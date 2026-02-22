@@ -1,0 +1,3281 @@
+<!doctype html>
+{% load i18n %}{% load static %}{% get_current_language as LANGUAGE_CODE %}
+<html lang="{{ LANGUAGE_CODE }}" dir="{% if LANGUAGE_CODE == 'ar' %}rtl{% else %}ltr{% endif %}">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% trans "Advisor Dashboard" %}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="{% static 'css/global.css' %}" rel="stylesheet">
+  
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Kufi+Arabic:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="icon" href="data:,">
+
+<style>
+/* ═══════════════════════════════════════════════════════
+   UX ENHANCEMENTS  (no existing classes overridden)
+   ═══════════════════════════════════════════════════════ */
+
+/* ── REC 5 + 9: Sticky page header ─────────────────── */
+.page-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.55rem 1.5rem;
+  margin: -1.5rem -1.5rem 1rem -1.5rem; /* extend edge-to-edge inside p-4 */
+  background: rgba(238,241,247,0.96);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line, #dde3ed);
+  box-shadow: 0 1px 8px rgba(0,0,0,0.06);
+}
+
+.page-header-module {
+  font-weight: 700;
+  font-size: 1rem;
+  color: var(--ink, #0d1526);
+  letter-spacing: -0.01em;
+  margin-bottom: 0.2rem;
+}
+
+.page-header-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  align-items: center;
+}
+
+.ph-chip {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.ph-chip-role   { background: #dbeafe; color: #1558d6; border: 1px solid #bfdbfe; }
+.ph-chip-scope  { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0;
+                  max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+.ph-chip-dept   { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+.ph-chip-context { background: #ecfdf5; color: #0d9253; border: 1px solid #a7f3d0;
+                   font-family: var(--font-mono, monospace); }
+
+.page-header-right { flex-shrink: 0; }
+
+/* ── REC 2: Button loading state ────────────────────── */
+/* Top loading bar — shows when any button in the page is disabled */
+#ux-loading-bar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  z-index: 9999;
+  background: linear-gradient(90deg,
+    transparent 0%, #1d6ef5 30%, #388bfd 70%, transparent 100%);
+  background-size: 200% 100%;
+  animation: ux-loading-sweep 1.2s linear infinite;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+#ux-loading-bar.active { opacity: 1; }
+
+@keyframes ux-loading-sweep {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Button disabled spinner */
+/* Loading spinner: added programmatically via .ux-loading class */
+.ux-loading {
+  position: relative !important;
+  padding-inline-start: 2rem !important;
+}
+
+.ux-loading::before {
+  content: '';
+  position: absolute;
+  inset-inline-start: 0.6rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 12px; height: 12px;
+  border: 2px solid rgba(255,255,255,0.35);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: ux-spin 0.7s linear infinite;
+}
+
+/* For dark/outline buttons the spinner uses a darker colour */
+.ux-loading.btn-outline-secondary::before,
+.ux-loading.btn-outline-dark::before,
+.ux-loading.btn-outline-primary::before {
+  border-color: rgba(0,0,0,0.18);
+  border-top-color: currentColor;
+}
+
+@keyframes ux-spin {
+  to { transform: translateY(-50%) rotate(360deg); }
+}
+
+/* ── REC 1: Empty states ────────────────────────────── */
+.empty-state {
+  text-align: center;
+  padding: 2rem 1.5rem;
+  color: var(--muted-light, #94a3b8);
+}
+
+.empty-icon {
+  display: block;
+  font-size: 2rem;
+  margin-bottom: 0.5rem;
+  opacity: 0.6;
+}
+
+.empty-title {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--muted, #64748b);
+  margin-bottom: 0.3rem;
+}
+
+.empty-hint {
+  font-size: 0.78rem;
+  color: var(--muted-light, #94a3b8);
+  line-height: 1.5;
+}
+
+.empty-hint strong { color: var(--brand, #1d6ef5); }
+
+/* ── REC 4: HP advanced settings ───────────────────── */
+.hp-advanced { border: none; }
+
+.hp-advanced-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  list-style: none;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted, #64748b);
+  padding: 0.3rem 0;
+  user-select: none;
+}
+
+.hp-advanced-toggle::-webkit-details-marker { display: none; }
+
+.hp-adv-arrow {
+  font-size: 0.6rem;
+  transition: transform 0.2s ease;
+  display: inline-block;
+}
+
+.hp-advanced[open] .hp-adv-arrow { transform: rotate(90deg); }
+
+.hp-adv-defaults-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  background: var(--bg-subtle, #e8ecf3);
+  color: var(--muted, #64748b);
+  border-radius: 4px;
+  padding: 0.1rem 0.4rem;
+}
+
+.hp-advanced[open] .hp-adv-defaults-badge { display: none; }
+
+/* ── REC 8: Advisor admin wizard bar ────────────────── */
+.adm-wizard-bar {
+  display: flex;
+  align-items: center;
+  margin-bottom: 1.5rem;
+  padding: 1rem 1rem 0.75rem;
+  background: var(--brand-soft, #dbeafe);
+  border: 1px solid #bfdbfe;
+  border-radius: var(--radius, 10px);
+}
+
+.adm-step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  flex: 0 0 auto;
+}
+
+.adm-step-circle {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  background: var(--brand, #1d6ef5);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  font-weight: 700;
+  box-shadow: 0 0 0 3px rgba(29,110,245,0.2);
+}
+
+.adm-step-inactive .adm-step-circle {
+  background: #fff;
+  color: var(--muted, #64748b);
+  border: 2px solid var(--line-strong, #c8d0df);
+  box-shadow: none;
+}
+
+.adm-step-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--brand-dark, #1558d6);
+  white-space: nowrap;
+}
+
+.adm-step-inactive .adm-step-label { color: var(--muted, #64748b); }
+
+.adm-step-line {
+  flex: 1;
+  height: 2px;
+  background: var(--brand, #1d6ef5);
+  margin: 0 0.5rem;
+  margin-bottom: 1.1rem; /* align with circle center */
+}
+
+.adm-step-line-inactive { background: var(--line-strong, #c8d0df); }
+
+
+
+/* ── REC 6: ⌘K Command palette ──────────────────────── */
+.cmd-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(13,21,38,0.5);
+  backdrop-filter: blur(4px);
+  z-index: 2000;
+  display: flex !important;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+}
+
+.cmd-backdrop[style*="display:none"] { display: none !important; }
+
+.cmd-modal {
+  background: #fff;
+  border: 1px solid var(--line, #dde3ed);
+  border-radius: 14px;
+  width: 560px;
+  max-width: 90vw;
+  box-shadow: 0 24px 64px rgba(13,21,38,0.25);
+  overflow: hidden;
+}
+
+.cmd-search-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid var(--line, #dde3ed);
+}
+
+.cmd-search-icon { font-size: 1.1rem; color: var(--brand, #1d6ef5); }
+
+.cmd-input {
+  flex: 1;
+  border: none;
+  outline: none;
+  font-size: 1rem;
+  font-family: var(--font-body, sans-serif);
+  color: var(--ink, #0d1526);
+  background: transparent;
+}
+
+.cmd-input::placeholder { color: var(--muted-light, #94a3b8); }
+
+.cmd-esc {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.68rem;
+  background: var(--bg-subtle, #e8ecf3);
+  border: 1px solid var(--line-strong, #c8d0df);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  padding: 0.1rem 0.4rem;
+  color: var(--muted, #64748b);
+}
+
+.cmd-results { max-height: 320px; overflow-y: auto; }
+
+.cmd-hint {
+  padding: 1rem;
+  font-size: 0.82rem;
+  color: var(--muted-light, #94a3b8);
+  text-align: center;
+}
+
+.cmd-section-label {
+  padding: 0.5rem 1rem 0.25rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted-light, #94a3b8);
+  border-top: 1px solid var(--line, #dde3ed);
+}
+
+.cmd-section-label:first-child { border-top: none; }
+
+.cmd-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 1rem;
+  cursor: pointer;
+  transition: background 0.1s ease;
+  font-size: 0.875rem;
+}
+
+.cmd-item:hover, .cmd-item.selected {
+  background: #eff6ff;
+}
+
+.cmd-item-id {
+  font-family: var(--font-mono, monospace);
+  font-weight: 600;
+  color: var(--brand, #1d6ef5);
+  min-width: 70px;
+}
+
+.cmd-item-name { flex: 1; color: var(--ink, #0d1526); }
+
+.cmd-item-badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: #dbeafe;
+  color: #1558d6;
+  border: 1px solid #bfdbfe;
+  flex-shrink: 0;
+}
+
+/* ── REC 3: Sidebar badges ──────────────────────────── */
+.sidebar-badge {
+  margin-inline-start: auto;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.62rem;
+  font-weight: 700;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  min-width: 1.4rem;
+  text-align: center;
+  display: none; /* shown via JS when count > 0 */
+}
+
+.sidebar-badge.danger { background: rgba(248,81,73,0.2); color: #f87171; }
+.sidebar-badge.warning { background: rgba(210,153,34,0.18); color: #f59e0b; }
+.sidebar-badge.ready { background: rgba(63,185,80,0.18); color: #4ade80; font-size: 0.58rem; }
+
+/* Fix sidebar nav-link layout for badge */
+.sidebar .nav-link { display: flex; align-items: center; }
+</style>
+</head>
+<body>
+<div class="d-flex shell">
+  {% include "core/partials/sidebar.html" %}
+
+  <main class="flex-grow-1 p-4">
+    <div class="page-header">
+      <div class="page-header-left">
+        <div id="currentModule" class="page-header-module">{% trans "Student Recommender" %}</div>
+        <div class="page-header-chips">
+          <span class="ph-chip ph-chip-role">{{ role }}</span>
+          <span class="ph-chip ph-chip-scope" title="{{ role_scope_hint }}">{{ role_scope_hint|truncatechars:40 }}</span>
+          {% if scope_departments %}<span class="ph-chip ph-chip-dept">{{ scope_departments|join:", " }}</span>{% endif %}
+          <span class="ph-chip ph-chip-context" id="phContextChip" style="display:none;"></span>
+        </div>
+      </div>
+      <div class="page-header-right">
+        <a href="/logout/" class="btn btn-sm btn-outline-secondary">{% trans "Logout" %}</a>
+      </div>
+    </div>
+
+    {# SECURITY: debug_mode must also be enforced server-side in the view (e.g. settings.DEBUG and request.user.is_superuser). Template-only gating is not sufficient. #}
+    {% if debug_mode %}
+    <div class="card soft-card p-3 ">
+      <h6 class="mb-2">Dev Role Switch (DEBUG only)</h6>
+      <div class="row g-2 align-items-end">
+        <div class="col-md-3">
+          <label class="form-label">Role</label>
+          <select id="devRole" class="form-select form-select-sm">
+            <option value="SUPER_ADMIN">SUPER_ADMIN</option>
+            <option value="GENERAL_ACADEMIC_ADVISOR">GENERAL_ACADEMIC_ADVISOR</option>
+            <option value="ADVISOR">ADVISOR</option>
+          </select>
+        </div>
+        <div class="col-md-3"><label class="form-label">Advisor ID</label><input id="devAdvisorId" class="form-control form-control-sm" placeholder="A001"></div>
+        <div class="col-md-4"><label class="form-label">Departments CSV</label><input id="devDepartments" class="form-control form-control-sm" placeholder="AI,CS"></div>
+        <div class="col-md-2 d-grid"><button id="devSwitchRole" type="button" class="btn btn-outline-warning btn-sm">Switch Role</button></div>
+      </div>
+      <div id="devRoleMsg" class="small text-secondary mt-2">Use for QA only; refresh after switch.</div>
+    </div>
+    {% endif %}
+
+    <div id="student" class="panel active card soft-card p-4 ">
+      <h4>Student Recommender</h4>
+      <div class="panel-sub">Get a per-student recommendation list and export it instantly.</div>
+      <form method="get" action="/" class="row g-3 align-items-end sticky-cta">
+        <div class="col-md-3"><label class="form-label">Student ID</label><input id="studentIdInput" class="form-control" type="number" name="student_id" value="{{ student_id }}" required></div>
+        <div class="col-md-2"><label class="form-label">Year</label><input class="form-control" type="number" name="year" value="{{ year }}" required></div>
+        <div class="col-md-2"><label class="form-label">Semester</label><input class="form-control" type="number" min="0" max="1" name="semester" value="{{ semester }}" required></div>
+        <div class="col-md-3 d-grid"><button class="btn btn-primary">Recommend courses</button></div>
+        <div class="col-md-2 d-grid"><button id="loadStudentPlan" type="button" class="btn btn-outline-primary">Load plan</button></div>
+      </form>
+      {% if recommendations is not None %}
+      <hr>
+      <div><strong>Recommendations:</strong></div>
+      <div class="mt-2">{% for code in recommendations %}<span class="pill">{{ code }}</span>{% endfor %}</div>
+      <div class="mt-3 actions-row secondary-inline-actions">
+        <a id="studentCsvLink" class="btn btn-outline-primary btn-sm" href="/export/student.csv?student_id={{ student_id }}&year={{ year }}&semester={{ semester }}">Export CSV</a>
+        <button id="copyStudentCsv" type="button" class="btn btn-outline-secondary btn-sm">Copy link</button>
+      </div>
+      {% endif %}
+      {% if error %}<div class="alert alert-danger mt-3 mb-0">{{ error }}</div>{% endif %}
+
+      <div class="mt-4">
+        <h6>Student Plan Matrix (Terms 1-10)</h6>
+        <div id="studentPlanMeta" class="small text-secondary mb-2">Load a student to view the full term matrix.</div>
+        <div class="row g-2 mb-2" id="studentPlanMetrics" style="display:none;">
+          <div class="col-md-3"><div class="metric"><div class="k">Passed</div><div class="v" id="spPassed">0</div></div></div>
+          <div class="col-md-3"><div class="metric"><div class="k">Studying</div><div class="v" id="spStudying">0</div></div></div>
+          <div class="col-md-3"><div class="metric"><div class="k">Can register</div><div class="v text-success" id="spCan">0</div></div></div>
+          <div class="col-md-3"><div class="metric"><div class="k">Locked</div><div class="v" id="spLocked">0</div></div></div>
+        </div>
+        <div id="studentPlanLegend" class="small text-secondary mb-2" style="display:none;">
+          Legend: <span class="badge text-bg-success">passed</span>
+          <span class="badge text-bg-primary">studying</span>
+          <span class="badge" style="background:#22c55e;color:#052e16;">not taken (can register)</span>
+          <span class="badge text-bg-light">locked not taken</span>
+        </div>
+        <div class="actions-row mb-2" id="studentPlanActions" style="display:none;">
+          <button id="spFocusNext" type="button" class="btn btn-primary btn-sm">Focus next term</button>
+          <button id="spBuildTargetPlan" type="button" class="btn btn-success btn-sm">Build target plan</button>
+          <a id="spCsvExport" class="btn btn-outline-dark btn-sm" href="#">Export CSV</a>
+
+          <details class="d-inline-block">
+            <summary class="btn btn-outline-secondary btn-sm">View filters</summary>
+            <div class="d-flex flex-wrap gap-2 mt-2">
+              <button id="spShowAll" type="button" class="btn btn-outline-secondary btn-sm">Show all</button>
+              <button id="spShowCanOnly" type="button" class="btn btn-outline-success btn-sm">Can register only</button>
+              <button id="spShowLockedOnly" type="button" class="btn btn-outline-danger btn-sm">Locked only</button>
+              <button id="spCompact" type="button" class="btn btn-outline-secondary btn-sm">Compact rows</button>
+              <button id="spExpandAll" type="button" class="btn btn-outline-secondary btn-sm">Expand all</button>
+              <button id="spCollapseAll" type="button" class="btn btn-outline-secondary btn-sm">Collapse all</button>
+            </div>
+          </details>
+
+          <details class="d-inline-block">
+            <summary class="btn btn-outline-secondary btn-sm">Sort options</summary>
+            <div class="d-flex flex-wrap gap-2 mt-2">
+              <button id="spSortImportance" type="button" class="btn btn-outline-warning btn-sm">Importance</button>
+              <button id="spSortStatus" type="button" class="btn btn-outline-info btn-sm">Status</button>
+              <button id="spSortCode" type="button" class="btn btn-outline-info btn-sm">Code</button>
+            </div>
+          </details>
+
+          <details class="d-inline-block">
+            <summary class="btn btn-outline-secondary btn-sm">Target settings</summary>
+            <div class="d-flex flex-wrap gap-2 mt-2 align-items-center">
+              <label class="small text-secondary">Credits</label>
+              <select id="spTargetCredits" class="form-select form-select-sm" style="width:auto;">
+                <option value="12">12</option>
+                <option value="15">15</option>
+                <option value="18" selected>18</option>
+              </select>
+              <select id="spTargetStrategy" class="form-select form-select-sm" style="width:auto;">
+                <option value="max" selected>Max importance</option>
+                <option value="balanced">Balanced by term load</option>
+              </select>
+              <button id="spPrintPdf" type="button" class="btn btn-outline-dark btn-sm">Print / PDF</button>
+            </div>
+          </details>
+        </div>
+        <div id="studentPlanRiskAlerts" class="mb-3"></div>
+        <div id="studentPlanTopImportant" class="mb-3"></div>
+        <div id="studentPlanHints" class="mb-3"></div>
+        <div id="studentPlanActionPlan" class="mb-3"></div>
+        <div class="row g-3">
+          <div class="col-lg-8">
+            <div id="studentPlanTerms"></div>
+          </div>
+          <div class="col-lg-4">
+            <div id="studentCourseDrawer" class="drawer">
+              <h6>Course Explain Drawer</h6>
+              <div class="empty-note">Click any course row to inspect lock reason, missing prereqs, and unlock impact.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="batch" class="panel card soft-card p-4 ">
+      <h4>Batch Recommender</h4>
+      <div class="panel-sub">Run cohort-level preview, inspect top courses, and export aggregate CSV.</div>
+      <div class="row g-3 align-items-end batch-filters sticky-cta">
+        <div class="col-md-2"><label class="form-label">Year</label><input id="batchYear" class="form-control" type="number" value="{{ year }}"></div>
+        <div class="col-md-2"><label class="form-label">Semester</label><input id="batchSemester" class="form-control" type="number" min="0" max="1" value="{{ semester }}"></div>
+        <div class="col-md-3"><label class="form-label">Program (optional)</label><input id="batchProgram" class="form-control"></div>
+        <div class="col-md-2"><label class="form-label">Section (optional)</label><input id="batchSection" class="form-control"></div>
+        <div class="col-md-2 d-grid"><button id="runBatch" class="btn btn-success">Run preview</button></div>
+        <div class="col-md-1 d-grid"><button id="resetBatch" type="button" class="btn btn-outline-secondary">Reset</button></div>
+      </div>
+      <div class="preset-row">
+        <button id="batchSavePreset" type="button" class="btn btn-outline-secondary btn-sm">Save preset</button>
+        <button id="batchLoadPreset" type="button" class="btn btn-outline-secondary btn-sm">Load preset</button>
+      </div>
+
+      <div class="row g-2 mt-3 mb-2" id="batchMetrics" style="display:none;">
+        <div class="col-md-3"><div class="metric"><div class="k">Year/Semester</div><div class="v" id="batchMetricTerm">-</div></div></div>
+        <div class="col-md-3"><div class="metric"><div class="k">Students scanned</div><div class="v" id="batchMetricStudents">0</div></div></div>
+        <div class="col-md-3"><div class="metric"><div class="k">Top list size</div><div class="v" id="batchMetricTopCount">0</div></div></div>
+      </div>
+
+      <div class="row g-2 align-items-end batch-export-row">
+        <div class="col-md-3 d-grid"><a id="batchCsv" class="btn btn-outline-success btn-sm" href="#">Download aggregate CSV</a></div>
+        <div class="col-md-3 d-grid"><a id="batchSummary" class="btn btn-outline-primary btn-sm" href="#">Open summary JSON</a></div>
+        <div class="col-md-3 d-grid"><button id="copyBatchCsv" type="button" class="btn btn-outline-secondary btn-sm">Copy aggregate CSV link</button></div>
+        <div class="col-md-3"><div id="batchUpdated" class="small text-secondary mt-2">Last update: -</div></div>
+      </div>
+
+      <div class="table-wrap mt-3">
+        <table class="table table-sm mb-0" id="batchTable">
+          <thead><tr><th data-sort="num">#</th><th data-sort="text">Course</th><th data-sort="num">Count</th><th>Share</th></tr></thead>
+          <tbody><tr><td colspan="4"><div class="empty-state"><span class="empty-icon">📊</span><div class="empty-title">No batch data yet</div><div class="empty-hint">Set Year &amp; Semester above, then click <strong>Run preview</strong></div></div></td></tr></tbody>
+        </table>
+      </div>
+
+      <div class="mt-3">
+        <div class="small text-secondary mb-1">Top recommendation chips</div>
+        <div id="batchTopChips" class="mb-1"></div>
+      </div>
+    </div>
+
+    <div id="prereq" class="panel card soft-card p-4 ">
+      <h4>Course Prerequisites View</h4>
+      <div class="panel-sub">Explore prerequisite links by program and optionally by a specific course.</div>
+      <div class="zone-card">
+        <div class="zone-title">Filters</div>
+        <div class="row g-3 align-items-end">
+          <div class="col-md-3"><label class="form-label">Program</label><input id="preProgram" class="form-control" list="programs" placeholder="e.g. CS"></div>
+          <div class="col-md-3"><label class="form-label">Course code (optional)</label><input id="preCourse" class="form-control" placeholder="e.g. CS323"></div>
+          <div class="col-md-2 d-grid"><button id="loadPre" class="btn btn-primary">Load</button></div>
+        </div>
+      </div>
+      <div class="zone-card">
+        <div class="zone-title">Results</div>
+        <div class="row g-2 mt-1 mb-2" id="preMetrics" style="display:none;">
+          <div class="col-md-3"><div class="metric"><div class="k">Program</div><div class="v" id="preMetricProgram">-</div></div></div>
+          <div class="col-md-3"><div class="metric"><div class="k">Courses in view</div><div class="v" id="preMetricCourses">0</div></div></div>
+          <div class="col-md-3"><div class="metric"><div class="k">Prerequisite links</div><div class="v" id="preMetricLinks">0</div></div></div>
+        </div>
+        <div id="preUpdated" class="small text-secondary">Last update: -</div>
+        <div class="table-wrap mt-3">
+          <table class="table table-sm mb-0" id="preTable">
+            <thead><tr><th data-sort="text">Course</th><th data-sort="text">Prerequisite</th></tr></thead>
+            <tbody><tr><td colspan="2"><div class="empty-state"><span class="empty-icon">📋</span><div class="empty-title">No prerequisites loaded</div><div class="empty-hint">Choose a program above, then click <strong>Load</strong></div></div></td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="zone-card">
+        <div class="zone-title">Graph</div>
+        <div id="preGraph" class="small text-secondary">Load prerequisites to visualize dependency chains.</div>
+      </div>
+    </div>
+
+    <div id="plan" class="panel card soft-card p-4 ">
+      <h4>Program Plan Viewer</h4>
+      <div class="panel-sub">Inspect full program requirements, term breakdown, and credit totals.</div>
+      <div class="zone-card">
+        <div class="zone-title">Filters</div>
+        <div class="row g-3 align-items-end">
+          <div class="col-md-3"><label class="form-label">Program</label><input id="planProgram" class="form-control" list="programs" placeholder="e.g. CS"></div>
+          <div class="col-md-2 d-grid"><button id="loadPlan" class="btn btn-primary">Load Plan</button></div>
+        </div>
+      </div>
+      <div class="zone-card">
+        <div class="zone-title">Results</div>
+        <div class="row g-2 mt-1 mb-2" id="planMetrics" style="display:none;">
+          <div class="col-md-3"><div class="metric"><div class="k">Program</div><div class="v" id="planMetricProgram">-</div></div></div>
+          <div class="col-md-3"><div class="metric"><div class="k">Total courses</div><div class="v" id="planMetricCount">0</div></div></div>
+          <div class="col-md-3"><div class="metric"><div class="k">Total credit hours</div><div class="v" id="planMetricCredits">0</div></div></div>
+        </div>
+        <div id="planUpdated" class="small text-secondary">Last update: -</div>
+        <div class="table-wrap mt-3">
+          <table class="table table-sm mb-0" id="planTable">
+            <thead><tr><th data-sort="num">Term</th><th data-sort="text">Course</th><th data-sort="num">Credit Hours</th></tr></thead>
+            <tbody><tr><td colspan="3"><div class="empty-state"><span class="empty-icon">🗓️</span><div class="empty-title">No plan loaded</div><div class="empty-hint">Choose a program above, then click <strong>Load Plan</strong></div></div></td></tr></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="zone-card">
+        <div class="zone-title">Visuals</div>
+        <h6>Term distribution</h6>
+        <div id="termBars"></div>
+
+        <div class="mt-3">
+          <h6>Term cards</h6>
+          <div id="termCards" class="row g-2"></div>
+        </div>
+      </div>
+
+      <div class="zone-card">
+        <div class="zone-title">Selected course prerequisites</div>
+        <div class="small text-secondary mb-2">Click a course in Program Plan table to load its prerequisites.</div>
+        <div id="planPrereqMeta" class="small text-secondary">No course selected.</div>
+        <div class="table-wrap mt-2">
+          <table class="table table-sm mb-0" id="planPrereqTable">
+            <thead><tr><th data-sort="text">Course</th><th data-sort="text">Prerequisite</th></tr></thead>
+            <tbody><tr><td colspan="2"><div class="empty-state"><span class="empty-icon">🔗</span><div class="empty-title">No course selected</div><div class="empty-hint">Click any course row in the plan table above</div></div></td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div id="scrape" class="panel card soft-card p-4">
+      <h4>Batch Scraping (Legacy)</h4>
+      <div class="panel-sub">Run legacy scraper in background, monitor logs, and track run history metadata.</div>
+      <p>Runs <code>import_old/phase_1_scraper/batch_scraper.py</code> in background and streams progress logs.</p>
+      <div class="row g-3 align-items-end">
+        <div class="col-md-2">
+          <label class="form-label">Concurrency</label>
+          <input id="scrapeConcurrency" class="form-control" type="number" min="1" max="8" value="2">
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Students CSV path (optional)</label>
+          <input id="scrapeCsv" class="form-control" placeholder="default: import_old/data/students_list.csv">
+        </div>
+        <div class="col-md-2 d-grid"><button id="scrapeStart" class="btn btn-danger">Start scrape</button></div>
+        <div class="col-md-1 d-grid"><button id="scrapeStop" class="btn btn-warning">Stop</button></div>
+        <div class="col-md-1 d-grid"><button id="scrapeRefresh" class="btn btn-outline-secondary">Refresh</button></div>
+      </div>
+      <div class="row g-2 mt-3" id="scrapeMetrics">
+        <div class="col-md-3"><div class="metric"><div class="k">Current status</div><div class="v fs-6" id="scrapeMetricStatus">Idle</div></div></div>
+        <div class="col-md-2"><div class="metric"><div class="k">PID</div><div class="v fs-6" id="scrapeMetricPid">-</div></div></div>
+        <div class="col-md-3"><div class="metric"><div class="k">Started</div><div class="v fs-6" id="scrapeMetricStarted">-</div></div></div>
+        <div class="col-md-3"><div class="metric"><div class="k">Stopped</div><div class="v fs-6" id="scrapeMetricStopped">-</div></div></div>
+      </div>
+      <div id="scrapeMeta" class="small text-secondary mt-3">No scrape run started.</div>
+      <div id="scrapeUpdatedAt" class="small text-secondary">Last update: -</div>
+      <div class="table-wrap mt-2">
+        <table class="table table-sm mb-0" id="scrapeHistoryTable">
+          <thead><tr><th>Time (UTC)</th><th>Event</th><th>PID</th><th>Concurrency</th><th>CSV</th></tr></thead>
+          <tbody><tr><td colspan="5"><div class="empty-state"><span class="empty-icon">🕑</span><div class="empty-title">No scrape history</div><div class="empty-hint">Run a scrape to see history here</div></div></td></tr></tbody>
+        </table>
+      </div>
+      <pre id="scrapeOut" class="mt-2 p-3 small log-box" style="max-height: 320px; overflow: auto;">No logs yet.</pre>
+    </div>
+
+    <div id="debug" class="panel card soft-card p-4 ">
+      <h4>Recommendation Debug Report</h4>
+      <div class="panel-sub">Legacy-style student debug report for recommendation traceability.</div>
+      <div class="row g-2 align-items-end sticky-cta">
+        <div class="col-md-2"><label class="form-label">Year</label><input id="dbgYear" class="form-control" type="number" value="{{ year }}"></div>
+        <div class="col-md-2"><label class="form-label">Semester</label><input id="dbgSemester" class="form-control" type="number" min="0" max="1" value="{{ semester }}"></div>
+        <div class="col-md-2"><label class="form-label">Section</label><input id="dbgSection" class="form-control" placeholder="M/F"></div>
+        <div class="col-md-2"><label class="form-label">Program</label><input id="dbgProgram" class="form-control" placeholder="AI/CS"></div>
+        <div class="col-md-2"><label class="form-label">Join years</label><input id="dbgJoin" class="form-control" placeholder="43,44"></div>
+        <div class="col-md-1"><label class="form-label">Limit</label><input id="dbgLimit" class="form-control" type="number" value="80"></div>
+        <div class="col-md-1 d-grid"><button id="dbgRun" class="btn btn-primary">Run</button></div>
+      </div>
+      <div class="preset-row">
+        <button id="dbgSavePreset" type="button" class="btn btn-outline-secondary btn-sm">Save preset</button>
+        <button id="dbgLoadPreset" type="button" class="btn btn-outline-secondary btn-sm">Load preset</button>
+      </div>
+      <div class="actions-row mt-2"><a id="dbgCsv" class="btn btn-outline-dark btn-sm" href="#">Export debug CSV</a></div>
+      <div id="dbgMeta" class="meta-banner meta-info mt-2">No debug report loaded.</div>
+      <div class="row g-2 mt-2" id="dbgSummary" style="display:none;">
+        <div class="col-md-3"><div class="metric"><div class="k">Students matched</div><div class="v" id="dbgCount">0</div></div></div>
+        <div class="col-md-3"><div class="metric"><div class="k">With recommendations</div><div class="v" id="dbgWithRec">0</div></div></div>
+        <div class="col-md-3"><div class="metric"><div class="k">Empty recommendations</div><div class="v" id="dbgWithoutRec">0</div></div></div>
+      </div>
+      <div id="dbgUpdated" class="small text-secondary">Last update: -</div>
+      <div class="small text-secondary mt-1">Details</div>
+      <div class="table-wrap mt-2">
+        <table class="table table-sm mb-0" id="dbgTable">
+          <thead><tr><th>Student</th><th>Program</th><th>Real→Next</th><th>Passed</th><th>Studying</th><th>Recommended</th><th>Trace</th></tr></thead>
+          <tbody><tr><td colspan="7"><div class="empty-state"><span class="empty-icon">🔍</span><div class="empty-title">No debug data</div><div class="empty-hint">Fill filters above, then click <strong>Run</strong></div></div></td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="eligibility" class="panel card soft-card p-4 ">
+      <h4>Course Eligibility Inspector</h4>
+      <div class="panel-sub">Old-style output: eligible student IDs only.</div>
+      <div class="row g-2 align-items-end sticky-cta">
+        <div class="col-md-2"><label class="form-label">Course code</label><input id="elCourse" class="form-control" placeholder="CS323"></div>
+        <div class="col-md-2"><label class="form-label">Section</label><input id="elSection" class="form-control" placeholder="M/F"></div>
+        <div class="col-md-2"><label class="form-label">Program</label><input id="elProgram" class="form-control" placeholder="AI/CS"></div>
+        <div class="col-md-2"><label class="form-label">Join years</label><input id="elJoin" class="form-control" placeholder="43,44"></div>
+        <div class="col-md-2"><label class="form-label">Mode</label><select id="elMode" class="form-select"><option value="relaxed" selected>Relaxed (passed+studying)</option><option value="strict">Strict (passed only)</option></select></div>
+        <div class="col-md-2 d-grid"><button id="elRun" class="btn btn-primary">Check eligibility</button></div>
+      </div>
+      <div class="preset-row">
+        <button id="elSavePreset" type="button" class="btn btn-outline-secondary btn-sm">Save preset</button>
+        <button id="elLoadPreset" type="button" class="btn btn-outline-secondary btn-sm">Load preset</button>
+      </div>
+      <div class="actions-row mt-2"><a id="elCsv" class="btn btn-outline-dark btn-sm" href="#">Export eligibility CSV</a></div>
+      <div id="elMeta" class="meta-banner meta-info mt-2">No eligibility report loaded.</div>
+      <div class="row g-2 mt-2" id="elSummary" style="display:none;">
+        <div class="col-md-3"><div class="metric"><div class="k">Eligible IDs</div><div class="v" id="elCount">0</div></div></div>
+        <div class="col-md-3"><div class="metric"><div class="k">Mode</div><div class="v fs-6" id="elModeBadge">relaxed</div></div></div>
+        <div class="col-md-3"><div class="metric"><div class="k">Course</div><div class="v fs-6" id="elCourseBadge">-</div></div></div>
+      </div>
+      <div id="elUpdated" class="small text-secondary">Last update: -</div>
+      <div class="small text-secondary mt-1">Details</div>
+      <div class="table-wrap mt-2">
+        <table class="table table-sm mb-0" id="elTable">
+          <thead><tr><th>Eligible Student IDs</th></tr></thead>
+          <tbody><tr><td><div class="empty-state"><span class="empty-icon">✅</span><div class="empty-title">No eligibility results</div><div class="empty-hint">Enter a course code above, then click <strong>Check eligibility</strong></div></div></td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    {% if can_admin_advisors %}<div id="advisoradmin" class="panel card soft-card p-4 ">
+      <h4>Advisor Admin</h4>
+      <div class="panel-sub">Create advisors and manage student-to-advisor assignments.</div>
+
+      <div class="adm-wizard-bar">
+        <div class="adm-step" id="admStep1">
+          <div class="adm-step-circle">1</div>
+          <div class="adm-step-label">Create Advisor</div>
+        </div>
+        <div class="adm-step-line"></div>
+        <div class="adm-step adm-step-inactive" id="admStep2">
+          <div class="adm-step-circle">2</div>
+          <div class="adm-step-label">Bulk Mapping</div>
+        </div>
+        <div class="adm-step-line adm-step-line-inactive"></div>
+        <div class="adm-step adm-step-inactive" id="admStep3">
+          <div class="adm-step-circle">3</div>
+          <div class="adm-step-label">Single Assign</div>
+        </div>
+      </div>
+
+      <div class="advisor-block">
+        <h6><span class="badge text-bg-primary">Step 1</span> Create / Update Advisor Profile</h6>
+        <div class="small text-secondary mb-2">Use a unique advisor ID and valid institutional email.</div>
+        <div class="row g-2 align-items-end">
+          <div class="col-md-2"><label class="form-label">Advisor ID</label><input id="advId" class="form-control" placeholder="A001" maxlength="30"><div id="advIdErr" class="field-error"></div></div>
+          <div class="col-md-3"><label class="form-label">Full name</label><input id="advName" class="form-control" placeholder="Dr. Name" maxlength="120"><div id="advNameErr" class="field-error"></div></div>
+          <div class="col-md-3"><label class="form-label">Email</label><input id="advEmail" type="email" class="form-control" placeholder="advisor@uni.edu" maxlength="120"><div id="advEmailErr" class="field-error"></div></div>
+          <div class="col-md-2"><label class="form-label">Departments</label><input id="advDept" class="form-control" placeholder="CS,AI" maxlength="120"><div id="advDeptErr" class="field-error"></div></div>
+          <div class="col-md-2 d-grid"><button id="advSave" class="btn btn-primary">Save advisor</button></div>
+        </div>
+      </div>
+
+      <div class="advisor-block">
+        <h6><span class="badge text-bg-primary">Step 2</span> Bulk Mapping</h6>
+        <div class="small text-secondary mb-2">Paste CSV rows to map many students at once.</div>
+        <div class="row g-2 align-items-end mt-1">
+          <div class="col-md-3 d-grid"><button id="advEnsureColumn" class="btn btn-outline-dark">Enable students.advisor_id</button></div>
+          <div class="col-md-9"><label class="form-label">Bulk assign CSV (student_id,advisor_id)</label><textarea id="advAssignCsv" class="form-control" rows="3" placeholder="student_id,advisor_id&#10;4410001,A001"></textarea></div>
+        </div>
+        <div class="actions-row mt-2">
+          <button id="advAssignCsvBtn" class="btn btn-outline-success btn-sm" type="button">Apply CSV mapping</button>
+        </div>
+      </div>
+
+      <div class="advisor-block">
+        <h6><span class="badge text-bg-primary">Step 3</span> Quick Single Assignment</h6>
+        <div class="small text-secondary mb-2">Use for quick corrections without re-uploading CSV.</div>
+        <div class="row g-2 align-items-end mt-1">
+          <div class="col-md-3"><label class="form-label">Quick assign student ID</label><input id="advAssignStudentId" class="form-control" placeholder="4410001"></div>
+          <div class="col-md-3"><label class="form-label">Quick assign advisor ID</label><input id="advAssignAdvisorId" class="form-control" placeholder="A001"></div>
+          <div class="col-md-3 d-grid"><button id="advAssignOneBtn" class="btn btn-outline-primary" type="button">Assign one student</button></div>
+        </div>
+      </div>
+
+      <div id="advMeta" class="small text-secondary mt-2">No advisor action yet.</div>
+      <div id="advUpdated" class="small text-secondary">Last update: -</div>
+
+    </div>{% endif %}
+
+    <!-- Advisor Portfolio → moved to standalone page at /advisor-portfolio/ -->
+
+    <div id="exports" class="panel card soft-card p-4 ">
+      <h4>Export Center</h4>
+      <div class="panel-sub">Quick links for all operational exports in one place.</div>
+      <div class="task-card mb-2">
+        <div class="k">What these exports contain</div>
+        <div class="small text-secondary">Student/aggregate recommendations, student plan matrix, debug diagnostics, eligibility IDs, advisor roster, and high-priority XLSX snapshot based on current filters.</div>
+      </div>
+      <div class="table-wrap">
+        <table class="table table-sm mb-0" id="exportsTable">
+          <thead><tr><th>Export</th><th>Contains</th><th>Action</th><th>Copy Link</th></tr></thead>
+          <tbody>
+            <tr><td>Student recommendations CSV</td><td>Single student</td><td><a id="exStudentCsv" class="btn btn-sm btn-outline-primary" href="#">Download</a></td><td><button class="btn btn-sm btn-outline-secondary ex-copy" data-link-id="exStudentCsv">Copy</button></td></tr>
+            <tr><td>Aggregate recommendations CSV</td><td>Batch summary</td><td><a id="exAggregateCsv" class="btn btn-sm btn-outline-primary" href="#">Download</a></td><td><button class="btn btn-sm btn-outline-secondary ex-copy" data-link-id="exAggregateCsv">Copy</button></td></tr>
+            <tr><td>Student plan matrix CSV</td><td>Single student</td><td><a id="exPlanCsv" class="btn btn-sm btn-outline-primary" href="#">Download</a></td><td><button class="btn btn-sm btn-outline-secondary ex-copy" data-link-id="exPlanCsv">Copy</button></td></tr>
+            <tr><td>Recommendation debug CSV</td><td>Filtered cohort debug</td><td><a id="exDebugCsv" class="btn btn-sm btn-outline-primary" href="#">Download</a></td><td><button class="btn btn-sm btn-outline-secondary ex-copy" data-link-id="exDebugCsv">Copy</button></td></tr>
+            <tr><td>Course eligibility CSV</td><td>Eligibility inspector</td><td><a id="exEligibilityCsv" class="btn btn-sm btn-outline-primary" href="#">Download</a></td><td><button class="btn btn-sm btn-outline-secondary ex-copy" data-link-id="exEligibilityCsv">Copy</button></td></tr>
+            <tr><td>Students by advisor CSV</td><td>Advisor roster</td><td><a id="exAdvisorCsv" class="btn btn-sm btn-outline-primary" href="#">Download</a></td><td><button class="btn btn-sm btn-outline-secondary ex-copy" data-link-id="exAdvisorCsv">Copy</button></td></tr>
+            <tr><td>Missing high priority XLSX</td><td>High-priority checker</td><td><a id="exHighPriorityXlsx" class="btn btn-sm btn-outline-primary" href="#">Download</a></td><td><button class="btn btn-sm btn-outline-secondary ex-copy" data-link-id="exHighPriorityXlsx">Copy</button></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="exportsMeta" class="small text-secondary mt-2">Tip: run each module once to auto-fill parameterized export links.</div>
+    </div>
+
+    <div id="highpriority" class="panel card soft-card p-4 ">
+      <h4>Missing High Priority Courses</h4>
+      <div class="panel-sub">Exact legacy logic from old script (unlock-graph priority + parity split).</div>
+      <div class="task-card mb-2">
+        <div class="k">Task</div>
+        <div class="small text-secondary">Use this report to flag students missing high-impact unlock courses; export XLSX for advisor intervention lists.</div>
+      </div>
+      <div class="row g-2 align-items-end sticky-cta">
+        <div class="col-md-2"><label class="form-label">Year</label><input id="hpYear" class="form-control" type="number" value="{{ year }}"></div>
+        <div class="col-md-2"><label class="form-label">Semester</label><input id="hpSemester" class="form-control" type="number" min="0" max="1" value="{{ semester }}"></div>
+        <div class="col-md-2"><label class="form-label">Section</label><input id="hpSection" class="form-control" placeholder="M/F"></div>
+        <div class="col-md-2"><label class="form-label">Program</label><input id="hpProgram" class="form-control" placeholder="AI/CS"></div>
+        <div class="col-md-2"><label class="form-label">Join years</label><input id="hpJoin" class="form-control" placeholder="43,44"></div>
+        <div class="col-md-2"><label class="form-label">Parity</label><select id="hpParity" class="form-select"><option value="0" selected>0 (odd)</option><option value="1">1 (even)</option></select></div>
+      </div>
+      <div class="row g-2 align-items-end mt-1">
+        <div class="col-md-9">
+          <details class="hp-advanced">
+            <summary class="hp-advanced-toggle">
+              <span class="hp-adv-arrow">▶</span> Advanced settings
+              <span class="hp-adv-defaults-badge">Using defaults</span>
+            </summary>
+            <div class="row g-2 align-items-end mt-2">
+              <div class="col-md-3"><label class="form-label">Discount</label><select id="hpDiscount" class="form-select"><option value="1_over_d" selected>1_over_d</option><option value="half_power_d">half_power_d</option><option value="none">none</option></select></div>
+              <div class="col-md-3"><label class="form-label">Min score</label><input id="hpMinScore" class="form-control" type="number" step="0.1" value="2.0"></div>
+              <div class="col-md-3"><label class="form-label">Top K</label><input id="hpTopK" class="form-control" type="number" value="10"></div>
+              <div class="col-md-3"><label class="form-label">Studying counts as passed</label><select id="hpStudying" class="form-select"><option value="false" selected>No (exact default)</option><option value="true">Yes</option></select></div>
+            </div>
+          </details>
+        </div>
+        <div class="col-md-3">
+          <div class="actions-row">
+            <button id="hpRun" class="btn btn-primary">Run report</button>
+            <a id="hpXlsx" class="btn btn-outline-success" href="#">Export XLSX</a>
+          </div>
+        </div>
+      </div>
+      <div class="preset-row">
+        <button id="hpSavePreset" type="button" class="btn btn-outline-secondary btn-sm">Save preset</button>
+        <button id="hpLoadPreset" type="button" class="btn btn-outline-secondary btn-sm">Load preset</button>
+      </div>
+      <div id="hpMeta" class="small text-secondary mt-2">No report loaded.</div>
+      <div id="hpUpdated" class="small text-secondary">Last update: -</div>
+      <div class="table-wrap mt-2">
+        <table class="table table-sm mb-0" id="hpTable">
+          <thead><tr><th>Student</th><th>Program</th><th>Missing this parity</th><th>Missing other</th><th>Total</th></tr></thead>
+          <tbody><tr><td colspan="5"><div class="empty-state"><span class="empty-icon">⚠️</span><div class="empty-title">No report loaded</div><div class="empty-hint">Set filters above, then click <strong>Run report</strong></div></div></td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- User Management → moved to standalone page at /user-management/ -->
+
+    <!-- DB Admin → moved to standalone page at /db-admin/ -->
+
+    <datalist id="programs">
+      {% for p in programs %}<option value="{{ p }}"></option>{% endfor %}
+    </datalist>
+  </main>
+</div>
+
+<!-- toast-container injected by JS -->
+
+<div class="modal fade" id="eligibilityDetailsModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Eligibility Details</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="eligibilityDetailsBody"></div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="debugTraceModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Recommendation Trace</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body" id="debugTraceBody"></div>
+    </div>
+  </div>
+</div>
+
+
+
+
+<!-- ⌘K Command Palette -->
+<div id="cmdPalette" class="cmd-backdrop" style="display:none;" role="dialog" aria-modal="true" aria-label="Quick search">
+  <div class="cmd-modal">
+    <div class="cmd-search-row">
+      <span class="cmd-search-icon">⌕</span>
+      <input id="cmdInput" class="cmd-input" type="text" placeholder="Student ID, course code, or advisor ID…" autocomplete="off">
+      <kbd class="cmd-esc">ESC</kbd>
+    </div>
+    <div id="cmdResults" class="cmd-results">
+      <div class="cmd-hint">Type a student ID to jump directly to their plan</div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+  const IS_AR = document.documentElement.lang === 'ar';
+  const links = document.querySelectorAll('.nav-link[data-target]');
+  const panels = document.querySelectorAll('.panel');
+  function activatePanel(target) {
+    links.forEach(l => l.classList.remove('active'));
+    panels.forEach(p => p.classList.remove('active'));
+    const link = Array.from(links).find((l) => l.dataset.target === target);
+    if (link) {
+      link.classList.add('active');
+      const current = q('currentModule');
+      if (current) current.textContent = link.textContent?.trim() || target;
+    }
+    const panel = document.getElementById(target);
+    if (panel) panel.classList.add('active');
+  }
+
+  links.forEach(link => link.addEventListener('click', async (e) => {
+    e.preventDefault();
+    const target = link.dataset.target;
+    if (!target) return;
+    activatePanel(target);
+    // pushState updates the URL without triggering the browser's
+    // native scroll-to-anchor behaviour that location.hash causes.
+    history.pushState(null, '', '#' + target);
+
+    if (target === 'scrape') {
+      await refreshScrapeStatus();
+    }
+  }));
+
+  const q = (id) => document.getElementById(id);
+
+  q('resetBatch').onclick = () => {
+    q('batchProgram').value = '';
+    q('batchSection').value = '';
+    const tbody = document.querySelector('#batchTable tbody');
+    if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="empty-note">No data yet. Next step: set filters and click Run Preview.</td></tr>';
+    q('batchMetrics').style.display = 'none';
+    q('batchCsv').href = '#';
+    q('batchSummary').href = '#';
+    q('batchTopChips').innerHTML = '';
+    setUpdated('batchUpdated');
+  };
+
+  q('runBatch').onclick = async () => {
+    if (!requireFields(['batchYear','batchSemester'], 'batchUpdated', 'Batch preview')) return;
+    const runBtn = q('runBatch');
+      showSkeleton('batchTable', 4);
+    runBtn.disabled = true;
+    runBtn.textContent = 'Running...';
+
+    const year = q('batchYear').value, semester = q('batchSemester').value;
+    const program = q('batchProgram').value, section = q('batchSection').value;
+    const url = `/report/summary/?year=${year}&semester=${semester}&program=${encodeURIComponent(program)}&section=${encodeURIComponent(section)}`;
+
+    const tbody = document.querySelector('#batchTable tbody');
+    if (tbody) {
+      tbody.innerHTML = '<tr><td colspan="4" class="empty-note">Running...</td></tr>';
+    }
+
+    const res = await fetch(url);
+    const data = await res.json();
+
+    q('batchCsv').href = `/export/aggregate.csv?year=${year}&semester=${semester}&program=${encodeURIComponent(program)}&section=${encodeURIComponent(section)}`;
+    q('batchSummary').href = url;
+
+    if (!res.ok || !Array.isArray(data.top_recommended_courses)) {
+      if (tbody) {
+        tbody.innerHTML = `<tr><td colspan="4" class="text-danger">${preciseError(res, data, 'Failed to load batch summary.')}</td></tr>`;
+      }
+      q('batchTopChips').innerHTML = '';
+      q('batchMetrics').style.display = 'none';
+      setUpdated('batchUpdated', true);
+      runBtn.disabled = false;
+      runBtn.textContent = 'Run Preview';
+      return;
+    }
+
+    q('batchMetricTerm').textContent = `${data.year}/${data.semester}`;
+    q('batchMetricStudents').textContent = String(data.student_count ?? 0);
+    q('batchMetricTopCount').textContent = String(data.top_recommended_courses.length);
+    q('batchMetrics').style.display = 'flex';
+
+    if (tbody) {
+      if (data.top_recommended_courses.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="empty-note">No recommendations found.</td></tr>';
+        q('batchTopChips').innerHTML = '';
+      } else {
+        const maxCount = Math.max(...data.top_recommended_courses.map((x) => Number(x.count) || 0), 1);
+        tbody.innerHTML = data.top_recommended_courses
+          .map((row, idx) => {
+            const cls = idx < 3 ? 'row-highlight' : '';
+            const count = Number(row.count) || 0;
+            const pct = Math.max(3, Math.round((count / maxCount) * 100));
+            return `<tr class="${cls}"><td>${idx + 1}</td><td>${row.course_code}</td><td>${count}</td><td><div class="mini-bar-wrap"><div class="mini-bar" style="width:${pct}%"></div></div></td></tr>`;
+          })
+          .join('');
+
+        const top3 = data.top_recommended_courses.slice(0, 3);
+        q('batchTopChips').innerHTML = top3
+          .map((x, i) => `<span class="top-chip">#${i + 1} ${x.course_code} (${x.count})</span>`)
+          .join('');
+      }
+    }
+
+    setUpdated('batchUpdated');
+    toast('Batch summary loaded', true);
+    runBtn.disabled = false;
+    runBtn.textContent = 'Run Preview';
+  };
+
+  q('loadPre').onclick = async () => {
+    const btn = q('loadPre');
+    showSkeleton('preTable', 2);
+    btn.disabled = true;
+    btn.textContent = 'Loading...';
+
+    const program = q('preProgram').value, code = q('preCourse').value;
+    const res = await fetch(`/report/prerequisites/?program=${encodeURIComponent(program)}&course_code=${encodeURIComponent(code)}`);
+    const data = await res.json();
+
+    const tbody = document.querySelector('#preTable tbody');
+    const preGraph = q('preGraph');
+    if (!tbody || !preGraph) {
+      btn.disabled = false;
+      btn.textContent = 'Load';
+      return;
+    }
+
+    if (!res.ok || !Array.isArray(data.items) || data.items.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="2" class="empty-note">No prerequisite rows found.</td></tr>';
+      q('preMetrics').style.display = 'none';
+      preGraph.innerHTML = '<span class="empty-note">No prerequisite map available.</span>';
+      setUpdated('preUpdated', true);
+      btn.disabled = false;
+      btn.textContent = 'Load';
+      return;
+    }
+
+    const courseSet = new Set(data.items.map((x) => x.course_code));
+    q('preMetricProgram').textContent = data.program || '-';
+    q('preMetricCourses').textContent = String(courseSet.size);
+    q('preMetricLinks').textContent = String(data.count ?? data.items.length);
+    q('preMetrics').style.display = 'flex';
+
+    tbody.innerHTML = data.items
+      .map((row) => `<tr><td>${row.course_code}</td><td>${row.prerequisite_course_code}</td></tr>`)
+      .join('');
+
+    const grouped = {};
+    data.items.forEach((row) => {
+      const c = String(row.course_code);
+      if (!grouped[c]) grouped[c] = [];
+      grouped[c].push(String(row.prerequisite_course_code));
+    });
+    preGraph.innerHTML = Object.entries(grouped)
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .slice(0, 20)
+      .map(([course, pres]) => `<div class="mb-1"><span class="pill">${course}</span> ← ${pres.map((p) => `<span class="pill">${p}</span>`).join(' ')}</div>`)
+      .join('');
+
+    setUpdated('preUpdated');
+    toast('Prerequisites loaded', true);
+    btn.disabled = false;
+    btn.textContent = 'Load';
+  };
+
+  async function loadPrereqsForPlanCourse(program, courseCode) {
+    const meta = q('planPrereqMeta');
+    const tbody = document.querySelector('#planPrereqTable tbody');
+    if (!meta || !tbody) return;
+
+    meta.textContent = `Loading prerequisites for ${courseCode}...`;
+    const res = await fetch(`/report/prerequisites/?program=${encodeURIComponent(program)}&course_code=${encodeURIComponent(courseCode)}`);
+    const data = await res.json();
+
+    if (!res.ok || !Array.isArray(data.items) || data.items.length === 0) {
+      meta.textContent = `No prerequisites found for ${courseCode} in program ${program}.`;
+      tbody.innerHTML = '<tr><td colspan="2" class="empty-note">No prerequisite links found.</td></tr>';
+      return;
+    }
+
+    meta.textContent = `Prerequisites for ${courseCode} (${data.items.length} link(s))`;
+    tbody.innerHTML = data.items
+      .map((row) => `<tr><td>${row.course_code}</td><td>${row.prerequisite_course_code}</td></tr>`)
+      .join('');
+  }
+
+  q('loadPlan').onclick = async () => {
+    const btn = q('loadPlan');
+    showSkeleton('planTable', 3);
+    btn.disabled = true;
+    btn.textContent = 'Loading...';
+
+    const program = q('planProgram').value;
+    const res = await fetch(`/report/program-plan/?program=${encodeURIComponent(program)}`);
+    const data = await res.json();
+
+    const tbody = document.querySelector('#planTable tbody');
+    const termBars = q('termBars');
+    const termCards = q('termCards');
+    const prereqMeta = q('planPrereqMeta');
+    const prereqTbody = document.querySelector('#planPrereqTable tbody');
+    if (!tbody || !termBars || !termCards || !prereqMeta || !prereqTbody) {
+      btn.disabled = false;
+      btn.textContent = 'Load Plan';
+      return;
+    }
+
+    prereqMeta.textContent = 'No course selected.';
+    prereqTbody.innerHTML = '<tr><td colspan="2" class="empty-note">No prerequisite data loaded.</td></tr>';
+
+    if (!res.ok || !Array.isArray(data.items) || data.items.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3" class="empty-note">No plan rows found.</td></tr>';
+      termBars.innerHTML = '<div class="empty-note">No term distribution available.</div>';
+      termCards.innerHTML = '<div class="empty-note">No term cards available.</div>';
+      q('planMetrics').style.display = 'none';
+      setUpdated('planUpdated', true);
+      btn.disabled = false;
+      btn.textContent = 'Load Plan';
+      return;
+    }
+
+    const totalCredits = data.items.reduce((acc, row) => acc + (row.credit_hours || 0), 0);
+    q('planMetricProgram').textContent = data.program || '-';
+    q('planMetricCount').textContent = String(data.count ?? data.items.length);
+    q('planMetricCredits').textContent = String(totalCredits);
+    q('planMetrics').style.display = 'flex';
+
+    tbody.innerHTML = data.items
+      .map((row) => `<tr><td>${row.programme_term ?? '-'}</td><td><button type="button" class="btn btn-link p-0 plan-course-link" data-program="${data.program || ''}" data-course="${row.course_code}">${row.course_code}</button></td><td>${row.credit_hours ?? '-'}</td></tr>`)
+      .join('');
+
+    const termMap = {};
+    const termCredits = {};
+    const termCourses = {};
+    data.items.forEach((row) => {
+      const term = String(row.programme_term ?? 'Unknown');
+      termMap[term] = (termMap[term] || 0) + 1;
+      termCredits[term] = (termCredits[term] || 0) + (Number(row.credit_hours) || 0);
+      if (!termCourses[term]) termCourses[term] = [];
+      termCourses[term].push(String(row.course_code));
+    });
+
+    const max = Math.max(...Object.values(termMap));
+    termBars.innerHTML = Object.entries(termMap)
+      .sort((a, b) => Number(a[0]) - Number(b[0]))
+      .map(([term, count]) => {
+        const pct = Math.round((Number(count) / max) * 100);
+        const credits = termCredits[term] || 0;
+        return `<div class="mb-2"><div class="small mb-1">Term ${term} (${count} courses, ${credits} credits)</div><div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="${max}" aria-valuenow="${count}"><div class="progress-bar" style="width:${pct}%">${count}</div></div></div>`;
+      })
+      .join('');
+
+    termCards.innerHTML = Object.keys(termCourses)
+      .sort((a, b) => Number(a) - Number(b))
+      .map((term) => {
+        const chips = termCourses[term]
+          .map((c) => `<button type="button" class="pill plan-course-link" data-program="${data.program || ''}" data-course="${c}" title="Show prerequisites for ${c}">${c}</button>`)
+          .join('');
+        return `<div class="col-md-4"><div class="term-card"><h6>Term ${term}</h6><div class="small text-secondary mb-2">Courses: ${termMap[term]} | Credits: ${termCredits[term]}</div><div>${chips}</div></div></div>`;
+      })
+      .join('');
+
+    document.querySelectorAll('.plan-course-link').forEach((el) => {
+      el.addEventListener('click', async () => {
+        const course = el.getAttribute('data-course') || '';
+        const prog = el.getAttribute('data-program') || program;
+        if (!course || !prog) return;
+        await loadPrereqsForPlanCourse(prog, course);
+      });
+    });
+
+    setUpdated('planUpdated');
+    toast('Program plan loaded', true);
+    btn.disabled = false;
+    btn.textContent = 'Load Plan';
+  };
+
+  let studentPlanData = null;
+  let studentPlanFilterMode = 'all';
+  let studentPlanFocusedTerm = null;
+  let studentPlanSortMode = 'term';
+  let studentPlanCompact = false;
+  let studentPlanBlockedBy = null;
+  let studentPlanExpandAll = false;
+  let studentPlanSelectedCourse = null;
+
+  function detectNextSuggestedTerm(terms) {
+    for (const t of terms) {
+      const hasCanRegister = (t.courses || []).some((c) => c.status === 'not_taken' && c.can_register);
+      if (hasCanRegister) return t.term;
+    }
+    return null;
+  }
+
+  function selectTargetPlanCourses(pool, targetCredits, strategy) {
+    const candidates = pool
+      .filter((c) => Number(c.credit_hours || 0) > 0)
+      .slice(0, 18);
+
+    let best = { usedCredits: 0, score: -1e9, picks: [] };
+
+    function evalPicks(picks, usedCredits) {
+      const totalImportance = picks.reduce((s, c) => s + Number(c.importance_score || 0), 0);
+      const termCounts = {};
+      picks.forEach((c) => {
+        const t = String(c.programme_term ?? '0');
+        termCounts[t] = (termCounts[t] || 0) + 1;
+      });
+      const concentrationPenalty = Object.values(termCounts).reduce((s, n) => s + Number(n) * Number(n), 0);
+      const fitBonus = usedCredits / Math.max(targetCredits, 1);
+      let score = totalImportance * 10 + fitBonus;
+      if (strategy === 'balanced') score -= concentrationPenalty * 0.9;
+      return score;
+    }
+
+    function dfs(i, picks, usedCredits) {
+      const currentScore = evalPicks(picks, usedCredits);
+      if (
+        usedCredits > best.usedCredits ||
+        (usedCredits === best.usedCredits && currentScore > best.score)
+      ) {
+        best = { usedCredits, score: currentScore, picks: picks.slice() };
+      }
+      if (i >= candidates.length) return;
+
+      for (let j = i; j < candidates.length; j++) {
+        const c = candidates[j];
+        const ch = Number(c.credit_hours || 0);
+        if (usedCredits + ch > targetCredits) continue;
+        picks.push(c);
+        dfs(j + 1, picks, usedCredits + ch);
+        picks.pop();
+      }
+    }
+
+    dfs(0, [], 0);
+    return best;
+  }
+
+  function renderCourseDrawer() {
+    const drawer = q('studentCourseDrawer');
+    if (!drawer) return;
+    if (!studentPlanSelectedCourse) {
+      drawer.innerHTML = '<h6>Course Explain Drawer</h6><div class="empty-note">Click any course row to inspect lock reason, missing prereqs, and unlock impact.</div>';
+      return;
+    }
+
+    const c = studentPlanSelectedCourse;
+    const statusText = c.status === 'passed'
+      ? 'Passed already'
+      : c.status === 'studying'
+      ? 'Currently studying'
+      : c.can_register
+      ? 'Eligible to register now'
+      : 'Locked (prerequisites not satisfied)';
+    const missing = (c.missing_prereqs || []).length ? (c.missing_prereqs || []).join(', ') : 'None';
+    const prereqs = (c.prerequisites || []).length ? (c.prerequisites || []).join(', ') : 'None';
+
+    const downstream = [];
+    const allTerms = studentPlanData?.terms || [];
+    allTerms.forEach((t) => {
+      (t.courses || []).forEach((x) => {
+        if (Array.isArray(x.prerequisites) && x.prerequisites.includes(c.course_code)) downstream.push(String(x.course_code));
+      });
+    });
+
+    drawer.innerHTML = `
+      <h6>${c.course_code}</h6>
+      <div class="kv"><strong>Status:</strong> ${statusText}</div>
+      <div class="kv"><strong>Credits:</strong> ${c.credit_hours ?? '-'}</div>
+      <div class="kv"><strong>Program term:</strong> ${c.programme_term ?? '-'}</div>
+      <div class="kv"><strong>Importance:</strong> ${Number(c.importance_score || 0).toFixed(2)}</div>
+      <hr class="my-2">
+      <div class="kv"><strong>Prerequisites:</strong> ${prereqs}</div>
+      <div class="kv"><strong>Missing now:</strong> ${missing}</div>
+      <hr class="my-2">
+      <div class="kv"><strong>Potential unlocks:</strong> ${downstream.length ? downstream.join(', ') : 'No direct downstream courses found in current plan.'}</div>
+    `;
+  }
+
+  function bindCourseRowClicks() {
+    document.querySelectorAll('.course-row').forEach((row) => {
+      row.addEventListener('click', () => {
+        const payload = row.getAttribute('data-course-json');
+        if (!payload) return;
+        try {
+          studentPlanSelectedCourse = JSON.parse(decodeURIComponent(payload));
+        } catch {
+          return;
+        }
+        document.querySelectorAll('.course-row').forEach((r) => r.classList.remove('active'));
+        row.classList.add('active');
+        renderCourseDrawer();
+      });
+    });
+  }
+
+  function renderStudentPlanTerms() {
+    const container = q('studentPlanTerms');
+    const topImportant = q('studentPlanTopImportant');
+    const actionPlan = q('studentPlanActionPlan');
+    if (!container || !topImportant || !actionPlan || !studentPlanData) return;
+
+    let terms = studentPlanData.terms || [];
+    if (studentPlanFocusedTerm !== null) {
+      terms = terms.filter((t) => t.term === studentPlanFocusedTerm);
+    }
+
+    const meta = q('studentPlanMeta');
+    if (meta && studentPlanData) {
+      const blockerNote = studentPlanBlockedBy ? ` • blocker filter: ${studentPlanBlockedBy}` : '';
+      meta.textContent = `Student ${studentPlanData.student_id} • Program ${studentPlanData.program}${blockerNote}`;
+    }
+
+    const allCourses = terms.flatMap((t) => Array.isArray(t.courses) ? t.courses : []);
+    const topImportantCourses = allCourses
+      .slice()
+      .sort((a, b) => Number(b.importance_score || 0) - Number(a.importance_score || 0))
+      .slice(0, 5);
+    topImportant.innerHTML = topImportantCourses.length
+      ? `<div class="small text-secondary mb-1">Top importance courses:</div>${topImportantCourses.map((c) => `<span class="pill">${c.course_code} (${Number(c.importance_score || 0).toFixed(2)})</span>`).join('')}`
+      : '<div class="empty-note">No courses available for current filter.</div>';
+
+    const targetCredits = Number(q('spTargetCredits')?.value || 18);
+    const strategy = String(q('spTargetStrategy')?.value || 'max');
+    const canRegisterPool = allCourses
+      .filter((c) => c.status === 'not_taken' && c.can_register)
+      .sort((a, b) => Number(b.importance_score || 0) - Number(a.importance_score || 0));
+
+    const planResult = selectTargetPlanCourses(canRegisterPool, targetCredits, strategy);
+    const selected = planResult.picks || [];
+    const usedCredits = planResult.usedCredits || 0;
+
+    actionPlan.innerHTML = selected.length
+      ? `<div class="small text-secondary mb-2">Suggested action plan (${strategy === 'balanced' ? 'balanced' : 'max importance'} • target ${targetCredits} CH, selected ${usedCredits} CH):</div>${selected.map((c, i) => `<div class="plan-item"><div class="title">${i + 1}. ${c.course_code}</div><div class="sub">Importance ${Number(c.importance_score || 0).toFixed(2)} • Term ${c.programme_term ?? '-'} • Credits ${c.credit_hours ?? '-'}</div></div>`).join('')}`
+      : '<div class="empty-note">No immediate can-register action plan for current filter/target credits.</div>';
+
+    container.innerHTML = terms.map((termObj) => {
+      let rows = Array.isArray(termObj.courses) ? termObj.courses : [];
+      if (studentPlanFilterMode === 'can-only') {
+        rows = rows.filter((c) => c.status === 'not_taken' && c.can_register);
+      } else if (studentPlanFilterMode === 'locked-only') {
+        rows = rows.filter((c) => c.status === 'not_taken' && !c.can_register);
+      }
+      if (studentPlanBlockedBy) {
+        rows = rows.filter((c) => Array.isArray(c.missing_prereqs) && c.missing_prereqs.includes(studentPlanBlockedBy));
+      }
+      if (studentPlanSortMode === 'importance') {
+        rows = rows.slice().sort((a, b) => Number(b.importance_score || 0) - Number(a.importance_score || 0));
+      } else if (studentPlanSortMode === 'status') {
+        const rank = { passed: 0, studying: 1, not_taken: 2 };
+        rows = rows.slice().sort((a, b) => (rank[a.status] ?? 9) - (rank[b.status] ?? 9));
+      } else if (studentPlanSortMode === 'code') {
+        rows = rows.slice().sort((a, b) => String(a.course_code).localeCompare(String(b.course_code)));
+      }
+
+      const total = rows.length;
+      const passedN = rows.filter((c) => c.status === 'passed').length;
+      const studyingN = rows.filter((c) => c.status === 'studying').length;
+      const canN = rows.filter((c) => c.status === 'not_taken' && c.can_register).length;
+      const lockedN = rows.filter((c) => c.status === 'not_taken' && !c.can_register).length;
+
+      const tbody = rows.length
+        ? rows.map((c) => {
+            let cls = '';
+            if (c.status === 'passed') cls = 'status-passed';
+            else if (c.status === 'studying') cls = 'status-studying';
+            else if (c.status === 'not_taken' && c.can_register) cls = 'status-can-register';
+            const prereqText = (c.prerequisites || []).join(', ') || '-';
+            const missingText = (c.missing_prereqs || []).join(', ');
+            const statusBadge = c.status === 'passed'
+              ? '<span class="badge text-bg-success">Passed</span>'
+              : c.status === 'studying'
+              ? '<span class="badge text-bg-primary">Studying</span>'
+              : c.can_register
+              ? '<span class="badge" style="background:#22c55e;color:#052e16;">Can register</span>'
+              : '<span class="badge text-bg-light">Locked</span>';
+            const importanceNum = Number(c.importance_score || 0);
+            const importance = importanceNum.toFixed(2);
+            const impClass = importanceNum >= 2 ? 'importance-high' : importanceNum >= 1 ? 'importance-mid' : 'importance-low';
+            const prereqCell = missingText ? `${prereqText}<div class="missing-prereq mt-1">Missing: ${missingText}</div>` : prereqText;
+            const rowPayload = encodeURIComponent(JSON.stringify({
+              course_code: c.course_code,
+              credit_hours: c.credit_hours,
+              programme_term: c.programme_term,
+              status: c.status,
+              can_register: c.can_register,
+              prerequisites: c.prerequisites || [],
+              missing_prereqs: c.missing_prereqs || [],
+              importance_score: c.importance_score || 0,
+            }));
+            return `<tr class="${cls} course-row" data-course-json="${rowPayload}"><td><span class="fw-semibold">${c.course_code}</span></td><td>${c.credit_hours ?? '-'}</td><td>${statusBadge}</td><td>${prereqCell}</td><td class="${impClass}">${importance}</td></tr>`;
+          }).join('')
+        : '<tr><td colspan="5" class="empty-note">No courses in this term for current filter.</td></tr>';
+
+      const compactClass = studentPlanCompact ? 'table-compact' : '';
+      return `<details class="term-details" ${studentPlanExpandAll ? 'open' : ''}><summary class="term-summary"><div class="term-header-sticky"><h6 class="mb-1">Term ${termObj.term}</h6><div class="small text-secondary">Total ${total} • Passed ${passedN} • Studying ${studyingN} • Can ${canN} • Locked ${lockedN}</div></div></summary><div class="table-wrap mt-2"><table class="table table-sm table-hover mb-0 ${compactClass}"><thead><tr><th>Course</th><th>CH</th><th>Status</th><th>Prerequisites</th><th>Importance</th></tr></thead><tbody>${tbody}</tbody></table></div></details>`;
+    }).join('');
+
+    bindCourseRowClicks();
+    renderCourseDrawer();
+  }
+
+  q('spShowAll').onclick = () => {
+    studentPlanFilterMode = 'all';
+    studentPlanFocusedTerm = null;
+    studentPlanBlockedBy = null;
+    renderStudentPlanTerms();
+  };
+  q('spShowCanOnly').onclick = () => {
+    studentPlanFilterMode = 'can-only';
+    studentPlanFocusedTerm = null;
+    studentPlanBlockedBy = null;
+    renderStudentPlanTerms();
+  };
+  q('spShowLockedOnly').onclick = () => {
+    studentPlanFilterMode = 'locked-only';
+    studentPlanFocusedTerm = null;
+    studentPlanBlockedBy = null;
+    renderStudentPlanTerms();
+  };
+  q('spFocusNext').onclick = () => {
+    if (!studentPlanData) return;
+    studentPlanFilterMode = 'all';
+    studentPlanBlockedBy = null;
+    studentPlanFocusedTerm = detectNextSuggestedTerm(studentPlanData.terms || []);
+    renderStudentPlanTerms();
+  };
+  q('spSortImportance').onclick = () => {
+    studentPlanSortMode = studentPlanSortMode === 'importance' ? 'term' : 'importance';
+    q('spSortImportance').textContent = studentPlanSortMode === 'importance' ? 'Sort: importance ✓' : 'Sort by importance';
+    renderStudentPlanTerms();
+  };
+  q('spSortStatus').onclick = () => {
+    studentPlanSortMode = studentPlanSortMode === 'status' ? 'term' : 'status';
+    q('spSortStatus').textContent = studentPlanSortMode === 'status' ? 'Sort: status ✓' : 'Sort by status';
+    renderStudentPlanTerms();
+  };
+  q('spSortCode').onclick = () => {
+    studentPlanSortMode = studentPlanSortMode === 'code' ? 'term' : 'code';
+    q('spSortCode').textContent = studentPlanSortMode === 'code' ? 'Sort: code ✓' : 'Sort by code';
+    renderStudentPlanTerms();
+  };
+  q('spCompact').onclick = () => {
+    studentPlanCompact = !studentPlanCompact;
+    q('spCompact').textContent = studentPlanCompact ? 'Compact ✓' : 'Compact rows';
+    renderStudentPlanTerms();
+  };
+  q('spBuildTargetPlan').onclick = () => {
+    if (!studentPlanData) return;
+    renderStudentPlanTerms();
+  };
+  q('spTargetCredits').onchange = () => {
+    if (!studentPlanData) return;
+    renderStudentPlanTerms();
+  };
+  q('spTargetStrategy').onchange = () => {
+    if (!studentPlanData) return;
+    renderStudentPlanTerms();
+  };
+  q('spExpandAll').onclick = () => {
+    studentPlanExpandAll = true;
+    renderStudentPlanTerms();
+  };
+  q('spCollapseAll').onclick = () => {
+    studentPlanExpandAll = false;
+    renderStudentPlanTerms();
+  };
+  q('spPrintPdf').onclick = () => window.print();
+
+  q('loadStudentPlan').onclick = async () => {
+    const studentId = q('studentIdInput').value;
+    const container = q('studentPlanTerms');
+    const meta = q('studentPlanMeta');
+    if (!container || !meta) return;
+    if (!studentId) {
+      meta.textContent = 'Please enter student ID first.';
+      return;
+    }
+
+      showSkeleton('planTable', 3);
+    q('loadStudentPlan').disabled = true;
+    q('loadStudentPlan').textContent = 'Loading...';
+    container.innerHTML = '<div class="empty-note">Loading plan matrix...</div>';
+
+    const res = await fetch(`/report/student-plan/?student_id=${encodeURIComponent(studentId)}`);
+    const data = await res.json();
+
+    if (!res.ok || !Array.isArray(data.terms)) {
+      meta.textContent = preciseError(res, data, 'Failed to load student plan.');
+      container.innerHTML = `<div class="empty-note">${preciseError(res, data, 'Unable to render student plan matrix.')}</div>`;
+      q('studentPlanRiskAlerts').innerHTML = '';
+      q('studentPlanTopImportant').innerHTML = '';
+      q('studentPlanHints').innerHTML = '';
+      q('studentPlanActionPlan').innerHTML = '';
+      studentPlanSelectedCourse = null;
+      renderCourseDrawer();
+      q('studentPlanMetrics').style.display = 'none';
+      q('studentPlanActions').style.display = 'none';
+      q('studentPlanLegend').style.display = 'none';
+      q('loadStudentPlan').disabled = false;
+      q('loadStudentPlan').textContent = 'Load Student Plan Matrix';
+      return;
+    }
+
+    studentPlanData = data;
+    studentPlanFilterMode = 'all';
+    studentPlanFocusedTerm = null;
+    studentPlanSortMode = 'term';
+    studentPlanCompact = false;
+    studentPlanExpandAll = false;
+    studentPlanSelectedCourse = null;
+    q('spSortImportance').textContent = 'Sort by importance';
+    q('spSortStatus').textContent = 'Sort by status';
+    q('spSortCode').textContent = 'Sort by code';
+    q('spCompact').textContent = 'Compact rows';
+    q('spTargetCredits').value = '18';
+    q('spTargetStrategy').value = 'max';
+
+    meta.textContent = `Student ${data.student_id} • Program ${data.program}`;
+    q('spPassed').textContent = String(data.summary?.passed ?? 0);
+    q('spStudying').textContent = String(data.summary?.studying ?? 0);
+    q('spCan').textContent = String(data.summary?.not_taken_can_register ?? 0);
+    q('spLocked').textContent = String(data.summary?.not_taken_locked ?? 0);
+    q('studentPlanMetrics').style.display = 'flex';
+    q('studentPlanActions').style.display = 'flex';
+    q('studentPlanLegend').style.display = 'block';
+    q('spCsvExport').href = `/export/student-plan.csv?student_id=${encodeURIComponent(studentId)}`;
+
+    const canCount = Number(data.summary?.not_taken_can_register ?? 0);
+    const lockedCount = Number(data.summary?.not_taken_locked ?? 0);
+    const hints = Array.isArray(data.blocker_hints) ? data.blocker_hints : [];
+    const riskChips = [];
+    if (canCount <= 2) {
+      riskChips.push(`<span class="alert-chip danger">High risk: only ${canCount} can-register courses available</span>`);
+    } else if (canCount <= 4) {
+      riskChips.push(`<span class="alert-chip warn">Warning: low flexibility (${canCount} can-register courses)</span>`);
+    }
+    if (lockedCount >= 10) {
+      riskChips.push(`<span class="alert-chip warn">Heavy lock load: ${lockedCount} locked courses</span>`);
+    }
+    const critical = hints.filter((h) => Number(h.blocks || 0) >= 3).slice(0, 3);
+    critical.forEach((h) => {
+      riskChips.push(`<span class="alert-chip danger">Critical blocker: ${h.course_code} blocks ${h.blocks} courses</span>`);
+    });
+    q('studentPlanRiskAlerts').innerHTML = riskChips.length
+      ? `<div class="small text-secondary mb-1">Risk alerts</div>${riskChips.join('')}`
+      : '<div class="small text-success">No major advising risk flags detected.</div>';
+
+    
+    q('studentPlanHints').innerHTML = hints.length
+      ? `<div class="small text-secondary mb-1">What to pass first (click a hint to filter blocked courses):</div>${hints.map((h) => `<button type="button" class="hint-chip border-0 hint-filter" data-blocker="${h.course_code}">${h.course_code} • blocks ${h.blocks} • unlock ${Number(h.unlock_score || 0).toFixed(2)}</button>`).join('')}<button type="button" id="clearBlockerFilter" class="btn btn-sm btn-outline-secondary ms-2">Clear blocker filter</button>`
+      : '<div class="empty-note">No blocking prerequisite hints right now.</div>';
+
+    document.querySelectorAll('.hint-filter').forEach((el) => {
+      el.addEventListener('click', () => {
+        const blocker = el.getAttribute('data-blocker');
+        studentPlanBlockedBy = blocker || null;
+        studentPlanFilterMode = 'locked-only';
+        studentPlanFocusedTerm = null;
+        renderStudentPlanTerms();
+      });
+    });
+    const clearBtn = document.getElementById('clearBlockerFilter');
+    if (clearBtn) {
+      clearBtn.addEventListener('click', () => {
+        studentPlanBlockedBy = null;
+        renderStudentPlanTerms();
+      });
+    }
+
+    renderStudentPlanTerms();
+
+    q('loadStudentPlan').disabled = false;
+    q('loadStudentPlan').textContent = 'Load Student Plan Matrix';
+  };
+
+  let scrapeAutoTimer = null;
+
+  function stopScrapeAutoRefresh() {
+    if (scrapeAutoTimer !== null) {
+      clearInterval(scrapeAutoTimer);
+      scrapeAutoTimer = null;
+    }
+  }
+
+  function startScrapeAutoRefresh() {
+    if (scrapeAutoTimer !== null) return;
+    scrapeAutoTimer = setInterval(async () => {
+      const scrapePanelVisible = q('scrape').classList.contains('active');
+      if (!scrapePanelVisible) return;
+      await refreshScrapeStatus();
+    }, 3000);
+  }
+
+  async function refreshScrapeStatus() {
+    const res = await fetch('/ops/scrape/status/');
+    const data = await res.json();
+
+    const hasFailureTrace = typeof data.log_tail === 'string' && data.log_tail.includes('Traceback');
+    let statusHtml = '<span class="status-dot status-stopped"></span>Idle';
+    if (data.running) {
+      statusHtml = '<span class="status-dot status-running"></span>Running';
+    } else if (data.last_action === 'failed' || hasFailureTrace) {
+      statusHtml = '<span class="status-dot status-failed"></span>Failed';
+    }
+
+    q('scrapeMetricStatus').innerHTML = statusHtml;
+    q('scrapeMetricPid').textContent = String(data.pid ?? '-');
+    q('scrapeMetricStarted').textContent = String(data.started_at ?? '-');
+    q('scrapeMetricStopped').textContent = String(data.stopped_at ?? '-');
+
+    q('scrapeMeta').textContent = `action=${data.last_action ?? '-'} log=${data.log_path}`;
+    q('scrapeUpdatedAt').textContent = `Last update: ${new Date().toLocaleTimeString()}`;
+    q('scrapeOut').textContent = data.log_tail || 'No logs yet.';
+    if (data.running) {
+      q('scrapeOut').scrollTop = q('scrapeOut').scrollHeight;
+    }
+
+    q('scrapeStart').disabled = Boolean(data.running);
+    q('scrapeStop').disabled = !Boolean(data.running);
+
+    const historyBody = document.querySelector('#scrapeHistoryTable tbody');
+    if (historyBody) {
+      const history = Array.isArray(data.history) ? data.history : [];
+      if (history.length === 0) {
+        historyBody.innerHTML = '<tr><td colspan="5" class="empty-note">No history yet.</td></tr>';
+      } else {
+        const rows = history
+          .slice()
+          .reverse()
+          .map((h) => `<tr><td>${h.at ?? '-'}</td><td>${h.event ?? '-'}</td><td>${h.pid ?? '-'}</td><td>${h.concurrency ?? '-'}</td><td>${h.students_csv ?? '-'}</td></tr>`)
+          .join('');
+        historyBody.innerHTML = rows;
+      }
+    }
+
+    if (data.running) {
+      startScrapeAutoRefresh();
+    } else {
+      stopScrapeAutoRefresh();
+    }
+  }
+
+  q('scrapeStart').onclick = async () => {
+    const concurrency = q('scrapeConcurrency').value || '2';
+    const studentsCsv = q('scrapeCsv').value || '';
+
+    const ok = await dlg.confirm({
+      title: 'Start batch scraping?',
+      body: `<p>This will run the scraper in the background.</p>
+             <p><strong>Concurrency:</strong> ${concurrency}<br>
+             <strong>CSV:</strong> ${studentsCsv || 'default import_old/data/students_list.csv'}</p>`,
+      confirmText: 'Start scraping',
+      cancelText: 'Cancel',
+      kind: 'info',
+    });
+    if (!ok) return;
+
+    const url = `/ops/scrape/start/?concurrency=${encodeURIComponent(concurrency)}&students_csv=${encodeURIComponent(studentsCsv)}`;
+    try {
+      const res = await fetch(url);
+      const data = await res.json();
+      q('scrapeMeta').textContent = JSON.stringify(data, null, 2);
+    } catch (err) {
+      q('scrapeMeta').textContent = `Failed to start scrape: ${err}`;
+    }
+    await refreshScrapeStatus();
+  };
+
+  q('scrapeStop').onclick = async () => {
+    const ok = await dlg.confirm({
+      title: 'Stop scraping process?',
+      body: '<p>This will send a stop signal. Any in-progress student may still complete.</p>',
+      confirmText: 'Stop scraping',
+      kind: 'warning',
+    });
+    if (!ok) return;
+
+    try {
+      const res = await fetch('/ops/scrape/stop/');
+      const data = await res.json();
+      q('scrapeMeta').textContent = JSON.stringify(data, null, 2);
+    } catch (err) {
+      q('scrapeMeta').textContent = `Failed to stop scrape: ${err}`;
+    }
+    await refreshScrapeStatus();
+  };
+
+  function toast(message, ok = true) {
+    /* Proxy to new notify engine */
+    if (ok) notify.success(message);
+    else    notify.error(message);
+  }
+
+  function getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(';').shift();
+    return '';
+  }
+
+  const csrfToken = getCookie('csrftoken');
+
+  function csrfHeaders(extra = {}) {
+    return { 'X-CSRFToken': csrfToken, ...extra };
+  }
+
+  function savePreset(key, fieldIds) {
+    const payload = {};
+    fieldIds.forEach((id) => { payload[id] = q(id)?.value ?? ''; });
+    localStorage.setItem(`preset.${key}`, JSON.stringify(payload));
+    toast(`Saved ${key} preset`, true);
+  }
+  function loadPreset(key, fieldIds) {
+    try {
+      const raw = localStorage.getItem(`preset.${key}`);
+      if (!raw) return toast(`No saved ${key} preset`, false);
+      const payload = JSON.parse(raw);
+      fieldIds.forEach((id) => { if (q(id) && payload[id] !== undefined) q(id).value = payload[id]; });
+      toast(`Loaded ${key} preset`, true);
+    } catch {
+      toast(`Invalid ${key} preset`, false);
+    }
+  }
+  function requireFields(fieldIds, metaId, label) {
+    const missing = fieldIds.filter((id) => !(String(q(id)?.value || '').trim()));
+    if (!missing.length) return true;
+    const msg = `${label}: missing required fields (${missing.join(', ')})`;
+    const meta = q(metaId);
+    if (meta) meta.textContent = msg;
+    toast(msg, false);
+    return false;
+  }
+
+  const devSwitchBtn = q('devSwitchRole');
+  if (devSwitchBtn) {
+    devSwitchBtn.onclick = async () => {
+      const role = (q('devRole')?.value || '').trim();
+      const advisor_id = (q('devAdvisorId')?.value || '').trim();
+      const departments = (q('devDepartments')?.value || '').trim();
+      const out = q('devRoleMsg');
+      try {
+        const body = new URLSearchParams({ role, advisor_id, departments }).toString();
+        const res = await fetch('/ops/dev/switch-role/', {
+          method: 'POST',
+          headers: csrfHeaders({ 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' }),
+          body,
+        });
+        const data = await res.json();
+        out.textContent = res.ok ? `✅ ${data.message}` : preciseError(res, data, 'Failed to switch role.');
+      } catch (err) {
+        out.textContent = preciseError(null, null, 'Failed to switch role.', err);
+      }
+    };
+  }
+
+  async function fetchJsonWithRetry(url, retries = 2, delayMs = 350) {
+    let lastNetworkErr = null;
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      let res;
+      try {
+        res = await fetch(url);           /* only throws on actual network failure */
+      } catch (networkErr) {
+        /* Real network failure (offline, DNS, CORS) — worth retrying */
+        lastNetworkErr = networkErr;
+        if (attempt < retries) await new Promise((r) => setTimeout(r, delayMs * (attempt + 1)));
+        continue;
+      }
+
+      /* We got an HTTP response — parse it regardless of status */
+      let data = null;
+      const ct = res.headers.get('content-type') || '';
+      if (ct.includes('application/json') || ct.includes('text/json')) {
+        try { data = await res.json(); } catch { /* JSON parse failed despite content-type */ }
+      } else {
+        /* Server sent non-JSON (HTML error page, plain text, etc.) */
+        let body = '';
+        try { body = await res.text(); } catch { /* ignore */ }
+        /* Synthesise a data object with enough info for preciseError to surface */
+        const snippet = body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 300);
+        data = {
+          error: `HTTP ${res.status} ${res.statusText}${snippet ? ': ' + snippet : ''}`,
+          _raw_status: res.status,
+          _raw_body: snippet,
+        };
+      }
+
+      return { res, data };    /* always return — never retry HTTP errors */
+    }
+
+    /* Only reach here on repeated genuine network failures */
+    throw lastNetworkErr || new Error('Network request failed after retries');
+  }
+
+  function setUpdated(elId, failed = false) {
+    const el = q(elId);
+    if (!el) return;
+    el.textContent = `Last update: ${new Date().toLocaleTimeString()}${failed ? ' (failed)' : ''}`;
+  }
+
+  function preciseError(res, data, fallback, err) {
+    const status = Number(res?.status || 0);
+    const apiMsg = (data && (data.error || data.message || data.detail)) ? String(data.error || data.message || data.detail) : '';
+    const errMsg = err ? String(err) : '';
+    const reason = String(data?.reason_code || '');
+
+    let msg = apiMsg || errMsg || fallback;
+
+    if (status === 403 && msg.toLowerCase().includes('csrf')) {
+      msg = 'Request blocked by security token (CSRF). Refresh page and retry.';
+    } else if (status === 400 && !apiMsg) {
+      msg = `Invalid request parameters. ${fallback}`;
+    } else if (status === 404) {
+      msg = `Endpoint not found. ${fallback}`;
+    } else if (status >= 500 && !apiMsg) {
+      msg = `Server error (${status}). ${fallback}`;
+    }
+
+    const remediationByReason = {
+      PROGRAM_SCOPE_MISSING_PROGRAM: 'Pick a program from your allowed department list, then retry.',
+      PROGRAM_SCOPE_OUTSIDE_ALLOWED: 'Choose a program within your allowed departments.',
+      STUDENT_SCOPE_ADVISOR_MISMATCH: 'Use a student assigned to your advisor ID, or switch role for QA in DEBUG.',
+      STUDENT_SCOPE_DEPARTMENT_MISMATCH: 'Use a student from your department scope.',
+      STUDENT_SCOPE_NOT_FOUND: 'Check the student ID and confirm the student exists in students table.',
+    };
+    const allowed = Array.isArray(data?.allowed_programs) ? data.allowed_programs : [];
+    if (reason && remediationByReason[reason]) {
+      msg = `${msg} Remediation: ${remediationByReason[reason]}`;
+      if (allowed.length) msg += ` Allowed: ${allowed.join(', ')}`;
+    } else if (status === 403) {
+      msg = `${msg} Remediation: verify your role scope and choose in-scope data.`;
+    }
+
+    return status ? `${msg} [HTTP ${status}${reason ? ` | ${reason}` : ''}]` : msg;
+  }
+
+  /* ── DB Admin JS → moved to standalone page at /db-admin/ ── */
+
+
+  q('dbgRun').onclick = async () => {
+    if (!requireFields(['dbgYear','dbgSemester'], 'dbgMeta', 'Debug report')) return;
+    const btn = q('dbgRun');
+    btn.disabled = true;
+    btn.textContent = 'Running...';
+    const url = `/report/recommendation-debug/?year=${encodeURIComponent(q('dbgYear').value)}&semester=${encodeURIComponent(q('dbgSemester').value)}&section=${encodeURIComponent(q('dbgSection').value)}&program=${encodeURIComponent(q('dbgProgram').value)}&join_years=${encodeURIComponent(q('dbgJoin').value)}&limit=${encodeURIComponent(q('dbgLimit').value)}`;
+    q('dbgCsv').href = `/export/recommendation-debug.csv?year=${encodeURIComponent(q('dbgYear').value)}&semester=${encodeURIComponent(q('dbgSemester').value)}&section=${encodeURIComponent(q('dbgSection').value)}&program=${encodeURIComponent(q('dbgProgram').value)}&join_years=${encodeURIComponent(q('dbgJoin').value)}&limit=${encodeURIComponent(q('dbgLimit').value)}`;
+    const tbody = document.querySelector('#dbgTable tbody');
+    if (!tbody) return;
+
+    let res, data;
+    try {
+      ({ res, data } = await fetchJsonWithRetry(url));
+    } catch (err) {
+      tbody.innerHTML = '<tr><td colspan="7" class="text-danger">Network error while loading debug report.</td></tr>';
+      q('dbgMeta').textContent = preciseError(null, null, 'Unable to load debug report.', err);
+      q('dbgMeta').className = 'meta-banner meta-danger mt-2';
+      q('dbgSummary').style.display = 'none';
+      setUpdated('dbgUpdated', true);
+      toast('Debug report failed', false);
+      btn.disabled = false;
+      btn.textContent = 'Run';
+      return;
+    }
+
+    if (!res.ok || !Array.isArray(data.items)) {
+      tbody.innerHTML = '<tr><td colspan="7" class="text-danger">Failed to load debug report.</td></tr>';
+      q('dbgMeta').textContent = preciseError(res, data, 'Failed to load debug report.');
+      q('dbgMeta').className = 'meta-banner meta-warn mt-2';
+      q('dbgSummary').style.display = 'none';
+      setUpdated('dbgUpdated', true);
+      btn.disabled = false;
+      btn.textContent = 'Run';
+      return;
+    }
+    q('dbgMeta').textContent = `Loaded ${data.count} students • filters: section=${data.filters?.section || '-'} program=${data.filters?.program || '-'} join=${(data.filters?.join_year_prefixes || []).join(',') || '-'}.`;
+    q('dbgMeta').className = 'meta-banner meta-info mt-2';
+    const withRec = (data.items || []).filter((x) => (x.recommended_courses || []).length > 0).length;
+    q('dbgCount').textContent = String(data.count || 0);
+    q('dbgWithRec').textContent = String(withRec);
+    q('dbgWithoutRec').textContent = String((data.count || 0) - withRec);
+    q('dbgSummary').style.display = '';
+    tbody.innerHTML = data.items.map((x) => {
+      const tracePayload = encodeURIComponent(JSON.stringify(x.recommendation_details || []));
+      const summary = `Student ${x.student_id} (${x.program})\nReal→Next: ${x.real_term}→${x.next_term}\nRecommended: ${(x.recommended_courses || []).join(', ') || '-'}`;
+      return `
+      <tr>
+        <td>${x.student_id}</td>
+        <td>${x.program}</td>
+        <td>${x.real_term} → ${x.next_term}</td>
+        <td>${(x.passed || []).slice(0,4).join(', ')}${(x.passed || []).length > 4 ? ' ...' : ''}</td>
+        <td>${(x.studying || []).join(', ') || '-'}</td>
+        <td>${(x.recommended_courses || []).join(', ') || '-'}</td>
+        <td>
+          <button type="button" class="btn btn-sm btn-outline-secondary dbg-trace" data-trace="${tracePayload}">View</button>
+          <button type="button" class="btn btn-sm btn-outline-dark dbg-copy" data-summary="${encodeURIComponent(summary)}">Copy</button>
+        </td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="7" class="empty-note">No students matched filters.</td></tr>';
+
+    document.querySelectorAll('.dbg-trace').forEach((b) => {
+      b.addEventListener('click', () => {
+        const raw = b.getAttribute('data-trace') || '';
+        const body = q('debugTraceBody');
+        if (!body) return;
+        let items = [];
+        try { items = JSON.parse(decodeURIComponent(raw)); } catch {}
+        body.innerHTML = Array.isArray(items) && items.length
+          ? items.map((it) => `<div class="border rounded p-2 mb-2"><div><strong>${it.course_code}</strong></div><div class="small text-secondary">Prereqs: ${(it.prerequisites || []).join(', ') || 'None'}</div><div class="small">${(it.prerequisite_status || []).map((s) => `${s.prerequisite}: ${s.status}`).join(' • ') || 'No prerequisite status rows'}</div></div>`).join('')
+          : '<div class="empty-note">No trace details for this student.</div>';
+        const modalEl = q('debugTraceModal');
+        if (modalEl && window.bootstrap?.Modal) bootstrap.Modal.getOrCreateInstance(modalEl).show();
+      });
+    });
+    document.querySelectorAll('.dbg-copy').forEach((b) => {
+      b.addEventListener('click', async () => {
+        const s = decodeURIComponent(b.getAttribute('data-summary') || '');
+        await navigator.clipboard.writeText(s);
+        toast('Debug summary copied', true);
+      });
+    });
+
+    setUpdated('dbgUpdated');
+    toast('Debug report loaded', true);
+    btn.disabled = false;
+    btn.textContent = 'Run';
+  };
+
+  q('elRun').onclick = async () => {
+    if (!requireFields(['elCourse'], 'elMeta', 'Eligibility')) return;
+    const btn = q('elRun');
+    btn.disabled = true;
+    btn.textContent = 'Checking...';
+    const url = `/report/course-eligibility/?course_code=${encodeURIComponent(q('elCourse').value)}&section=${encodeURIComponent(q('elSection').value)}&program=${encodeURIComponent(q('elProgram').value)}&join_years=${encodeURIComponent(q('elJoin').value)}&mode=${encodeURIComponent(q('elMode').value)}`;
+    q('elCsv').href = `/export/course-eligibility.csv?course_code=${encodeURIComponent(q('elCourse').value)}&section=${encodeURIComponent(q('elSection').value)}&program=${encodeURIComponent(q('elProgram').value)}&join_years=${encodeURIComponent(q('elJoin').value)}&mode=${encodeURIComponent(q('elMode').value)}`;
+    const tbody = document.querySelector('#elTable tbody');
+    if (!tbody) return;
+
+    let res, data;
+    try {
+      ({ res, data } = await fetchJsonWithRetry(url));
+    } catch (err) {
+      q('elMeta').textContent = preciseError(null, null, 'Unable to load eligibility report.', err);
+      q('elMeta').className = 'meta-banner meta-danger mt-2';
+      q('elSummary').style.display = 'none';
+      setUpdated('elUpdated', true);
+      tbody.innerHTML = '<tr><td class="text-danger">Network error while loading eligibility report.</td></tr>';
+      toast('Eligibility report failed', false);
+      btn.disabled = false;
+      btn.textContent = 'Check eligibility';
+      return;
+    }
+    if (!res.ok || !Array.isArray(data.per_program)) {
+      q('elMeta').textContent = preciseError(res, data, 'Failed eligibility report.');
+      q('elMeta').className = 'meta-banner meta-warn mt-2';
+      q('elSummary').style.display = 'none';
+      setUpdated('elUpdated', true);
+      tbody.innerHTML = '<tr><td class="text-danger">Failed to load eligibility report.</td></tr>';
+      btn.disabled = false;
+      btn.textContent = 'Check eligibility';
+      return;
+    }
+
+    const eligibleIds = [];
+    (data.per_program || []).forEach((p) => {
+      (p.eligible_student_ids || []).forEach((sid) => eligibleIds.push(sid));
+    });
+
+    q('elMeta').textContent = `Course ${data.course_code} • mode=${data.strict_passed_only ? 'strict' : 'relaxed'} • IDs=${eligibleIds.length}`;
+    q('elMeta').className = 'meta-banner meta-info mt-2';
+    q('elCount').textContent = String(eligibleIds.length);
+    q('elModeBadge').textContent = data.strict_passed_only ? 'strict' : 'relaxed';
+    q('elCourseBadge').textContent = String(data.course_code || '-');
+    q('elSummary').style.display = '';
+
+    tbody.innerHTML = eligibleIds.length
+      ? eligibleIds.map((sid) => `<tr><td>${sid}</td></tr>`).join('')
+      : '<tr><td class="empty-note">No eligible student IDs for this filter.</td></tr>';
+
+    setUpdated('elUpdated');
+    toast('Eligibility report loaded', true);
+    btn.disabled = false;
+    btn.textContent = 'Check eligibility';
+  };
+
+  async function refreshAdvisorsDropdown(selectAdvisorId = '') {
+    const sel = q('advSelect');
+    if (!sel) return;
+    try {
+      const { res, data } = await fetchJsonWithRetry('/report/advisors/');
+      if (!res.ok || !Array.isArray(data.items)) {
+        q('advMeta').textContent = preciseError(res, data, 'Failed to load advisors list.');
+        setUpdated('advUpdated', true);
+        return;
+      }
+      sel.innerHTML = '<option value="">Select advisor</option>' + data.items.map((a) => `<option value="${a.advisor_id}">${a.advisor_id} — ${a.full_name} (${a.department})</option>`).join('');
+      if (selectAdvisorId) sel.value = selectAdvisorId;
+    } catch (err) {
+      q('advMeta').textContent = preciseError(null, null, 'Network request failed.', err);
+      setUpdated('advUpdated', true);
+    }
+  }
+
+  function clearAdvisorFieldErrors() {
+    ['advId','advName','advEmail','advDept'].forEach((id) => q(id)?.classList.remove('input-invalid'));
+    ['advIdErr','advNameErr','advEmailErr','advDeptErr'].forEach((id) => {
+      const el = q(id);
+      if (!el) return;
+      el.textContent = '';
+      el.style.display = 'none';
+    });
+  }
+
+  function setAdvisorFieldError(inputId, errId, msg) {
+    const inp = q(inputId);
+    const err = q(errId);
+    if (inp) inp.classList.add('input-invalid');
+    if (err) {
+      err.textContent = msg;
+      err.style.display = 'block';
+    }
+  }
+
+  function mapAdvisorSaveErrorToFields(msg) {
+    const m = String(msg || '').toLowerCase();
+    if (m.includes('email')) {
+      setAdvisorFieldError('advEmail', 'advEmailErr', 'Email is invalid or already used.');
+      return true;
+    }
+    if (m.includes('advisor id') || m.includes('advisor_id')) {
+      setAdvisorFieldError('advId', 'advIdErr', 'Advisor ID is invalid or already exists.');
+      return true;
+    }
+    if (m.includes('department')) {
+      setAdvisorFieldError('advDept', 'advDeptErr', 'Please provide at least one department.');
+      return true;
+    }
+    if (m.includes('full_name') || m.includes('full name')) {
+      setAdvisorFieldError('advName', 'advNameErr', 'Please provide advisor full name.');
+      return true;
+    }
+    return false;
+  }
+
+  ['advId','advName','advEmail','advDept'].forEach((id) => q(id)?.addEventListener('input', clearAdvisorFieldErrors));
+
+  q('advSave').onclick = async () => {
+    clearAdvisorFieldErrors();
+    const advisor_id = (q('advId').value || '').trim();
+    const full_name = (q('advName').value || '').trim();
+    const email = (q('advEmail').value || '').trim();
+    const department = (q('advDept').value || '').trim();
+
+    if (!advisor_id || !full_name || !email || !department) {
+      if (!advisor_id) setAdvisorFieldError('advId', 'advIdErr', 'Advisor ID is required.');
+      if (!full_name) setAdvisorFieldError('advName', 'advNameErr', 'Full name is required.');
+      if (!email) setAdvisorFieldError('advEmail', 'advEmailErr', 'Email is required.');
+      if (!department) setAdvisorFieldError('advDept', 'advDeptErr', 'Department(s) is required.');
+      q('advMeta').textContent = 'Please correct highlighted fields and retry.';
+      setUpdated('advUpdated', true);
+      toast('Advisor save failed', false);
+      return;
+    }
+
+    const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+    if (!emailOk) {
+      setAdvisorFieldError('advEmail', 'advEmailErr', 'Enter a valid email format (example: advisor@uni.edu).');
+      q('advMeta').textContent = 'Please correct highlighted fields and retry.';
+      setUpdated('advUpdated', true);
+      toast('Advisor save failed', false);
+      return;
+    }
+
+    const btn = q('advSave');
+    btn.disabled = true;
+    btn.textContent = 'Saving...';
+
+    try {
+      const res = await fetch('/ops/advisors/upsert/', {
+        method: 'POST',
+        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ advisor_id, full_name, email, department }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const msg = preciseError(res, data, 'Failed to save advisor.');
+        mapAdvisorSaveErrorToFields(msg);
+        q('advMeta').textContent = msg;
+        setUpdated('advUpdated', true);
+        toast('Advisor save failed', false);
+        return;
+      }
+      q('advMeta').textContent = `Advisor saved: ${advisor_id} • ${full_name}`;
+      setUpdated('advUpdated');
+      toast('Advisor saved', true);
+      await refreshAdvisorsDropdown(advisor_id);
+    } catch (err) {
+      q('advMeta').textContent = preciseError(null, null, 'Network request failed.', err);
+      setUpdated('advUpdated', true);
+      toast('Advisor save failed', false);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Save advisor';
+    }
+  };
+
+  q('advEnsureColumn').onclick = async () => {
+    const btn = q('advEnsureColumn');
+    btn.disabled = true;
+    btn.textContent = 'Enabling...';
+    try {
+      const res = await fetch('/ops/advisors/ensure-students-column/', { method: 'POST', headers: csrfHeaders() });
+      const data = await res.json();
+      if (!res.ok) {
+        q('advMeta').textContent = preciseError(res, data, 'Failed to enable students.advisor_id.');
+        setUpdated('advUpdated', true);
+        toast('Enable advisor column failed', false);
+        return;
+      }
+      q('advMeta').textContent = data.added ? 'students.advisor_id column created.' : 'students.advisor_id already exists.';
+      setUpdated('advUpdated');
+      toast('Advisor column ready', true);
+    } catch (err) {
+      q('advMeta').textContent = preciseError(null, null, 'Network request failed.', err);
+      setUpdated('advUpdated', true);
+      toast('Enable advisor column failed', false);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Enable students.advisor_id';
+    }
+  };
+
+  q('advAssignCsvBtn').onclick = async () => {
+    const csv_text = (q('advAssignCsv').value || '').trim();
+    if (!csv_text) {
+      q('advMeta').textContent = 'Paste CSV mapping first.';
+      setUpdated('advUpdated', true);
+      return;
+    }
+
+    const btn = q('advAssignCsvBtn');
+    btn.disabled = true;
+    btn.textContent = 'Applying...';
+    try {
+      const res = await fetch('/ops/advisors/assign-students/', {
+        method: 'POST',
+        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ csv_text }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        q('advMeta').textContent = preciseError(res, data, 'Failed to apply CSV mapping.');
+        setUpdated('advUpdated', true);
+        toast('Advisor mapping failed', false);
+        return;
+      }
+      q('advMeta').textContent = `Mapping applied: updated=${data.updated}, errors=${data.errors_count}`;
+      setUpdated('advUpdated');
+      toast('Advisor mapping applied', true);
+    } catch (err) {
+      q('advMeta').textContent = preciseError(null, null, 'Network request failed.', err);
+      setUpdated('advUpdated', true);
+      toast('Advisor mapping failed', false);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Apply CSV mapping';
+    }
+  };
+
+  q('advAssignOneBtn').onclick = async () => {
+    const sidRaw = (q('advAssignStudentId').value || '').trim();
+    const aidRaw = (q('advAssignAdvisorId').value || '').trim();
+    const sid = Number(sidRaw);
+
+    if (!sidRaw || !Number.isInteger(sid) || sid <= 0 || !aidRaw) {
+      q('advMeta').textContent = 'Provide valid student ID and advisor ID.';
+      setUpdated('advUpdated', true);
+      toast('Single assignment failed', false);
+      return;
+    }
+
+    const btn = q('advAssignOneBtn');
+    btn.disabled = true;
+    btn.textContent = 'Assigning...';
+    try {
+      const res = await fetch('/ops/advisors/assign-students/', {
+        method: 'POST',
+        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ mappings: [{ student_id: sid, advisor_id: aidRaw }] }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        q('advMeta').textContent = preciseError(res, data, 'Failed to assign student.');
+        setUpdated('advUpdated', true);
+        toast('Single assignment failed', false);
+        return;
+      }
+      q('advMeta').textContent = `Assigned student ${sid} to advisor ${aidRaw}. updated=${data.updated}, errors=${data.errors_count}`;
+      setUpdated('advUpdated');
+      toast('Student assigned', true);
+    } catch (err) {
+      q('advMeta').textContent = preciseError(null, null, 'Network request failed.', err);
+      setUpdated('advUpdated', true);
+      toast('Single assignment failed', false);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Assign one student';
+    }
+  };
+
+  /* ── Advisor Portfolio JS → moved to standalone page at /advisor-portfolio/ ── */
+  let advisorStudentsCache = [];  // kept for ⌘K palette compatibility
+  window._advisorStudentsCache = advisorStudentsCache;
+
+  q('hpRun').onclick = async () => {
+    if (!requireFields(['hpYear','hpSemester'], 'hpMeta', 'High priority report')) return;
+    const btn = q('hpRun');
+    btn.disabled = true;
+    btn.textContent = 'Running...';
+    const url = `/report/missing-high-priority/?year=${encodeURIComponent(q('hpYear').value)}&semester=${encodeURIComponent(q('hpSemester').value)}&section=${encodeURIComponent(q('hpSection').value)}&program=${encodeURIComponent(q('hpProgram').value)}&join_years=${encodeURIComponent(q('hpJoin').value)}&term_parity=${encodeURIComponent(q('hpParity').value)}&discount=${encodeURIComponent(q('hpDiscount').value)}&min_score=${encodeURIComponent(q('hpMinScore').value)}&top_k=${encodeURIComponent(q('hpTopK').value)}&studying_counts_as_passed=${encodeURIComponent(q('hpStudying').value)}`;
+    q('hpXlsx').href = `/export/missing-high-priority.xlsx?year=${encodeURIComponent(q('hpYear').value)}&semester=${encodeURIComponent(q('hpSemester').value)}&section=${encodeURIComponent(q('hpSection').value)}&program=${encodeURIComponent(q('hpProgram').value)}&join_years=${encodeURIComponent(q('hpJoin').value)}&term_parity=${encodeURIComponent(q('hpParity').value)}&discount=${encodeURIComponent(q('hpDiscount').value)}&min_score=${encodeURIComponent(q('hpMinScore').value)}&top_k=${encodeURIComponent(q('hpTopK').value)}&studying_counts_as_passed=${encodeURIComponent(q('hpStudying').value)}`;
+
+    const tbody = document.querySelector('#hpTable tbody');
+    if (!tbody) return;
+    showSkeleton('hpTable', 5);
+
+    let res, data;
+    try {
+      ({ res, data } = await fetchJsonWithRetry(url));
+    } catch (err) {
+      q('hpMeta').textContent = preciseError(null, null, 'Network request failed.', err);
+      setUpdated('hpUpdated', true);
+      tbody.innerHTML = '<tr><td colspan="5" class="text-danger">Network error while loading report.</td></tr>';
+      toast('Missing high priority failed', false);
+      btn.disabled = false;
+      btn.textContent = 'Run report';
+      return;
+    }
+    if (!res.ok || !Array.isArray(data.items)) {
+      q('hpMeta').textContent = preciseError(res, data, 'Failed to load report.');
+      setUpdated('hpUpdated', true);
+      tbody.innerHTML = '<tr><td colspan="5" class="text-danger">Failed to load report.</td></tr>';
+      btn.disabled = false;
+      btn.textContent = 'Run report';
+      return;
+    }
+
+    q('hpMeta').textContent = `Flagged students: ${data.count} • discount=${data.params?.discount} • min_score=${data.params?.min_score} • top_k=${data.params?.top_k_per_student}`;
+    tbody.innerHTML = data.items.map((r) => `<tr><td>${r.student_id}</td><td>${r.program}</td><td>${(r.missing_this_parity || []).map((x) => `${x.course_code}(${Number(x.score).toFixed(2)})`).join(', ') || '-'}</td><td>${(r.missing_other || []).map((x) => `${x.course_code}(${Number(x.score).toFixed(2)})`).join(', ') || '-'}</td><td>${r.missing_total}</td></tr>`).join('') || '<tr><td colspan="5" class="empty-note">No flagged students.</td></tr>';
+    setUpdated('hpUpdated');
+    toast('Missing high priority report loaded', true);
+    btn.disabled = false;
+    btn.textContent = 'Run report';
+  };
+
+  function wireSortableTable(tableId) {
+    wireSortableTablePro(tableId); /* upgraded — see wireSortableTablePro below */
+  }
+
+  async function copyLinkFrom(elId, label) {
+    const el = q(elId);
+    if (!el) return;
+    const href = el.getAttribute('href') || '';
+    if (!href || href === '#') return;
+    const absolute = new URL(href, window.location.origin).toString();
+    await navigator.clipboard.writeText(absolute);
+    q('scrapeMeta').textContent = `${label} copied to clipboard: ${absolute}`;
+    toast(`${label} copied`, true);
+  }
+
+  const copyStudentBtn = q('copyStudentCsv');
+  if (copyStudentBtn) {
+    copyStudentBtn.onclick = async () => copyLinkFrom('studentCsvLink', 'Student CSV link');
+  }
+
+  const copyBatchBtn = q('copyBatchCsv');
+  if (copyBatchBtn) {
+    copyBatchBtn.onclick = async () => copyLinkFrom('batchCsv', 'Aggregate CSV link');
+  }
+
+  function syncExportCenterLinks() {
+    const sid = q('studentIdInput')?.value || '';
+    const year = q('batchYear')?.value || q('dbgYear')?.value || '';
+    const sem = q('batchSemester')?.value || q('dbgSemester')?.value || '';
+    q('exStudentCsv').href = sid && year !== '' && sem !== '' ? `/export/student.csv?student_id=${encodeURIComponent(sid)}&year=${encodeURIComponent(year)}&semester=${encodeURIComponent(sem)}` : '#';
+    q('exAggregateCsv').href = `/export/aggregate.csv?year=${encodeURIComponent(q('batchYear')?.value || '')}&semester=${encodeURIComponent(q('batchSemester')?.value || '')}&program=${encodeURIComponent(q('batchProgram')?.value || '')}&section=${encodeURIComponent(q('batchSection')?.value || '')}`;
+    q('exPlanCsv').href = sid ? `/export/student-plan.csv?student_id=${encodeURIComponent(sid)}` : '#';
+    q('exDebugCsv').href = `/export/recommendation-debug.csv?year=${encodeURIComponent(q('dbgYear')?.value || '')}&semester=${encodeURIComponent(q('dbgSemester')?.value || '')}&section=${encodeURIComponent(q('dbgSection')?.value || '')}&program=${encodeURIComponent(q('dbgProgram')?.value || '')}&join_years=${encodeURIComponent(q('dbgJoin')?.value || '')}&limit=${encodeURIComponent(q('dbgLimit')?.value || '')}`;
+    q('exEligibilityCsv').href = `/export/course-eligibility.csv?course_code=${encodeURIComponent(q('elCourse')?.value || '')}&section=${encodeURIComponent(q('elSection')?.value || '')}&program=${encodeURIComponent(q('elProgram')?.value || '')}&join_years=${encodeURIComponent(q('elJoin')?.value || '')}&mode=${encodeURIComponent(q('elMode')?.value || 'relaxed')}`;
+    q('exAdvisorCsv').href = '/advisor-portfolio/';  // portfolio is now standalone
+    q('exHighPriorityXlsx').href = `/export/missing-high-priority.xlsx?year=${encodeURIComponent(q('hpYear')?.value || '')}&semester=${encodeURIComponent(q('hpSemester')?.value || '')}&section=${encodeURIComponent(q('hpSection')?.value || '')}&program=${encodeURIComponent(q('hpProgram')?.value || '')}&join_years=${encodeURIComponent(q('hpJoin')?.value || '')}&term_parity=${encodeURIComponent(q('hpParity')?.value || '0')}&discount=${encodeURIComponent(q('hpDiscount')?.value || '1_over_d')}&min_score=${encodeURIComponent(q('hpMinScore')?.value || '2.0')}&top_k=${encodeURIComponent(q('hpTopK')?.value || '10')}&studying_counts_as_passed=${encodeURIComponent(q('hpStudying')?.value || 'false')}`;
+  }
+
+  document.querySelectorAll('.ex-copy').forEach((b) => {
+    b.addEventListener('click', async () => {
+      const id = b.getAttribute('data-link-id') || '';
+      if (!id) return;
+      await copyLinkFrom(id, 'Export link');
+    });
+  });
+
+  ['studentIdInput','batchYear','batchSemester','batchProgram','batchSection','dbgYear','dbgSemester','dbgSection','dbgProgram','dbgJoin','dbgLimit','elCourse','elSection','elProgram','elJoin','elMode','hpYear','hpSemester','hpSection','hpProgram','hpJoin','hpParity','hpDiscount','hpMinScore','hpTopK','hpStudying'].forEach((id) => {
+    const el = q(id);
+    if (el) el.addEventListener('change', syncExportCenterLinks);
+  });
+  syncExportCenterLinks();
+
+  q('batchSavePreset')?.addEventListener('click', () => savePreset('batch', ['batchYear','batchSemester','batchProgram','batchSection']));
+  q('batchLoadPreset')?.addEventListener('click', () => loadPreset('batch', ['batchYear','batchSemester','batchProgram','batchSection']));
+  q('dbgSavePreset')?.addEventListener('click', () => savePreset('debug', ['dbgYear','dbgSemester','dbgSection','dbgProgram','dbgJoin','dbgLimit']));
+  q('dbgLoadPreset')?.addEventListener('click', () => loadPreset('debug', ['dbgYear','dbgSemester','dbgSection','dbgProgram','dbgJoin','dbgLimit']));
+  q('elSavePreset')?.addEventListener('click', () => savePreset('eligibility', ['elCourse','elSection','elProgram','elJoin','elMode']));
+  q('elLoadPreset')?.addEventListener('click', () => loadPreset('eligibility', ['elCourse','elSection','elProgram','elJoin','elMode']));
+  q('hpSavePreset')?.addEventListener('click', () => savePreset('highpriority', ['hpYear','hpSemester','hpSection','hpProgram','hpJoin','hpParity','hpDiscount','hpMinScore','hpTopK','hpStudying']));
+  q('hpLoadPreset')?.addEventListener('click', () => loadPreset('highpriority', ['hpYear','hpSemester','hpSection','hpProgram','hpJoin','hpParity','hpDiscount','hpMinScore','hpTopK','hpStudying']));
+
+  function exportMissingFields(href) {
+    if (!href || href.endsWith('#')) return ['required filters'];
+    try {
+      const u = new URL(href, window.location.origin);
+      const p = u.searchParams;
+      if (u.pathname.includes('/export/aggregate.csv')) {
+        const out = [];
+        if (!p.get('year')) out.push('year');
+        if (!p.get('semester')) out.push('semester');
+        return out;
+      }
+      if (u.pathname.includes('/export/student.csv') || u.pathname.includes('/export/student-plan.csv')) {
+        return !p.get('student_id') ? ['student_id'] : [];
+      }
+      if (u.pathname.includes('/export/recommendation-debug.csv')) {
+        const out = [];
+        if (!p.get('year')) out.push('year');
+        if (!p.get('semester')) out.push('semester');
+        return out;
+      }
+      if (u.pathname.includes('/export/course-eligibility.csv')) {
+        return !p.get('course_code') ? ['course_code'] : [];
+      }
+      if (u.pathname.includes('/export/students-by-advisor.csv')) {
+        return !p.get('advisor_id') ? ['advisor_id'] : [];
+      }
+      if (u.pathname.includes('/export/missing-high-priority.xlsx')) {
+        const out = [];
+        if (!p.get('year')) out.push('year');
+        if (!p.get('semester')) out.push('semester');
+        return out;
+      }
+      return [];
+    } catch {
+      return ['required filters'];
+    }
+  }
+
+  [
+    'studentCsvLink','batchCsv','spCsv','dbgCsv','elCsv','hpXlsx',
+    'exStudentCsv','exAggregateCsv','exPlanCsv','exDebugCsv','exEligibilityCsv','exAdvisorCsv','exHighPriorityXlsx'
+  ].forEach((id) => {
+    const a = q(id);
+    if (!a || !(a instanceof HTMLAnchorElement)) return;
+    a.addEventListener('click', (ev) => {
+      const missing = exportMissingFields(a.href);
+      if (missing.length) {
+        ev.preventDefault();
+        toast(`Export blocked: fill ${missing.join(', ')} first.`, false);
+        return;
+      }
+      // Let the browser handle download directly to preserve server filename.
+      window.location.href = a.href;
+      ev.preventDefault();
+    });
+  });
+
+  q('scrapeRefresh').onclick = refreshScrapeStatus;
+
+  /* ─────────────────────────────────────────────────────────────
+     MODAL DIALOG ENGINE
+     Usage:
+       await dlg.confirm({ title, body, confirmText, kind, typed })
+       await dlg.prompt({ title, body, label, placeholder, kind })
+     kind: 'danger' | 'warning' | 'info'
+  ───────────────────────────────────────────────────────────── */
+  const dlg = (() => {
+    const ICONS = {
+      danger:  '🗑️',
+      warning: '⚠️',
+      info:    'ℹ️',
+      success: '✅',
+    };
+
+    function build(opts) {
+      const kind = opts.kind || 'danger';
+      const backdrop = document.createElement('div');
+      backdrop.className = 'dlg-backdrop';
+      backdrop.innerHTML = `
+        <div class="dlg-box" role="dialog" aria-modal="true" aria-labelledby="dlg-title-text">
+          <div class="dlg-header">
+            <div class="dlg-icon dlg-icon-${kind}">${ICONS[kind] || '⚠️'}</div>
+            <div>
+              <div class="dlg-title" id="dlg-title-text">${opts.title || 'Confirm'}</div>
+            </div>
+          </div>
+          <div class="dlg-body">${opts.body || ''}</div>
+          ${opts.typed || opts.inputLabel ? `
+          <div class="dlg-input-row">
+            <label>${opts.inputLabel || ('Type <code>' + (opts.typed || '') + '</code> to confirm')}</label>
+            <input type="text" class="dlg-confirm-input ${kind === 'danger' ? 'dlg-input-danger' : ''}"
+              placeholder="${opts.inputPlaceholder || ''}" autocomplete="off" spellcheck="false">
+            ${opts.inputHint ? `<div class="dlg-input-hint">${opts.inputHint}</div>` : ''}
+          </div>` : ''}
+          <div class="dlg-footer">
+            <button class="btn-cancel">${opts.cancelText || 'Cancel'}</button>
+            <button class="btn-confirm ${kind}" ${opts.typed ? 'disabled' : ''}>${opts.confirmText || 'Confirm'}</button>
+          </div>
+        </div>`;
+
+      document.body.appendChild(backdrop);
+
+      // Focus first interactive element
+      setTimeout(() => {
+        const inp = backdrop.querySelector('.dlg-confirm-input');
+        if (inp) inp.focus();
+        else backdrop.querySelector('.btn-confirm').focus();
+      }, 50);
+
+      return backdrop;
+    }
+
+    function confirm(opts = {}) {
+      return new Promise(resolve => {
+        const el = build(opts);
+        const confirmBtn = el.querySelector('.btn-confirm');
+        const cancelBtn  = el.querySelector('.btn-cancel');
+        const input      = el.querySelector('.dlg-confirm-input');
+
+        function close(result) {
+          el.querySelector('.dlg-box').style.animation = 'dlg-slide-up 0.15s ease reverse';
+          setTimeout(() => { el.remove(); resolve(result); }, 140);
+        }
+
+        if (input && opts.typed) {
+          input.addEventListener('input', () => {
+            confirmBtn.disabled = input.value.trim() !== opts.typed;
+          });
+          input.addEventListener('keydown', e => {
+            if (e.key === 'Enter' && !confirmBtn.disabled) close(true);
+          });
+        }
+
+        confirmBtn.addEventListener('click', () => close(true));
+        cancelBtn.addEventListener('click',  () => close(false));
+        el.addEventListener('click', e => { if (e.target === el) close(false); });
+        document.addEventListener('keydown', function esc(e) {
+          if (e.key === 'Escape') { document.removeEventListener('keydown', esc); close(false); }
+        });
+      });
+    }
+
+    function prompt(opts = {}) {
+      return new Promise(resolve => {
+        const el = build({ ...opts, inputLabel: opts.label, inputPlaceholder: opts.placeholder || '', inputHint: opts.hint, typed: null });
+        const confirmBtn = el.querySelector('.btn-confirm');
+        const cancelBtn  = el.querySelector('.btn-cancel');
+        const input      = el.querySelector('.dlg-confirm-input');
+
+        if (opts.required !== false && input) {
+          confirmBtn.disabled = true;
+          input.addEventListener('input', () => {
+            confirmBtn.disabled = input.value.trim() === '';
+          });
+        }
+
+        function close(value) {
+          el.querySelector('.dlg-box').style.animation = 'dlg-slide-up 0.15s ease reverse';
+          setTimeout(() => { el.remove(); resolve(value); }, 140);
+        }
+
+        if (input) input.addEventListener('keydown', e => {
+          if (e.key === 'Enter' && !confirmBtn.disabled) close(input.value.trim());
+        });
+
+        confirmBtn.addEventListener('click', () => close(input ? input.value.trim() : true));
+        cancelBtn.addEventListener('click',  () => close(null));
+        el.addEventListener('click', e => { if (e.target === el) close(null); });
+        document.addEventListener('keydown', function esc(e) {
+          if (e.key === 'Escape') { document.removeEventListener('keydown', esc); close(null); }
+        });
+      });
+    }
+
+    return { confirm, prompt };
+  })();
+
+  /* ─────────────────────────────────────────────────────────────
+     TOAST ENGINE  (replaces Bootstrap toast)
+  ───────────────────────────────────────────────────────────── */
+  const notify = (() => {
+    let container = document.getElementById('toast-container');
+    if (!container) {
+      container = document.createElement('div');
+      container.id = 'toast-container';
+      document.body.appendChild(container);
+    }
+
+    const ICONS = { success: '✓', error: '✕', info: 'ℹ', warning: '!' };
+    const DURATIONS = { success: 3200, error: 5000, info: 4000, warning: 4500 };
+
+    function show(title, kind = 'success', sub = '') {
+      const duration = DURATIONS[kind] || 3200;
+      const t = document.createElement('div');
+      t.className = `ux-toast ${kind}`;
+      t.innerHTML = `
+        <div class="ux-toast-icon">${ICONS[kind] || '✓'}</div>
+        <div class="ux-toast-body">
+          <div class="ux-toast-title">${title}</div>
+          ${sub ? `<div class="ux-toast-sub">${sub}</div>` : ''}
+        </div>
+        <button class="ux-toast-close" aria-label="Dismiss">✕</button>
+        <div class="ux-toast-progress" style="animation-duration:${duration}ms;"></div>`;
+
+      container.appendChild(t);
+
+      function dismiss() {
+        t.classList.add('removing');
+        setTimeout(() => t.remove(), 250);
+      }
+
+      t.querySelector('.ux-toast-close').addEventListener('click', dismiss);
+      setTimeout(dismiss, duration);
+    }
+
+    return {
+      success: (msg, sub) => show(msg, 'success', sub),
+      error:   (msg, sub) => show(msg, 'error',   sub),
+      info:    (msg, sub) => show(msg, 'info',     sub),
+      warning: (msg, sub) => show(msg, 'warning',  sub),
+    };
+  })();
+
+  /* ─────────────────────────────────────────────────────────────
+     SKELETON ENGINE
+  ───────────────────────────────────────────────────────────── */
+  function showSkeleton(tableId, colCount = 4, rowCount = 4) {
+    const table = document.getElementById(tableId);
+    if (!table) return;
+    const tbody = table.querySelector('tbody');
+    if (!tbody) return;
+    const widths = ['40%','70%','55%','80%','45%','65%','35%','75%'];
+    tbody.innerHTML = Array.from({ length: rowCount }, () =>
+      `<tr class="skel-row">${Array.from({ length: colCount }, (_, i) =>
+        `<td><div class="skel-cell" style="width:${widths[(i * 3 + Math.floor(Math.random()*3)) % widths.length]}"></div></td>`
+      ).join('')}</tr>`
+    ).join('');
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     SORT ARROWS — upgrade wireSortableTable
+  ───────────────────────────────────────────────────────────── */
+  function wireSortableTablePro(tableId) {
+    const table = document.getElementById(tableId);
+    if (!table) return;
+    const headers = table.querySelectorAll('thead th[data-sort]');
+    headers.forEach((th, idx) => {
+      let dir = 'asc';
+      th.style.cursor = 'pointer';
+      th.setAttribute('title', 'Click to sort');
+      th.addEventListener('click', () => {
+        const tbody = table.querySelector('tbody');
+        if (!tbody) return;
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+        const validRows = rows.filter(r => r.children.length > idx && !r.querySelector('td[colspan]'));
+        if (!validRows.length) return;
+        const mode = th.dataset.sort || 'text';
+        const asc = dir === 'asc';
+        validRows.sort((a, b) => {
+          const av = a.children[idx]?.textContent?.trim() || '';
+          const bv = b.children[idx]?.textContent?.trim() || '';
+          if (mode === 'num') {
+            return asc ? (Number(av)||0) - (Number(bv)||0) : (Number(bv)||0) - (Number(av)||0);
+          }
+          return asc ? av.localeCompare(bv, undefined, {numeric:true}) : bv.localeCompare(av, undefined, {numeric:true});
+        });
+        // Update arrows
+        headers.forEach(h => h.removeAttribute('data-dir'));
+        th.setAttribute('data-dir', asc ? 'asc' : 'desc');
+        dir = asc ? 'desc' : 'asc';
+        tbody.innerHTML = '';
+        validRows.forEach(r => tbody.appendChild(r));
+      });
+    });
+  }
+
+  /* ─────────────────────────────────────────────────────────────
+     KEYBOARD SHORTCUT HELP  (?  key)
+  ───────────────────────────────────────────────────────────── */
+  document.addEventListener('keydown', e => {
+    if (e.key !== '?' || e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    const existing = document.getElementById('kbd-help-overlay');
+    if (existing) { existing.remove(); return; }
+
+    const overlay = document.createElement('div');
+    overlay.id = 'kbd-help-overlay';
+    overlay.className = 'kbd-help-backdrop';
+    overlay.innerHTML = `
+      <div class="kbd-help-box">
+        <h3>⌨️ Keyboard shortcuts</h3>
+        <div class="kbd-row"><span class="kbd-desc">Open quick search</span><span class="kbd-key"><kbd>⌘</kbd><kbd>K</kbd></span></div>
+        <div class="kbd-row"><span class="kbd-desc">Close dialog / palette</span><span class="kbd-key"><kbd>Esc</kbd></span></div>
+        <div class="kbd-row"><span class="kbd-desc">Show this help</span><span class="kbd-key"><kbd>?</kbd></span></div>
+        <div class="kbd-row"><span class="kbd-desc">Sort table column</span><span class="kbd-desc">Click column header</span></div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+    document.addEventListener('keydown', function closeHelp(e) {
+      if (e.key === 'Escape' || e.key === '?') { overlay.remove(); document.removeEventListener('keydown', closeHelp); }
+    }, { once: false });
+  });
+
+  /* Replace old wireSortableTable calls with pro version */
+  wireSortableTablePro('batchTable');
+  wireSortableTablePro('preTable');
+  wireSortableTablePro('planTable');
+  wireSortableTablePro('planPrereqTable');
+  wireSortableTablePro('dbgTable');
+  wireSortableTablePro('elTable');
+  wireSortableTable('exportsTable');
+  wireSortableTablePro('hpTable');
+
+  const hashTargetRaw = (window.location.hash || '').replace('#', '');
+  /* Redirect hash routes for panels that moved to standalone pages */
+  const standaloneRedirects = { advisorportfolio: '/advisor-portfolio/', advisors: '/advisor-portfolio/', usermgmt: '/user-management/', dbadmin: '/db-admin/' };
+  if (standaloneRedirects[hashTargetRaw]) { window.location.href = standaloneRedirects[hashTargetRaw]; }
+  const hashTarget = hashTargetRaw;
+  if (hashTarget && document.getElementById(hashTarget)) {
+    activatePanel(hashTarget);
+    // Cancel the browser's native scroll-to-anchor that fires on page load
+    // when a hash is present. We always want to start at the top of the page.
+    window.scrollTo({ top: 0, behavior: 'instant' });
+  }
+
+  window.addEventListener('hashchange', () => {
+    const raw = (window.location.hash || '').replace('#', '');
+    if (standaloneRedirects[raw]) { window.location.href = standaloneRedirects[raw]; return; }
+    if (raw && document.getElementById(raw)) {
+      activatePanel(raw);
+    }
+  });
+
+  refreshAdvisorsDropdown();
+  refreshScrapeStatus();
+  /* -- User Management JS → moved to standalone page at /user-management/ -- */
+</script>
+
+<script>
+  // Lightweight in-template i18n (domain-aware Arabic)
+  // - Keeps English as source-of-truth in markup
+  // - For Arabic (LANG=ar), replaces visible UI strings + common placeholders
+  // - Avoids touching dynamic values (IDs, numbers, codes)
+  (function () {
+    const LANG = "{{ LANGUAGE_CODE|default:'en' }}";
+    if (LANG !== "ar") return;
+
+    const MAP = {
+      // Shell
+      "Advisor Dashboard": "لوحة المرشد الأكاديمي",
+      "Advisor Console": "لوحة التحكم",
+      "Main functions": "الوظائف الرئيسية",
+      "Current module": "الوحدة الحالية",
+      "Role:": "الدور:",
+      "Logout": "تسجيل الخروج",
+      "Access scope:": "نطاق الصلاحيات:",
+      "Allowed departments:": "الأقسام المسموح بها:",
+      "Advisor ID:": "معرّف المرشد:",
+      // Sidebar modules
+      "Student Recommender": "توصيات الطالب",
+      "Batch Recommender": "توصيات الدفعة",
+      "Course Prerequisites": "متطلبات المقررات",
+      "Course Prerequisites View": "عرض متطلبات المقررات",
+      "Program Plan Viewer": "عارض الخطة الدراسية",
+      "Batch Scraping (legacy)": "استخراج الدفعات (إصدار قديم)",
+      "Recommendation Debug": "تشخيص التوصيات",
+      "Recommendation Debug Report": "تقرير تشخيص التوصيات",
+      "Course Eligibility": "أهلية تسجيل المقرر",
+      "Course Eligibility Inspector": "فحص أهلية تسجيل المقرر",
+      "Advisor Admin": "إدارة المرشدين",
+      "User Management": "إدارة المستخدمين",
+      "Advisor Portfolio": "ملف المرشد",
+      "Export Center": "مركز التصدير",
+      "Missing High Priority": "نواقص عالية الأولوية",
+      "Missing High Priority Courses": "مقررات عالية الأولوية غير مكتملة",
+      "Student Timetable Builder": "منشئ جدول الطالب",
+      "Database Admin Console": "وحدة إدارة قاعدة البيانات",
+      "Sections Import (Oracle HTML)": "استيراد الشعب (Oracle HTML)",
+      "Open Audit Explorer": "فتح مستكشف التدقيق",
+      // Student module
+      "Get a per-student recommendation list and export it instantly.": "استخرج قائمة توصيات لكل طالب مع إمكانية التصدير فوراً.",
+      "Student ID": "الرقم الجامعي",
+      "Year": "السنة",
+      "Semester": "الفصل",
+      "Recommend courses": "توليد التوصيات",
+      "Load plan": "تحميل الخطة",
+      "Recommendations:": "التوصيات:",
+      "Export CSV": "تصدير CSV",
+      "Copy link": "نسخ الرابط",
+      "Student Plan Matrix (Terms 1-10)": "مصفوفة خطة الطالب (الفصول 1–10)",
+      "Load a student to view the full term matrix.": "حمّل بيانات طالب لعرض مصفوفة الخطة الكاملة.",
+      "Passed": "مُجتاز",
+      "Studying": "قيد الدراسة",
+      "Can register": "متاح للتسجيل",
+      "Locked": "مُقفل",
+      "Legend:": "المفتاح:",
+      "passed": "مجتاز",
+      "studying": "قيد الدراسة",
+      "not taken (can register)": "غير مُسجّل (متاح للتسجيل)",
+      "locked not taken": "غير مُسجّل (مقفل)",
+      "Focus next term": "التركيز على الفصل التالي",
+      "Build target plan": "بناء خطة مستهدفة",
+      "View filters": "عرض عوامل التصفية",
+      "Show all": "عرض الكل",
+      "Can register only": "المتاح للتسجيل فقط",
+      "Locked only": "المقفل فقط",
+      "Compact rows": "صفوف مختصرة",
+      "Expand all": "توسيع الكل",
+      "Collapse all": "طيّ الكل",
+      "Sort options": "خيارات الفرز",
+      "Importance": "الأهمية",
+      "Status": "الحالة",
+      "Code": "الرمز",
+      "Target settings": "إعدادات الهدف",
+      "Credits": "الساعات",
+      "Max importance": "تعظيم الأهمية",
+      "Balanced by term load": "موازنة حسب عبء الفصل",
+      "Print / PDF": "طباعة / PDF",
+      "Course Explain Drawer": "لوحة شرح المقرر",
+      "Click any course row to inspect lock reason, missing prereqs, and unlock impact.": "انقر على أي مقرر لعرض سبب الإقفال، المتطلبات الناقصة، وتأثير فتح المسار.",
+      // Batch module
+      "Run cohort-level preview, inspect top courses, and export aggregate CSV.": "نفّذ معاينة على مستوى الدفعة، استعرض أعلى المقررات، وصدّر ملف CSV تجميعي.",
+      "Program (optional)": "البرنامج (اختياري)",
+      "Section (optional)": "الشعبة (اختياري)",
+      "Run preview": "تشغيل المعاينة",
+      "Reset": "إعادة ضبط",
+      "Save preset": "حفظ الإعداد",
+      "Load preset": "تحميل الإعداد",
+      "Year/Semester": "السنة/الفصل",
+      "Students scanned": "عدد الطلاب المفحوصين",
+      "Top list size": "حجم قائمة الأعلى",
+      "Download aggregate CSV": "تنزيل CSV تجميعي",
+      "Open summary JSON": "فتح ملخص JSON",
+      "Copy aggregate CSV link": "نسخ رابط CSV التجميعي",
+      "Last update: -": "آخر تحديث: -",
+      "Details": "التفاصيل",
+      "No data yet. Next step: set filters and click Run Preview.": "لا توجد بيانات بعد. الخطوة التالية: حدّد المرشحات ثم اضغط «تشغيل المعاينة».",
+      "Top recommendation chips": "أعلى التوصيات",
+      // Prereq module
+      "Explore prerequisite links by program and optionally by a specific course.": "استكشف علاقات المتطلبات حسب البرنامج ويمكن تقييدها بمقرر محدد.",
+      "Filters": "المرشحات",
+      "Program": "البرنامج",
+      "Course code (optional)": "رمز المقرر (اختياري)",
+      "Load": "تحميل",
+      "Results": "النتائج",
+      "Courses in view": "عدد المقررات المعروضة",
+      "Prerequisite links": "روابط المتطلبات",
+      "No data loaded yet. Next step: choose filters and click Load.": "لم يتم تحميل بيانات بعد. الخطوة التالية: اختر المرشحات ثم اضغط «تحميل».",
+      "Graph": "الرسم البياني",
+      "Load prerequisites to visualize dependency chains.": "حمّل المتطلبات لعرض سلاسل الاعتماد بين المقررات.",
+      // Plan module
+      "Inspect full program requirements, term breakdown, and credit totals.": "استعرض متطلبات البرنامج كاملة، توزيعها على الفصول، وإجمالي الساعات.",
+      "Load Plan": "تحميل الخطة",
+      "Total courses": "إجمالي المقررات",
+      "Total credit hours": "إجمالي الساعات المعتمدة",
+      "Visuals": "تصوّرات",
+      "Term distribution": "توزيع الساعات على الفصول",
+      "Term cards": "بطاقات الفصول",
+      "Selected course prerequisites": "متطلبات المقرر المحدد",
+      "Click a course in Program Plan table to load its prerequisites.": "انقر على مقرر في جدول الخطة لتحميل متطلباته.",
+      "No course selected.": "لم يتم تحديد مقرر.",
+      "No prerequisite data loaded.": "لا توجد بيانات متطلبات محمّلة.",
+      // Scrape module
+      "Batch Scraping (Legacy)": "استخراج الدفعات (إصدار قديم)",
+      "Run legacy scraper in background, monitor logs, and track run history metadata.": "شغّل أداة الاستخراج القديمة في الخلفية مع متابعة السجلات وسجل التشغيل.",
+      "Concurrency": "التوازي",
+      "Students CSV path (optional)": "مسار CSV للطلاب (اختياري)",
+      "Start scrape": "بدء الاستخراج",
+      "Stop": "إيقاف",
+      "Refresh": "تحديث",
+      "Current status": "الحالة الحالية",
+      "PID": "PID",
+      "Started": "بدأ",
+      "Stopped": "توقّف",
+      "Idle": "متوقف",
+      "No scrape run started.": "لم يبدأ أي تشغيل للاستخراج.",
+      "No history yet.": "لا يوجد سجل بعد.",
+      "No logs yet.": "لا توجد سجلات بعد.",
+      "Time (UTC)": "الوقت (UTC)",
+      "Event": "الحدث",
+      // Debug module
+      "Legacy-style student debug report for recommendation traceability.": "تقرير تشخيص بأسلوب قديم لتتبع منطق التوصيات.",
+      "Section": "الشعبة",
+      "Join years": "سنوات الالتحاق",
+      "Limit": "الحد",
+      "Run": "تشغيل",
+      "Export debug CSV": "تصدير CSV للتشخيص",
+      "No debug report loaded.": "لم يتم تحميل تقرير تشخيص.",
+      "Students matched": "الطلاب المطابقون",
+      "With recommendations": "لديهم توصيات",
+      "Empty recommendations": "بدون توصيات",
+      // Eligibility module
+      "Old-style output: eligible student IDs only.": "مخرجات مختصرة: أرقام الطلاب المؤهلين فقط.",
+      "Course code": "رمز المقرر",
+      "Mode": "الوضع",
+      "Relaxed (passed+studying)": "مرن (مجتاز + قيد الدراسة)",
+      "Strict (passed only)": "صارم (مجتاز فقط)",
+      "Check eligibility": "فحص الأهلية",
+      "Export eligibility CSV": "تصدير CSV للأهلية",
+      "No eligibility report loaded.": "لم يتم تحميل تقرير أهلية.",
+      "Eligible IDs": "الأرقام المؤهلة",
+      "Eligible Student IDs": "أرقام الطلاب المؤهلين",
+      "No eligibility rows yet. Next step: enter course code and click Check eligibility.": "لا توجد نتائج بعد. الخطوة التالية: أدخل رمز المقرر ثم اضغط «فحص الأهلية».",
+      // Advisor admin
+      "Create advisors and manage student-to-advisor assignments.": "إنشاء حسابات المرشدين وإدارة ربط الطلاب بالمرشد.",
+      "Step 1": "الخطوة 1",
+      "Create / Update Advisor Profile": "إنشاء/تحديث ملف المرشد",
+      "Use a unique advisor ID and valid institutional email.": "استخدم معرّفاً فريداً وبريداً مؤسسياً صحيحاً.",
+      "Full name": "الاسم الكامل",
+      "Email": "البريد الإلكتروني",
+      "Departments": "الأقسام",
+      "Save advisor": "حفظ المرشد",
+      "Step 2": "الخطوة 2",
+      "Bulk Mapping": "ربط جماعي",
+      "Paste CSV rows to map many students at once.": "الصق بيانات CSV لربط عدد كبير من الطلاب دفعة واحدة.",
+      "Enable students.advisor_id": "تفعيل students.advisor_id",
+      "Bulk assign CSV (student_id,advisor_id)": "ربط جماعي عبر CSV (student_id,advisor_id)",
+      "Apply CSV mapping": "تطبيق الربط",
+      "Copy shown student IDs": "نسخ أرقام الطلاب المعروضة",
+      "Step 3": "الخطوة 3",
+      "Quick Single Assignment": "ربط فردي سريع",
+      "Use for quick corrections without re-uploading CSV.": "للتصحيحات السريعة دون إعادة رفع CSV.",
+      "Quick assign student ID": "رقم الطالب (ربط سريع)",
+      "Quick assign advisor ID": "معرّف المرشد (ربط سريع)",
+      "Assign one student": "ربط طالب واحد",
+      // Portfolio
+      "View students for a selected advisor with risk, attention, and missing-high-priority insights.": "عرض طلاب مرشد محدد مع مؤشرات المخاطر والتنبيه ونواقص الأولوية العالية.",
+      "Portfolio Selection & Export": "اختيار الملف والتصدير",
+      "Choose advisor, load roster, then export exactly what is filtered.": "اختر المرشد ثم حمّل القائمة ثم صدّر النتائج وفق عوامل التصفية الحالية.",
+      "Advisor selector": "اختيار المرشد",
+      "Select advisor": "اختر المرشد",
+      "Load students": "تحميل الطلاب",
+      "Export students CSV": "تصدير CSV للطلاب",
+      "Copy CSV link": "نسخ رابط CSV",
+      "Filtering & Quick Focus": "التصفية والتركيز السريع",
+      "Narrow the list to high-priority advising cases in one click.": "قلّص القائمة إلى حالات الإرشاد ذات الأولوية بنقرة واحدة.",
+      "Search student (ID/Name)": "بحث عن طالب (رقم/اسم)",
+      "Focus": "التركيز",
+      "All students": "جميع الطلاب",
+      "Needs attention": "تحتاج متابعة",
+      "At risk GPA (<2.0)": "مخاطر (معدل < 2.0)",
+      "Has high priority missing": "لديه نواقص عالية الأولوية",
+      "Zero current term hours": "ساعات فصل حالي = صفر",
+      "Program filter": "تصفية حسب البرنامج",
+      "Apply filters": "تطبيق التصفية",
+      "Needs Attention": "تحتاج متابعة",
+      "At Risk Only": "المخاطر فقط",
+      "High Priority Missing": "نواقص عالية الأولوية",
+      "Zero Term Hours": "ساعات الفصل = صفر",
+      "Clear Focus": "إلغاء التركيز",
+      "Copy high-risk IDs": "نسخ أرقام عالي المخاطر",
+      "Advisor Snapshot": "ملخص المرشد",
+      "Students": "الطلاب",
+      "Average GPA": "متوسط المعدل",
+      "Term hours (total)": "ساعات الفصل (الإجمالي)",
+      "Student Portfolio Table": "جدول طلاب المرشد",
+      "Student ID": "رقم الطالب",
+      "Name": "الاسم",
+      "Status": "الحالة",
+      "Attention": "تنبيه",
+      "Risk Score": "درجة المخاطر",
+      "GPA": "المعدل",
+      "Current Term Hours": "ساعات الفصل الحالي",
+      "High Priority Missing": "نواقص عالية الأولوية",
+      "Reasons": "الأسباب",
+      "Earned/Registered": "المكتسبة/المسجلة",
+      "Registration No": "رقم التسجيل",
+      "Select an advisor to view students.": "اختر مرشداً لعرض الطلاب.",
+      // Exports
+      "Quick links for all operational exports in one place.": "روابط سريعة لجميع عمليات التصدير في مكان واحد.",
+      "What these exports contain": "محتوى هذه الصادرات",
+      "Tip: run each module once to auto-fill parameterized export links.": "ملاحظة: شغّل كل وحدة مرة واحدة لتعبئة روابط التصدير تلقائياً.",
+      "Download": "تنزيل",
+      "Copy": "نسخ",
+      "Contains": "المحتوى",
+      "Action": "الإجراء",
+      "Copy Link": "نسخ الرابط",
+      "Student recommendations CSV": "CSV توصيات الطالب",
+      "Single student": "طالب واحد",
+      "Aggregate recommendations CSV": "CSV توصيات تجميعية",
+      "Batch summary": "ملخص الدفعة",
+      "Student plan matrix CSV": "CSV مصفوفة الخطة",
+      "Filtered cohort debug": "تشخيص الدفعة (مصفّى)",
+      "Course eligibility CSV": "CSV أهلية المقرر",
+      "Eligibility inspector": "فحص الأهلية",
+      "Students by advisor CSV": "CSV طلاب المرشد",
+      "Advisor roster": "قائمة المرشد",
+      "Missing high priority XLSX": "XLSX نواقص عالية الأولوية",
+      "High-priority checker": "فحص الأولوية العالية",
+      // High priority
+      "Exact legacy logic from old script (unlock-graph priority + parity split).": "منطق مطابق للأداة القديمة (أولوية فتح المسار + فصل حسب الفردي/الزوجي).",
+      "Task": "المهمة",
+      "Use this report to flag students missing high-impact unlock courses; export XLSX for advisor intervention lists.": "استخدم التقرير لرصد الطلاب الذين تنقصهم مقررات مفصلية لفتح المسار، ثم صدّر XLSX لقوائم التدخل.",
+      "Parity": "الفردي/الزوجي",
+      "Discount": "الخصم",
+      "Min score": "الحد الأدنى للنقاط",
+      "Top K": "أعلى K",
+      "Studying counts as passed": "اعتبار قيد الدراسة كمجتاز",
+      "No (exact default)": "لا (الافتراضي الدقيق)",
+      "Yes": "نعم",
+      "Run report": "تشغيل التقرير",
+      "Export XLSX": "تصدير XLSX",
+      "No report loaded.": "لم يتم تحميل تقرير.",
+      "Student": "الطالب",
+      "Missing this parity": "النواقص لهذا النمط",
+      "Missing other": "النواقص للنمط الآخر",
+      "Total": "الإجمالي",
+      "No flagged students shown yet. Next step: set filters and click Run report.": "لا توجد حالات معروضة بعد. الخطوة التالية: حدّد المرشحات ثم اضغط «تشغيل التقرير».",
+      // User mgmt
+      "SUPER_ADMIN only: create users, update role/scope, then manage account state safely.": "لـ SUPER_ADMIN فقط: إنشاء مستخدمين، تحديث الدور/النطاق، ثم إدارة حالة الحساب بأمان.",
+      "User Identity & Scope": "هوية المستخدم والنطاق",
+      "Username": "اسم المستخدم",
+      "Password (create)": "كلمة المرور (إنشاء)",
+      "Role": "الدور",
+      "Departments CSV": "الأقسام (CSV)",
+      "Create user": "إنشاء مستخدم",
+      "Update role/scope": "تحديث الدور/النطاق",
+      "Refresh list": "تحديث القائمة",
+      "Account maintenance": "صيانة الحساب",
+      "Reset password": "إعادة تعيين كلمة المرور",
+      "Disable user": "تعطيل المستخدم",
+      "Enable user": "تفعيل المستخدم",
+      "Danger zone": "منطقة خطرة",
+      "Deletion is permanent. Username confirmation is required.": "الحذف نهائي. يلزم تأكيد اسم المستخدم.",
+      "Delete user permanently": "حذف المستخدم نهائياً",
+      "No action yet.": "لا توجد عملية بعد.",
+      "Load users list.": "حمّل قائمة المستخدمين.",
+      "Active": "نشط"
+    };
+
+    const PLACEHOLDERS = {
+      "e.g. CS": "مثال: CS",
+      "e.g. CS323": "مثال: CS323",
+      "M/F": "M/F",
+      "AI/CS": "AI/CS",
+      "43,44": "43,44",
+      "A001": "A001",
+      "AI,CS": "AI,CS",
+      "Dr. Name": "د. الاسم",
+      "advisor@uni.edu": "advisor@uni.edu",
+      "student_id,advisor_id\n4410001,A001": "student_id,advisor_id\n4410001,A001",
+      "e.g. 4410 or Ahmed": "مثال: 4410 أو أحمد",
+      "default: import_old/data/students_list.csv": "افتراضي: import_old/data/students_list.csv"
+    };
+
+    function translateNodeText(el) {
+      if (!el) return;
+      // Avoid translating inputs/selects/textarea values directly here
+      const tag = (el.tagName || "").toLowerCase();
+      if (["script", "style", "code", "pre"].includes(tag)) return;
+      // Only translate leaf nodes (no nested element children)
+      if (el.children && el.children.length) return;
+
+      const raw = (el.textContent || "").trim();
+      if (!raw) return;
+
+      // Handle common prefixes like "Role: X" or "Last update: -"
+      for (const [en, ar] of Object.entries(MAP)) {
+        if (raw === en) { el.textContent = ar; return; }
+        // Prefix case: "Role: {{ role }}" etc.
+        if (raw.startsWith(en) && raw.length > en.length) {
+          el.textContent = ar + raw.slice(en.length);
+          return;
+        }
+      }
+    }
+
+    function translateAttributes(root) {
+      root.querySelectorAll("[placeholder]").forEach(el => {
+        const p = el.getAttribute("placeholder");
+        if (p && PLACEHOLDERS[p]) el.setAttribute("placeholder", PLACEHOLDERS[p]);
+      });
+      root.querySelectorAll("a[title],button[title],input[title],select[title],textarea[title]").forEach(el => {
+        const t = el.getAttribute("title");
+        if (t && MAP[t]) el.setAttribute("title", MAP[t]);
+      });
+    }
+
+    function translateOptions(root) {
+      root.querySelectorAll("option").forEach(opt => {
+        const raw = (opt.textContent || "").trim();
+        if (MAP[raw]) opt.textContent = MAP[raw];
+      });
+    }
+
+    function walkAndTranslate(root) {
+      // Translate common UI text nodes
+      const candidates = root.querySelectorAll("h1,h2,h3,h4,h5,h6,div,span,p,a,button,label,th,td,summary,li,small,strong,badge,pre");
+      candidates.forEach(translateNodeText);
+      translateOptions(root);
+      translateAttributes(root);
+    }
+
+    // Initial pass
+    walkAndTranslate(document);
+
+    // Translate module title when navigation changes (JS in page may update it)
+    const cm = document.getElementById("currentModule");
+    if (cm) {
+      const obs = new MutationObserver(() => translateNodeText(cm));
+      obs.observe(cm, { childList: true, characterData: true, subtree: true });
+    }
+
+    // If page renders more content later, re-translate once after load
+    window.addEventListener("load", () => {
+      walkAndTranslate(document);
+    });
+  })();
+
+  /* ════════════════════════════════════════════════════════════════
+     UX ADDITIONS — purely additive, zero existing logic changed
+     ════════════════════════════════════════════════════════════════ */
+
+  /* ── REC 2: Global loading bar via MutationObserver ── */
+  const uxLoadingBar = document.createElement('div');
+  uxLoadingBar.id = 'ux-loading-bar';
+  document.body.prepend(uxLoadingBar);
+
+  (() => {
+    const LOADING_TEXTS = ['running...', 'loading...', 'running', 'loading', 'saving...', 'checking...'];
+    function applyLoadingClass(btn) {
+      if (!btn || btn.classList.contains('btn-close') || btn.dataset.bsDismiss) return;
+      const txt = (btn.textContent || '').trim().toLowerCase();
+      if (btn.disabled && LOADING_TEXTS.some(t => txt.startsWith(t))) {
+        btn.classList.add('ux-loading');
+      } else {
+        btn.classList.remove('ux-loading');
+      }
+    }
+    const checkLoading = () => {
+      document.querySelectorAll('main button').forEach(applyLoadingClass);
+      const anyLoading = document.querySelector('main .ux-loading');
+      uxLoadingBar.classList.toggle('active', Boolean(anyLoading));
+    };
+    const obs = new MutationObserver(checkLoading);
+    obs.observe(document.querySelector('main') || document.body, {
+      attributes: true, attributeFilter: ['disabled'],
+      characterData: true, subtree: true, childList: true
+    });
+  })();
+
+  /* ── REC 5: Update context chip when student plan loads ── */
+  (() => {
+    const origLoadPlan = q('loadStudentPlan');
+    if (!origLoadPlan) return;
+    const chip = q('phContextChip');
+    if (!chip) return;
+    const observer = new MutationObserver(() => {
+      const meta = q('studentPlanMeta');
+      if (meta && meta.textContent && meta.textContent.includes('Student')) {
+        chip.textContent = meta.textContent.split('•')[0].trim();
+        chip.style.display = '';
+      }
+    });
+    const meta = q('studentPlanMeta');
+    if (meta) observer.observe(meta, { childList: true, characterData: true, subtree: true });
+  })();
+
+  /* ── REC 6: ⌘K / Ctrl+K command palette ── */
+  (() => {
+    const palette = q('cmdPalette');
+    const input   = q('cmdInput');
+    const results = q('cmdResults');
+    if (!palette || !input || !results) return;
+
+    const openPalette = () => {
+      palette.style.display = '';
+      input.value = '';
+      results.innerHTML = '<div class="cmd-hint">Type a student ID to jump directly to their plan</div>';
+      requestAnimationFrame(() => input.focus());
+    };
+
+    const closePalette = () => { palette.style.display = 'none'; };
+
+    document.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        palette.style.display === 'none' ? openPalette() : closePalette();
+      }
+      if (e.key === 'Escape') closePalette();
+    });
+
+    palette.addEventListener('click', (e) => { if (e.target === palette) closePalette(); });
+
+    input.addEventListener('input', () => {
+      const val = input.value.trim();
+      if (!val) {
+        results.innerHTML = '<div class="cmd-hint">Type a student ID to jump directly to their plan</div>';
+        return;
+      }
+
+      // Search in loaded student cache
+      const cached = window._advisorStudentsCache || [];
+      const matches = cached.filter(s =>
+        String(s.student_id || '').includes(val) ||
+        String(s.name || '').toLowerCase().includes(val.toLowerCase())
+      ).slice(0, 8);
+
+      // Always offer direct navigation by ID if it looks numeric
+      const isNum = /^\d+$/.test(val);
+      let html = '';
+
+      if (matches.length) {
+        html += '<div class="cmd-section-label">Students</div>';
+        html += matches.map(s => `
+          <div class="cmd-item" data-action="open-student" data-sid="${s.student_id}">
+            <span class="cmd-item-id">${s.student_id}</span>
+            <span class="cmd-item-name">${s.name || ''} ${s.program ? '· ' + s.program : ''}</span>
+            <span class="cmd-item-badge">Open plan</span>
+          </div>`).join('');
+      }
+
+      if (isNum && !matches.find(s => String(s.student_id) === val)) {
+        html += '<div class="cmd-section-label">Direct navigation</div>';
+        html += `<div class="cmd-item" data-action="open-student" data-sid="${val}">
+          <span class="cmd-item-id">${val}</span>
+          <span class="cmd-item-name">Navigate to student plan</span>
+          <span class="cmd-item-badge">Open plan</span>
+        </div>`;
+      }
+
+      if (!html) {
+        html = '<div class="cmd-hint">No matches found</div>';
+      }
+
+      results.innerHTML = html;
+
+      results.querySelectorAll('.cmd-item').forEach(item => {
+        item.addEventListener('click', () => {
+          const action = item.dataset.action;
+          if (action === 'open-student') {
+            const sid = item.dataset.sid;
+            q('studentIdInput').value = sid;
+            closePalette();
+            activatePanel('student');
+            history.pushState(null, '', '#student');
+            window.scrollTo({ top: 0, behavior: 'instant' });
+            q('loadStudentPlan')?.click();
+            toast(`Opening student plan for ${sid}`, true);
+          }
+        });
+      });
+    });
+  })();
+
+
+  /* ── REC 8: Advisor admin step activation ── */
+  (() => {
+    const step1 = q('admStep1'), step2 = q('admStep2'), step3 = q('admStep3');
+    if (!step1) return;
+
+    const markDone = (stepEl) => {
+      stepEl.classList.remove('adm-step-inactive');
+      const circle = stepEl.querySelector('.adm-step-circle');
+      if (circle) circle.textContent = '✓';
+    };
+
+    // Mark step 1 done when advisor is saved
+    const saveBtn = q('advSave');
+    if (saveBtn) {
+      saveBtn.addEventListener('click', () => {
+        setTimeout(() => {
+          // only mark done if no field errors visible
+          const hasErr = document.querySelector('.field-error:not([style*="display: none"]):not([style*="display:none"])');
+          if (!hasErr) {
+            markDone(step1);
+            step2?.classList.remove('adm-step-inactive');
+          }
+        }, 600);
+      });
+    }
+
+    // Mark step 2 done when CSV applied
+    const csvBtn = q('advAssignCsvBtn');
+    if (csvBtn) {
+      csvBtn.addEventListener('click', () => {
+        setTimeout(() => { markDone(step2); step3?.classList.remove('adm-step-inactive'); }, 400);
+      });
+    }
+
+    // Mark step 3 done when single assign done
+    const oneBtn = q('advAssignOneBtn');
+    if (oneBtn) {
+      oneBtn.addEventListener('click', () => {
+        setTimeout(() => markDone(step3), 400);
+      });
+    }
+  })();
+
+  /* ── REC 3: Sidebar badges — populated from cached data ── */
+  (() => {
+    function updateSidebarBadges() {
+      // High priority: from last loaded HP report
+      const hpTbody = document.querySelector('#hpTable tbody');
+      const hpFirstCell = hpTbody?.querySelector('td.empty-note, td .empty-state');
+      const hpRows = hpTbody && !hpFirstCell ? hpTbody.querySelectorAll('tr').length : 0;
+      const sbHp = document.querySelector('.sb-badge-hp');
+      if (sbHp && hpRows > 0) {
+        sbHp.textContent = hpRows;
+        sbHp.className = 'sidebar-badge warning';
+        sbHp.style.display = '';
+      }
+
+      // Export: show "Ready" if any export link is set
+      const sbExport = document.querySelector('.sb-badge-export');
+      const exportReady = Boolean(q('exStudentCsv')?.href?.includes('?'));
+      if (sbExport) {
+        sbExport.textContent = exportReady ? 'Ready' : '';
+        sbExport.className = 'sidebar-badge ready';
+        sbExport.style.display = exportReady ? '' : 'none';
+      }
+    }
+
+    // Re-check badges after any toast (toast fires after data loads)
+    const origToast = window._origToast || toast;
+    window._origToast = origToast;
+    const origToastFn = toast;
+    // Poll every 3 seconds as a lightweight approach
+    setInterval(updateSidebarBadges, 3000);
+    updateSidebarBadges();
+  })();
+
+</script>
+
+</body>
+</html>

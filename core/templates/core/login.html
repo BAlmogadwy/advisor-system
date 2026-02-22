@@ -1,0 +1,125 @@
+{% load i18n static %}
+{% get_current_language as LANGUAGE_CODE %}
+<!doctype html>
+<html lang="{{ LANGUAGE_CODE }}" dir="{% if LANGUAGE_CODE == 'ar' %}rtl{% else %}ltr{% endif %}">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% trans "Advisor Dashboard Login" %}</title>
+  <link rel="icon" href="data:,">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="{% static 'css/global.css' %}" rel="stylesheet">
+  
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Kufi+Arabic:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* Page-specific: center the login card */
+    body { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    .login-wrap { width: 100%; max-width: 480px; padding: 1rem; }
+  </style>
+
+<style id="login-ux-css">
+/* Login page polish */
+body {
+  background: linear-gradient(135deg, #f0f4ff 0%, #e8f0fe 40%, #f0f8f4 100%);
+  min-height: 100vh;
+}
+
+.login-wrap {
+  animation: login-fade-up 0.4s ease both;
+}
+
+@keyframes login-fade-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.login-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px; height: 48px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #1d6ef5, #388bfd);
+  color: #fff;
+  font-size: 1.4rem;
+  margin: 0 auto 1rem;
+  box-shadow: 0 4px 16px rgba(29,110,245,0.25);
+}
+
+.login-title {
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--ink, #0d1526);
+  text-align: center;
+  margin-bottom: 0.2rem;
+}
+
+.login-sub {
+  font-size: 0.82rem;
+  color: var(--muted, #64748b);
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+
+.login-card {
+  box-shadow: 0 8px 32px rgba(13,21,38,0.1), 0 1px 4px rgba(13,21,38,0.06);
+  border: 1px solid rgba(255,255,255,0.8);
+}
+
+/* Login button full width + loading state */
+.login-btn {
+  position: relative;
+  overflow: hidden;
+}
+
+.login-btn::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+  transform: translateX(-100%);
+  transition: transform 0s;
+}
+
+.login-btn:active::after {
+  transform: translateX(100%);
+  transition: transform 0.4s ease;
+}
+</style>
+
+</head>
+<body>
+  <div class="login-wrap">
+    <div class="card soft-card p-4 login-card">
+      <div class="login-logo">🎓</div>
+      <div class="login-title">{% if LANGUAGE_CODE == 'ar' %}لوحة تحكم المرشد{% else %}Advisor Dashboard{% endif %}</div>
+      <div class="login-sub">{% if LANGUAGE_CODE == 'ar' %}أدخل بيانات اعتمادك للمتابعة{% else %}Sign in with your account to continue{% endif %}</div>
+      {% if error %}<div class="alert alert-danger py-2 mb-3">{{ error }}</div>{% endif %}
+      <form method="post">
+        {% csrf_token %}
+        <div class="mb-3">
+          <label class="form-label fw-semibold">{% trans "Username" %}</label>
+          <input name="username" class="form-control" required autocomplete="username" autofocus>
+        </div>
+        <div class="mb-4">
+          <label class="form-label fw-semibold">{% trans "Password" %}</label>
+          <input name="password" type="password" class="form-control" required autocomplete="current-password">
+        </div>
+        <button class="btn btn-primary w-100 login-btn">{% trans "Sign in" %}</button>
+      </form>
+    </div>
+
+    <div class="mt-3 text-center">
+      <form action="/i18n/setlang/" method="post" class="d-inline">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+        <select name="language" class="form-select form-select-sm" style="width:auto;display:inline-block;" onchange="this.form.submit()">
+          <option value="en" {% if LANGUAGE_CODE == 'en' %}selected{% endif %}>English</option>
+          <option value="ar" {% if LANGUAGE_CODE == 'ar' %}selected{% endif %}>العربية</option>
+        </select>
+      </form>
+    </div>
+  </div>
+</body>
+</html>

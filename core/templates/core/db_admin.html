@@ -1,0 +1,947 @@
+{% load i18n static %}{% get_current_language as LANGUAGE_CODE %}
+<!doctype html>
+<html lang="{{ LANGUAGE_CODE }}" dir="{% if LANGUAGE_CODE == 'ar' %}rtl{% else %}ltr{% endif %}">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% trans "Database Admin" %}</title>
+  <link rel="icon" href="data:,">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="{% static 'css/global.css' %}" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Kufi+Arabic:wght@400;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    /* ── DB Admin Console layout ─────────────────────────── */
+    pre { white-space: pre-wrap; word-break: break-all; overflow-x: auto; }
+
+    /* Split layout: nav | work area */
+    .dba-shell {
+      display:     flex;
+      gap:         1.25rem;
+      align-items: flex-start;
+      min-height:  calc(100vh - 120px);
+    }
+
+    /* LEFT: operation nav list */
+    .dba-nav {
+      flex-shrink:   0;
+      width:         260px;
+      position:      sticky;
+      top:           72px; /* below page-header */
+      display:       flex;
+      flex-direction: column;
+      gap:           0.35rem;
+    }
+
+    .dba-nav-label {
+      font-size:      0.65rem;
+      font-weight:    700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color:          var(--muted);
+      padding:        0.75rem 0.75rem 0.3rem;
+      margin-top:     0.25rem;
+    }
+    .dba-nav-label:first-child { margin-top: 0; }
+
+    .dba-nav-item {
+      display:        flex;
+      align-items:    center;
+      gap:            0.65rem;
+      padding:        0.7rem 0.875rem;
+      border-radius:  var(--radius);
+      border:         1px solid transparent;
+      cursor:         pointer;
+      transition:     background 0.12s, border-color 0.12s, box-shadow 0.12s;
+      background:     #fff;
+      border-color:   var(--line);
+      box-shadow:     var(--shadow-card);
+      user-select:    none;
+      text-decoration: none;
+      color:          inherit;
+    }
+
+    .dba-nav-item:hover {
+      background:   #f4f7fc;
+      border-color: var(--line-strong);
+    }
+
+    .dba-nav-item.active {
+      background:   linear-gradient(135deg, #eff6ff 0%, #fff 100%);
+      border-color: var(--brand);
+      box-shadow:   0 0 0 3px var(--brand-glow), var(--shadow-card);
+    }
+
+    .dba-nav-item.danger-item.active {
+      background:   linear-gradient(135deg, #fff5f5 0%, #fff 100%);
+      border-color: var(--danger);
+      box-shadow:   0 0 0 3px rgba(224,52,52,.12), var(--shadow-card);
+    }
+
+    .dba-nav-icon {
+      flex-shrink: 0;
+      width:       36px;
+      height:      36px;
+      border-radius: 9px;
+      display:     flex;
+      align-items: center;
+      justify-content: center;
+      font-size:   1rem;
+    }
+
+    .icon-safe    { background: #f0fdf4; }
+    .icon-danger  { background: #fff1f2; }
+    .icon-warning { background: #fffbeb; }
+    .icon-system  { background: #f0f9ff; }
+
+    .dba-nav-text { flex: 1; min-width: 0; }
+
+    .dba-nav-name {
+      font-size:   0.875rem;
+      font-weight: 600;
+      color:       var(--ink);
+      line-height: 1.2;
+      white-space: nowrap;
+      overflow:    hidden;
+      text-overflow: ellipsis;
+    }
+
+    .dba-nav-desc {
+      font-size:   0.72rem;
+      color:       var(--muted);
+      margin-top:  0.1rem;
+      white-space: nowrap;
+      overflow:    hidden;
+      text-overflow: ellipsis;
+    }
+
+    .dba-risk-badge {
+      flex-shrink: 0;
+      font-size:   0.58rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      padding:     0.15rem 0.4rem;
+      border-radius: 5px;
+    }
+    .risk-danger  { background: #fee2e2; color: #991b1b; }
+    .risk-warning { background: #fef3c7; color: #92400e; }
+    .risk-safe    { background: #dcfce7; color: #166534; }
+
+    /* RIGHT: work area */
+    .dba-work {
+      flex:     1;
+      min-width: 0;
+    }
+
+    /* Individual panels */
+    .dba-panel { display: none; }
+    .dba-panel.active { display: block; }
+
+    /* Panel header */
+    .dba-panel-header {
+      display:      flex;
+      align-items:  center;
+      gap:          0.875rem;
+      margin-bottom: 1.25rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .dba-panel-icon {
+      width:         48px;
+      height:        48px;
+      border-radius: 12px;
+      display:       flex;
+      align-items:   center;
+      justify-content: center;
+      font-size:     1.35rem;
+      flex-shrink:   0;
+    }
+
+    .dba-panel-title {
+      font-size:      1.1rem;
+      font-weight:    700;
+      color:          var(--ink);
+      letter-spacing: -0.01em;
+      margin-bottom:  0.2rem;
+    }
+
+    .dba-panel-subtitle {
+      font-size:   0.875rem;
+      color:       var(--muted);
+      line-height: 1.45;
+    }
+
+    /* Danger zone panel accent */
+    .dba-panel.danger-panel .dba-panel-header {
+      background:    #fff5f5;
+      border:        1px solid #fecaca;
+      border-radius: var(--radius);
+      padding:       1rem;
+      margin-bottom: 1.25rem;
+    }
+
+    /* Output pre block */
+    .dba-output {
+      background:    #0d1117;
+      color:         #b8d4f8;
+      border-radius: var(--radius);
+      padding:       1rem 1.125rem;
+      font-family:   var(--font-mono);
+      font-size:     0.8rem;
+      line-height:   1.65;
+      border:        1px solid rgba(255,255,255,.06);
+      min-height:    80px;
+      margin-top:    1rem;
+      white-space:   pre-wrap;
+      word-break:    break-all;
+    }
+
+    .dba-output.has-error { color: #fca5a5; }
+    .dba-output.has-success { color: #86efac; }
+
+    /* Action section within panel */
+    .dba-section {
+      background:    var(--card);
+      border:        1px solid var(--line);
+      border-radius: var(--radius);
+      padding:       1.125rem 1.25rem;
+      margin-bottom: 0.875rem;
+    }
+
+    .dba-section-title {
+      font-size:      0.72rem;
+      font-weight:    700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color:          var(--muted);
+      margin-bottom:  0.875rem;
+      display:        flex;
+      align-items:    center;
+      gap:            0.4rem;
+    }
+
+    .dba-section-title::before {
+      content: '';
+      display: inline-block;
+      width:   3px; height: 0.8rem;
+      border-radius: 2px;
+      background: var(--brand);
+      opacity: 0.55;
+    }
+
+    .danger-panel .dba-section-title::before { background: var(--danger); }
+
+    /* Step flow indicator (for term sections) */
+    .dba-steps {
+      display:      flex;
+      align-items:  center;
+      gap:          0.5rem;
+      margin-bottom: 1rem;
+      font-size:    0.78rem;
+    }
+
+    .dba-step {
+      display:      flex;
+      align-items:  center;
+      gap:          0.35rem;
+      padding:      0.3rem 0.65rem;
+      border-radius: 999px;
+      font-weight:  600;
+      color:        var(--muted);
+      background:   #f1f5f9;
+      border:       1px solid var(--line);
+    }
+
+    .dba-step.active {
+      color:      var(--brand-dark);
+      background: var(--brand-soft);
+      border-color: #bfdbfe;
+    }
+
+    .dba-step.done {
+      color:      var(--success);
+      background: #f0fdf4;
+      border-color: #bbf7d0;
+    }
+
+    .dba-step-arrow { color: var(--muted); font-size: 0.65rem; }
+
+    /* Mobile: collapse nav to horizontal scroll strip */
+    @media (max-width: 900px) {
+      .dba-shell { flex-direction: column; }
+      .dba-nav {
+        width:      100%;
+        position:   static;
+        flex-direction: row;
+        overflow-x: auto;
+        gap:        0.5rem;
+        padding-bottom: 0.25rem;
+        scrollbar-width: thin;
+      }
+      .dba-nav-label { display: none; }
+      .dba-nav-item {
+        flex-shrink: 0;
+        flex-direction: column;
+        align-items: center;
+        text-align:  center;
+        padding:     0.6rem 0.875rem;
+        min-width:   80px;
+        gap:         0.3rem;
+      }
+      .dba-nav-desc  { display: none; }
+      .dba-risk-badge { display: none; }
+      .dba-nav-icon { width: 28px; height: 28px; font-size: 0.85rem; }
+      .dba-nav-name  { font-size: 0.72rem; white-space: normal; text-align: center; }
+    }
+  </style>
+
+<style id="shared-ux-css">
+.page-header {
+  position: sticky; top: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  padding: 0.55rem 1.5rem; margin: -1.5rem -1.5rem 1rem -1.5rem;
+  background: rgba(238,241,247,0.96); backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line, #dde3ed);
+  box-shadow: 0 1px 8px rgba(0,0,0,0.06);
+}
+.page-header-left { display: flex; flex-direction: column; gap: 0.2rem; }
+.page-header-module { font-weight: 700; font-size: 0.98rem; color: var(--ink, #0d1526); letter-spacing: -0.01em; }
+.page-header-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
+.page-header-right { flex-shrink: 0; display: flex; align-items: center; gap: 0.5rem; }
+.ph-chip { display: inline-block; font-size: 0.7rem; font-weight: 600; padding: 0.15rem 0.5rem; border-radius: 999px; letter-spacing: 0.01em; white-space: nowrap; }
+.ph-chip-danger { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+.ph-chip-gray   { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
+#ux-loading-bar {
+  position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 9999;
+  background: linear-gradient(90deg, transparent 0%, #1d6ef5 30%, #388bfd 70%, transparent 100%);
+  background-size: 200% 100%; animation: ux-loading-sweep 1.2s linear infinite;
+  opacity: 0; transition: opacity 0.2s ease; pointer-events: none;
+}
+#ux-loading-bar.active { opacity: 1; }
+@keyframes ux-loading-sweep { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.ux-loading { position: relative !important; padding-inline-start: 2rem !important; }
+.ux-loading::before {
+  content: ''; position: absolute; inset-inline-start: 0.6rem; top: 50%;
+  transform: translateY(-50%); width: 12px; height: 12px;
+  border: 2px solid rgba(255,255,255,0.35); border-top-color: currentColor;
+  border-radius: 50%; animation: ux-spin 0.7s linear infinite;
+}
+.ux-loading.btn-outline-secondary::before,
+.ux-loading.btn-outline-dark::before,
+.ux-loading.btn-outline-primary::before { border-color: rgba(0,0,0,0.18); border-top-color: currentColor; }
+@keyframes ux-spin { to { transform: translateY(-50%) rotate(360deg); } }
+</style>
+
+</head>
+<body>
+<div class="d-flex shell">
+  {% include 'core/partials/sidebar.html' %}
+
+  <main class="flex-grow-1 p-4">
+
+    <!-- Page header -->
+    <div class="page-header">
+      <div class="page-header-left">
+        <div class="page-header-module">{% if LANGUAGE_CODE == 'ar' %}لوحة إدارة قاعدة البيانات{% else %}Database Admin Console{% endif %}</div>
+        <div class="page-header-chips">
+          <span class="ph-chip ph-chip-danger">{% if LANGUAGE_CODE == 'ar' %}منطقة خطر{% else %}Danger Zone{% endif %}</span>
+          <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}معاينة أولاً · تأكيد مطلوب{% else %}Preview-first · Confirmation required{% endif %}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Console split layout -->
+    <div class="dba-shell">
+
+      <!-- ── LEFT NAV ─────────────────────────────────────── -->
+      <nav class="dba-nav" aria-label="DB Admin operations">
+
+        <div class="dba-nav-label">{% if LANGUAGE_CODE == 'ar' %}حذف البيانات{% else %}Delete Data{% endif %}</div>
+
+        <button class="dba-nav-item danger-item active" data-panel="students" type="button">
+          <span class="dba-nav-icon icon-danger">🗑️</span>
+          <span class="dba-nav-text">
+            <span class="dba-nav-name">{% if LANGUAGE_CODE == 'ar' %}حذف الطلاب{% else %}Delete Students{% endif %}</span>
+            <span class="dba-nav-desc">{% if LANGUAGE_CODE == 'ar' %}حسب البرنامج / القسم{% else %}By program / section{% endif %}</span>
+          </span>
+          <span class="dba-risk-badge risk-danger">{% if LANGUAGE_CODE == 'ar' %}خطر{% else %}Danger{% endif %}</span>
+        </button>
+
+        <button class="dba-nav-item danger-item" data-panel="catalog" type="button">
+          <span class="dba-nav-icon icon-danger">📋</span>
+          <span class="dba-nav-text">
+            <span class="dba-nav-name">{% if LANGUAGE_CODE == 'ar' %}حذف الكتالوج{% else %}Delete Catalog{% endif %}</span>
+            <span class="dba-nav-desc">{% if LANGUAGE_CODE == 'ar' %}متطلبات + مكوّنات{% else %}Requirements + prerequisites{% endif %}</span>
+          </span>
+          <span class="dba-risk-badge risk-danger">{% if LANGUAGE_CODE == 'ar' %}خطر{% else %}Danger{% endif %}</span>
+        </button>
+
+        <div class="dba-nav-label">{% if LANGUAGE_CODE == 'ar' %}استيراد البيانات{% else %}Import Data{% endif %}</div>
+
+        <button class="dba-nav-item" data-panel="plan" type="button">
+          <span class="dba-nav-icon icon-safe">📥</span>
+          <span class="dba-nav-text">
+            <span class="dba-nav-name">{% if LANGUAGE_CODE == 'ar' %}استيراد خطة البرنامج{% else %}Import Program Plan{% endif %}</span>
+            <span class="dba-nav-desc">{% if LANGUAGE_CODE == 'ar' %}من نص CSV{% else %}From CSV text{% endif %}</span>
+          </span>
+          <span class="dba-risk-badge risk-safe">{% if LANGUAGE_CODE == 'ar' %}آمن{% else %}Safe{% endif %}</span>
+        </button>
+
+        <button class="dba-nav-item" data-panel="termsections" type="button">
+          <span class="dba-nav-icon icon-safe">🗓️</span>
+          <span class="dba-nav-text">
+            <span class="dba-nav-name">{% if LANGUAGE_CODE == 'ar' %}أقسام الفصل الدراسي{% else %}Term Sections{% endif %}</span>
+            <span class="dba-nav-desc">{% if LANGUAGE_CODE == 'ar' %}تحليل → معاينة → إدراج{% else %}Parse → Preview → Insert{% endif %}</span>
+          </span>
+          <span class="dba-risk-badge risk-safe">{% if LANGUAGE_CODE == 'ar' %}آمن{% else %}Safe{% endif %}</span>
+        </button>
+
+        <button class="dba-nav-item" data-panel="legacy" type="button">
+          <span class="dba-nav-icon icon-warning">🔄</span>
+          <span class="dba-nav-text">
+            <span class="dba-nav-name">{% if LANGUAGE_CODE == 'ar' %}الاستيراد القديم{% else %}Legacy Import{% endif %}</span>
+            <span class="dba-nav-desc">{% if LANGUAGE_CODE == 'ar' %}منطق department_loader.py{% else %}department_loader.py logic{% endif %}</span>
+          </span>
+          <span class="dba-risk-badge risk-warning">{% if LANGUAGE_CODE == 'ar' %}تحذير{% else %}Warning{% endif %}</span>
+        </button>
+
+        <div class="dba-nav-label">{% if LANGUAGE_CODE == 'ar' %}النظام{% else %}System{% endif %}</div>
+
+        <button class="dba-nav-item" data-panel="maintenance" type="button">
+          <span class="dba-nav-icon icon-system">🔒</span>
+          <span class="dba-nav-text">
+            <span class="dba-nav-name">{% if LANGUAGE_CODE == 'ar' %}النسخ الاحتياطي والتكامل{% else %}Backup & Integrity{% endif %}</span>
+            <span class="dba-nav-desc">{% if LANGUAGE_CODE == 'ar' %}لقطة + تقرير التحقق{% else %}Snapshot + verification report{% endif %}</span>
+          </span>
+          <span class="dba-risk-badge risk-safe">{% if LANGUAGE_CODE == 'ar' %}آمن{% else %}Safe{% endif %}</span>
+        </button>
+
+      </nav>
+
+      <!-- ── RIGHT WORK AREA ──────────────────────────────── -->
+      <div class="dba-work">
+
+        <!-- ══ PANEL: Delete Students ══════════════════════ -->
+        <div class="dba-panel danger-panel active" id="panel-students">
+          <div class="dba-panel-header">
+            <div class="dba-panel-icon icon-danger">🗑️</div>
+            <div>
+              <div class="dba-panel-title">{% if LANGUAGE_CODE == 'ar' %}حذف الطلاب{% else %}Delete Students{% endif %}</div>
+              <div class="dba-panel-subtitle">{% if LANGUAGE_CODE == 'ar' %}يحذف الطلاب المطابقين وجميع سجلات <code>student_courses</code> المرتبطة بهم بشكل دائم.{% else %}Permanently deletes matching students and all their associated <code>student_courses</code> records.{% endif %}</div>
+            </div>
+          </div>
+
+          <div class="dba-section">
+            <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}معايير التصفية{% else %}Filter criteria{% endif %}</div>
+            <div class="row g-2 align-items-end">
+              <div class="col-md-4">
+                <label class="form-label">{% trans "Program" %}</label>
+                <input id="sProgram" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثال: CS{% else %}e.g. CS{% endif %}">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label">{% trans "Section" %}</label>
+                <input id="sSection" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثال: 1{% else %}e.g. 1{% endif %}">
+              </div>
+              <div class="col-md-4 d-flex gap-2">
+                <button id="sPreview" class="btn btn-outline-primary flex-fill">{% if LANGUAGE_CODE == 'ar' %}معاينة{% else %}Preview{% endif %}</button>
+                <button id="sDelete" class="btn btn-danger flex-fill">{% if LANGUAGE_CODE == 'ar' %}حذف{% else %}Delete{% endif %}</button>
+              </div>
+            </div>
+          </div>
+
+          <pre id="sOut" class="dba-output">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد. ابدأ بـ «معاينة» للتحقق من النطاق.{% else %}No action yet. Run Preview first to confirm scope.{% endif %}</pre>
+        </div>
+
+        <!-- ══ PANEL: Delete Catalog ════════════════════════ -->
+        <div class="dba-panel danger-panel" id="panel-catalog">
+          <div class="dba-panel-header">
+            <div class="dba-panel-icon icon-danger">📋</div>
+            <div>
+              <div class="dba-panel-title">{% if LANGUAGE_CODE == 'ar' %}حذف كتالوج البرنامج{% else %}Delete Program Catalog{% endif %}</div>
+              <div class="dba-panel-subtitle">{% if LANGUAGE_CODE == 'ar' %}يحذف بشكل دائم جميع صفوف <code>programme_requirements</code> و <code>prerequisites</code> لبرنامج محدد.{% else %}Permanently deletes all <code>programme_requirements</code> and <code>prerequisites</code> rows for a specific program.{% endif %}</div>
+            </div>
+          </div>
+
+          <div class="dba-section">
+            <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}تحديد البرنامج{% else %}Target program{% endif %}</div>
+            <div class="row g-2 align-items-end">
+              <div class="col-md-5">
+                <label class="form-label">{% trans "Program code" %}</label>
+                <input id="pProgram" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثال: CS{% else %}e.g. CS{% endif %}">
+              </div>
+              <div class="col-md-7 d-flex gap-2">
+                <button id="pPreview" class="btn btn-outline-primary flex-fill">{% if LANGUAGE_CODE == 'ar' %}معاينة{% else %}Preview{% endif %}</button>
+                <button id="pDelete" class="btn btn-danger flex-fill">{% if LANGUAGE_CODE == 'ar' %}حذف الكتالوج{% else %}Delete catalog{% endif %}</button>
+              </div>
+            </div>
+          </div>
+
+          <pre id="pOut" class="dba-output">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد. ابدأ بـ «معاينة» للتحقق من النطاق.{% else %}No action yet. Run Preview first to confirm scope.{% endif %}</pre>
+        </div>
+
+        <!-- ══ PANEL: Import Program Plan ═══════════════════ -->
+        <div class="dba-panel" id="panel-plan">
+          <div class="dba-panel-header">
+            <div class="dba-panel-icon icon-safe">📥</div>
+            <div>
+              <div class="dba-panel-title">{% if LANGUAGE_CODE == 'ar' %}استيراد خطة البرنامج{% else %}Import Program Plan{% endif %}</div>
+              <div class="dba-panel-subtitle">{% if LANGUAGE_CODE == 'ar' %}يُدرج أو يُحدّث <code>programme_requirements</code> من نص CSV مباشرةً. الترويسات المطلوبة: <code>course_code, programme_term, credit_hours</code>{% else %}Inserts or updates <code>programme_requirements</code> from raw CSV text. Required headers: <code>course_code, programme_term, credit_hours</code>{% endif %}</div>
+            </div>
+          </div>
+
+          <div class="dba-section">
+            <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}إعداد الاستيراد{% else %}Import settings{% endif %}</div>
+            <div class="row g-2 align-items-end mb-3">
+              <div class="col-md-4">
+                <label class="form-label">{% trans "Program code" %}</label>
+                <input id="iProgram" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثال: CS{% else %}e.g. CS{% endif %}">
+              </div>
+              <div class="col-md-8 d-flex align-items-center gap-2 pt-3">
+                <div class="form-check">
+                  <input id="iReplace" class="form-check-input" type="checkbox">
+                  <label class="form-check-label" for="iReplace">{% if LANGUAGE_CODE == 'ar' %}استبدال الصفوف الموجودة لهذا البرنامج{% else %}Replace existing rows for this program{% endif %}</label>
+                </div>
+              </div>
+            </div>
+            <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}نص CSV{% else %}CSV text{% endif %}</label>
+            <textarea id="iCsv" class="form-control" rows="9" placeholder="course_code,programme_term,credit_hours,type&#10;CS101,1,3,CORE&#10;CS202,2,3,CORE"></textarea>
+            <div class="mt-3">
+              <button id="iImport" class="btn btn-success">{% if LANGUAGE_CODE == 'ar' %}استيراد / تحديث{% else %}Import / Upsert{% endif %}</button>
+            </div>
+          </div>
+
+          <pre id="iOut" class="dba-output">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد.{% else %}No action yet.{% endif %}</pre>
+        </div>
+
+        <!-- ══ PANEL: Term Sections ══════════════════════════ -->
+        <div class="dba-panel" id="panel-termsections">
+          <div class="dba-panel-header">
+            <div class="dba-panel-icon icon-safe">🗓️</div>
+            <div>
+              <div class="dba-panel-title">{% if LANGUAGE_CODE == 'ar' %}استيراد أقسام الفصل الدراسي{% else %}Import Term Sections{% endif %}</div>
+              <div class="dba-panel-subtitle">{% if LANGUAGE_CODE == 'ar' %}تدفق ثلاثي المراحل: تحليل CSV → مراجعة المعاينة → إدراج المصفوف.{% else %}Three-step flow: parse CSV → review preview → insert normalised rows.{% endif %}</div>
+            </div>
+          </div>
+
+          <!-- Step indicator -->
+          <div class="dba-steps">
+            <span class="dba-step active" id="tStep1">{% if LANGUAGE_CODE == 'ar' %}١ تحليل + معاينة{% else %}1 Parse + Preview{% endif %}</span>
+            <span class="dba-step-arrow">›</span>
+            <span class="dba-step" id="tStep2">{% if LANGUAGE_CODE == 'ar' %}٢ مراجعة{% else %}2 Review{% endif %}</span>
+            <span class="dba-step-arrow">›</span>
+            <span class="dba-step" id="tStep3">{% if LANGUAGE_CODE == 'ar' %}٣ إدراج{% else %}3 Insert{% endif %}</span>
+          </div>
+
+          <div class="dba-section">
+            <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}مصدر الملف وإعدادات الفصل{% else %}File source & term settings{% endif %}</div>
+            <div class="row g-2 align-items-end">
+              <div class="col-md-6">
+                <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}مسار ملف CSV{% else %}CSV file path{% endif %}</label>
+                <input id="tCsvPath" class="form-control" placeholder="C:\...	imetable_final_extracted_multiday_clean.csv">
+              </div>
+              <div class="col-md-2">
+                <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}السنة الأكاديمية{% else %}Academic year{% endif %}</label>
+                <input id="tYear" class="form-control" placeholder="1447">
+              </div>
+              <div class="col-md-2">
+                <label class="form-label">{% trans "Term" %}</label>
+                <input id="tTerm" class="form-control" placeholder="1">
+              </div>
+              <div class="col-md-2 d-flex flex-column gap-1 pt-3">
+                <div class="form-check">
+                  <input id="tDept" class="form-check-input" type="checkbox">
+                  <label class="form-check-label small" for="tDept">{% if LANGUAGE_CODE == 'ar' %}مقررات القسم{% else %}Dept courses{% endif %}</label>
+                </div>
+                <div class="form-check">
+                  <input id="tTruncate" class="form-check-input" type="checkbox" checked>
+                  <label class="form-check-label small" for="tTruncate">{% if LANGUAGE_CODE == 'ar' %}استبدال السنة+الفصل{% else %}Replace year+term{% endif %}</label>
+                </div>
+              </div>
+            </div>
+            <div class="mt-3 d-flex gap-2">
+              <button id="tPreview" class="btn btn-outline-primary">{% if LANGUAGE_CODE == 'ar' %}تحليل + معاينة{% else %}Parse + Preview{% endif %}</button>
+              <button id="tImport" class="btn btn-success" disabled>{% if LANGUAGE_CODE == 'ar' %}إدراج الكل (مؤكَّد){% else %}Insert all (confirmed){% endif %}</button>
+            </div>
+          </div>
+
+          <!-- Preview table -->
+          <div id="tTableWrap" class="dba-section d-none">
+            <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}معاينة البيانات المصفّاة{% else %}Normalised preview{% endif %}</div>
+            <div class="table-wrap">
+              <table class="table table-sm mb-0">
+                <thead><tr>
+                  <th>{% if LANGUAGE_CODE == 'ar' %}الرمز{% else %}Code{% endif %}</th>
+                  <th>{% if LANGUAGE_CODE == 'ar' %}رقم{% else %}No.{% endif %}</th>
+                  <th>{% if LANGUAGE_CODE == 'ar' %}القسم{% else %}Sec{% endif %}</th>
+                  <th>{% if LANGUAGE_CODE == 'ar' %}اليوم{% else %}Day{% endif %}</th>
+                  <th>{% if LANGUAGE_CODE == 'ar' %}البداية{% else %}Start{% endif %}</th>
+                  <th>{% if LANGUAGE_CODE == 'ar' %}النهاية{% else %}End{% endif %}</th>
+                  <th>{% if LANGUAGE_CODE == 'ar' %}القاعة{% else %}Room{% endif %}</th>
+                  <th>{% if LANGUAGE_CODE == 'ar' %}المحاضر{% else %}Instructor{% endif %}</th>
+                  <th>{% if LANGUAGE_CODE == 'ar' %}التصنيف{% else %}Tag{% endif %}</th>
+                </tr></thead>
+                <tbody id="tTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <pre id="tOut" class="dba-output">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد. ابدأ بـ «تحليل + معاينة».{% else %}No action yet. Start with Parse + Preview.{% endif %}</pre>
+        </div>
+
+        <!-- ══ PANEL: Legacy Import ══════════════════════════ -->
+        <div class="dba-panel" id="panel-legacy">
+          <div class="dba-panel-header">
+            <div class="dba-panel-icon icon-warning">🔄</div>
+            <div>
+              <div class="dba-panel-title">{% if LANGUAGE_CODE == 'ar' %}الاستيراد القديم{% else %}Legacy Exact Import{% endif %}</div>
+              <div class="dba-panel-subtitle">{% if LANGUAGE_CODE == 'ar' %}يعكس منطق <code>department_loader.py</code> القديم: INSERT OR REPLACE للمتطلبات، INSERT بدون إزالة التكرار للمكوّنات السابقة.{% else %}Mirrors old <code>department_loader.py</code>: INSERT OR REPLACE for requirements, INSERT without deduplication for prerequisites. May create duplicate rows.{% endif %}</div>
+            </div>
+          </div>
+
+          <div class="dba-section">
+            <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}مسارات ملفات CSV (اختيارية){% else %}CSV file paths (optional){% endif %}</div>
+            <div class="row g-2 align-items-end">
+              <div class="col-md-5">
+                <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}مسار CSV المتطلبات{% else %}Requirements CSV path{% endif %}</label>
+                <input id="lReqPath" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}الافتراضي: import_old/data/department_courses.csv{% else %}default: import_old/data/department_courses.csv{% endif %}">
+              </div>
+              <div class="col-md-5">
+                <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}مسار CSV المكوّنات السابقة{% else %}Prerequisites CSV path{% endif %}</label>
+                <input id="lPrePath" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}الافتراضي: import_old/data/department_prerequisites.csv{% else %}default: import_old/data/department_prerequisites.csv{% endif %}">
+              </div>
+              <div class="col-md-2 d-grid">
+                <button id="lImport" class="btn btn-warning">{% if LANGUAGE_CODE == 'ar' %}تشغيل الاستيراد القديم{% else %}Run legacy import{% endif %}</button>
+              </div>
+            </div>
+          </div>
+
+          <pre id="lOut" class="dba-output">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد.{% else %}No action yet.{% endif %}</pre>
+        </div>
+
+        <!-- ══ PANEL: Backup & Integrity ═════════════════════ -->
+        <div class="dba-panel" id="panel-maintenance">
+          <div class="dba-panel-header">
+            <div class="dba-panel-icon icon-system">🔒</div>
+            <div>
+              <div class="dba-panel-title">{% if LANGUAGE_CODE == 'ar' %}النسخ الاحتياطي والتحقق{% else %}Backup & Integrity{% endif %}</div>
+              <div class="dba-panel-subtitle">{% if LANGUAGE_CODE == 'ar' %}إنشاء لقطة احتياطية للقاعدة أو تشغيل تقرير التحقق من التكامل.{% else %}Create a database snapshot backup or run a full integrity verification report.{% endif %}</div>
+            </div>
+          </div>
+
+          <div class="row g-3">
+            <div class="col-md-6">
+              <div class="dba-section h-100">
+                <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}النسخ الاحتياطي{% else %}Backup{% endif %}</div>
+                <p class="small text-secondary mb-3">{% if LANGUAGE_CODE == 'ar' %}ينشئ نسخة احتياطية بطابع زمني لقاعدة البيانات الحالية.{% else %}Creates a timestamped copy of the current database file.{% endif %}</p>
+                <button id="bSnapshot" class="btn btn-outline-dark w-100">{% if LANGUAGE_CODE == 'ar' %}إنشاء لقطة قاعدة البيانات{% else %}Create DB snapshot{% endif %}</button>
+              </div>
+            </div>
+            <div class="col-md-6">
+              <div class="dba-section h-100">
+                <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}التحقق من التكامل{% else %}Integrity{% endif %}</div>
+                <p class="small text-secondary mb-3">{% if LANGUAGE_CODE == 'ar' %}يتحقق من الأعداد والعلاقات عبر الجداول الرئيسية.{% else %}Checks counts and relationships across all key tables.{% endif %}</p>
+                <button id="bIntegrity" class="btn btn-outline-primary w-100">{% if LANGUAGE_CODE == 'ar' %}تشغيل تقرير التحقق{% else %}Run integrity report{% endif %}</button>
+              </div>
+            </div>
+          </div>
+
+          <pre id="bOut" class="dba-output">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد.{% else %}No action yet.{% endif %}</pre>
+        </div>
+
+      </div><!-- /.dba-work -->
+    </div><!-- /.dba-shell -->
+  </main>
+</div>
+
+<script>
+/* ── Modal dialog engine ── */
+const dlg = (() => {
+  const ICONS = { danger:'🗑️', warning:'⚠️', info:'ℹ️', success:'✅' };
+  function build(opts) {
+    const kind = opts.kind || 'danger';
+    const backdrop = document.createElement('div');
+    backdrop.className = 'dlg-backdrop';
+    backdrop.innerHTML = `
+      <div class="dlg-box" role="dialog" aria-modal="true">
+        <div class="dlg-header">
+          <div class="dlg-icon dlg-icon-${kind}">${ICONS[kind]||'⚠️'}</div>
+          <div><div class="dlg-title">${opts.title||'Confirm'}</div></div>
+        </div>
+        <div class="dlg-body">${opts.body||''}</div>
+        ${opts.typed ? `<div class="dlg-input-row">
+          <label>Type <code>${opts.typed}</code> to confirm</label>
+          <input type="text" class="dlg-confirm-input dlg-input-danger"
+            placeholder="" autocomplete="off" spellcheck="false">
+        </div>` : ''}
+        <div class="dlg-footer">
+          <button class="btn-cancel">${opts.cancelText||'Cancel'}</button>
+          <button class="btn-confirm ${kind}" ${opts.typed?'disabled':''}>${opts.confirmText||'Confirm'}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(backdrop);
+    setTimeout(()=>{ const i=backdrop.querySelector('.dlg-confirm-input'); if(i)i.focus(); else backdrop.querySelector('.btn-confirm').focus(); },50);
+    return backdrop;
+  }
+  function confirm(opts={}) {
+    return new Promise(resolve => {
+      const el=build(opts);
+      const confirmBtn=el.querySelector('.btn-confirm');
+      const cancelBtn=el.querySelector('.btn-cancel');
+      const input=el.querySelector('.dlg-confirm-input');
+      function close(r){ el.querySelector('.dlg-box').style.animation='dlg-slide-up 0.15s ease reverse'; setTimeout(()=>{el.remove();resolve(r);},140); }
+      if(input&&opts.typed){ input.addEventListener('input',()=>{ confirmBtn.disabled=input.value.trim()!==opts.typed; }); input.addEventListener('keydown',e=>{ if(e.key==='Enter'&&!confirmBtn.disabled)close(true); }); }
+      confirmBtn.addEventListener('click',()=>close(true));
+      cancelBtn.addEventListener('click',()=>close(false));
+      el.addEventListener('click',e=>{if(e.target===el)close(false);});
+      document.addEventListener('keydown',function esc(e){if(e.key==='Escape'){document.removeEventListener('keydown',esc);close(false);}});
+    });
+  }
+  return { confirm };
+})();
+
+const q = (id) => document.getElementById(id);
+const IS_AR = '{{ LANGUAGE_CODE }}' === 'ar';
+const T = {
+  runPreviewFirst: IS_AR ? 'يرجى تشغيل تحليل + معاينة أولاً.' : 'Please run Parse + Preview first.',
+  requestFailed:  IS_AR ? 'فشل الطلب' : 'Request failed',
+};
+
+/* ── Nav switching ── */
+const navItems = document.querySelectorAll('.dba-nav-item[data-panel]');
+const panels   = document.querySelectorAll('.dba-panel');
+
+navItems.forEach(item => {
+  item.addEventListener('click', () => {
+    const target = item.dataset.panel;
+    navItems.forEach(n => n.classList.remove('active'));
+    panels.forEach(p => p.classList.remove('active'));
+    item.classList.add('active');
+    const panel = document.getElementById('panel-' + target);
+    if (panel) panel.classList.add('active');
+  });
+});
+
+/* ── Helpers ── */
+const pretty = (data) => JSON.stringify(data, null, 2);
+
+function writeOut(id, data) {
+  const el = q(id);
+  if (!el) return;
+  el.textContent = pretty(data);
+  el.classList.remove('has-error', 'has-success');
+  if (data && data.error)   el.classList.add('has-error');
+  if (data && data.message && !data.error) el.classList.add('has-success');
+}
+
+function getCsrfToken() {
+  const name = 'csrftoken=';
+  for (const part of document.cookie.split(';')) {
+    const t = part.trim();
+    if (t.startsWith(name)) return decodeURIComponent(t.slice(name.length));
+  }
+  return '';
+}
+
+async function callJson(url, options = {}, outId = null, btn = null) {
+  if (btn) { btn.disabled = true; btn._prevText = btn.textContent; btn.textContent = IS_AR ? 'جارٍ التحميل...' : 'Loading...'; }
+  const method = (options.method || 'GET').toUpperCase();
+  if (['POST','PUT','PATCH','DELETE'].includes(method)) {
+    options.headers = Object.assign({ 'X-CSRFToken': getCsrfToken() }, options.headers || {});
+  }
+  try {
+    const r = await fetch(url, options);
+    let data;
+    const ct = r.headers.get('content-type') || '';
+    if (ct.includes('application/json') || ct.includes('text/json')) {
+      data = await r.json();
+    } else {
+      const body = await r.text();
+      const snippet = body.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0,300);
+      data = { error: `HTTP ${r.status} ${r.statusText}${snippet ? ': ' + snippet : ''}` };
+    }
+    if (outId) writeOut(outId, data);
+    return data;
+  } catch (err) {
+    const data = { error: T.requestFailed, details: String(err || '') };
+    if (outId) writeOut(outId, data);
+    return data;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = btn._prevText || btn.textContent; }
+  }
+}
+
+let termPreviewReady = false;
+
+/* ── Section: Delete students ── */
+q('sPreview').onclick = async () => {
+  const u = `/ops/db/preview-delete-students/?program=${encodeURIComponent(q('sProgram').value)}&section=${encodeURIComponent(q('sSection').value)}`;
+  await callJson(u, {}, 'sOut', q('sPreview'));
+};
+
+q('sDelete').onclick = async () => {
+  const okS = await dlg.confirm({
+    title: IS_AR ? 'حذف الطلاب؟' : 'Delete students?',
+    body: IS_AR
+      ? '<p>سيحذف هذا جميع الطلاب المطابقين وسجلات <code>student_courses</code>.</p>'
+      : '<p>This will permanently delete all matching students and their <code>student_courses</code> records.</p>',
+    typed: 'DELETE',
+    confirmText: IS_AR ? 'حذف نهائي' : 'Delete permanently',
+    kind: 'danger',
+  });
+  if (!okS) return;
+  await callJson('/ops/db/delete-students/', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ program: q('sProgram').value, section: q('sSection').value, confirm: 'DELETE' })
+  }, 'sOut', q('sDelete'));
+};
+
+/* ── Section: Delete catalog ── */
+q('pPreview').onclick = async () => {
+  const u = `/ops/db/preview-delete-program-catalog/?program=${encodeURIComponent(q('pProgram').value)}`;
+  await callJson(u, {}, 'pOut', q('pPreview'));
+};
+
+q('pDelete').onclick = async () => {
+  const prog = (q('pProgram').value || '').trim().toUpperCase();
+  const okP = await dlg.confirm({
+    title: IS_AR ? `حذف كتالوج ${prog}؟` : `Delete program catalog?`,
+    body: IS_AR
+      ? `<p>سيحذف هذا كتالوج البرنامج بالكامل لـ <strong>${prog}</strong>. لا يمكن التراجع عن هذا.</p>`
+      : `<p>This will permanently delete all requirements and prerequisites for <strong>${prog}</strong>.</p><p>This cannot be undone.</p>`,
+    typed: `DELETE ${prog}`,
+    confirmText: IS_AR ? 'حذف الكتالوج' : 'Delete catalog',
+    kind: 'danger',
+  });
+  if (!okP) return;
+  await callJson('/ops/db/delete-program-catalog/', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ program: q('pProgram').value, confirm: 'DELETE' })
+  }, 'pOut', q('pDelete'));
+};
+
+/* ── Section: Import program plan ── */
+q('iImport').onclick = async () => {
+  await callJson('/ops/db/import-program-plan/', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ program: q('iProgram').value, csv_text: q('iCsv').value, replace_existing: q('iReplace').checked })
+  }, 'iOut', q('iImport'));
+};
+
+/* ── Section: Term sections ── */
+function setTermStep(step) {
+  ['tStep1','tStep2','tStep3'].forEach((id, i) => {
+    const el = q(id);
+    if (!el) return;
+    el.classList.remove('active','done');
+    if (i + 1 < step)     el.classList.add('done');
+    else if (i + 1 === step) el.classList.add('active');
+  });
+}
+
+q('tPreview').onclick = async () => {
+  setTermStep(2);
+  const data = await callJson('/ops/db/preview-term-sections/', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      csv_path:     q('tCsvPath').value,
+      academic_year: q('tYear').value,
+      term:          q('tTerm').value,
+      is_department: q('tDept').checked
+    })
+  }, 'tOut', q('tPreview'));
+
+  const body = q('tTableBody');
+  body.innerHTML = '';
+  if (!data.error && Array.isArray(data.preview_rows)) {
+    for (const row of data.preview_rows) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td>${row.course_code||''}</td><td>${row.course_number||''}</td><td>${row.section||''}</td><td>${row.day||''}</td><td>${row.start_time||''}</td><td>${row.end_time||''}</td><td>${row.room||''}</td><td>${row.instructor||''}</td><td><span class="badge text-bg-secondary">${row.source_tag||''}</span></td>`;
+      body.appendChild(tr);
+    }
+    q('tTableWrap').classList.remove('d-none');
+    termPreviewReady = true;
+    q('tImport').disabled = false;
+    setTermStep(3);
+  } else {
+    q('tTableWrap').classList.add('d-none');
+    termPreviewReady = false;
+    q('tImport').disabled = true;
+    setTermStep(1);
+  }
+};
+
+q('tImport').onclick = async () => {
+  if (!termPreviewReady) { alert(T.runPreviewFirst); return; }
+  const ok = await dlg.confirm({
+    title: IS_AR ? 'إدراج الصفوف المصفّاة؟' : 'Insert normalised rows?',
+    body: IS_AR
+      ? '<p>سيُدرج هذا جميع الصفوف المعروضة في المعاينة في قاعدة البيانات.</p>'
+      : '<p>This will insert all rows shown in the preview into the database.</p>',
+    confirmText: IS_AR ? 'إدراج الكل' : 'Insert all',
+    kind: 'info',
+  });
+  if (!ok) return;
+  await callJson('/ops/db/import-term-sections/', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      csv_path:         q('tCsvPath').value,
+      academic_year:    q('tYear').value,
+      term:             q('tTerm').value,
+      is_department:    q('tDept').checked,
+      truncate_existing: q('tTruncate').checked
+    })
+  }, 'tOut', q('tImport'));
+};
+
+/* ── Section: Legacy import ── */
+q('lImport').onclick = async () => {
+  const ok = await dlg.confirm({
+    title: IS_AR ? 'تشغيل الاستيراد القديم؟' : 'Run legacy exact import?',
+    body: IS_AR
+      ? '<p>يعكس هذا المنطق القديم وقد يُدخل صفوف مكوّنات سابقة مكررة.</p>'
+      : '<p>This mirrors the old loader logic and <strong>may insert duplicate prerequisite rows</strong>.</p><p>Run a preview first if unsure.</p>',
+    confirmText: IS_AR ? 'تشغيل الاستيراد' : 'Run import',
+    kind: 'warning',
+  });
+  if (!ok) return;
+  await callJson('/ops/db/import-legacy-exact/', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ requirements_csv_path: q('lReqPath').value, prerequisites_csv_path: q('lPrePath').value })
+  }, 'lOut', q('lImport'));
+};
+
+/* ── Section: Maintenance ── */
+q('bSnapshot').onclick = async () => {
+  await callJson('/ops/db/backup-snapshot/', { method:'POST' }, 'bOut', q('bSnapshot'));
+};
+q('bIntegrity').onclick = async () => {
+  await callJson('/ops/db/integrity-report/', {}, 'bOut', q('bIntegrity'));
+};
+</script>
+
+<script id="shared-ux-js">
+(function() {
+  const bar = document.createElement('div');
+  bar.id = 'ux-loading-bar';
+  document.body.prepend(bar);
+  const LOADING = ['loading...','running...','parsing...','inserting...','saving...','جارٍ'];
+  function applyLoading(btn) {
+    if (!btn || btn.classList.contains('btn-close')) return;
+    const txt = (btn.textContent || '').trim().toLowerCase();
+    if (btn.disabled && LOADING.some(t => txt.startsWith(t))) btn.classList.add('ux-loading');
+    else btn.classList.remove('ux-loading');
+  }
+  const obs = new MutationObserver(() => {
+    document.querySelectorAll('main button').forEach(applyLoading);
+    bar.classList.toggle('active', !!document.querySelector('main .ux-loading'));
+  });
+  const main = document.querySelector('main');
+  if (main) obs.observe(main, { attributes:true, attributeFilter:['disabled'], subtree:true, childList:true, characterData:true });
+})();
+</script>
+
+</body>
+</html>

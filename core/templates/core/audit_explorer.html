@@ -1,0 +1,211 @@
+{% load i18n static %}{% get_current_language as LANGUAGE_CODE %}
+<!doctype html>
+<html lang="{{ LANGUAGE_CODE }}" dir="{% if LANGUAGE_CODE == 'ar' %}rtl{% else %}ltr{% endif %}">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% trans "Audit Explorer" %}</title>
+  <link rel="icon" href="data:,">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="{% static 'css/global.css' %}" rel="stylesheet">
+  
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Kufi+Arabic:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* Page-specific: audit table overrides */
+    .audit-table { border-collapse: collapse; width: 100%; font-size: 12px; }
+    .audit-table th, .audit-table td { border: 1px solid #ddd; padding: 6px; vertical-align: top; }
+    .audit-table th { background: #f3f3f3; }
+    .ok  { color: #0b8a32; font-weight: 700; }
+    .bad { color: #b00020; font-weight: 700; }
+    .audit-filter-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    .audit-filter-row input,
+    .audit-filter-row select { padding: 6px; }
+  </style>
+
+<style id="shared-ux-css">
+/* ── Shared UX additions ─────────────────────────────────────────── */
+
+/* Page header (sticky context bar) */
+.page-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.55rem 1.5rem;
+  margin: -1.5rem -1.5rem 1rem -1.5rem;
+  background: rgba(238,241,247,0.96);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line, #dde3ed);
+  box-shadow: 0 1px 8px rgba(0,0,0,0.06);
+}
+
+/* planner uses p-3 not p-4 */
+main.p-3 .page-header {
+  padding: 0.5rem 1rem;
+  margin: -1rem -1rem 1rem -1rem;
+}
+
+.page-header-left { display: flex; flex-direction: column; gap: 0.2rem; }
+.page-header-module { font-weight: 700; font-size: 0.98rem; color: var(--ink, #0d1526); letter-spacing: -0.01em; }
+.page-header-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
+.page-header-right { flex-shrink: 0; display: flex; align-items: center; gap: 0.5rem; }
+
+.ph-chip {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.ph-chip-page   { background: #dbeafe; color: #1558d6; border: 1px solid #bfdbfe; }
+.ph-chip-status { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+.ph-chip-warn   { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+.ph-chip-danger { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+.ph-chip-gray   { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
+
+/* Loading bar */
+#ux-loading-bar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  z-index: 9999;
+  background: linear-gradient(90deg,
+    transparent 0%, #1d6ef5 30%, #388bfd 70%, transparent 100%);
+  background-size: 200% 100%;
+  animation: ux-loading-sweep 1.2s linear infinite;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+#ux-loading-bar.active { opacity: 1; }
+
+@keyframes ux-loading-sweep {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.ux-loading {
+  position: relative !important;
+  padding-inline-start: 2rem !important;
+}
+
+.ux-loading::before {
+  content: '';
+  position: absolute;
+  inset-inline-start: 0.6rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 12px; height: 12px;
+  border: 2px solid rgba(255,255,255,0.35);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: ux-spin 0.7s linear infinite;
+}
+
+.ux-loading.btn-outline-secondary::before,
+.ux-loading.btn-outline-dark::before,
+.ux-loading.btn-outline-primary::before {
+  border-color: rgba(0,0,0,0.18);
+  border-top-color: currentColor;
+}
+
+@keyframes ux-spin { to { transform: translateY(-50%) rotate(360deg); } }
+
+/* Empty states */
+.empty-state {
+  text-align: center;
+  padding: 2rem 1.5rem;
+  color: #94a3b8;
+}
+
+.empty-icon { display: block; font-size: 2rem; margin-bottom: 0.5rem; opacity: 0.6; }
+.empty-title { font-weight: 600; font-size: 0.9rem; color: #64748b; margin-bottom: 0.3rem; }
+.empty-hint  { font-size: 0.78rem; color: #94a3b8; line-height: 1.5; }
+.empty-hint strong { color: #1d6ef5; }
+
+/* Remove table-striped odd-row override for all pages */
+.table-striped > tbody > tr:nth-of-type(odd) > * { --bs-table-accent-bg: transparent; }
+</style>
+
+</head>
+<body>
+<div class="d-flex shell">
+  {% include 'core/partials/sidebar.html' %}
+  <main class="flex-grow-1 p-4">
+    <div class="page-header">
+      <div class="page-header-left">
+        <div class="page-header-module">{% if LANGUAGE_CODE == 'ar' %}مستكشف التدقيق{% else %}Audit Explorer{% endif %}</div>
+        <div class="page-header-chips">
+          <span class="ph-chip ph-chip-page">Super Admin</span>
+          {% if chain.ok %}
+          <span class="ph-chip ph-chip-status">{% trans "Hash chain: OK" %} · {{ chain.checked }} {% trans "records" %}</span>
+          {% else %}
+          <span class="ph-chip ph-chip-danger">{% trans "Hash chain: FAILED" %} · {{ chain.checked }} {% trans "records" %}</span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="card soft-card p-4">
+
+  <form method="get" class="audit-filter-row">
+    <input name="action" placeholder="{% trans 'Action' %}" value="{{ filters.action }}" />
+    <input name="user" placeholder="{% trans 'User' %}" value="{{ filters.user }}" />
+    <select name="status">
+      <option value="" {% if not filters.status %}selected{% endif %}>{% trans "All statuses" %}</option>
+      <option value="success" {% if filters.status == 'success' %}selected{% endif %}>{% trans "Success" %}</option>
+      <option value="error" {% if filters.status == 'error' %}selected{% endif %}>{% trans "Error" %}</option>
+      <option value="allow" {% if filters.status == 'allow' %}selected{% endif %}>{% trans "Allow" %}</option>
+      <option value="deny" {% if filters.status == 'deny' %}selected{% endif %}>{% trans "Deny" %}</option>
+      <option value="critical" {% if filters.status == 'critical' %}selected{% endif %}>{% trans "Critical" %}</option>
+    </select>
+    <input name="from" placeholder="{% trans 'From (ISO UTC)' %}" value="{{ filters.from }}" />
+    <input name="to" placeholder="{% trans 'To (ISO UTC)' %}" value="{{ filters.to }}" />
+    <input name="limit" type="number" min="1" max="5000" value="{{ filters.limit }}" placeholder="{% trans 'Limit' %}" title="{% trans 'Maximum number of rows' %}" />
+    <button type="submit">{% trans "Apply filters" %}</button>
+    <a href="/ops/audit/export.csv?action={{ filters.action|urlencode }}&user={{ filters.user|urlencode }}&status={{ filters.status|urlencode }}&from={{ filters.from|urlencode }}&to={{ filters.to|urlencode }}&limit={{ filters.limit }}">{% trans "Export CSV" %}</a>
+  </form>
+
+  <table class="audit-table">
+    <thead>
+      <tr>
+        <th>{% trans "ID" %}</th><th>{% trans "Time (UTC)" %}</th><th>{% trans "User" %}</th><th>{% trans "Role" %}</th><th>{% trans "Action" %}</th><th>{% trans "Status" %}</th><th>{% trans "Reason" %}</th><th>{% trans "Endpoint" %}</th><th>{% trans "Error" %}</th><th>{% trans "Hash" %}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>{{ row.id }}</td>
+        <td>{{ row.ts_utc }}</td>
+        <td>{{ row.actor_username }}</td>
+        <td>{{ row.actor_role }}</td>
+        <td>{{ row.action }}</td>
+        <td>{{ row.status }}</td>
+        <td>{{ row.details.reason_code|default:'' }}</td>
+        <td>{{ row.endpoint }} {{ row.method }}</td>
+        <td>{{ row.error_text }}</td>
+        <td><code>{{ row.entry_hash|slice:":12" }}</code></td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="10">
+        <div class="empty-state" style="padding:1.5rem;">
+          <span class="empty-icon">🔍</span>
+          <div class="empty-title">{% trans "No audit records found" %}</div>
+          <div class="empty-hint">{% trans "Try adjusting your filters above" %}</div>
+        </div>
+      </td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+    </div>
+  </main>
+</div>
+<script>/* No async JS on this page */</script>
+</body>
+</html>

@@ -1,0 +1,40 @@
+{
+  "pid": 123260,
+  "started_at": "2026-02-22 22:28:28",
+  "stopped_at": null,
+  "last_action": "started",
+  "params": {
+    "concurrency": 2,
+    "students_csv": "C:\\Users\\user\\myUniproject\\import_old\\data\\students_list.csv"
+  },
+  "history": [
+    {
+      "event": "started",
+      "at": "2026-02-21 05:18:04",
+      "pid": 40480,
+      "concurrency": 4,
+      "students_csv": "C:\\Users\\user\\myUniproject\\import_old\\data\\students_list.csv"
+    },
+    {
+      "event": "started",
+      "at": "2026-02-22 22:21:30",
+      "pid": 145072,
+      "concurrency": 6,
+      "students_csv": "C:\\Users\\user\\myUniproject\\import_old\\data\\students_list.csv"
+    },
+    {
+      "event": "started",
+      "at": "2026-02-22 22:22:59",
+      "pid": 149184,
+      "concurrency": 6,
+      "students_csv": "C:\\Users\\user\\myUniproject\\import_old\\data\\students_list.csv"
+    },
+    {
+      "event": "started",
+      "at": "2026-02-22 22:28:28",
+      "pid": 123260,
+      "concurrency": 2,
+      "students_csv": "C:\\Users\\user\\myUniproject\\import_old\\data\\students_list.csv"
+    }
+  ]
+}

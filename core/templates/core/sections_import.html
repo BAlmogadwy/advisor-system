@@ -1,0 +1,373 @@
+{% load i18n static %}{% get_current_language as LANGUAGE_CODE %}
+<!doctype html>
+<html lang="{{ LANGUAGE_CODE }}" dir="{% if LANGUAGE_CODE == 'ar' %}rtl{% else %}ltr{% endif %}">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% trans "Sections Import (Oracle HTML)" %}</title>
+  <link rel="icon" href="data:,">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="{% static 'css/global.css' %}" rel="stylesheet">
+  
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Kufi+Arabic:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* Page-specific: KPI summary tiles */
+    .kpi { border: 1px solid #e2e8f0; border-radius: .7rem; padding: .6rem; background: #fff; }
+    .kpi .k { font-size: .75rem; color: #64748b; text-transform: uppercase; }
+    .kpi .v { font-weight: 700; }
+  </style>
+
+<style id="shared-ux-css">
+/* ── Shared UX additions ─────────────────────────────────────────── */
+
+/* Page header (sticky context bar) */
+.page-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.55rem 1.5rem;
+  margin: -1.5rem -1.5rem 1rem -1.5rem;
+  background: rgba(238,241,247,0.96);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line, #dde3ed);
+  box-shadow: 0 1px 8px rgba(0,0,0,0.06);
+}
+
+/* planner uses p-3 not p-4 */
+main.p-3 .page-header {
+  padding: 0.5rem 1rem;
+  margin: -1rem -1rem 1rem -1rem;
+}
+
+.page-header-left { display: flex; flex-direction: column; gap: 0.2rem; }
+.page-header-module { font-weight: 700; font-size: 0.98rem; color: var(--ink, #0d1526); letter-spacing: -0.01em; }
+.page-header-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
+.page-header-right { flex-shrink: 0; display: flex; align-items: center; gap: 0.5rem; }
+
+.ph-chip {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.ph-chip-page   { background: #dbeafe; color: #1558d6; border: 1px solid #bfdbfe; }
+.ph-chip-status { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+.ph-chip-warn   { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+.ph-chip-danger { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+.ph-chip-gray   { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
+
+/* Loading bar */
+#ux-loading-bar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  z-index: 9999;
+  background: linear-gradient(90deg,
+    transparent 0%, #1d6ef5 30%, #388bfd 70%, transparent 100%);
+  background-size: 200% 100%;
+  animation: ux-loading-sweep 1.2s linear infinite;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+#ux-loading-bar.active { opacity: 1; }
+
+@keyframes ux-loading-sweep {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.ux-loading {
+  position: relative !important;
+  padding-inline-start: 2rem !important;
+}
+
+.ux-loading::before {
+  content: '';
+  position: absolute;
+  inset-inline-start: 0.6rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 12px; height: 12px;
+  border: 2px solid rgba(255,255,255,0.35);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: ux-spin 0.7s linear infinite;
+}
+
+.ux-loading.btn-outline-secondary::before,
+.ux-loading.btn-outline-dark::before,
+.ux-loading.btn-outline-primary::before {
+  border-color: rgba(0,0,0,0.18);
+  border-top-color: currentColor;
+}
+
+@keyframes ux-spin { to { transform: translateY(-50%) rotate(360deg); } }
+
+/* Empty states */
+.empty-state {
+  text-align: center;
+  padding: 2rem 1.5rem;
+  color: #94a3b8;
+}
+
+.empty-icon { display: block; font-size: 2rem; margin-bottom: 0.5rem; opacity: 0.6; }
+.empty-title { font-weight: 600; font-size: 0.9rem; color: #64748b; margin-bottom: 0.3rem; }
+.empty-hint  { font-size: 0.78rem; color: #94a3b8; line-height: 1.5; }
+.empty-hint strong { color: #1d6ef5; }
+
+/* Remove table-striped odd-row override for all pages */
+.table-striped > tbody > tr:nth-of-type(odd) > * { --bs-table-accent-bg: transparent; }
+</style>
+
+</head>
+<body>
+<div class="d-flex shell">
+  {% include 'core/partials/sidebar.html' %}
+  <main class="flex-grow-1 p-4">
+    <div class="page-header">
+      <div class="page-header-left">
+        <div class="page-header-module">{% if LANGUAGE_CODE == 'ar' %}استيراد الشعب{% else %}Sections Import{% endif %}</div>
+        <div class="page-header-chips">
+          <span class="ph-chip ph-chip-page">SUPER_ADMIN</span>
+          <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}تحليل → مراجعة → تأكيد{% else %}Parse → Review → Insert{% endif %}</span>
+        </div>
+      </div>
+    </div>
+<div class="container py-0">
+
+  <div class="card soft-card p-4 mb-3">
+    <div class="row g-2 align-items-end">
+      <div class="col-md-4"><label class="form-label">{% trans "Oracle HTML file" %}</label><input id="oracleFile" type="file" class="form-control" accept=".html,.htm,.txt"></div>
+      <div class="col-md-3 form-check ms-3"><input id="dept" type="checkbox" class="form-check-input"><label class="form-check-label" for="dept">{% trans "Is department courses?" %}</label></div>
+      <div class="col-md-3 form-check"><input id="truncate" type="checkbox" class="form-check-input" checked><label class="form-check-label" for="truncate">{% trans "Replace all existing sections" %}</label></div>
+    </div>
+    <div class="mt-3 d-flex gap-2">
+      <button id="parseBtn" class="btn btn-outline-primary">{% trans "Parse + Preview" %}</button>
+      <button id="insertBtn" class="btn btn-success" disabled>{% trans "Insert all" %}</button>
+      <button id="toggleTech" class="btn btn-outline-secondary">{% trans "Show technical details" %}</button>
+    </div>
+    <small class="text-secondary">{% trans "Tag rule: checked = department, unchecked = other" %}</small>
+    <div id="status" class="alert alert-info mt-2 py-2 mb-0">{% trans "Ready." %}</div>
+    <div id="techWrap" class="d-none"><pre id="out" class="mt-2 p-2 bg-light border rounded small">{% trans "No action yet." %}</pre></div>
+  </div>
+
+  <div class="card soft-card p-4 mb-3">
+    <h6 class="mb-2">{% trans "Preview summary" %}</h6>
+    <div class="row g-2">
+      <div class="col-md-3"><div class="kpi"><div class="k">{% trans "Raw rows" %}</div><div class="v" id="kRaw">0</div></div></div>
+      <div class="col-md-3"><div class="kpi"><div class="k">{% trans "Deduped rows" %}</div><div class="v" id="kDedup">0</div></div></div>
+      <div class="col-md-3"><div class="kpi"><div class="k">{% trans "Duplicates removed" %}</div><div class="v" id="kDup">0</div></div></div>
+      <div class="col-md-3"><div class="kpi"><div class="k">{% trans "Sections count" %}</div><div class="v" id="kSec">0</div></div></div>
+    </div>
+  </div>
+
+  <div class="card soft-card p-4">
+    <div class="row g-2 mb-2">
+      <div class="col-md-4"><input id="fCode" class="form-control form-control-sm" placeholder="{% trans "Filter by code" %}"></div>
+      <div class="col-md-4"><input id="fSection" class="form-control form-control-sm" placeholder="{% trans "Filter by section" %}"></div>
+      <div class="col-md-4"><input id="fDay" class="form-control form-control-sm" placeholder="{% trans "Filter by day (SUN/MON/...)" %}"></div>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead><tr><th>{% trans "Code" %}</th><th>{% trans "No." %}</th><th>{% trans "Course name" %}</th><th>{% trans "Section" %}</th><th>{% trans "Day" %}</th><th>{% trans "Start" %}</th><th>{% trans "End" %}</th><th>{% trans "Capacity" %}</th><th>{% trans "Registered" %}</th><th>{% trans "Room" %}</th><th>{% trans "Instructor" %}</th><th>{% trans "Tag" %}</th></tr></thead>
+        <tbody id="tbody">
+          <tr><td colspan="12"><div class="empty-state"><span class="empty-icon">📄</span><div class="empty-title">{% if LANGUAGE_CODE == 'ar' %}لا توجد بيانات بعد{% else %}No data yet{% endif %}</div><div class="empty-hint">{% if LANGUAGE_CODE == 'ar' %}اختر ملف Oracle HTML وانقر <strong>تحليل + معاينة</strong>{% else %}Select an Oracle HTML file and click <strong>Parse + Preview</strong>{% endif %}</div></div></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const q = id => document.getElementById(id);
+const IS_AR = '{{ LANGUAGE_CODE }}' === 'ar';
+const T = {
+  noAction: IS_AR ? 'لا يوجد إجراء بعد.' : 'No action yet.',
+  requestFailed: IS_AR ? 'فشل الطلب' : 'Request failed',
+  chooseFileFirst: IS_AR ? 'اختر ملف Oracle HTML أولاً.' : 'Choose Oracle HTML file first.',
+  parsingFile: IS_AR ? 'جارٍ تحليل الملف...' : 'Parsing file...',
+  confirmInsertAll: IS_AR ? 'إدخال جميع الصفوف المحللة الآن؟' : 'Insert all parsed rows now?',
+  parseFailed: IS_AR ? 'فشل التحليل' : 'Parse failed',
+  previewReady: (shown,total)=> IS_AR ? `المعاينة جاهزة: ${shown} معروض، ${total} محلل.` : `Preview ready: ${shown} shown, ${total} parsed.`,
+  parsePreviewFirst: IS_AR ? 'قم بتشغيل تحليل + معاينة أولاً.' : 'Parse + Preview first.',
+  inserting: IS_AR ? 'جارٍ إدخال الشعب في قاعدة البيانات...' : 'Inserting sections into database...',
+  insertFailed: IS_AR ? 'فشل الإدخال' : 'Insert failed',
+  insertedOk: (mode,rows,meet,ds,dm)=> IS_AR ? `تم الإدخال بنجاح [${mode}]. الشعب: ${rows}، اللقاءات: ${meet}. المحذوف: شعب ${ds}، لقاءات ${dm}.` : `Inserted successfully [${mode}]. Sections: ${rows}, meetings: ${meet}. Deleted: sections ${ds}, meetings ${dm}.`,
+};
+let previewToken = null;
+let rowsAll = [];
+let currentTag = '';
+
+function getCsrfToken(){
+  const name='csrftoken=';
+  const parts=document.cookie.split(';').map(x=>x.trim());
+  for(const p of parts){ if(p.startsWith(name)) return decodeURIComponent(p.slice(name.length)); }
+  return '';
+}
+
+function setStatus(kind, text){
+  const el=q('status');
+  el.className=`alert mt-2 py-2 mb-0 alert-${kind}`;
+  el.textContent=text;
+}
+
+function rowKey(r){
+
+  return [r.course_code,r.course_number,r.section,r.day,r.start_time,r.end_time,r.room,r.instructor].map(x=>(x||'').trim().toUpperCase()).join('|');
+}
+
+function dedupeRows(rows){
+  const seen=new Set();
+  const out=[];
+  for(const r of rows){
+    const k=rowKey(r);
+    if(seen.has(k)) continue;
+    seen.add(k); out.push(r);
+  }
+  return out;
+}
+
+function updateSummary(rawRows, dedupRows){
+  q('kRaw').textContent = String(rawRows.length);
+  q('kDedup').textContent = String(dedupRows.length);
+  q('kDup').textContent = String(rawRows.length - dedupRows.length);
+  const secSet = new Set(dedupRows.map(r=>`${r.course_code||''}-${r.course_number||''}-${r.section||''}`));
+  q('kSec').textContent = String(secSet.size);
+}
+
+function filteredRows(rows){
+  const c=(q('fCode').value||'').trim().toUpperCase();
+  const s=(q('fSection').value||'').trim().toUpperCase();
+  const d=(q('fDay').value||'').trim().toUpperCase();
+  return rows.filter(r=>{
+    const okC = !c || String(r.course_code||'').toUpperCase().includes(c);
+    const okS = !s || String(r.section||'').toUpperCase().includes(s);
+    const okD = !d || String(r.day||'').toUpperCase().includes(d);
+    return okC && okS && okD;
+  });
+}
+
+function renderTable(rows){
+  const tb = q('tbody'); tb.innerHTML = '';
+  for (const row of rows) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${row.course_code||''}</td><td>${row.course_number||''}</td><td>${row.course_name||''}</td><td>${row.section||''}</td><td>${row.day||''}</td><td>${row.start_time||''}</td><td>${row.end_time||''}</td><td>${row.available_capacity||''}</td><td>${row.registered_count||''}</td><td>${row.room||''}</td><td>${row.instructor||''}</td><td><span class="badge text-bg-secondary">${currentTag||''}</span></td>`;
+    tb.appendChild(tr);
+  }
+}
+
+['fCode','fSection','fDay'].forEach(id=>q(id).addEventListener('input',()=>renderTable(filteredRows(rowsAll))));
+
+q('toggleTech').onclick = ()=> q('techWrap').classList.toggle('d-none');
+
+q('parseBtn').onclick = async () => {
+  const file = q('oracleFile').files[0];
+  if (!file) return alert(T.chooseFileFirst);
+  setStatus('info', T.parsingFile);
+  const fd = new FormData();
+  fd.append('oracle_file', file);
+  fd.append('is_department', q('dept').checked ? '1' : '0');
+
+  try {
+    const r = await fetch('/ops/sections-import/preview/', {
+      method:'POST', headers:{'X-CSRFToken': getCsrfToken()}, body:fd
+    });
+    const data = await r.json();
+    q('out').textContent = JSON.stringify(data, null, 2);
+
+    if (data.error || !Array.isArray(data.preview_rows)) {
+      rowsAll = [];
+      renderTable([]);
+      previewToken = null;
+      q('insertBtn').disabled = true;
+      setStatus('danger', data.error || T.parseFailed);
+      return;
+    }
+
+    const dedup = dedupeRows(data.preview_rows);
+    rowsAll = dedup;
+    currentTag = data.source_tag || '';
+    updateSummary(data.preview_rows, dedup);
+    renderTable(filteredRows(rowsAll));
+
+    previewToken = data.token;
+    q('insertBtn').disabled = false;
+    setStatus('success', T.previewReady(data.preview_count||0, data.total_rows||0));
+  } catch (err) {
+    q('out').textContent = JSON.stringify({ error: T.requestFailed, details: String(err || '') }, null, 2);
+    setStatus('danger', T.requestFailed);
+  }
+};
+
+q('insertBtn').onclick = async () => {
+  if (!previewToken) return alert(T.parsePreviewFirst);
+  if (!confirm(T.confirmInsertAll)) return;
+  setStatus('info', T.inserting);
+  try {
+    const r = await fetch('/ops/sections-import/insert/', {
+      method:'POST', headers:{'Content-Type':'application/json','X-CSRFToken': getCsrfToken()},
+      body: JSON.stringify({
+        token: previewToken,
+        is_department: q('dept').checked,
+        truncate_existing: q('truncate').checked
+      })
+    });
+    const data = await r.json();
+    q('out').textContent = JSON.stringify(data, null, 2);
+    if(data.error){
+      setStatus('danger', data.error || T.insertFailed);
+    }else{
+      const mode = data.truncate_existing ? 'REPLACE-ALL' : 'MERGE';
+      setStatus('success', T.insertedOk(mode, data.rows_total||0, data.meetings_total||0, data.deleted_sections||0, data.deleted_meetings||0));
+    }
+  } catch (err) {
+    q('out').textContent = JSON.stringify({ error: T.requestFailed, details: String(err || '') }, null, 2);
+    setStatus('danger', T.requestFailed);
+  }
+};
+</script>
+</div>
+  </main>
+</div>
+
+<script id="shared-ux-js">
+/* Shared UX: loading bar */
+(function() {
+  const bar = document.createElement('div');
+  bar.id = 'ux-loading-bar';
+  document.body.prepend(bar);
+
+  const LOADING = ['loading...', 'running...', 'parsing...', 'inserting...', 'saving...', 'loading', 'running'];
+
+  function applyLoading(btn) {
+    if (!btn || btn.classList.contains('btn-close')) return;
+    const txt = (btn.textContent || '').trim().toLowerCase();
+    if (btn.disabled && LOADING.some(t => txt.startsWith(t))) {
+      btn.classList.add('ux-loading');
+    } else {
+      btn.classList.remove('ux-loading');
+    }
+  }
+
+  const obs = new MutationObserver(() => {
+    document.querySelectorAll('main button').forEach(applyLoading);
+    bar.classList.toggle('active', !!document.querySelector('main .ux-loading'));
+  });
+
+  const main = document.querySelector('main');
+  if (main) obs.observe(main, { attributes: true, attributeFilter: ['disabled'], subtree: true, childList: true, characterData: true });
+})();
+</script>
+
+</body>
+</html>

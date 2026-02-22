@@ -1,0 +1,1244 @@
+{% load i18n static %}{% get_current_language as LANGUAGE_CODE %}
+<!doctype html>
+<html lang="{{ LANGUAGE_CODE }}" dir="{% if LANGUAGE_CODE == 'ar' %}rtl{% else %}ltr{% endif %}">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% trans "Student Timetable Builder" %}</title>
+  <link rel="icon" href="data:,">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="{% static 'css/global.css' %}" rel="stylesheet">
+  
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Kufi+Arabic:wght@400;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    /* Page-specific: planner layout & colour chips */
+    .sticky-head { position: sticky; top: 0; z-index: 40; background: var(--bg); padding-top: .5rem; }
+    .command-bar { border: 1px solid #dbe6f5; background: linear-gradient(180deg, #ffffff, #f6f9ff); }
+    .plan-chip { display: inline-block; padding: .1rem .45rem; border-radius: .45rem; font-size: .72rem; font-weight: 700; }
+    .plan-black  { background: #111827; color: #fff; }
+    .plan-red    { background: #dc2626; color: #fff; }
+    .plan-green  { background: #16a34a; color: #fff; }
+    .plan-prereq { background: #7c3aed; color: #fff; }
+    .col-stack { display: flex; flex-direction: column; gap: .75rem; }
+    .pane-title { font-weight: 700; margin-bottom: .35rem; }
+    .dock-card { position: sticky; bottom: .5rem; z-index: 30; border: 1px solid #dbe6f5; background: #fff; }
+    .table thead th { white-space: nowrap; }
+    .step-pill { display: inline-block; padding: .3rem .6rem; border-radius: 999px; font-size: .75rem; border: 1px solid #cbd5e1; background: #fff; color: #475569; }
+    .step-pill.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+
+    /* RTL polish: Bootstrap isn't RTL-native for checkboxes */
+    [dir="rtl"] .form-check { padding-right: 1.5em; padding-left: 0; }
+    [dir="rtl"] .form-check .form-check-input { float: right; margin-right: -1.5em; margin-left: .5em; }
+    [dir="rtl"] .ms-auto { margin-left: 0 !important; margin-right: auto !important; }
+
+    /* Mobile: stack columns and tighten command bar */
+    @media (max-width: 768px) {
+      .col-lg-5, .col-lg-7 { flex: 0 0 100%; max-width: 100%; }
+      .sticky-head { position: static; }          /* don't steal half the screen */
+      .command-bar { border-radius: 0; margin: 0 -1rem; padding: 0.75rem 1rem !important; }
+      /* Collapsible command bar controls on mobile */
+      .command-bar-controls { display: none; }
+      .command-bar-controls.expanded { display: block; }
+      .command-bar-toggle {
+        display: flex; align-items: center; justify-content: space-between;
+        font-size: 0.82rem; font-weight: 600; color: var(--muted, #64748b);
+        cursor: pointer; padding: 0.4rem 0; border: none; background: none; width: 100%;
+      }
+      .dock-card { position: static; }
+    }
+    @media (min-width: 769px) {
+      .command-bar-toggle { display: none; }
+      .command-bar-controls { display: block !important; }
+    }
+  </style>
+
+<style id="shared-ux-css">
+/* ── Shared UX additions ─────────────────────────────────────────── */
+
+/* Page header (sticky context bar) */
+.page-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.55rem 1.5rem;
+  margin: -1.5rem -1.5rem 1rem -1.5rem;
+  background: rgba(238,241,247,0.96);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line, #dde3ed);
+  box-shadow: 0 1px 8px rgba(0,0,0,0.06);
+}
+
+/* planner uses p-3 not p-4 */
+main.p-3 .page-header {
+  padding: 0.5rem 1rem;
+  margin: -1rem -1rem 1rem -1rem;
+}
+
+.page-header-left { display: flex; flex-direction: column; gap: 0.2rem; }
+.page-header-module { font-weight: 700; font-size: 0.98rem; color: var(--ink, #0d1526); letter-spacing: -0.01em; }
+.page-header-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
+.page-header-right { flex-shrink: 0; display: flex; align-items: center; gap: 0.5rem; }
+
+.ph-chip {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.ph-chip-page   { background: #dbeafe; color: #1558d6; border: 1px solid #bfdbfe; }
+.ph-chip-status { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+.ph-chip-warn   { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+.ph-chip-danger { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+.ph-chip-gray   { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
+
+/* Loading bar */
+#ux-loading-bar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  z-index: 9999;
+  background: linear-gradient(90deg,
+    transparent 0%, #1d6ef5 30%, #388bfd 70%, transparent 100%);
+  background-size: 200% 100%;
+  animation: ux-loading-sweep 1.2s linear infinite;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+#ux-loading-bar.active { opacity: 1; }
+
+@keyframes ux-loading-sweep {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.ux-loading {
+  position: relative !important;
+  padding-inline-start: 2rem !important;
+}
+
+.ux-loading::before {
+  content: '';
+  position: absolute;
+  inset-inline-start: 0.6rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 12px; height: 12px;
+  border: 2px solid rgba(255,255,255,0.35);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: ux-spin 0.7s linear infinite;
+}
+
+.ux-loading.btn-outline-secondary::before,
+.ux-loading.btn-outline-dark::before,
+.ux-loading.btn-outline-primary::before {
+  border-color: rgba(0,0,0,0.18);
+  border-top-color: currentColor;
+}
+
+@keyframes ux-spin { to { transform: translateY(-50%) rotate(360deg); } }
+
+/* Empty states */
+.empty-state {
+  text-align: center;
+  padding: 2rem 1.5rem;
+  color: #94a3b8;
+}
+
+.empty-icon { display: block; font-size: 2rem; margin-bottom: 0.5rem; opacity: 0.6; }
+.empty-title { font-weight: 600; font-size: 0.9rem; color: #64748b; margin-bottom: 0.3rem; }
+.empty-hint  { font-size: 0.78rem; color: #94a3b8; line-height: 1.5; }
+.empty-hint strong { color: #1d6ef5; }
+
+/* Remove table-striped odd-row override for all pages */
+.table-striped > tbody > tr:nth-of-type(odd) > * { --bs-table-accent-bg: transparent; }
+</style>
+
+</head>
+
+<body>
+<div class="d-flex shell">
+  {% include 'core/partials/sidebar.html' %}
+
+  <main class="flex-grow-1 p-3">
+    <div class="container-fluid p-0">
+
+      <div class="page-header">
+        <div class="page-header-left">
+          <div class="page-header-module">{% if LANGUAGE_CODE == 'ar' %}منشئ الجدول الدراسي{% else %}Student Timetable Builder{% endif %}</div>
+          <div class="page-header-chips">
+            <span class="ph-chip ph-chip-page">{% if LANGUAGE_CODE == 'ar' %}خطوات أ → د{% else %}Steps A → D{% endif %}</span>
+            <span class="ph-chip ph-chip-gray" id="plannerContextChip" style="display:none;"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="sticky-head">
+        <div class="card soft-card command-bar p-3 mb-3">
+          <div class="d-flex justify-content-between align-items-center">
+            <div class="fw-semibold small text-secondary">{% trans "Student Timetable Builder" %}</div>
+            <small id="fetchState" class="text-secondary">{% trans "Idle" %}</small>
+          </div>
+
+          <button class="command-bar-toggle" onclick="this.nextElementSibling.classList.toggle('expanded');this.querySelector('span').textContent=this.nextElementSibling.classList.contains('expanded')?'▲':'▼';" aria-label="Toggle filters">
+            <span style="font-size:0.7rem;">{% if LANGUAGE_CODE == 'ar' %}إعدادات الجلسة{% else %}Session settings{% endif %}</span>
+            <span>▼</span>
+          </button>
+          <div class="command-bar-controls">
+          <div id="statusBanner" class="alert alert-info py-2 mt-2 mb-0">
+            {% trans "Ready. Enter student context and click Fetch." %}
+          </div>
+
+          <div class="row g-2 mt-1 align-items-end">
+            <div class="col-md-2">
+              <label class="form-label">{% trans "Student ID" %}</label>
+              <input id="studentId" class="form-control">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">{% trans "Academic year" %}</label>
+              <input id="year" class="form-control" placeholder="1447">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">{% trans "Term" %}</label>
+              <input id="term" class="form-control" placeholder="1">
+            </div>
+            <div class="col-md-2">
+              <button id="fetchBtn" class="btn btn-primary w-100">{% trans "Fetch" %}</button>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">{% trans "Mode" %}</label>
+              <select id="mode" class="form-select">
+                <option value="keep">{% trans "Keep Registered" %}</option>
+                <option value="ignore">{% trans "Ignore Registered (planning only)" %}</option>
+              </select>
+            </div>
+            <div class="col-md-2 form-check">
+              <input id="swap" type="checkbox" class="form-check-input">
+              <label for="swap" class="form-check-label">{% trans "Suggest swaps" %}</label>
+            </div>
+          </div>
+
+          <div id="planningBanner" class="alert alert-warning mt-2 py-2 d-none mb-0">
+            {% trans "Planning only mode: baseline registration is ignored in run constraints." %}
+          </div>
+
+          <div id="trustStrip" class="alert alert-secondary mt-2 py-2 mb-0">
+            {% trans "Mapping quality: unknown | Unresolved: - | Last build: -" %}
+          </div>
+
+          <div class="d-flex flex-wrap gap-2 mt-2 align-items-center">
+            <button id="stepA" class="step-pill active" type="button">{% trans "A) Fetch student" %}</button>
+            <button id="stepB" class="step-pill" type="button">{% trans "B) Pick courses" %}</button>
+            <button id="stepC" class="step-pill" type="button">{% trans "C) Build options" %}</button>
+            <button id="stepD" class="step-pill" type="button">{% trans "D) Save mapping" %}</button>
+
+            <div class="ms-auto d-flex gap-2">
+              <button id="prevStep" class="btn btn-sm btn-outline-secondary" type="button">{% trans "Back" %}</button>
+              <button id="nextStep" class="btn btn-sm btn-primary" type="button">{% trans "Next" %}</button>
+            </div>
+          </div>
+
+          <div class="form-check mt-2">
+            <input id="simpleMode" class="form-check-input" type="checkbox">
+            <label class="form-check-label" for="simpleMode">{% trans "Simplified mode" %}</label>
+          </div>
+          </div><!-- /.command-bar-controls -->
+        </div>
+      </div>
+
+      <div class="row g-3">
+        <div class="col-lg-5 col-stack">
+          <div id="studentSummaryCard" class="card soft-card p-3 step-panel" data-step="A">
+            <h6 class="pane-title">{% trans "Student summary" %}</h6>
+            <div id="studentSummary" class="small bg-light border rounded p-2 text-secondary">
+              <div class="empty-state" style="padding:1rem 0.5rem;">
+                <span class="empty-icon" style="font-size:1.4rem;">👤</span>
+                <div class="empty-title" style="font-size:0.8rem;">{% trans "No student loaded" %}</div>
+                <div class="empty-hint">{% trans "Enter student ID above and click" %} <strong>{% trans "Fetch" %}</strong></div>
+              </div>
+            </div>
+          </div>
+
+          <div id="recCard" class="card soft-card p-3 step-panel" data-step="B">
+            <h6 class="pane-title">{% trans "Suggested to add (recommended)" %}</h6>
+            <div class="table-responsive">
+              <table class="table table-sm">
+                <thead>
+                  <tr>
+                    <th>{% trans "Course" %}</th>
+                    <th>{% trans "Status" %}</th>
+                    <th>{% trans "Priority" %}</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody id="recTable"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div id="shortlistCard" class="card soft-card p-3 step-panel" data-step="B">
+            <h6 class="pane-title">{% trans "Selected add list" %}</h6>
+            <div class="d-flex gap-2 mb-2">
+              <button id="resetShortlist" class="btn btn-sm btn-outline-secondary">{% trans "Reset to recommendations" %}</button>
+              <button id="clearShortlist" class="btn btn-sm btn-outline-danger">{% trans "Clear" %}</button>
+            </div>
+            <div id="shortlist" class="small"></div>
+            <div class="mt-2"><strong>{% trans "Total credits" %}: <span id="shortCredits">0</span></strong></div>
+          </div>
+
+          <div id="planCard" class="card soft-card p-3 step-panel" data-step="B">
+            <h6 class="pane-title">{% trans "Full student plan (click course to add)" %}</h6>
+            <div class="small text-secondary mb-2">
+              {% trans "Black: not offered this term | Red: offered but full | Green: offered with capacity | Purple: prerequisites not satisfied (cannot add)" %}
+            </div>
+
+            <div class="d-flex flex-wrap gap-3 mb-2 small">
+              <label><input id="fltNotTaken" type="checkbox" checked> {% trans "Only not taken" %}</label>
+              <label><input id="fltGreen" type="checkbox"> {% trans "Only green" %}</label>
+              <label><input id="fltHighImp" type="checkbox"> {% trans "Only high importance (>=1.0)" %}</label>
+              <button id="addSelectedPlan" class="btn btn-sm btn-outline-primary">{% trans "Add selected" %}</button>
+            </div>
+
+            <div id="planPalette" class="small"></div>
+          </div>
+
+          <div id="sectionCard" class="card soft-card p-3 step-panel" data-step="D">
+            <h6 class="pane-title">{% trans "Section picker (assign student mappings)" %}</h6>
+            <div class="d-flex gap-2 mb-2">
+              <button id="loadSections" class="btn btn-sm btn-outline-primary">{% trans "Load sections for shortlist" %}</button>
+              <button id="saveSections" class="btn btn-sm btn-success">{% trans "Save selected to student" %}</button>
+            </div>
+            <div id="sectionsPicker" class="small"></div>
+          </div>
+        </div>
+
+        <div class="col-lg-7 col-stack">
+          <div id="baselineCard" class="card soft-card p-3 mb-3 step-panel" data-step="B">
+            <h6>{% trans "Registered timetable (baseline)" %}</h6>
+            <div id="baselineTotals" class="small text-secondary mb-2"></div>
+            <div id="baselineWeekly" class="small"></div>
+          </div>
+
+          <div id="builderCard" class="card soft-card p-3 step-panel" data-step="C">
+            <h6 class="pane-title">{% trans "Builder run" %}</h6>
+
+            <div class="d-flex gap-2 mb-2 align-items-center flex-wrap">
+              <button id="runBuilder" class="btn btn-primary btn-sm">{% trans "Build Best Option" %}</button>
+              <button id="applyOption" class="btn btn-success btn-sm">{% trans "Apply Selected Option" %}</button>
+
+              <label class="small ms-2"><input id="strictSections" type="checkbox"> {% trans "Strict (exactly 1 section/course)" %}</label>
+              <label class="small ms-2"><input id="ignoreCapacity" type="checkbox"> {% trans "Ignore capacity" %}</label>
+            </div>
+
+            <input id="selectedOption" type="hidden">
+            <div id="selectedOptionBar" class="small alert alert-light py-2 mb-2">{% trans "No option selected." %}</div>
+            <div id="optionCards" class="row g-2 mb-2"></div>
+            <div id="builderSummary" class="small bg-light border rounded p-2 text-secondary">{% trans "No run yet." %}</div>
+          </div>
+
+          <div id="visualCard" class="card soft-card p-3 step-panel" data-step="C">
+            <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap">
+              <h6 class="pane-title mb-0">{% trans "Visual Timetable" %}</h6>
+              <div class="d-flex gap-2">
+                <select id="visualSource" class="form-select form-select-sm" style="width:240px">
+                  <option value="baseline">{% trans "Baseline" %}</option>
+                  <option value="A">{% trans "Builder Option A" %}</option>
+                  <option value="B">{% trans "Builder Option B" %}</option>
+                  <option value="C">{% trans "Builder Option C" %}</option>
+                  <option value="overlay">{% trans "Overlay (Baseline + Selected)" %}</option>
+                </select>
+              </div>
+            </div>
+
+            <div id="visualLegend" class="small text-secondary mt-1">
+              {% trans "Legend:" %}
+              <span class="badge text-bg-primary">{% trans "baseline" %}</span>
+              <span class="badge text-bg-success">{% trans "planned" %}</span>
+              <span class="badge text-bg-danger">{% trans "conflict" %}</span>
+            </div>
+
+            <div id="visualGrid" class="mt-2 small"></div>
+          </div>
+
+          <details id="advancedDiag" class="card soft-card p-3 step-panel mt-2" data-step="C">
+            <summary class="small text-secondary">{% trans "Advanced diagnostics" %}</summary>
+            <div id="builderOptions" class="small mt-2"></div>
+            <div class="mt-2">
+              <h6 class="mb-1">{% trans "Swap suggestions" %}</h6>
+              <div id="swapSuggestions" class="small text-danger"></div>
+            </div>
+          </details>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<script>
+const q=id=>document.getElementById(id);
+const IS_AR = '{{ LANGUAGE_CODE }}' === 'ar';
+
+const UI = {
+  time: IS_AR ? 'الوقت' : 'Time',
+  dayShort: IS_AR
+    ? {SUN:'أحد',MON:'اثن',TUE:'ثلا',WED:'أرب',THU:'خم'}
+    : {SUN:'Sun',MON:'Mon',TUE:'Tue',WED:'Wed',THU:'Thu'},
+  dayLong: IS_AR
+    ? {SUN:'الأحد',MON:'الاثنين',TUE:'الثلاثاء',WED:'الأربعاء',THU:'الخميس'}
+    : {SUN:'Sunday',MON:'Monday',TUE:'Tuesday',WED:'Wednesday',THU:'Thursday'},
+};
+
+const T = {
+  requestFailed: IS_AR ? 'فشل الطلب' : 'Request failed',
+  unknown: IS_AR ? 'غير معروف' : 'Unknown',
+  noMappedSlots: IS_AR ? 'لا توجد خانات جدول مرتبطة بعد.' : 'No mapped timetable slots yet.',
+  noSectionsForShortlist: IS_AR ? 'لم يتم العثور على شعب للقائمة المختصرة. أضف مقررات مؤهلة أولاً أو تحقق من بيانات الفصل.' : 'No sections found for shortlist. Add eligible courses first or confirm term data.',
+  addedSelected: (n)=> IS_AR ? `تمت إضافة ${n} مقرر(ات) للقائمة المختصرة.` : `Added ${n} selected course(s) to shortlist.`,
+  fetchStudentFirst: IS_AR ? 'قم بجلب الطالب أولاً.' : 'Fetch student first.',
+  enterYearTerm: IS_AR ? 'أدخل العام والفصل.' : 'Enter year and term.',
+  selectBuilderFirst: IS_AR ? 'اختر خيار المُنشئ أولاً.' : 'Select a builder option first.',
+  optionNotFound: IS_AR ? 'الخيار غير موجود. شغّل المُنشئ مرة أخرى.' : 'Option not found. Run builder again.',
+  noMappings: IS_AR ? 'لا توجد روابط' : 'No mappings',
+  noSwaps: IS_AR ? 'لا توجد تبديلات مقترحة.' : 'No swaps suggested.',
+  noMeetings: IS_AR ? 'لا توجد لقاءات' : 'No meetings',
+  noCoursesShortlist: IS_AR ? 'لا توجد مقررات في القائمة المختصرة بعد. أضف مقررات أولاً من خطة الطالب.' : 'No courses in shortlist yet. Add courses from student plan first.',
+  loadedSections: (n)=> IS_AR ? `تم تحميل ${n} شعبة للقائمة المختصرة.` : `Loaded ${n} sections for shortlist.`,
+  savedMappings: (n)=> IS_AR ? `تم حفظ ${n} ربط شعبة ويتم تحديث الأساس.` : `Saved ${n} section mappings and refreshing baseline.`,
+  noMappableInOption: (name)=> IS_AR ? `الخيار ${name} لا يحتوي شعبًا قابلة للربط. استورد أحدث الشعب أو اختر خيارًا آخر.` : `Option ${name} has no mappable sections. Import latest sections or choose another option.`,
+  appliedOption: (name,n)=> IS_AR ? `تم تطبيق الخيار ${name}. تم حفظ ${n} عملية ربط.` : `Applied Option ${name}. Saved ${n} mappings.`,
+  trustUpdated: (name)=> IS_AR ? `جودة الربط: تم التحديث | غير المحلول: - | آخر بناء: تطبيق الخيار ${name}` : `Mapping quality: updated | Unresolved: - | Last build: applied option ${name}`,
+  trustBuilt: (mapped,unresolved,time)=> IS_AR ? `جودة الربط: ${mapped?'ربط متاح':'اعتماد على الاحتياطي'} | غير المحلول: ${unresolved} | آخر بناء: ${time}` : `Mapping quality: ${mapped?'mapped available':'fallback only'} | Unresolved: ${unresolved} | Last build: ${time}`,
+  noCoursesFoundStudentPlan: IS_AR ? 'لم يتم العثور على مقررات في خطة الطالب.' : 'No courses found in student plan.',
+  failedLoadStudentPlanPanel: IS_AR ? 'فشل تحميل لوحة خطة الطالب.' : 'Failed to load student plan panel.',
+};
+
+const errMsg=(d)=> (d?.error?.message || d?.error || T.requestFailed);
+
+function getCsrfToken(){
+  const name='csrftoken=';
+  const parts=document.cookie.split(';').map(x=>x.trim());
+  for(const p of parts){ if(p.startsWith(name)) return decodeURIComponent(p.slice(name.length)); }
+  return '';
+}
+
+function setBanner(kind, text){
+  const b=q('statusBanner');
+  b.className=`alert py-2 mt-2 mb-0 alert-${kind}`;
+  b.textContent=text;
+}
+
+let currentStep='A';
+function setStep(step){
+  currentStep=step;
+  ['A','B','C','D'].forEach(s=>q('step'+s)?.classList.toggle('active', s===step));
+  const simple=!!q('simpleMode')?.checked;
+  document.querySelectorAll('.step-panel').forEach(el=>{
+    const s=el.getAttribute('data-step');
+    el.classList.toggle('d-none', simple && s!==step);
+  });
+  if(simple){ q('advancedDiag')?.removeAttribute('open'); }
+}
+
+function enforceBuilderProcessLayout(){
+  const left=document.querySelector('.col-lg-5.col-stack');
+  const right=document.querySelector('.col-lg-7.col-stack');
+  if(!left||!right) return;
+  [q('studentSummaryCard'), q('recCard'), q('shortlistCard'), q('planCard'), q('sectionCard')].forEach(el=>{ if(el && el.parentElement!==left) left.appendChild(el); });
+  [q('baselineCard'), q('builderCard'), q('visualCard'), q('advancedDiag')].forEach(el=>{ if(el && el.parentElement!==right) right.appendChild(el); });
+}
+
+let currentRecommendations=[];
+let shortlist=[];
+let selectedSectionIds=new Set();
+let currentCtx={student_id:'',academic_year:'',term:''};
+let currentBaseline=[];
+let lastBuilderOptions=[];
+
+/* Robust day normalisation: prefer stable codes (SUN/MON/...) */
+function normalizeDay(d){
+  const v=(d||'').toString().trim();
+  const up=v.toUpperCase();
+  const map = {
+    'SUN':'SUN','SUNDAY':'SUN','الأحد':'SUN',
+    'MON':'MON','MONDAY':'MON','الاثنين':'MON','الإثنين':'MON',
+    'TUE':'TUE','TUESDAY':'TUE','الثلاثاء':'TUE',
+    'WED':'WED','WEDNESDAY':'WED','الأربعاء':'WED',
+    'THU':'THU','THURSDAY':'THU','الخميس':'THU'
+  };
+  return map[up] || map[v] || v || T.unknown;
+}
+
+function toMins(t){
+  if(!t||!String(t).includes(':')) return null;
+  const [h,m]=String(t).split(':').map(Number);
+  if(Number.isNaN(h)||Number.isNaN(m)) return null;
+  return h*60+m;
+}
+
+function colorForCourse(code){
+  let h=0; const s=String(code||'');
+  for(let i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))%360;
+  return `hsl(${h} 70% 92%)`;
+}
+
+function renderBaselineWeeklyCompact(baseline){
+  const host=q('baselineWeekly');
+  const rows=(baseline||[]).filter(r=>r.day&&r.start_time&&r.end_time);
+  if(!rows.length){ host.innerHTML=`<span class="text-secondary">${T.noMappedSlots}</span>`; return; }
+
+  const dayOrder=['SUN','MON','TUE','WED','THU'];
+  const dayLabel = UI.dayShort;
+
+  const mins=rows.flatMap(r=>[toMins(r.start_time),toMins(r.end_time)]).filter(v=>v!==null);
+  const rawMin=Math.min(...mins), rawMax=Math.max(...mins);
+  const step=30;
+  const startMin=Math.max(0, Math.floor((rawMin-30)/step)*step);
+  const endMin=Math.ceil((rawMax+30)/step)*step;
+
+  const startsByDay={SUN:{},MON:{},TUE:{},WED:{},THU:{}};
+  rows.forEach(r=>{
+    const d=normalizeDay(r.day);
+    const st=toMins(r.start_time), en=toMins(r.end_time);
+    if(st===null||en===null||en<=st) return;
+    const stSlot = Math.floor(st/step)*step;
+    const span=Math.max(1, Math.ceil((en-stSlot)/step));
+    startsByDay[d][stSlot]={label:`${r.course_code||''} ${r.section||''}`.trim(), room:r.room||'', start:r.start_time, end:r.end_time, span, source:r.source||''};
+  });
+
+  let html='<div class="table-responsive"><table class="table table-sm table-bordered align-middle"><thead><tr>';
+  html += `<th style="width:70px">${UI.time}</th>`;
+  dayOrder.forEach(d=> html += `<th>${dayLabel[d]}</th>`);
+  html+='</tr></thead><tbody>';
+
+  const carry={SUN:0,MON:0,TUE:0,WED:0,THU:0};
+  for(let t=startMin;t<endMin;t+=step){
+    const hh=String(Math.floor(t/60)).padStart(2,'0');
+    const mm=String(t%60).padStart(2,'0');
+    html += `<tr><td class="text-secondary">${hh}:${mm}</td>`;
+    dayOrder.forEach(d=>{
+      if(carry[d]>0){ carry[d]-=1; return; }
+      const m=startsByDay[d][t];
+      if(!m){ html+='<td></td>'; return; }
+      carry[d]=Math.max(0,(m.span||1)-1);
+      html += `<td rowspan="${m.span||1}" style="background:${colorForCourse(m.label)}">
+        <div class="fw-semibold">${m.label}</div>
+        <div class="small text-secondary">${m.start}-${m.end}</div>
+      </td>`;
+    });
+    html+='</tr>';
+  }
+  html+='</tbody></table></div>';
+  host.innerHTML=html;
+}
+
+function renderVisualTimetable(source='baseline'){
+  const host=q('visualGrid');
+  const dayOrder=['SUN','MON','TUE','WED','THU'];
+  const dayLabel = UI.dayShort;
+
+  const baseline=(currentBaseline||[])
+    .filter(x=>x.day&&x.start_time&&x.end_time)
+    .map(x=>({
+      day: normalizeDay(x.day),
+      start:x.start_time,
+      end:x.end_time,
+      label:`${x.course_code||''} ${x.section||''}`.trim(),
+      room:x.room||'',
+      kind:'baseline'
+    }));
+
+  let planned=[];
+  if(source!=='baseline'){
+    const pick = source==='overlay'
+      ? (lastBuilderOptions||[])[0]
+      : (lastBuilderOptions||[]).find(o=>String(o.name||'')===String(source));
+
+    (pick?.mappings||[]).forEach(m=>
+      (m.meetings||[]).forEach(mm=>
+        planned.push({
+          day: normalizeDay(mm.day),
+          start:mm.start_time,
+          end:mm.end_time,
+          label:`${m.course_code||''}${m.course_number||''} ${m.section||''}`.trim(),
+          room:mm.room||'',
+          kind:'planned'
+        })
+      )
+    );
+  }
+
+  let meetings=[];
+  if(source==='baseline') meetings=baseline;
+  else if(source==='overlay') meetings=[...baseline,...planned];
+  else meetings=planned;
+
+  const step=30;
+  const startsByDay={SUN:{},MON:{},TUE:{},WED:{},THU:{}};
+
+  const enriched=meetings.map(m=>{
+    const st=toMins(m.start), en=toMins(m.end);
+    return {...m, st, en, conflict:false};
+  }).filter(m=>m.st!==null && m.en!==null && m.en>m.st);
+
+  if(!enriched.length){
+    host.innerHTML=`<span class="text-secondary">${IS_AR ? 'لا توجد لقاءات جدول لعرضها.' : 'No timetable meetings to display.'}</span>`;
+    return;
+  }
+
+  const rawMin=Math.min(...enriched.map(m=>m.st));
+  const rawMax=Math.max(...enriched.map(m=>m.en));
+  const startMin=Math.max(0, Math.floor((rawMin-30)/step)*step);
+  const endMin=Math.ceil((rawMax+30)/step)*step;
+
+  // Overlap conflict detection (overlay: baseline vs planned)
+  for(let i=0;i<enriched.length;i++){
+    for(let j=i+1;j<enriched.length;j++){
+      const a=enriched[i], b=enriched[j];
+      if(a.day!==b.day) continue;
+      const overlaps = a.st < b.en && b.st < a.en;
+      if(!overlaps) continue;
+      if(source==='overlay' && a.kind!==b.kind){ a.conflict=true; b.conflict=true; }
+    }
+  }
+
+  enriched.forEach(m=>{
+    const stSlot = Math.floor((m.st||0)/step)*step;
+    const span=Math.max(1, Math.ceil((m.en-stSlot)/step));
+    if(!startsByDay[m.day]) startsByDay[m.day]={};
+    const key=`${stSlot}`;
+    if(!startsByDay[m.day][key]) startsByDay[m.day][key]={...m, span};
+    else if(m.conflict) startsByDay[m.day][key]={...m, span}; // prefer showing conflicts
+  });
+
+  let html='<div class="table-responsive"><table class="table table-sm table-bordered align-middle"><thead><tr>';
+  html += `<th style="width:70px">${UI.time}</th>`;
+  dayOrder.forEach(d=> html += `<th>${dayLabel[d]}</th>`);
+  html+='</tr></thead><tbody>';
+
+  const carry={SUN:0,MON:0,TUE:0,WED:0,THU:0};
+  for(let t=startMin;t<endMin;t+=step){
+    const hh=String(Math.floor(t/60)).padStart(2,'0');
+    const mm=String(t%60).padStart(2,'0');
+    html += `<tr><td class="text-secondary">${hh}:${mm}</td>`;
+    dayOrder.forEach(d=>{
+      if(carry[d]>0){ carry[d]-=1; return; }
+      const m=startsByDay[d][t];
+      if(!m){ html += '<td></td>'; return; }
+      carry[d]=Math.max(0,(m.span||1)-1);
+
+      const bg = m.conflict ? '#fecaca' : colorForCourse(m.label);
+      const badge = m.conflict
+        ? `<span class="badge text-bg-danger">${IS_AR ? 'تعارض' : 'conflict'}</span>`
+        : (m.kind==='planned'
+          ? `<span class="badge text-bg-success">${IS_AR ? 'مخطط' : 'planned'}</span>`
+          : `<span class="badge text-bg-primary">${IS_AR ? 'أساس' : 'baseline'}</span>`);
+
+      html += `<td rowspan="${m.span||1}" style="background:${bg}">
+        <div class="fw-semibold">${m.label}</div>
+        <div class="small text-secondary">${m.start}-${m.end}</div>
+        <div class="mt-1">${badge}</div>
+      </td>`;
+    });
+    html+='</tr>';
+  }
+
+  html+='</tbody></table></div>';
+  host.innerHTML=html;
+}
+
+q('mode').addEventListener('change',()=>{
+  q('planningBanner').classList.toggle('d-none', q('mode').value!=='ignore');
+  if(currentCtx?.student_id){ renderPlanPalette(currentCtx.student_id); }
+});
+
+q('visualSource').addEventListener('change',(e)=>renderVisualTimetable(e.target.value));
+['A','B','C','D'].forEach(s=> q('step'+s)?.addEventListener('click',()=>setStep(s)));
+q('simpleMode')?.addEventListener('change',()=>setStep(currentStep));
+q('prevStep')?.addEventListener('click',()=>{ const order=['A','B','C','D']; const i=Math.max(0,order.indexOf(currentStep)-1); setStep(order[i]); });
+q('nextStep')?.addEventListener('click',()=>{ const order=['A','B','C','D']; const i=Math.min(order.length-1,order.indexOf(currentStep)+1); setStep(order[i]); });
+
+function renderShortlist(){
+  const wrap=q('shortlist'); wrap.innerHTML='';
+  let credits=0;
+  shortlist.forEach((c,idx)=>{
+    credits += Number(c.credits||0);
+    const row=document.createElement('div');
+    row.className='border rounded p-2 mb-2';
+    row.innerHTML=`
+      <div class="d-flex justify-content-between">
+        <div>
+          <strong>${c.course_code}</strong> ${c.course_name||''}
+          <span class="text-secondary">(${c.credits||0} ${IS_AR?'ساعة':'cr'})</span>
+        </div>
+        <button class="btn btn-sm btn-outline-danger" data-i="${idx}">${IS_AR?'إزالة':'Remove'}</button>
+      </div>
+      <div class="form-check mt-1">
+        <input type="checkbox" class="form-check-input" id="m${idx}" ${c.must_take?'checked':''}>
+        <label class="form-check-label" for="m${idx}">${IS_AR?'إلزامي':'Must-take'}</label>
+      </div>`;
+    wrap.appendChild(row);
+    row.querySelector('button').onclick=()=>{shortlist.splice(idx,1);renderShortlist();};
+    row.querySelector('input').onchange=(e)=>{shortlist[idx].must_take=e.target.checked;};
+  });
+  q('shortCredits').textContent=String(credits);
+}
+
+async function renderPlanPalette(studentId){
+  const wrap=q('planPalette');
+  wrap.innerHTML=`<span class="text-secondary">${IS_AR ? 'جارٍ تحميل خطة الطالب...' : 'Loading student plan...'}</span>`;
+  try{
+    const planRes=await fetch(`/report/student-plan/?student_id=${encodeURIComponent(studentId)}`);
+    const planData=await planRes.json();
+    if(planData.error){ wrap.innerHTML=`<span class="text-danger">${planData.error}</span>`; return; }
+
+    const allCourses=[];
+    (planData.terms||[]).forEach(t=> (t.courses||[]).forEach(c=> allCourses.push({...c, _term:t.term})));
+    const codes=[...new Set(allCourses.map(c=>String(c.course_code||'').replace(/\s+/g,'').toUpperCase()).filter(Boolean))];
+
+    let sections=[];
+    if(codes.length){
+      const secRes=await fetch('/ops/planner/sections-catalog/',{
+        method:'POST',
+        headers:{'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
+        body:JSON.stringify({academic_year:currentCtx.academic_year,term:currentCtx.term,course_codes:codes})
+      });
+      const secData=await secRes.json();
+      sections=secData.sections||[];
+    }
+
+    const secByCourse={};
+    sections.forEach(s=>{
+      const k=String((s.course_code||'') + (s.course_number||'')).replace(/\s+/g,'').toUpperCase();
+      (secByCourse[k] ||= []).push(s);
+    });
+
+    const terms = [...(planData.terms||[])].sort((a,b)=>Number(a.term||0)-Number(b.term||0));
+    wrap.innerHTML='';
+
+    terms.forEach(t=>{
+      const rows=(t.courses||[]).slice().sort((a,b)=>Number(b.importance_score||0)-Number(a.importance_score||0));
+      const details=document.createElement('details');
+      details.className='mb-2 border rounded p-2';
+      if(Number(t.term||0) <= 2) details.open=true;
+
+      const summary=document.createElement('summary');
+      summary.innerHTML=`<strong>${IS_AR?'الفصل':'Term'} ${t.term}</strong> <span class="small text-secondary">(${rows.length} ${IS_AR?'مقرر':'courses'})</span>`;
+      details.appendChild(summary);
+
+      const table=document.createElement('table');
+      table.className='table table-sm mt-2 mb-0';
+      table.innerHTML=`<thead><tr>
+        <th>${IS_AR?'المقرر':'Course'}</th>
+        <th>${IS_AR?'الحالة':'Status'}</th>
+        <th>${IS_AR?'الأولوية':'Importance'}</th>
+        <th>${IS_AR?'الإتاحة':'Offer'}</th>
+        <th></th>
+      </tr></thead>`;
+      const tb=document.createElement('tbody');
+
+      rows.forEach(c=>{
+        const code=String(c.course_code||'').replace(/\s+/g,'').toUpperCase();
+        const list=secByCourse[code]||[];
+        const hasAny=list.length>0;
+        const hasOpen=list.some(s=> Number(s.available_capacity||0) > 0);
+        const prereqOk = (String(c.status||'') !== 'not_taken') ? true : Boolean(c.can_register);
+
+        let cls='plan-black';
+        let label=IS_AR?'غير مطروح':'not offered';
+
+        if(!prereqOk){
+          cls='plan-prereq'; label=IS_AR?'المتطلبات غير مستوفاة':'prereq missing';
+        }else if(hasAny && hasOpen){
+          cls='plan-green'; label=IS_AR?'شعب متاحة':'open sections';
+        }else if(hasAny){
+          cls='plan-red'; label=IS_AR?'كل الشعب ممتلئة':'all full';
+        }
+
+        const modeIgnoreRegistered = (q('mode')?.value === 'ignore');
+        const canAdd=((String(c.status||'')==='not_taken') || modeIgnoreRegistered) && prereqOk;
+
+        const onlyNotTaken=q('fltNotTaken')?.checked;
+        const onlyGreen=q('fltGreen')?.checked;
+        const onlyHigh=q('fltHighImp')?.checked;
+        if(onlyNotTaken && String(c.status||'')!=='not_taken') return;
+        if(onlyGreen && !(hasOpen && prereqOk)) return;
+        if(onlyHigh && Number(c.importance_score||0) < 1) return;
+
+        const tr=document.createElement('tr');
+        tr.style.cursor=canAdd?'pointer':'default';
+        tr.innerHTML=`
+          <td>
+            <input type="checkbox" class="form-check-input me-2 planPick"
+              data-code="${code}"
+              data-credits="${Number(c.credit_hours||0)}"
+              data-score="${Math.round(Number(c.importance_score||0)*20)}"
+              ${canAdd?'':'disabled'}>
+            <strong>${code}</strong> <span class="text-secondary">(${c.credit_hours||0}${IS_AR?' ساعة':'cr'})</span>
+          </td>
+          <td>${c.status||''}</td>
+          <td>${Number(c.importance_score||0).toFixed(2)}</td>
+          <td><span class="plan-chip ${cls}">${label}</span></td>
+          <td><button class="btn btn-sm btn-outline-primary" ${canAdd?'':'disabled'}>${IS_AR?'إضافة':'Add'}</button></td>`;
+
+        const addCourse=()=>{
+          if(!canAdd) return;
+          if(shortlist.find(x=>String(x.course_code||'').toUpperCase()===code)) return;
+          shortlist.push({
+            course_code:code, course_name:'', credits:Number(c.credit_hours||0),
+            priority:'Med', status:'Eligible', missing_prerequisites:[],
+            must_take:false, score:Math.round(Number(c.importance_score||0)*20)
+          });
+          renderShortlist();
+          setStep('B');
+        };
+
+        tr.querySelector('button').onclick=(e)=>{ e.stopPropagation(); addCourse(); };
+        tr.onclick=(e)=>{ if(e.target.closest('input,button')) return; addCourse(); };
+        tb.appendChild(tr);
+      });
+
+      table.appendChild(tb);
+      details.appendChild(table);
+      wrap.appendChild(details);
+    });
+
+    if(!terms.length) wrap.innerHTML=`<span class="text-secondary">${T.noCoursesFoundStudentPlan}</span>`;
+  }catch(e){
+    wrap.innerHTML=`<span class="text-danger">${T.failedLoadStudentPlanPanel}</span>`;
+  }
+}
+
+function renderSectionPicker(sections){
+  const wrap=q('sectionsPicker');
+  wrap.innerHTML='';
+  if(!sections?.length){wrap.innerHTML=`<span class="text-secondary">${T.noSectionsForShortlist}</span>`; return;}
+  sections.forEach(s=>{
+    const meetingText=(s.meetings||[]).map(m=>{
+      const d=normalizeDay(m.day);
+      const label=UI.dayLong[d] || d;
+      return `${label} ${m.start_time||''}-${m.end_time||''}`.trim();
+    }).join(' | ');
+    const checked=selectedSectionIds.has(s.term_section_id)?'checked':'';
+    const row=document.createElement('label');
+    row.className='d-block border rounded p-2 mb-2';
+    row.innerHTML=`
+      <input type="checkbox" class="form-check-input me-2" data-sid="${s.term_section_id}" ${checked}>
+      <strong>${s.course_code}${s.course_number} - ${s.section}</strong>
+      <div class="small text-secondary">${s.course_name||''}</div>
+      <div class="small">${meetingText||T.noMeetings}</div>`;
+    wrap.appendChild(row);
+    row.querySelector('input').onchange=(e)=>{
+      const sid=Number(e.target.dataset.sid);
+      if(e.target.checked) selectedSectionIds.add(sid); else selectedSectionIds.delete(sid);
+    };
+  });
+}
+
+q('resetShortlist').onclick=()=>{
+  shortlist=currentRecommendations.filter(x=>x.status==='Eligible').map(x=>({...x,must_take:false}));
+  renderShortlist(); setStep('B');
+};
+q('clearShortlist').onclick=()=>{shortlist=[];renderShortlist(); setStep('B');};
+
+['fltNotTaken','fltGreen','fltHighImp'].forEach(id=>
+  q(id)?.addEventListener('change',()=>{ if(currentCtx.student_id) renderPlanPalette(currentCtx.student_id); })
+);
+
+q('addSelectedPlan').onclick=()=>{
+  const picks=[...document.querySelectorAll('.planPick:checked')];
+  let added=0;
+  picks.forEach(p=>{
+    const code=String(p.dataset.code||'').toUpperCase();
+    if(!code) return;
+    if(shortlist.find(x=>String(x.course_code||'').toUpperCase()===code)) return;
+    shortlist.push({course_code:code,course_name:'',credits:Number(p.dataset.credits||0),priority:'Med',status:'Eligible',missing_prerequisites:[],must_take:false,score:Number(p.dataset.score||0)});
+    added++;
+  });
+  renderShortlist();
+  setBanner('info', T.addedSelected(added));
+  setStep('B');
+};
+
+q('loadSections').onclick=async()=>{
+  setStep('D');
+  const codes=[...new Set(shortlist.map(x=>x.course_code).filter(Boolean))];
+  if(!codes.length){ setBanner('warning', T.noCoursesShortlist); return; }
+  const r=await fetch('/ops/planner/sections-catalog/',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
+    body:JSON.stringify({academic_year:currentCtx.academic_year,term:currentCtx.term,course_codes:codes})
+  });
+  const data=await r.json();
+  if(data.error){setBanner('danger', errMsg(data)); return;}
+  renderSectionPicker(data.sections||[]);
+  setBanner('info', T.loadedSections(data.count||0));
+};
+
+q('saveSections').onclick=async()=>{
+  setStep('D');
+  if(!currentCtx.student_id) return alert(T.fetchStudentFirst);
+  const r=await fetch('/ops/planner/save-student-sections/',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
+    body:JSON.stringify({
+      student_id:currentCtx.student_id,
+      academic_year:currentCtx.academic_year,
+      term:currentCtx.term,
+      term_section_ids:[...selectedSectionIds],
+      confirm_replace:true
+    })
+  });
+  const data=await r.json();
+  if(data.error){setBanner('danger', errMsg(data)); return;}
+  setBanner('success', T.savedMappings(data.inserted||0));
+  q('fetchBtn').click();
+};
+
+q('applyOption').onclick=async()=>{
+  const name=q('selectedOption').value;
+  if(!name) return alert(T.selectBuilderFirst);
+  if(!currentCtx.student_id) return alert(T.fetchStudentFirst);
+
+  const opt=(lastBuilderOptions||[]).find(x=>String(x.name||'')===String(name));
+  if(!opt) return alert(T.optionNotFound);
+
+  const ids=(opt.mappings||[]).map(m=>m.term_section_id).filter(Boolean);
+  if(!ids.length){ setBanner('warning', T.noMappableInOption(name)); return; }
+
+  const r=await fetch('/ops/planner/save-student-sections/',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
+    body:JSON.stringify({
+      student_id:currentCtx.student_id,
+      academic_year:currentCtx.academic_year,
+      term:currentCtx.term,
+      term_section_ids:ids,
+      confirm_replace:true
+    })
+  });
+  const data=await r.json();
+  if(data.error){ setBanner('danger', errMsg(data)); return; }
+
+  setBanner('success', T.appliedOption(name, data.inserted||0));
+  q('trustStrip').textContent=T.trustUpdated(name);
+  setStep('D');
+  q('fetchBtn').click();
+};
+
+q('runBuilder').onclick=async()=>{
+  setStep('C');
+
+  /* Fix: correct preconditions + correct message */
+  if(!currentCtx.student_id) return alert(T.fetchStudentFirst);
+  if(!currentCtx.academic_year || !currentCtx.term) return alert(T.enterYearTerm);
+
+  const r=await fetch('/ops/planner/build/',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
+    body:JSON.stringify({
+      academic_year:currentCtx.academic_year,
+      term:currentCtx.term,
+      mode:q('mode').value,
+      swap:q('swap').checked,
+      strict_sections:q('strictSections')?.checked||false,
+      ignore_capacity:q('ignoreCapacity')?.checked||false,
+      shortlist,
+      baseline:currentBaseline
+    })
+  });
+
+  const data=await r.json();
+  if(data.error){setBanner('danger', errMsg(data)); return;}
+
+  const s=data.summary||{};
+  q('builderSummary').innerHTML=`
+    <div><strong>${IS_AR ? 'تمت الجدولة' : 'Scheduled'}:</strong> ${s.scheduled||0}/${s.target||0}</div>
+    <div><strong>${IS_AR ? 'التعارضات' : 'Conflicts'}:</strong> ${s.conflicts||0}</div>
+    <div><strong>${IS_AR ? 'التبديلات المطلوبة' : 'Swaps required'}:</strong> ${s.swaps_required||0}</div>
+    <div><strong>${IS_AR ? 'الحالة' : 'Status'}:</strong> ${s.best_feasible?(IS_AR?'تم العثور على أفضل خطة ممكنة':'Best feasible plan found'):(IS_AR?'لا توجد خطة ممكنة':'No feasible plan')}</div>`;
+
+  setBanner('success', IS_AR ? 'اكتمل تشغيل المُنشئ. راجع الخيارات أدناه.' : 'Builder run completed. Review options below.');
+
+  const unresolved=(data.options||[])[0]?.unscheduled?.length || 0;
+  q('trustStrip').textContent=T.trustBuilt(!!currentBaseline.length, unresolved, new Date().toLocaleTimeString());
+
+  const wrap=q('builderOptions');
+  wrap.innerHTML='';
+  lastBuilderOptions=(data.options||[]);
+  q('selectedOption').value='';
+  const cards=q('optionCards');
+  cards.innerHTML='';
+
+  const vs=q('visualSource');
+  if(vs){
+    const prev=vs.value;
+    vs.innerHTML='';
+    const mk=(v,t)=>{const o=document.createElement('option');o.value=v;o.textContent=t;vs.appendChild(o);};
+    mk('baseline', IS_AR ? 'الأساس' : 'Baseline');
+    (data.options||[]).forEach(o=>mk(String(o.name||''), IS_AR ? `خيار المُنشئ ${o.name||''}` : `Builder ${o.name||''}`));
+    mk('overlay', IS_AR ? 'تراكب (الأساس + المحدد)' : 'Overlay (Baseline + Selected)');
+    if([...vs.options].some(o=>o.value===prev)) vs.value=prev;
+  }
+
+  let bestName=''; let bestScore=-1;
+  (data.options||[]).forEach(opt=>{ if((opt.scheduled||0)>bestScore){bestScore=(opt.scheduled||0); bestName=String(opt.name||'');} });
+
+  function chooseOption(name){
+    q('selectedOption').value=String(name||'');
+    q('selectedOptionBar').textContent = name
+      ? (IS_AR ? `الخيار المحدد: ${name}` : `Selected option: ${name}`)
+      : (IS_AR ? 'لا يوجد خيار محدد.' : 'No option selected.');
+
+    cards.querySelectorAll('[data-opt]').forEach(el=> el.classList.toggle('border-primary', el.getAttribute('data-opt')===String(name||'')));
+
+    const vs=q('visualSource');
+    let chosenSource='baseline';
+    if(vs && name && [...vs.options].some(o=>String(o.value)===String(name))){
+      vs.value=String(name);
+      chosenSource=String(name);
+    }else if(vs){
+      chosenSource=String(vs.value||'baseline');
+    } else if(name){
+      chosenSource=String(name);
+    }
+
+    renderVisualTimetable(chosenSource);
+  }
+
+  (data.options||[]).forEach(opt=>{
+    const col=document.createElement('div');
+    col.className='col-md-4';
+    col.innerHTML=`
+      <div class="border rounded p-2 h-100" data-opt="${opt.name}">
+        <div class="fw-semibold">${IS_AR?'الخيار':'Option'} ${opt.name}</div>
+        <div class="small">${IS_AR?'تمت الجدولة':'Scheduled'} ${opt.scheduled||0}/${opt.target||0}</div>
+        <div class="small text-secondary">${IS_AR?'غير مجدول':'Unscheduled'} ${(opt.unscheduled||[]).length||0}</div>
+        <button class="btn btn-sm btn-outline-primary mt-2">${IS_AR?'اختيار':'Select'}</button>
+      </div>`;
+    col.querySelector('button').onclick=()=>chooseOption(opt.name);
+    cards.appendChild(col);
+  });
+
+  if(bestName){ chooseOption(bestName); }
+
+  (data.options||[]).forEach(opt=>{
+    const div=document.createElement('div');
+    div.className='border rounded p-2 mb-2';
+    const method = String(opt.method||opt.name||'').charAt(0).toUpperCase();
+    const rationale = method==='A'
+      ? (IS_AR ? 'تعظيم عدد المقررات المجدولة' : 'Maximise scheduled courses')
+      : (method==='B'
+        ? (IS_AR ? 'ضغط بالبت ماسك (أيام/فجوات)' : 'Bitmask compactness (days/gaps)')
+        : (IS_AR ? 'بحث DFS بالبت ماسك مع ترتيب معجمي (أيام/فجوات/كسر تعادل)' : 'Bitmask DFS lexicographic (days/gaps/tiebreakers)'));
+
+    div.innerHTML=`
+      <div><strong>${IS_AR?'الخيار':'Option'} ${opt.name}</strong> - ${IS_AR?'تمت الجدولة':'Scheduled'} ${opt.scheduled}/${opt.target}</div>
+      <div class="small text-secondary">${rationale}</div>
+      <div class="mt-1">
+        ${(opt.mappings||[]).map(m=>`<div>• ${m.course_code}${m.course_number} → ${m.section}</div>`).join('') || `<span class="text-secondary">${T.noMappings}</span>`}
+      </div>
+      <div class="mt-1 text-danger">
+        ${(opt.unscheduled||[]).map(u=>`<div>• ${u.course_code}: ${u.reason}</div>`).join('')}
+      </div>`;
+    wrap.appendChild(div);
+  });
+
+  q('swapSuggestions').innerHTML=(data.swap_suggestions||[]).map(s=>`<div>• ${s.course_code}: ${s.from_section} → ${s.to_section} (${s.reason})</div>`).join('') || `<span class="text-secondary">${T.noSwaps}</span>`;
+
+  renderVisualTimetable(q('visualSource').value || 'baseline');
+};
+
+q('fetchBtn').onclick=async()=>{
+  setStep('A');
+  q('fetchState').textContent = IS_AR ? 'جارٍ التحميل...' : 'Loading...';
+  setBanner('info', IS_AR ? 'جارٍ جلب بيانات الطالب...' : 'Fetching student context...');
+
+  const r=await fetch('/ops/planner/context/',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
+    body:JSON.stringify({
+      student_id:q('studentId').value,
+      academic_year:q('year').value,
+      term:q('term').value
+    })
+  });
+
+  const data=await r.json();
+  if(data.error){
+    q('fetchState').textContent = IS_AR ? 'خطأ' : 'Error';
+    setBanner('danger', errMsg(data));
+    return;
+  }
+
+  q('fetchState').textContent = (IS_AR ? 'تم الجلب @ ' : 'Fetched @ ') + new Date().toLocaleTimeString();
+
+  currentCtx={
+    student_id:String(data.student?.student_id||q('studentId').value),
+    academic_year:String(data.year||q('year').value),
+    term:String(data.term||q('term').value)
+  };
+
+  currentBaseline=(data.baseline||[]);
+  selectedSectionIds=new Set((data.baseline||[]).map(x=>x.term_section_id).filter(Boolean));
+
+  const st=data.student||{};
+  q('studentSummary').innerHTML=`
+    <div><strong>${IS_AR ? 'المعرّف' : 'ID'}:</strong> ${st.student_id||''}</div>
+    <div><strong>${IS_AR ? 'الاسم' : 'Name'}:</strong> ${st.name||''}</div>
+    <div><strong>${IS_AR ? 'البرنامج' : 'Program'}:</strong> ${st.program||''}</div>
+    <div><strong>${IS_AR ? 'المرشد' : 'Advisor'}:</strong> ${st.advisor_id||''}</div>
+    <div><strong>${IS_AR ? 'المعدل التراكمي' : 'GPA'}:</strong> ${st.gpa??''}</div>
+    <div><strong>${IS_AR ? 'الساعات المسجلة' : 'Registered credits'}:</strong> ${st.registered_credits||0}</div>
+    <div><strong>${IS_AR ? 'الحد الأعلى للساعات' : 'Credit cap'}:</strong> ${st.credit_cap||0}</div>`;
+
+  q('baselineTotals').textContent=`${IS_AR ? 'المقررات' : 'Courses'}: ${data.baseline_totals.courses} | ${IS_AR ? 'الساعات' : 'Credits'}: ${data.baseline_totals.credits}`;
+
+  const srcCounts={};
+  (data.baseline||[]).forEach(x=>{ const s=(x.source||'mapped'); srcCounts[s]=(srcCounts[s]||0)+1; });
+  const srcText=Object.entries(srcCounts).map(([k,v])=>`${k}:${v}`).join(' | ');
+  if(srcText){ q('baselineTotals').textContent += IS_AR ? ` | المصدر: ${srcText}` : ` | Source: ${srcText}`; }
+
+  const fallbackRows=(data.baseline||[]).filter(x=>String(x.source||'').toLowerCase().includes('fallback')).length;
+  const quality=fallbackRows
+    ? (IS_AR ? `جزئي (${fallbackRows} احتياطي)` : `partial (${fallbackRows} fallback)`)
+    : (IS_AR ? 'جيد' : 'good');
+
+  q('trustStrip').textContent = IS_AR
+    ? `جودة الربط: ${quality} | غير المحلول: - | آخر بناء: -`
+    : `Mapping quality: ${quality} | Unresolved: - | Last build: -`;
+
+  setBanner('success', IS_AR ? 'تم تحميل بيانات الطالب بنجاح.' : 'Student context loaded successfully.');
+  setStep('B');
+
+  renderBaselineWeeklyCompact(data.baseline||[]);
+  renderVisualTimetable(q('visualSource').value || 'baseline');
+
+  currentRecommendations=data.recommendations||[];
+  const rt=q('recTable'); rt.innerHTML='';
+  currentRecommendations.forEach(rec=>{
+    const tag=rec.status==='Eligible'?'success':'danger';
+    const tr=document.createElement('tr');
+    tr.innerHTML=`
+      <td>
+        <div><strong>${rec.course_code}</strong></div>
+        <div class="small text-secondary">${rec.course_name||''}</div>
+      </td>
+      <td>
+        <span class="badge text-bg-${tag}">${rec.status}</span>
+        ${rec.missing_prerequisites?.length?`<div class="small text-danger">${IS_AR?'ناقص:':'Missing:'} ${rec.missing_prerequisites.join(', ')}</div>`:''}
+      </td>
+      <td>${rec.priority}</td>
+      <td><button class="btn btn-sm btn-outline-primary" ${rec.status!=='Eligible'?'disabled':''}>${IS_AR?'إضافة':'Add'}</button></td>`;
+
+    tr.querySelector('button').onclick=()=>{
+      if(shortlist.find(x=>x.course_code===rec.course_code)) return;
+      shortlist.push({...rec,must_take:false});
+      renderShortlist();
+    };
+    rt.appendChild(tr);
+  });
+
+  shortlist=currentRecommendations.filter(x=>x.status==='Eligible').map(x=>({...x,must_take:false}));
+  renderShortlist();
+  renderPlanPalette(currentCtx.student_id);
+};
+
+enforceBuilderProcessLayout();
+setStep('A');
+
+/* ── URL param deep-link: /planner/?student=123456&year=1447&term=1 ──────
+   Advisors can open the planner pre-loaded for a specific student by
+   passing URL params. All three params are optional — if year/term are
+   omitted the inputs are left as-is (their defaults apply).
+─────────────────────────────────────────────────────────────────────── */
+(function initFromUrlParams() {
+  const params = new URLSearchParams(window.location.search);
+  const student = params.get('student') || params.get('student_id') || params.get('sid');
+  const year    = params.get('year') || params.get('academic_year');
+  const term    = params.get('term');
+
+  if (!student) return; // no deep-link, normal load
+
+  const sidInput  = q('studentId');
+  const yearInput = q('year');
+  const termInput = q('term');
+
+  if (sidInput)  sidInput.value  = student;
+  if (year && yearInput) yearInput.value = year;
+  if (term && termInput) termInput.value = term;
+
+  /* Update page-header chip immediately so it shows the student ID
+     even before the fetch completes */
+  const chip = q('plannerContextChip');
+  if (chip) {
+    chip.textContent = `${student}`;
+    chip.style.display = '';
+  }
+
+  /* Auto-trigger fetch after a short delay so the page is fully painted */
+  setTimeout(() => {
+    q('fetchBtn')?.click();
+  }, 120);
+})();
+
+/* UX: update page-header context chip after fetch */
+const _origFetchBtn = q('fetchBtn');
+if (_origFetchBtn) {
+  _origFetchBtn.addEventListener('click', function patchContext() {
+    const chip = q('plannerContextChip');
+    if (!chip) return;
+    const sid = q('studentId')?.value;
+    const yr  = q('year')?.value;
+    const tm  = q('term')?.value;
+    if (sid) {
+      chip.textContent = `${sid} · ${yr || ''}/${tm || ''}`;
+      chip.style.display = '';
+    }
+  });
+}
+</script>
+
+
+<script id="shared-ux-js">
+/* Shared UX: loading bar */
+(function() {
+  const bar = document.createElement('div');
+  bar.id = 'ux-loading-bar';
+  document.body.prepend(bar);
+
+  const LOADING = ['loading...', 'running...', 'parsing...', 'inserting...', 'saving...', 'loading', 'running'];
+
+  function applyLoading(btn) {
+    if (!btn || btn.classList.contains('btn-close')) return;
+    const txt = (btn.textContent || '').trim().toLowerCase();
+    if (btn.disabled && LOADING.some(t => txt.startsWith(t))) {
+      btn.classList.add('ux-loading');
+    } else {
+      btn.classList.remove('ux-loading');
+    }
+  }
+
+  const obs = new MutationObserver(() => {
+    document.querySelectorAll('main button').forEach(applyLoading);
+    bar.classList.toggle('active', !!document.querySelector('main .ux-loading'));
+  });
+
+  const main = document.querySelector('main');
+  if (main) obs.observe(main, { attributes: true, attributeFilter: ['disabled'], subtree: true, childList: true, characterData: true });
+})();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,1025 @@
+{% load i18n static %}{% get_current_language as LANGUAGE_CODE %}
+<!doctype html>
+<html lang="{{ LANGUAGE_CODE }}" dir="{% if LANGUAGE_CODE == 'ar' %}rtl{% else %}ltr{% endif %}">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% trans "User Management" %}</title>
+  <link rel="icon" href="data:,">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="{% static 'css/global.css' %}" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Kufi+Arabic:wght@400;600;700&display=swap" rel="stylesheet">
+
+<style>
+/* ── Page-specific styles ─────────────────────────────────── */
+
+/* Stats bar */
+.um-stats {
+  display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem;
+}
+.um-stat {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  padding: 0.35rem 0.75rem; border-radius: 999px;
+  font-size: 0.78rem; font-weight: 700;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+.um-stat .um-stat-n {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  color: var(--ink);
+}
+.um-stat-total  { border-color: #bfdbfe; background: #eff6ff; color: #1e3a8a; }
+.um-stat-super  { border-color: #fecaca; background: #fff5f5; color: #991b1b; }
+.um-stat-gen    { border-color: #fed7aa; background: #fff7ed; color: #9a3412; }
+.um-stat-adv    { border-color: #bfdbfe; background: #f0f6ff; color: #1e40af; }
+.um-stat-off    { border-color: #e5e7eb; background: #f9fafb; color: #6b7280; }
+
+/* Toolbar */
+.um-toolbar {
+  display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;
+  margin-bottom: 0.75rem;
+}
+.um-toolbar .um-search {
+  flex: 1; min-width: 200px; max-width: 360px;
+}
+.um-toolbar .um-search input {
+  padding-inline-start: 2.2rem;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%2394a3b8' viewBox='0 0 16 16'%3E%3Cpath d='M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85zm-5.242.156a5 5 0 1 1 0-10 5 5 0 0 1 0 10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: 0.7rem center;
+  background-size: 14px;
+}
+[dir="rtl"] .um-toolbar .um-search input {
+  background-position: calc(100% - 0.7rem) center;
+  padding-inline-start: 2.2rem;
+}
+
+/* Table enhancements */
+#umTable tbody tr { cursor: pointer; transition: background 0.1s, box-shadow 0.1s; }
+#umTable tbody tr.um-selected td { background: #eff6ff !important; }
+#umTable tbody tr.um-selected { box-shadow: inset 3px 0 0 var(--brand); }
+[dir="rtl"] #umTable tbody tr.um-selected { box-shadow: inset -3px 0 0 var(--brand); }
+
+/* Role badges in table */
+.um-role-badge {
+  display: inline-block; padding: 0.15rem 0.5rem;
+  border-radius: 999px; font-size: 0.7rem; font-weight: 700;
+  letter-spacing: 0.04em; text-transform: uppercase;
+}
+.um-role-super { background: #fff1f2; color: #be123c; border: 1px solid #fecdd3; }
+.um-role-gen   { background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa; }
+.um-role-adv   { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+
+/* Active badge */
+.um-active-badge {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  padding: 0.15rem 0.5rem; border-radius: 999px;
+  font-size: 0.72rem; font-weight: 700; cursor: pointer;
+  transition: all 0.12s;
+}
+.um-active-badge:hover { transform: scale(1.05); }
+.um-active-on  { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
+.um-active-off { background: #fee2e2; color: #b91c1c; border: 1px solid #fecaca; }
+
+/* Row actions */
+.um-row-actions {
+  display: flex; gap: 0.25rem; opacity: 0;
+  transition: opacity 0.12s;
+}
+#umTable tbody tr:hover .um-row-actions,
+#umTable tbody tr.um-selected .um-row-actions { opacity: 1; }
+
+.um-row-btn {
+  width: 28px; height: 28px; border-radius: 6px; border: 1px solid transparent;
+  background: transparent; cursor: pointer; display: inline-flex;
+  align-items: center; justify-content: center; font-size: 0.78rem;
+  color: var(--muted); transition: all 0.1s;
+}
+.um-row-btn:hover { background: #f1f5f9; color: var(--ink); border-color: var(--line); }
+.um-row-btn.um-btn-edit:hover { color: var(--brand); background: var(--brand-soft); border-color: #bfdbfe; }
+.um-row-btn.um-btn-key:hover { color: #d97706; background: #fffbeb; border-color: #fde68a; }
+.um-row-btn.um-btn-del:hover { color: #dc2626; background: #fff5f5; border-color: #fecaca; }
+
+/* Mobile: always show row actions */
+@media (max-width: 768px) {
+  .um-row-actions { opacity: 1; }
+}
+
+/* Panels: Create & Edit */
+.um-panel {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: #fff; padding: 1.25rem; margin-bottom: 1rem;
+  transition: box-shadow 0.15s;
+}
+.um-panel:hover { box-shadow: var(--shadow-card); }
+.um-panel-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 1rem;
+}
+.um-panel-title {
+  font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.07em; color: var(--muted);
+  display: flex; align-items: center; gap: 0.4rem;
+}
+.um-panel-title::before {
+  content: ""; display: inline-block; width: 3px; height: 0.8rem;
+  border-radius: 2px; background: var(--brand); opacity: 0.6;
+}
+.um-panel-title.edit::before { background: #f59e0b; }
+.um-panel-title.danger::before { background: var(--danger); }
+
+/* Edit panel highlight */
+.um-panel-edit {
+  border-color: #bfdbfe; background: linear-gradient(180deg, #fafcff 0%, #fff 40px);
+}
+.um-panel-edit .um-editing-user {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.4rem 0.75rem; border-radius: var(--radius-sm);
+  background: var(--brand-soft); border: 1px solid #bfdbfe;
+  font-size: 0.85rem; font-weight: 600; color: var(--brand-dark);
+}
+
+/* Generate password button */
+.um-gen-pw {
+  font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.05em; padding: 0.35rem 0.65rem;
+  border-radius: var(--radius-sm); border: 1px solid var(--line-strong);
+  background: #f8fafc; color: var(--ink-2); cursor: pointer;
+  transition: all 0.12s; white-space: nowrap;
+}
+.um-gen-pw:hover { background: #fff; border-color: var(--brand); color: var(--brand); }
+
+/* Bulk bar */
+.um-bulk-bar {
+  display: none; align-items: center; gap: 0.75rem;
+  padding: 0.5rem 0.75rem; border-radius: var(--radius);
+  background: var(--brand-soft); border: 1px solid #bfdbfe;
+  margin-bottom: 0.75rem; font-size: 0.85rem; color: var(--brand-dark);
+  animation: dlg-fade-in 0.15s ease;
+}
+.um-bulk-bar.active { display: flex; }
+.um-bulk-count { font-weight: 700; font-family: var(--font-mono); }
+
+/* Subtle time display */
+.um-time { font-size: 0.78rem; color: var(--muted); white-space: nowrap; }
+.um-time-never { font-size: 0.75rem; color: var(--muted-light); font-style: italic; }
+
+/* Checkbox in table */
+#umTable .um-check { width: 16px; height: 16px; cursor: pointer; accent-color: var(--brand); }
+
+/* Empty state */
+.um-empty {
+  text-align: center; padding: 2.5rem 1.5rem; color: #94a3b8;
+}
+.um-empty-icon { display: block; font-size: 2.2rem; margin-bottom: 0.5rem; opacity: 0.6; }
+.um-empty-title { font-weight: 600; font-size: 0.9rem; color: #64748b; margin-bottom: 0.3rem; }
+.um-empty-hint { font-size: 0.78rem; color: #94a3b8; }
+
+/* Scope fields fade animation */
+.um-scope-field { transition: opacity 0.2s, max-height 0.25s; overflow: hidden; }
+.um-scope-field.hidden { opacity: 0; max-height: 0; padding: 0; margin: 0; }
+
+/* Remove table-striped odd-row override */
+.table-striped > tbody > tr:nth-of-type(odd) > * { --bs-table-accent-bg: transparent; }
+</style>
+</head>
+
+<body>
+<div class="d-flex shell">
+  {% include 'core/partials/sidebar.html' %}
+
+  <main class="flex-grow-1 p-3">
+    <div class="container-fluid p-0">
+
+      <!-- Page header -->
+      <div class="page-header">
+        <div class="page-header-left">
+          <div class="page-header-module">{% if LANGUAGE_CODE == 'ar' %}إدارة المستخدمين{% else %}User Management{% endif %}</div>
+          <div class="page-header-chips">
+            <span class="ph-chip ph-chip-page">SUPER_ADMIN</span>
+            <span class="ph-chip ph-chip-gray" id="umUserCount">—</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stats bar -->
+      <div class="um-stats" id="umStats">
+        <span class="um-stat um-stat-total">Total <span class="um-stat-n" id="statTotal">—</span></span>
+        <span class="um-stat um-stat-super">Super Admin <span class="um-stat-n" id="statSuper">0</span></span>
+        <span class="um-stat um-stat-gen">Gen. Advisor <span class="um-stat-n" id="statGen">0</span></span>
+        <span class="um-stat um-stat-adv">Advisor <span class="um-stat-n" id="statAdv">0</span></span>
+        <span class="um-stat um-stat-off">Disabled <span class="um-stat-n" id="statDisabled">0</span></span>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════════
+           CREATE USER PANEL
+           ═══════════════════════════════════════════════════════ -->
+      <div class="um-panel" id="createPanel">
+        <div class="um-panel-header">
+          <div class="um-panel-title">Create New User</div>
+          <button class="btn btn-sm btn-outline-secondary" type="button" onclick="toggleCreatePanel()">
+            <span id="createToggleIcon">▼</span>
+          </button>
+        </div>
+        <div id="createFields">
+          <div class="row g-2 align-items-end">
+            <div class="col-md-2">
+              <label class="form-label">Username</label>
+              <input id="cUsername" class="form-control" placeholder="john.doe" autocomplete="off">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">Password</label>
+              <div class="d-flex gap-1">
+                <input id="cPassword" type="text" class="form-control" placeholder="•••••••" autocomplete="new-password">
+                <button type="button" class="um-gen-pw" onclick="generatePassword()" title="Generate strong password">⟳ Gen</button>
+              </div>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">Role</label>
+              <select id="cRole" class="form-select" onchange="updateCreateScopeFields()">
+                <option value="SUPER_ADMIN">SUPER_ADMIN</option>
+                <option value="GENERAL_ACADEMIC_ADVISOR">GEN. ADVISOR</option>
+                <option value="ADVISOR" selected>ADVISOR</option>
+              </select>
+            </div>
+            <div class="col-md-2 um-scope-field" id="cAdvisorWrap">
+              <label class="form-label">Advisor ID</label>
+              <input id="cAdvisorId" class="form-control" placeholder="A001">
+            </div>
+            <div class="col-md-2 um-scope-field" id="cDeptWrap">
+              <label class="form-label">Departments</label>
+              <input id="cDepartments" class="form-control" placeholder="AI, CS">
+            </div>
+            <div class="col-md-2 d-grid">
+              <button id="cCreateBtn" class="btn btn-success" type="button" onclick="createUser()">Create User</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════════
+           EDIT USER PANEL (hidden until a user is selected)
+           ═══════════════════════════════════════════════════════ -->
+      <div class="um-panel um-panel-edit" id="editPanel" style="display:none;">
+        <div class="um-panel-header">
+          <div class="um-panel-title edit">Editing User</div>
+          <div class="d-flex align-items-center gap-2">
+            <div class="um-editing-user" id="editingLabel">—</div>
+            <button class="btn btn-sm btn-outline-secondary" type="button" onclick="deselectUser()">✕ Close</button>
+          </div>
+        </div>
+        <div class="row g-2 align-items-end">
+          <div class="col-md-2">
+            <label class="form-label">Role</label>
+            <select id="eRole" class="form-select" onchange="updateEditScopeFields()">
+              <option value="SUPER_ADMIN">SUPER_ADMIN</option>
+              <option value="GENERAL_ACADEMIC_ADVISOR">GEN. ADVISOR</option>
+              <option value="ADVISOR">ADVISOR</option>
+            </select>
+          </div>
+          <div class="col-md-2 um-scope-field" id="eAdvisorWrap">
+            <label class="form-label">Advisor ID</label>
+            <input id="eAdvisorId" class="form-control" placeholder="A001">
+          </div>
+          <div class="col-md-2 um-scope-field" id="eDeptWrap">
+            <label class="form-label">Departments</label>
+            <input id="eDepartments" class="form-control" placeholder="AI, CS">
+          </div>
+          <div class="col-md-2 d-grid">
+            <button class="btn btn-primary" type="button" onclick="updateRole()">Update Role & Scope</button>
+          </div>
+          <div class="col-md-2 d-grid">
+            <button class="btn btn-outline-warning" type="button" onclick="resetPassword()">Reset Password</button>
+          </div>
+          <div class="col-md-2 d-grid">
+            <button class="btn btn-danger" type="button" onclick="deleteUser()">Delete User</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════════
+           TOOLBAR: Search + Bulk + Export
+           ═══════════════════════════════════════════════════════ -->
+      <div class="um-toolbar">
+        <div class="um-search">
+          <input id="umSearch" class="form-control" type="search" placeholder="Search users…" oninput="filterTable()">
+        </div>
+        <select id="umRoleFilter" class="form-select" style="width:auto;min-width:140px;" onchange="filterTable()">
+          <option value="">All Roles</option>
+          <option value="SUPER_ADMIN">Super Admin</option>
+          <option value="GENERAL_ACADEMIC_ADVISOR">Gen. Advisor</option>
+          <option value="ADVISOR">Advisor</option>
+        </select>
+        <select id="umStatusFilter" class="form-select" style="width:auto;min-width:120px;" onchange="filterTable()">
+          <option value="">All Status</option>
+          <option value="active">Active</option>
+          <option value="disabled">Disabled</option>
+        </select>
+        <button class="btn btn-outline-secondary btn-sm" type="button" onclick="loadUsers()">↻ Refresh</button>
+        <button class="btn btn-outline-secondary btn-sm" type="button" onclick="exportCSV()">↓ Export CSV</button>
+      </div>
+
+      <!-- Bulk actions bar -->
+      <div class="um-bulk-bar" id="bulkBar">
+        <span><span class="um-bulk-count" id="bulkCount">0</span> selected</span>
+        <button class="btn btn-sm btn-outline-dark" type="button" onclick="bulkDisable()">Disable Selected</button>
+        <button class="btn btn-sm btn-outline-success" type="button" onclick="bulkEnable()">Enable Selected</button>
+        <button class="btn btn-sm btn-outline-secondary" type="button" onclick="clearBulk()">Clear</button>
+      </div>
+
+      <!-- ═══════════════════════════════════════════════════════
+           USERS TABLE
+           ═══════════════════════════════════════════════════════ -->
+      <div class="table-wrap" style="max-height:600px;">
+        <table class="table table-sm mb-0" id="umTable">
+          <thead>
+            <tr>
+              <th style="width:32px;"><input type="checkbox" class="um-check" id="umCheckAll" onclick="toggleAllChecks(this)"></th>
+              <th data-sort="text">Username</th>
+              <th data-sort="text">Role</th>
+              <th data-sort="text">Advisor ID</th>
+              <th data-sort="text">Departments</th>
+              <th data-sort="text">Status</th>
+              <th data-sort="text">Last Login</th>
+              <th data-sort="text">Created</th>
+              <th style="width:100px;">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td colspan="9">
+              <div class="um-empty">
+                <span class="um-empty-icon">👥</span>
+                <div class="um-empty-title">Loading users…</div>
+              </div>
+            </td></tr>
+          </tbody>
+        </table>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   STATE
+   ═══════════════════════════════════════════════════════════════ */
+let allUsers = [];
+let selectedUsername = null;
+let bulkSelected = new Set();
+
+const q = (id) => document.getElementById(id);
+
+/* ═══════════════════════════════════════════════════════════════
+   CSRF
+   ═══════════════════════════════════════════════════════════════ */
+function getCookie(name) {
+  const v = `; ${document.cookie}`;
+  const p = v.split(`; ${name}=`);
+  return p.length === 2 ? p.pop().split(';').shift() : '';
+}
+const csrfToken = getCookie('csrftoken');
+function csrfHeaders(extra = {}) { return { 'X-CSRFToken': csrfToken, ...extra }; }
+
+/* ═══════════════════════════════════════════════════════════════
+   TOAST / NOTIFY
+   ═══════════════════════════════════════════════════════════════ */
+const notify = (() => {
+  let container = document.getElementById('toast-container');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'toast-container';
+    document.body.appendChild(container);
+  }
+  const ICONS = { success: '✓', error: '✕', info: 'ℹ', warning: '!' };
+  const DURATIONS = { success: 3200, error: 5000, info: 4000, warning: 4500 };
+
+  function show(title, kind = 'success', sub = '') {
+    const duration = DURATIONS[kind] || 3200;
+    const t = document.createElement('div');
+    t.className = `ux-toast ${kind}`;
+    t.innerHTML = `
+      <div class="ux-toast-icon">${ICONS[kind] || '✓'}</div>
+      <div class="ux-toast-body">
+        <div class="ux-toast-title">${title}</div>
+        ${sub ? `<div class="ux-toast-sub">${sub}</div>` : ''}
+      </div>
+      <button class="ux-toast-close" aria-label="Dismiss">✕</button>
+      <div class="ux-toast-progress" style="animation-duration:${duration}ms;"></div>`;
+    container.appendChild(t);
+    function dismiss() { t.classList.add('removing'); setTimeout(() => t.remove(), 250); }
+    t.querySelector('.ux-toast-close').addEventListener('click', dismiss);
+    setTimeout(dismiss, duration);
+  }
+  return {
+    success: (msg, sub) => show(msg, 'success', sub),
+    error:   (msg, sub) => show(msg, 'error', sub),
+    info:    (msg, sub) => show(msg, 'info', sub),
+    warning: (msg, sub) => show(msg, 'warning', sub),
+  };
+})();
+
+/* ═══════════════════════════════════════════════════════════════
+   DIALOG SYSTEM
+   ═══════════════════════════════════════════════════════════════ */
+const dlg = (() => {
+  const ICONS = { danger: '🗑️', warning: '⚠️', info: 'ℹ️', success: '✅' };
+
+  function build(opts) {
+    const kind = opts.kind || 'danger';
+    const backdrop = document.createElement('div');
+    backdrop.className = 'dlg-backdrop';
+    backdrop.innerHTML = `
+      <div class="dlg-box" role="dialog" aria-modal="true">
+        <div class="dlg-header">
+          <div class="dlg-icon dlg-icon-${kind}">${ICONS[kind] || '⚠️'}</div>
+          <div><div class="dlg-title">${opts.title || 'Confirm'}</div></div>
+        </div>
+        <div class="dlg-body">${opts.body || ''}</div>
+        ${opts.typed || opts.inputLabel ? `
+        <div class="dlg-input-row">
+          <label>${opts.inputLabel || ('Type <code>' + (opts.typed || '') + '</code> to confirm')}</label>
+          <input type="${opts.inputType || 'text'}" class="dlg-confirm-input ${kind === 'danger' ? 'dlg-input-danger' : ''}"
+            placeholder="${opts.inputPlaceholder || ''}" autocomplete="off" spellcheck="false">
+          ${opts.inputHint ? `<div class="dlg-input-hint">${opts.inputHint}</div>` : ''}
+        </div>` : ''}
+        <div class="dlg-footer">
+          <button class="btn-cancel">${opts.cancelText || 'Cancel'}</button>
+          <button class="btn-confirm ${kind}" ${opts.typed ? 'disabled' : ''}>${opts.confirmText || 'Confirm'}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(backdrop);
+    setTimeout(() => {
+      const inp = backdrop.querySelector('.dlg-confirm-input');
+      if (inp) inp.focus(); else backdrop.querySelector('.btn-confirm').focus();
+    }, 50);
+    return backdrop;
+  }
+
+  function confirm(opts = {}) {
+    return new Promise(resolve => {
+      const el = build(opts);
+      const confirmBtn = el.querySelector('.btn-confirm');
+      const cancelBtn = el.querySelector('.btn-cancel');
+      const input = el.querySelector('.dlg-confirm-input');
+      function close(result) {
+        el.querySelector('.dlg-box').style.animation = 'dlg-slide-up 0.15s ease reverse';
+        setTimeout(() => { el.remove(); resolve(result); }, 140);
+      }
+      if (input && opts.typed) {
+        input.addEventListener('input', () => { confirmBtn.disabled = input.value.trim() !== opts.typed; });
+        input.addEventListener('keydown', e => { if (e.key === 'Enter' && !confirmBtn.disabled) close(true); });
+      }
+      confirmBtn.addEventListener('click', () => close(true));
+      cancelBtn.addEventListener('click', () => close(false));
+      el.addEventListener('click', e => { if (e.target === el) close(false); });
+      document.addEventListener('keydown', function esc(e) {
+        if (e.key === 'Escape') { document.removeEventListener('keydown', esc); close(false); }
+      });
+    });
+  }
+
+  function prompt(opts = {}) {
+    return new Promise(resolve => {
+      const el = build({ ...opts, inputLabel: opts.label, inputPlaceholder: opts.placeholder || '', inputHint: opts.hint, typed: null });
+      const confirmBtn = el.querySelector('.btn-confirm');
+      const cancelBtn = el.querySelector('.btn-cancel');
+      const input = el.querySelector('.dlg-confirm-input');
+      if (opts.required !== false && input) {
+        confirmBtn.disabled = true;
+        input.addEventListener('input', () => { confirmBtn.disabled = input.value.trim() === ''; });
+      }
+      function close(value) {
+        el.querySelector('.dlg-box').style.animation = 'dlg-slide-up 0.15s ease reverse';
+        setTimeout(() => { el.remove(); resolve(value); }, 140);
+      }
+      if (input) input.addEventListener('keydown', e => { if (e.key === 'Enter' && !confirmBtn.disabled) close(input.value.trim()); });
+      confirmBtn.addEventListener('click', () => close(input ? input.value.trim() : true));
+      cancelBtn.addEventListener('click', () => close(null));
+      el.addEventListener('click', e => { if (e.target === el) close(null); });
+      document.addEventListener('keydown', function esc(e) {
+        if (e.key === 'Escape') { document.removeEventListener('keydown', esc); close(null); }
+      });
+    });
+  }
+  return { confirm, prompt };
+})();
+
+/* ═══════════════════════════════════════════════════════════════
+   API HELPERS
+   ═══════════════════════════════════════════════════════════════ */
+function apiError(res, data, fallback) {
+  const msg = data?.error || data?.message || data?.detail || '';
+  const status = res?.status || 0;
+  return msg ? `${msg} [HTTP ${status}]` : `${fallback} [HTTP ${status}]`;
+}
+
+async function apiPost(url, payload) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: csrfHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  return { res, data };
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   LOAD & RENDER USERS
+   ═══════════════════════════════════════════════════════════════ */
+async function loadUsers() {
+  const tbody = q('umTable')?.querySelector('tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="9"><div class="um-empty"><span class="um-empty-icon">⏳</span><div class="um-empty-title">Loading…</div></div></td></tr>';
+
+  try {
+    const res = await fetch('/ops/users/list/');
+    const data = await res.json();
+    if (!res.ok) { notify.error(apiError(res, data, 'Failed to load users')); return; }
+    allUsers = Array.isArray(data.items) ? data.items : [];
+    updateStats();
+    filterTable();
+    notify.success(`Loaded ${allUsers.length} users`);
+  } catch (err) {
+    notify.error('Network error loading users');
+  }
+}
+
+function updateStats() {
+  const total = allUsers.length;
+  const supe = allUsers.filter(u => u.role === 'SUPER_ADMIN').length;
+  const gen = allUsers.filter(u => u.role === 'GENERAL_ACADEMIC_ADVISOR').length;
+  const adv = allUsers.filter(u => u.role === 'ADVISOR').length;
+  const disabled = allUsers.filter(u => !u.is_active).length;
+
+  q('statTotal').textContent = total;
+  q('statSuper').textContent = supe;
+  q('statGen').textContent = gen;
+  q('statAdv').textContent = adv;
+  q('statDisabled').textContent = disabled;
+  q('umUserCount').textContent = `${total} users`;
+}
+
+function filterTable() {
+  const search = (q('umSearch')?.value || '').trim().toLowerCase();
+  const roleFilter = q('umRoleFilter')?.value || '';
+  const statusFilter = q('umStatusFilter')?.value || '';
+
+  const filtered = allUsers.filter(u => {
+    if (search && !u.username.toLowerCase().includes(search) &&
+        !(u.advisor_id || '').toLowerCase().includes(search) &&
+        !(u.departments || []).join(',').toLowerCase().includes(search)) return false;
+    if (roleFilter && u.role !== roleFilter) return false;
+    if (statusFilter === 'active' && !u.is_active) return false;
+    if (statusFilter === 'disabled' && u.is_active) return false;
+    return true;
+  });
+
+  renderTable(filtered);
+}
+
+function renderTable(users) {
+  const tbody = q('umTable')?.querySelector('tbody');
+  if (!tbody) return;
+
+  if (!users.length) {
+    tbody.innerHTML = `<tr><td colspan="9"><div class="um-empty">
+      <span class="um-empty-icon">🔍</span>
+      <div class="um-empty-title">No users found</div>
+      <div class="um-empty-hint">Try adjusting your filters</div>
+    </div></td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = users.map(u => {
+    const isSelected = u.username === selectedUsername;
+    const isChecked = bulkSelected.has(u.username);
+    const roleBadge = u.role === 'SUPER_ADMIN'
+      ? '<span class="um-role-badge um-role-super">Super Admin</span>'
+      : u.role === 'GENERAL_ACADEMIC_ADVISOR'
+        ? '<span class="um-role-badge um-role-gen">Gen. Advisor</span>'
+        : '<span class="um-role-badge um-role-adv">Advisor</span>';
+
+    const activeBadge = u.is_active
+      ? `<span class="um-active-badge um-active-on" onclick="event.stopPropagation();toggleActive('${u.username}',false)" title="Click to disable">● Active</span>`
+      : `<span class="um-active-badge um-active-off" onclick="event.stopPropagation();toggleActive('${u.username}',true)" title="Click to enable">○ Disabled</span>`;
+
+    const lastLogin = u.last_login
+      ? `<span class="um-time">${formatDate(u.last_login)}</span>`
+      : '<span class="um-time-never">Never</span>';
+
+    const created = u.date_joined
+      ? `<span class="um-time">${formatDate(u.date_joined)}</span>`
+      : '<span class="um-time-never">—</span>';
+
+    return `<tr class="${isSelected ? 'um-selected' : ''}" data-username="${esc(u.username)}" onclick="selectUserFromRow(this)">
+      <td onclick="event.stopPropagation()"><input type="checkbox" class="um-check" ${isChecked ? 'checked' : ''} onchange="toggleBulkCheck('${esc(u.username)}', this.checked)"></td>
+      <td><strong>${esc(u.username)}</strong></td>
+      <td>${roleBadge}</td>
+      <td>${esc(u.advisor_id || '—')}</td>
+      <td>${(u.departments || []).join(', ') || '—'}</td>
+      <td>${activeBadge}</td>
+      <td>${lastLogin}</td>
+      <td>${created}</td>
+      <td>
+        <div class="um-row-actions">
+          <button class="um-row-btn um-btn-edit" title="Edit role/scope" onclick="event.stopPropagation();selectUser('${esc(u.username)}')">✎</button>
+          <button class="um-row-btn um-btn-key" title="Reset password" onclick="event.stopPropagation();resetPasswordFor('${esc(u.username)}')">🔑</button>
+          <button class="um-row-btn um-btn-del" title="Delete user" onclick="event.stopPropagation();deleteUserFor('${esc(u.username)}')">✕</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+
+  updateBulkBar();
+}
+
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+
+function formatDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  const now = new Date();
+  const diff = now - d;
+  if (diff < 86400000) {
+    const hrs = Math.floor(diff / 3600000);
+    return hrs < 1 ? 'Just now' : `${hrs}h ago`;
+  }
+  if (diff < 604800000) {
+    const days = Math.floor(diff / 86400000);
+    return `${days}d ago`;
+  }
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SELECT / DESELECT USER
+   ═══════════════════════════════════════════════════════════════ */
+function selectUserFromRow(tr) {
+  const username = tr.dataset.username;
+  if (selectedUsername === username) { deselectUser(); return; }
+  selectUser(username);
+}
+
+function selectUser(username) {
+  const user = allUsers.find(u => u.username === username);
+  if (!user) return;
+
+  selectedUsername = username;
+  q('editPanel').style.display = 'block';
+  q('editingLabel').textContent = `👤 ${username}`;
+
+  // Populate edit fields
+  q('eRole').value = user.role;
+  q('eAdvisorId').value = user.advisor_id || '';
+  q('eDepartments').value = (user.departments || []).join(', ');
+  updateEditScopeFields();
+
+  // Highlight row
+  document.querySelectorAll('#umTable tbody tr').forEach(r => {
+    r.classList.toggle('um-selected', r.dataset.username === username);
+  });
+
+  // Scroll edit panel into view smoothly
+  q('editPanel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function deselectUser() {
+  selectedUsername = null;
+  q('editPanel').style.display = 'none';
+  document.querySelectorAll('#umTable tbody tr.um-selected').forEach(r => r.classList.remove('um-selected'));
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   ROLE-BASED SCOPE FIELDS
+   ═══════════════════════════════════════════════════════════════ */
+function updateScopeFields(roleId, advisorWrapId, deptWrapId) {
+  const role = q(roleId)?.value || '';
+  const advisorWrap = q(advisorWrapId);
+  const deptWrap = q(deptWrapId);
+  if (!advisorWrap || !deptWrap) return;
+
+  if (role === 'SUPER_ADMIN') {
+    advisorWrap.classList.add('hidden');
+    deptWrap.classList.add('hidden');
+  } else if (role === 'GENERAL_ACADEMIC_ADVISOR') {
+    advisorWrap.classList.add('hidden');
+    deptWrap.classList.remove('hidden');
+  } else {
+    advisorWrap.classList.remove('hidden');
+    deptWrap.classList.add('hidden');
+  }
+}
+function updateCreateScopeFields() { updateScopeFields('cRole', 'cAdvisorWrap', 'cDeptWrap'); }
+function updateEditScopeFields() { updateScopeFields('eRole', 'eAdvisorWrap', 'eDeptWrap'); }
+
+/* ═══════════════════════════════════════════════════════════════
+   CREATE USER
+   ═══════════════════════════════════════════════════════════════ */
+async function createUser() {
+  const username = (q('cUsername')?.value || '').trim();
+  const password = (q('cPassword')?.value || '').trim();
+  const role = (q('cRole')?.value || '').trim();
+  const advisor_id = (q('cAdvisorId')?.value || '').trim();
+  const departments = (q('cDepartments')?.value || '').trim();
+
+  if (!username || !password) { notify.warning('Username and password are required'); return; }
+
+  const { res, data } = await apiPost('/ops/users/create/', { username, password, role, advisor_id, departments });
+  if (res.ok) {
+    notify.success('User created', username);
+    q('cUsername').value = '';
+    q('cPassword').value = '';
+    q('cAdvisorId').value = '';
+    q('cDepartments').value = '';
+    loadUsers();
+  } else {
+    notify.error(apiError(res, data, 'Failed to create user'));
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   UPDATE ROLE / SCOPE
+   ═══════════════════════════════════════════════════════════════ */
+async function updateRole() {
+  if (!selectedUsername) { notify.warning('No user selected'); return; }
+  const { res, data } = await apiPost('/ops/users/update-role/', {
+    username: selectedUsername,
+    role: q('eRole')?.value || '',
+    advisor_id: (q('eAdvisorId')?.value || '').trim(),
+    departments: (q('eDepartments')?.value || '').trim(),
+  });
+  if (res.ok) {
+    notify.success('Role updated', selectedUsername);
+    loadUsers();
+  } else {
+    notify.error(apiError(res, data, 'Failed to update role'));
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   RESET PASSWORD
+   ═══════════════════════════════════════════════════════════════ */
+async function resetPassword() {
+  if (!selectedUsername) return;
+  await resetPasswordFor(selectedUsername);
+}
+
+async function resetPasswordFor(username) {
+  const newPassword = await dlg.prompt({
+    title: 'Reset password',
+    body: `<p>Enter a new password for <strong>${username}</strong>.</p>`,
+    label: 'New password',
+    placeholder: 'Enter new password…',
+    kind: 'warning',
+    confirmText: 'Set password',
+  });
+  if (!newPassword) return;
+
+  const ok = await dlg.confirm({
+    title: 'Confirm password reset',
+    body: `<p>Set a new password for <strong>${username}</strong>?</p>`,
+    typed: 'RESET',
+    confirmText: 'Confirm reset',
+    kind: 'warning',
+  });
+  if (!ok) return;
+
+  const { res, data } = await apiPost('/ops/users/set-password/', { username, new_password: newPassword });
+  if (res.ok) notify.success('Password reset', username);
+  else notify.error(apiError(res, data, 'Failed to reset password'));
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TOGGLE ACTIVE (inline badge click)
+   ═══════════════════════════════════════════════════════════════ */
+async function toggleActive(username, enable) {
+  const action = enable ? 'Enable' : 'Disable';
+  const ok = await dlg.confirm({
+    title: `${action} user account?`,
+    body: enable
+      ? `<p>Restore login access for <strong>${username}</strong>.</p>`
+      : `<p>This will prevent <strong>${username}</strong> from logging in.</p><p>You can re-enable at any time.</p>`,
+    typed: enable ? undefined : 'DISABLE',
+    confirmText: `${action} account`,
+    kind: enable ? 'info' : 'warning',
+  });
+  if (!ok) return;
+
+  const { res, data } = await apiPost('/ops/users/set-active/', { username, is_active: enable });
+  if (res.ok) {
+    notify.success(`User ${action.toLowerCase()}d`, username);
+    loadUsers();
+  } else {
+    notify.error(apiError(res, data, `Failed to ${action.toLowerCase()} user`));
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   DELETE USER
+   ═══════════════════════════════════════════════════════════════ */
+async function deleteUser() {
+  if (!selectedUsername) return;
+  await deleteUserFor(selectedUsername);
+}
+
+async function deleteUserFor(username) {
+  const ok = await dlg.confirm({
+    title: 'Delete user account?',
+    body: `<p>This will permanently delete <strong>${username}</strong>.</p><p>This cannot be undone.</p>`,
+    typed: username,
+    confirmText: 'Delete user',
+    kind: 'danger',
+  });
+  if (!ok) return;
+
+  const { res, data } = await apiPost('/ops/users/delete/', { username });
+  if (res.ok) {
+    notify.success('User deleted', username);
+    if (selectedUsername === username) deselectUser();
+    loadUsers();
+  } else {
+    notify.error(apiError(res, data, 'Failed to delete user'));
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   GENERATE PASSWORD
+   ═══════════════════════════════════════════════════════════════ */
+function generatePassword() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789!@#$%&*';
+  const arr = new Uint8Array(16);
+  crypto.getRandomValues(arr);
+  const pw = Array.from(arr).map(b => chars[b % chars.length]).join('');
+  q('cPassword').value = pw;
+  q('cPassword').type = 'text';
+
+  // Copy to clipboard
+  navigator.clipboard.writeText(pw).then(() => {
+    notify.info('Password generated & copied to clipboard');
+  }).catch(() => {
+    notify.info('Password generated — copy it manually');
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   BULK ACTIONS
+   ═══════════════════════════════════════════════════════════════ */
+function toggleBulkCheck(username, checked) {
+  if (checked) bulkSelected.add(username);
+  else bulkSelected.delete(username);
+  updateBulkBar();
+}
+
+function toggleAllChecks(master) {
+  const checkboxes = document.querySelectorAll('#umTable tbody .um-check');
+  checkboxes.forEach(cb => {
+    const tr = cb.closest('tr');
+    const uname = tr?.dataset?.username;
+    if (uname) {
+      cb.checked = master.checked;
+      if (master.checked) bulkSelected.add(uname);
+      else bulkSelected.delete(uname);
+    }
+  });
+  updateBulkBar();
+}
+
+function clearBulk() {
+  bulkSelected.clear();
+  document.querySelectorAll('#umTable tbody .um-check').forEach(cb => cb.checked = false);
+  q('umCheckAll').checked = false;
+  updateBulkBar();
+}
+
+function updateBulkBar() {
+  const bar = q('bulkBar');
+  q('bulkCount').textContent = bulkSelected.size;
+  bar.classList.toggle('active', bulkSelected.size > 0);
+}
+
+async function bulkDisable() {
+  if (!bulkSelected.size) return;
+  const names = Array.from(bulkSelected);
+  const ok = await dlg.confirm({
+    title: `Disable ${names.length} users?`,
+    body: `<p>This will disable: <strong>${names.join(', ')}</strong></p>`,
+    typed: 'DISABLE',
+    confirmText: 'Disable all',
+    kind: 'warning',
+  });
+  if (!ok) return;
+
+  let success = 0, fail = 0;
+  for (const username of names) {
+    const { res } = await apiPost('/ops/users/set-active/', { username, is_active: false });
+    if (res.ok) success++; else fail++;
+  }
+  notify.success(`Disabled ${success} users${fail ? `, ${fail} failed` : ''}`);
+  clearBulk();
+  loadUsers();
+}
+
+async function bulkEnable() {
+  if (!bulkSelected.size) return;
+  const names = Array.from(bulkSelected);
+  const ok = await dlg.confirm({
+    title: `Enable ${names.length} users?`,
+    body: `<p>This will enable: <strong>${names.join(', ')}</strong></p>`,
+    confirmText: 'Enable all',
+    kind: 'info',
+  });
+  if (!ok) return;
+
+  let success = 0, fail = 0;
+  for (const username of names) {
+    const { res } = await apiPost('/ops/users/set-active/', { username, is_active: true });
+    if (res.ok) success++; else fail++;
+  }
+  notify.success(`Enabled ${success} users${fail ? `, ${fail} failed` : ''}`);
+  clearBulk();
+  loadUsers();
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   EXPORT CSV
+   ═══════════════════════════════════════════════════════════════ */
+function exportCSV() {
+  if (!allUsers.length) { notify.warning('No users to export'); return; }
+  const header = 'username,role,advisor_id,departments,is_active,last_login,date_joined';
+  const rows = allUsers.map(u =>
+    [u.username, u.role, u.advisor_id || '', (u.departments||[]).join(';'), u.is_active, u.last_login||'', u.date_joined||''].join(',')
+  );
+  const csv = '\ufeff' + header + '\n' + rows.join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `users_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  notify.success('CSV exported', `${allUsers.length} users`);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   CREATE PANEL TOGGLE
+   ═══════════════════════════════════════════════════════════════ */
+function toggleCreatePanel() {
+  const fields = q('createFields');
+  const icon = q('createToggleIcon');
+  if (fields.style.display === 'none') {
+    fields.style.display = 'block';
+    icon.textContent = '▼';
+  } else {
+    fields.style.display = 'none';
+    icon.textContent = '▶';
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SORTABLE TABLE
+   ═══════════════════════════════════════════════════════════════ */
+function wireSortableTable(tableId) {
+  const table = document.getElementById(tableId);
+  if (!table) return;
+  const headers = table.querySelectorAll('thead th[data-sort]');
+  headers.forEach((th, idx) => {
+    let dir = 'asc';
+    th.style.cursor = 'pointer';
+    th.setAttribute('title', 'Click to sort');
+    th.addEventListener('click', () => {
+      const tbody = table.querySelector('tbody');
+      if (!tbody) return;
+      const rows = Array.from(tbody.querySelectorAll('tr'));
+      const validRows = rows.filter(r => r.children.length > idx && !r.querySelector('td[colspan]'));
+      if (!validRows.length) return;
+      const asc = dir === 'asc';
+      validRows.sort((a, b) => {
+        const av = a.children[idx]?.textContent?.trim() || '';
+        const bv = b.children[idx]?.textContent?.trim() || '';
+        return asc ? av.localeCompare(bv, undefined, {numeric:true}) : bv.localeCompare(av, undefined, {numeric:true});
+      });
+      headers.forEach(h => h.removeAttribute('data-dir'));
+      th.setAttribute('data-dir', asc ? 'asc' : 'desc');
+      dir = asc ? 'desc' : 'asc';
+      tbody.innerHTML = '';
+      validRows.forEach(r => tbody.appendChild(r));
+    });
+  });
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   INIT
+   ═══════════════════════════════════════════════════════════════ */
+updateCreateScopeFields();
+wireSortableTable('umTable');
+loadUsers();
+
+/* Mark current sidebar link as active */
+document.querySelectorAll('.sidebar .nav-link').forEach(link => {
+  if (link.getAttribute('href') === '/user-management/') link.classList.add('active');
+});
+</script>
+</body>
+</html>

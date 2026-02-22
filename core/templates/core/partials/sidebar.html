@@ -1,0 +1,193 @@
+{# core/partials/sidebar.html #}
+{% load i18n %}
+{% get_current_language as LANGUAGE_CODE %}
+
+<aside class="sidebar p-3">
+  <h5 class="mb-3">
+    {% if LANGUAGE_CODE == 'ar' %}لوحة المرشد{% else %}Advisor Console{% endif %}
+  </h5>
+  <div class="small text-secondary mb-3">
+    {% if LANGUAGE_CODE == 'ar' %}الوظائف الرئيسية{% else %}Main functions{% endif %}
+  </div>
+
+  <nav class="nav flex-column gap-1" id="menu">
+    <a class="nav-link" data-target="student" href="/#student">
+      {% if LANGUAGE_CODE == 'ar' %}توصية الطلاب{% else %}Student Recommender{% endif %}
+    </a>
+    <a class="nav-link" data-target="batch" href="/#batch">
+      {% if LANGUAGE_CODE == 'ar' %}دفع المرشحات{% else %}Batch Recommender{% endif %}
+    </a>
+    <a class="nav-link" data-target="prereq" href="/#prereq">
+      {% if LANGUAGE_CODE == 'ar' %}متطلبات المقررات{% else %}Course Prerequisites{% endif %}
+    </a>
+    <a class="nav-link" data-target="plan" href="/#plan">
+      {% if LANGUAGE_CODE == 'ar' %}عارض خطة البرنامج{% else %}Program Plan Viewer{% endif %}
+    </a>
+    <a class="nav-link" data-target="scrape" href="/#scrape">
+      {% if LANGUAGE_CODE == 'ar' %}السحب الدفعي{% else %}Batch Scraping{% endif %}
+    </a>
+    <a class="nav-link" data-target="debug" href="/#debug">
+      {% if LANGUAGE_CODE == 'ar' %}تصحيح التوصيات{% else %}Recommendation Debug{% endif %}
+    </a>
+    <a class="nav-link" data-target="eligibility" href="/#eligibility">
+      {% if LANGUAGE_CODE == 'ar' %}أهلية المقررات{% else %}Course Eligibility{% endif %}
+    </a>
+
+    {% if can_admin_advisors %}
+      <a class="nav-link" data-target="advisoradmin" href="/#advisoradmin">
+        {% if LANGUAGE_CODE == 'ar' %}إدارة المرشد{% else %}Advisor Admin{% endif %}
+      </a>
+      <a class="nav-link" href="/user-management/">
+        {% if LANGUAGE_CODE == 'ar' %}إدارة المستخدمين{% else %}User Management{% endif %}
+      </a>
+    {% endif %}
+
+    {% if can_view_portfolio %}
+      <a class="nav-link" href="/advisor-portfolio/">
+        {% if LANGUAGE_CODE == 'ar' %}محفظة المرشد{% else %}Advisor Portfolio{% endif %}
+        <span class="sidebar-badge sb-badge-portfolio"></span>
+      </a>
+    {% endif %}
+
+    <a class="nav-link" data-target="exports" href="/#exports">
+      {% if LANGUAGE_CODE == 'ar' %}مركز التصدير{% else %}Export Center{% endif %}
+      <span class="sidebar-badge sb-badge-export"></span>
+    </a>
+    <a class="nav-link" data-target="highpriority" href="/#highpriority">
+      {% if LANGUAGE_CODE == 'ar' %}نواقص عالية الأولوية{% else %}Missing High Priority{% endif %}
+      <span class="sidebar-badge sb-badge-hp"></span>
+    </a>
+
+    {% if can_db_admin %}
+      <a class="nav-link" data-target="dbadmin" href="/#dbadmin">
+        {% if LANGUAGE_CODE == 'ar' %}لوحة قاعدة البيانات{% else %}DB Admin Panel{% endif %}
+      </a>
+    {% endif %}
+
+    <a class="nav-link" href="/planner/">
+      {% if LANGUAGE_CODE == 'ar' %}منشئ الجدول{% else %}Student Timetable Builder{% endif %}
+    </a>
+    <a class="nav-link" href="/ops/sections-import/">
+      {% if LANGUAGE_CODE == 'ar' %}استيراد الشعب{% else %}Sections Import{% endif %}
+    </a>
+    <a class="nav-link" href="/db-admin/">
+      {% if LANGUAGE_CODE == 'ar' %}إدارة قاعدة البيانات{% else %}Full DB Admin{% endif %}
+    </a>
+    <a class="nav-link" href="/audit-explorer/">
+      {% if LANGUAGE_CODE == 'ar' %}مستكشف التدقيق{% else %}Audit Explorer{% endif %}
+    </a>
+  </nav>
+
+  {% if user.is_authenticated %}
+    <hr class="border-secondary mt-3">
+    <a class="sb-user-card text-decoration-none" href="/logout/" title="{% if LANGUAGE_CODE == 'ar' %}تسجيل الخروج{% else %}Click to logout{% endif %}">
+      <div class="sb-avatar">{{ user.username|slice:":2"|upper }}</div>
+      <div class="sb-user-info">
+        <div class="sb-username">{{ user.username }}</div>
+        {% if role %}
+          {% if role == "SUPER_ADMIN" %}
+            <span class="sb-role-badge sb-role-super">{{ role }}</span>
+          {% elif role == "GENERAL_ACADEMIC_ADVISOR" %}
+            <span class="sb-role-badge sb-role-admin">GEN. ADVISOR</span>
+          {% elif role == "ADVISOR" %}
+            <span class="sb-role-badge sb-role-advisor">ADVISOR</span>
+          {% else %}
+            <span class="sb-role-badge sb-role-default">{{ role }}</span>
+          {% endif %}
+        {% endif %}
+      </div>
+      <span class="sb-logout-icon" aria-label="Logout">⏻</span>
+    </a>
+  {% endif %}
+
+  <div class="mt-3">
+    <form action="/i18n/setlang/" method="post">
+      {% csrf_token %}
+      {# keep user on the same page after switching language #}
+      <input type="hidden" name="next" value="{{ request.get_full_path }}">
+      <select name="language" class="form-select form-select-sm" onchange="this.form.submit()">
+        <option value="en" {% if LANGUAGE_CODE == 'en' %}selected{% endif %}>English</option>
+        <option value="ar" {% if LANGUAGE_CODE == 'ar' %}selected{% endif %}>العربية</option>
+      </select>
+    </form>
+  </div>
+</aside>
+
+<!-- Mobile sidebar backdrop -->
+<div id="sidebarBackdrop" class="sidebar-backdrop"></div>
+
+<script>
+/* ── Mobile sidebar toggle — runs on every page that includes sidebar ── */
+(function() {
+  const sidebar   = document.querySelector('.sidebar');
+  const backdrop  = document.getElementById('sidebarBackdrop');
+  if (!sidebar || !backdrop) return;
+
+  /* Create hamburger button */
+  const toggle = document.createElement('button');
+  toggle.className    = 'sidebar-toggle';
+  toggle.setAttribute('aria-label', 'Toggle navigation');
+  toggle.setAttribute('aria-expanded', 'false');
+  toggle.innerHTML = `<span class="sidebar-toggle-icon">
+    <span></span><span></span><span></span>
+  </span>`;
+
+  function openSidebar() {
+    sidebar.classList.add('sidebar-open');
+    backdrop.classList.add('active');
+    toggle.setAttribute('aria-expanded', 'true');
+    document.body.style.overflow = 'hidden'; /* prevent scroll behind */
+  }
+
+  function closeSidebar() {
+    sidebar.classList.remove('sidebar-open');
+    backdrop.classList.remove('active');
+    toggle.setAttribute('aria-expanded', 'false');
+    document.body.style.overflow = '';
+  }
+
+  toggle.addEventListener('click', () => {
+    sidebar.classList.contains('sidebar-open') ? closeSidebar() : openSidebar();
+  });
+
+  backdrop.addEventListener('click', closeSidebar);
+
+  /* Close on Escape */
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeSidebar();
+  });
+
+  /* Close when a nav link is clicked on mobile (navigates to panel) */
+  sidebar.querySelectorAll('.nav-link').forEach(link => {
+    link.addEventListener('click', () => {
+      if (window.innerWidth <= 768) closeSidebar();
+    });
+  });
+
+  /* Inject button into page-header if it exists, otherwise before <main> */
+  const pageHeader = document.querySelector('.page-header');
+  if (pageHeader) {
+    /* Prepend to page-header */
+    const left = pageHeader.querySelector('.page-header-left');
+    if (left) {
+      pageHeader.insertBefore(toggle, left);
+    } else {
+      pageHeader.prepend(toggle);
+    }
+  } else {
+    /* Fallback: fixed floating button */
+    toggle.style.cssText = 'position:fixed;top:0.75rem;inset-inline-start:0.75rem;z-index:301;';
+    document.body.appendChild(toggle);
+  }
+
+  /* Wrap main content in .mobile-content-pad if not already wrapped */
+  const main = document.querySelector('main.flex-grow-1');
+  if (main) {
+    /* Don't wrap if already has page-header (padding handled differently) */
+    if (!main.querySelector('.mobile-content-pad')) {
+      /* Just ensure the shell (main) has top padding when page-header is sticky */
+      /* No DOM wrapping needed — page-header is sticky inside main */
+    }
+  }
+})();
+</script>
