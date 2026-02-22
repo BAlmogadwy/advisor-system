@@ -96,7 +96,7 @@ DATABASES = {
 }
 
 # Legacy parity DB used by migrated advisor logic (can be overridden via env var)
-DB_PATH = os.getenv("ADVISOR_DB_PATH", str(BASE_DIR / "import_old" / "database" / "advisor.db"))
+DB_PATH = os.getenv("ADVISOR_DB_PATH", str(BASE_DIR / "db.sqlite3"))
 
 # Portal credentials for scraper/runtime commands
 PORTAL_ADMIN_USERNAME = os.getenv("PORTAL_ADMIN_USERNAME", "")

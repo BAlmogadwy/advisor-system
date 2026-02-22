@@ -1,7 +1,10 @@
 # student_advisor_system/database/db_utils.py
 
 import sqlite3
-from config.settings import DB_PATH
+from pathlib import Path
+
+# Always use the Django db.sqlite3 at the project root
+DB_PATH = str(Path(__file__).resolve().parents[2] / "db.sqlite3")
 
 def get_connection():
     return sqlite3.connect(DB_PATH)
@@ -14,8 +17,8 @@ def insert_student(student_data):
         INSERT OR REPLACE INTO students (
             student_id, registration_no, name, nationality, status,
             gpa, total_registered_credits, total_earned_credits,
-            program, section                           -- ✅ NEW
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            program, section, advisor_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         student_data["student_id"],
         student_data["registration_no"],
@@ -26,7 +29,8 @@ def insert_student(student_data):
         student_data["total_registered_credits"],
         student_data["total_earned_credits"],
         student_data["program"],
-        student_data["section"]                      # ✅ NEW
+        student_data["section"],
+        student_data.get("advisor_id", ""),
     ))
     conn.commit()
     conn.close()
@@ -71,9 +75,9 @@ def insert_student_course(student_id, course_code, course_data):
         course_id,
         course_data["programme_term"],
         course_data["status"],
-        course_data["grade"],
-        course_data["mark"],
-        course_data["actual_term"]
+        course_data.get("grade") or "",
+        course_data.get("mark"),
+        course_data.get("actual_term") or ""
     ))
     conn.commit()
     conn.close()

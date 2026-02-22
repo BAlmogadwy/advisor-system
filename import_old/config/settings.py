@@ -5,5 +5,6 @@ STUDENT_TIMETABLE_URL = "https://eas.taibahu.edu.sa/TaibahReg/studentSchedualEnq
 ADMIN_USERNAME = "322071"
 ADMIN_PASSWORD = "Bass1409"
 
-DB_PATH = "database/advisor.db"
+from pathlib import Path as _Path
+DB_PATH = str(_Path(__file__).resolve().parents[2] / "db.sqlite3")
 STUDENT_LIST_FILE = "data/students_list.csv"

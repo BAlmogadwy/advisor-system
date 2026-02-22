@@ -105,6 +105,10 @@ def start_batch_scrape(concurrency: int = 2, students_csv: str | None = None) ->
         f"asyncio.run(batch_scrape_students(student_list_file=r'{csv_path}', concurrency={concurrency}, save_html=False, debug_snapshot=True, close_on_finish=True))"
     )
 
+    # Ensure subprocess uses the Django db.sqlite3, not the legacy advisor.db
+    env = os.environ.copy()
+    env["ADVISOR_DB_PATH"] = str(BASE_DIR / "db.sqlite3")
+
     with LOG_PATH.open("w", encoding="utf-8") as logf:
         # bandit: argv is fixed and derived from trusted local config; shell is not used.
         proc = subprocess.Popen(  # nosec
@@ -113,6 +117,7 @@ def start_batch_scrape(concurrency: int = 2, students_csv: str | None = None) ->
             stdout=logf,
             stderr=subprocess.STDOUT,
             creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+            env=env,
         )
 
     started_at = _now_local_str()
