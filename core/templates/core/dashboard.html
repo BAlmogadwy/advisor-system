@@ -587,37 +587,53 @@
         <div class="col-md-2"><label class="form-label">Semester</label><input id="batchSemester" class="form-control" type="number" min="0" max="1" value="{{ semester }}"></div>
         <div class="col-md-3"><label class="form-label">Program (optional)</label><input id="batchProgram" class="form-control"></div>
         <div class="col-md-2"><label class="form-label">Section (optional)</label><input id="batchSection" class="form-control"></div>
-        <div class="col-md-2 d-grid"><button id="runBatch" class="btn btn-success">Run preview</button></div>
+        <div class="col-md-2 d-grid"><button id="runBatch" class="btn btn-primary">Run preview</button></div>
         <div class="col-md-1 d-grid"><button id="resetBatch" type="button" class="btn btn-outline-secondary">Reset</button></div>
       </div>
-      <div class="preset-row">
-        <button id="batchSavePreset" type="button" class="btn btn-outline-secondary btn-sm">Save preset</button>
-        <button id="batchLoadPreset" type="button" class="btn btn-outline-secondary btn-sm">Load preset</button>
+      <div style="display:flex;gap:6px;margin-top:8px;">
+        <button id="batchSavePreset" type="button" class="fb-dd"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span> Save preset</button>
+        <button id="batchLoadPreset" type="button" class="fb-dd"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span> Load preset</button>
       </div>
 
       <div class="row g-2 mt-3 mb-2" id="batchMetrics" style="display:none;">
-        <div class="col-md-3"><div class="metric"><div class="k">Year/Semester</div><div class="v" id="batchMetricTerm">-</div></div></div>
-        <div class="col-md-3"><div class="metric"><div class="k">Students scanned</div><div class="v" id="batchMetricStudents">0</div></div></div>
-        <div class="col-md-3"><div class="metric"><div class="k">Top list size</div><div class="v" id="batchMetricTopCount">0</div></div></div>
+        <div class="col-md-4"><div class="mc mc-royal">
+          <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></div><div class="mc-lbl">Year / Semester</div></div>
+          <div class="mc-val" id="batchMetricTerm">-</div>
+        </div></div>
+        <div class="col-md-4"><div class="mc mc-teal mc-hero">
+          <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span></div><div class="mc-lbl">Students Scanned</div></div>
+          <div class="mc-val" id="batchMetricStudents">0</div>
+        </div></div>
+        <div class="col-md-4"><div class="mc mc-sky">
+          <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span></div><div class="mc-lbl">Top List Size</div></div>
+          <div class="mc-val" id="batchMetricTopCount">0</div>
+        </div></div>
       </div>
 
-      <div class="row g-2 align-items-end batch-export-row">
-        <div class="col-md-3 d-grid"><a id="batchCsv" class="btn btn-outline-success btn-sm" href="#">Download aggregate CSV</a></div>
-        <div class="col-md-3 d-grid"><a id="batchSummary" class="btn btn-outline-primary btn-sm" href="#">Open summary JSON</a></div>
-        <div class="col-md-3 d-grid"><button id="copyBatchCsv" type="button" class="btn btn-outline-secondary btn-sm">Copy aggregate CSV link</button></div>
-        <div class="col-md-3"><div id="batchUpdated" class="small text-secondary mt-2">Last update: -</div></div>
+      <div class="filter-bar mt-2 mb-3" style="display:flex;align-items:center;">
+        <a id="batchCsv" class="fb-dd" href="#"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span> CSV</a>
+        <a id="batchSummary" class="fb-dd" href="#"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span> Summary JSON</a>
+        <button id="copyBatchCsv" type="button" class="fb-dd">Copy CSV link</button>
+        <div class="fb-spacer"></div>
+        <div id="batchUpdated" class="small" style="color:var(--t4)">Last update: -</div>
       </div>
 
-      <div class="table-wrap mt-3">
-        <table class="table table-sm mb-0" id="batchTable">
-          <thead><tr><th data-sort="num">#</th><th data-sort="text">Course</th><th data-sort="num">Count</th><th>Share</th></tr></thead>
-          <tbody><tr><td colspan="4"><div class="empty-state"><span class="empty-icon">📊</span><div class="empty-title">No batch data yet</div><div class="empty-hint">Set Year &amp; Semester above, then click <strong>Run preview</strong></div></div></td></tr></tbody>
+      <div style="margin-bottom:6px;">
+        <table class="tbl-card" id="batchTable">
+          <thead><tr><th data-sort="num"># <span class="sort-arrow">▲</span></th><th data-sort="text">Course</th><th data-sort="num">Count</th><th>Share</th></tr></thead>
+          <tbody><tr><td colspan="4"><div class="ap-empty"><span class="ap-empty-icon">📊</span><div class="ap-empty-title">No batch data yet</div><div class="ap-empty-hint">Set Year &amp; Semester above, then click <strong>Run preview</strong></div></div></td></tr></tbody>
         </table>
       </div>
 
-      <div class="mt-3">
-        <div class="small text-secondary mb-1">Top recommendation chips</div>
-        <div id="batchTopChips" class="mb-1"></div>
+      <div class="cpanel mt-3">
+        <div class="cp-h">
+          <span class="i" style="opacity:0.4"><svg viewBox="0 0 24 24"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-6"/></svg></span>
+          <div class="cp-t">Top Recommendations</div>
+          <span class="cp-live">LIVE</span>
+        </div>
+        <div class="cp-b" id="batchTopChips">
+          <div class="empty-note">Run a batch preview to see top course recommendations.</div>
+        </div>
       </div>
     </div>
 
@@ -1050,11 +1066,11 @@
     q('batchProgram').value = '';
     q('batchSection').value = '';
     const tbody = document.querySelector('#batchTable tbody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="4" class="empty-note">No data yet. Next step: set filters and click Run Preview.</td></tr>';
+    if (tbody) tbody.innerHTML = '<tr><td colspan="4"><div class="ap-empty"><span class="ap-empty-icon">📊</span><div class="ap-empty-title">No batch data yet</div><div class="ap-empty-hint">Set filters and click Run Preview</div></div></td></tr>';
     q('batchMetrics').style.display = 'none';
     q('batchCsv').href = '#';
     q('batchSummary').href = '#';
-    q('batchTopChips').innerHTML = '';
+    q('batchTopChips').innerHTML = '<div class="empty-note">Run a batch preview to see top course recommendations.</div>';
     setUpdated('batchUpdated');
   };
 
@@ -1084,7 +1100,7 @@
       if (tbody) {
         tbody.innerHTML = `<tr><td colspan="4" class="text-danger">${preciseError(res, data, 'Failed to load batch summary.')}</td></tr>`;
       }
-      q('batchTopChips').innerHTML = '';
+      q('batchTopChips').innerHTML = '<div class="empty-note">Failed to load recommendations.</div>';
       q('batchMetrics').style.display = 'none';
       setUpdated('batchUpdated', true);
       runBtn.disabled = false;
@@ -1100,21 +1116,21 @@
     if (tbody) {
       if (data.top_recommended_courses.length === 0) {
         tbody.innerHTML = '<tr><td colspan="4" class="empty-note">No recommendations found.</td></tr>';
-        q('batchTopChips').innerHTML = '';
+        q('batchTopChips').innerHTML = '<div class="empty-note">No courses to display.</div>';
       } else {
         const maxCount = Math.max(...data.top_recommended_courses.map((x) => Number(x.count) || 0), 1);
         tbody.innerHTML = data.top_recommended_courses
           .map((row, idx) => {
-            const cls = idx < 3 ? 'row-highlight' : '';
             const count = Number(row.count) || 0;
             const pct = Math.max(3, Math.round((count / maxCount) * 100));
-            return `<tr class="${cls}"><td>${idx + 1}</td><td>${row.course_code}</td><td>${count}</td><td><div class="mini-bar-wrap"><div class="mini-bar" style="width:${pct}%"></div></div></td></tr>`;
+            const fillCls = idx < 3 ? 'cr-fill-hi' : idx < 8 ? 'cr-fill-md' : 'cr-fill-lo';
+            return `<tr class="cr-row"><td style="font-family:var(--font-mono);font-weight:700;color:${idx < 3 ? 'var(--teal)' : 'var(--t3)'};font-size:12px;">${idx + 1}</td><td><span class="cr-id">${row.course_code}</span></td><td><span style="font-family:var(--font-mono);font-weight:600;font-size:13px;">${count}</span></td><td><div class="cr-bar"><div class="cr-track" style="width:100px;"><div class="cr-fill ${fillCls}" style="width:${pct}%"></div></div><span class="cr-txt">${pct}%</span></div></td></tr>`;
           })
           .join('');
 
-        const top3 = data.top_recommended_courses.slice(0, 3);
-        q('batchTopChips').innerHTML = top3
-          .map((x, i) => `<span class="top-chip">#${i + 1} ${x.course_code} (${x.count})</span>`)
+        const top5 = data.top_recommended_courses.slice(0, 5);
+        q('batchTopChips').innerHTML = top5
+          .map((x, i) => `<div class="rec"><div><div class="rec-code">${x.course_code}</div><div class="rec-pre">${x.count} students recommended</div></div><span class="pill-status pill-g"><span class="pill-dot"></span>#${i + 1}</span></div>`)
           .join('');
       }
     }
