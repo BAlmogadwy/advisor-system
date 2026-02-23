@@ -563,8 +563,8 @@
           <div class="col-lg-8">
             <div id="studentPlanTerms"></div>
           </div>
-          <div class="col-lg-4">
-            <div id="studentCourseDrawer" class="cpanel">
+          <div class="col-lg-4" style="position:relative;">
+            <div id="studentCourseDrawer" class="cpanel" style="position:sticky;top:16px;">
               <div class="cp-h">
                 <span class="i" style="opacity:0.4"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
                 <div class="cp-t">Course Inspector</div>
@@ -1422,6 +1422,11 @@
         document.querySelectorAll('.course-row').forEach((r) => r.classList.remove('active'));
         row.classList.add('active');
         renderCourseDrawer();
+        /* On narrow viewports where sticky won't help, scroll drawer into view */
+        const drawer = q('studentCourseDrawer');
+        if (drawer && window.innerWidth < 992) {
+          drawer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
       });
     });
   }
