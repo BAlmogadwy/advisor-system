@@ -433,7 +433,7 @@
 
     {# SECURITY: debug_mode must also be enforced server-side in the view (e.g. settings.DEBUG and request.user.is_superuser). Template-only gating is not sufficient. #}
     {% if debug_mode %}
-    <div class="card soft-card p-3 ">
+    <div style="padding:12px 16px;margin-bottom:16px;border-radius:var(--radius-sm);background:rgba(255,255,255,0.82);backdrop-filter:blur(20px);border:1px solid rgba(17,17,68,0.06)">
       <h6 class="mb-2">Dev Role Switch (DEBUG only)</h6>
       <div class="row g-2 align-items-end">
         <div class="col-md-3">

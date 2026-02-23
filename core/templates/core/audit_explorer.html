@@ -7,13 +7,14 @@
   <style>
     /* Page-specific: audit table overrides */
     .audit-table { border-collapse: collapse; width: 100%; font-size: 12px; }
-    .audit-table th, .audit-table td { border: 1px solid #ddd; padding: 6px; vertical-align: top; }
-    .audit-table th { background: #f3f3f3; }
+    .audit-table th, .audit-table td { border: 1px solid rgba(17,17,68,0.06); padding: 6px; vertical-align: top; }
+    .audit-table th { background: rgba(255,255,255,0.85); font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--t4); }
+    .audit-table td { background: rgba(255,255,255,0.7); }
+    .audit-filter-row input,
+    .audit-filter-row select { background: rgba(255,255,255,0.88); border: 1px solid rgba(17,17,68,0.06); border-radius: var(--radius-sm); }
     .ok  { color: #0b8a32; font-weight: 700; }
     .bad { color: #b00020; font-weight: 700; }
     .audit-filter-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-    .audit-filter-row input,
-    .audit-filter-row select { padding: 6px; }
   </style>
 
 <style id="shared-ux-css">
@@ -149,7 +150,7 @@ main.p-3 .page-header {
         </div>
       </div>
     </div>
-    <div class="card soft-card p-4">
+    <div>
 
   <form method="get" class="audit-filter-row">
     <input name="action" placeholder="{% trans 'Action' %}" value="{{ filters.action }}" />

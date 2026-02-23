@@ -47,8 +47,9 @@
       border:         1px solid transparent;
       cursor:         pointer;
       transition:     background 0.12s, border-color 0.12s, box-shadow 0.12s;
-      background:     #fff;
-      border-color:   var(--line);
+      background:     rgba(255,255,255,0.82);
+      backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+      border-color:   rgba(17,17,68,0.05);
       box-shadow:     var(--shadow-card);
       user-select:    none;
       text-decoration: none;
@@ -56,18 +57,18 @@
     }
 
     .dba-nav-item:hover {
-      background:   #f4f7fc;
-      border-color: var(--line-strong);
+      background:   rgba(255,255,255,0.92);
+      border-color: rgba(17,17,68,0.08);
     }
 
     .dba-nav-item.active {
-      background:   linear-gradient(135deg, #eff6ff 0%, #fff 100%);
-      border-color: var(--brand);
-      box-shadow:   0 0 0 3px var(--brand-glow), var(--shadow-card);
+      background:   rgba(255,255,255,0.92);
+      border-color: var(--teal);
+      box-shadow:   0 0 0 3px rgba(10,142,110,0.08), var(--shadow-card);
     }
 
     .dba-nav-item.danger-item.active {
-      background:   linear-gradient(135deg, #fff5f5 0%, #fff 100%);
+      background:   rgba(255,245,245,0.92);
       border-color: var(--danger);
       box-shadow:   0 0 0 3px rgba(224,52,52,.12), var(--shadow-card);
     }
@@ -139,7 +140,7 @@
       gap:          0.875rem;
       margin-bottom: 1.25rem;
       padding-bottom: 1rem;
-      border-bottom: 1px solid var(--line);
+      border-bottom: 1px solid rgba(17,17,68,0.06);
     }
 
     .dba-panel-icon {
