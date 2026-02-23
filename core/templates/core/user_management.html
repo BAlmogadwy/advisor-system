@@ -215,7 +215,7 @@
         <div class="um-panel-header">
           <div class="um-panel-title">Create New User</div>
           <button class="btn btn-sm btn-outline-secondary" type="button" onclick="toggleCreatePanel()">
-            <span id="createToggleIcon">▼</span>
+            <span id="createToggleIcon" class="i i-sm" style="transition:transform 0.2s ease"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span>
           </button>
         </div>
         <div id="createFields">
@@ -262,7 +262,7 @@
           <div class="um-panel-title edit">Editing User</div>
           <div class="d-flex align-items-center gap-2">
             <div class="um-editing-user" id="editingLabel">—</div>
-            <button class="btn btn-sm btn-outline-secondary" type="button" onclick="deselectUser()">✕ Close</button>
+            <button class="btn btn-sm btn-outline-secondary" type="button" onclick="deselectUser()"><span class="i i-sm"><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span> Close</button>
           </div>
         </div>
         <div class="row g-2 align-items-end">
@@ -312,8 +312,8 @@
           <option value="active">Active</option>
           <option value="disabled">Disabled</option>
         </select>
-        <button class="btn btn-outline-secondary btn-sm" type="button" onclick="loadUsers()">↻ Refresh</button>
-        <button class="btn btn-outline-secondary btn-sm" type="button" onclick="exportCSV()">↓ Export CSV</button>
+        <button class="btn btn-outline-secondary btn-sm" type="button" onclick="loadUsers()"><span class="i i-sm"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></span> Refresh</button>
+        <button class="btn btn-outline-secondary btn-sm" type="button" onclick="exportCSV()"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span> Export CSV</button>
       </div>
 
       <!-- Bulk actions bar -->
@@ -390,7 +390,12 @@ const notify = (() => {
     container.id = 'toast-container';
     document.body.appendChild(container);
   }
-  const ICONS = { success: '✓', error: '✕', info: 'ℹ', warning: '!' };
+  const ICONS = {
+    success:'<span class="i" style="width:16px;height:16px"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>',
+    error:'<span class="i" style="width:16px;height:16px"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg></span>',
+    info:'<span class="i" style="width:16px;height:16px"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></span>',
+    warning:'<span class="i" style="width:16px;height:16px"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>',
+  };
   const DURATIONS = { success: 3200, error: 5000, info: 4000, warning: 4500 };
 
   function show(title, kind = 'success', sub = '') {
@@ -398,12 +403,12 @@ const notify = (() => {
     const t = document.createElement('div');
     t.className = `ux-toast ${kind}`;
     t.innerHTML = `
-      <div class="ux-toast-icon">${ICONS[kind] || '✓'}</div>
+      <div class="ux-toast-icon">${ICONS[kind] || ICONS.info}</div>
       <div class="ux-toast-body">
         <div class="ux-toast-title">${title}</div>
         ${sub ? `<div class="ux-toast-sub">${sub}</div>` : ''}
       </div>
-      <button class="ux-toast-close" aria-label="Dismiss">✕</button>
+      <button class="ux-toast-close" aria-label="Dismiss"><span class="i" style="width:12px;height:12px"><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span></button>
       <div class="ux-toast-progress" style="animation-duration:${duration}ms;"></div>`;
     container.appendChild(t);
     function dismiss() { t.classList.add('removing'); setTimeout(() => t.remove(), 250); }
@@ -627,9 +632,9 @@ function renderTable(users) {
       <td>${created}</td>
       <td>
         <div class="um-row-actions">
-          <button class="um-row-btn um-btn-edit" title="Edit role/scope" onclick="event.stopPropagation();selectUser('${esc(u.username)}')">✎</button>
-          <button class="um-row-btn um-btn-key" title="Reset password" onclick="event.stopPropagation();resetPasswordFor('${esc(u.username)}')"><span class="i" style="width:14px;height:14px"><svg viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg></span></button>
-          <button class="um-row-btn um-btn-del" title="Delete user" onclick="event.stopPropagation();deleteUserFor('${esc(u.username)}')">✕</button>
+          <button class="um-row-btn um-btn-edit" title="Edit role/scope" aria-label="Edit" onclick="event.stopPropagation();selectUser('${esc(u.username)}')"><span class="i" style="width:14px;height:14px"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></span></button>
+          <button class="um-row-btn um-btn-key" title="Reset password" aria-label="Reset password" onclick="event.stopPropagation();resetPasswordFor('${esc(u.username)}')"><span class="i" style="width:14px;height:14px"><svg viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg></span></button>
+          <button class="um-row-btn um-btn-del" title="Delete user" aria-label="Delete" onclick="event.stopPropagation();deleteUserFor('${esc(u.username)}')"><span class="i" style="width:14px;height:14px"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></span></button>
         </div>
       </td>
     </tr>`;
@@ -972,10 +977,10 @@ function toggleCreatePanel() {
   const icon = q('createToggleIcon');
   if (fields.style.display === 'none') {
     fields.style.display = 'block';
-    icon.textContent = '▼';
+    icon.style.transform = '';
   } else {
     fields.style.display = 'none';
-    icon.textContent = '▶';
+    icon.style.transform = 'rotate(-90deg)';
   }
 }
 

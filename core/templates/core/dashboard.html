@@ -10,14 +10,14 @@
    ═══════════════════════════════════════════════════════ */
 
 /* ── Dashboard page-header overrides (non-sticky, gradient accent) ── */
-.page-header {
+#dashboard-page .page-header {
   position: relative;
   padding: 0.65rem 1.5rem;
   margin: -1.5rem -1.5rem 1.25rem -1.5rem;
   background: rgba(255,255,255,0.35);
   box-shadow: none;
 }
-.page-header::after {
+#dashboard-page .page-header::after {
   content: '';
   position: absolute;
   bottom: -1px; left: 0; right: 0;
@@ -25,7 +25,7 @@
   background: linear-gradient(90deg, var(--teal), var(--sky) 35%, var(--royal) 65%, transparent);
   opacity: 0.15;
 }
-.page-header-module { font-size: 1rem; }
+#dashboard-page .page-header-module { font-size: 1rem; }
 
 /* ── REC 4: HP advanced settings ───────────────────── */
 .hp-advanced { border: none; }
@@ -265,7 +265,7 @@
 <div class="d-flex shell">
   {% include "core/partials/sidebar.html" %}
 
-  <main class="flex-grow-1 p-4">
+  <main id="dashboard-page" class="flex-grow-1 p-4">
     <div class="page-header">
       <div class="page-header-left">
         <div id="currentModule" class="page-header-module">{% trans "Student Recommender" %}</div>

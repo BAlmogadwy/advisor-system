@@ -9,7 +9,7 @@
   <link rel="icon" href="data:,">
   <link href="{% static 'css/global.css' %}" rel="stylesheet">
   <link href="{% static 'css/bootstrap-compat.css' %}" rel="stylesheet">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=DM+Serif+Display&family=JetBrains+Mono:wght@400;500&family=Noto+Kufi+Arabic:wght@400;600;700&display=swap" rel="stylesheet">
+  {# Fonts loaded via @import in global.css — no duplicate <link> needed #}
   {% block extra_css %}{% endblock %}
 </head>
 <body>

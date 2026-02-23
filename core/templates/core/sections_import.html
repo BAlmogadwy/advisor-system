@@ -94,6 +94,29 @@ const T = {
   insertFailed: IS_AR ? 'فشل الإدخال' : 'Insert failed',
   insertedOk: (mode,rows,meet,ds,dm)=> IS_AR ? `تم الإدخال بنجاح [${mode}]. الشعب: ${rows}، اللقاءات: ${meet}. المحذوف: شعب ${ds}، لقاءات ${dm}.` : `Inserted successfully [${mode}]. Sections: ${rows}, meetings: ${meet}. Deleted: sections ${ds}, meetings ${dm}.`,
 };
+/* ── Toast / Notify ─────────────────────────────────────────── */
+const notify = (() => {
+  let c = document.getElementById('toast-container');
+  if (!c) { c = document.createElement('div'); c.id = 'toast-container'; document.body.appendChild(c); }
+  const I = {
+    success:'<span class="i" style="width:16px;height:16px"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>',
+    error:'<span class="i" style="width:16px;height:16px"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg></span>',
+    info:'<span class="i" style="width:16px;height:16px"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></span>',
+    warning:'<span class="i" style="width:16px;height:16px"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>',
+  };
+  const D = { success:3200, error:5000, info:4000, warning:4500 };
+  function show(title, kind='success', sub='') {
+    const dur = D[kind]||3200, t = document.createElement('div');
+    t.className = `ux-toast ${kind}`;
+    t.innerHTML = `<div class="ux-toast-icon">${I[kind]||I.info}</div><div class="ux-toast-body"><div class="ux-toast-title">${title}</div>${sub?`<div class="ux-toast-sub">${sub}</div>`:''}</div><button class="ux-toast-close" aria-label="Dismiss"><span class="i" style="width:12px;height:12px"><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span></button><div class="ux-toast-progress" style="animation-duration:${dur}ms;"></div>`;
+    c.appendChild(t);
+    function dismiss(){t.classList.add('removing');setTimeout(()=>t.remove(),250);}
+    t.querySelector('.ux-toast-close').addEventListener('click',dismiss);
+    setTimeout(dismiss,dur);
+  }
+  return { success:(m,s)=>show(m,'success',s), error:(m,s)=>show(m,'error',s), info:(m,s)=>show(m,'info',s), warning:(m,s)=>show(m,'warning',s) };
+})();
+
 let previewToken = null;
 let rowsAll = [];
 let currentTag = '';
@@ -162,7 +185,8 @@ q('toggleTech').onclick = ()=> q('techWrap').classList.toggle('d-none');
 
 q('parseBtn').onclick = async () => {
   const file = q('oracleFile').files[0];
-  if (!file) return alert(T.chooseFileFirst);
+  if (!file) { notify.warning(T.chooseFileFirst); return; }
+  q('parseBtn').disabled = true; q('parseBtn').textContent = IS_AR ? 'جارٍ التحليل...' : 'Parsing...';
   setStatus('info', T.parsingFile);
   const fd = new FormData();
   fd.append('oracle_file', file);
@@ -181,6 +205,7 @@ q('parseBtn').onclick = async () => {
       previewToken = null;
       q('insertBtn').disabled = true;
       setStatus('danger', data.error || T.parseFailed);
+      q('parseBtn').disabled = false; q('parseBtn').textContent = IS_AR ? 'تحليل + معاينة' : 'Parse + Preview';
       return;
     }
 
@@ -192,16 +217,19 @@ q('parseBtn').onclick = async () => {
 
     previewToken = data.token;
     q('insertBtn').disabled = false;
+    q('parseBtn').disabled = false; q('parseBtn').textContent = IS_AR ? 'تحليل + معاينة' : 'Parse + Preview';
     setStatus('success', T.previewReady(data.preview_count||0, data.total_rows||0));
   } catch (err) {
     q('out').textContent = JSON.stringify({ error: T.requestFailed, details: String(err || '') }, null, 2);
     setStatus('danger', T.requestFailed);
+    q('parseBtn').disabled = false; q('parseBtn').textContent = IS_AR ? 'تحليل + معاينة' : 'Parse + Preview';
   }
 };
 
 q('insertBtn').onclick = async () => {
-  if (!previewToken) return alert(T.parsePreviewFirst);
+  if (!previewToken) { notify.warning(T.parsePreviewFirst); return; }
   if (!confirm(T.confirmInsertAll)) return;
+  q('insertBtn').disabled = true; q('insertBtn').textContent = IS_AR ? 'جارٍ الإدخال...' : 'Inserting...';
   setStatus('info', T.inserting);
   try {
     const r = await fetch('/ops/sections-import/insert/', {
@@ -220,9 +248,11 @@ q('insertBtn').onclick = async () => {
       const mode = data.truncate_existing ? 'REPLACE-ALL' : 'MERGE';
       setStatus('success', T.insertedOk(mode, data.rows_total||0, data.meetings_total||0, data.deleted_sections||0, data.deleted_meetings||0));
     }
+    q('insertBtn').disabled = false; q('insertBtn').textContent = IS_AR ? 'إدخال الكل' : 'Insert All';
   } catch (err) {
     q('out').textContent = JSON.stringify({ error: T.requestFailed, details: String(err || '') }, null, 2);
     setStatus('danger', T.requestFailed);
+    q('insertBtn').disabled = false; q('insertBtn').textContent = IS_AR ? 'إدخال الكل' : 'Insert All';
   }
 };
 </script>
