@@ -183,7 +183,7 @@
   border-color: var(--brand, #0A8E6E);
   outline: 0;
   box-shadow: 0 0 0 3px rgba(10,142,110,0.1);
-  background-color: rgba(255,255,255,0.9);
+  background-color: rgba(255,255,255,0.8);
 }
 .form-control-sm {
   padding: 0.35rem 0.75rem;
@@ -217,7 +217,7 @@ html[dir="rtl"] .form-select {
   border-color: var(--brand, #0A8E6E);
   outline: 0;
   box-shadow: 0 0 0 3px rgba(10,142,110,0.1);
-  background-color: rgba(255,255,255,0.9);
+  background-color: rgba(255,255,255,0.8);
 }
 .form-select-sm {
   padding-top: 0.35rem;

@@ -6,10 +6,10 @@
 {% block extra_css %}
   <style>
     /* Page-specific: KPI summary tiles */
-    .kpi { border: 1px solid rgba(17,17,68,0.05); border-radius: var(--radius); padding: .6rem; background: rgba(255,255,255,0.82); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); box-shadow: var(--shadow-card); }
+    .kpi { border: 1px solid rgba(17,17,68,0.05); border-radius: var(--radius); padding: .6rem; background: rgba(255,255,255,0.55); backdrop-filter: blur(20px) saturate(130%); -webkit-backdrop-filter: blur(20px) saturate(130%); box-shadow: var(--shadow-card); }
     .kpi .k { font-size: .7rem; color: var(--t4); text-transform: uppercase; font-family: var(--font-mono); letter-spacing: 0.06em; font-weight: 700; }
     .kpi .v { font-weight: 700; font-family: var(--font-serif); font-size: 1.4rem; color: var(--teal); }
-    .si-panel { padding: 16px 20px; margin-bottom: 12px; border-radius: var(--radius); background: rgba(255,255,255,0.82); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(17,17,68,0.05); box-shadow: var(--shadow-card); }
+    .si-panel { padding: 16px 20px; margin-bottom: 12px; border-radius: var(--radius); background: rgba(255,255,255,0.55); backdrop-filter: blur(20px) saturate(130%); -webkit-backdrop-filter: blur(20px) saturate(130%); border: 1px solid rgba(17,17,68,0.05); box-shadow: var(--shadow-card); }
   </style>
 
 <style id="shared-ux-css">
@@ -26,9 +26,9 @@
   gap: 1rem;
   padding: 0.55rem 1.5rem;
   margin: -1.5rem -1.5rem 1rem -1.5rem;
-  background: rgba(238,241,247,0.96);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: rgba(255,255,255,0.4);
+  backdrop-filter: blur(24px) saturate(130%);
+  -webkit-backdrop-filter: blur(24px) saturate(130%);
   border-bottom: 1px solid var(--line, #dde3ed);
   box-shadow: 0 1px 8px rgba(0,0,0,0.06);
 }

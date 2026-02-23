@@ -47,8 +47,8 @@
       border:         1px solid transparent;
       cursor:         pointer;
       transition:     background 0.12s, border-color 0.12s, box-shadow 0.12s;
-      background:     rgba(255,255,255,0.82);
-      backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+      background:     rgba(255,255,255,0.55);
+      backdrop-filter: blur(20px) saturate(130%); -webkit-backdrop-filter: blur(20px) saturate(130%);
       border-color:   rgba(17,17,68,0.05);
       box-shadow:     var(--shadow-card);
       user-select:    none;
@@ -57,18 +57,18 @@
     }
 
     .dba-nav-item:hover {
-      background:   rgba(255,255,255,0.92);
+      background:   rgba(255,255,255,0.7);
       border-color: rgba(17,17,68,0.08);
     }
 
     .dba-nav-item.active {
-      background:   rgba(255,255,255,0.92);
+      background:   rgba(255,255,255,0.7);
       border-color: var(--teal);
       box-shadow:   0 0 0 3px rgba(10,142,110,0.08), var(--shadow-card);
     }
 
     .dba-nav-item.danger-item.active {
-      background:   rgba(255,245,245,0.92);
+      background:   rgba(255,245,245,0.7);
       border-color: var(--danger);
       box-shadow:   0 0 0 3px rgba(224,52,52,.12), var(--shadow-card);
     }

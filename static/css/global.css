@@ -487,7 +487,7 @@ main.flex-grow-1 {
 .form-control:focus,
 .form-select:focus {
   border-color:     var(--teal) !important;
-  background-color: rgba(255,255,255,0.9) !important;
+  background-color: rgba(255,255,255,0.8) !important;
   box-shadow:       0 0 0 3px rgba(10,142,110,0.1), 0 1px 3px rgba(0,0,0,0.04) !important;
   outline:          none;
 }
@@ -564,7 +564,7 @@ html body .btn-danger:hover {
 html body .btn-outline-primary {
   color:        var(--teal) !important;
   border:       1.5px solid var(--teal) !important;
-  background:   #fff !important;
+  background:   rgba(255,255,255,0.55) !important;
   box-shadow:   0 1px 3px rgba(0,0,0,0.04) !important;
 }
 
@@ -578,7 +578,7 @@ html body .btn-outline-primary:hover {
 html body .btn-outline-secondary {
   color:        var(--t2) !important;
   border:       1.5px solid rgba(17,17,68,0.12) !important;
-  background:   #fff !important;
+  background:   rgba(255,255,255,0.55) !important;
   box-shadow:   0 1px 3px rgba(0,0,0,0.04) !important;
 }
 
@@ -606,7 +606,7 @@ html body .btn-warning:hover {
 html body .btn-outline-success {
   color:        var(--teal) !important;
   border:       1.5px solid var(--teal) !important;
-  background:   #fff !important;
+  background:   rgba(255,255,255,0.55) !important;
   box-shadow:   0 1px 3px rgba(0,0,0,0.04) !important;
 }
 html body .btn-outline-success:hover {
@@ -617,7 +617,7 @@ html body .btn-outline-success:hover {
 html body .btn-outline-danger {
   color:        var(--danger) !important;
   border:       1.5px solid var(--danger) !important;
-  background:   #fff !important;
+  background:   rgba(255,255,255,0.55) !important;
   box-shadow:   0 1px 3px rgba(0,0,0,0.04) !important;
 }
 html body .btn-outline-danger:hover {
@@ -628,7 +628,7 @@ html body .btn-outline-danger:hover {
 html body .btn-outline-warning {
   color:        #92400e !important;
   border:       1.5px solid #d97706 !important;
-  background:   #fff !important;
+  background:   rgba(255,255,255,0.55) !important;
   box-shadow:   0 1px 3px rgba(0,0,0,0.04) !important;
 }
 html body .btn-outline-warning:hover {
@@ -639,7 +639,7 @@ html body .btn-outline-warning:hover {
 html body .btn-outline-info {
   color:        var(--sky) !important;
   border:       1.5px solid var(--sky) !important;
-  background:   #fff !important;
+  background:   rgba(255,255,255,0.55) !important;
   box-shadow:   0 1px 3px rgba(0,0,0,0.04) !important;
 }
 html body .btn-outline-info:hover {
@@ -650,7 +650,7 @@ html body .btn-outline-info:hover {
 html body .btn-outline-dark {
   color:        var(--t1) !important;
   border:       1.5px solid rgba(17,17,68,0.2) !important;
-  background:   #fff !important;
+  background:   rgba(255,255,255,0.55) !important;
   box-shadow:   0 1px 3px rgba(0,0,0,0.04) !important;
 }
 html body .btn-outline-dark:hover {
@@ -707,7 +707,9 @@ html body .btn:focus-visible {
   overflow:      auto;
   border:        1px solid var(--line);
   border-radius: var(--radius);
-  background:    #fff;
+  background:    rgba(255,255,255,0.5);
+  backdrop-filter: blur(16px) saturate(120%);
+  -webkit-backdrop-filter: blur(16px) saturate(120%);
   box-shadow:    var(--shadow-card);
   scrollbar-width: thin;
   scrollbar-color: var(--line-strong) transparent;
@@ -738,7 +740,7 @@ html body .btn:focus-visible {
   user-select:   none;
 }
 
-.table-wrap thead th:hover { background: rgba(255,255,255,0.8) !important; color: var(--t3); }
+.table-wrap thead th:hover { background: rgba(255,255,255,0.72) !important; color: var(--t3); }
 
 .table-wrap tbody td {
   font-family:  var(--font-body);
@@ -894,7 +896,7 @@ html body .btn:focus-visible {
   backdrop-filter:blur(8px);
 }
 .btn-circle:hover {
-  background:rgba(255,255,255,0.8); border-color:var(--teal-border); color:var(--teal);
+  background:rgba(255,255,255,0.72); border-color:var(--teal-border); color:var(--teal);
 }
 .btn-circle.ac {
   background:linear-gradient(135deg, var(--teal), var(--sky));
@@ -921,7 +923,7 @@ html body .btn:focus-visible {
   color:var(--t3); font-size:12px; font-weight:600; cursor:pointer;
   transition:all .12s ease; font-family:var(--font-mono);
 }
-.pg-btn:hover { background:rgba(255,255,255,0.8); border-color:var(--line-strong); color:var(--t1); }
+.pg-btn:hover { background:rgba(255,255,255,0.72); border-color:var(--line-strong); color:var(--t1); }
 .pg-btn.active { background:var(--teal); color:#fff; border-color:var(--teal); box-shadow:0 2px 6px rgba(10,142,110,0.2); }
 .pg-btn:disabled { opacity:0.3; pointer-events:none; }
 
@@ -1344,8 +1346,9 @@ tr.attention-row td { background: #fff7ed !important; }
    ZONE CARDS
    ============================================================ */
 .zone-card {
-  border: 1px solid var(--line); border-radius: var(--radius);
-  background: #fff; padding: 1rem; margin-top: 0.75rem;
+  border: 1px solid rgba(17,17,68,0.05); border-radius: var(--radius);
+  background: rgba(255,255,255,0.55); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  padding: 1rem; margin-top: 0.75rem; box-shadow: var(--shadow-card);
 }
 
 .zone-card .zone-title {
@@ -1366,9 +1369,10 @@ tr.attention-row td { background: #fff7ed !important; }
    TERM CARDS
    ============================================================ */
 .term-card {
-  border: 1px solid var(--line); border-radius: var(--radius);
-  background: #fff; padding: 0.875rem; margin-bottom: 0.75rem;
-  box-shadow: 0 1px 3px rgba(13,21,38,.05);
+  border: 1px solid rgba(17,17,68,0.05); border-radius: var(--radius);
+  background: rgba(255,255,255,0.55); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  padding: 0.875rem; margin-bottom: 0.75rem;
+  box-shadow: var(--shadow-card);
 }
 
 .term-card h6 { margin-bottom: 0.4rem; font-weight: 600; }
@@ -1446,8 +1450,9 @@ tr.attention-row td { background: #fff7ed !important; }
 }
 
 .task-card {
-  border: 1px solid var(--line); border-radius: var(--radius);
-  background: #fff; padding: 0.8rem 1rem; margin-bottom: 0.5rem;
+  border: 1px solid rgba(17,17,68,0.05); border-radius: var(--radius);
+  background: rgba(255,255,255,0.55); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  padding: 0.8rem 1rem; margin-bottom: 0.5rem;
   transition: box-shadow .15s, transform .15s;
 }
 .task-card:hover { box-shadow: var(--shadow-card); transform: translateY(-1px); }

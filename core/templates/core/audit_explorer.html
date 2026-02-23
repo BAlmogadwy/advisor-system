@@ -8,10 +8,10 @@
     /* Page-specific: audit table overrides */
     .audit-table { border-collapse: collapse; width: 100%; font-size: 12px; }
     .audit-table th, .audit-table td { border: 1px solid rgba(17,17,68,0.06); padding: 6px; vertical-align: top; }
-    .audit-table th { background: rgba(255,255,255,0.85); font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--t4); }
+    .audit-table th { background: rgba(255,255,255,0.6); font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--t4); }
     .audit-table td { background: rgba(255,255,255,0.7); }
     .audit-filter-row input,
-    .audit-filter-row select { background: rgba(255,255,255,0.88); border: 1px solid rgba(17,17,68,0.06); border-radius: var(--radius-sm); }
+    .audit-filter-row select { background: rgba(255,255,255,0.6); border: 1px solid rgba(17,17,68,0.06); border-radius: var(--radius-sm); }
     .ok  { color: #0b8a32; font-weight: 700; }
     .bad { color: #b00020; font-weight: 700; }
     .audit-filter-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
@@ -31,9 +31,9 @@
   gap: 1rem;
   padding: 0.55rem 1.5rem;
   margin: -1.5rem -1.5rem 1rem -1.5rem;
-  background: rgba(238,241,247,0.96);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: rgba(255,255,255,0.4);
+  backdrop-filter: blur(24px) saturate(130%);
+  -webkit-backdrop-filter: blur(24px) saturate(130%);
   border-bottom: 1px solid var(--line, #dde3ed);
   box-shadow: 0 1px 8px rgba(0,0,0,0.06);
 }
