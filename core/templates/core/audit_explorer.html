@@ -10,11 +10,16 @@
     .audit-table th, .audit-table td { border: 1px solid rgba(17,17,68,0.06); padding: 6px; vertical-align: top; }
     .audit-table th { background: rgba(255,255,255,0.6); font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--t4); }
     .audit-table td { background: rgba(255,255,255,0.7); }
-    .audit-filter-row input,
-    .audit-filter-row select { background: rgba(255,255,255,0.6); border: 1px solid rgba(17,17,68,0.06); border-radius: var(--radius-sm); }
     .ok  { color: #0b8a32; font-weight: 700; }
     .bad { color: #b00020; font-weight: 700; }
-    .audit-filter-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    .audit-filter-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
+    .audit-filter-row .form-control,
+    .audit-filter-row .form-select { max-width: 180px; }
+    .audit-table-wrap {
+      background: rgba(255,255,255,0.55); backdrop-filter: blur(20px) saturate(130%); -webkit-backdrop-filter: blur(20px) saturate(130%);
+      border: 1px solid rgba(17,17,68,0.05); border-radius: var(--radius);
+      overflow: hidden; box-shadow: var(--shadow-card);
+    }
   </style>
 
 {% endblock %}
@@ -39,9 +44,9 @@
     <div>
 
   <form method="get" class="audit-filter-row">
-    <input name="action" placeholder="{% trans 'Action' %}" value="{{ filters.action }}" />
-    <input name="user" placeholder="{% trans 'User' %}" value="{{ filters.user }}" />
-    <select name="status">
+    <input name="action" class="form-control form-control-sm" placeholder="{% trans 'Action' %}" value="{{ filters.action }}" />
+    <input name="user" class="form-control form-control-sm" placeholder="{% trans 'User' %}" value="{{ filters.user }}" />
+    <select name="status" class="form-select form-select-sm">
       <option value="" {% if not filters.status %}selected{% endif %}>{% trans "All statuses" %}</option>
       <option value="success" {% if filters.status == 'success' %}selected{% endif %}>{% trans "Success" %}</option>
       <option value="error" {% if filters.status == 'error' %}selected{% endif %}>{% trans "Error" %}</option>
@@ -49,13 +54,14 @@
       <option value="deny" {% if filters.status == 'deny' %}selected{% endif %}>{% trans "Deny" %}</option>
       <option value="critical" {% if filters.status == 'critical' %}selected{% endif %}>{% trans "Critical" %}</option>
     </select>
-    <input name="from" placeholder="{% trans 'From (ISO UTC)' %}" value="{{ filters.from }}" />
-    <input name="to" placeholder="{% trans 'To (ISO UTC)' %}" value="{{ filters.to }}" />
-    <input name="limit" type="number" min="1" max="5000" value="{{ filters.limit }}" placeholder="{% trans 'Limit' %}" title="{% trans 'Maximum number of rows' %}" />
-    <button type="submit">{% trans "Apply filters" %}</button>
-    <a href="/ops/audit/export.csv?action={{ filters.action|urlencode }}&user={{ filters.user|urlencode }}&status={{ filters.status|urlencode }}&from={{ filters.from|urlencode }}&to={{ filters.to|urlencode }}&limit={{ filters.limit }}">{% trans "Export CSV" %}</a>
+    <input name="from" class="form-control form-control-sm" placeholder="{% trans 'From (ISO UTC)' %}" value="{{ filters.from }}" />
+    <input name="to" class="form-control form-control-sm" placeholder="{% trans 'To (ISO UTC)' %}" value="{{ filters.to }}" />
+    <input name="limit" class="form-control form-control-sm" type="number" min="1" max="5000" value="{{ filters.limit }}" placeholder="{% trans 'Limit' %}" title="{% trans 'Maximum number of rows' %}" style="max-width:100px" />
+    <button type="submit" class="btn btn-sm btn-primary">{% trans "Apply filters" %}</button>
+    <a class="btn btn-sm btn-outline-secondary" href="/ops/audit/export.csv?action={{ filters.action|urlencode }}&user={{ filters.user|urlencode }}&status={{ filters.status|urlencode }}&from={{ filters.from|urlencode }}&to={{ filters.to|urlencode }}&limit={{ filters.limit }}">{% trans "Export CSV" %}</a>
   </form>
 
+  <div class="audit-table-wrap">
   <table class="audit-table">
     <thead>
       <tr>
@@ -87,6 +93,7 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
     </div>
   </main>
 </div>

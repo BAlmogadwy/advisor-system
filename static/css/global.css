@@ -36,6 +36,8 @@
   /* borders */
   --line:           #dde3ed;
   --line-strong:    #c8d0df;
+  --line-h:         rgba(17,17,68,0.10);
+  --line-a:         rgba(17,17,68,0.15);
 
   /* Taibah University brand — primary teal */
   --brand:          #0A8E6E;
@@ -99,16 +101,38 @@
    ============================================================ */
 html {
   font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 body {
   background:          #f0f2f0 !important;
   background-attachment: fixed;
-  color:               var(--ink) !important;
+  color:               var(--t2) !important;
   font-family:         var(--font-body) !important;
-  font-size:           0.9375rem;
-  line-height:         1.55;
+  font-size:           14px;
+  line-height:         1.5;
   margin:              0;
+}
+
+/* ── Selection highlight ─────────────────────────────────── */
+::selection { background: var(--teal); color: #fff; }
+
+/* ── Thin custom scrollbars ──────────────────────────────── */
+* { scrollbar-width: thin; scrollbar-color: rgba(17,17,68,0.12) transparent; }
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(17,17,68,0.12); border-radius: 3px; }
+
+/* ── Noise texture overlay for depth ─────────────────────── */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0.02;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
 /* ============================================================
@@ -143,16 +167,20 @@ body {
    LAYOUT
    ============================================================ */
 .shell {
-  min-height: 100vh;
+  height: 100vh;
   display: flex;
   position: relative;
   z-index: 1;
+  overflow: hidden;
 }
 
 main.flex-grow-1 {
   flex: 1;
   padding: 1.5rem;
-  min-width: 0;   /* prevent flex overflow */
+  min-width: 0;       /* prevent flex overflow */
+  overflow-y: auto;
+  overflow-x: hidden;
+  position: relative;
 }
 
 /* ============================================================
@@ -2442,7 +2470,9 @@ kbd {
   .dlg-backdrop,
   .btn-outline-secondary,
   .cmd-backdrop,
-  .kbd-help-backdrop { display: none !important; }
+  .kbd-help-backdrop,
+  .color-mesh,
+  .ambience { display: none !important; }
 
   /* Reset backgrounds */
   body {
@@ -2451,16 +2481,20 @@ kbd {
     color: #000 !important;
     font-size: 11pt;
   }
+  body::after { display: none !important; }
 
   main.flex-grow-1 {
     padding: 0 !important;
     width:   100% !important;
   }
 
-  /* Cards: no shadow on print */
-  .soft-card {
+  /* Glassmorphic panels: flatten on print */
+  .mc, .cpanel, .planner-panel, .zone-card, .term-details, .filter-bar {
     border:     1px solid #ccc !important;
     box-shadow: none !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background: #fff !important;
     break-inside: avoid;
   }
 
@@ -2496,6 +2530,7 @@ kbd {
 
   /* Hide less important link annotations */
   .nav-link[href^="#"]::after { content: none; }
+  .nav-a[href^="#"]::after    { content: none; }
   .btn[href]::after           { content: none; }
 }
 

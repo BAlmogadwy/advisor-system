@@ -118,6 +118,9 @@
 .fs-6                 { font-size: 1rem !important; }
 .small, small         { font-size: 0.875em; }
 
+/* ── BACKGROUNDS ────────────────────────────────────────── */
+.bg-light          { background-color: rgba(255,255,255,0.55) !important; }
+
 /* ── BORDERS ─────────────────────────────────────────────── */
 .border            { border: 1px solid var(--line, #dde3ed) !important; }
 .border-0          { border: 0 !important; }
