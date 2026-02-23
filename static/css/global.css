@@ -751,6 +751,145 @@ html body .btn:focus-visible {
 .table-compact td { padding: 0.22rem 0.4rem !important; font-size: 0.8rem; }
 
 /* ============================================================
+   CARD-ROW TABLE — Glassmorphic table rows (Taibah mockup)
+   ============================================================ */
+.tbl-card {
+  width:100%; border-collapse:separate; border-spacing:0 8px;
+}
+.tbl-card thead th {
+  font-size:10px; font-weight:700; text-transform:uppercase;
+  letter-spacing:0.08em; color:var(--t5); padding:0 12px 4px;
+  font-family:var(--font-mono); cursor:pointer;
+  user-select:none; transition:color .12s ease; border:none;
+  white-space:nowrap;
+}
+.tbl-card thead th:hover { color:var(--t3); }
+.tbl-card thead th.sorted { color:var(--teal); }
+.tbl-card thead th .sort-arrow {
+  display:inline-block; font-size:8px; opacity:0.3; margin-inline-start:3px;
+  transition:opacity .12s;
+}
+.tbl-card thead th:hover .sort-arrow { opacity:0.7; }
+.tbl-card thead th.sorted .sort-arrow { opacity:1; color:var(--teal); }
+
+.tbl-card tbody tr.cr-row {
+  background:rgba(255,255,255,0.5);
+  backdrop-filter:blur(16px) saturate(120%);
+  -webkit-backdrop-filter:blur(16px) saturate(120%);
+  box-shadow:var(--shadow-card);
+  transition:all .2s var(--ease);
+  cursor:pointer; position:relative;
+}
+.tbl-card tbody tr.cr-row td {
+  padding:14px 12px; border:none;
+  border-top:1px solid rgba(17,17,68,0.04);
+  border-bottom:1px solid rgba(17,17,68,0.04);
+  vertical-align:middle; font-size:13px;
+}
+.tbl-card tbody tr.cr-row td:first-child {
+  border-radius:var(--radius) 0 0 var(--radius);
+  border-inline-start:1px solid rgba(17,17,68,0.04);
+}
+.tbl-card tbody tr.cr-row td:last-child {
+  border-radius:0 var(--radius) var(--radius) 0;
+  border-inline-end:1px solid rgba(17,17,68,0.04);
+}
+[dir="rtl"] .tbl-card tbody tr.cr-row td:first-child {
+  border-radius:0 var(--radius) var(--radius) 0;
+}
+[dir="rtl"] .tbl-card tbody tr.cr-row td:last-child {
+  border-radius:var(--radius) 0 0 var(--radius);
+}
+.tbl-card tbody tr.cr-row:hover {
+  transform:translateY(-2px);
+  box-shadow:var(--shadow-lift);
+  background:rgba(255,255,255,0.72);
+}
+.tbl-card tbody tr.cr-row:hover td:first-child {
+  border-inline-start-color:var(--teal);
+  box-shadow:inset 3px 0 0 var(--teal);
+}
+[dir="rtl"] .tbl-card tbody tr.cr-row:hover td:first-child {
+  box-shadow:inset -3px 0 0 var(--teal);
+}
+.tbl-card tbody tr.cr-row.selected {
+  background:rgba(10,142,110,0.04);
+}
+.tbl-card tbody tr.cr-row.selected td:first-child {
+  box-shadow:inset 3px 0 0 var(--teal);
+}
+[dir="rtl"] .tbl-card tbody tr.cr-row.selected td:first-child {
+  box-shadow:inset -3px 0 0 var(--teal);
+}
+
+/* Cell typography */
+.cr-id {
+  font-family:var(--font-mono); font-size:12px;
+  font-weight:700; color:var(--teal);
+}
+.tbl-card tbody tr.cr-row:hover .cr-id {
+  text-shadow:0 0 8px rgba(10,142,110,0.2);
+}
+.cr-nm { color:var(--navy); font-weight:600; font-size:13.5px; }
+.cr-sub { font-size:10.5px; color:var(--t4); margin-top:1px; font-weight:300; }
+.cr-prog { font-size:13px; color:var(--t2); }
+.cr-gpa {
+  font-family:var(--font-mono); font-weight:700; font-size:13px;
+}
+.cr-gpa-hi { color:var(--teal); }
+.cr-gpa-md { color:var(--t1); }
+.cr-gpa-lo { color:var(--danger); }
+
+/* Progress bar */
+.cr-bar { display:flex; align-items:center; gap:8px; }
+.cr-track {
+  width:56px; height:6px; border-radius:3px;
+  background:rgba(17,17,68,0.06); overflow:hidden;
+  box-shadow:0 1px 2px rgba(0,0,0,0.03) inset;
+}
+.cr-fill { height:100%; border-radius:3px; }
+.cr-fill-hi { background:linear-gradient(90deg, var(--teal), var(--sky)); }
+.cr-fill-md { background:linear-gradient(90deg, var(--sky), var(--royal)); }
+.cr-fill-lo { background:linear-gradient(90deg, var(--danger), var(--warning)); }
+.cr-txt {
+  font-family:var(--font-mono); font-size:10.5px; color:var(--t4);
+}
+
+/* Row actions */
+.cr-actions { display:flex; align-items:center; gap:5px; justify-content:flex-end; }
+.btn-circle {
+  width:30px; height:30px; border-radius:var(--radius-sm);
+  display:flex; align-items:center; justify-content:center;
+  background:rgba(255,255,255,0.5); border:1px solid rgba(17,17,68,0.06);
+  color:var(--t3); cursor:pointer; transition:all .12s ease;
+}
+.btn-circle:hover {
+  background:rgba(255,255,255,0.8); border-color:var(--teal-border); color:var(--teal);
+}
+
+/* Pagination — Taibah mockup */
+.pg-bar {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:14px 22px; margin-top:4px;
+  background:rgba(255,255,255,0.35);
+  backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
+  border:1px solid rgba(17,17,68,0.04); border-radius:var(--radius);
+}
+.pg-info { font-size:12px; color:var(--t3); font-weight:500; }
+.pg-info strong { color:var(--t1); font-weight:700; }
+.pg-nav { display:flex; align-items:center; gap:4px; }
+.pg-btn {
+  width:32px; height:32px; border-radius:var(--radius-sm);
+  display:flex; align-items:center; justify-content:center;
+  background:rgba(255,255,255,0.5); border:1px solid rgba(17,17,68,0.06);
+  color:var(--t3); font-size:12px; font-weight:600; cursor:pointer;
+  transition:all .12s ease; font-family:var(--font-mono);
+}
+.pg-btn:hover { background:rgba(255,255,255,0.8); border-color:var(--line-strong); color:var(--t1); }
+.pg-btn.active { background:var(--teal); color:#fff; border-color:var(--teal); box-shadow:0 2px 6px rgba(10,142,110,0.2); }
+.pg-btn:disabled { opacity:0.3; pointer-events:none; }
+
+/* ============================================================
    METRICS
    ============================================================ */
 .metric {
