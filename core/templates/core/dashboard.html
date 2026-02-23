@@ -91,6 +91,50 @@
   background: rgba(10,142,110,0.12); color: var(--teal);
 }
 
+/* ── Scrape terminal (mockup .term style) ────────────── */
+.scrape-term {
+  border-radius: var(--radius); overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.06);
+  box-shadow: 0 4px 20px rgba(17,17,68,0.12);
+}
+.scrape-term-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px;
+  background: #0c0c30;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.scrape-term-dots {
+  display: flex; gap: 6px;
+}
+.scrape-term-dots span {
+  width: 10px; height: 10px; border-radius: 50%;
+  display: block;
+}
+.scrape-term-dots span:nth-child(1) { background: #ff5f57; }
+.scrape-term-dots span:nth-child(2) { background: #febc2e; }
+.scrape-term-dots span:nth-child(3) { background: #28c840; }
+.scrape-term-label {
+  font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.5);
+  letter-spacing: 0.04em; text-transform: uppercase;
+}
+.scrape-term-file {
+  font-size: 10px; font-family: var(--font-mono); color: rgba(255,255,255,0.25);
+}
+.scrape-term-body {
+  background: var(--navy); padding: 14px 16px;
+  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.9;
+  max-height: 280px; overflow-y: auto; color: rgba(255,255,255,0.5);
+  box-shadow: 0 2px 8px rgba(17,17,68,0.15) inset;
+}
+.scrape-term-body::-webkit-scrollbar { width: 6px; }
+.scrape-term-body::-webkit-scrollbar-track { background: transparent; }
+.scrape-term-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
+.t-ts  { color: rgba(255,255,255,0.22); }
+.t-ok  { color: #28c840; }
+.t-er  { color: #ff7070; }
+.t-hl  { color: #6ec6ff; }
+.t-wrn { color: #febc2e; }
+
 /* ── REC 8: Advisor admin wizard bar ────────────────── */
 .adm-wizard-bar {
   display: flex;
@@ -674,6 +718,16 @@
       </div>
       <div id="scrapeMeta" class="meta-banner meta-info" style="font-family:var(--font-mono);font-size:12px;border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:10px">No scrape run started.</div>
       <div id="scrapeUpdatedAt" style="font-size:11px;color:var(--t5);font-family:var(--font-mono);margin-bottom:14px">Last update: -</div>
+      <div class="scrape-term" style="margin-bottom:18px">
+        <div class="scrape-term-head">
+          <div style="display:flex;align-items:center;gap:8px">
+            <div class="scrape-term-dots"><span></span><span></span><span></span></div>
+            <span class="scrape-term-label">Live Log Output</span>
+          </div>
+          <span class="scrape-term-file">batch_scraper.py</span>
+        </div>
+        <div id="scrapeOut" class="scrape-term-body"><span style="color:rgba(255,255,255,0.3)">No logs yet.</span></div>
+      </div>
       <div class="tbl-section" style="margin-bottom:14px">
         <div class="tbl-header">
           <div class="tbl-title">Scrape History <span class="tbl-cnt" id="scrapeHistoryCnt">0</span></div>
@@ -684,16 +738,6 @@
             <tbody><tr><td colspan="5"><div class="empty-state"><span class="i" style="width:32px;height:32px;color:var(--t5);margin-bottom:8px"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span><div class="empty-title">No scrape history</div><div class="empty-hint">Run a scrape to see history here</div></div></td></tr></tbody>
           </table>
         </div>
-      </div>
-      <div style="border-radius:var(--radius);overflow:hidden;border:1px solid rgba(17,17,68,0.06)">
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:rgba(17,17,68,0.03);border-bottom:1px solid rgba(17,17,68,0.06)">
-          <div style="display:flex;align-items:center;gap:8px">
-            <span class="i i-sm" style="color:var(--t4)"><svg viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></span>
-            <span style="font-size:12px;font-weight:600;color:var(--t2);letter-spacing:0.03em;text-transform:uppercase">Live Log Output</span>
-          </div>
-          <span style="font-size:10px;font-family:var(--font-mono);color:var(--t5)">batch_scraper.py</span>
-        </div>
-        <pre id="scrapeOut" class="log-box" style="max-height:300px;overflow:auto;margin:0;border-radius:0;border:none">No logs yet.</pre>
       </div>
     </div>
 
@@ -1893,9 +1937,29 @@
 
     q('scrapeMeta').textContent = `action=${data.last_action ?? '-'} log=${data.log_path}`;
     q('scrapeUpdatedAt').textContent = `Last update: ${new Date().toLocaleTimeString()}`;
-    q('scrapeOut').textContent = data.log_tail || 'No logs yet.';
+    const logEl = q('scrapeOut');
+    const rawLog = data.log_tail || '';
+    if (!rawLog) {
+      logEl.innerHTML = '<span style="color:rgba(255,255,255,0.3)">No logs yet.</span>';
+    } else {
+      const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      logEl.innerHTML = rawLog.split('\n').map(line => {
+        const l = esc(line);
+        /* colorize timestamps like [HH:MM:SS] or [YYYY-MM-DD HH:MM:SS] */
+        let colored = l.replace(/^(\[[\d\-: ]+\])/, '<span class="t-ts">$1</span>');
+        /* colorize success markers */
+        colored = colored.replace(/(✓|OK|SUCCESS|DONE|completed)/gi, '<span class="t-ok">$1</span>');
+        /* colorize error/fail markers */
+        colored = colored.replace(/(✗|ERROR|FAIL|Traceback|Exception|timeout)/gi, '<span class="t-er">$1</span>');
+        /* colorize warnings */
+        colored = colored.replace(/(WARNING|WARN|retry|retrying)/gi, '<span class="t-wrn">$1</span>');
+        /* highlight numbers like counts 423/764 */
+        colored = colored.replace(/(\d+)\s*\/\s*(\d+)/g, '<span class="t-hl">$1</span>/$2');
+        return '<div>' + colored + '</div>';
+      }).join('');
+    }
     if (data.running) {
-      q('scrapeOut').scrollTop = q('scrapeOut').scrollHeight;
+      logEl.scrollTop = logEl.scrollHeight;
     }
 
     q('scrapeStart').disabled = Boolean(data.running);
