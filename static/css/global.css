@@ -806,11 +806,229 @@ html body .btn:focus-visible {
   line-height:    1.1;
 }
 
-#studentPlanMetrics .metric {
-  border-color: var(--teal-border);
+/* ============================================================
+   MC — Enhanced Metric Cards (Taibah design)
+   ============================================================ */
+.mc {
+  background:      rgba(255,255,255,0.55);
+  backdrop-filter:  blur(20px) saturate(130%);
+  -webkit-backdrop-filter: blur(20px) saturate(130%);
+  border:          1px solid rgba(17,17,68,0.05);
+  border-radius:   var(--radius);
+  padding:         20px;
+  position:        relative;
+  overflow:        hidden;
+  box-shadow:      var(--shadow-card);
+  transition:      all .25s var(--ease);
 }
+.mc::before {
+  content:''; position:absolute; top:0; left:15%; right:15%; height:1.5px;
+  background: var(--mc-c, var(--teal)); opacity:0.4;
+  box-shadow: 0 0 12px var(--mc-c, var(--teal)); transition:all .25s ease;
+}
+.mc:hover::before { left:5%; right:5%; opacity:0.65; }
+.mc::after {
+  content:''; position:absolute; top:-10px; inset-inline-end:-10px;
+  width:70px; height:70px; background:var(--mc-c, var(--teal));
+  opacity:0.04; border-radius:50%; filter:blur(22px); transition:opacity .25s ease;
+}
+.mc:hover { border-color:rgba(17,17,68,0.08); transform:translateY(-2px); box-shadow:var(--shadow-lift); background:rgba(255,255,255,0.7); }
+.mc:hover::after { opacity:0.07; }
 
-#studentPlanMetrics .metric .v { font-size: 1.6rem; color: var(--teal-deep); }
+.mc-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+.mc-icon {
+  width:38px; height:38px; border-radius:var(--radius-sm);
+  display:flex; align-items:center; justify-content:center;
+  border:1px solid rgba(17,17,68,0.04);
+  box-shadow:0 1px 0 rgba(255,255,255,0.6) inset;
+}
+.mc-icon .i { width:18px; height:18px; }
+.mc-lbl {
+  font-size:10.5px; font-weight:700; text-transform:uppercase;
+  letter-spacing:0.07em; color:var(--t4);
+}
+.mc-val {
+  font-family:var(--font-serif); letter-spacing:-0.02em; line-height:1;
+  font-size:28px;
+}
+.mc-hero .mc-val { font-size:36px; }
+.mc-delta {
+  font-size:10px; margin-top:8px; font-weight:600;
+  font-family:var(--font-mono); display:flex; align-items:center; gap:4px;
+  color:var(--t4);
+}
+.mc-delta .up   { color:var(--teal); }
+.mc-delta .dn   { color:var(--danger); }
+.mc-delta .flat { color:var(--t5); }
+
+/* Sparkline */
+.spark { display:flex; align-items:flex-end; gap:2.5px; height:28px; margin-top:12px; }
+.spark .b {
+  flex:1; min-width:4px; border-radius:2px 2px 0 0;
+  background:var(--mc-c, var(--teal)); opacity:0.1; transition:opacity .15s;
+}
+.spark .b:nth-last-child(1) { opacity:0.35; }
+.spark .b:nth-last-child(2) { opacity:0.22; }
+.spark .b:nth-last-child(3) { opacity:0.16; }
+.spark .b:hover { opacity:0.45; }
+
+/* MC color variants */
+.mc-teal  { --mc-c:var(--teal); }
+.mc-teal .mc-icon  { background:rgba(10,142,110,0.08); color:var(--teal); }
+.mc-teal .mc-val   { color:var(--teal); }
+
+.mc-royal { --mc-c:var(--royal); }
+.mc-royal .mc-icon { background:rgba(64,86,227,0.08); color:var(--royal); }
+.mc-royal .mc-val  { color:var(--royal); }
+
+.mc-err   { --mc-c:var(--danger); }
+.mc-err .mc-icon   { background:rgba(192,48,48,0.08); color:var(--danger); }
+.mc-err .mc-val    { color:var(--danger); }
+
+.mc-sky   { --mc-c:var(--sky); }
+.mc-sky .mc-icon   { background:rgba(0,174,218,0.08); color:var(--sky); }
+.mc-sky .mc-val    { color:var(--sky); }
+
+/* ============================================================
+   REC — Recommendation Item Cards
+   ============================================================ */
+.rec {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:11px 14px; border:1px solid rgba(17,17,68,0.05);
+  border-radius:var(--radius-sm); margin-bottom:7px; cursor:pointer;
+  transition:all .15s ease; position:relative; overflow:hidden;
+  background:rgba(255,255,255,0.4);
+  box-shadow:0 1px 0 rgba(255,255,255,0.5) inset;
+}
+.rec:last-child { margin-bottom:0; }
+.rec:hover {
+  border-color:var(--teal-border); background:rgba(10,142,110,0.04);
+  transform:translateX(4px);
+  box-shadow:0 1px 0 rgba(255,255,255,0.3) inset, -3px 0 0 var(--teal);
+}
+[dir="rtl"] .rec:hover {
+  transform:translateX(-4px);
+  box-shadow:0 1px 0 rgba(255,255,255,0.3) inset, 3px 0 0 var(--teal);
+}
+.rec-code {
+  font-family:var(--font-mono); font-size:12px; font-weight:700; color:var(--teal);
+}
+.rec-name { font-size:12.5px; color:var(--navy); font-weight:600; margin-top:2px; }
+.rec-pre  { font-size:10px; color:var(--t5); margin-top:2px; font-family:var(--font-mono); }
+
+/* ============================================================
+   PILL — Status Pills with Dot Indicators
+   ============================================================ */
+.pill-status {
+  display:inline-flex; align-items:center; gap:5px;
+  padding:3px 10px; border-radius:999px;
+  font-size:11px; font-weight:600; border:1px solid;
+  position:relative;
+  box-shadow:0 1px 0 rgba(255,255,255,0.4) inset;
+}
+.pill-status::before {
+  content:''; position:absolute; top:0; left:0; right:0; height:50%;
+  background:linear-gradient(180deg, rgba(255,255,255,0.3), transparent);
+  border-radius:999px 999px 0 0; pointer-events:none;
+}
+.pill-dot {
+  width:5px; height:5px; border-radius:50%;
+  background:currentColor; box-shadow:0 0 4px currentColor;
+}
+.pill-g { background:rgba(10,142,110,0.08); color:var(--teal); border-color:var(--teal-border); }
+.pill-r { background:rgba(192,48,48,0.07); color:var(--danger); border-color:rgba(192,48,48,0.16); }
+.pill-a { background:rgba(154,106,8,0.07); color:var(--warning); border-color:rgba(154,106,8,0.16); }
+.pill-b { background:rgba(64,86,227,0.07); color:var(--royal); border-color:var(--royal-border); }
+
+/* ============================================================
+   FILTER BAR — Glassmorphic toolbar
+   ============================================================ */
+.filter-bar {
+  display:flex; align-items:center; gap:10px; margin-bottom:18px;
+  padding:12px 18px;
+  background:rgba(255,255,255,0.4);
+  backdrop-filter:blur(24px) saturate(130%);
+  -webkit-backdrop-filter:blur(24px) saturate(130%);
+  border:1px solid rgba(17,17,68,0.05);
+  border-radius:var(--radius);
+  box-shadow:var(--shadow-card);
+  flex-wrap:wrap;
+}
+.fb-search {
+  display:flex; align-items:center; gap:8px; flex:1; max-width:320px;
+  padding:8px 14px; border-radius:var(--radius-sm);
+  background:rgba(255,255,255,0.6); border:1px solid rgba(17,17,68,0.05);
+  transition:all .15s ease; box-shadow:var(--shadow-input);
+}
+.fb-search:focus-within {
+  border-color:var(--teal); background:rgba(255,255,255,0.8);
+  box-shadow:0 0 0 3px rgba(10,142,110,0.06), 0 0 14px rgba(10,142,110,0.04);
+}
+.fb-search .i { color:var(--t5); }
+.fb-search input {
+  flex:1; background:none; border:none; outline:none;
+  color:var(--t1); font-size:13px; font-family:inherit;
+}
+.fb-search input::placeholder { color:var(--t5); }
+.fb-spacer { flex:1; }
+.fb-dd {
+  display:flex; align-items:center; gap:6px;
+  padding:7px 14px; border-radius:999px;
+  background:rgba(255,255,255,0.55); border:1px solid rgba(17,17,68,0.05);
+  font-size:12px; font-weight:600; color:var(--t2);
+  cursor:pointer; transition:all .15s ease;
+  box-shadow:var(--shadow-input); backdrop-filter:blur(8px);
+}
+.fb-dd:hover { background:rgba(255,255,255,0.75); border-color:var(--line-strong); }
+.fb-dd.active { background:rgba(10,142,110,0.08); border-color:var(--teal-border); color:var(--teal); }
+.fb-dd .i { opacity:0.4; }
+
+/* ============================================================
+   CPANEL — Bottom Panel Cards (Recommendations, Activity)
+   ============================================================ */
+.cpanel {
+  background:rgba(255,255,255,0.5);
+  backdrop-filter:blur(20px) saturate(130%);
+  -webkit-backdrop-filter:blur(20px) saturate(130%);
+  border:1px solid rgba(17,17,68,0.05);
+  border-radius:var(--radius);
+  overflow:hidden;
+  box-shadow:var(--shadow-card);
+  transition:all .25s var(--ease);
+}
+.cpanel:hover {
+  border-color:rgba(17,17,68,0.08);
+  box-shadow:var(--shadow-lift);
+  background:rgba(255,255,255,0.65);
+}
+.cpanel::before {
+  content:''; display:block; height:2px;
+  background:linear-gradient(90deg, transparent 5%, var(--teal) 25%, var(--sky) 50%, var(--royal) 75%, transparent 95%);
+  opacity:0.15; transition:opacity .25s ease;
+}
+.cpanel:hover::before { opacity:0.35; }
+.cp-h {
+  padding:14px 20px; border-block-end:1px solid rgba(17,17,68,0.05);
+  display:flex; align-items:center; gap:9px; background:rgba(255,255,255,0.3);
+}
+.cp-t { font-size:13.5px; font-weight:700; color:var(--t1); }
+.cp-live {
+  font-family:var(--font-mono); font-size:9px; font-weight:700;
+  padding:2px 8px; border-radius:999px;
+  background:var(--teal-dim); color:var(--teal); border:1px solid var(--teal-border);
+  animation:livePulse 3s ease infinite;
+}
+@keyframes livePulse { 0%,100%{opacity:1;} 50%{opacity:0.6;} }
+.cp-b { padding:16px 20px; }
+
+/* ============================================================
+   STICKY-CTA — Gradient accent line
+   ============================================================ */
+.sticky-cta::before {
+  content:''; display:block; height:2px; margin-bottom:16px;
+  background:linear-gradient(90deg, transparent 5%, var(--teal) 25%, var(--sky) 50%, var(--royal) 75%, transparent 95%);
+  opacity:0.12; border-radius:2px;
+}
 
 /* ============================================================
    STATUS INDICATORS
