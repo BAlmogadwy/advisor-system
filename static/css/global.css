@@ -139,122 +139,243 @@ main.flex-grow-1 {
 /* ============================================================
    SIDEBAR
    ============================================================ */
+/* ── Icon system ──────────────────────────────────────────── */
+.i { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; flex-shrink: 0; }
+.i svg { width: 100%; height: 100%; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.i-sm { width: 14px; height: 14px; }
+.i-sm svg { stroke-width: 2; }
+.i-lg { width: 20px; height: 20px; }
+
 .sidebar {
-  width:        256px;
-  background:   var(--sidebar-bg) !important;
-  color:        var(--sidebar-ink);
-  padding:      0;
-  flex-shrink:  0;
-  display:      flex;
-  flex-direction: column;
-  box-shadow:   inset -1px 0 0 rgba(255,255,255,.03),
-                4px 0 24px rgba(0,0,0,.25);
-}
-
-/* Brand / title area */
-.sidebar h5 {
-  font-size:       0.8rem;
-  font-weight:     700;
-  letter-spacing:  0.06em;
-  text-transform:  uppercase;
-  color:           #e8edf5;
-  padding:         1.25rem 1rem 0.75rem;
-  margin:          0;
-  border-bottom:   1px solid rgba(255,255,255,.06);
-  background:      linear-gradient(180deg, rgba(10,142,110,.15) 0%, transparent 100%);
-}
-
-/* Section labels ("Main" / "Admin") */
-.sidebar .small {
-  font-size:       0.65rem;
-  font-weight:     700;
-  letter-spacing:  0.10em;
-  text-transform:  uppercase;
-  color:           var(--sidebar-muted);
-  padding:         1rem 1rem 0.3rem;
-  margin:          0;
-  display:         block;
-}
-
-.sidebar .nav {
-  padding: 0 0.6rem;
-}
-
-/* ── nav links — must beat Bootstrap's .nav-link specificity ── */
-.sidebar .nav-link,
-.sidebar .nav .nav-link {
-  color:           var(--sidebar-ink) !important;
-  border-radius:   var(--radius-sm);
+  width:           252px;
+  height:          100vh;
+  background:      rgba(255,255,255,0.48);
+  backdrop-filter:  blur(50px) saturate(160%);
+  -webkit-backdrop-filter: blur(50px) saturate(160%);
+  border-inline-end: 1px solid rgba(17,17,68,0.06);
+  display:         flex;
+  flex-direction:  column;
+  flex-shrink:     0;
   position:        relative;
-  padding:         0.45rem 0.75rem;
-  display:         block;
+}
+
+/* Decorative gradient line on the sidebar edge */
+.sidebar::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  inset-inline-end: -1px;
+  width: 1.5px;
+  height: 40%;
+  background: linear-gradient(180deg, var(--teal), var(--sky), var(--royal), transparent);
+  opacity: 0.25;
+}
+
+/* ── Logo area ────────────────────────────────────────────── */
+.logo-area {
+  padding:          20px 18px 22px;
+  display:          flex;
+  align-items:      center;
+  gap:              12px;
+  border-block-end: 1px solid rgba(17,17,68,0.06);
+}
+
+.logo-mark {
+  width:           40px;
+  height:          40px;
+  border-radius:   11px;
+  position:        relative;
+  background:      linear-gradient(135deg, var(--teal), var(--sky), var(--royal));
+  display:         flex;
+  align-items:     center;
+  justify-content: center;
+  box-shadow:      0 4px 16px rgba(10,142,110,0.2),
+                   0 2px 6px rgba(64,86,227,0.12),
+                   0 1px 0 rgba(255,255,255,0.25) inset;
+}
+.logo-mark::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 11px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.3), transparent 50%);
+}
+.logo-mark .i {
+  width: 22px; height: 22px;
+  color: #fff;
+  position: relative; z-index: 1;
+  filter: drop-shadow(0 1px 1px rgba(0,0,0,0.15));
+}
+
+.logo-title {
+  font-family:     var(--font-serif);
+  font-size:       20px;
+  color:           var(--navy);
+  line-height:     1.1;
+  letter-spacing:  -0.01em;
+}
+.logo-sub {
+  font-size:       10px;
+  color:           var(--t4);
+  font-weight:     600;
+  letter-spacing:  0.08em;
+  text-transform:  uppercase;
+  margin-top:      3px;
+  font-family:     var(--font-mono);
+}
+
+/* ── Navigation sections ──────────────────────────────────── */
+.nav-sec {
+  padding:    14px 10px;
+  flex:       1;
+  overflow-y: auto;
+}
+
+.nav-lbl {
+  padding:        14px 10px 5px;
+  font-size:      9px;
+  font-weight:    700;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color:          var(--t5);
+  font-family:    var(--font-mono);
+}
+
+/* ── Nav links ────────────────────────────────────────────── */
+.nav-a {
+  display:         flex;
+  align-items:     center;
+  gap:             10px;
+  padding:         9px 12px;
+  margin:          1.5px 0;
+  border-radius:   var(--radius-sm);
+  color:           var(--t3);
+  font-size:       13px;
+  font-weight:     400;
   text-decoration: none;
-  font-family:     var(--font-body);
-  font-size:       0.875rem;
-  font-weight:     500;
-  transition:      background 0.12s ease, color 0.12s ease;
-  margin-bottom:   1px;
+  cursor:          pointer;
+  transition:      all 0.15s ease;
+  position:        relative;
+}
+.nav-a:hover {
+  color:      var(--t1);
+  background: rgba(10,142,110,0.05);
 }
 
-.sidebar .nav-link:hover,
-.sidebar .nav .nav-link:hover {
-  background: var(--sidebar-hover) !important;
-  color:      #e8edf5 !important;
-}
-
-.sidebar .nav-link.active,
-.sidebar .nav .nav-link.active {
-  background:  var(--sidebar-active) !important;
-  color:       #ffffff !important;
+/* Active state */
+.nav-a.active,
+.nav-a.on {
+  color:       var(--teal-deep);
   font-weight: 600;
-  box-shadow:  0 0 0 1px rgba(91,156,246,.20);
+  background:  linear-gradient(135deg, rgba(10,142,110,0.14), rgba(0,174,218,0.05));
+  box-shadow:  0 0 0 1px var(--teal-border) inset;
 }
 
-/* Active glow bar */
-.sidebar .nav-link.active::before {
-  content:          "";
-  position:         absolute;
+.nav-a.active::before,
+.nav-a.on::before {
+  content: '';
+  position: absolute;
   inset-inline-start: 0;
-  top:              6px;
-  bottom:           6px;
-  width:            3px;
-  border-radius:    0 3px 3px 0;
-  background:       var(--sidebar-bar);
-  box-shadow:       0 0 8px var(--sidebar-glow);
+  top: 7px;
+  bottom: 7px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: linear-gradient(180deg, var(--teal), var(--sky));
+  box-shadow: 0 0 8px rgba(10,142,110,0.3), 0 0 4px rgba(0,174,218,0.2);
 }
 
-/* Hover pre-indicator */
-.sidebar .nav-link:not(.active):hover::before {
-  content:          "";
-  position:         absolute;
-  inset-inline-start: 0;
-  top:              10px;
-  bottom:           10px;
-  width:            2px;
-  border-radius:    0 2px 2px 0;
-  background:       rgba(91,156,246,.4);
+.nav-a .i        { opacity: 0.4; color: var(--t3); }
+.nav-a.active .i,
+.nav-a.on .i     { opacity: 0.9; color: var(--teal); }
+
+/* Nav badge */
+.nav-badge {
+  margin-inline-start: auto;
+  font-family:         var(--font-mono);
+  font-size:           9px;
+  font-weight:         700;
+  min-width:           18px;
+  height:              18px;
+  border-radius:       99px;
+  display:             flex;
+  align-items:         center;
+  justify-content:     center;
+  background:          rgba(192,48,48,0.08);
+  color:               var(--danger);
+  border:              1px solid rgba(192,48,48,0.16);
 }
 
-.sidebar hr.border-secondary {
-  border-color: rgba(255,255,255,.07) !important;
-  margin: 0.75rem 1rem;
+/* ── Sidebar footer ──────────────────────────────────────── */
+.s-foot {
+  margin-top:      auto;
+  padding:         14px;
+  border-block-start: 1px solid rgba(17,17,68,0.06);
 }
 
-/* Language switcher */
+.s-usr {
+  display:      flex;
+  align-items:  center;
+  gap:          10px;
+  padding:      8px 10px;
+  border-radius: var(--radius-sm);
+  cursor:       pointer;
+  transition:   all 0.15s ease;
+  text-decoration: none;
+  color:        inherit;
+}
+.s-usr:hover {
+  background: rgba(10,142,110,0.05);
+  box-shadow: 0 0 0 1px var(--line) inset;
+}
+
+.avatar {
+  width:           32px;
+  height:          32px;
+  border-radius:   9px;
+  background:      linear-gradient(135deg, var(--teal), var(--royal));
+  display:         flex;
+  align-items:     center;
+  justify-content: center;
+  color:           #fff;
+  font-size:       10px;
+  font-weight:     700;
+  font-family:     var(--font-mono);
+  box-shadow:      0 2px 8px rgba(10,142,110,0.2),
+                   0 1px 0 rgba(255,255,255,0.15) inset;
+  position:        relative;
+}
+.avatar::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  inset-inline-end: -1px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--teal);
+  border: 2px solid #fff;
+  box-shadow: 0 0 4px rgba(10,142,110,0.4);
+}
+
+.u-nm { font-size: 12px; font-weight: 600; color: var(--t1); }
+.u-rl { font-size: 10px; color: var(--t4); font-family: var(--font-mono); }
+
+.s-lang { margin-top: 10px; }
+
+/* Language switcher inside glassmorphism sidebar */
 .sidebar .form-select {
-  background-color: rgba(255,255,255,.06) !important;
-  border-color:     rgba(255,255,255,.10) !important;
-  color:            var(--sidebar-ink) !important;
+  background-color: rgba(255,255,255,.5) !important;
+  border-color:     rgba(17,17,68,.08) !important;
+  color:            var(--t2) !important;
   font-size:        0.82rem;
   font-family:      var(--font-body);
   border-radius:    var(--radius-sm);
 }
-
 .sidebar .form-select:focus {
-  background-color: rgba(255,255,255,.10) !important;
-  border-color:     rgba(91,156,246,.50) !important;
-  box-shadow:       0 0 0 3px rgba(91,156,246,.15) !important;
-  color:            #ffffff !important;
+  background-color: rgba(255,255,255,.7) !important;
+  border-color:     var(--teal) !important;
+  box-shadow:       0 0 0 3px rgba(10,142,110,.15) !important;
+  color:            var(--t0) !important;
 }
 
 /* ============================================================
@@ -860,23 +981,12 @@ html[dir="rtl"] .shell {
 }
 
 html[dir="rtl"] .sidebar {
-  order:      2 !important;   /* sidebar after main → physically on the right */
+  order:      2 !important;
   text-align: right;
-  /* Shadow faces left (toward main content) in RTL */
-  box-shadow: inset 1px 0 0 rgba(255,255,255,.03),
-              -4px 0 24px rgba(0,0,0,.25);
 }
 
 html[dir="rtl"] main.flex-grow-1 {
-  order: 1 !important;   /* main before sidebar → physically on the left */
-}
-
-html[dir="rtl"] .sidebar .nav-link.active::before,
-html[dir="rtl"] .sidebar .nav-link:not(.active):hover::before {
-  /* Bar on the RIGHT edge of the link (facing main content) */
-  inset-inline-start: auto;
-  inset-inline-end:   0;
-  border-radius:      3px 0 0 3px;
+  order: 1 !important;
 }
 
 html[dir="rtl"] .panel .form-label     { letter-spacing: 0; }
@@ -960,9 +1070,8 @@ pre, .pre-output {
     width: 220px;
   }
 
-  .sidebar h5,
-  .sidebar .small,
-  .sidebar .nav-link { font-size: 0.82rem; }
+  .sidebar .nav-a { font-size: 12px; }
+  .sidebar .logo-title { font-size: 17px; }
 
   main.flex-grow-1 { padding: 1rem !important; }
 
@@ -992,28 +1101,31 @@ pre, .pre-output {
     top:        0;
     bottom:     0;
     inset-inline-start: 0;
-    z-index:    10;          /* behind page-header when closed */
+    z-index:    10;
     width:      0;
     padding:    0;
     overflow:   hidden;
+    background: rgba(255,255,255,0.92);
+    backdrop-filter: blur(50px) saturate(160%);
+    -webkit-backdrop-filter: blur(50px) saturate(160%);
     transition: width 0.28s cubic-bezier(0.4, 0, 0.2, 1),
                 padding 0.28s cubic-bezier(0.4, 0, 0.2, 1),
-                z-index 0s 0.28s; /* delay z-index change until animation done */
+                z-index 0s 0.28s;
     box-shadow: none;
   }
+  .sidebar::after { display: none; }
   .sidebar.sidebar-open {
     z-index:    200;
     transition: width 0.28s cubic-bezier(0.4, 0, 0.2, 1),
                 padding 0.28s cubic-bezier(0.4, 0, 0.2, 1),
-                z-index 0s; /* instant z-index raise when opening */
+                z-index 0s;
   }
 
   .sidebar.sidebar-open {
     width:      272px;
     padding:    0;
     overflow-y: auto;
-    box-shadow: 4px 0 32px rgba(0, 0, 0, 0.35);
-    /* z-index already set above */
+    box-shadow: 4px 0 32px rgba(0, 0, 0, 0.15);
   }
 
   /* Show backdrop when sidebar open */
@@ -1147,7 +1259,7 @@ pre, .pre-output {
   }
 
   html[dir="rtl"] .sidebar.sidebar-open {
-    box-shadow: -4px 0 32px rgba(0, 0, 0, 0.35);
+    box-shadow: -4px 0 32px rgba(0, 0, 0, 0.15);
   }
 }
 
@@ -1546,76 +1658,7 @@ pre, .pre-output {
   100% { background-position: -200% 0; }
 }
 
-/* ============================================================
-   SIDEBAR USER PROFILE CARD
-   ============================================================ */
-.sb-user-card {
-  margin:          0 0.6rem 0;
-  padding:         0.75rem;
-  border-radius:   var(--radius);
-  background:      rgba(255,255,255,.05);
-  border:          1px solid rgba(255,255,255,.07);
-  display:         flex;
-  align-items:     center;
-  gap:             0.65rem;
-  transition:      background 0.12s;
-}
-
-.sb-user-card:hover { background: rgba(255,255,255,.09); }
-
-.sb-avatar {
-  flex-shrink:     0;
-  width:           34px;
-  height:          34px;
-  border-radius:   9px;
-  background:      linear-gradient(135deg, var(--teal), var(--teal-bright));
-  color:           #fff;
-  font-family:     var(--font-body);
-  font-weight:     700;
-  font-size:       0.85rem;
-  display:         flex;
-  align-items:     center;
-  justify-content: center;
-  letter-spacing:  0.01em;
-  box-shadow:      0 2px 6px rgba(10,142,110,.35);
-}
-
-.sb-user-info { flex: 1; min-width: 0; }
-
-.sb-username {
-  font-size:      0.82rem;
-  font-weight:    600;
-  color:          #e8edf5;
-  white-space:    nowrap;
-  overflow:       hidden;
-  text-overflow:  ellipsis;
-}
-
-.sb-role-badge {
-  display:        inline-block;
-  font-size:      0.6rem;
-  font-weight:    700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  padding:        0.1rem 0.4rem;
-  border-radius:  4px;
-  margin-top:     0.15rem;
-}
-
-.sb-role-super   { background: rgba(239,68,68,.2);   color: #fca5a5; }
-.sb-role-admin   { background: rgba(251,146,60,.18);  color: #fdba74; }
-.sb-role-advisor { background: rgba(91,156,246,.2);   color: #93c5fd; }
-.sb-role-default { background: rgba(255,255,255,.1);  color: var(--sidebar-muted); }
-
-.sb-logout-icon {
-  flex-shrink: 0;
-  color:       var(--sidebar-muted);
-  font-size:   0.75rem;
-  text-decoration: none;
-  transition:  color 0.12s;
-  padding:     0.2rem;
-}
-.sb-logout-icon:hover { color: #e8edf5; }
+/* (Sidebar user card styles are now defined in the SIDEBAR section above as .s-foot, .s-usr, .avatar, .u-nm, .u-rl) */
 
 /* ============================================================
    KEYBOARD SHORTCUT HELP OVERLAY
@@ -1708,8 +1751,8 @@ kbd {
 }
 
 /* Sidebar links keyboard nav */
-.sidebar .nav-link:focus-visible {
-  outline:        2px solid var(--sidebar-bar) !important;
+.sidebar .nav-a:focus-visible {
+  outline:        2px solid var(--teal) !important;
   outline-offset: -2px !important;
   box-shadow:     none !important;
 }

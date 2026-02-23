@@ -3267,7 +3267,7 @@
       const sbHp = document.querySelector('.sb-badge-hp');
       if (sbHp && hpRows > 0) {
         sbHp.textContent = hpRows;
-        sbHp.className = 'sidebar-badge warning';
+        sbHp.className = 'nav-badge sidebar-badge warning';
         sbHp.style.display = '';
       }
 
@@ -3276,7 +3276,7 @@
       const exportReady = Boolean(q('exStudentCsv')?.href?.includes('?'));
       if (sbExport) {
         sbExport.textContent = exportReady ? 'Ready' : '';
-        sbExport.className = 'sidebar-badge ready';
+        sbExport.className = 'nav-badge sidebar-badge ready';
         sbExport.style.display = exportReady ? '' : 'none';
       }
     }
