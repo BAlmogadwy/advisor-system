@@ -44,7 +44,7 @@ main.p-3 .page-header {
 }
 
 .page-header-left { display: flex; flex-direction: column; gap: 0.2rem; }
-.page-header-module { font-weight: 700; font-size: 0.98rem; color: var(--ink, #0d1526); letter-spacing: -0.01em; }
+.page-header-module { font-family: 'DM Serif Display', serif; font-weight: 700; font-size: 0.98rem; color: var(--ink, #0d1526); letter-spacing: -0.01em; }
 .page-header-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
 .page-header-right { flex-shrink: 0; display: flex; align-items: center; gap: 0.5rem; }
 
@@ -126,10 +126,29 @@ main.p-3 .page-header {
 
 /* Remove table-striped odd-row override for all pages */
 .table-striped > tbody > tr:nth-of-type(odd) > * { --bs-table-accent-bg: transparent; }
+
+/* ── Gradient mesh background ──────────────────────────────────── */
+.color-mesh {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    radial-gradient(ellipse 80% 60% at 0% 0%, rgba(10,142,110,0.14) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 55% at 45% 0%, rgba(0,174,218,0.10) 0%, transparent 55%),
+    radial-gradient(ellipse 55% 50% at 100% 5%, rgba(64,86,227,0.12) 0%, transparent 55%),
+    linear-gradient(160deg, #f2f5f2 0%, #f0f3f5 25%, #f2f0f3 50%, #f5f3f0 75%, #f2f5f3 100%);
+}
+.ambience { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
+.amb { position: absolute; border-radius: 50%; animation: ambF 28s ease-in-out infinite; }
+.amb-1 { width: 500px; height: 420px; top: -5%; left: 5%; background: rgba(10,142,110,0.06); filter: blur(120px); }
+.amb-2 { width: 400px; height: 350px; top: 0%; right: 8%; background: rgba(64,86,227,0.05); filter: blur(130px); animation-delay: -9s; }
+.amb-3 { width: 380px; height: 320px; top: 25%; left: 35%; background: rgba(0,174,218,0.04); filter: blur(140px); animation-delay: -16s; }
+@keyframes ambF { 0%,100%{transform:translate(0,0) scale(1)} 25%{transform:translate(18px,-15px) scale(1.03)} 50%{transform:translate(-14px,18px) scale(0.97)} 75%{transform:translate(10px,-10px) scale(1.02)} }
+.shell { position: relative; z-index: 1; }
 </style>
 {% endblock %}
 
 {% block body %}
+<div class="color-mesh"></div>
+<div class="ambience"><div class="amb amb-1"></div><div class="amb amb-2"></div><div class="amb amb-3"></div></div>
 <div class="d-flex shell">
   {% include 'core/partials/sidebar.html' %}
   <main class="flex-grow-1 p-4">
