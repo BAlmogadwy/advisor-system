@@ -828,10 +828,15 @@
         </div></div>
       </div>
       <div id="dbgUpdated" style="font-size:11px;color:var(--t5);font-family:var(--font-mono);margin-bottom:10px">Last update: —</div>
-      <div class="cpanel">
-        <div class="cp-h"><span class="i" style="color:var(--t4)"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span><span class="cp-t">Debug Details</span></div>
-        <div class="cp-b" style="padding:0;overflow-x:auto">
-          <table class="tbl-card" id="dbgTable" style="border-spacing:0 4px">
+      <div class="tbl-section">
+        <div class="tbl-header">
+          <div class="tbl-title">Debug Details <span class="tbl-cnt" id="dbgTableCnt">0</span></div>
+          <div class="tbl-actions">
+            <button class="btn btn-outline-secondary btn-sm" style="font-size:11px;padding:4px 10px;border-radius:var(--radius-sm);background:rgba(255,255,255,0.5);border:1px solid rgba(17,17,68,0.06);color:var(--t3);cursor:pointer" onclick="document.getElementById('dbgTable').scrollIntoView({behavior:'smooth'})"><span class="i i-sm"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span> Columns</button>
+          </div>
+        </div>
+        <div style="overflow-x:auto">
+          <table class="tbl-card" id="dbgTable">
             <thead><tr><th>Student</th><th>Program</th><th>Real→Next</th><th>Passed</th><th>Studying</th><th>Recommended</th><th>Trace</th></tr></thead>
             <tbody><tr><td colspan="7"><div class="empty-state"><span class="i" style="width:32px;height:32px;color:var(--t5);margin-bottom:8px"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span><div class="empty-title">No debug data</div><div class="empty-hint">Fill filters above, then click <strong>Run</strong></div></div></td></tr></tbody>
           </table>
@@ -877,10 +882,12 @@
         </div></div>
       </div>
       <div id="elUpdated" style="font-size:11px;color:var(--t5);font-family:var(--font-mono);margin-bottom:10px">Last update: —</div>
-      <div class="cpanel">
-        <div class="cp-h"><span class="i" style="color:var(--t4)"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span><span class="cp-t">Eligible Students</span></div>
-        <div class="cp-b" style="padding:0;overflow-x:auto">
-          <table class="tbl-card" id="elTable" style="border-spacing:0 4px">
+      <div class="tbl-section">
+        <div class="tbl-header">
+          <div class="tbl-title">Eligible Students <span class="tbl-cnt" id="elTableCnt">0</span></div>
+        </div>
+        <div style="overflow-x:auto">
+          <table class="tbl-card" id="elTable">
             <thead><tr><th>Eligible Student IDs</th></tr></thead>
             <tbody><tr><td><div class="empty-state"><span class="i" style="width:32px;height:32px;color:var(--t5);margin-bottom:8px"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span><div class="empty-title">No eligibility results</div><div class="empty-hint">Enter a course code above, then click <strong>Check</strong></div></div></td></tr></tbody>
           </table>
@@ -2229,6 +2236,7 @@
     q('dbgWithRec').textContent = String(withRec);
     q('dbgWithoutRec').textContent = String((data.count || 0) - withRec);
     q('dbgSummary').style.display = 'flex';
+    if (q('dbgTableCnt')) q('dbgTableCnt').textContent = String(data.count || 0);
     tbody.innerHTML = data.items.map((x) => {
       const tracePayload = encodeURIComponent(JSON.stringify(x.recommendation_details || []));
       const summary = `Student ${x.student_id} (${x.program})\nReal→Next: ${x.real_term}→${x.next_term}\nRecommended: ${(x.recommended_courses || []).join(', ') || '-'}`;
@@ -2319,6 +2327,7 @@
     q('elModeBadge').textContent = data.strict_passed_only ? 'strict' : 'relaxed';
     q('elCourseBadge').textContent = String(data.course_code || '-');
     q('elSummary').style.display = 'flex';
+    if (q('elTableCnt')) q('elTableCnt').textContent = String(eligibleIds.length);
 
     tbody.innerHTML = eligibleIds.length
       ? eligibleIds.map((sid) => `<tr class="cr-row"><td><span class="cr-id">${sid}</span></td></tr>`).join('')

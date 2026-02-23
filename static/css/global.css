@@ -753,12 +753,29 @@ html body .btn:focus-visible {
 /* ============================================================
    CARD-ROW TABLE — Glassmorphic table rows (Taibah mockup)
    ============================================================ */
+/* ── Table section wrapper ── */
+.tbl-section { margin-bottom:24px; }
+.tbl-header {
+  display:flex; align-items:center; justify-content:space-between;
+  margin-bottom:14px; padding:0 4px;
+}
+.tbl-title {
+  font-family:var(--font-serif); font-size:18px; color:var(--navy);
+  display:flex; align-items:center; gap:10px; line-height:1.1;
+}
+.tbl-cnt {
+  font-family:var(--font-mono); font-size:10px; font-weight:700;
+  padding:3px 9px; border-radius:999px;
+  background:var(--teal-dim); color:var(--teal); border:1px solid var(--teal-border);
+}
+.tbl-actions { display:flex; gap:6px; }
+
 .tbl-card {
   width:100%; border-collapse:separate; border-spacing:0 8px;
 }
 .tbl-card thead th {
   font-size:10px; font-weight:700; text-transform:uppercase;
-  letter-spacing:0.08em; color:var(--t5); padding:0 12px 4px;
+  letter-spacing:0.08em; color:var(--t5); padding:0 14px 4px;
   font-family:var(--font-mono); cursor:pointer;
   user-select:none; transition:color .12s ease; border:none;
   white-space:nowrap;
@@ -772,6 +789,7 @@ html body .btn:focus-visible {
 .tbl-card thead th:hover .sort-arrow { opacity:0.7; }
 .tbl-card thead th.sorted .sort-arrow { opacity:1; color:var(--teal); }
 
+/* ── Card rows — glassmorphic table rows ── */
 .tbl-card tbody tr.cr-row {
   background:rgba(255,255,255,0.5);
   backdrop-filter:blur(16px) saturate(120%);
@@ -781,14 +799,15 @@ html body .btn:focus-visible {
   cursor:pointer; position:relative;
 }
 .tbl-card tbody tr.cr-row td {
-  padding:14px 12px; border:none;
+  padding:14px 14px; border:none;
   border-top:1px solid rgba(17,17,68,0.04);
   border-bottom:1px solid rgba(17,17,68,0.04);
   vertical-align:middle; font-size:13px;
 }
 .tbl-card tbody tr.cr-row td:first-child {
   border-radius:var(--radius) 0 0 var(--radius);
-  border-inline-start:1px solid rgba(17,17,68,0.04);
+  border-inline-start:3px solid transparent;
+  transition:border-color .2s var(--ease);
 }
 .tbl-card tbody tr.cr-row td:last-child {
   border-radius:0 var(--radius) var(--radius) 0;
@@ -807,32 +826,37 @@ html body .btn:focus-visible {
 }
 .tbl-card tbody tr.cr-row:hover td:first-child {
   border-inline-start-color:var(--teal);
-  box-shadow:inset 3px 0 0 var(--teal);
 }
 [dir="rtl"] .tbl-card tbody tr.cr-row:hover td:first-child {
-  box-shadow:inset -3px 0 0 var(--teal);
+  border-inline-start-color:var(--teal);
 }
 .tbl-card tbody tr.cr-row.selected {
   background:rgba(10,142,110,0.04);
 }
 .tbl-card tbody tr.cr-row.selected td:first-child {
-  box-shadow:inset 3px 0 0 var(--teal);
+  border-inline-start-color:var(--teal);
 }
 [dir="rtl"] .tbl-card tbody tr.cr-row.selected td:first-child {
-  box-shadow:inset -3px 0 0 var(--teal);
+  border-inline-start-color:var(--teal);
+}
+
+/* Group separator every 3 rows for visual rhythm */
+.tbl-card tbody tr.cr-row:nth-child(3n+4) td {
+  padding-top:22px;
 }
 
 /* Cell typography */
 .cr-id {
   font-family:var(--font-mono); font-size:12px;
   font-weight:700; color:var(--teal);
+  transition:text-shadow .2s ease;
 }
 .tbl-card tbody tr.cr-row:hover .cr-id {
   text-shadow:0 0 8px rgba(10,142,110,0.2);
 }
 .cr-nm { color:var(--navy); font-weight:600; font-size:13.5px; }
 .cr-sub { font-size:10.5px; color:var(--t4); margin-top:1px; font-weight:300; }
-.cr-prog { font-size:13px; color:var(--t2); }
+.cr-prog { font-size:13px; color:var(--t2); font-weight:400; }
 .cr-gpa {
   font-family:var(--font-mono); font-weight:700; font-size:13px;
 }
@@ -858,14 +882,22 @@ html body .btn:focus-visible {
 /* Row actions */
 .cr-actions { display:flex; align-items:center; gap:5px; justify-content:flex-end; }
 .btn-circle {
-  width:30px; height:30px; border-radius:var(--radius-sm);
+  width:32px; height:32px; border-radius:50%;
   display:flex; align-items:center; justify-content:center;
-  background:rgba(255,255,255,0.5); border:1px solid rgba(17,17,68,0.06);
-  color:var(--t3); cursor:pointer; transition:all .12s ease;
+  background:rgba(255,255,255,0.6); border:1px solid rgba(17,17,68,0.06);
+  color:var(--t3); cursor:pointer; transition:all .15s ease;
+  box-shadow:0 1px 0 rgba(255,255,255,0.6) inset, 0 1px 3px rgba(17,17,68,0.04);
+  backdrop-filter:blur(8px);
 }
 .btn-circle:hover {
   background:rgba(255,255,255,0.8); border-color:var(--teal-border); color:var(--teal);
 }
+.btn-circle.ac {
+  background:linear-gradient(135deg, var(--teal), var(--sky));
+  color:#fff; border-color:rgba(10,142,110,0.3);
+  box-shadow:0 1px 0 rgba(255,255,255,0.15) inset, 0 2px 6px rgba(10,142,110,0.18);
+}
+.btn-circle .i { width:14px; height:14px; }
 
 /* Pagination — Taibah mockup */
 .pg-bar {
