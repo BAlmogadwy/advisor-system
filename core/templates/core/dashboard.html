@@ -1152,12 +1152,24 @@
     runBtn.textContent = 'Run Preview';
   };
 
+  /* ── Normalize prereq data: split comma-separated prerequisites ── */
+  function normalizePrereqs(items) {
+    const out = [];
+    items.forEach(row => {
+      const course = String(row.course_code).trim();
+      String(row.prerequisite_course_code).split(',').map(s => s.trim()).filter(Boolean).forEach(p => {
+        out.push({ course_code: course, prerequisite_course_code: p });
+      });
+    });
+    return out;
+  }
+
   /* ── Prereq graph renderer ── */
   function renderPrereqGraph(items, container) {
     const prereqs = {};
     const allCourses = new Set();
     items.forEach(row => {
-      const c = String(row.course_code), p = String(row.prerequisite_course_code);
+      const c = row.course_code, p = row.prerequisite_course_code;
       allCourses.add(c); allCourses.add(p);
       if (!prereqs[c]) prereqs[c] = [];
       prereqs[c].push(p);
@@ -1188,10 +1200,13 @@
     });
     Object.values(groups).forEach(a => a.sort());
 
-    /* layout params */
-    const nW = 90, nH = 34, gX = 28, gY = 58;
+    /* layout — measure longest label per node for dynamic width */
+    const nH = 34, gX = 20, gY = 56;
     const maxRow = Math.max(...Object.values(groups).map(g => g.length));
-    const svgW = Math.max(520, maxRow * (nW + gX) + gX);
+    /* dynamic node width: measure chars of longest code */
+    const maxChars = Math.max(...[...allCourses].map(c => c.length));
+    const nW = Math.max(72, maxChars * 8 + 20);
+    const svgW = Math.max(480, maxRow * (nW + gX) + gX * 2);
     const svgH = (maxL + 1) * (nH + gY) + gY;
 
     /* position nodes */
@@ -1220,7 +1235,7 @@
 
     /* nodes — color by role */
     const isPreOf = new Set();
-    items.forEach(r => isPreOf.add(String(r.prerequisite_course_code)));
+    items.forEach(r => isPreOf.add(r.prerequisite_course_code));
     allCourses.forEach(c => {
       const p = pos[c]; if (!p) return;
       const hasP = (prereqs[c] || []).length > 0, isP = isPreOf.has(c);
@@ -1273,21 +1288,24 @@
       btn.disabled = false; btn.textContent = 'Load'; return;
     }
 
-    const courseSet = new Set(data.items.map(x => x.course_code));
+    /* normalize: split comma-separated prerequisites into individual edges */
+    const norm = normalizePrereqs(data.items);
+    const courseSet = new Set(norm.map(x => x.course_code));
+    const allSet = new Set(norm.flatMap(x => [x.course_code, x.prerequisite_course_code]));
     q('preMetricProgram').textContent = data.program || '-';
-    q('preMetricCourses').textContent = String(courseSet.size);
-    q('preMetricLinks').textContent = String(data.count ?? data.items.length);
+    q('preMetricCourses').textContent = String(allSet.size);
+    q('preMetricLinks').textContent = String(norm.length);
     q('preMetrics').style.display = 'flex';
     const lc = q('preLinkCount');
-    if (lc) { lc.style.display = ''; q('preLinkNum').textContent = String(data.count ?? data.items.length); }
+    if (lc) { lc.style.display = ''; q('preLinkNum').textContent = String(norm.length); }
 
-    /* table — card-rows with arrow indicator */
-    tbody.innerHTML = data.items
-      .map(row => `<tr class="cr-row"><td><span class="cr-id">${row.course_code}</span></td><td style="text-align:center;color:var(--t5);padding:6px 0"><svg width="16" height="14" viewBox="0 0 16 14" class="i" style="opacity:.3"><path d="M14 7H2M2 7l5-5M2 7l5 5"/></svg></td><td><span style="font-family:var(--font-mono);font-size:12px;font-weight:600;color:var(--royal)">${row.prerequisite_course_code}</span></td></tr>`)
+    /* table — card-rows: one row per individual prerequisite edge */
+    tbody.innerHTML = norm
+      .map(row => `<tr class="cr-row"><td><span class="cr-id">${row.course_code}</span></td><td style="text-align:center;color:var(--t5);padding:6px 2px"><svg width="18" height="14" viewBox="0 0 18 14" class="i" style="opacity:.35"><path d="M16 7H2m0 0 5-5M2 7l5 5"/></svg></td><td><span style="font-family:var(--font-mono);font-size:12px;font-weight:600;color:var(--royal)">${row.prerequisite_course_code}</span></td></tr>`)
       .join('');
 
     /* SVG dependency graph */
-    renderPrereqGraph(data.items, preGraph);
+    renderPrereqGraph(norm, preGraph);
 
     setUpdated('preUpdated');
     toast('Prerequisites loaded', true);
