@@ -130,8 +130,18 @@
 /* ── REC 1: Empty states ────────────────────────────── */
 .empty-state {
   text-align: center;
-  padding: 2rem 1.5rem;
-  color: var(--muted-light, #94a3b8);
+  padding: 2.5rem 1.5rem;
+  color: var(--t4);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.empty-state .i {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.45;
 }
 
 .empty-icon {
@@ -142,16 +152,18 @@
 }
 
 .empty-title {
-  font-weight: 600;
-  font-size: 0.9rem;
-  color: var(--muted, #64748b);
-  margin-bottom: 0.3rem;
+  font-family: var(--font-serif, 'DM Serif Display', serif);
+  font-weight: 400;
+  font-size: 15px;
+  color: var(--t2);
+  margin-bottom: 4px;
 }
 
 .empty-hint {
-  font-size: 0.78rem;
-  color: var(--muted-light, #94a3b8);
+  font-size: 12px;
+  color: var(--t5);
   line-height: 1.5;
+  font-weight: 300;
 }
 
 .empty-hint strong { color: var(--brand, #0A8E6E); }
@@ -441,18 +453,20 @@
     {% endif %}
 
     <div id="student" class="panel active card soft-card p-4 ">
-      <h4>Student Recommender</h4>
-      <div class="panel-sub">Get a per-student recommendation list and export it instantly.</div>
-      <form method="get" action="/" class="filter-bar sticky-cta mb-3" style="flex-wrap:wrap">
-        <svg class="i" viewBox="0 0 24 24" width="16" height="16"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-        <input id="studentIdInput" class="fb-search" type="number" name="student_id" value="{{ student_id }}" placeholder="Student ID" required style="max-width:160px">
-        <input class="fb-search" type="number" name="year" value="{{ year }}" placeholder="Year" required style="max-width:100px">
-        <input class="fb-search" type="number" min="0" max="1" name="semester" value="{{ semester }}" placeholder="Semester" required style="max-width:100px">
-        <button class="btn btn-primary" style="margin-left:auto;padding:7px 20px;font-size:13px">
-          <svg class="i" viewBox="0 0 24 24" width="14" height="14" style="margin-right:4px"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>Recommend
+      <div style="margin-bottom:18px">
+        <h4 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Student Recommender</h4>
+        <div style="font-size:13px;color:var(--t3);font-weight:300">Get a per-student recommendation list and export it instantly.</div>
+      </div>
+      <form method="get" action="/" class="filter-bar sticky-cta" style="margin-bottom:14px">
+        <div class="fb-search" style="max-width:170px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span><input id="studentIdInput" type="number" name="student_id" value="{{ student_id }}" placeholder="Student ID" required></div>
+        <div class="fb-search" style="max-width:110px"><input type="number" name="year" value="{{ year }}" placeholder="Year" required></div>
+        <div class="fb-search" style="max-width:110px"><input type="number" min="0" max="1" name="semester" value="{{ semester }}" placeholder="Semester" required></div>
+        <div class="fb-spacer"></div>
+        <button class="btn btn-primary" style="padding:7px 20px;font-size:13px">
+          <span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Recommend
         </button>
         <button id="loadStudentPlan" type="button" class="fb-dd">
-          <svg class="i i-sm" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Load plan
+          <span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>Load plan
         </button>
       </form>
       {% if recommendations is not None %}
@@ -489,19 +503,23 @@
         <div id="studentPlanMeta" class="small mb-2" style="color:var(--t4)">Load a student to view the full term matrix.</div>
         <div id="studentPlanMetrics" style="display:none;gap:12px;margin-bottom:12px">
           <div style="flex:1;min-width:0"><div class="mc mc-teal">
-            <div style="display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:var(--teal)"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg><div><div class="mc-lbl">Passed</div><div class="mc-val" id="spPassed">0</div></div></div>
+            <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span></div><div class="mc-lbl">Passed</div></div>
+            <div class="mc-val" id="spPassed">0</div>
             <div class="spark" id="spSparkPassed"></div>
           </div></div>
           <div style="flex:1;min-width:0"><div class="mc mc-royal">
-            <div style="display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:var(--royal)"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg><div><div class="mc-lbl">Studying</div><div class="mc-val" id="spStudying">0</div></div></div>
+            <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span></div><div class="mc-lbl">Studying</div></div>
+            <div class="mc-val" id="spStudying">0</div>
             <div class="spark" id="spSparkStudying"></div>
           </div></div>
-          <div style="flex:1;min-width:0"><div class="mc mc-teal" style="--mc-c:var(--sky)">
-            <div style="display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:var(--sky)"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg><div><div class="mc-lbl">Can Register</div><div class="mc-val" id="spCan">0</div></div></div>
+          <div style="flex:1;min-width:0"><div class="mc mc-sky">
+            <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></div><div class="mc-lbl">Can Register</div></div>
+            <div class="mc-val" id="spCan">0</div>
             <div class="spark" id="spSparkCan"></div>
           </div></div>
           <div style="flex:1;min-width:0"><div class="mc mc-err">
-            <div style="display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:var(--danger)"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><div><div class="mc-lbl">Locked</div><div class="mc-val" id="spLocked">0</div></div></div>
+            <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span></div><div class="mc-lbl">Locked</div></div>
+            <div class="mc-val" id="spLocked">0</div>
             <div class="spark" id="spSparkLocked"></div>
           </div></div>
         </div>
@@ -567,7 +585,7 @@
           <div style="width:340px;flex-shrink:0">
             <div id="studentCourseDrawer" class="cpanel" style="position:sticky;top:16px;">
               <div class="cp-h">
-                <svg class="i" viewBox="0 0 24 24" width="16" height="16" style="opacity:0.4"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <span class="i" style="opacity:0.4"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
                 <div class="cp-t">Course Inspector</div>
                 <span class="cp-live">LIVE</span>
               </div>
@@ -581,8 +599,10 @@
     </div>
 
     <div id="batch" class="panel card soft-card p-4 ">
-      <h4>Batch Recommender</h4>
-      <div class="panel-sub">Run cohort-level preview, inspect top courses, and export aggregate CSV.</div>
+      <div style="margin-bottom:18px">
+        <h4 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Batch Recommender</h4>
+        <div style="font-size:13px;color:var(--t3);font-weight:300">Run cohort-level preview, inspect top courses, and export aggregate CSV.</div>
+      </div>
       <div class="row g-3 align-items-end batch-filters sticky-cta">
         <div class="col-md-2"><label class="form-label">Year</label><input id="batchYear" class="form-control" type="number" value="{{ year }}"></div>
         <div class="col-md-2"><label class="form-label">Semester</label><input id="batchSemester" class="form-control" type="number" min="0" max="1" value="{{ semester }}"></div>
@@ -639,22 +659,32 @@
     </div>
 
     <div id="prereq" class="panel card soft-card p-4 ">
-      <h4>Course Prerequisites View</h4>
-      <div class="panel-sub">Explore prerequisite links by program and optionally by a specific course.</div>
-      <!-- Filter bar -->
-      <div class="filter-bar mb-3">
-        <svg class="i" viewBox="0 0 24 24" width="16" height="16"><path d="M3 4h18l-7 8v5l-4 2V12z"/></svg>
-        <input id="preProgram" class="fb-search" list="programs" placeholder="Program  e.g. CS" style="max-width:180px">
-        <input id="preCourse" class="fb-search" placeholder="Course code (optional)" style="max-width:200px">
-        <button id="loadPre" class="btn btn-primary" style="margin-left:auto;padding:7px 22px;font-size:13px">
-          <svg class="i" viewBox="0 0 24 24" width="14" height="14" style="margin-right:4px"><path d="M5 12h14M12 5l7 7-7 7"/></svg>Load
+      <div style="margin-bottom:18px">
+        <h4 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Course Prerequisites</h4>
+        <div style="font-size:13px;color:var(--t3);font-weight:300">Explore prerequisite links by program and optionally by a specific course.</div>
+      </div>
+      <div class="filter-bar" style="margin-bottom:14px">
+        <div class="fb-search" style="max-width:200px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><input id="preProgram" list="programs" placeholder="Program  e.g. CS"></div>
+        <div class="fb-search" style="max-width:220px"><input id="preCourse" placeholder="Course code (optional)"></div>
+        <div class="fb-spacer"></div>
+        <button id="loadPre" class="btn btn-primary" style="padding:7px 22px;font-size:13px">
+          <span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Load
         </button>
       </div>
       <!-- Metrics -->
-      <div id="preMetrics" style="display:none;gap:12px;margin-bottom:16px">
-        <div style="flex:1;min-width:0"><div class="mc mc-royal"><div style="display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:var(--royal)"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg><div><div class="mc-lbl">Program</div><div class="mc-val" id="preMetricProgram">-</div></div></div></div></div>
-        <div style="flex:1;min-width:0"><div class="mc mc-teal"><div style="display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:var(--teal)"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg><div><div class="mc-lbl">Courses in view</div><div class="mc-val" id="preMetricCourses">0</div></div></div></div></div>
-        <div style="flex:1;min-width:0"><div class="mc mc-sky"><div style="display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:var(--sky)"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg><div><div class="mc-lbl">Prerequisite links</div><div class="mc-val" id="preMetricLinks">0</div></div></div></div></div>
+      <div id="preMetrics" style="display:none;gap:14px;margin-bottom:16px">
+        <div style="flex:1;min-width:0"><div class="mc mc-royal">
+          <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span></div><div class="mc-lbl">Program</div></div>
+          <div class="mc-val" id="preMetricProgram">—</div>
+        </div></div>
+        <div style="flex:1;min-width:0"><div class="mc mc-teal">
+          <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></span></div><div class="mc-lbl">Courses</div></div>
+          <div class="mc-val" id="preMetricCourses">0</div>
+        </div></div>
+        <div style="flex:1;min-width:0"><div class="mc mc-sky">
+          <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span></div><div class="mc-lbl">Prereq Links</div></div>
+          <div class="mc-val" id="preMetricLinks">0</div>
+        </div></div>
       </div>
       <div id="preUpdated" class="small text-secondary mb-3">Last update: -</div>
       <!-- Graph full width on top -->
@@ -760,77 +790,99 @@
     </div>
 
     <div id="debug" class="panel card soft-card p-4 ">
-      <h4>Recommendation Debug Report</h4>
-      <div class="panel-sub">Legacy-style student debug report for recommendation traceability.</div>
-      <div class="filter-bar sticky-cta mb-3" style="flex-wrap:wrap">
-        <svg class="i" viewBox="0 0 24 24" width="16" height="16"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-        <input id="dbgYear" class="fb-search" type="number" value="{{ year }}" placeholder="Year" style="max-width:90px">
-        <input id="dbgSemester" class="fb-search" type="number" min="0" max="1" value="{{ semester }}" placeholder="Sem" style="max-width:80px">
-        <input id="dbgSection" class="fb-search" placeholder="Section" style="max-width:90px">
-        <input id="dbgProgram" class="fb-search" placeholder="Program" style="max-width:100px">
-        <input id="dbgJoin" class="fb-search" placeholder="Join yrs" style="max-width:100px">
-        <input id="dbgLimit" class="fb-search" type="number" value="80" placeholder="Limit" style="max-width:80px">
-        <button id="dbgRun" class="btn btn-primary" style="margin-left:auto;padding:7px 20px;font-size:13px">
-          <svg class="i" viewBox="0 0 24 24" width="14" height="14" style="margin-right:4px"><path d="M5 12h14M12 5l7 7-7 7"/></svg>Run
+      <div style="margin-bottom:18px">
+        <h4 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Recommendation Debug</h4>
+        <div style="font-size:13px;color:var(--t3);font-weight:300">Student-level recommendation trace for debugging and validation.</div>
+      </div>
+      <div class="filter-bar sticky-cta" style="margin-bottom:14px">
+        <div class="fb-search" style="max-width:110px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input id="dbgYear" type="number" value="{{ year }}" placeholder="Year"></div>
+        <div class="fb-search" style="max-width:90px"><input id="dbgSemester" type="number" min="0" max="1" value="{{ semester }}" placeholder="Sem"></div>
+        <div class="fb-search" style="max-width:110px"><input id="dbgSection" placeholder="Section"></div>
+        <div class="fb-search" style="max-width:120px"><input id="dbgProgram" placeholder="Program"></div>
+        <div class="fb-search" style="max-width:110px"><input id="dbgJoin" placeholder="Join yrs"></div>
+        <div class="fb-search" style="max-width:100px"><input id="dbgLimit" type="number" value="80" placeholder="Limit"></div>
+        <div class="fb-spacer"></div>
+        <button id="dbgRun" class="btn btn-primary" style="padding:7px 20px;font-size:13px">
+          <span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run
         </button>
       </div>
-      <div class="filter-bar mb-3" style="padding:8px 14px">
-        <button id="dbgSavePreset" type="button" class="fb-dd"><svg class="i i-sm" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Save preset</button>
-        <button id="dbgLoadPreset" type="button" class="fb-dd"><svg class="i i-sm" viewBox="0 0 24 24"><path d="M3 15v4c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>Load preset</button>
-        <div style="flex:1"></div>
-        <a id="dbgCsv" class="fb-dd" href="#"><svg class="i i-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>CSV</a>
+      <div class="filter-bar" style="padding:8px 14px;margin-bottom:14px">
+        <button id="dbgSavePreset" type="button" class="fb-dd"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span>Save preset</button>
+        <button id="dbgLoadPreset" type="button" class="fb-dd"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M3 15v4c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg></span>Load preset</button>
+        <div class="fb-spacer"></div>
+        <a id="dbgCsv" class="fb-dd" href="#"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>CSV</a>
       </div>
-      <div id="dbgMeta" class="meta-banner meta-info mt-2" style="font-family:var(--font-mono);font-size:12px;border-radius:var(--radius-sm);padding:10px 14px">No debug report loaded.</div>
-      <div id="dbgSummary" style="display:none;gap:12px;margin:12px 0">
-        <div style="flex:1;min-width:0"><div class="mc mc-royal"><div style="display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:var(--royal)"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><div><div class="mc-lbl">Students matched</div><div class="mc-val" id="dbgCount">0</div></div></div></div></div>
-        <div style="flex:1;min-width:0"><div class="mc mc-teal"><div style="display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:var(--teal)"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg><div><div class="mc-lbl">With recommendations</div><div class="mc-val" id="dbgWithRec">0</div></div></div></div></div>
-        <div style="flex:1;min-width:0"><div class="mc mc-err"><div style="display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:var(--danger)"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg><div><div class="mc-lbl">Empty recommendations</div><div class="mc-val" id="dbgWithoutRec">0</div></div></div></div></div>
+      <div id="dbgMeta" class="meta-banner meta-info" style="font-family:var(--font-mono);font-size:12px;border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:14px">No debug report loaded.</div>
+      <div id="dbgSummary" style="display:none;gap:14px;margin-bottom:18px">
+        <div style="flex:1;min-width:0"><div class="mc mc-royal">
+          <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span></div><div class="mc-lbl">Students</div></div>
+          <div class="mc-val" id="dbgCount">0</div>
+        </div></div>
+        <div style="flex:1;min-width:0"><div class="mc mc-teal">
+          <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span></div><div class="mc-lbl">With Recs</div></div>
+          <div class="mc-val" id="dbgWithRec">0</div>
+        </div></div>
+        <div style="flex:1;min-width:0"><div class="mc mc-err">
+          <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg></span></div><div class="mc-lbl">Empty Recs</div></div>
+          <div class="mc-val" id="dbgWithoutRec">0</div>
+        </div></div>
       </div>
-      <div id="dbgUpdated" class="small text-secondary mb-2">Last update: -</div>
+      <div id="dbgUpdated" style="font-size:11px;color:var(--t5);font-family:var(--font-mono);margin-bottom:10px">Last update: —</div>
       <div class="cpanel">
-        <div class="cp-h"><span class="cp-t">Debug Details</span></div>
+        <div class="cp-h"><span class="i" style="color:var(--t4)"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span><span class="cp-t">Debug Details</span></div>
         <div class="cp-b" style="padding:0;overflow-x:auto">
-          <table class="tbl-card mb-0" id="dbgTable" style="border-spacing:0 4px">
+          <table class="tbl-card" id="dbgTable" style="border-spacing:0 4px">
             <thead><tr><th>Student</th><th>Program</th><th>Real→Next</th><th>Passed</th><th>Studying</th><th>Recommended</th><th>Trace</th></tr></thead>
-            <tbody><tr><td colspan="7"><div class="empty-state"><span class="empty-icon">🔍</span><div class="empty-title">No debug data</div><div class="empty-hint">Fill filters above, then click <strong>Run</strong></div></div></td></tr></tbody>
+            <tbody><tr><td colspan="7"><div class="empty-state"><span class="i" style="width:32px;height:32px;color:var(--t5);margin-bottom:8px"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span><div class="empty-title">No debug data</div><div class="empty-hint">Fill filters above, then click <strong>Run</strong></div></div></td></tr></tbody>
           </table>
         </div>
       </div>
     </div>
 
     <div id="eligibility" class="panel card soft-card p-4 ">
-      <h4>Course Eligibility Inspector</h4>
-      <div class="panel-sub">Check which students are eligible to register for a specific course.</div>
-      <div class="filter-bar sticky-cta mb-3" style="flex-wrap:wrap">
-        <svg class="i" viewBox="0 0 24 24" width="16" height="16"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-        <input id="elCourse" class="fb-search" placeholder="Course code" style="max-width:130px">
-        <input id="elSection" class="fb-search" placeholder="Section" style="max-width:90px">
-        <input id="elProgram" class="fb-search" placeholder="Program" style="max-width:100px">
-        <input id="elJoin" class="fb-search" placeholder="Join yrs" style="max-width:100px">
-        <select id="elMode" class="fb-search" style="max-width:180px;cursor:pointer"><option value="relaxed" selected>Relaxed (passed+studying)</option><option value="strict">Strict (passed only)</option></select>
-        <button id="elRun" class="btn btn-primary" style="margin-left:auto;padding:7px 20px;font-size:13px">
-          <svg class="i" viewBox="0 0 24 24" width="14" height="14" style="margin-right:4px"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>Check
+      <div style="margin-bottom:18px">
+        <h4 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Course Eligibility Inspector</h4>
+        <div style="font-size:13px;color:var(--t3);font-weight:300">Check which students are eligible to register for a specific course.</div>
+      </div>
+      <div class="filter-bar sticky-cta" style="margin-bottom:14px">
+        <div class="fb-search" style="max-width:140px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><input id="elCourse" placeholder="Course code"></div>
+        <div class="fb-search" style="max-width:110px"><input id="elSection" placeholder="Section"></div>
+        <div class="fb-search" style="max-width:120px"><input id="elProgram" placeholder="Program"></div>
+        <div class="fb-search" style="max-width:110px"><input id="elJoin" placeholder="Join yrs"></div>
+        <div class="fb-search" style="max-width:210px"><select id="elMode" style="flex:1;background:none;border:none;outline:none;color:var(--t1);font-size:13px;font-family:inherit;cursor:pointer"><option value="relaxed" selected>Relaxed (passed+studying)</option><option value="strict">Strict (passed only)</option></select></div>
+        <div class="fb-spacer"></div>
+        <button id="elRun" class="btn btn-primary" style="padding:7px 20px;font-size:13px">
+          <span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Check
         </button>
       </div>
-      <div class="filter-bar mb-3" style="padding:8px 14px">
-        <button id="elSavePreset" type="button" class="fb-dd"><svg class="i i-sm" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Save preset</button>
-        <button id="elLoadPreset" type="button" class="fb-dd"><svg class="i i-sm" viewBox="0 0 24 24"><path d="M3 15v4c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>Load preset</button>
-        <div style="flex:1"></div>
-        <a id="elCsv" class="fb-dd" href="#"><svg class="i i-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>CSV</a>
+      <div class="filter-bar" style="padding:8px 14px;margin-bottom:14px">
+        <button id="elSavePreset" type="button" class="fb-dd"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span>Save preset</button>
+        <button id="elLoadPreset" type="button" class="fb-dd"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M3 15v4c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg></span>Load preset</button>
+        <div class="fb-spacer"></div>
+        <a id="elCsv" class="fb-dd" href="#"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>CSV</a>
       </div>
-      <div id="elMeta" class="meta-banner meta-info mt-2" style="font-family:var(--font-mono);font-size:12px;border-radius:var(--radius-sm);padding:10px 14px">No eligibility report loaded.</div>
-      <div id="elSummary" style="display:none;gap:12px;margin:12px 0">
-        <div style="flex:1;min-width:0"><div class="mc mc-teal"><div style="display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:var(--teal)"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg><div><div class="mc-lbl">Eligible IDs</div><div class="mc-val" id="elCount">0</div></div></div></div></div>
-        <div style="flex:1;min-width:0"><div class="mc mc-royal"><div style="display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:var(--royal)"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><div><div class="mc-lbl">Mode</div><div class="mc-val" id="elModeBadge" style="font-size:18px">relaxed</div></div></div></div></div>
-        <div style="flex:1;min-width:0"><div class="mc mc-sky"><div style="display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:var(--sky)"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg><div><div class="mc-lbl">Course</div><div class="mc-val" id="elCourseBadge" style="font-size:18px">-</div></div></div></div></div>
+      <div id="elMeta" class="meta-banner meta-info" style="font-family:var(--font-mono);font-size:12px;border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:14px">No eligibility report loaded.</div>
+      <div id="elSummary" style="display:none;gap:14px;margin-bottom:18px">
+        <div style="flex:1;min-width:0"><div class="mc mc-teal">
+          <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></span></div><div class="mc-lbl">Eligible</div></div>
+          <div class="mc-val" id="elCount">0</div>
+        </div></div>
+        <div style="flex:1;min-width:0"><div class="mc mc-royal">
+          <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span></div><div class="mc-lbl">Mode</div></div>
+          <div class="mc-val" id="elModeBadge" style="font-size:18px">relaxed</div>
+        </div></div>
+        <div style="flex:1;min-width:0"><div class="mc mc-sky">
+          <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></span></div><div class="mc-lbl">Course</div></div>
+          <div class="mc-val" id="elCourseBadge" style="font-size:18px">—</div>
+        </div></div>
       </div>
-      <div id="elUpdated" class="small text-secondary mb-2">Last update: -</div>
+      <div id="elUpdated" style="font-size:11px;color:var(--t5);font-family:var(--font-mono);margin-bottom:10px">Last update: —</div>
       <div class="cpanel">
-        <div class="cp-h"><span class="cp-t">Eligible Students</span></div>
+        <div class="cp-h"><span class="i" style="color:var(--t4)"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span><span class="cp-t">Eligible Students</span></div>
         <div class="cp-b" style="padding:0;overflow-x:auto">
-          <table class="tbl-card mb-0" id="elTable" style="border-spacing:0 4px">
+          <table class="tbl-card" id="elTable" style="border-spacing:0 4px">
             <thead><tr><th>Eligible Student IDs</th></tr></thead>
-            <tbody><tr><td><div class="empty-state"><span class="empty-icon">✅</span><div class="empty-title">No eligibility results</div><div class="empty-hint">Enter a course code above, then click <strong>Check</strong></div></div></td></tr></tbody>
+            <tbody><tr><td><div class="empty-state"><span class="i" style="width:32px;height:32px;color:var(--t5);margin-bottom:8px"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span><div class="empty-title">No eligibility results</div><div class="empty-hint">Enter a course code above, then click <strong>Check</strong></div></div></td></tr></tbody>
           </table>
         </div>
       </div>
@@ -1755,7 +1807,7 @@
 
       showSkeleton('planTable', 3);
     q('loadStudentPlan').disabled = true;
-    q('loadStudentPlan').innerHTML = '<svg class="i i-sm" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Loading...';
+    q('loadStudentPlan').innerHTML = '<span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>Loading...';
     container.innerHTML = '<div class="empty-note">Loading plan matrix...</div>';
 
     const res = await fetch(`/report/student-plan/?student_id=${encodeURIComponent(studentId)}`);
@@ -1774,7 +1826,7 @@
       q('studentPlanActions').style.display = 'none';
       q('studentPlanLegend').style.display = 'none';
       q('loadStudentPlan').disabled = false;
-      q('loadStudentPlan').innerHTML = '<svg class="i i-sm" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Load plan';
+      q('loadStudentPlan').innerHTML = '<span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>Load plan';
       return;
     }
 
@@ -1868,7 +1920,7 @@
     renderStudentPlanTerms();
 
     q('loadStudentPlan').disabled = false;
-    q('loadStudentPlan').innerHTML = '<svg class="i i-sm" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Load plan';
+    q('loadStudentPlan').innerHTML = '<span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>Load plan';
   };
 
   let scrapeAutoTimer = null;
@@ -2139,7 +2191,7 @@
     if (!requireFields(['dbgYear','dbgSemester'], 'dbgMeta', 'Debug report')) return;
     const btn = q('dbgRun');
     btn.disabled = true;
-    btn.innerHTML = '<svg class="i" viewBox="0 0 24 24" width="14" height="14" style="margin-right:4px"><path d="M5 12h14M12 5l7 7-7 7"/></svg>Running...';
+    btn.innerHTML = '<span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Running...';
     const url = `/report/recommendation-debug/?year=${encodeURIComponent(q('dbgYear').value)}&semester=${encodeURIComponent(q('dbgSemester').value)}&section=${encodeURIComponent(q('dbgSection').value)}&program=${encodeURIComponent(q('dbgProgram').value)}&join_years=${encodeURIComponent(q('dbgJoin').value)}&limit=${encodeURIComponent(q('dbgLimit').value)}`;
     q('dbgCsv').href = `/export/recommendation-debug.csv?year=${encodeURIComponent(q('dbgYear').value)}&semester=${encodeURIComponent(q('dbgSemester').value)}&section=${encodeURIComponent(q('dbgSection').value)}&program=${encodeURIComponent(q('dbgProgram').value)}&join_years=${encodeURIComponent(q('dbgJoin').value)}&limit=${encodeURIComponent(q('dbgLimit').value)}`;
     const tbody = document.querySelector('#dbgTable tbody');
@@ -2151,27 +2203,27 @@
     } catch (err) {
       tbody.innerHTML = '<tr><td colspan="7" class="text-danger">Network error while loading debug report.</td></tr>';
       q('dbgMeta').textContent = preciseError(null, null, 'Unable to load debug report.', err);
-      q('dbgMeta').className = 'meta-banner meta-danger mt-2';
+      q('dbgMeta').className = 'meta-banner meta-danger';
       q('dbgSummary').style.display = 'none';
       setUpdated('dbgUpdated', true);
       toast('Debug report failed', false);
       btn.disabled = false;
-      btn.innerHTML = '<svg class="i" viewBox="0 0 24 24" width="14" height="14" style="margin-right:4px"><path d="M5 12h14M12 5l7 7-7 7"/></svg>Run';
+      btn.innerHTML = '<span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run';
       return;
     }
 
     if (!res.ok || !Array.isArray(data.items)) {
       tbody.innerHTML = '<tr><td colspan="7" class="text-danger">Failed to load debug report.</td></tr>';
       q('dbgMeta').textContent = preciseError(res, data, 'Failed to load debug report.');
-      q('dbgMeta').className = 'meta-banner meta-warn mt-2';
+      q('dbgMeta').className = 'meta-banner meta-warn';
       q('dbgSummary').style.display = 'none';
       setUpdated('dbgUpdated', true);
       btn.disabled = false;
-      btn.innerHTML = '<svg class="i" viewBox="0 0 24 24" width="14" height="14" style="margin-right:4px"><path d="M5 12h14M12 5l7 7-7 7"/></svg>Run';
+      btn.innerHTML = '<span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run';
       return;
     }
     q('dbgMeta').textContent = `Loaded ${data.count} students • filters: section=${data.filters?.section || '-'} program=${data.filters?.program || '-'} join=${(data.filters?.join_year_prefixes || []).join(',') || '-'}.`;
-    q('dbgMeta').className = 'meta-banner meta-info mt-2';
+    q('dbgMeta').className = 'meta-banner meta-info';
     const withRec = (data.items || []).filter((x) => (x.recommended_courses || []).length > 0).length;
     q('dbgCount').textContent = String(data.count || 0);
     q('dbgWithRec').textContent = String(withRec);
@@ -2189,7 +2241,7 @@
         <td style="font-size:11px">${(x.passed || []).slice(0,4).join(', ')}${(x.passed || []).length > 4 ? ' ...' : ''}</td>
         <td style="font-size:11px">${(x.studying || []).join(', ') || '-'}</td>
         <td>${recHtml}</td>
-        <td style="white-space:nowrap"><button type="button" class="fb-dd dbg-trace" data-trace="${tracePayload}" style="font-size:11px;padding:3px 10px"><svg class="i i-sm" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>View</button> <button type="button" class="fb-dd dbg-copy" data-summary="${encodeURIComponent(summary)}" style="font-size:11px;padding:3px 10px"><svg class="i i-sm" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy</button></td>
+        <td style="white-space:nowrap"><button type="button" class="fb-dd dbg-trace" data-trace="${tracePayload}" style="font-size:11px;padding:3px 10px"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span>View</button> <button type="button" class="fb-dd dbg-copy" data-summary="${encodeURIComponent(summary)}" style="font-size:11px;padding:3px 10px"><span class="i i-sm"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>Copy</button></td>
       </tr>`;
     }).join('') || '<tr><td colspan="7" class="empty-note">No students matched filters.</td></tr>';
 
@@ -2218,14 +2270,14 @@
     setUpdated('dbgUpdated');
     toast('Debug report loaded', true);
     btn.disabled = false;
-    btn.innerHTML = '<svg class="i" viewBox="0 0 24 24" width="14" height="14" style="margin-right:4px"><path d="M5 12h14M12 5l7 7-7 7"/></svg>Run';
+    btn.innerHTML = '<span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run';
   };
 
   q('elRun').onclick = async () => {
     if (!requireFields(['elCourse'], 'elMeta', 'Eligibility')) return;
     const btn = q('elRun');
     btn.disabled = true;
-    btn.innerHTML = '<svg class="i" viewBox="0 0 24 24" width="14" height="14" style="margin-right:4px"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>Checking...';
+    btn.innerHTML = '<span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Checking...';
     const url = `/report/course-eligibility/?course_code=${encodeURIComponent(q('elCourse').value)}&section=${encodeURIComponent(q('elSection').value)}&program=${encodeURIComponent(q('elProgram').value)}&join_years=${encodeURIComponent(q('elJoin').value)}&mode=${encodeURIComponent(q('elMode').value)}`;
     q('elCsv').href = `/export/course-eligibility.csv?course_code=${encodeURIComponent(q('elCourse').value)}&section=${encodeURIComponent(q('elSection').value)}&program=${encodeURIComponent(q('elProgram').value)}&join_years=${encodeURIComponent(q('elJoin').value)}&mode=${encodeURIComponent(q('elMode').value)}`;
     const tbody = document.querySelector('#elTable tbody');
@@ -2236,23 +2288,23 @@
       ({ res, data } = await fetchJsonWithRetry(url));
     } catch (err) {
       q('elMeta').textContent = preciseError(null, null, 'Unable to load eligibility report.', err);
-      q('elMeta').className = 'meta-banner meta-danger mt-2';
+      q('elMeta').className = 'meta-banner meta-danger';
       q('elSummary').style.display = 'none';
       setUpdated('elUpdated', true);
       tbody.innerHTML = '<tr><td class="text-danger">Network error while loading eligibility report.</td></tr>';
       toast('Eligibility report failed', false);
       btn.disabled = false;
-      btn.innerHTML = '<svg class="i" viewBox="0 0 24 24" width="14" height="14" style="margin-right:4px"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>Check';
+      btn.innerHTML = '<span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Check';
       return;
     }
     if (!res.ok || !Array.isArray(data.per_program)) {
       q('elMeta').textContent = preciseError(res, data, 'Failed eligibility report.');
-      q('elMeta').className = 'meta-banner meta-warn mt-2';
+      q('elMeta').className = 'meta-banner meta-warn';
       q('elSummary').style.display = 'none';
       setUpdated('elUpdated', true);
       tbody.innerHTML = '<tr><td class="text-danger">Failed to load eligibility report.</td></tr>';
       btn.disabled = false;
-      btn.innerHTML = '<svg class="i" viewBox="0 0 24 24" width="14" height="14" style="margin-right:4px"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>Check';
+      btn.innerHTML = '<span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Check';
       return;
     }
 
@@ -2262,7 +2314,7 @@
     });
 
     q('elMeta').textContent = `Course ${data.course_code} • mode=${data.strict_passed_only ? 'strict' : 'relaxed'} • IDs=${eligibleIds.length}`;
-    q('elMeta').className = 'meta-banner meta-info mt-2';
+    q('elMeta').className = 'meta-banner meta-info';
     q('elCount').textContent = String(eligibleIds.length);
     q('elModeBadge').textContent = data.strict_passed_only ? 'strict' : 'relaxed';
     q('elCourseBadge').textContent = String(data.course_code || '-');
@@ -2275,7 +2327,7 @@
     setUpdated('elUpdated');
     toast('Eligibility report loaded', true);
     btn.disabled = false;
-    btn.innerHTML = '<svg class="i" viewBox="0 0 24 24" width="14" height="14" style="margin-right:4px"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>Check';
+    btn.innerHTML = '<span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Check';
   };
 
   async function refreshAdvisorsDropdown(selectAdvisorId = '') {
