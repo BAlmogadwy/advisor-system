@@ -9,164 +9,23 @@
    UX ENHANCEMENTS  (no existing classes overridden)
    ═══════════════════════════════════════════════════════ */
 
-/* ── REC 5 + 9: Sticky page header ─────────────────── */
+/* ── Dashboard page-header overrides (non-sticky, gradient accent) ── */
 .page-header {
-  position: sticky;
-  top: 0;
-  z-index: 50;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
+  position: relative;
   padding: 0.65rem 1.5rem;
   margin: -1.5rem -1.5rem 1.25rem -1.5rem;
   background: rgba(255,255,255,0.35);
-  backdrop-filter: blur(30px) saturate(130%);
-  -webkit-backdrop-filter: blur(30px) saturate(130%);
-  border-bottom: 1px solid rgba(17,17,68,0.05);
   box-shadow: none;
-  position: relative;
 }
-
 .page-header::after {
   content: '';
   position: absolute;
-  bottom: -1px;
-  left: 0;
-  right: 0;
+  bottom: -1px; left: 0; right: 0;
   height: 2px;
   background: linear-gradient(90deg, var(--teal), var(--sky) 35%, var(--royal) 65%, transparent);
   opacity: 0.15;
 }
-
-.page-header-module {
-  font-weight: 700;
-  font-size: 1rem;
-  color: var(--navy);
-  letter-spacing: -0.01em;
-  margin-bottom: 0.2rem;
-}
-
-.page-header-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
-  align-items: center;
-}
-
-.ph-chip {
-  display: inline-block;
-  font-size: 0.7rem;
-  font-weight: 600;
-  padding: 0.15rem 0.5rem;
-  border-radius: 999px;
-  letter-spacing: 0.01em;
-  white-space: nowrap;
-}
-
-.ph-chip-role   { background: #dcf5ee; color: #067858; border: 1px solid #a8e6d4; }
-.ph-chip-scope  { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0;
-                  max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
-.ph-chip-dept   { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
-.ph-chip-context { background: #ecfdf5; color: #0d9253; border: 1px solid #a7f3d0;
-                   font-family: var(--font-mono, monospace); }
-
-.page-header-right { flex-shrink: 0; }
-
-/* ── REC 2: Button loading state ────────────────────── */
-/* Top loading bar — shows when any button in the page is disabled */
-#ux-loading-bar {
-  position: fixed;
-  top: 0; left: 0; right: 0;
-  height: 3px;
-  z-index: 9999;
-  background: linear-gradient(90deg,
-    transparent 0%, #0A8E6E 30%, #0CA87E 70%, transparent 100%);
-  background-size: 200% 100%;
-  animation: ux-loading-sweep 1.2s linear infinite;
-  opacity: 0;
-  transition: opacity 0.2s ease;
-  pointer-events: none;
-}
-#ux-loading-bar.active { opacity: 1; }
-
-@keyframes ux-loading-sweep {
-  0%   { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
-}
-
-/* Button disabled spinner */
-/* Loading spinner: added programmatically via .ux-loading class */
-.ux-loading {
-  position: relative !important;
-  padding-inline-start: 2rem !important;
-}
-
-.ux-loading::before {
-  content: '';
-  position: absolute;
-  inset-inline-start: 0.6rem;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 12px; height: 12px;
-  border: 2px solid rgba(255,255,255,0.35);
-  border-top-color: currentColor;
-  border-radius: 50%;
-  animation: ux-spin 0.7s linear infinite;
-}
-
-/* For dark/outline buttons the spinner uses a darker colour */
-.ux-loading.btn-outline-secondary::before,
-.ux-loading.btn-outline-dark::before,
-.ux-loading.btn-outline-primary::before {
-  border-color: rgba(0,0,0,0.18);
-  border-top-color: currentColor;
-}
-
-@keyframes ux-spin {
-  to { transform: translateY(-50%) rotate(360deg); }
-}
-
-/* ── REC 1: Empty states ────────────────────────────── */
-.empty-state {
-  text-align: center;
-  padding: 2.5rem 1.5rem;
-  color: var(--t4);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.empty-state .i {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0.45;
-}
-
-.empty-icon {
-  display: block;
-  font-size: 2rem;
-  margin-bottom: 0.5rem;
-  opacity: 0.6;
-}
-
-.empty-title {
-  font-family: var(--font-serif, 'DM Serif Display', serif);
-  font-weight: 400;
-  font-size: 15px;
-  color: var(--t2);
-  margin-bottom: 4px;
-}
-
-.empty-hint {
-  font-size: 12px;
-  color: var(--t5);
-  line-height: 1.5;
-  font-weight: 300;
-}
-
-.empty-hint strong { color: var(--brand, #0A8E6E); }
+.page-header-module { font-size: 1rem; }
 
 /* ── REC 4: HP advanced settings ───────────────────── */
 .hp-advanced { border: none; }

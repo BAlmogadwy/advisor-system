@@ -292,43 +292,6 @@
     }
   </style>
 
-<style id="shared-ux-css">
-.page-header {
-  position: sticky; top: 0; z-index: 50;
-  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
-  padding: 0.55rem 1.5rem; margin: -1.5rem -1.5rem 1rem -1.5rem;
-  background: rgba(238,241,247,0.96); backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-bottom: 1px solid var(--line, #dde3ed);
-  box-shadow: 0 1px 8px rgba(0,0,0,0.06);
-}
-.page-header-left { display: flex; flex-direction: column; gap: 0.2rem; }
-.page-header-module { font-weight: 700; font-size: 0.98rem; color: var(--ink, #0d1526); letter-spacing: -0.01em; }
-.page-header-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
-.page-header-right { flex-shrink: 0; display: flex; align-items: center; gap: 0.5rem; }
-.ph-chip { display: inline-block; font-size: 0.7rem; font-weight: 600; padding: 0.15rem 0.5rem; border-radius: 999px; letter-spacing: 0.01em; white-space: nowrap; }
-.ph-chip-danger { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
-.ph-chip-gray   { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
-#ux-loading-bar {
-  position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 9999;
-  background: linear-gradient(90deg, transparent 0%, #0A8E6E 30%, #0CA87E 70%, transparent 100%);
-  background-size: 200% 100%; animation: ux-loading-sweep 1.2s linear infinite;
-  opacity: 0; transition: opacity 0.2s ease; pointer-events: none;
-}
-#ux-loading-bar.active { opacity: 1; }
-@keyframes ux-loading-sweep { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
-.ux-loading { position: relative !important; padding-inline-start: 2rem !important; }
-.ux-loading::before {
-  content: ''; position: absolute; inset-inline-start: 0.6rem; top: 50%;
-  transform: translateY(-50%); width: 12px; height: 12px;
-  border: 2px solid rgba(255,255,255,0.35); border-top-color: currentColor;
-  border-radius: 50%; animation: ux-spin 0.7s linear infinite;
-}
-.ux-loading.btn-outline-secondary::before,
-.ux-loading.btn-outline-dark::before,
-.ux-loading.btn-outline-primary::before { border-color: rgba(0,0,0,0.18); border-top-color: currentColor; }
-@keyframes ux-spin { to { transform: translateY(-50%) rotate(360deg); } }
-</style>
 {% endblock %}
 
 {% block body %}
