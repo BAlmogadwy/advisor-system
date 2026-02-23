@@ -81,13 +81,13 @@
       display:     flex;
       align-items: center;
       justify-content: center;
-      font-size:   1rem;
     }
+    .dba-nav-icon .i { width: 18px; height: 18px; }
 
-    .icon-safe    { background: #f0fdf4; }
-    .icon-danger  { background: #fff1f2; }
-    .icon-warning { background: #fffbeb; }
-    .icon-system  { background: #f0f9ff; }
+    .icon-safe    { background: #f0fdf4; color: #16a34a; }
+    .icon-danger  { background: #fff1f2; color: #dc2626; }
+    .icon-warning { background: #fffbeb; color: #d97706; }
+    .icon-system  { background: #f0f9ff; color: #0284c7; }
 
     .dba-nav-text { flex: 1; min-width: 0; }
 
@@ -150,9 +150,9 @@
       display:       flex;
       align-items:   center;
       justify-content: center;
-      font-size:     1.35rem;
       flex-shrink:   0;
     }
+    .dba-panel-icon .i { width: 24px; height: 24px; }
 
     .dba-panel-title {
       font-size:      1.1rem;
@@ -320,7 +320,7 @@
         <div class="dba-nav-label">{% if LANGUAGE_CODE == 'ar' %}حذف البيانات{% else %}Delete Data{% endif %}</div>
 
         <button class="dba-nav-item danger-item active" data-panel="students" type="button">
-          <span class="dba-nav-icon icon-danger">🗑️</span>
+          <span class="dba-nav-icon icon-danger"><span class="i"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></span></span>
           <span class="dba-nav-text">
             <span class="dba-nav-name">{% if LANGUAGE_CODE == 'ar' %}حذف الطلاب{% else %}Delete Students{% endif %}</span>
             <span class="dba-nav-desc">{% if LANGUAGE_CODE == 'ar' %}حسب البرنامج / القسم{% else %}By program / section{% endif %}</span>
@@ -329,7 +329,7 @@
         </button>
 
         <button class="dba-nav-item danger-item" data-panel="catalog" type="button">
-          <span class="dba-nav-icon icon-danger">📋</span>
+          <span class="dba-nav-icon icon-danger"><span class="i"><svg viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg></span></span>
           <span class="dba-nav-text">
             <span class="dba-nav-name">{% if LANGUAGE_CODE == 'ar' %}حذف الكتالوج{% else %}Delete Catalog{% endif %}</span>
             <span class="dba-nav-desc">{% if LANGUAGE_CODE == 'ar' %}متطلبات + مكوّنات{% else %}Requirements + prerequisites{% endif %}</span>
@@ -340,7 +340,7 @@
         <div class="dba-nav-label">{% if LANGUAGE_CODE == 'ar' %}استيراد البيانات{% else %}Import Data{% endif %}</div>
 
         <button class="dba-nav-item" data-panel="plan" type="button">
-          <span class="dba-nav-icon icon-safe">📥</span>
+          <span class="dba-nav-icon icon-safe"><span class="i"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span></span>
           <span class="dba-nav-text">
             <span class="dba-nav-name">{% if LANGUAGE_CODE == 'ar' %}استيراد خطة البرنامج{% else %}Import Program Plan{% endif %}</span>
             <span class="dba-nav-desc">{% if LANGUAGE_CODE == 'ar' %}من نص CSV{% else %}From CSV text{% endif %}</span>
@@ -349,7 +349,7 @@
         </button>
 
         <button class="dba-nav-item" data-panel="termsections" type="button">
-          <span class="dba-nav-icon icon-safe">🗓️</span>
+          <span class="dba-nav-icon icon-safe"><span class="i"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></span>
           <span class="dba-nav-text">
             <span class="dba-nav-name">{% if LANGUAGE_CODE == 'ar' %}أقسام الفصل الدراسي{% else %}Term Sections{% endif %}</span>
             <span class="dba-nav-desc">{% if LANGUAGE_CODE == 'ar' %}تحليل → معاينة → إدراج{% else %}Parse → Preview → Insert{% endif %}</span>
@@ -358,7 +358,7 @@
         </button>
 
         <button class="dba-nav-item" data-panel="legacy" type="button">
-          <span class="dba-nav-icon icon-warning">🔄</span>
+          <span class="dba-nav-icon icon-warning"><span class="i"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></span></span>
           <span class="dba-nav-text">
             <span class="dba-nav-name">{% if LANGUAGE_CODE == 'ar' %}الاستيراد القديم{% else %}Legacy Import{% endif %}</span>
             <span class="dba-nav-desc">{% if LANGUAGE_CODE == 'ar' %}منطق department_loader.py{% else %}department_loader.py logic{% endif %}</span>
@@ -369,7 +369,7 @@
         <div class="dba-nav-label">{% if LANGUAGE_CODE == 'ar' %}النظام{% else %}System{% endif %}</div>
 
         <button class="dba-nav-item" data-panel="maintenance" type="button">
-          <span class="dba-nav-icon icon-system">🔒</span>
+          <span class="dba-nav-icon icon-system"><span class="i"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span></span>
           <span class="dba-nav-text">
             <span class="dba-nav-name">{% if LANGUAGE_CODE == 'ar' %}النسخ الاحتياطي والتكامل{% else %}Backup & Integrity{% endif %}</span>
             <span class="dba-nav-desc">{% if LANGUAGE_CODE == 'ar' %}لقطة + تقرير التحقق{% else %}Snapshot + verification report{% endif %}</span>
@@ -385,7 +385,7 @@
         <!-- ══ PANEL: Delete Students ══════════════════════ -->
         <div class="dba-panel danger-panel active" id="panel-students">
           <div class="dba-panel-header">
-            <div class="dba-panel-icon icon-danger">🗑️</div>
+            <div class="dba-panel-icon icon-danger"><span class="i"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></span></div>
             <div>
               <div class="dba-panel-title">{% if LANGUAGE_CODE == 'ar' %}حذف الطلاب{% else %}Delete Students{% endif %}</div>
               <div class="dba-panel-subtitle">{% if LANGUAGE_CODE == 'ar' %}يحذف الطلاب المطابقين وجميع سجلات <code>student_courses</code> المرتبطة بهم بشكل دائم.{% else %}Permanently deletes matching students and all their associated <code>student_courses</code> records.{% endif %}</div>
@@ -416,7 +416,7 @@
         <!-- ══ PANEL: Delete Catalog ════════════════════════ -->
         <div class="dba-panel danger-panel" id="panel-catalog">
           <div class="dba-panel-header">
-            <div class="dba-panel-icon icon-danger">📋</div>
+            <div class="dba-panel-icon icon-danger"><span class="i"><svg viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg></span></div>
             <div>
               <div class="dba-panel-title">{% if LANGUAGE_CODE == 'ar' %}حذف كتالوج البرنامج{% else %}Delete Program Catalog{% endif %}</div>
               <div class="dba-panel-subtitle">{% if LANGUAGE_CODE == 'ar' %}يحذف بشكل دائم جميع صفوف <code>programme_requirements</code> و <code>prerequisites</code> لبرنامج محدد.{% else %}Permanently deletes all <code>programme_requirements</code> and <code>prerequisites</code> rows for a specific program.{% endif %}</div>
@@ -443,7 +443,7 @@
         <!-- ══ PANEL: Import Program Plan ═══════════════════ -->
         <div class="dba-panel" id="panel-plan">
           <div class="dba-panel-header">
-            <div class="dba-panel-icon icon-safe">📥</div>
+            <div class="dba-panel-icon icon-safe"><span class="i"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span></div>
             <div>
               <div class="dba-panel-title">{% if LANGUAGE_CODE == 'ar' %}استيراد خطة البرنامج{% else %}Import Program Plan{% endif %}</div>
               <div class="dba-panel-subtitle">{% if LANGUAGE_CODE == 'ar' %}يُدرج أو يُحدّث <code>programme_requirements</code> من نص CSV مباشرةً. الترويسات المطلوبة: <code>course_code, programme_term, credit_hours</code>{% else %}Inserts or updates <code>programme_requirements</code> from raw CSV text. Required headers: <code>course_code, programme_term, credit_hours</code>{% endif %}</div>
@@ -477,7 +477,7 @@
         <!-- ══ PANEL: Term Sections ══════════════════════════ -->
         <div class="dba-panel" id="panel-termsections">
           <div class="dba-panel-header">
-            <div class="dba-panel-icon icon-safe">🗓️</div>
+            <div class="dba-panel-icon icon-safe"><span class="i"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></div>
             <div>
               <div class="dba-panel-title">{% if LANGUAGE_CODE == 'ar' %}استيراد أقسام الفصل الدراسي{% else %}Import Term Sections{% endif %}</div>
               <div class="dba-panel-subtitle">{% if LANGUAGE_CODE == 'ar' %}تدفق ثلاثي المراحل: تحليل CSV → مراجعة المعاينة → إدراج المصفوف.{% else %}Three-step flow: parse CSV → review preview → insert normalised rows.{% endif %}</div>
@@ -552,7 +552,7 @@
         <!-- ══ PANEL: Legacy Import ══════════════════════════ -->
         <div class="dba-panel" id="panel-legacy">
           <div class="dba-panel-header">
-            <div class="dba-panel-icon icon-warning">🔄</div>
+            <div class="dba-panel-icon icon-warning"><span class="i"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></span></div>
             <div>
               <div class="dba-panel-title">{% if LANGUAGE_CODE == 'ar' %}الاستيراد القديم{% else %}Legacy Exact Import{% endif %}</div>
               <div class="dba-panel-subtitle">{% if LANGUAGE_CODE == 'ar' %}يعكس منطق <code>department_loader.py</code> القديم: INSERT OR REPLACE للمتطلبات، INSERT بدون إزالة التكرار للمكوّنات السابقة.{% else %}Mirrors old <code>department_loader.py</code>: INSERT OR REPLACE for requirements, INSERT without deduplication for prerequisites. May create duplicate rows.{% endif %}</div>
@@ -582,7 +582,7 @@
         <!-- ══ PANEL: Backup & Integrity ═════════════════════ -->
         <div class="dba-panel" id="panel-maintenance">
           <div class="dba-panel-header">
-            <div class="dba-panel-icon icon-system">🔒</div>
+            <div class="dba-panel-icon icon-system"><span class="i"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span></div>
             <div>
               <div class="dba-panel-title">{% if LANGUAGE_CODE == 'ar' %}النسخ الاحتياطي والتحقق{% else %}Backup & Integrity{% endif %}</div>
               <div class="dba-panel-subtitle">{% if LANGUAGE_CODE == 'ar' %}إنشاء لقطة احتياطية للقاعدة أو تشغيل تقرير التحقق من التكامل.{% else %}Create a database snapshot backup or run a full integrity verification report.{% endif %}</div>

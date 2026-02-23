@@ -345,7 +345,7 @@
           <tbody>
             <tr><td colspan="9">
               <div class="um-empty">
-                <span class="um-empty-icon">👥</span>
+                <span class="um-empty-icon"><span class="i" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span></span>
                 <div class="um-empty-title">Loading users…</div>
               </div>
             </td></tr>
@@ -583,7 +583,7 @@ function renderTable(users) {
 
   if (!users.length) {
     tbody.innerHTML = `<tr><td colspan="9"><div class="um-empty">
-      <span class="um-empty-icon">🔍</span>
+      <span class="um-empty-icon"><span class="i" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span></span>
       <div class="um-empty-title">No users found</div>
       <div class="um-empty-hint">Try adjusting your filters</div>
     </div></td></tr>`;
