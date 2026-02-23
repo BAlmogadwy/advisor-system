@@ -65,6 +65,32 @@
 
 .hp-advanced[open] .hp-adv-defaults-badge { display: none; }
 
+/* ── Trace action micro-buttons ────────────────────── */
+.trace-actions { display: inline-flex; gap: 4px; }
+.trace-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+  padding: 3px 10px; border-radius: 6px; border: none;
+  font-size: 11px; font-weight: 600; font-family: inherit;
+  cursor: pointer; transition: all 0.15s ease;
+  line-height: 1.3;
+}
+.trace-btn .i { width: 12px; height: 12px; opacity: 0.7; }
+.trace-btn-view {
+  background: rgba(10,142,110,0.1); color: var(--teal);
+}
+.trace-btn-view:hover {
+  background: rgba(10,142,110,0.2); box-shadow: 0 1px 4px rgba(10,142,110,0.15);
+}
+.trace-btn-copy {
+  background: rgba(17,17,68,0.05); color: var(--t3);
+}
+.trace-btn-copy:hover {
+  background: rgba(17,17,68,0.1); box-shadow: 0 1px 4px rgba(17,17,68,0.08);
+}
+.trace-btn-copy.copied {
+  background: rgba(10,142,110,0.12); color: var(--teal);
+}
+
 /* ── REC 8: Advisor admin wizard bar ────────────────── */
 .adm-wizard-bar {
   display: flex;
@@ -2157,7 +2183,7 @@
         <td style="font-size:11px">${(x.passed || []).slice(0,4).join(', ')}${(x.passed || []).length > 4 ? ' ...' : ''}</td>
         <td style="font-size:11px">${(x.studying || []).join(', ') || '-'}</td>
         <td>${recHtml}</td>
-        <td style="white-space:nowrap"><button type="button" class="fb-dd dbg-trace" data-trace="${tracePayload}" style="font-size:11px;padding:3px 10px"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span>View</button> <button type="button" class="fb-dd dbg-copy" data-summary="${encodeURIComponent(summary)}" style="font-size:11px;padding:3px 10px"><span class="i i-sm"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>Copy</button></td>
+        <td style="white-space:nowrap"><div class="trace-actions"><button type="button" class="trace-btn trace-btn-view dbg-trace" data-trace="${tracePayload}" title="View trace"><span class="i"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span>View</button><button type="button" class="trace-btn trace-btn-copy dbg-copy" data-summary="${encodeURIComponent(summary)}" title="Copy summary"><span class="i"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>Copy</button></div></td>
       </tr>`;
     }).join('') || '<tr><td colspan="7" class="empty-note">No students matched filters.</td></tr>';
 
@@ -2179,6 +2205,10 @@
       b.addEventListener('click', async () => {
         const s = decodeURIComponent(b.getAttribute('data-summary') || '');
         await navigator.clipboard.writeText(s);
+        b.classList.add('copied');
+        const orig = b.innerHTML;
+        b.innerHTML = '<span class="i" style="width:12px;height:12px"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Copied!';
+        setTimeout(() => { b.innerHTML = orig; b.classList.remove('copied'); }, 1500);
         toast('Debug summary copied', true);
       });
     });
