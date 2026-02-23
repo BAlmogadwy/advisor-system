@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Design 1: Frost Glass</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  :root{
+    --glass:rgba(255,255,255,0.15);
+    --glass-solid:rgba(255,255,255,0.82);
+    --glass-border:rgba(255,255,255,0.25);
+    --ink:#1e1b4b;--ink2:#4338ca;--muted:#6366f1;
+    --accent:#6366f1;--accent-soft:#e0e7ff;
+    --sidebar-bg:rgba(15,12,41,0.88);
+    --success:#10b981;--danger:#ef4444;--warning:#f59e0b;
+    --radius:14px;
+  }
+  body{
+    font-family:'Inter',system-ui,sans-serif;
+    min-height:100vh;
+    background:linear-gradient(135deg,#667eea 0%,#764ba2 50%,#f093fb 100%);
+    background-attachment:fixed;
+    color:var(--ink);
+    font-size:0.9375rem;
+  }
+  .shell{display:flex;min-height:100vh}
+
+  /* ── Sidebar ── */
+  .sidebar{
+    width:260px;min-height:100vh;
+    background:var(--sidebar-bg);
+    backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);
+    border-right:1px solid rgba(255,255,255,0.08);
+    padding:1.5rem 0;
+    display:flex;flex-direction:column;
+    flex-shrink:0;
+  }
+  .sidebar .logo{
+    padding:0 1.25rem 1.5rem;
+    font-size:1.1rem;font-weight:700;
+    color:#fff;letter-spacing:-0.02em;
+    display:flex;align-items:center;gap:0.5rem;
+  }
+  .sidebar .logo span{font-size:1.4rem}
+  .sidebar .section-label{
+    padding:0.75rem 1.25rem 0.35rem;
+    font-size:0.65rem;font-weight:700;
+    text-transform:uppercase;letter-spacing:0.10em;
+    color:rgba(255,255,255,0.35);
+  }
+  .sidebar .nav-link{
+    display:flex;align-items:center;gap:0.65rem;
+    padding:0.6rem 1.25rem;
+    color:rgba(255,255,255,0.6);
+    text-decoration:none;font-size:0.875rem;font-weight:500;
+    border-left:3px solid transparent;
+    transition:all 0.15s ease;
+  }
+  .sidebar .nav-link:hover{
+    color:rgba(255,255,255,0.9);
+    background:rgba(255,255,255,0.06);
+  }
+  .sidebar .nav-link.active{
+    color:#fff;
+    background:rgba(99,102,241,0.15);
+    border-left-color:#818cf8;
+    box-shadow:inset 0 0 20px rgba(99,102,241,0.08);
+  }
+  .sidebar .user-card{
+    margin-top:auto;
+    padding:1rem 1.25rem;
+    border-top:1px solid rgba(255,255,255,0.08);
+    display:flex;align-items:center;gap:0.65rem;
+  }
+  .sidebar .avatar{
+    width:36px;height:36px;border-radius:50%;
+    background:linear-gradient(135deg,#818cf8,#6366f1);
+    display:flex;align-items:center;justify-content:center;
+    color:#fff;font-weight:700;font-size:0.8rem;
+  }
+  .sidebar .user-name{color:#fff;font-size:0.82rem;font-weight:600}
+  .sidebar .user-role{color:rgba(255,255,255,0.45);font-size:0.72rem}
+
+  /* ── Main ── */
+  .main{flex:1;padding:1.5rem;overflow-y:auto}
+
+  /* ── Page Header ── */
+  .page-header{
+    background:var(--glass-solid);
+    backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+    border:1px solid var(--glass-border);
+    border-radius:var(--radius);
+    padding:1rem 1.5rem;
+    margin-bottom:1.25rem;
+    display:flex;justify-content:space-between;align-items:center;
+    box-shadow:0 4px 24px rgba(99,102,241,0.08);
+  }
+  .page-title{font-size:1.15rem;font-weight:700;color:var(--ink)}
+  .chips{display:flex;gap:0.4rem;margin-top:0.25rem}
+  .chip{
+    padding:0.15rem 0.55rem;border-radius:999px;
+    font-size:0.72rem;font-weight:600;
+    background:var(--accent-soft);color:var(--accent);
+    border:1px solid rgba(99,102,241,0.2);
+  }
+
+  /* ── Glass Cards ── */
+  .glass-card{
+    background:var(--glass-solid);
+    backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+    border:1px solid var(--glass-border);
+    border-radius:var(--radius);
+    padding:1.25rem;
+    margin-bottom:1rem;
+    box-shadow:0 8px 32px rgba(99,102,241,0.08);
+    transition:transform 0.2s ease,box-shadow 0.2s ease;
+  }
+  .glass-card:hover{
+    transform:translateY(-2px);
+    box-shadow:0 12px 40px rgba(99,102,241,0.14);
+  }
+  .card-title{font-size:0.95rem;font-weight:700;margin-bottom:0.75rem;color:var(--ink)}
+
+  /* ── Metrics ── */
+  .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:0.85rem;margin-bottom:1.25rem}
+  .metric{
+    background:var(--glass-solid);
+    backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+    border:1px solid var(--glass-border);
+    border-radius:12px;
+    padding:1rem;
+    text-align:center;
+    transition:transform 0.2s ease,box-shadow 0.2s ease;
+  }
+  .metric:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(99,102,241,0.12)}
+  .metric .label{font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);margin-bottom:0.35rem}
+  .metric .value{font-size:1.6rem;font-weight:700;color:var(--ink);letter-spacing:-0.02em}
+  .metric .value.green{color:var(--success)}
+  .metric .value.indigo{color:var(--accent)}
+  .metric .value.amber{color:var(--warning)}
+  .metric .value.red{color:var(--danger)}
+  .metric .icon{font-size:1.4rem;margin-bottom:0.25rem;opacity:0.7}
+
+  /* ── Buttons ── */
+  .btn{
+    display:inline-flex;align-items:center;gap:0.4rem;
+    padding:0.5rem 1.1rem;border-radius:8px;
+    font-size:0.85rem;font-weight:600;
+    border:none;cursor:pointer;
+    transition:all 0.15s ease;
+  }
+  .btn-primary{
+    background:linear-gradient(135deg,#818cf8,#6366f1);
+    color:#fff;
+    box-shadow:0 4px 14px rgba(99,102,241,0.3);
+  }
+  .btn-primary:hover{box-shadow:0 6px 20px rgba(99,102,241,0.4);transform:translateY(-1px)}
+  .btn-outline{
+    background:rgba(255,255,255,0.5);
+    color:var(--accent);
+    border:1px solid rgba(99,102,241,0.3);
+    backdrop-filter:blur(8px);
+  }
+  .btn-outline:hover{background:rgba(99,102,241,0.08)}
+  .btn-success{background:linear-gradient(135deg,#34d399,#10b981);color:#fff;box-shadow:0 4px 14px rgba(16,185,129,0.3)}
+  .btn-danger{background:linear-gradient(135deg,#f87171,#ef4444);color:#fff;box-shadow:0 4px 14px rgba(239,68,68,0.3)}
+  .actions{display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:1rem}
+
+  /* ── Table ── */
+  .table-wrap{
+    background:var(--glass-solid);
+    backdrop-filter:blur(12px);
+    border:1px solid var(--glass-border);
+    border-radius:var(--radius);
+    overflow:hidden;
+    box-shadow:0 4px 24px rgba(99,102,241,0.06);
+  }
+  table{width:100%;border-collapse:collapse}
+  thead th{
+    padding:0.65rem 0.85rem;
+    font-size:0.72rem;font-weight:700;
+    text-transform:uppercase;letter-spacing:0.06em;
+    color:var(--muted);text-align:left;
+    background:rgba(238,242,255,0.6);
+    border-bottom:1px solid rgba(99,102,241,0.1);
+  }
+  tbody td{
+    padding:0.6rem 0.85rem;font-size:0.85rem;
+    border-bottom:1px solid rgba(99,102,241,0.06);
+    color:var(--ink);
+  }
+  tbody tr{transition:background 0.1s ease}
+  tbody tr:hover{background:rgba(99,102,241,0.04)}
+
+  /* ── Pills ── */
+  .pill{
+    display:inline-block;padding:0.15rem 0.55rem;border-radius:999px;
+    font-size:0.72rem;font-weight:600;
+  }
+  .pill-green{background:#d1fae5;color:#065f46;border:1px solid #a7f3d0}
+  .pill-red{background:#fee2e2;color:#991b1b;border:1px solid #fecaca}
+  .pill-amber{background:#fef3c7;color:#92400e;border:1px solid #fde68a}
+  .pill-indigo{background:#e0e7ff;color:#3730a3;border:1px solid #c7d2fe}
+
+  /* ── Toast Demo ── */
+  .toast-demo{
+    position:fixed;bottom:1.5rem;right:1.5rem;
+    display:flex;flex-direction:column;gap:0.5rem;
+  }
+  .toast{
+    background:var(--glass-solid);
+    backdrop-filter:blur(16px);
+    border-radius:12px;
+    padding:0.75rem 1rem;
+    display:flex;align-items:center;gap:0.65rem;
+    box-shadow:0 8px 32px rgba(0,0,0,0.12);
+    min-width:280px;
+    border-left:none;
+    animation:slideIn 0.3s ease;
+  }
+  .toast .glow{
+    width:8px;height:8px;border-radius:50%;
+    box-shadow:0 0 10px currentColor;
+    flex-shrink:0;
+  }
+  .toast.success .glow{color:var(--success);background:var(--success)}
+  .toast.error .glow{color:var(--danger);background:var(--danger)}
+  .toast .msg{font-size:0.82rem;font-weight:500}
+  @keyframes slideIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+
+  /* ── Form ── */
+  .form-group{margin-bottom:0.85rem}
+  .form-label{
+    display:block;font-size:0.72rem;font-weight:700;
+    text-transform:uppercase;letter-spacing:0.04em;
+    color:var(--muted);margin-bottom:0.3rem;
+  }
+  .form-input{
+    width:100%;padding:0.55rem 0.75rem;
+    border:1px solid rgba(99,102,241,0.2);
+    border-radius:8px;font-size:0.875rem;
+    background:rgba(255,255,255,0.6);
+    backdrop-filter:blur(8px);
+    outline:none;
+    transition:all 0.15s ease;
+  }
+  .form-input:focus{
+    border-color:var(--accent);
+    box-shadow:0 0 0 3px rgba(99,102,241,0.15);
+  }
+  .form-row{display:grid;grid-template-columns:1fr 1fr;gap:0.85rem}
+
+  /* ── Modal ── */
+  .modal-backdrop{
+    position:fixed;inset:0;
+    background:rgba(30,27,75,0.4);
+    backdrop-filter:blur(6px);
+    display:flex;align-items:center;justify-content:center;
+    z-index:100;display:none;
+  }
+  .modal-box{
+    background:var(--glass-solid);
+    backdrop-filter:blur(20px);
+    border:1px solid var(--glass-border);
+    border-radius:18px;
+    padding:1.5rem;
+    width:420px;max-width:90vw;
+    box-shadow:0 24px 64px rgba(99,102,241,0.2);
+  }
+  .modal-title{font-size:1rem;font-weight:700;margin-bottom:1rem}
+  .modal-footer{display:flex;gap:0.5rem;justify-content:flex-end;margin-top:1.25rem}
+</style>
+</head>
+<body>
+<div class="shell">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="logo"><span>🎓</span> Student Advisor</div>
+    <div class="section-label">Main</div>
+    <a class="nav-link active" href="#">📊 Dashboard</a>
+    <a class="nav-link" href="#">🎯 Recommender</a>
+    <a class="nav-link" href="#">📋 Study Planner</a>
+    <a class="nav-link" href="#">📑 Audit Explorer</a>
+    <div class="section-label">Management</div>
+    <a class="nav-link" href="#">👥 User Management</a>
+    <a class="nav-link" href="#">🗄️ Database Admin</a>
+    <a class="nav-link" href="#">⚙️ Batch Processor</a>
+    <div class="section-label">Portfolio</div>
+    <a class="nav-link" href="#">📈 Advisor Portfolio</a>
+    <a class="nav-link" href="#">📤 Export Center</a>
+    <div class="user-card">
+      <div class="avatar">BA</div>
+      <div>
+        <div class="user-name">Bas Ofi</div>
+        <div class="user-role">Super Admin</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <div class="main">
+    <!-- Page Header -->
+    <div class="page-header">
+      <div>
+        <div class="page-title">📊 Dashboard — Recommender</div>
+        <div class="chips">
+          <span class="chip">Super Admin</span>
+          <span class="chip">CS Department</span>
+          <span class="chip">764 Students</span>
+        </div>
+      </div>
+      <div style="display:flex;gap:0.5rem">
+        <button class="btn btn-outline">⌨️ Ctrl+K</button>
+        <button class="btn btn-primary">🔄 Refresh</button>
+      </div>
+    </div>
+
+    <!-- Metrics -->
+    <div class="metrics">
+      <div class="metric">
+        <div class="icon">👨‍🎓</div>
+        <div class="label">Total Students</div>
+        <div class="value indigo">764</div>
+      </div>
+      <div class="metric">
+        <div class="icon">📊</div>
+        <div class="label">Average GPA</div>
+        <div class="value green">3.42</div>
+      </div>
+      <div class="metric">
+        <div class="icon">⚠️</div>
+        <div class="label">At Risk</div>
+        <div class="value red">23</div>
+      </div>
+      <div class="metric">
+        <div class="icon">📚</div>
+        <div class="label">Courses Tracked</div>
+        <div class="value amber">186</div>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="actions">
+      <button class="btn btn-primary">▶ Run Recommender</button>
+      <button class="btn btn-success">📥 Import Students</button>
+      <button class="btn btn-outline">📊 Export Report</button>
+      <button class="btn btn-outline">🔍 Search Student</button>
+    </div>
+
+    <!-- Student Table -->
+    <div class="glass-card">
+      <div class="card-title">Student Records</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Student ID</th>
+              <th>Name</th>
+              <th>Program</th>
+              <th>GPA</th>
+              <th>Credits</th>
+              <th>Status</th>
+              <th>Risk</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style="font-family:monospace;font-weight:600">2210345</td>
+              <td>Ahmed Al-Rashidi</td>
+              <td>Computer Science</td>
+              <td><strong>3.85</strong></td>
+              <td>96 / 136</td>
+              <td><span class="pill pill-green">Active</span></td>
+              <td><span class="pill pill-green">Low</span></td>
+            </tr>
+            <tr>
+              <td style="font-family:monospace;font-weight:600">2210412</td>
+              <td>Mohammed Hassan</td>
+              <td>Information Systems</td>
+              <td><strong>2.15</strong></td>
+              <td>62 / 136</td>
+              <td><span class="pill pill-amber">Warning</span></td>
+              <td><span class="pill pill-red">High</span></td>
+            </tr>
+            <tr>
+              <td style="font-family:monospace;font-weight:600">2210567</td>
+              <td>Khalid Al-Otaibi</td>
+              <td>Computer Science</td>
+              <td><strong>3.21</strong></td>
+              <td>84 / 136</td>
+              <td><span class="pill pill-green">Active</span></td>
+              <td><span class="pill pill-amber">Medium</span></td>
+            </tr>
+            <tr>
+              <td style="font-family:monospace;font-weight:600">2210689</td>
+              <td>Faisal Al-Qahtani</td>
+              <td>Computer Science</td>
+              <td><strong>3.67</strong></td>
+              <td>110 / 136</td>
+              <td><span class="pill pill-green">Active</span></td>
+              <td><span class="pill pill-green">Low</span></td>
+            </tr>
+            <tr>
+              <td style="font-family:monospace;font-weight:600">2210234</td>
+              <td>Sultan Al-Harbi</td>
+              <td>Information Systems</td>
+              <td><strong>1.89</strong></td>
+              <td>45 / 136</td>
+              <td><span class="pill pill-red">Probation</span></td>
+              <td><span class="pill pill-red">High</span></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Recommender Card -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+      <div class="glass-card">
+        <div class="card-title">🎯 Course Recommendations</div>
+        <div style="display:flex;flex-direction:column;gap:0.5rem">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:0.55rem 0.75rem;background:rgba(99,102,241,0.05);border-radius:8px;border:1px solid rgba(99,102,241,0.1)">
+            <div>
+              <div style="font-weight:600;font-size:0.85rem">CS 301 — Data Structures</div>
+              <div style="font-size:0.72rem;color:var(--muted)">Prerequisites: CS 201 ✅</div>
+            </div>
+            <span class="pill pill-green">Ready</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:0.55rem 0.75rem;background:rgba(99,102,241,0.05);border-radius:8px;border:1px solid rgba(99,102,241,0.1)">
+            <div>
+              <div style="font-weight:600;font-size:0.85rem">CS 310 — Algorithms</div>
+              <div style="font-size:0.72rem;color:var(--muted)">Prerequisites: CS 301 ❌</div>
+            </div>
+            <span class="pill pill-red">Blocked</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:0.55rem 0.75rem;background:rgba(99,102,241,0.05);border-radius:8px;border:1px solid rgba(99,102,241,0.1)">
+            <div>
+              <div style="font-weight:600;font-size:0.85rem">MATH 204 — Linear Algebra</div>
+              <div style="font-size:0.72rem;color:var(--muted)">Prerequisites: MATH 101 ✅</div>
+            </div>
+            <span class="pill pill-green">Ready</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="glass-card">
+        <div class="card-title">📊 Batch Scraper Status</div>
+        <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.75rem">
+          <div style="width:10px;height:10px;border-radius:50%;background:var(--success);box-shadow:0 0 8px var(--success);animation:pulse 2s infinite"></div>
+          <span style="font-size:0.85rem;font-weight:600;color:var(--success)">Running</span>
+          <span style="font-size:0.75rem;color:var(--muted);margin-left:auto">PID 12847</span>
+        </div>
+        <div style="background:rgba(99,102,241,0.05);border-radius:8px;padding:0.65rem;font-family:monospace;font-size:0.75rem;color:var(--ink);line-height:1.6;border:1px solid rgba(99,102,241,0.1)">
+          [14:23:01] Scraping student 423/764...<br>
+          [14:23:03] ✅ 2210567 — 18 courses found<br>
+          [14:23:05] Scraping student 424/764...<br>
+          [14:23:07] ✅ 2210689 — 22 courses found
+        </div>
+        <div style="margin-top:0.75rem;display:flex;gap:0.5rem">
+          <button class="btn btn-outline" style="flex:1">⏸ Pause</button>
+          <button class="btn btn-danger" style="flex:1">⏹ Stop</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Form Demo -->
+    <div class="glass-card" style="margin-top:1rem">
+      <div class="card-title">🔍 Search & Filter</div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Student ID</label>
+          <input class="form-input" type="text" placeholder="Enter student ID...">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Program</label>
+          <input class="form-input" type="text" placeholder="e.g. Computer Science">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label class="form-label">Min GPA</label>
+          <input class="form-input" type="number" placeholder="0.00" step="0.01">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Status</label>
+          <input class="form-input" type="text" placeholder="Active, Warning, Probation">
+        </div>
+      </div>
+      <div style="display:flex;gap:0.5rem;margin-top:0.5rem">
+        <button class="btn btn-primary">🔍 Search</button>
+        <button class="btn btn-outline">↺ Reset</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast Demo -->
+<div class="toast-demo">
+  <div class="toast success">
+    <div class="glow"></div>
+    <div class="msg">764 students imported successfully</div>
+  </div>
+  <div class="toast error">
+    <div class="glow"></div>
+    <div class="msg">Connection timeout — retrying...</div>
+  </div>
+</div>
+
+<style>@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.5}}</style>
+</body>
+</html>

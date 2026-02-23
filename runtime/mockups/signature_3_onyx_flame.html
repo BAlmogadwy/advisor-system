@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Onyx Flame — Student Advisor</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=DM+Serif+Display&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ═══════════════════════════════════════════════════════════════════════════
+   ONYX FLAME — Signature III
+   Inspired by: TRUTH dashboard (clean card-rows, orange accent, dark header)
+   Merged with: Obsidian premium depth & craftsmanship
+   ═══════════════════════════════════════════════════════════════════════════ */
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+
+:root{
+  /* Surface — Deep charcoal with warm undertone */
+  --s0:#0e0e11;--s1:#141418;--s2:#1a1a20;--s3:#212128;--s4:#2a2a32;--s5:#34343e;--s6:#3e3e4a;
+  --s-glass:rgba(20,20,24,0.7);
+
+  /* Text hierarchy — warm white */
+  --t0:#f8f6f3;--t1:#eae6e0;--t2:#b8b2a8;--t3:#8a847a;--t4:#5e5a52;--t5:#3e3a36;
+
+  /* Flame — primary orange accent (inspired by TRUTH's orange) */
+  --fl:#f07030;--fl-bright:#ff8844;--fl-pale:#ffaa66;--fl-deep:#c05020;
+  --fl-dim:rgba(240,112,48,0.06);--fl-glow:rgba(240,112,48,0.1);
+  --fl-border:rgba(240,112,48,0.15);--fl-bg:rgba(240,112,48,0.04);
+
+  /* Amber secondary */
+  --am:#e8a030;--am-dim:rgba(232,160,48,0.06);--am-b:rgba(232,160,48,0.12);
+
+  /* Semantic */
+  --ok:#3dcc7b;--ok-dim:rgba(61,204,123,0.05);--ok-b:rgba(61,204,123,0.12);--ok-t:#50e090;--ok-bg:rgba(61,204,123,0.06);
+  --err:#f05555;--err-dim:rgba(240,85,85,0.05);--err-b:rgba(240,85,85,0.12);--err-t:#ff7070;
+  --warn:#e8a030;--warn-dim:rgba(232,160,48,0.05);--warn-b:rgba(232,160,48,0.12);--warn-t:#f0b040;
+  --info:#5090f0;--info-dim:rgba(80,144,240,0.05);--info-b:rgba(80,144,240,0.12);--info-t:#60a0ff;
+
+  /* Borders */
+  --line:rgba(255,255,255,0.05);--line-h:rgba(255,255,255,0.08);--line-a:rgba(255,255,255,0.12);
+
+  /* Shadows */
+  --sh-sm:0 1px 3px rgba(0,0,0,0.3);
+  --sh-card:0 1px 0 rgba(255,255,255,0.02) inset,0 2px 8px rgba(0,0,0,0.3),0 0 0 1px var(--line);
+  --sh-card-h:0 1px 0 rgba(255,255,255,0.03) inset,0 12px 40px rgba(0,0,0,0.4),0 0 0 1px var(--line-h);
+  --sh-btn:0 1px 0 rgba(255,255,255,0.1) inset,0 2px 8px rgba(240,112,48,0.15);
+  --sh-inp:0 1px 0 rgba(255,255,255,0.02) inset,0 1px 3px rgba(0,0,0,0.2);
+
+  --r:14px;--r-s:10px;--r-xs:7px;--r-f:9999px;
+  --ease:cubic-bezier(0.16,1,0.3,1);--spring:cubic-bezier(0.34,1.56,0.64,1);
+}
+
+html{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+body{
+  font-family:'Inter',system-ui,sans-serif;
+  background:var(--s0);color:var(--t2);
+  font-size:14px;line-height:1.5;min-height:100vh;overflow:hidden;
+}
+
+/* Grain overlay */
+body::after{
+  content:'';position:fixed;inset:0;z-index:9999;pointer-events:none;opacity:0.012;
+  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Ambient warm glow */
+.ambience{position:fixed;inset:0;z-index:0;pointer-events:none;overflow:hidden}
+.amb{position:absolute;border-radius:50%;filter:blur(160px);animation:ambF 28s ease-in-out infinite}
+.amb-1{width:500px;height:400px;top:-8%;left:25%;background:rgba(240,112,48,0.04);animation-delay:0s}
+.amb-2{width:300px;height:300px;bottom:5%;right:10%;background:rgba(232,160,48,0.025);animation-delay:-12s;animation-duration:32s}
+@keyframes ambF{0%,100%{transform:translate(0,0)}33%{transform:translate(18px,-22px)}66%{transform:translate(-14px,18px)}}
+
+::selection{background:var(--fl);color:#fff}
+::-webkit-scrollbar{width:5px}
+::-webkit-scrollbar-track{background:var(--s1)}
+::-webkit-scrollbar-thumb{background:var(--s5);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--s6)}
+
+.shell{display:flex;height:100vh;position:relative;z-index:1}
+
+/* ═══════════════════════════════════════════════════════════════
+   SIDEBAR — Frosted glass with flame accent
+   ═══════════════════════════════════════════════════════════════ */
+.sidebar{
+  width:252px;height:100vh;
+  background:rgba(14,14,17,0.85);
+  backdrop-filter:blur(40px) saturate(130%);-webkit-backdrop-filter:blur(40px) saturate(130%);
+  border-right:1px solid var(--line);
+  display:flex;flex-direction:column;flex-shrink:0;position:relative;
+}
+/* Flame edge glow on sidebar right border */
+.sidebar::after{
+  content:'';position:absolute;top:0;right:-1px;width:1px;height:35%;
+  background:linear-gradient(180deg,var(--fl),transparent);opacity:0.25;
+}
+
+/* Logo — Clean with flame mark */
+.logo-area{
+  padding:22px 18px 28px;display:flex;align-items:center;gap:12px;
+  border-bottom:1px solid var(--line);
+}
+.logo-mark{
+  width:38px;height:38px;border-radius:11px;position:relative;
+  background:linear-gradient(135deg,var(--fl-bright),var(--fl),var(--fl-deep));
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 4px 16px rgba(240,112,48,0.25),0 1px 0 rgba(255,255,255,0.15) inset;
+}
+.logo-mark::before{
+  content:'';position:absolute;inset:0;border-radius:11px;
+  background:linear-gradient(180deg,rgba(255,255,255,0.2),transparent 50%);
+}
+.logo-mark span{font-size:18px;position:relative;z-index:1;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.3))}
+.logo-title{
+  font-family:'DM Serif Display',serif;
+  font-size:20px;color:var(--t0);line-height:1;letter-spacing:-0.01em;
+}
+.logo-sub{
+  font-size:9.5px;color:var(--t4);font-weight:600;letter-spacing:0.1em;
+  text-transform:uppercase;margin-top:3px;font-family:'JetBrains Mono',monospace;
+}
+
+/* Nav items */
+.nav-sec{padding:16px 10px;flex:1;overflow-y:auto}
+.nav-lbl{
+  padding:14px 10px 5px;font-size:9px;font-weight:700;
+  text-transform:uppercase;letter-spacing:0.14em;color:var(--t5);
+  font-family:'JetBrains Mono',monospace;
+}
+.nav-a{
+  display:flex;align-items:center;gap:10px;
+  padding:9px 12px;margin:1.5px 0;border-radius:var(--r-xs);
+  color:var(--t3);font-size:13px;font-weight:500;
+  text-decoration:none;cursor:pointer;transition:all 0.15s ease;position:relative;
+}
+.nav-a:hover{color:var(--t1);background:rgba(240,112,48,0.03)}
+.nav-a.on{
+  color:var(--fl-pale);font-weight:600;
+  background:linear-gradient(135deg,rgba(240,112,48,0.07),rgba(240,112,48,0.02));
+  box-shadow:0 0 0 1px var(--fl-border) inset;
+}
+/* Active flame bar */
+.nav-a.on::before{
+  content:'';position:absolute;left:0;top:7px;bottom:7px;width:3px;
+  border-radius:0 3px 3px 0;
+  background:linear-gradient(180deg,var(--fl-bright),var(--fl));
+  box-shadow:0 0 10px rgba(240,112,48,0.4),0 0 3px rgba(240,112,48,0.6);
+}
+.nav-ico{width:18px;text-align:center;font-size:12px;opacity:0.45}
+.nav-a.on .nav-ico{opacity:1}
+.nav-badge{
+  margin-left:auto;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:700;
+  min-width:18px;height:18px;border-radius:var(--r-f);
+  display:flex;align-items:center;justify-content:center;
+  background:var(--fl-dim);color:var(--fl-bright);border:1px solid var(--fl-border);
+}
+
+/* Sidebar footer / user */
+.s-foot{margin-top:auto;padding:14px;border-top:1px solid var(--line)}
+.s-usr{
+  display:flex;align-items:center;gap:10px;
+  padding:8px 10px;border-radius:var(--r-xs);
+  cursor:pointer;transition:all 0.15s ease;
+}
+.s-usr:hover{background:rgba(240,112,48,0.03);box-shadow:0 0 0 1px var(--line) inset}
+.avatar{
+  width:32px;height:32px;border-radius:9px;
+  background:linear-gradient(135deg,var(--fl),var(--fl-deep));
+  display:flex;align-items:center;justify-content:center;
+  color:#fff;font-size:10px;font-weight:700;font-family:'JetBrains Mono',monospace;
+  box-shadow:0 2px 8px rgba(240,112,48,0.2),0 0 0 1.5px rgba(240,112,48,0.2),0 1px 0 rgba(255,255,255,0.1) inset;
+  position:relative;
+}
+.avatar::after{
+  content:'';position:absolute;bottom:-1px;right:-1px;
+  width:8px;height:8px;border-radius:50%;background:var(--ok);
+  border:2px solid var(--s0);box-shadow:0 0 6px rgba(61,204,123,0.5);
+}
+.u-nm{font-size:12px;font-weight:600;color:var(--t1)}
+.u-rl{font-size:10px;color:var(--t4);font-family:'JetBrains Mono',monospace}
+
+/* ═══════════════════════════════════════════════════════════════
+   MAIN CONTENT AREA
+   ═══════════════════════════════════════════════════════════════ */
+.main-w{flex:1;overflow-y:auto;overflow-x:hidden;position:relative}
+.main{max-width:1120px;margin:0 auto;padding:28px 36px;position:relative;z-index:1}
+
+/* ═══ TOP HEADER BAR — Dark textured like TRUTH ═══ */
+.top-bar{
+  display:flex;align-items:center;justify-content:space-between;
+  margin:-28px -36px 28px;padding:16px 36px;
+  background:linear-gradient(180deg,var(--s2),var(--s1));
+  border-bottom:1px solid var(--line);
+  position:relative;
+}
+/* Subtle texture overlay on top bar */
+.top-bar::before{
+  content:'';position:absolute;inset:0;opacity:0.02;
+  background-image:url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+}
+.top-bar::after{
+  content:'';position:absolute;bottom:-1px;left:5%;right:5%;height:1px;
+  background:linear-gradient(90deg,transparent,var(--fl),transparent);opacity:0.12;
+}
+.tb-left{display:flex;align-items:center;gap:14px}
+.tb-greeting{font-size:13px;color:var(--t3)}
+.tb-greeting strong{color:var(--t1);font-weight:600}
+
+.tb-right{display:flex;align-items:center;gap:10px}
+/* Notification bell */
+.tb-bell{
+  width:34px;height:34px;border-radius:var(--r-xs);
+  display:flex;align-items:center;justify-content:center;
+  background:var(--s3);border:1px solid var(--line);
+  color:var(--t3);font-size:14px;cursor:pointer;
+  transition:all 0.15s ease;position:relative;
+  box-shadow:0 1px 0 rgba(255,255,255,0.02) inset;
+}
+.tb-bell:hover{border-color:var(--line-h);color:var(--t1);background:var(--s4)}
+.tb-bell-dot{
+  position:absolute;top:6px;right:6px;width:6px;height:6px;border-radius:50%;
+  background:var(--fl);box-shadow:0 0 6px rgba(240,112,48,0.6);
+}
+/* Workspace dropdown like TRUTH */
+.tb-ws{
+  display:flex;align-items:center;gap:8px;
+  padding:7px 14px;border-radius:var(--r-xs);
+  background:var(--s3);border:1px solid var(--line);
+  font-size:12px;font-weight:600;color:var(--t1);cursor:pointer;
+  transition:all 0.15s ease;
+  box-shadow:0 1px 0 rgba(255,255,255,0.02) inset;
+}
+.tb-ws:hover{border-color:var(--line-h);background:var(--s4)}
+.tb-ws span{color:var(--t4);font-size:10px}
+
+/* ═══ PAGE HEADER ═══ */
+.ph{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:28px}
+.ph-t{
+  font-family:'DM Serif Display',serif;
+  font-size:28px;color:var(--t0);letter-spacing:-0.01em;
+}
+.ph-d{font-size:13px;color:var(--t3);margin-top:4px;font-weight:400}
+.ph-r{display:flex;gap:8px;align-items:center;padding-top:4px}
+
+/* ═══ BUTTONS — Hand-crafted depth system ═══ */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  padding:8px 16px;border-radius:var(--r-xs);
+  font-size:12.5px;font-weight:600;font-family:inherit;
+  border:1px solid transparent;cursor:pointer;
+  transition:all 0.15s ease;white-space:nowrap;position:relative;overflow:hidden;
+}
+/* Primary — Flame gradient with crafted shine */
+.btn-p{
+  background:linear-gradient(180deg,var(--fl-bright) 0%,var(--fl) 50%,var(--fl-deep) 100%);
+  color:#fff;border-color:rgba(240,112,48,0.5);
+  box-shadow:var(--sh-btn);text-shadow:0 1px 2px rgba(0,0,0,0.2);
+}
+.btn-p::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:50%;
+  background:linear-gradient(180deg,rgba(255,255,255,0.16),transparent);
+}
+.btn-p:hover{
+  box-shadow:0 1px 0 rgba(255,255,255,0.12) inset,0 6px 24px rgba(240,112,48,0.3);
+  transform:translateY(-1px);filter:brightness(1.08);
+}
+.btn-p:active{transform:translateY(0);filter:brightness(0.95)}
+
+/* Secondary */
+.btn-s{
+  background:linear-gradient(180deg,var(--s4),var(--s3));
+  color:var(--t1);border-color:var(--line-h);
+  box-shadow:0 1px 0 rgba(255,255,255,0.03) inset,0 1px 4px rgba(0,0,0,0.2);
+}
+.btn-s::before{content:'';position:absolute;top:0;left:0;right:0;height:50%;background:linear-gradient(180deg,rgba(255,255,255,0.04),transparent)}
+.btn-s:hover{background:linear-gradient(180deg,var(--s5),var(--s4));border-color:var(--line-a)}
+
+/* Ghost */
+.btn-g{background:transparent;color:var(--t3);padding:8px 12px}
+.btn-g:hover{color:var(--t1);background:rgba(255,255,255,0.03);box-shadow:0 0 0 1px var(--line) inset}
+
+/* Success/Danger outlines */
+.btn-ok{background:transparent;color:var(--ok-t);border-color:var(--ok-b)}
+.btn-ok::before{content:none}
+.btn-ok:hover{background:var(--ok-dim)}
+.btn-d{background:transparent;color:var(--err-t);border-color:var(--err-b)}
+.btn-d::before{content:none}
+.btn-d:hover{background:var(--err-dim)}
+
+/* Circular icon button — like TRUTH's row action buttons */
+.btn-circle{
+  width:32px;height:32px;padding:0;border-radius:50%;
+  background:var(--s3);border:1px solid var(--line);
+  display:flex;align-items:center;justify-content:center;
+  color:var(--t3);font-size:13px;cursor:pointer;
+  transition:all 0.15s ease;
+  box-shadow:0 1px 0 rgba(255,255,255,0.02) inset,0 1px 3px rgba(0,0,0,0.15);
+}
+.btn-circle:hover{
+  border-color:var(--fl-border);color:var(--fl-bright);background:var(--fl-dim);
+  box-shadow:0 0 0 3px var(--fl-dim),0 1px 0 rgba(255,255,255,0.02) inset;
+}
+.btn-circle.fl{
+  background:linear-gradient(180deg,var(--fl-bright),var(--fl));
+  color:#fff;border-color:rgba(240,112,48,0.4);
+  box-shadow:0 1px 0 rgba(255,255,255,0.1) inset,0 2px 8px rgba(240,112,48,0.2);
+}
+
+/* ═══ METRICS — Card grid ═══ */
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px}
+.mc{
+  background:linear-gradient(180deg,var(--s2),var(--s1));
+  border:1px solid var(--line);border-radius:var(--r);
+  padding:20px;position:relative;overflow:hidden;
+  box-shadow:var(--sh-card);transition:all 0.25s var(--ease);
+}
+.mc::before{
+  content:'';position:absolute;top:0;left:20%;right:20%;height:1px;
+  background:var(--mc-c,var(--fl));opacity:0.3;
+  box-shadow:0 0 14px var(--mc-c,var(--fl)),0 0 3px var(--mc-c,var(--fl));
+  transition:all 0.25s ease;
+}
+.mc:hover::before{left:10%;right:10%;opacity:0.6}
+.mc::after{
+  content:'';position:absolute;top:-10px;right:-10px;width:60px;height:60px;
+  background:var(--mc-c,var(--fl));opacity:0.02;border-radius:50%;filter:blur(22px);
+  transition:opacity 0.25s ease;
+}
+.mc:hover{border-color:var(--line-h);transform:translateY(-2px);box-shadow:var(--sh-card-h)}
+.mc:hover::after{opacity:0.04}
+
+.mc-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.mc-icon{
+  width:34px;height:34px;border-radius:var(--r-xs);
+  display:flex;align-items:center;justify-content:center;font-size:16px;
+  background:linear-gradient(135deg,rgba(255,255,255,0.04),rgba(255,255,255,0.01));
+  border:1px solid rgba(255,255,255,0.04);
+  box-shadow:0 1px 0 rgba(255,255,255,0.02) inset;
+}
+.mc-lbl{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:var(--t4)}
+.mc-val{
+  font-family:'DM Serif Display',serif;
+  font-size:32px;letter-spacing:-0.02em;line-height:1;
+}
+.mc-delta{
+  font-size:10px;margin-top:8px;font-weight:600;
+  font-family:'JetBrains Mono',monospace;display:flex;align-items:center;gap:4px;
+}
+.mc-delta .up{color:var(--ok-t)}.mc-delta .dn{color:var(--err-t)}.mc-delta .flat{color:var(--t5)}
+
+/* Mini sparkline chart */
+.spark{display:flex;align-items:flex-end;gap:2px;height:24px;margin-top:12px}
+.spark .b{flex:1;min-width:3px;border-radius:2px 2px 0 0;background:var(--mc-c,var(--fl));opacity:0.08;transition:opacity 0.15s}
+.spark .b:nth-last-child(1){opacity:0.25}.spark .b:nth-last-child(2){opacity:0.18}
+.spark .b:hover{opacity:0.35}
+
+.mc-fl{--mc-c:var(--fl)}.mc-fl .mc-val{color:var(--fl-bright)}
+.mc-ok{--mc-c:var(--ok)}.mc-ok .mc-val{color:var(--ok-t)}
+.mc-err{--mc-c:var(--err)}.mc-err .mc-val{color:var(--err-t)}
+.mc-warn{--mc-c:var(--warn)}.mc-warn .mc-val{color:var(--warn-t)}
+
+/* ═══ FILTER BAR — Inspired by TRUTH's search + dropdowns row ═══ */
+.filter-bar{
+  display:flex;align-items:center;gap:10px;
+  margin-bottom:18px;padding:12px 18px;
+  background:linear-gradient(180deg,var(--s2),var(--s1));
+  border:1px solid var(--line);border-radius:var(--r);
+  box-shadow:var(--sh-card);
+}
+/* Search input in filter bar */
+.fb-search{
+  display:flex;align-items:center;gap:8px;flex:1;max-width:320px;
+  padding:8px 14px;border-radius:var(--r-xs);
+  background:var(--s0);border:1px solid var(--line);
+  transition:all 0.15s ease;box-shadow:var(--sh-inp);
+}
+.fb-search:focus-within{
+  border-color:var(--fl);
+  box-shadow:0 0 0 3px var(--fl-dim),0 0 16px rgba(240,112,48,0.04),0 1px 0 rgba(255,255,255,0.02) inset;
+}
+.fb-search .ico{color:var(--t5);font-size:14px;flex-shrink:0}
+.fb-search input{
+  flex:1;background:none;border:none;outline:none;
+  color:var(--t1);font-size:13px;font-family:inherit;
+}
+.fb-search input::placeholder{color:var(--t5)}
+
+/* Dropdown pill filters like TRUTH */
+.fb-dd{
+  display:flex;align-items:center;gap:6px;
+  padding:7px 14px;border-radius:var(--r-f);
+  background:var(--s3);border:1px solid var(--line);
+  font-size:12px;font-weight:600;color:var(--t2);cursor:pointer;
+  transition:all 0.15s ease;
+  box-shadow:0 1px 0 rgba(255,255,255,0.02) inset;
+}
+.fb-dd:hover{border-color:var(--line-h);background:var(--s4)}
+.fb-dd.active{
+  background:var(--fl-dim);border-color:var(--fl-border);color:var(--fl-bright);
+  box-shadow:0 0 0 1px var(--fl-border),0 0 10px rgba(240,112,48,0.04);
+}
+.fb-dd .ico{font-size:12px;opacity:0.5}
+.fb-dd .chevron{font-size:9px;color:var(--t4);margin-left:2px}
+.fb-spacer{flex:1}
+
+/* ═══ TABLE with CARD-ROW pattern (inspired by TRUTH) ═══ */
+.tbl-section{margin-bottom:24px}
+.tbl-header{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:14px;padding:0 4px;
+}
+.tbl-title{
+  font-family:'DM Serif Display',serif;
+  font-size:18px;color:var(--t0);display:flex;align-items:center;gap:10px;
+}
+.tbl-cnt{
+  font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;
+  padding:3px 9px;border-radius:var(--r-f);
+  background:var(--fl-dim);color:var(--fl-bright);
+  border:1px solid var(--fl-border);box-shadow:0 0 6px rgba(240,112,48,0.04);
+}
+
+/* Column header row */
+.col-header{
+  display:grid;grid-template-columns:60px 1.3fr 1fr 0.8fr 1fr 0.8fr 0.7fr 80px;
+  padding:0 22px;margin-bottom:6px;
+}
+.col-h{
+  font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;
+  color:var(--t5);cursor:pointer;display:flex;align-items:center;gap:4px;
+  transition:color 0.12s ease;font-family:'JetBrains Mono',monospace;
+}
+.col-h:hover{color:var(--t3)}
+.col-h .sort{font-size:8px;opacity:0.4}
+
+/* ═══ CARD ROW — Each student is its own elevated card (TRUTH style) ═══ */
+.card-row{
+  display:grid;grid-template-columns:60px 1.3fr 1fr 0.8fr 1fr 0.8fr 0.7fr 80px;
+  align-items:center;
+  padding:16px 22px;margin-bottom:8px;
+  background:linear-gradient(180deg,var(--s2),var(--s1));
+  border:1px solid var(--line);border-radius:var(--r);
+  box-shadow:var(--sh-card);
+  transition:all 0.2s var(--ease);position:relative;overflow:hidden;
+}
+/* Inner top shine line */
+.card-row::before{
+  content:'';position:absolute;top:0;left:10%;right:10%;height:1px;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,0.04),transparent);
+  transition:all 0.2s ease;
+}
+.card-row:hover{
+  border-color:var(--fl-border);transform:translateY(-2px);
+  box-shadow:var(--sh-card-h);
+  background:linear-gradient(180deg,var(--s3),var(--s2));
+}
+.card-row:hover::before{left:5%;right:5%;background:linear-gradient(90deg,transparent,rgba(240,112,48,0.1),transparent)}
+
+/* Flame accent bar on hover — like TRUTH's left-border indicator */
+.card-row::after{
+  content:'';position:absolute;left:0;top:15%;bottom:15%;width:3px;
+  border-radius:0 3px 3px 0;
+  background:linear-gradient(180deg,var(--fl-bright),var(--fl));
+  opacity:0;transform:scaleY(0.5);
+  transition:all 0.2s var(--ease);
+  box-shadow:0 0 8px rgba(240,112,48,0.3);
+}
+.card-row:hover::after{opacity:1;transform:scaleY(1)}
+
+/* Cell styles */
+.c-id{
+  font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;
+  color:var(--fl-bright);transition:text-shadow 0.2s ease;
+}
+.card-row:hover .c-id{text-shadow:0 0 10px rgba(240,112,48,0.3)}
+.c-nm{color:var(--t1);font-weight:600;font-size:13.5px}
+.c-sub{font-size:11px;color:var(--t4);margin-top:1px}
+.c-prog{font-size:13px;color:var(--t2)}
+.c-gpa{font-family:'JetBrains Mono',monospace;font-weight:700;font-size:13px}
+.gpa-hi{color:var(--ok-t)}.gpa-md{color:var(--t1)}.gpa-lo{color:var(--err-t)}
+
+/* Credit progress bar */
+.cr{display:flex;align-items:center;gap:8px}
+.cr-track{
+  width:56px;height:5px;border-radius:3px;
+  background:var(--s4);overflow:hidden;
+  box-shadow:0 1px 2px rgba(0,0,0,0.3) inset;
+}
+.cr-fill{height:100%;border-radius:3px;position:relative}
+.cr-fill.hi{background:linear-gradient(90deg,var(--fl),var(--ok));box-shadow:0 0 4px rgba(61,204,123,0.15)}
+.cr-fill.mi{background:linear-gradient(90deg,var(--warn),var(--fl));box-shadow:0 0 4px rgba(232,160,48,0.15)}
+.cr-fill.lo{background:linear-gradient(90deg,var(--err),var(--warn));box-shadow:0 0 4px rgba(240,85,85,0.15)}
+.cr-txt{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--t4)}
+
+/* ═══ PILLS — Crafted with inner shine and glow dot ═══ */
+.pill{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:3px 10px;border-radius:var(--r-f);font-size:11px;font-weight:600;
+  border:1px solid;position:relative;
+  box-shadow:0 1px 0 rgba(255,255,255,0.03) inset;
+}
+.pill::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:50%;
+  background:linear-gradient(180deg,rgba(255,255,255,0.04),transparent);
+  border-radius:var(--r-f) var(--r-f) 0 0;pointer-events:none;
+}
+.pill-dot{width:5px;height:5px;border-radius:50%;background:currentColor;box-shadow:0 0 5px currentColor}
+.pill-g{background:var(--ok-dim);color:var(--ok-t);border-color:var(--ok-b)}
+.pill-r{background:var(--err-dim);color:var(--err-t);border-color:var(--err-b)}
+.pill-a{background:var(--warn-dim);color:var(--warn-t);border-color:var(--warn-b)}
+.pill-fl{background:var(--fl-dim);color:var(--fl-bright);border-color:var(--fl-border)}
+
+/* Row actions — circular buttons like TRUTH */
+.row-actions{display:flex;align-items:center;gap:5px;justify-content:flex-end}
+
+/* ═══ TWO-COLUMN BOTTOM SECTION ═══ */
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px}
+
+/* Panel cards */
+.cpanel{
+  background:linear-gradient(180deg,var(--s2),var(--s1));
+  border:1px solid var(--line);border-radius:var(--r);overflow:hidden;
+  box-shadow:var(--sh-card);transition:all 0.25s var(--ease);
+}
+.cpanel:hover{border-color:var(--line-h);box-shadow:var(--sh-card-h)}
+.cpanel::before{
+  content:'';display:block;height:2px;
+  background:linear-gradient(90deg,transparent 5%,var(--fl) 50%,transparent 95%);
+  opacity:0.12;transition:opacity 0.25s ease;
+}
+.cpanel:hover::before{opacity:0.3}
+.cp-h{
+  padding:14px 20px;border-bottom:1px solid var(--line);
+  display:flex;align-items:center;gap:9px;
+  background:linear-gradient(180deg,rgba(255,255,255,0.01),transparent);
+}
+.cp-t{font-size:13.5px;font-weight:700;color:var(--t1)}
+.cp-live{
+  font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:700;
+  padding:2px 8px;border-radius:var(--r-f);
+  background:var(--fl-dim);color:var(--fl-bright);
+  border:1px solid var(--fl-border);animation:livePulse 3s ease infinite;
+}
+@keyframes livePulse{0%,100%{opacity:1}50%{opacity:0.6}}
+.cp-b{padding:16px 20px}
+
+/* Recommendation items */
+.rec{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:11px 14px;border:1px solid var(--line);border-radius:var(--r-xs);
+  margin-bottom:7px;cursor:pointer;transition:all 0.15s ease;
+  position:relative;overflow:hidden;
+  background:linear-gradient(180deg,rgba(255,255,255,0.006),transparent);
+  box-shadow:0 1px 0 rgba(255,255,255,0.01) inset;
+}
+.rec:last-child{margin-bottom:0}
+.rec:hover{
+  border-color:var(--fl-border);background:var(--fl-dim);
+  transform:translateX(4px);box-shadow:0 1px 0 rgba(255,255,255,0.02) inset,-3px 0 0 var(--fl);
+}
+.rec-code{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700;color:var(--fl-bright)}
+.rec-name{font-size:12.5px;color:var(--t1);font-weight:600;margin-top:2px}
+.rec-pre{font-size:10px;color:var(--t5);margin-top:2px;font-family:'JetBrains Mono',monospace}
+
+/* Scraper panel */
+.sc-st{display:flex;align-items:center;gap:8px;margin-bottom:14px}
+.sc-ind{
+  display:flex;align-items:center;gap:6px;padding:4px 11px;border-radius:var(--r-f);
+  background:var(--ok-dim);border:1px solid var(--ok-b);
+}
+.sc-dot{
+  width:7px;height:7px;border-radius:50%;background:var(--ok);
+  box-shadow:0 0 6px rgba(61,204,123,0.5);animation:scPulse 2s ease infinite;
+}
+@keyframes scPulse{0%,100%{box-shadow:0 0 6px rgba(61,204,123,0.4)}50%{box-shadow:0 0 14px rgba(61,204,123,0.8)}}
+.sc-lbl{font-size:11px;font-weight:700;color:var(--ok-t)}
+.sc-pid{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--t5);margin-left:auto}
+
+/* Progress bar with shimmer */
+.prog{height:5px;border-radius:3px;background:var(--s4);overflow:hidden;margin-bottom:6px;box-shadow:0 1px 3px rgba(0,0,0,0.3) inset}
+.prog-f{
+  height:100%;border-radius:3px;position:relative;
+  background:linear-gradient(90deg,var(--fl),var(--am));
+  transition:width 0.4s var(--ease);
+}
+.prog-f::after{
+  content:'';position:absolute;right:-1px;top:-3px;bottom:-3px;width:10px;
+  background:var(--am);border-radius:50%;filter:blur(3px);opacity:0.6;
+}
+.prog-f::before{
+  content:'';position:absolute;inset:0;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,0.15),transparent);
+  animation:shimmer 2s infinite;
+}
+@keyframes shimmer{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+.prog-m{display:flex;justify-content:space-between;margin-bottom:12px;font-size:10.5px;color:var(--t4);font-family:'JetBrains Mono',monospace}
+
+/* Terminal log */
+.term{
+  background:var(--s0);border:1px solid var(--line);border-radius:var(--r-xs);
+  padding:12px 14px;font-family:'JetBrains Mono',monospace;
+  font-size:11px;line-height:2;max-height:160px;overflow-y:auto;color:var(--t3);
+  box-shadow:0 2px 6px rgba(0,0,0,0.3) inset,0 1px 0 rgba(255,255,255,0.01);
+}
+.t-ts{color:var(--t5)}.t-ok{color:var(--ok-t)}.t-er{color:var(--err-t)}.t-hl{color:var(--fl-bright)}
+
+/* ═══ TOASTS ═══ */
+.toasts{position:fixed;bottom:20px;right:20px;display:flex;flex-direction:column;gap:9px;z-index:100}
+.toast{
+  display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:var(--r);
+  background:linear-gradient(180deg,var(--s3),var(--s2));border:1px solid var(--line-h);
+  min-width:310px;animation:tIn 0.4s var(--spring);position:relative;overflow:hidden;
+  box-shadow:0 12px 48px rgba(0,0,0,0.5),0 1px 0 rgba(255,255,255,0.03) inset;
+}
+.toast::before{content:'';position:absolute;top:0;left:0;right:0;height:50%;background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent);pointer-events:none}
+.toast::after{content:'';position:absolute;bottom:0;left:0;height:2px;border-radius:0 0 var(--r) var(--r);animation:tD 6s linear forwards}
+.toast-s::after{background:linear-gradient(90deg,var(--fl),var(--ok))}
+.toast-e::after{background:linear-gradient(90deg,var(--err),#c03030)}
+.toast-ic{
+  width:26px;height:26px;border-radius:var(--r-xs);
+  display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;
+  box-shadow:0 1px 0 rgba(255,255,255,0.03) inset;
+}
+.toast-s .toast-ic{background:var(--ok-dim);color:var(--ok-t);border:1px solid var(--ok-b)}
+.toast-e .toast-ic{background:var(--err-dim);color:var(--err-t);border:1px solid var(--err-b)}
+.toast-body{flex:1}
+.toast-mn{font-size:13px;font-weight:600;color:var(--t1)}
+.toast-sb{font-size:11px;color:var(--t3);margin-top:1px}
+.toast-tm{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--t5);white-space:nowrap}
+@keyframes tIn{from{opacity:0;transform:translateY(16px) scale(0.96)}to{opacity:1;transform:translateY(0) scale(1)}}
+@keyframes tD{from{width:100%}to{width:0%}}
+
+/* ═══ BOTTOM ACTION ROW ═══ */
+.bottom-actions{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:16px 0;margin-top:8px;
+}
+.bottom-actions .center{display:flex;justify-content:center;flex:1}
+</style>
+</head>
+<body>
+<div class="ambience"><div class="amb amb-1"></div><div class="amb amb-2"></div></div>
+
+<div class="shell">
+  <!-- ═══ SIDEBAR ═══ -->
+  <aside class="sidebar">
+    <div class="logo-area">
+      <div class="logo-mark"><span>🎓</span></div>
+      <div>
+        <div class="logo-title">Advisor</div>
+        <div class="logo-sub">Taibah University</div>
+      </div>
+    </div>
+    <nav class="nav-sec">
+      <div class="nav-lbl">Academic</div>
+      <a class="nav-a on"><span class="nav-ico">◈</span> Dashboard</a>
+      <a class="nav-a"><span class="nav-ico">◎</span> Recommender</a>
+      <a class="nav-a"><span class="nav-ico">▦</span> Study Planner</a>
+      <a class="nav-a"><span class="nav-ico">◉</span> Audit Explorer</a>
+      <div class="nav-lbl">System</div>
+      <a class="nav-a"><span class="nav-ico">⊞</span> Users</a>
+      <a class="nav-a"><span class="nav-ico">⛁</span> Database <span class="nav-badge">3</span></a>
+      <a class="nav-a"><span class="nav-ico">⟲</span> Batch Ops</a>
+      <div class="nav-lbl">Insights</div>
+      <a class="nav-a"><span class="nav-ico">◧</span> Portfolio</a>
+      <a class="nav-a"><span class="nav-ico">⤴</span> Exports</a>
+    </nav>
+    <div class="s-foot">
+      <div class="s-usr">
+        <div class="avatar">BO</div>
+        <div><div class="u-nm">Bas Ofi</div><div class="u-rl">super_admin</div></div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ═══ MAIN ═══ -->
+  <div class="main-w"><div class="main">
+
+    <!-- Dark textured top bar (TRUTH-inspired) -->
+    <div class="top-bar">
+      <div class="tb-left">
+        <div class="tb-greeting">Welcome back, <strong>Bas</strong></div>
+      </div>
+      <div class="tb-right">
+        <div class="tb-ws">CS Department <span>▾</span></div>
+        <div class="tb-bell">🔔<div class="tb-bell-dot"></div></div>
+      </div>
+    </div>
+
+    <!-- Page header -->
+    <div class="ph">
+      <div>
+        <div class="ph-t">Dashboard</div>
+        <div class="ph-d">Real-time student analytics and performance monitoring</div>
+      </div>
+      <div class="ph-r">
+        <button class="btn btn-s">⤴ Export</button>
+        <button class="btn btn-p">↻ Sync Data</button>
+      </div>
+    </div>
+
+    <!-- Metric cards -->
+    <div class="metrics">
+      <div class="mc mc-fl">
+        <div class="mc-head"><div class="mc-icon">👨‍🎓</div><div class="mc-lbl">Total Students</div></div>
+        <div class="mc-val">764</div>
+        <div class="mc-delta"><span class="up">↑ 12</span> from last term</div>
+        <div class="spark"><div class="b" style="height:40%"></div><div class="b" style="height:52%"></div><div class="b" style="height:48%"></div><div class="b" style="height:62%"></div><div class="b" style="height:56%"></div><div class="b" style="height:70%"></div><div class="b" style="height:74%"></div><div class="b" style="height:80%"></div><div class="b" style="height:84%"></div><div class="b" style="height:90%"></div><div class="b" style="height:94%"></div></div>
+      </div>
+      <div class="mc mc-ok">
+        <div class="mc-head"><div class="mc-icon">📊</div><div class="mc-lbl">Average GPA</div></div>
+        <div class="mc-val">3.42</div>
+        <div class="mc-delta"><span class="up">↑ 0.03</span> improvement</div>
+        <div class="spark"><div class="b" style="height:58%"></div><div class="b" style="height:62%"></div><div class="b" style="height:60%"></div><div class="b" style="height:66%"></div><div class="b" style="height:64%"></div><div class="b" style="height:70%"></div><div class="b" style="height:72%"></div><div class="b" style="height:74%"></div><div class="b" style="height:76%"></div><div class="b" style="height:75%"></div><div class="b" style="height:78%"></div></div>
+      </div>
+      <div class="mc mc-err">
+        <div class="mc-head"><div class="mc-icon">⚠️</div><div class="mc-lbl">At Risk</div></div>
+        <div class="mc-val">23</div>
+        <div class="mc-delta"><span class="dn">↑ 2</span> new this week</div>
+        <div class="spark"><div class="b" style="height:28%"></div><div class="b" style="height:30%"></div><div class="b" style="height:26%"></div><div class="b" style="height:34%"></div><div class="b" style="height:30%"></div><div class="b" style="height:36%"></div><div class="b" style="height:32%"></div><div class="b" style="height:40%"></div><div class="b" style="height:36%"></div><div class="b" style="height:42%"></div><div class="b" style="height:46%"></div></div>
+      </div>
+      <div class="mc mc-warn">
+        <div class="mc-head"><div class="mc-icon">📚</div><div class="mc-lbl">Courses</div></div>
+        <div class="mc-val">186</div>
+        <div class="mc-delta"><span class="flat">—</span> mapped</div>
+        <div class="spark"><div class="b" style="height:80%"></div><div class="b" style="height:80%"></div><div class="b" style="height:82%"></div><div class="b" style="height:83%"></div><div class="b" style="height:84%"></div><div class="b" style="height:84%"></div><div class="b" style="height:85%"></div><div class="b" style="height:85%"></div><div class="b" style="height:86%"></div><div class="b" style="height:86%"></div><div class="b" style="height:86%"></div></div>
+      </div>
+    </div>
+
+    <!-- ═══ FILTER BAR (TRUTH-style search + dropdown pills) ═══ -->
+    <div class="filter-bar">
+      <div class="fb-search">
+        <span class="ico">⌕</span>
+        <input type="text" placeholder="Search students...">
+      </div>
+      <div class="fb-spacer"></div>
+      <div class="fb-dd active"><span class="ico">☰</span> All Sources <span class="chevron">▾</span></div>
+      <div class="fb-dd"><span class="ico">◎</span> Computer Science <span class="chevron">▾</span></div>
+      <div class="fb-dd"><span class="ico">📅</span> Spring 2026 <span class="chevron">▾</span></div>
+    </div>
+
+    <!-- Student Records - Card rows like TRUTH -->
+    <div class="tbl-section">
+      <div class="tbl-header">
+        <div class="tbl-title">Student Records <span class="tbl-cnt">764</span></div>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-g" style="font-size:11px">⚙ Columns</button>
+          <button class="btn btn-s" style="padding:6px 12px;font-size:11px">⤓ CSV</button>
+        </div>
+      </div>
+
+      <!-- Column headers -->
+      <div class="col-header">
+        <div class="col-h">ID <span class="sort">▾</span></div>
+        <div class="col-h">Name</div>
+        <div class="col-h">Program</div>
+        <div class="col-h">GPA <span class="sort">▾</span></div>
+        <div class="col-h">Progress</div>
+        <div class="col-h">Status</div>
+        <div class="col-h">Risk</div>
+        <div class="col-h" style="justify-content:flex-end">Actions</div>
+      </div>
+
+      <!-- Card Row 1 -->
+      <div class="card-row">
+        <div class="c-id">2210345</div>
+        <div><div class="c-nm">Ahmed Al-Rashidi</div><div class="c-sub">Level 7 · Sem 14</div></div>
+        <div class="c-prog">Computer Science</div>
+        <div class="c-gpa gpa-hi">3.85</div>
+        <div class="cr"><div class="cr-track"><div class="cr-fill hi" style="width:70%"></div></div><span class="cr-txt">96/136</span></div>
+        <div><span class="pill pill-g"><span class="pill-dot"></span>Active</span></div>
+        <div><span class="pill pill-g"><span class="pill-dot"></span>Low</span></div>
+        <div class="row-actions"><button class="btn-circle fl">+</button><button class="btn-circle">⋮</button></div>
+      </div>
+
+      <!-- Card Row 2 -->
+      <div class="card-row">
+        <div class="c-id">2210412</div>
+        <div><div class="c-nm">Mohammed Hassan</div><div class="c-sub">Level 4 · Sem 8</div></div>
+        <div class="c-prog">Info Systems</div>
+        <div class="c-gpa gpa-lo">2.15</div>
+        <div class="cr"><div class="cr-track"><div class="cr-fill lo" style="width:45%"></div></div><span class="cr-txt">62/136</span></div>
+        <div><span class="pill pill-a"><span class="pill-dot"></span>Warning</span></div>
+        <div><span class="pill pill-r"><span class="pill-dot"></span>High</span></div>
+        <div class="row-actions"><button class="btn-circle fl">+</button><button class="btn-circle">⋮</button></div>
+      </div>
+
+      <!-- Card Row 3 -->
+      <div class="card-row">
+        <div class="c-id">2210567</div>
+        <div><div class="c-nm">Khalid Al-Otaibi</div><div class="c-sub">Level 6 · Sem 11</div></div>
+        <div class="c-prog">Computer Science</div>
+        <div class="c-gpa gpa-md">3.21</div>
+        <div class="cr"><div class="cr-track"><div class="cr-fill mi" style="width:62%"></div></div><span class="cr-txt">84/136</span></div>
+        <div><span class="pill pill-g"><span class="pill-dot"></span>Active</span></div>
+        <div><span class="pill pill-a"><span class="pill-dot"></span>Mid</span></div>
+        <div class="row-actions"><button class="btn-circle fl">+</button><button class="btn-circle">⋮</button></div>
+      </div>
+
+      <!-- Card Row 4 -->
+      <div class="card-row">
+        <div class="c-id">2210689</div>
+        <div><div class="c-nm">Faisal Al-Qahtani</div><div class="c-sub">Level 8 · Sem 15</div></div>
+        <div class="c-prog">Computer Science</div>
+        <div class="c-gpa gpa-hi">3.67</div>
+        <div class="cr"><div class="cr-track"><div class="cr-fill hi" style="width:81%"></div></div><span class="cr-txt">110/136</span></div>
+        <div><span class="pill pill-g"><span class="pill-dot"></span>Active</span></div>
+        <div><span class="pill pill-g"><span class="pill-dot"></span>Low</span></div>
+        <div class="row-actions"><button class="btn-circle fl">+</button><button class="btn-circle">⋮</button></div>
+      </div>
+
+      <!-- Card Row 5 -->
+      <div class="card-row">
+        <div class="c-id">2210234</div>
+        <div><div class="c-nm">Sultan Al-Harbi</div><div class="c-sub">Level 3 · Sem 5</div></div>
+        <div class="c-prog">Info Systems</div>
+        <div class="c-gpa gpa-lo">1.89</div>
+        <div class="cr"><div class="cr-track"><div class="cr-fill lo" style="width:33%"></div></div><span class="cr-txt">45/136</span></div>
+        <div><span class="pill pill-r"><span class="pill-dot"></span>Probation</span></div>
+        <div><span class="pill pill-r"><span class="pill-dot"></span>High</span></div>
+        <div class="row-actions"><button class="btn-circle fl">+</button><button class="btn-circle">⋮</button></div>
+      </div>
+    </div>
+
+    <!-- Bottom panels -->
+    <div class="g2">
+      <div class="cpanel">
+        <div class="cp-h"><span style="font-size:14px;opacity:0.4">◎</span><div class="cp-t">Recommendations</div><span class="cp-live">LIVE</span></div>
+        <div class="cp-b">
+          <div class="rec"><div><div class="rec-code">CS 301</div><div class="rec-name">Data Structures</div><div class="rec-pre">prereq: CS201 ✓</div></div><span class="pill pill-g"><span class="pill-dot"></span>Ready</span></div>
+          <div class="rec"><div><div class="rec-code">CS 310</div><div class="rec-name">Algorithms</div><div class="rec-pre">prereq: CS301 ✗</div></div><span class="pill pill-r"><span class="pill-dot"></span>Blocked</span></div>
+          <div class="rec"><div><div class="rec-code">MATH 204</div><div class="rec-name">Linear Algebra</div><div class="rec-pre">prereq: MATH101 ✓</div></div><span class="pill pill-g"><span class="pill-dot"></span>Ready</span></div>
+          <div class="rec"><div><div class="rec-code">CS 320</div><div class="rec-name">Database Systems</div><div class="rec-pre">prereq: CS201 ✓</div></div><span class="pill pill-g"><span class="pill-dot"></span>Ready</span></div>
+        </div>
+      </div>
+      <div class="cpanel">
+        <div class="cp-h"><span style="font-size:14px;opacity:0.4">⟲</span><div class="cp-t">Batch Scraper</div></div>
+        <div class="cp-b">
+          <div class="sc-st"><div class="sc-ind"><div class="sc-dot"></div><span class="sc-lbl">Running</span></div><span class="sc-pid">pid:12847 · 8 workers</span></div>
+          <div class="prog"><div class="prog-f" style="width:55%"></div></div>
+          <div class="prog-m"><span>423 / 764</span><span>55%</span></div>
+          <div class="term">
+            <div><span class="t-ts">[14:23:01]</span> scraping <span class="t-hl">423</span>/764</div>
+            <div><span class="t-ts">[14:23:03]</span> <span class="t-ok">✓</span> 2210567 — 18 courses</div>
+            <div><span class="t-ts">[14:23:05]</span> scraping <span class="t-hl">424</span>/764</div>
+            <div><span class="t-ts">[14:23:07]</span> <span class="t-ok">✓</span> 2210689 — 22 courses</div>
+            <div><span class="t-ts">[14:23:09]</span> <span class="t-er">✗</span> timeout</div>
+            <div><span class="t-ts">[14:23:12]</span> <span class="t-ok">✓</span> retry ok — 15 courses</div>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:14px">
+            <button class="btn btn-s" style="flex:1">⏸ Pause</button>
+            <button class="btn btn-d" style="flex:1">⏹ Stop</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom action row like TRUTH -->
+    <div class="bottom-actions">
+      <div></div>
+      <div class="center"><button class="btn btn-p" style="padding:10px 28px;font-size:13px">⊕ Add Student</button></div>
+      <button class="btn btn-s" style="padding:8px 18px">Next →</button>
+    </div>
+
+  </div></div>
+</div>
+
+<!-- Toasts -->
+<div class="toasts">
+  <div class="toast toast-s"><div class="toast-ic">✓</div><div class="toast-body"><div class="toast-mn">Sync Complete</div><div class="toast-sb">764 student records updated</div></div><div class="toast-tm">2s ago</div></div>
+</div>
+</body>
+</html>

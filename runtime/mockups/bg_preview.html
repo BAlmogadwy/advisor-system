@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Taibah Background Preview</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  min-height:100vh;
+  background:#f0f2f0;
+  font-family:system-ui,sans-serif;
+  overflow:hidden;
+}
+
+/* The multi-color mesh — VISIBLE zones */
+.color-mesh{
+  position:fixed;inset:0;z-index:0;
+  background:
+    radial-gradient(ellipse 80% 60% at 0% 0%, rgba(10,142,110,0.14) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 55% at 45% 0%, rgba(0,174,218,0.10) 0%, transparent 55%),
+    radial-gradient(ellipse 55% 50% at 100% 5%, rgba(64,86,227,0.12) 0%, transparent 55%),
+    radial-gradient(ellipse 70% 50% at 15% 45%, rgba(64,224,208,0.10) 0%, transparent 50%),
+    radial-gradient(ellipse 50% 40% at 55% 40%, rgba(229,198,3,0.07) 0%, transparent 45%),
+    radial-gradient(ellipse 55% 50% at 95% 45%, rgba(255,209,220,0.16) 0%, transparent 50%),
+    radial-gradient(ellipse 60% 45% at 40% 90%, rgba(10,142,110,0.08) 0%, transparent 50%),
+    radial-gradient(ellipse 50% 45% at 85% 85%, rgba(0,174,218,0.09) 0%, transparent 50%),
+    radial-gradient(ellipse 45% 40% at 10% 90%, rgba(64,86,227,0.06) 0%, transparent 45%),
+    linear-gradient(160deg, #f2f5f2 0%, #f0f3f5 25%, #f2f0f3 50%, #f5f3f0 75%, #f2f5f3 100%);
+}
+
+/* Animated blobs */
+.ambience{position:fixed;inset:0;z-index:1;pointer-events:none;overflow:hidden}
+.amb{position:absolute;border-radius:50%;animation:ambF 28s ease-in-out infinite}
+.amb-1{width:500px;height:420px;top:-5%;left:5%;background:rgba(10,142,110,0.06);filter:blur(120px)}
+.amb-2{width:400px;height:350px;top:0%;right:8%;background:rgba(64,86,227,0.05);filter:blur(130px);animation-delay:-9s;animation-duration:32s}
+.amb-3{width:380px;height:320px;top:25%;left:35%;background:rgba(0,174,218,0.04);filter:blur(140px);animation-delay:-16s;animation-duration:26s}
+.amb-4{width:350px;height:300px;top:40%;left:0%;background:rgba(64,224,208,0.05);filter:blur(130px);animation-delay:-5s;animation-duration:30s}
+.amb-5{width:300px;height:300px;top:30%;right:0%;background:rgba(255,209,220,0.08);filter:blur(120px);animation-delay:-20s;animation-duration:24s}
+.amb-6{width:280px;height:240px;bottom:20%;left:40%;background:rgba(229,198,3,0.035);filter:blur(140px);animation-delay:-12s;animation-duration:34s}
+@keyframes ambF{0%,100%{transform:translate(0,0) scale(1)}25%{transform:translate(18px,-15px) scale(1.03)}50%{transform:translate(-14px,18px) scale(0.97)}75%{transform:translate(10px,-10px) scale(1.02)}}
+
+/* Labels showing where each color is */
+.labels{position:fixed;inset:0;z-index:2;pointer-events:none}
+.lbl{
+  position:absolute;padding:8px 16px;border-radius:8px;
+  font-size:12px;font-weight:700;letter-spacing:0.05em;
+  backdrop-filter:blur(10px);border:1px solid rgba(0,0,0,0.08);
+  box-shadow:0 2px 8px rgba(0,0,0,0.06);
+}
+.lbl-teal{top:8%;left:5%;background:rgba(10,142,110,0.15);color:#067858}
+.lbl-sky{top:8%;left:40%;background:rgba(0,174,218,0.15);color:#0090B8}
+.lbl-royal{top:8%;right:5%;background:rgba(64,86,227,0.15);color:#2A3CB8}
+.lbl-turq{top:45%;left:5%;background:rgba(64,224,208,0.12);color:#1a9a85}
+.lbl-yellow{top:42%;left:45%;background:rgba(229,198,3,0.15);color:#9a8500}
+.lbl-pink{top:42%;right:5%;background:rgba(255,209,220,0.2);color:#c06080}
+.lbl-teal2{bottom:10%;left:30%;background:rgba(10,142,110,0.12);color:#067858}
+.lbl-sky2{bottom:10%;right:10%;background:rgba(0,174,218,0.12);color:#0090B8}
+.lbl-royal2{bottom:10%;left:5%;background:rgba(64,86,227,0.12);color:#2A3CB8}
+
+/* Title */
+.title{
+  position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:3;
+  text-align:center;pointer-events:none;
+}
+.title h1{
+  font-size:42px;font-weight:800;
+  background:linear-gradient(135deg,#0A8E6E,#00AEDA,#4056E3);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  margin-bottom:8px;
+}
+.title p{font-size:15px;color:rgba(17,17,68,0.4);font-weight:500}
+</style>
+</head>
+<body>
+<div class="color-mesh"></div>
+<div class="ambience">
+  <div class="amb amb-1"></div>
+  <div class="amb amb-2"></div>
+  <div class="amb amb-3"></div>
+  <div class="amb amb-4"></div>
+  <div class="amb amb-5"></div>
+  <div class="amb amb-6"></div>
+</div>
+<div class="labels">
+  <div class="lbl lbl-teal">🟢 TEAL #0A8E6E</div>
+  <div class="lbl lbl-sky">🔵 SKY BLUE #00AEDA</div>
+  <div class="lbl lbl-royal">🟣 ROYAL #4056E3</div>
+  <div class="lbl lbl-turq">🩵 TURQUOISE #40E0D0</div>
+  <div class="lbl lbl-yellow">🟡 YELLOW #E5C603</div>
+  <div class="lbl lbl-pink">🩷 PINK #FFD1DC</div>
+  <div class="lbl lbl-teal2">🟢 TEAL wash</div>
+  <div class="lbl lbl-sky2">🔵 SKY wash</div>
+  <div class="lbl lbl-royal2">🟣 ROYAL wash</div>
+</div>
+<div class="title">
+  <h1>Taibah Color Mesh</h1>
+  <p>Multi-zone gradient background using official brand colors</p>
+</div>
+</body>
+</html>

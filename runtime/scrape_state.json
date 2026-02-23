@@ -1,10 +1,10 @@
 {
-  "pid": 123260,
-  "started_at": "2026-02-22 22:28:28",
-  "stopped_at": null,
-  "last_action": "started",
+  "pid": 156408,
+  "started_at": "2026-02-23 01:17:09",
+  "stopped_at": "2026-02-23 01:48:38",
+  "last_action": "stopped",
   "params": {
-    "concurrency": 2,
+    "concurrency": 4,
     "students_csv": "C:\\Users\\user\\myUniproject\\import_old\\data\\students_list.csv"
   },
   "history": [
@@ -35,6 +35,85 @@
       "pid": 123260,
       "concurrency": 2,
       "students_csv": "C:\\Users\\user\\myUniproject\\import_old\\data\\students_list.csv"
+    },
+    {
+      "event": "started",
+      "at": "2026-02-22 23:14:31",
+      "pid": 146072,
+      "concurrency": 8,
+      "students_csv": "C:\\Users\\user\\myUniproject\\import_old\\data\\students_list.csv"
+    },
+    {
+      "event": "started",
+      "at": "2026-02-23 00:46:12",
+      "pid": 129532,
+      "concurrency": 8,
+      "students_csv": "C:\\Users\\user\\myUniproject\\import_old\\data\\students_list.csv"
+    },
+    {
+      "event": "stopped",
+      "at": "2026-02-23 00:51:04",
+      "pid": 129532
+    },
+    {
+      "event": "started",
+      "at": "2026-02-23 00:52:04",
+      "pid": 146920,
+      "concurrency": 8,
+      "students_csv": "C:\\Users\\user\\myUniproject\\import_old\\data\\students_list.csv"
+    },
+    {
+      "event": "stopped",
+      "at": "2026-02-23 00:54:10",
+      "pid": 146920
+    },
+    {
+      "event": "started",
+      "at": "2026-02-23 01:06:19",
+      "pid": 155176,
+      "concurrency": 8,
+      "students_csv": "C:\\Users\\user\\myUniproject\\import_old\\data\\students_list.csv"
+    },
+    {
+      "event": "stopped",
+      "at": "2026-02-23 01:10:28",
+      "pid": 155176
+    },
+    {
+      "event": "started",
+      "at": "2026-02-23 01:10:38",
+      "pid": 147180,
+      "concurrency": 8,
+      "students_csv": "C:\\Users\\user\\myUniproject\\import_old\\data\\students_list.csv"
+    },
+    {
+      "event": "stopped",
+      "at": "2026-02-23 01:11:15",
+      "pid": 147180
+    },
+    {
+      "event": "started",
+      "at": "2026-02-23 01:11:49",
+      "pid": 158272,
+      "concurrency": 8,
+      "students_csv": "C:\\Users\\user\\myUniproject\\import_old\\data\\students_list.csv"
+    },
+    {
+      "event": "stopped",
+      "at": "2026-02-23 01:14:40",
+      "pid": 158272
+    },
+    {
+      "event": "started",
+      "at": "2026-02-23 01:17:09",
+      "pid": 156408,
+      "concurrency": 4,
+      "students_csv": "C:\\Users\\user\\myUniproject\\import_old\\data\\students_list.csv"
+    },
+    {
+      "event": "stopped",
+      "at": "2026-02-23 01:48:38",
+      "pid": 156408
     }
   ]
 }
