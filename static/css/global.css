@@ -467,106 +467,122 @@ main.flex-grow-1 {
 
 .form-control,
 .form-select {
-  font-family:   var(--font-body) !important;
-  font-size:     0.875rem !important;
-  color:         var(--ink) !important;
-  border-color:  var(--line-strong) !important;
-  border-radius: var(--radius-sm) !important;
-  background-color: #fff !important;
-  box-shadow:    var(--shadow-input) !important;
-  transition:    border-color .15s ease, box-shadow .15s ease;
+  font-family:      var(--font-body) !important;
+  font-size:        0.875rem !important;
+  color:            var(--ink) !important;
+  border:           1px solid rgba(17,17,68,0.08) !important;
+  border-radius:    999px !important;
+  background-color: rgba(255,255,255,0.65) !important;
+  backdrop-filter:  blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  padding:          0.55rem 1rem !important;
+  box-shadow:       0 1px 3px rgba(0,0,0,0.04) !important;
+  transition:       border-color .15s ease, box-shadow .15s ease, background-color .15s ease;
 }
 
 .form-control:focus,
 .form-select:focus {
-  border-color: var(--brand) !important;
-  box-shadow:   0 0 0 3px var(--brand-glow), var(--shadow-input) !important;
-  outline:      none;
+  border-color:     var(--teal) !important;
+  background-color: rgba(255,255,255,0.9) !important;
+  box-shadow:       0 0 0 3px rgba(10,142,110,0.1), 0 1px 3px rgba(0,0,0,0.04) !important;
+  outline:          none;
+}
+
+/* Textareas keep rounded-rectangle, not pill */
+textarea.form-control {
+  border-radius: var(--radius) !important;
+  padding:       0.65rem 0.85rem !important;
 }
 
 /* ============================================================
    BUTTONS  (html body prefix for specificity over Bootstrap)
    ============================================================ */
 html body .btn {
-  font-family:   var(--font-body) !important;
-  font-weight:   600 !important;
-  font-size:     0.875rem !important;
-  border-radius: var(--radius-sm) !important;
-  min-height:    38px;
-  display:       inline-flex;
-  align-items:   center;
+  font-family:     var(--font-body) !important;
+  font-weight:     600 !important;
+  font-size:       0.875rem !important;
+  border-radius:   999px !important;
+  min-height:      40px;
+  padding:         0.5rem 1.25rem !important;
+  display:         inline-flex;
+  align-items:     center;
   justify-content: center;
-  gap:           0.35rem;
-  transition:    all .14s ease !important;
+  gap:             0.4rem;
+  transition:      all .18s ease !important;
 }
 
 html body .btn-primary {
-  background:  linear-gradient(135deg, var(--teal-bright) 0%, var(--teal) 40%, var(--teal-deep) 100%) !important;
-  border-color: rgba(10,142,110,0.3) !important;
-  color:       #fff !important;
-  box-shadow:  0 1px 0 rgba(0,0,0,.15),
-               inset 0 1px 0 rgba(255,255,255,.15) !important;
+  background:   var(--teal) !important;
+  border-color: var(--teal) !important;
+  color:        #fff !important;
+  box-shadow:   0 2px 8px rgba(10,142,110,0.25) !important;
 }
 
 html body .btn-primary:hover,
 html body .btn-primary:focus {
-  background:  linear-gradient(135deg, var(--teal-pale) 0%, var(--teal-bright) 40%, var(--teal) 100%) !important;
-  border-color: var(--teal) !important;
-  transform:   translateY(-1px);
-  box-shadow:  0 3px 10px rgba(10,142,110,.35),
-               inset 0 1px 0 rgba(255,255,255,.15) !important;
+  background:   var(--teal-bright) !important;
+  border-color: var(--teal-bright) !important;
+  transform:    translateY(-1px);
+  box-shadow:   0 4px 14px rgba(10,142,110,.35) !important;
 }
 
 html body .btn-primary:active {
-  transform:   translateY(0);
-  box-shadow:  0 1px 2px rgba(10,142,110,.20) !important;
+  transform:    translateY(0);
+  background:   var(--teal-deep) !important;
+  box-shadow:   0 1px 3px rgba(10,142,110,.20) !important;
 }
 
 html body .btn-success {
-  background:  linear-gradient(135deg, var(--teal-bright) 0%, var(--teal) 100%) !important;
-  border-color: var(--teal-deep) !important;
-  color:       #fff !important;
-  box-shadow:  0 1px 0 rgba(0,0,0,.12),
-               inset 0 1px 0 rgba(255,255,255,.12) !important;
+  background:   var(--teal) !important;
+  border-color: var(--teal) !important;
+  color:        #fff !important;
+  box-shadow:   0 2px 8px rgba(10,142,110,0.25) !important;
 }
 
 html body .btn-success:hover {
-  transform:  translateY(-1px);
-  box-shadow: 0 3px 10px rgba(18,162,89,.30) !important;
+  background:   var(--teal-bright) !important;
+  transform:    translateY(-1px);
+  box-shadow:   0 4px 14px rgba(10,142,110,.35) !important;
 }
 
 html body .btn-danger {
-  background:  linear-gradient(180deg, #f04040 0%, #c92c2c 100%) !important;
-  border-color: #c92c2c !important;
-  color:       #fff !important;
+  background:   var(--danger) !important;
+  border-color: var(--danger) !important;
+  color:        #fff !important;
+  box-shadow:   0 2px 8px rgba(192,48,48,0.25) !important;
 }
 
 html body .btn-danger:hover {
-  transform:  translateY(-1px);
-  box-shadow: 0 3px 10px rgba(224,52,52,.30) !important;
+  transform:    translateY(-1px);
+  box-shadow:   0 4px 14px rgba(192,48,48,.35) !important;
 }
 
 html body .btn-outline-primary {
   color:        var(--teal) !important;
-  border-color: var(--teal-border) !important;
-  background:   var(--teal-dim) !important;
+  border:       1.5px solid var(--teal) !important;
+  background:   #fff !important;
+  box-shadow:   0 1px 3px rgba(0,0,0,0.04) !important;
 }
 
 html body .btn-outline-primary:hover {
-  background: rgba(10,142,110,0.10) !important;
-  color:      var(--teal-deep) !important;
+  background:   rgba(10,142,110,0.06) !important;
+  color:        var(--teal-deep) !important;
+  border-color: var(--teal-deep) !important;
+  box-shadow:   0 2px 8px rgba(10,142,110,0.15) !important;
 }
 
 html body .btn-outline-secondary {
-  color:        var(--ink-2) !important;
-  border-color: var(--line-strong) !important;
-  background:   rgba(255,255,255,.70) !important;
+  color:        var(--t2) !important;
+  border:       1.5px solid rgba(17,17,68,0.12) !important;
+  background:   #fff !important;
+  box-shadow:   0 1px 3px rgba(0,0,0,0.04) !important;
 }
 
 html body .btn-outline-secondary:hover {
-  background:   #ffffff !important;
-  border-color: var(--ink-2) !important;
-  color:        var(--ink) !important;
+  background:   rgba(17,17,68,0.03) !important;
+  border-color: rgba(17,17,68,0.2) !important;
+  color:        var(--t1) !important;
+  box-shadow:   0 2px 8px rgba(0,0,0,0.06) !important;
 }
 
 html body .btn:focus,
@@ -1464,16 +1480,16 @@ pre, .pre-output {
 }
 
 .dlg-footer .btn-cancel {
-  background:    transparent;
-  border:        1px solid var(--line-strong);
-  color:         var(--ink-2);
+  background:    #fff;
+  border:        1.5px solid rgba(17,17,68,0.12);
+  color:         var(--t2);
   font-family:   var(--font-body);
   font-weight:   600;
   font-size:     0.875rem;
-  padding:       0.45rem 1rem;
-  border-radius: var(--radius-sm);
+  padding:       0.5rem 1.25rem;
+  border-radius: 999px;
   cursor:        pointer;
-  transition:    all 0.12s;
+  transition:    all 0.15s;
 }
 
 .dlg-footer .btn-cancel:hover {
@@ -1486,41 +1502,42 @@ pre, .pre-output {
   font-family:   var(--font-body);
   font-weight:   700;
   font-size:     0.875rem;
-  padding:       0.45rem 1.25rem;
-  border-radius: var(--radius-sm);
+  padding:       0.5rem 1.5rem;
+  border-radius: 999px;
   border:        none;
   cursor:        pointer;
-  transition:    all 0.12s;
+  transition:    all 0.15s;
   min-width:     90px;
 }
 
 .dlg-footer .btn-confirm.danger {
-  background: linear-gradient(180deg, #f04040, #c92c2c);
+  background: var(--danger);
   color:      #fff;
-  box-shadow: 0 1px 3px rgba(201,44,44,.3);
+  box-shadow: 0 2px 8px rgba(192,48,48,.25);
 }
 
 .dlg-footer .btn-confirm.danger:hover {
-  background: linear-gradient(180deg, #f55, #dc2626);
+  background: #d43a3a;
   transform:  translateY(-1px);
-  box-shadow: 0 3px 10px rgba(201,44,44,.4);
+  box-shadow: 0 4px 14px rgba(192,48,48,.35);
 }
 
 .dlg-footer .btn-confirm.primary {
-  background: linear-gradient(180deg, var(--teal-bright), var(--teal-deep));
+  background: var(--teal);
   color:      #fff;
-  box-shadow: 0 1px 3px rgba(10,142,110,.3);
+  box-shadow: 0 2px 8px rgba(10,142,110,.25);
 }
 
 .dlg-footer .btn-confirm.primary:hover {
-  background: linear-gradient(180deg, var(--teal-pale), var(--teal));
+  background: var(--teal-bright);
   transform:  translateY(-1px);
-  box-shadow: 0 3px 10px rgba(10,142,110,.35);
+  box-shadow: 0 4px 14px rgba(10,142,110,.35);
 }
 
 .dlg-footer .btn-confirm.warning {
-  background: linear-gradient(180deg, #f59e0b, #d97706);
+  background: #d97706;
   color:      #fff;
+  box-shadow: 0 2px 8px rgba(217,119,6,.25);
 }
 
 .dlg-footer .btn-confirm:disabled {

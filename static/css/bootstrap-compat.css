@@ -168,58 +168,60 @@
 .form-control {
   display: block;
   width: 100%;
-  padding: 0.45rem 0.75rem;
+  padding: 0.55rem 1rem;
   font-size: 0.88rem;
   font-weight: 400;
   line-height: 1.5;
   color: var(--ink, #0d1526);
-  background-color: #fff;
-  border: 1px solid var(--line, #dde3ed);
-  border-radius: var(--radius-sm, 7px);
+  background-color: rgba(255,255,255,0.65);
+  border: 1px solid rgba(17,17,68,0.08);
+  border-radius: 999px;
   transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
   appearance: none;
 }
 .form-control:focus {
   border-color: var(--brand, #0A8E6E);
   outline: 0;
-  box-shadow: 0 0 0 3px var(--brand-glow, rgba(10,142,110,0.18));
+  box-shadow: 0 0 0 3px rgba(10,142,110,0.1);
+  background-color: rgba(255,255,255,0.9);
 }
 .form-control-sm {
-  padding: 0.3rem 0.55rem;
+  padding: 0.35rem 0.75rem;
   font-size: 0.8rem;
-  border-radius: var(--radius-sm, 7px);
+  border-radius: 999px;
 }
 
 .form-select {
   display: block;
   width: 100%;
-  padding: 0.45rem 2rem 0.45rem 0.75rem;
+  padding: 0.55rem 2.25rem 0.55rem 1rem;
   font-size: 0.88rem;
   font-weight: 400;
   line-height: 1.5;
   color: var(--ink, #0d1526);
-  background-color: #fff;
+  background-color: rgba(255,255,255,0.65);
   background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23343a40' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e");
   background-repeat: no-repeat;
-  background-position: right 0.75rem center;
-  background-size: 16px 12px;
-  border: 1px solid var(--line, #dde3ed);
-  border-radius: var(--radius-sm, 7px);
+  background-position: right 0.85rem center;
+  background-size: 14px 10px;
+  border: 1px solid rgba(17,17,68,0.08);
+  border-radius: 999px;
   transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
   appearance: none;
 }
 html[dir="rtl"] .form-select {
-  background-position: left 0.75rem center;
-  padding: 0.45rem 0.75rem 0.45rem 2rem;
+  background-position: left 0.85rem center;
+  padding: 0.55rem 1rem 0.55rem 2.25rem;
 }
 .form-select:focus {
   border-color: var(--brand, #0A8E6E);
   outline: 0;
-  box-shadow: 0 0 0 3px var(--brand-glow, rgba(10,142,110,0.18));
+  box-shadow: 0 0 0 3px rgba(10,142,110,0.1);
+  background-color: rgba(255,255,255,0.9);
 }
 .form-select-sm {
-  padding-top: 0.3rem;
-  padding-bottom: 0.3rem;
+  padding-top: 0.35rem;
+  padding-bottom: 0.35rem;
   font-size: 0.8rem;
 }
 
