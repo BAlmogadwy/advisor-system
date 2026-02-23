@@ -452,7 +452,7 @@
     </div>
     {% endif %}
 
-    <div id="student" class="panel active card soft-card p-4 ">
+    <div id="student" class="panel active">
       <div style="margin-bottom:18px">
         <h4 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Student Recommender</h4>
         <div style="font-size:13px;color:var(--t3);font-weight:300">Get a per-student recommendation list and export it instantly.</div>
@@ -598,7 +598,7 @@
       </div>
     </div>
 
-    <div id="batch" class="panel card soft-card p-4 ">
+    <div id="batch" class="panel">
       <div style="margin-bottom:18px">
         <h4 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Batch Recommender</h4>
         <div style="font-size:13px;color:var(--t3);font-weight:300">Run cohort-level preview, inspect top courses, and export aggregate CSV.</div>
@@ -658,7 +658,7 @@
       </div>
     </div>
 
-    <div id="prereq" class="panel card soft-card p-4 ">
+    <div id="prereq" class="panel">
       <div style="margin-bottom:18px">
         <h4 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Course Prerequisites</h4>
         <div style="font-size:13px;color:var(--t3);font-weight:300">Explore prerequisite links by program and optionally by a specific course.</div>
@@ -706,7 +706,7 @@
       </div>
     </div>
 
-    <div id="plan" class="panel card soft-card p-4 ">
+    <div id="plan" class="panel">
       <h4>Program Plan Viewer</h4>
       <div class="panel-sub">Inspect full program requirements, term breakdown, and credit totals.</div>
       <div class="zone-card">
@@ -755,7 +755,7 @@
       </div>
     </div>
 
-    <div id="scrape" class="panel card soft-card p-4">
+    <div id="scrape" class="panel">
       <div style="margin-bottom:18px">
         <h4 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Batch Scraping</h4>
         <div style="font-size:13px;color:var(--t3);font-weight:300">Legacy scraper — runs <code style="font-size:11px;font-family:var(--font-mono);background:rgba(17,17,68,0.04);padding:2px 6px;border-radius:4px">batch_scraper.py</code> in background with live log streaming.</div>
@@ -811,7 +811,7 @@
       </div>
     </div>
 
-    <div id="debug" class="panel card soft-card p-4 ">
+    <div id="debug" class="panel">
       <div style="margin-bottom:18px">
         <h4 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Recommendation Debug</h4>
         <div style="font-size:13px;color:var(--t3);font-weight:300">Student-level recommendation trace for debugging and validation.</div>
@@ -866,7 +866,7 @@
       </div>
     </div>
 
-    <div id="eligibility" class="panel card soft-card p-4 ">
+    <div id="eligibility" class="panel">
       <div style="margin-bottom:18px">
         <h4 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Course Eligibility Inspector</h4>
         <div style="font-size:13px;color:var(--t3);font-weight:300">Check which students are eligible to register for a specific course.</div>
@@ -917,7 +917,7 @@
       </div>
     </div>
 
-    {% if can_admin_advisors %}<div id="advisoradmin" class="panel card soft-card p-4 ">
+    {% if can_admin_advisors %}<div id="advisoradmin" class="panel">
       <h4>Advisor Admin</h4>
       <div class="panel-sub">Create advisors and manage student-to-advisor assignments.</div>
 
@@ -979,7 +979,7 @@
 
     <!-- Advisor Portfolio → moved to standalone page at /advisor-portfolio/ -->
 
-    <div id="exports" class="panel card soft-card p-4 ">
+    <div id="exports" class="panel">
       <h4>Export Center</h4>
       <div class="panel-sub">Quick links for all operational exports in one place.</div>
       <div class="task-card mb-2">
@@ -1003,7 +1003,7 @@
       <div id="exportsMeta" class="small text-secondary mt-2">Tip: run each module once to auto-fill parameterized export links.</div>
     </div>
 
-    <div id="highpriority" class="panel card soft-card p-4 ">
+    <div id="highpriority" class="panel">
       <h4>Missing High Priority Courses</h4>
       <div class="panel-sub">Exact legacy logic from old script (unlock-graph priority + parity split).</div>
       <div class="task-card mb-2">

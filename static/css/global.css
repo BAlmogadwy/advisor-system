@@ -402,6 +402,7 @@ main.flex-grow-1 {
   opacity:   0;
   transform: translateY(6px);
   transition: opacity .20s ease, transform .20s ease;
+  padding:   0;
 }
 
 .panel.active {
@@ -1790,8 +1791,7 @@ pre, .pre-output {
   .metric .v { font-size: 1.4rem; }
   .metric .k { font-size: 0.65rem; }
 
-  /* Panel padding: tighter */
-  .panel.card.soft-card { padding: 0.75rem !important; }
+  /* Panel padding: removed card wrapper, no extra padding needed */
 
   /* Dashboard batch export row: stack */
   .batch-export-row .btn { width: 100%; }
