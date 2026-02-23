@@ -285,18 +285,24 @@
     {% if debug_mode %}
     <div style="padding:12px 16px;margin-bottom:16px;border-radius:var(--radius-sm);background:rgba(255,255,255,0.55);backdrop-filter:blur(20px) saturate(130%);-webkit-backdrop-filter:blur(20px) saturate(130%);border:1px solid rgba(17,17,68,0.05);box-shadow:var(--shadow-card)">
       <h6 class="mb-2">Dev Role Switch (DEBUG only)</h6>
-      <div class="row g-2 align-items-end">
-        <div class="col-md-3">
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+        <div style="flex:1;min-width:160px">
           <label class="form-label">Role</label>
-          <select id="devRole" class="form-select form-select-sm">
+          <div class="fb-search" style="max-width:none"><select id="devRole" style="flex:1;background:none;border:none;outline:none;color:var(--t1);font-size:13px;font-family:inherit;cursor:pointer">
             <option value="SUPER_ADMIN">SUPER_ADMIN</option>
             <option value="GENERAL_ACADEMIC_ADVISOR">GENERAL_ACADEMIC_ADVISOR</option>
             <option value="ADVISOR">ADVISOR</option>
-          </select>
+          </select></div>
         </div>
-        <div class="col-md-3"><label class="form-label">Advisor ID</label><input id="devAdvisorId" class="form-control form-control-sm" placeholder="A001"></div>
-        <div class="col-md-4"><label class="form-label">Departments CSV</label><input id="devDepartments" class="form-control form-control-sm" placeholder="AI,CS"></div>
-        <div class="col-md-2 d-grid"><button id="devSwitchRole" type="button" class="btn btn-outline-warning btn-sm">Switch Role</button></div>
+        <div style="flex:1;min-width:120px">
+          <label class="form-label">Advisor ID</label>
+          <div class="fb-search" style="max-width:none"><input id="devAdvisorId" placeholder="A001"></div>
+        </div>
+        <div style="flex:1.5;min-width:140px">
+          <label class="form-label">Departments CSV</label>
+          <div class="fb-search" style="max-width:none"><input id="devDepartments" placeholder="AI,CS"></div>
+        </div>
+        <div style="flex:0 0 auto;padding-bottom:1px"><button id="devSwitchRole" type="button" class="btn btn-outline-warning btn-sm" style="padding:7px 14px;font-size:12px">Switch Role</button></div>
       </div>
       <div id="devRoleMsg" class="small text-secondary mt-2">Use for QA only; refresh after switch.</div>
     </div>
@@ -453,13 +459,14 @@
         <h4 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Batch Recommender</h4>
         <div style="font-size:13px;color:var(--t3);font-weight:300">Run cohort-level preview, inspect top courses, and export aggregate CSV.</div>
       </div>
-      <div class="row g-3 align-items-end batch-filters sticky-cta">
-        <div class="col-md-2"><label class="form-label">Year</label><input id="batchYear" class="form-control" type="number" value="{{ year }}"></div>
-        <div class="col-md-2"><label class="form-label">Semester</label><input id="batchSemester" class="form-control" type="number" min="0" max="1" value="{{ semester }}"></div>
-        <div class="col-md-3"><label class="form-label">Program (optional)</label><input id="batchProgram" class="form-control"></div>
-        <div class="col-md-2"><label class="form-label">Section (optional)</label><input id="batchSection" class="form-control"></div>
-        <div class="col-md-2 d-grid"><button id="runBatch" class="btn btn-primary">Run preview</button></div>
-        <div class="col-md-1 d-grid"><button id="resetBatch" type="button" class="btn btn-outline-secondary">Reset</button></div>
+      <div class="filter-bar sticky-cta" style="margin-bottom:14px">
+        <div class="fb-search" style="max-width:120px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input id="batchYear" type="number" value="{{ year }}" placeholder="Year"></div>
+        <div class="fb-search" style="max-width:110px"><input id="batchSemester" type="number" min="0" max="1" value="{{ semester }}" placeholder="Semester"></div>
+        <div class="fb-search" style="max-width:170px"><input id="batchProgram" placeholder="Program (optional)"></div>
+        <div class="fb-search" style="max-width:160px"><input id="batchSection" placeholder="Section (optional)"></div>
+        <div class="fb-spacer"></div>
+        <button id="runBatch" class="btn btn-primary" style="padding:7px 20px;font-size:13px"><span class="i i-sm"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></span>Run preview</button>
+        <button id="resetBatch" type="button" class="fb-dd">Reset</button>
       </div>
       <div style="display:flex;gap:6px;margin-top:8px;">
         <button id="batchSavePreset" type="button" class="fb-dd"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span> Save preset</button>
@@ -561,9 +568,12 @@
       <div class="panel-sub">Inspect full program requirements, term breakdown, and credit totals.</div>
       <div class="zone-card">
         <div class="zone-title">Filters</div>
-        <div class="row g-3 align-items-end">
-          <div class="col-md-3"><label class="form-label">Program</label><input id="planProgram" class="form-control" list="programs" placeholder="e.g. CS"></div>
-          <div class="col-md-2 d-grid"><button id="loadPlan" class="btn btn-primary">Load Plan</button></div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+          <div style="flex:1;min-width:140px;max-width:220px">
+            <label class="form-label">Program</label>
+            <div class="fb-search" style="max-width:none"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><input id="planProgram" list="programs" placeholder="e.g. CS"></div>
+          </div>
+          <div style="flex:0 0 auto;padding-bottom:1px"><button id="loadPlan" class="btn btn-primary" style="padding:7px 20px;font-size:13px">Load Plan</button></div>
         </div>
       </div>
       <div class="zone-card">
@@ -791,34 +801,59 @@
       <div class="advisor-block">
         <h6><span class="badge text-bg-primary">Step 1</span> Create / Update Advisor Profile</h6>
         <div class="small text-secondary mb-2">Use a unique advisor ID and valid institutional email.</div>
-        <div class="row g-2 align-items-end">
-          <div class="col-md-2"><label class="form-label">Advisor ID</label><input id="advId" class="form-control" placeholder="A001" maxlength="30"><div id="advIdErr" class="field-error"></div></div>
-          <div class="col-md-3"><label class="form-label">Full name</label><input id="advName" class="form-control" placeholder="Dr. Name" maxlength="120"><div id="advNameErr" class="field-error"></div></div>
-          <div class="col-md-3"><label class="form-label">Email</label><input id="advEmail" type="email" class="form-control" placeholder="advisor@uni.edu" maxlength="120"><div id="advEmailErr" class="field-error"></div></div>
-          <div class="col-md-2"><label class="form-label">Departments</label><input id="advDept" class="form-control" placeholder="CS,AI" maxlength="120"><div id="advDeptErr" class="field-error"></div></div>
-          <div class="col-md-2 d-grid"><button id="advSave" class="btn btn-primary">Save advisor</button></div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+          <div style="flex:1;min-width:110px">
+            <label class="form-label">Advisor ID</label>
+            <div class="fb-search" style="max-width:none"><input id="advId" placeholder="A001" maxlength="30"></div>
+            <div id="advIdErr" class="field-error"></div>
+          </div>
+          <div style="flex:1.5;min-width:150px">
+            <label class="form-label">Full name</label>
+            <div class="fb-search" style="max-width:none"><input id="advName" placeholder="Dr. Name" maxlength="120"></div>
+            <div id="advNameErr" class="field-error"></div>
+          </div>
+          <div style="flex:1.5;min-width:160px">
+            <label class="form-label">Email</label>
+            <div class="fb-search" style="max-width:none"><input id="advEmail" type="email" placeholder="advisor@uni.edu" maxlength="120"></div>
+            <div id="advEmailErr" class="field-error"></div>
+          </div>
+          <div style="flex:1;min-width:110px">
+            <label class="form-label">Departments</label>
+            <div class="fb-search" style="max-width:none"><input id="advDept" placeholder="CS,AI" maxlength="120"></div>
+            <div id="advDeptErr" class="field-error"></div>
+          </div>
+          <div style="flex:0 0 auto;padding-bottom:1px"><button id="advSave" class="btn btn-primary" style="padding:7px 16px;font-size:13px">Save advisor</button></div>
         </div>
       </div>
 
       <div class="advisor-block">
         <h6><span class="badge text-bg-primary">Step 2</span> Bulk Mapping</h6>
         <div class="small text-secondary mb-2">Paste CSV rows to map many students at once.</div>
-        <div class="row g-2 align-items-end mt-1">
-          <div class="col-md-3 d-grid"><button id="advEnsureColumn" class="btn btn-outline-dark">Enable students.advisor_id</button></div>
-          <div class="col-md-9"><label class="form-label">Bulk assign CSV (student_id,advisor_id)</label><textarea id="advAssignCsv" class="form-control" rows="3" placeholder="student_id,advisor_id&#10;4410001,A001"></textarea></div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-top:4px">
+          <div style="flex:0 0 auto"><button id="advEnsureColumn" class="fb-dd" style="padding:8px 14px">Enable students.advisor_id</button></div>
+          <div style="flex:1;min-width:220px">
+            <label class="form-label">Bulk assign CSV (student_id,advisor_id)</label>
+            <textarea id="advAssignCsv" class="form-control" rows="3" placeholder="student_id,advisor_id&#10;4410001,A001" style="border-radius:var(--radius-sm);border:1px solid rgba(17,17,68,0.05);background:rgba(255,255,255,0.6);font-size:13px"></textarea>
+          </div>
         </div>
-        <div class="actions-row mt-2">
-          <button id="advAssignCsvBtn" class="btn btn-outline-success btn-sm" type="button">Apply CSV mapping</button>
+        <div style="margin-top:8px">
+          <button id="advAssignCsvBtn" class="btn btn-outline-success btn-sm" type="button" style="padding:6px 14px;font-size:12px">Apply CSV mapping</button>
         </div>
       </div>
 
       <div class="advisor-block">
         <h6><span class="badge text-bg-primary">Step 3</span> Quick Single Assignment</h6>
         <div class="small text-secondary mb-2">Use for quick corrections without re-uploading CSV.</div>
-        <div class="row g-2 align-items-end mt-1">
-          <div class="col-md-3"><label class="form-label">Quick assign student ID</label><input id="advAssignStudentId" class="form-control" placeholder="4410001"></div>
-          <div class="col-md-3"><label class="form-label">Quick assign advisor ID</label><input id="advAssignAdvisorId" class="form-control" placeholder="A001"></div>
-          <div class="col-md-3 d-grid"><button id="advAssignOneBtn" class="btn btn-outline-primary" type="button">Assign one student</button></div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-top:4px">
+          <div style="flex:1;min-width:140px">
+            <label class="form-label">Student ID</label>
+            <div class="fb-search" style="max-width:none"><input id="advAssignStudentId" placeholder="4410001"></div>
+          </div>
+          <div style="flex:1;min-width:140px">
+            <label class="form-label">Advisor ID</label>
+            <div class="fb-search" style="max-width:none"><input id="advAssignAdvisorId" placeholder="A001"></div>
+          </div>
+          <div style="flex:0 0 auto;padding-bottom:1px"><button id="advAssignOneBtn" class="btn btn-outline-primary" type="button" style="padding:7px 16px;font-size:13px">Assign one student</button></div>
         </div>
       </div>
 
@@ -860,36 +895,29 @@
         <div class="k">Task</div>
         <div class="small text-secondary">Use this report to flag students missing high-impact unlock courses; export XLSX for advisor intervention lists.</div>
       </div>
-      <div class="row g-2 align-items-end sticky-cta">
-        <div class="col-md-2"><label class="form-label">Year</label><input id="hpYear" class="form-control" type="number" value="{{ year }}"></div>
-        <div class="col-md-2"><label class="form-label">Semester</label><input id="hpSemester" class="form-control" type="number" min="0" max="1" value="{{ semester }}"></div>
-        <div class="col-md-2"><label class="form-label">Section</label><input id="hpSection" class="form-control" placeholder="M/F"></div>
-        <div class="col-md-2"><label class="form-label">Program</label><input id="hpProgram" class="form-control" placeholder="AI/CS"></div>
-        <div class="col-md-2"><label class="form-label">Join years</label><input id="hpJoin" class="form-control" placeholder="43,44"></div>
-        <div class="col-md-2"><label class="form-label">Parity</label><select id="hpParity" class="form-select"><option value="0" selected>0 (odd)</option><option value="1">1 (even)</option></select></div>
+      <div class="filter-bar sticky-cta" style="margin-bottom:14px">
+        <div class="fb-search" style="max-width:110px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input id="hpYear" type="number" value="{{ year }}" placeholder="Year"></div>
+        <div class="fb-search" style="max-width:110px"><input id="hpSemester" type="number" min="0" max="1" value="{{ semester }}" placeholder="Semester"></div>
+        <div class="fb-search" style="max-width:100px"><input id="hpSection" placeholder="Section"></div>
+        <div class="fb-search" style="max-width:110px"><input id="hpProgram" placeholder="Program"></div>
+        <div class="fb-search" style="max-width:110px"><input id="hpJoin" placeholder="Join yrs"></div>
+        <div class="fb-search" style="max-width:130px"><select id="hpParity" style="flex:1;background:none;border:none;outline:none;color:var(--t1);font-size:13px;font-family:inherit;cursor:pointer"><option value="0" selected>0 (odd)</option><option value="1">1 (even)</option></select></div>
+        <div class="fb-spacer"></div>
+        <button id="hpRun" class="btn btn-primary" style="padding:7px 20px;font-size:13px"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run report</button>
+        <a id="hpXlsx" class="fb-dd" href="#"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>XLSX</a>
       </div>
-      <div class="row g-2 align-items-end mt-1">
-        <div class="col-md-9">
-          <details class="hp-advanced">
-            <summary class="hp-advanced-toggle">
-              <span class="hp-adv-arrow">▶</span> Advanced settings
-              <span class="hp-adv-defaults-badge">Using defaults</span>
-            </summary>
-            <div class="row g-2 align-items-end mt-2">
-              <div class="col-md-3"><label class="form-label">Discount</label><select id="hpDiscount" class="form-select"><option value="1_over_d" selected>1_over_d</option><option value="half_power_d">half_power_d</option><option value="none">none</option></select></div>
-              <div class="col-md-3"><label class="form-label">Min score</label><input id="hpMinScore" class="form-control" type="number" step="0.1" value="2.0"></div>
-              <div class="col-md-3"><label class="form-label">Top K</label><input id="hpTopK" class="form-control" type="number" value="10"></div>
-              <div class="col-md-3"><label class="form-label">Studying counts as passed</label><select id="hpStudying" class="form-select"><option value="false" selected>No (exact default)</option><option value="true">Yes</option></select></div>
-            </div>
-          </details>
+      <details class="hp-advanced" style="margin-bottom:8px">
+        <summary class="hp-advanced-toggle">
+          <span class="hp-adv-arrow">▶</span> Advanced settings
+          <span class="hp-adv-defaults-badge">Using defaults</span>
+        </summary>
+        <div class="filter-bar" style="margin-top:8px;padding:10px 14px">
+          <div class="fb-search" style="max-width:150px"><select id="hpDiscount" style="flex:1;background:none;border:none;outline:none;color:var(--t1);font-size:13px;font-family:inherit;cursor:pointer"><option value="1_over_d" selected>1_over_d</option><option value="half_power_d">half_power_d</option><option value="none">none</option></select></div>
+          <div class="fb-search" style="max-width:120px"><input id="hpMinScore" type="number" step="0.1" value="2.0" placeholder="Min score"></div>
+          <div class="fb-search" style="max-width:100px"><input id="hpTopK" type="number" value="10" placeholder="Top K"></div>
+          <div class="fb-search" style="max-width:210px"><select id="hpStudying" style="flex:1;background:none;border:none;outline:none;color:var(--t1);font-size:13px;font-family:inherit;cursor:pointer"><option value="false" selected>No (exact default)</option><option value="true">Yes</option></select></div>
         </div>
-        <div class="col-md-3">
-          <div class="actions-row">
-            <button id="hpRun" class="btn btn-primary">Run report</button>
-            <a id="hpXlsx" class="btn btn-outline-success" href="#">Export XLSX</a>
-          </div>
-        </div>
-      </div>
+      </details>
       <div class="preset-row">
         <button id="hpSavePreset" type="button" class="btn btn-outline-secondary btn-sm">Save preset</button>
         <button id="hpLoadPreset" type="button" class="btn btn-outline-secondary btn-sm">Load preset</button>
