@@ -1581,8 +1581,8 @@
       .sort((a, b) => Number(b.importance_score || 0) - Number(a.importance_score || 0))
       .slice(0, 5);
     topImportant.innerHTML = topImportantCourses.length
-      ? `<div class="small text-secondary mb-1">Top importance courses:</div>${topImportantCourses.map((c) => `<span class="pill">${c.course_code} (${Number(c.importance_score || 0).toFixed(2)})</span>`).join('')}`
-      : '<div class="empty-note">No courses available for current filter.</div>';
+      ? `<div style="font-size:11px;font-weight:600;color:var(--t5);font-family:var(--font-mono);margin-bottom:6px;letter-spacing:0.04em">TOP IMPORTANCE</div><div style="display:flex;flex-wrap:wrap;gap:6px">${topImportantCourses.map((c, i) => `<span class="pill-status ${i === 0 ? 'pill-g' : 'pill-b'}" style="font-family:var(--font-mono);font-size:11px"><span class="pill-dot"></span>${c.course_code} <span style="opacity:0.6">${Number(c.importance_score || 0).toFixed(1)}</span></span>`).join('')}</div>`
+      : '';
 
     const targetCredits = Number(q('spTargetCredits')?.value || 18);
     const strategy = String(q('spTargetStrategy')?.value || 'max');
@@ -1595,8 +1595,8 @@
     const usedCredits = planResult.usedCredits || 0;
 
     actionPlan.innerHTML = selected.length
-      ? `<div class="small text-secondary mb-2">Suggested action plan (${strategy === 'balanced' ? 'balanced' : 'max importance'} • target ${targetCredits} CH, selected ${usedCredits} CH):</div>${selected.map((c, i) => `<div class="plan-item"><div class="title">${i + 1}. ${c.course_code}</div><div class="sub">Importance ${Number(c.importance_score || 0).toFixed(2)} • Term ${c.programme_term ?? '-'} • Credits ${c.credit_hours ?? '-'}</div></div>`).join('')}`
-      : '<div class="empty-note">No immediate can-register action plan for current filter/target credits.</div>';
+      ? `<div class="cpanel mb-0"><div class="cp-h"><span class="cp-t">Action Plan</span><span class="pill-status pill-g" style="font-size:10px"><span class="pill-dot"></span>${strategy === 'balanced' ? 'Balanced' : 'Max Imp'} • ${usedCredits}/${targetCredits} CH</span></div><div class="cp-b" style="padding:8px 12px">${selected.map((c, i) => `<div class="plan-item"><div><div class="title">${c.course_code}</div><div class="sub">Imp ${Number(c.importance_score || 0).toFixed(1)} • T${c.programme_term ?? '-'} • ${c.credit_hours ?? '-'} CH</div></div><span class="pill-status pill-g" style="font-size:10px"><span class="pill-dot"></span>#${i + 1}</span></div>`).join('')}</div></div>`
+      : '';
 
     container.innerHTML = terms.map((termObj) => {
       let rows = Array.isArray(termObj.courses) ? termObj.courses : [];
@@ -1652,12 +1652,12 @@
               missing_prereqs: c.missing_prereqs || [],
               importance_score: c.importance_score || 0,
             }));
-            return `<tr class="${cls} course-row" data-course-json="${rowPayload}"><td><span class="fw-semibold">${c.course_code}</span></td><td>${c.credit_hours ?? '-'}</td><td>${statusBadge}</td><td>${prereqCell}</td><td class="${impClass}">${importance}</td></tr>`;
+            return `<tr class="cr-row ${cls} course-row" data-course-json="${rowPayload}"><td><span class="cr-id">${c.course_code}</span></td><td style="font-family:var(--font-mono);font-size:12px">${c.credit_hours ?? '-'}</td><td>${statusBadge}</td><td style="font-size:11px">${prereqCell}</td><td class="${impClass}">${importance}</td></tr>`;
           }).join('')
         : '<tr><td colspan="5" class="empty-note">No courses in this term for current filter.</td></tr>';
 
       const compactClass = studentPlanCompact ? 'table-compact' : '';
-      return `<details class="term-details" ${studentPlanExpandAll ? 'open' : ''}><summary class="term-summary"><div class="term-header-sticky"><h6 class="mb-1">Term ${termObj.term}</h6><div class="small text-secondary">Total ${total} • Passed ${passedN} • Studying ${studyingN} • Can ${canN} • Locked ${lockedN}</div></div></summary><div class="table-wrap mt-2"><table class="table table-sm table-hover mb-0 ${compactClass}"><thead><tr><th>Course</th><th>CH</th><th>Status</th><th>Prerequisites</th><th>Importance</th></tr></thead><tbody>${tbody}</tbody></table></div></details>`;
+      return `<details class="term-details" ${studentPlanExpandAll ? 'open' : ''}><summary class="term-summary"><div class="term-header-sticky"><h6>Term ${termObj.term}</h6><div style="display:flex;gap:5px;margin-left:auto">${passedN ? `<span class="pill-status pill-g" style="font-size:10px"><span class="pill-dot"></span>${passedN}</span>` : ''}${studyingN ? `<span class="pill-status pill-b" style="font-size:10px"><span class="pill-dot"></span>${studyingN}</span>` : ''}${canN ? `<span class="pill-status pill-g" style="font-size:10px;background:rgba(0,174,218,0.08);color:var(--sky);border-color:rgba(0,174,218,0.16)"><span class="pill-dot"></span>${canN}</span>` : ''}${lockedN ? `<span class="pill-status pill-r" style="font-size:10px"><span class="pill-dot"></span>${lockedN}</span>` : ''}</div></div></summary><div style="padding:0 12px 12px"><table class="tbl-card mb-0 ${compactClass}" style="border-spacing:0 4px"><thead><tr><th>Course</th><th>CH</th><th>Status</th><th>Prerequisites</th><th>Imp.</th></tr></thead><tbody>${tbody}</tbody></table></div></details>`;
     }).join('');
 
     bindCourseRowClicks();
@@ -1743,7 +1743,7 @@
 
       showSkeleton('planTable', 3);
     q('loadStudentPlan').disabled = true;
-    q('loadStudentPlan').textContent = 'Loading...';
+    q('loadStudentPlan').innerHTML = '<svg class="i i-sm" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Loading...';
     container.innerHTML = '<div class="empty-note">Loading plan matrix...</div>';
 
     const res = await fetch(`/report/student-plan/?student_id=${encodeURIComponent(studentId)}`);
@@ -1762,7 +1762,7 @@
       q('studentPlanActions').style.display = 'none';
       q('studentPlanLegend').style.display = 'none';
       q('loadStudentPlan').disabled = false;
-      q('loadStudentPlan').textContent = 'Load Student Plan Matrix';
+      q('loadStudentPlan').innerHTML = '<svg class="i i-sm" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Load plan';
       return;
     }
 
@@ -1828,13 +1828,13 @@
       riskChips.push(`<span class="alert-chip danger">Critical blocker: ${h.course_code} blocks ${h.blocks} courses</span>`);
     });
     q('studentPlanRiskAlerts').innerHTML = riskChips.length
-      ? `<div class="small text-secondary mb-1">Risk alerts</div>${riskChips.join('')}`
-      : '<div class="small text-success">No major advising risk flags detected.</div>';
+      ? `<div style="font-size:11px;font-weight:600;color:var(--t5);font-family:var(--font-mono);margin-bottom:6px;letter-spacing:0.04em">RISK ALERTS</div><div style="display:flex;flex-wrap:wrap;gap:6px">${riskChips.join('')}</div>`
+      : '';
 
 
     q('studentPlanHints').innerHTML = hints.length
-      ? `<div class="small text-secondary mb-1">What to pass first (click a hint to filter blocked courses):</div>${hints.map((h) => `<button type="button" class="hint-chip border-0 hint-filter" data-blocker="${h.course_code}">${h.course_code} • blocks ${h.blocks} • unlock ${Number(h.unlock_score || 0).toFixed(2)}</button>`).join('')}<button type="button" id="clearBlockerFilter" class="btn btn-sm btn-outline-secondary ms-2">Clear blocker filter</button>`
-      : '<div class="empty-note">No blocking prerequisite hints right now.</div>';
+      ? `<div style="font-size:11px;font-weight:600;color:var(--t5);font-family:var(--font-mono);margin-bottom:6px;letter-spacing:0.04em">PASS FIRST <span style="opacity:0.5">(click to filter)</span></div><div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">${hints.map((h) => `<button type="button" class="hint-chip hint-filter" data-blocker="${h.course_code}"><svg width="10" height="10" viewBox="0 0 24 24" style="fill:none;stroke:currentColor;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>${h.course_code} → ${h.blocks}</button>`).join('')}<button type="button" id="clearBlockerFilter" class="fb-dd" style="font-size:11px;padding:4px 12px">Clear</button></div>`
+      : '';
 
     document.querySelectorAll('.hint-filter').forEach((el) => {
       el.addEventListener('click', () => {
@@ -1856,7 +1856,7 @@
     renderStudentPlanTerms();
 
     q('loadStudentPlan').disabled = false;
-    q('loadStudentPlan').textContent = 'Load Student Plan Matrix';
+    q('loadStudentPlan').innerHTML = '<svg class="i i-sm" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Load plan';
   };
 
   let scrapeAutoTimer = null;
