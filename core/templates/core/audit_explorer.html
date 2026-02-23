@@ -28,6 +28,7 @@
 <div class="d-flex shell">
   {% include 'core/partials/sidebar.html' %}
   <main class="flex-grow-1 p-4">
+    <div class="content-wrap">
     <div class="page-header">
       <div class="page-header-left">
         <div class="page-header-module">{% if LANGUAGE_CODE == 'ar' %}مستكشف التدقيق{% else %}Audit Explorer{% endif %}</div>
@@ -95,6 +96,7 @@
   </table>
   </div>
     </div>
+    </div><!-- /.content-wrap -->
   </main>
 </div>
 {% endblock %}

@@ -336,6 +336,7 @@
   {% include "core/partials/sidebar.html" %}
 
   <main id="dashboard-page" class="flex-grow-1 p-4">
+    <div class="content-wrap">
     <div class="page-header">
       <div class="page-header-left">
         <div id="currentModule" class="page-header-module">{% trans "Student Recommender" %}</div>
@@ -1009,6 +1010,7 @@
     <datalist id="programs">
       {% for p in programs %}<option value="{{ p }}"></option>{% endfor %}
     </datalist>
+    </div><!-- /.content-wrap -->
   </main>
 </div>
 
