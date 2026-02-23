@@ -1186,7 +1186,7 @@
     s += '</svg>';
 
     /* legend */
-    s += `<div class="pg-legend"><span><span class="pg-legend-dot" style="color:var(--teal);background:var(--teal)"></span>Foundation</span><span><span class="pg-legend-dot" style="color:var(--royal);background:var(--royal)"></span>Terminal</span><span><span class="pg-legend-dot" style="color:var(--navy);background:var(--navy)"></span>Intermediate</span><span style="margin-left:auto;opacity:0.4;font-weight:400">Hover to trace chains</span></div>`;
+    s += `<div class="pg-legend"><span><span class="pg-legend-dot" style="color:var(--teal);background:var(--teal)"></span>Foundation</span><span><span class="pg-legend-dot" style="color:var(--royal);background:var(--royal)"></span>Terminal</span><span><span class="pg-legend-dot" style="color:var(--navy);background:var(--navy)"></span>Intermediate</span><span style="margin-inline-start:auto;opacity:0.4;font-weight:400">Hover to trace chains</span></div>`;
     container.innerHTML = s;
 
     /* interactivity — hover highlights full chain */
@@ -1600,7 +1600,7 @@
         : '<tr><td colspan="5" class="empty-note">No courses in this term for current filter.</td></tr>';
 
       const compactClass = studentPlanCompact ? 'table-compact' : '';
-      return `<details class="term-details" ${studentPlanExpandAll ? 'open' : ''}><summary class="term-summary"><div class="term-header-sticky"><h6>Term ${termObj.term}</h6><div style="display:flex;gap:5px;margin-left:auto">${passedN ? `<span class="pill-status pill-g" style="font-size:10px"><span class="pill-dot"></span>${passedN}</span>` : ''}${studyingN ? `<span class="pill-status pill-b" style="font-size:10px"><span class="pill-dot"></span>${studyingN}</span>` : ''}${canN ? `<span class="pill-status pill-g" style="font-size:10px;background:rgba(0,174,218,0.08);color:var(--sky);border-color:rgba(0,174,218,0.16)"><span class="pill-dot"></span>${canN}</span>` : ''}${lockedN ? `<span class="pill-status pill-r" style="font-size:10px"><span class="pill-dot"></span>${lockedN}</span>` : ''}</div></div></summary><div style="padding:0 12px 12px"><table class="tbl-card mb-0 ${compactClass}" style="border-spacing:0 4px"><thead><tr><th>Course</th><th>CH</th><th>Status</th><th>Prerequisites</th><th>Imp.</th></tr></thead><tbody>${tbody}</tbody></table></div></details>`;
+      return `<details class="term-details" ${studentPlanExpandAll ? 'open' : ''}><summary class="term-summary"><div class="term-header-sticky"><h6>Term ${termObj.term}</h6><div style="display:flex;gap:5px;margin-inline-start:auto">${passedN ? `<span class="pill-status pill-g" style="font-size:10px"><span class="pill-dot"></span>${passedN}</span>` : ''}${studyingN ? `<span class="pill-status pill-b" style="font-size:10px"><span class="pill-dot"></span>${studyingN}</span>` : ''}${canN ? `<span class="pill-status pill-g" style="font-size:10px;background:rgba(0,174,218,0.08);color:var(--sky);border-color:rgba(0,174,218,0.16)"><span class="pill-dot"></span>${canN}</span>` : ''}${lockedN ? `<span class="pill-status pill-r" style="font-size:10px"><span class="pill-dot"></span>${lockedN}</span>` : ''}</div></div></summary><div style="padding:0 12px 12px"><table class="tbl-card mb-0 ${compactClass}" style="border-spacing:0 4px"><thead><tr><th>Course</th><th>CH</th><th>Status</th><th>Prerequisites</th><th>Imp.</th></tr></thead><tbody>${tbody}</tbody></table></div></details>`;
     }).join('');
 
     bindCourseRowClicks();

@@ -289,7 +289,7 @@
         <table class="tbl-card" id="apTable">
           <thead>
             <tr>
-              <th style="width:28px;padding-left:14px;"><input type="checkbox" class="ap-check" id="apCheckAll" onclick="toggleAllChecks(this)" style="accent-color:var(--teal);"></th>
+              <th style="width:28px;padding-inline-start:14px;"><input type="checkbox" class="ap-check" id="apCheckAll" onclick="toggleAllChecks(this)" style="accent-color:var(--teal);"></th>
               <th data-sort="num">ID <span class="sort-arrow">▲</span></th>
               <th data-sort="text">Name</th>
               <th data-sort="text">Program</th>
@@ -635,7 +635,7 @@ function renderTable(rows) {
       .map(r => `<span class="pill-status pill-a" style="font-size:10px;padding:2px 7px;"><span class="pill-dot"></span>${reasonMap[r]||r}</span>`).join(' ') || '<span style="color:var(--t5)">—</span>';
 
     return `<tr class="${trCls}" data-sid="${sid}" onclick="onRowClick(event, '${sid}')">
-      <td onclick="event.stopPropagation()" style="padding-left:14px;"><input type="checkbox" class="ap-check" ${checked} onchange="toggleBatch('${sid}',this.checked)" style="accent-color:var(--teal);"></td>
+      <td onclick="event.stopPropagation()" style="padding-inline-start:14px;"><input type="checkbox" class="ap-check" ${checked} onchange="toggleBatch('${sid}',this.checked)" style="accent-color:var(--teal);"></td>
       <td><span class="cr-id">${sid}</span></td>
       <td><div class="cr-nm">${esc(s.name||'—')}</div><div class="cr-sub">${esc(s.program||'')} · ${esc(s.section||'')}</div></td>
       <td class="cr-prog">${esc(s.program||'—')}</td>
