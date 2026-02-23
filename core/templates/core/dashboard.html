@@ -762,65 +762,77 @@
     <div id="debug" class="panel card soft-card p-4 ">
       <h4>Recommendation Debug Report</h4>
       <div class="panel-sub">Legacy-style student debug report for recommendation traceability.</div>
-      <div class="row g-2 align-items-end sticky-cta">
-        <div class="col-md-2"><label class="form-label">Year</label><input id="dbgYear" class="form-control" type="number" value="{{ year }}"></div>
-        <div class="col-md-2"><label class="form-label">Semester</label><input id="dbgSemester" class="form-control" type="number" min="0" max="1" value="{{ semester }}"></div>
-        <div class="col-md-2"><label class="form-label">Section</label><input id="dbgSection" class="form-control" placeholder="M/F"></div>
-        <div class="col-md-2"><label class="form-label">Program</label><input id="dbgProgram" class="form-control" placeholder="AI/CS"></div>
-        <div class="col-md-2"><label class="form-label">Join years</label><input id="dbgJoin" class="form-control" placeholder="43,44"></div>
-        <div class="col-md-1"><label class="form-label">Limit</label><input id="dbgLimit" class="form-control" type="number" value="80"></div>
-        <div class="col-md-1 d-grid"><button id="dbgRun" class="btn btn-primary">Run</button></div>
+      <div class="filter-bar sticky-cta mb-3" style="flex-wrap:wrap">
+        <svg class="i" viewBox="0 0 24 24" width="16" height="16"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+        <input id="dbgYear" class="fb-search" type="number" value="{{ year }}" placeholder="Year" style="max-width:90px">
+        <input id="dbgSemester" class="fb-search" type="number" min="0" max="1" value="{{ semester }}" placeholder="Sem" style="max-width:80px">
+        <input id="dbgSection" class="fb-search" placeholder="Section" style="max-width:90px">
+        <input id="dbgProgram" class="fb-search" placeholder="Program" style="max-width:100px">
+        <input id="dbgJoin" class="fb-search" placeholder="Join yrs" style="max-width:100px">
+        <input id="dbgLimit" class="fb-search" type="number" value="80" placeholder="Limit" style="max-width:80px">
+        <button id="dbgRun" class="btn btn-primary" style="margin-left:auto;padding:7px 20px;font-size:13px">
+          <svg class="i" viewBox="0 0 24 24" width="14" height="14" style="margin-right:4px"><path d="M5 12h14M12 5l7 7-7 7"/></svg>Run
+        </button>
       </div>
-      <div class="preset-row">
-        <button id="dbgSavePreset" type="button" class="btn btn-outline-secondary btn-sm">Save preset</button>
-        <button id="dbgLoadPreset" type="button" class="btn btn-outline-secondary btn-sm">Load preset</button>
+      <div class="filter-bar mb-3" style="padding:8px 14px">
+        <button id="dbgSavePreset" type="button" class="fb-dd"><svg class="i i-sm" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Save preset</button>
+        <button id="dbgLoadPreset" type="button" class="fb-dd"><svg class="i i-sm" viewBox="0 0 24 24"><path d="M3 15v4c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>Load preset</button>
+        <div style="flex:1"></div>
+        <a id="dbgCsv" class="fb-dd" href="#"><svg class="i i-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>CSV</a>
       </div>
-      <div class="actions-row mt-2"><a id="dbgCsv" class="btn btn-outline-dark btn-sm" href="#">Export debug CSV</a></div>
-      <div id="dbgMeta" class="meta-banner meta-info mt-2">No debug report loaded.</div>
-      <div class="row g-2 mt-2" id="dbgSummary" style="display:none;">
-        <div class="col-md-3"><div class="metric"><div class="k">Students matched</div><div class="v" id="dbgCount">0</div></div></div>
-        <div class="col-md-3"><div class="metric"><div class="k">With recommendations</div><div class="v" id="dbgWithRec">0</div></div></div>
-        <div class="col-md-3"><div class="metric"><div class="k">Empty recommendations</div><div class="v" id="dbgWithoutRec">0</div></div></div>
+      <div id="dbgMeta" class="meta-banner meta-info mt-2" style="font-family:var(--font-mono);font-size:12px;border-radius:var(--radius-sm);padding:10px 14px">No debug report loaded.</div>
+      <div id="dbgSummary" style="display:none;gap:12px;margin:12px 0">
+        <div style="flex:1;min-width:0"><div class="mc mc-royal"><div style="display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:var(--royal)"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><div><div class="mc-lbl">Students matched</div><div class="mc-val" id="dbgCount">0</div></div></div></div></div>
+        <div style="flex:1;min-width:0"><div class="mc mc-teal"><div style="display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:var(--teal)"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg><div><div class="mc-lbl">With recommendations</div><div class="mc-val" id="dbgWithRec">0</div></div></div></div></div>
+        <div style="flex:1;min-width:0"><div class="mc mc-err"><div style="display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:var(--danger)"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg><div><div class="mc-lbl">Empty recommendations</div><div class="mc-val" id="dbgWithoutRec">0</div></div></div></div></div>
       </div>
-      <div id="dbgUpdated" class="small text-secondary">Last update: -</div>
-      <div class="small text-secondary mt-1">Details</div>
-      <div class="table-wrap mt-2">
-        <table class="table table-sm mb-0" id="dbgTable">
-          <thead><tr><th>Student</th><th>Program</th><th>Real→Next</th><th>Passed</th><th>Studying</th><th>Recommended</th><th>Trace</th></tr></thead>
-          <tbody><tr><td colspan="7"><div class="empty-state"><span class="empty-icon">🔍</span><div class="empty-title">No debug data</div><div class="empty-hint">Fill filters above, then click <strong>Run</strong></div></div></td></tr></tbody>
-        </table>
+      <div id="dbgUpdated" class="small text-secondary mb-2">Last update: -</div>
+      <div class="cpanel">
+        <div class="cp-h"><span class="cp-t">Debug Details</span></div>
+        <div class="cp-b" style="padding:0;overflow-x:auto">
+          <table class="tbl-card mb-0" id="dbgTable" style="border-spacing:0 4px">
+            <thead><tr><th>Student</th><th>Program</th><th>Real→Next</th><th>Passed</th><th>Studying</th><th>Recommended</th><th>Trace</th></tr></thead>
+            <tbody><tr><td colspan="7"><div class="empty-state"><span class="empty-icon">🔍</span><div class="empty-title">No debug data</div><div class="empty-hint">Fill filters above, then click <strong>Run</strong></div></div></td></tr></tbody>
+          </table>
+        </div>
       </div>
     </div>
 
     <div id="eligibility" class="panel card soft-card p-4 ">
       <h4>Course Eligibility Inspector</h4>
-      <div class="panel-sub">Old-style output: eligible student IDs only.</div>
-      <div class="row g-2 align-items-end sticky-cta">
-        <div class="col-md-2"><label class="form-label">Course code</label><input id="elCourse" class="form-control" placeholder="CS323"></div>
-        <div class="col-md-2"><label class="form-label">Section</label><input id="elSection" class="form-control" placeholder="M/F"></div>
-        <div class="col-md-2"><label class="form-label">Program</label><input id="elProgram" class="form-control" placeholder="AI/CS"></div>
-        <div class="col-md-2"><label class="form-label">Join years</label><input id="elJoin" class="form-control" placeholder="43,44"></div>
-        <div class="col-md-2"><label class="form-label">Mode</label><select id="elMode" class="form-select"><option value="relaxed" selected>Relaxed (passed+studying)</option><option value="strict">Strict (passed only)</option></select></div>
-        <div class="col-md-2 d-grid"><button id="elRun" class="btn btn-primary">Check eligibility</button></div>
+      <div class="panel-sub">Check which students are eligible to register for a specific course.</div>
+      <div class="filter-bar sticky-cta mb-3" style="flex-wrap:wrap">
+        <svg class="i" viewBox="0 0 24 24" width="16" height="16"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        <input id="elCourse" class="fb-search" placeholder="Course code" style="max-width:130px">
+        <input id="elSection" class="fb-search" placeholder="Section" style="max-width:90px">
+        <input id="elProgram" class="fb-search" placeholder="Program" style="max-width:100px">
+        <input id="elJoin" class="fb-search" placeholder="Join yrs" style="max-width:100px">
+        <select id="elMode" class="fb-search" style="max-width:180px;cursor:pointer"><option value="relaxed" selected>Relaxed (passed+studying)</option><option value="strict">Strict (passed only)</option></select>
+        <button id="elRun" class="btn btn-primary" style="margin-left:auto;padding:7px 20px;font-size:13px">
+          <svg class="i" viewBox="0 0 24 24" width="14" height="14" style="margin-right:4px"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>Check
+        </button>
       </div>
-      <div class="preset-row">
-        <button id="elSavePreset" type="button" class="btn btn-outline-secondary btn-sm">Save preset</button>
-        <button id="elLoadPreset" type="button" class="btn btn-outline-secondary btn-sm">Load preset</button>
+      <div class="filter-bar mb-3" style="padding:8px 14px">
+        <button id="elSavePreset" type="button" class="fb-dd"><svg class="i i-sm" viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>Save preset</button>
+        <button id="elLoadPreset" type="button" class="fb-dd"><svg class="i i-sm" viewBox="0 0 24 24"><path d="M3 15v4c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>Load preset</button>
+        <div style="flex:1"></div>
+        <a id="elCsv" class="fb-dd" href="#"><svg class="i i-sm" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>CSV</a>
       </div>
-      <div class="actions-row mt-2"><a id="elCsv" class="btn btn-outline-dark btn-sm" href="#">Export eligibility CSV</a></div>
-      <div id="elMeta" class="meta-banner meta-info mt-2">No eligibility report loaded.</div>
-      <div class="row g-2 mt-2" id="elSummary" style="display:none;">
-        <div class="col-md-3"><div class="metric"><div class="k">Eligible IDs</div><div class="v" id="elCount">0</div></div></div>
-        <div class="col-md-3"><div class="metric"><div class="k">Mode</div><div class="v fs-6" id="elModeBadge">relaxed</div></div></div>
-        <div class="col-md-3"><div class="metric"><div class="k">Course</div><div class="v fs-6" id="elCourseBadge">-</div></div></div>
+      <div id="elMeta" class="meta-banner meta-info mt-2" style="font-family:var(--font-mono);font-size:12px;border-radius:var(--radius-sm);padding:10px 14px">No eligibility report loaded.</div>
+      <div id="elSummary" style="display:none;gap:12px;margin:12px 0">
+        <div style="flex:1;min-width:0"><div class="mc mc-teal"><div style="display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:var(--teal)"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg><div><div class="mc-lbl">Eligible IDs</div><div class="mc-val" id="elCount">0</div></div></div></div></div>
+        <div style="flex:1;min-width:0"><div class="mc mc-royal"><div style="display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:var(--royal)"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><div><div class="mc-lbl">Mode</div><div class="mc-val" id="elModeBadge" style="font-size:18px">relaxed</div></div></div></div></div>
+        <div style="flex:1;min-width:0"><div class="mc mc-sky"><div style="display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:var(--sky)"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg><div><div class="mc-lbl">Course</div><div class="mc-val" id="elCourseBadge" style="font-size:18px">-</div></div></div></div></div>
       </div>
-      <div id="elUpdated" class="small text-secondary">Last update: -</div>
-      <div class="small text-secondary mt-1">Details</div>
-      <div class="table-wrap mt-2">
-        <table class="table table-sm mb-0" id="elTable">
-          <thead><tr><th>Eligible Student IDs</th></tr></thead>
-          <tbody><tr><td><div class="empty-state"><span class="empty-icon">✅</span><div class="empty-title">No eligibility results</div><div class="empty-hint">Enter a course code above, then click <strong>Check eligibility</strong></div></div></td></tr></tbody>
-        </table>
+      <div id="elUpdated" class="small text-secondary mb-2">Last update: -</div>
+      <div class="cpanel">
+        <div class="cp-h"><span class="cp-t">Eligible Students</span></div>
+        <div class="cp-b" style="padding:0;overflow-x:auto">
+          <table class="tbl-card mb-0" id="elTable" style="border-spacing:0 4px">
+            <thead><tr><th>Eligible Student IDs</th></tr></thead>
+            <tbody><tr><td><div class="empty-state"><span class="empty-icon">✅</span><div class="empty-title">No eligibility results</div><div class="empty-hint">Enter a course code above, then click <strong>Check</strong></div></div></td></tr></tbody>
+          </table>
+        </div>
       </div>
     </div>
 
@@ -2127,7 +2139,7 @@
     if (!requireFields(['dbgYear','dbgSemester'], 'dbgMeta', 'Debug report')) return;
     const btn = q('dbgRun');
     btn.disabled = true;
-    btn.textContent = 'Running...';
+    btn.innerHTML = '<svg class="i" viewBox="0 0 24 24" width="14" height="14" style="margin-right:4px"><path d="M5 12h14M12 5l7 7-7 7"/></svg>Running...';
     const url = `/report/recommendation-debug/?year=${encodeURIComponent(q('dbgYear').value)}&semester=${encodeURIComponent(q('dbgSemester').value)}&section=${encodeURIComponent(q('dbgSection').value)}&program=${encodeURIComponent(q('dbgProgram').value)}&join_years=${encodeURIComponent(q('dbgJoin').value)}&limit=${encodeURIComponent(q('dbgLimit').value)}`;
     q('dbgCsv').href = `/export/recommendation-debug.csv?year=${encodeURIComponent(q('dbgYear').value)}&semester=${encodeURIComponent(q('dbgSemester').value)}&section=${encodeURIComponent(q('dbgSection').value)}&program=${encodeURIComponent(q('dbgProgram').value)}&join_years=${encodeURIComponent(q('dbgJoin').value)}&limit=${encodeURIComponent(q('dbgLimit').value)}`;
     const tbody = document.querySelector('#dbgTable tbody');
@@ -2144,7 +2156,7 @@
       setUpdated('dbgUpdated', true);
       toast('Debug report failed', false);
       btn.disabled = false;
-      btn.textContent = 'Run';
+      btn.innerHTML = '<svg class="i" viewBox="0 0 24 24" width="14" height="14" style="margin-right:4px"><path d="M5 12h14M12 5l7 7-7 7"/></svg>Run';
       return;
     }
 
@@ -2155,7 +2167,7 @@
       q('dbgSummary').style.display = 'none';
       setUpdated('dbgUpdated', true);
       btn.disabled = false;
-      btn.textContent = 'Run';
+      btn.innerHTML = '<svg class="i" viewBox="0 0 24 24" width="14" height="14" style="margin-right:4px"><path d="M5 12h14M12 5l7 7-7 7"/></svg>Run';
       return;
     }
     q('dbgMeta').textContent = `Loaded ${data.count} students • filters: section=${data.filters?.section || '-'} program=${data.filters?.program || '-'} join=${(data.filters?.join_year_prefixes || []).join(',') || '-'}.`;
@@ -2164,22 +2176,20 @@
     q('dbgCount').textContent = String(data.count || 0);
     q('dbgWithRec').textContent = String(withRec);
     q('dbgWithoutRec').textContent = String((data.count || 0) - withRec);
-    q('dbgSummary').style.display = '';
+    q('dbgSummary').style.display = 'flex';
     tbody.innerHTML = data.items.map((x) => {
       const tracePayload = encodeURIComponent(JSON.stringify(x.recommendation_details || []));
       const summary = `Student ${x.student_id} (${x.program})\nReal→Next: ${x.real_term}→${x.next_term}\nRecommended: ${(x.recommended_courses || []).join(', ') || '-'}`;
-      return `
-      <tr>
-        <td>${x.student_id}</td>
-        <td>${x.program}</td>
-        <td>${x.real_term} → ${x.next_term}</td>
-        <td>${(x.passed || []).slice(0,4).join(', ')}${(x.passed || []).length > 4 ? ' ...' : ''}</td>
-        <td>${(x.studying || []).join(', ') || '-'}</td>
-        <td>${(x.recommended_courses || []).join(', ') || '-'}</td>
-        <td>
-          <button type="button" class="btn btn-sm btn-outline-secondary dbg-trace" data-trace="${tracePayload}">View</button>
-          <button type="button" class="btn btn-sm btn-outline-dark dbg-copy" data-summary="${encodeURIComponent(summary)}">Copy</button>
-        </td>
+      const recList = (x.recommended_courses || []);
+      const recHtml = recList.length ? recList.map(r => `<span class="pill-status pill-g" style="font-size:10px;margin:1px"><span class="pill-dot"></span>${r}</span>`).join('') : '<span style="color:var(--t5);font-size:11px">—</span>';
+      return `<tr class="cr-row">
+        <td><span class="cr-id">${x.student_id}</span></td>
+        <td style="font-family:var(--font-mono);font-size:12px">${x.program}</td>
+        <td style="font-family:var(--font-mono);font-size:11px">${x.real_term} → ${x.next_term}</td>
+        <td style="font-size:11px">${(x.passed || []).slice(0,4).join(', ')}${(x.passed || []).length > 4 ? ' ...' : ''}</td>
+        <td style="font-size:11px">${(x.studying || []).join(', ') || '-'}</td>
+        <td>${recHtml}</td>
+        <td style="white-space:nowrap"><button type="button" class="fb-dd dbg-trace" data-trace="${tracePayload}" style="font-size:11px;padding:3px 10px"><svg class="i i-sm" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>View</button> <button type="button" class="fb-dd dbg-copy" data-summary="${encodeURIComponent(summary)}" style="font-size:11px;padding:3px 10px"><svg class="i i-sm" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copy</button></td>
       </tr>`;
     }).join('') || '<tr><td colspan="7" class="empty-note">No students matched filters.</td></tr>';
 
@@ -2191,7 +2201,7 @@
         let items = [];
         try { items = JSON.parse(decodeURIComponent(raw)); } catch {}
         body.innerHTML = Array.isArray(items) && items.length
-          ? items.map((it) => `<div class="border rounded p-2 mb-2"><div><strong>${it.course_code}</strong></div><div class="small text-secondary">Prereqs: ${(it.prerequisites || []).join(', ') || 'None'}</div><div class="small">${(it.prerequisite_status || []).map((s) => `${s.prerequisite}: ${s.status}`).join(' • ') || 'No prerequisite status rows'}</div></div>`).join('')
+          ? items.map((it) => `<div class="plan-item"><div class="title">${it.course_code}</div><div class="sub">Prereqs: ${(it.prerequisites || []).join(', ') || 'None'}</div><div class="sub">${(it.prerequisite_status || []).map((s) => `<span class="pill-status ${s.status === 'passed' ? 'pill-g' : s.status === 'studying' ? 'pill-b' : 'pill-r'}" style="font-size:10px;margin:1px"><span class="pill-dot"></span>${s.prerequisite}: ${s.status}</span>`).join(' ') || 'No prerequisite status'}</div></div>`).join('')
           : '<div class="empty-note">No trace details for this student.</div>';
         const modalEl = q('debugTraceModal');
         if (modalEl) openDlgModal(modalEl);
@@ -2208,14 +2218,14 @@
     setUpdated('dbgUpdated');
     toast('Debug report loaded', true);
     btn.disabled = false;
-    btn.textContent = 'Run';
+    btn.innerHTML = '<svg class="i" viewBox="0 0 24 24" width="14" height="14" style="margin-right:4px"><path d="M5 12h14M12 5l7 7-7 7"/></svg>Run';
   };
 
   q('elRun').onclick = async () => {
     if (!requireFields(['elCourse'], 'elMeta', 'Eligibility')) return;
     const btn = q('elRun');
     btn.disabled = true;
-    btn.textContent = 'Checking...';
+    btn.innerHTML = '<svg class="i" viewBox="0 0 24 24" width="14" height="14" style="margin-right:4px"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>Checking...';
     const url = `/report/course-eligibility/?course_code=${encodeURIComponent(q('elCourse').value)}&section=${encodeURIComponent(q('elSection').value)}&program=${encodeURIComponent(q('elProgram').value)}&join_years=${encodeURIComponent(q('elJoin').value)}&mode=${encodeURIComponent(q('elMode').value)}`;
     q('elCsv').href = `/export/course-eligibility.csv?course_code=${encodeURIComponent(q('elCourse').value)}&section=${encodeURIComponent(q('elSection').value)}&program=${encodeURIComponent(q('elProgram').value)}&join_years=${encodeURIComponent(q('elJoin').value)}&mode=${encodeURIComponent(q('elMode').value)}`;
     const tbody = document.querySelector('#elTable tbody');
@@ -2232,7 +2242,7 @@
       tbody.innerHTML = '<tr><td class="text-danger">Network error while loading eligibility report.</td></tr>';
       toast('Eligibility report failed', false);
       btn.disabled = false;
-      btn.textContent = 'Check eligibility';
+      btn.innerHTML = '<svg class="i" viewBox="0 0 24 24" width="14" height="14" style="margin-right:4px"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>Check';
       return;
     }
     if (!res.ok || !Array.isArray(data.per_program)) {
@@ -2242,7 +2252,7 @@
       setUpdated('elUpdated', true);
       tbody.innerHTML = '<tr><td class="text-danger">Failed to load eligibility report.</td></tr>';
       btn.disabled = false;
-      btn.textContent = 'Check eligibility';
+      btn.innerHTML = '<svg class="i" viewBox="0 0 24 24" width="14" height="14" style="margin-right:4px"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>Check';
       return;
     }
 
@@ -2256,16 +2266,16 @@
     q('elCount').textContent = String(eligibleIds.length);
     q('elModeBadge').textContent = data.strict_passed_only ? 'strict' : 'relaxed';
     q('elCourseBadge').textContent = String(data.course_code || '-');
-    q('elSummary').style.display = '';
+    q('elSummary').style.display = 'flex';
 
     tbody.innerHTML = eligibleIds.length
-      ? eligibleIds.map((sid) => `<tr><td>${sid}</td></tr>`).join('')
+      ? eligibleIds.map((sid) => `<tr class="cr-row"><td><span class="cr-id">${sid}</span></td></tr>`).join('')
       : '<tr><td class="empty-note">No eligible student IDs for this filter.</td></tr>';
 
     setUpdated('elUpdated');
     toast('Eligibility report loaded', true);
     btn.disabled = false;
-    btn.textContent = 'Check eligibility';
+    btn.innerHTML = '<svg class="i" viewBox="0 0 24 24" width="14" height="14" style="margin-right:4px"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>Check';
   };
 
   async function refreshAdvisorsDropdown(selectAdvisorId = '') {
