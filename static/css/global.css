@@ -1162,6 +1162,20 @@ pre, .pre-output {
   gap:           0.875rem;
 }
 
+.dlg-close {
+  margin-left:   auto;
+  background:    none;
+  border:        none;
+  font-size:     1.5rem;
+  line-height:   1;
+  color:         var(--ink-light, #6b7280);
+  cursor:        pointer;
+  padding:       0 0.25rem;
+  opacity:       0.6;
+  transition:    opacity 0.15s;
+}
+.dlg-close:hover { opacity: 1; }
+
 .dlg-icon {
   flex-shrink: 0;
   width:       40px;
