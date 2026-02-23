@@ -71,7 +71,6 @@
       -webkit-backdrop-filter: blur(24px) saturate(130%);
       padding: 14px 18px; border-radius: var(--radius);
       box-shadow: 0 2px 12px rgba(17,17,68,0.05);
-      max-width: 960px; margin: 0 auto;
     }
     .cb-header {
       display: flex; align-items: center; justify-content: space-between;
@@ -163,9 +162,11 @@
     }
 
     /* ── Planner panels ──────────────────────────────────────── */
+    .planner-wrap {
+      max-width: 960px; margin: 0 auto;
+    }
     .planner-grid {
       display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
-      max-width: 960px; margin: 0 auto;
     }
     .pg-full { grid-column: 1 / -1; }
     @media (max-width: 992px) { .planner-grid { grid-template-columns: 1fr; } }
@@ -343,6 +344,8 @@
 
   <main class="flex-grow-1 p-3">
     <div class="container-fluid p-0">
+
+      <div class="planner-wrap">
 
       <div class="page-header">
         <div class="page-header-left">
@@ -601,6 +604,7 @@
 
       </div>
 
+      </div><!-- /.planner-wrap -->
     </div>
   </main>
 </div>
