@@ -111,10 +111,8 @@ html {
 }
 
 body {
-  background-color:    var(--bg) !important;
-  background-image:    radial-gradient(circle, #c5cedc 1px, transparent 1px) !important;
-  background-size:     24px 24px !important;
-  background-attachment: fixed !important;
+  background-color:    #f2f4f7 !important;
+  background-image:    none !important;
   color:               var(--ink) !important;
   font-family:         var(--font-body) !important;
   font-size:           0.9375rem;
@@ -396,14 +394,15 @@ main.flex-grow-1 {
 
 .panel h4 {
   margin-bottom:   0.2rem;
-  font-weight:     700;
-  font-size:       1.1rem;
-  color:           var(--ink);
+  font-family:     var(--font-serif);
+  font-weight:     400;
+  font-size:       1.15rem;
+  color:           var(--navy);
   letter-spacing: -0.01em;
 }
 
 .panel-sub {
-  color:         var(--muted);
+  color:         var(--t3);
   font-size:     0.875rem;
   margin-bottom: 1.25rem;
   max-width:     80ch;
@@ -414,20 +413,24 @@ main.flex-grow-1 {
    CARDS
    ============================================================ */
 .soft-card {
-  border:           1px solid var(--line) !important;
-  border-top:       1px solid rgba(255,255,255,.9) !important;
+  border:           1px solid rgba(17,17,68,0.05) !important;
   border-radius:    var(--radius-lg) !important;
-  background-color: var(--card) !important;
-  /* subtle brand wash at the top */
-  background-image: linear-gradient(180deg, rgba(10,142,110,.025) 0%, transparent 60px) !important;
+  background:       rgba(255,255,255,0.55) !important;
+  backdrop-filter:  blur(20px) saturate(130%);
+  -webkit-backdrop-filter: blur(20px) saturate(130%);
   box-shadow:       var(--shadow-card) !important;
   padding:          1.25rem;
   margin-bottom:    1rem;
-  transition:       box-shadow 0.2s ease;
+  transition:       all 0.25s ease;
+  position:         relative;
+  overflow:         hidden;
 }
 
 .soft-card:hover {
-  box-shadow: var(--shadow-lift) !important;
+  border-color:     rgba(17,17,68,0.08) !important;
+  box-shadow:       var(--shadow-lift) !important;
+  background:       rgba(255,255,255,0.7) !important;
+  transform:        translateY(-1px);
 }
 
 /* ============================================================
@@ -596,28 +599,30 @@ html body .btn:focus-visible {
 
 .table-wrap tbody tr { transition: background .10s ease; }
 
-.table-wrap tbody tr:hover td { background: #f4f7fc; }
+.table-wrap tbody tr:hover td { background: rgba(10,142,110,0.03); }
 
 .table-wrap thead th {
   position:      sticky;
   top:           0;
-  background:    #f4f7fc !important;
-  border-bottom: 1px solid var(--line);
+  background:    rgba(255,255,255,0.6) !important;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(17,17,68,0.06);
   z-index:       2;
   cursor:        pointer;
-  font-family:   var(--font-body);
+  font-family:   var(--font-mono);
   font-weight:   700;
-  font-size:     0.72rem;
+  font-size:     0.65rem;
   text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color:         var(--ink-2);
+  letter-spacing: 0.08em;
+  color:         var(--t5);
   padding:       0.55rem 0.75rem;
   text-align:    start;
   white-space:   nowrap;
   user-select:   none;
 }
 
-.table-wrap thead th:hover { background: #eaeef5 !important; }
+.table-wrap thead th:hover { background: rgba(255,255,255,0.8) !important; color: var(--t3); }
 
 .table-wrap tbody td {
   font-family:  var(--font-body);
@@ -637,42 +642,63 @@ html body .btn:focus-visible {
    METRICS
    ============================================================ */
 .metric {
-  border:        1px solid var(--line);
+  border:        1px solid rgba(17,17,68,0.05);
   border-radius: var(--radius);
   padding:       0.875rem 1rem;
-  background:    var(--card);
+  background:    rgba(255,255,255,0.55);
+  backdrop-filter: blur(20px) saturate(130%);
+  -webkit-backdrop-filter: blur(20px) saturate(130%);
   height:        100%;
   box-shadow:    var(--shadow-card);
-  transition:    box-shadow .20s ease, transform .20s ease;
+  transition:    all .25s ease;
+  position:      relative;
+  overflow:      hidden;
 }
 
-.metric:hover { transform: translateY(-2px); box-shadow: var(--shadow-lift); }
+.metric::before {
+  content:    '';
+  position:   absolute;
+  top:        0;
+  left:       15%;
+  right:      15%;
+  height:     1.5px;
+  background: var(--teal);
+  opacity:    0.3;
+  transition: all 0.25s ease;
+}
+
+.metric:hover {
+  transform:    translateY(-2px);
+  box-shadow:   var(--shadow-lift);
+  border-color: rgba(17,17,68,0.08);
+  background:   rgba(255,255,255,0.7);
+}
+.metric:hover::before { left: 5%; right: 5%; opacity: 0.5; }
 
 .metric .k {
-  font-family:    var(--font-body);
-  color:          var(--muted);
-  font-size:      0.72rem;
+  font-family:    var(--font-mono);
+  color:          var(--t4);
+  font-size:      0.65rem;
   font-weight:    700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  margin-bottom:  0.3rem;
+  margin-bottom:  0.35rem;
 }
 
 .metric .v {
-  font-family:    var(--font-mono) !important;
-  font-weight:    600;
-  font-size:      1.5rem;
-  color:          var(--ink);
+  font-family:    var(--font-serif) !important;
+  font-weight:    400;
+  font-size:      1.6rem;
+  color:          var(--teal);
   letter-spacing: -0.02em;
   line-height:    1.1;
 }
 
 #studentPlanMetrics .metric {
-  border-color: #a8e6d4;
-  background: linear-gradient(135deg, #f0faf6 0%, #ffffff 100%);
+  border-color: var(--teal-border);
 }
 
-#studentPlanMetrics .metric .v { font-size: 1.6rem; color: var(--brand-dark); }
+#studentPlanMetrics .metric .v { font-size: 1.6rem; color: var(--teal-deep); }
 
 /* ============================================================
    STATUS INDICATORS
