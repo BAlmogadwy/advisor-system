@@ -1998,8 +1998,8 @@ pre, .pre-output {
   display:     flex;
   align-items: center;
   justify-content: center;
-  font-size:   1.15rem;
 }
+.dlg-icon .i { width: 20px; height: 20px; }
 
 .dlg-icon-danger  { background: #fff1f2; color: #dc2626; }
 .dlg-icon-warning { background: #fff7ed; color: #d97706; }

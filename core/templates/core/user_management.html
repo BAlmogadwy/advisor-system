@@ -422,7 +422,12 @@ const notify = (() => {
    DIALOG SYSTEM
    ═══════════════════════════════════════════════════════════════ */
 const dlg = (() => {
-  const ICONS = { danger: '🗑️', warning: '⚠️', info: 'ℹ️', success: '✅' };
+  const ICONS = {
+    danger:  '<span class="i"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></span>',
+    warning: '<span class="i"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>',
+    info:    '<span class="i"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></span>',
+    success: '<span class="i"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>',
+  };
 
   function build(opts) {
     const kind = opts.kind || 'danger';
@@ -431,7 +436,7 @@ const dlg = (() => {
     backdrop.innerHTML = `
       <div class="dlg-box" role="dialog" aria-modal="true">
         <div class="dlg-header">
-          <div class="dlg-icon dlg-icon-${kind}">${ICONS[kind] || '⚠️'}</div>
+          <div class="dlg-icon dlg-icon-${kind}">${ICONS[kind] || ICONS.warning}</div>
           <div><div class="dlg-title">${opts.title || 'Confirm'}</div></div>
         </div>
         <div class="dlg-body">${opts.body || ''}</div>
@@ -529,7 +534,7 @@ async function apiPost(url, payload) {
 async function loadUsers() {
   const tbody = q('umTable')?.querySelector('tbody');
   if (!tbody) return;
-  tbody.innerHTML = '<tr><td colspan="9"><div class="um-empty"><span class="um-empty-icon">⏳</span><div class="um-empty-title">Loading…</div></div></td></tr>';
+  tbody.innerHTML = '<tr><td colspan="9"><div class="um-empty"><span class="um-empty-icon"><span class="i" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg></span></span><div class="um-empty-title">Loading…</div></div></td></tr>';
 
   try {
     const res = await fetch('/ops/users/list/');
@@ -623,7 +628,7 @@ function renderTable(users) {
       <td>
         <div class="um-row-actions">
           <button class="um-row-btn um-btn-edit" title="Edit role/scope" onclick="event.stopPropagation();selectUser('${esc(u.username)}')">✎</button>
-          <button class="um-row-btn um-btn-key" title="Reset password" onclick="event.stopPropagation();resetPasswordFor('${esc(u.username)}')">🔑</button>
+          <button class="um-row-btn um-btn-key" title="Reset password" onclick="event.stopPropagation();resetPasswordFor('${esc(u.username)}')"><span class="i" style="width:14px;height:14px"><svg viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg></span></button>
           <button class="um-row-btn um-btn-del" title="Delete user" onclick="event.stopPropagation();deleteUserFor('${esc(u.username)}')">✕</button>
         </div>
       </td>
@@ -666,7 +671,7 @@ function selectUser(username) {
 
   selectedUsername = username;
   q('editPanel').style.display = 'block';
-  q('editingLabel').textContent = `👤 ${username}`;
+  q('editingLabel').innerHTML = `<span class="i" style="width:14px;height:14px"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span> ${esc(username)}`;
 
   // Populate edit fields
   q('eRole').value = user.role;
