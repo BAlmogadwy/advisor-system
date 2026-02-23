@@ -1458,9 +1458,6 @@ tr.attention-row td { background: #fff7ed !important; }
 
 .sticky-cta {
   position: sticky; top: 0.5rem; z-index: 6;
-  background: rgba(255,255,255,.88); backdrop-filter: blur(8px);
-  border: 1px solid var(--line); border-radius: var(--radius); padding: 0.6rem;
-  box-shadow: 0 4px 16px rgba(13,21,38,.08);
 }
 
 .mini-bar-wrap {
