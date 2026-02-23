@@ -650,32 +650,27 @@
         </button>
       </div>
       <!-- Metrics -->
-      <div class="row g-3 mb-3" id="preMetrics" style="display:none;">
-        <div class="col-md-4"><div class="mc mc-royal"><div style="display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:var(--royal)"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg><div><div class="mc-lbl">Program</div><div class="mc-val" id="preMetricProgram">-</div></div></div></div></div>
-        <div class="col-md-4"><div class="mc mc-teal"><div style="display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:var(--teal)"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg><div><div class="mc-lbl">Courses in view</div><div class="mc-val" id="preMetricCourses">0</div></div></div></div></div>
-        <div class="col-md-4"><div class="mc mc-sky"><div style="display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:var(--sky)"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg><div><div class="mc-lbl">Prerequisite links</div><div class="mc-val" id="preMetricLinks">0</div></div></div></div></div>
+      <div id="preMetrics" style="display:none;gap:12px;margin-bottom:16px">
+        <div style="flex:1;min-width:0"><div class="mc mc-royal"><div style="display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:var(--royal)"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg><div><div class="mc-lbl">Program</div><div class="mc-val" id="preMetricProgram">-</div></div></div></div></div>
+        <div style="flex:1;min-width:0"><div class="mc mc-teal"><div style="display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:var(--teal)"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg><div><div class="mc-lbl">Courses in view</div><div class="mc-val" id="preMetricCourses">0</div></div></div></div></div>
+        <div style="flex:1;min-width:0"><div class="mc mc-sky"><div style="display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:var(--sky)"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg><div><div class="mc-lbl">Prerequisite links</div><div class="mc-val" id="preMetricLinks">0</div></div></div></div></div>
       </div>
       <div id="preUpdated" class="small text-secondary mb-3">Last update: -</div>
-      <!-- Two-column: Table + Graph -->
-      <div class="row g-3">
-        <div class="col-lg-5">
-          <div class="cpanel">
-            <div class="cp-h"><span class="cp-t">Prerequisite Links</span><span class="pill-status pill-b" id="preLinkCount" style="display:none"><span class="pill-dot"></span><span id="preLinkNum">0</span> links</span></div>
-            <div class="cp-b" style="padding:0;max-height:520px;overflow-y:auto">
-              <table class="tbl-card mb-0" id="preTable" style="border-spacing:0 4px">
-                <thead><tr><th data-sort="text">Course</th><th style="width:28px"></th><th data-sort="text">Prerequisite</th></tr></thead>
-                <tbody><tr><td colspan="3"><div class="empty-state"><span class="empty-icon">📋</span><div class="empty-title">No prerequisites loaded</div><div class="empty-hint">Choose a program above, then click <strong>Load</strong></div></div></td></tr></tbody>
-              </table>
-            </div>
-          </div>
+      <!-- Graph full width on top -->
+      <div class="cpanel mb-3">
+        <div class="cp-h"><span class="cp-t">Dependency Graph</span><span class="cp-live">VISUAL</span></div>
+        <div class="cp-b" id="preGraph" style="min-height:320px;overflow-x:auto;overflow-y:auto;padding:16px">
+          <div class="empty-state"><span class="empty-icon">🔗</span><div class="empty-title">No graph data</div><div class="empty-hint">Load prerequisites to visualize dependency chains</div></div>
         </div>
-        <div class="col-lg-7">
-          <div class="cpanel" style="position:sticky;top:16px">
-            <div class="cp-h"><span class="cp-t">Dependency Graph</span><span class="cp-live">VISUAL</span></div>
-            <div class="cp-b" id="preGraph" style="min-height:320px;overflow:auto;padding:16px">
-              <div class="empty-state"><span class="empty-icon">🔗</span><div class="empty-title">No graph data</div><div class="empty-hint">Load prerequisites to visualize dependency chains</div></div>
-            </div>
-          </div>
+      </div>
+      <!-- Table below -->
+      <div class="cpanel">
+        <div class="cp-h"><span class="cp-t">Prerequisite Links</span><span class="pill-status pill-b" id="preLinkCount" style="display:none"><span class="pill-dot"></span><span id="preLinkNum">0</span> links</span></div>
+        <div class="cp-b" style="padding:0;max-height:420px;overflow-y:auto">
+          <table class="tbl-card mb-0" id="preTable" style="border-spacing:0 4px">
+            <thead><tr><th data-sort="text">Course</th><th style="width:32px;text-align:center">→</th><th data-sort="text">Requires</th></tr></thead>
+            <tbody><tr><td colspan="3"><div class="empty-state"><span class="empty-icon">📋</span><div class="empty-title">No prerequisites loaded</div><div class="empty-hint">Choose a program above, then click <strong>Load</strong></div></div></td></tr></tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -1301,7 +1296,7 @@
 
     /* table — card-rows: one row per individual prerequisite edge */
     tbody.innerHTML = norm
-      .map(row => `<tr class="cr-row"><td><span class="cr-id">${row.course_code}</span></td><td style="text-align:center;color:var(--t5);padding:6px 2px"><svg width="18" height="14" viewBox="0 0 18 14" class="i" style="opacity:.35"><path d="M16 7H2m0 0 5-5M2 7l5 5"/></svg></td><td><span style="font-family:var(--font-mono);font-size:12px;font-weight:600;color:var(--royal)">${row.prerequisite_course_code}</span></td></tr>`)
+      .map(row => `<tr class="cr-row"><td><span class="cr-id">${row.course_code}</span></td><td style="text-align:center;padding:6px 0"><svg width="20" height="12" viewBox="0 0 20 12" style="vertical-align:middle"><path d="M2 6h16M14 2l4 4-4 4" fill="none" stroke="var(--teal)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.5"/></svg></td><td><span style="font-family:var(--font-mono);font-size:12px;font-weight:600;color:var(--royal)">${row.prerequisite_course_code}</span></td></tr>`)
       .join('');
 
     /* SVG dependency graph */
