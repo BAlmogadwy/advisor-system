@@ -11,8 +11,8 @@
  * ============================================================
  */
 
-/* ── FONTS (self-contained — no template changes needed) ─── */
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap');
+/* ── FONTS — Taibah University brand ─────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=DM+Serif+Display:ital@0;1&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
 /* Arabic (loads only when page lang=ar) */
 @import url('https://fonts.googleapis.com/css2?family=Noto+Kufi+Arabic:wght@400;600;700&display=swap');
@@ -25,49 +25,82 @@
   --bg:             #eef1f7;
   --card:           #ffffff;
 
-  /* ink */
-  --ink:            #0d1526;
-  --ink-2:          #334155;
-  --muted:          #64748b;
-  --muted-light:    #94a3b8;
+  /* ink — WCAG AA compliant text hierarchy */
+  --ink:            #111144;
+  --ink-2:          #1e1e4a;
+  --t0:             #111144;
+  --t1:             #1e1e4a;
+  --t2:             #3e3e62;
+  --t3:             #5c5c7a;
+  --t4:             #7a7a92;
+  --t5:             #a8a8be;
+  --muted:          #5c5c7a;
+  --muted-light:    #7a7a92;
 
   /* borders */
   --line:           #dde3ed;
   --line-strong:    #c8d0df;
 
-  /* brand blue */
-  --brand:          #1d6ef5;
-  --brand-dark:     #1558d6;
-  --brand-soft:     #dbeafe;
-  --brand-glow:     rgba(29, 110, 245, 0.18);
+  /* Taibah University brand — primary teal */
+  --brand:          #0A8E6E;
+  --brand-dark:     #067858;
+  --brand-soft:     rgba(10,142,110,0.06);
+  --brand-glow:     rgba(10, 142, 110, 0.18);
 
-  /* sidebar (dark navy) */
+  /* Extended Taibah palette */
+  --teal:           #0A8E6E;
+  --teal-bright:    #0CA87E;
+  --teal-pale:      #2EC9A0;
+  --teal-deep:      #067858;
+  --teal-dim:       rgba(10,142,110,0.06);
+  --teal-border:    rgba(10,142,110,0.16);
+
+  --royal:          #4056E3;
+  --royal-bright:   #5068F0;
+  --royal-dim:      rgba(64,86,227,0.06);
+  --royal-border:   rgba(64,86,227,0.16);
+
+  --sky:            #00AEDA;
+  --sky-bright:     #10C0EC;
+  --sky-dim:        rgba(0,174,218,0.06);
+
+  --navy:           #111144;
+
+  /* sidebar (dark navy — Phase 3 will switch to glassmorphism) */
   --sidebar-bg:     #0c1322;
   --sidebar-hover:  #141e35;
   --sidebar-active: #17244a;
   --sidebar-ink:    #c8d4e8;
   --sidebar-muted:  #4b6080;
-  --sidebar-bar:    #5b9cf6;
-  --sidebar-glow:   rgba(91, 156, 246, 0.28);
+  --sidebar-bar:    #0CA87E;
+  --sidebar-glow:   rgba(10, 142, 110, 0.28);
 
   /* semantic */
-  --success:        #12a259;
-  --danger:         #e03434;
-  --warning:        #d97706;
+  --success:        #0A8E6E;
+  --danger:         #C03030;
+  --warning:        #9A6A08;
 
   /* shape */
   --radius:         10px;
   --radius-sm:      7px;
   --radius-lg:      14px;
 
-  /* typography */
-  --font-body:      'IBM Plex Sans', 'Noto Kufi Arabic', system-ui, sans-serif;
-  --font-mono:      'IBM Plex Mono', 'Cascadia Code', ui-monospace, monospace;
+  /* typography — Taibah brand fonts */
+  --font-body:      'Inter', 'Noto Kufi Arabic', system-ui, sans-serif;
+  --font-mono:      'JetBrains Mono', 'Cascadia Code', ui-monospace, monospace;
+  --font-serif:     'DM Serif Display', serif;
 
   /* shadows */
   --shadow-card:    0 1px 3px rgba(13,21,38,.06), 0 8px 24px rgba(13,21,38,.07);
   --shadow-lift:    0 4px 12px rgba(13,21,38,.10), 0 16px 40px rgba(13,21,38,.09);
   --shadow-input:   0 1px 2px rgba(13,21,38,.04);
+
+  /* focus (teal ring for accessibility) */
+  --focus-ring:     0 0 0 2px #fff, 0 0 0 4px var(--teal);
+
+  /* transitions */
+  --ease:           cubic-bezier(0.16,1,0.3,1);
+  --spring:         cubic-bezier(0.34,1.56,0.64,1);
 }
 
 /* ============================================================
@@ -128,7 +161,7 @@ main.flex-grow-1 {
   padding:         1.25rem 1rem 0.75rem;
   margin:          0;
   border-bottom:   1px solid rgba(255,255,255,.06);
-  background:      linear-gradient(180deg, rgba(29,110,245,.15) 0%, transparent 100%);
+  background:      linear-gradient(180deg, rgba(10,142,110,.15) 0%, transparent 100%);
 }
 
 /* Section labels ("Main" / "Admin") */
@@ -265,7 +298,7 @@ main.flex-grow-1 {
   border-radius:    var(--radius-lg) !important;
   background-color: var(--card) !important;
   /* subtle brand wash at the top */
-  background-image: linear-gradient(180deg, rgba(29,110,245,.025) 0%, transparent 60px) !important;
+  background-image: linear-gradient(180deg, rgba(10,142,110,.025) 0%, transparent 60px) !important;
   box-shadow:       var(--shadow-card) !important;
   padding:          1.25rem;
   margin-bottom:    1rem;
@@ -326,8 +359,8 @@ html body .btn {
 }
 
 html body .btn-primary {
-  background:  linear-gradient(180deg, #2876f7 0%, var(--brand-dark) 100%) !important;
-  border-color: var(--brand-dark) !important;
+  background:  linear-gradient(135deg, var(--teal-bright) 0%, var(--teal) 40%, var(--teal-deep) 100%) !important;
+  border-color: rgba(10,142,110,0.3) !important;
   color:       #fff !important;
   box-shadow:  0 1px 0 rgba(0,0,0,.15),
                inset 0 1px 0 rgba(255,255,255,.15) !important;
@@ -335,21 +368,21 @@ html body .btn-primary {
 
 html body .btn-primary:hover,
 html body .btn-primary:focus {
-  background:  linear-gradient(180deg, #3381fa 0%, var(--brand) 100%) !important;
-  border-color: var(--brand) !important;
+  background:  linear-gradient(135deg, var(--teal-pale) 0%, var(--teal-bright) 40%, var(--teal) 100%) !important;
+  border-color: var(--teal) !important;
   transform:   translateY(-1px);
-  box-shadow:  0 3px 10px rgba(29,110,245,.35),
+  box-shadow:  0 3px 10px rgba(10,142,110,.35),
                inset 0 1px 0 rgba(255,255,255,.15) !important;
 }
 
 html body .btn-primary:active {
   transform:   translateY(0);
-  box-shadow:  0 1px 2px rgba(29,110,245,.20) !important;
+  box-shadow:  0 1px 2px rgba(10,142,110,.20) !important;
 }
 
 html body .btn-success {
-  background:  linear-gradient(180deg, #14ad64 0%, #0d9253 100%) !important;
-  border-color: #0d9253 !important;
+  background:  linear-gradient(135deg, var(--teal-bright) 0%, var(--teal) 100%) !important;
+  border-color: var(--teal-deep) !important;
   color:       #fff !important;
   box-shadow:  0 1px 0 rgba(0,0,0,.12),
                inset 0 1px 0 rgba(255,255,255,.12) !important;
@@ -372,14 +405,14 @@ html body .btn-danger:hover {
 }
 
 html body .btn-outline-primary {
-  color:        var(--brand) !important;
-  border-color: var(--brand) !important;
-  background:   rgba(29,110,245,.04) !important;
+  color:        var(--teal) !important;
+  border-color: var(--teal-border) !important;
+  background:   var(--teal-dim) !important;
 }
 
 html body .btn-outline-primary:hover {
-  background: var(--brand-soft) !important;
-  color:      var(--brand-dark) !important;
+  background: rgba(10,142,110,0.10) !important;
+  color:      var(--teal-deep) !important;
 }
 
 html body .btn-outline-secondary {
@@ -514,8 +547,8 @@ html body .btn:focus-visible {
 }
 
 #studentPlanMetrics .metric {
-  border-color: #c3d6ff;
-  background: linear-gradient(135deg, #f4f8ff 0%, #ffffff 100%);
+  border-color: #a8e6d4;
+  background: linear-gradient(135deg, #f0faf6 0%, #ffffff 100%);
 }
 
 #studentPlanMetrics .metric .v { font-size: 1.6rem; color: var(--brand-dark); }
@@ -547,7 +580,7 @@ html body .btn:focus-visible {
 }
 
 .status-passed,           .status-passed td           { background: #ecfdf5 !important; }
-.status-studying,         .status-studying td         { background: #eff6ff !important; }
+.status-studying,         .status-studying td         { background: #ecf9f4 !important; }
 .status-can-register,     .status-can-register td     { background: #d1fae5 !important; }
 
 /* ============================================================
@@ -690,25 +723,25 @@ tr.attention-row td { background: #fff7ed !important; }
    COURSE ROW / DRAWER / ADVISOR BLOCK
    ============================================================ */
 .course-row { cursor: pointer; transition: background .10s; }
-.course-row.active { outline: 2px solid var(--brand); outline-offset: -1px; background: #f0f6ff; }
+.course-row.active { outline: 2px solid var(--brand); outline-offset: -1px; background: #ecf9f4; }
 .plan-course-link { cursor: pointer; }
 
 .drawer {
   position: sticky; top: 1rem;
-  border: 1px solid #c3d6ff; background: linear-gradient(160deg, #f4f8ff 0%, #fff 100%);
+  border: 1px solid #a8e6d4; background: linear-gradient(160deg, #f0faf6 0%, #fff 100%);
   border-radius: var(--radius); padding: 0.875rem;
-  box-shadow: 0 4px 16px rgba(29,110,245,.08);
+  box-shadow: 0 4px 16px rgba(10,142,110,.08);
 }
 .drawer h6 { margin-bottom: 0.4rem; font-weight: 700; color: var(--brand-dark); }
 .drawer .kv { font-size: 0.85rem; color: var(--ink-2); margin-bottom: 0.28rem; }
 
 .advisor-block {
-  border: 1px solid #c3d6ff; background: linear-gradient(160deg, #f4f8ff 0%, #fff 100%);
+  border: 1px solid #a8e6d4; background: linear-gradient(160deg, #f0faf6 0%, #fff 100%);
   border-radius: var(--radius); padding: 1rem; margin-top: 0.875rem;
-  box-shadow: 0 2px 8px rgba(29,110,245,.07);
+  box-shadow: 0 2px 8px rgba(10,142,110,.07);
 }
 .advisor-block h6 {
-  margin-bottom: 0.55rem; font-weight: 700; color: #1e3a8a; font-size: 0.875rem;
+  margin-bottom: 0.55rem; font-weight: 700; color: #045a3e; font-size: 0.875rem;
   display: flex; align-items: center; gap: 0.45rem;
 }
 
@@ -783,7 +816,7 @@ tr.attention-row td { background: #fff7ed !important; }
 #student .secondary-inline-actions .btn { min-height: 34px; }
 
 #batch .batch-filters .btn-success { font-weight: 700; }
-#batchMetrics .metric              { border-color: #bfdbfe; background: #f8fbff; }
+#batchMetrics .metric              { border-color: #a8e6d4; background: #f5fcf9; }
 #batch .batch-export-row           { margin-top: 0.75rem; }
 #batch .batch-export-row .btn      { min-height: 36px; }
 
@@ -795,7 +828,7 @@ tr.attention-row td { background: #fff7ed !important; }
 #advisorportfolio #advTable td:nth-child(11) {
   max-width: 220px; overflow: hidden; text-overflow: ellipsis;
 }
-#advisorportfolio #advTable thead th { background: #eff6ff; color: #1e3a8a; }
+#advisorportfolio #advTable thead th { background: #ecf9f4; color: #045a3e; }
 
 #advisoradmin .btn-primary,
 #advisorportfolio .btn-primary     { font-weight: 600; }
@@ -803,7 +836,7 @@ tr.attention-row td { background: #fff7ed !important; }
 #advisorportfolio .panel-sub       { font-size: 0.875rem; }
 #advisoradmin .actions-row .btn,
 #advisorportfolio .actions-row .btn { border-radius: var(--radius-sm); }
-#advisoradmin .advisor-block       { border-color: #c3d6ff; }
+#advisoradmin .advisor-block       { border-color: #a8e6d4; }
 
 #usermgmt .actions-row .btn        { flex: 1 1 180px; }
 #umMeta.meta-banner                { font-size: 0.85rem; }
@@ -872,18 +905,18 @@ pre, .pre-output {
   height:         40px;
   border-radius:  10px;
   border:         none;
-  background:     var(--brand, #1d6ef5);
+  background:     var(--teal);
   color:          #fff;
   cursor:         pointer;
   flex-shrink:    0;
   margin-inline-end: 0.5rem;   /* gap between hamburger and module title */
-  box-shadow:     0 2px 8px rgba(29,110,245,0.3);
+  box-shadow:     0 2px 8px rgba(10,142,110,0.3);
   transition:     background 0.15s ease, transform 0.1s ease;
   position:       relative;
   z-index:        300;
 }
 
-.sidebar-toggle:hover  { background: #1558d6; }
+.sidebar-toggle:hover  { background: var(--teal-deep); }
 .sidebar-toggle:active { transform: scale(0.93); }
 
 .sidebar-toggle-icon {
@@ -1189,7 +1222,7 @@ pre, .pre-output {
 
 .dlg-icon-danger  { background: #fff1f2; color: #dc2626; }
 .dlg-icon-warning { background: #fff7ed; color: #d97706; }
-.dlg-icon-info    { background: #eff6ff; color: #2563eb; }
+.dlg-icon-info    { background: #ecf9f4; color: var(--teal); }
 .dlg-icon-success { background: #f0fdf4; color: #16a34a; }
 
 .dlg-title {
@@ -1318,15 +1351,15 @@ pre, .pre-output {
 }
 
 .dlg-footer .btn-confirm.primary {
-  background: linear-gradient(180deg, #2876f7, var(--brand-dark));
+  background: linear-gradient(180deg, var(--teal-bright), var(--teal-deep));
   color:      #fff;
-  box-shadow: 0 1px 3px rgba(29,110,245,.3);
+  box-shadow: 0 1px 3px rgba(10,142,110,.3);
 }
 
 .dlg-footer .btn-confirm.primary:hover {
-  background: linear-gradient(180deg, #3381fa, var(--brand));
+  background: linear-gradient(180deg, var(--teal-pale), var(--teal));
   transform:  translateY(-1px);
-  box-shadow: 0 3px 10px rgba(29,110,245,.35);
+  box-shadow: 0 3px 10px rgba(10,142,110,.35);
 }
 
 .dlg-footer .btn-confirm.warning {
@@ -1403,7 +1436,7 @@ pre, .pre-output {
 
 .ux-toast.success .ux-toast-icon { background: #f0fdf4; color: var(--success); }
 .ux-toast.error   .ux-toast-icon { background: #fff1f2; color: var(--danger);  }
-.ux-toast.info    .ux-toast-icon { background: #eff6ff; color: var(--brand);   }
+.ux-toast.info    .ux-toast-icon { background: #ecf9f4; color: var(--brand);   }
 .ux-toast.warning .ux-toast-icon { background: #fffbeb; color: var(--warning); }
 
 .ux-toast-body { flex: 1; min-width: 0; }
@@ -1489,7 +1522,7 @@ pre, .pre-output {
 /* Active sort col gets subtle highlight */
 .table-wrap thead th[data-sort][data-dir] {
   color: var(--brand-dark) !important;
-  background: #eff6ff !important;
+  background: #ecf9f4 !important;
 }
 
 /* ============================================================
@@ -1535,7 +1568,7 @@ pre, .pre-output {
   width:           34px;
   height:          34px;
   border-radius:   9px;
-  background:      linear-gradient(135deg, var(--brand), #388bfd);
+  background:      linear-gradient(135deg, var(--teal), var(--teal-bright));
   color:           #fff;
   font-family:     var(--font-body);
   font-weight:     700;
@@ -1544,7 +1577,7 @@ pre, .pre-output {
   align-items:     center;
   justify-content: center;
   letter-spacing:  0.01em;
-  box-shadow:      0 2px 6px rgba(29,110,245,.35);
+  box-shadow:      0 2px 6px rgba(10,142,110,.35);
 }
 
 .sb-user-info { flex: 1; min-width: 0; }
@@ -1660,9 +1693,9 @@ kbd {
 
 /* Restore crisp ring for keyboard users */
 *:focus-visible {
-  outline:        2px solid var(--brand) !important;
+  outline:        none !important;
   outline-offset: 2px !important;
-  box-shadow:     0 0 0 4px var(--brand-glow) !important;
+  box-shadow:     var(--focus-ring) !important;
   border-radius:  var(--radius-sm);
 }
 
@@ -1789,7 +1822,7 @@ kbd {
   pointer-events: all;
   color:          var(--brand);
   background:     var(--brand-soft);
-  border-color:   #bfdbfe;
+  border-color:   #a8e6d4;
 }
 
 .adv-planner-btn:hover {
@@ -1811,6 +1844,6 @@ kbd {
     pointer-events: all;
     color:          var(--brand);
     background:     var(--brand-soft);
-    border-color:   #bfdbfe;
+    border-color:   #a8e6d4;
   }
 }

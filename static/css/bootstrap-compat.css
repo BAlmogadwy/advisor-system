@@ -136,7 +136,7 @@
   vertical-align: baseline;
   border-radius: var(--radius-sm, 7px);
 }
-.text-bg-primary   { background-color: var(--brand, #1d6ef5) !important; color: #fff !important; }
+.text-bg-primary   { background-color: var(--brand, #0A8E6E) !important; color: #fff !important; }
 .text-bg-secondary { background-color: #6c757d !important; color: #fff !important; }
 .text-bg-success   { background-color: var(--success, #12a259) !important; color: #fff !important; }
 .text-bg-danger    { background-color: var(--danger, #e03434) !important; color: #fff !important; }
@@ -180,9 +180,9 @@
   appearance: none;
 }
 .form-control:focus {
-  border-color: var(--brand, #1d6ef5);
+  border-color: var(--brand, #0A8E6E);
   outline: 0;
-  box-shadow: 0 0 0 3px var(--brand-glow, rgba(29,110,245,0.18));
+  box-shadow: 0 0 0 3px var(--brand-glow, rgba(10,142,110,0.18));
 }
 .form-control-sm {
   padding: 0.3rem 0.55rem;
@@ -213,9 +213,9 @@ html[dir="rtl"] .form-select {
   padding: 0.45rem 0.75rem 0.45rem 2rem;
 }
 .form-select:focus {
-  border-color: var(--brand, #1d6ef5);
+  border-color: var(--brand, #0A8E6E);
   outline: 0;
-  box-shadow: 0 0 0 3px var(--brand-glow, rgba(29,110,245,0.18));
+  box-shadow: 0 0 0 3px var(--brand-glow, rgba(10,142,110,0.18));
 }
 .form-select-sm {
   padding-top: 0.3rem;
@@ -225,14 +225,14 @@ html[dir="rtl"] .form-select {
 
 .form-check          { display: flex; align-items: center; gap: 0.4rem; min-height: 1.5rem; }
 .form-check-input    { width: 1rem; height: 1rem; margin: 0; border: 1px solid var(--line, #dde3ed); border-radius: 0.25rem; appearance: none; background-color: #fff; cursor: pointer; }
-.form-check-input:checked { background-color: var(--brand, #1d6ef5); border-color: var(--brand, #1d6ef5); background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3e%3cpath fill='none' stroke='%23fff' stroke-linecap='round' stroke-linejoin='round' stroke-width='3' d='m6 10 3 3 6-6'/%3e%3c/svg%3e"); background-size: 100%; background-position: center; }
+.form-check-input:checked { background-color: var(--brand, #0A8E6E); border-color: var(--brand, #0A8E6E); background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3e%3cpath fill='none' stroke='%23fff' stroke-linecap='round' stroke-linejoin='round' stroke-width='3' d='m6 10 3 3 6-6'/%3e%3c/svg%3e"); background-size: 100%; background-position: center; }
 .form-check-label    { cursor: pointer; font-size: 0.88rem; }
 
 /* ── BUTTONS ─────────────────────────────────────────────── */
 /* Base btn is defined in global.css — these are supplementary */
 .btn-link {
   font-weight: 400;
-  color: var(--brand, #1d6ef5);
+  color: var(--brand, #0A8E6E);
   text-decoration: underline;
   background: none;
   border: none;
@@ -317,7 +317,7 @@ html[dir="rtl"] .form-select {
   color: #fff;
   text-align: center;
   white-space: nowrap;
-  background-color: var(--brand, #1d6ef5);
+  background-color: var(--brand, #0A8E6E);
   transition: width 0.6s ease;
 }
 
