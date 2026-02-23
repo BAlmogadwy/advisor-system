@@ -792,7 +792,7 @@ html body .btn:focus-visible {
 
 /* ── Card rows — glassmorphic table rows ── */
 .tbl-card tbody tr.cr-row {
-  background:rgba(255,255,255,0.5);
+  background:rgba(255,255,255,0.82);
   backdrop-filter:blur(16px) saturate(120%);
   -webkit-backdrop-filter:blur(16px) saturate(120%);
   box-shadow:var(--shadow-card);
@@ -823,7 +823,7 @@ html body .btn:focus-visible {
 .tbl-card tbody tr.cr-row:hover {
   transform:translateY(-2px);
   box-shadow:var(--shadow-lift);
-  background:rgba(255,255,255,0.72);
+  background:rgba(255,255,255,0.94);
 }
 .tbl-card tbody tr.cr-row:hover td:first-child {
   border-inline-start-color:var(--teal);
@@ -941,7 +941,7 @@ html body .btn:focus-visible {
   border:        1px solid rgba(17,17,68,0.05);
   border-radius: var(--radius);
   padding:       0.875rem 1rem;
-  background:    rgba(255,255,255,0.55);
+  background:    rgba(255,255,255,0.82);
   backdrop-filter: blur(20px) saturate(130%);
   -webkit-backdrop-filter: blur(20px) saturate(130%);
   height:        100%;
@@ -967,7 +967,7 @@ html body .btn:focus-visible {
   transform:    translateY(-2px);
   box-shadow:   var(--shadow-lift);
   border-color: rgba(17,17,68,0.08);
-  background:   rgba(255,255,255,0.7);
+  background:   rgba(255,255,255,0.92);
 }
 .metric:hover::before { left: 5%; right: 5%; opacity: 0.5; }
 
@@ -994,7 +994,7 @@ html body .btn:focus-visible {
    MC — Enhanced Metric Cards (Taibah design)
    ============================================================ */
 .mc {
-  background:      rgba(255,255,255,0.55);
+  background:      rgba(255,255,255,0.82);
   backdrop-filter:  blur(20px) saturate(130%);
   -webkit-backdrop-filter: blur(20px) saturate(130%);
   border:          1px solid rgba(17,17,68,0.05);
@@ -1016,7 +1016,7 @@ html body .btn:focus-visible {
   width:70px; height:70px; background:var(--mc-c, var(--teal));
   opacity:0.04; border-radius:50%; filter:blur(22px); transition:opacity .25s ease;
 }
-.mc:hover { border-color:rgba(17,17,68,0.08); transform:translateY(-2px); box-shadow:var(--shadow-lift); background:rgba(255,255,255,0.7); }
+.mc:hover { border-color:rgba(17,17,68,0.08); transform:translateY(-2px); box-shadow:var(--shadow-lift); background:rgba(255,255,255,0.92); }
 .mc:hover::after { opacity:0.07; }
 
 .mc-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
@@ -1134,7 +1134,7 @@ html body .btn:focus-visible {
 .filter-bar {
   display:flex; align-items:center; gap:10px; margin-bottom:18px;
   padding:12px 18px;
-  background:rgba(255,255,255,0.4);
+  background:rgba(255,255,255,0.82);
   backdrop-filter:blur(24px) saturate(130%);
   -webkit-backdrop-filter:blur(24px) saturate(130%);
   border:1px solid rgba(17,17,68,0.05);
@@ -1145,11 +1145,11 @@ html body .btn:focus-visible {
 .fb-search {
   display:flex; align-items:center; gap:8px; flex:1; max-width:320px;
   padding:8px 14px; border-radius:var(--radius-sm);
-  background:rgba(255,255,255,0.6); border:1px solid rgba(17,17,68,0.05);
+  background:rgba(255,255,255,0.88); border:1px solid rgba(17,17,68,0.05);
   transition:all .15s ease; box-shadow:var(--shadow-input);
 }
 .fb-search:focus-within {
-  border-color:var(--teal); background:rgba(255,255,255,0.8);
+  border-color:var(--teal); background:rgba(255,255,255,0.95);
   box-shadow:0 0 0 3px rgba(10,142,110,0.06), 0 0 14px rgba(10,142,110,0.04);
 }
 .fb-search .i { color:var(--t5); }
