@@ -1072,6 +1072,10 @@ html body .btn:focus-visible {
 .mc-sky .mc-icon   { background:rgba(0,174,218,0.08); color:var(--sky); }
 .mc-sky .mc-val    { color:var(--sky); }
 
+.mc-warn  { --mc-c:var(--warning); }
+.mc-warn .mc-icon  { background:rgba(154,106,8,0.08); color:var(--warning); }
+.mc-warn .mc-val   { color:var(--warning); }
+
 /* ============================================================
    REC — Recommendation Item Cards
    ============================================================ */
