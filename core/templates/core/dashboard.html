@@ -640,32 +640,43 @@
     <div id="prereq" class="panel card soft-card p-4 ">
       <h4>Course Prerequisites View</h4>
       <div class="panel-sub">Explore prerequisite links by program and optionally by a specific course.</div>
-      <div class="zone-card">
-        <div class="zone-title">Filters</div>
-        <div class="row g-3 align-items-end">
-          <div class="col-md-3"><label class="form-label">Program</label><input id="preProgram" class="form-control" list="programs" placeholder="e.g. CS"></div>
-          <div class="col-md-3"><label class="form-label">Course code (optional)</label><input id="preCourse" class="form-control" placeholder="e.g. CS323"></div>
-          <div class="col-md-2 d-grid"><button id="loadPre" class="btn btn-primary">Load</button></div>
-        </div>
+      <!-- Filter bar -->
+      <div class="filter-bar mb-3">
+        <svg class="i" viewBox="0 0 24 24" width="16" height="16"><path d="M3 4h18l-7 8v5l-4 2V12z"/></svg>
+        <input id="preProgram" class="fb-search" list="programs" placeholder="Program  e.g. CS" style="max-width:180px">
+        <input id="preCourse" class="fb-search" placeholder="Course code (optional)" style="max-width:200px">
+        <button id="loadPre" class="btn btn-primary" style="margin-left:auto;padding:7px 22px;font-size:13px">
+          <svg class="i" viewBox="0 0 24 24" width="14" height="14" style="margin-right:4px"><path d="M5 12h14M12 5l7 7-7 7"/></svg>Load
+        </button>
       </div>
-      <div class="zone-card">
-        <div class="zone-title">Results</div>
-        <div class="row g-2 mt-1 mb-2" id="preMetrics" style="display:none;">
-          <div class="col-md-3"><div class="metric"><div class="k">Program</div><div class="v" id="preMetricProgram">-</div></div></div>
-          <div class="col-md-3"><div class="metric"><div class="k">Courses in view</div><div class="v" id="preMetricCourses">0</div></div></div>
-          <div class="col-md-3"><div class="metric"><div class="k">Prerequisite links</div><div class="v" id="preMetricLinks">0</div></div></div>
-        </div>
-        <div id="preUpdated" class="small text-secondary">Last update: -</div>
-        <div class="table-wrap mt-3">
-          <table class="table table-sm mb-0" id="preTable">
-            <thead><tr><th data-sort="text">Course</th><th data-sort="text">Prerequisite</th></tr></thead>
-            <tbody><tr><td colspan="2"><div class="empty-state"><span class="empty-icon">📋</span><div class="empty-title">No prerequisites loaded</div><div class="empty-hint">Choose a program above, then click <strong>Load</strong></div></div></td></tr></tbody>
-          </table>
-        </div>
+      <!-- Metrics -->
+      <div class="row g-3 mb-3" id="preMetrics" style="display:none;">
+        <div class="col-md-4"><div class="mc mc-royal"><div style="display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:var(--royal)"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg><div><div class="mc-lbl">Program</div><div class="mc-val" id="preMetricProgram">-</div></div></div></div></div>
+        <div class="col-md-4"><div class="mc mc-teal"><div style="display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:var(--teal)"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg><div><div class="mc-lbl">Courses in view</div><div class="mc-val" id="preMetricCourses">0</div></div></div></div></div>
+        <div class="col-md-4"><div class="mc mc-sky"><div style="display:flex;align-items:center;gap:10px"><svg class="i" viewBox="0 0 24 24" width="20" height="20" style="color:var(--sky)"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg><div><div class="mc-lbl">Prerequisite links</div><div class="mc-val" id="preMetricLinks">0</div></div></div></div></div>
       </div>
-      <div class="zone-card">
-        <div class="zone-title">Graph</div>
-        <div id="preGraph" class="small text-secondary">Load prerequisites to visualize dependency chains.</div>
+      <div id="preUpdated" class="small text-secondary mb-3">Last update: -</div>
+      <!-- Two-column: Table + Graph -->
+      <div class="row g-3">
+        <div class="col-lg-5">
+          <div class="cpanel">
+            <div class="cp-h"><span class="cp-t">Prerequisite Links</span><span class="pill-status pill-b" id="preLinkCount" style="display:none"><span class="pill-dot"></span><span id="preLinkNum">0</span> links</span></div>
+            <div class="cp-b" style="padding:0;max-height:520px;overflow-y:auto">
+              <table class="tbl-card mb-0" id="preTable" style="border-spacing:0 4px">
+                <thead><tr><th data-sort="text">Course</th><th style="width:28px"></th><th data-sort="text">Prerequisite</th></tr></thead>
+                <tbody><tr><td colspan="3"><div class="empty-state"><span class="empty-icon">📋</span><div class="empty-title">No prerequisites loaded</div><div class="empty-hint">Choose a program above, then click <strong>Load</strong></div></div></td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-7">
+          <div class="cpanel" style="position:sticky;top:16px">
+            <div class="cp-h"><span class="cp-t">Dependency Graph</span><span class="cp-live">VISUAL</span></div>
+            <div class="cp-b" id="preGraph" style="min-height:320px;overflow:auto;padding:16px">
+              <div class="empty-state"><span class="empty-icon">🔗</span><div class="empty-title">No graph data</div><div class="empty-hint">Load prerequisites to visualize dependency chains</div></div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1141,9 +1152,107 @@
     runBtn.textContent = 'Run Preview';
   };
 
+  /* ── Prereq graph renderer ── */
+  function renderPrereqGraph(items, container) {
+    const prereqs = {};
+    const allCourses = new Set();
+    items.forEach(row => {
+      const c = String(row.course_code), p = String(row.prerequisite_course_code);
+      allCourses.add(c); allCourses.add(p);
+      if (!prereqs[c]) prereqs[c] = [];
+      prereqs[c].push(p);
+    });
+
+    /* topological layers: 0 = foundation, higher = more dependent */
+    const layers = {};
+    function depth(c, vis) {
+      if (layers[c] !== undefined) return layers[c];
+      if (!vis) vis = new Set();
+      if (vis.has(c)) return 0;
+      vis.add(c);
+      const ps = prereqs[c] || [];
+      if (!ps.length) { layers[c] = 0; return 0; }
+      const d = Math.max(...ps.map(p => depth(p, new Set(vis)))) + 1;
+      layers[c] = d; return d;
+    }
+    allCourses.forEach(c => depth(c));
+
+    /* group by layer */
+    const groups = {};
+    let maxL = 0;
+    allCourses.forEach(c => {
+      const l = layers[c] || 0;
+      if (!groups[l]) groups[l] = [];
+      groups[l].push(c);
+      if (l > maxL) maxL = l;
+    });
+    Object.values(groups).forEach(a => a.sort());
+
+    /* layout params */
+    const nW = 90, nH = 34, gX = 28, gY = 58;
+    const maxRow = Math.max(...Object.values(groups).map(g => g.length));
+    const svgW = Math.max(520, maxRow * (nW + gX) + gX);
+    const svgH = (maxL + 1) * (nH + gY) + gY;
+
+    /* position nodes */
+    const pos = {};
+    for (let l = 0; l <= maxL; l++) {
+      const g = groups[l] || [];
+      const tw = g.length * nW + (g.length - 1) * gX;
+      const sx = (svgW - tw) / 2;
+      g.forEach((c, i) => {
+        pos[c] = { x: sx + i * (nW + gX) + nW / 2, y: gY / 2 + l * (nH + gY) + nH / 2 };
+      });
+    }
+
+    /* build SVG */
+    let s = `<svg class="prereq-svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">`;
+    s += `<defs><marker id="pgA" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="var(--teal)" opacity="0.5"/></marker>`;
+    s += `<filter id="nSh"><feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="rgba(17,17,68,0.07)"/></filter></defs>`;
+
+    /* edges — bezier from prereq (bottom) → course (top) */
+    items.forEach(row => {
+      const f = pos[row.prerequisite_course_code], t = pos[row.course_code];
+      if (!f || !t) return;
+      const y1 = f.y + nH / 2, y2 = t.y - nH / 2, cy = (y1 + y2) / 2;
+      s += `<path class="pg-edge" d="M${f.x},${y1} C${f.x},${cy} ${t.x},${cy} ${t.x},${y2}" data-f="${row.prerequisite_course_code}" data-t="${row.course_code}" marker-end="url(#pgA)"/>`;
+    });
+
+    /* nodes — color by role */
+    const isPreOf = new Set();
+    items.forEach(r => isPreOf.add(String(r.prerequisite_course_code)));
+    allCourses.forEach(c => {
+      const p = pos[c]; if (!p) return;
+      const hasP = (prereqs[c] || []).length > 0, isP = isPreOf.has(c);
+      let fl = 'rgba(255,255,255,0.65)', st = 'rgba(17,17,68,0.08)', tc = 'var(--navy)';
+      if (!hasP && isP) { fl = 'rgba(10,142,110,0.08)'; st = 'rgba(10,142,110,0.22)'; tc = '#087a5e'; }
+      else if (hasP && !isP) { fl = 'rgba(64,86,227,0.08)'; st = 'rgba(64,86,227,0.22)'; tc = '#3548c9'; }
+      s += `<g class="pg-node" data-c="${c}"><rect x="${p.x-nW/2}" y="${p.y-nH/2}" width="${nW}" height="${nH}" rx="8" fill="${fl}" stroke="${st}" stroke-width="1.2" filter="url(#nSh)"/><text x="${p.x}" y="${p.y+1}" text-anchor="middle" dominant-baseline="middle" fill="${tc}" font-family="var(--font-mono)" font-size="11" font-weight="700">${c}</text></g>`;
+    });
+    s += '</svg>';
+
+    /* legend */
+    s += `<div class="pg-legend"><span><span class="pg-legend-dot" style="color:var(--teal);background:var(--teal)"></span>Foundation</span><span><span class="pg-legend-dot" style="color:var(--royal);background:var(--royal)"></span>Terminal</span><span><span class="pg-legend-dot" style="color:var(--navy);background:var(--navy)"></span>Intermediate</span><span style="margin-left:auto;opacity:0.4;font-weight:400">Hover to trace chains</span></div>`;
+    container.innerHTML = s;
+
+    /* interactivity — hover highlights full chain */
+    container.querySelectorAll('.pg-node').forEach(nd => {
+      nd.addEventListener('mouseenter', () => {
+        const cc = nd.dataset.c, conn = new Set();
+        (function up(x) { conn.add(x); (prereqs[x]||[]).forEach(p => { if(!conn.has(p)) up(p); }); })(cc);
+        (function dn(x) { conn.add(x); Object.entries(prereqs).forEach(([k,v]) => { if(v.includes(x) && !conn.has(k)) dn(k); }); })(cc);
+        container.querySelectorAll('.pg-node').forEach(n => { n.classList.toggle('hl', conn.has(n.dataset.c)); n.classList.toggle('dm', !conn.has(n.dataset.c)); });
+        container.querySelectorAll('.pg-edge').forEach(e => { const ok = conn.has(e.dataset.f) && conn.has(e.dataset.t); e.classList.toggle('hl', ok); e.classList.toggle('dm', !ok); });
+      });
+      nd.addEventListener('mouseleave', () => {
+        container.querySelectorAll('.pg-node,.pg-edge').forEach(el => { el.classList.remove('hl','dm'); });
+      });
+    });
+  }
+
   q('loadPre').onclick = async () => {
     const btn = q('loadPre');
-    showSkeleton('preTable', 2);
+    showSkeleton('preTable', 3);
     btn.disabled = true;
     btn.textContent = 'Loading...';
 
@@ -1153,48 +1262,36 @@
 
     const tbody = document.querySelector('#preTable tbody');
     const preGraph = q('preGraph');
-    if (!tbody || !preGraph) {
-      btn.disabled = false;
-      btn.textContent = 'Load';
-      return;
-    }
+    if (!tbody || !preGraph) { btn.disabled = false; btn.textContent = 'Load'; return; }
 
     if (!res.ok || !Array.isArray(data.items) || data.items.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="2" class="empty-note">No prerequisite rows found.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="3" class="empty-note">No prerequisite rows found.</td></tr>';
       q('preMetrics').style.display = 'none';
-      preGraph.innerHTML = '<span class="empty-note">No prerequisite map available.</span>';
+      const lc = q('preLinkCount'); if (lc) lc.style.display = 'none';
+      preGraph.innerHTML = '<div class="empty-state"><span class="empty-icon">🔗</span><div class="empty-title">No graph data</div><div class="empty-hint">No prerequisite map available</div></div>';
       setUpdated('preUpdated', true);
-      btn.disabled = false;
-      btn.textContent = 'Load';
-      return;
+      btn.disabled = false; btn.textContent = 'Load'; return;
     }
 
-    const courseSet = new Set(data.items.map((x) => x.course_code));
+    const courseSet = new Set(data.items.map(x => x.course_code));
     q('preMetricProgram').textContent = data.program || '-';
     q('preMetricCourses').textContent = String(courseSet.size);
     q('preMetricLinks').textContent = String(data.count ?? data.items.length);
     q('preMetrics').style.display = 'flex';
+    const lc = q('preLinkCount');
+    if (lc) { lc.style.display = ''; q('preLinkNum').textContent = String(data.count ?? data.items.length); }
 
+    /* table — card-rows with arrow indicator */
     tbody.innerHTML = data.items
-      .map((row) => `<tr><td>${row.course_code}</td><td>${row.prerequisite_course_code}</td></tr>`)
+      .map(row => `<tr class="cr-row"><td><span class="cr-id">${row.course_code}</span></td><td style="text-align:center;color:var(--t5);padding:6px 0"><svg width="16" height="14" viewBox="0 0 16 14" class="i" style="opacity:.3"><path d="M14 7H2M2 7l5-5M2 7l5 5"/></svg></td><td><span style="font-family:var(--font-mono);font-size:12px;font-weight:600;color:var(--royal)">${row.prerequisite_course_code}</span></td></tr>`)
       .join('');
 
-    const grouped = {};
-    data.items.forEach((row) => {
-      const c = String(row.course_code);
-      if (!grouped[c]) grouped[c] = [];
-      grouped[c].push(String(row.prerequisite_course_code));
-    });
-    preGraph.innerHTML = Object.entries(grouped)
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .slice(0, 20)
-      .map(([course, pres]) => `<div class="mb-1"><span class="pill">${course}</span> ← ${pres.map((p) => `<span class="pill">${p}</span>`).join(' ')}</div>`)
-      .join('');
+    /* SVG dependency graph */
+    renderPrereqGraph(data.items, preGraph);
 
     setUpdated('preUpdated');
     toast('Prerequisites loaded', true);
-    btn.disabled = false;
-    btn.textContent = 'Load';
+    btn.disabled = false; btn.textContent = 'Load';
   };
 
   async function loadPrereqsForPlanCourse(program, courseCode) {
