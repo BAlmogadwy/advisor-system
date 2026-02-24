@@ -352,33 +352,6 @@
       </div>
     </div>
 
-    {# SECURITY: debug_mode must also be enforced server-side in the view (e.g. settings.DEBUG and request.user.is_superuser). Template-only gating is not sufficient. #}
-    {% if debug_mode %}
-    <div style="padding:12px 16px;margin-bottom:16px;border-radius:var(--radius-sm);background:rgba(255,255,255,0.55);backdrop-filter:blur(20px) saturate(130%);-webkit-backdrop-filter:blur(20px) saturate(130%);border:1px solid rgba(17,17,68,0.05);box-shadow:var(--shadow-card)">
-      <h6 class="mb-2">Dev Role Switch (DEBUG only)</h6>
-      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
-        <div style="flex:1;min-width:160px">
-          <label class="form-label">Role</label>
-          <div class="fb-search" style="max-width:none"><select id="devRole" style="flex:1;background:none;border:none;outline:none;color:var(--t1);font-size:13px;font-family:inherit;cursor:pointer">
-            <option value="SUPER_ADMIN">SUPER_ADMIN</option>
-            <option value="GENERAL_ACADEMIC_ADVISOR">GENERAL_ACADEMIC_ADVISOR</option>
-            <option value="ADVISOR">ADVISOR</option>
-          </select></div>
-        </div>
-        <div style="flex:1;min-width:120px">
-          <label class="form-label">Advisor ID</label>
-          <div class="fb-search" style="max-width:none"><input id="devAdvisorId" placeholder="A001" aria-label="Advisor ID"></div>
-        </div>
-        <div style="flex:1.5;min-width:140px">
-          <label class="form-label">Departments CSV</label>
-          <div class="fb-search" style="max-width:none"><input id="devDepartments" placeholder="AI,CS" aria-label="Departments"></div>
-        </div>
-        <div style="flex:0 0 auto;padding-bottom:1px"><button id="devSwitchRole" type="button" class="btn btn-outline-warning btn-sm" style="padding:7px 14px;font-size:12px">Switch Role</button></div>
-      </div>
-      <div id="devRoleMsg" class="small text-secondary mt-2">Use for QA only; refresh after switch.</div>
-    </div>
-    {% endif %}
-
     <div id="student" class="panel active">
       <div style="margin-bottom:18px">
         <h2 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Student Recommender</h2>
@@ -2287,29 +2260,6 @@
     if (meta) meta.textContent = msg;
     toast(msg, false);
     return false;
-  }
-
-  const devSwitchBtn = q('devSwitchRole');
-  if (devSwitchBtn) {
-    devSwitchBtn.onclick = async () => {
-      const role = (q('devRole')?.value || '').trim();
-      const advisor_id = (q('devAdvisorId')?.value || '').trim();
-      const departments = (q('devDepartments')?.value || '').trim();
-      const out = q('devRoleMsg');
-      try {
-        const body = new URLSearchParams({ role, advisor_id, departments }).toString();
-        const res = await fetch('/ops/dev/switch-role/', {
-          method: 'POST',
-          headers: csrfHeaders({ 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' }),
-          body,
-        });
-        const data = await res.json();
-        out.textContent = res.ok ? data.message : preciseError(res, data, 'Failed to switch role.');
-        if (res.ok) out.style.color = 'var(--success)';
-      } catch (err) {
-        out.textContent = preciseError(null, null, 'Failed to switch role.', err);
-      }
-    };
   }
 
   async function fetchJsonWithRetry(url, retries = 2, delayMs = 350) {
