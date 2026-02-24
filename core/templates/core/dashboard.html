@@ -1057,6 +1057,221 @@
 {% block extra_js %}
 <script>
   const IS_AR = document.documentElement.lang === 'ar';
+  const T = {
+    // ── Common / Shared ──
+    loading: IS_AR ? 'جارٍ التحميل...' : 'Loading...',
+    running: IS_AR ? 'جارٍ التنفيذ...' : 'Running...',
+    checking: IS_AR ? 'جارٍ التحقق...' : 'Checking...',
+    saving: IS_AR ? 'جارٍ الحفظ...' : 'Saving...',
+    run: IS_AR ? 'تشغيل' : 'Run',
+    load: IS_AR ? 'تحميل' : 'Load',
+    check: IS_AR ? 'فحص' : 'Check',
+    cancel: IS_AR ? 'إلغاء' : 'Cancel',
+    view: IS_AR ? 'عرض' : 'View',
+    copy: IS_AR ? 'نسخ' : 'Copy',
+    copied: IS_AR ? 'تم النسخ' : 'Copied',
+    lastUpdate: IS_AR ? 'آخر تحديث' : 'Last update',
+    failed: IS_AR ? 'فشل' : 'failed',
+
+    // ── Batch Preview ──
+    noBatchData: IS_AR ? 'لا توجد بيانات حتى الآن' : 'No batch data yet',
+    setBatchFilters: IS_AR ? 'حدد الفلاتر ثم اضغط معاينة' : 'Set filters and click Run Preview',
+    runBatchHint: IS_AR ? 'شغّل المعاينة لعرض أفضل المقررات الموصى بها.' : 'Run a batch preview to see top course recommendations.',
+    batchPreview: IS_AR ? 'معاينة الدفعة' : 'Batch preview',
+    runPreview: IS_AR ? 'معاينة' : 'Run Preview',
+    batchLoadFailed: IS_AR ? 'تعذّر تحميل ملخص الدفعة.' : 'Failed to load batch summary.',
+    batchRecFailed: IS_AR ? 'تعذّر تحميل التوصيات.' : 'Failed to load recommendations.',
+    noRecsFound: IS_AR ? 'لم يتم العثور على توصيات.' : 'No recommendations found.',
+    noCoursesDisplay: IS_AR ? 'لا توجد مقررات لعرضها.' : 'No courses to display.',
+    studentsRecommended: IS_AR ? 'طالب حصل على توصية' : 'students recommended',
+    batchLoaded: IS_AR ? 'تم تحميل ملخص الدفعة' : 'Batch summary loaded',
+
+    // ── Prerequisites ──
+    noPrereqRows: IS_AR ? 'لم يتم العثور على بيانات المتطلبات.' : 'No prerequisite rows found.',
+    noGraphData: IS_AR ? 'لا توجد بيانات رسم بياني' : 'No graph data',
+    noPrereqMap: IS_AR ? 'لا يتوفر مخطط متطلبات مسبقة' : 'No prerequisite map available',
+    prereqsLoaded: IS_AR ? 'تم تحميل المتطلبات' : 'Prerequisites loaded',
+
+    // ── Plan Viewer ──
+    loadPlan: IS_AR ? 'تحميل الخطة' : 'Load Plan',
+    noCourseSelected: IS_AR ? 'لم يتم اختيار مقرر.' : 'No course selected.',
+    noPrereqData: IS_AR ? 'لم يتم تحميل بيانات المتطلبات.' : 'No prerequisite data loaded.',
+    noPlanRows: IS_AR ? 'لم يتم العثور على صفوف الخطة.' : 'No plan rows found.',
+    noTermDist: IS_AR ? 'لا يتوفر توزيع للفصول.' : 'No term distribution available.',
+    noTermCards: IS_AR ? 'لا تتوفر بطاقات الفصول.' : 'No term cards available.',
+    termLabel: (term, count, credits) => IS_AR ? `الفصل ${term} (${count} مقرر، ${credits} ساعة)` : `Term ${term} (${count} courses, ${credits} credits)`,
+    showPrereqFor: (c) => IS_AR ? `عرض متطلبات ${c}` : `Show prerequisites for ${c}`,
+    termHeading: (term) => IS_AR ? `الفصل ${term}` : `Term ${term}`,
+    termSummary: (courses, credits) => IS_AR ? `المقررات: ${courses} | الساعات: ${credits}` : `Courses: ${courses} | Credits: ${credits}`,
+    planLoaded: IS_AR ? 'تم تحميل خطة البرنامج' : 'Program plan loaded',
+
+    // ── Student Plan Matrix ──
+    courseInspector: IS_AR ? 'فاحص المقررات' : 'Course Inspector',
+    live: IS_AR ? 'مباشر' : 'LIVE',
+    inspectorHint: IS_AR ? 'اضغط على أي صف مقرر لعرض سبب القفل والمتطلبات الناقصة وأثر الفتح.' : 'Click any course row to inspect lock reason, missing prereqs, and unlock impact.',
+    passedAlready: IS_AR ? 'اجتاز المقرر مسبقاً' : 'Passed already',
+    currentlyStudying: IS_AR ? 'يدرس المقرر حالياً' : 'Currently studying',
+    canRegister: IS_AR ? 'مؤهل للتسجيل الآن' : 'Eligible to register now',
+    lockedPrereqs: IS_AR ? 'مقفل (متطلبات غير مستوفاة)' : 'Locked (prerequisites not satisfied)',
+    passed: IS_AR ? 'اجتاز' : 'Passed',
+    studying: IS_AR ? 'يدرس' : 'Studying',
+    canRegisterShort: IS_AR ? 'مؤهل' : 'Can register',
+    locked: IS_AR ? 'مقفل' : 'Locked',
+    none: IS_AR ? 'لا يوجد' : 'None',
+    prerequisites: IS_AR ? 'المتطلبات' : 'Prerequisites',
+    missing: IS_AR ? 'ناقصة' : 'Missing',
+    unlocks: IS_AR ? 'يفتح' : 'Unlocks',
+    noDownstream: IS_AR ? 'لا توجد مقررات لاحقة تعتمد عليه.' : 'No direct downstream courses found.',
+    topImportance: IS_AR ? 'الأعلى أهمية' : 'TOP IMPORTANCE',
+    actionPlan: IS_AR ? 'خطة العمل' : 'Action Plan',
+    balanced: IS_AR ? 'متوازن' : 'Balanced',
+    maxImp: IS_AR ? 'أقصى أهمية' : 'Max Imp',
+    noCoursesThisTerm: IS_AR ? 'لا توجد مقررات في هذا الفصل للفلتر الحالي.' : 'No courses in this term for current filter.',
+    termSection: (term) => IS_AR ? `الفصل ${term}` : `Term ${term}`,
+    course: IS_AR ? 'المقرر' : 'Course',
+    ch: IS_AR ? 'س.م' : 'CH',
+    status: IS_AR ? 'الحالة' : 'Status',
+    imp: IS_AR ? 'الأهمية' : 'Imp.',
+    enterStudentFirst: IS_AR ? 'أدخل رقم الطالب أولاً.' : 'Please enter student ID first.',
+    loadingPlanMatrix: IS_AR ? 'جارٍ تحميل مصفوفة الخطة...' : 'Loading plan matrix...',
+    failedLoadPlan: IS_AR ? 'تعذّر تحميل خطة الطالب.' : 'Failed to load student plan.',
+    failedRenderPlan: IS_AR ? 'تعذّر عرض مصفوفة خطة الطالب.' : 'Unable to render student plan matrix.',
+    loadPlanBtn: IS_AR ? 'تحميل الخطة' : 'Load plan',
+    importance: IS_AR ? 'الأهمية' : 'Importance',
+    statusSort: IS_AR ? 'الحالة' : 'Status',
+    code: IS_AR ? 'الرمز' : 'Code',
+    compact: IS_AR ? 'مختصر' : 'Compact',
+    studentMeta: (sid, prog) => IS_AR ? `الطالب ${sid} • البرنامج ${prog}` : `Student ${sid} • Program ${prog}`,
+    highRiskAlert: (n) => IS_AR ? `خطر عالي: ${n} مقرر متاح فقط للتسجيل` : `High risk: only ${n} can-register courses available`,
+    lowFlexAlert: (n) => IS_AR ? `تنبيه: مرونة محدودة (${n} مقرر متاح للتسجيل)` : `Warning: low flexibility (${n} can-register courses)`,
+    heavyLockAlert: (n) => IS_AR ? `حمل قفل كبير: ${n} مقرر مقفل` : `Heavy lock load: ${n} locked courses`,
+    criticalBlocker: (code, blocks) => IS_AR ? `عائق حرج: ${code} يحجب ${blocks} مقرر` : `Critical blocker: ${code} blocks ${blocks} courses`,
+    riskAlerts: IS_AR ? 'تنبيهات المخاطر' : 'RISK ALERTS',
+    passFirst: IS_AR ? 'الأولوية للاجتياز' : 'PASS FIRST',
+    clickToFilter: IS_AR ? '(اضغط للتصفية)' : '(click to filter)',
+
+    // ── Scrape ──
+    idle: IS_AR ? 'خامل' : 'Idle',
+    scrapeRunning: IS_AR ? 'قيد التنفيذ' : 'Running',
+    scrapeFailed: IS_AR ? 'فشل' : 'Failed',
+    noLogsYet: IS_AR ? 'لا توجد سجلات حتى الآن.' : 'No logs yet.',
+    noScrapeHistory: IS_AR ? 'لا يوجد سجل عمليات' : 'No scrape history',
+    runScrapeHint: IS_AR ? 'شغّل عملية جلب لعرض السجل هنا' : 'Run a scrape to see history here',
+    started: IS_AR ? 'بدأ' : 'started',
+    stopped: IS_AR ? 'توقف' : 'stopped',
+    startScrapeTitle: IS_AR ? 'بدء جلب البيانات؟' : 'Start batch scraping?',
+    startScrapeBody: IS_AR ? 'سيتم تشغيل أداة الجلب في الخلفية.' : 'This will run the scraper in the background.',
+    concurrencyLabel: IS_AR ? 'التزامن:' : 'Concurrency:',
+    csvLabel: IS_AR ? 'ملف CSV:' : 'CSV:',
+    csvDefault: IS_AR ? 'الافتراضي import_old/data/students_list.csv' : 'default import_old/data/students_list.csv',
+    startScraping: IS_AR ? 'بدء الجلب' : 'Start scraping',
+    failedStartScrape: (err) => IS_AR ? `تعذّر بدء الجلب: ${err}` : `Failed to start scrape: ${err}`,
+    stopScrapeTitle: IS_AR ? 'إيقاف عملية الجلب؟' : 'Stop scraping process?',
+    stopScrapeBody: IS_AR ? 'سيتم إرسال إشارة إيقاف. قد يُكمل الطالب الجاري معالجته.' : 'This will send a stop signal. Any in-progress student may still complete.',
+    stopScraping: IS_AR ? 'إيقاف الجلب' : 'Stop scraping',
+    failedStopScrape: (err) => IS_AR ? `تعذّر إيقاف الجلب: ${err}` : `Failed to stop scrape: ${err}`,
+
+    // ── Debug Report ──
+    debugReport: IS_AR ? 'تقرير التشخيص' : 'Debug report',
+    networkErrorDebug: IS_AR ? 'خطأ في الاتصال أثناء تحميل تقرير التشخيص.' : 'Network error while loading debug report.',
+    debugFailed: IS_AR ? 'فشل تقرير التشخيص' : 'Debug report failed',
+    failedLoadDebug: IS_AR ? 'تعذّر تحميل تقرير التشخيص.' : 'Failed to load debug report.',
+    debugCopied: IS_AR ? 'تم نسخ ملخص التشخيص' : 'Debug summary copied',
+    debugLoaded: IS_AR ? 'تم تحميل تقرير التشخيص' : 'Debug report loaded',
+    debugMeta: (count, section, program, join) => IS_AR ? `تم تحميل ${count} طالب • الفلاتر: الشعبة=${section} البرنامج=${program} سنة الالتحاق=${join}.` : `Loaded ${count} students • filters: section=${section} program=${program} join=${join}.`,
+
+    // ── Eligibility ──
+    eligibility: IS_AR ? 'الأهلية' : 'Eligibility',
+    networkErrorEligibility: IS_AR ? 'خطأ في الاتصال أثناء تحميل تقرير الأهلية.' : 'Network error while loading eligibility report.',
+    eligibilityFailed: IS_AR ? 'فشل تقرير الأهلية' : 'Eligibility report failed',
+    failedLoadEligibility: IS_AR ? 'تعذّر تحميل تقرير الأهلية.' : 'Failed to load eligibility report.',
+    noEligibleIds: IS_AR ? 'لا يوجد طلاب مؤهلون لهذا الفلتر.' : 'No eligible student IDs for this filter.',
+    eligibilityLoaded: IS_AR ? 'تم تحميل تقرير الأهلية' : 'Eligibility report loaded',
+
+    // ── Advisor ──
+    selectAdvisor: IS_AR ? 'اختر مرشداً' : 'Select advisor',
+    emailInvalid: IS_AR ? 'البريد الإلكتروني غير صالح أو مستخدم مسبقاً.' : 'Email is invalid or already used.',
+    advisorIdInvalid: IS_AR ? 'رقم المرشد غير صالح أو موجود مسبقاً.' : 'Advisor ID is invalid or already exists.',
+    deptRequired: IS_AR ? 'يرجى إدخال قسم واحد على الأقل.' : 'Please provide at least one department.',
+    nameRequired: IS_AR ? 'يرجى إدخال اسم المرشد.' : 'Please provide advisor full name.',
+    advisorIdReq: IS_AR ? 'رقم المرشد مطلوب.' : 'Advisor ID is required.',
+    fullNameReq: IS_AR ? 'الاسم الكامل مطلوب.' : 'Full name is required.',
+    emailReq: IS_AR ? 'البريد الإلكتروني مطلوب.' : 'Email is required.',
+    deptReqShort: IS_AR ? 'القسم مطلوب.' : 'Department(s) is required.',
+    fixFieldsRetry: IS_AR ? 'صحّح الحقول المظللة وأعد المحاولة.' : 'Please correct highlighted fields and retry.',
+    emailFormatError: IS_AR ? 'أدخل صيغة بريد إلكتروني صحيحة (مثال: advisor@uni.edu).' : 'Enter a valid email format (example: advisor@uni.edu).',
+    advisorSaved: (id, name) => IS_AR ? `تم حفظ المرشد: ${id} • ${name}` : `Advisor saved: ${id} • ${name}`,
+    advisorSavedToast: IS_AR ? 'تم حفظ المرشد' : 'Advisor saved',
+    saveAdvisor: IS_AR ? 'حفظ المرشد' : 'Save advisor',
+    enabling: IS_AR ? 'جارٍ التفعيل...' : 'Enabling...',
+    enableFailed: IS_AR ? 'تعذّر تفعيل عمود students.advisor_id.' : 'Failed to enable students.advisor_id.',
+    enableColumnFailed: IS_AR ? 'فشل تفعيل عمود المرشد' : 'Enable advisor column failed',
+    columnCreated: IS_AR ? 'تم إنشاء عمود students.advisor_id.' : 'students.advisor_id column created.',
+    columnExists: IS_AR ? 'عمود students.advisor_id موجود مسبقاً.' : 'students.advisor_id already exists.',
+    columnReady: IS_AR ? 'عمود المرشد جاهز' : 'Advisor column ready',
+    enableColumn: IS_AR ? 'تفعيل عمود students.advisor_id' : 'Enable students.advisor_id',
+    pasteCsvFirst: IS_AR ? 'الصق بيانات CSV أولاً.' : 'Paste CSV mapping first.',
+    applying: IS_AR ? 'جارٍ التطبيق...' : 'Applying...',
+    csvMappingFailed: IS_AR ? 'تعذّر تطبيق ربط CSV.' : 'Failed to apply CSV mapping.',
+    mappingFailed: IS_AR ? 'فشل ربط المرشدين' : 'Advisor mapping failed',
+    mappingApplied: (updated, errors) => IS_AR ? `تم التطبيق: تحديث=${updated}، أخطاء=${errors}` : `Mapping applied: updated=${updated}, errors=${errors}`,
+    mappingAppliedToast: IS_AR ? 'تم تطبيق ربط المرشدين' : 'Advisor mapping applied',
+    applyCsvMapping: IS_AR ? 'تطبيق ربط CSV' : 'Apply CSV mapping',
+    provideStudentAdvisor: IS_AR ? 'أدخل رقم الطالب ورقم المرشد.' : 'Provide valid student ID and advisor ID.',
+    singleAssignFailed: IS_AR ? 'فشل التعيين الفردي' : 'Single assignment failed',
+    assigning: IS_AR ? 'جارٍ التعيين...' : 'Assigning...',
+    failedAssignStudent: IS_AR ? 'تعذّر تعيين الطالب.' : 'Failed to assign student.',
+    assignResult: (sid, aid, updated, errors) => IS_AR ? `تم تعيين الطالب ${sid} للمرشد ${aid}. تحديث=${updated}، أخطاء=${errors}` : `Assigned student ${sid} to advisor ${aid}. updated=${updated}, errors=${errors}`,
+    studentAssigned: IS_AR ? 'تم تعيين الطالب' : 'Student assigned',
+    assignOne: IS_AR ? 'تعيين طالب واحد' : 'Assign one student',
+
+    // ── High Priority ──
+    highPriorityReport: IS_AR ? 'تقرير الأولوية العالية' : 'High priority report',
+    hpFailed: IS_AR ? 'فشل تقرير المقررات ذات الأولوية' : 'Missing high priority failed',
+    runReport: IS_AR ? 'تشغيل التقرير' : 'Run report',
+    hpMeta: (count, discount, minScore, topK) => IS_AR ? `الطلاب المُبلغ عنهم: ${count} • الخصم=${discount} • الحد الأدنى=${minScore} • أعلى=${topK}` : `Flagged students: ${count} • discount=${discount} • min_score=${minScore} • top_k=${topK}`,
+    noFlaggedStudents: IS_AR ? 'لا يوجد طلاب مُبلغ عنهم.' : 'No flagged students.',
+    hpLoaded: IS_AR ? 'تم تحميل تقرير الأولوية العالية' : 'Missing high priority report loaded',
+
+    // ── Export ──
+    linkCopied: (label, path) => IS_AR ? `تم نسخ رابط ${label}: ${path}` : `${label} copied to clipboard: ${path}`,
+    labelCopied: (label) => IS_AR ? `تم نسخ ${label}` : `${label} copied`,
+    studentCsvLink: IS_AR ? 'رابط CSV الطالب' : 'Student CSV link',
+    aggregateCsvLink: IS_AR ? 'رابط CSV المجمع' : 'Aggregate CSV link',
+    requiredFilters: IS_AR ? 'الفلاتر المطلوبة' : 'required filters',
+    exportBlocked: (missing) => IS_AR ? `التصدير محظور: أكمل ${missing} أولاً.` : `Export blocked: fill ${missing} first.`,
+
+    // ── preciseError remediation ──
+    csrfBlocked: IS_AR ? 'تم حظر الطلب بسبب رمز الأمان (CSRF). حدّث الصفحة وأعد المحاولة.' : 'Request blocked by security token (CSRF). Refresh page and retry.',
+    invalidParams: (fb) => IS_AR ? `معلمات الطلب غير صالحة. ${fb}` : `Invalid request parameters. ${fb}`,
+    endpointNotFound: (fb) => IS_AR ? `نقطة النهاية غير موجودة. ${fb}` : `Endpoint not found. ${fb}`,
+    serverError: (code, fb) => IS_AR ? `خطأ في الخادم (${code}). ${fb}` : `Server error (${code}). ${fb}`,
+    remediation: IS_AR ? 'الإجراء التصحيحي' : 'Remediation',
+    remPickProgram: IS_AR ? 'اختر برنامجاً من قائمة أقسامك المسموحة ثم أعد المحاولة.' : 'Pick a program from your allowed department list, then retry.',
+    remChooseProgram: IS_AR ? 'اختر برنامجاً ضمن أقسامك المسموحة.' : 'Choose a program within your allowed departments.',
+    remAdvisorMismatch: IS_AR ? 'استخدم طالباً معيّناً لرقم مرشدك، أو بدّل الصلاحية للتحقق في وضع التشخيص.' : 'Use a student assigned to your advisor ID, or switch role for QA in DEBUG.',
+    remDeptMismatch: IS_AR ? 'استخدم طالباً من نطاق قسمك.' : 'Use a student from your department scope.',
+    remStudentNotFound: IS_AR ? 'تحقق من رقم الطالب وتأكد من وجوده في جدول الطلاب.' : 'Check the student ID and confirm the student exists in students table.',
+    verifyScope: IS_AR ? 'تحقق من صلاحيات دورك واختر بيانات ضمن نطاقك.' : 'verify your role scope and choose in-scope data.',
+    allowed: IS_AR ? 'المسموح' : 'Allowed',
+
+    // ── Command Palette ──
+    paletteHint: IS_AR ? 'أدخل رقم طالب للانتقال مباشرة لخطته' : 'Type a student ID to jump directly to their plan',
+    students: IS_AR ? 'الطلاب' : 'Students',
+    openPlan: IS_AR ? 'فتح الخطة' : 'Open plan',
+    directNav: IS_AR ? 'انتقال مباشر' : 'Direct navigation',
+    navToStudentPlan: IS_AR ? 'الانتقال لخطة الطالب' : 'Navigate to student plan',
+    noMatchesFound: IS_AR ? 'لم يتم العثور على نتائج' : 'No matches found',
+    openingPlan: (sid) => IS_AR ? `جارٍ فتح خطة الطالب ${sid}` : `Opening student plan for ${sid}`,
+
+    // ── Keyboard Help ──
+    kbShortcuts: IS_AR ? 'اختصارات لوحة المفاتيح' : 'Keyboard shortcuts',
+    kbOpenSearch: IS_AR ? 'فتح البحث السريع' : 'Open quick search',
+    kbCloseDialog: IS_AR ? 'إغلاق النافذة / لوحة البحث' : 'Close dialog / palette',
+    kbShowHelp: IS_AR ? 'عرض هذه المساعدة' : 'Show this help',
+    kbSortColumn: IS_AR ? 'ترتيب عمود الجدول' : 'Sort table column',
+    kbClickHeader: IS_AR ? 'اضغط على رأس العمود' : 'Click column header',
+  };
   const links = document.querySelectorAll('.nav-link[data-target]');
   const panels = document.querySelectorAll('.panel');
   function activatePanel(target) {
@@ -1115,20 +1330,20 @@
     q('batchProgram').value = '';
     q('batchSection').value = '';
     const tbody = document.querySelector('#batchTable tbody');
-    if (tbody) tbody.innerHTML = '<tr><td colspan="4"><div class="ap-empty"><span class="ap-empty-icon"><span class="i" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span></span><div class="ap-empty-title">No batch data yet</div><div class="ap-empty-hint">Set filters and click Run Preview</div></div></td></tr>';
+    if (tbody) tbody.innerHTML = `<tr><td colspan="4"><div class="ap-empty"><span class="ap-empty-icon"><span class="i" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span></span><div class="ap-empty-title">${T.noBatchData}</div><div class="ap-empty-hint">${T.setBatchFilters}</div></div></td></tr>`;
     q('batchMetrics').style.display = 'none';
     q('batchCsv').href = '#';
     q('batchSummary').href = '#';
-    q('batchTopChips').innerHTML = '<div class="empty-note">Run a batch preview to see top course recommendations.</div>';
+    q('batchTopChips').innerHTML = `<div class="empty-note">${T.runBatchHint}</div>`;
     setUpdated('batchUpdated');
   };
 
   q('runBatch').onclick = async () => {
-    if (!requireFields(['batchYear','batchSemester'], 'batchUpdated', 'Batch preview')) return;
+    if (!requireFields(['batchYear','batchSemester'], 'batchUpdated', T.batchPreview)) return;
     const runBtn = q('runBatch');
       showSkeleton('batchTable', 4);
     runBtn.disabled = true;
-    runBtn.textContent = 'Running...';
+    runBtn.textContent = T.running;
 
     const year = q('batchYear').value, semester = q('batchSemester').value;
     const program = q('batchProgram').value, section = q('batchSection').value;
@@ -1136,7 +1351,7 @@
 
     const tbody = document.querySelector('#batchTable tbody');
     if (tbody) {
-      tbody.innerHTML = '<tr><td colspan="4" class="empty-note">Running...</td></tr>';
+      tbody.innerHTML = `<tr><td colspan="4" class="empty-note">${T.running}</td></tr>`;
     }
 
     const res = await fetch(url);
@@ -1147,13 +1362,13 @@
 
     if (!res.ok || !Array.isArray(data.top_recommended_courses)) {
       if (tbody) {
-        tbody.innerHTML = `<tr><td colspan="4" class="text-danger">${preciseError(res, data, 'Failed to load batch summary.')}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="4" class="text-danger">${preciseError(res, data, T.batchLoadFailed)}</td></tr>`;
       }
-      q('batchTopChips').innerHTML = '<div class="empty-note">Failed to load recommendations.</div>';
+      q('batchTopChips').innerHTML = `<div class="empty-note">${T.batchRecFailed}</div>`;
       q('batchMetrics').style.display = 'none';
       setUpdated('batchUpdated', true);
       runBtn.disabled = false;
-      runBtn.textContent = 'Run Preview';
+      runBtn.textContent = T.runPreview;
       return;
     }
 
@@ -1164,8 +1379,8 @@
 
     if (tbody) {
       if (data.top_recommended_courses.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" class="empty-note">No recommendations found.</td></tr>';
-        q('batchTopChips').innerHTML = '<div class="empty-note">No courses to display.</div>';
+        tbody.innerHTML = `<tr><td colspan="4" class="empty-note">${T.noRecsFound}</td></tr>`;
+        q('batchTopChips').innerHTML = `<div class="empty-note">${T.noCoursesDisplay}</div>`;
       } else {
         const maxCount = Math.max(...data.top_recommended_courses.map((x) => Number(x.count) || 0), 1);
         tbody.innerHTML = data.top_recommended_courses
@@ -1179,15 +1394,15 @@
 
         const top5 = data.top_recommended_courses.slice(0, 5);
         q('batchTopChips').innerHTML = top5
-          .map((x, i) => `<div class="rec"><div><div class="rec-code">${x.course_code}</div><div class="rec-pre">${x.count} students recommended</div></div><span class="pill-status pill-g"><span class="pill-dot"></span>#${i + 1}</span></div>`)
+          .map((x, i) => `<div class="rec"><div><div class="rec-code">${x.course_code}</div><div class="rec-pre">${x.count} ${T.studentsRecommended}</div></div><span class="pill-status pill-g"><span class="pill-dot"></span>#${i + 1}</span></div>`)
           .join('');
       }
     }
 
     setUpdated('batchUpdated');
-    toast('Batch summary loaded', true);
+    toast(T.batchLoaded, true);
     runBtn.disabled = false;
-    runBtn.textContent = 'Run Preview';
+    runBtn.textContent = T.runPreview;
   };
 
   /* ── Normalize prereq data: split comma-separated prerequisites ── */
@@ -1307,7 +1522,7 @@
     const btn = q('loadPre');
     showSkeleton('preTable', 3);
     btn.disabled = true;
-    btn.textContent = 'Loading...';
+    btn.textContent = T.loading;
 
     const program = q('preProgram').value, code = q('preCourse').value;
     const res = await fetch(`/report/prerequisites/?program=${encodeURIComponent(program)}&course_code=${encodeURIComponent(code)}`);
@@ -1315,15 +1530,15 @@
 
     const tbody = document.querySelector('#preTable tbody');
     const preGraph = q('preGraph');
-    if (!tbody || !preGraph) { btn.disabled = false; btn.textContent = 'Load'; return; }
+    if (!tbody || !preGraph) { btn.disabled = false; btn.textContent = T.load; return; }
 
     if (!res.ok || !Array.isArray(data.items) || data.items.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="3" class="empty-note">No prerequisite rows found.</td></tr>';
+      tbody.innerHTML = `<tr><td colspan="3" class="empty-note">${T.noPrereqRows}</td></tr>`;
       q('preMetrics').style.display = 'none';
       const lc = q('preLinkCount'); if (lc) lc.style.display = 'none';
-      preGraph.innerHTML = '<div class="empty-state"><span class="empty-icon"><span class="i" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg></span></span><div class="empty-title">No graph data</div><div class="empty-hint">No prerequisite map available</div></div>';
+      preGraph.innerHTML = `<div class="empty-state"><span class="empty-icon"><span class="i" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg></span></span><div class="empty-title">${T.noGraphData}</div><div class="empty-hint">${T.noPrereqMap}</div></div>`;
       setUpdated('preUpdated', true);
-      btn.disabled = false; btn.textContent = 'Load'; return;
+      btn.disabled = false; btn.textContent = T.load; return;
     }
 
     /* normalize: split comma-separated prerequisites into individual edges */
@@ -1346,8 +1561,8 @@
     renderPrereqGraph(norm, preGraph);
 
     setUpdated('preUpdated');
-    toast('Prerequisites loaded', true);
-    btn.disabled = false; btn.textContent = 'Load';
+    toast(T.prereqsLoaded, true);
+    btn.disabled = false; btn.textContent = T.load;
   };
 
   async function loadPrereqsForPlanCourse(program, courseCode) {
@@ -1375,7 +1590,7 @@
     const btn = q('loadPlan');
     showSkeleton('planTable', 3);
     btn.disabled = true;
-    btn.textContent = 'Loading...';
+    btn.textContent = T.loading;
 
     const program = q('planProgram').value;
     const res = await fetch(`/report/program-plan/?program=${encodeURIComponent(program)}`);
@@ -1388,21 +1603,21 @@
     const prereqTbody = document.querySelector('#planPrereqTable tbody');
     if (!tbody || !termBars || !termCards || !prereqMeta || !prereqTbody) {
       btn.disabled = false;
-      btn.textContent = 'Load Plan';
+      btn.textContent = T.loadPlan;
       return;
     }
 
-    prereqMeta.textContent = 'No course selected.';
-    prereqTbody.innerHTML = '<tr><td colspan="2" class="empty-note">No prerequisite data loaded.</td></tr>';
+    prereqMeta.textContent = T.noCourseSelected;
+    prereqTbody.innerHTML = `<tr><td colspan="2" class="empty-note">${T.noPrereqData}</td></tr>`;
 
     if (!res.ok || !Array.isArray(data.items) || data.items.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="3" class="empty-note">No plan rows found.</td></tr>';
-      termBars.innerHTML = '<div class="empty-note">No term distribution available.</div>';
-      termCards.innerHTML = '<div class="empty-note">No term cards available.</div>';
+      tbody.innerHTML = `<tr><td colspan="3" class="empty-note">${T.noPlanRows}</td></tr>`;
+      termBars.innerHTML = `<div class="empty-note">${T.noTermDist}</div>`;
+      termCards.innerHTML = `<div class="empty-note">${T.noTermCards}</div>`;
       q('planMetrics').style.display = 'none';
       setUpdated('planUpdated', true);
       btn.disabled = false;
-      btn.textContent = 'Load Plan';
+      btn.textContent = T.loadPlan;
       return;
     }
 
@@ -1433,7 +1648,7 @@
       .map(([term, count]) => {
         const pct = Math.round((Number(count) / max) * 100);
         const credits = termCredits[term] || 0;
-        return `<div class="mb-2"><div class="small mb-1">Term ${term} (${count} courses, ${credits} credits)</div><div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="${max}" aria-valuenow="${count}"><div class="progress-bar" style="width:${pct}%">${count}</div></div></div>`;
+        return `<div class="mb-2"><div class="small mb-1">${T.termLabel(term, count, credits)}</div><div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="${max}" aria-valuenow="${count}"><div class="progress-bar" style="width:${pct}%">${count}</div></div></div>`;
       })
       .join('');
 
@@ -1441,9 +1656,9 @@
       .sort((a, b) => Number(a) - Number(b))
       .map((term) => {
         const chips = termCourses[term]
-          .map((c) => `<button type="button" class="pill plan-course-link" data-program="${data.program || ''}" data-course="${c}" title="Show prerequisites for ${c}">${c}</button>`)
+          .map((c) => `<button type="button" class="pill plan-course-link" data-program="${data.program || ''}" data-course="${c}" title="${T.showPrereqFor(c)}">${c}</button>`)
           .join('');
-        return `<div class="col-md-4"><div class="term-card"><h6>Term ${term}</h6><div class="small text-secondary mb-2">Courses: ${termMap[term]} | Credits: ${termCredits[term]}</div><div>${chips}</div></div></div>`;
+        return `<div class="col-md-4"><div class="term-card"><h6>${T.termHeading(term)}</h6><div class="small text-secondary mb-2">${T.termSummary(termMap[term], termCredits[term])}</div><div>${chips}</div></div></div>`;
       })
       .join('');
 
@@ -1457,9 +1672,9 @@
     });
 
     setUpdated('planUpdated');
-    toast('Program plan loaded', true);
+    toast(T.planLoaded, true);
     btn.disabled = false;
-    btn.textContent = 'Load Plan';
+    btn.textContent = T.loadPlan;
   };
 
   let studentPlanData = null;
@@ -1528,27 +1743,27 @@
     const drawer = q('studentCourseDrawer');
     if (!drawer) return;
     if (!studentPlanSelectedCourse) {
-      drawer.innerHTML = `<div class="cp-h"><span class="i" style="opacity:0.4"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span><div class="cp-t">Course Inspector</div><span class="cp-live">LIVE</span></div><div class="cp-b"><div class="empty-note">Click any course row to inspect lock reason, missing prereqs, and unlock impact.</div></div>`;
+      drawer.innerHTML = `<div class="cp-h"><span class="i" style="opacity:0.4"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span><div class="cp-t">${T.courseInspector}</div><span class="cp-live">${T.live}</span></div><div class="cp-b"><div class="empty-note">${T.inspectorHint}</div></div>`;
       return;
     }
 
     const c = studentPlanSelectedCourse;
     const statusText = c.status === 'passed'
-      ? 'Passed already'
+      ? T.passedAlready
       : c.status === 'studying'
-      ? 'Currently studying'
+      ? T.currentlyStudying
       : c.can_register
-      ? 'Eligible to register now'
-      : 'Locked (prerequisites not satisfied)';
+      ? T.canRegister
+      : T.lockedPrereqs;
     const statusPill = c.status === 'passed'
-      ? '<span class="pill-status pill-g"><span class="pill-dot"></span>Passed</span>'
+      ? `<span class="pill-status pill-g"><span class="pill-dot"></span>${T.passed}</span>`
       : c.status === 'studying'
-      ? '<span class="pill-status pill-b"><span class="pill-dot"></span>Studying</span>'
+      ? `<span class="pill-status pill-b"><span class="pill-dot"></span>${T.studying}</span>`
       : c.can_register
-      ? '<span class="pill-status pill-g"><span class="pill-dot"></span>Can register</span>'
-      : '<span class="pill-status pill-r"><span class="pill-dot"></span>Locked</span>';
-    const missing = (c.missing_prereqs || []).length ? (c.missing_prereqs || []).join(', ') : 'None';
-    const prereqs = (c.prerequisites || []).length ? (c.prerequisites || []).join(', ') : 'None';
+      ? `<span class="pill-status pill-g"><span class="pill-dot"></span>${T.canRegisterShort}</span>`
+      : `<span class="pill-status pill-r"><span class="pill-dot"></span>${T.locked}</span>`;
+    const missing = (c.missing_prereqs || []).length ? (c.missing_prereqs || []).join(', ') : T.none;
+    const prereqs = (c.prerequisites || []).length ? (c.prerequisites || []).join(', ') : T.none;
 
     const downstream = [];
     const allTerms = studentPlanData?.terms || [];
@@ -1571,10 +1786,10 @@
             <div class="rec-pre">Credits: ${c.credit_hours ?? '-'} &middot; Term ${c.programme_term ?? '-'} &middot; Importance ${Number(c.importance_score || 0).toFixed(2)}</div>
           </div>
         </div>
-        <div class="kv" style="margin-bottom:6px"><strong style="color:var(--t3);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">Prerequisites</strong><div style="margin-top:2px;font-size:13px">${prereqs}</div></div>
-        <div class="kv" style="margin-bottom:6px;color:var(--danger)"><strong style="color:var(--danger);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">Missing</strong><div style="margin-top:2px;font-size:13px">${missing}</div></div>
+        <div class="kv" style="margin-bottom:6px"><strong style="color:var(--t3);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">${T.prerequisites}</strong><div style="margin-top:2px;font-size:13px">${prereqs}</div></div>
+        <div class="kv" style="margin-bottom:6px;color:var(--danger)"><strong style="color:var(--danger);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">${T.missing}</strong><div style="margin-top:2px;font-size:13px">${missing}</div></div>
         <div style="border-top:1px solid rgba(17,17,68,0.05);margin:10px 0;"></div>
-        <div class="kv"><strong style="color:var(--t3);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">Unlocks</strong><div style="margin-top:4px">${downstream.length ? downstream.map(d => `<span class="pill">${d}</span>`).join(' ') : '<span class="empty-note">No direct downstream courses found.</span>'}</div></div>
+        <div class="kv"><strong style="color:var(--t3);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">${T.unlocks}</strong><div style="margin-top:4px">${downstream.length ? downstream.map(d => `<span class="pill">${d}</span>`).join(' ') : `<span class="empty-note">${T.noDownstream}</span>`}</div></div>
       </div>`;
   }
 
@@ -1614,7 +1829,7 @@
     const meta = q('studentPlanMeta');
     if (meta && studentPlanData) {
       const blockerNote = studentPlanBlockedBy ? ` • blocker filter: ${studentPlanBlockedBy}` : '';
-      meta.textContent = `Student ${studentPlanData.student_id} • Program ${studentPlanData.program}${blockerNote}`;
+      meta.textContent = T.studentMeta(studentPlanData.student_id, studentPlanData.program) + blockerNote;
     }
 
     const allCourses = terms.flatMap((t) => Array.isArray(t.courses) ? t.courses : []);
@@ -1623,7 +1838,7 @@
       .sort((a, b) => Number(b.importance_score || 0) - Number(a.importance_score || 0))
       .slice(0, 5);
     topImportant.innerHTML = topImportantCourses.length
-      ? `<div style="font-size:11px;font-weight:600;color:var(--t3);font-family:var(--font-mono);margin-bottom:6px;letter-spacing:0.04em">TOP IMPORTANCE</div><div style="display:flex;flex-wrap:wrap;gap:6px">${topImportantCourses.map((c, i) => `<span class="pill-status ${i === 0 ? 'pill-g' : 'pill-b'}" style="font-family:var(--font-mono);font-size:11px"><span class="pill-dot"></span>${c.course_code} <span style="opacity:0.6">${Number(c.importance_score || 0).toFixed(1)}</span></span>`).join('')}</div>`
+      ? `<div style="font-size:11px;font-weight:600;color:var(--t3);font-family:var(--font-mono);margin-bottom:6px;letter-spacing:0.04em">${T.topImportance}</div><div style="display:flex;flex-wrap:wrap;gap:6px">${topImportantCourses.map((c, i) => `<span class="pill-status ${i === 0 ? 'pill-g' : 'pill-b'}" style="font-family:var(--font-mono);font-size:11px"><span class="pill-dot"></span>${c.course_code} <span style="opacity:0.6">${Number(c.importance_score || 0).toFixed(1)}</span></span>`).join('')}</div>`
       : '';
 
     const targetCredits = Number(q('spTargetCredits')?.value || 18);
@@ -1637,7 +1852,7 @@
     const usedCredits = planResult.usedCredits || 0;
 
     actionPlan.innerHTML = selected.length
-      ? `<div class="cpanel mb-0"><div class="cp-h"><span class="cp-t">Action Plan</span><span class="pill-status pill-g" style="font-size:10px"><span class="pill-dot"></span>${strategy === 'balanced' ? 'Balanced' : 'Max Imp'} • ${usedCredits}/${targetCredits} CH</span></div><div class="cp-b" style="padding:8px 12px">${selected.map((c, i) => `<div class="plan-item"><div><div class="title">${c.course_code}</div><div class="sub">Imp ${Number(c.importance_score || 0).toFixed(1)} • T${c.programme_term ?? '-'} • ${c.credit_hours ?? '-'} CH</div></div><span class="pill-status pill-g" style="font-size:10px"><span class="pill-dot"></span>#${i + 1}</span></div>`).join('')}</div></div>`
+      ? `<div class="cpanel mb-0"><div class="cp-h"><span class="cp-t">${T.actionPlan}</span><span class="pill-status pill-g" style="font-size:10px"><span class="pill-dot"></span>${strategy === 'balanced' ? T.balanced : T.maxImp} • ${usedCredits}/${targetCredits} CH</span></div><div class="cp-b" style="padding:8px 12px">${selected.map((c, i) => `<div class="plan-item"><div><div class="title">${c.course_code}</div><div class="sub">Imp ${Number(c.importance_score || 0).toFixed(1)} • T${c.programme_term ?? '-'} • ${c.credit_hours ?? '-'} CH</div></div><span class="pill-status pill-g" style="font-size:10px"><span class="pill-dot"></span>#${i + 1}</span></div>`).join('')}</div></div>`
       : '';
 
     container.innerHTML = terms.map((termObj) => {
@@ -1674,16 +1889,16 @@
             const prereqText = (c.prerequisites || []).join(', ') || '-';
             const missingText = (c.missing_prereqs || []).join(', ');
             const statusBadge = c.status === 'passed'
-              ? '<span class="pill-status pill-g"><span class="pill-dot"></span>Passed</span>'
+              ? `<span class="pill-status pill-g"><span class="pill-dot"></span>${T.passed}</span>`
               : c.status === 'studying'
-              ? '<span class="pill-status pill-b"><span class="pill-dot"></span>Studying</span>'
+              ? `<span class="pill-status pill-b"><span class="pill-dot"></span>${T.studying}</span>`
               : c.can_register
-              ? '<span class="pill-status pill-g" style="background:rgba(10,142,110,0.14)"><span class="pill-dot"></span>Can register</span>'
-              : '<span class="pill-status pill-r"><span class="pill-dot"></span>Locked</span>';
+              ? `<span class="pill-status pill-g" style="background:rgba(10,142,110,0.14)"><span class="pill-dot"></span>${T.canRegisterShort}</span>`
+              : `<span class="pill-status pill-r"><span class="pill-dot"></span>${T.locked}</span>`;
             const importanceNum = Number(c.importance_score || 0);
             const importance = importanceNum.toFixed(2);
             const impClass = importanceNum >= 2 ? 'importance-high' : importanceNum >= 1 ? 'importance-mid' : 'importance-low';
-            const prereqCell = missingText ? `${prereqText}<div class="missing-prereq mt-1">Missing: ${missingText}</div>` : prereqText;
+            const prereqCell = missingText ? `${prereqText}<div class="missing-prereq mt-1">${T.missing}: ${missingText}</div>` : prereqText;
             const rowPayload = encodeURIComponent(JSON.stringify({
               course_code: c.course_code,
               credit_hours: c.credit_hours,
@@ -1696,10 +1911,10 @@
             }));
             return `<tr class="cr-row ${cls} course-row" data-course-json="${rowPayload}"><td><span class="cr-id">${c.course_code}</span></td><td style="font-family:var(--font-mono);font-size:12px">${c.credit_hours ?? '-'}</td><td>${statusBadge}</td><td style="font-size:11px">${prereqCell}</td><td class="${impClass}">${importance}</td></tr>`;
           }).join('')
-        : '<tr><td colspan="5" class="empty-note">No courses in this term for current filter.</td></tr>';
+        : `<tr><td colspan="5" class="empty-note">${T.noCoursesThisTerm}</td></tr>`;
 
       const compactClass = studentPlanCompact ? 'table-compact' : '';
-      return `<details class="term-details" ${studentPlanExpandAll ? 'open' : ''}><summary class="term-summary"><div class="term-header-sticky"><h6>Term ${termObj.term}</h6><div style="display:flex;gap:5px;margin-inline-start:auto">${passedN ? `<span class="pill-status pill-g" style="font-size:10px"><span class="pill-dot"></span>${passedN}</span>` : ''}${studyingN ? `<span class="pill-status pill-b" style="font-size:10px"><span class="pill-dot"></span>${studyingN}</span>` : ''}${canN ? `<span class="pill-status pill-g" style="font-size:10px;background:rgba(0,174,218,0.08);color:var(--sky);border-color:rgba(0,174,218,0.16)"><span class="pill-dot"></span>${canN}</span>` : ''}${lockedN ? `<span class="pill-status pill-r" style="font-size:10px"><span class="pill-dot"></span>${lockedN}</span>` : ''}</div></div></summary><div style="padding:0 12px 12px"><table class="tbl-card mb-0 ${compactClass}" style="border-spacing:0 4px"><thead><tr><th>Course</th><th>CH</th><th>Status</th><th>Prerequisites</th><th>Imp.</th></tr></thead><tbody>${tbody}</tbody></table></div></details>`;
+      return `<details class="term-details" ${studentPlanExpandAll ? 'open' : ''}><summary class="term-summary"><div class="term-header-sticky"><h6>${T.termSection(termObj.term)}</h6><div style="display:flex;gap:5px;margin-inline-start:auto">${passedN ? `<span class="pill-status pill-g" style="font-size:10px"><span class="pill-dot"></span>${passedN}</span>` : ''}${studyingN ? `<span class="pill-status pill-b" style="font-size:10px"><span class="pill-dot"></span>${studyingN}</span>` : ''}${canN ? `<span class="pill-status pill-g" style="font-size:10px;background:rgba(0,174,218,0.08);color:var(--sky);border-color:rgba(0,174,218,0.16)"><span class="pill-dot"></span>${canN}</span>` : ''}${lockedN ? `<span class="pill-status pill-r" style="font-size:10px"><span class="pill-dot"></span>${lockedN}</span>` : ''}</div></div></summary><div style="padding:0 12px 12px"><table class="tbl-card mb-0 ${compactClass}" style="border-spacing:0 4px"><thead><tr><th>${T.course}</th><th>${T.ch}</th><th>${T.status}</th><th>${T.prerequisites}</th><th>${T.imp}</th></tr></thead><tbody>${tbody}</tbody></table></div></details>`;
     }).join('');
 
     bindCourseRowClicks();
@@ -1733,22 +1948,22 @@
   };
   q('spSortImportance').onclick = () => {
     studentPlanSortMode = studentPlanSortMode === 'importance' ? 'term' : 'importance';
-    q('spSortImportance').textContent = studentPlanSortMode === 'importance' ? 'Importance ✓' : 'Importance';
+    q('spSortImportance').textContent = studentPlanSortMode === 'importance' ? T.importance + ' ✓' : T.importance;
     renderStudentPlanTerms();
   };
   q('spSortStatus').onclick = () => {
     studentPlanSortMode = studentPlanSortMode === 'status' ? 'term' : 'status';
-    q('spSortStatus').textContent = studentPlanSortMode === 'status' ? 'Status ✓' : 'Status';
+    q('spSortStatus').textContent = studentPlanSortMode === 'status' ? T.statusSort + ' ✓' : T.statusSort;
     renderStudentPlanTerms();
   };
   q('spSortCode').onclick = () => {
     studentPlanSortMode = studentPlanSortMode === 'code' ? 'term' : 'code';
-    q('spSortCode').textContent = studentPlanSortMode === 'code' ? 'Code ✓' : 'Code';
+    q('spSortCode').textContent = studentPlanSortMode === 'code' ? T.code + ' ✓' : T.code;
     renderStudentPlanTerms();
   };
   q('spCompact').onclick = () => {
     studentPlanCompact = !studentPlanCompact;
-    q('spCompact').textContent = studentPlanCompact ? 'Compact ✓' : 'Compact';
+    q('spCompact').textContent = studentPlanCompact ? T.compact + ' ✓' : T.compact;
     renderStudentPlanTerms();
   };
   q('spBuildTargetPlan').onclick = () => {
@@ -1779,21 +1994,21 @@
     const meta = q('studentPlanMeta');
     if (!container || !meta) return;
     if (!studentId) {
-      meta.textContent = 'Please enter student ID first.';
+      meta.textContent = T.enterStudentFirst;
       return;
     }
 
       showSkeleton('planTable', 3);
     q('loadStudentPlan').disabled = true;
-    q('loadStudentPlan').innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>Loading...';
-    container.innerHTML = '<div class="empty-note">Loading plan matrix...</div>';
+    q('loadStudentPlan').innerHTML = `<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>${T.loading}`;
+    container.innerHTML = `<div class="empty-note">${T.loadingPlanMatrix}</div>`;
 
     const res = await fetch(`/report/student-plan/?student_id=${encodeURIComponent(studentId)}`);
     const data = await res.json();
 
     if (!res.ok || !Array.isArray(data.terms)) {
-      meta.textContent = preciseError(res, data, 'Failed to load student plan.');
-      container.innerHTML = `<div class="empty-note">${preciseError(res, data, 'Unable to render student plan matrix.')}</div>`;
+      meta.textContent = preciseError(res, data, T.failedLoadPlan);
+      container.innerHTML = `<div class="empty-note">${preciseError(res, data, T.failedRenderPlan)}</div>`;
       q('studentPlanRiskAlerts').innerHTML = '';
       q('studentPlanTopImportant').innerHTML = '';
       q('studentPlanHints').innerHTML = '';
@@ -1804,7 +2019,7 @@
       q('studentPlanActions').style.display = 'none';
       q('studentPlanLegend').style.display = 'none';
       q('loadStudentPlan').disabled = false;
-      q('loadStudentPlan').innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>Load plan';
+      q('loadStudentPlan').innerHTML = `<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>${T.loadPlanBtn}`;
       return;
     }
 
@@ -1815,14 +2030,14 @@
     studentPlanCompact = false;
     studentPlanExpandAll = false;
     studentPlanSelectedCourse = null;
-    q('spSortImportance').textContent = 'Importance';
-    q('spSortStatus').textContent = 'Status';
-    q('spSortCode').textContent = 'Code';
-    q('spCompact').textContent = 'Compact';
+    q('spSortImportance').textContent = T.importance;
+    q('spSortStatus').textContent = T.statusSort;
+    q('spSortCode').textContent = T.code;
+    q('spCompact').textContent = T.compact;
     q('spTargetCredits').value = '18';
     q('spTargetStrategy').value = 'max';
 
-    meta.textContent = `Student ${data.student_id} • Program ${data.program}`;
+    meta.textContent = T.studentMeta(data.student_id, data.program);
     const passed = data.summary?.passed ?? 0;
     const studying = data.summary?.studying ?? 0;
     const canReg = data.summary?.not_taken_can_register ?? 0;
@@ -1858,24 +2073,24 @@
     const hints = Array.isArray(data.blocker_hints) ? data.blocker_hints : [];
     const riskChips = [];
     if (canCount <= 2) {
-      riskChips.push(`<span class="alert-chip danger">High risk: only ${canCount} can-register courses available</span>`);
+      riskChips.push(`<span class="alert-chip danger">${T.highRiskAlert(canCount)}</span>`);
     } else if (canCount <= 4) {
-      riskChips.push(`<span class="alert-chip warn">Warning: low flexibility (${canCount} can-register courses)</span>`);
+      riskChips.push(`<span class="alert-chip warn">${T.lowFlexAlert(canCount)}</span>`);
     }
     if (lockedCount >= 10) {
-      riskChips.push(`<span class="alert-chip warn">Heavy lock load: ${lockedCount} locked courses</span>`);
+      riskChips.push(`<span class="alert-chip warn">${T.heavyLockAlert(lockedCount)}</span>`);
     }
     const critical = hints.filter((h) => Number(h.blocks || 0) >= 3).slice(0, 3);
     critical.forEach((h) => {
-      riskChips.push(`<span class="alert-chip danger">Critical blocker: ${h.course_code} blocks ${h.blocks} courses</span>`);
+      riskChips.push(`<span class="alert-chip danger">${T.criticalBlocker(h.course_code, h.blocks)}</span>`);
     });
     q('studentPlanRiskAlerts').innerHTML = riskChips.length
-      ? `<div style="font-size:11px;font-weight:600;color:var(--t3);font-family:var(--font-mono);margin-bottom:6px;letter-spacing:0.04em">RISK ALERTS</div><div style="display:flex;flex-wrap:wrap;gap:6px">${riskChips.join('')}</div>`
+      ? `<div style="font-size:11px;font-weight:600;color:var(--t3);font-family:var(--font-mono);margin-bottom:6px;letter-spacing:0.04em">${T.riskAlerts}</div><div style="display:flex;flex-wrap:wrap;gap:6px">${riskChips.join('')}</div>`
       : '';
 
 
     q('studentPlanHints').innerHTML = hints.length
-      ? `<div style="font-size:11px;font-weight:600;color:var(--t3);font-family:var(--font-mono);margin-bottom:6px;letter-spacing:0.04em">PASS FIRST <span style="opacity:0.5">(click to filter)</span></div><div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">${hints.map((h) => `<button type="button" class="hint-chip hint-filter" data-blocker="${h.course_code}"><svg width="10" height="10" viewBox="0 0 24 24" style="fill:none;stroke:currentColor;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>${h.course_code} → ${h.blocks}</button>`).join('')}<button type="button" id="clearBlockerFilter" class="fb-dd" style="font-size:11px;padding:4px 12px">Clear</button></div>`
+      ? `<div style="font-size:11px;font-weight:600;color:var(--t3);font-family:var(--font-mono);margin-bottom:6px;letter-spacing:0.04em">${T.passFirst} <span style="opacity:0.5">${T.clickToFilter}</span></div><div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">${hints.map((h) => `<button type="button" class="hint-chip hint-filter" data-blocker="${h.course_code}"><svg width="10" height="10" viewBox="0 0 24 24" style="fill:none;stroke:currentColor;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>${h.course_code} → ${h.blocks}</button>`).join('')}<button type="button" id="clearBlockerFilter" class="fb-dd" style="font-size:11px;padding:4px 12px">Clear</button></div>`
       : '';
 
     document.querySelectorAll('.hint-filter').forEach((el) => {
@@ -1898,7 +2113,7 @@
     renderStudentPlanTerms();
 
     q('loadStudentPlan').disabled = false;
-    q('loadStudentPlan').innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>Load plan';
+    q('loadStudentPlan').innerHTML = `<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>${T.loadPlanBtn}`;
   };
 
   let scrapeAutoTimer = null;
@@ -1924,11 +2139,11 @@
     const data = await res.json();
 
     const hasFailureTrace = typeof data.log_tail === 'string' && data.log_tail.includes('Traceback');
-    let statusHtml = '<span class="status-dot status-stopped"></span>Idle';
+    let statusHtml = '<span class="status-dot status-stopped"></span>' + T.idle;
     if (data.running) {
-      statusHtml = '<span class="status-dot status-running"></span>Running';
+      statusHtml = '<span class="status-dot status-running"></span>' + T.scrapeRunning;
     } else if (data.last_action === 'failed' || hasFailureTrace) {
-      statusHtml = '<span class="status-dot status-failed"></span>Failed';
+      statusHtml = '<span class="status-dot status-failed"></span>' + T.scrapeFailed;
     }
 
     q('scrapeMetricStatus').innerHTML = statusHtml;
@@ -1937,11 +2152,11 @@
     q('scrapeMetricStopped').textContent = String(data.stopped_at ?? '-');
 
     q('scrapeMeta').textContent = `action=${data.last_action ?? '-'} log=${data.log_path}`;
-    q('scrapeUpdatedAt').textContent = `Last update: ${new Date().toLocaleTimeString()}`;
+    q('scrapeUpdatedAt').textContent = `${T.lastUpdate}: ${new Date().toLocaleTimeString()}`;
     const logEl = q('scrapeOut');
     const rawLog = data.log_tail || '';
     if (!rawLog) {
-      logEl.innerHTML = '<span style="color:rgba(255,255,255,0.3)">No logs yet.</span>';
+      logEl.innerHTML = `<span style="color:rgba(255,255,255,0.3)">${T.noLogsYet}</span>`;
     } else {
       const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
       logEl.innerHTML = rawLog.split('\n').map(line => {
@@ -1971,7 +2186,7 @@
       const history = Array.isArray(data.history) ? data.history : [];
       const cntEl = document.getElementById('scrapeHistoryCnt');
       if (history.length === 0) {
-        historyBody.innerHTML = '<tr><td colspan="5"><div class="empty-state"><span class="i" style="width:32px;height:32px;color:var(--t5);margin-bottom:8px"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span><div class="empty-title">No scrape history</div><div class="empty-hint">Run a scrape to see history here</div></div></td></tr>';
+        historyBody.innerHTML = `<tr><td colspan="5"><div class="empty-state"><span class="i" style="width:32px;height:32px;color:var(--t5);margin-bottom:8px"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span><div class="empty-title">${T.noScrapeHistory}</div><div class="empty-hint">${T.runScrapeHint}</div></div></td></tr>`;
         if (cntEl) cntEl.textContent = '0';
       } else {
         const rows = history
@@ -1980,7 +2195,8 @@
           .map((h) => {
             const evt = h.event ?? '-';
             const evtPill = evt === 'started' ? 'pill-g' : evt === 'stopped' ? 'pill-a' : evt === 'failed' ? 'pill-r' : 'pill-b';
-            return `<tr class="cr-row"><td style="font-family:var(--font-mono);font-size:11px;color:var(--t3)">${h.at ?? '-'}</td><td><span class="pill ${evtPill}" style="font-size:11px;padding:3px 10px"><span class="pill-dot" style="width:6px;height:6px;border-radius:50%;display:inline-block;margin-inline-end:5px;background:currentColor;opacity:0.5"></span>${evt}</span></td><td style="font-family:var(--font-mono)">${h.pid ?? '-'}</td><td>${h.concurrency ?? '-'}</td><td style="font-family:var(--font-mono);font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${h.students_csv ?? '-'}</td></tr>`;
+            const evtLabel = evt === 'started' ? T.started : evt === 'stopped' ? T.stopped : evt === 'failed' ? T.failed : evt;
+            return `<tr class="cr-row"><td style="font-family:var(--font-mono);font-size:11px;color:var(--t3)">${h.at ?? '-'}</td><td><span class="pill ${evtPill}" style="font-size:11px;padding:3px 10px"><span class="pill-dot" style="width:6px;height:6px;border-radius:50%;display:inline-block;margin-inline-end:5px;background:currentColor;opacity:0.5"></span>${evtLabel}</span></td><td style="font-family:var(--font-mono)">${h.pid ?? '-'}</td><td>${h.concurrency ?? '-'}</td><td style="font-family:var(--font-mono);font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${h.students_csv ?? '-'}</td></tr>`;
           })
           .join('');
         historyBody.innerHTML = rows;
@@ -2000,12 +2216,12 @@
     const studentsCsv = q('scrapeCsv').value || '';
 
     const ok = await dlg.confirm({
-      title: 'Start batch scraping?',
-      body: `<p>This will run the scraper in the background.</p>
-             <p><strong>Concurrency:</strong> ${concurrency}<br>
-             <strong>CSV:</strong> ${studentsCsv || 'default import_old/data/students_list.csv'}</p>`,
-      confirmText: 'Start scraping',
-      cancelText: 'Cancel',
+      title: T.startScrapeTitle,
+      body: `<p>${T.startScrapeBody}</p>
+             <p><strong>${T.concurrencyLabel}</strong> ${concurrency}<br>
+             <strong>${T.csvLabel}</strong> ${studentsCsv || T.csvDefault}</p>`,
+      confirmText: T.startScraping,
+      cancelText: T.cancel,
       kind: 'info',
     });
     if (!ok) return;
@@ -2016,16 +2232,16 @@
       const data = await res.json();
       q('scrapeMeta').textContent = JSON.stringify(data, null, 2);
     } catch (err) {
-      q('scrapeMeta').textContent = `Failed to start scrape: ${err}`;
+      q('scrapeMeta').textContent = T.failedStartScrape(err);
     }
     await refreshScrapeStatus();
   };
 
   q('scrapeStop').onclick = async () => {
     const ok = await dlg.confirm({
-      title: 'Stop scraping process?',
-      body: '<p>This will send a stop signal. Any in-progress student may still complete.</p>',
-      confirmText: 'Stop scraping',
+      title: T.stopScrapeTitle,
+      body: `<p>${T.stopScrapeBody}</p>`,
+      confirmText: T.stopScraping,
       kind: 'warning',
     });
     if (!ok) return;
@@ -2035,7 +2251,7 @@
       const data = await res.json();
       q('scrapeMeta').textContent = JSON.stringify(data, null, 2);
     } catch (err) {
-      q('scrapeMeta').textContent = `Failed to stop scrape: ${err}`;
+      q('scrapeMeta').textContent = T.failedStopScrape(err);
     }
     await refreshScrapeStatus();
   };
@@ -2138,7 +2354,7 @@
   function setUpdated(elId, failed = false) {
     const el = q(elId);
     if (!el) return;
-    el.textContent = `Last update: ${new Date().toLocaleTimeString()}${failed ? ' (failed)' : ''}`;
+    el.textContent = `${T.lastUpdate}: ${new Date().toLocaleTimeString()}${failed ? ' (failed)' : ''}`;
   }
 
   function preciseError(res, data, fallback, err) {
@@ -2150,28 +2366,28 @@
     let msg = apiMsg || errMsg || fallback;
 
     if (status === 403 && msg.toLowerCase().includes('csrf')) {
-      msg = 'Request blocked by security token (CSRF). Refresh page and retry.';
+      msg = T.csrfBlocked;
     } else if (status === 400 && !apiMsg) {
-      msg = `Invalid request parameters. ${fallback}`;
+      msg = T.invalidParams(fallback);
     } else if (status === 404) {
-      msg = `Endpoint not found. ${fallback}`;
+      msg = T.endpointNotFound(fallback);
     } else if (status >= 500 && !apiMsg) {
-      msg = `Server error (${status}). ${fallback}`;
+      msg = T.serverError(status, fallback);
     }
 
     const remediationByReason = {
-      PROGRAM_SCOPE_MISSING_PROGRAM: 'Pick a program from your allowed department list, then retry.',
-      PROGRAM_SCOPE_OUTSIDE_ALLOWED: 'Choose a program within your allowed departments.',
-      STUDENT_SCOPE_ADVISOR_MISMATCH: 'Use a student assigned to your advisor ID, or switch role for QA in DEBUG.',
-      STUDENT_SCOPE_DEPARTMENT_MISMATCH: 'Use a student from your department scope.',
-      STUDENT_SCOPE_NOT_FOUND: 'Check the student ID and confirm the student exists in students table.',
+      PROGRAM_SCOPE_MISSING_PROGRAM: T.remPickProgram,
+      PROGRAM_SCOPE_OUTSIDE_ALLOWED: T.remChooseProgram,
+      STUDENT_SCOPE_ADVISOR_MISMATCH: T.remAdvisorMismatch,
+      STUDENT_SCOPE_DEPARTMENT_MISMATCH: T.remDeptMismatch,
+      STUDENT_SCOPE_NOT_FOUND: T.remStudentNotFound,
     };
     const allowed = Array.isArray(data?.allowed_programs) ? data.allowed_programs : [];
     if (reason && remediationByReason[reason]) {
-      msg = `${msg} Remediation: ${remediationByReason[reason]}`;
-      if (allowed.length) msg += ` Allowed: ${allowed.join(', ')}`;
+      msg = `${msg} ${T.remediation}: ${remediationByReason[reason]}`;
+      if (allowed.length) msg += ` ${T.allowed}: ${allowed.join(', ')}`;
     } else if (status === 403) {
-      msg = `${msg} Remediation: verify your role scope and choose in-scope data.`;
+      msg = `${msg} ${T.remediation}: ${T.verifyScope}`;
     }
 
     return status ? `${msg} [HTTP ${status}${reason ? ` | ${reason}` : ''}]` : msg;
@@ -2181,10 +2397,10 @@
 
 
   q('dbgRun').onclick = async () => {
-    if (!requireFields(['dbgYear','dbgSemester'], 'dbgMeta', 'Debug report')) return;
+    if (!requireFields(['dbgYear','dbgSemester'], 'dbgMeta', T.debugReport)) return;
     const btn = q('dbgRun');
     btn.disabled = true;
-    btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Running...';
+    btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>' + T.running;
     const url = `/report/recommendation-debug/?year=${encodeURIComponent(q('dbgYear').value)}&semester=${encodeURIComponent(q('dbgSemester').value)}&section=${encodeURIComponent(q('dbgSection').value)}&program=${encodeURIComponent(q('dbgProgram').value)}&join_years=${encodeURIComponent(q('dbgJoin').value)}&limit=${encodeURIComponent(q('dbgLimit').value)}`;
     q('dbgCsv').href = `/export/recommendation-debug.csv?year=${encodeURIComponent(q('dbgYear').value)}&semester=${encodeURIComponent(q('dbgSemester').value)}&section=${encodeURIComponent(q('dbgSection').value)}&program=${encodeURIComponent(q('dbgProgram').value)}&join_years=${encodeURIComponent(q('dbgJoin').value)}&limit=${encodeURIComponent(q('dbgLimit').value)}`;
     const tbody = document.querySelector('#dbgTable tbody');
@@ -2194,28 +2410,28 @@
     try {
       ({ res, data } = await fetchJsonWithRetry(url));
     } catch (err) {
-      tbody.innerHTML = '<tr><td colspan="7" class="text-danger">Network error while loading debug report.</td></tr>';
+      tbody.innerHTML = `<tr><td colspan="7" class="text-danger">${T.networkErrorDebug}</td></tr>`;
       q('dbgMeta').textContent = preciseError(null, null, 'Unable to load debug report.', err);
       q('dbgMeta').className = 'meta-banner meta-danger';
       q('dbgSummary').style.display = 'none';
       setUpdated('dbgUpdated', true);
-      toast('Debug report failed', false);
+      toast(T.debugFailed, false);
       btn.disabled = false;
-      btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run';
+      btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>' + T.run;
       return;
     }
 
     if (!res.ok || !Array.isArray(data.items)) {
-      tbody.innerHTML = '<tr><td colspan="7" class="text-danger">Failed to load debug report.</td></tr>';
-      q('dbgMeta').textContent = preciseError(res, data, 'Failed to load debug report.');
+      tbody.innerHTML = `<tr><td colspan="7" class="text-danger">${T.failedLoadDebug}</td></tr>`;
+      q('dbgMeta').textContent = preciseError(res, data, T.failedLoadDebug);
       q('dbgMeta').className = 'meta-banner meta-warn';
       q('dbgSummary').style.display = 'none';
       setUpdated('dbgUpdated', true);
       btn.disabled = false;
-      btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run';
+      btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>' + T.run;
       return;
     }
-    q('dbgMeta').textContent = `Loaded ${data.count} students • filters: section=${data.filters?.section || '-'} program=${data.filters?.program || '-'} join=${(data.filters?.join_year_prefixes || []).join(',') || '-'}.`;
+    q('dbgMeta').textContent = T.debugMeta(data.count, data.filters?.section || '-', data.filters?.program || '-', (data.filters?.join_year_prefixes || []).join(',') || '-');
     q('dbgMeta').className = 'meta-banner meta-info';
     const withRec = (data.items || []).filter((x) => (x.recommended_courses || []).length > 0).length;
     q('dbgCount').textContent = String(data.count || 0);
@@ -2261,21 +2477,21 @@
         const orig = b.innerHTML;
         b.innerHTML = '<span class="i" style="width:12px;height:12px"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Copied!';
         setTimeout(() => { b.innerHTML = orig; b.classList.remove('copied'); }, 1500);
-        toast('Debug summary copied', true);
+        toast(T.debugCopied, true);
       });
     });
 
     setUpdated('dbgUpdated');
-    toast('Debug report loaded', true);
+    toast(T.debugLoaded, true);
     btn.disabled = false;
-    btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run';
+    btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>' + T.run;
   };
 
   q('elRun').onclick = async () => {
-    if (!requireFields(['elCourse'], 'elMeta', 'Eligibility')) return;
+    if (!requireFields(['elCourse'], 'elMeta', T.eligibility)) return;
     const btn = q('elRun');
     btn.disabled = true;
-    btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Checking...';
+    btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>' + T.checking;
     const url = `/report/course-eligibility/?course_code=${encodeURIComponent(q('elCourse').value)}&section=${encodeURIComponent(q('elSection').value)}&program=${encodeURIComponent(q('elProgram').value)}&join_years=${encodeURIComponent(q('elJoin').value)}&mode=${encodeURIComponent(q('elMode').value)}`;
     q('elCsv').href = `/export/course-eligibility.csv?course_code=${encodeURIComponent(q('elCourse').value)}&section=${encodeURIComponent(q('elSection').value)}&program=${encodeURIComponent(q('elProgram').value)}&join_years=${encodeURIComponent(q('elJoin').value)}&mode=${encodeURIComponent(q('elMode').value)}`;
     const tbody = document.querySelector('#elTable tbody');
@@ -2289,20 +2505,20 @@
       q('elMeta').className = 'meta-banner meta-danger';
       q('elSummary').style.display = 'none';
       setUpdated('elUpdated', true);
-      tbody.innerHTML = '<tr><td class="text-danger">Network error while loading eligibility report.</td></tr>';
-      toast('Eligibility report failed', false);
+      tbody.innerHTML = `<tr><td class="text-danger">${T.networkErrorEligibility}</td></tr>`;
+      toast(T.eligibilityFailed, false);
       btn.disabled = false;
-      btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Check';
+      btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>' + T.check;
       return;
     }
     if (!res.ok || !Array.isArray(data.per_program)) {
-      q('elMeta').textContent = preciseError(res, data, 'Failed eligibility report.');
+      q('elMeta').textContent = preciseError(res, data, T.failedLoadEligibility);
       q('elMeta').className = 'meta-banner meta-warn';
       q('elSummary').style.display = 'none';
       setUpdated('elUpdated', true);
-      tbody.innerHTML = '<tr><td class="text-danger">Failed to load eligibility report.</td></tr>';
+      tbody.innerHTML = `<tr><td class="text-danger">${T.failedLoadEligibility}</td></tr>`;
       btn.disabled = false;
-      btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Check';
+      btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>' + T.check;
       return;
     }
 
@@ -2321,12 +2537,12 @@
 
     tbody.innerHTML = eligibleIds.length
       ? eligibleIds.map((sid) => `<tr class="cr-row"><td><span class="cr-id">${sid}</span></td></tr>`).join('')
-      : '<tr><td class="empty-note">No eligible student IDs for this filter.</td></tr>';
+      : `<tr><td class="empty-note">${T.noEligibleIds}</td></tr>`;
 
     setUpdated('elUpdated');
-    toast('Eligibility report loaded', true);
+    toast(T.eligibilityLoaded, true);
     btn.disabled = false;
-    btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Check';
+    btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>' + T.check;
   };
 
   async function refreshAdvisorsDropdown(selectAdvisorId = '') {
@@ -2339,7 +2555,7 @@
         setUpdated('advUpdated', true);
         return;
       }
-      sel.innerHTML = '<option value="">Select advisor</option>' + data.items.map((a) => `<option value="${a.advisor_id}">${a.advisor_id} — ${a.full_name} (${a.department})</option>`).join('');
+      sel.innerHTML = `<option value="">${T.selectAdvisor}</option>` + data.items.map((a) => `<option value="${a.advisor_id}">${a.advisor_id} — ${a.full_name} (${a.department})</option>`).join('');
       if (selectAdvisorId) sel.value = selectAdvisorId;
     } catch (err) {
       q('advMeta').textContent = preciseError(null, null, 'Network request failed.', err);
@@ -2370,19 +2586,19 @@
   function mapAdvisorSaveErrorToFields(msg) {
     const m = String(msg || '').toLowerCase();
     if (m.includes('email')) {
-      setAdvisorFieldError('advEmail', 'advEmailErr', 'Email is invalid or already used.');
+      setAdvisorFieldError('advEmail', 'advEmailErr', T.emailInvalid);
       return true;
     }
     if (m.includes('advisor id') || m.includes('advisor_id')) {
-      setAdvisorFieldError('advId', 'advIdErr', 'Advisor ID is invalid or already exists.');
+      setAdvisorFieldError('advId', 'advIdErr', T.advisorIdInvalid);
       return true;
     }
     if (m.includes('department')) {
-      setAdvisorFieldError('advDept', 'advDeptErr', 'Please provide at least one department.');
+      setAdvisorFieldError('advDept', 'advDeptErr', T.deptRequired);
       return true;
     }
     if (m.includes('full_name') || m.includes('full name')) {
-      setAdvisorFieldError('advName', 'advNameErr', 'Please provide advisor full name.');
+      setAdvisorFieldError('advName', 'advNameErr', T.nameRequired);
       return true;
     }
     return false;
@@ -2398,11 +2614,11 @@
     const department = (q('advDept').value || '').trim();
 
     if (!advisor_id || !full_name || !email || !department) {
-      if (!advisor_id) setAdvisorFieldError('advId', 'advIdErr', 'Advisor ID is required.');
-      if (!full_name) setAdvisorFieldError('advName', 'advNameErr', 'Full name is required.');
-      if (!email) setAdvisorFieldError('advEmail', 'advEmailErr', 'Email is required.');
-      if (!department) setAdvisorFieldError('advDept', 'advDeptErr', 'Department(s) is required.');
-      q('advMeta').textContent = 'Please correct highlighted fields and retry.';
+      if (!advisor_id) setAdvisorFieldError('advId', 'advIdErr', T.advisorIdReq);
+      if (!full_name) setAdvisorFieldError('advName', 'advNameErr', T.fullNameReq);
+      if (!email) setAdvisorFieldError('advEmail', 'advEmailErr', T.emailReq);
+      if (!department) setAdvisorFieldError('advDept', 'advDeptErr', T.deptReqShort);
+      q('advMeta').textContent = T.fixFieldsRetry;
       setUpdated('advUpdated', true);
       toast('Advisor save failed', false);
       return;
@@ -2410,8 +2626,8 @@
 
     const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
     if (!emailOk) {
-      setAdvisorFieldError('advEmail', 'advEmailErr', 'Enter a valid email format (example: advisor@uni.edu).');
-      q('advMeta').textContent = 'Please correct highlighted fields and retry.';
+      setAdvisorFieldError('advEmail', 'advEmailErr', T.emailFormatError);
+      q('advMeta').textContent = T.fixFieldsRetry;
       setUpdated('advUpdated', true);
       toast('Advisor save failed', false);
       return;
@@ -2419,7 +2635,7 @@
 
     const btn = q('advSave');
     btn.disabled = true;
-    btn.textContent = 'Saving...';
+    btn.textContent = T.saving;
 
     try {
       const res = await fetch('/ops/advisors/upsert/', {
@@ -2436,9 +2652,9 @@
         toast('Advisor save failed', false);
         return;
       }
-      q('advMeta').textContent = `Advisor saved: ${advisor_id} • ${full_name}`;
+      q('advMeta').textContent = T.advisorSaved(advisor_id, full_name);
       setUpdated('advUpdated');
-      toast('Advisor saved', true);
+      toast(T.advisorSavedToast, true);
       await refreshAdvisorsDropdown(advisor_id);
     } catch (err) {
       q('advMeta').textContent = preciseError(null, null, 'Network request failed.', err);
@@ -2446,47 +2662,47 @@
       toast('Advisor save failed', false);
     } finally {
       btn.disabled = false;
-      btn.textContent = 'Save advisor';
+      btn.textContent = T.saveAdvisor;
     }
   };
 
   q('advEnsureColumn').onclick = async () => {
     const btn = q('advEnsureColumn');
     btn.disabled = true;
-    btn.textContent = 'Enabling...';
+    btn.textContent = T.enabling;
     try {
       const res = await fetch('/ops/advisors/ensure-students-column/', { method: 'POST', headers: csrfHeaders() });
       const data = await res.json();
       if (!res.ok) {
-        q('advMeta').textContent = preciseError(res, data, 'Failed to enable students.advisor_id.');
+        q('advMeta').textContent = preciseError(res, data, T.enableFailed);
         setUpdated('advUpdated', true);
-        toast('Enable advisor column failed', false);
+        toast(T.enableColumnFailed, false);
         return;
       }
-      q('advMeta').textContent = data.added ? 'students.advisor_id column created.' : 'students.advisor_id already exists.';
+      q('advMeta').textContent = data.added ? T.columnCreated : T.columnExists;
       setUpdated('advUpdated');
-      toast('Advisor column ready', true);
+      toast(T.columnReady, true);
     } catch (err) {
       q('advMeta').textContent = preciseError(null, null, 'Network request failed.', err);
       setUpdated('advUpdated', true);
-      toast('Enable advisor column failed', false);
+      toast(T.enableColumnFailed, false);
     } finally {
       btn.disabled = false;
-      btn.textContent = 'Enable students.advisor_id';
+      btn.textContent = T.enableColumn;
     }
   };
 
   q('advAssignCsvBtn').onclick = async () => {
     const csv_text = (q('advAssignCsv').value || '').trim();
     if (!csv_text) {
-      q('advMeta').textContent = 'Paste CSV mapping first.';
+      q('advMeta').textContent = T.pasteCsvFirst;
       setUpdated('advUpdated', true);
       return;
     }
 
     const btn = q('advAssignCsvBtn');
     btn.disabled = true;
-    btn.textContent = 'Applying...';
+    btn.textContent = T.applying;
     try {
       const res = await fetch('/ops/advisors/assign-students/', {
         method: 'POST',
@@ -2495,21 +2711,21 @@
       });
       const data = await res.json();
       if (!res.ok) {
-        q('advMeta').textContent = preciseError(res, data, 'Failed to apply CSV mapping.');
+        q('advMeta').textContent = preciseError(res, data, T.csvMappingFailed);
         setUpdated('advUpdated', true);
-        toast('Advisor mapping failed', false);
+        toast(T.mappingFailed, false);
         return;
       }
-      q('advMeta').textContent = `Mapping applied: updated=${data.updated}, errors=${data.errors_count}`;
+      q('advMeta').textContent = T.mappingApplied(data.updated, data.errors_count);
       setUpdated('advUpdated');
-      toast('Advisor mapping applied', true);
+      toast(T.mappingAppliedToast, true);
     } catch (err) {
       q('advMeta').textContent = preciseError(null, null, 'Network request failed.', err);
       setUpdated('advUpdated', true);
-      toast('Advisor mapping failed', false);
+      toast(T.mappingFailed, false);
     } finally {
       btn.disabled = false;
-      btn.textContent = 'Apply CSV mapping';
+      btn.textContent = T.applyCsvMapping;
     }
   };
 
@@ -2519,15 +2735,15 @@
     const sid = Number(sidRaw);
 
     if (!sidRaw || !Number.isInteger(sid) || sid <= 0 || !aidRaw) {
-      q('advMeta').textContent = 'Provide valid student ID and advisor ID.';
+      q('advMeta').textContent = T.provideStudentAdvisor;
       setUpdated('advUpdated', true);
-      toast('Single assignment failed', false);
+      toast(T.singleAssignFailed, false);
       return;
     }
 
     const btn = q('advAssignOneBtn');
     btn.disabled = true;
-    btn.textContent = 'Assigning...';
+    btn.textContent = T.assigning;
     try {
       const res = await fetch('/ops/advisors/assign-students/', {
         method: 'POST',
@@ -2536,21 +2752,21 @@
       });
       const data = await res.json();
       if (!res.ok) {
-        q('advMeta').textContent = preciseError(res, data, 'Failed to assign student.');
+        q('advMeta').textContent = preciseError(res, data, T.failedAssignStudent);
         setUpdated('advUpdated', true);
-        toast('Single assignment failed', false);
+        toast(T.singleAssignFailed, false);
         return;
       }
-      q('advMeta').textContent = `Assigned student ${sid} to advisor ${aidRaw}. updated=${data.updated}, errors=${data.errors_count}`;
+      q('advMeta').textContent = T.assignResult(sid, aidRaw, data.updated, data.errors_count);
       setUpdated('advUpdated');
-      toast('Student assigned', true);
+      toast(T.studentAssigned, true);
     } catch (err) {
       q('advMeta').textContent = preciseError(null, null, 'Network request failed.', err);
       setUpdated('advUpdated', true);
-      toast('Single assignment failed', false);
+      toast(T.singleAssignFailed, false);
     } finally {
       btn.disabled = false;
-      btn.textContent = 'Assign one student';
+      btn.textContent = T.assignOne;
     }
   };
 
@@ -2559,10 +2775,10 @@
   window._advisorStudentsCache = advisorStudentsCache;
 
   q('hpRun').onclick = async () => {
-    if (!requireFields(['hpYear','hpSemester'], 'hpMeta', 'High priority report')) return;
+    if (!requireFields(['hpYear','hpSemester'], 'hpMeta', T.highPriorityReport)) return;
     const btn = q('hpRun');
     btn.disabled = true;
-    btn.textContent = 'Running...';
+    btn.textContent = T.running;
     const url = `/report/missing-high-priority/?year=${encodeURIComponent(q('hpYear').value)}&semester=${encodeURIComponent(q('hpSemester').value)}&section=${encodeURIComponent(q('hpSection').value)}&program=${encodeURIComponent(q('hpProgram').value)}&join_years=${encodeURIComponent(q('hpJoin').value)}&term_parity=${encodeURIComponent(q('hpParity').value)}&discount=${encodeURIComponent(q('hpDiscount').value)}&min_score=${encodeURIComponent(q('hpMinScore').value)}&top_k=${encodeURIComponent(q('hpTopK').value)}&studying_counts_as_passed=${encodeURIComponent(q('hpStudying').value)}`;
     q('hpXlsx').href = `/export/missing-high-priority.xlsx?year=${encodeURIComponent(q('hpYear').value)}&semester=${encodeURIComponent(q('hpSemester').value)}&section=${encodeURIComponent(q('hpSection').value)}&program=${encodeURIComponent(q('hpProgram').value)}&join_years=${encodeURIComponent(q('hpJoin').value)}&term_parity=${encodeURIComponent(q('hpParity').value)}&discount=${encodeURIComponent(q('hpDiscount').value)}&min_score=${encodeURIComponent(q('hpMinScore').value)}&top_k=${encodeURIComponent(q('hpTopK').value)}&studying_counts_as_passed=${encodeURIComponent(q('hpStudying').value)}`;
 
@@ -2577,9 +2793,9 @@
       q('hpMeta').textContent = preciseError(null, null, 'Network request failed.', err);
       setUpdated('hpUpdated', true);
       tbody.innerHTML = '<tr><td colspan="5" class="text-danger">Network error while loading report.</td></tr>';
-      toast('Missing high priority failed', false);
+      toast(T.hpFailed, false);
       btn.disabled = false;
-      btn.textContent = 'Run report';
+      btn.textContent = T.runReport;
       return;
     }
     if (!res.ok || !Array.isArray(data.items)) {
@@ -2587,16 +2803,16 @@
       setUpdated('hpUpdated', true);
       tbody.innerHTML = '<tr><td colspan="5" class="text-danger">Failed to load report.</td></tr>';
       btn.disabled = false;
-      btn.textContent = 'Run report';
+      btn.textContent = T.runReport;
       return;
     }
 
-    q('hpMeta').textContent = `Flagged students: ${data.count} • discount=${data.params?.discount} • min_score=${data.params?.min_score} • top_k=${data.params?.top_k_per_student}`;
-    tbody.innerHTML = data.items.map((r) => `<tr><td>${r.student_id}</td><td>${r.program}</td><td>${(r.missing_this_parity || []).map((x) => `${x.course_code}(${Number(x.score).toFixed(2)})`).join(', ') || '-'}</td><td>${(r.missing_other || []).map((x) => `${x.course_code}(${Number(x.score).toFixed(2)})`).join(', ') || '-'}</td><td>${r.missing_total}</td></tr>`).join('') || '<tr><td colspan="5" class="empty-note">No flagged students.</td></tr>';
+    q('hpMeta').textContent = T.hpMeta(data.count, data.params?.discount, data.params?.min_score, data.params?.top_k_per_student);
+    tbody.innerHTML = data.items.map((r) => `<tr><td>${r.student_id}</td><td>${r.program}</td><td>${(r.missing_this_parity || []).map((x) => `${x.course_code}(${Number(x.score).toFixed(2)})`).join(', ') || '-'}</td><td>${(r.missing_other || []).map((x) => `${x.course_code}(${Number(x.score).toFixed(2)})`).join(', ') || '-'}</td><td>${r.missing_total}</td></tr>`).join('') || `<tr><td colspan="5" class="empty-note">${T.noFlaggedStudents}</td></tr>`;
     setUpdated('hpUpdated');
-    toast('Missing high priority report loaded', true);
+    toast(T.hpLoaded, true);
     btn.disabled = false;
-    btn.textContent = 'Run report';
+    btn.textContent = T.runReport;
   };
 
   async function copyLinkFrom(elId, label) {
@@ -2606,18 +2822,18 @@
     if (!href || href === '#') return;
     const absolute = new URL(href, window.location.origin).toString();
     await navigator.clipboard.writeText(absolute);
-    q('scrapeMeta').textContent = `${label} copied to clipboard: ${absolute}`;
-    toast(`${label} copied`, true);
+    q('scrapeMeta').textContent = T.linkCopied(label, absolute);
+    toast(T.labelCopied(label), true);
   }
 
   const copyStudentBtn = q('copyStudentCsv');
   if (copyStudentBtn) {
-    copyStudentBtn.onclick = async () => copyLinkFrom('studentCsvLink', 'Student CSV link');
+    copyStudentBtn.onclick = async () => copyLinkFrom('studentCsvLink', T.studentCsvLink);
   }
 
   const copyBatchBtn = q('copyBatchCsv');
   if (copyBatchBtn) {
-    copyBatchBtn.onclick = async () => copyLinkFrom('batchCsv', 'Aggregate CSV link');
+    copyBatchBtn.onclick = async () => copyLinkFrom('batchCsv', T.aggregateCsvLink);
   }
 
   function syncExportCenterLinks() {
@@ -2657,7 +2873,7 @@
   q('hpLoadPreset')?.addEventListener('click', () => loadPreset('highpriority', ['hpYear','hpSemester','hpSection','hpProgram','hpJoin','hpParity','hpDiscount','hpMinScore','hpTopK','hpStudying']));
 
   function exportMissingFields(href) {
-    if (!href || href.endsWith('#')) return ['required filters'];
+    if (!href || href.endsWith('#')) return [T.requiredFilters];
     try {
       const u = new URL(href, window.location.origin);
       const p = u.searchParams;
@@ -2690,7 +2906,7 @@
       }
       return [];
     } catch {
-      return ['required filters'];
+      return [T.requiredFilters];
     }
   }
 
@@ -2704,7 +2920,7 @@
       const missing = exportMissingFields(a.href);
       if (missing.length) {
         ev.preventDefault();
-        toast(`Export blocked: fill ${missing.join(', ')} first.`, false);
+        toast(T.exportBlocked(missing.join(', ')), false);
         return;
       }
       // Let the browser handle download directly to preserve server filename.
@@ -2744,11 +2960,11 @@
     overlay.className = 'kbd-help-backdrop';
     overlay.innerHTML = `
       <div class="kbd-help-box">
-        <h3>⌨️ Keyboard shortcuts</h3>
-        <div class="kbd-row"><span class="kbd-desc">Open quick search</span><span class="kbd-key"><kbd>⌘</kbd><kbd>K</kbd></span></div>
-        <div class="kbd-row"><span class="kbd-desc">Close dialog / palette</span><span class="kbd-key"><kbd>Esc</kbd></span></div>
-        <div class="kbd-row"><span class="kbd-desc">Show this help</span><span class="kbd-key"><kbd>?</kbd></span></div>
-        <div class="kbd-row"><span class="kbd-desc">Sort table column</span><span class="kbd-desc">Click column header</span></div>
+        <h3>${T.kbShortcuts}</h3>
+        <div class="kbd-row"><span class="kbd-desc">${T.kbOpenSearch}</span><span class="kbd-key"><kbd>⌘</kbd><kbd>K</kbd></span></div>
+        <div class="kbd-row"><span class="kbd-desc">${T.kbCloseDialog}</span><span class="kbd-key"><kbd>Esc</kbd></span></div>
+        <div class="kbd-row"><span class="kbd-desc">${T.kbShowHelp}</span><span class="kbd-key"><kbd>?</kbd></span></div>
+        <div class="kbd-row"><span class="kbd-desc">${T.kbSortColumn}</span><span class="kbd-desc">${T.kbClickHeader}</span></div>
       </div>`;
     document.body.appendChild(overlay);
     overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
@@ -3194,7 +3410,7 @@
     const openPalette = () => {
       palette.style.display = '';
       input.value = '';
-      results.innerHTML = '<div class="cmd-hint">Type a student ID to jump directly to their plan</div>';
+      results.innerHTML = `<div class="cmd-hint">${T.paletteHint}</div>`;
       requestAnimationFrame(() => input.focus());
     };
 
@@ -3213,7 +3429,7 @@
     input.addEventListener('input', () => {
       const val = input.value.trim();
       if (!val) {
-        results.innerHTML = '<div class="cmd-hint">Type a student ID to jump directly to their plan</div>';
+        results.innerHTML = `<div class="cmd-hint">${T.paletteHint}</div>`;
         return;
       }
 
@@ -3229,26 +3445,26 @@
       let html = '';
 
       if (matches.length) {
-        html += '<div class="cmd-section-label">Students</div>';
+        html += `<div class="cmd-section-label">${T.students}</div>`;
         html += matches.map(s => `
           <div class="cmd-item" data-action="open-student" data-sid="${s.student_id}">
             <span class="cmd-item-id">${s.student_id}</span>
             <span class="cmd-item-name">${s.name || ''} ${s.program ? '· ' + s.program : ''}</span>
-            <span class="cmd-item-badge">Open plan</span>
+            <span class="cmd-item-badge">${T.openPlan}</span>
           </div>`).join('');
       }
 
       if (isNum && !matches.find(s => String(s.student_id) === val)) {
-        html += '<div class="cmd-section-label">Direct navigation</div>';
+        html += `<div class="cmd-section-label">${T.directNav}</div>`;
         html += `<div class="cmd-item" data-action="open-student" data-sid="${val}">
           <span class="cmd-item-id">${val}</span>
-          <span class="cmd-item-name">Navigate to student plan</span>
-          <span class="cmd-item-badge">Open plan</span>
+          <span class="cmd-item-name">${T.navToStudentPlan}</span>
+          <span class="cmd-item-badge">${T.openPlan}</span>
         </div>`;
       }
 
       if (!html) {
-        html = '<div class="cmd-hint">No matches found</div>';
+        html = `<div class="cmd-hint">${T.noMatchesFound}</div>`;
       }
 
       results.innerHTML = html;
@@ -3264,7 +3480,7 @@
             history.pushState(null, '', '#student');
             window.scrollTo({ top: 0, behavior: 'instant' });
             q('loadStudentPlan')?.click();
-            toast(`Opening student plan for ${sid}`, true);
+            toast(T.openingPlan(sid), true);
           }
         });
       });
