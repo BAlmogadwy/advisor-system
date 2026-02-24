@@ -11,6 +11,7 @@ class Student(models.Model):
     gpa = models.FloatField(null=True, blank=True)
     total_registered_credits = models.IntegerField(null=True, default=0)
     total_earned_credits = models.IntegerField(null=True, default=0)
+    current_registered_credits = models.IntegerField(null=True, default=0)
     program = models.TextField(null=True, blank=True)  # noqa: DJ001
     section = models.TextField(blank=True, default="")
     advisor_id = models.TextField(blank=True, default="")

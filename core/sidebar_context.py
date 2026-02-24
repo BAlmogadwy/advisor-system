@@ -26,6 +26,7 @@ def get_sidebar_context(request: HttpRequest) -> dict[str, object]:
 
     return {
         "role": role,
+        "user_advisor_id": str(scope.get("advisor_id", "")),
         "can_admin_advisors": role == ROLE_SUPER_ADMIN,
         "can_view_portfolio": role in {ROLE_SUPER_ADMIN, ROLE_GENERAL_ADVISOR, ROLE_ADVISOR},
         "can_db_admin": role == ROLE_SUPER_ADMIN,

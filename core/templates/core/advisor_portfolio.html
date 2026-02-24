@@ -196,8 +196,8 @@
 {% endblock %}
 
 {% block content %}
-      <!-- ═══ Advisor selector bar ═══ -->
-      <div class="ap-advisor-bar">
+      <!-- ═══ Advisor selector bar (hidden for ADVISOR role) ═══ -->
+      <div class="ap-advisor-bar" id="apAdvisorBar" {% if role == 'ADVISOR' %}style="display:none;"{% endif %}>
         <select id="apAdvisorSelect" class="form-select">
           <option value="">{% if LANGUAGE_CODE == 'ar' %}اختر مرشدًا…{% else %}Select advisor…{% endif %}</option>
         </select>
@@ -961,7 +961,17 @@ q('apProgramFilter').addEventListener('input', debounce(() => { currentPage = 1;
    INIT
    ═══════════════════════════════════════════════════════════════ */
 wireSortableTable('apTable');
-loadAdvisors();
+
+const USER_ROLE = '{{ role }}';
+const USER_ADVISOR_ID = '{{ user_advisor_id|escapejs }}';
+
+if (USER_ROLE === 'ADVISOR' && USER_ADVISOR_ID) {
+  // Advisor role: skip dropdown, load own students immediately
+  loadStudents(USER_ADVISOR_ID);
+} else {
+  // Super admin / general advisor: show dropdown
+  loadAdvisors();
+}
 
 /* Mark sidebar link active */
 document.querySelectorAll('.sidebar .nav-link').forEach(link => {

@@ -13,7 +13,7 @@ from core.services.advisors import (
     upsert_academic_advisor,
 )
 from core.services.audit import log_audit_event
-from core.services.rbac import ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_scope
+from core.services.rbac import ROLE_ADVISOR, ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_scope
 
 
 @role_required(ROLE_GENERAL_ADVISOR)
@@ -151,7 +151,7 @@ def assign_students_advisors_view(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": str(exc)}, status=400)
 
 
-@role_required(ROLE_GENERAL_ADVISOR)
+@role_required(ROLE_ADVISOR)
 @require_GET
 def students_by_advisor_view(request: HttpRequest) -> JsonResponse:
     advisor_id = (request.GET.get("advisor_id") or "").strip()

@@ -1,6 +1,7 @@
 import csv
 import io
 import time
+import unicodedata
 from typing import Any
 
 from django.db.models import Q, Sum
@@ -8,6 +9,15 @@ from django.db.models.functions import Coalesce
 
 from core.models import AcademicAdvisor, Student
 from core.services.high_priority_missing import run_missing_high_priority_report
+
+
+def normalize_arabic(text: str) -> str:
+    """Normalize Arabic text for comparison: unify hamza/alef variants."""
+    text = unicodedata.normalize("NFKC", text)
+    text = text.replace("\u0625", "\u0627")  # إ -> ا
+    text = text.replace("\u0623", "\u0627")  # أ -> ا
+    text = text.replace("\u0622", "\u0627")  # آ -> ا
+    return text.strip()
 
 
 def _normalize_departments(raw: str) -> tuple[str, list[str]]:

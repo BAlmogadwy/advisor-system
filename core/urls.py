@@ -35,6 +35,11 @@ from .exam_views import (
     exam_timetable_page,
     exam_timetable_preview_courses_view,
 )
+from .profile_views import (
+    profile_change_password_view,
+    profile_change_username_view,
+    profile_me_view,
+)
 from .planner_views import (
     planner_build_view,
     planner_context_view,
@@ -207,6 +212,9 @@ urlpatterns = [
     path("ops/users/set-password/", users_set_password_view, name="users_set_password"),
     path("ops/users/set-active/", users_set_active_view, name="users_set_active"),
     path("ops/users/delete/", users_delete_view, name="users_delete"),
+    path("ops/profile/me/", profile_me_view, name="profile_me"),
+    path("ops/profile/change-username/", profile_change_username_view, name="profile_change_username"),
+    path("ops/profile/change-password/", profile_change_password_view, name="profile_change_password"),
     path("exam-timetable/", login_required(exam_timetable_page), name="exam_timetable_page"),
     path(
         "ops/exam-timetable/filters/",
