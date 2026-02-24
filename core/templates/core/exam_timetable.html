@@ -18,6 +18,15 @@
     .et-chip:hover { border-color: var(--teal, #0a8e6e); }
     .et-chip.active { background: var(--teal, #0a8e6e); color: #fff; border-color: var(--teal, #0a8e6e); }
     .et-chip input { display: none; }
+    .et-dept-group { margin-bottom: 4px; }
+    .et-dept-header { display: flex; align-items: center; gap: 6px; padding: 3px 4px; font-size: .75rem; cursor: pointer; border-radius: 4px; transition: background 0.15s; }
+    .et-dept-header:hover { background: rgba(10,142,110,0.05); }
+    .et-dept-header .dept-name { font-weight: 700; color: var(--t2, #333); font-size: .8rem; }
+    .et-dept-header .dept-count { color: var(--t3, #666); font-weight: 400; }
+    .et-dept-header .dept-toggle { margin-left: auto; font-size: .68rem; color: var(--teal, #0a8e6e); text-decoration: none; }
+    .et-dept-chips { padding: 2px 0 4px 12px; border-left: 2px solid rgba(10,142,110,0.12); margin-left: 6px; }
+    .et-level-row { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; margin-bottom: 2px; }
+    .et-level-badge { font-size: .58rem; font-weight: 700; color: var(--t3, #666); background: rgba(10,142,110,0.08); padding: 1px 5px; border-radius: 3px; white-space: nowrap; min-width: 20px; text-align: center; flex-shrink: 0; }
     .et-grid { width: 100%; border-collapse: collapse; }
     .et-grid th, .et-grid td { border: 1px solid rgba(17,17,68,0.08); padding: 7px 6px; text-align: center; vertical-align: middle; }
     .et-grid thead th { font-size: .73rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--t3, #666); background: rgba(10,142,110,0.04); white-space: nowrap; }
@@ -28,6 +37,27 @@
     .et-grid .et-overflow-row th, .et-grid .et-overflow-row td { background: rgba(220,53,69,0.06); }
     .et-grid .et-highlight { outline: 2.5px solid var(--teal, #0a8e6e); outline-offset: -2px; }
     .et-grid .et-dim { opacity: 0.25; }
+    /* Conflict matrix heatmap */
+    .et-matrix { border-collapse: collapse; font-size: .62rem; }
+    .et-matrix th, .et-matrix td { border: 1px solid rgba(17,17,68,0.06); padding: 0; text-align: center; vertical-align: middle; }
+    .et-matrix td { width: 26px; height: 26px; min-width: 26px; cursor: default; font-weight: 600; font-size: .6rem; }
+    .et-matrix thead th { height: 80px; white-space: nowrap; vertical-align: bottom; padding: 4px 0; }
+    .et-matrix thead th > span { display: inline-block; transform: rotate(-55deg); transform-origin: left bottom; width: 1.6em; font-size: .65rem; font-weight: 700; color: var(--t2, #333); }
+    .et-matrix tbody th { font-size: .65rem; font-weight: 700; white-space: nowrap; padding: 0 5px; text-align: right; color: var(--t2, #333); background: rgba(10,142,110,0.03); position: sticky; left: 0; z-index: 1; }
+    .et-matrix .cm-0 { background: transparent; color: transparent; }
+    .et-matrix .cm-1 { background: hsl(45 90% 88%); color: #8b7000; }
+    .et-matrix .cm-2 { background: hsl(33 90% 78%); color: #7a4400; }
+    .et-matrix .cm-3 { background: hsl(15 85% 68%); color: #fff; }
+    .et-matrix .cm-4 { background: hsl(0 80% 55%); color: #fff; }
+    .et-matrix .cm-diag { background: var(--t5, #ddd); color: transparent; }
+    .et-matrix tbody tr:hover > td, .et-matrix tbody tr:hover > th { box-shadow: inset 0 0 0 50px rgba(10,142,110,0.09); }
+    .et-matrix .cm-col-hl { box-shadow: inset 0 0 0 50px rgba(10,142,110,0.09); }
+    .et-matrix tbody tr:hover > .cm-col-hl { box-shadow: inset 0 0 0 50px rgba(10,142,110,0.18); }
+    .et-matrix thead th { cursor: pointer; }
+    .et-matrix tbody th { cursor: pointer; }
+    .et-matrix td:not(.cm-0):not(.cm-diag) { cursor: pointer; }
+    .et-legend { display: flex; gap: 10px; align-items: center; font-size: .72rem; color: var(--t3, #666); margin-top: 8px; flex-wrap: wrap; }
+    .et-legend-box { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: middle; border: 1px solid rgba(0,0,0,0.1); }
   </style>
 {% endblock %}
 
@@ -103,7 +133,7 @@
         <label class="form-label mb-0">{% if LANGUAGE_CODE == 'ar' %}المقررات{% else %}Courses{% endif %} <small class="text-secondary" id="courseCount"></small></label>
         <a href="#" id="toggleAllCourses" class="small text-decoration-none"></a>
       </div>
-      <div id="courseList" class="d-flex flex-wrap gap-1 p-2 border rounded" style="min-height:36px;max-height:180px;overflow-y:auto;"></div>
+      <div id="courseList" class="p-2 border rounded" style="min-height:36px;max-height:260px;overflow-y:auto;"></div>
     </div>
     <div id="etStatus" role="alert" aria-live="polite" class="alert alert-info mt-2 py-2 mb-0">{% if LANGUAGE_CODE == 'ar' %}جاهز. حدد الفلاتر ثم انقر تحميل المقررات.{% else %}Ready. Select filters then click Load Courses.{% endif %}</div>
   </div>
@@ -144,6 +174,17 @@
       </div>
       <div class="table-responsive" id="schedGrid"></div>
     </div>
+
+    <!-- Conflict Matrix (collapsed by default) -->
+    <div class="et-panel">
+      <div class="d-flex align-items-center justify-content-between mb-2">
+        <h6 class="mb-0">{% if LANGUAGE_CODE == 'ar' %}مصفوفة التعارضات{% else %}Conflict Matrix{% endif %}</h6>
+        <button id="toggleMatrix" class="btn btn-sm btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}عرض{% else %}Show{% endif %}</button>
+      </div>
+      <div id="conflictMatrix" style="display:none;">
+        <div class="table-responsive" id="matrixGrid"></div>
+      </div>
+    </div>
   </div>
 
   <!-- ─── History ─── -->
@@ -177,6 +218,10 @@ const T = {
   deselectAll:    IS_AR ? 'إلغاء تحديد الكل' : 'Deselect all',
   loadFirst:      IS_AR ? 'يرجى تحميل المقررات أولاً.' : 'Please load courses first.',
   noSelected:     IS_AR ? 'يرجى اختيار مقرر واحد على الأقل.' : 'Please select at least one course.',
+  show:           IS_AR ? 'عرض' : 'Show',
+  hide:           IS_AR ? 'إخفاء' : 'Hide',
+  students:       IS_AR ? 'طلاب' : 'students',
+  noConflicts:    IS_AR ? 'لا توجد تعارضات.' : 'No conflicts.',
 };
 
 const CSRF = document.querySelector('[name=csrfmiddlewaretoken]')?.value
@@ -280,20 +325,84 @@ function renderCourseChips(courses) {
     _coursesLoaded = false;
     return;
   }
-  box.innerHTML = courses.map(c =>
-    `<label class="et-chip active"><input type="checkbox" value="${c.course_code}" checked>${c.course_code} <small class="opacity-75">(${c.enrolled_count})</small></label>`
-  ).join('');
+
+  // Group by department prefix, then sub-group by level (first digit)
+  const deptMap = {};
+  for (const c of courses) {
+    const dept = c.course_code.match(/^[A-Za-z]+/)?.[0] || '?';
+    if (!deptMap[dept]) deptMap[dept] = {};
+    const level = c.course_code.match(/\d/)?.[0] || '0';
+    if (!deptMap[dept][level]) deptMap[dept][level] = [];
+    deptMap[dept][level].push(c);
+  }
+
+  const deptKeys = Object.keys(deptMap).sort();
+  let html = '';
+  for (const dept of deptKeys) {
+    const levels = Object.keys(deptMap[dept]).sort();
+    const deptTotal = levels.reduce((s, l) => s + deptMap[dept][l].length, 0);
+    html += `<div class="et-dept-group" data-dept="${dept}">`;
+    html += `<div class="et-dept-header">`;
+    html += `<span class="dept-name">${dept}</span>`;
+    html += `<span class="dept-count">(${deptTotal})</span>`;
+    html += `<a href="#" class="dept-toggle">${T.deselectAll}</a>`;
+    html += `</div><div class="et-dept-chips">`;
+    for (const level of levels) {
+      html += `<div class="et-level-row">`;
+      html += `<span class="et-level-badge">L${level}</span>`;
+      for (const c of deptMap[dept][level]) {
+        html += `<label class="et-chip active"><input type="checkbox" value="${c.course_code}" checked>${c.course_code} <small class="opacity-75">(${c.enrolled_count})</small></label>`;
+      }
+      html += `</div>`;
+    }
+    html += `</div></div>`;
+  }
+
+  box.innerHTML = html;
+
+  // Chip click handlers
   box.querySelectorAll('.et-chip').forEach(chip => {
     chip.addEventListener('click', () => {
       const cb = chip.querySelector('input');
       cb.checked = !cb.checked;
       chip.classList.toggle('active', cb.checked);
       updateCourseCount(courses.length);
+      updateDeptToggleLabel(chip.closest('.et-dept-group'));
     });
   });
+
+  // Per-department toggle handlers
+  box.querySelectorAll('.dept-toggle').forEach(link => {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const group = link.closest('.et-dept-group');
+      const cbs = group.querySelectorAll('input[type=checkbox]');
+      const checked = group.querySelectorAll('input:checked');
+      const newState = checked.length < cbs.length;
+      cbs.forEach(cb => {
+        cb.checked = newState;
+        cb.closest('.et-chip').classList.toggle('active', newState);
+      });
+      updateCourseCount(courses.length);
+      updateDeptToggleLabel(group);
+    });
+  });
+
   _coursesLoaded = true;
   $('buildBtn').disabled = false;
   updateCourseCount(courses.length);
+  updateToggleLabel();
+  // Init per-dept labels
+  box.querySelectorAll('.et-dept-group').forEach(updateDeptToggleLabel);
+}
+
+function updateDeptToggleLabel(group) {
+  if (!group) return;
+  const all = group.querySelectorAll('input[type=checkbox]');
+  const checked = group.querySelectorAll('input:checked');
+  const link = group.querySelector('.dept-toggle');
+  if (link) link.textContent = checked.length === all.length ? T.deselectAll : T.selectAll;
   updateToggleLabel();
 }
 
@@ -321,6 +430,7 @@ $('toggleAllCourses').addEventListener('click', (e) => {
     cb.closest('.et-chip').classList.toggle('active', newState);
   });
   updateCourseCount(all.length);
+  $('courseList').querySelectorAll('.et-dept-group').forEach(updateDeptToggleLabel);
 });
 
 // Clear course list when filters change
@@ -513,6 +623,9 @@ function renderResults(data) {
   const schedule = data.schedule ?? [];
   const slots    = data.slots ?? [];
   renderScheduleGrid(schedule, slots);
+
+  // Conflict matrix
+  renderConflictMatrix(data.conflicts ?? [], data.courses ?? []);
 }
 
 /* ── Color helper (reused from planner) ── */
@@ -633,20 +746,23 @@ $('schedFilter').addEventListener('input', function() {
     return;
   }
 
-  // Determine match function
-  let matchFn;
-  if (raw.endsWith('*')) {
-    // Prefix mode: "CS*" → courses starting with "cs"
-    const prefix = raw.slice(0, -1);
-    matchFn = (code) => code.startsWith(prefix);
-  } else if (_programCourses[raw]) {
-    // Exact programme match: "ai" → full AI study plan
-    const progCourses = _programCourses[raw];
-    matchFn = (code) => progCourses.has(code);
-  } else {
-    // Substring fallback: "101" → courses containing "101"
-    matchFn = (code) => code.includes(raw);
+  // Build a match function for a single term
+  function buildMatchFn(term) {
+    if (term.endsWith('*')) {
+      const prefix = term.slice(0, -1);
+      return (code) => code.startsWith(prefix);
+    } else if (_programCourses[term]) {
+      const progCourses = _programCourses[term];
+      return (code) => progCourses.has(code);
+    } else {
+      return (code) => code.includes(term);
+    }
   }
+
+  // Support multiple space-separated terms (OR logic)
+  const tokens = raw.split(/\s+/).filter(Boolean);
+  const fns = tokens.map(buildMatchFn);
+  const matchFn = (code) => fns.some(fn => fn(code));
 
   allChips.forEach(chip => {
     const code = (chip.dataset.course || '').toLowerCase();
@@ -664,6 +780,134 @@ $('schedFilter').addEventListener('input', function() {
       cell.classList.add('et-dim');
     }
   });
+});
+
+/* ── Conflict Matrix ── */
+function renderConflictMatrix(conflicts, courses) {
+  const container = $('matrixGrid');
+
+  // Reset toggle state
+  $('conflictMatrix').style.display = 'none';
+  $('toggleMatrix').textContent = T.show;
+
+  if (!conflicts.length || courses.length < 2) {
+    container.innerHTML = `<p class="text-center text-secondary py-3">${T.noConflicts}</p>`;
+    return;
+  }
+
+  // Build adjacency map from edge list
+  const adj = {};
+  for (const c of courses) adj[c] = {};
+  for (const e of conflicts) {
+    adj[e.course_a][e.course_b] = e.shared;
+    adj[e.course_b][e.course_a] = e.shared;
+  }
+
+  // Color class by shared-student count
+  function cmClass(n) {
+    if (n === 0) return 'cm-0';
+    if (n <= 2) return 'cm-1';
+    if (n <= 5) return 'cm-2';
+    if (n <= 10) return 'cm-3';
+    return 'cm-4';
+  }
+
+  // Build HTML table
+  let html = '<table class="et-matrix">';
+
+  // Header row: empty corner + rotated course labels
+  html += '<thead><tr><th></th>';
+  for (const c of courses) {
+    html += `<th><span>${c}</span></th>`;
+  }
+  html += '</tr></thead>';
+
+  // Body: one row per course
+  html += '<tbody>';
+  for (let i = 0; i < courses.length; i++) {
+    const rowCourse = courses[i];
+    html += `<tr><th>${rowCourse}</th>`;
+    for (let j = 0; j < courses.length; j++) {
+      const colCourse = courses[j];
+      if (i === j) {
+        html += '<td class="cm-diag">\u00b7</td>';
+      } else {
+        const n = adj[rowCourse]?.[colCourse] ?? 0;
+        const cls = cmClass(n);
+        const label = n > 0 ? n : '';
+        const tooltip = n > 0
+          ? `${rowCourse} \u2194 ${colCourse}: ${n} ${T.students}`
+          : `${rowCourse} \u2194 ${colCourse}: 0`;
+        html += `<td class="${cls}" title="${tooltip}">${label}</td>`;
+      }
+    }
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+
+  // Legend
+  html += '<div class="et-legend">';
+  html += `<span><span class="et-legend-box" style="background:transparent"></span> 0</span>`;
+  html += `<span><span class="et-legend-box" style="background:hsl(45 90% 88%)"></span> 1-2</span>`;
+  html += `<span><span class="et-legend-box" style="background:hsl(33 90% 78%)"></span> 3-5</span>`;
+  html += `<span><span class="et-legend-box" style="background:hsl(15 85% 68%)"></span> 6-10</span>`;
+  html += `<span><span class="et-legend-box" style="background:hsl(0 80% 55%)"></span> 11+</span>`;
+  html += '</div>';
+
+  container.innerHTML = html;
+
+  // ── Crosshair hover (column highlight via JS, row via CSS tr:hover) ──
+  const tbl = container.querySelector('.et-matrix');
+  if (tbl) {
+    tbl.addEventListener('mouseover', (e) => {
+      const cell = e.target.closest('td, th');
+      if (!cell) return;
+      const ci = [...cell.parentElement.children].indexOf(cell);
+      tbl.querySelectorAll('.cm-col-hl').forEach(el => el.classList.remove('cm-col-hl'));
+      if (ci > 0) {
+        tbl.querySelectorAll('tr').forEach(r => {
+          if (r.children[ci]) r.children[ci].classList.add('cm-col-hl');
+        });
+      }
+    });
+    tbl.addEventListener('mouseleave', () => {
+      tbl.querySelectorAll('.cm-col-hl').forEach(el => el.classList.remove('cm-col-hl'));
+    });
+
+    // ── Click-to-filter: click a course header or conflict cell → filter schedule grid ──
+    tbl.addEventListener('click', (e) => {
+      const target = e.target.closest('th, td');
+      if (!target) return;
+      let courseCode = '';
+      if (target.tagName === 'TH') {
+        const span = target.querySelector('span');
+        courseCode = span ? span.textContent.trim() : target.textContent.trim();
+      } else if (target.tagName === 'TD' && !target.classList.contains('cm-diag') && !target.classList.contains('cm-0')) {
+        // Conflict cell → both row and column courses
+        const th = target.parentElement.querySelector('th');
+        const rowCourse = th ? th.textContent.trim() : '';
+        const ci = [...target.parentElement.children].indexOf(target);
+        const headerCells = tbl.querySelector('thead tr').children;
+        const colSpan = headerCells[ci] ? headerCells[ci].querySelector('span') : null;
+        const colCourse = colSpan ? colSpan.textContent.trim() : '';
+        courseCode = rowCourse && colCourse ? `${rowCourse} ${colCourse}` : rowCourse || colCourse;
+      }
+      if (courseCode) {
+        const filter = $('schedFilter');
+        filter.value = courseCode;
+        filter.dispatchEvent(new Event('input'));
+        $('schedGrid').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    });
+  }
+}
+
+/* ── Toggle conflict matrix ── */
+$('toggleMatrix').addEventListener('click', () => {
+  const el = $('conflictMatrix');
+  const show = el.style.display === 'none';
+  el.style.display = show ? '' : 'none';
+  $('toggleMatrix').textContent = show ? T.hide : T.show;
 });
 
 /* ── History ── */
