@@ -241,7 +241,7 @@
         </div>
 
         <!-- Insights strip -->
-        <div class="ap-insights" id="apInsights"></div>
+        <div class="ap-insights" id="apInsights" role="alert" aria-live="polite"></div>
 
         <!-- Program breakdown + GPA chart -->
         <div class="ap-breakdown-row" id="apBreakdownRow">
@@ -277,7 +277,7 @@
       </div>
 
       <!-- Batch bar -->
-      <div class="ap-batch-bar" id="apBatchBar">
+      <div class="ap-batch-bar" id="apBatchBar" role="status" aria-live="polite">
         <span><span class="ap-batch-count" id="apBatchCount">0</span> {% if LANGUAGE_CODE == 'ar' %}محدد{% else %}selected{% endif %}</span>
         <button class="btn btn-sm btn-outline-primary" onclick="copySelectedIds()">{% if LANGUAGE_CODE == 'ar' %}نسخ المعرفات{% else %}Copy selected IDs{% endif %}</button>
         <button class="btn btn-sm btn-outline-secondary" onclick="exportSelectedCsv()">{% if LANGUAGE_CODE == 'ar' %}تصدير CSV{% else %}Export selected CSV{% endif %}</button>
@@ -289,15 +289,15 @@
         <table class="tbl-card" id="apTable">
           <thead>
             <tr>
-              <th style="width:28px;padding-inline-start:14px;"><input type="checkbox" class="ap-check" id="apCheckAll" onclick="toggleAllChecks(this)" style="accent-color:var(--teal);"></th>
-              <th data-sort="num">{% if LANGUAGE_CODE == 'ar' %}المعرف{% else %}ID{% endif %} <span class="sort-arrow">▲</span></th>
-              <th data-sort="text">{% if LANGUAGE_CODE == 'ar' %}الاسم{% else %}Name{% endif %}</th>
-              <th data-sort="text">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}</th>
-              <th data-sort="text">{% if LANGUAGE_CODE == 'ar' %}الحالة{% else %}Status{% endif %}</th>
-              <th data-sort="num">{% if LANGUAGE_CODE == 'ar' %}المعدل{% else %}GPA{% endif %}</th>
-              <th data-sort="num">{% if LANGUAGE_CODE == 'ar' %}المخاطر{% else %}Risk{% endif %}</th>
-              <th data-sort="num">{% if LANGUAGE_CODE == 'ar' %}أولوية مفقودة{% else %}HP Missing{% endif %}</th>
-              <th style="width:36px;"></th>
+              <th scope="col" style="width:28px;padding-inline-start:14px;"><input type="checkbox" class="ap-check" id="apCheckAll" onclick="toggleAllChecks(this)" style="accent-color:var(--teal);"></th>
+              <th scope="col" data-sort="num">{% if LANGUAGE_CODE == 'ar' %}المعرف{% else %}ID{% endif %} <span class="sort-arrow">▲</span></th>
+              <th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}الاسم{% else %}Name{% endif %}</th>
+              <th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}</th>
+              <th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}الحالة{% else %}Status{% endif %}</th>
+              <th scope="col" data-sort="num">{% if LANGUAGE_CODE == 'ar' %}المعدل{% else %}GPA{% endif %}</th>
+              <th scope="col" data-sort="num">{% if LANGUAGE_CODE == 'ar' %}المخاطر{% else %}Risk{% endif %}</th>
+              <th scope="col" data-sort="num">{% if LANGUAGE_CODE == 'ar' %}أولوية مفقودة{% else %}HP Missing{% endif %}</th>
+              <th scope="col" style="width:36px;"></th>
             </tr>
           </thead>
           <tbody>
@@ -314,7 +314,7 @@
 
       <!-- Pagination bar -->
       <div class="pg-bar" id="apRowCount">
-        <div class="pg-info" id="apShowing">—</div>
+        <div class="pg-info" id="apShowing" role="status" aria-live="polite">—</div>
         <div class="pg-nav" id="apPagination"></div>
       </div>
 
@@ -659,7 +659,7 @@ function openDrawer(sid) {
   const reasons = (Array.isArray(s.attention_reasons) ? s.attention_reasons : []).map(r => reasonMap[r]||r).join(', ') || 'None';
   const hpList = Array.isArray(s.high_priority_missing_courses) ? s.high_priority_missing_courses : [];
   const hpHtml = hpList.length
-    ? `<div class="table-wrap" style="max-height:200px;margin-top:0.4rem;"><table class="table table-sm mb-0"><thead><tr><th>Course</th><th>Score</th><th>Bucket</th></tr></thead><tbody>${hpList.map(c=>`<tr><td>${esc(c.course_code||'—')}</td><td>${Number(c.score||0).toFixed(2)}</td><td>${c.bucket==='this_parity'?'This parity':'Other'}</td></tr>`).join('')}</tbody></table></div>`
+    ? `<div class="table-wrap" style="max-height:200px;margin-top:0.4rem;"><table class="table table-sm mb-0"><thead><tr><th scope="col">Course</th><th scope="col">Score</th><th scope="col">Bucket</th></tr></thead><tbody>${hpList.map(c=>`<tr><td>${esc(c.course_code||'—')}</td><td>${Number(c.score||0).toFixed(2)}</td><td>${c.bucket==='this_parity'?'This parity':'Other'}</td></tr>`).join('')}</tbody></table></div>`
     : '<span style="color:var(--muted-light);font-size:0.82rem;">No high-priority missing courses.</span>';
 
   const plannerHref = `/planner/?student=${encodeURIComponent(sid)}`;

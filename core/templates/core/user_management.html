@@ -317,7 +317,7 @@
       </div>
 
       <!-- Bulk actions bar -->
-      <div class="um-bulk-bar" id="bulkBar">
+      <div class="um-bulk-bar" id="bulkBar" role="status" aria-live="polite">
         <span><span class="um-bulk-count" id="bulkCount">0</span> selected</span>
         <button class="btn btn-sm btn-outline-dark" type="button" onclick="bulkDisable()">Disable Selected</button>
         <button class="btn btn-sm btn-outline-success" type="button" onclick="bulkEnable()">Enable Selected</button>
@@ -331,15 +331,15 @@
         <table class="table table-sm mb-0" id="umTable">
           <thead>
             <tr>
-              <th style="width:32px;"><input type="checkbox" class="um-check" id="umCheckAll" onclick="toggleAllChecks(this)"></th>
-              <th data-sort="text">Username</th>
-              <th data-sort="text">Role</th>
-              <th data-sort="text">Advisor ID</th>
-              <th data-sort="text">Departments</th>
-              <th data-sort="text">Status</th>
-              <th data-sort="text">Last Login</th>
-              <th data-sort="text">Created</th>
-              <th style="width:100px;">Actions</th>
+              <th scope="col" style="width:32px;"><input type="checkbox" class="um-check" id="umCheckAll" onclick="toggleAllChecks(this)"></th>
+              <th scope="col" data-sort="text">Username</th>
+              <th scope="col" data-sort="text">Role</th>
+              <th scope="col" data-sort="text">Advisor ID</th>
+              <th scope="col" data-sort="text">Departments</th>
+              <th scope="col" data-sort="text">Status</th>
+              <th scope="col" data-sort="text">Last Login</th>
+              <th scope="col" data-sort="text">Created</th>
+              <th scope="col" style="width:100px;">Actions</th>
             </tr>
           </thead>
           <tbody>
