@@ -94,6 +94,7 @@ const T = {
   inserting: IS_AR ? 'جارٍ إدخال الشعب في قاعدة البيانات...' : 'Inserting sections into database...',
   insertFailed: IS_AR ? 'فشل الإدخال' : 'Insert failed',
   insertedOk: (mode,rows,meet,ds,dm)=> IS_AR ? `تم الإدخال بنجاح [${mode}]. الشعب: ${rows}، اللقاءات: ${meet}. المحذوف: شعب ${ds}، لقاءات ${dm}.` : `Inserted successfully [${mode}]. Sections: ${rows}, meetings: ${meet}. Deleted: sections ${ds}, meetings ${dm}.`,
+  noFilterResults: IS_AR ? 'لا توجد نتائج مطابقة للفلتر' : 'No results match your filter',
 };
 let previewToken = null;
 let rowsAll = [];
@@ -143,6 +144,10 @@ function filteredRows(rows){
 
 function renderTable(rows){
   const tb = q('tbody'); tb.innerHTML = '';
+  if (!rows.length && rowsAll.length) {
+    tb.innerHTML = `<tr><td colspan="12"><div class="empty-state"><span class="empty-icon"><span class="i" aria-hidden="true" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span></span><div class="empty-title">${T.noFilterResults}</div></div></td></tr>`;
+    return;
+  }
   for (const row of rows) {
     const tr = document.createElement('tr');
     tr.innerHTML = `<td>${row.course_code||''}</td><td>${row.course_number||''}</td><td>${row.course_name||''}</td><td>${row.section||''}</td><td>${row.day||''}</td><td>${row.start_time||''}</td><td>${row.end_time||''}</td><td>${row.available_capacity||''}</td><td>${row.registered_count||''}</td><td>${row.room||''}</td><td>${row.instructor||''}</td><td><span class="badge text-bg-secondary">${currentTag||''}</span></td>`;

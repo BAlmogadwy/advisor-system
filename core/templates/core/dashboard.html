@@ -381,7 +381,7 @@
 
     <div id="student" class="panel active">
       <div style="margin-bottom:18px">
-        <h4 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Student Recommender</h4>
+        <h2 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Student Recommender</h2>
         <div style="font-size:13px;color:var(--t3);font-weight:300">Get a per-student recommendation list and export it instantly.</div>
       </div>
       <form method="get" action="/" class="filter-bar sticky-cta" style="margin-bottom:14px">
@@ -527,7 +527,7 @@
 
     <div id="batch" class="panel">
       <div style="margin-bottom:18px">
-        <h4 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Batch Recommender</h4>
+        <h2 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Batch Recommender</h2>
         <div style="font-size:13px;color:var(--t3);font-weight:300">Run cohort-level preview, inspect top courses, and export aggregate CSV.</div>
       </div>
       <div class="filter-bar sticky-cta" style="margin-bottom:14px">
@@ -569,7 +569,7 @@
 
       <div style="margin-bottom:6px;">
         <table class="tbl-card" id="batchTable">
-          <thead><tr><th data-sort="num"># <span class="sort-arrow">▲</span></th><th data-sort="text">Course</th><th data-sort="num">Count</th><th>Share</th></tr></thead>
+          <thead><tr><th scope="col" data-sort="num"># <span class="sort-arrow">▲</span></th><th scope="col" data-sort="text">Course</th><th scope="col" data-sort="num">Count</th><th scope="col">Share</th></tr></thead>
           <tbody><tr><td colspan="4"><div class="ap-empty"><span class="ap-empty-icon"><span class="i" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span></span><div class="ap-empty-title">No batch data yet</div><div class="ap-empty-hint">Set Year &amp; Semester above, then click <strong>Run preview</strong></div></div></td></tr></tbody>
         </table>
       </div>
@@ -588,7 +588,7 @@
 
     <div id="prereq" class="panel">
       <div style="margin-bottom:18px">
-        <h4 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Course Prerequisites</h4>
+        <h2 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Course Prerequisites</h2>
         <div style="font-size:13px;color:var(--t3);font-weight:300">Explore prerequisite links by program and optionally by a specific course.</div>
       </div>
       <div class="filter-bar" style="margin-bottom:14px">
@@ -627,7 +627,7 @@
         <div class="cp-h"><span class="cp-t">Prerequisite Links</span><span class="pill-status pill-b" id="preLinkCount" style="display:none"><span class="pill-dot"></span><span id="preLinkNum">0</span> links</span></div>
         <div class="cp-b" style="padding:0;max-height:420px;overflow-y:auto">
           <table class="tbl-card mb-0" id="preTable" style="border-spacing:0 4px">
-            <thead><tr><th data-sort="text">Course</th><th style="width:32px;text-align:center">→</th><th data-sort="text">Requires</th></tr></thead>
+            <thead><tr><th scope="col" data-sort="text">Course</th><th scope="col" style="width:32px;text-align:center">→</th><th scope="col" data-sort="text">Requires</th></tr></thead>
             <tbody><tr><td colspan="3"><div class="empty-state"><span class="empty-icon"><span class="i" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg></span></span><div class="empty-title">No prerequisites loaded</div><div class="empty-hint">Choose a program above, then click <strong>Load</strong></div></div></td></tr></tbody>
           </table>
         </div>
@@ -635,7 +635,7 @@
     </div>
 
     <div id="plan" class="panel">
-      <h4>Program Plan Viewer</h4>
+      <h2>Program Plan Viewer</h2>
       <div class="panel-sub">Inspect full program requirements, term breakdown, and credit totals.</div>
       <div class="zone-card">
         <div class="zone-title">Filters</div>
@@ -657,7 +657,7 @@
         <div id="planUpdated" class="small text-secondary">Last update: -</div>
         <div class="table-wrap mt-3">
           <table class="table table-sm mb-0" id="planTable">
-            <thead><tr><th data-sort="num">Term</th><th data-sort="text">Course</th><th data-sort="num">Credit Hours</th></tr></thead>
+            <thead><tr><th scope="col" data-sort="num">Term</th><th scope="col" data-sort="text">Course</th><th scope="col" data-sort="num">Credit Hours</th></tr></thead>
             <tbody><tr><td colspan="3"><div class="empty-state"><span class="empty-icon"><span class="i" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></span><div class="empty-title">No plan loaded</div><div class="empty-hint">Choose a program above, then click <strong>Load Plan</strong></div></div></td></tr></tbody>
           </table>
         </div>
@@ -679,7 +679,7 @@
         <div id="planPrereqMeta" class="small text-secondary">No course selected.</div>
         <div class="table-wrap mt-2">
           <table class="table table-sm mb-0" id="planPrereqTable">
-            <thead><tr><th data-sort="text">Course</th><th data-sort="text">Prerequisite</th></tr></thead>
+            <thead><tr><th scope="col" data-sort="text">Course</th><th scope="col" data-sort="text">Prerequisite</th></tr></thead>
             <tbody><tr><td colspan="2"><div class="empty-state"><span class="empty-icon"><span class="i" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg></span></span><div class="empty-title">No course selected</div><div class="empty-hint">Click any course row in the plan table above</div></div></td></tr></tbody>
           </table>
         </div>
@@ -688,7 +688,7 @@
 
     <div id="scrape" class="panel">
       <div style="margin-bottom:18px">
-        <h4 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Batch Scraping</h4>
+        <h2 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Batch Scraping</h2>
         <div style="font-size:13px;color:var(--t3);font-weight:300">Legacy scraper — runs <code style="font-size:11px;font-family:var(--font-mono);background:rgba(17,17,68,0.04);padding:2px 6px;border-radius:4px">batch_scraper.py</code> in background with live log streaming.</div>
       </div>
       <div class="filter-bar sticky-cta" style="margin-bottom:14px">
@@ -735,7 +735,7 @@
         </div>
         <div style="overflow-x:auto">
           <table class="tbl-card" id="scrapeHistoryTable">
-            <thead><tr><th>Time (UTC)</th><th>Event</th><th>PID</th><th>Concurrency</th><th>CSV</th></tr></thead>
+            <thead><tr><th scope="col">Time (UTC)</th><th scope="col">Event</th><th scope="col">PID</th><th scope="col">Concurrency</th><th scope="col">CSV</th></tr></thead>
             <tbody><tr><td colspan="5"><div class="empty-state"><span class="i" style="width:32px;height:32px;color:var(--t5);margin-bottom:8px"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span><div class="empty-title">No scrape history</div><div class="empty-hint">Run a scrape to see history here</div></div></td></tr></tbody>
           </table>
         </div>
@@ -744,7 +744,7 @@
 
     <div id="debug" class="panel">
       <div style="margin-bottom:18px">
-        <h4 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Recommendation Debug</h4>
+        <h2 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Recommendation Debug</h2>
         <div style="font-size:13px;color:var(--t3);font-weight:300">Student-level recommendation trace for debugging and validation.</div>
       </div>
       <div class="filter-bar sticky-cta" style="margin-bottom:14px">
@@ -790,7 +790,7 @@
         </div>
         <div style="overflow-x:auto">
           <table class="tbl-card" id="dbgTable">
-            <thead><tr><th>Student</th><th>Program</th><th>Real→Next</th><th>Passed</th><th>Studying</th><th>Recommended</th><th>Trace</th></tr></thead>
+            <thead><tr><th scope="col">Student</th><th scope="col">Program</th><th scope="col">Real→Next</th><th scope="col">Passed</th><th scope="col">Studying</th><th scope="col">Recommended</th><th scope="col">Trace</th></tr></thead>
             <tbody><tr><td colspan="7"><div class="empty-state"><span class="i" style="width:32px;height:32px;color:var(--t5);margin-bottom:8px"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span><div class="empty-title">No debug data</div><div class="empty-hint">Fill filters above, then click <strong>Run</strong></div></div></td></tr></tbody>
           </table>
         </div>
@@ -799,7 +799,7 @@
 
     <div id="eligibility" class="panel">
       <div style="margin-bottom:18px">
-        <h4 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Course Eligibility Inspector</h4>
+        <h2 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Course Eligibility Inspector</h2>
         <div style="font-size:13px;color:var(--t3);font-weight:300">Check which students are eligible to register for a specific course.</div>
       </div>
       <div class="filter-bar sticky-cta" style="margin-bottom:14px">
@@ -841,7 +841,7 @@
         </div>
         <div style="overflow-x:auto">
           <table class="tbl-card" id="elTable">
-            <thead><tr><th>Eligible Student IDs</th></tr></thead>
+            <thead><tr><th scope="col">Eligible Student IDs</th></tr></thead>
             <tbody><tr><td><div class="empty-state"><span class="i" style="width:32px;height:32px;color:var(--t5);margin-bottom:8px"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span><div class="empty-title">No eligibility results</div><div class="empty-hint">Enter a course code above, then click <strong>Check</strong></div></div></td></tr></tbody>
           </table>
         </div>
@@ -849,7 +849,7 @@
     </div>
 
     {% if can_admin_advisors %}<div id="advisoradmin" class="panel">
-      <h4>Advisor Admin</h4>
+      <h2>Advisor Admin</h2>
       <div class="panel-sub">Create advisors and manage student-to-advisor assignments.</div>
 
       <div class="adm-wizard-bar">
@@ -936,7 +936,7 @@
     <!-- Advisor Portfolio → moved to standalone page at /advisor-portfolio/ -->
 
     <div id="exports" class="panel">
-      <h4>Export Center</h4>
+      <h2>Export Center</h2>
       <div class="panel-sub">Quick links for all operational exports in one place.</div>
       <div class="task-card mb-2">
         <div class="k">What these exports contain</div>
@@ -944,7 +944,7 @@
       </div>
       <div class="table-wrap">
         <table class="table table-sm mb-0" id="exportsTable">
-          <thead><tr><th>Export</th><th>Contains</th><th>Action</th><th>Copy Link</th></tr></thead>
+          <thead><tr><th scope="col">Export</th><th scope="col">Contains</th><th scope="col">Action</th><th scope="col">Copy Link</th></tr></thead>
           <tbody>
             <tr><td>Student recommendations CSV</td><td>Single student</td><td><a id="exStudentCsv" class="btn btn-sm btn-outline-primary" href="#">Download</a></td><td><button class="btn btn-sm btn-outline-secondary ex-copy" data-link-id="exStudentCsv">Copy</button></td></tr>
             <tr><td>Aggregate recommendations CSV</td><td>Batch summary</td><td><a id="exAggregateCsv" class="btn btn-sm btn-outline-primary" href="#">Download</a></td><td><button class="btn btn-sm btn-outline-secondary ex-copy" data-link-id="exAggregateCsv">Copy</button></td></tr>
@@ -960,7 +960,7 @@
     </div>
 
     <div id="highpriority" class="panel">
-      <h4>Missing High Priority Courses</h4>
+      <h2>Missing High Priority Courses</h2>
       <div class="panel-sub">Exact legacy logic from old script (unlock-graph priority + parity split).</div>
       <div class="task-card mb-2">
         <div class="k">Task</div>
@@ -997,7 +997,7 @@
       <div id="hpUpdated" class="small text-secondary">Last update: -</div>
       <div class="table-wrap mt-2">
         <table class="table table-sm mb-0" id="hpTable">
-          <thead><tr><th>Student</th><th>Program</th><th>Missing this parity</th><th>Missing other</th><th>Total</th></tr></thead>
+          <thead><tr><th scope="col">Student</th><th scope="col">Program</th><th scope="col">Missing this parity</th><th scope="col">Missing other</th><th scope="col">Total</th></tr></thead>
           <tbody><tr><td colspan="5"><div class="empty-state"><span class="empty-icon"><span class="i" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span></span><div class="empty-title">No report loaded</div><div class="empty-hint">Set filters above, then click <strong>Run report</strong></div></div></td></tr></tbody>
         </table>
       </div>
@@ -1914,7 +1914,7 @@
         : `<tr><td colspan="5" class="empty-note">${T.noCoursesThisTerm}</td></tr>`;
 
       const compactClass = studentPlanCompact ? 'table-compact' : '';
-      return `<details class="term-details" ${studentPlanExpandAll ? 'open' : ''}><summary class="term-summary"><div class="term-header-sticky"><h6>${T.termSection(termObj.term)}</h6><div style="display:flex;gap:5px;margin-inline-start:auto">${passedN ? `<span class="pill-status pill-g" style="font-size:10px"><span class="pill-dot"></span>${passedN}</span>` : ''}${studyingN ? `<span class="pill-status pill-b" style="font-size:10px"><span class="pill-dot"></span>${studyingN}</span>` : ''}${canN ? `<span class="pill-status pill-g" style="font-size:10px;background:rgba(0,174,218,0.08);color:var(--sky);border-color:rgba(0,174,218,0.16)"><span class="pill-dot"></span>${canN}</span>` : ''}${lockedN ? `<span class="pill-status pill-r" style="font-size:10px"><span class="pill-dot"></span>${lockedN}</span>` : ''}</div></div></summary><div style="padding:0 12px 12px"><table class="tbl-card mb-0 ${compactClass}" style="border-spacing:0 4px"><thead><tr><th>${T.course}</th><th>${T.ch}</th><th>${T.status}</th><th>${T.prerequisites}</th><th>${T.imp}</th></tr></thead><tbody>${tbody}</tbody></table></div></details>`;
+      return `<details class="term-details" ${studentPlanExpandAll ? 'open' : ''}><summary class="term-summary"><div class="term-header-sticky"><h6>${T.termSection(termObj.term)}</h6><div style="display:flex;gap:5px;margin-inline-start:auto">${passedN ? `<span class="pill-status pill-g" style="font-size:10px"><span class="pill-dot"></span>${passedN}</span>` : ''}${studyingN ? `<span class="pill-status pill-b" style="font-size:10px"><span class="pill-dot"></span>${studyingN}</span>` : ''}${canN ? `<span class="pill-status pill-g" style="font-size:10px;background:rgba(0,174,218,0.08);color:var(--sky);border-color:rgba(0,174,218,0.16)"><span class="pill-dot"></span>${canN}</span>` : ''}${lockedN ? `<span class="pill-status pill-r" style="font-size:10px"><span class="pill-dot"></span>${lockedN}</span>` : ''}</div></div></summary><div style="padding:0 12px 12px"><table class="tbl-card mb-0 ${compactClass}" style="border-spacing:0 4px"><thead><tr><th scope="col">${T.course}</th><th scope="col">${T.ch}</th><th scope="col">${T.status}</th><th scope="col">${T.prerequisites}</th><th scope="col">${T.imp}</th></tr></thead><tbody>${tbody}</tbody></table></div></details>`;
     }).join('');
 
     bindCourseRowClicks();
