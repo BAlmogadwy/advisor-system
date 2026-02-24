@@ -9,10 +9,12 @@ from core.services.db_admin_ops import (
     create_backup_snapshot,
     delete_program_catalog,
     delete_students,
+    import_oracle_plan_from_rows,
     import_program_plan,
     legacy_load_department_files_exact,
     preview_delete_program_catalog,
     preview_delete_students,
+    preview_oracle_plan,
     run_integrity_checks,
 )
 from core.services.term_sections import (
@@ -264,6 +266,85 @@ def db_import_term_sections_view(request: HttpRequest) -> JsonResponse:
             action="db.import_term_sections",
             status="error",
             details={"csv_path": csv_path, "academic_year": academic_year, "term": term, "source_tag": source_tag},
+            error_text=str(exc),
+        )
+        return JsonResponse({"error": str(exc)}, status=400)
+
+
+@require_POST
+def db_preview_oracle_plan_view(request: HttpRequest) -> JsonResponse:
+    payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    filepath = str(payload.get("filepath", "")).strip()
+    program = str(payload.get("program", "")).strip()
+
+    if not filepath:
+        return JsonResponse({"error": "filepath is required"}, status=400)
+    if not program:
+        return JsonResponse({"error": "program is required"}, status=400)
+
+    encoding = str(payload.get("encoding", "windows-1256")).strip() or "windows-1256"
+
+    try:
+        result = preview_oracle_plan(
+            filepath=filepath,
+            program=program,
+            encoding=encoding,
+        )
+        return JsonResponse(result)
+    except (ValueError, FileNotFoundError, OSError) as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+
+@require_POST
+def db_import_oracle_plan_view(request: HttpRequest) -> JsonResponse:
+    payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    program = str(payload.get("program", "")).strip()
+    rows = payload.get("rows", [])
+    replace_existing = bool(payload.get("replace_existing", False))
+
+    if not program:
+        log_audit_event(
+            request,
+            action="db.import_oracle_plan",
+            status="error",
+            error_text="missing program",
+        )
+        return JsonResponse({"error": "program is required"}, status=400)
+    if not rows:
+        log_audit_event(
+            request,
+            action="db.import_oracle_plan",
+            status="error",
+            details={"program": program},
+            error_text="no rows provided",
+        )
+        return JsonResponse({"error": "rows are required"}, status=400)
+
+    try:
+        result = import_oracle_plan_from_rows(
+            program=program,
+            rows=rows,
+            replace_existing=replace_existing,
+        )
+        log_audit_event(
+            request,
+            action="db.import_oracle_plan",
+            status="success",
+            details={
+                "program": program,
+                "replace_existing": replace_existing,
+                "requirements_upserted": result.get("requirements_upserted", 0),
+                "prerequisites_inserted": result.get("prerequisites_inserted", 0),
+                "courses_upserted": result.get("courses_upserted", 0),
+            },
+        )
+        return JsonResponse(result)
+    except ValueError as exc:
+        log_audit_event(
+            request,
+            action="db.import_oracle_plan",
+            status="error",
+            details={"program": program},
             error_text=str(exc),
         )
         return JsonResponse({"error": str(exc)}, status=400)

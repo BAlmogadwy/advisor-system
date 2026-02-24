@@ -353,6 +353,15 @@
           <span class="dba-risk-badge risk-safe">{% if LANGUAGE_CODE == 'ar' %}آمن{% else %}Safe{% endif %}</span>
         </button>
 
+        <button class="dba-nav-item" data-panel="oracleplan" type="button">
+          <span class="dba-nav-icon icon-safe"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span></span>
+          <span class="dba-nav-text">
+            <span class="dba-nav-name">{% if LANGUAGE_CODE == 'ar' %}استيراد خطة Oracle{% else %}Import Oracle Plan{% endif %}</span>
+            <span class="dba-nav-desc">{% if LANGUAGE_CODE == 'ar' %}تحليل → تعديل → إدراج{% else %}Parse → Edit → Insert{% endif %}</span>
+          </span>
+          <span class="dba-risk-badge risk-safe">{% if LANGUAGE_CODE == 'ar' %}آمن{% else %}Safe{% endif %}</span>
+        </button>
+
         <button class="dba-nav-item" data-panel="legacy" type="button">
           <span class="dba-nav-icon icon-warning"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></span></span>
           <span class="dba-nav-text">
@@ -543,6 +552,85 @@
           </div>
 
           <pre id="tOut" class="dba-output" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد. ابدأ بـ «تحليل + معاينة».{% else %}No action yet. Start with Parse + Preview.{% endif %}</pre>
+        </div>
+
+        <!-- ══ PANEL: Import Oracle Plan ═════════════════════ -->
+        <div class="dba-panel" id="panel-oracleplan">
+          <div class="dba-panel-header">
+            <div class="dba-panel-icon icon-safe"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span></div>
+            <div>
+              <div class="dba-panel-title">{% if LANGUAGE_CODE == 'ar' %}استيراد خطة Oracle{% else %}Import Oracle Plan{% endif %}</div>
+              <div class="dba-panel-subtitle">{% if LANGUAGE_CODE == 'ar' %}تحليل ملف تصدير Oracle → مراجعة وتعديل → إدراج في <code>programme_requirements</code> و <code>prerequisites</code> و <code>courses</code>.{% else %}Parse Oracle export file → review &amp; edit → insert into <code>programme_requirements</code>, <code>prerequisites</code>, and <code>courses</code>.{% endif %}</div>
+            </div>
+          </div>
+
+          <!-- Step indicator -->
+          <div class="dba-steps">
+            <span class="dba-step active" id="oStep1">{% if LANGUAGE_CODE == 'ar' %}١ تحليل + معاينة{% else %}1 Parse + Preview{% endif %}</span>
+            <span class="dba-step-arrow">&rsaquo;</span>
+            <span class="dba-step" id="oStep2">{% if LANGUAGE_CODE == 'ar' %}٢ مراجعة وتعديل{% else %}2 Review &amp; Edit{% endif %}</span>
+            <span class="dba-step-arrow">&rsaquo;</span>
+            <span class="dba-step" id="oStep3">{% if LANGUAGE_CODE == 'ar' %}٣ إدراج{% else %}3 Import{% endif %}</span>
+          </div>
+
+          <div class="dba-section">
+            <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}مصدر الملف وإعدادات البرنامج{% else %}File source &amp; program settings{% endif %}</div>
+            <div class="row g-2 align-items-end">
+              <div class="col-md-5">
+                <label class="form-label" for="oFilePath">{% if LANGUAGE_CODE == 'ar' %}مسار ملف Oracle{% else %}Oracle file path{% endif %}</label>
+                <input id="oFilePath" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثال: C:\...\getjobid31100{% else %}e.g. C:\...\getjobid31100{% endif %}">
+              </div>
+              <div class="col-md-3">
+                <label class="form-label" for="oProgram">{% if LANGUAGE_CODE == 'ar' %}رمز البرنامج{% else %}Program code{% endif %}</label>
+                <input id="oProgram" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثال: AI{% else %}e.g. AI{% endif %}">
+              </div>
+              <div class="col-md-2">
+                <label class="form-label" for="oEncoding">{% if LANGUAGE_CODE == 'ar' %}ترميز الملف{% else %}Encoding{% endif %}</label>
+                <input id="oEncoding" class="form-control" value="windows-1256">
+              </div>
+              <div class="col-md-2 d-flex flex-column gap-1 pt-3">
+                <div class="form-check">
+                  <input id="oReplace" class="form-check-input" type="checkbox">
+                  <label class="form-check-label small" for="oReplace">{% if LANGUAGE_CODE == 'ar' %}استبدال الموجود{% else %}Replace existing{% endif %}</label>
+                </div>
+              </div>
+            </div>
+            <div class="mt-3 d-flex gap-2">
+              <button id="oPreview" class="btn btn-outline-primary">{% if LANGUAGE_CODE == 'ar' %}تحليل + معاينة{% else %}Parse + Preview{% endif %}</button>
+              <button id="oImport" class="btn btn-success" disabled>{% if LANGUAGE_CODE == 'ar' %}إدراج الكل{% else %}Import all{% endif %}</button>
+            </div>
+          </div>
+
+          <!-- Summary KPIs -->
+          <div id="oSummaryWrap" class="dba-section d-none">
+            <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}ملخص{% else %}Summary{% endif %}</div>
+            <div class="row g-3 text-center" id="oSummary"></div>
+          </div>
+
+          <!-- Editable preview table -->
+          <div id="oTableWrap" class="dba-section d-none">
+            <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}معاينة قابلة للتعديل — عدّل أي خلية قبل الإدراج{% else %}Editable preview &mdash; modify any cell before importing{% endif %}</div>
+            <div class="d-flex gap-2 mb-2">
+              <button id="oAddRow" class="btn btn-sm btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}+ إضافة صف{% else %}+ Add row{% endif %}</button>
+            </div>
+            <div class="table-wrap" style="max-height:60vh;overflow:auto;">
+              <table class="table table-sm table-bordered mb-0" style="font-size:.82rem;">
+                <thead class="table-light"><tr>
+                  <th style="width:3%">#</th>
+                  <th style="width:6%">{% if LANGUAGE_CODE == 'ar' %}المستوى{% else %}Level{% endif %}</th>
+                  <th style="width:10%">{% if LANGUAGE_CODE == 'ar' %}الرمز{% else %}Code{% endif %}</th>
+                  <th style="width:22%">{% if LANGUAGE_CODE == 'ar' %}اسم المقرر (EN){% else %}Course Name (EN){% endif %}</th>
+                  <th style="width:5%">{% if LANGUAGE_CODE == 'ar' %}الساعات{% else %}Cr{% endif %}</th>
+                  <th style="width:14%">{% if LANGUAGE_CODE == 'ar' %}النوع{% else %}Type{% endif %}</th>
+                  <th style="width:16%">{% if LANGUAGE_CODE == 'ar' %}المتطلبات{% else %}Prerequisites{% endif %}</th>
+                  <th style="width:4%"></th>
+                </tr></thead>
+                <tbody id="oTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <pre id="oOut" class="dba-output" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد. ابدأ بـ «تحليل + معاينة».{% else %}No action yet. Start with Parse + Preview.{% endif %}</pre>
         </div>
 
         <!-- ══ PANEL: Legacy Import ══════════════════════════ -->
@@ -793,6 +881,158 @@ q('tImport').onclick = async () => {
       truncate_existing: q('tTruncate').checked
     })
   }, 'tOut', q('tImport'));
+};
+
+/* ── Section: Oracle plan import ── */
+let oraclePreviewReady = false;
+
+const ORACLE_TYPE_OPTIONS = [
+  'Mandatory', 'Free Elective', 'Program Elective', 'University Elective', 'Elective'
+];
+
+function setOracleStep(step) {
+  ['oStep1','oStep2','oStep3'].forEach((id, i) => {
+    const el = q(id);
+    if (!el) return;
+    el.classList.remove('active','done');
+    if (i + 1 < step)     el.classList.add('done');
+    else if (i + 1 === step) el.classList.add('active');
+  });
+}
+
+function oracleTypeSelect(val) {
+  let html = '<select class="form-select form-select-sm">';
+  for (const opt of ORACLE_TYPE_OPTIONS) {
+    html += `<option value="${esc(opt)}"${opt === val ? ' selected' : ''}>${esc(opt)}</option>`;
+  }
+  html += '</select>';
+  return html;
+}
+
+function oracleAddRow(row, idx) {
+  const tr = document.createElement('tr');
+  tr.innerHTML =
+    `<td class="text-muted">${idx}</td>` +
+    `<td><input class="form-control form-control-sm o-level" value="${esc(String(row.level_number || ''))}" style="width:50px"></td>` +
+    `<td><input class="form-control form-control-sm o-code" value="${esc(row.code || '')}"></td>` +
+    `<td><input class="form-control form-control-sm o-name" value="${esc(row.en_name || '')}"></td>` +
+    `<td><input class="form-control form-control-sm o-credits" value="${esc(String(row.credits || ''))}" style="width:55px"></td>` +
+    `<td class="o-type-cell">${oracleTypeSelect(row.type || 'Mandatory')}</td>` +
+    `<td><input class="form-control form-control-sm o-prereqs" value="${esc(row.prereqs_str || '')}"></td>` +
+    `<td><button class="btn btn-sm btn-outline-danger o-del-row" title="${IS_AR ? 'حذف' : 'Delete'}">&times;</button></td>`;
+  return tr;
+}
+
+function collectOracleRows() {
+  const rows = [];
+  q('oTableBody').querySelectorAll('tr').forEach(tr => {
+    rows.push({
+      level_number: tr.querySelector('.o-level')?.value || '',
+      code:         tr.querySelector('.o-code')?.value || '',
+      en_name:      tr.querySelector('.o-name')?.value || '',
+      credits:      tr.querySelector('.o-credits')?.value || '',
+      type:         tr.querySelector('.o-type-cell select')?.value || 'Mandatory',
+      prereqs_str:  tr.querySelector('.o-prereqs')?.value || '',
+    });
+  });
+  return rows;
+}
+
+function renderOracleSummary(data) {
+  const s = data.summary || {};
+  const m = data.metadata || {};
+  const db = data.existing_db || {};
+  const w = data.warnings || [];
+  const kpis = [
+    { label: IS_AR ? 'المقررات' : 'Courses',  value: s.total_courses || 0, color: '#0d9488' },
+    { label: IS_AR ? 'الساعات'  : 'Credits',  value: s.total_credits || 0, color: '#6366f1' },
+    { label: IS_AR ? 'المستويات': 'Levels',   value: s.total_levels  || 0, color: '#f59e0b' },
+    { label: IS_AR ? 'التخصص'   : 'Major',    value: m.major_ar || '—',    color: '#8b5cf6' },
+    { label: IS_AR ? 'صفوف موجودة' : 'Existing Reqs', value: db.requirements || 0, color: '#64748b' },
+    { label: IS_AR ? 'متطلبات موجودة' : 'Existing Prereqs', value: db.prerequisites || 0, color: '#64748b' },
+  ];
+  let html = '';
+  for (const k of kpis) {
+    html += `<div class="col-md-2 col-4"><div class="border rounded p-2"><div style="font-size:1.3rem;font-weight:700;color:${k.color}">${esc(String(k.value))}</div><div class="text-muted" style="font-size:.72rem">${esc(k.label)}</div></div></div>`;
+  }
+  if (w.length > 0) {
+    html += `<div class="col-12"><div class="alert alert-warning py-1 px-2 mb-0" style="font-size:.78rem"><strong>${IS_AR ? 'تحذيرات:' : 'Warnings:'}</strong> ${esc(w.join(' | '))}</div></div>`;
+  }
+  q('oSummary').innerHTML = html;
+  q('oSummaryWrap').classList.remove('d-none');
+}
+
+q('oPreview').onclick = async () => {
+  setOracleStep(2);
+  const data = await callJson('/ops/db/preview-oracle-plan/', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      filepath:  q('oFilePath').value,
+      program:   q('oProgram').value,
+      encoding:  q('oEncoding').value,
+    })
+  }, 'oOut', q('oPreview'));
+
+  const body = q('oTableBody');
+  body.innerHTML = '';
+
+  if (!data.error && Array.isArray(data.preview_rows)) {
+    renderOracleSummary(data);
+    data.preview_rows.forEach((row, i) => {
+      body.appendChild(oracleAddRow(row, i + 1));
+    });
+    q('oTableWrap').classList.remove('d-none');
+    oraclePreviewReady = true;
+    q('oImport').disabled = false;
+    setOracleStep(3);
+  } else {
+    q('oTableWrap').classList.add('d-none');
+    q('oSummaryWrap').classList.add('d-none');
+    oraclePreviewReady = false;
+    q('oImport').disabled = true;
+    setOracleStep(1);
+  }
+};
+
+/* Delegate delete row clicks */
+q('oTableBody').addEventListener('click', (e) => {
+  if (e.target.classList.contains('o-del-row')) {
+    e.target.closest('tr').remove();
+    /* re-number rows */
+    q('oTableBody').querySelectorAll('tr').forEach((tr, i) => {
+      tr.querySelector('td').textContent = i + 1;
+    });
+  }
+});
+
+/* Add empty row */
+q('oAddRow').onclick = () => {
+  const body = q('oTableBody');
+  const idx = body.querySelectorAll('tr').length + 1;
+  body.appendChild(oracleAddRow({level_number:'',code:'',en_name:'',credits:'',type:'Mandatory',prereqs_str:''}, idx));
+};
+
+q('oImport').onclick = async () => {
+  if (!oraclePreviewReady) { notify.warning(T.runPreviewFirst); return; }
+  const rows = collectOracleRows();
+  if (rows.length === 0) { notify.warning(IS_AR ? 'لا توجد صفوف للإدراج.' : 'No rows to import.'); return; }
+  const ok = await dlg.confirm({
+    title: IS_AR ? 'إدراج خطة Oracle؟' : 'Import Oracle plan?',
+    body: IS_AR
+      ? `<p>سيُدرج هذا <strong>${rows.length}</strong> مقرر في قاعدة البيانات للبرنامج <strong>${esc(q('oProgram').value)}</strong>.</p>`
+      : `<p>This will insert <strong>${rows.length}</strong> courses into the database for program <strong>${esc(q('oProgram').value)}</strong>.</p>`,
+    confirmText: IS_AR ? 'إدراج الكل' : 'Import all',
+    kind: 'info',
+  });
+  if (!ok) return;
+  await callJson('/ops/db/import-oracle-plan/', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      program:          q('oProgram').value,
+      rows:             rows,
+      replace_existing: q('oReplace').checked,
+    })
+  }, 'oOut', q('oImport'));
 };
 
 /* ── Section: Legacy import ── */

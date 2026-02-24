@@ -17,11 +17,13 @@ from .db_admin_views import (
     db_delete_program_catalog_view,
     db_delete_students_view,
     db_import_legacy_exact_view,
+    db_import_oracle_plan_view,
     db_import_program_plan_view,
     db_import_term_sections_view,
     db_integrity_report_view,
     db_preview_delete_program_catalog_view,
     db_preview_delete_students_view,
+    db_preview_oracle_plan_view,
     db_preview_term_sections_view,
 )
 from .exam_views import (
@@ -177,6 +179,16 @@ urlpatterns = [
     ),
     path("ops/db/import-program-plan/", db_import_program_plan_view, name="db_import_program_plan"),
     path("ops/db/import-legacy-exact/", db_import_legacy_exact_view, name="db_import_legacy_exact"),
+    path(
+        "ops/db/preview-oracle-plan/",
+        db_preview_oracle_plan_view,
+        name="db_preview_oracle_plan",
+    ),
+    path(
+        "ops/db/import-oracle-plan/",
+        db_import_oracle_plan_view,
+        name="db_import_oracle_plan",
+    ),
     path(
         "ops/db/preview-term-sections/",
         db_preview_term_sections_view,

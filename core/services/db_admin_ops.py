@@ -9,7 +9,7 @@ from django.conf import settings
 from django.db import connection, transaction
 from django.db.models import Q
 
-from core.models import Prerequisite, ProgrammeRequirement, Student, StudentCourse
+from core.models import Course, Prerequisite, ProgrammeRequirement, Student, StudentCourse
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_REQ_CSV = BASE_DIR / "import_old" / "data" / "department_courses.csv"
@@ -250,4 +250,141 @@ def legacy_load_department_files_exact(
         "prerequisites_csv": str(pre_path),
         "requirements_loaded": req_count,
         "prerequisites_loaded": pre_count,
+    }
+
+
+def preview_oracle_plan(
+    filepath: str,
+    program: str,
+    encoding: str = "windows-1256",
+) -> dict[str, Any]:
+    """Parse an Oracle study-plan export and return a preview (no DB writes).
+
+    Returns a dict with ``preview_rows`` (flat list ready for editable table),
+    ``metadata``, ``summary``, ``warnings``, and existing DB row counts.
+    """
+    from core.services.oracle_plan_parser import map_course_type, parse_oracle_plan
+
+    parsed = parse_oracle_plan(filepath, encoding=encoding)
+
+    # Flatten courses into a list the frontend can render as editable rows.
+    preview_rows: list[dict[str, Any]] = []
+    for level_key, level_data in parsed["levels"].items():
+        for course in level_data["courses"]:
+            preview_rows.append({
+                "code": course["code"],
+                "code_ar": course.get("code_ar", ""),
+                "en_name": course["en_name"],
+                "ar_name": course.get("ar_name", ""),
+                "credits": course["credits"],
+                "level_number": course["level_number"],
+                "level_en": course["level_en"],
+                "level_ar": course.get("level_ar", ""),
+                "type": map_course_type(course.get("course_type", "")),
+                "prereqs_str": ", ".join(course.get("prereqs", [])),
+                "delivery": course.get("delivery", ""),
+            })
+
+    # Existing DB row counts for this program (helps the user decide).
+    existing_requirements = ProgrammeRequirement.objects.filter(program=program).count()
+    existing_prerequisites = Prerequisite.objects.filter(program=program).count()
+
+    return {
+        "ok": True,
+        "metadata": parsed["metadata"],
+        "summary": parsed["summary"],
+        "warnings": parsed["warnings"],
+        "preview_rows": preview_rows,
+        "existing_db": {
+            "requirements": existing_requirements,
+            "prerequisites": existing_prerequisites,
+        },
+    }
+
+
+def import_oracle_plan_from_rows(
+    program: str,
+    rows: list[dict[str, Any]],
+    replace_existing: bool = False,
+) -> dict[str, Any]:
+    """Insert user-edited Oracle plan rows into the database.
+
+    *rows* is a list of dicts coming from the editable frontend table::
+
+        {code, en_name, credits, level_number, type, prereqs_str}
+
+    ``prereqs_str`` is a comma-separated string of prerequisite course codes.
+
+    Returns counts: ``{requirements_upserted, prerequisites_inserted, courses_upserted}``.
+    """
+    if not rows:
+        raise ValueError("No rows to import")
+
+    backup = create_backup_snapshot()
+
+    requirements_upserted = 0
+    prerequisites_inserted = 0
+    courses_upserted = 0
+
+    with transaction.atomic():
+        if replace_existing:
+            Prerequisite.objects.filter(program=program).delete()
+            ProgrammeRequirement.objects.filter(program=program).delete()
+
+        for row in rows:
+            code = str(row.get("code", "")).strip().upper().replace(" ", "")
+            if not code:
+                continue
+
+            credits = int(str(row.get("credits", 0)).strip() or 0)
+            level_number = int(str(row.get("level_number", 0)).strip() or 0)
+            course_type = str(row.get("type", "Mandatory")).strip() or "Mandatory"
+            en_name = str(row.get("en_name", "")).strip()
+
+            # Upsert ProgrammeRequirement
+            ProgrammeRequirement.objects.update_or_create(
+                program=program,
+                course_code=code,
+                defaults={
+                    "type": course_type,
+                    "programme_term": level_number,
+                    "credit_hours": credits,
+                },
+            )
+            requirements_upserted += 1
+
+            # Prerequisites — delete existing for this course then re-insert.
+            if not replace_existing:
+                Prerequisite.objects.filter(program=program, course_code=code).delete()
+
+            prereqs_str = str(row.get("prereqs_str", "")).strip()
+            if prereqs_str:
+                for p in prereqs_str.split(","):
+                    p = p.strip().upper().replace(" ", "")
+                    if p:
+                        Prerequisite.objects.create(
+                            program=program,
+                            course_code=code,
+                            prerequisite_course_code=p,
+                        )
+                        prerequisites_inserted += 1
+
+            # Upsert Course metadata
+            Course.objects.update_or_create(
+                course_code=code,
+                defaults={
+                    "description": en_name,
+                    "credit_hours": credits,
+                },
+            )
+            courses_upserted += 1
+
+    return {
+        "ok": True,
+        "program": program,
+        "replace_existing": replace_existing,
+        "requirements_upserted": requirements_upserted,
+        "prerequisites_inserted": prerequisites_inserted,
+        "courses_upserted": courses_upserted,
+        "backup": backup,
     }

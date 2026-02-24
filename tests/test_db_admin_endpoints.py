@@ -102,3 +102,66 @@ def test_delete_program_catalog_returns_backup_metadata(monkeypatch: MonkeyPatch
     assert payload["ok"] is True
     assert payload["program"] == "CS"
     assert payload["backup"]["size_bytes"] == 3333
+
+
+def test_preview_oracle_plan_endpoint(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "core.db_admin_views.preview_oracle_plan",
+        lambda filepath, program, encoding="windows-1256": {
+            "ok": True,
+            "metadata": {"college_ar": "كلية", "dept_ar": "قسم", "major_ar": "تخصص", "study_type": "انتظام"},
+            "summary": {"total_courses": 53, "total_credits": 157, "total_levels": 10},
+            "warnings": [],
+            "preview_rows": [
+                {"code": "GS101", "en_name": "ISLAMIC STUDIES", "credits": 2, "level_number": 1, "type": "Mandatory", "prereqs_str": ""},
+                {"code": "CS101", "en_name": "INTRO TO CS", "credits": 3, "level_number": 3, "type": "Mandatory", "prereqs_str": "GS101"},
+            ],
+            "existing_db": {"requirements": 0, "prerequisites": 0},
+        },
+    )
+
+    response = client.post(
+        "/ops/db/preview-oracle-plan/",
+        data='{"filepath":"C:/fake/getjobid31100","program":"AI"}',
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["summary"]["total_courses"] == 53
+    assert len(payload["preview_rows"]) == 2
+    assert payload["preview_rows"][0]["code"] == "GS101"
+
+
+def test_import_oracle_plan_endpoint(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "core.db_admin_views.import_oracle_plan_from_rows",
+        lambda program, rows, replace_existing=False: {
+            "ok": True,
+            "program": program,
+            "replace_existing": replace_existing,
+            "requirements_upserted": len(rows),
+            "prerequisites_inserted": 1,
+            "courses_upserted": len(rows),
+            "backup": {
+                "ok": True,
+                "backup_path": "runtime/db_backups/advisor_20260224_100000.db",
+                "size_bytes": 4444,
+            },
+        },
+    )
+
+    response = client.post(
+        "/ops/db/import-oracle-plan/",
+        data='{"program":"AI","rows":[{"code":"GS101","en_name":"ISLAMIC STUDIES","credits":"2","level_number":"1","type":"Mandatory","prereqs_str":""}],"replace_existing":false}',
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ok"] is True
+    assert payload["program"] == "AI"
+    assert payload["requirements_upserted"] == 1
+    assert payload["courses_upserted"] == 1
+    assert payload["backup"]["size_bytes"] == 4444
