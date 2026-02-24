@@ -565,7 +565,7 @@ main.p-3 .page-header {
   transform: translateY(0);
 }
 
-.panel h4 {
+.panel h2 {
   margin-bottom:   0.2rem;
   font-family:     var(--font-serif);
   font-weight:     400;

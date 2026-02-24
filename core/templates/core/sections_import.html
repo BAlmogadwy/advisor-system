@@ -28,6 +28,14 @@
           <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}تحليل → مراجعة → تأكيد{% else %}Parse → Review → Insert{% endif %}</span>
         </div>
       </div>
+      <div class="page-header-right">
+        <a href="/logout/" class="btn btn-sm btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}تسجيل الخروج{% else %}Logout{% endif %}</a>
+      </div>
+    </div>
+
+    <div style="margin-bottom:18px">
+      <h2 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">{% if LANGUAGE_CODE == 'ar' %}استيراد الشعب{% else %}Sections Import{% endif %}</h2>
+      <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}تحليل ملفات Oracle HTML لمعاينة واستيراد شعب المقررات.{% else %}Parse Oracle HTML files to preview and import course sections into the system.{% endif %}</div>
     </div>
 <div>
 

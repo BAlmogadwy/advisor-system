@@ -41,6 +41,14 @@
           {% endif %}
         </div>
       </div>
+      <div class="page-header-right">
+        <a href="/logout/" class="btn btn-sm btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}تسجيل الخروج{% else %}Logout{% endif %}</a>
+      </div>
+    </div>
+
+    <div style="margin-bottom:18px">
+      <h2 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">{% if LANGUAGE_CODE == 'ar' %}مستعرض سجل التدقيق{% else %}Audit Explorer{% endif %}</h2>
+      <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}تصفح سجل التدقيق وتصفية إجراءات النظام.{% else %}Browse the tamper-proof audit trail and filter system actions.{% endif %}</div>
     </div>
     <div>
 

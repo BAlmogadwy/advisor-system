@@ -353,6 +353,14 @@
             <span class="ph-chip ph-chip-gray" id="plannerContextChip" style="display:none;"></span>
           </div>
         </div>
+        <div class="page-header-right">
+          <a href="/logout/" class="btn btn-sm btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}تسجيل الخروج{% else %}Logout{% endif %}</a>
+        </div>
+      </div>
+
+      <div style="margin-bottom:18px">
+        <h2 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">{% if LANGUAGE_CODE == 'ar' %}أداة بناء جدول الطالب{% else %}Student Timetable Builder{% endif %}</h2>
+        <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}بناء وتحسين جداول المقررات للطلاب باستخدام التخطيط القائم على القيود.{% else %}Build and optimize student course schedules with constraint-based planning.{% endif %}</div>
       </div>
 
       <!-- ═══ Sticky control bar ═══════════════════════════════ -->
