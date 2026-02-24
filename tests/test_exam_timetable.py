@@ -24,6 +24,7 @@ from core.services.exam_timetable import (
     build_exam_timetable,
     build_plan_term_buckets,
     check_bucket_feasibility,
+    export_exam_timetable_xlsx,
     schedule,
 )
 
@@ -482,3 +483,62 @@ def test_pinned_conflict_reported_in_qa() -> None:
         conflict_courses.update(c["courses"])
     assert "EX101" in conflict_courses
     assert "EX102" in conflict_courses
+
+
+# ── Excel export tests ────────────────────────────────────────
+
+
+def test_export_exam_timetable_xlsx() -> None:
+    """Export a built timetable to .xlsx and verify sheet structure."""
+    _setup_fixture()
+
+    result = build_exam_timetable(
+        label="Export Test Run",
+        days=["Sun", "Mon", "Tue"],
+        periods=["08:00-10:00", "10:30-12:30"],
+    )
+    run_id = result["run_id"]
+
+    # Export
+    path = export_exam_timetable_xlsx(run_id)
+    assert path.exists()
+    assert path.suffix == ".xlsx"
+
+    # Open with openpyxl and verify structure
+    from openpyxl import load_workbook
+
+    wb = load_workbook(path)
+    sheet_names = wb.sheetnames
+    assert "Schedule" in sheet_names
+    assert "Courses" in sheet_names
+    assert "QA Summary" in sheet_names
+
+    # Schedule sheet: header row + 3 day rows = 4 rows, 1 + 2 period columns = 3
+    ws_sched = wb["Schedule"]
+    assert ws_sched.max_row == 4  # header + Sun, Mon, Tue
+    assert ws_sched.cell(1, 1).value == "Day \\ Period"
+    assert ws_sched.cell(1, 2).value == "08:00-10:00"
+    assert ws_sched.cell(1, 3).value == "10:30-12:30"
+    # Day names in column A
+    days_in_sheet = [ws_sched.cell(r, 1).value for r in range(2, 5)]
+    assert days_in_sheet == ["Sun", "Mon", "Tue"]
+
+    # Courses sheet: header + 4 course rows = 5 rows
+    ws_courses = wb["Courses"]
+    assert ws_courses.max_row == 5  # header + 4 courses
+    assert ws_courses.cell(1, 1).value == "Course Code"
+    # Collect all course codes
+    course_codes = {ws_courses.cell(r, 1).value for r in range(2, 6)}
+    assert course_codes == {"EX101", "EX102", "EX201", "EX301"}
+
+    # QA Summary sheet: header + 10 metric rows = 11 rows minimum
+    ws_qa = wb["QA Summary"]
+    assert ws_qa.cell(1, 1).value == "Metric"
+    assert ws_qa.cell(1, 2).value == "Value"
+    # Label should be the first metric
+    assert ws_qa.cell(2, 1).value == "Label"
+    assert ws_qa.cell(2, 2).value == "Export Test Run"
+
+    # Cleanup
+    wb.close()
+    path.unlink(missing_ok=True)

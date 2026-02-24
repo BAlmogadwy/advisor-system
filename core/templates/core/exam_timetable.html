@@ -175,9 +175,15 @@
 
     <!-- Schedule Grid -->
     <div class="et-panel">
-      <div class="d-flex align-items-center justify-content-between mb-2">
+      <div class="d-flex align-items-center justify-content-between mb-2 gap-2">
         <h6 class="mb-0">{% if LANGUAGE_CODE == 'ar' %}جدول الاختبارات{% else %}Exam Schedule{% endif %}</h6>
-        <input id="schedFilter" class="form-control form-control-sm" style="max-width:300px" placeholder="{% if LANGUAGE_CODE == 'ar' %}تصفية: AI=برنامج، CS*=رمز المقرر{% else %}Filter: AI=program, CS*=course code{% endif %}">
+        <div class="d-flex align-items-center gap-2 ms-auto">
+          <a id="exportXlsx" href="#" class="btn btn-sm btn-outline-success" style="display:none;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" style="vertical-align:-2px;margin-right:3px"><path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5"/><path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708z"/></svg>
+            {% if LANGUAGE_CODE == 'ar' %}تصدير إكسل{% else %}Export Excel{% endif %}
+          </a>
+          <input id="schedFilter" class="form-control form-control-sm" style="max-width:300px" placeholder="{% if LANGUAGE_CODE == 'ar' %}تصفية: AI=برنامج، CS*=رمز المقرر{% else %}Filter: AI=program, CS*=course code{% endif %}">
+        </div>
       </div>
       <div class="table-responsive" id="schedGrid"></div>
       <div id="pinBar" class="et-pin-bar" style="display:none;">
@@ -568,6 +574,9 @@ let _programCourses = {};   // { programName: Set([course_code, ...]) }
 /* ── Pinned courses (drag & drop) ── */
 let _pinnedCourses = {};    // { course_code: { course_code, day, period } }
 
+/* ── Current run ID (for export) ── */
+let _currentRunId = null;
+
 // Rebuild lookup from buckets_summary each time results arrive.
 function buildProgramCoursesMap(bucketsSummary) {
   _programCourses = {};
@@ -584,6 +593,16 @@ function buildProgramCoursesMap(bucketsSummary) {
 function renderResults(data) {
   buildProgramCoursesMap(data.buckets_summary);
   $('etResults').style.display = '';
+
+  // Track run_id for Excel export link
+  _currentRunId = data.run_id ?? null;
+  const exportBtn = $('exportXlsx');
+  if (_currentRunId) {
+    exportBtn.href = `/ops/exam-timetable/${_currentRunId}/export.xlsx`;
+    exportBtn.style.display = '';
+  } else {
+    exportBtn.style.display = 'none';
+  }
 
   // KPIs
   $('kCourses').textContent  = data.courses_count ?? data.qa?.total_courses ?? 0;

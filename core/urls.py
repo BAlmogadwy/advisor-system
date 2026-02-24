@@ -27,6 +27,7 @@ from .db_admin_views import (
 from .exam_views import (
     exam_timetable_build_view,
     exam_timetable_detail_view,
+    exam_timetable_export_view,
     exam_timetable_filters_view,
     exam_timetable_list_view,
     exam_timetable_page,
@@ -214,6 +215,11 @@ urlpatterns = [
         "ops/exam-timetable/list/",
         login_required(exam_timetable_list_view),
         name="exam_timetable_list",
+    ),
+    path(
+        "ops/exam-timetable/<int:run_id>/export.xlsx",
+        login_required(exam_timetable_export_view),
+        name="exam_timetable_export",
     ),
     path(
         "ops/exam-timetable/<int:run_id>/",

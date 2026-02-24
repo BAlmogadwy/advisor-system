@@ -8,6 +8,7 @@ In-memory exam-timetable pipeline.
 4. check_bucket_feasibility – verify no bucket exceeds available days
 5. schedule                 – greedy graph-coloring → course→slot assignments
 6. build_exam_timetable     – orchestrator: runs 1→5, QA, persists JSON
+7. export_exam_timetable_xlsx – export a saved run to a styled .xlsx workbook
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from __future__ import annotations
 import itertools
 import json
 from collections import defaultdict
+from pathlib import Path
 
 from core.models import ExamTimetableRun, ProgrammeRequirement, StudentCourse
 
@@ -588,3 +590,225 @@ def build_exam_timetable(
     result["run_id"] = run.id
 
     return result
+
+
+# ── 7. Excel export ──────────────────────────────────────────
+
+BASE_DIR = Path(__file__).resolve().parents[2]
+RUNTIME_DIR = BASE_DIR / "runtime"
+
+
+def export_exam_timetable_xlsx(run_id: int) -> Path:
+    """Export a saved ExamTimetableRun to a styled multi-sheet .xlsx workbook.
+
+    Sheets:
+        Schedule  – day × period grid (mirrors the on-screen table)
+        Courses   – flat list with course code, enrolled count, day, period
+        QA Summary – key metrics + any conflict / bucket-day warnings
+
+    Returns the Path to the written file (in the runtime/ directory).
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    run = ExamTimetableRun.objects.get(id=run_id)
+    data = json.loads(run.result_json)
+
+    schedule = data.get("schedule", [])
+    slots = data.get("slots", [])
+    qa = data.get("qa", {})
+
+    # ── Styling constants ──
+    header_font = Font(bold=True, size=11)
+    header_fill = PatternFill("solid", fgColor="0A8E6E")  # teal
+    header_font_white = Font(bold=True, size=11, color="FFFFFF")
+    thin_border = Border(
+        left=Side(style="thin", color="CCCCCC"),
+        right=Side(style="thin", color="CCCCCC"),
+        top=Side(style="thin", color="CCCCCC"),
+        bottom=Side(style="thin", color="CCCCCC"),
+    )
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left_align = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    warn_fill = PatternFill("solid", fgColor="FFF3CD")  # light yellow
+    danger_fill = PatternFill("solid", fgColor="F8D7DA")  # light red
+
+    def style_header_row(ws, col_count: int) -> None:
+        """Apply teal background + white bold font to the first row."""
+        for col in range(1, col_count + 1):
+            cell = ws.cell(row=1, column=col)
+            cell.font = header_font_white
+            cell.fill = header_fill
+            cell.alignment = center
+            cell.border = thin_border
+
+    # ── Extract ordered days and periods from slots ──
+    day_order: list[str] = []
+    period_order: list[str] = []
+    day_set: set[str] = set()
+    period_set: set[str] = set()
+    for s in slots:
+        if s["day"] not in day_set:
+            day_set.add(s["day"])
+            day_order.append(s["day"])
+        if s["period"] not in period_set:
+            period_set.add(s["period"])
+            period_order.append(s["period"])
+
+    # Build grid lookup: grid[day][period] = [course_codes]
+    grid: dict[str, dict[str, list[str]]] = {}
+    for e in schedule:
+        if e["day"] == "OVERFLOW":
+            continue
+        grid.setdefault(e["day"], {}).setdefault(e["period"], []).append(e["course_code"])
+
+    wb = Workbook()
+
+    # ────────────────────────────────────────────────────────────
+    # Sheet 1: Schedule (day × period grid)
+    # ────────────────────────────────────────────────────────────
+    ws1 = wb.active
+    ws1.title = "Schedule"
+
+    # Header row: "Day \ Period", then each period
+    ws1.append(["Day \\ Period"] + period_order)
+    style_header_row(ws1, 1 + len(period_order))
+
+    # One row per day
+    for day in day_order:
+        row: list[str] = [day]
+        for period in period_order:
+            courses = grid.get(day, {}).get(period, [])
+            row.append(", ".join(sorted(courses)) if courses else "—")
+        ws1.append(row)
+
+    # Style body cells
+    for r in range(2, ws1.max_row + 1):
+        for c in range(1, ws1.max_column + 1):
+            cell = ws1.cell(row=r, column=c)
+            cell.border = thin_border
+            cell.alignment = center if c > 1 else left_align
+            if c == 1:
+                cell.font = header_font  # bold day name
+
+    # Column widths
+    ws1.column_dimensions["A"].width = 14
+    for i, _p in enumerate(period_order, start=2):
+        col_letter = chr(64 + i) if i <= 26 else f"A{chr(64 + i - 26)}"
+        ws1.column_dimensions[col_letter].width = 22
+
+    # ────────────────────────────────────────────────────────────
+    # Sheet 2: Courses (flat list)
+    # ────────────────────────────────────────────────────────────
+    ws2 = wb.create_sheet("Courses")
+    ws2.append(["Course Code", "Day", "Period", "Slot Index"])
+    style_header_row(ws2, 4)
+
+    sorted_schedule = sorted(schedule, key=lambda e: (e.get("slot_index", 999), e["course_code"]))
+    for e in sorted_schedule:
+        ws2.append([e["course_code"], e["day"], e["period"], e.get("slot_index", "")])
+
+    for r in range(2, ws2.max_row + 1):
+        for c in range(1, 5):
+            cell = ws2.cell(row=r, column=c)
+            cell.border = thin_border
+            cell.alignment = center
+
+    ws2.column_dimensions["A"].width = 16
+    ws2.column_dimensions["B"].width = 14
+    ws2.column_dimensions["C"].width = 18
+    ws2.column_dimensions["D"].width = 12
+
+    # ────────────────────────────────────────────────────────────
+    # Sheet 3: QA Summary
+    # ────────────────────────────────────────────────────────────
+    ws3 = wb.create_sheet("QA Summary")
+
+    # Key metrics as label-value pairs
+    metrics = [
+        ("Label", run.label),
+        ("Total Courses", qa.get("total_courses", data.get("courses_count", 0))),
+        ("Total Students", qa.get("total_students", data.get("students_count", 0))),
+        ("Slots Used", qa.get("slots_used", 0)),
+        ("Max Exams/Day/Student", qa.get("max_exams_per_day_per_student", 0)),
+        ("Max Per Day Cap", qa.get("max_per_day", 2)),
+        ("Students Over Limit", qa.get("students_over_limit_per_day", 0)),
+        ("Same-Slot Conflicts", qa.get("conflict_count", 0)),
+        ("Programme Buckets", qa.get("bucket_count", 0)),
+        ("Bucket Day Violations", qa.get("bucket_day_violations_count", 0)),
+    ]
+
+    ws3.append(["Metric", "Value"])
+    style_header_row(ws3, 2)
+
+    for label, value in metrics:
+        ws3.append([label, value])
+
+    # Highlight warning rows
+    for r in range(2, ws3.max_row + 1):
+        for c in range(1, 3):
+            cell = ws3.cell(row=r, column=c)
+            cell.border = thin_border
+            cell.alignment = left_align
+        metric_name = ws3.cell(row=r, column=1).value
+        metric_val = ws3.cell(row=r, column=2).value
+        # Colour warning rows yellow/red
+        if metric_name == "Same-Slot Conflicts" and metric_val and int(metric_val) > 0:
+            ws3.cell(row=r, column=1).fill = danger_fill
+            ws3.cell(row=r, column=2).fill = danger_fill
+        elif metric_name in ("Students Over Limit", "Bucket Day Violations"):
+            if metric_val and int(metric_val) > 0:
+                ws3.cell(row=r, column=1).fill = warn_fill
+                ws3.cell(row=r, column=2).fill = warn_fill
+
+    # Append same-slot conflict details (if any)
+    same_slot = qa.get("same_slot_conflicts", [])
+    if same_slot:
+        ws3.append([])
+        ws3.append(["Same-Slot Conflict Details"])
+        ws3.cell(row=ws3.max_row, column=1).font = header_font
+        ws3.append(["Student ID", "Slot Index", "Courses"])
+        r = ws3.max_row
+        for c in range(1, 4):
+            cell = ws3.cell(row=r, column=c)
+            cell.font = header_font
+            cell.fill = PatternFill("solid", fgColor="EEEEEE")
+            cell.border = thin_border
+        for conflict in same_slot:
+            ws3.append([
+                conflict.get("student_id", ""),
+                conflict.get("slot_index", ""),
+                ", ".join(conflict.get("courses", [])),
+            ])
+
+    # Append bucket day violation details (if any)
+    bucket_viols = qa.get("bucket_day_violations", [])
+    if bucket_viols:
+        ws3.append([])
+        ws3.append(["Bucket Day Violation Details"])
+        ws3.cell(row=ws3.max_row, column=1).font = header_font
+        ws3.append(["Programme", "Term", "Day", "Courses"])
+        r = ws3.max_row
+        for c in range(1, 5):
+            cell = ws3.cell(row=r, column=c)
+            cell.font = header_font
+            cell.fill = PatternFill("solid", fgColor="EEEEEE")
+            cell.border = thin_border
+        for v in bucket_viols:
+            ws3.append([
+                v.get("program", ""),
+                v.get("programme_term", ""),
+                v.get("day", ""),
+                ", ".join(v.get("courses", [])),
+            ])
+
+    ws3.column_dimensions["A"].width = 26
+    ws3.column_dimensions["B"].width = 16
+    ws3.column_dimensions["C"].width = 18
+    ws3.column_dimensions["D"].width = 30
+
+    # ── Write to disk ──
+    RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    out = RUNTIME_DIR / f"exam_timetable_{run_id}.xlsx"
+    wb.save(str(out))
+    return out

@@ -7,12 +7,16 @@ from __future__ import annotations
 
 import json
 
-from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.http import FileResponse, HttpRequest, HttpResponse, HttpResponseBase, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
 from core.models import ExamTimetableRun, Student
-from core.services.exam_timetable import build_enrolled_sets, build_exam_timetable
+from core.services.exam_timetable import (
+    build_enrolled_sets,
+    build_exam_timetable,
+    export_exam_timetable_xlsx,
+)
 from core.services.rbac import ROLE_SUPER_ADMIN, get_user_role
 from core.sidebar_context import get_sidebar_context
 
@@ -226,3 +230,24 @@ def exam_timetable_detail_view(request: HttpRequest, run_id: int) -> JsonRespons
     result["created_at"] = run.created_at.isoformat() if run.created_at else ""
 
     return JsonResponse({"ok": True, **result})
+
+
+@require_GET
+def exam_timetable_export_view(request: HttpRequest, run_id: int) -> HttpResponseBase:
+    """Download the exam timetable for a saved run as a styled .xlsx workbook."""
+    deny = _require_super_admin(request)
+    if deny:
+        return deny
+
+    try:
+        path = export_exam_timetable_xlsx(run_id)
+    except ExamTimetableRun.DoesNotExist:
+        return JsonResponse({"ok": False, "error": "Run not found"}, status=404)
+    except RuntimeError as exc:
+        return JsonResponse({"ok": False, "error": str(exc)}, status=500)
+
+    return FileResponse(
+        path.open("rb"),
+        as_attachment=True,
+        filename=f"exam_timetable_{run_id}.xlsx",
+    )
