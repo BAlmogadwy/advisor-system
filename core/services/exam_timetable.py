@@ -58,19 +58,20 @@ def build_conflict_graph(
         conflicts  – list of {course_a, course_b, shared} with course_a < course_b
         adj        – adjacency dict {course: {neighbour: weight, …}}
     """
-    # Invert: student → [courses]
+    # Invert: student_id → [course_codes] so we can iterate per-student
     student_courses: dict[int, list[str]] = defaultdict(list)
     for course_code, students in enrolled_sets.items():
         for sid in students:
             student_courses[sid].append(course_code)
 
-    # Count pairwise overlaps
+    # Count pairwise overlaps: for each student, every pair of their courses
+    # shares that student.  sorted() ensures (a,b) key is deterministic.
     edge_counts: dict[tuple[str, str], int] = defaultdict(int)
     for courses in student_courses.values():
         for a, b in itertools.combinations(sorted(set(courses)), 2):
             edge_counts[(a, b)] += 1
 
-    # Build output
+    # Build adjacency dict (bidirectional) + flat edge list for the frontend
     conflicts: list[dict] = []
     adj: dict[str, dict[str, int]] = defaultdict(dict)
     for (a, b), cnt in edge_counts.items():
@@ -97,7 +98,10 @@ def build_plan_term_buckets(
         course_code__in=running_courses, programme_term__isnull=False
     ).values_list("program", "course_code", "programme_term")
 
+    # Forward index: (program, term) → {course_codes}
     buckets: dict[tuple[str, int], set[str]] = defaultdict(set)
+    # Reverse index: course_code → [(program, term), …]  (a course can appear
+    # in multiple programmes, e.g. service courses shared across AI & DS)
     course_buckets: dict[str, list[tuple[str, int]]] = defaultdict(list)
 
     for program, course_code, programme_term in rows:
@@ -189,6 +193,8 @@ def schedule(
     _cb = course_buckets or {}
 
     def _constraint_degree(c: str) -> int:
+        """Heuristic: courses with more conflicts + more bucket-mates are harder
+        to place, so we schedule them first (most-constrained-first ordering)."""
         adj_deg = len(adj.get(c, {}))
         bucket_deg = sum(len(_ptb.get(bk, set())) for bk in _cb.get(c, []))
         return adj_deg + bucket_deg
@@ -255,7 +261,9 @@ def schedule(
                 ]
 
         if not candidates:
-            # Overflow: no feasible slot found
+            # No feasible slot exists (all blocked by hard constraints).
+            # Create a virtual OVERFLOW slot so the course isn't silently dropped;
+            # the QA report will flag it and the UI shows a red overflow row.
             max_slot_idx += 1
             chosen = max_slot_idx
             slot_by_index[chosen] = {
@@ -271,8 +279,11 @@ def schedule(
             continue
 
         if enrolled_sets and course in enrolled_sets:
-            # Score each candidate with three-level priority:
+            # ── Soft-constraint scoring ──
+            # Evaluate ALL conflict-free candidates and pick the best by a
+            # three-level priority tuple (lower is better):
             #   (day_overload_penalty, spacing_penalty, slot_load)
+            # Python tuple comparison ensures level 1 always trumps level 2, etc.
             course_students = enrolled_sets[course]
             best_slot = candidates[0]
             best_score = (float("inf"), float("inf"), float("inf"))
@@ -280,13 +291,16 @@ def schedule(
             for si in candidates:
                 day = slot_by_index[si]["day"]
 
-                # 1) Day-overload penalty
+                # Level 1 — Day-overload: count students who would exceed the
+                # per-day cap if this course is placed on this day.
                 penalty = 0
                 for sid in course_students:
                     if student_day_count[sid][day] >= max_per_day:
                         penalty += 1
 
-                # 2) Spacing penalty within buckets
+                # Level 2 — Spacing within programme-plan buckets:
+                # penalise placing bucket-mates on adjacent days so students
+                # get breathing room.  Weights: 1-day gap=100, 2-day=30, 3-day=10.
                 spacing_penalty = 0
                 if my_buckets and day in day_to_idx:
                     cand_di = day_to_idx[day]
@@ -303,6 +317,7 @@ def schedule(
                                     elif gap <= 3:
                                         spacing_penalty += 10
 
+                # Level 3 — Load balance: prefer slots with fewer courses
                 score = (penalty, spacing_penalty, slot_load[si])
                 if score < best_score:
                     best_score = score
@@ -310,7 +325,7 @@ def schedule(
 
             chosen = best_slot
         else:
-            # No enrolled data — pick least-loaded slot
+            # No enrolled data available — fall back to least-loaded slot
             chosen = min(candidates, key=lambda si: slot_load[si])
 
         assignment[course] = chosen
@@ -353,17 +368,25 @@ def _build_qa(
     max_per_day: int = 2,
     plan_term_buckets: dict[tuple[str, int], set[str]] | None = None,
 ) -> dict:
-    """Validate the schedule and produce a QA report."""
+    """Validate the schedule and produce a QA report.
+
+    Checks two hard-constraint violations (which should only happen with
+    user-pinned overrides) and one soft-constraint metric:
+      - Same-slot conflicts:  two courses sharing students in the same slot
+      - Bucket day violations: two bucket-mates on the same day
+      - Day-overload count:    students exceeding max_per_day
+    """
     all_students: set[int] = set()
     for sids in enrolled_sets.values():
         all_students |= sids
 
+    # Lookup maps: course → its assigned slot index / day
     course_slot: dict[str, int] = {e["course_code"]: e["slot_index"] for e in schedule_entries}
     course_day: dict[str, str] = {e["course_code"]: e["day"] for e in schedule_entries}
 
     slots_used = len({e["slot_index"] for e in schedule_entries})
 
-    # Invert: student → courses
+    # Invert: student_id → [course_codes] for per-student validation
     student_courses: dict[int, list[str]] = defaultdict(list)
     for cc, sids in enrolled_sets.items():
         for sid in sids:
@@ -371,10 +394,10 @@ def _build_qa(
 
     same_slot_conflicts: list[dict] = []
     max_exams_per_day: int = 0
-    students_over_limit_per_day: int = 0  # count of students exceeding max_per_day
+    students_over_limit_per_day: int = 0
 
     for sid, courses in student_courses.items():
-        # Same-slot check
+        # Group this student's courses by slot and by day
         slot_groups: dict[int, list[str]] = defaultdict(list)
         day_groups: dict[str, list[str]] = defaultdict(list)
         for cc in courses:
@@ -385,6 +408,7 @@ def _build_qa(
             if day is not None:
                 day_groups[day].append(cc)
 
+        # If ≥2 courses land in the same slot → conflict (pinned override)
         for si, ccs in slot_groups.items():
             if len(ccs) >= 2:
                 same_slot_conflicts.append(
@@ -395,6 +419,7 @@ def _build_qa(
                     }
                 )
 
+        # Track worst-case day load and students over the soft cap
         has_overload = False
         for _day, ccs in day_groups.items():
             day_count = len(ccs)

@@ -18,6 +18,7 @@ from core.sidebar_context import get_sidebar_context
 
 
 def _require_super_admin(request: HttpRequest) -> JsonResponse | None:
+    """Guard: returns a 403 JsonResponse if user is not SUPER_ADMIN, else None."""
     if get_user_role(request.user) != ROLE_SUPER_ADMIN:
         return JsonResponse({"error": "SUPER_ADMIN access required"}, status=403)
     return None
@@ -65,6 +66,9 @@ def exam_timetable_preview_courses_view(request: HttpRequest) -> JsonResponse:
     programs_raw = payload.get("programs", [])
     sections_raw = payload.get("sections", [])
 
+    # Normalise filter lists: strip whitespace, drop empties.
+    # `or None` converts an empty list to None so build_enrolled_sets
+    # treats it as "no filter" (include all students).
     programs = (
         [str(p).strip() for p in programs_raw if str(p).strip()]
         if isinstance(programs_raw, list)
@@ -88,6 +92,11 @@ def exam_timetable_preview_courses_view(request: HttpRequest) -> JsonResponse:
 
 @require_POST
 def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
+    """Build (or rebuild) the exam timetable.
+
+    Accepts JSON body with: label, days, periods, max_per_day,
+    programs, sections, selected_courses, and pinned overrides.
+    """
     deny = _require_super_admin(request)
     if deny:
         return deny
@@ -97,6 +106,7 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
     except Exception:
         return JsonResponse({"ok": False, "error": "Invalid JSON"}, status=400)
 
+    # ── Extract raw values from JSON payload ──
     label = str(payload.get("label", "")).strip()
     days_raw = payload.get("days", [])
     periods_raw = payload.get("periods", [])
@@ -109,6 +119,7 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
     if not label:
         return JsonResponse({"ok": False, "error": "label is required"}, status=400)
 
+    # ── Normalise list inputs: strip whitespace, drop empties ──
     days = (
         [str(d).strip() for d in days_raw if str(d).strip()] if isinstance(days_raw, list) else []
     )
@@ -118,6 +129,7 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
         else []
     )
 
+    # Soft cap on exams per student per day (default 2, minimum 1)
     try:
         max_per_day = int(max_per_day_raw)
         if max_per_day < 1:
@@ -125,6 +137,7 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
     except (ValueError, TypeError):
         max_per_day = 2
 
+    # `or None` → treat empty list as "no filter" (all students)
     programs = (
         [str(p).strip() for p in programs_raw if str(p).strip()]
         if isinstance(programs_raw, list)
@@ -136,12 +149,15 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
         else []
     ) or None
 
+    # User-curated course list from the preview step (None = use all)
     selected_courses = (
         [str(c).strip() for c in selected_courses_raw if str(c).strip()]
         if isinstance(selected_courses_raw, list)
         else None
     )
 
+    # Pinned overrides: courses the user dragged to a specific slot.
+    # Each entry must have course_code, day, and period; skip invalid ones.
     pinned = None
     if isinstance(pinned_raw, list):
         pinned = []

@@ -273,6 +273,8 @@ $('etNumDays').addEventListener('input', updateDayPreview);
 updateDayPreview();
 
 /* ── Filter chips (programs & sections) ── */
+// Render toggle-able chips for a list of items (e.g. programs or sections).
+// Each chip is a <label> wrapping a hidden checkbox; clicking toggles state.
 function renderChips(containerId, items, countId) {
   const box = $(containerId);
   if (!items.length) {
@@ -559,11 +561,14 @@ $('buildBtn').addEventListener('click', async () => {
 });
 
 /* ── Program → courses mapping (for schedule filter) ── */
+// Built from buckets_summary in each build result.  Allows the schedule
+// filter to accept a programme name (e.g. "AI") and highlight all its courses.
 let _programCourses = {};   // { programName: Set([course_code, ...]) }
 
 /* ── Pinned courses (drag & drop) ── */
 let _pinnedCourses = {};    // { course_code: { course_code, day, period } }
 
+// Rebuild lookup from buckets_summary each time results arrive.
 function buildProgramCoursesMap(bucketsSummary) {
   _programCourses = {};
   if (!Array.isArray(bucketsSummary)) return;
@@ -662,6 +667,9 @@ function colorForCourseBorder(code) {
 }
 
 /* ── Render schedule as day×period grid ── */
+// Builds an HTML table: rows = days, columns = periods, cells = course chips.
+// Each chip is draggable for pin-to-slot; pinned courses get .et-pinned class.
+// Courses that couldn't be placed appear in a red OVERFLOW row at the bottom.
 function renderScheduleGrid(schedule, slots) {
   const container = $('schedGrid');
   if (!schedule.length) {
@@ -751,9 +759,12 @@ function renderScheduleGrid(schedule, slots) {
 }
 
 /* ── Schedule Filter ── */
-// "AI"   → programme plan: all courses in the AI study plan (from ProgrammeRequirement)
-// "CS*"  → course-code prefix: courses whose code starts with "CS"
-// "101"  → substring fallback: courses whose code contains "101"
+// Three filter modes (auto-detected from input):
+//   "AI"   → programme plan: highlight all courses in that programme's study plan
+//   "CS*"  → prefix match: highlight courses whose code starts with "CS"
+//   "101"  → substring fallback: highlight courses whose code contains "101"
+// Multiple space-separated terms are OR'd: "CS101 MATH201" highlights both.
+// Matching chips get .et-highlight; non-matching get .et-dim.
 $('schedFilter').addEventListener('input', function() {
   const raw = this.value.trim().toLowerCase();
   const allChips = $('schedGrid').querySelectorAll('.et-course');
@@ -802,6 +813,13 @@ $('schedFilter').addEventListener('input', function() {
 });
 
 /* ── Drag & Drop Pin ── */
+// Users can drag a course chip from one grid cell to another to "pin" it.
+// Pinned courses are fixed to that slot on the next rebuild — the scheduler
+// places them first, then schedules everything else around them.
+// State is held in `_pinnedCourses` (course_code → {course_code, day, period}).
+// • Drop    → records pin + moves chip visually (instant feedback)
+// • Dblclick → unpins a single course
+// • Clear   → removes all pins
 function updatePinBar() {
   const n = Object.keys(_pinnedCourses).length;
   $('pinBar').style.display = n > 0 ? '' : 'none';
@@ -887,6 +905,12 @@ $('clearPins').addEventListener('click', (e) => {
 });
 
 /* ── Conflict Matrix ── */
+// Renders an N×N heatmap of shared students between every course pair.
+// Color scale: 0 (transparent) → 1-2 (yellow) → 3-5 (orange) → 6-10 (red) → 11+ (dark red).
+// Interactive features:
+//   • Crosshair hover: row highlight via CSS, column via JS .cm-col-hl class
+//   • Click header → fill schedule filter with that course
+//   • Click conflict cell → fill schedule filter with BOTH row & column courses
 function renderConflictMatrix(conflicts, courses) {
   const container = $('matrixGrid');
 
@@ -1042,6 +1066,7 @@ async function loadHistory() {
   } catch { /* ignore */ }
 }
 
+// Load a previously saved run from the database and render it (read-only view).
 async function loadRun(runId) {
   $('etStatus').textContent = T.loadingRun;
   $('etStatus').className = 'alert alert-info mt-2 py-2 mb-0';
