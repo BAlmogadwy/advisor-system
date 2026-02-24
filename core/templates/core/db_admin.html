@@ -619,10 +619,11 @@
                   <th style="width:3%">#</th>
                   <th style="width:6%">{% if LANGUAGE_CODE == 'ar' %}المستوى{% else %}Level{% endif %}</th>
                   <th style="width:10%">{% if LANGUAGE_CODE == 'ar' %}الرمز{% else %}Code{% endif %}</th>
-                  <th style="width:22%">{% if LANGUAGE_CODE == 'ar' %}اسم المقرر (EN){% else %}Course Name (EN){% endif %}</th>
+                  <th style="width:20%">{% if LANGUAGE_CODE == 'ar' %}اسم المقرر (EN){% else %}Course Name (EN){% endif %}</th>
                   <th style="width:5%">{% if LANGUAGE_CODE == 'ar' %}الساعات{% else %}Cr{% endif %}</th>
-                  <th style="width:14%">{% if LANGUAGE_CODE == 'ar' %}النوع{% else %}Type{% endif %}</th>
-                  <th style="width:16%">{% if LANGUAGE_CODE == 'ar' %}المتطلبات{% else %}Prerequisites{% endif %}</th>
+                  <th style="width:13%">{% if LANGUAGE_CODE == 'ar' %}النوع{% else %}Type{% endif %}</th>
+                  <th style="width:5%">{% if LANGUAGE_CODE == 'ar' %}عن بُعد{% else %}Online{% endif %}</th>
+                  <th style="width:14%">{% if LANGUAGE_CODE == 'ar' %}المتطلبات{% else %}Prerequisites{% endif %}</th>
                   <th style="width:4%"></th>
                 </tr></thead>
                 <tbody id="oTableBody"></tbody>
@@ -911,6 +912,7 @@ function oracleTypeSelect(val) {
 
 function oracleAddRow(row, idx) {
   const tr = document.createElement('tr');
+  const isOnline = parseInt(row.is_online || 0, 10);
   tr.innerHTML =
     `<td class="text-muted">${idx}</td>` +
     `<td><input class="form-control form-control-sm o-level" value="${esc(String(row.level_number || ''))}" style="width:50px"></td>` +
@@ -918,6 +920,7 @@ function oracleAddRow(row, idx) {
     `<td><input class="form-control form-control-sm o-name" value="${esc(row.en_name || '')}"></td>` +
     `<td><input class="form-control form-control-sm o-credits" value="${esc(String(row.credits || ''))}" style="width:55px"></td>` +
     `<td class="o-type-cell">${oracleTypeSelect(row.type || 'Mandatory')}</td>` +
+    `<td class="text-center"><input class="form-check-input o-online" type="checkbox"${isOnline ? ' checked' : ''}></td>` +
     `<td><input class="form-control form-control-sm o-prereqs" value="${esc(row.prereqs_str || '')}"></td>` +
     `<td><button class="btn btn-sm btn-outline-danger o-del-row" title="${IS_AR ? 'حذف' : 'Delete'}">&times;</button></td>`;
   return tr;
@@ -932,6 +935,7 @@ function collectOracleRows() {
       en_name:      tr.querySelector('.o-name')?.value || '',
       credits:      tr.querySelector('.o-credits')?.value || '',
       type:         tr.querySelector('.o-type-cell select')?.value || 'Mandatory',
+      is_online:    tr.querySelector('.o-online')?.checked ? 1 : 0,
       prereqs_str:  tr.querySelector('.o-prereqs')?.value || '',
     });
   });
@@ -1009,7 +1013,7 @@ q('oTableBody').addEventListener('click', (e) => {
 q('oAddRow').onclick = () => {
   const body = q('oTableBody');
   const idx = body.querySelectorAll('tr').length + 1;
-  body.appendChild(oracleAddRow({level_number:'',code:'',en_name:'',credits:'',type:'Mandatory',prereqs_str:''}, idx));
+  body.appendChild(oracleAddRow({level_number:'',code:'',en_name:'',credits:'',type:'Mandatory',is_online:0,prereqs_str:''}, idx));
 };
 
 q('oImport').onclick = async () => {

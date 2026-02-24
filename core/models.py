@@ -71,6 +71,7 @@ class ProgrammeRequirement(models.Model):
     type = models.TextField(blank=True, default="")
     programme_term = models.IntegerField(null=True, blank=True)
     credit_hours = models.IntegerField(null=True, blank=True)
+    is_online = models.BooleanField(default=False)
 
     class Meta:
         db_table = "programme_requirements"

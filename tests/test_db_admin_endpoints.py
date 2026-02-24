@@ -113,8 +113,8 @@ def test_preview_oracle_plan_endpoint(monkeypatch: MonkeyPatch) -> None:
             "summary": {"total_courses": 53, "total_credits": 157, "total_levels": 10},
             "warnings": [],
             "preview_rows": [
-                {"code": "GS101", "en_name": "ISLAMIC STUDIES", "credits": 2, "level_number": 1, "type": "Mandatory", "prereqs_str": ""},
-                {"code": "CS101", "en_name": "INTRO TO CS", "credits": 3, "level_number": 3, "type": "Mandatory", "prereqs_str": "GS101"},
+                {"code": "GS101", "en_name": "ISLAMIC STUDIES", "credits": 2, "level_number": 1, "type": "Mandatory", "prereqs_str": "", "is_online": 0},
+                {"code": "CS101", "en_name": "INTRO TO CS", "credits": 3, "level_number": 3, "type": "Mandatory", "prereqs_str": "GS101", "is_online": 1},
             ],
             "existing_db": {"requirements": 0, "prerequisites": 0},
         },
@@ -132,6 +132,8 @@ def test_preview_oracle_plan_endpoint(monkeypatch: MonkeyPatch) -> None:
     assert payload["summary"]["total_courses"] == 53
     assert len(payload["preview_rows"]) == 2
     assert payload["preview_rows"][0]["code"] == "GS101"
+    assert payload["preview_rows"][0]["is_online"] == 0
+    assert payload["preview_rows"][1]["is_online"] == 1
 
 
 def test_import_oracle_plan_endpoint(monkeypatch: MonkeyPatch) -> None:
@@ -154,7 +156,7 @@ def test_import_oracle_plan_endpoint(monkeypatch: MonkeyPatch) -> None:
 
     response = client.post(
         "/ops/db/import-oracle-plan/",
-        data='{"program":"AI","rows":[{"code":"GS101","en_name":"ISLAMIC STUDIES","credits":"2","level_number":"1","type":"Mandatory","prereqs_str":""}],"replace_existing":false}',
+        data='{"program":"AI","rows":[{"code":"GS101","en_name":"ISLAMIC STUDIES","credits":"2","level_number":"1","type":"Mandatory","is_online":1,"prereqs_str":""}],"replace_existing":false}',
         content_type="application/json",
     )
 

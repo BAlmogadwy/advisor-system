@@ -271,6 +271,7 @@ def preview_oracle_plan(
     preview_rows: list[dict[str, Any]] = []
     for level_key, level_data in parsed["levels"].items():
         for course in level_data["courses"]:
+            delivery = course.get("delivery", "")
             preview_rows.append({
                 "code": course["code"],
                 "code_ar": course.get("code_ar", ""),
@@ -282,7 +283,8 @@ def preview_oracle_plan(
                 "level_ar": course.get("level_ar", ""),
                 "type": map_course_type(course.get("course_type", "")),
                 "prereqs_str": ", ".join(course.get("prereqs", [])),
-                "delivery": course.get("delivery", ""),
+                "delivery": delivery,
+                "is_online": 1 if "إلكتروني" in delivery else 0,
             })
 
     # Existing DB row counts for this program (helps the user decide).
@@ -340,6 +342,7 @@ def import_oracle_plan_from_rows(
             level_number = int(str(row.get("level_number", 0)).strip() or 0)
             course_type = str(row.get("type", "Mandatory")).strip() or "Mandatory"
             en_name = str(row.get("en_name", "")).strip()
+            is_online = bool(int(str(row.get("is_online", 0)).strip() or 0))
 
             # Upsert ProgrammeRequirement
             ProgrammeRequirement.objects.update_or_create(
@@ -349,6 +352,7 @@ def import_oracle_plan_from_rows(
                     "type": course_type,
                     "programme_term": level_number,
                     "credit_hours": credits,
+                    "is_online": is_online,
                 },
             )
             requirements_upserted += 1
