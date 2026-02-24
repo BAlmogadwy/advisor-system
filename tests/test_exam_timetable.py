@@ -419,3 +419,66 @@ def test_build_without_selection_uses_all() -> None:
 
     scheduled_codes = {e["course_code"] for e in result["schedule"]}
     assert scheduled_codes == {"EX101", "EX102", "EX201", "EX301"}
+
+
+# ── Pinned courses tests ─────────────────────────────────────
+
+
+def test_build_with_pinned_course() -> None:
+    """Pin EX101 to Mon/08:00-10:00, verify it lands in that exact slot."""
+    _setup_fixture()
+
+    result = build_exam_timetable(
+        label="Pinned Run",
+        days=["Sun", "Mon", "Tue"],
+        periods=["08:00-10:00", "10:30-12:30"],
+        pinned=[{"course_code": "EX101", "day": "Mon", "period": "08:00-10:00"}],
+    )
+
+    assert result["courses_count"] == 4
+    assert len(result["schedule"]) == 4
+
+    # EX101 must be in the exact pinned slot
+    ex101 = next(e for e in result["schedule"] if e["course_code"] == "EX101")
+    assert ex101["day"] == "Mon"
+    assert ex101["period"] == "08:00-10:00"
+
+    # No same-slot conflicts for non-pinned courses
+    # (pinned bypasses constraints, but the scheduler should still avoid clashes)
+    assert result["qa"]["conflict_count"] == 0
+
+
+def test_pinned_conflict_reported_in_qa() -> None:
+    """Pin two conflicting courses to the same slot → QA reports the clash."""
+    _setup_fixture()
+
+    # EX101 and EX102 share 2 students (s1 + s2). Pin both to same slot.
+    result = build_exam_timetable(
+        label="Pinned Conflict Run",
+        days=["Sun", "Mon", "Tue"],
+        periods=["08:00-10:00", "10:30-12:30"],
+        pinned=[
+            {"course_code": "EX101", "day": "Sun", "period": "08:00-10:00"},
+            {"course_code": "EX102", "day": "Sun", "period": "08:00-10:00"},
+        ],
+    )
+
+    assert result["courses_count"] == 4
+    assert len(result["schedule"]) == 4
+
+    # Both pinned courses should be in the exact pinned slot
+    ex101 = next(e for e in result["schedule"] if e["course_code"] == "EX101")
+    ex102 = next(e for e in result["schedule"] if e["course_code"] == "EX102")
+    assert ex101["day"] == "Sun" and ex101["period"] == "08:00-10:00"
+    assert ex102["day"] == "Sun" and ex102["period"] == "08:00-10:00"
+
+    # QA must report the conflict
+    assert result["qa"]["conflict_count"] > 0
+    same_slot = result["qa"]["same_slot_conflicts"]
+    assert len(same_slot) > 0
+    # At least one conflict involving EX101 and EX102
+    conflict_courses = set()
+    for c in same_slot:
+        conflict_courses.update(c["courses"])
+    assert "EX101" in conflict_courses
+    assert "EX102" in conflict_courses

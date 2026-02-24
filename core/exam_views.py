@@ -104,6 +104,7 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
     programs_raw = payload.get("programs", [])
     sections_raw = payload.get("sections", [])
     selected_courses_raw = payload.get("selected_courses", None)
+    pinned_raw = payload.get("pinned", None)
 
     if not label:
         return JsonResponse({"ok": False, "error": "label is required"}, status=400)
@@ -141,6 +142,19 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
         else None
     )
 
+    pinned = None
+    if isinstance(pinned_raw, list):
+        pinned = []
+        for p in pinned_raw:
+            if isinstance(p, dict):
+                cc = str(p.get("course_code", "")).strip()
+                d = str(p.get("day", "")).strip()
+                pr = str(p.get("period", "")).strip()
+                if cc and d and pr:
+                    pinned.append({"course_code": cc, "day": d, "period": pr})
+        if not pinned:
+            pinned = None
+
     if not days or not periods:
         return JsonResponse({"ok": False, "error": "days and periods are required"}, status=400)
 
@@ -153,6 +167,7 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
             programs=programs,
             sections=sections,
             selected_courses=selected_courses,
+            pinned=pinned,
         )
         # Check for feasibility error (bucket too large for available days)
         if result.get("feasibility_error"):

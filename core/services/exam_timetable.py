@@ -143,6 +143,7 @@ def schedule(
     max_per_day: int = 2,
     plan_term_buckets: dict[tuple[str, int], set[str]] | None = None,
     course_buckets: dict[str, list[tuple[str, int]]] | None = None,
+    pinned: list[dict] | None = None,
 ) -> list[dict]:
     """
     Greedy graph-coloring with day-spread soft constraint.
@@ -166,6 +167,7 @@ def schedule(
         max_per_day        – soft cap on exams per student per day (default 2)
         plan_term_buckets  – {(program, term): {course_codes}} hard day-rule buckets
         course_buckets     – {course_code: [(program, term), …]} reverse index
+        pinned             – list of {course_code, day, period} to fix before scheduling
 
     Returns:
         list of {course_code, slot_index, day, period}
@@ -210,7 +212,28 @@ def schedule(
     # Track which day each course is assigned to (for spacing calculation)
     course_assigned_day: dict[str, str] = {}
 
+    # Pre-assign pinned courses (user overrides — bypass constraints)
+    if pinned:
+        dp_to_slot = {(s["day"], s["period"]): s["index"] for s in slots}
+        for pin in pinned:
+            cc = pin.get("course_code", "")
+            p_day = pin.get("day", "")
+            p_period = pin.get("period", "")
+            si = dp_to_slot.get((p_day, p_period))
+            if si is None or cc not in set(courses):
+                continue
+            assignment[cc] = si
+            slot_load[si] += 1
+            course_assigned_day[cc] = p_day
+            if enrolled_sets and cc in enrolled_sets:
+                for sid in enrolled_sets[cc]:
+                    student_day_count[sid][p_day] += 1
+            for bk in _cb.get(cc, []):
+                bucket_day_courses[bk][p_day].add(cc)
+
     for course in courses_sorted:
+        if course in assignment:
+            continue  # already pinned
         neighbours = adj.get(course, {})
         used_slots = {assignment[n] for n in neighbours if n in assignment}
 
@@ -430,6 +453,7 @@ def build_exam_timetable(
     programs: list[str] | None = None,
     sections: list[str] | None = None,
     selected_courses: list[str] | None = None,
+    pinned: list[dict] | None = None,
 ) -> dict:
     """
     End-to-end pipeline: build enrolled sets → conflict graph →
@@ -493,6 +517,7 @@ def build_exam_timetable(
         max_per_day=max_per_day,
         plan_term_buckets=ptb,
         course_buckets=cb,
+        pinned=pinned,
     )
 
     # 7. QA

@@ -7,3 +7,4 @@ __pycache__/
 .ruff_cache/
 db.sqlite3
 tmp/
+import_old/

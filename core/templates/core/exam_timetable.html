@@ -37,6 +37,13 @@
     .et-grid .et-overflow-row th, .et-grid .et-overflow-row td { background: rgba(220,53,69,0.06); }
     .et-grid .et-highlight { outline: 2.5px solid var(--teal, #0a8e6e); outline-offset: -2px; }
     .et-grid .et-dim { opacity: 0.25; }
+    /* Drag & drop pin */
+    .et-course[draggable="true"] { cursor: grab; }
+    .et-course[draggable="true"]:active { cursor: grabbing; }
+    .et-course.et-pinned { outline: 2px dashed #d35400; outline-offset: -1px; }
+    .et-grid td.et-drag-over { background: rgba(10,142,110,0.12) !important; outline: 2px dashed var(--teal, #0a8e6e); outline-offset: -2px; }
+    .et-pin-bar { display: flex; align-items: center; gap: 8px; font-size: .75rem; color: var(--t3, #666); margin-top: 6px; }
+    .et-pin-bar a { color: var(--red, #dc3545); text-decoration: none; font-size: .72rem; }
     /* Conflict matrix heatmap */
     .et-matrix { border-collapse: collapse; font-size: .62rem; }
     .et-matrix th, .et-matrix td { border: 1px solid rgba(17,17,68,0.06); padding: 0; text-align: center; vertical-align: middle; }
@@ -173,6 +180,11 @@
         <input id="schedFilter" class="form-control form-control-sm" style="max-width:300px" placeholder="{% if LANGUAGE_CODE == 'ar' %}تصفية: AI=برنامج، CS*=رمز المقرر{% else %}Filter: AI=program, CS*=course code{% endif %}">
       </div>
       <div class="table-responsive" id="schedGrid"></div>
+      <div id="pinBar" class="et-pin-bar" style="display:none;">
+        <span id="pinCount"></span>
+        <a href="#" id="clearPins">{% if LANGUAGE_CODE == 'ar' %}مسح التثبيت{% else %}Clear all pins{% endif %}</a>
+        <small class="text-secondary">{% if LANGUAGE_CODE == 'ar' %}انقر نقراً مزدوجاً لإلغاء تثبيت مقرر{% else %}Double-click a pinned course to unpin{% endif %}</small>
+      </div>
     </div>
 
     <!-- Conflict Matrix (collapsed by default) -->
@@ -222,6 +234,8 @@ const T = {
   hide:           IS_AR ? 'إخفاء' : 'Hide',
   students:       IS_AR ? 'طلاب' : 'students',
   noConflicts:    IS_AR ? 'لا توجد تعارضات.' : 'No conflicts.',
+  rebuild:        IS_AR ? 'إعادة البناء ({n} مثبت)' : 'Rebuild ({n} pinned)',
+  pinCount:       IS_AR ? '{n} مقرر مثبت' : '{n} course(s) pinned',
 };
 
 const CSRF = document.querySelector('[name=csrfmiddlewaretoken]')?.value
@@ -512,7 +526,7 @@ $('buildBtn').addEventListener('click', async () => {
     const res = await fetch('/ops/exam-timetable/build/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
-      body: JSON.stringify({ label, days, periods, max_per_day: maxPerDay, programs, sections, selected_courses: selectedCourses }),
+      body: JSON.stringify({ label, days, periods, max_per_day: maxPerDay, programs, sections, selected_courses: selectedCourses, pinned: Object.keys(_pinnedCourses).length ? Object.values(_pinnedCourses) : undefined }),
     });
     const data = await res.json();
     if (!data.ok) {
@@ -532,6 +546,7 @@ $('buildBtn').addEventListener('click', async () => {
     }
 
     renderResults(data);
+    updatePinBar();
     $('etStatus').textContent = T.done;
     $('etStatus').className = 'alert alert-success mt-2 py-2 mb-0';
     loadHistory();
@@ -545,6 +560,9 @@ $('buildBtn').addEventListener('click', async () => {
 
 /* ── Program → courses mapping (for schedule filter) ── */
 let _programCourses = {};   // { programName: Set([course_code, ...]) }
+
+/* ── Pinned courses (drag & drop) ── */
+let _pinnedCourses = {};    // { course_code: { course_code, day, period } }
 
 function buildProgramCoursesMap(bucketsSummary) {
   _programCourses = {};
@@ -705,12 +723,13 @@ function renderScheduleGrid(schedule, slots) {
     for (const period of periodOrder) {
       const courses = (grid[day] && grid[day][period]) ? grid[day][period] : [];
       if (courses.length === 0) {
-        html += `<td class="et-empty">—</td>`;
+        html += `<td class="et-empty" data-day="${day}" data-period="${period}">—</td>`;
       } else {
-        const chips = courses.map(c =>
-          `<span class="et-course" data-course="${c}" style="background:${colorForCourse(c)};border:1px solid ${colorForCourseBorder(c)}">${c}</span>`
-        ).join(' ');
-        html += `<td>${chips}</td>`;
+        const chips = courses.map(c => {
+          const pinCls = _pinnedCourses[c] ? ' et-pinned' : '';
+          return `<span class="et-course${pinCls}" data-course="${c}" draggable="true" style="background:${colorForCourse(c)};border:1px solid ${colorForCourseBorder(c)}">${c}</span>`;
+        }).join(' ');
+        html += `<td data-day="${day}" data-period="${period}">${chips}</td>`;
       }
     }
     html += '</tr>';
@@ -721,7 +740,7 @@ function renderScheduleGrid(schedule, slots) {
     html += `<tr class="et-overflow-row">`;
     html += `<th style="color:var(--red,#dc3545)">${T.overflow}</th>`;
     const chips = overflowCourses.map(c =>
-      `<span class="et-course" data-course="${c}" style="background:${colorForCourse(c)};border:1px solid ${colorForCourseBorder(c)}">${c}</span>`
+      `<span class="et-course" data-course="${c}" draggable="true" style="background:${colorForCourse(c)};border:1px solid ${colorForCourseBorder(c)}">${c}</span>`
     ).join(' ');
     html += `<td colspan="${periodOrder.length}">${chips}</td>`;
     html += '</tr>';
@@ -780,6 +799,91 @@ $('schedFilter').addEventListener('input', function() {
       cell.classList.add('et-dim');
     }
   });
+});
+
+/* ── Drag & Drop Pin ── */
+function updatePinBar() {
+  const n = Object.keys(_pinnedCourses).length;
+  $('pinBar').style.display = n > 0 ? '' : 'none';
+  $('pinCount').textContent = T.pinCount.replace('{n}', n);
+  // Update build button text
+  $('buildBtn').textContent = n > 0
+    ? T.rebuild.replace('{n}', n)
+    : (IS_AR ? 'بناء الجدول' : 'Build Timetable');
+}
+
+$('schedGrid').addEventListener('dragstart', (e) => {
+  const chip = e.target.closest('.et-course');
+  if (!chip) return;
+  e.dataTransfer.setData('text/plain', chip.dataset.course);
+  e.dataTransfer.effectAllowed = 'move';
+});
+
+$('schedGrid').addEventListener('dragover', (e) => {
+  const td = e.target.closest('td');
+  if (!td || !td.dataset.day) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  // Highlight target cell
+  $('schedGrid').querySelectorAll('.et-drag-over').forEach(el => el.classList.remove('et-drag-over'));
+  td.classList.add('et-drag-over');
+});
+
+$('schedGrid').addEventListener('dragleave', (e) => {
+  const td = e.target.closest('td');
+  if (td) td.classList.remove('et-drag-over');
+});
+
+$('schedGrid').addEventListener('drop', (e) => {
+  e.preventDefault();
+  $('schedGrid').querySelectorAll('.et-drag-over').forEach(el => el.classList.remove('et-drag-over'));
+  const td = e.target.closest('td');
+  if (!td || !td.dataset.day) return;
+  const cc = e.dataTransfer.getData('text/plain');
+  if (!cc) return;
+
+  const day = td.dataset.day;
+  const period = td.dataset.period;
+
+  // Record pin
+  _pinnedCourses[cc] = { course_code: cc, day, period };
+
+  // Move chip visually
+  const chip = $('schedGrid').querySelector(`.et-course[data-course="${cc}"]`);
+  if (chip) {
+    // Remove empty marker from source cell if it becomes empty
+    const srcCell = chip.parentElement;
+    chip.remove();
+    if (srcCell && srcCell.tagName === 'TD' && !srcCell.querySelector('.et-course')) {
+      srcCell.className = 'et-empty';
+      srcCell.textContent = '\u2014';
+    }
+    // Add to target cell
+    td.classList.remove('et-empty');
+    if (td.textContent === '\u2014') td.textContent = '';
+    chip.classList.add('et-pinned');
+    td.appendChild(chip);
+  }
+
+  updatePinBar();
+});
+
+// Double-click to unpin
+$('schedGrid').addEventListener('dblclick', (e) => {
+  const chip = e.target.closest('.et-course.et-pinned');
+  if (!chip) return;
+  const cc = chip.dataset.course;
+  delete _pinnedCourses[cc];
+  chip.classList.remove('et-pinned');
+  updatePinBar();
+});
+
+// Clear all pins
+$('clearPins').addEventListener('click', (e) => {
+  e.preventDefault();
+  _pinnedCourses = {};
+  $('schedGrid').querySelectorAll('.et-pinned').forEach(c => c.classList.remove('et-pinned'));
+  updatePinBar();
 });
 
 /* ── Conflict Matrix ── */
@@ -949,7 +1053,9 @@ async function loadRun(runId) {
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || T.reqFailed);
 
+    _pinnedCourses = {};        // clear pins when viewing a saved run
     renderResults(data);
+    updatePinBar();
     $('etLabel').value = data.label ?? '';
     $('etStatus').textContent = T.done;
     $('etStatus').className = 'alert alert-success mt-2 py-2 mb-0';
