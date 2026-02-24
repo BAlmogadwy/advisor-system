@@ -1,7 +1,7 @@
 {% extends "core/base.html" %}
 {% load i18n %}{% get_current_language as LANGUAGE_CODE %}
 
-{% block title %}{% trans "Advisor Portfolio" %}{% endblock %}
+{% block title %}{% if LANGUAGE_CODE == 'ar' %}محفظة المرشد{% else %}Advisor Portfolio{% endif %}{% endblock %}
 
 {% block extra_css %}
 <style>

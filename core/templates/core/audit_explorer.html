@@ -1,7 +1,7 @@
 {% extends "core/base.html" %}
 {% load i18n %}{% get_current_language as LANGUAGE_CODE %}
 
-{% block title %}{% trans "Audit Explorer" %}{% endblock %}
+{% block title %}{% if LANGUAGE_CODE == 'ar' %}مستعرض سجل التدقيق{% else %}Audit Explorer{% endif %}{% endblock %}
 
 {% block extra_css %}
   <style>
@@ -35,9 +35,9 @@
         <div class="page-header-chips">
           <span class="ph-chip ph-chip-page">Super Admin</span>
           {% if chain.ok %}
-          <span class="ph-chip ph-chip-status">{% trans "Hash chain: OK" %} · {{ chain.checked }} {% trans "records" %}</span>
+          <span class="ph-chip ph-chip-status">{% if LANGUAGE_CODE == 'ar' %}سلسلة التحقق: سليمة{% else %}Hash chain: OK{% endif %} · {{ chain.checked }} {% if LANGUAGE_CODE == 'ar' %}سجل{% else %}records{% endif %}</span>
           {% else %}
-          <span class="ph-chip ph-chip-danger">{% trans "Hash chain: FAILED" %} · {{ chain.checked }} {% trans "records" %}</span>
+          <span class="ph-chip ph-chip-danger">{% if LANGUAGE_CODE == 'ar' %}سلسلة التحقق: فشلت{% else %}Hash chain: FAILED{% endif %} · {{ chain.checked }} {% if LANGUAGE_CODE == 'ar' %}سجل{% else %}records{% endif %}</span>
           {% endif %}
         </div>
       </div>
@@ -45,28 +45,28 @@
     <div>
 
   <form method="get" class="audit-filter-row">
-    <input name="action" class="form-control form-control-sm" placeholder="{% trans 'Action' %}" value="{{ filters.action }}" />
-    <input name="user" class="form-control form-control-sm" placeholder="{% trans 'User' %}" value="{{ filters.user }}" />
+    <input name="action" class="form-control form-control-sm" placeholder="{% if LANGUAGE_CODE == 'ar' %}الإجراء{% else %}Action{% endif %}" value="{{ filters.action }}" />
+    <input name="user" class="form-control form-control-sm" placeholder="{% if LANGUAGE_CODE == 'ar' %}المستخدم{% else %}User{% endif %}" value="{{ filters.user }}" />
     <select name="status" class="form-select form-select-sm">
-      <option value="" {% if not filters.status %}selected{% endif %}>{% trans "All statuses" %}</option>
-      <option value="success" {% if filters.status == 'success' %}selected{% endif %}>{% trans "Success" %}</option>
-      <option value="error" {% if filters.status == 'error' %}selected{% endif %}>{% trans "Error" %}</option>
-      <option value="allow" {% if filters.status == 'allow' %}selected{% endif %}>{% trans "Allow" %}</option>
-      <option value="deny" {% if filters.status == 'deny' %}selected{% endif %}>{% trans "Deny" %}</option>
-      <option value="critical" {% if filters.status == 'critical' %}selected{% endif %}>{% trans "Critical" %}</option>
+      <option value="" {% if not filters.status %}selected{% endif %}>{% if LANGUAGE_CODE == 'ar' %}جميع الحالات{% else %}All statuses{% endif %}</option>
+      <option value="success" {% if filters.status == 'success' %}selected{% endif %}>{% if LANGUAGE_CODE == 'ar' %}ناجح{% else %}Success{% endif %}</option>
+      <option value="error" {% if filters.status == 'error' %}selected{% endif %}>{% if LANGUAGE_CODE == 'ar' %}خطأ{% else %}Error{% endif %}</option>
+      <option value="allow" {% if filters.status == 'allow' %}selected{% endif %}>{% if LANGUAGE_CODE == 'ar' %}مسموح{% else %}Allow{% endif %}</option>
+      <option value="deny" {% if filters.status == 'deny' %}selected{% endif %}>{% if LANGUAGE_CODE == 'ar' %}مرفوض{% else %}Deny{% endif %}</option>
+      <option value="critical" {% if filters.status == 'critical' %}selected{% endif %}>{% if LANGUAGE_CODE == 'ar' %}حرج{% else %}Critical{% endif %}</option>
     </select>
-    <input name="from" class="form-control form-control-sm" placeholder="{% trans 'From (ISO UTC)' %}" value="{{ filters.from }}" />
-    <input name="to" class="form-control form-control-sm" placeholder="{% trans 'To (ISO UTC)' %}" value="{{ filters.to }}" />
-    <input name="limit" class="form-control form-control-sm" type="number" min="1" max="5000" value="{{ filters.limit }}" placeholder="{% trans 'Limit' %}" title="{% trans 'Maximum number of rows' %}" style="max-width:100px" />
-    <button type="submit" class="btn btn-sm btn-primary">{% trans "Apply filters" %}</button>
-    <a class="btn btn-sm btn-outline-secondary" href="/ops/audit/export.csv?action={{ filters.action|urlencode }}&user={{ filters.user|urlencode }}&status={{ filters.status|urlencode }}&from={{ filters.from|urlencode }}&to={{ filters.to|urlencode }}&limit={{ filters.limit }}">{% trans "Export CSV" %}</a>
+    <input name="from" class="form-control form-control-sm" placeholder="{% if LANGUAGE_CODE == 'ar' %}من (ISO UTC){% else %}From (ISO UTC){% endif %}" value="{{ filters.from }}" />
+    <input name="to" class="form-control form-control-sm" placeholder="{% if LANGUAGE_CODE == 'ar' %}إلى (ISO UTC){% else %}To (ISO UTC){% endif %}" value="{{ filters.to }}" />
+    <input name="limit" class="form-control form-control-sm" type="number" min="1" max="5000" value="{{ filters.limit }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى{% else %}Limit{% endif %}" title="{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى لعدد الصفوف{% else %}Maximum number of rows{% endif %}" style="max-width:100px" />
+    <button type="submit" class="btn btn-sm btn-primary">{% if LANGUAGE_CODE == 'ar' %}تطبيق الفلاتر{% else %}Apply filters{% endif %}</button>
+    <a class="btn btn-sm btn-outline-secondary" href="/ops/audit/export.csv?action={{ filters.action|urlencode }}&user={{ filters.user|urlencode }}&status={{ filters.status|urlencode }}&from={{ filters.from|urlencode }}&to={{ filters.to|urlencode }}&limit={{ filters.limit }}">{% if LANGUAGE_CODE == 'ar' %}تصدير CSV{% else %}Export CSV{% endif %}</a>
   </form>
 
   <div class="audit-table-wrap">
   <table class="audit-table">
     <thead>
       <tr>
-        <th scope="col">{% trans "ID" %}</th><th scope="col">{% trans "Time (UTC)" %}</th><th scope="col">{% trans "User" %}</th><th scope="col">{% trans "Role" %}</th><th scope="col">{% trans "Action" %}</th><th scope="col">{% trans "Status" %}</th><th scope="col">{% trans "Reason" %}</th><th scope="col">{% trans "Endpoint" %}</th><th scope="col">{% trans "Error" %}</th><th scope="col">{% trans "Hash" %}</th>
+        <th scope="col">{% if LANGUAGE_CODE == 'ar' %}المعرّف{% else %}ID{% endif %}</th><th scope="col">{% if LANGUAGE_CODE == 'ar' %}الوقت (UTC){% else %}Time (UTC){% endif %}</th><th scope="col">{% if LANGUAGE_CODE == 'ar' %}المستخدم{% else %}User{% endif %}</th><th scope="col">{% if LANGUAGE_CODE == 'ar' %}الدور{% else %}Role{% endif %}</th><th scope="col">{% if LANGUAGE_CODE == 'ar' %}الإجراء{% else %}Action{% endif %}</th><th scope="col">{% if LANGUAGE_CODE == 'ar' %}الحالة{% else %}Status{% endif %}</th><th scope="col">{% if LANGUAGE_CODE == 'ar' %}السبب{% else %}Reason{% endif %}</th><th scope="col">{% if LANGUAGE_CODE == 'ar' %}نقطة الوصول{% else %}Endpoint{% endif %}</th><th scope="col">{% if LANGUAGE_CODE == 'ar' %}الخطأ{% else %}Error{% endif %}</th><th scope="col">{% if LANGUAGE_CODE == 'ar' %}التحقق{% else %}Hash{% endif %}</th>
       </tr>
     </thead>
     <tbody>
@@ -87,8 +87,8 @@
       <tr><td colspan="10">
         <div class="empty-state" style="padding:1.5rem;">
           <span class="empty-icon"><span class="i" aria-hidden="true" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span></span>
-          <div class="empty-title">{% trans "No audit records found" %}</div>
-          <div class="empty-hint">{% trans "Try adjusting your filters above" %}</div>
+          <div class="empty-title">{% if LANGUAGE_CODE == 'ar' %}لا توجد سجلات تدقيق{% else %}No audit records found{% endif %}</div>
+          <div class="empty-hint">{% if LANGUAGE_CODE == 'ar' %}حاول تعديل الفلاتر أعلاه{% else %}Try adjusting your filters above{% endif %}</div>
         </div>
       </td></tr>
       {% endfor %}

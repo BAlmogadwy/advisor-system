@@ -1,7 +1,7 @@
 {% extends "core/base.html" %}
 {% load i18n %}{% get_current_language as LANGUAGE_CODE %}
 
-{% block title %}{% trans "Database Admin" %}{% endblock %}
+{% block title %}{% if LANGUAGE_CODE == 'ar' %}إدارة قاعدة البيانات{% else %}Database Admin{% endif %}{% endblock %}
 
 {% block extra_css %}
   <style>
@@ -316,7 +316,7 @@
     <div class="dba-shell">
 
       <!-- ── LEFT NAV ─────────────────────────────────────── -->
-      <nav class="dba-nav" aria-label="DB Admin operations">
+      <nav class="dba-nav" aria-label="{% if LANGUAGE_CODE == 'ar' %}عمليات إدارة قاعدة البيانات{% else %}DB Admin operations{% endif %}">
 
         <div class="dba-nav-label">{% if LANGUAGE_CODE == 'ar' %}حذف البيانات{% else %}Delete Data{% endif %}</div>
 
@@ -397,11 +397,11 @@
             <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}معايير التصفية{% else %}Filter criteria{% endif %}</div>
             <div class="row g-2 align-items-end">
               <div class="col-md-4">
-                <label class="form-label" for="sProgram">{% trans "Program" %}</label>
+                <label class="form-label" for="sProgram">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}</label>
                 <input id="sProgram" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثال: CS{% else %}e.g. CS{% endif %}">
               </div>
               <div class="col-md-4">
-                <label class="form-label" for="sSection">{% trans "Section" %}</label>
+                <label class="form-label" for="sSection">{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}</label>
                 <input id="sSection" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثال: 1{% else %}e.g. 1{% endif %}">
               </div>
               <div class="col-md-4 d-flex gap-2">
@@ -428,7 +428,7 @@
             <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}تحديد البرنامج{% else %}Target program{% endif %}</div>
             <div class="row g-2 align-items-end">
               <div class="col-md-5">
-                <label class="form-label" for="pProgram">{% trans "Program code" %}</label>
+                <label class="form-label" for="pProgram">{% if LANGUAGE_CODE == 'ar' %}رمز البرنامج{% else %}Program code{% endif %}</label>
                 <input id="pProgram" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثال: CS{% else %}e.g. CS{% endif %}">
               </div>
               <div class="col-md-7 d-flex gap-2">
@@ -455,7 +455,7 @@
             <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}إعداد الاستيراد{% else %}Import settings{% endif %}</div>
             <div class="row g-2 align-items-end mb-3">
               <div class="col-md-4">
-                <label class="form-label" for="iProgram">{% trans "Program code" %}</label>
+                <label class="form-label" for="iProgram">{% if LANGUAGE_CODE == 'ar' %}رمز البرنامج{% else %}Program code{% endif %}</label>
                 <input id="iProgram" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثال: CS{% else %}e.g. CS{% endif %}">
               </div>
               <div class="col-md-8 d-flex align-items-center gap-2 pt-3">
@@ -506,7 +506,7 @@
                 <input id="tYear" class="form-control" placeholder="1447">
               </div>
               <div class="col-md-2">
-                <label class="form-label" for="tTerm">{% trans "Term" %}</label>
+                <label class="form-label" for="tTerm">{% if LANGUAGE_CODE == 'ar' %}الفصل الدراسي{% else %}Term{% endif %}</label>
                 <input id="tTerm" class="form-control" placeholder="1">
               </div>
               <div class="col-md-2 d-flex flex-column gap-1 pt-3">

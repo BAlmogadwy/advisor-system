@@ -1,7 +1,7 @@
 {% extends "core/base.html" %}
 {% load i18n %}{% get_current_language as LANGUAGE_CODE %}
 
-{% block title %}{% trans "Advisor Dashboard Login" %}{% endblock %}
+{% block title %}{% if LANGUAGE_CODE == 'ar' %}تسجيل الدخول — لوحة تحكم المرشد{% else %}Advisor Dashboard Login{% endif %}{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -123,14 +123,14 @@ body {
       <form method="post">
         {% csrf_token %}
         <div class="mb-3">
-          <label for="id_username" class="form-label fw-semibold">{% trans "Username" %}</label>
+          <label for="id_username" class="form-label fw-semibold">{% if LANGUAGE_CODE == 'ar' %}اسم المستخدم{% else %}Username{% endif %}</label>
           <input id="id_username" name="username" class="form-control" required autocomplete="username" autofocus>
         </div>
         <div class="mb-4">
-          <label for="id_password" class="form-label fw-semibold">{% trans "Password" %}</label>
+          <label for="id_password" class="form-label fw-semibold">{% if LANGUAGE_CODE == 'ar' %}كلمة المرور{% else %}Password{% endif %}</label>
           <input id="id_password" name="password" type="password" class="form-control" required autocomplete="current-password">
         </div>
-        <button class="btn btn-primary w-100 login-btn">{% trans "Sign in" %}</button>
+        <button class="btn btn-primary w-100 login-btn">{% if LANGUAGE_CODE == 'ar' %}تسجيل الدخول{% else %}Sign in{% endif %}</button>
       </form>
     </div>
 

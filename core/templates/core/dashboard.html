@@ -1,7 +1,7 @@
 {% extends "core/base.html" %}
 {% load i18n %}{% get_current_language as LANGUAGE_CODE %}
 
-{% block title %}{% trans "Advisor Dashboard" %}{% endblock %}
+{% block title %}{% if LANGUAGE_CODE == 'ar' %}لوحة تحكم المرشد{% else %}Advisor Dashboard{% endif %}{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -339,7 +339,7 @@
     <div class="content-wrap">
     <div class="page-header">
       <div class="page-header-left">
-        <h1 id="currentModule" class="page-header-module">{% trans "Student Recommender" %}</h1>
+        <h1 id="currentModule" class="page-header-module">{% if LANGUAGE_CODE == 'ar' %}نظام توصيات الطلاب{% else %}Student Recommender{% endif %}</h1>
         <div class="page-header-chips">
           <span class="ph-chip ph-chip-role">{{ role }}</span>
           <span class="ph-chip ph-chip-scope" title="{{ role_scope_hint }}">{{ role_scope_hint|truncatechars:40 }}</span>
@@ -348,35 +348,35 @@
         </div>
       </div>
       <div class="page-header-right">
-        <a href="/logout/" class="btn btn-sm btn-outline-secondary">{% trans "Logout" %}</a>
+        <a href="/logout/" class="btn btn-sm btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}تسجيل الخروج{% else %}Logout{% endif %}</a>
       </div>
     </div>
 
     <div id="student" class="panel active">
       <div style="margin-bottom:18px">
-        <h2 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Student Recommender</h2>
-        <div style="font-size:13px;color:var(--t3);font-weight:300">Get a per-student recommendation list and export it instantly.</div>
+        <h2 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">{% if LANGUAGE_CODE == 'ar' %}نظام توصيات الطلاب{% else %}Student Recommender{% endif %}</h2>
+        <div style="font-size:13px;color:var(--t3);font-weight:300">{% if LANGUAGE_CODE == 'ar' %}احصل على قائمة توصيات لكل طالب وصدّرها فوراً.{% else %}Get a per-student recommendation list and export it instantly.{% endif %}</div>
       </div>
       <form method="get" action="/" class="filter-bar sticky-cta" style="margin-bottom:14px">
-        <div class="fb-search" style="max-width:170px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span><input id="studentIdInput" type="number" name="student_id" value="{{ student_id }}" placeholder="Student ID" aria-label="Student ID" required></div>
-        <div class="fb-search" style="max-width:110px"><input type="number" name="year" value="{{ year }}" placeholder="Year" aria-label="Year" required></div>
-        <div class="fb-search" style="max-width:110px"><input type="number" min="0" max="1" name="semester" value="{{ semester }}" placeholder="Semester" aria-label="Semester" required></div>
+        <div class="fb-search" style="max-width:170px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span><input id="studentIdInput" type="number" name="student_id" value="{{ student_id }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}" required></div>
+        <div class="fb-search" style="max-width:110px"><input type="number" name="year" value="{{ year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" required></div>
+        <div class="fb-search" style="max-width:110px"><input type="number" min="0" max="1" name="semester" value="{{ semester }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}" required></div>
         <div class="fb-spacer"></div>
         <button class="btn btn-primary" style="padding:7px 20px;font-size:13px">
-          <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Recommend
+          <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}توصية{% else %}Recommend{% endif %}
         </button>
         <button id="loadStudentPlan" type="button" class="fb-dd">
-          <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>Load plan
+          <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}تحميل الخطة{% else %}Load plan{% endif %}
         </button>
       </form>
       {% if recommendations is not None %}
       <div class="cpanel mt-4">
         <div class="cp-h">
           <span class="i" style="opacity:0.4"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></span>
-          <div class="cp-t">Recommendations</div>
+          <div class="cp-t">{% if LANGUAGE_CODE == 'ar' %}التوصيات{% else %}Recommendations{% endif %}</div>
           <span class="cp-live">{{ recommendations|length }} courses</span>
           <div style="flex:1"></div>
-          <a id="studentCsvLink" class="btn btn-outline-primary btn-sm" href="/export/student.csv?student_id={{ student_id }}&year={{ year }}&semester={{ semester }}">Export CSV</a>
+          <a id="studentCsvLink" class="btn btn-outline-primary btn-sm" href="/export/student.csv?student_id={{ student_id }}&year={{ year }}&semester={{ semester }}">{% if LANGUAGE_CODE == 'ar' %}تصدير CSV{% else %}Export CSV{% endif %}</a>
           <button id="copyStudentCsv" type="button" class="btn btn-outline-secondary btn-sm">Copy link</button>
         </div>
         <div class="cp-b">
@@ -385,10 +385,10 @@
             <div>
               <div class="rec-code">{{ code }}</div>
             </div>
-            <span class="pill-status pill-g"><span class="pill-dot"></span>Ready</span>
+            <span class="pill-status pill-g"><span class="pill-dot"></span>{% if LANGUAGE_CODE == 'ar' %}جاهز{% else %}Ready{% endif %}</span>
           </div>
           {% empty %}
-          <div class="empty-note">No courses recommended for this student/term combination.</div>
+          <div class="empty-note">{% if LANGUAGE_CODE == 'ar' %}لا توجد مقررات موصى بها لهذا الطالب/الفصل.{% else %}No courses recommended for this student/term combination.{% endif %}</div>
           {% endfor %}
         </div>
       </div>
@@ -397,23 +397,23 @@
 
       <div class="mt-4">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-          <h6 style="font-family:var(--font-serif);font-size:18px;color:var(--navy);margin:0">Student Plan Matrix</h6>
-          <span style="font-family:var(--font-mono);font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px;background:var(--teal-dim);color:var(--teal);border:1px solid var(--teal-border)">Terms 1-10</span>
+          <h6 style="font-family:var(--font-serif);font-size:18px;color:var(--navy);margin:0">{% if LANGUAGE_CODE == 'ar' %}مصفوفة خطة الطالب{% else %}Student Plan Matrix{% endif %}</h6>
+          <span style="font-family:var(--font-mono);font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px;background:var(--teal-dim);color:var(--teal);border:1px solid var(--teal-border)">{% if LANGUAGE_CODE == 'ar' %}الفصول 1-10{% else %}Terms 1-10{% endif %}</span>
         </div>
-        <div id="studentPlanMeta" class="small mb-2" style="color:var(--t3)">Load a student to view the full term matrix.</div>
+        <div id="studentPlanMeta" class="small mb-2" style="color:var(--t3)">{% if LANGUAGE_CODE == 'ar' %}حمّل بيانات طالب لعرض مصفوفة الفصول الكاملة.{% else %}Load a student to view the full term matrix.{% endif %}</div>
         <div id="studentPlanMetrics" style="display:none;gap:12px;margin-bottom:12px">
           <div style="flex:1;min-width:0"><div class="mc mc-teal">
-            <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span></div><div class="mc-lbl">Passed</div></div>
+            <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span></div><div class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}مجتاز{% else %}Passed{% endif %}</div></div>
             <div class="mc-val" id="spPassed">0</div>
             <div class="spark" id="spSparkPassed"></div>
           </div></div>
           <div style="flex:1;min-width:0"><div class="mc mc-royal">
-            <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span></div><div class="mc-lbl">Studying</div></div>
+            <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span></div><div class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}يدرس حالياً{% else %}Studying{% endif %}</div></div>
             <div class="mc-val" id="spStudying">0</div>
             <div class="spark" id="spSparkStudying"></div>
           </div></div>
           <div style="flex:1;min-width:0"><div class="mc mc-sky">
-            <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></div><div class="mc-lbl">Can Register</div></div>
+            <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></div><div class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}يمكن تسجيله{% else %}Can Register{% endif %}</div></div>
             <div class="mc-val" id="spCan">0</div>
             <div class="spark" id="spSparkCan"></div>
           </div></div>
@@ -460,15 +460,15 @@
           <details class="d-inline-block">
             <summary class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span> Target</summary>
             <div class="d-flex flex-wrap gap-2 mt-2 align-items-center" style="padding:8px 0;">
-              <label class="small" style="color:var(--t3)">Credits</label>
+              <label class="small" style="color:var(--t3)">{% if LANGUAGE_CODE == 'ar' %}الساعات{% else %}Credits{% endif %}</label>
               <select id="spTargetCredits" class="form-select form-select-sm" style="width:auto;">
                 <option value="12">12</option>
                 <option value="15">15</option>
                 <option value="18" selected>18</option>
               </select>
               <select id="spTargetStrategy" class="form-select form-select-sm" style="width:auto;">
-                <option value="max" selected>Max importance</option>
-                <option value="balanced">Balanced by term load</option>
+                <option value="max" selected>{% if LANGUAGE_CODE == 'ar' %}الأهمية القصوى{% else %}Max importance{% endif %}</option>
+                <option value="balanced">{% if LANGUAGE_CODE == 'ar' %}موازنة حسب العبء الدراسي{% else %}Balanced by term load{% endif %}</option>
               </select>
               <button id="spPrintPdf" type="button" class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></span> Print / PDF</button>
             </div>
@@ -504,10 +504,10 @@
         <div style="font-size:13px;color:var(--t3);font-weight:300">Run cohort-level preview, inspect top courses, and export aggregate CSV.</div>
       </div>
       <div class="filter-bar sticky-cta" style="margin-bottom:14px">
-        <div class="fb-search" style="max-width:120px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input id="batchYear" type="number" value="{{ year }}" placeholder="Year" aria-label="Year"></div>
-        <div class="fb-search" style="max-width:110px"><input id="batchSemester" type="number" min="0" max="1" value="{{ semester }}" placeholder="Semester" aria-label="Semester"></div>
-        <div class="fb-search" style="max-width:170px"><input id="batchProgram" placeholder="Program (optional)" aria-label="Program"></div>
-        <div class="fb-search" style="max-width:160px"><input id="batchSection" placeholder="Section (optional)" aria-label="Section"></div>
+        <div class="fb-search" style="max-width:120px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input id="batchYear" type="number" value="{{ year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}"></div>
+        <div class="fb-search" style="max-width:110px"><input id="batchSemester" type="number" min="0" max="1" value="{{ semester }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}"></div>
+        <div class="fb-search" style="max-width:170px"><input id="batchProgram" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج (اختياري){% else %}Program (optional){% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج (اختياري){% else %}Program (optional){% endif %}"></div>
+        <div class="fb-search" style="max-width:160px"><input id="batchSection" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة (اختياري){% else %}Section (optional){% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة (اختياري){% else %}Section (optional){% endif %}"></div>
         <div class="fb-spacer"></div>
         <button id="runBatch" class="btn btn-primary" style="padding:7px 20px;font-size:13px"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></span>Run preview</button>
         <button id="resetBatch" type="button" class="fb-dd">Reset</button>
@@ -565,8 +565,8 @@
         <div style="font-size:13px;color:var(--t3);font-weight:300">Explore prerequisite links by program and optionally by a specific course.</div>
       </div>
       <div class="filter-bar" style="margin-bottom:14px">
-        <div class="fb-search" style="max-width:200px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><input id="preProgram" list="programs" placeholder="Program  e.g. CS" aria-label="Program"></div>
-        <div class="fb-search" style="max-width:220px"><input id="preCourse" placeholder="Course code (optional)" aria-label="Course code"></div>
+        <div class="fb-search" style="max-width:200px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><input id="preProgram" list="programs" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج مثال CS{% else %}Program  e.g. CS{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج مثال CS{% else %}Program{% endif %}"></div>
+        <div class="fb-search" style="max-width:220px"><input id="preCourse" placeholder="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر (اختياري){% else %}Course code (optional){% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر (اختياري){% else %}Course code{% endif %}"></div>
         <div class="fb-spacer"></div>
         <button id="loadPre" class="btn btn-primary" style="padding:7px 22px;font-size:13px">
           <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Load
@@ -608,16 +608,16 @@
     </div>
 
     <div id="plan" class="panel">
-      <h2>Program Plan Viewer</h2>
-      <div class="panel-sub">Inspect full program requirements, term breakdown, and credit totals.</div>
+      <h2>{% if LANGUAGE_CODE == 'ar' %}عارض خطة البرنامج{% else %}Program Plan Viewer{% endif %}</h2>
+      <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}استعراض متطلبات البرنامج الكاملة وتوزيع الفصول وإجمالي الساعات.{% else %}Inspect full program requirements, term breakdown, and credit totals.{% endif %}</div>
       <div class="zone-card">
         <div class="zone-title">Filters</div>
         <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
           <div style="flex:1;min-width:140px;max-width:220px">
-            <label class="form-label">Program</label>
-            <div class="fb-search" style="max-width:none"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><input id="planProgram" list="programs" placeholder="e.g. CS" aria-label="Program"></div>
+            <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}</label>
+            <div class="fb-search" style="max-width:none"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><input id="planProgram" list="programs" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثال CS{% else %}e.g. CS{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}"></div>
           </div>
-          <div style="flex:0 0 auto;padding-bottom:1px"><button id="loadPlan" class="btn btn-primary" style="padding:7px 20px;font-size:13px">Load Plan</button></div>
+          <div style="flex:0 0 auto;padding-bottom:1px"><button id="loadPlan" class="btn btn-primary" style="padding:7px 20px;font-size:13px">{% if LANGUAGE_CODE == 'ar' %}تحميل الخطة{% else %}Load Plan{% endif %}</button></div>
         </div>
       </div>
       <div class="zone-card">
@@ -665,12 +665,12 @@
         <div style="font-size:13px;color:var(--t3);font-weight:300">Legacy scraper — runs <code style="font-size:11px;font-family:var(--font-mono);background:rgba(17,17,68,0.04);padding:2px 6px;border-radius:4px">batch_scraper.py</code> in background with live log streaming.</div>
       </div>
       <div class="filter-bar sticky-cta" style="margin-bottom:14px">
-        <div class="fb-search" style="max-width:120px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></span><input id="scrapeConcurrency" type="number" min="1" max="8" value="2" placeholder="Threads" aria-label="Concurrency threads"></div>
-        <div class="fb-search" style="flex:1;min-width:180px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><input id="scrapeCsv" placeholder="CSV path (default: import_old/data/students_list.csv)" aria-label="CSV file path"></div>
+        <div class="fb-search" style="max-width:120px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></span><input id="scrapeConcurrency" type="number" min="1" max="8" value="2" placeholder="{% if LANGUAGE_CODE == 'ar' %}المسارات{% else %}Threads{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}المسارات{% else %}Concurrency threads{% endif %}"></div>
+        <div class="fb-search" style="flex:1;min-width:180px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><input id="scrapeCsv" placeholder="{% if LANGUAGE_CODE == 'ar' %}مسار CSV{% else %}CSV path (default: import_old/data/students_list.csv){% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}مسار CSV{% else %}CSV file path{% endif %}"></div>
         <div class="fb-spacer"></div>
-        <button id="scrapeStart" class="btn btn-primary" style="padding:7px 16px;font-size:13px;background:linear-gradient(135deg,#e74c3c,#c0392b);border:none"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>Start</button>
-        <button id="scrapeStop" class="btn btn-primary" style="padding:7px 14px;font-size:13px;background:linear-gradient(135deg,#f39c12,#e67e22);border:none"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></span>Stop</button>
-        <button id="scrapeRefresh" class="btn-circle" title="Refresh status"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></span></button>
+        <button id="scrapeStart" class="btn btn-primary" style="padding:7px 16px;font-size:13px;background:linear-gradient(135deg,#e74c3c,#c0392b);border:none"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}بدء{% else %}Start{% endif %}</button>
+        <button id="scrapeStop" class="btn btn-primary" style="padding:7px 14px;font-size:13px;background:linear-gradient(135deg,#f39c12,#e67e22);border:none"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}إيقاف{% else %}Stop{% endif %}</button>
+        <button id="scrapeRefresh" class="btn-circle" title="{% if LANGUAGE_CODE == 'ar' %}تحديث الحالة{% else %}Refresh status{% endif %}"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></span></button>
       </div>
       <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px" id="scrapeMetrics">
         <div style="flex:1;min-width:140px"><div class="mc mc-teal">
@@ -721,12 +721,12 @@
         <div style="font-size:13px;color:var(--t3);font-weight:300">Student-level recommendation trace for debugging and validation.</div>
       </div>
       <div class="filter-bar sticky-cta" style="margin-bottom:14px">
-        <div class="fb-search" style="max-width:110px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input id="dbgYear" type="number" value="{{ year }}" placeholder="Year" aria-label="Year"></div>
-        <div class="fb-search" style="max-width:90px"><input id="dbgSemester" type="number" min="0" max="1" value="{{ semester }}" placeholder="Sem" aria-label="Semester"></div>
-        <div class="fb-search" style="max-width:110px"><input id="dbgSection" placeholder="Section" aria-label="Section"></div>
-        <div class="fb-search" style="max-width:120px"><input id="dbgProgram" placeholder="Program" aria-label="Program"></div>
-        <div class="fb-search" style="max-width:110px"><input id="dbgJoin" placeholder="Join yrs" aria-label="Join years"></div>
-        <div class="fb-search" style="max-width:100px"><input id="dbgLimit" type="number" value="80" placeholder="Limit" aria-label="Limit"></div>
+        <div class="fb-search" style="max-width:110px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input id="dbgYear" type="number" value="{{ year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}"></div>
+        <div class="fb-search" style="max-width:90px"><input id="dbgSemester" type="number" min="0" max="1" value="{{ semester }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Sem{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}"></div>
+        <div class="fb-search" style="max-width:110px"><input id="dbgSection" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}"></div>
+        <div class="fb-search" style="max-width:120px"><input id="dbgProgram" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}"></div>
+        <div class="fb-search" style="max-width:110px"><input id="dbgJoin" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join yrs{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join years{% endif %}"></div>
+        <div class="fb-search" style="max-width:100px"><input id="dbgLimit" type="number" value="80" placeholder="{% if LANGUAGE_CODE == 'ar' %}الحد{% else %}Limit{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الحد{% else %}Limit{% endif %}"></div>
         <div class="fb-spacer"></div>
         <button id="dbgRun" class="btn btn-primary" style="padding:7px 20px;font-size:13px">
           <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run
@@ -776,11 +776,11 @@
         <div style="font-size:13px;color:var(--t3);font-weight:300">Check which students are eligible to register for a specific course.</div>
       </div>
       <div class="filter-bar sticky-cta" style="margin-bottom:14px">
-        <div class="fb-search" style="max-width:140px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><input id="elCourse" placeholder="Course code" aria-label="Course code"></div>
-        <div class="fb-search" style="max-width:110px"><input id="elSection" placeholder="Section" aria-label="Section"></div>
-        <div class="fb-search" style="max-width:120px"><input id="elProgram" placeholder="Program" aria-label="Program"></div>
-        <div class="fb-search" style="max-width:110px"><input id="elJoin" placeholder="Join yrs" aria-label="Join years"></div>
-        <div class="fb-search" style="max-width:210px"><select id="elMode" style="flex:1;background:none;border:none;outline:none;color:var(--t1);font-size:13px;font-family:inherit;cursor:pointer"><option value="relaxed" selected>Relaxed (passed+studying)</option><option value="strict">Strict (passed only)</option></select></div>
+        <div class="fb-search" style="max-width:140px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><input id="elCourse" placeholder="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر{% else %}Course code{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر{% else %}Course code{% endif %}"></div>
+        <div class="fb-search" style="max-width:110px"><input id="elSection" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}"></div>
+        <div class="fb-search" style="max-width:120px"><input id="elProgram" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}"></div>
+        <div class="fb-search" style="max-width:110px"><input id="elJoin" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join yrs{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join years{% endif %}"></div>
+        <div class="fb-search" style="max-width:210px"><select id="elMode" style="flex:1;background:none;border:none;outline:none;color:var(--t1);font-size:13px;font-family:inherit;cursor:pointer"><option value="relaxed" selected>{% if LANGUAGE_CODE == 'ar' %}مرن (مجتاز+يدرس){% else %}Relaxed (passed+studying){% endif %}</option><option value="strict">{% if LANGUAGE_CODE == 'ar' %}صارم (مجتاز فقط){% else %}Strict (passed only){% endif %}</option></select></div>
         <div class="fb-spacer"></div>
         <button id="elRun" class="btn btn-primary" style="padding:7px 20px;font-size:13px">
           <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Check
@@ -822,18 +822,18 @@
     </div>
 
     {% if can_admin_advisors %}<div id="advisoradmin" class="panel">
-      <h2>Advisor Admin</h2>
-      <div class="panel-sub">Create advisors and manage student-to-advisor assignments.</div>
+      <h2>{% if LANGUAGE_CODE == 'ar' %}إدارة المرشدين{% else %}Advisor Admin{% endif %}</h2>
+      <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}إنشاء المرشدين وإدارة تعيين الطلاب للمرشدين.{% else %}Create advisors and manage student-to-advisor assignments.{% endif %}</div>
 
       <div class="adm-wizard-bar">
         <div class="adm-step" id="admStep1">
           <div class="adm-step-circle">1</div>
-          <div class="adm-step-label">Create Advisor</div>
+          <div class="adm-step-label">{% if LANGUAGE_CODE == 'ar' %}إنشاء مرشد{% else %}Create Advisor{% endif %}</div>
         </div>
         <div class="adm-step-line"></div>
         <div class="adm-step adm-step-inactive" id="admStep2">
           <div class="adm-step-circle">2</div>
-          <div class="adm-step-label">Bulk Mapping</div>
+          <div class="adm-step-label">{% if LANGUAGE_CODE == 'ar' %}ربط جماعي{% else %}Bulk Mapping{% endif %}</div>
         </div>
         <div class="adm-step-line adm-step-line-inactive"></div>
         <div class="adm-step adm-step-inactive" id="admStep3">
@@ -847,22 +847,22 @@
         <div class="small text-secondary mb-2">Use a unique advisor ID and valid institutional email.</div>
         <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
           <div style="flex:1;min-width:110px">
-            <label class="form-label">Advisor ID</label>
-            <div class="fb-search" style="max-width:none"><input id="advId" placeholder="A001" maxlength="30" aria-label="Advisor ID"></div>
+            <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}معرّف المرشد{% else %}Advisor ID{% endif %}</label>
+            <div class="fb-search" style="max-width:none"><input id="advId" placeholder="A001" maxlength="30" aria-label="{% if LANGUAGE_CODE == 'ar' %}معرّف المرشد{% else %}Advisor ID{% endif %}"></div>
             <div id="advIdErr" class="field-error"></div>
           </div>
           <div style="flex:1.5;min-width:150px">
-            <label class="form-label">Full name</label>
+            <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}الاسم الكامل{% else %}Full name{% endif %}</label>
             <div class="fb-search" style="max-width:none"><input id="advName" placeholder="Dr. Name" maxlength="120" aria-label="Advisor name"></div>
             <div id="advNameErr" class="field-error"></div>
           </div>
           <div style="flex:1.5;min-width:160px">
-            <label class="form-label">Email</label>
+            <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}البريد الإلكتروني{% else %}Email{% endif %}</label>
             <div class="fb-search" style="max-width:none"><input id="advEmail" type="email" placeholder="advisor@uni.edu" maxlength="120" aria-label="Advisor email"></div>
             <div id="advEmailErr" class="field-error"></div>
           </div>
           <div style="flex:1;min-width:110px">
-            <label class="form-label">Departments</label>
+            <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}الأقسام{% else %}Departments{% endif %}</label>
             <div class="fb-search" style="max-width:none"><input id="advDept" placeholder="CS,AI" maxlength="120" aria-label="Departments"></div>
             <div id="advDeptErr" class="field-error"></div>
           </div>
@@ -876,7 +876,7 @@
         <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-top:4px">
           <div style="flex:0 0 auto"><button id="advEnsureColumn" class="fb-dd" style="padding:8px 14px">Enable students.advisor_id</button></div>
           <div style="flex:1;min-width:220px">
-            <label class="form-label">Bulk assign CSV (student_id,advisor_id)</label>
+            <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}ربط جماعي CSV (student_id,advisor_id){% else %}Bulk assign CSV (student_id,advisor_id){% endif %}</label>
             <textarea id="advAssignCsv" class="form-control" rows="3" placeholder="student_id,advisor_id&#10;4410001,A001" aria-label="Assignment CSV data" style="border-radius:var(--radius-sm);border:1px solid rgba(17,17,68,0.05);background:rgba(255,255,255,0.6);font-size:13px"></textarea>
           </div>
         </div>
@@ -890,14 +890,14 @@
         <div class="small text-secondary mb-2">Use for quick corrections without re-uploading CSV.</div>
         <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-top:4px">
           <div style="flex:1;min-width:140px">
-            <label class="form-label">Student ID</label>
-            <div class="fb-search" style="max-width:none"><input id="advAssignStudentId" placeholder="4410001" aria-label="Student ID"></div>
+            <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}</label>
+            <div class="fb-search" style="max-width:none"><input id="advAssignStudentId" placeholder="4410001" aria-label="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}"></div>
           </div>
           <div style="flex:1;min-width:140px">
-            <label class="form-label">Advisor ID</label>
-            <div class="fb-search" style="max-width:none"><input id="advAssignAdvisorId" placeholder="A001" aria-label="Advisor ID"></div>
+            <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}معرّف المرشد{% else %}Advisor ID{% endif %}</label>
+            <div class="fb-search" style="max-width:none"><input id="advAssignAdvisorId" placeholder="A001" aria-label="{% if LANGUAGE_CODE == 'ar' %}معرّف المرشد{% else %}Advisor ID{% endif %}"></div>
           </div>
-          <div style="flex:0 0 auto;padding-bottom:1px"><button id="advAssignOneBtn" class="btn btn-outline-primary" type="button" style="padding:7px 16px;font-size:13px">Assign one student</button></div>
+          <div style="flex:0 0 auto;padding-bottom:1px"><button id="advAssignOneBtn" class="btn btn-outline-primary" type="button" style="padding:7px 16px;font-size:13px">{% if LANGUAGE_CODE == 'ar' %}تعيين طالب واحد{% else %}Assign one student{% endif %}</button></div>
         </div>
       </div>
 
@@ -909,7 +909,7 @@
     <!-- Advisor Portfolio → moved to standalone page at /advisor-portfolio/ -->
 
     <div id="exports" class="panel">
-      <h2>Export Center</h2>
+      <h2>{% if LANGUAGE_CODE == 'ar' %}مركز التصدير{% else %}Export Center{% endif %}</h2>
       <div class="panel-sub">Quick links for all operational exports in one place.</div>
       <div class="task-card mb-2">
         <div class="k">What these exports contain</div>
@@ -924,8 +924,8 @@
             <tr><td>Student plan matrix CSV</td><td>Single student</td><td><a id="exPlanCsv" class="btn btn-sm btn-outline-primary" href="#">Download</a></td><td><button class="btn btn-sm btn-outline-secondary ex-copy" data-link-id="exPlanCsv">Copy</button></td></tr>
             <tr><td>Recommendation debug CSV</td><td>Filtered cohort debug</td><td><a id="exDebugCsv" class="btn btn-sm btn-outline-primary" href="#">Download</a></td><td><button class="btn btn-sm btn-outline-secondary ex-copy" data-link-id="exDebugCsv">Copy</button></td></tr>
             <tr><td>Course eligibility CSV</td><td>Eligibility inspector</td><td><a id="exEligibilityCsv" class="btn btn-sm btn-outline-primary" href="#">Download</a></td><td><button class="btn btn-sm btn-outline-secondary ex-copy" data-link-id="exEligibilityCsv">Copy</button></td></tr>
-            <tr><td>Students by advisor CSV</td><td>Advisor roster</td><td><a id="exAdvisorCsv" class="btn btn-sm btn-outline-primary" href="#">Download</a></td><td><button class="btn btn-sm btn-outline-secondary ex-copy" data-link-id="exAdvisorCsv">Copy</button></td></tr>
-            <tr><td>Missing high priority XLSX</td><td>High-priority checker</td><td><a id="exHighPriorityXlsx" class="btn btn-sm btn-outline-primary" href="#">Download</a></td><td><button class="btn btn-sm btn-outline-secondary ex-copy" data-link-id="exHighPriorityXlsx">Copy</button></td></tr>
+            <tr><td>{% if LANGUAGE_CODE == 'ar' %}طلاب حسب المرشد CSV{% else %}Students by advisor CSV{% endif %}</td><td>{% if LANGUAGE_CODE == 'ar' %}قائمة المرشدين{% else %}Advisor roster{% endif %}</td><td><a id="exAdvisorCsv" class="btn btn-sm btn-outline-primary" href="#">Download</a></td><td><button class="btn btn-sm btn-outline-secondary ex-copy" data-link-id="exAdvisorCsv">Copy</button></td></tr>
+            <tr><td>{% if LANGUAGE_CODE == 'ar' %}المقررات عالية الأولوية المفقودة XLSX{% else %}Missing high priority XLSX{% endif %}</td><td>{% if LANGUAGE_CODE == 'ar' %}فاحص الأولوية العالية{% else %}High-priority checker{% endif %}</td><td><a id="exHighPriorityXlsx" class="btn btn-sm btn-outline-primary" href="#">Download</a></td><td><button class="btn btn-sm btn-outline-secondary ex-copy" data-link-id="exHighPriorityXlsx">Copy</button></td></tr>
           </tbody>
         </table>
       </div>
@@ -933,18 +933,18 @@
     </div>
 
     <div id="highpriority" class="panel">
-      <h2>Missing High Priority Courses</h2>
+      <h2>{% if LANGUAGE_CODE == 'ar' %}المقررات عالية الأولوية المفقودة{% else %}Missing High Priority Courses{% endif %}</h2>
       <div class="panel-sub">Exact legacy logic from old script (unlock-graph priority + parity split).</div>
       <div class="task-card mb-2">
         <div class="k">Task</div>
         <div class="small text-secondary">Use this report to flag students missing high-impact unlock courses; export XLSX for advisor intervention lists.</div>
       </div>
       <div class="filter-bar sticky-cta" style="margin-bottom:14px">
-        <div class="fb-search" style="max-width:110px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input id="hpYear" type="number" value="{{ year }}" placeholder="Year" aria-label="Year"></div>
-        <div class="fb-search" style="max-width:110px"><input id="hpSemester" type="number" min="0" max="1" value="{{ semester }}" placeholder="Semester" aria-label="Semester"></div>
-        <div class="fb-search" style="max-width:100px"><input id="hpSection" placeholder="Section" aria-label="Section"></div>
-        <div class="fb-search" style="max-width:110px"><input id="hpProgram" placeholder="Program" aria-label="Program"></div>
-        <div class="fb-search" style="max-width:110px"><input id="hpJoin" placeholder="Join yrs" aria-label="Join years"></div>
+        <div class="fb-search" style="max-width:110px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input id="hpYear" type="number" value="{{ year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}"></div>
+        <div class="fb-search" style="max-width:110px"><input id="hpSemester" type="number" min="0" max="1" value="{{ semester }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}"></div>
+        <div class="fb-search" style="max-width:100px"><input id="hpSection" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}"></div>
+        <div class="fb-search" style="max-width:110px"><input id="hpProgram" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}"></div>
+        <div class="fb-search" style="max-width:110px"><input id="hpJoin" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join yrs{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join years{% endif %}"></div>
         <div class="fb-search" style="max-width:130px"><select id="hpParity" style="flex:1;background:none;border:none;outline:none;color:var(--t1);font-size:13px;font-family:inherit;cursor:pointer"><option value="0" selected>0 (odd)</option><option value="1">1 (even)</option></select></div>
         <div class="fb-spacer"></div>
         <button id="hpRun" class="btn btn-primary" style="padding:7px 20px;font-size:13px"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run report</button>
@@ -957,9 +957,9 @@
         </summary>
         <div class="filter-bar" style="margin-top:8px;padding:10px 14px">
           <div class="fb-search" style="max-width:150px"><select id="hpDiscount" style="flex:1;background:none;border:none;outline:none;color:var(--t1);font-size:13px;font-family:inherit;cursor:pointer"><option value="1_over_d" selected>1_over_d</option><option value="half_power_d">half_power_d</option><option value="none">none</option></select></div>
-          <div class="fb-search" style="max-width:120px"><input id="hpMinScore" type="number" step="0.1" value="2.0" placeholder="Min score" aria-label="Minimum score"></div>
-          <div class="fb-search" style="max-width:100px"><input id="hpTopK" type="number" value="10" placeholder="Top K" aria-label="Top K"></div>
-          <div class="fb-search" style="max-width:210px"><select id="hpStudying" style="flex:1;background:none;border:none;outline:none;color:var(--t1);font-size:13px;font-family:inherit;cursor:pointer"><option value="false" selected>No (exact default)</option><option value="true">Yes</option></select></div>
+          <div class="fb-search" style="max-width:120px"><input id="hpMinScore" type="number" step="0.1" value="2.0" placeholder="{% if LANGUAGE_CODE == 'ar' %}أقل درجة{% else %}Min score{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}أقل درجة{% else %}Minimum score{% endif %}"></div>
+          <div class="fb-search" style="max-width:100px"><input id="hpTopK" type="number" value="10" placeholder="{% if LANGUAGE_CODE == 'ar' %}أفضل K{% else %}Top K{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}أفضل K{% else %}Top K{% endif %}"></div>
+          <div class="fb-search" style="max-width:210px"><select id="hpStudying" style="flex:1;background:none;border:none;outline:none;color:var(--t1);font-size:13px;font-family:inherit;cursor:pointer"><option value="false" selected>{% if LANGUAGE_CODE == 'ar' %}لا (الافتراضي الدقيق){% else %}No (exact default){% endif %}</option><option value="true">{% if LANGUAGE_CODE == 'ar' %}نعم{% else %}Yes{% endif %}</option></select></div>
         </div>
       </details>
       <div class="preset-row">
@@ -993,7 +993,7 @@
   <div class="dlg-box" style="max-width:800px;">
     <div class="dlg-header">
       <div><div class="dlg-title">Eligibility Details</div></div>
-      <button type="button" class="dlg-close" aria-label="Close">&times;</button>
+      <button type="button" class="dlg-close" aria-label="{% if LANGUAGE_CODE == 'ar' %}إغلاق{% else %}Close{% endif %}">&times;</button>
     </div>
     <div class="dlg-body" id="eligibilityDetailsBody" style="max-height:70vh;overflow-y:auto;"></div>
   </div>
@@ -1003,7 +1003,7 @@
   <div class="dlg-box" style="max-width:800px;">
     <div class="dlg-header">
       <div><div class="dlg-title">Recommendation Trace</div></div>
-      <button type="button" class="dlg-close" aria-label="Close">&times;</button>
+      <button type="button" class="dlg-close" aria-label="{% if LANGUAGE_CODE == 'ar' %}إغلاق{% else %}Close{% endif %}">&times;</button>
     </div>
     <div class="dlg-body" id="debugTraceBody" style="max-height:70vh;overflow-y:auto;"></div>
   </div>
@@ -1013,11 +1013,11 @@
 
 
 <!-- ⌘K Command Palette -->
-<div id="cmdPalette" class="cmd-backdrop" style="display:none;" role="dialog" aria-modal="true" aria-label="Quick search">
+<div id="cmdPalette" class="cmd-backdrop" style="display:none;" role="dialog" aria-modal="true" aria-label="{% if LANGUAGE_CODE == 'ar' %}بحث سريع{% else %}Quick search{% endif %}">
   <div class="cmd-modal">
     <div class="cmd-search-row">
       <span class="cmd-search-icon">⌕</span>
-      <input id="cmdInput" class="cmd-input" type="text" placeholder="Student ID, course code, or advisor ID…" autocomplete="off">
+      <input id="cmdInput" class="cmd-input" type="text" placeholder="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب، رمز المقرر، أو معرّف المرشد…{% else %}Student ID, course code, or advisor ID…{% endif %}" autocomplete="off">
       <kbd class="cmd-esc">ESC</kbd>
     </div>
     <div id="cmdResults" class="cmd-results">

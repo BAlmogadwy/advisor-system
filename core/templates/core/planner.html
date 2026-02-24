@@ -1,7 +1,7 @@
 {% extends "core/base.html" %}
 {% load i18n %}{% get_current_language as LANGUAGE_CODE %}
 
-{% block title %}{% trans "Student Timetable Builder" %}{% endblock %}
+{% block title %}{% if LANGUAGE_CODE == 'ar' %}أداة بناء جدول الطالب{% else %}Student Timetable Builder{% endif %}{% endblock %}
 
 {% block extra_css %}
   <style>
@@ -368,7 +368,7 @@
             </div>
             <div class="cb-status">
               <span class="cb-dot" id="fetchDot"></span>
-              <span id="fetchState">{% trans "Idle" %}</span>
+              <span id="fetchState">{% if LANGUAGE_CODE == 'ar' %}في الانتظار{% else %}Idle{% endif %}</span>
             </div>
           </div>
 
@@ -381,7 +381,7 @@
           <!-- Status banner -->
           <div id="statusBanner" class="planner-banner planner-banner-info" aria-live="polite">
             <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></span>
-            {% trans "Ready. Enter student context and click Fetch." %}
+            {% if LANGUAGE_CODE == 'ar' %}جاهز. أدخل بيانات الطالب واضغط جلب.{% else %}Ready. Enter student context and click Fetch.{% endif %}
           </div>
 
           <!-- Input bar -->
@@ -390,23 +390,23 @@
             <div class="fb-search" style="min-width:0;flex:0 0 80px"><span class="i i-sm" aria-hidden="true" style="flex-shrink:0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input id="year" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنة{% else %}Year{% endif %}" style="width:100%"></div>
             <div class="fb-search" style="min-width:0;flex:0 0 55px"><input id="term" placeholder="{% if LANGUAGE_CODE == 'ar' %}فصل{% else %}Sem{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}فصل{% else %}Semester{% endif %}" style="width:100%"></div>
             <div class="fb-search" style="min-width:0;flex:1;max-width:200px"><select id="mode" aria-label="{% if LANGUAGE_CODE == 'ar' %}وضع التسجيل{% else %}Registration mode{% endif %}" style="flex:1;background:none;border:none;outline:none;color:var(--t1);font-size:12px;font-family:inherit;cursor:pointer">
-              <option value="keep">{% trans "Keep Registered" %}</option>
-              <option value="ignore">{% trans "Ignore Registered (planning only)" %}</option>
+              <option value="keep">{% if LANGUAGE_CODE == 'ar' %}الإبقاء على المسجّل{% else %}Keep Registered{% endif %}</option>
+              <option value="ignore">{% if LANGUAGE_CODE == 'ar' %}تجاهل المسجّل (تخطيط فقط){% else %}Ignore Registered (planning only){% endif %}</option>
             </select></div>
             <label style="display:flex;align-items:center;gap:5px;font-size:11.5px;font-weight:500;color:var(--t3);cursor:pointer;white-space:nowrap;flex-shrink:0"><input id="swap" type="checkbox" style="accent-color:var(--teal)"> {% if LANGUAGE_CODE == 'ar' %}تبديلات{% else %}Swaps{% endif %}</label>
-            <button id="fetchBtn" class="pl-btn pl-btn-primary" style="padding:7px 16px;font-size:13px;flex-shrink:0"><span class="i" aria-hidden="true" style="width:14px;height:14px"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>{% trans "Fetch" %}</button>
+            <button id="fetchBtn" class="pl-btn pl-btn-primary" style="padding:7px 16px;font-size:13px;flex-shrink:0"><span class="i" aria-hidden="true" style="width:14px;height:14px"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}جلب{% else %}Fetch{% endif %}</button>
           </div>
 
           <!-- Planning mode banner -->
           <div id="planningBanner" class="planner-banner planner-banner-warn d-none" style="margin-top:8px">
             <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
-            {% trans "Planning only mode: baseline registration is ignored in run constraints." %}
+            {% if LANGUAGE_CODE == 'ar' %}وضع التخطيط فقط: يتم تجاهل التسجيل الحالي في قيود التشغيل.{% else %}Planning only mode: baseline registration is ignored in run constraints.{% endif %}
           </div>
 
           <!-- Trust strip -->
           <div id="trustStrip" class="trust-strip" style="margin-top:8px">
             <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>
-            {% trans "Mapping quality: unknown | Unresolved: - | Last build: -" %}
+            {% if LANGUAGE_CODE == 'ar' %}جودة الربط: غير معروفة | غير محلول: - | آخر بناء: -{% else %}Mapping quality: unknown | Unresolved: - | Last build: -{% endif %}
           </div>
 
           <!-- Workflow stepper -->
@@ -419,15 +419,15 @@
             <div class="wf-sep"></div>
             <button id="stepD" class="wf-step" type="button"><span class="wf-num">D</span>{% if LANGUAGE_CODE == 'ar' %}حفظ الربط{% else %}Save{% endif %}</button>
             <div class="wf-nav">
-              <button id="prevStep" class="wf-back" type="button"><span class="i" aria-hidden="true" style="width:12px;height:12px"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></span>{% trans "Back" %}</button>
-              <button id="nextStep" class="wf-next" type="button">{% trans "Next" %}<span class="i" aria-hidden="true" style="width:12px;height:12px"><svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></span></button>
+              <button id="prevStep" class="wf-back" type="button"><span class="i" aria-hidden="true" style="width:12px;height:12px"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}رجوع{% else %}Back{% endif %}</button>
+              <button id="nextStep" class="wf-next" type="button">{% if LANGUAGE_CODE == 'ar' %}التالي{% else %}Next{% endif %}<span class="i" aria-hidden="true" style="width:12px;height:12px"><svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></span></button>
             </div>
           </div>
 
           <!-- Simplified mode toggle -->
           <label class="mode-toggle" style="margin-top:8px">
             <input id="simpleMode" type="checkbox">
-            <span>{% trans "Simplified mode" %}</span>
+            <span>{% if LANGUAGE_CODE == 'ar' %}الوضع المبسّط{% else %}Simplified mode{% endif %}</span>
           </label>
 
           </div><!-- /.command-bar-controls -->
@@ -441,13 +441,13 @@
           <div id="studentSummaryCard" class="planner-panel step-panel pg-full" data-step="A">
             <div class="pane-head">
               <div class="pane-icon pane-icon-teal"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span></div>
-              <div><h6 class="pane-title">{% trans "Student summary" %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}ملخص بيانات الطالب الأكاديمية{% else %}Academic profile overview{% endif %}</div></div>
+              <div><h6 class="pane-title">{% if LANGUAGE_CODE == 'ar' %}ملخص الطالب{% else %}Student summary{% endif %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}ملخص بيانات الطالب الأكاديمية{% else %}Academic profile overview{% endif %}</div></div>
             </div>
             <div id="studentSummary">
               <div class="pl-empty">
                 <div class="pl-empty-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span></div>
-                <div class="pl-empty-title">{% trans "No student loaded" %}</div>
-                <div class="pl-empty-hint">{% trans "Enter student ID above and click" %} <strong>{% trans "Fetch" %}</strong></div>
+                <div class="pl-empty-title">{% if LANGUAGE_CODE == 'ar' %}لم يتم تحميل بيانات طالب{% else %}No student loaded{% endif %}</div>
+                <div class="pl-empty-hint">{% if LANGUAGE_CODE == 'ar' %}أدخل رقم الطالب أعلاه واضغط{% else %}Enter student ID above and click{% endif %} <strong>{% if LANGUAGE_CODE == 'ar' %}جلب{% else %}Fetch{% endif %}</strong></div>
               </div>
             </div>
           </div>
@@ -456,15 +456,15 @@
           <div id="recCard" class="planner-panel step-panel" data-step="B">
             <div class="pane-head">
               <div class="pane-icon pane-icon-teal"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span></div>
-              <div><h6 class="pane-title">{% trans "Suggested to add" %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}المقررات المؤهلة بحسب الأولوية{% else %}Eligible courses ranked by priority{% endif %}</div></div>
+              <div><h6 class="pane-title">{% if LANGUAGE_CODE == 'ar' %}مقررات مقترحة للإضافة{% else %}Suggested to add{% endif %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}المقررات المؤهلة بحسب الأولوية{% else %}Eligible courses ranked by priority{% endif %}</div></div>
             </div>
             <div class="table-responsive">
               <table class="table table-sm">
                 <thead>
                   <tr>
-                    <th>{% trans "Course" %}</th>
-                    <th>{% trans "Status" %}</th>
-                    <th>{% trans "Priority" %}</th>
+                    <th>{% if LANGUAGE_CODE == 'ar' %}المقرر{% else %}Course{% endif %}</th>
+                    <th>{% if LANGUAGE_CODE == 'ar' %}الحالة{% else %}Status{% endif %}</th>
+                    <th>{% if LANGUAGE_CODE == 'ar' %}الأولوية{% else %}Priority{% endif %}</th>
                     <th></th>
                   </tr>
                 </thead>
@@ -477,7 +477,7 @@
           <div id="baselineCard" class="planner-panel step-panel" data-step="B">
             <div class="pane-head">
               <div class="pane-icon pane-icon-sky"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span></div>
-              <div><h6 class="pane-title">{% trans "Registered timetable" %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}الجدول المسجل حالياً{% else %}Currently registered schedule{% endif %}</div></div>
+              <div><h6 class="pane-title">{% if LANGUAGE_CODE == 'ar' %}الجدول المسجّل{% else %}Registered timetable{% endif %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}الجدول المسجل حالياً{% else %}Currently registered schedule{% endif %}</div></div>
             </div>
             <div id="baselineTotals" class="small text-secondary" style="margin-bottom:8px"></div>
             <div id="baselineWeekly" class="small"></div>
@@ -487,16 +487,16 @@
           <div id="shortlistCard" class="planner-panel step-panel pg-full" data-step="B">
             <div class="pane-head">
               <div class="pane-icon pane-icon-royal"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span></div>
-              <div><h6 class="pane-title">{% trans "Selected add list" %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}المقررات المختارة للإضافة{% else %}Courses selected for scheduling{% endif %}</div></div>
+              <div><h6 class="pane-title">{% if LANGUAGE_CODE == 'ar' %}قائمة المقررات المختارة{% else %}Selected add list{% endif %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}المقررات المختارة للإضافة{% else %}Courses selected for scheduling{% endif %}</div></div>
               <div style="margin-inline-start:auto;display:flex;gap:6px">
-                <button id="resetShortlist" class="pl-btn pl-btn-outline"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></span>{% trans "Reset" %}</button>
-                <button id="clearShortlist" class="pl-btn pl-btn-red"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></span>{% trans "Clear" %}</button>
+                <button id="resetShortlist" class="pl-btn pl-btn-outline"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}إعادة تعيين{% else %}Reset{% endif %}</button>
+                <button id="clearShortlist" class="pl-btn pl-btn-red"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}مسح{% else %}Clear{% endif %}</button>
               </div>
             </div>
             <div id="shortlist" class="small"><div class="pl-empty-state" id="shortlistEmpty" style="text-align:center;padding:20px;color:var(--t3)">{% if LANGUAGE_CODE == 'ar' %}لا توجد مقررات مختارة{% else %}No courses shortlisted{% endif %}</div></div>
             <div style="display:flex;align-items:center;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid rgba(17,17,68,0.05)">
               <span class="i" aria-hidden="true" style="width:14px;height:14px;color:var(--t4)"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></span>
-              <span style="font-size:13px;font-weight:600;color:var(--t2)">{% trans "Total credits" %}: <span id="shortCredits" style="color:var(--teal)">0</span></span>
+              <span style="font-size:13px;font-weight:600;color:var(--t2)">{% if LANGUAGE_CODE == 'ar' %}إجمالي الساعات{% else %}Total credits{% endif %}: <span id="shortCredits" style="color:var(--teal)">0</span></span>
             </div>
           </div>
 
@@ -504,7 +504,7 @@
           <div id="planCard" class="planner-panel step-panel pg-full" data-step="B">
             <div class="pane-head">
               <div class="pane-icon pane-icon-purple"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></span></div>
-              <div><h6 class="pane-title">{% trans "Full student plan (click course to add)" %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}جميع مقررات الخطة — انقر لإضافة{% else %}All plan courses — click to add to shortlist{% endif %}</div></div>
+              <div><h6 class="pane-title">{% if LANGUAGE_CODE == 'ar' %}الخطة الدراسية الكاملة (انقر لإضافة مقرر){% else %}Full student plan (click course to add){% endif %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}جميع مقررات الخطة — انقر لإضافة{% else %}All plan courses — click to add to shortlist{% endif %}</div></div>
             </div>
             <div class="chip-legend">
               <div class="chip-legend-item"><span class="chip-legend-dot" style="background:#111827"></span>{% if LANGUAGE_CODE == 'ar' %}غير مطروح{% else %}Not offered{% endif %}</div>
@@ -514,10 +514,10 @@
             </div>
 
             <div class="pl-checks" style="margin-bottom:10px">
-              <label><input id="fltNotTaken" type="checkbox" checked> {% trans "Only not taken" %}</label>
-              <label><input id="fltGreen" type="checkbox"> {% trans "Only green" %}</label>
-              <label><input id="fltHighImp" type="checkbox"> {% trans "Only high importance (>=1.0)" %}</label>
-              <button id="addSelectedPlan" class="pl-btn pl-btn-teal" style="margin-inline-start:auto"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>{% trans "Add selected" %}</button>
+              <label><input id="fltNotTaken" type="checkbox" checked> {% if LANGUAGE_CODE == 'ar' %}غير المجتازة فقط{% else %}Only not taken{% endif %}</label>
+              <label><input id="fltGreen" type="checkbox"> {% if LANGUAGE_CODE == 'ar' %}المتاحة فقط{% else %}Only green{% endif %}</label>
+              <label><input id="fltHighImp" type="checkbox"> {% if LANGUAGE_CODE == 'ar' %}ذات الأهمية العالية فقط (>=1.0){% else %}Only high importance (>=1.0){% endif %}</label>
+              <button id="addSelectedPlan" class="pl-btn pl-btn-teal" style="margin-inline-start:auto"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}إضافة المحدد{% else %}Add selected{% endif %}</button>
             </div>
 
             <div id="planPalette" class="small"></div>
@@ -527,27 +527,27 @@
           <div id="builderCard" class="planner-panel step-panel" data-step="C">
             <div class="pane-head">
               <div class="pane-icon pane-icon-amber"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span></div>
-              <div><h6 class="pane-title">{% trans "Builder run" %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}إنشاء وتقييم خيارات الجدول{% else %}Generate & evaluate schedule options{% endif %}</div></div>
+              <div><h6 class="pane-title">{% if LANGUAGE_CODE == 'ar' %}تشغيل البناء{% else %}Builder run{% endif %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}إنشاء وتقييم خيارات الجدول{% else %}Generate & evaluate schedule options{% endif %}</div></div>
             </div>
 
             <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
-              <button id="runBuilder" class="pl-btn pl-btn-primary"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>{% trans "Build" %}</button>
-              <button id="applyOption" class="pl-btn pl-btn-success"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>{% trans "Apply" %}</button>
+              <button id="runBuilder" class="pl-btn pl-btn-primary"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}بناء{% else %}Build{% endif %}</button>
+              <button id="applyOption" class="pl-btn pl-btn-success"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}تطبيق{% else %}Apply{% endif %}</button>
             </div>
             <div class="pl-checks" style="margin-bottom:10px">
-              <label><input id="strictSections" type="checkbox"> {% trans "Strict" %}</label>
-              <label><input id="ignoreCapacity" type="checkbox"> {% trans "Ignore capacity" %}</label>
+              <label><input id="strictSections" type="checkbox"> {% if LANGUAGE_CODE == 'ar' %}صارم{% else %}Strict{% endif %}</label>
+              <label><input id="ignoreCapacity" type="checkbox"> {% if LANGUAGE_CODE == 'ar' %}تجاهل السعة{% else %}Ignore capacity{% endif %}</label>
             </div>
 
             <input id="selectedOption" type="hidden">
             <div id="selectedOptionBar" class="planner-banner planner-banner-neutral" style="margin-top:0;margin-bottom:10px">
               <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></span>
-              {% trans "No option selected." %}
+              {% if LANGUAGE_CODE == 'ar' %}لم يتم اختيار أي خيار.{% else %}No option selected.{% endif %}
             </div>
             <div id="optionCards" class="row g-2 mb-2"></div>
             <div id="builderSummary" class="planner-banner planner-banner-neutral" style="margin-top:0">
               <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>
-              {% trans "No run yet." %}
+              {% if LANGUAGE_CODE == 'ar' %}لم يتم التشغيل بعد.{% else %}No run yet.{% endif %}
             </div>
           </div>
 
@@ -555,13 +555,13 @@
           <div id="visualCard" class="planner-panel step-panel" data-step="C">
             <div class="pane-head">
               <div class="pane-icon pane-icon-sky"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></div>
-              <div style="flex:1"><h6 class="pane-title" style="margin:0">{% trans "Visual Timetable" %}</h6></div>
+              <div style="flex:1"><h6 class="pane-title" style="margin:0">{% if LANGUAGE_CODE == 'ar' %}الجدول المرئي{% else %}Visual Timetable{% endif %}</h6></div>
               <select id="visualSource" class="form-select form-select-sm" style="width:180px;font-size:12px">
-                <option value="baseline">{% trans "Baseline" %}</option>
-                <option value="A">{% trans "Option A" %}</option>
-                <option value="B">{% trans "Option B" %}</option>
-                <option value="C">{% trans "Option C" %}</option>
-                <option value="overlay">{% trans "Overlay" %}</option>
+                <option value="baseline">{% if LANGUAGE_CODE == 'ar' %}الأساسي{% else %}Baseline{% endif %}</option>
+                <option value="A">{% if LANGUAGE_CODE == 'ar' %}الخيار أ{% else %}Option A{% endif %}</option>
+                <option value="B">{% if LANGUAGE_CODE == 'ar' %}الخيار ب{% else %}Option B{% endif %}</option>
+                <option value="C">{% if LANGUAGE_CODE == 'ar' %}الخيار ج{% else %}Option C{% endif %}</option>
+                <option value="overlay">{% if LANGUAGE_CODE == 'ar' %}متراكب{% else %}Overlay{% endif %}</option>
               </select>
             </div>
 
@@ -578,11 +578,11 @@
           <details id="advancedDiag" class="planner-panel step-panel pg-full" data-step="C">
             <summary style="font-size:12.5px;font-weight:600;color:var(--t3);cursor:pointer;padding:4px 0;list-style:none;display:flex;align-items:center;gap:8px">
               <span class="i" aria-hidden="true" style="width:14px;height:14px;transition:transform 0.2s"><svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></span>
-              {% trans "Advanced diagnostics" %}
+              {% if LANGUAGE_CODE == 'ar' %}تشخيصات متقدمة{% else %}Advanced diagnostics{% endif %}
             </summary>
             <div id="builderOptions" class="small" style="margin-top:10px"></div>
             <div style="margin-top:12px">
-              <h6 style="font-size:13px;font-weight:600;color:var(--navy);margin-bottom:6px">{% trans "Swap suggestions" %}</h6>
+              <h6 style="font-size:13px;font-weight:600;color:var(--navy);margin-bottom:6px">{% if LANGUAGE_CODE == 'ar' %}اقتراحات التبديل{% else %}Swap suggestions{% endif %}</h6>
               <div id="swapSuggestions" class="small text-danger"></div>
             </div>
           </details>
@@ -591,11 +591,11 @@
           <div id="sectionCard" class="planner-panel step-panel pg-full" data-step="D">
             <div class="pane-head">
               <div class="pane-icon pane-icon-teal"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg></span></div>
-              <div><h6 class="pane-title">{% trans "Section picker (assign student mappings)" %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}ربط الشعب للمقررات المختارة{% else %}Assign sections to selected courses{% endif %}</div></div>
+              <div><h6 class="pane-title">{% if LANGUAGE_CODE == 'ar' %}اختيار الشعب (تعيين ربط الطالب){% else %}Section picker (assign student mappings){% endif %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}ربط الشعب للمقررات المختارة{% else %}Assign sections to selected courses{% endif %}</div></div>
             </div>
             <div style="display:flex;gap:8px;margin-bottom:12px">
-              <button id="loadSections" class="pl-btn pl-btn-outline"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>{% trans "Load sections" %}</button>
-              <button id="saveSections" class="pl-btn pl-btn-success"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span>{% trans "Save to student" %}</button>
+              <button id="loadSections" class="pl-btn pl-btn-outline"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}تحميل الشعب{% else %}Load sections{% endif %}</button>
+              <button id="saveSections" class="pl-btn pl-btn-success"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}حفظ للطالب{% else %}Save to student{% endif %}</button>
             </div>
             <div id="sectionsPicker" class="small"></div>
           </div>

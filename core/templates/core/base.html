@@ -5,7 +5,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>{% block title %}{% trans "Advisor Dashboard" %}{% endblock %}</title>
+  <title>{% block title %}{% if LANGUAGE_CODE == 'ar' %}لوحة تحكم المرشد{% else %}Advisor Dashboard{% endif %}{% endblock %}</title>
   <link rel="icon" href="data:,">
   <link href="{% static 'css/global.css' %}" rel="stylesheet">
   <link href="{% static 'css/bootstrap-compat.css' %}" rel="stylesheet">

@@ -1,7 +1,8 @@
 {% extends "core/base.html" %}
-{% load i18n %}{% get_current_language as LANGUAGE_CODE %}
+{% load i18n %}
+{% get_current_language as LANGUAGE_CODE %}
 
-{% block title %}{% trans "Sections Import (Oracle HTML)" %}{% endblock %}
+{% block title %}{% if LANGUAGE_CODE == 'ar' %}استيراد الشعب (Oracle HTML){% else %}Sections Import (Oracle HTML){% endif %}{% endblock %}
 
 {% block extra_css %}
   <style>
@@ -32,39 +33,39 @@
 
   <div class="si-panel">
     <div class="row g-2 align-items-end">
-      <div class="col-md-4"><label class="form-label">{% trans "Oracle HTML file" %}</label><input id="oracleFile" type="file" class="form-control" accept=".html,.htm,.txt"></div>
-      <div class="col-md-3 form-check ms-3"><input id="dept" type="checkbox" class="form-check-input"><label class="form-check-label" for="dept">{% trans "Is department courses?" %}</label></div>
-      <div class="col-md-3 form-check"><input id="truncate" type="checkbox" class="form-check-input" checked><label class="form-check-label" for="truncate">{% trans "Replace all existing sections" %}</label></div>
+      <div class="col-md-4"><label class="form-label">{% if LANGUAGE_CODE == 'ar' %}ملف Oracle HTML{% else %}Oracle HTML file{% endif %}</label><input id="oracleFile" type="file" class="form-control" accept=".html,.htm,.txt"></div>
+      <div class="col-md-3 form-check ms-3"><input id="dept" type="checkbox" class="form-check-input"><label class="form-check-label" for="dept">{% if LANGUAGE_CODE == 'ar' %}هل هي مقررات القسم؟{% else %}Is department courses?{% endif %}</label></div>
+      <div class="col-md-3 form-check"><input id="truncate" type="checkbox" class="form-check-input" checked><label class="form-check-label" for="truncate">{% if LANGUAGE_CODE == 'ar' %}استبدال جميع الشعب الحالية{% else %}Replace all existing sections{% endif %}</label></div>
     </div>
     <div class="mt-3 d-flex gap-2">
-      <button id="parseBtn" class="btn btn-outline-primary">{% trans "Parse + Preview" %}</button>
-      <button id="insertBtn" class="btn btn-success" disabled>{% trans "Insert all" %}</button>
-      <button id="toggleTech" class="btn btn-outline-secondary">{% trans "Show technical details" %}</button>
+      <button id="parseBtn" class="btn btn-outline-primary">{% if LANGUAGE_CODE == 'ar' %}تحليل + معاينة{% else %}Parse + Preview{% endif %}</button>
+      <button id="insertBtn" class="btn btn-success" disabled>{% if LANGUAGE_CODE == 'ar' %}إدخال الكل{% else %}Insert all{% endif %}</button>
+      <button id="toggleTech" class="btn btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}عرض التفاصيل التقنية{% else %}Show technical details{% endif %}</button>
     </div>
-    <small class="text-secondary">{% trans "Tag rule: checked = department, unchecked = other" %}</small>
-    <div id="status" role="alert" aria-live="polite" class="alert alert-info mt-2 py-2 mb-0">{% trans "Ready." %}</div>
-    <div id="techWrap" class="d-none"><pre id="out" class="mt-2 p-2 bg-light border rounded small">{% trans "No action yet." %}</pre></div>
+    <small class="text-secondary">{% if LANGUAGE_CODE == 'ar' %}قاعدة التصنيف: محدد = مقررات القسم، غير محدد = أخرى{% else %}Tag rule: checked = department, unchecked = other{% endif %}</small>
+    <div id="status" role="alert" aria-live="polite" class="alert alert-info mt-2 py-2 mb-0">{% if LANGUAGE_CODE == 'ar' %}جاهز.{% else %}Ready.{% endif %}</div>
+    <div id="techWrap" class="d-none"><pre id="out" class="mt-2 p-2 bg-light border rounded small">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد.{% else %}No action yet.{% endif %}</pre></div>
   </div>
 
   <div class="si-panel">
-    <h6 class="mb-2">{% trans "Preview summary" %}</h6>
+    <h6 class="mb-2">{% if LANGUAGE_CODE == 'ar' %}ملخص المعاينة{% else %}Preview summary{% endif %}</h6>
     <div class="row g-2">
-      <div class="col-md-3"><div class="kpi"><div class="k">{% trans "Raw rows" %}</div><div class="v" id="kRaw">0</div></div></div>
-      <div class="col-md-3"><div class="kpi"><div class="k">{% trans "Deduped rows" %}</div><div class="v" id="kDedup">0</div></div></div>
-      <div class="col-md-3"><div class="kpi"><div class="k">{% trans "Duplicates removed" %}</div><div class="v" id="kDup">0</div></div></div>
-      <div class="col-md-3"><div class="kpi"><div class="k">{% trans "Sections count" %}</div><div class="v" id="kSec">0</div></div></div>
+      <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}الصفوف الأولية{% else %}Raw rows{% endif %}</div><div class="v" id="kRaw">0</div></div></div>
+      <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}بعد إزالة التكرار{% else %}Deduped rows{% endif %}</div><div class="v" id="kDedup">0</div></div></div>
+      <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}المكررات المحذوفة{% else %}Duplicates removed{% endif %}</div><div class="v" id="kDup">0</div></div></div>
+      <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}عدد الشعب{% else %}Sections count{% endif %}</div><div class="v" id="kSec">0</div></div></div>
     </div>
   </div>
 
   <div class="si-panel">
     <div class="row g-2 mb-2">
-      <div class="col-md-4"><input id="fCode" class="form-control form-control-sm" placeholder="{% trans "Filter by code" %}" aria-label="{% trans "Filter by code" %}"></div>
-      <div class="col-md-4"><input id="fSection" class="form-control form-control-sm" placeholder="{% trans "Filter by section" %}" aria-label="{% trans "Filter by section" %}"></div>
-      <div class="col-md-4"><input id="fDay" class="form-control form-control-sm" placeholder="{% trans "Filter by day (SUN/MON/...)" %}" aria-label="{% trans "Filter by day" %}"></div>
+      <div class="col-md-4"><input id="fCode" class="form-control form-control-sm" placeholder="{% if LANGUAGE_CODE == 'ar' %}تصفية حسب الرمز{% else %}Filter by code{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}تصفية حسب الرمز{% else %}Filter by code{% endif %}"></div>
+      <div class="col-md-4"><input id="fSection" class="form-control form-control-sm" placeholder="{% if LANGUAGE_CODE == 'ar' %}تصفية حسب الشعبة{% else %}Filter by section{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}تصفية حسب الشعبة{% else %}Filter by section{% endif %}"></div>
+      <div class="col-md-4"><input id="fDay" class="form-control form-control-sm" placeholder="{% if LANGUAGE_CODE == 'ar' %}تصفية حسب اليوم (أحد/اثنين/...){% else %}Filter by day (SUN/MON/...){% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}تصفية حسب اليوم{% else %}Filter by day{% endif %}"></div>
     </div>
     <div class="table-responsive">
       <table class="table table-sm align-middle">
-        <thead><tr><th scope="col">{% trans "Code" %}</th><th scope="col">{% trans "No." %}</th><th scope="col">{% trans "Course name" %}</th><th scope="col">{% trans "Section" %}</th><th scope="col">{% trans "Day" %}</th><th scope="col">{% trans "Start" %}</th><th scope="col">{% trans "End" %}</th><th scope="col">{% trans "Capacity" %}</th><th scope="col">{% trans "Registered" %}</th><th scope="col">{% trans "Room" %}</th><th scope="col">{% trans "Instructor" %}</th><th scope="col">{% trans "Tag" %}</th></tr></thead>
+        <thead><tr><th scope="col">{% if LANGUAGE_CODE == 'ar' %}الرمز{% else %}Code{% endif %}</th><th scope="col">{% if LANGUAGE_CODE == 'ar' %}الرقم{% else %}No.{% endif %}</th><th scope="col">{% if LANGUAGE_CODE == 'ar' %}اسم المقرر{% else %}Course name{% endif %}</th><th scope="col">{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}</th><th scope="col">{% if LANGUAGE_CODE == 'ar' %}اليوم{% else %}Day{% endif %}</th><th scope="col">{% if LANGUAGE_CODE == 'ar' %}البداية{% else %}Start{% endif %}</th><th scope="col">{% if LANGUAGE_CODE == 'ar' %}النهاية{% else %}End{% endif %}</th><th scope="col">{% if LANGUAGE_CODE == 'ar' %}السعة{% else %}Capacity{% endif %}</th><th scope="col">{% if LANGUAGE_CODE == 'ar' %}المسجلون{% else %}Registered{% endif %}</th><th scope="col">{% if LANGUAGE_CODE == 'ar' %}القاعة{% else %}Room{% endif %}</th><th scope="col">{% if LANGUAGE_CODE == 'ar' %}المحاضر{% else %}Instructor{% endif %}</th><th scope="col">{% if LANGUAGE_CODE == 'ar' %}التصنيف{% else %}Tag{% endif %}</th></tr></thead>
         <tbody id="tbody">
           <tr><td colspan="12"><div class="empty-state"><span class="empty-icon"><span class="i" aria-hidden="true" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span></span><div class="empty-title">{% if LANGUAGE_CODE == 'ar' %}لا توجد بيانات بعد{% else %}No data yet{% endif %}</div><div class="empty-hint">{% if LANGUAGE_CODE == 'ar' %}اختر ملف Oracle HTML وانقر <strong>تحليل + معاينة</strong>{% else %}Select an Oracle HTML file and click <strong>Parse + Preview</strong>{% endif %}</div></div></td></tr>
         </tbody>
@@ -95,6 +96,8 @@ const T = {
   insertFailed: IS_AR ? 'فشل الإدخال' : 'Insert failed',
   insertedOk: (mode,rows,meet,ds,dm)=> IS_AR ? `تم الإدخال بنجاح [${mode}]. الشعب: ${rows}، اللقاءات: ${meet}. المحذوف: شعب ${ds}، لقاءات ${dm}.` : `Inserted successfully [${mode}]. Sections: ${rows}, meetings: ${meet}. Deleted: sections ${ds}, meetings ${dm}.`,
   noFilterResults: IS_AR ? 'لا توجد نتائج مطابقة للفلتر' : 'No results match your filter',
+  insertAll: IS_AR ? 'إدخال' : 'Insert',
+  cancel: IS_AR ? 'إلغاء' : 'Cancel',
 };
 let previewToken = null;
 let rowsAll = [];

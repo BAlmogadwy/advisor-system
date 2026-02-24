@@ -1,7 +1,7 @@
 {% extends "core/base.html" %}
 {% load i18n %}{% get_current_language as LANGUAGE_CODE %}
 
-{% block title %}{% trans "User Management" %}{% endblock %}
+{% block title %}{% if LANGUAGE_CODE == 'ar' %}إدارة المستخدمين{% else %}User Management{% endif %}{% endblock %}
 
 {% block extra_css %}
 <style>
@@ -201,11 +201,11 @@
 
       <!-- Stats bar -->
       <div class="um-stats" id="umStats">
-        <span class="um-stat um-stat-total">Total <span class="um-stat-n" id="statTotal">—</span></span>
-        <span class="um-stat um-stat-super">Super Admin <span class="um-stat-n" id="statSuper">0</span></span>
-        <span class="um-stat um-stat-gen">Gen. Advisor <span class="um-stat-n" id="statGen">0</span></span>
-        <span class="um-stat um-stat-adv">Advisor <span class="um-stat-n" id="statAdv">0</span></span>
-        <span class="um-stat um-stat-off">Disabled <span class="um-stat-n" id="statDisabled">0</span></span>
+        <span class="um-stat um-stat-total">{% if LANGUAGE_CODE == 'ar' %}الإجمالي{% else %}Total{% endif %} <span class="um-stat-n" id="statTotal">—</span></span>
+        <span class="um-stat um-stat-super">{% if LANGUAGE_CODE == 'ar' %}مشرف عام{% else %}Super Admin{% endif %} <span class="um-stat-n" id="statSuper">0</span></span>
+        <span class="um-stat um-stat-gen">{% if LANGUAGE_CODE == 'ar' %}مرشد عام{% else %}Gen. Advisor{% endif %} <span class="um-stat-n" id="statGen">0</span></span>
+        <span class="um-stat um-stat-adv">{% if LANGUAGE_CODE == 'ar' %}مرشد{% else %}Advisor{% endif %} <span class="um-stat-n" id="statAdv">0</span></span>
+        <span class="um-stat um-stat-off">{% if LANGUAGE_CODE == 'ar' %}معطّل{% else %}Disabled{% endif %} <span class="um-stat-n" id="statDisabled">0</span></span>
       </div>
 
       <!-- ═══════════════════════════════════════════════════════
@@ -213,7 +213,7 @@
            ═══════════════════════════════════════════════════════ -->
       <div class="um-panel" id="createPanel">
         <div class="um-panel-header">
-          <div class="um-panel-title">Create New User</div>
+          <div class="um-panel-title">{% if LANGUAGE_CODE == 'ar' %}إنشاء مستخدم جديد{% else %}Create New User{% endif %}</div>
           <button class="btn btn-sm btn-outline-secondary" type="button" onclick="toggleCreatePanel()">
             <span id="createToggleIcon" class="i i-sm" style="transition:transform 0.2s ease"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span>
           </button>
@@ -221,18 +221,18 @@
         <div id="createFields">
           <div class="row g-2 align-items-end">
             <div class="col-md-2">
-              <label class="form-label">Username</label>
+              <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}اسم المستخدم{% else %}Username{% endif %}</label>
               <input id="cUsername" class="form-control" placeholder="john.doe" autocomplete="off">
             </div>
             <div class="col-md-2">
-              <label class="form-label">Password</label>
+              <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}كلمة المرور{% else %}Password{% endif %}</label>
               <div class="d-flex gap-1">
                 <input id="cPassword" type="text" class="form-control" placeholder="•••••••" autocomplete="new-password">
-                <button type="button" class="um-gen-pw" onclick="generatePassword()" title="Generate strong password">⟳ Gen</button>
+                <button type="button" class="um-gen-pw" onclick="generatePassword()" title="{% if LANGUAGE_CODE == 'ar' %}إنشاء كلمة مرور قوية{% else %}Generate strong password{% endif %}">⟳ Gen</button>
               </div>
             </div>
             <div class="col-md-2">
-              <label class="form-label">Role</label>
+              <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}الدور{% else %}Role{% endif %}</label>
               <select id="cRole" class="form-select" onchange="updateCreateScopeFields()">
                 <option value="SUPER_ADMIN">SUPER_ADMIN</option>
                 <option value="GENERAL_ACADEMIC_ADVISOR">GEN. ADVISOR</option>
@@ -240,15 +240,15 @@
               </select>
             </div>
             <div class="col-md-2 um-scope-field" id="cAdvisorWrap">
-              <label class="form-label">Advisor ID</label>
+              <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}معرّف المرشد{% else %}Advisor ID{% endif %}</label>
               <input id="cAdvisorId" class="form-control" placeholder="A001">
             </div>
             <div class="col-md-2 um-scope-field" id="cDeptWrap">
-              <label class="form-label">Departments</label>
+              <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}الأقسام{% else %}Departments{% endif %}</label>
               <input id="cDepartments" class="form-control" placeholder="AI, CS">
             </div>
             <div class="col-md-2 d-grid">
-              <button id="cCreateBtn" class="btn btn-success" type="button" onclick="createUser()">Create User</button>
+              <button id="cCreateBtn" class="btn btn-success" type="button" onclick="createUser()">{% if LANGUAGE_CODE == 'ar' %}إنشاء مستخدم{% else %}Create User{% endif %}</button>
             </div>
           </div>
         </div>
@@ -259,15 +259,15 @@
            ═══════════════════════════════════════════════════════ -->
       <div class="um-panel um-panel-edit" id="editPanel" style="display:none;">
         <div class="um-panel-header">
-          <div class="um-panel-title edit">Editing User</div>
+          <div class="um-panel-title edit">{% if LANGUAGE_CODE == 'ar' %}تعديل المستخدم{% else %}Editing User{% endif %}</div>
           <div class="d-flex align-items-center gap-2">
             <div class="um-editing-user" id="editingLabel">—</div>
-            <button class="btn btn-sm btn-outline-secondary" type="button" onclick="deselectUser()"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span> Close</button>
+            <button class="btn btn-sm btn-outline-secondary" type="button" onclick="deselectUser()"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span> {% if LANGUAGE_CODE == 'ar' %}إغلاق{% else %}Close{% endif %}</button>
           </div>
         </div>
         <div class="row g-2 align-items-end">
           <div class="col-md-2">
-            <label class="form-label">Role</label>
+            <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}الدور{% else %}Role{% endif %}</label>
             <select id="eRole" class="form-select" onchange="updateEditScopeFields()">
               <option value="SUPER_ADMIN">SUPER_ADMIN</option>
               <option value="GENERAL_ACADEMIC_ADVISOR">GEN. ADVISOR</option>
@@ -275,21 +275,21 @@
             </select>
           </div>
           <div class="col-md-2 um-scope-field" id="eAdvisorWrap">
-            <label class="form-label">Advisor ID</label>
+            <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}معرّف المرشد{% else %}Advisor ID{% endif %}</label>
             <input id="eAdvisorId" class="form-control" placeholder="A001">
           </div>
           <div class="col-md-2 um-scope-field" id="eDeptWrap">
-            <label class="form-label">Departments</label>
+            <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}الأقسام{% else %}Departments{% endif %}</label>
             <input id="eDepartments" class="form-control" placeholder="AI, CS">
           </div>
           <div class="col-md-2 d-grid">
-            <button class="btn btn-primary" type="button" onclick="updateRole()">Update Role & Scope</button>
+            <button class="btn btn-primary" type="button" onclick="updateRole()">{% if LANGUAGE_CODE == 'ar' %}تحديث الدور والصلاحيات{% else %}Update Role & Scope{% endif %}</button>
           </div>
           <div class="col-md-2 d-grid">
-            <button class="btn btn-outline-warning" type="button" onclick="resetPassword()">Reset Password</button>
+            <button class="btn btn-outline-warning" type="button" onclick="resetPassword()">{% if LANGUAGE_CODE == 'ar' %}إعادة تعيين كلمة المرور{% else %}Reset Password{% endif %}</button>
           </div>
           <div class="col-md-2 d-grid">
-            <button class="btn btn-danger" type="button" onclick="deleteUser()">Delete User</button>
+            <button class="btn btn-danger" type="button" onclick="deleteUser()">{% if LANGUAGE_CODE == 'ar' %}حذف المستخدم{% else %}Delete User{% endif %}</button>
           </div>
         </div>
       </div>
@@ -299,29 +299,29 @@
            ═══════════════════════════════════════════════════════ -->
       <div class="um-toolbar">
         <div class="um-search">
-          <input id="umSearch" class="form-control" type="search" placeholder="Search users…" oninput="debouncedFilter()">
+          <input id="umSearch" class="form-control" type="search" placeholder="{% if LANGUAGE_CODE == 'ar' %}البحث عن مستخدمين…{% else %}Search users…{% endif %}" oninput="debouncedFilter()">
         </div>
         <select id="umRoleFilter" class="form-select" style="width:auto;min-width:140px;" onchange="filterTable()">
-          <option value="">All Roles</option>
-          <option value="SUPER_ADMIN">Super Admin</option>
-          <option value="GENERAL_ACADEMIC_ADVISOR">Gen. Advisor</option>
-          <option value="ADVISOR">Advisor</option>
+          <option value="">{% if LANGUAGE_CODE == 'ar' %}جميع الأدوار{% else %}All Roles{% endif %}</option>
+          <option value="SUPER_ADMIN">{% if LANGUAGE_CODE == 'ar' %}مشرف عام{% else %}Super Admin{% endif %}</option>
+          <option value="GENERAL_ACADEMIC_ADVISOR">{% if LANGUAGE_CODE == 'ar' %}مرشد عام{% else %}Gen. Advisor{% endif %}</option>
+          <option value="ADVISOR">{% if LANGUAGE_CODE == 'ar' %}مرشد{% else %}Advisor{% endif %}</option>
         </select>
         <select id="umStatusFilter" class="form-select" style="width:auto;min-width:120px;" onchange="filterTable()">
-          <option value="">All Status</option>
-          <option value="active">Active</option>
-          <option value="disabled">Disabled</option>
+          <option value="">{% if LANGUAGE_CODE == 'ar' %}جميع الحالات{% else %}All Status{% endif %}</option>
+          <option value="active">{% if LANGUAGE_CODE == 'ar' %}نشط{% else %}Active{% endif %}</option>
+          <option value="disabled">{% if LANGUAGE_CODE == 'ar' %}معطّل{% else %}Disabled{% endif %}</option>
         </select>
-        <button class="btn btn-outline-secondary btn-sm" type="button" onclick="loadUsers()"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></span> Refresh</button>
-        <button class="btn btn-outline-secondary btn-sm" type="button" onclick="exportCSV()"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span> Export CSV</button>
+        <button class="btn btn-outline-secondary btn-sm" type="button" onclick="loadUsers()"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></span> {% if LANGUAGE_CODE == 'ar' %}تحديث{% else %}Refresh{% endif %}</button>
+        <button class="btn btn-outline-secondary btn-sm" type="button" onclick="exportCSV()"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span> {% if LANGUAGE_CODE == 'ar' %}تصدير CSV{% else %}Export CSV{% endif %}</button>
       </div>
 
       <!-- Bulk actions bar -->
       <div class="um-bulk-bar" id="bulkBar" role="status" aria-live="polite">
-        <span><span class="um-bulk-count" id="bulkCount">0</span> selected</span>
-        <button class="btn btn-sm btn-outline-dark" type="button" onclick="bulkDisable()">Disable Selected</button>
-        <button class="btn btn-sm btn-outline-success" type="button" onclick="bulkEnable()">Enable Selected</button>
-        <button class="btn btn-sm btn-outline-secondary" type="button" onclick="clearBulk()">Clear</button>
+        <span><span class="um-bulk-count" id="bulkCount">0</span> {% if LANGUAGE_CODE == 'ar' %}محدد{% else %}selected{% endif %}</span>
+        <button class="btn btn-sm btn-outline-dark" type="button" onclick="bulkDisable()">{% if LANGUAGE_CODE == 'ar' %}تعطيل المحدد{% else %}Disable Selected{% endif %}</button>
+        <button class="btn btn-sm btn-outline-success" type="button" onclick="bulkEnable()">{% if LANGUAGE_CODE == 'ar' %}تفعيل المحدد{% else %}Enable Selected{% endif %}</button>
+        <button class="btn btn-sm btn-outline-secondary" type="button" onclick="clearBulk()">{% if LANGUAGE_CODE == 'ar' %}مسح{% else %}Clear{% endif %}</button>
       </div>
 
       <!-- ═══════════════════════════════════════════════════════
@@ -332,21 +332,21 @@
           <thead>
             <tr>
               <th scope="col" style="width:32px;"><input type="checkbox" class="um-check" id="umCheckAll" onclick="toggleAllChecks(this)"></th>
-              <th scope="col" data-sort="text">Username</th>
-              <th scope="col" data-sort="text">Role</th>
-              <th scope="col" data-sort="text">Advisor ID</th>
-              <th scope="col" data-sort="text">Departments</th>
-              <th scope="col" data-sort="text">Status</th>
-              <th scope="col" data-sort="text">Last Login</th>
-              <th scope="col" data-sort="text">Created</th>
-              <th scope="col" style="width:100px;">Actions</th>
+              <th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}اسم المستخدم{% else %}Username{% endif %}</th>
+              <th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}الدور{% else %}Role{% endif %}</th>
+              <th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}معرّف المرشد{% else %}Advisor ID{% endif %}</th>
+              <th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}الأقسام{% else %}Departments{% endif %}</th>
+              <th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}الحالة{% else %}Status{% endif %}</th>
+              <th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}آخر دخول{% else %}Last Login{% endif %}</th>
+              <th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}تاريخ الإنشاء{% else %}Created{% endif %}</th>
+              <th scope="col" style="width:100px;">{% if LANGUAGE_CODE == 'ar' %}الإجراءات{% else %}Actions{% endif %}</th>
             </tr>
           </thead>
           <tbody>
             <tr><td colspan="9">
               <div class="um-empty">
                 <span class="um-empty-icon"><span class="i" aria-hidden="true" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span></span>
-                <div class="um-empty-title">Loading users…</div>
+                <div class="um-empty-title">{% if LANGUAGE_CODE == 'ar' %}جارٍ تحميل المستخدمين…{% else %}Loading users…{% endif %}</div>
               </div>
             </td></tr>
           </tbody>
