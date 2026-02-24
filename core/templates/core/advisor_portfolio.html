@@ -342,11 +342,97 @@ let batchSelected = new Set();
 let selectedSid = null;
 
 const IS_AR = document.documentElement.lang === 'ar';
+
+const T = {
+  // ── Clipboard ──
+  copied:             IS_AR ? 'تم النسخ'                            : 'Copied to clipboard',
+  copyFailed:         IS_AR ? 'فشل النسخ — استخدم Ctrl+C'           : 'Copy failed — use Ctrl+C',
+
+  // ── Advisors dropdown ──
+  selectAdvisor:      IS_AR ? 'اختر مرشدًا…'                        : 'Select advisor…',
+  failedLoadAdvisors: IS_AR ? 'تعذّر تحميل قائمة المرشدين'          : 'Failed to load advisors list',
+
+  // ── Load students ──
+  loadingStudents:    IS_AR ? 'جارٍ تحميل الطلاب…'                  : 'Loading students…',
+  failedLoadStudents: IS_AR ? 'تعذّر تحميل الطلاب'                  : 'Failed to load students',
+  mappingNotReady:    IS_AR ? 'ربط الطلاب بالمرشدين غير جاهز بعد.'  : 'Student-advisor mapping is not ready yet.',
+  mappingNotReadyShort: IS_AR ? 'الربط غير جاهز'                    : 'Mapping not ready',
+  nStudents:       (n) => IS_AR ? `${n} طالب`                       : `${n} students`,
+  loadedStudents:  (n) => IS_AR ? `تم تحميل ${n} طالب`              : `Loaded ${n} students`,
+  networkFailure:     IS_AR ? 'خطأ في الاتصال'                       : 'Network failure',
+
+  // ── Clear state ──
+  noAdvisor:          IS_AR ? 'لا يوجد مرشد'                        : 'No advisor',
+  zeroStudents:       IS_AR ? '0 طالب'                               : '0 students',
+  noAdvisorSelected:  IS_AR ? 'لم يتم اختيار مرشد'                  : 'No advisor selected',
+  chooseAdvisorHint:  IS_AR ? 'اختر مرشدًا أعلاه لتحميل قائمة طلابه' : 'Choose an advisor above to load their roster',
+
+  // ── Insights ──
+  veryHighRisk:    (n) => IS_AR ? `${n} خطورة عالية جدًا`           : `${n} very high risk`,
+  lowGpaInsight:   (n) => IS_AR ? `${n} معدل أقل من 2.0`            : `${n} GPA < 2.0`,
+  hpMissing2Plus:  (n) => IS_AR ? `${n} بنقص ≥2 مقررات ذات أولوية`  : `${n} with 2+ HP missing`,
+  zeroTermHours:   (n) => IS_AR ? `${n} بدون ساعات هذا الفصل`       : `${n} zero current-term hours`,
+
+  // ── Table status ──
+  noStudentsMatch:    IS_AR ? 'لم يُعثر على طلاب مطابقين'           : 'No students match filters',
+  showingRange:   (s,e,t) => IS_AR ? `عرض <strong>${s}–${e}</strong> من <strong>${t}</strong> طالب` : `Showing <strong>${s}–${e}</strong> of <strong>${t}</strong> students`,
+  attention:          IS_AR ? 'يحتاج متابعة'                         : 'Attention',
+  ok:                 IS_AR ? 'جيد'                                   : 'OK',
+  expandDetails:      IS_AR ? 'عرض التفاصيل'                        : 'Expand details',
+
+  // ── Reason map ──
+  lowGpa:             IS_AR ? 'معدل منخفض'                          : 'Low GPA',
+  hpMissing:          IS_AR ? 'نقص أولوية عالية'                     : 'HP missing',
+  zeroHours:          IS_AR ? 'بدون ساعات'                           : 'Zero hours',
+
+  // ── Detail row labels ──
+  section:            IS_AR ? 'الشعبة'                               : 'Section',
+  status:             IS_AR ? 'الحالة'                               : 'Status',
+  termHours:          IS_AR ? 'ساعات الفصل'                          : 'Term Hours',
+  earnedReg:          IS_AR ? 'مكتسبة / مسجلة'                      : 'Earned / Reg',
+  regNo:              IS_AR ? 'رقم القيد'                            : 'Reg No',
+  reasons:            IS_AR ? 'الأسباب'                              : 'Reasons',
+
+  // ── Drawer ──
+  close:              IS_AR ? 'إغلاق'                                : 'Close',
+  studentDetails:     IS_AR ? 'تفاصيل الطالب'                       : 'Student details',
+  none:               IS_AR ? 'لا يوجد'                              : 'None',
+  noHpMissing:        IS_AR ? 'لا توجد مقررات ذات أولوية عالية ناقصة.' : 'No high-priority missing courses.',
+  needsAttention:     IS_AR ? 'يحتاج متابعة — '                      : 'Needs attention — ',
+  academicInfo:       IS_AR ? 'المعلومات الأكاديمية'                 : 'Academic Info',
+  gpa:                IS_AR ? 'المعدل التراكمي'                      : 'GPA',
+  riskScore:          IS_AR ? 'درجة الخطورة'                        : 'Risk Score',
+  registrationNo:     IS_AR ? 'رقم القيد'                            : 'Registration No',
+  credits:            IS_AR ? 'الساعات'                              : 'Credits',
+  earned:             IS_AR ? 'المكتسبة'                             : 'Earned',
+  registered:         IS_AR ? 'المسجلة'                              : 'Registered',
+  highPriorityMissing:IS_AR ? 'مقررات ذات أولوية عالية ناقصة'        : 'High Priority Missing',
+  openPlanner:        IS_AR ? 'فتح مخطط الجدول'                      : 'Open Timetable Builder',
+  copyId:             IS_AR ? 'نسخ المعرّف'                          : 'Copy ID',
+  copyHpCourses:      IS_AR ? 'نسخ المقررات ذات الأولوية'            : 'Copy HP courses',
+
+  // ── HP table headers ──
+  course:             IS_AR ? 'المقرر'                               : 'Course',
+  score:              IS_AR ? 'الدرجة'                               : 'Score',
+  bucket:             IS_AR ? 'الفئة'                                : 'Bucket',
+  thisParity:         IS_AR ? 'هذا الطرف'                            : 'This parity',
+  other:              IS_AR ? 'آخر'                                  : 'Other',
+
+  // ── GPA chart ──
+  nStudentsTitle:  (n) => IS_AR ? `${n} طالب`                       : `${n} students`,
+
+  // ── Batch & export ──
+  noStudentsSelected: IS_AR ? 'لم يتم اختيار طلاب'                  : 'No students selected',
+  exportedStudents:(n) => IS_AR ? `تم تصدير ${n} طالب`               : `Exported ${n} students`,
+  noStudentsCopy:     IS_AR ? 'لا يوجد طلاب للنسخ'                   : 'No students to copy',
+  noHighRisk:         IS_AR ? 'لا يوجد طلاب بخطورة عالية'            : 'No high-risk students',
+};
+
 /* q, esc, getCookie, csrfToken, csrfHeaders — provided by shared-utils.js */
 
 async function copyText(text) {
-  try { await navigator.clipboard.writeText(text); notify.success('Copied to clipboard'); }
-  catch { notify.warning('Copy failed — use Ctrl+C'); }
+  try { await navigator.clipboard.writeText(text); notify.success(T.copied); }
+  catch { notify.warning(T.copyFailed); }
 }
 
 /* notify — provided by notify.js */
@@ -360,14 +446,14 @@ async function loadAdvisors() {
     const data = await res.json();
     if (!res.ok || !Array.isArray(data.items)) return;
     const sel = q('apAdvisorSelect');
-    sel.innerHTML = `<option value="">${IS_AR ? 'اختر مرشدًا…' : 'Select advisor…'}</option>` +
+    sel.innerHTML = `<option value="">${T.selectAdvisor}</option>` +
       data.items.map(a => `<option value="${a.advisor_id}">${a.advisor_id} — ${a.full_name} (${a.department})</option>`).join('');
 
     // Auto-select if advisor_id is in URL
     const params = new URLSearchParams(location.search);
     const urlAdvisor = params.get('advisor_id') || params.get('advisor');
     if (urlAdvisor) { sel.value = urlAdvisor; loadStudents(urlAdvisor); }
-  } catch { notify.error('Failed to load advisors list'); }
+  } catch { notify.error(T.failedLoadAdvisors); }
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -386,7 +472,7 @@ async function loadStudents(advisorId) {
   updateBatchBar();
 
   const tbody = q('apTable').querySelector('tbody');
-  tbody.innerHTML = '<tr><td colspan="9"><div class="ap-empty"><span class="ap-empty-icon"><span class="i" style="width:32px;height:32px" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg></span></span><div class="ap-empty-title">Loading students…</div></div></td></tr>';
+  tbody.innerHTML = `<tr><td colspan="9"><div class="ap-empty"><span class="ap-empty-icon"><span class="i" style="width:32px;height:32px" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg></span></span><div class="ap-empty-title">${T.loadingStudents}</div></div></td></tr>`;
 
   try {
     const res = await fetch(`/report/students-by-advisor/?advisor_id=${encodeURIComponent(advisorId)}`);
@@ -394,12 +480,12 @@ async function loadStudents(advisorId) {
     if (!res.ok || !Array.isArray(data?.items)) {
       const msg = data?.error || data?.message || `HTTP ${res.status}`;
       tbody.innerHTML = `<tr><td colspan="9" class="text-danger small"><span class="i" style="width:14px;height:14px;vertical-align:-2px" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span> ${esc(msg)}</td></tr>`;
-      notify.error('Failed to load students', msg.slice(0,80));
+      notify.error(T.failedLoadStudents, msg.slice(0,80));
       return;
     }
     if (data.mapping_ready === false) {
-      tbody.innerHTML = '<tr><td colspan="9" class="empty-note">Student-advisor mapping is not ready yet.</td></tr>';
-      notify.warning('Mapping not ready');
+      tbody.innerHTML = `<tr><td colspan="9" class="empty-note">${T.mappingNotReady}</td></tr>`;
+      notify.warning(T.mappingNotReadyShort);
       return;
     }
 
@@ -407,7 +493,7 @@ async function loadStudents(advisorId) {
     summaryCache = data.summary || {};
 
     q('apAdvisorChip').textContent = advisorId;
-    q('apCountChip').textContent = `${allStudents.length} students`;
+    q('apCountChip').textContent = T.nStudents(allStudents.length);
     q('apLoadedLabel').style.display = '';
     q('apLoadedTime').textContent = new Date().toLocaleTimeString();
     q('apMetricsWrap').style.display = '';
@@ -415,10 +501,10 @@ async function loadStudents(advisorId) {
     updateMetrics();
     updateCsvLink();
     apFilter();
-    notify.success(`Loaded ${allStudents.length} students`, advisorId);
+    notify.success(T.loadedStudents(allStudents.length), advisorId);
   } catch (err) {
     tbody.innerHTML = `<tr><td colspan="9" class="text-danger small"><span class="i" style="width:14px;height:14px;vertical-align:-2px" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span> Network failure — ${esc(String(err))}</td></tr>`;
-    notify.error('Network failure');
+    notify.error(T.networkFailure);
   }
 }
 
@@ -429,10 +515,10 @@ function clearPortfolio() {
   filteredStudents = [];
   q('apMetricsWrap').style.display = 'none';
   q('apLoadedLabel').style.display = 'none';
-  q('apAdvisorChip').textContent = 'No advisor';
-  q('apCountChip').textContent = '0 students';
+  q('apAdvisorChip').textContent = T.noAdvisor;
+  q('apCountChip').textContent = T.zeroStudents;
   const tbody = q('apTable').querySelector('tbody');
-  tbody.innerHTML = '<tr><td colspan="9"><div class="ap-empty"><span class="ap-empty-icon"><span class="i" style="width:32px;height:32px" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span></span><div class="ap-empty-title">No advisor selected</div><div class="ap-empty-hint">Choose an advisor above to load their roster</div></div></td></tr>';
+  tbody.innerHTML = `<tr><td colspan="9"><div class="ap-empty"><span class="ap-empty-icon"><span class="i" style="width:32px;height:32px" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span></span><div class="ap-empty-title">${T.noAdvisorSelected}</div><div class="ap-empty-hint">${T.chooseAdvisorHint}</div></div></td></tr>`;
   q('apShowing').innerHTML = '—';
   q('apPagination').innerHTML = '';
   q('apInsights').innerHTML = '';
@@ -458,10 +544,10 @@ function updateMetrics() {
   const zero = Number(s.zero_current_term_hours_count || 0);
   const lowGpa = Number(s.low_gpa_count || 0);
   const chips = [];
-  if (vhr > 0) chips.push(`<span class="ap-insight ap-insight-danger"><span class="i" style="width:12px;height:12px" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="currentColor"/></svg></span> ${vhr} very high risk</span>`);
-  if (lowGpa > 0) chips.push(`<span class="ap-insight ap-insight-danger"><span class="i" style="width:12px;height:12px" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="22 17 13.5 8.5 8.5 13.5 2 7"/><polyline points="16 17 22 17 22 11"/></svg></span> ${lowGpa} GPA &lt; 2.0</span>`);
-  if (twoPlus > 0) chips.push(`<span class="ap-insight ap-insight-warn"><span class="i" style="width:12px;height:12px" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span> ${twoPlus} with 2+ HP missing</span>`);
-  if (zero > 0) chips.push(`<span class="ap-insight ap-insight-warn"><span class="i" style="width:12px;height:12px" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span> ${zero} zero current-term hours</span>`);
+  if (vhr > 0) chips.push(`<span class="ap-insight ap-insight-danger"><span class="i" style="width:12px;height:12px" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="currentColor"/></svg></span> ${T.veryHighRisk(vhr)}</span>`);
+  if (lowGpa > 0) chips.push(`<span class="ap-insight ap-insight-danger"><span class="i" style="width:12px;height:12px" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="22 17 13.5 8.5 8.5 13.5 2 7"/><polyline points="16 17 22 17 22 11"/></svg></span> ${T.lowGpaInsight(lowGpa)}</span>`);
+  if (twoPlus > 0) chips.push(`<span class="ap-insight ap-insight-warn"><span class="i" style="width:12px;height:12px" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span> ${T.hpMissing2Plus(twoPlus)}</span>`);
+  if (zero > 0) chips.push(`<span class="ap-insight ap-insight-warn"><span class="i" style="width:12px;height:12px" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span> ${T.zeroTermHours(zero)}</span>`);
   q('apInsights').innerHTML = chips.join('');
 
   // Program breakdown pills
@@ -487,7 +573,7 @@ function buildGpaChart() {
   const max = Math.max(...buckets, 1);
   const colors = ['ap-gpa-bar-danger', 'ap-gpa-bar-warn', 'ap-gpa-bar-ok', 'ap-gpa-bar-great'];
   q('apGpaChart').innerHTML = buckets.map((n, i) =>
-    `<div class="ap-gpa-bar ${colors[i]}" style="height:${Math.max(n/max*100, 4)}%" title="${n} students"></div>`
+    `<div class="ap-gpa-bar ${colors[i]}" style="height:${Math.max(n/max*100, 4)}%" title="${T.nStudentsTitle(n)}"></div>`
   ).join('');
 }
 
@@ -542,8 +628,8 @@ function renderPage() {
   const pageRows = filteredStudents.slice(start, start + PAGE_SIZE);
 
   q('apShowing').innerHTML = total === 0
-    ? 'No students match filters'
-    : `Showing <strong>${start + 1}–${Math.min(start + PAGE_SIZE, total)}</strong> of <strong>${total}</strong> students`;
+    ? T.noStudentsMatch
+    : T.showingRange(start + 1, Math.min(start + PAGE_SIZE, total), total);
 
   renderPagination(pages);
   renderTable(pageRows);
@@ -569,7 +655,7 @@ function goPage(p) { currentPage = p; renderPage(); q('apTable').scrollIntoView(
 function renderTable(rows) {
   const tbody = q('apTable').querySelector('tbody');
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="9"><div class="ap-empty"><span class="ap-empty-icon"><span class="i" style="width:32px;height:32px" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span></span><div class="ap-empty-title">No students match filters</div></div></td></tr>';
+    tbody.innerHTML = `<tr><td colspan="9"><div class="ap-empty"><span class="ap-empty-icon"><span class="i" style="width:32px;height:32px" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span></span><div class="ap-empty-title">${T.noStudentsMatch}</div></div></td></tr>`;
     return;
   }
 
@@ -592,8 +678,8 @@ function renderTable(rows) {
       : '<span style="color:var(--t3);font-size:11px;">—</span>';
 
     const attCell = s.needs_attention
-      ? '<span class="pill-status pill-r"><span class="pill-dot"></span>Attention</span>'
-      : '<span style="color:var(--t3);font-size:11px;">OK</span>';
+      ? `<span class="pill-status pill-r"><span class="pill-dot"></span>${T.attention}</span>`
+      : `<span style="color:var(--t3);font-size:11px;">${T.ok}</span>`;
 
     const trCls = [
       'cr-row',
@@ -604,7 +690,7 @@ function renderTable(rows) {
     const detailId = `apd-${sid}`;
     const plannerHref = `/planner/?student=${encodeURIComponent(sid)}`;
 
-    const reasonMap = { low_gpa:'Low GPA', high_priority_missing:'HP missing', zero_current_term_hours:'Zero hours' };
+    const reasonMap = { low_gpa: T.lowGpa, high_priority_missing: T.hpMissing, zero_current_term_hours: T.zeroHours };
     const reasons = (Array.isArray(s.attention_reasons) ? s.attention_reasons : [])
       .map(r => `<span class="pill-status pill-a" style="font-size:10px;padding:2px 7px;"><span class="pill-dot"></span>${reasonMap[r]||r}</span>`).join(' ') || '<span style="color:var(--t3)">—</span>';
 
@@ -618,18 +704,18 @@ function renderTable(rows) {
       <td>${riskPill}</td>
       <td>${hpCell}</td>
       <td class="cr-actions" onclick="event.stopPropagation()">
-        <button class="btn-circle ap-expand" data-detail="${detailId}" aria-expanded="false" onclick="toggleDetail(this)" title="Expand details"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></span></button>
+        <button class="btn-circle ap-expand" data-detail="${detailId}" aria-expanded="false" onclick="toggleDetail(this)" title="${T.expandDetails}"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></span></button>
       </td>
     </tr>
     <tr id="${detailId}" class="ap-detail-row" style="display:none;">
       <td colspan="9">
         <div class="ap-detail-grid">
-          <div><span class="ap-detail-label">Section</span>${esc(s.section||'—')}</div>
-          <div><span class="ap-detail-label">Status</span>${esc(s.status||'—')}</div>
-          <div><span class="ap-detail-label">Term Hours</span>${s.current_term_registered_hours||0}</div>
-          <div><span class="ap-detail-label">Earned / Reg</span>${s.total_earned_credits||0} / ${s.total_registered_credits||0}</div>
-          <div><span class="ap-detail-label">Reg No</span>${esc(s.registration_no||'—')}</div>
-          <div class="ap-detail-full"><span class="ap-detail-label">Reasons</span>${reasons}</div>
+          <div><span class="ap-detail-label">${T.section}</span>${esc(s.section||'—')}</div>
+          <div><span class="ap-detail-label">${T.status}</span>${esc(s.status||'—')}</div>
+          <div><span class="ap-detail-label">${T.termHours}</span>${s.current_term_registered_hours||0}</div>
+          <div><span class="ap-detail-label">${T.earnedReg}</span>${s.total_earned_credits||0} / ${s.total_registered_credits||0}</div>
+          <div><span class="ap-detail-label">${T.regNo}</span>${esc(s.registration_no||'—')}</div>
+          <div class="ap-detail-full"><span class="ap-detail-label">${T.reasons}</span>${reasons}</div>
         </div>
       </td>
     </tr>`;
@@ -655,52 +741,52 @@ function openDrawer(sid) {
   const gpa = s.gpa == null ? '—' : Number(s.gpa).toFixed(2);
   const rs = Number(s.risk_score || 0);
   const riskCls = rs >= 8 ? 'ap-risk-high' : rs >= 4 ? 'ap-risk-mid' : 'ap-risk-low';
-  const reasonMap = { low_gpa:'Low GPA', high_priority_missing:'HP missing', zero_current_term_hours:'Zero hours' };
-  const reasons = (Array.isArray(s.attention_reasons) ? s.attention_reasons : []).map(r => reasonMap[r]||r).join(', ') || 'None';
+  const reasonMap = { low_gpa: T.lowGpa, high_priority_missing: T.hpMissing, zero_current_term_hours: T.zeroHours };
+  const reasons = (Array.isArray(s.attention_reasons) ? s.attention_reasons : []).map(r => reasonMap[r]||r).join(', ') || T.none;
   const hpList = Array.isArray(s.high_priority_missing_courses) ? s.high_priority_missing_courses : [];
   const hpHtml = hpList.length
-    ? `<div class="table-wrap" style="max-height:200px;margin-top:0.4rem;"><table class="table table-sm mb-0"><thead><tr><th scope="col">Course</th><th scope="col">Score</th><th scope="col">Bucket</th></tr></thead><tbody>${hpList.map(c=>`<tr><td>${esc(c.course_code||'—')}</td><td>${Number(c.score||0).toFixed(2)}</td><td>${c.bucket==='this_parity'?'This parity':'Other'}</td></tr>`).join('')}</tbody></table></div>`
-    : '<span style="color:var(--muted-light);font-size:0.82rem;">No high-priority missing courses.</span>';
+    ? `<div class="table-wrap" style="max-height:200px;margin-top:0.4rem;"><table class="table table-sm mb-0"><thead><tr><th scope="col">${T.course}</th><th scope="col">${T.score}</th><th scope="col">${T.bucket}</th></tr></thead><tbody>${hpList.map(c=>`<tr><td>${esc(c.course_code||'—')}</td><td>${Number(c.score||0).toFixed(2)}</td><td>${c.bucket==='this_parity'?T.thisParity:T.other}</td></tr>`).join('')}</tbody></table></div>`
+    : `<span style="color:var(--muted-light);font-size:0.82rem;">${T.noHpMissing}</span>`;
 
   const plannerHref = `/planner/?student=${encodeURIComponent(sid)}`;
 
   q('apDrawerWrap').innerHTML = `
     <div class="ap-drawer-backdrop" onclick="closeDrawer()"></div>
-    <div class="ap-drawer" role="dialog" aria-modal="true" aria-label="Student details">
-      <button class="ap-drawer-close" onclick="closeDrawer()" aria-label="Close"><span class="i" style="width:14px;height:14px" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span></button>
+    <div class="ap-drawer" role="dialog" aria-modal="true" aria-label="${T.studentDetails}">
+      <button class="ap-drawer-close" onclick="closeDrawer()" aria-label="${T.close}"><span class="i" style="width:14px;height:14px" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span></button>
       <div class="ap-drawer-name">${esc(s.name || '—')}</div>
       <div class="ap-drawer-id">ID: ${sid} · ${esc(s.program||'—')} · ${esc(s.section||'—')}</div>
 
-      ${s.needs_attention ? '<div class="meta-banner meta-warn mb-3" style="font-size:0.82rem;"><span class="i" style="width:14px;height:14px;vertical-align:-2px" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span> Needs attention — ' + esc(reasons) + '</div>' : ''}
+      ${s.needs_attention ? '<div class="meta-banner meta-warn mb-3" style="font-size:0.82rem;"><span class="i" style="width:14px;height:14px;vertical-align:-2px" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span> ' + T.needsAttention + esc(reasons) + '</div>' : ''}
 
       <div class="ap-drawer-section">
-        <div class="ap-drawer-section-title">Academic Info</div>
+        <div class="ap-drawer-section-title">${T.academicInfo}</div>
         <div class="ap-drawer-kv">
-          <div class="ap-drawer-kv-item"><div class="ap-drawer-kv-label">GPA</div><strong>${gpa}</strong></div>
-          <div class="ap-drawer-kv-item"><div class="ap-drawer-kv-label">Risk Score</div><span class="risk-pill ${riskCls}">${rs.toFixed(2)}</span></div>
-          <div class="ap-drawer-kv-item"><div class="ap-drawer-kv-label">Status</div>${esc(s.status||'—')}</div>
-          <div class="ap-drawer-kv-item"><div class="ap-drawer-kv-label">Registration No</div>${esc(s.registration_no||'—')}</div>
+          <div class="ap-drawer-kv-item"><div class="ap-drawer-kv-label">${T.gpa}</div><strong>${gpa}</strong></div>
+          <div class="ap-drawer-kv-item"><div class="ap-drawer-kv-label">${T.riskScore}</div><span class="risk-pill ${riskCls}">${rs.toFixed(2)}</span></div>
+          <div class="ap-drawer-kv-item"><div class="ap-drawer-kv-label">${T.status}</div>${esc(s.status||'—')}</div>
+          <div class="ap-drawer-kv-item"><div class="ap-drawer-kv-label">${T.registrationNo}</div>${esc(s.registration_no||'—')}</div>
         </div>
       </div>
 
       <div class="ap-drawer-section">
-        <div class="ap-drawer-section-title">Credits</div>
+        <div class="ap-drawer-section-title">${T.credits}</div>
         <div class="ap-drawer-kv">
-          <div class="ap-drawer-kv-item"><div class="ap-drawer-kv-label">Term Hours</div><strong>${s.current_term_registered_hours||0}</strong></div>
-          <div class="ap-drawer-kv-item"><div class="ap-drawer-kv-label">Earned</div>${s.total_earned_credits||0}</div>
-          <div class="ap-drawer-kv-item"><div class="ap-drawer-kv-label">Registered</div>${s.total_registered_credits||0}</div>
+          <div class="ap-drawer-kv-item"><div class="ap-drawer-kv-label">${T.termHours}</div><strong>${s.current_term_registered_hours||0}</strong></div>
+          <div class="ap-drawer-kv-item"><div class="ap-drawer-kv-label">${T.earned}</div>${s.total_earned_credits||0}</div>
+          <div class="ap-drawer-kv-item"><div class="ap-drawer-kv-label">${T.registered}</div>${s.total_registered_credits||0}</div>
         </div>
       </div>
 
       <div class="ap-drawer-section">
-        <div class="ap-drawer-section-title">High Priority Missing</div>
+        <div class="ap-drawer-section-title">${T.highPriorityMissing}</div>
         ${hpHtml}
       </div>
 
       <div class="ap-drawer-actions">
-        <a href="${plannerHref}" target="_blank" class="btn btn-sm btn-outline-primary"><span class="i" style="width:14px;height:14px;vertical-align:-2px" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span> Open Timetable Builder</a>
-        <button class="btn btn-sm btn-outline-secondary" onclick="copyText('${sid}')">Copy ID</button>
-        ${hpList.length ? `<button class="btn btn-sm btn-outline-secondary" onclick="copyHpCourses('${sid}')">Copy HP courses</button>` : ''}
+        <a href="${plannerHref}" target="_blank" class="btn btn-sm btn-outline-primary"><span class="i" style="width:14px;height:14px;vertical-align:-2px" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span> ${T.openPlanner}</a>
+        <button class="btn btn-sm btn-outline-secondary" onclick="copyText('${sid}')">${T.copyId}</button>
+        ${hpList.length ? `<button class="btn btn-sm btn-outline-secondary" onclick="copyHpCourses('${sid}')">${T.copyHpCourses}</button>` : ''}
       </div>
     </div>`;
 
@@ -805,7 +891,7 @@ function copySelectedIds() {
 }
 
 function exportSelectedCsv() {
-  if (!batchSelected.size) { notify.warning('No students selected'); return; }
+  if (!batchSelected.size) { notify.warning(T.noStudentsSelected); return; }
   const selected = allStudents.filter(s => batchSelected.has(String(s.student_id)));
   const header = 'student_id,name,program,section,gpa,risk_score,needs_attention,has_hp_missing,term_hours';
   const rows = selected.map(s => [s.student_id,`"${s.name||''}"`,s.program||'',s.section||'',s.gpa??'',s.risk_score||0,s.needs_attention?1:0,s.has_high_priority_missing?1:0,s.current_term_registered_hours||0].join(','));
@@ -816,20 +902,20 @@ function exportSelectedCsv() {
   a.download = `portfolio_selected_${new Date().toISOString().slice(0,10)}.csv`;
   a.click();
   URL.revokeObjectURL(a.href);
-  notify.success(`Exported ${selected.length} students`);
+  notify.success(T.exportedStudents(selected.length));
 }
 
 /* ═══════════════════════════════════════════════════════════════
    COPY IDS + CSV LINK — Fix #5
    ═══════════════════════════════════════════════════════════════ */
 function copyFilteredIds() {
-  if (!filteredStudents.length) { notify.warning('No students to copy'); return; }
+  if (!filteredStudents.length) { notify.warning(T.noStudentsCopy); return; }
   copyText(filteredStudents.map(s => s.student_id).join(','));
 }
 
 function copyHighRiskIds() {
   const ids = allStudents.filter(s => Number(s.risk_score || 0) >= 8).map(s => s.student_id);
-  if (!ids.length) { notify.warning('No high-risk students'); return; }
+  if (!ids.length) { notify.warning(T.noHighRisk); return; }
   copyText(ids.join(','));
 }
 
