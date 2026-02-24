@@ -1,0 +1,726 @@
+{% extends "core/base.html" %}
+{% load i18n %}
+{% get_current_language as LANGUAGE_CODE %}
+
+{% block title %}{% if LANGUAGE_CODE == 'ar' %}جدول الاختبارات{% else %}Exam Timetable Builder{% endif %}{% endblock %}
+
+{% block extra_css %}
+  <style>
+    .et-panel { padding: 16px 20px; margin-bottom: 12px; border-radius: var(--radius); background: rgba(255,255,255,0.55); backdrop-filter: blur(20px) saturate(130%); -webkit-backdrop-filter: blur(20px) saturate(130%); border: 1px solid rgba(17,17,68,0.05); box-shadow: var(--shadow-card); }
+    .kpi { border: 1px solid rgba(17,17,68,0.05); border-radius: var(--radius); padding: .6rem; background: rgba(255,255,255,0.55); backdrop-filter: blur(20px) saturate(130%); -webkit-backdrop-filter: blur(20px) saturate(130%); box-shadow: var(--shadow-card); }
+    .kpi .k { font-size: .7rem; color: var(--t3); text-transform: uppercase; font-family: var(--font-mono); letter-spacing: 0.06em; font-weight: 700; }
+    .kpi .v { font-weight: 700; font-family: var(--font-serif); font-size: 1.4rem; color: var(--teal); }
+    .kpi .v.warn { color: var(--red, #dc3545); }
+    .et-history-item { cursor: pointer; padding: 6px 10px; border-radius: 6px; transition: background 0.15s; }
+    .et-history-item:hover { background: rgba(10,142,110,0.06); }
+    .et-history-item.active { background: rgba(10,142,110,0.10); font-weight: 600; }
+    .et-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; border-radius: 20px; font-size: .78rem; font-weight: 600; cursor: pointer; border: 1.5px solid var(--t4, #ccc); background: transparent; color: var(--t2, #555); transition: all 0.15s; user-select: none; }
+    .et-chip:hover { border-color: var(--teal, #0a8e6e); }
+    .et-chip.active { background: var(--teal, #0a8e6e); color: #fff; border-color: var(--teal, #0a8e6e); }
+    .et-chip input { display: none; }
+    .et-grid { width: 100%; border-collapse: collapse; }
+    .et-grid th, .et-grid td { border: 1px solid rgba(17,17,68,0.08); padding: 7px 6px; text-align: center; vertical-align: middle; }
+    .et-grid thead th { font-size: .73rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--t3, #666); background: rgba(10,142,110,0.04); white-space: nowrap; }
+    .et-grid tbody th { font-size: .78rem; font-weight: 700; white-space: nowrap; color: var(--t2, #333); background: rgba(10,142,110,0.04); min-width: 70px; }
+    .et-grid td { font-size: .82rem; font-weight: 600; min-width: 90px; }
+    .et-grid .et-empty { color: var(--t5, #a8a8be); font-weight: 400; font-size: .75rem; }
+    .et-grid .et-course { display: inline-block; padding: 3px 8px; border-radius: 6px; margin: 2px 1px; font-size: .78rem; font-weight: 600; }
+    .et-grid .et-overflow-row th, .et-grid .et-overflow-row td { background: rgba(220,53,69,0.06); }
+    .et-grid .et-highlight { outline: 2.5px solid var(--teal, #0a8e6e); outline-offset: -2px; }
+    .et-grid .et-dim { opacity: 0.25; }
+  </style>
+{% endblock %}
+
+{% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}جدول الاختبارات{% else %}Exam Timetable{% endif %}{% endblock %}
+
+{% block page_chips %}
+  <span class="ph-chip ph-chip-page">SUPER_ADMIN</span>
+  <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}إنشاء → جدولة → تقرير{% else %}Create → Schedule → Report{% endif %}</span>
+{% endblock %}
+
+{% block page_intro %}
+      <h2>{% if LANGUAGE_CODE == 'ar' %}أداة بناء جدول الاختبارات{% else %}Exam Timetable Builder{% endif %}</h2>
+      <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}إنشاء جداول اختبارات خالية من التعارض بناءً على بيانات تسجيل الطلاب.{% else %}Generate conflict-free exam schedules based on student enrollment data.{% endif %}</div>
+{% endblock %}
+
+{% block content %}
+  <!-- ─── Input Form ─── -->
+  <div class="et-panel">
+    <h6 class="mb-3">{% if LANGUAGE_CODE == 'ar' %}إعدادات الجدول{% else %}Timetable Settings{% endif %}</h6>
+    <div class="row g-2">
+      <div class="col-md-3">
+        <label class="form-label" for="etLabel">{% if LANGUAGE_CODE == 'ar' %}التسمية{% else %}Label{% endif %}</label>
+        <input id="etLabel" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثال: اختبارات نهائية{% else %}e.g. Final Exams{% endif %}">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label" for="etStartDay">{% if LANGUAGE_CODE == 'ar' %}يوم البداية{% else %}Starting day{% endif %}</label>
+        <select id="etStartDay" class="form-select">
+          <option value="Sun" selected>{% if LANGUAGE_CODE == 'ar' %}الأحد{% else %}Sunday{% endif %}</option>
+          <option value="Mon">{% if LANGUAGE_CODE == 'ar' %}الإثنين{% else %}Monday{% endif %}</option>
+          <option value="Tue">{% if LANGUAGE_CODE == 'ar' %}الثلاثاء{% else %}Tuesday{% endif %}</option>
+          <option value="Wed">{% if LANGUAGE_CODE == 'ar' %}الأربعاء{% else %}Wednesday{% endif %}</option>
+          <option value="Thu">{% if LANGUAGE_CODE == 'ar' %}الخميس{% else %}Thursday{% endif %}</option>
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label" for="etNumDays">{% if LANGUAGE_CODE == 'ar' %}عدد أيام الاختبارات{% else %}Exam days{% endif %}</label>
+        <input id="etNumDays" type="number" class="form-control" value="5" min="1" max="60">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label" for="etPeriods">{% if LANGUAGE_CODE == 'ar' %}الفترات (مفصولة بفاصلة){% else %}Periods (comma-separated){% endif %}</label>
+        <input id="etPeriods" class="form-control" value="08:00-10:00,10:30-12:30,13:00-15:00">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label" for="etMaxPerDay">{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى/يوم{% else %}Max exams/day{% endif %}</label>
+        <input id="etMaxPerDay" type="number" class="form-control" value="2" min="1" max="10">
+      </div>
+    </div>
+    <div class="mt-2">
+      <small class="text-secondary">{% if LANGUAGE_CODE == 'ar' %}الأيام المولّدة:{% else %}Generated days:{% endif %}</small>
+      <small id="dayPreview" class="font-monospace text-primary"></small>
+    </div>
+    <div class="row g-2 mt-2">
+      <div class="col-md-6">
+        <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}البرامج{% else %}Programs{% endif %} <small class="text-secondary" id="progCount"></small></label>
+        <div id="progList" class="d-flex flex-wrap gap-1 p-2 border rounded" style="min-height:36px;max-height:120px;overflow-y:auto;">
+          <small class="text-secondary">{% if LANGUAGE_CODE == 'ar' %}جارٍ التحميل...{% else %}Loading...{% endif %}</small>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}الشُّعب{% else %}Sections{% endif %} <small class="text-secondary" id="secCount"></small></label>
+        <div id="secList" class="d-flex flex-wrap gap-1 p-2 border rounded" style="min-height:36px;max-height:120px;overflow-y:auto;">
+          <small class="text-secondary">{% if LANGUAGE_CODE == 'ar' %}جارٍ التحميل...{% else %}Loading...{% endif %}</small>
+        </div>
+      </div>
+    </div>
+    <div class="mt-3 d-flex gap-2 align-items-center">
+      <button id="loadCoursesBtn" class="btn btn-outline-primary">{% if LANGUAGE_CODE == 'ar' %}تحميل المقررات{% else %}Load Courses{% endif %}</button>
+      <button id="buildBtn" class="btn btn-primary" disabled>{% if LANGUAGE_CODE == 'ar' %}بناء الجدول{% else %}Build Timetable{% endif %}</button>
+    </div>
+    <!-- Course preview list (populated after Load Courses) -->
+    <div id="coursePreview" class="mt-2" style="display:none;">
+      <div class="d-flex align-items-center gap-2 mb-1">
+        <label class="form-label mb-0">{% if LANGUAGE_CODE == 'ar' %}المقررات{% else %}Courses{% endif %} <small class="text-secondary" id="courseCount"></small></label>
+        <a href="#" id="toggleAllCourses" class="small text-decoration-none"></a>
+      </div>
+      <div id="courseList" class="d-flex flex-wrap gap-1 p-2 border rounded" style="min-height:36px;max-height:180px;overflow-y:auto;"></div>
+    </div>
+    <div id="etStatus" role="alert" aria-live="polite" class="alert alert-info mt-2 py-2 mb-0">{% if LANGUAGE_CODE == 'ar' %}جاهز. حدد الفلاتر ثم انقر تحميل المقررات.{% else %}Ready. Select filters then click Load Courses.{% endif %}</div>
+  </div>
+
+  <!-- ─── Results (hidden until built) ─── -->
+  <div id="etResults" style="display:none;">
+    <!-- KPI Row -->
+    <div class="et-panel">
+      <h6 class="mb-2">{% if LANGUAGE_CODE == 'ar' %}الملخص{% else %}Summary{% endif %}</h6>
+      <div class="row g-2">
+        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}المقررات{% else %}Courses{% endif %}</div><div class="v" id="kCourses">0</div></div></div>
+        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}الطلاب{% else %}Students{% endif %}</div><div class="v" id="kStudents">0</div></div></div>
+        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}الفترات المستخدمة{% else %}Slots used{% endif %}</div><div class="v" id="kSlots">0</div></div></div>
+        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}التعارضات{% else %}Conflicts{% endif %}</div><div class="v" id="kConflicts">0</div></div></div>
+      </div>
+      <div class="row g-2 mt-1">
+        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}حواف التعارض{% else %}Conflict edges{% endif %}</div><div class="v" id="kEdges">0</div></div></div>
+        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}أقصى اختبارات/يوم/طالب{% else %}Max exams/day/student{% endif %}</div><div class="v" id="kMaxDay">0</div></div></div>
+        <div class="col-md-3"><div class="kpi"><div class="k" id="kOverLabel">{% if LANGUAGE_CODE == 'ar' %}طلاب تجاوزوا الحد{% else %}Students over limit/day{% endif %}</div><div class="v" id="kOver2">0</div></div></div>
+      </div>
+      <div class="row g-2 mt-1">
+        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}مجموعات البرنامج/الفصل{% else %}Programme-term buckets{% endif %}</div><div class="v" id="kBuckets">0</div></div></div>
+        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}انتهاكات يوم المجموعة{% else %}Bucket day violations{% endif %}</div><div class="v" id="kBucketViol">0</div></div></div>
+      </div>
+    </div>
+
+    <!-- QA Warnings -->
+    <div id="qaWarnings" class="et-panel" style="display:none;">
+      <h6 class="mb-2" style="color:var(--red,#dc3545)">{% if LANGUAGE_CODE == 'ar' %}تحذيرات الجودة{% else %}QA Warnings{% endif %}</h6>
+      <div id="qaBody"></div>
+    </div>
+
+    <!-- Schedule Grid -->
+    <div class="et-panel">
+      <div class="d-flex align-items-center justify-content-between mb-2">
+        <h6 class="mb-0">{% if LANGUAGE_CODE == 'ar' %}جدول الاختبارات{% else %}Exam Schedule{% endif %}</h6>
+        <input id="schedFilter" class="form-control form-control-sm" style="max-width:300px" placeholder="{% if LANGUAGE_CODE == 'ar' %}تصفية: AI=برنامج، CS*=رمز المقرر{% else %}Filter: AI=program, CS*=course code{% endif %}">
+      </div>
+      <div class="table-responsive" id="schedGrid"></div>
+    </div>
+  </div>
+
+  <!-- ─── History ─── -->
+  <div class="et-panel">
+    <h6 class="mb-2">{% if LANGUAGE_CODE == 'ar' %}السجل السابق{% else %}Previous Runs{% endif %}</h6>
+    <div id="historyList"><small class="text-secondary">{% if LANGUAGE_CODE == 'ar' %}جارٍ التحميل...{% else %}Loading...{% endif %}</small></div>
+  </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const IS_AR = '{{ LANGUAGE_CODE }}' === 'ar';
+const T = {
+  ready:      IS_AR ? 'جاهز. حدد الفلاتر ثم انقر تحميل المقررات.' : 'Ready. Select filters then click Load Courses.',
+  building:   IS_AR ? 'جارٍ بناء الجدول...' : 'Building timetable...',
+  done:       IS_AR ? 'تم بناء الجدول بنجاح.' : 'Timetable built successfully.',
+  error:      IS_AR ? 'خطأ' : 'Error',
+  fillAll:    IS_AR ? 'يرجى ملء جميع الحقول.' : 'Please fill in all fields.',
+  noHistory:  IS_AR ? 'لا توجد عمليات سابقة.' : 'No previous runs.',
+  reqFailed:  IS_AR ? 'فشل الطلب' : 'Request failed',
+  loadingRun: IS_AR ? 'جارٍ تحميل النتائج...' : 'Loading results...',
+  sameSlot:   IS_AR ? 'الطالب {sid} لديه {n} اختبارات في نفس الفترة #{slot}: {courses}' : 'Student {sid} has {n} exams in same slot #{slot}: {courses}',
+  overflow:   IS_AR ? 'فترة إضافية (تجاوز)' : 'Overflow slot',
+  bucketViol: IS_AR ? 'مجموعة {prog}/فصل{term}: {courses} في نفس اليوم ({day})' : 'Bucket {prog}/Term{term}: {courses} on same day ({day})',
+  infeasible: IS_AR ? 'الجدول غير ممكن! المجموعات التالية تحتوي مقررات أكثر من الأيام المتاحة:' : 'Infeasible schedule! The following buckets have more courses than available days:',
+  infeasItem: IS_AR ? '{prog}/فصل{term}: {size} مقررات > {days} أيام ({courses})' : '{prog}/Term{term}: {size} courses > {days} days ({courses})',
+  loadingCourses: IS_AR ? 'جارٍ تحميل المقررات...' : 'Loading courses...',
+  coursesLoaded:  IS_AR ? 'تم تحميل {n} مقرر. اختر المقررات ثم انقر بناء الجدول.' : '{n} courses loaded. Select courses then click Build Timetable.',
+  noCourses:      IS_AR ? 'لا توجد مقررات مطابقة للفلاتر المحددة.' : 'No courses match the selected filters.',
+  selectAll:      IS_AR ? 'تحديد الكل' : 'Select all',
+  deselectAll:    IS_AR ? 'إلغاء تحديد الكل' : 'Deselect all',
+  loadFirst:      IS_AR ? 'يرجى تحميل المقررات أولاً.' : 'Please load courses first.',
+  noSelected:     IS_AR ? 'يرجى اختيار مقرر واحد على الأقل.' : 'Please select at least one course.',
+};
+
+const CSRF = document.querySelector('[name=csrfmiddlewaretoken]')?.value
+  || '{{ csrf_token }}';
+
+const $ = id => document.getElementById(id);
+
+/* ── Day label generator ── */
+const WORK_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu'];
+
+function generateDayLabels() {
+  const startDay = $('etStartDay').value;
+  const count    = parseInt($('etNumDays').value, 10) || 5;
+  const startIdx = WORK_DAYS.indexOf(startDay);
+  if (startIdx === -1 || count < 1) return [];
+
+  const days = [];
+  let week = 1;
+  const needPrefix = count > WORK_DAYS.length;
+
+  for (let i = 0; i < count; i++) {
+    const idx = (startIdx + i) % WORK_DAYS.length;
+    if (i > 0 && idx === 0) week++;
+    days.push(needPrefix ? `W${week}-${WORK_DAYS[idx]}` : WORK_DAYS[idx]);
+  }
+  return days;
+}
+
+function updateDayPreview() {
+  $('dayPreview').textContent = generateDayLabels().join(', ');
+}
+
+$('etStartDay').addEventListener('change', updateDayPreview);
+$('etNumDays').addEventListener('input', updateDayPreview);
+updateDayPreview();
+
+/* ── Filter chips (programs & sections) ── */
+function renderChips(containerId, items, countId) {
+  const box = $(containerId);
+  if (!items.length) {
+    box.innerHTML = `<small class="text-secondary">${IS_AR ? 'لا توجد بيانات' : 'None found'}</small>`;
+    $(countId).textContent = '';
+    return;
+  }
+  box.innerHTML = items.map(v =>
+    `<label class="et-chip active"><input type="checkbox" value="${v}" checked>${v}</label>`
+  ).join('');
+  box.querySelectorAll('.et-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const cb = chip.querySelector('input');
+      cb.checked = !cb.checked;
+      chip.classList.toggle('active', cb.checked);
+      updateChipCount(containerId, countId, items.length);
+    });
+  });
+  updateChipCount(containerId, countId, items.length);
+}
+
+function updateChipCount(containerId, countId, total) {
+  const checked = $(containerId).querySelectorAll('input:checked').length;
+  $(countId).textContent = checked === total
+    ? (IS_AR ? `(الكل ${total})` : `(all ${total})`)
+    : `(${checked}/${total})`;
+}
+
+function getCheckedValues(containerId) {
+  return [...$(containerId).querySelectorAll('input:checked')].map(cb => cb.value);
+}
+
+async function loadFilters() {
+  try {
+    const res = await fetch('/ops/exam-timetable/filters/', {
+      headers: { 'X-CSRFToken': CSRF },
+    });
+    const data = await res.json();
+    if (!data.ok) return;
+    renderChips('progList', data.programs ?? [], 'progCount');
+    renderChips('secList', data.sections ?? [], 'secCount');
+  } catch { /* ignore */ }
+}
+loadFilters();
+
+/* ── Step 1: Load Courses (preview) ── */
+let _coursesLoaded = false;
+
+function clearCoursePreview() {
+  $('coursePreview').style.display = 'none';
+  $('courseList').innerHTML = '';
+  $('courseCount').textContent = '';
+  $('buildBtn').disabled = true;
+  _coursesLoaded = false;
+}
+
+function renderCourseChips(courses) {
+  const box = $('courseList');
+  if (!courses.length) {
+    box.innerHTML = `<small class="text-secondary">${T.noCourses}</small>`;
+    $('courseCount').textContent = '';
+    $('toggleAllCourses').textContent = '';
+    $('buildBtn').disabled = true;
+    _coursesLoaded = false;
+    return;
+  }
+  box.innerHTML = courses.map(c =>
+    `<label class="et-chip active"><input type="checkbox" value="${c.course_code}" checked>${c.course_code} <small class="opacity-75">(${c.enrolled_count})</small></label>`
+  ).join('');
+  box.querySelectorAll('.et-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const cb = chip.querySelector('input');
+      cb.checked = !cb.checked;
+      chip.classList.toggle('active', cb.checked);
+      updateCourseCount(courses.length);
+    });
+  });
+  _coursesLoaded = true;
+  $('buildBtn').disabled = false;
+  updateCourseCount(courses.length);
+  updateToggleLabel();
+}
+
+function updateCourseCount(total) {
+  const checked = $('courseList').querySelectorAll('input:checked').length;
+  $('courseCount').textContent = checked === total
+    ? (IS_AR ? `(الكل ${total})` : `(all ${total})`)
+    : `(${checked}/${total})`;
+  updateToggleLabel();
+}
+
+function updateToggleLabel() {
+  const all = $('courseList').querySelectorAll('input[type=checkbox]');
+  const checked = $('courseList').querySelectorAll('input:checked');
+  $('toggleAllCourses').textContent = checked.length === all.length ? T.deselectAll : T.selectAll;
+}
+
+$('toggleAllCourses').addEventListener('click', (e) => {
+  e.preventDefault();
+  const all = $('courseList').querySelectorAll('input[type=checkbox]');
+  const checked = $('courseList').querySelectorAll('input:checked');
+  const newState = checked.length < all.length;
+  all.forEach(cb => {
+    cb.checked = newState;
+    cb.closest('.et-chip').classList.toggle('active', newState);
+  });
+  updateCourseCount(all.length);
+});
+
+// Clear course list when filters change
+['progList', 'secList'].forEach(id => {
+  $(id).addEventListener('click', () => { if (_coursesLoaded) clearCoursePreview(); });
+});
+
+$('loadCoursesBtn').addEventListener('click', async () => {
+  const programs = getCheckedValues('progList');
+  const sections = getCheckedValues('secList');
+
+  $('loadCoursesBtn').disabled = true;
+  $('etStatus').textContent = T.loadingCourses;
+  $('etStatus').className = 'alert alert-info mt-2 py-2 mb-0';
+
+  try {
+    const res = await fetch('/ops/exam-timetable/preview-courses/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      body: JSON.stringify({ programs, sections }),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || T.reqFailed);
+
+    const courses = data.courses ?? [];
+    $('coursePreview').style.display = '';
+    renderCourseChips(courses);
+
+    if (courses.length > 0) {
+      $('etStatus').textContent = T.coursesLoaded.replace('{n}', courses.length);
+      $('etStatus').className = 'alert alert-success mt-2 py-2 mb-0';
+    } else {
+      $('etStatus').textContent = T.noCourses;
+      $('etStatus').className = 'alert alert-warning mt-2 py-2 mb-0';
+    }
+  } catch (err) {
+    $('etStatus').textContent = T.error + ': ' + err.message;
+    $('etStatus').className = 'alert alert-danger mt-2 py-2 mb-0';
+  } finally {
+    $('loadCoursesBtn').disabled = false;
+  }
+});
+
+/* ── Step 2: Build Timetable ── */
+$('buildBtn').addEventListener('click', async () => {
+  if (!_coursesLoaded) {
+    $('etStatus').textContent = T.loadFirst;
+    $('etStatus').className = 'alert alert-warning mt-2 py-2 mb-0';
+    return;
+  }
+
+  const selectedCourses = getCheckedValues('courseList');
+  if (!selectedCourses.length) {
+    $('etStatus').textContent = T.noSelected;
+    $('etStatus').className = 'alert alert-warning mt-2 py-2 mb-0';
+    return;
+  }
+
+  const label      = $('etLabel').value.trim();
+  const perStr     = $('etPeriods').value.trim();
+  const maxPerDay  = parseInt($('etMaxPerDay').value, 10) || 2;
+  const days       = generateDayLabels();
+  const programs   = getCheckedValues('progList');
+  const sections   = getCheckedValues('secList');
+
+  if (!label || !perStr || !days.length) {
+    $('etStatus').textContent = T.fillAll;
+    $('etStatus').className = 'alert alert-warning mt-2 py-2 mb-0';
+    return;
+  }
+
+  const periods = perStr.split(',').map(s => s.trim()).filter(Boolean);
+
+  $('buildBtn').disabled = true;
+  $('etStatus').textContent = T.building;
+  $('etStatus').className = 'alert alert-info mt-2 py-2 mb-0';
+
+  try {
+    const res = await fetch('/ops/exam-timetable/build/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      body: JSON.stringify({ label, days, periods, max_per_day: maxPerDay, programs, sections, selected_courses: selectedCourses }),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      if (data.feasibility_error && data.violations) {
+        let msg = T.infeasible + '\n';
+        data.violations.forEach(v => {
+          msg += '\n• ' + T.infeasItem
+            .replace('{prog}', v.program)
+            .replace('{term}', v.programme_term)
+            .replace('{size}', v.bucket_size)
+            .replace('{days}', v.num_days)
+            .replace('{courses}', v.courses.join(', '));
+        });
+        throw new Error(msg);
+      }
+      throw new Error(data.error || T.reqFailed);
+    }
+
+    renderResults(data);
+    $('etStatus').textContent = T.done;
+    $('etStatus').className = 'alert alert-success mt-2 py-2 mb-0';
+    loadHistory();
+  } catch (err) {
+    $('etStatus').textContent = T.error + ': ' + err.message;
+    $('etStatus').className = 'alert alert-danger mt-2 py-2 mb-0';
+  } finally {
+    $('buildBtn').disabled = false;
+  }
+});
+
+/* ── Program → courses mapping (for schedule filter) ── */
+let _programCourses = {};   // { programName: Set([course_code, ...]) }
+
+function buildProgramCoursesMap(bucketsSummary) {
+  _programCourses = {};
+  if (!Array.isArray(bucketsSummary)) return;
+  for (const b of bucketsSummary) {
+    const prog = (b.program || '').toLowerCase();
+    if (!prog) continue;
+    if (!_programCourses[prog]) _programCourses[prog] = new Set();
+    for (const c of (b.courses || [])) _programCourses[prog].add(c.toLowerCase());
+  }
+}
+
+/* ── Render Results ── */
+function renderResults(data) {
+  buildProgramCoursesMap(data.buckets_summary);
+  $('etResults').style.display = '';
+
+  // KPIs
+  $('kCourses').textContent  = data.courses_count ?? data.qa?.total_courses ?? 0;
+  $('kStudents').textContent = data.students_count ?? data.qa?.total_students ?? 0;
+  $('kSlots').textContent    = data.qa?.slots_used ?? 0;
+  $('kEdges').textContent    = data.conflicts_count ?? 0;
+  $('kMaxDay').textContent   = data.qa?.max_exams_per_day_per_student ?? 0;
+
+  const mpd = data.qa?.max_per_day ?? 2;
+  $('kOverLabel').textContent = IS_AR
+    ? `طلاب بأكثر من ${mpd} اختبارات/يوم`
+    : `Students >${mpd} exams/day`;
+
+  const overLimit = data.qa?.students_over_limit_per_day ?? data.qa?.students_over_2_per_day ?? 0;
+  $('kOver2').textContent = overLimit;
+  $('kOver2').className   = 'v' + (overLimit > 0 ? ' warn' : '');
+
+  const cc = data.qa?.conflict_count ?? 0;
+  $('kConflicts').textContent = cc;
+  $('kConflicts').className   = 'v' + (cc > 0 ? ' warn' : '');
+
+  // Bucket KPIs
+  $('kBuckets').textContent = data.qa?.bucket_count ?? data.bucket_count ?? 0;
+  const bv = data.qa?.bucket_day_violations_count ?? 0;
+  $('kBucketViol').textContent = bv;
+  $('kBucketViol').className   = 'v' + (bv > 0 ? ' warn' : '');
+
+  // QA Warnings
+  const conflicts = data.qa?.same_slot_conflicts ?? [];
+  const bucketViols = data.qa?.bucket_day_violations ?? [];
+  const hasWarnings = conflicts.length > 0 || bucketViols.length > 0;
+
+  if (hasWarnings) {
+    $('qaWarnings').style.display = '';
+    let warningHtml = '';
+    warningHtml += conflicts.map(c =>
+      `<div class="alert alert-danger py-1 px-2 mb-1 small">${
+        T.sameSlot
+          .replace('{sid}', c.student_id)
+          .replace('{n}', c.courses.length)
+          .replace('{slot}', c.slot_index)
+          .replace('{courses}', c.courses.join(', '))
+      }</div>`
+    ).join('');
+    warningHtml += bucketViols.map(v =>
+      `<div class="alert alert-warning py-1 px-2 mb-1 small">${
+        T.bucketViol
+          .replace('{prog}', v.program)
+          .replace('{term}', v.programme_term)
+          .replace('{courses}', v.courses.join(', '))
+          .replace('{day}', v.day)
+      }</div>`
+    ).join('');
+    $('qaBody').innerHTML = warningHtml;
+  } else {
+    $('qaWarnings').style.display = 'none';
+  }
+
+  // Schedule grid
+  const schedule = data.schedule ?? [];
+  const slots    = data.slots ?? [];
+  renderScheduleGrid(schedule, slots);
+}
+
+/* ── Color helper (reused from planner) ── */
+function colorForCourse(code) {
+  let h = 0;
+  const s = String(code || '');
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
+  return `hsl(${h} 70% 92%)`;
+}
+
+function colorForCourseBorder(code) {
+  let h = 0;
+  const s = String(code || '');
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
+  return `hsl(${h} 50% 72%)`;
+}
+
+/* ── Render schedule as day×period grid ── */
+function renderScheduleGrid(schedule, slots) {
+  const container = $('schedGrid');
+  if (!schedule.length) {
+    container.innerHTML = `<p class="text-center text-secondary py-3">${IS_AR ? 'لا توجد بيانات' : 'No data'}</p>`;
+    return;
+  }
+
+  // Extract ordered unique days and periods from the slots array (preserves creation order)
+  const dayOrder = [];
+  const periodOrder = [];
+  const daySet = new Set();
+  const periodSet = new Set();
+  for (const s of slots) {
+    if (!daySet.has(s.day))    { daySet.add(s.day);       dayOrder.push(s.day); }
+    if (!periodSet.has(s.period)) { periodSet.add(s.period); periodOrder.push(s.period); }
+  }
+
+  // Build lookup: grid[day][period] = [course_code, ...]
+  const grid = {};
+  const overflowCourses = [];
+  for (const e of schedule) {
+    if (e.day === 'OVERFLOW') {
+      overflowCourses.push(e.course_code);
+      continue;
+    }
+    if (!grid[e.day]) grid[e.day] = {};
+    if (!grid[e.day][e.period]) grid[e.day][e.period] = [];
+    grid[e.day][e.period].push(e.course_code);
+  }
+
+  // If there are days in schedule not in slots (shouldn't happen, but defensive)
+  for (const e of schedule) {
+    if (e.day !== 'OVERFLOW' && !daySet.has(e.day)) {
+      daySet.add(e.day);
+      dayOrder.push(e.day);
+    }
+    if (e.day !== 'OVERFLOW' && !periodSet.has(e.period)) {
+      periodSet.add(e.period);
+      periodOrder.push(e.period);
+    }
+  }
+
+  // Build HTML table
+  let html = '<table class="et-grid">';
+
+  // Header: corner + periods
+  html += '<thead><tr>';
+  html += `<th>${IS_AR ? 'اليوم' : 'Day'}</th>`;
+  for (const p of periodOrder) {
+    html += `<th>${p}</th>`;
+  }
+  html += '</tr></thead>';
+
+  // Body: one row per day
+  html += '<tbody>';
+  for (const day of dayOrder) {
+    html += '<tr>';
+    html += `<th>${day}</th>`;
+    for (const period of periodOrder) {
+      const courses = (grid[day] && grid[day][period]) ? grid[day][period] : [];
+      if (courses.length === 0) {
+        html += `<td class="et-empty">—</td>`;
+      } else {
+        const chips = courses.map(c =>
+          `<span class="et-course" data-course="${c}" style="background:${colorForCourse(c)};border:1px solid ${colorForCourseBorder(c)}">${c}</span>`
+        ).join(' ');
+        html += `<td>${chips}</td>`;
+      }
+    }
+    html += '</tr>';
+  }
+
+  // Overflow row (if any)
+  if (overflowCourses.length > 0) {
+    html += `<tr class="et-overflow-row">`;
+    html += `<th style="color:var(--red,#dc3545)">${T.overflow}</th>`;
+    const chips = overflowCourses.map(c =>
+      `<span class="et-course" data-course="${c}" style="background:${colorForCourse(c)};border:1px solid ${colorForCourseBorder(c)}">${c}</span>`
+    ).join(' ');
+    html += `<td colspan="${periodOrder.length}">${chips}</td>`;
+    html += '</tr>';
+  }
+
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+/* ── Schedule Filter ── */
+// "AI"   → programme plan: all courses in the AI study plan (from ProgrammeRequirement)
+// "CS*"  → course-code prefix: courses whose code starts with "CS"
+// "101"  → substring fallback: courses whose code contains "101"
+$('schedFilter').addEventListener('input', function() {
+  const raw = this.value.trim().toLowerCase();
+  const allChips = $('schedGrid').querySelectorAll('.et-course');
+  const allCells = $('schedGrid').querySelectorAll('td');
+
+  if (!raw) {
+    allChips.forEach(c => { c.classList.remove('et-highlight', 'et-dim'); });
+    allCells.forEach(c => { c.classList.remove('et-dim'); });
+    return;
+  }
+
+  // Determine match function
+  let matchFn;
+  if (raw.endsWith('*')) {
+    // Prefix mode: "CS*" → courses starting with "cs"
+    const prefix = raw.slice(0, -1);
+    matchFn = (code) => code.startsWith(prefix);
+  } else if (_programCourses[raw]) {
+    // Exact programme match: "ai" → full AI study plan
+    const progCourses = _programCourses[raw];
+    matchFn = (code) => progCourses.has(code);
+  } else {
+    // Substring fallback: "101" → courses containing "101"
+    matchFn = (code) => code.includes(raw);
+  }
+
+  allChips.forEach(chip => {
+    const code = (chip.dataset.course || '').toLowerCase();
+    if (matchFn(code)) {
+      chip.classList.add('et-highlight');
+      chip.classList.remove('et-dim');
+    } else {
+      chip.classList.remove('et-highlight');
+      chip.classList.add('et-dim');
+    }
+  });
+
+  allCells.forEach(cell => {
+    if (cell.classList.contains('et-empty')) {
+      cell.classList.add('et-dim');
+    }
+  });
+});
+
+/* ── History ── */
+async function loadHistory() {
+  try {
+    const res = await fetch('/ops/exam-timetable/list/', {
+      headers: { 'X-CSRFToken': CSRF },
+    });
+    const data = await res.json();
+    if (!data.ok) return;
+
+    const runs = data.runs ?? [];
+    if (!runs.length) {
+      $('historyList').innerHTML = `<small class="text-secondary">${T.noHistory}</small>`;
+      return;
+    }
+
+    $('historyList').innerHTML = runs.map(r => {
+      const dt = r.created_at ? new Date(r.created_at).toLocaleString() : '';
+      return `<div class="et-history-item" data-id="${r.id}">
+        <strong>${r.label}</strong> <small class="text-secondary">${dt}</small>
+      </div>`;
+    }).join('');
+
+    $('historyList').querySelectorAll('.et-history-item').forEach(el => {
+      el.addEventListener('click', () => loadRun(el.dataset.id));
+    });
+  } catch { /* ignore */ }
+}
+
+async function loadRun(runId) {
+  $('etStatus').textContent = T.loadingRun;
+  $('etStatus').className = 'alert alert-info mt-2 py-2 mb-0';
+
+  try {
+    const res = await fetch(`/ops/exam-timetable/${runId}/`, {
+      headers: { 'X-CSRFToken': CSRF },
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || T.reqFailed);
+
+    renderResults(data);
+    $('etLabel').value = data.label ?? '';
+    $('etStatus').textContent = T.done;
+    $('etStatus').className = 'alert alert-success mt-2 py-2 mb-0';
+
+    // Highlight active
+    $('historyList').querySelectorAll('.et-history-item').forEach(el => {
+      el.classList.toggle('active', el.dataset.id === String(runId));
+    });
+  } catch (err) {
+    $('etStatus').textContent = T.error + ': ' + err.message;
+    $('etStatus').className = 'alert alert-danger mt-2 py-2 mb-0';
+  }
+}
+
+// Load history on page load
+loadHistory();
+</script>
+{% endblock %}

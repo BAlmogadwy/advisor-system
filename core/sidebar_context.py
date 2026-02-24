@@ -4,6 +4,7 @@ Shared helper that builds the sidebar permission context variables.
 Import and call `get_sidebar_context(request)` in any view that
 renders a template including the sidebar partial.
 """
+
 from django.http import HttpRequest
 
 from core.services.rbac import (
@@ -28,4 +29,5 @@ def get_sidebar_context(request: HttpRequest) -> dict[str, object]:
         "can_admin_advisors": role == ROLE_SUPER_ADMIN,
         "can_view_portfolio": role in {ROLE_SUPER_ADMIN, ROLE_GENERAL_ADVISOR, ROLE_ADVISOR},
         "can_db_admin": role == ROLE_SUPER_ADMIN,
+        "can_exam_timetable": role == ROLE_SUPER_ADMIN,
     }

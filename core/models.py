@@ -11,7 +11,7 @@ class Student(models.Model):
     gpa = models.FloatField(null=True, blank=True)
     total_registered_credits = models.IntegerField(null=True, default=0)
     total_earned_credits = models.IntegerField(null=True, default=0)
-    program = models.TextField(null=True, blank=True)
+    program = models.TextField(null=True, blank=True)  # noqa: DJ001
     section = models.TextField(blank=True, default="")
     advisor_id = models.TextField(blank=True, default="")
 
@@ -43,10 +43,14 @@ class Course(models.Model):
 
 class StudentCourse(models.Model):
     student = models.ForeignKey(
-        Student, on_delete=models.CASCADE, related_name="student_courses",
+        Student,
+        on_delete=models.CASCADE,
+        related_name="student_courses",
     )
     course = models.ForeignKey(
-        Course, on_delete=models.CASCADE, related_name="student_courses",
+        Course,
+        on_delete=models.CASCADE,
+        related_name="student_courses",
     )
     programme_term = models.IntegerField(null=True, blank=True)
     status = models.TextField(blank=True, default="")
@@ -151,7 +155,9 @@ class TermSection(models.Model):
 
 class TermSectionMeeting(models.Model):
     term_section = models.ForeignKey(
-        TermSection, on_delete=models.CASCADE, related_name="meetings",
+        TermSection,
+        on_delete=models.CASCADE,
+        related_name="meetings",
     )
     day = models.TextField()
     start_time = models.TextField()
@@ -168,8 +174,12 @@ class TermSectionMeeting(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=[
-                    "term_section", "day", "start_time", "end_time",
-                    "room", "instructor",
+                    "term_section",
+                    "day",
+                    "start_time",
+                    "end_time",
+                    "room",
+                    "instructor",
                 ],
                 name="ux_term_section_meetings_unique",
             ),
@@ -184,7 +194,9 @@ class StudentTermSection(models.Model):
     academic_year = models.TextField()
     term = models.TextField()
     term_section = models.ForeignKey(
-        TermSection, on_delete=models.CASCADE, related_name="student_sections",
+        TermSection,
+        on_delete=models.CASCADE,
+        related_name="student_sections",
     )
     source = models.TextField(default="manual")
     created_at = models.TextField(blank=True, default="")
@@ -211,7 +223,9 @@ class StudentTermSection(models.Model):
 
 class UserScope(models.Model):
     user = models.OneToOneField(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, primary_key=True,
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        primary_key=True,
     )
     advisor_id = models.TextField(blank=True, default="")
     departments = models.TextField(blank=True, default="")
@@ -247,3 +261,18 @@ class AuditLog(models.Model):
 
     def __str__(self) -> str:
         return f"AuditLog({self.id}/{self.action})"
+
+
+# ── Exam Timetable Builder ──────────────────────────────────────
+
+
+class ExamTimetableRun(models.Model):
+    label = models.CharField(max_length=120)
+    created_at = models.DateTimeField(auto_now_add=True)
+    result_json = models.TextField(default="{}")
+
+    class Meta:
+        db_table = "exam_timetable_runs"
+
+    def __str__(self) -> str:
+        return f"ExamTimetableRun({self.id}/{self.label})"
