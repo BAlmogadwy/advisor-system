@@ -13,6 +13,7 @@
   {% block extra_css %}{% endblock %}
 </head>
 <body>
+<a href="#main-content" class="skip-link">{% if LANGUAGE_CODE == 'ar' %}تخطي إلى المحتوى{% else %}Skip to content{% endif %}</a>
 <div class="color-mesh"></div>
 <div class="ambience">
   <div class="amb amb-1"></div>
@@ -23,6 +24,10 @@
   <div class="amb amb-6"></div>
 </div>
 {% block body %}{% endblock %}
+<script src="{% static 'js/shared-utils.js' %}"></script>
+<script src="{% static 'js/notify.js' %}"></script>
+<script src="{% static 'js/dialog.js' %}"></script>
+<script src="{% static 'js/shared-ux.js' %}"></script>
 {% block extra_js %}{% endblock %}
 </body>
 </html>

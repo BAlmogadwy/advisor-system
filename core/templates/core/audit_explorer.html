@@ -8,7 +8,7 @@
     /* Page-specific: audit table overrides */
     .audit-table { border-collapse: collapse; width: 100%; font-size: 12px; }
     .audit-table th, .audit-table td { border: 1px solid rgba(17,17,68,0.06); padding: 6px; vertical-align: top; }
-    .audit-table th { background: rgba(255,255,255,0.6); font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--t4); }
+    .audit-table th { background: rgba(255,255,255,0.6); font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--t3); }
     .audit-table td { background: rgba(255,255,255,0.7); }
     .ok  { color: #0b8a32; font-weight: 700; }
     .bad { color: #b00020; font-weight: 700; }
@@ -27,11 +27,11 @@
 {% block body %}
 <div class="d-flex shell">
   {% include 'core/partials/sidebar.html' %}
-  <main class="flex-grow-1 p-4">
+  <main id="main-content" class="flex-grow-1 p-4">
     <div class="content-wrap">
     <div class="page-header">
       <div class="page-header-left">
-        <div class="page-header-module">{% if LANGUAGE_CODE == 'ar' %}مستكشف التدقيق{% else %}Audit Explorer{% endif %}</div>
+        <h1 class="page-header-module">{% if LANGUAGE_CODE == 'ar' %}مستكشف التدقيق{% else %}Audit Explorer{% endif %}</h1>
         <div class="page-header-chips">
           <span class="ph-chip ph-chip-page">Super Admin</span>
           {% if chain.ok %}
@@ -66,7 +66,7 @@
   <table class="audit-table">
     <thead>
       <tr>
-        <th>{% trans "ID" %}</th><th>{% trans "Time (UTC)" %}</th><th>{% trans "User" %}</th><th>{% trans "Role" %}</th><th>{% trans "Action" %}</th><th>{% trans "Status" %}</th><th>{% trans "Reason" %}</th><th>{% trans "Endpoint" %}</th><th>{% trans "Error" %}</th><th>{% trans "Hash" %}</th>
+        <th scope="col">{% trans "ID" %}</th><th scope="col">{% trans "Time (UTC)" %}</th><th scope="col">{% trans "User" %}</th><th scope="col">{% trans "Role" %}</th><th scope="col">{% trans "Action" %}</th><th scope="col">{% trans "Status" %}</th><th scope="col">{% trans "Reason" %}</th><th scope="col">{% trans "Endpoint" %}</th><th scope="col">{% trans "Error" %}</th><th scope="col">{% trans "Hash" %}</th>
       </tr>
     </thead>
     <tbody>
@@ -86,7 +86,7 @@
       {% empty %}
       <tr><td colspan="10">
         <div class="empty-state" style="padding:1.5rem;">
-          <span class="empty-icon"><span class="i" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span></span>
+          <span class="empty-icon"><span class="i" aria-hidden="true" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span></span>
           <div class="empty-title">{% trans "No audit records found" %}</div>
           <div class="empty-hint">{% trans "Try adjusting your filters above" %}</div>
         </div>

@@ -132,7 +132,7 @@
 }
 .ap-drawer-close {
   position: absolute; top: 0.75rem; inset-inline-end: 0.75rem;
-  width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--line);
+  width: 36px; height: 36px; border-radius: 8px; border: 1px solid var(--line);
   background: #f8fafc; cursor: pointer; display: flex;
   align-items: center; justify-content: center; font-size: 0.85rem;
   color: var(--muted); transition: all 0.1s;
@@ -185,13 +185,13 @@
 <div class="d-flex shell">
   {% include 'core/partials/sidebar.html' %}
 
-  <main class="flex-grow-1 p-3">
+  <main id="main-content" class="flex-grow-1 p-3">
     <div class="content-wrap">
 
       <!-- ═══ Page header ═══ -->
       <div class="page-header">
         <div class="page-header-left">
-          <div class="page-header-module">{% if LANGUAGE_CODE == 'ar' %}محفظة المرشد{% else %}Advisor Portfolio{% endif %}</div>
+          <h1 class="page-header-module">{% if LANGUAGE_CODE == 'ar' %}محفظة المرشد{% else %}Advisor Portfolio{% endif %}</h1>
           <div class="page-header-chips">
             <span class="ph-chip ph-chip-page" id="apAdvisorChip">{% if LANGUAGE_CODE == 'ar' %}لا يوجد مرشد{% else %}No advisor{% endif %}</span>
             <span class="ph-chip ph-chip-gray" id="apCountChip">{% if LANGUAGE_CODE == 'ar' %}0 طالب{% else %}0 students{% endif %}</span>
@@ -342,45 +342,14 @@ let batchSelected = new Set();
 let selectedSid = null;
 
 const IS_AR = document.documentElement.lang === 'ar';
-const q = (id) => document.getElementById(id);
-
-/* ═══════════════════════════════════════════════════════════════
-   CSRF + HELPERS
-   ═══════════════════════════════════════════════════════════════ */
-function getCookie(n) { const v=`; ${document.cookie}`; const p=v.split(`; ${n}=`); return p.length===2?p.pop().split(';').shift():''; }
-const csrfToken = getCookie('csrftoken');
-
-function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+/* q, esc, getCookie, csrfToken, csrfHeaders — provided by shared-utils.js */
 
 async function copyText(text) {
   try { await navigator.clipboard.writeText(text); notify.success('Copied to clipboard'); }
   catch { notify.warning('Copy failed — use Ctrl+C'); }
 }
 
-/* ═══════════════════════════════════════════════════════════════
-   TOAST / NOTIFY
-   ═══════════════════════════════════════════════════════════════ */
-const notify = (() => {
-  let c = document.getElementById('toast-container');
-  if (!c) { c = document.createElement('div'); c.id = 'toast-container'; document.body.appendChild(c); }
-  const I = {
-    success:'<span class="i" style="width:16px;height:16px"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>',
-    error:'<span class="i" style="width:16px;height:16px"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg></span>',
-    info:'<span class="i" style="width:16px;height:16px"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></span>',
-    warning:'<span class="i" style="width:16px;height:16px"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>',
-  };
-  const D = { success:3200, error:5000, info:4000, warning:4500 };
-  function show(title, kind='success', sub='') {
-    const dur = D[kind]||3200, t = document.createElement('div');
-    t.className = `ux-toast ${kind}`;
-    t.innerHTML = `<div class="ux-toast-icon">${I[kind]||I.info}</div><div class="ux-toast-body"><div class="ux-toast-title">${title}</div>${sub?`<div class="ux-toast-sub">${sub}</div>`:''}</div><button class="ux-toast-close" aria-label="Dismiss"><span class="i" style="width:12px;height:12px"><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span></button><div class="ux-toast-progress" style="animation-duration:${dur}ms;"></div>`;
-    c.appendChild(t);
-    function dismiss(){t.classList.add('removing');setTimeout(()=>t.remove(),250);}
-    t.querySelector('.ux-toast-close').addEventListener('click',dismiss);
-    setTimeout(dismiss,dur);
-  }
-  return { success:(m,s)=>show(m,'success',s), error:(m,s)=>show(m,'error',s), info:(m,s)=>show(m,'info',s), warning:(m,s)=>show(m,'warning',s) };
-})();
+/* notify — provided by notify.js */
 
 /* ═══════════════════════════════════════════════════════════════
    LOAD ADVISORS DROPDOWN
@@ -851,40 +820,7 @@ function updateCsvLink() {
   q('apCsvLink').href = `/export/students-by-advisor.csv?advisor_id=${encodeURIComponent(currentAdvisorId)}&search=${encodeURIComponent(search)}&focus=${encodeURIComponent(currentFocus)}&program_filter=${encodeURIComponent(prog)}`;
 }
 
-/* ═══════════════════════════════════════════════════════════════
-   SORTABLE TABLE — Fix #12 (columns)
-   ═══════════════════════════════════════════════════════════════ */
-function wireSortableTable(tableId) {
-  const table = document.getElementById(tableId);
-  if (!table) return;
-  table.querySelectorAll('thead th[data-sort]').forEach((th, idx) => {
-    let dir = 'asc';
-    th.style.cursor = 'pointer';
-    th.addEventListener('click', () => {
-      const tbody = table.querySelector('tbody');
-      const rows = Array.from(tbody.querySelectorAll('tr:not(.ap-detail-row)')).filter(r => r.children.length > idx && !r.querySelector('td[colspan]'));
-      if (!rows.length) return;
-      const mode = th.dataset.sort;
-      const asc = dir === 'asc';
-      rows.sort((a, b) => {
-        const av = a.children[idx]?.textContent?.trim() || '';
-        const bv = b.children[idx]?.textContent?.trim() || '';
-        if (mode === 'num') return asc ? (Number(av)||0)-(Number(bv)||0) : (Number(bv)||0)-(Number(av)||0);
-        return asc ? av.localeCompare(bv,undefined,{numeric:true}) : bv.localeCompare(av,undefined,{numeric:true});
-      });
-      table.querySelectorAll('thead th').forEach(h => h.removeAttribute('data-dir'));
-      th.setAttribute('data-dir', asc ? 'asc' : 'desc');
-      dir = asc ? 'desc' : 'asc';
-      // Re-insert with their detail rows
-      rows.forEach(r => {
-        tbody.appendChild(r);
-        const detailId = r.querySelector('.ap-expand')?.dataset?.detail;
-        const detailRow = detailId ? document.getElementById(detailId) : null;
-        if (detailRow) tbody.appendChild(detailRow);
-      });
-    });
-  });
-}
+/* wireSortableTable — provided by shared-ux.js */
 
 /* ═══════════════════════════════════════════════════════════════
    KEYBOARD NAVIGATION — Fix #13

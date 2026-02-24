@@ -118,6 +118,24 @@ body {
 /* ── Selection highlight ─────────────────────────────────── */
 ::selection { background: var(--teal); color: #fff; }
 
+/* ── Skip-to-content link (accessibility) ───────────────── */
+.skip-link {
+  position: absolute;
+  top: -100%;
+  left: 0;
+  z-index: 10000;
+  padding: 8px 16px;
+  background: var(--teal);
+  color: #fff;
+  font-weight: 600;
+  font-size: 13px;
+  text-decoration: none;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+}
+.skip-link:focus {
+  top: 0;
+}
+
 /* ── Thin custom scrollbars ──────────────────────────────── */
 * { scrollbar-width: thin; scrollbar-color: rgba(17,17,68,0.12) transparent; }
 ::-webkit-scrollbar { width: 5px; height: 5px; }

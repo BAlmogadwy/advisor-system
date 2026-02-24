@@ -298,13 +298,13 @@
 <div class="d-flex shell">
   {% include 'core/partials/sidebar.html' %}
 
-  <main class="flex-grow-1 p-4">
+  <main id="main-content" class="flex-grow-1 p-4">
     <div class="content-wrap">
 
     <!-- Page header -->
     <div class="page-header">
       <div class="page-header-left">
-        <div class="page-header-module">{% if LANGUAGE_CODE == 'ar' %}لوحة إدارة قاعدة البيانات{% else %}Database Admin Console{% endif %}</div>
+        <h1 class="page-header-module">{% if LANGUAGE_CODE == 'ar' %}لوحة إدارة قاعدة البيانات{% else %}Database Admin Console{% endif %}</h1>
         <div class="page-header-chips">
           <span class="ph-chip ph-chip-danger">{% if LANGUAGE_CODE == 'ar' %}منطقة خطر{% else %}Danger Zone{% endif %}</span>
           <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}معاينة أولاً · تأكيد مطلوب{% else %}Preview-first · Confirmation required{% endif %}</span>
@@ -321,7 +321,7 @@
         <div class="dba-nav-label">{% if LANGUAGE_CODE == 'ar' %}حذف البيانات{% else %}Delete Data{% endif %}</div>
 
         <button class="dba-nav-item danger-item active" data-panel="students" type="button">
-          <span class="dba-nav-icon icon-danger"><span class="i"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></span></span>
+          <span class="dba-nav-icon icon-danger"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></span></span>
           <span class="dba-nav-text">
             <span class="dba-nav-name">{% if LANGUAGE_CODE == 'ar' %}حذف الطلاب{% else %}Delete Students{% endif %}</span>
             <span class="dba-nav-desc">{% if LANGUAGE_CODE == 'ar' %}حسب البرنامج / القسم{% else %}By program / section{% endif %}</span>
@@ -330,7 +330,7 @@
         </button>
 
         <button class="dba-nav-item danger-item" data-panel="catalog" type="button">
-          <span class="dba-nav-icon icon-danger"><span class="i"><svg viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg></span></span>
+          <span class="dba-nav-icon icon-danger"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg></span></span>
           <span class="dba-nav-text">
             <span class="dba-nav-name">{% if LANGUAGE_CODE == 'ar' %}حذف الكتالوج{% else %}Delete Catalog{% endif %}</span>
             <span class="dba-nav-desc">{% if LANGUAGE_CODE == 'ar' %}متطلبات + مكوّنات{% else %}Requirements + prerequisites{% endif %}</span>
@@ -341,7 +341,7 @@
         <div class="dba-nav-label">{% if LANGUAGE_CODE == 'ar' %}استيراد البيانات{% else %}Import Data{% endif %}</div>
 
         <button class="dba-nav-item" data-panel="plan" type="button">
-          <span class="dba-nav-icon icon-safe"><span class="i"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span></span>
+          <span class="dba-nav-icon icon-safe"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span></span>
           <span class="dba-nav-text">
             <span class="dba-nav-name">{% if LANGUAGE_CODE == 'ar' %}استيراد خطة البرنامج{% else %}Import Program Plan{% endif %}</span>
             <span class="dba-nav-desc">{% if LANGUAGE_CODE == 'ar' %}من نص CSV{% else %}From CSV text{% endif %}</span>
@@ -350,7 +350,7 @@
         </button>
 
         <button class="dba-nav-item" data-panel="termsections" type="button">
-          <span class="dba-nav-icon icon-safe"><span class="i"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></span>
+          <span class="dba-nav-icon icon-safe"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></span>
           <span class="dba-nav-text">
             <span class="dba-nav-name">{% if LANGUAGE_CODE == 'ar' %}أقسام الفصل الدراسي{% else %}Term Sections{% endif %}</span>
             <span class="dba-nav-desc">{% if LANGUAGE_CODE == 'ar' %}تحليل → معاينة → إدراج{% else %}Parse → Preview → Insert{% endif %}</span>
@@ -359,7 +359,7 @@
         </button>
 
         <button class="dba-nav-item" data-panel="legacy" type="button">
-          <span class="dba-nav-icon icon-warning"><span class="i"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></span></span>
+          <span class="dba-nav-icon icon-warning"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></span></span>
           <span class="dba-nav-text">
             <span class="dba-nav-name">{% if LANGUAGE_CODE == 'ar' %}الاستيراد القديم{% else %}Legacy Import{% endif %}</span>
             <span class="dba-nav-desc">{% if LANGUAGE_CODE == 'ar' %}منطق department_loader.py{% else %}department_loader.py logic{% endif %}</span>
@@ -370,7 +370,7 @@
         <div class="dba-nav-label">{% if LANGUAGE_CODE == 'ar' %}النظام{% else %}System{% endif %}</div>
 
         <button class="dba-nav-item" data-panel="maintenance" type="button">
-          <span class="dba-nav-icon icon-system"><span class="i"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span></span>
+          <span class="dba-nav-icon icon-system"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span></span>
           <span class="dba-nav-text">
             <span class="dba-nav-name">{% if LANGUAGE_CODE == 'ar' %}النسخ الاحتياطي والتكامل{% else %}Backup & Integrity{% endif %}</span>
             <span class="dba-nav-desc">{% if LANGUAGE_CODE == 'ar' %}لقطة + تقرير التحقق{% else %}Snapshot + verification report{% endif %}</span>
@@ -386,7 +386,7 @@
         <!-- ══ PANEL: Delete Students ══════════════════════ -->
         <div class="dba-panel danger-panel active" id="panel-students">
           <div class="dba-panel-header">
-            <div class="dba-panel-icon icon-danger"><span class="i"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></span></div>
+            <div class="dba-panel-icon icon-danger"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></span></div>
             <div>
               <div class="dba-panel-title">{% if LANGUAGE_CODE == 'ar' %}حذف الطلاب{% else %}Delete Students{% endif %}</div>
               <div class="dba-panel-subtitle">{% if LANGUAGE_CODE == 'ar' %}يحذف الطلاب المطابقين وجميع سجلات <code>student_courses</code> المرتبطة بهم بشكل دائم.{% else %}Permanently deletes matching students and all their associated <code>student_courses</code> records.{% endif %}</div>
@@ -397,11 +397,11 @@
             <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}معايير التصفية{% else %}Filter criteria{% endif %}</div>
             <div class="row g-2 align-items-end">
               <div class="col-md-4">
-                <label class="form-label">{% trans "Program" %}</label>
+                <label class="form-label" for="sProgram">{% trans "Program" %}</label>
                 <input id="sProgram" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثال: CS{% else %}e.g. CS{% endif %}">
               </div>
               <div class="col-md-4">
-                <label class="form-label">{% trans "Section" %}</label>
+                <label class="form-label" for="sSection">{% trans "Section" %}</label>
                 <input id="sSection" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثال: 1{% else %}e.g. 1{% endif %}">
               </div>
               <div class="col-md-4 d-flex gap-2">
@@ -411,13 +411,13 @@
             </div>
           </div>
 
-          <pre id="sOut" class="dba-output">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد. ابدأ بـ «معاينة» للتحقق من النطاق.{% else %}No action yet. Run Preview first to confirm scope.{% endif %}</pre>
+          <pre id="sOut" class="dba-output" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد. ابدأ بـ «معاينة» للتحقق من النطاق.{% else %}No action yet. Run Preview first to confirm scope.{% endif %}</pre>
         </div>
 
         <!-- ══ PANEL: Delete Catalog ════════════════════════ -->
         <div class="dba-panel danger-panel" id="panel-catalog">
           <div class="dba-panel-header">
-            <div class="dba-panel-icon icon-danger"><span class="i"><svg viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg></span></div>
+            <div class="dba-panel-icon icon-danger"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg></span></div>
             <div>
               <div class="dba-panel-title">{% if LANGUAGE_CODE == 'ar' %}حذف كتالوج البرنامج{% else %}Delete Program Catalog{% endif %}</div>
               <div class="dba-panel-subtitle">{% if LANGUAGE_CODE == 'ar' %}يحذف بشكل دائم جميع صفوف <code>programme_requirements</code> و <code>prerequisites</code> لبرنامج محدد.{% else %}Permanently deletes all <code>programme_requirements</code> and <code>prerequisites</code> rows for a specific program.{% endif %}</div>
@@ -428,7 +428,7 @@
             <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}تحديد البرنامج{% else %}Target program{% endif %}</div>
             <div class="row g-2 align-items-end">
               <div class="col-md-5">
-                <label class="form-label">{% trans "Program code" %}</label>
+                <label class="form-label" for="pProgram">{% trans "Program code" %}</label>
                 <input id="pProgram" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثال: CS{% else %}e.g. CS{% endif %}">
               </div>
               <div class="col-md-7 d-flex gap-2">
@@ -438,13 +438,13 @@
             </div>
           </div>
 
-          <pre id="pOut" class="dba-output">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد. ابدأ بـ «معاينة» للتحقق من النطاق.{% else %}No action yet. Run Preview first to confirm scope.{% endif %}</pre>
+          <pre id="pOut" class="dba-output" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد. ابدأ بـ «معاينة» للتحقق من النطاق.{% else %}No action yet. Run Preview first to confirm scope.{% endif %}</pre>
         </div>
 
         <!-- ══ PANEL: Import Program Plan ═══════════════════ -->
         <div class="dba-panel" id="panel-plan">
           <div class="dba-panel-header">
-            <div class="dba-panel-icon icon-safe"><span class="i"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span></div>
+            <div class="dba-panel-icon icon-safe"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span></div>
             <div>
               <div class="dba-panel-title">{% if LANGUAGE_CODE == 'ar' %}استيراد خطة البرنامج{% else %}Import Program Plan{% endif %}</div>
               <div class="dba-panel-subtitle">{% if LANGUAGE_CODE == 'ar' %}يُدرج أو يُحدّث <code>programme_requirements</code> من نص CSV مباشرةً. الترويسات المطلوبة: <code>course_code, programme_term, credit_hours</code>{% else %}Inserts or updates <code>programme_requirements</code> from raw CSV text. Required headers: <code>course_code, programme_term, credit_hours</code>{% endif %}</div>
@@ -455,7 +455,7 @@
             <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}إعداد الاستيراد{% else %}Import settings{% endif %}</div>
             <div class="row g-2 align-items-end mb-3">
               <div class="col-md-4">
-                <label class="form-label">{% trans "Program code" %}</label>
+                <label class="form-label" for="iProgram">{% trans "Program code" %}</label>
                 <input id="iProgram" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثال: CS{% else %}e.g. CS{% endif %}">
               </div>
               <div class="col-md-8 d-flex align-items-center gap-2 pt-3">
@@ -465,20 +465,20 @@
                 </div>
               </div>
             </div>
-            <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}نص CSV{% else %}CSV text{% endif %}</label>
+            <label class="form-label" for="iCsv">{% if LANGUAGE_CODE == 'ar' %}نص CSV{% else %}CSV text{% endif %}</label>
             <textarea id="iCsv" class="form-control" rows="9" placeholder="course_code,programme_term,credit_hours,type&#10;CS101,1,3,CORE&#10;CS202,2,3,CORE"></textarea>
             <div class="mt-3">
               <button id="iImport" class="btn btn-success">{% if LANGUAGE_CODE == 'ar' %}استيراد / تحديث{% else %}Import / Upsert{% endif %}</button>
             </div>
           </div>
 
-          <pre id="iOut" class="dba-output">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد.{% else %}No action yet.{% endif %}</pre>
+          <pre id="iOut" class="dba-output" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد.{% else %}No action yet.{% endif %}</pre>
         </div>
 
         <!-- ══ PANEL: Term Sections ══════════════════════════ -->
         <div class="dba-panel" id="panel-termsections">
           <div class="dba-panel-header">
-            <div class="dba-panel-icon icon-safe"><span class="i"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></div>
+            <div class="dba-panel-icon icon-safe"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></div>
             <div>
               <div class="dba-panel-title">{% if LANGUAGE_CODE == 'ar' %}استيراد أقسام الفصل الدراسي{% else %}Import Term Sections{% endif %}</div>
               <div class="dba-panel-subtitle">{% if LANGUAGE_CODE == 'ar' %}تدفق ثلاثي المراحل: تحليل CSV → مراجعة المعاينة → إدراج المصفوف.{% else %}Three-step flow: parse CSV → review preview → insert normalised rows.{% endif %}</div>
@@ -498,15 +498,15 @@
             <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}مصدر الملف وإعدادات الفصل{% else %}File source & term settings{% endif %}</div>
             <div class="row g-2 align-items-end">
               <div class="col-md-6">
-                <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}مسار ملف CSV{% else %}CSV file path{% endif %}</label>
+                <label class="form-label" for="tCsvPath">{% if LANGUAGE_CODE == 'ar' %}مسار ملف CSV{% else %}CSV file path{% endif %}</label>
                 <input id="tCsvPath" class="form-control" placeholder="C:\...	imetable_final_extracted_multiday_clean.csv">
               </div>
               <div class="col-md-2">
-                <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}السنة الأكاديمية{% else %}Academic year{% endif %}</label>
+                <label class="form-label" for="tYear">{% if LANGUAGE_CODE == 'ar' %}السنة الأكاديمية{% else %}Academic year{% endif %}</label>
                 <input id="tYear" class="form-control" placeholder="1447">
               </div>
               <div class="col-md-2">
-                <label class="form-label">{% trans "Term" %}</label>
+                <label class="form-label" for="tTerm">{% trans "Term" %}</label>
                 <input id="tTerm" class="form-control" placeholder="1">
               </div>
               <div class="col-md-2 d-flex flex-column gap-1 pt-3">
@@ -532,28 +532,28 @@
             <div class="table-wrap">
               <table class="table table-sm mb-0">
                 <thead><tr>
-                  <th>{% if LANGUAGE_CODE == 'ar' %}الرمز{% else %}Code{% endif %}</th>
-                  <th>{% if LANGUAGE_CODE == 'ar' %}رقم{% else %}No.{% endif %}</th>
-                  <th>{% if LANGUAGE_CODE == 'ar' %}القسم{% else %}Sec{% endif %}</th>
-                  <th>{% if LANGUAGE_CODE == 'ar' %}اليوم{% else %}Day{% endif %}</th>
-                  <th>{% if LANGUAGE_CODE == 'ar' %}البداية{% else %}Start{% endif %}</th>
-                  <th>{% if LANGUAGE_CODE == 'ar' %}النهاية{% else %}End{% endif %}</th>
-                  <th>{% if LANGUAGE_CODE == 'ar' %}القاعة{% else %}Room{% endif %}</th>
-                  <th>{% if LANGUAGE_CODE == 'ar' %}المحاضر{% else %}Instructor{% endif %}</th>
-                  <th>{% if LANGUAGE_CODE == 'ar' %}التصنيف{% else %}Tag{% endif %}</th>
+                  <th scope="col">{% if LANGUAGE_CODE == 'ar' %}الرمز{% else %}Code{% endif %}</th>
+                  <th scope="col">{% if LANGUAGE_CODE == 'ar' %}رقم{% else %}No.{% endif %}</th>
+                  <th scope="col">{% if LANGUAGE_CODE == 'ar' %}القسم{% else %}Sec{% endif %}</th>
+                  <th scope="col">{% if LANGUAGE_CODE == 'ar' %}اليوم{% else %}Day{% endif %}</th>
+                  <th scope="col">{% if LANGUAGE_CODE == 'ar' %}البداية{% else %}Start{% endif %}</th>
+                  <th scope="col">{% if LANGUAGE_CODE == 'ar' %}النهاية{% else %}End{% endif %}</th>
+                  <th scope="col">{% if LANGUAGE_CODE == 'ar' %}القاعة{% else %}Room{% endif %}</th>
+                  <th scope="col">{% if LANGUAGE_CODE == 'ar' %}المحاضر{% else %}Instructor{% endif %}</th>
+                  <th scope="col">{% if LANGUAGE_CODE == 'ar' %}التصنيف{% else %}Tag{% endif %}</th>
                 </tr></thead>
                 <tbody id="tTableBody"></tbody>
               </table>
             </div>
           </div>
 
-          <pre id="tOut" class="dba-output">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد. ابدأ بـ «تحليل + معاينة».{% else %}No action yet. Start with Parse + Preview.{% endif %}</pre>
+          <pre id="tOut" class="dba-output" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد. ابدأ بـ «تحليل + معاينة».{% else %}No action yet. Start with Parse + Preview.{% endif %}</pre>
         </div>
 
         <!-- ══ PANEL: Legacy Import ══════════════════════════ -->
         <div class="dba-panel" id="panel-legacy">
           <div class="dba-panel-header">
-            <div class="dba-panel-icon icon-warning"><span class="i"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></span></div>
+            <div class="dba-panel-icon icon-warning"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></span></div>
             <div>
               <div class="dba-panel-title">{% if LANGUAGE_CODE == 'ar' %}الاستيراد القديم{% else %}Legacy Exact Import{% endif %}</div>
               <div class="dba-panel-subtitle">{% if LANGUAGE_CODE == 'ar' %}يعكس منطق <code>department_loader.py</code> القديم: INSERT OR REPLACE للمتطلبات، INSERT بدون إزالة التكرار للمكوّنات السابقة.{% else %}Mirrors old <code>department_loader.py</code>: INSERT OR REPLACE for requirements, INSERT without deduplication for prerequisites. May create duplicate rows.{% endif %}</div>
@@ -564,11 +564,11 @@
             <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}مسارات ملفات CSV (اختيارية){% else %}CSV file paths (optional){% endif %}</div>
             <div class="row g-2 align-items-end">
               <div class="col-md-5">
-                <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}مسار CSV المتطلبات{% else %}Requirements CSV path{% endif %}</label>
+                <label class="form-label" for="lReqPath">{% if LANGUAGE_CODE == 'ar' %}مسار CSV المتطلبات{% else %}Requirements CSV path{% endif %}</label>
                 <input id="lReqPath" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}الافتراضي: import_old/data/department_courses.csv{% else %}default: import_old/data/department_courses.csv{% endif %}">
               </div>
               <div class="col-md-5">
-                <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}مسار CSV المكوّنات السابقة{% else %}Prerequisites CSV path{% endif %}</label>
+                <label class="form-label" for="lPrePath">{% if LANGUAGE_CODE == 'ar' %}مسار CSV المكوّنات السابقة{% else %}Prerequisites CSV path{% endif %}</label>
                 <input id="lPrePath" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}الافتراضي: import_old/data/department_prerequisites.csv{% else %}default: import_old/data/department_prerequisites.csv{% endif %}">
               </div>
               <div class="col-md-2 d-grid">
@@ -577,13 +577,13 @@
             </div>
           </div>
 
-          <pre id="lOut" class="dba-output">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد.{% else %}No action yet.{% endif %}</pre>
+          <pre id="lOut" class="dba-output" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد.{% else %}No action yet.{% endif %}</pre>
         </div>
 
         <!-- ══ PANEL: Backup & Integrity ═════════════════════ -->
         <div class="dba-panel" id="panel-maintenance">
           <div class="dba-panel-header">
-            <div class="dba-panel-icon icon-system"><span class="i"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span></div>
+            <div class="dba-panel-icon icon-system"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span></div>
             <div>
               <div class="dba-panel-title">{% if LANGUAGE_CODE == 'ar' %}النسخ الاحتياطي والتحقق{% else %}Backup & Integrity{% endif %}</div>
               <div class="dba-panel-subtitle">{% if LANGUAGE_CODE == 'ar' %}إنشاء لقطة احتياطية للقاعدة أو تشغيل تقرير التحقق من التكامل.{% else %}Create a database snapshot backup or run a full integrity verification report.{% endif %}</div>
@@ -607,7 +607,7 @@
             </div>
           </div>
 
-          <pre id="bOut" class="dba-output">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد.{% else %}No action yet.{% endif %}</pre>
+          <pre id="bOut" class="dba-output" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد.{% else %}No action yet.{% endif %}</pre>
         </div>
 
       </div><!-- /.dba-work -->
@@ -619,80 +619,6 @@
 
 {% block extra_js %}
 <script>
-/* ── Toast / Notify ── */
-const notify = (() => {
-  let c = document.getElementById('toast-container');
-  if (!c) { c = document.createElement('div'); c.id = 'toast-container'; document.body.appendChild(c); }
-  const I = {
-    success:'<span class="i" style="width:16px;height:16px"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>',
-    error:'<span class="i" style="width:16px;height:16px"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg></span>',
-    info:'<span class="i" style="width:16px;height:16px"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></span>',
-    warning:'<span class="i" style="width:16px;height:16px"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>',
-  };
-  const D = { success:3200, error:5000, info:4000, warning:4500 };
-  function show(title, kind='success', sub='') {
-    const dur = D[kind]||3200, t = document.createElement('div');
-    t.className = `ux-toast ${kind}`;
-    t.innerHTML = `<div class="ux-toast-icon">${I[kind]||I.info}</div><div class="ux-toast-body"><div class="ux-toast-title">${title}</div>${sub?`<div class="ux-toast-sub">${sub}</div>`:''}</div><button class="ux-toast-close" aria-label="Dismiss"><span class="i" style="width:12px;height:12px"><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span></button><div class="ux-toast-progress" style="animation-duration:${dur}ms;"></div>`;
-    c.appendChild(t);
-    function dismiss(){t.classList.add('removing');setTimeout(()=>t.remove(),250);}
-    t.querySelector('.ux-toast-close').addEventListener('click',dismiss);
-    setTimeout(dismiss,dur);
-  }
-  return { success:(m,s)=>show(m,'success',s), error:(m,s)=>show(m,'error',s), info:(m,s)=>show(m,'info',s), warning:(m,s)=>show(m,'warning',s) };
-})();
-
-/* ── Modal dialog engine ── */
-const dlg = (() => {
-  const ICONS = {
-    danger:  '<span class="i"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></span>',
-    warning: '<span class="i"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>',
-    info:    '<span class="i"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></span>',
-    success: '<span class="i"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>',
-  };
-  function build(opts) {
-    const kind = opts.kind || 'danger';
-    const backdrop = document.createElement('div');
-    backdrop.className = 'dlg-backdrop';
-    backdrop.innerHTML = `
-      <div class="dlg-box" role="dialog" aria-modal="true">
-        <div class="dlg-header">
-          <div class="dlg-icon dlg-icon-${kind}">${ICONS[kind]||ICONS.warning}</div>
-          <div><div class="dlg-title">${opts.title||'Confirm'}</div></div>
-        </div>
-        <div class="dlg-body">${opts.body||''}</div>
-        ${opts.typed ? `<div class="dlg-input-row">
-          <label>Type <code>${opts.typed}</code> to confirm</label>
-          <input type="text" class="dlg-confirm-input dlg-input-danger"
-            placeholder="" autocomplete="off" spellcheck="false">
-        </div>` : ''}
-        <div class="dlg-footer">
-          <button class="btn-cancel">${opts.cancelText||'Cancel'}</button>
-          <button class="btn-confirm ${kind}" ${opts.typed?'disabled':''}>${opts.confirmText||'Confirm'}</button>
-        </div>
-      </div>`;
-    document.body.appendChild(backdrop);
-    setTimeout(()=>{ const i=backdrop.querySelector('.dlg-confirm-input'); if(i)i.focus(); else backdrop.querySelector('.btn-confirm').focus(); },50);
-    return backdrop;
-  }
-  function confirm(opts={}) {
-    return new Promise(resolve => {
-      const el=build(opts);
-      const confirmBtn=el.querySelector('.btn-confirm');
-      const cancelBtn=el.querySelector('.btn-cancel');
-      const input=el.querySelector('.dlg-confirm-input');
-      function close(r){ el.querySelector('.dlg-box').style.animation='dlg-slide-up 0.15s ease reverse'; setTimeout(()=>{el.remove();resolve(r);},140); }
-      if(input&&opts.typed){ input.addEventListener('input',()=>{ confirmBtn.disabled=input.value.trim()!==opts.typed; }); input.addEventListener('keydown',e=>{ if(e.key==='Enter'&&!confirmBtn.disabled)close(true); }); }
-      confirmBtn.addEventListener('click',()=>close(true));
-      cancelBtn.addEventListener('click',()=>close(false));
-      el.addEventListener('click',e=>{if(e.target===el)close(false);});
-      document.addEventListener('keydown',function esc(e){if(e.key==='Escape'){document.removeEventListener('keydown',esc);close(false);}});
-    });
-  }
-  return { confirm };
-})();
-
-const q = (id) => document.getElementById(id);
 const IS_AR = '{{ LANGUAGE_CODE }}' === 'ar';
 const T = {
   runPreviewFirst: IS_AR ? 'يرجى تشغيل تحليل + معاينة أولاً.' : 'Please run Parse + Preview first.',
@@ -724,15 +650,6 @@ function writeOut(id, data) {
   el.classList.remove('has-error', 'has-success');
   if (data && data.error)   el.classList.add('has-error');
   if (data && data.message && !data.error) el.classList.add('has-success');
-}
-
-function getCsrfToken() {
-  const name = 'csrftoken=';
-  for (const part of document.cookie.split(';')) {
-    const t = part.trim();
-    if (t.startsWith(name)) return decodeURIComponent(t.slice(name.length));
-  }
-  return '';
 }
 
 async function callJson(url, options = {}, outId = null, btn = null) {
@@ -910,26 +827,5 @@ q('bSnapshot').onclick = async () => {
 q('bIntegrity').onclick = async () => {
   await callJson('/ops/db/integrity-report/', {}, 'bOut', q('bIntegrity'));
 };
-</script>
-
-<script id="shared-ux-js">
-(function() {
-  const bar = document.createElement('div');
-  bar.id = 'ux-loading-bar';
-  document.body.prepend(bar);
-  const LOADING = ['loading...','running...','parsing...','inserting...','saving...','جارٍ'];
-  function applyLoading(btn) {
-    if (!btn || btn.classList.contains('btn-close')) return;
-    const txt = (btn.textContent || '').trim().toLowerCase();
-    if (btn.disabled && LOADING.some(t => txt.startsWith(t))) btn.classList.add('ux-loading');
-    else btn.classList.remove('ux-loading');
-  }
-  const obs = new MutationObserver(() => {
-    document.querySelectorAll('main button').forEach(applyLoading);
-    bar.classList.toggle('active', !!document.querySelector('main .ux-loading'));
-  });
-  const main = document.querySelector('main');
-  if (main) obs.observe(main, { attributes:true, attributeFilter:['disabled'], subtree:true, childList:true, characterData:true });
-})();
 </script>
 {% endblock %}

@@ -7,7 +7,7 @@
   <style>
     /* Page-specific: KPI summary tiles */
     .kpi { border: 1px solid rgba(17,17,68,0.05); border-radius: var(--radius); padding: .6rem; background: rgba(255,255,255,0.55); backdrop-filter: blur(20px) saturate(130%); -webkit-backdrop-filter: blur(20px) saturate(130%); box-shadow: var(--shadow-card); }
-    .kpi .k { font-size: .7rem; color: var(--t4); text-transform: uppercase; font-family: var(--font-mono); letter-spacing: 0.06em; font-weight: 700; }
+    .kpi .k { font-size: .7rem; color: var(--t3); text-transform: uppercase; font-family: var(--font-mono); letter-spacing: 0.06em; font-weight: 700; }
     .kpi .v { font-weight: 700; font-family: var(--font-serif); font-size: 1.4rem; color: var(--teal); }
     .si-panel { padding: 16px 20px; margin-bottom: 12px; border-radius: var(--radius); background: rgba(255,255,255,0.55); backdrop-filter: blur(20px) saturate(130%); -webkit-backdrop-filter: blur(20px) saturate(130%); border: 1px solid rgba(17,17,68,0.05); box-shadow: var(--shadow-card); }
   </style>
@@ -17,11 +17,11 @@
 {% block body %}
 <div class="d-flex shell">
   {% include 'core/partials/sidebar.html' %}
-  <main class="flex-grow-1 p-4">
+  <main id="main-content" class="flex-grow-1 p-4">
     <div class="content-wrap">
     <div class="page-header">
       <div class="page-header-left">
-        <div class="page-header-module">{% if LANGUAGE_CODE == 'ar' %}استيراد الشعب{% else %}Sections Import{% endif %}</div>
+        <h1 class="page-header-module">{% if LANGUAGE_CODE == 'ar' %}استيراد الشعب{% else %}Sections Import{% endif %}</h1>
         <div class="page-header-chips">
           <span class="ph-chip ph-chip-page">SUPER_ADMIN</span>
           <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}تحليل → مراجعة → تأكيد{% else %}Parse → Review → Insert{% endif %}</span>
@@ -42,7 +42,7 @@
       <button id="toggleTech" class="btn btn-outline-secondary">{% trans "Show technical details" %}</button>
     </div>
     <small class="text-secondary">{% trans "Tag rule: checked = department, unchecked = other" %}</small>
-    <div id="status" class="alert alert-info mt-2 py-2 mb-0">{% trans "Ready." %}</div>
+    <div id="status" role="alert" aria-live="polite" class="alert alert-info mt-2 py-2 mb-0">{% trans "Ready." %}</div>
     <div id="techWrap" class="d-none"><pre id="out" class="mt-2 p-2 bg-light border rounded small">{% trans "No action yet." %}</pre></div>
   </div>
 
@@ -58,15 +58,15 @@
 
   <div class="si-panel">
     <div class="row g-2 mb-2">
-      <div class="col-md-4"><input id="fCode" class="form-control form-control-sm" placeholder="{% trans "Filter by code" %}"></div>
-      <div class="col-md-4"><input id="fSection" class="form-control form-control-sm" placeholder="{% trans "Filter by section" %}"></div>
-      <div class="col-md-4"><input id="fDay" class="form-control form-control-sm" placeholder="{% trans "Filter by day (SUN/MON/...)" %}"></div>
+      <div class="col-md-4"><input id="fCode" class="form-control form-control-sm" placeholder="{% trans "Filter by code" %}" aria-label="{% trans "Filter by code" %}"></div>
+      <div class="col-md-4"><input id="fSection" class="form-control form-control-sm" placeholder="{% trans "Filter by section" %}" aria-label="{% trans "Filter by section" %}"></div>
+      <div class="col-md-4"><input id="fDay" class="form-control form-control-sm" placeholder="{% trans "Filter by day (SUN/MON/...)" %}" aria-label="{% trans "Filter by day" %}"></div>
     </div>
     <div class="table-responsive">
       <table class="table table-sm align-middle">
-        <thead><tr><th>{% trans "Code" %}</th><th>{% trans "No." %}</th><th>{% trans "Course name" %}</th><th>{% trans "Section" %}</th><th>{% trans "Day" %}</th><th>{% trans "Start" %}</th><th>{% trans "End" %}</th><th>{% trans "Capacity" %}</th><th>{% trans "Registered" %}</th><th>{% trans "Room" %}</th><th>{% trans "Instructor" %}</th><th>{% trans "Tag" %}</th></tr></thead>
+        <thead><tr><th scope="col">{% trans "Code" %}</th><th scope="col">{% trans "No." %}</th><th scope="col">{% trans "Course name" %}</th><th scope="col">{% trans "Section" %}</th><th scope="col">{% trans "Day" %}</th><th scope="col">{% trans "Start" %}</th><th scope="col">{% trans "End" %}</th><th scope="col">{% trans "Capacity" %}</th><th scope="col">{% trans "Registered" %}</th><th scope="col">{% trans "Room" %}</th><th scope="col">{% trans "Instructor" %}</th><th scope="col">{% trans "Tag" %}</th></tr></thead>
         <tbody id="tbody">
-          <tr><td colspan="12"><div class="empty-state"><span class="empty-icon"><span class="i" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span></span><div class="empty-title">{% if LANGUAGE_CODE == 'ar' %}لا توجد بيانات بعد{% else %}No data yet{% endif %}</div><div class="empty-hint">{% if LANGUAGE_CODE == 'ar' %}اختر ملف Oracle HTML وانقر <strong>تحليل + معاينة</strong>{% else %}Select an Oracle HTML file and click <strong>Parse + Preview</strong>{% endif %}</div></div></td></tr>
+          <tr><td colspan="12"><div class="empty-state"><span class="empty-icon"><span class="i" aria-hidden="true" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span></span><div class="empty-title">{% if LANGUAGE_CODE == 'ar' %}لا توجد بيانات بعد{% else %}No data yet{% endif %}</div><div class="empty-hint">{% if LANGUAGE_CODE == 'ar' %}اختر ملف Oracle HTML وانقر <strong>تحليل + معاينة</strong>{% else %}Select an Oracle HTML file and click <strong>Parse + Preview</strong>{% endif %}</div></div></td></tr>
         </tbody>
       </table>
     </div>
@@ -81,7 +81,6 @@
 
 {% block extra_js %}
 <script>
-const q = id => document.getElementById(id);
 const IS_AR = '{{ LANGUAGE_CODE }}' === 'ar';
 const T = {
   noAction: IS_AR ? 'لا يوجد إجراء بعد.' : 'No action yet.',
@@ -96,39 +95,9 @@ const T = {
   insertFailed: IS_AR ? 'فشل الإدخال' : 'Insert failed',
   insertedOk: (mode,rows,meet,ds,dm)=> IS_AR ? `تم الإدخال بنجاح [${mode}]. الشعب: ${rows}، اللقاءات: ${meet}. المحذوف: شعب ${ds}، لقاءات ${dm}.` : `Inserted successfully [${mode}]. Sections: ${rows}, meetings: ${meet}. Deleted: sections ${ds}, meetings ${dm}.`,
 };
-/* ── Toast / Notify ─────────────────────────────────────────── */
-const notify = (() => {
-  let c = document.getElementById('toast-container');
-  if (!c) { c = document.createElement('div'); c.id = 'toast-container'; document.body.appendChild(c); }
-  const I = {
-    success:'<span class="i" style="width:16px;height:16px"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>',
-    error:'<span class="i" style="width:16px;height:16px"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg></span>',
-    info:'<span class="i" style="width:16px;height:16px"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></span>',
-    warning:'<span class="i" style="width:16px;height:16px"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>',
-  };
-  const D = { success:3200, error:5000, info:4000, warning:4500 };
-  function show(title, kind='success', sub='') {
-    const dur = D[kind]||3200, t = document.createElement('div');
-    t.className = `ux-toast ${kind}`;
-    t.innerHTML = `<div class="ux-toast-icon">${I[kind]||I.info}</div><div class="ux-toast-body"><div class="ux-toast-title">${title}</div>${sub?`<div class="ux-toast-sub">${sub}</div>`:''}</div><button class="ux-toast-close" aria-label="Dismiss"><span class="i" style="width:12px;height:12px"><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span></button><div class="ux-toast-progress" style="animation-duration:${dur}ms;"></div>`;
-    c.appendChild(t);
-    function dismiss(){t.classList.add('removing');setTimeout(()=>t.remove(),250);}
-    t.querySelector('.ux-toast-close').addEventListener('click',dismiss);
-    setTimeout(dismiss,dur);
-  }
-  return { success:(m,s)=>show(m,'success',s), error:(m,s)=>show(m,'error',s), info:(m,s)=>show(m,'info',s), warning:(m,s)=>show(m,'warning',s) };
-})();
-
 let previewToken = null;
 let rowsAll = [];
 let currentTag = '';
-
-function getCsrfToken(){
-  const name='csrftoken=';
-  const parts=document.cookie.split(';').map(x=>x.trim());
-  for(const p of parts){ if(p.startsWith(name)) return decodeURIComponent(p.slice(name.length)); }
-  return '';
-}
 
 function setStatus(kind, text){
   const el=q('status');
@@ -230,7 +199,8 @@ q('parseBtn').onclick = async () => {
 
 q('insertBtn').onclick = async () => {
   if (!previewToken) { notify.warning(T.parsePreviewFirst); return; }
-  if (!confirm(T.confirmInsertAll)) return;
+  const ok = await dlg.confirm({title: T.confirmInsertAll, icon:'warning', confirmLabel: T.insertAll || 'Insert', cancelLabel: T.cancel || 'Cancel'});
+  if (!ok) return;
   q('insertBtn').disabled = true; q('insertBtn').textContent = IS_AR ? 'جارٍ الإدخال...' : 'Inserting...';
   setStatus('info', T.inserting);
   try {
@@ -259,32 +229,4 @@ q('insertBtn').onclick = async () => {
 };
 </script>
 
-<script id="shared-ux-js">
-/* Shared UX: loading bar */
-(function() {
-  const bar = document.createElement('div');
-  bar.id = 'ux-loading-bar';
-  document.body.prepend(bar);
-
-  const LOADING = ['loading...', 'running...', 'parsing...', 'inserting...', 'saving...', 'loading', 'running'];
-
-  function applyLoading(btn) {
-    if (!btn || btn.classList.contains('btn-close')) return;
-    const txt = (btn.textContent || '').trim().toLowerCase();
-    if (btn.disabled && LOADING.some(t => txt.startsWith(t))) {
-      btn.classList.add('ux-loading');
-    } else {
-      btn.classList.remove('ux-loading');
-    }
-  }
-
-  const obs = new MutationObserver(() => {
-    document.querySelectorAll('main button').forEach(applyLoading);
-    bar.classList.toggle('active', !!document.querySelector('main .ux-loading'));
-  });
-
-  const main = document.querySelector('main');
-  if (main) obs.observe(main, { attributes: true, attributeFilter: ['disabled'], subtree: true, childList: true, characterData: true });
-})();
-</script>
 {% endblock %}

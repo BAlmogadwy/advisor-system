@@ -10,14 +10,14 @@
    ═══════════════════════════════════════════════════════ */
 
 /* ── Dashboard page-header overrides (non-sticky, gradient accent) ── */
-#dashboard-page .page-header {
+[data-page="dashboard"] .page-header {
   position: relative;
   padding: 0.65rem 1.5rem;
   margin: -1.5rem -1.5rem 1.25rem -1.5rem;
   background: rgba(255,255,255,0.35);
   box-shadow: none;
 }
-#dashboard-page .page-header::after {
+[data-page="dashboard"] .page-header::after {
   content: '';
   position: absolute;
   bottom: -1px; left: 0; right: 0;
@@ -25,7 +25,7 @@
   background: linear-gradient(90deg, var(--teal), var(--sky) 35%, var(--royal) 65%, transparent);
   opacity: 0.15;
 }
-#dashboard-page .page-header-module { font-size: 1rem; }
+[data-page="dashboard"] .page-header-module { font-size: 1rem; }
 
 /* ── REC 4: HP advanced settings ───────────────────── */
 .hp-advanced { border: none; }
@@ -335,11 +335,11 @@
 <div class="d-flex shell">
   {% include "core/partials/sidebar.html" %}
 
-  <main id="dashboard-page" class="flex-grow-1 p-4">
+  <main id="main-content" class="flex-grow-1 p-4" data-page="dashboard">
     <div class="content-wrap">
     <div class="page-header">
       <div class="page-header-left">
-        <div id="currentModule" class="page-header-module">{% trans "Student Recommender" %}</div>
+        <h1 id="currentModule" class="page-header-module">{% trans "Student Recommender" %}</h1>
         <div class="page-header-chips">
           <span class="ph-chip ph-chip-role">{{ role }}</span>
           <span class="ph-chip ph-chip-scope" title="{{ role_scope_hint }}">{{ role_scope_hint|truncatechars:40 }}</span>
@@ -390,10 +390,10 @@
         <div class="fb-search" style="max-width:110px"><input type="number" min="0" max="1" name="semester" value="{{ semester }}" placeholder="Semester" required></div>
         <div class="fb-spacer"></div>
         <button class="btn btn-primary" style="padding:7px 20px;font-size:13px">
-          <span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Recommend
+          <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Recommend
         </button>
         <button id="loadStudentPlan" type="button" class="fb-dd">
-          <span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>Load plan
+          <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>Load plan
         </button>
       </form>
       {% if recommendations is not None %}
@@ -420,51 +420,51 @@
         </div>
       </div>
       {% endif %}
-      {% if error %}<div class="alert alert-danger mt-3 mb-0">{{ error }}</div>{% endif %}
+      {% if error %}<div class="alert alert-danger mt-3 mb-0" role="alert">{{ error }}</div>{% endif %}
 
       <div class="mt-4">
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
           <h6 style="font-family:var(--font-serif);font-size:18px;color:var(--navy);margin:0">Student Plan Matrix</h6>
           <span style="font-family:var(--font-mono);font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px;background:var(--teal-dim);color:var(--teal);border:1px solid var(--teal-border)">Terms 1-10</span>
         </div>
-        <div id="studentPlanMeta" class="small mb-2" style="color:var(--t4)">Load a student to view the full term matrix.</div>
+        <div id="studentPlanMeta" class="small mb-2" style="color:var(--t3)">Load a student to view the full term matrix.</div>
         <div id="studentPlanMetrics" style="display:none;gap:12px;margin-bottom:12px">
           <div style="flex:1;min-width:0"><div class="mc mc-teal">
-            <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span></div><div class="mc-lbl">Passed</div></div>
+            <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span></div><div class="mc-lbl">Passed</div></div>
             <div class="mc-val" id="spPassed">0</div>
             <div class="spark" id="spSparkPassed"></div>
           </div></div>
           <div style="flex:1;min-width:0"><div class="mc mc-royal">
-            <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span></div><div class="mc-lbl">Studying</div></div>
+            <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span></div><div class="mc-lbl">Studying</div></div>
             <div class="mc-val" id="spStudying">0</div>
             <div class="spark" id="spSparkStudying"></div>
           </div></div>
           <div style="flex:1;min-width:0"><div class="mc mc-sky">
-            <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></div><div class="mc-lbl">Can Register</div></div>
+            <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></div><div class="mc-lbl">Can Register</div></div>
             <div class="mc-val" id="spCan">0</div>
             <div class="spark" id="spSparkCan"></div>
           </div></div>
           <div style="flex:1;min-width:0"><div class="mc mc-err">
-            <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span></div><div class="mc-lbl">Locked</div></div>
+            <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span></div><div class="mc-lbl">Locked</div></div>
             <div class="mc-val" id="spLocked">0</div>
             <div class="spark" id="spSparkLocked"></div>
           </div></div>
         </div>
         <div id="studentPlanLegend" class="small mb-2" style="display:none;">
-          <span style="color:var(--t4);margin-inline-end:6px">Legend:</span>
+          <span style="color:var(--t3);margin-inline-end:6px">Legend:</span>
           <span class="pill-status pill-g"><span class="pill-dot"></span>Passed</span>
           <span class="pill-status pill-b"><span class="pill-dot"></span>Studying</span>
           <span class="pill-status pill-g" style="background:rgba(10,142,110,0.14)"><span class="pill-dot"></span>Can register</span>
           <span class="pill-status pill-r"><span class="pill-dot"></span>Locked</span>
         </div>
         <div class="filter-bar mb-2" id="studentPlanActions" style="display:none;">
-          <button id="spFocusNext" type="button" class="fb-dd active"><span class="i i-sm"><svg viewBox="0 0 24 24"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg></span> Focus next</button>
-          <button id="spBuildTargetPlan" type="button" class="fb-dd" style="background:rgba(10,142,110,0.08);border-color:var(--teal-border);color:var(--teal)"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span> Build plan</button>
-          <a id="spCsvExport" class="fb-dd" href="#"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span> CSV</a>
+          <button id="spFocusNext" type="button" class="fb-dd active"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg></span> Focus next</button>
+          <button id="spBuildTargetPlan" type="button" class="fb-dd" style="background:rgba(10,142,110,0.08);border-color:var(--teal-border);color:var(--teal)"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span> Build plan</button>
+          <a id="spCsvExport" class="fb-dd" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span> CSV</a>
           <div class="fb-spacer"></div>
 
           <details class="d-inline-block">
-            <summary class="fb-dd"><span class="i i-sm"><svg viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/></svg></span> Filters</summary>
+            <summary class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/></svg></span> Filters</summary>
             <div class="d-flex flex-wrap gap-2 mt-2" style="padding:8px 0;">
               <button id="spShowAll" type="button" class="fb-dd active">Show all</button>
               <button id="spShowCanOnly" type="button" class="fb-dd" style="color:var(--teal)">Can register</button>
@@ -476,7 +476,7 @@
           </details>
 
           <details class="d-inline-block">
-            <summary class="fb-dd"><span class="i i-sm"><svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg></span> Sort</summary>
+            <summary class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg></span> Sort</summary>
             <div class="d-flex flex-wrap gap-2 mt-2" style="padding:8px 0;">
               <button id="spSortImportance" type="button" class="fb-dd" style="color:var(--warning)">Importance</button>
               <button id="spSortStatus" type="button" class="fb-dd" style="color:var(--sky)">Status</button>
@@ -485,9 +485,9 @@
           </details>
 
           <details class="d-inline-block">
-            <summary class="fb-dd"><span class="i i-sm"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span> Target</summary>
+            <summary class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span> Target</summary>
             <div class="d-flex flex-wrap gap-2 mt-2 align-items-center" style="padding:8px 0;">
-              <label class="small" style="color:var(--t4)">Credits</label>
+              <label class="small" style="color:var(--t3)">Credits</label>
               <select id="spTargetCredits" class="form-select form-select-sm" style="width:auto;">
                 <option value="12">12</option>
                 <option value="15">15</option>
@@ -497,7 +497,7 @@
                 <option value="max" selected>Max importance</option>
                 <option value="balanced">Balanced by term load</option>
               </select>
-              <button id="spPrintPdf" type="button" class="fb-dd"><span class="i i-sm"><svg viewBox="0 0 24 24"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></span> Print / PDF</button>
+              <button id="spPrintPdf" type="button" class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></span> Print / PDF</button>
             </div>
           </details>
         </div>
@@ -536,35 +536,35 @@
         <div class="fb-search" style="max-width:170px"><input id="batchProgram" placeholder="Program (optional)"></div>
         <div class="fb-search" style="max-width:160px"><input id="batchSection" placeholder="Section (optional)"></div>
         <div class="fb-spacer"></div>
-        <button id="runBatch" class="btn btn-primary" style="padding:7px 20px;font-size:13px"><span class="i i-sm"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></span>Run preview</button>
+        <button id="runBatch" class="btn btn-primary" style="padding:7px 20px;font-size:13px"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></span>Run preview</button>
         <button id="resetBatch" type="button" class="fb-dd">Reset</button>
       </div>
       <div style="display:flex;gap:6px;margin-top:8px;">
-        <button id="batchSavePreset" type="button" class="fb-dd"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span> Save preset</button>
-        <button id="batchLoadPreset" type="button" class="fb-dd"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span> Load preset</button>
+        <button id="batchSavePreset" type="button" class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span> Save preset</button>
+        <button id="batchLoadPreset" type="button" class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span> Load preset</button>
       </div>
 
       <div class="row g-2 mt-3 mb-2" id="batchMetrics" style="display:none;">
         <div class="col-md-4"><div class="mc mc-royal">
-          <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></div><div class="mc-lbl">Year / Semester</div></div>
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></div><div class="mc-lbl">Year / Semester</div></div>
           <div class="mc-val" id="batchMetricTerm">-</div>
         </div></div>
         <div class="col-md-4"><div class="mc mc-teal mc-hero">
-          <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span></div><div class="mc-lbl">Students Scanned</div></div>
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span></div><div class="mc-lbl">Students Scanned</div></div>
           <div class="mc-val" id="batchMetricStudents">0</div>
         </div></div>
         <div class="col-md-4"><div class="mc mc-sky">
-          <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span></div><div class="mc-lbl">Top List Size</div></div>
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span></div><div class="mc-lbl">Top List Size</div></div>
           <div class="mc-val" id="batchMetricTopCount">0</div>
         </div></div>
       </div>
 
       <div class="filter-bar mt-2 mb-3" style="display:flex;align-items:center;">
-        <a id="batchCsv" class="fb-dd" href="#"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span> CSV</a>
-        <a id="batchSummary" class="fb-dd" href="#"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span> Summary JSON</a>
+        <a id="batchCsv" class="fb-dd" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span> CSV</a>
+        <a id="batchSummary" class="fb-dd" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span> Summary JSON</a>
         <button id="copyBatchCsv" type="button" class="fb-dd">Copy CSV link</button>
         <div class="fb-spacer"></div>
-        <div id="batchUpdated" class="small" style="color:var(--t4)">Last update: -</div>
+        <div id="batchUpdated" class="small" style="color:var(--t3)">Last update: -</div>
       </div>
 
       <div style="margin-bottom:6px;">
@@ -596,21 +596,21 @@
         <div class="fb-search" style="max-width:220px"><input id="preCourse" placeholder="Course code (optional)"></div>
         <div class="fb-spacer"></div>
         <button id="loadPre" class="btn btn-primary" style="padding:7px 22px;font-size:13px">
-          <span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Load
+          <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Load
         </button>
       </div>
       <!-- Metrics -->
       <div id="preMetrics" style="display:none;gap:14px;margin-bottom:16px">
         <div style="flex:1;min-width:0"><div class="mc mc-royal">
-          <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span></div><div class="mc-lbl">Program</div></div>
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span></div><div class="mc-lbl">Program</div></div>
           <div class="mc-val" id="preMetricProgram">—</div>
         </div></div>
         <div style="flex:1;min-width:0"><div class="mc mc-teal">
-          <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></span></div><div class="mc-lbl">Courses</div></div>
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></span></div><div class="mc-lbl">Courses</div></div>
           <div class="mc-val" id="preMetricCourses">0</div>
         </div></div>
         <div style="flex:1;min-width:0"><div class="mc mc-sky">
-          <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span></div><div class="mc-lbl">Prereq Links</div></div>
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span></div><div class="mc-lbl">Prereq Links</div></div>
           <div class="mc-val" id="preMetricLinks">0</div>
         </div></div>
       </div>
@@ -695,30 +695,30 @@
         <div class="fb-search" style="max-width:120px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></span><input id="scrapeConcurrency" type="number" min="1" max="8" value="2" placeholder="Threads"></div>
         <div class="fb-search" style="flex:1;min-width:180px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><input id="scrapeCsv" placeholder="CSV path (default: import_old/data/students_list.csv)"></div>
         <div class="fb-spacer"></div>
-        <button id="scrapeStart" class="btn btn-primary" style="padding:7px 16px;font-size:13px;background:linear-gradient(135deg,#e74c3c,#c0392b);border:none"><span class="i i-sm"><svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>Start</button>
-        <button id="scrapeStop" class="btn btn-primary" style="padding:7px 14px;font-size:13px;background:linear-gradient(135deg,#f39c12,#e67e22);border:none"><span class="i i-sm"><svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></span>Stop</button>
-        <button id="scrapeRefresh" class="btn-circle" title="Refresh status"><span class="i"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></span></button>
+        <button id="scrapeStart" class="btn btn-primary" style="padding:7px 16px;font-size:13px;background:linear-gradient(135deg,#e74c3c,#c0392b);border:none"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>Start</button>
+        <button id="scrapeStop" class="btn btn-primary" style="padding:7px 14px;font-size:13px;background:linear-gradient(135deg,#f39c12,#e67e22);border:none"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></span>Stop</button>
+        <button id="scrapeRefresh" class="btn-circle" title="Refresh status"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></span></button>
       </div>
       <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px" id="scrapeMetrics">
         <div style="flex:1;min-width:140px"><div class="mc mc-teal">
-          <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span></div><div class="mc-lbl">Status</div></div>
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span></div><div class="mc-lbl">Status</div></div>
           <div class="mc-val" id="scrapeMetricStatus" style="font-size:20px"><span class="status-dot status-stopped"></span>Idle</div>
         </div></div>
         <div style="flex:0.6;min-width:100px"><div class="mc mc-royal">
-          <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg></span></div><div class="mc-lbl">PID</div></div>
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg></span></div><div class="mc-lbl">PID</div></div>
           <div class="mc-val" id="scrapeMetricPid" style="font-size:20px">-</div>
         </div></div>
         <div style="flex:1;min-width:140px"><div class="mc mc-sky">
-          <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span></div><div class="mc-lbl">Started</div></div>
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span></div><div class="mc-lbl">Started</div></div>
           <div class="mc-val" id="scrapeMetricStarted" style="font-size:16px;font-family:var(--font-mono);letter-spacing:0">-</div>
         </div></div>
         <div style="flex:1;min-width:140px"><div class="mc mc-warn">
-          <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></span></div><div class="mc-lbl">Stopped</div></div>
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></span></div><div class="mc-lbl">Stopped</div></div>
           <div class="mc-val" id="scrapeMetricStopped" style="font-size:16px;font-family:var(--font-mono);letter-spacing:0">-</div>
         </div></div>
       </div>
       <div id="scrapeMeta" class="meta-banner meta-info" style="font-family:var(--font-mono);font-size:12px;border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:10px">No scrape run started.</div>
-      <div id="scrapeUpdatedAt" style="font-size:11px;color:var(--t5);font-family:var(--font-mono);margin-bottom:14px">Last update: -</div>
+      <div id="scrapeUpdatedAt" style="font-size:11px;color:var(--t3);font-family:var(--font-mono);margin-bottom:14px">Last update: -</div>
       <div class="scrape-term" style="margin-bottom:18px">
         <div class="scrape-term-head">
           <div style="display:flex;align-items:center;gap:8px">
@@ -756,36 +756,36 @@
         <div class="fb-search" style="max-width:100px"><input id="dbgLimit" type="number" value="80" placeholder="Limit"></div>
         <div class="fb-spacer"></div>
         <button id="dbgRun" class="btn btn-primary" style="padding:7px 20px;font-size:13px">
-          <span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run
+          <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run
         </button>
       </div>
       <div class="filter-bar" style="padding:8px 14px;margin-bottom:14px">
-        <button id="dbgSavePreset" type="button" class="fb-dd"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span>Save preset</button>
-        <button id="dbgLoadPreset" type="button" class="fb-dd"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M3 15v4c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg></span>Load preset</button>
+        <button id="dbgSavePreset" type="button" class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span>Save preset</button>
+        <button id="dbgLoadPreset" type="button" class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 15v4c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg></span>Load preset</button>
         <div class="fb-spacer"></div>
-        <a id="dbgCsv" class="fb-dd" href="#"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>CSV</a>
+        <a id="dbgCsv" class="fb-dd" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>CSV</a>
       </div>
       <div id="dbgMeta" class="meta-banner meta-info" style="font-family:var(--font-mono);font-size:12px;border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:14px">No debug report loaded.</div>
       <div id="dbgSummary" style="display:none;gap:14px;margin-bottom:18px">
         <div style="flex:1;min-width:0"><div class="mc mc-royal">
-          <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span></div><div class="mc-lbl">Students</div></div>
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span></div><div class="mc-lbl">Students</div></div>
           <div class="mc-val" id="dbgCount">0</div>
         </div></div>
         <div style="flex:1;min-width:0"><div class="mc mc-teal">
-          <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span></div><div class="mc-lbl">With Recs</div></div>
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span></div><div class="mc-lbl">With Recs</div></div>
           <div class="mc-val" id="dbgWithRec">0</div>
         </div></div>
         <div style="flex:1;min-width:0"><div class="mc mc-err">
-          <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg></span></div><div class="mc-lbl">Empty Recs</div></div>
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg></span></div><div class="mc-lbl">Empty Recs</div></div>
           <div class="mc-val" id="dbgWithoutRec">0</div>
         </div></div>
       </div>
-      <div id="dbgUpdated" style="font-size:11px;color:var(--t5);font-family:var(--font-mono);margin-bottom:10px">Last update: —</div>
+      <div id="dbgUpdated" style="font-size:11px;color:var(--t3);font-family:var(--font-mono);margin-bottom:10px">Last update: —</div>
       <div class="tbl-section">
         <div class="tbl-header">
           <div class="tbl-title">Debug Details <span class="tbl-cnt" id="dbgTableCnt">0</span></div>
           <div class="tbl-actions">
-            <button class="btn btn-outline-secondary btn-sm" style="font-size:11px;padding:4px 10px;border-radius:var(--radius-sm);background:rgba(255,255,255,0.5);border:1px solid rgba(17,17,68,0.06);color:var(--t3);cursor:pointer" onclick="document.getElementById('dbgTable').scrollIntoView({behavior:'smooth'})"><span class="i i-sm"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span> Columns</button>
+            <button class="btn btn-outline-secondary btn-sm" style="font-size:11px;padding:4px 10px;border-radius:var(--radius-sm);background:rgba(255,255,255,0.5);border:1px solid rgba(17,17,68,0.06);color:var(--t3);cursor:pointer" onclick="document.getElementById('dbgTable').scrollIntoView({behavior:'smooth'})"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span> Columns</button>
           </div>
         </div>
         <div style="overflow-x:auto">
@@ -810,31 +810,31 @@
         <div class="fb-search" style="max-width:210px"><select id="elMode" style="flex:1;background:none;border:none;outline:none;color:var(--t1);font-size:13px;font-family:inherit;cursor:pointer"><option value="relaxed" selected>Relaxed (passed+studying)</option><option value="strict">Strict (passed only)</option></select></div>
         <div class="fb-spacer"></div>
         <button id="elRun" class="btn btn-primary" style="padding:7px 20px;font-size:13px">
-          <span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Check
+          <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Check
         </button>
       </div>
       <div class="filter-bar" style="padding:8px 14px;margin-bottom:14px">
-        <button id="elSavePreset" type="button" class="fb-dd"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span>Save preset</button>
-        <button id="elLoadPreset" type="button" class="fb-dd"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M3 15v4c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg></span>Load preset</button>
+        <button id="elSavePreset" type="button" class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span>Save preset</button>
+        <button id="elLoadPreset" type="button" class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 15v4c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg></span>Load preset</button>
         <div class="fb-spacer"></div>
-        <a id="elCsv" class="fb-dd" href="#"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>CSV</a>
+        <a id="elCsv" class="fb-dd" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>CSV</a>
       </div>
       <div id="elMeta" class="meta-banner meta-info" style="font-family:var(--font-mono);font-size:12px;border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:14px">No eligibility report loaded.</div>
       <div id="elSummary" style="display:none;gap:14px;margin-bottom:18px">
         <div style="flex:1;min-width:0"><div class="mc mc-teal">
-          <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></span></div><div class="mc-lbl">Eligible</div></div>
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></span></div><div class="mc-lbl">Eligible</div></div>
           <div class="mc-val" id="elCount">0</div>
         </div></div>
         <div style="flex:1;min-width:0"><div class="mc mc-royal">
-          <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span></div><div class="mc-lbl">Mode</div></div>
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span></div><div class="mc-lbl">Mode</div></div>
           <div class="mc-val" id="elModeBadge" style="font-size:18px">relaxed</div>
         </div></div>
         <div style="flex:1;min-width:0"><div class="mc mc-sky">
-          <div class="mc-head"><div class="mc-icon"><span class="i"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></span></div><div class="mc-lbl">Course</div></div>
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></span></div><div class="mc-lbl">Course</div></div>
           <div class="mc-val" id="elCourseBadge" style="font-size:18px">—</div>
         </div></div>
       </div>
-      <div id="elUpdated" style="font-size:11px;color:var(--t5);font-family:var(--font-mono);margin-bottom:10px">Last update: —</div>
+      <div id="elUpdated" style="font-size:11px;color:var(--t3);font-family:var(--font-mono);margin-bottom:10px">Last update: —</div>
       <div class="tbl-section">
         <div class="tbl-header">
           <div class="tbl-title">Eligible Students <span class="tbl-cnt" id="elTableCnt">0</span></div>
@@ -974,8 +974,8 @@
         <div class="fb-search" style="max-width:110px"><input id="hpJoin" placeholder="Join yrs"></div>
         <div class="fb-search" style="max-width:130px"><select id="hpParity" style="flex:1;background:none;border:none;outline:none;color:var(--t1);font-size:13px;font-family:inherit;cursor:pointer"><option value="0" selected>0 (odd)</option><option value="1">1 (even)</option></select></div>
         <div class="fb-spacer"></div>
-        <button id="hpRun" class="btn btn-primary" style="padding:7px 20px;font-size:13px"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run report</button>
-        <a id="hpXlsx" class="fb-dd" href="#"><span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>XLSX</a>
+        <button id="hpRun" class="btn btn-primary" style="padding:7px 20px;font-size:13px"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run report</button>
+        <a id="hpXlsx" class="fb-dd" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>XLSX</a>
       </div>
       <details class="hp-advanced" style="margin-bottom:8px">
         <summary class="hp-advanced-toggle">
@@ -1086,7 +1086,6 @@
     }
   }));
 
-  const q = (id) => document.getElementById(id);
 
   /* ── Custom dialog open/close helpers for dlg-backdrop modals ── */
   function openDlgModal(el) {
@@ -1624,7 +1623,7 @@
       .sort((a, b) => Number(b.importance_score || 0) - Number(a.importance_score || 0))
       .slice(0, 5);
     topImportant.innerHTML = topImportantCourses.length
-      ? `<div style="font-size:11px;font-weight:600;color:var(--t5);font-family:var(--font-mono);margin-bottom:6px;letter-spacing:0.04em">TOP IMPORTANCE</div><div style="display:flex;flex-wrap:wrap;gap:6px">${topImportantCourses.map((c, i) => `<span class="pill-status ${i === 0 ? 'pill-g' : 'pill-b'}" style="font-family:var(--font-mono);font-size:11px"><span class="pill-dot"></span>${c.course_code} <span style="opacity:0.6">${Number(c.importance_score || 0).toFixed(1)}</span></span>`).join('')}</div>`
+      ? `<div style="font-size:11px;font-weight:600;color:var(--t3);font-family:var(--font-mono);margin-bottom:6px;letter-spacing:0.04em">TOP IMPORTANCE</div><div style="display:flex;flex-wrap:wrap;gap:6px">${topImportantCourses.map((c, i) => `<span class="pill-status ${i === 0 ? 'pill-g' : 'pill-b'}" style="font-family:var(--font-mono);font-size:11px"><span class="pill-dot"></span>${c.course_code} <span style="opacity:0.6">${Number(c.importance_score || 0).toFixed(1)}</span></span>`).join('')}</div>`
       : '';
 
     const targetCredits = Number(q('spTargetCredits')?.value || 18);
@@ -1786,7 +1785,7 @@
 
       showSkeleton('planTable', 3);
     q('loadStudentPlan').disabled = true;
-    q('loadStudentPlan').innerHTML = '<span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>Loading...';
+    q('loadStudentPlan').innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>Loading...';
     container.innerHTML = '<div class="empty-note">Loading plan matrix...</div>';
 
     const res = await fetch(`/report/student-plan/?student_id=${encodeURIComponent(studentId)}`);
@@ -1805,7 +1804,7 @@
       q('studentPlanActions').style.display = 'none';
       q('studentPlanLegend').style.display = 'none';
       q('loadStudentPlan').disabled = false;
-      q('loadStudentPlan').innerHTML = '<span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>Load plan';
+      q('loadStudentPlan').innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>Load plan';
       return;
     }
 
@@ -1871,12 +1870,12 @@
       riskChips.push(`<span class="alert-chip danger">Critical blocker: ${h.course_code} blocks ${h.blocks} courses</span>`);
     });
     q('studentPlanRiskAlerts').innerHTML = riskChips.length
-      ? `<div style="font-size:11px;font-weight:600;color:var(--t5);font-family:var(--font-mono);margin-bottom:6px;letter-spacing:0.04em">RISK ALERTS</div><div style="display:flex;flex-wrap:wrap;gap:6px">${riskChips.join('')}</div>`
+      ? `<div style="font-size:11px;font-weight:600;color:var(--t3);font-family:var(--font-mono);margin-bottom:6px;letter-spacing:0.04em">RISK ALERTS</div><div style="display:flex;flex-wrap:wrap;gap:6px">${riskChips.join('')}</div>`
       : '';
 
 
     q('studentPlanHints').innerHTML = hints.length
-      ? `<div style="font-size:11px;font-weight:600;color:var(--t5);font-family:var(--font-mono);margin-bottom:6px;letter-spacing:0.04em">PASS FIRST <span style="opacity:0.5">(click to filter)</span></div><div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">${hints.map((h) => `<button type="button" class="hint-chip hint-filter" data-blocker="${h.course_code}"><svg width="10" height="10" viewBox="0 0 24 24" style="fill:none;stroke:currentColor;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>${h.course_code} → ${h.blocks}</button>`).join('')}<button type="button" id="clearBlockerFilter" class="fb-dd" style="font-size:11px;padding:4px 12px">Clear</button></div>`
+      ? `<div style="font-size:11px;font-weight:600;color:var(--t3);font-family:var(--font-mono);margin-bottom:6px;letter-spacing:0.04em">PASS FIRST <span style="opacity:0.5">(click to filter)</span></div><div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">${hints.map((h) => `<button type="button" class="hint-chip hint-filter" data-blocker="${h.course_code}"><svg width="10" height="10" viewBox="0 0 24 24" style="fill:none;stroke:currentColor;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>${h.course_code} → ${h.blocks}</button>`).join('')}<button type="button" id="clearBlockerFilter" class="fb-dd" style="font-size:11px;padding:4px 12px">Clear</button></div>`
       : '';
 
     document.querySelectorAll('.hint-filter').forEach((el) => {
@@ -1899,7 +1898,7 @@
     renderStudentPlanTerms();
 
     q('loadStudentPlan').disabled = false;
-    q('loadStudentPlan').innerHTML = '<span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>Load plan';
+    q('loadStudentPlan').innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>Load plan';
   };
 
   let scrapeAutoTimer = null;
@@ -2047,19 +2046,6 @@
     else    notify.error(message);
   }
 
-  function getCookie(name) {
-    const value = `; ${document.cookie}`;
-    const parts = value.split(`; ${name}=`);
-    if (parts.length === 2) return parts.pop().split(';').shift();
-    return '';
-  }
-
-  const csrfToken = getCookie('csrftoken');
-
-  function csrfHeaders(extra = {}) {
-    return { 'X-CSRFToken': csrfToken, ...extra };
-  }
-
   function savePreset(key, fieldIds) {
     const payload = {};
     fieldIds.forEach((id) => { payload[id] = q(id)?.value ?? ''; });
@@ -2198,7 +2184,7 @@
     if (!requireFields(['dbgYear','dbgSemester'], 'dbgMeta', 'Debug report')) return;
     const btn = q('dbgRun');
     btn.disabled = true;
-    btn.innerHTML = '<span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Running...';
+    btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Running...';
     const url = `/report/recommendation-debug/?year=${encodeURIComponent(q('dbgYear').value)}&semester=${encodeURIComponent(q('dbgSemester').value)}&section=${encodeURIComponent(q('dbgSection').value)}&program=${encodeURIComponent(q('dbgProgram').value)}&join_years=${encodeURIComponent(q('dbgJoin').value)}&limit=${encodeURIComponent(q('dbgLimit').value)}`;
     q('dbgCsv').href = `/export/recommendation-debug.csv?year=${encodeURIComponent(q('dbgYear').value)}&semester=${encodeURIComponent(q('dbgSemester').value)}&section=${encodeURIComponent(q('dbgSection').value)}&program=${encodeURIComponent(q('dbgProgram').value)}&join_years=${encodeURIComponent(q('dbgJoin').value)}&limit=${encodeURIComponent(q('dbgLimit').value)}`;
     const tbody = document.querySelector('#dbgTable tbody');
@@ -2215,7 +2201,7 @@
       setUpdated('dbgUpdated', true);
       toast('Debug report failed', false);
       btn.disabled = false;
-      btn.innerHTML = '<span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run';
+      btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run';
       return;
     }
 
@@ -2226,7 +2212,7 @@
       q('dbgSummary').style.display = 'none';
       setUpdated('dbgUpdated', true);
       btn.disabled = false;
-      btn.innerHTML = '<span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run';
+      btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run';
       return;
     }
     q('dbgMeta').textContent = `Loaded ${data.count} students • filters: section=${data.filters?.section || '-'} program=${data.filters?.program || '-'} join=${(data.filters?.join_year_prefixes || []).join(',') || '-'}.`;
@@ -2241,7 +2227,7 @@
       const tracePayload = encodeURIComponent(JSON.stringify(x.recommendation_details || []));
       const summary = `Student ${x.student_id} (${x.program})\nReal→Next: ${x.real_term}→${x.next_term}\nRecommended: ${(x.recommended_courses || []).join(', ') || '-'}`;
       const recList = (x.recommended_courses || []);
-      const recHtml = recList.length ? recList.map(r => `<span class="pill-status pill-g" style="font-size:10px;margin:1px"><span class="pill-dot"></span>${r}</span>`).join('') : '<span style="color:var(--t5);font-size:11px">—</span>';
+      const recHtml = recList.length ? recList.map(r => `<span class="pill-status pill-g" style="font-size:10px;margin:1px"><span class="pill-dot"></span>${r}</span>`).join('') : '<span style="color:var(--t3);font-size:11px">—</span>';
       return `<tr class="cr-row">
         <td><span class="cr-id">${x.student_id}</span></td>
         <td style="font-family:var(--font-mono);font-size:12px">${x.program}</td>
@@ -2249,7 +2235,7 @@
         <td style="font-size:11px">${(x.passed || []).slice(0,4).join(', ')}${(x.passed || []).length > 4 ? ' ...' : ''}</td>
         <td style="font-size:11px">${(x.studying || []).join(', ') || '-'}</td>
         <td>${recHtml}</td>
-        <td style="white-space:nowrap"><div class="trace-actions"><button type="button" class="trace-btn trace-btn-view dbg-trace" data-trace="${tracePayload}" title="View trace"><span class="i"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span>View</button><button type="button" class="trace-btn trace-btn-copy dbg-copy" data-summary="${encodeURIComponent(summary)}" title="Copy summary"><span class="i"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>Copy</button></div></td>
+        <td style="white-space:nowrap"><div class="trace-actions"><button type="button" class="trace-btn trace-btn-view dbg-trace" data-trace="${tracePayload}" title="View trace"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span>View</button><button type="button" class="trace-btn trace-btn-copy dbg-copy" data-summary="${encodeURIComponent(summary)}" title="Copy summary"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>Copy</button></div></td>
       </tr>`;
     }).join('') || '<tr><td colspan="7" class="empty-note">No students matched filters.</td></tr>';
 
@@ -2282,14 +2268,14 @@
     setUpdated('dbgUpdated');
     toast('Debug report loaded', true);
     btn.disabled = false;
-    btn.innerHTML = '<span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run';
+    btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run';
   };
 
   q('elRun').onclick = async () => {
     if (!requireFields(['elCourse'], 'elMeta', 'Eligibility')) return;
     const btn = q('elRun');
     btn.disabled = true;
-    btn.innerHTML = '<span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Checking...';
+    btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Checking...';
     const url = `/report/course-eligibility/?course_code=${encodeURIComponent(q('elCourse').value)}&section=${encodeURIComponent(q('elSection').value)}&program=${encodeURIComponent(q('elProgram').value)}&join_years=${encodeURIComponent(q('elJoin').value)}&mode=${encodeURIComponent(q('elMode').value)}`;
     q('elCsv').href = `/export/course-eligibility.csv?course_code=${encodeURIComponent(q('elCourse').value)}&section=${encodeURIComponent(q('elSection').value)}&program=${encodeURIComponent(q('elProgram').value)}&join_years=${encodeURIComponent(q('elJoin').value)}&mode=${encodeURIComponent(q('elMode').value)}`;
     const tbody = document.querySelector('#elTable tbody');
@@ -2306,7 +2292,7 @@
       tbody.innerHTML = '<tr><td class="text-danger">Network error while loading eligibility report.</td></tr>';
       toast('Eligibility report failed', false);
       btn.disabled = false;
-      btn.innerHTML = '<span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Check';
+      btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Check';
       return;
     }
     if (!res.ok || !Array.isArray(data.per_program)) {
@@ -2316,7 +2302,7 @@
       setUpdated('elUpdated', true);
       tbody.innerHTML = '<tr><td class="text-danger">Failed to load eligibility report.</td></tr>';
       btn.disabled = false;
-      btn.innerHTML = '<span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Check';
+      btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Check';
       return;
     }
 
@@ -2340,7 +2326,7 @@
     setUpdated('elUpdated');
     toast('Eligibility report loaded', true);
     btn.disabled = false;
-    btn.innerHTML = '<span class="i i-sm"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Check';
+    btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Check';
   };
 
   async function refreshAdvisorsDropdown(selectAdvisorId = '') {
@@ -2613,10 +2599,6 @@
     btn.textContent = 'Run report';
   };
 
-  function wireSortableTable(tableId) {
-    wireSortableTablePro(tableId); /* upgraded — see wireSortableTablePro below */
-  }
-
   async function copyLinkFrom(elId, label) {
     const el = q(elId);
     if (!el) return;
@@ -2734,170 +2716,6 @@
   q('scrapeRefresh').onclick = refreshScrapeStatus;
 
   /* ─────────────────────────────────────────────────────────────
-     MODAL DIALOG ENGINE
-     Usage:
-       await dlg.confirm({ title, body, confirmText, kind, typed })
-       await dlg.prompt({ title, body, label, placeholder, kind })
-     kind: 'danger' | 'warning' | 'info'
-  ───────────────────────────────────────────────────────────── */
-  const dlg = (() => {
-    const ICONS = {
-      danger:  '<span class="i"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></span>',
-      warning: '<span class="i"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>',
-      info:    '<span class="i"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></span>',
-      success: '<span class="i"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>',
-    };
-
-    function build(opts) {
-      const kind = opts.kind || 'danger';
-      const backdrop = document.createElement('div');
-      backdrop.className = 'dlg-backdrop';
-      backdrop.innerHTML = `
-        <div class="dlg-box" role="dialog" aria-modal="true" aria-labelledby="dlg-title-text">
-          <div class="dlg-header">
-            <div class="dlg-icon dlg-icon-${kind}">${ICONS[kind] || ICONS.warning}</div>
-            <div>
-              <div class="dlg-title" id="dlg-title-text">${opts.title || 'Confirm'}</div>
-            </div>
-          </div>
-          <div class="dlg-body">${opts.body || ''}</div>
-          ${opts.typed || opts.inputLabel ? `
-          <div class="dlg-input-row">
-            <label>${opts.inputLabel || ('Type <code>' + (opts.typed || '') + '</code> to confirm')}</label>
-            <input type="text" class="dlg-confirm-input ${kind === 'danger' ? 'dlg-input-danger' : ''}"
-              placeholder="${opts.inputPlaceholder || ''}" autocomplete="off" spellcheck="false">
-            ${opts.inputHint ? `<div class="dlg-input-hint">${opts.inputHint}</div>` : ''}
-          </div>` : ''}
-          <div class="dlg-footer">
-            <button class="btn-cancel">${opts.cancelText || 'Cancel'}</button>
-            <button class="btn-confirm ${kind}" ${opts.typed ? 'disabled' : ''}>${opts.confirmText || 'Confirm'}</button>
-          </div>
-        </div>`;
-
-      document.body.appendChild(backdrop);
-
-      // Focus first interactive element
-      setTimeout(() => {
-        const inp = backdrop.querySelector('.dlg-confirm-input');
-        if (inp) inp.focus();
-        else backdrop.querySelector('.btn-confirm').focus();
-      }, 50);
-
-      return backdrop;
-    }
-
-    function confirm(opts = {}) {
-      return new Promise(resolve => {
-        const el = build(opts);
-        const confirmBtn = el.querySelector('.btn-confirm');
-        const cancelBtn  = el.querySelector('.btn-cancel');
-        const input      = el.querySelector('.dlg-confirm-input');
-
-        function close(result) {
-          el.querySelector('.dlg-box').style.animation = 'dlg-slide-up 0.15s ease reverse';
-          setTimeout(() => { el.remove(); resolve(result); }, 140);
-        }
-
-        if (input && opts.typed) {
-          input.addEventListener('input', () => {
-            confirmBtn.disabled = input.value.trim() !== opts.typed;
-          });
-          input.addEventListener('keydown', e => {
-            if (e.key === 'Enter' && !confirmBtn.disabled) close(true);
-          });
-        }
-
-        confirmBtn.addEventListener('click', () => close(true));
-        cancelBtn.addEventListener('click',  () => close(false));
-        el.addEventListener('click', e => { if (e.target === el) close(false); });
-        document.addEventListener('keydown', function esc(e) {
-          if (e.key === 'Escape') { document.removeEventListener('keydown', esc); close(false); }
-        });
-      });
-    }
-
-    function prompt(opts = {}) {
-      return new Promise(resolve => {
-        const el = build({ ...opts, inputLabel: opts.label, inputPlaceholder: opts.placeholder || '', inputHint: opts.hint, typed: null });
-        const confirmBtn = el.querySelector('.btn-confirm');
-        const cancelBtn  = el.querySelector('.btn-cancel');
-        const input      = el.querySelector('.dlg-confirm-input');
-
-        if (opts.required !== false && input) {
-          confirmBtn.disabled = true;
-          input.addEventListener('input', () => {
-            confirmBtn.disabled = input.value.trim() === '';
-          });
-        }
-
-        function close(value) {
-          el.querySelector('.dlg-box').style.animation = 'dlg-slide-up 0.15s ease reverse';
-          setTimeout(() => { el.remove(); resolve(value); }, 140);
-        }
-
-        if (input) input.addEventListener('keydown', e => {
-          if (e.key === 'Enter' && !confirmBtn.disabled) close(input.value.trim());
-        });
-
-        confirmBtn.addEventListener('click', () => close(input ? input.value.trim() : true));
-        cancelBtn.addEventListener('click',  () => close(null));
-        el.addEventListener('click', e => { if (e.target === el) close(null); });
-        document.addEventListener('keydown', function esc(e) {
-          if (e.key === 'Escape') { document.removeEventListener('keydown', esc); close(null); }
-        });
-      });
-    }
-
-    return { confirm, prompt };
-  })();
-
-  /* ─────────────────────────────────────────────────────────────
-     TOAST ENGINE  (replaces Bootstrap toast)
-  ───────────────────────────────────────────────────────────── */
-  const notify = (() => {
-    let container = document.getElementById('toast-container');
-    if (!container) {
-      container = document.createElement('div');
-      container.id = 'toast-container';
-      document.body.appendChild(container);
-    }
-
-    const ICONS = { success: '✓', error: '✕', info: 'ℹ', warning: '!' };
-    const DURATIONS = { success: 3200, error: 5000, info: 4000, warning: 4500 };
-
-    function show(title, kind = 'success', sub = '') {
-      const duration = DURATIONS[kind] || 3200;
-      const t = document.createElement('div');
-      t.className = `ux-toast ${kind}`;
-      t.innerHTML = `
-        <div class="ux-toast-icon">${ICONS[kind] || '✓'}</div>
-        <div class="ux-toast-body">
-          <div class="ux-toast-title">${title}</div>
-          ${sub ? `<div class="ux-toast-sub">${sub}</div>` : ''}
-        </div>
-        <button class="ux-toast-close" aria-label="Dismiss">✕</button>
-        <div class="ux-toast-progress" style="animation-duration:${duration}ms;"></div>`;
-
-      container.appendChild(t);
-
-      function dismiss() {
-        t.classList.add('removing');
-        setTimeout(() => t.remove(), 250);
-      }
-
-      t.querySelector('.ux-toast-close').addEventListener('click', dismiss);
-      setTimeout(dismiss, duration);
-    }
-
-    return {
-      success: (msg, sub) => show(msg, 'success', sub),
-      error:   (msg, sub) => show(msg, 'error',   sub),
-      info:    (msg, sub) => show(msg, 'info',     sub),
-      warning: (msg, sub) => show(msg, 'warning',  sub),
-    };
-  })();
-
-  /* ─────────────────────────────────────────────────────────────
      SKELETON ENGINE
   ───────────────────────────────────────────────────────────── */
   function showSkeleton(tableId, colCount = 4, rowCount = 4) {
@@ -2911,43 +2729,6 @@
         `<td><div class="skel-cell" style="width:${widths[(i * 3 + Math.floor(Math.random()*3)) % widths.length]}"></div></td>`
       ).join('')}</tr>`
     ).join('');
-  }
-
-  /* ─────────────────────────────────────────────────────────────
-     SORT ARROWS — upgrade wireSortableTable
-  ───────────────────────────────────────────────────────────── */
-  function wireSortableTablePro(tableId) {
-    const table = document.getElementById(tableId);
-    if (!table) return;
-    const headers = table.querySelectorAll('thead th[data-sort]');
-    headers.forEach((th, idx) => {
-      let dir = 'asc';
-      th.style.cursor = 'pointer';
-      th.setAttribute('title', 'Click to sort');
-      th.addEventListener('click', () => {
-        const tbody = table.querySelector('tbody');
-        if (!tbody) return;
-        const rows = Array.from(tbody.querySelectorAll('tr'));
-        const validRows = rows.filter(r => r.children.length > idx && !r.querySelector('td[colspan]'));
-        if (!validRows.length) return;
-        const mode = th.dataset.sort || 'text';
-        const asc = dir === 'asc';
-        validRows.sort((a, b) => {
-          const av = a.children[idx]?.textContent?.trim() || '';
-          const bv = b.children[idx]?.textContent?.trim() || '';
-          if (mode === 'num') {
-            return asc ? (Number(av)||0) - (Number(bv)||0) : (Number(bv)||0) - (Number(av)||0);
-          }
-          return asc ? av.localeCompare(bv, undefined, {numeric:true}) : bv.localeCompare(av, undefined, {numeric:true});
-        });
-        // Update arrows
-        headers.forEach(h => h.removeAttribute('data-dir'));
-        th.setAttribute('data-dir', asc ? 'asc' : 'desc');
-        dir = asc ? 'desc' : 'asc';
-        tbody.innerHTML = '';
-        validRows.forEach(r => tbody.appendChild(r));
-      });
-    });
   }
 
   /* ─────────────────────────────────────────────────────────────
@@ -2976,15 +2757,15 @@
     }, { once: false });
   });
 
-  /* Replace old wireSortableTable calls with pro version */
-  wireSortableTablePro('batchTable');
-  wireSortableTablePro('preTable');
-  wireSortableTablePro('planTable');
-  wireSortableTablePro('planPrereqTable');
-  wireSortableTablePro('dbgTable');
-  wireSortableTablePro('elTable');
+  /* Wire up sortable tables (provided by shared-ux.js) */
+  wireSortableTable('batchTable');
+  wireSortableTable('preTable');
+  wireSortableTable('planTable');
+  wireSortableTable('planPrereqTable');
+  wireSortableTable('dbgTable');
+  wireSortableTable('elTable');
   wireSortableTable('exportsTable');
-  wireSortableTablePro('hpTable');
+  wireSortableTable('hpTable');
 
   const hashTargetRaw = (window.location.hash || '').replace('#', '');
   /* Redirect hash routes for panels that moved to standalone pages */
@@ -3385,34 +3166,6 @@
   /* ════════════════════════════════════════════════════════════════
      UX ADDITIONS — purely additive, zero existing logic changed
      ════════════════════════════════════════════════════════════════ */
-
-  /* ── REC 2: Global loading bar via MutationObserver ── */
-  const uxLoadingBar = document.createElement('div');
-  uxLoadingBar.id = 'ux-loading-bar';
-  document.body.prepend(uxLoadingBar);
-
-  (() => {
-    const LOADING_TEXTS = ['running...', 'loading...', 'running', 'loading', 'saving...', 'checking...'];
-    function applyLoadingClass(btn) {
-      if (!btn || btn.classList.contains('btn-close') || btn.dataset.bsDismiss) return;
-      const txt = (btn.textContent || '').trim().toLowerCase();
-      if (btn.disabled && LOADING_TEXTS.some(t => txt.startsWith(t))) {
-        btn.classList.add('ux-loading');
-      } else {
-        btn.classList.remove('ux-loading');
-      }
-    }
-    const checkLoading = () => {
-      document.querySelectorAll('main button').forEach(applyLoadingClass);
-      const anyLoading = document.querySelector('main .ux-loading');
-      uxLoadingBar.classList.toggle('active', Boolean(anyLoading));
-    };
-    const obs = new MutationObserver(checkLoading);
-    obs.observe(document.querySelector('main') || document.body, {
-      attributes: true, attributeFilter: ['disabled'],
-      characterData: true, subtree: true, childList: true
-    });
-  })();
 
   /* ── REC 5: Update context chip when student plan loads ── */
   (() => {
