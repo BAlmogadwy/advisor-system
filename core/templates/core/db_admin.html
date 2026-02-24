@@ -294,32 +294,19 @@
 
 {% endblock %}
 
-{% block body %}
-<div class="d-flex shell">
-  {% include 'core/partials/sidebar.html' %}
+{% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}لوحة إدارة قاعدة البيانات{% else %}Database Admin Console{% endif %}{% endblock %}
 
-  <main id="main-content" class="flex-grow-1 p-4">
-    <div class="content-wrap">
-
-    <!-- Page header -->
-    <div class="page-header">
-      <div class="page-header-left">
-        <h1 class="page-header-module">{% if LANGUAGE_CODE == 'ar' %}لوحة إدارة قاعدة البيانات{% else %}Database Admin Console{% endif %}</h1>
-        <div class="page-header-chips">
+{% block page_chips %}
           <span class="ph-chip ph-chip-danger">{% if LANGUAGE_CODE == 'ar' %}منطقة خطر{% else %}Danger Zone{% endif %}</span>
           <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}معاينة أولاً · تأكيد مطلوب{% else %}Preview-first · Confirmation required{% endif %}</span>
-        </div>
-      </div>
-      <div class="page-header-right">
-        <a href="/logout/" class="btn btn-sm btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}تسجيل الخروج{% else %}Logout{% endif %}</a>
-      </div>
-    </div>
+{% endblock %}
 
-    <div style="margin-bottom:18px">
-      <h2 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">{% if LANGUAGE_CODE == 'ar' %}لوحة إدارة قاعدة البيانات{% else %}Database Admin Console{% endif %}</h2>
+{% block page_intro %}
+      <h2>{% if LANGUAGE_CODE == 'ar' %}لوحة إدارة قاعدة البيانات{% else %}Database Admin Console{% endif %}</h2>
       <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}تنفيذ عمليات قاعدة البيانات مع بروتوكول المعاينة أولاً.{% else %}Execute database operations with preview-first safety protocol.{% endif %}</div>
-    </div>
+{% endblock %}
 
+{% block content %}
     <!-- Console split layout -->
     <div class="dba-shell">
 
@@ -620,9 +607,6 @@
 
       </div><!-- /.dba-work -->
     </div><!-- /.dba-shell -->
-    </div><!-- /.content-wrap -->
-  </main>
-</div>
 {% endblock %}
 
 {% block extra_js %}

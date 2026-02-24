@@ -12,33 +12,21 @@
     .kpi .v { font-weight: 700; font-family: var(--font-serif); font-size: 1.4rem; color: var(--teal); }
     .si-panel { padding: 16px 20px; margin-bottom: 12px; border-radius: var(--radius); background: rgba(255,255,255,0.55); backdrop-filter: blur(20px) saturate(130%); -webkit-backdrop-filter: blur(20px) saturate(130%); border: 1px solid rgba(17,17,68,0.05); box-shadow: var(--shadow-card); }
   </style>
-
 {% endblock %}
 
-{% block body %}
-<div class="d-flex shell">
-  {% include 'core/partials/sidebar.html' %}
-  <main id="main-content" class="flex-grow-1 p-4">
-    <div class="content-wrap">
-    <div class="page-header">
-      <div class="page-header-left">
-        <h1 class="page-header-module">{% if LANGUAGE_CODE == 'ar' %}استيراد الشعب{% else %}Sections Import{% endif %}</h1>
-        <div class="page-header-chips">
-          <span class="ph-chip ph-chip-page">SUPER_ADMIN</span>
-          <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}تحليل → مراجعة → تأكيد{% else %}Parse → Review → Insert{% endif %}</span>
-        </div>
-      </div>
-      <div class="page-header-right">
-        <a href="/logout/" class="btn btn-sm btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}تسجيل الخروج{% else %}Logout{% endif %}</a>
-      </div>
-    </div>
+{% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}استيراد الشعب{% else %}Sections Import{% endif %}{% endblock %}
 
-    <div style="margin-bottom:18px">
-      <h2 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">{% if LANGUAGE_CODE == 'ar' %}استيراد الشعب{% else %}Sections Import{% endif %}</h2>
+{% block page_chips %}
+  <span class="ph-chip ph-chip-page">SUPER_ADMIN</span>
+  <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}تحليل → مراجعة → تأكيد{% else %}Parse → Review → Insert{% endif %}</span>
+{% endblock %}
+
+{% block page_intro %}
+      <h2>{% if LANGUAGE_CODE == 'ar' %}استيراد الشعب{% else %}Sections Import{% endif %}</h2>
       <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}تحليل ملفات Oracle HTML لمعاينة واستيراد شعب المقررات.{% else %}Parse Oracle HTML files to preview and import course sections into the system.{% endif %}</div>
-    </div>
-<div>
+{% endblock %}
 
+{% block content %}
   <div class="si-panel">
     <div class="row g-2 align-items-end">
       <div class="col-md-4"><label class="form-label">{% if LANGUAGE_CODE == 'ar' %}ملف Oracle HTML{% else %}Oracle HTML file{% endif %}</label><input id="oracleFile" type="file" class="form-control" accept=".html,.htm,.txt"></div>
@@ -80,12 +68,6 @@
       </table>
     </div>
   </div>
-</div>
-
-</div>
-    </div><!-- /.content-wrap -->
-  </main>
-</div>
 {% endblock %}
 
 {% block extra_js %}
@@ -118,7 +100,6 @@ function setStatus(kind, text){
 }
 
 function rowKey(r){
-
   return [r.course_code,r.course_number,r.section,r.day,r.start_time,r.end_time,r.room,r.instructor].map(x=>(x||'').trim().toUpperCase()).join('|');
 }
 
@@ -244,5 +225,4 @@ q('insertBtn').onclick = async () => {
   }
 };
 </script>
-
 {% endblock %}

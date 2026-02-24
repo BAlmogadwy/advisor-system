@@ -181,32 +181,21 @@
 </style>
 {% endblock %}
 
-{% block body %}
-<div class="d-flex shell">
-  {% include 'core/partials/sidebar.html' %}
+{% block main_padding %}p-3{% endblock %}
 
-  <main id="main-content" class="flex-grow-1 p-3">
-    <div class="content-wrap">
+{% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}محفظة المرشد{% else %}Advisor Portfolio{% endif %}{% endblock %}
 
-      <!-- ═══ Page header ═══ -->
-      <div class="page-header">
-        <div class="page-header-left">
-          <h1 class="page-header-module">{% if LANGUAGE_CODE == 'ar' %}محفظة المرشد{% else %}Advisor Portfolio{% endif %}</h1>
-          <div class="page-header-chips">
+{% block page_chips %}
             <span class="ph-chip ph-chip-page" id="apAdvisorChip">{% if LANGUAGE_CODE == 'ar' %}لا يوجد مرشد{% else %}No advisor{% endif %}</span>
             <span class="ph-chip ph-chip-gray" id="apCountChip">{% if LANGUAGE_CODE == 'ar' %}0 طالب{% else %}0 students{% endif %}</span>
-          </div>
-        </div>
-        <div class="page-header-right">
-          <a href="/logout/" class="btn btn-sm btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}تسجيل الخروج{% else %}Logout{% endif %}</a>
-        </div>
-      </div>
+{% endblock %}
 
-      <div style="margin-bottom:18px">
-        <h2 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">{% if LANGUAGE_CODE == 'ar' %}محفظة المرشد{% else %}Advisor Portfolio{% endif %}</h2>
-        <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}عرض وإدارة الطلاب المشرف عليهم ومتابعة التقدم الأكاديمي.{% else %}View and manage student advisees, track academic progress and insights.{% endif %}</div>
-      </div>
+{% block page_intro %}
+      <h2>{% if LANGUAGE_CODE == 'ar' %}محفظة المرشد{% else %}Advisor Portfolio{% endif %}</h2>
+      <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}عرض وإدارة الطلاب المشرف عليهم ومتابعة التقدم الأكاديمي.{% else %}View and manage student advisees, track academic progress and insights.{% endif %}</div>
+{% endblock %}
 
+{% block content %}
       <!-- ═══ Advisor selector bar ═══ -->
       <div class="ap-advisor-bar">
         <select id="apAdvisorSelect" class="form-select">
@@ -325,10 +314,6 @@
         <div class="pg-info" id="apShowing" role="status" aria-live="polite">—</div>
         <div class="pg-nav" id="apPagination"></div>
       </div>
-
-    </div><!-- /container-fluid -->
-  </main>
-</div>
 
 <!-- Student drawer (injected dynamically) -->
 <div id="apDrawerWrap"></div>

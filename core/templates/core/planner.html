@@ -336,33 +336,21 @@
 
 {% endblock %}
 
-{% block body %}
-<div class="d-flex shell">
-  {% include 'core/partials/sidebar.html' %}
+{% block main_padding %}p-3{% endblock %}
 
-  <main id="main-content" class="flex-grow-1 p-3">
-    <div class="container-fluid p-0">
+{% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}منشئ الجدول الدراسي{% else %}Student Timetable Builder{% endif %}{% endblock %}
 
-      <div class="content-wrap">
-
-      <div class="page-header">
-        <div class="page-header-left">
-          <h1 class="page-header-module">{% if LANGUAGE_CODE == 'ar' %}منشئ الجدول الدراسي{% else %}Student Timetable Builder{% endif %}</h1>
-          <div class="page-header-chips">
+{% block page_chips %}
             <span class="ph-chip ph-chip-page">{% if LANGUAGE_CODE == 'ar' %}خطوات أ → د{% else %}Steps A → D{% endif %}</span>
             <span class="ph-chip ph-chip-gray" id="plannerContextChip" style="display:none;"></span>
-          </div>
-        </div>
-        <div class="page-header-right">
-          <a href="/logout/" class="btn btn-sm btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}تسجيل الخروج{% else %}Logout{% endif %}</a>
-        </div>
-      </div>
+{% endblock %}
 
-      <div style="margin-bottom:18px">
-        <h2 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">{% if LANGUAGE_CODE == 'ar' %}أداة بناء جدول الطالب{% else %}Student Timetable Builder{% endif %}</h2>
-        <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}بناء وتحسين جداول المقررات للطلاب باستخدام التخطيط القائم على القيود.{% else %}Build and optimize student course schedules with constraint-based planning.{% endif %}</div>
-      </div>
+{% block page_intro %}
+      <h2>{% if LANGUAGE_CODE == 'ar' %}أداة بناء جدول الطالب{% else %}Student Timetable Builder{% endif %}</h2>
+      <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}بناء وتحسين جداول المقررات للطلاب باستخدام التخطيط القائم على القيود.{% else %}Build and optimize student course schedules with constraint-based planning.{% endif %}</div>
+{% endblock %}
 
+{% block content %}
       <!-- ═══ Sticky control bar ═══════════════════════════════ -->
       <div class="sticky-head">
         <div class="command-bar">
@@ -609,11 +597,6 @@
           </div>
 
       </div>
-
-      </div><!-- /.content-wrap -->
-    </div>
-  </main>
-</div>
 {% endblock %}
 
 {% block extra_js %}

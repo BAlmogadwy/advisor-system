@@ -23,7 +23,28 @@
   <div class="amb amb-5"></div>
   <div class="amb amb-6"></div>
 </div>
-{% block body %}{% endblock %}
+{% block body %}
+<div class="d-flex shell">
+  {% include 'core/partials/sidebar.html' %}
+  <main id="main-content" class="flex-grow-1 {% block main_padding %}p-4{% endblock %}" {% block main_attrs %}{% endblock %}>
+    <div class="content-wrap">
+    <div class="page-header">
+      <div class="page-header-left">
+        <h1 {% block page_h1_attrs %}class="page-header-module"{% endblock %}>{% block page_heading %}{% endblock %}</h1>
+        <div class="page-header-chips">
+          {% block page_chips %}{% endblock %}
+        </div>
+      </div>
+      <div class="page-header-right">
+        {% block page_header_right %}<a href="/logout/" class="btn btn-sm btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}تسجيل الخروج{% else %}Logout{% endif %}</a>{% endblock %}
+      </div>
+    </div>
+    <div class="page-intro">{% block page_intro %}{% endblock %}</div>
+    {% block content %}{% endblock %}
+    </div><!-- /.content-wrap -->
+  </main>
+</div>
+{% endblock %}
 <script src="{% static 'js/shared-utils.js' %}"></script>
 <script src="{% static 'js/notify.js' %}"></script>
 <script src="{% static 'js/dialog.js' %}"></script>

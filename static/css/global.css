@@ -574,6 +574,10 @@ main.p-3 .page-header {
   letter-spacing: -0.01em;
 }
 
+/* ── Page intro (h2 heading + subtitle below page-header) ── */
+.page-intro        { margin: 0.75rem 0 1.25rem; }
+.page-intro h2     { font-family: var(--font-serif); font-weight: 400; font-size: 1.35rem; color: var(--navy); letter-spacing: -0.01em; margin: 0 0 0.15rem; }
+
 .panel-sub {
   color:         var(--t3);
   font-size:     0.875rem;

@@ -331,27 +331,17 @@
 </style>
 {% endblock %}
 
-{% block body %}
-<div class="d-flex shell">
-  {% include "core/partials/sidebar.html" %}
-
-  <main id="main-content" class="flex-grow-1 p-4" data-page="dashboard">
-    <div class="content-wrap">
-    <div class="page-header">
-      <div class="page-header-left">
-        <h1 id="currentModule" class="page-header-module">{% if LANGUAGE_CODE == 'ar' %}نظام توصيات الطلاب{% else %}Student Recommender{% endif %}</h1>
-        <div class="page-header-chips">
+{% block main_attrs %}data-page="dashboard"{% endblock %}
+{% block page_h1_attrs %}id="currentModule" class="page-header-module"{% endblock %}
+{% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}نظام توصيات الطلاب{% else %}Student Recommender{% endif %}{% endblock %}
+{% block page_chips %}
           <span class="ph-chip ph-chip-role">{{ role }}</span>
           <span class="ph-chip ph-chip-scope" title="{{ role_scope_hint }}">{{ role_scope_hint|truncatechars:40 }}</span>
           {% if scope_departments %}<span class="ph-chip ph-chip-dept">{{ scope_departments|join:", " }}</span>{% endif %}
           <span class="ph-chip ph-chip-context" id="phContextChip" style="display:none;"></span>
-        </div>
-      </div>
-      <div class="page-header-right">
-        <a href="/logout/" class="btn btn-sm btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}تسجيل الخروج{% else %}Logout{% endif %}</a>
-      </div>
-    </div>
+{% endblock %}
 
+{% block content %}
     <div id="student" class="panel active">
       <div style="margin-bottom:18px">
         <h2 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">{% if LANGUAGE_CODE == 'ar' %}نظام توصيات الطلاب{% else %}Student Recommender{% endif %}</h2>
@@ -983,9 +973,6 @@
     <datalist id="programs">
       {% for p in programs %}<option value="{{ p }}"></option>{% endfor %}
     </datalist>
-    </div><!-- /.content-wrap -->
-  </main>
-</div>
 
 <!-- toast-container injected by JS -->
 
