@@ -11,6 +11,9 @@
     .kpi .k { font-size: .7rem; color: var(--t3); text-transform: uppercase; font-family: var(--font-mono); letter-spacing: 0.06em; font-weight: 700; }
     .kpi .v { font-weight: 700; font-family: var(--font-serif); font-size: 1.4rem; color: var(--teal); }
     .si-panel { padding: 16px 20px; margin-bottom: 12px; border-radius: var(--radius); background: rgba(255,255,255,0.55); backdrop-filter: blur(20px) saturate(130%); -webkit-backdrop-filter: blur(20px) saturate(130%); border: 1px solid rgba(17,17,68,0.05); box-shadow: var(--shadow-card); }
+    /* Softer form label — the global .form-label is uppercase-bold which
+       is too heavy for a simple file-upload label on this page. */
+    .si-panel > .row .form-label { text-transform: none; font-weight: 600; letter-spacing: 0; }
   </style>
 {% endblock %}
 
@@ -42,7 +45,7 @@
     </div>
     <div class="mt-3 d-flex gap-2">
       <button id="parseBtn" class="btn btn-outline-primary">{% if LANGUAGE_CODE == 'ar' %}تحليل + معاينة{% else %}Parse + Preview{% endif %}</button>
-      <button id="insertBtn" class="btn btn-success" disabled>{% if LANGUAGE_CODE == 'ar' %}إدخال الكل{% else %}Insert all{% endif %}</button>
+      <button id="insertBtn" class="btn btn-outline-secondary" disabled>{% if LANGUAGE_CODE == 'ar' %}إدخال الكل{% else %}Insert all{% endif %}</button>
       <button id="toggleTech" class="btn btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}عرض التفاصيل التقنية{% else %}Show technical details{% endif %}</button>
     </div>
     <small class="text-secondary">{% if LANGUAGE_CODE == 'ar' %}قاعدة التصنيف: محدد = مقررات القسم، غير محدد = أخرى{% else %}Tag rule: checked = department, unchecked = other{% endif %}</small>
@@ -190,6 +193,7 @@ q('parseBtn').onclick = async () => {
       renderTable([]);
       previewToken = null;
       q('insertBtn').disabled = true;
+      q('insertBtn').classList.replace('btn-success','btn-outline-secondary');
       setStatus('danger', data.error || T.parseFailed);
       q('parseBtn').disabled = false; q('parseBtn').textContent = IS_AR ? 'تحليل + معاينة' : 'Parse + Preview';
       return;
@@ -203,6 +207,7 @@ q('parseBtn').onclick = async () => {
 
     previewToken = data.token;
     q('insertBtn').disabled = false;
+    q('insertBtn').classList.replace('btn-outline-secondary','btn-success');
     q('parseBtn').disabled = false; q('parseBtn').textContent = IS_AR ? 'تحليل + معاينة' : 'Parse + Preview';
     setStatus('success', T.previewReady(data.preview_count||0, data.total_rows||0));
   } catch (err) {

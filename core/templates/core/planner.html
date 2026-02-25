@@ -1396,8 +1396,8 @@ setStep('A');
 (function initFromUrlParams() {
   const params = new URLSearchParams(window.location.search);
   const student = params.get('student') || params.get('student_id') || params.get('sid');
-  const year    = params.get('year') || params.get('academic_year');
-  const term    = params.get('term');
+  const year    = params.get('year') || params.get('academic_year') || '{{ default_year }}';
+  const term    = params.get('term') || '{{ default_term }}';
 
   if (!student) return; // no deep-link, normal load
 
@@ -1406,8 +1406,8 @@ setStep('A');
   const termInput = q('term');
 
   if (sidInput)  sidInput.value  = student;
-  if (year && yearInput) yearInput.value = year;
-  if (term && termInput) termInput.value = term;
+  if (yearInput && !yearInput.value) yearInput.value = year;
+  if (termInput && !termInput.value) termInput.value = term;
 
   /* Update page-header chip immediately so it shows the student ID
      even before the fetch completes */

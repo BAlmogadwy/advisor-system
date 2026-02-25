@@ -2,13 +2,16 @@
 core/services/exam_timetable.py
 In-memory exam-timetable pipeline.
 
-1. build_enrolled_sets      – read StudentCourse(status='studying') → {course_code: {student_ids}}
-2. build_conflict_graph     – pairwise overlap → adjacency dict + edge list
-3. build_plan_term_buckets  – map running courses to (program, programme_term) buckets
-4. check_bucket_feasibility – verify no bucket exceeds available days
-5. schedule                 – greedy graph-coloring → course→slot assignments
-6. build_exam_timetable     – orchestrator: runs 1→5, QA, persists JSON
-7. export_exam_timetable_xlsx – export a saved run to a styled .xlsx workbook
+Pipeline sections (section numbers match ``# ── N.`` markers below):
+
+0. Credit helpers             – build_credit_map, _credit_pair_penalty
+1. Enrolled sets              – build_enrolled_sets → {course_code: {student_ids}}
+2. Conflict graph             – build_conflict_graph → adjacency dict + edge list
+3. Programme-plan term buckets – build_plan_term_buckets, check_bucket_feasibility
+4. Greedy scheduler           – schedule → course→slot assignments (graph-coloring)
+5. QA report                  – _build_qa → validation + soft-constraint metrics
+6. Orchestrator               – build_exam_timetable → runs 0→5, persists JSON
+7. Excel export               – export_exam_timetable_xlsx → styled .xlsx workbook
 """
 
 from __future__ import annotations
@@ -18,7 +21,50 @@ import json
 from collections import defaultdict
 from pathlib import Path
 
-from core.models import ExamTimetableRun, ProgrammeRequirement, StudentCourse
+from core.models import Course, ExamTimetableRun, ProgrammeRequirement, StudentCourse
+
+# ── 0. Credit helpers ───────────────────────────────────────────
+
+_CREDIT_DEFAULT = 3  # fallback for NULL / 0 / missing credit_hours
+
+# Penalty ladder for the top-2 heaviest exams on a single day.
+# Key = (max_credits, min_credits); value = penalty weight.
+_CREDIT_PAIR_WEIGHTS: dict[tuple[int, int], int] = {
+    (4, 4): 100,  # worst – two heavy courses
+    (4, 3): 30,   # acceptable
+    (4, 2): 0,    # ideal pairing
+}
+_CREDIT_PAIR_FALLBACK = 5  # other combos (3+3, 3+2, 2+2, …)
+
+
+def build_credit_map(course_codes: list[str] | set[str]) -> dict[str, int]:
+    """Return {course_code: credit_hours} for the given courses.
+
+    Missing / NULL / zero credit_hours default to ``_CREDIT_DEFAULT``
+    so the penalty formula degrades gracefully.
+    """
+    rows = Course.objects.filter(
+        course_code__in=list(course_codes),
+    ).values_list("course_code", "credit_hours")
+    cm: dict[str, int] = {
+        cc: (ch if ch and ch > 0 else _CREDIT_DEFAULT) for cc, ch in rows
+    }
+    for cc in course_codes:
+        cm.setdefault(cc, _CREDIT_DEFAULT)
+    return cm
+
+
+def _credit_pair_penalty(credits_on_day: list[int]) -> int:
+    """Penalty for the top-2 heaviest exams on a single day for one student.
+
+    Returns 0 when there are fewer than 2 exams.
+    """
+    if len(credits_on_day) < 2:
+        return 0
+    top2 = sorted(credits_on_day, reverse=True)[:2]
+    pair = (top2[0], top2[1])
+    return _CREDIT_PAIR_WEIGHTS.get(pair, _CREDIT_PAIR_FALLBACK)
+
 
 # ── 1. Enrolled sets ────────────────────────────────────────────
 
@@ -150,6 +196,7 @@ def schedule(
     plan_term_buckets: dict[tuple[str, int], set[str]] | None = None,
     course_buckets: dict[str, list[tuple[str, int]]] | None = None,
     pinned: list[dict] | None = None,
+    credit_map: dict[str, int] | None = None,
 ) -> list[dict]:
     """
     Greedy graph-coloring with day-spread soft constraint.
@@ -160,10 +207,12 @@ def schedule(
          on the same day.
 
     Soft constraints (in priority order):
-      1. Minimise students with >max_per_day exams on one day.
-      2. Maximise spacing within (program, term) buckets (penalise
-         small day gaps between bucket-mates).
-      3. Balance load across slots (prefer less-loaded slots as tiebreaker).
+      1.   Minimise students with >max_per_day exams on one day.
+      1.5  Credit-pair penalty: when multi-exam days are unavoidable,
+           prefer lighter pairings (4+2 < 4+3 < 4+4).
+      2.   Maximise spacing within (program, term) buckets (penalise
+           small day gaps between bucket-mates).
+      3.   Balance load across slots (prefer less-loaded slots as tiebreaker).
 
     Args:
         courses            – list of course codes to schedule
@@ -174,14 +223,17 @@ def schedule(
         plan_term_buckets  – {(program, term): {course_codes}} hard day-rule buckets
         course_buckets     – {course_code: [(program, term), …]} reverse index
         pinned             – list of {course_code, day, period} to fix before scheduling
+        credit_map         – {course_code: credit_hours} for credit-pair penalty
 
     Returns:
         list of {course_code, slot_index, day, period}
     """
+    # ── Preparation: build lookup tables ──
     max_slot_idx = max((s["index"] for s in slots), default=-1)
     slot_by_index: dict[int, dict] = {s["index"]: s for s in slots}
 
-    # Build day-index lookup for spacing calculation
+    # Day-index mapping: convert day names ("Sun", "Mon") to integers (0, 1)
+    # so we can compute numeric spacing gaps between bucket-mates.
     unique_days: list[str] = []
     day_set: set[str] = set()
     for s in slots:
@@ -190,9 +242,10 @@ def schedule(
             unique_days.append(s["day"])
     day_to_idx: dict[str, int] = {d: i for i, d in enumerate(unique_days)}
 
-    # Sort courses by total constraint degree DESC (most constrained first)
-    _ptb = plan_term_buckets or {}
-    _cb = course_buckets or {}
+    # Shorthand aliases for optional dicts (avoid repeated `or {}` everywhere)
+    _ptb = plan_term_buckets or {}  # (program, term) → {course_codes}
+    _cb = course_buckets or {}      # course_code → [(program, term), …]
+    _cm = credit_map or {}          # course_code → credit_hours
 
     def _constraint_degree(c: str) -> int:
         """Heuristic: courses with more conflicts + more bucket-mates are harder
@@ -203,21 +256,29 @@ def schedule(
 
     courses_sorted = sorted(courses, key=_constraint_degree, reverse=True)
 
+    # ── Mutable state: updated as each course is placed ──
+    #
+    # assignment:          final result — which slot each course lands in
+    # student_day_count:   how many exams each student has per day (Level 1 scoring)
+    # student_day_courses: which courses each student has per day (Level 1.5 credit scoring)
+    # slot_load:           how many courses are in each slot (Level 3 load-balancing)
+    # bucket_day_courses:  which courses are assigned to each day per bucket (hard constraint B)
+    # course_assigned_day: which day each course is on (spacing calculation)
+
     assignment: dict[str, int] = {}  # course_code → slot_index
 
-    # Track how many exams each student already has per day
     student_day_count: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
-    # Track how many courses are assigned to each slot (for load-balancing)
+    student_day_courses: dict[int, dict[str, list[str]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+
     slot_load: dict[int, int] = defaultdict(int)
 
-    # Track bucket-day assignments for hard constraint B
-    # bucket_day_courses[(P,k)][day] = set of course_codes
     bucket_day_courses: dict[tuple[str, int], dict[str, set[str]]] = defaultdict(
         lambda: defaultdict(set)
     )
 
-    # Track which day each course is assigned to (for spacing calculation)
     course_assigned_day: dict[str, str] = {}
 
     # Pre-assign pinned courses (user overrides — bypass constraints)
@@ -236,20 +297,31 @@ def schedule(
             if enrolled_sets and cc in enrolled_sets:
                 for sid in enrolled_sets[cc]:
                     student_day_count[sid][p_day] += 1
+                    student_day_courses[sid][p_day].append(cc)
             for bk in _cb.get(cc, []):
                 bucket_day_courses[bk][p_day].add(cc)
 
+    # ── Main scheduling loop ──
+    # Process courses in most-constrained-first order.  For each course:
+    #   1. Eliminate slots blocked by hard constraints (A: clash, B: bucket-day)
+    #   2. If no slot survives → create OVERFLOW virtual slot
+    #   3. Otherwise score each surviving candidate on 4-level soft priority
+    #   4. Pick the candidate with the lowest (best) score tuple
     for course in courses_sorted:
         if course in assignment:
-            continue  # already pinned
+            continue  # already pinned by user
+
+        # Hard constraint A: no two conflicting courses in the same slot.
+        # Find which slots are already used by this course's neighbours.
         neighbours = adj.get(course, {})
         used_slots = {assignment[n] for n in neighbours if n in assignment}
 
-        # Collect all conflict-free candidate slots (hard constraint A)
+        # Conflict-free candidates: every slot NOT used by a neighbour
         candidates = [si for si in range(max_slot_idx + 1) if si not in used_slots]
 
-        # Apply hard constraint B: remove candidates whose day
-        # already has a bucket-mate from ANY of this course's buckets
+        # Hard constraint B: no two courses from the same (program, term)
+        # bucket on the same day.  Remove candidates whose day already
+        # has a bucket-mate from ANY of this course's buckets.
         my_buckets = _cb.get(course, [])
         if my_buckets and candidates:
             blocked_days: set[str] = set()
@@ -263,9 +335,11 @@ def schedule(
                 ]
 
         if not candidates:
-            # No feasible slot exists (all blocked by hard constraints).
-            # Create a virtual OVERFLOW slot so the course isn't silently dropped;
-            # the QA report will flag it and the UI shows a red overflow row.
+            # ── OVERFLOW: no feasible slot exists ──
+            # All real slots are blocked by hard constraints (student clash
+            # or bucket-mate same day).  Create a virtual OVERFLOW slot so
+            # the course isn't silently dropped; the QA report will flag it
+            # and the UI shows a red overflow row.
             max_slot_idx += 1
             chosen = max_slot_idx
             slot_by_index[chosen] = {
@@ -275,20 +349,26 @@ def schedule(
             }
             assignment[course] = chosen
             slot_load[chosen] += 1
+            course_assigned_day[course] = "OVERFLOW"
+            # Maintain student tracking structures for consistency
             if enrolled_sets and course in enrolled_sets:
                 for sid in enrolled_sets[course]:
                     student_day_count[sid]["OVERFLOW"] += 1
+                    student_day_courses[sid]["OVERFLOW"].append(course)
+            # Maintain bucket-day tracking (use my_buckets, already computed above)
+            for bk in my_buckets:
+                bucket_day_courses[bk]["OVERFLOW"].add(course)
             continue
 
         if enrolled_sets and course in enrolled_sets:
             # ── Soft-constraint scoring ──
             # Evaluate ALL conflict-free candidates and pick the best by a
-            # three-level priority tuple (lower is better):
-            #   (day_overload_penalty, spacing_penalty, slot_load)
+            # four-level priority tuple (lower is better):
+            #   (overload, credit_pair, spacing, slot_load)
             # Python tuple comparison ensures level 1 always trumps level 2, etc.
             course_students = enrolled_sets[course]
             best_slot = candidates[0]
-            best_score = (float("inf"), float("inf"), float("inf"))
+            best_score = (float("inf"), float("inf"), float("inf"), float("inf"))
 
             for si in candidates:
                 day = slot_by_index[si]["day"]
@@ -299,6 +379,17 @@ def schedule(
                 for sid in course_students:
                     if student_day_count[sid][day] >= max_per_day:
                         penalty += 1
+
+                # Level 1.5 — Credit-pair penalty: when multi-exam days are
+                # unavoidable, prefer lighter pairings (4+2 over 4+3 over 4+4).
+                credit_penalty = 0
+                if _cm:
+                    this_cr = _cm.get(course, _CREDIT_DEFAULT)
+                    for sid in course_students:
+                        existing = student_day_courses[sid][day]
+                        if existing:
+                            day_credits = [_cm.get(ec, _CREDIT_DEFAULT) for ec in existing] + [this_cr]
+                            credit_penalty += _credit_pair_penalty(day_credits)
 
                 # Level 2 — Spacing within programme-plan buckets:
                 # penalise placing bucket-mates on adjacent days so students
@@ -320,7 +411,7 @@ def schedule(
                                         spacing_penalty += 10
 
                 # Level 3 — Load balance: prefer slots with fewer courses
-                score = (penalty, spacing_penalty, slot_load[si])
+                score = (penalty, credit_penalty, spacing_penalty, slot_load[si])
                 if score < best_score:
                     best_score = score
                     best_slot = si
@@ -335,16 +426,17 @@ def schedule(
         chosen_day = slot_by_index[chosen]["day"]
         course_assigned_day[course] = chosen_day
 
-        # Update student day counts
+        # Update student day counts + courses-per-day tracking
         if enrolled_sets and course in enrolled_sets:
             for sid in enrolled_sets[course]:
                 student_day_count[sid][chosen_day] += 1
+                student_day_courses[sid][chosen_day].append(course)
 
         # Update bucket-day tracking
         for bk in my_buckets:
             bucket_day_courses[bk][chosen_day].add(course)
 
-    # Build result
+    # ── Build result list sorted by slot index ──
     result: list[dict] = []
     for cc, si in assignment.items():
         slot = slot_by_index[si]
@@ -360,24 +452,32 @@ def schedule(
     return sorted(result, key=lambda r: (r["slot_index"], r["course_code"]))
 
 
-# ── 4. QA report ────────────────────────────────────────────────
+# ── 5. QA report ────────────────────────────────────────────────
 
 
 def _build_qa(
     enrolled_sets: dict[str, set[int]],
     schedule_entries: list[dict],
-    adj: dict[str, dict[str, int]],
     max_per_day: int = 2,
     plan_term_buckets: dict[tuple[str, int], set[str]] | None = None,
+    credit_map: dict[str, int] | None = None,
 ) -> dict:
     """Validate the schedule and produce a QA report.
 
-    Checks two hard-constraint violations (which should only happen with
-    user-pinned overrides) and one soft-constraint metric:
-      - Same-slot conflicts:  two courses sharing students in the same slot
-      - Bucket day violations: two bucket-mates on the same day
-      - Day-overload count:    students exceeding max_per_day
+    Checks hard-constraint violations (which should only happen with
+    user-pinned overrides) and computes soft-constraint metrics:
+
+    Hard constraints:
+      - Same-slot conflicts:    two courses sharing students in the same slot
+      - Bucket day violations:  two bucket-mates placed on the same day
+
+    Soft-constraint metrics:
+      - Day-overload count:     students exceeding max_per_day
+      - Credit load metrics:    max credit-load per day, heavy-day student count
+
+    Also collects per-student detail records for KPI drilldown in the UI.
     """
+    # ── Preparation ──
     all_students: set[int] = set()
     for sids in enrolled_sets.values():
         all_students |= sids
@@ -388,16 +488,27 @@ def _build_qa(
 
     slots_used = len({e["slot_index"] for e in schedule_entries})
 
-    # Invert: student_id → [course_codes] for per-student validation
+    # Invert enrolled_sets: student_id → [course_codes] so we can iterate
+    # per-student and check their personal schedule for violations.
     student_courses: dict[int, list[str]] = defaultdict(list)
     for cc, sids in enrolled_sets.items():
         for sid in sids:
             student_courses[sid].append(cc)
 
-    same_slot_conflicts: list[dict] = []
-    max_exams_per_day: int = 0
-    students_over_limit_per_day: int = 0
+    _cm = credit_map or {}
 
+    # ── Accumulators ──
+    same_slot_conflicts: list[dict] = []       # hard-constraint violations
+    max_exams_per_day: int = 0                  # worst-case day load globally
+    students_over_limit_per_day: int = 0        # students exceeding soft cap
+    max_credit_load_per_day: int = 0            # worst-case credit sum on a day
+    heavy_day_students: int = 0                 # students with heavy credit pair
+
+    # Detail records for KPI drilldown panel in the UI
+    overload_details: list[dict] = []   # per-student, per-day overload records
+    heavy_day_details: list[dict] = []  # per-student, per-day heavy-credit records
+
+    # ── Per-student validation ──
     for sid, courses in student_courses.items():
         # Group this student's courses by slot and by day
         slot_groups: dict[int, list[str]] = defaultdict(list)
@@ -421,28 +532,72 @@ def _build_qa(
                     }
                 )
 
-        # Track worst-case day load and students over the soft cap
-        has_overload = False
+        # ── Soft-constraint metrics per day ──
+        has_overload = False   # does this student exceed the per-day cap?
+        has_heavy_day = False  # does this student have a heavy credit pairing?
         for _day, ccs in day_groups.items():
+            if _day == "OVERFLOW":
+                continue  # OVERFLOW is a virtual day — skip for metrics
+
             day_count = len(ccs)
             max_exams_per_day = max(max_exams_per_day, day_count)
+
+            # Day-overload check: student exceeds the soft cap
             if day_count > max_per_day:
                 has_overload = True
+                overload_details.append({
+                    "student_id": sid,
+                    "day": _day,
+                    "count": day_count,
+                    "courses": [
+                        {"code": c, "credits": _cm.get(c, _CREDIT_DEFAULT) if _cm else None}
+                        for c in sorted(ccs)
+                    ],
+                })
+
+            # Credit-load check: evaluate the top-2 heaviest exams on this day.
+            # Only relevant when credit_map is available AND student has ≥2 exams.
+            if _cm and len(ccs) >= 2:
+                day_credits = [_cm.get(c, _CREDIT_DEFAULT) for c in ccs]
+                total_credits = sum(day_credits)
+                max_credit_load_per_day = max(max_credit_load_per_day, total_credits)
+                pair_penalty = _credit_pair_penalty(day_credits)
+                # "Heavy day" threshold: penalty ≥ 30 catches (4,4)→100 and
+                # (4,3)→30, but NOT mild combos like (3,3)→5 or (3,2)→5.
+                if pair_penalty >= 30:
+                    has_heavy_day = True
+                    heavy_day_details.append({
+                        "student_id": sid,
+                        "day": _day,
+                        "penalty": pair_penalty,
+                        "total_credits": total_credits,
+                        "courses": [
+                            {"code": c, "credits": _cm.get(c, _CREDIT_DEFAULT)}
+                            for c in sorted(ccs)
+                        ],
+                    })
+
         if has_overload:
             students_over_limit_per_day += 1
+        if has_heavy_day:
+            heavy_day_students += 1
 
     # ── Bucket (programme-plan term) day-rule verification ──
+    # Hard constraint B says no two courses from the same (program, term)
+    # bucket should share a day.  This can only be violated when the user
+    # pins courses that override the scheduler's hard-constraint logic.
     bucket_day_violations: list[dict] = []
     bucket_count = 0
     if plan_term_buckets:
         bucket_count = len(plan_term_buckets)
         for (program, term), bucket_courses in sorted(plan_term_buckets.items()):
-            # Group bucket courses by their assigned day
+            # Group this bucket's courses by their assigned day
             day_groups_b: dict[str, list[str]] = defaultdict(list)
             for cc in bucket_courses:
                 day = course_day.get(cc)
                 if day is not None and day != "OVERFLOW":
                     day_groups_b[day].append(cc)
+            # Any day with ≥2 bucket-mates is a violation
             for day, ccs in day_groups_b.items():
                 if len(ccs) >= 2:
                     bucket_day_violations.append(
@@ -466,6 +621,10 @@ def _build_qa(
         "bucket_count": bucket_count,
         "bucket_day_violations": bucket_day_violations,
         "bucket_day_violations_count": len(bucket_day_violations),
+        "max_credit_load_per_day": max_credit_load_per_day,
+        "heavy_day_students": heavy_day_students,
+        "overload_details": overload_details,
+        "heavy_day_details": heavy_day_details,
     }
 
 
@@ -506,6 +665,9 @@ def build_exam_timetable(
 
     course_list = sorted(enrolled_sets.keys())
 
+    # 1c. Build credit map for credit-weighted scoring
+    credit_map = build_credit_map(course_list)
+
     all_students: set[int] = set()
     for sids in enrolled_sets.values():
         all_students |= sids
@@ -535,7 +697,7 @@ def build_exam_timetable(
             slots.append({"index": idx, "day": day, "period": period})
             idx += 1
 
-    # 6. Schedule (with day-spread + bucket constraints)
+    # 6. Schedule (with day-spread + bucket + credit-pair constraints)
     schedule_entries = schedule(
         course_list,
         adj,
@@ -545,18 +707,19 @@ def build_exam_timetable(
         plan_term_buckets=ptb,
         course_buckets=cb,
         pinned=pinned,
+        credit_map=credit_map,
     )
 
-    # 7. QA
+    # 7. QA report — validate hard constraints and compute quality metrics
     qa = _build_qa(
         enrolled_sets,
         schedule_entries,
-        adj,
         max_per_day=max_per_day,
         plan_term_buckets=ptb,
+        credit_map=credit_map,
     )
 
-    # Bucket summary for the result
+    # Bucket summary for the result (frontend renders bucket info cards)
     buckets_summary: list[dict] = []
     for (program, term), bucket_courses in sorted(ptb.items()):
         buckets_summary.append(
@@ -568,7 +731,9 @@ def build_exam_timetable(
             }
         )
 
-    # Assemble result
+    # ── Assemble result dict ──
+    # This dict is: (a) returned to the frontend as JSON, (b) persisted
+    # in ExamTimetableRun.result_json for later viewing/export.
     result: dict = {
         "students_count": len(all_students),
         "courses": course_list,
@@ -580,6 +745,7 @@ def build_exam_timetable(
         "qa": qa,
         "buckets_summary": buckets_summary,
         "bucket_count": len(ptb),
+        "credit_map": credit_map,
     }
 
     # Persist
@@ -610,13 +776,14 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
     """
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
 
     run = ExamTimetableRun.objects.get(id=run_id)
     data = json.loads(run.result_json)
 
-    schedule = data.get("schedule", [])
-    slots = data.get("slots", [])
-    qa = data.get("qa", {})
+    schedule = data.get("schedule", [])  # list of {course_code, slot_index, day, period}
+    slots = data.get("slots", [])        # list of {index, day, period}
+    qa = data.get("qa", {})              # QA metrics dict from _build_qa()
 
     # ── Styling constants ──
     header_font = Font(bold=True, size=11)
@@ -694,30 +861,32 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
     # Column widths
     ws1.column_dimensions["A"].width = 14
     for i, _p in enumerate(period_order, start=2):
-        col_letter = chr(64 + i) if i <= 26 else f"A{chr(64 + i - 26)}"
-        ws1.column_dimensions[col_letter].width = 22
+        ws1.column_dimensions[get_column_letter(i)].width = 22
 
     # ────────────────────────────────────────────────────────────
     # Sheet 2: Courses (flat list)
     # ────────────────────────────────────────────────────────────
     ws2 = wb.create_sheet("Courses")
-    ws2.append(["Course Code", "Day", "Period", "Slot Index"])
-    style_header_row(ws2, 4)
+    _credit_map = data.get("credit_map", {})
+    ws2.append(["Course Code", "Credits", "Day", "Period", "Slot Index"])
+    style_header_row(ws2, 5)
 
     sorted_schedule = sorted(schedule, key=lambda e: (e.get("slot_index", 999), e["course_code"]))
     for e in sorted_schedule:
-        ws2.append([e["course_code"], e["day"], e["period"], e.get("slot_index", "")])
+        cr = _credit_map.get(e["course_code"], "")
+        ws2.append([e["course_code"], cr, e["day"], e["period"], e.get("slot_index", "")])
 
     for r in range(2, ws2.max_row + 1):
-        for c in range(1, 5):
+        for c in range(1, 6):
             cell = ws2.cell(row=r, column=c)
             cell.border = thin_border
             cell.alignment = center
 
     ws2.column_dimensions["A"].width = 16
-    ws2.column_dimensions["B"].width = 14
-    ws2.column_dimensions["C"].width = 18
-    ws2.column_dimensions["D"].width = 12
+    ws2.column_dimensions["B"].width = 10
+    ws2.column_dimensions["C"].width = 14
+    ws2.column_dimensions["D"].width = 18
+    ws2.column_dimensions["E"].width = 12
 
     # ────────────────────────────────────────────────────────────
     # Sheet 3: QA Summary
@@ -733,6 +902,8 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
         ("Max Exams/Day/Student", qa.get("max_exams_per_day_per_student", 0)),
         ("Max Per Day Cap", qa.get("max_per_day", 2)),
         ("Students Over Limit", qa.get("students_over_limit_per_day", 0)),
+        ("Max Credit Load/Day", qa.get("max_credit_load_per_day", 0)),
+        ("Heavy Day Students", qa.get("heavy_day_students", 0)),
         ("Same-Slot Conflicts", qa.get("conflict_count", 0)),
         ("Programme Buckets", qa.get("bucket_count", 0)),
         ("Bucket Day Violations", qa.get("bucket_day_violations_count", 0)),
@@ -756,7 +927,7 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
         if metric_name == "Same-Slot Conflicts" and metric_val and int(metric_val) > 0:
             ws3.cell(row=r, column=1).fill = danger_fill
             ws3.cell(row=r, column=2).fill = danger_fill
-        elif metric_name in ("Students Over Limit", "Bucket Day Violations"):
+        elif metric_name in ("Students Over Limit", "Bucket Day Violations", "Heavy Day Students"):
             if metric_val and int(metric_val) > 0:
                 ws3.cell(row=r, column=1).fill = warn_fill
                 ws3.cell(row=r, column=2).fill = warn_fill

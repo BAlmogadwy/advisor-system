@@ -26,6 +26,7 @@ from core.services.student_sections import (
     get_student_term_baseline,
     replace_student_term_sections,
 )
+from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
 
 
@@ -85,7 +86,13 @@ def planner_page(request: HttpRequest) -> HttpResponse:
     deny = _require_staff(request)
     if deny:
         return HttpResponse(deny.content, status=deny.status_code, content_type="application/json")
-    return render(request, "core/planner.html", get_sidebar_context(request))
+    _defs = load_defaults()
+    ctx = {
+        **get_sidebar_context(request),
+        "default_year": _defs["academic_year"],
+        "default_term": _defs["term"],
+    }
+    return render(request, "core/planner.html", ctx)
 
 
 @login_required(login_url="login")

@@ -78,7 +78,7 @@
   letter-spacing: 0.03em;
 }
 .pf-input {
-  width: 100%; padding: 0.55rem 0.75rem;
+  width: 100%; box-sizing: border-box; padding: 0.55rem 0.75rem;
   border-radius: 8px; border: 1px solid var(--line, #e2e8f0);
   background: rgba(255,255,255,0.7);
   font-size: 0.88rem; color: var(--ink);
@@ -91,6 +91,37 @@
   box-shadow: 0 0 0 3px rgba(10,142,110,0.1);
 }
 .pf-input::placeholder { color: var(--muted-light, #94a3b8); }
+
+/* Password field wrapper — border lives on the wrapper so the eye
+   toggle sits visually *inside* the rounded container. */
+.pf-pwd-wrap {
+  position: relative;
+  border-radius: 8px;
+  border: 1px solid var(--line, #e2e8f0);
+  background: rgba(255,255,255,0.7);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.pf-pwd-wrap:focus-within {
+  border-color: var(--brand, #0A8E6E);
+  box-shadow: 0 0 0 3px rgba(10,142,110,0.1);
+}
+.pf-pwd-wrap .pf-input {
+  padding-right: 2.5rem;
+  border: none; background: transparent;
+}
+.pf-pwd-wrap .pf-input:focus { outline: none; box-shadow: none; }
+.pf-pwd-toggle {
+  position: absolute; right: 0.5rem; top: 50%; transform: translateY(-50%);
+  background: none; border: none; cursor: pointer; padding: 0.25rem;
+  color: var(--muted, #64748b); border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  transition: color 0.15s;
+}
+.pf-pwd-toggle:hover { color: var(--ink); }
+.pf-pwd-toggle .i { width: 18px; height: 18px; }
+.pf-pwd-toggle .pf-eye-off { display: none; }
+.pf-pwd-toggle.showing .pf-eye-on  { display: none; }
+.pf-pwd-toggle.showing .pf-eye-off { display: block; }
 
 .pf-hint {
   font-size: 0.7rem; color: var(--muted-light, #94a3b8);
@@ -146,11 +177,7 @@
       <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}تغيير اسم المستخدم وكلمة المرور.{% else %}Change your username and password.{% endif %}</div>
 {% endblock %}
 
-{% block page_header_right %}
-<a href="/" class="btn btn-sm btn-outline-secondary">
-  {% if LANGUAGE_CODE == 'ar' %}العودة{% else %}Back{% endif %}
-</a>
-{% endblock %}
+{% comment %}page_header_right: inherit default Logout button from base.html{% endcomment %}
 
 {% block content %}
 <div class="pf-grid">
@@ -208,25 +235,43 @@
       <label class="pf-label" for="pfCurrentPwd">
         {% if LANGUAGE_CODE == 'ar' %}كلمة المرور الحالية{% else %}Current Password{% endif %}
       </label>
-      <input id="pfCurrentPwd" class="pf-input" type="password"
-             placeholder="{% if LANGUAGE_CODE == 'ar' %}أدخل كلمة المرور الحالية{% else %}Enter current password{% endif %}"
-             autocomplete="off">
+      <div class="pf-pwd-wrap">
+        <input id="pfCurrentPwd" class="pf-input" type="password"
+               placeholder="{% if LANGUAGE_CODE == 'ar' %}أدخل كلمة المرور الحالية{% else %}Enter current password{% endif %}"
+               autocomplete="new-password">
+        <button type="button" class="pf-pwd-toggle" aria-label="{% if LANGUAGE_CODE == 'ar' %}إظهار/إخفاء كلمة المرور{% else %}Show / hide password{% endif %}">
+          <span class="i pf-eye-on" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span>
+          <span class="i pf-eye-off" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg></span>
+        </button>
+      </div>
     </div>
     <div class="pf-field">
       <label class="pf-label" for="pfNewPwd">
         {% if LANGUAGE_CODE == 'ar' %}كلمة المرور الجديدة{% else %}New Password{% endif %}
       </label>
-      <input id="pfNewPwd" class="pf-input" type="password"
-             placeholder="{% if LANGUAGE_CODE == 'ar' %}6 أحرف على الأقل{% else %}At least 6 characters{% endif %}"
-             autocomplete="off">
+      <div class="pf-pwd-wrap">
+        <input id="pfNewPwd" class="pf-input" type="password"
+               placeholder="{% if LANGUAGE_CODE == 'ar' %}6 أحرف على الأقل{% else %}At least 6 characters{% endif %}"
+               autocomplete="new-password">
+        <button type="button" class="pf-pwd-toggle" aria-label="{% if LANGUAGE_CODE == 'ar' %}إظهار/إخفاء كلمة المرور{% else %}Show / hide password{% endif %}">
+          <span class="i pf-eye-on" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span>
+          <span class="i pf-eye-off" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg></span>
+        </button>
+      </div>
     </div>
     <div class="pf-field">
       <label class="pf-label" for="pfConfirmPwd">
         {% if LANGUAGE_CODE == 'ar' %}تأكيد كلمة المرور{% else %}Confirm Password{% endif %}
       </label>
-      <input id="pfConfirmPwd" class="pf-input" type="password"
-             placeholder="{% if LANGUAGE_CODE == 'ar' %}أعد إدخال كلمة المرور{% else %}Re-enter password{% endif %}"
-             autocomplete="off">
+      <div class="pf-pwd-wrap">
+        <input id="pfConfirmPwd" class="pf-input" type="password"
+               placeholder="{% if LANGUAGE_CODE == 'ar' %}أعد إدخال كلمة المرور{% else %}Re-enter password{% endif %}"
+               autocomplete="new-password">
+        <button type="button" class="pf-pwd-toggle" aria-label="{% if LANGUAGE_CODE == 'ar' %}إظهار/إخفاء كلمة المرور{% else %}Show / hide password{% endif %}">
+          <span class="i pf-eye-on" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span>
+          <span class="i pf-eye-off" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg></span>
+        </button>
+      </div>
     </div>
     <button class="pf-submit pf-submit-primary" id="pfSavePassword" type="button">
       <span class="pf-spinner"></span>
@@ -366,6 +411,17 @@
   [inputCurrent, inputNew, inputConfirm].forEach(el => {
     el.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') btnPassword.click();
+    });
+  });
+
+  /* ── Show / hide password toggles ── */
+  document.querySelectorAll('.pf-pwd-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const input = btn.parentElement.querySelector('.pf-input');
+      const show = input.type === 'password';
+      input.type = show ? 'text' : 'password';
+      btn.classList.toggle('showing', show);
+      input.focus();
     });
   });
 

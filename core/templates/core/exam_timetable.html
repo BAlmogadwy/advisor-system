@@ -11,6 +11,14 @@
     .kpi .k { font-size: .7rem; color: var(--t3); text-transform: uppercase; font-family: var(--font-mono); letter-spacing: 0.06em; font-weight: 700; }
     .kpi .v { font-weight: 700; font-family: var(--font-serif); font-size: 1.4rem; color: var(--teal); }
     .kpi .v.warn { color: var(--red, #dc3545); }
+    .kpi-click { cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s; }
+    .kpi-click:hover { border-color: var(--teal, #0a8e6e); box-shadow: 0 0 0 2px rgba(10,142,110,0.12); }
+    .kpi-click .v { text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px; }
+    .kpi-click.active { border-color: var(--teal, #0a8e6e); box-shadow: 0 0 0 2px rgba(10,142,110,0.18); }
+    #kpiDrill { border-top: 2px solid var(--teal, #0a8e6e); padding-top: 10px; }
+    #kpiDrill table th { font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; color: var(--t3, #666); white-space: nowrap; }
+    #kpiDrill table td { vertical-align: middle; }
+    .drill-course-chip { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: .75rem; font-weight: 600; margin: 1px 2px; }
     .et-history-item { cursor: pointer; padding: 6px 10px; border-radius: 6px; transition: background 0.15s; }
     .et-history-item:hover { background: rgba(10,142,110,0.06); }
     .et-history-item.active { background: rgba(10,142,110,0.10); font-weight: 600; }
@@ -164,11 +172,26 @@
       <div class="row g-2 mt-1">
         <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}حواف التعارض{% else %}Conflict edges{% endif %}</div><div class="v" id="kEdges">0</div></div></div>
         <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}أقصى اختبارات/يوم/طالب{% else %}Max exams/day/student{% endif %}</div><div class="v" id="kMaxDay">0</div></div></div>
-        <div class="col-md-3"><div class="kpi"><div class="k" id="kOverLabel">{% if LANGUAGE_CODE == 'ar' %}طلاب تجاوزوا الحد{% else %}Students over limit/day{% endif %}</div><div class="v" id="kOver2">0</div></div></div>
+        <div class="col-md-3"><div class="kpi kpi-click" data-drill="overload"><div class="k" id="kOverLabel">{% if LANGUAGE_CODE == 'ar' %}طلاب تجاوزوا الحد{% else %}Students over limit/day{% endif %}</div><div class="v" id="kOver2">0</div></div></div>
       </div>
       <div class="row g-2 mt-1">
         <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}مجموعات البرنامج/الفصل{% else %}Programme-term buckets{% endif %}</div><div class="v" id="kBuckets">0</div></div></div>
         <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}انتهاكات يوم المجموعة{% else %}Bucket day violations{% endif %}</div><div class="v" id="kBucketViol">0</div></div></div>
+        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}أقصى ساعات معتمدة/يوم{% else %}Max credit load/day{% endif %}</div><div class="v" id="kMaxCredit">0</div></div></div>
+        <div class="col-md-3"><div class="kpi kpi-click" data-drill="heavy"><div class="k">{% if LANGUAGE_CODE == 'ar' %}طلاب بيوم ثقيل{% else %}Heavy day students{% endif %}</div><div class="v" id="kHeavyDay">0</div></div></div>
+      </div>
+      <!-- Drilldown detail panel (hidden until a KPI is clicked) -->
+      <div id="kpiDrill" style="display:none;" class="mt-2">
+        <div class="d-flex align-items-center justify-content-between mb-1">
+          <h6 class="mb-0" id="kpiDrillTitle"></h6>
+          <button id="kpiDrillClose" class="btn btn-sm btn-outline-secondary py-0 px-2">&times;</button>
+        </div>
+        <div class="table-responsive" style="max-height:340px;overflow-y:auto;">
+          <table class="table table-sm table-hover mb-0" style="font-size:.82rem;">
+            <thead id="kpiDrillHead"></thead>
+            <tbody id="kpiDrillBody"></tbody>
+          </table>
+        </div>
       </div>
     </div>
 
@@ -223,6 +246,24 @@
 
 {% block extra_js %}
 <script>
+/*
+ * Exam Timetable Builder — client-side logic.
+ *
+ * Flow:
+ *   1. Page load     → fetch filter chips (programs, sections) + history
+ *   2. Load Courses  → POST filters → render course chips grouped by dept/level
+ *   3. Build         → POST config → render KPI cards, schedule grid, conflict matrix
+ *   4. Interact      → filter schedule, drag-pin courses, click KPI drilldowns
+ *   5. History       → load/delete saved runs
+ *
+ * Global state:
+ *   _coursesLoaded   – whether the course preview is populated
+ *   _pinnedCourses   – {course_code: {course_code, day, period}} drag-pin overrides
+ *   _currentRunId    – ID of the currently viewed run (for export link)
+ *   _creditMap       – {course_code: credit_hours} for chip labels
+ *   _drillData       – {overload: [], heavy: []} detail records for KPI drilldown
+ *   _programCourses  – {programName: Set(course_codes)} for programme-based filtering
+ */
 const IS_AR = '{{ LANGUAGE_CODE }}' === 'ar';
 const T = {
   ready:      IS_AR ? 'جاهز. حدد الفلاتر ثم انقر تحميل المقررات.' : 'Ready. Select filters then click Load Courses.',
@@ -388,7 +429,8 @@ function renderCourseChips(courses) {
       html += `<div class="et-level-row">`;
       html += `<span class="et-level-badge">L${level}</span>`;
       for (const c of deptMap[dept][level]) {
-        html += `<label class="et-chip active"><input type="checkbox" value="${c.course_code}" checked>${c.course_code} <small class="opacity-75">(${c.enrolled_count})</small></label>`;
+        const crLabel = c.credit_hours ? ` | ${c.credit_hours}cr` : '';
+        html += `<label class="et-chip active"><input type="checkbox" value="${c.course_code}" checked>${c.course_code} <small class="opacity-75">(${c.enrolled_count}${crLabel})</small></label>`;
       }
       html += `</div>`;
     }
@@ -592,6 +634,92 @@ let _pinnedCourses = {};    // { course_code: { course_code, day, period } }
 /* ── Current run ID (for export) ── */
 let _currentRunId = null;
 
+/* ── Credit map (for chip labels) ── */
+let _creditMap = {};        // { course_code: credit_hours }
+
+/* ── KPI drilldown data ── */
+let _drillData = { overload: [], heavy: [] };
+
+function closeDrill() {
+  $('kpiDrill').style.display = 'none';
+  document.querySelectorAll('.kpi-click.active').forEach(el => el.classList.remove('active'));
+}
+
+function openDrill(type) {
+  const panel = $('kpiDrill');
+  const rows = _drillData[type] || [];
+
+  // Toggle off if already open on same type
+  const already = panel.style.display !== 'none' && panel.dataset.type === type;
+  if (already) { closeDrill(); return; }
+
+  // Mark active card
+  document.querySelectorAll('.kpi-click.active').forEach(el => el.classList.remove('active'));
+  const card = document.querySelector(`.kpi-click[data-drill="${type}"]`);
+  if (card) card.classList.add('active');
+
+  panel.dataset.type = type;
+
+  if (type === 'overload') {
+    $('kpiDrillTitle').textContent = IS_AR ? 'تفاصيل الطلاب المتجاوزين' : 'Overloaded Students Detail';
+    $('kpiDrillHead').innerHTML = `<tr>
+      <th>${IS_AR ? 'الطالب' : 'Student ID'}</th>
+      <th>${IS_AR ? 'اليوم' : 'Day'}</th>
+      <th>${IS_AR ? 'العدد' : 'Count'}</th>
+      <th>${IS_AR ? 'المقررات' : 'Courses'}</th>
+    </tr>`;
+    $('kpiDrillBody').innerHTML = rows.map(r => `<tr>
+      <td><strong>${r.student_id}</strong></td>
+      <td>${r.day}</td>
+      <td><span class="badge bg-danger">${r.count}</span></td>
+      <td>${r.courses.map(c =>
+        `<span class="drill-course-chip" style="background:${colorForCourse(c.code)};border:1px solid ${colorForCourseBorder(c.code)}">${c.code}${c.credits != null ? ` <small style="opacity:.6">${c.credits}cr</small>` : ''}</span>`
+      ).join('')}</td>
+    </tr>`).join('');
+  } else {
+    $('kpiDrillTitle').textContent = IS_AR ? 'تفاصيل الأيام الثقيلة' : 'Heavy Day Students Detail';
+    $('kpiDrillHead').innerHTML = `<tr>
+      <th>${IS_AR ? 'الطالب' : 'Student ID'}</th>
+      <th>${IS_AR ? 'اليوم' : 'Day'}</th>
+      <th>${IS_AR ? 'مجموع الساعات' : 'Total Cr.'}</th>
+      <th>${IS_AR ? 'شدة' : 'Severity'}</th>
+      <th>${IS_AR ? 'المقررات' : 'Courses'}</th>
+    </tr>`;
+    $('kpiDrillBody').innerHTML = rows.map(r => {
+      const sev = r.penalty >= 100
+        ? `<span class="badge bg-danger">${IS_AR ? 'حرج' : 'Critical'}</span>`
+        : `<span class="badge bg-warning text-dark">${IS_AR ? 'مرتفع' : 'High'}</span>`;
+      return `<tr>
+        <td><strong>${r.student_id}</strong></td>
+        <td>${r.day}</td>
+        <td>${r.total_credits}</td>
+        <td>${sev}</td>
+        <td>${r.courses.map(c =>
+          `<span class="drill-course-chip" style="background:${colorForCourse(c.code)};border:1px solid ${colorForCourseBorder(c.code)}">${c.code} <small style="opacity:.6">${c.credits}cr</small></span>`
+        ).join('')}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  if (!rows.length) {
+    $('kpiDrillBody').innerHTML = `<tr><td colspan="5" class="text-center text-secondary py-3">${IS_AR ? 'لا توجد بيانات' : 'No records'}</td></tr>`;
+  }
+
+  panel.style.display = '';
+}
+
+// Click handlers for KPI cards
+document.addEventListener('click', (e) => {
+  const card = e.target.closest('.kpi-click');
+  if (card) {
+    const type = card.dataset.drill;
+    if (type) openDrill(type);
+    return;
+  }
+});
+
+$('kpiDrillClose').addEventListener('click', closeDrill);
+
 // Rebuild lookup from buckets_summary each time results arrive.
 function buildProgramCoursesMap(bucketsSummary) {
   _programCourses = {};
@@ -644,6 +772,22 @@ function renderResults(data) {
   const bv = data.qa?.bucket_day_violations_count ?? 0;
   $('kBucketViol').textContent = bv;
   $('kBucketViol').className   = 'v' + (bv > 0 ? ' warn' : '');
+
+  // Credit KPIs
+  _creditMap = data.credit_map ?? {};
+  const maxCr = data.qa?.max_credit_load_per_day ?? 0;
+  $('kMaxCredit').textContent = maxCr;
+  $('kMaxCredit').className   = 'v' + (maxCr > 8 ? ' warn' : '');
+  const hd = data.qa?.heavy_day_students ?? 0;
+  $('kHeavyDay').textContent = hd;
+  $('kHeavyDay').className   = 'v' + (hd > 0 ? ' warn' : '');
+
+  // Store drilldown data + close any open panel
+  _drillData = {
+    overload: data.qa?.overload_details ?? [],
+    heavy:    data.qa?.heavy_day_details ?? [],
+  };
+  closeDrill();
 
   // QA Warnings
   const conflicts = data.qa?.same_slot_conflicts ?? [];
@@ -769,7 +913,9 @@ function renderScheduleGrid(schedule, slots) {
       } else {
         const chips = courses.map(c => {
           const pinCls = _pinnedCourses[c] ? ' et-pinned' : '';
-          return `<span class="et-course${pinCls}" data-course="${c}" draggable="true" style="background:${colorForCourse(c)};border:1px solid ${colorForCourseBorder(c)}">${c}</span>`;
+          const cr = _creditMap[c];
+          const crTag = cr ? ` <small style="opacity:.6;font-weight:400">${cr}cr</small>` : '';
+          return `<span class="et-course${pinCls}" data-course="${c}" draggable="true" style="background:${colorForCourse(c)};border:1px solid ${colorForCourseBorder(c)}">${c}${crTag}</span>`;
         }).join(' ');
         html += `<td data-day="${day}" data-period="${period}">${chips}</td>`;
       }
@@ -781,9 +927,11 @@ function renderScheduleGrid(schedule, slots) {
   if (overflowCourses.length > 0) {
     html += `<tr class="et-overflow-row">`;
     html += `<th style="color:var(--red,#dc3545)">${T.overflow}</th>`;
-    const chips = overflowCourses.map(c =>
-      `<span class="et-course" data-course="${c}" draggable="true" style="background:${colorForCourse(c)};border:1px solid ${colorForCourseBorder(c)}">${c}</span>`
-    ).join(' ');
+    const chips = overflowCourses.map(c => {
+      const cr = _creditMap[c];
+      const crTag = cr ? ` <small style="opacity:.6;font-weight:400">${cr}cr</small>` : '';
+      return `<span class="et-course" data-course="${c}" draggable="true" style="background:${colorForCourse(c)};border:1px solid ${colorForCourseBorder(c)}">${c}${crTag}</span>`;
+    }).join(' ');
     html += `<td colspan="${periodOrder.length}">${chips}</td>`;
     html += '</tr>';
   }
@@ -1172,13 +1320,14 @@ async function deleteRun(runId, label) {
 
     notify.success(T.deleted);
 
-    // If the deleted run was the currently loaded one, clear the view
+    // If the deleted run was the currently loaded one, hide the results panel.
+    // We hide (not clear innerHTML) so the DOM elements remain for the next build.
     if (String(_currentRunId) === String(runId)) {
       _currentRunId = null;
-      $('etResults').innerHTML = '';
+      $('etResults').style.display = 'none';
       $('etStatus').textContent = T.ready;
       $('etStatus').className = 'alert alert-info mt-2 py-2 mb-0';
-      const exportBtn = $('etExport');
+      const exportBtn = $('exportXlsx');
       if (exportBtn) { exportBtn.style.display = 'none'; exportBtn.removeAttribute('href'); }
     }
 

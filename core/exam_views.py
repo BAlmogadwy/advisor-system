@@ -1,6 +1,18 @@
 """
 core/exam_views.py
 Exam Timetable Builder — page view + API endpoints.
+
+All endpoints require SUPER_ADMIN role (enforced by ``_require_super_admin``).
+
+Endpoints:
+    GET  exam_timetable_page          – render the single-page builder UI
+    GET  exam_timetable_filters_view  – return programs/sections for filter dropdowns
+    POST exam_timetable_preview_courses_view – return running courses matching filters
+    POST exam_timetable_build_view    – build (or rebuild) the exam timetable
+    GET  exam_timetable_list_view     – paginated list of saved runs
+    GET  exam_timetable_detail_view   – load a specific saved run
+    GET  exam_timetable_export_view   – download a run as .xlsx
+    POST exam_timetable_delete_view   – delete a saved run (requires confirm=DELETE)
 """
 
 from __future__ import annotations
@@ -13,6 +25,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from core.models import ExamTimetableRun, Student
 from core.services.exam_timetable import (
+    build_credit_map,
     build_enrolled_sets,
     build_exam_timetable,
     export_exam_timetable_xlsx,
@@ -31,6 +44,7 @@ def _require_super_admin(request: HttpRequest) -> JsonResponse | None:
 
 @require_GET
 def exam_timetable_page(request: HttpRequest) -> HttpResponse:
+    """Render the exam timetable builder page (all logic is client-side JS)."""
     deny = _require_super_admin(request)
     if deny:
         return deny
@@ -87,8 +101,18 @@ def exam_timetable_preview_courses_view(request: HttpRequest) -> JsonResponse:
 
     enrolled_sets = build_enrolled_sets(programs=programs, sections=sections)
 
+    # Fetch credit hours for all preview courses
+    credit_map = build_credit_map(list(enrolled_sets.keys()))
+
     courses = sorted(
-        [{"course_code": cc, "enrolled_count": len(sids)} for cc, sids in enrolled_sets.items()],
+        [
+            {
+                "course_code": cc,
+                "enrolled_count": len(sids),
+                "credit_hours": credit_map.get(cc, 3),
+            }
+            for cc, sids in enrolled_sets.items()
+        ],
         key=lambda c: c["course_code"],
     )
 
@@ -200,6 +224,7 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
 
 @require_GET
 def exam_timetable_list_view(request: HttpRequest) -> JsonResponse:
+    """Return a paginated list of saved exam-timetable runs (newest first)."""
     deny = _require_super_admin(request)
     if deny:
         return deny
@@ -231,6 +256,7 @@ def exam_timetable_list_view(request: HttpRequest) -> JsonResponse:
 
 @require_GET
 def exam_timetable_detail_view(request: HttpRequest, run_id: int) -> JsonResponse:
+    """Load a previously saved exam-timetable run by ID (for the history panel)."""
     deny = _require_super_admin(request)
     if deny:
         return deny

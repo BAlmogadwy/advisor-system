@@ -1341,6 +1341,13 @@ html body .btn:focus-visible {
   flex:1; background:none; border:none; outline:none;
   color:var(--t1); font-size:13px; font-family:inherit;
 }
+/* Container already shows :focus-within ring — suppress the inner
+   input's *:focus-visible outline so it doesn't overflow the bar. */
+.fb-search input:focus,
+.fb-search input:focus-visible {
+  outline:    none !important;
+  box-shadow: none !important;
+}
 .fb-search input::placeholder { color:var(--t5); }
 .fb-spacer { flex:1; }
 .fb-dd {
