@@ -297,6 +297,7 @@
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}لوحة إدارة قاعدة البيانات{% else %}Database Admin Console{% endif %}{% endblock %}
 
 {% block page_chips %}
+          <span class="ph-chip ph-chip-role">{{ role }}</span>
           <span class="ph-chip ph-chip-danger">{% if LANGUAGE_CODE == 'ar' %}منطقة خطر{% else %}Danger Zone{% endif %}</span>
           <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}معاينة أولاً · تأكيد مطلوب{% else %}Preview-first · Confirmation required{% endif %}</span>
 {% endblock %}

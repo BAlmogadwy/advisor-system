@@ -14,6 +14,11 @@
     .et-history-item { cursor: pointer; padding: 6px 10px; border-radius: 6px; transition: background 0.15s; }
     .et-history-item:hover { background: rgba(10,142,110,0.06); }
     .et-history-item.active { background: rgba(10,142,110,0.10); font-weight: 600; }
+    .et-history-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .et-history-item .et-run-info { flex: 1; min-width: 0; }
+    .et-del-btn { background: none; border: none; cursor: pointer; padding: 4px 6px; border-radius: 4px; color: var(--t3); font-size: .85rem; opacity: 0; transition: opacity 0.15s, color 0.15s, background 0.15s; flex-shrink: 0; }
+    .et-history-item:hover .et-del-btn { opacity: 1; }
+    .et-del-btn:hover { color: var(--red, #dc3545); background: rgba(220,53,69,0.08); }
     .et-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; border-radius: 20px; font-size: .78rem; font-weight: 600; cursor: pointer; border: 1.5px solid var(--t4, #ccc); background: transparent; color: var(--t2, #555); transition: all 0.15s; user-select: none; }
     .et-chip:hover { border-color: var(--teal, #0a8e6e); }
     .et-chip.active { background: var(--teal, #0a8e6e); color: #fff; border-color: var(--teal, #0a8e6e); }
@@ -71,7 +76,7 @@
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}جدول الاختبارات{% else %}Exam Timetable{% endif %}{% endblock %}
 
 {% block page_chips %}
-  <span class="ph-chip ph-chip-page">{{ role }}</span>
+  <span class="ph-chip ph-chip-role">{{ role }}</span>
   <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}إنشاء → جدولة → تقرير{% else %}Create → Schedule → Report{% endif %}</span>
 {% endblock %}
 
@@ -209,6 +214,10 @@
   <div class="et-panel">
     <h6 class="mb-2">{% if LANGUAGE_CODE == 'ar' %}السجل السابق{% else %}Previous Runs{% endif %}</h6>
     <div id="historyList"><small class="text-secondary">{% if LANGUAGE_CODE == 'ar' %}جارٍ التحميل...{% else %}Loading...{% endif %}</small></div>
+    <div id="historyPagination" class="pg-bar" style="margin-top:8px;display:none;">
+      <div class="pg-info" id="historyShowing"></div>
+      <div class="pg-nav" id="historyPages"></div>
+    </div>
   </div>
 {% endblock %}
 
@@ -242,6 +251,12 @@ const T = {
   noConflicts:    IS_AR ? 'لا توجد تعارضات.' : 'No conflicts.',
   rebuild:        IS_AR ? 'إعادة البناء ({n} مثبت)' : 'Rebuild ({n} pinned)',
   pinCount:       IS_AR ? '{n} مقرر مثبت' : '{n} course(s) pinned',
+  deleteRun:      IS_AR ? 'حذف هذا السجل؟' : 'Delete this run?',
+  deleteRunBody:  IS_AR ? '<p>سيتم حذف هذا السجل نهائياً ولا يمكن التراجع.</p>' : '<p>This run will be permanently deleted. This cannot be undone.</p>',
+  deleteConfirm:  IS_AR ? 'حذف نهائياً' : 'Delete permanently',
+  deleted:        IS_AR ? 'تم حذف السجل.' : 'Run deleted.',
+  deleteFailed:   IS_AR ? 'فشل حذف السجل.' : 'Failed to delete run.',
+  showingRuns:    IS_AR ? '{from}-{to} من {total}' : '{from}-{to} of {total}',
 };
 
 const CSRF = document.querySelector('[name=csrfmiddlewaretoken]')?.value
@@ -1058,31 +1073,119 @@ $('toggleMatrix').addEventListener('click', () => {
 });
 
 /* ── History ── */
-async function loadHistory() {
+let _historyPage = 1;
+
+function fmtDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+async function loadHistory(page) {
+  if (page !== undefined) _historyPage = page;
   try {
-    const res = await fetch('/ops/exam-timetable/list/', {
+    const res = await fetch(`/ops/exam-timetable/list/?page=${_historyPage}`, {
       headers: { 'X-CSRFToken': CSRF },
     });
     const data = await res.json();
     if (!data.ok) return;
 
     const runs = data.runs ?? [];
+    const totalPages = data.total_pages ?? 1;
+    const total = data.total ?? 0;
+    _historyPage = data.page ?? 1;
+
     if (!runs.length) {
       $('historyList').innerHTML = `<small class="text-secondary">${T.noHistory}</small>`;
+      $('historyPagination').style.display = 'none';
       return;
     }
 
     $('historyList').innerHTML = runs.map(r => {
-      const dt = r.created_at ? new Date(r.created_at).toLocaleString() : '';
+      const dt = fmtDate(r.created_at);
       return `<div class="et-history-item" data-id="${r.id}">
-        <strong>${r.label}</strong> <small class="text-secondary">${dt}</small>
+        <div class="et-run-info">
+          <strong>${r.label}</strong> <small class="text-secondary">${dt}</small>
+        </div>
+        <button class="et-del-btn" data-id="${r.id}" data-label="${r.label}" title="${IS_AR ? 'حذف' : 'Delete'}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+        </button>
       </div>`;
     }).join('');
 
-    $('historyList').querySelectorAll('.et-history-item').forEach(el => {
-      el.addEventListener('click', () => loadRun(el.dataset.id));
+    // Click on run info → load run
+    $('historyList').querySelectorAll('.et-run-info').forEach(el => {
+      el.addEventListener('click', () => loadRun(el.closest('.et-history-item').dataset.id));
     });
+
+    // Click on delete button → confirm & delete
+    $('historyList').querySelectorAll('.et-del-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => { e.stopPropagation(); deleteRun(btn.dataset.id, btn.dataset.label); });
+    });
+
+    // Pagination
+    if (totalPages > 1) {
+      const from = (_historyPage - 1) * 10 + 1;
+      const to = Math.min(_historyPage * 10, total);
+      $('historyShowing').textContent = T.showingRuns.replace('{from}', from).replace('{to}', to).replace('{total}', total);
+      renderHistoryPagination(totalPages);
+      $('historyPagination').style.display = '';
+    } else {
+      $('historyPagination').style.display = 'none';
+    }
   } catch { /* ignore */ }
+}
+
+function renderHistoryPagination(pages) {
+  const wrap = $('historyPages');
+  let html = `<button class="pg-btn" onclick="loadHistory(${_historyPage-1})" ${_historyPage<=1?'disabled':''}>‹</button>`;
+  for (let i = 1; i <= pages; i++) {
+    if (pages > 7 && i > 2 && i < pages - 1 && Math.abs(i - _historyPage) > 1) {
+      if (i === 3 || i === pages - 2) html += '<span style="padding:0 0.2rem;color:var(--t3);">…</span>';
+      continue;
+    }
+    html += `<button class="pg-btn ${i===_historyPage?'active':''}" onclick="loadHistory(${i})">${i}</button>`;
+  }
+  html += `<button class="pg-btn" onclick="loadHistory(${_historyPage+1})" ${_historyPage>=pages?'disabled':''}>›</button>`;
+  wrap.innerHTML = html;
+}
+
+async function deleteRun(runId, label) {
+  const ok = await dlg.confirm({
+    title: T.deleteRun,
+    body: T.deleteRunBody + `<p style="margin-top:6px;"><strong>${label}</strong></p>`,
+    icon: 'danger',
+    confirmLabel: T.deleteConfirm,
+    confirmClass: 'danger',
+  });
+  if (!ok) return;
+
+  try {
+    const res = await fetch(`/ops/exam-timetable/${runId}/delete/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      body: JSON.stringify({ confirm: 'DELETE' }),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || T.reqFailed);
+
+    notify.success(T.deleted);
+
+    // If the deleted run was the currently loaded one, clear the view
+    if (String(_currentRunId) === String(runId)) {
+      _currentRunId = null;
+      $('etResults').innerHTML = '';
+      $('etStatus').textContent = T.ready;
+      $('etStatus').className = 'alert alert-info mt-2 py-2 mb-0';
+      const exportBtn = $('etExport');
+      if (exportBtn) { exportBtn.style.display = 'none'; exportBtn.removeAttribute('href'); }
+    }
+
+    loadHistory();
+  } catch (err) {
+    notify.error(T.deleteFailed, err.message);
+  }
 }
 
 // Load a previously saved run from the database and render it (read-only view).

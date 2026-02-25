@@ -339,7 +339,8 @@
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}منشئ الجدول الدراسي{% else %}Student Timetable Builder{% endif %}{% endblock %}
 
 {% block page_chips %}
-            <span class="ph-chip ph-chip-page">{% if LANGUAGE_CODE == 'ar' %}خطوات أ → د{% else %}Steps A → D{% endif %}</span>
+            <span class="ph-chip ph-chip-role">{{ role }}</span>
+            <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}خطوات أ → د{% else %}Steps A → D{% endif %}</span>
             <span class="ph-chip ph-chip-gray" id="plannerContextChip" style="display:none;"></span>
 {% endblock %}
 

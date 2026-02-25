@@ -28,6 +28,7 @@ from .db_admin_views import (
 )
 from .exam_views import (
     exam_timetable_build_view,
+    exam_timetable_delete_view,
     exam_timetable_detail_view,
     exam_timetable_export_view,
     exam_timetable_filters_view,
@@ -242,6 +243,11 @@ urlpatterns = [
         "ops/exam-timetable/<int:run_id>/export.xlsx",
         login_required(exam_timetable_export_view),
         name="exam_timetable_export",
+    ),
+    path(
+        "ops/exam-timetable/<int:run_id>/delete/",
+        login_required(exam_timetable_delete_view),
+        name="exam_timetable_delete",
     ),
     path(
         "ops/exam-timetable/<int:run_id>/",

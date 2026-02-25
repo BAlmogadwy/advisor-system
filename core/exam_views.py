@@ -17,6 +17,7 @@ from core.services.exam_timetable import (
     build_exam_timetable,
     export_exam_timetable_xlsx,
 )
+from core.services.audit import log_audit_event
 from core.services.rbac import ROLE_SUPER_ADMIN, get_user_role
 from core.sidebar_context import get_sidebar_context
 
@@ -203,14 +204,29 @@ def exam_timetable_list_view(request: HttpRequest) -> JsonResponse:
     if deny:
         return deny
 
-    runs = list(
-        ExamTimetableRun.objects.order_by("-created_at").values("id", "label", "created_at")[:20]
-    )
-    # Convert datetime to string for JSON serialisation
+    PAGE_SIZE = 10
+    try:
+        page = max(1, int(request.GET.get("page", 1)))
+    except (ValueError, TypeError):
+        page = 1
+
+    qs = ExamTimetableRun.objects.order_by("-created_at").values("id", "label", "created_at")
+    total = qs.count()
+    total_pages = max(1, -(-total // PAGE_SIZE))  # ceil division
+    page = min(page, total_pages)
+
+    start = (page - 1) * PAGE_SIZE
+    runs = list(qs[start : start + PAGE_SIZE])
     for r in runs:
         r["created_at"] = r["created_at"].isoformat() if r["created_at"] else ""
 
-    return JsonResponse({"ok": True, "runs": runs})
+    return JsonResponse({
+        "ok": True,
+        "runs": runs,
+        "page": page,
+        "total_pages": total_pages,
+        "total": total,
+    })
 
 
 @require_GET
@@ -251,3 +267,41 @@ def exam_timetable_export_view(request: HttpRequest, run_id: int) -> HttpRespons
         as_attachment=True,
         filename=f"exam_timetable_{run_id}.xlsx",
     )
+
+
+@require_POST
+def exam_timetable_delete_view(request: HttpRequest, run_id: int) -> JsonResponse:
+    """Delete a saved exam-timetable run (requires confirm=DELETE)."""
+    deny = _require_super_admin(request)
+    if deny:
+        return deny
+
+    payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    confirm = str(payload.get("confirm", ""))
+    if confirm != "DELETE":
+        log_audit_event(
+            request,
+            action="exam_timetable.delete_run",
+            status="error",
+            error_text="missing confirm=DELETE",
+        )
+        return JsonResponse(
+            {"ok": False, "error": "Confirmation required: send confirm=DELETE"},
+            status=400,
+        )
+
+    try:
+        run = ExamTimetableRun.objects.get(id=run_id)
+    except ExamTimetableRun.DoesNotExist:
+        return JsonResponse({"ok": False, "error": "Run not found"}, status=404)
+
+    label = run.label
+    run.delete()
+
+    log_audit_event(
+        request,
+        action="exam_timetable.delete_run",
+        status="success",
+        details={"run_id": run_id, "label": label},
+    )
+    return JsonResponse({"ok": True})

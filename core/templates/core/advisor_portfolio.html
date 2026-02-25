@@ -186,7 +186,8 @@
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}محفظة المرشد{% else %}Advisor Portfolio{% endif %}{% endblock %}
 
 {% block page_chips %}
-            <span class="ph-chip ph-chip-page" id="apAdvisorChip">{% if LANGUAGE_CODE == 'ar' %}لا يوجد مرشد{% else %}No advisor{% endif %}</span>
+            <span class="ph-chip ph-chip-role">{{ role }}</span>
+            <span class="ph-chip ph-chip-gray" id="apAdvisorChip">{% if LANGUAGE_CODE == 'ar' %}لا يوجد مرشد{% else %}No advisor{% endif %}</span>
             <span class="ph-chip ph-chip-gray" id="apCountChip">{% if LANGUAGE_CODE == 'ar' %}0 طالب{% else %}0 students{% endif %}</span>
 {% endblock %}
 

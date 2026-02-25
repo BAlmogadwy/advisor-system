@@ -27,7 +27,7 @@
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}مستكشف التدقيق{% else %}Audit Explorer{% endif %}{% endblock %}
 
 {% block page_chips %}
-          <span class="ph-chip ph-chip-page">{{ role }}</span>
+          <span class="ph-chip ph-chip-role">{{ role }}</span>
           {% if chain.ok %}
           <span class="ph-chip ph-chip-status">{% if LANGUAGE_CODE == 'ar' %}سلسلة التحقق: سليمة{% else %}Hash chain: OK{% endif %} · {{ chain.checked }} {% if LANGUAGE_CODE == 'ar' %}سجل{% else %}records{% endif %}</span>
           {% else %}
