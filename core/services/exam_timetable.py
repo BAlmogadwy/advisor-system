@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import random
 from collections import defaultdict
 from pathlib import Path
 
@@ -197,6 +198,7 @@ def schedule(
     course_buckets: dict[str, list[tuple[str, int]]] | None = None,
     pinned: list[dict] | None = None,
     credit_map: dict[str, int] | None = None,
+    seed: int | None = None,
 ) -> list[dict]:
     """
     Greedy graph-coloring with day-spread soft constraint.
@@ -214,6 +216,13 @@ def schedule(
            small day gaps between bucket-mates).
       3.   Balance load across slots (prefer less-loaded slots as tiebreaker).
 
+    Randomised tie-breaking:
+      When ``seed`` is provided, courses with the same constraint degree
+      are shuffled randomly before scheduling.  This produces a different
+      (but equally valid) timetable on each run, letting the user pick
+      the best variant.  When ``seed`` is None the order is deterministic
+      (alphabetical within each tier).
+
     Args:
         courses            – list of course codes to schedule
         adj                – adjacency dict from build_conflict_graph
@@ -224,6 +233,7 @@ def schedule(
         course_buckets     – {course_code: [(program, term), …]} reverse index
         pinned             – list of {course_code, day, period} to fix before scheduling
         credit_map         – {course_code: credit_hours} for credit-pair penalty
+        seed               – RNG seed for tie-breaking; None = deterministic order
 
     Returns:
         list of {course_code, slot_index, day, period}
@@ -254,7 +264,25 @@ def schedule(
         bucket_deg = sum(len(_ptb.get(bk, set())) for bk in _cb.get(c, []))
         return adj_deg + bucket_deg
 
-    courses_sorted = sorted(courses, key=_constraint_degree, reverse=True)
+    # Sort most-constrained first.  When seed is provided, shuffle courses
+    # within each constraint-degree tier so tie-breaking is randomised.
+    # This produces a different (but equally valid) timetable each run.
+    if seed is not None:
+        rng = random.Random(seed)
+        # Group courses by their constraint degree
+        degree_map: dict[int, list[str]] = defaultdict(list)
+        for c in courses:
+            degree_map[_constraint_degree(c)].append(c)
+        # Build the sorted list: tiers in descending degree order,
+        # courses within each tier shuffled randomly.
+        courses_sorted: list[str] = []
+        for _deg in sorted(degree_map.keys(), reverse=True):
+            tier = degree_map[_deg]
+            rng.shuffle(tier)
+            courses_sorted.extend(tier)
+    else:
+        # Deterministic: alphabetical within each tier (Python sort is stable)
+        courses_sorted = sorted(courses, key=_constraint_degree, reverse=True)
 
     # ── Mutable state: updated as each course is placed ──
     #
@@ -640,6 +668,7 @@ def build_exam_timetable(
     sections: list[str] | None = None,
     selected_courses: list[str] | None = None,
     pinned: list[dict] | None = None,
+    seed: int | None = None,
 ) -> dict:
     """
     End-to-end pipeline: build enrolled sets → conflict graph →
@@ -654,6 +683,10 @@ def build_exam_timetable(
         selected_courses – if provided, restrict scheduling to only
                            these course codes (user-curated list from
                            the preview step).
+        seed             – RNG seed for randomised tie-breaking in the
+                           scheduler; None = deterministic (alphabetical).
+                           Different seeds produce different timetable
+                           variants from the same input data.
     """
     # 1. Enrolled sets
     enrolled_sets = build_enrolled_sets(programs=programs, sections=sections)
@@ -708,6 +741,7 @@ def build_exam_timetable(
         course_buckets=cb,
         pinned=pinned,
         credit_map=credit_map,
+        seed=seed,
     )
 
     # 7. QA report — validate hard constraints and compute quality metrics
@@ -746,6 +780,7 @@ def build_exam_timetable(
         "buckets_summary": buckets_summary,
         "bucket_count": len(ptb),
         "credit_map": credit_map,
+        "seed": seed,
     }
 
     # Persist

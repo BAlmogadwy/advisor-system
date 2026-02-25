@@ -124,7 +124,8 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
     """Build (or rebuild) the exam timetable.
 
     Accepts JSON body with: label, days, periods, max_per_day,
-    programs, sections, selected_courses, and pinned overrides.
+    programs, sections, selected_courses, pinned overrides,
+    and optional randomize flag for varied timetable generation.
     """
     deny = _require_super_admin(request)
     if deny:
@@ -144,6 +145,7 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
     sections_raw = payload.get("sections", [])
     selected_courses_raw = payload.get("selected_courses", None)
     pinned_raw = payload.get("pinned", None)
+    randomize = payload.get("randomize", False)
 
     if not label:
         return JsonResponse({"ok": False, "error": "label is required"}, status=400)
@@ -203,6 +205,12 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
     if not days or not periods:
         return JsonResponse({"ok": False, "error": "days and periods are required"}, status=400)
 
+    # Generate a random seed when the user enables randomised tie-breaking.
+    # Each build produces a different timetable variant; the seed is stored
+    # in the result so it can be reproduced if needed.
+    import random as _rnd
+    seed = _rnd.randint(1, 2**31 - 1) if randomize else None
+
     try:
         result = build_exam_timetable(
             label,
@@ -213,6 +221,7 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
             sections=sections,
             selected_courses=selected_courses,
             pinned=pinned,
+            seed=seed,
         )
         # Check for feasibility error (bucket too large for available days)
         if result.get("feasibility_error"):
