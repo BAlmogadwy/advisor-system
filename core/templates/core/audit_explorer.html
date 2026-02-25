@@ -56,7 +56,7 @@
     </select>
     <input name="from" class="form-control form-control-sm" placeholder="{% if LANGUAGE_CODE == 'ar' %}من (ISO UTC){% else %}From (ISO UTC){% endif %}" value="{{ filters.from }}" />
     <input name="to" class="form-control form-control-sm" placeholder="{% if LANGUAGE_CODE == 'ar' %}إلى (ISO UTC){% else %}To (ISO UTC){% endif %}" value="{{ filters.to }}" />
-    <input name="limit" class="form-control form-control-sm" type="number" min="1" max="5000" value="{{ filters.limit }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى{% else %}Limit{% endif %}" title="{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى لعدد الصفوف{% else %}Maximum number of rows{% endif %}" style="max-width:100px" />
+    <input name="limit" class="form-control form-control-sm" type="text" inputmode="numeric" pattern="[0-9]*" min="1" max="5000" value="{{ filters.limit }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى{% else %}Limit{% endif %}" title="{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى لعدد الصفوف{% else %}Maximum number of rows{% endif %}" style="max-width:100px" />
     <button type="submit" class="btn btn-sm btn-primary">{% if LANGUAGE_CODE == 'ar' %}تطبيق الفلاتر{% else %}Apply filters{% endif %}</button>
     <a class="btn btn-sm btn-outline-secondary" href="/ops/audit/export.csv?action={{ filters.action|urlencode }}&user={{ filters.user|urlencode }}&status={{ filters.status|urlencode }}&from={{ filters.from|urlencode }}&to={{ filters.to|urlencode }}&limit={{ filters.limit }}">{% if LANGUAGE_CODE == 'ar' %}تصدير CSV{% else %}Export CSV{% endif %}</a>
   </form>
