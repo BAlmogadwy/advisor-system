@@ -9,24 +9,6 @@
    UX ENHANCEMENTS  (no existing classes overridden)
    ═══════════════════════════════════════════════════════ */
 
-/* ── Dashboard page-header overrides (non-sticky, gradient accent) ── */
-[data-page="dashboard"] .page-header {
-  position: relative;
-  padding: 0.65rem 1.5rem;
-  margin: -1.5rem -1.5rem 1.25rem -1.5rem;
-  background: rgba(255,255,255,0.35);
-  box-shadow: none;
-}
-[data-page="dashboard"] .page-header::after {
-  content: '';
-  position: absolute;
-  bottom: -1px; left: 0; right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, var(--teal), var(--sky) 35%, var(--royal) 65%, transparent);
-  opacity: 0.15;
-}
-[data-page="dashboard"] .page-header-module { font-size: 1rem; }
-
 /* ── REC 4: HP advanced settings ───────────────────── */
 .hp-advanced { border: none; }
 
@@ -331,7 +313,6 @@
 </style>
 {% endblock %}
 
-{% block main_attrs %}data-page="dashboard"{% endblock %}
 {% block page_h1_attrs %}id="currentModule" class="page-header-module"{% endblock %}
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}نظام توصيات الطلاب{% else %}Student Recommender{% endif %}{% endblock %}
 {% block page_chips %}
@@ -341,12 +322,13 @@
           <span class="ph-chip ph-chip-context" id="phContextChip" style="display:none;"></span>
 {% endblock %}
 
+{% block page_intro %}
+      <h2 id="pageIntroTitle">{% if LANGUAGE_CODE == 'ar' %}نظام توصيات الطلاب{% else %}Student Recommender{% endif %}</h2>
+      <div class="panel-sub" id="pageIntroSub">{% if LANGUAGE_CODE == 'ar' %}احصل على قائمة توصيات لكل طالب وصدّرها فوراً.{% else %}Get a per-student recommendation list and export it instantly.{% endif %}</div>
+{% endblock %}
+
 {% block content %}
     <div id="student" class="panel active">
-      <div style="margin-bottom:18px">
-        <h2 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">{% if LANGUAGE_CODE == 'ar' %}نظام توصيات الطلاب{% else %}Student Recommender{% endif %}</h2>
-        <div style="font-size:13px;color:var(--t3);font-weight:300">{% if LANGUAGE_CODE == 'ar' %}احصل على قائمة توصيات لكل طالب وصدّرها فوراً.{% else %}Get a per-student recommendation list and export it instantly.{% endif %}</div>
-      </div>
       <form method="get" action="/" class="filter-bar sticky-cta" style="margin-bottom:14px">
         <div class="fb-search" style="max-width:170px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span><input id="studentIdInput" type="number" name="student_id" value="{{ student_id }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}" required></div>
         <div class="fb-search" style="max-width:110px"><input type="number" name="year" value="{{ year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" required></div>
@@ -489,10 +471,6 @@
     </div>
 
     <div id="batch" class="panel">
-      <div style="margin-bottom:18px">
-        <h2 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Batch Recommender</h2>
-        <div style="font-size:13px;color:var(--t3);font-weight:300">Run cohort-level preview, inspect top courses, and export aggregate CSV.</div>
-      </div>
       <div class="filter-bar sticky-cta" style="margin-bottom:14px">
         <div class="fb-search" style="max-width:120px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input id="batchYear" type="number" value="{{ year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}"></div>
         <div class="fb-search" style="max-width:110px"><input id="batchSemester" type="number" min="0" max="1" value="{{ semester }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}"></div>
@@ -527,7 +505,7 @@
         <a id="batchSummary" class="fb-dd" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span> Summary JSON</a>
         <button id="copyBatchCsv" type="button" class="fb-dd">Copy CSV link</button>
         <div class="fb-spacer"></div>
-        <div id="batchUpdated" class="small" style="color:var(--t3)">Last update: -</div>
+        <div id="batchUpdated" class="small" style="color:var(--t3)">{% if LANGUAGE_CODE == 'ar' %}آخر تحديث: لا يوجد{% else %}Last update: never{% endif %}</div>
       </div>
 
       <div style="margin-bottom:6px;">
@@ -550,10 +528,6 @@
     </div>
 
     <div id="prereq" class="panel">
-      <div style="margin-bottom:18px">
-        <h2 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Course Prerequisites</h2>
-        <div style="font-size:13px;color:var(--t3);font-weight:300">Explore prerequisite links by program and optionally by a specific course.</div>
-      </div>
       <div class="filter-bar" style="margin-bottom:14px">
         <div class="fb-search" style="max-width:200px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><input id="preProgram" list="programs" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج مثال CS{% else %}Program  e.g. CS{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج مثال CS{% else %}Program{% endif %}"></div>
         <div class="fb-search" style="max-width:220px"><input id="preCourse" placeholder="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر (اختياري){% else %}Course code (optional){% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر (اختياري){% else %}Course code{% endif %}"></div>
@@ -577,7 +551,7 @@
           <div class="mc-val" id="preMetricLinks">0</div>
         </div></div>
       </div>
-      <div id="preUpdated" class="small text-secondary mb-3">Last update: -</div>
+      <div id="preUpdated" class="small text-secondary mb-3">{% if LANGUAGE_CODE == 'ar' %}آخر تحديث: لا يوجد{% else %}Last update: never{% endif %}</div>
       <!-- Graph full width on top -->
       <div class="cpanel mb-3">
         <div class="cp-h"><span class="cp-t">Dependency Graph</span><span class="cp-live">VISUAL</span></div>
@@ -598,8 +572,6 @@
     </div>
 
     <div id="plan" class="panel">
-      <h2>{% if LANGUAGE_CODE == 'ar' %}عارض خطة البرنامج{% else %}Program Plan Viewer{% endif %}</h2>
-      <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}استعراض متطلبات البرنامج الكاملة وتوزيع الفصول وإجمالي الساعات.{% else %}Inspect full program requirements, term breakdown, and credit totals.{% endif %}</div>
       <div class="zone-card">
         <div class="zone-title">Filters</div>
         <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
@@ -617,7 +589,7 @@
           <div class="col-md-3"><div class="metric"><div class="k">Total courses</div><div class="v" id="planMetricCount">0</div></div></div>
           <div class="col-md-3"><div class="metric"><div class="k">Total credit hours</div><div class="v" id="planMetricCredits">0</div></div></div>
         </div>
-        <div id="planUpdated" class="small text-secondary">Last update: -</div>
+        <div id="planUpdated" class="small text-secondary">{% if LANGUAGE_CODE == 'ar' %}آخر تحديث: لا يوجد{% else %}Last update: never{% endif %}</div>
         <div class="table-wrap mt-3">
           <table class="table table-sm mb-0" id="planTable">
             <thead><tr><th scope="col" data-sort="num">Term</th><th scope="col" data-sort="text">Course</th><th scope="col" data-sort="num">Credit Hours</th></tr></thead>
@@ -650,10 +622,6 @@
     </div>
 
     <div id="scrape" class="panel">
-      <div style="margin-bottom:18px">
-        <h2 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Batch Scraping</h2>
-        <div style="font-size:13px;color:var(--t3);font-weight:300">Legacy scraper — runs <code style="font-size:11px;font-family:var(--font-mono);background:rgba(17,17,68,0.04);padding:2px 6px;border-radius:4px">batch_scraper.py</code> in background with live log streaming.</div>
-      </div>
       <div class="filter-bar sticky-cta" style="margin-bottom:14px">
         <div class="fb-search" style="max-width:120px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></span><input id="scrapeConcurrency" type="number" min="1" max="8" value="2" placeholder="{% if LANGUAGE_CODE == 'ar' %}المسارات{% else %}Threads{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}المسارات{% else %}Concurrency threads{% endif %}"></div>
         <div class="fb-search" style="flex:1;min-width:180px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><input id="scrapeCsv" placeholder="{% if LANGUAGE_CODE == 'ar' %}مسار CSV{% else %}CSV path (default: import_old/data/students_list.csv){% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}مسار CSV{% else %}CSV file path{% endif %}"></div>
@@ -681,7 +649,7 @@
         </div></div>
       </div>
       <div id="scrapeMeta" class="meta-banner meta-info" style="font-family:var(--font-mono);font-size:12px;border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:10px">No scrape run started.</div>
-      <div id="scrapeUpdatedAt" style="font-size:11px;color:var(--t3);font-family:var(--font-mono);margin-bottom:14px">Last update: -</div>
+      <div id="scrapeUpdatedAt" style="font-size:11px;color:var(--t3);font-family:var(--font-mono);margin-bottom:14px">{% if LANGUAGE_CODE == 'ar' %}آخر تحديث: لا يوجد{% else %}Last update: never{% endif %}</div>
       <div class="scrape-term" style="margin-bottom:18px">
         <div class="scrape-term-head">
           <div style="display:flex;align-items:center;gap:8px">
@@ -706,10 +674,6 @@
     </div>
 
     <div id="debug" class="panel">
-      <div style="margin-bottom:18px">
-        <h2 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Recommendation Debug</h2>
-        <div style="font-size:13px;color:var(--t3);font-weight:300">Student-level recommendation trace for debugging and validation.</div>
-      </div>
       <div class="filter-bar sticky-cta" style="margin-bottom:14px">
         <div class="fb-search" style="max-width:110px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input id="dbgYear" type="number" value="{{ year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}"></div>
         <div class="fb-search" style="max-width:90px"><input id="dbgSemester" type="number" min="0" max="1" value="{{ semester }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Sem{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}"></div>
@@ -761,10 +725,6 @@
     </div>
 
     <div id="eligibility" class="panel">
-      <div style="margin-bottom:18px">
-        <h2 style="font-family:var(--font-serif);font-size:22px;color:var(--navy);letter-spacing:-0.01em;margin:0 0 4px">Course Eligibility Inspector</h2>
-        <div style="font-size:13px;color:var(--t3);font-weight:300">Check which students are eligible to register for a specific course.</div>
-      </div>
       <div class="filter-bar sticky-cta" style="margin-bottom:14px">
         <div class="fb-search" style="max-width:140px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><input id="elCourse" placeholder="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر{% else %}Course code{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر{% else %}Course code{% endif %}"></div>
         <div class="fb-search" style="max-width:110px"><input id="elSection" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}"></div>
@@ -812,8 +772,6 @@
     </div>
 
     {% if can_admin_advisors %}<div id="advisoradmin" class="panel">
-      <h2>{% if LANGUAGE_CODE == 'ar' %}إدارة المرشدين{% else %}Advisor Admin{% endif %}</h2>
-      <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}إنشاء المرشدين وإدارة تعيين الطلاب للمرشدين.{% else %}Create advisors and manage student-to-advisor assignments.{% endif %}</div>
 
       <div class="adm-wizard-bar">
         <div class="adm-step" id="admStep1">
@@ -892,15 +850,13 @@
       </div>
 
       <div id="advMeta" class="small text-secondary mt-2">No advisor action yet.</div>
-      <div id="advUpdated" class="small text-secondary">Last update: -</div>
+      <div id="advUpdated" class="small text-secondary">{% if LANGUAGE_CODE == 'ar' %}آخر تحديث: لا يوجد{% else %}Last update: never{% endif %}</div>
 
     </div>{% endif %}
 
     <!-- Advisor Portfolio → moved to standalone page at /advisor-portfolio/ -->
 
     <div id="exports" class="panel">
-      <h2>{% if LANGUAGE_CODE == 'ar' %}مركز التصدير{% else %}Export Center{% endif %}</h2>
-      <div class="panel-sub">Quick links for all operational exports in one place.</div>
       <div class="task-card mb-2">
         <div class="k">What these exports contain</div>
         <div class="small text-secondary">Student/aggregate recommendations, student plan matrix, debug diagnostics, eligibility IDs, advisor roster, and high-priority XLSX snapshot based on current filters.</div>
@@ -923,8 +879,6 @@
     </div>
 
     <div id="highpriority" class="panel">
-      <h2>{% if LANGUAGE_CODE == 'ar' %}المقررات عالية الأولوية المفقودة{% else %}Missing High Priority Courses{% endif %}</h2>
-      <div class="panel-sub">Exact legacy logic from old script (unlock-graph priority + parity split).</div>
       <div class="task-card mb-2">
         <div class="k">Task</div>
         <div class="small text-secondary">Use this report to flag students missing high-impact unlock courses; export XLSX for advisor intervention lists.</div>
@@ -957,7 +911,7 @@
         <button id="hpLoadPreset" type="button" class="btn btn-outline-secondary btn-sm">Load preset</button>
       </div>
       <div id="hpMeta" class="small text-secondary mt-2">No report loaded.</div>
-      <div id="hpUpdated" class="small text-secondary">Last update: -</div>
+      <div id="hpUpdated" class="small text-secondary">{% if LANGUAGE_CODE == 'ar' %}آخر تحديث: لا يوجد{% else %}Last update: never{% endif %}</div>
       <div class="table-wrap mt-2">
         <table class="table table-sm mb-0" id="hpTable">
           <thead><tr><th scope="col">Student</th><th scope="col">Program</th><th scope="col">Missing this parity</th><th scope="col">Missing other</th><th scope="col">Total</th></tr></thead>
@@ -1234,6 +1188,19 @@
   };
   const links = document.querySelectorAll('.nav-link[data-target]');
   const panels = document.querySelectorAll('.panel');
+  /* Panel descriptions for page_intro subtitle */
+  const PANEL_SUBS = {
+    student:      IS_AR ? 'احصل على قائمة توصيات لكل طالب وصدّرها فوراً.' : 'Get a per-student recommendation list and export it instantly.',
+    batch:        IS_AR ? 'معاينة التوصيات على مستوى الدفعة وتصدير CSV.' : 'Run cohort-level preview, inspect top courses, and export aggregate CSV.',
+    prereq:       IS_AR ? 'استكشف روابط المتطلبات حسب البرنامج أو المقرر.' : 'Explore prerequisite links by program and optionally by a specific course.',
+    plan:         IS_AR ? 'استعراض متطلبات البرنامج الكاملة وتوزيع الفصول وإجمالي الساعات.' : 'Inspect full program requirements, term breakdown, and credit totals.',
+    scrape:       IS_AR ? 'أداة السحب الدفعي — تعمل في الخلفية مع بث مباشر.' : 'Legacy scraper — runs batch_scraper.py in background with live log streaming.',
+    debug:        IS_AR ? 'تتبع توصيات الطالب للتصحيح والتحقق.' : 'Student-level recommendation trace for debugging and validation.',
+    eligibility:  IS_AR ? 'تحقق من أهلية الطلاب لتسجيل مقرر معين.' : 'Check which students are eligible to register for a specific course.',
+    advisoradmin: IS_AR ? 'إنشاء المرشدين وإدارة تعيين الطلاب للمرشدين.' : 'Create advisors and manage student-to-advisor assignments.',
+    exports:      IS_AR ? 'روابط سريعة لجميع التصديرات التشغيلية.' : 'Quick links for all operational exports in one place.',
+    highpriority: IS_AR ? 'تقرير الطلاب الذين يفتقدون مقررات فتح عالية الأولوية.' : 'Flag students missing high-impact unlock courses; export XLSX for advisor intervention.',
+  };
   function activatePanel(target) {
     links.forEach(l => l.classList.remove('active'));
     panels.forEach(p => p.classList.remove('active'));
@@ -1243,6 +1210,11 @@
       const current = q('currentModule');
       if (current) current.textContent = link.textContent?.trim() || target;
     }
+    /* Update page intro title + subtitle */
+    const introTitle = q('pageIntroTitle');
+    const introSub = q('pageIntroSub');
+    if (introTitle && link) introTitle.textContent = link.textContent?.trim() || target;
+    if (introSub && PANEL_SUBS[target]) introSub.textContent = PANEL_SUBS[target];
     const panel = document.getElementById(target);
     if (panel) panel.classList.add('active');
   }
@@ -3041,7 +3013,7 @@
       "Download aggregate CSV": "تنزيل CSV تجميعي",
       "Open summary JSON": "فتح ملخص JSON",
       "Copy aggregate CSV link": "نسخ رابط CSV التجميعي",
-      "Last update: -": "آخر تحديث: -",
+      "Last update: never": "آخر تحديث: لا يوجد",
       "Details": "التفاصيل",
       "No data yet. Next step: set filters and click Run Preview.": "لا توجد بيانات بعد. الخطوة التالية: حدّد المرشحات ثم اضغط «تشغيل المعاينة».",
       "Top recommendation chips": "أعلى التوصيات",
@@ -3263,7 +3235,7 @@
       const raw = (el.textContent || "").trim();
       if (!raw) return;
 
-      // Handle common prefixes like "Role: X" or "Last update: -"
+      // Handle common prefixes like "Role: X" or "Last update: never"
       for (const [en, ar] of Object.entries(MAP)) {
         if (raw === en) { el.textContent = ar; return; }
         // Prefix case: "Role: {{ role }}" etc.

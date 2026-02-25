@@ -18,7 +18,7 @@
     .audit-table-wrap {
       background: rgba(255,255,255,0.55); backdrop-filter: blur(20px) saturate(130%); -webkit-backdrop-filter: blur(20px) saturate(130%);
       border: 1px solid rgba(17,17,68,0.05); border-radius: var(--radius);
-      overflow: hidden; box-shadow: var(--shadow-card);
+      overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; box-shadow: var(--shadow-card);
     }
   </style>
 
@@ -27,7 +27,7 @@
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}مستكشف التدقيق{% else %}Audit Explorer{% endif %}{% endblock %}
 
 {% block page_chips %}
-          <span class="ph-chip ph-chip-page">Super Admin</span>
+          <span class="ph-chip ph-chip-page">{{ role }}</span>
           {% if chain.ok %}
           <span class="ph-chip ph-chip-status">{% if LANGUAGE_CODE == 'ar' %}سلسلة التحقق: سليمة{% else %}Hash chain: OK{% endif %} · {{ chain.checked }} {% if LANGUAGE_CODE == 'ar' %}سجل{% else %}records{% endif %}</span>
           {% else %}

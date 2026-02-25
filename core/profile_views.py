@@ -9,11 +9,20 @@ import json
 from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
-from django.http import HttpRequest, JsonResponse
+from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
 from core.services.audit import log_audit_event
 from core.services.rbac import get_user_role, get_user_scope
+from core.sidebar_context import get_sidebar_context
+
+
+@login_required(login_url="login")
+@require_GET
+def profile_page(request: HttpRequest) -> HttpResponse:
+    """Render the self-service profile settings page."""
+    return render(request, "core/profile.html", get_sidebar_context(request))
 
 
 @login_required(login_url="login")

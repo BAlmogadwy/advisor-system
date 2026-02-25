@@ -186,7 +186,7 @@
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}إدارة المستخدمين{% else %}User Management{% endif %}{% endblock %}
 
 {% block page_chips %}
-            <span class="ph-chip ph-chip-page">SUPER_ADMIN</span>
+            <span class="ph-chip ph-chip-page">{{ role }}</span>
             <span class="ph-chip ph-chip-gray" id="umUserCount">—</span>
 {% endblock %}
 

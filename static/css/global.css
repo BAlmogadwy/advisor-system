@@ -431,6 +431,21 @@ main.flex-grow-1 {
 .u-nm { font-size: 12px; font-weight: 600; color: var(--t1); }
 .u-rl { font-size: 10px; color: var(--t4); font-family: var(--font-mono); }
 
+.s-usr-row {
+  display: flex; align-items: center; gap: 4px;
+}
+.s-usr-row .s-usr { flex: 1; min-width: 0; }
+.s-usr-logout {
+  display: flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; border-radius: var(--radius-sm);
+  color: var(--t4); transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+.s-usr-logout .i { width: 16px; height: 16px; }
+.s-usr-logout:hover {
+  background: rgba(192,48,48,0.08); color: #c03030;
+}
+
 .s-lang { margin-top: 10px; }
 
 /* Language switcher inside glassmorphism sidebar */
@@ -453,27 +468,36 @@ main.flex-grow-1 {
    PAGE HEADER  (sticky context bar on every page)
    ============================================================ */
 .page-header {
-  position:         sticky;
-  top:              0;
+  position:         relative;
   z-index:          50;
   display:          flex;
   align-items:      center;
   justify-content:  space-between;
   gap:              1rem;
-  padding:          0.55rem 1.5rem;
-  margin:           -1.5rem -1.5rem 1rem -1.5rem;
-  background:       rgba(255,255,255,0.4);
+  padding:          0.65rem 1.5rem;
+  margin:           -1.5rem -1.5rem 1.25rem -1.5rem;
+  background:       rgba(255,255,255,0.35);
   backdrop-filter:  blur(24px) saturate(130%);
   -webkit-backdrop-filter: blur(24px) saturate(130%);
-  border-bottom:    1px solid rgba(17,17,68,0.05);
+  border-bottom:    none;
+}
+.page-header::after {
+  content:    '';
+  position:   absolute;
+  bottom:     -1px;
+  left:       0;
+  right:      0;
+  height:     2px;
+  background: linear-gradient(90deg, var(--teal), var(--sky) 35%, var(--royal) 65%, transparent);
+  opacity:    0.15;
 }
 /* p-3 main (planner, user-mgmt, portfolio) adjusts bleed */
 main.p-3 .page-header {
   padding: 0.5rem 1rem;
-  margin:  -1rem -1rem 1rem -1rem;
+  margin:  -1rem -1rem 1.25rem -1rem;
 }
 .page-header-left   { display: flex; flex-direction: column; gap: 0.2rem; }
-.page-header-module { font-weight: 700; font-size: 0.98rem; color: var(--navy); letter-spacing: -0.01em; }
+.page-header-module { font-weight: 700; font-size: 1rem; color: var(--navy); letter-spacing: -0.01em; }
 .page-header-chips  { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
 .page-header-right  { flex-shrink: 0; display: flex; align-items: center; gap: 0.5rem; }
 
@@ -576,7 +600,7 @@ main.p-3 .page-header {
 
 /* ── Page intro (h2 heading + subtitle below page-header) ── */
 .page-intro        { margin: 0.75rem 0 1.25rem; }
-.page-intro h2     { font-family: var(--font-serif); font-weight: 400; font-size: 1.35rem; color: var(--navy); letter-spacing: -0.01em; margin: 0 0 0.15rem; }
+.page-intro h2     { font-family: var(--font-serif); font-weight: 700; font-size: 22px; color: var(--navy); letter-spacing: -0.01em; margin: 0 0 4px; }
 
 .panel-sub {
   color:         var(--t3);
@@ -1801,7 +1825,7 @@ pre, .pre-output {
 
   /* page-header: adjust bleed for 1rem main padding */
   .page-header {
-    margin: -1rem -1rem 1rem -1rem !important;
+    margin: -1rem -1rem 1.25rem -1rem !important;
     padding-inline: 1rem;
   }
 
@@ -1860,7 +1884,7 @@ pre, .pre-output {
   .page-header {
     position:      sticky;
     top:           0;
-    margin:        0 -1rem 1rem -1rem !important;   /* bleeds out of main's 1rem padding */
+    margin:        0 -1rem 1.25rem -1rem !important;  /* bleeds out of main's 1rem padding */
     padding:       0.55rem 1rem !important;
     border-radius: 0;
     border-bottom: 1px solid var(--line, #dde3ed);
@@ -1895,8 +1919,8 @@ pre, .pre-output {
   }
 
 
-  /* Table wraps: no artificial max-height on mobile */
-  .table-wrap { max-height: none !important; }
+  /* Table wraps: no artificial max-height on mobile, enable horizontal scroll */
+  .table-wrap { max-height: none !important; overflow-x: auto !important; -webkit-overflow-scrolling: touch; }
 
   /* Actions row: wrap earlier */
   .actions-row {
@@ -2462,9 +2486,9 @@ kbd {
 
 /* Restore crisp ring for keyboard users */
 *:focus-visible {
-  outline:        none !important;
+  outline:        2px solid var(--teal) !important;
   outline-offset: 2px !important;
-  box-shadow:     var(--focus-ring) !important;
+  box-shadow:     0 0 0 4px rgba(10,142,110,0.18) !important;
   border-radius:  var(--radius-sm);
 }
 

@@ -1,0 +1,374 @@
+{% extends "core/base.html" %}
+{% load i18n %}{% get_current_language as LANGUAGE_CODE %}
+
+{% block title %}{% if LANGUAGE_CODE == 'ar' %}الملف الشخصي{% else %}My Profile{% endif %}{% endblock %}
+
+{% block extra_css %}
+<style>
+/* ═══════════════════════════════════════════════════════════
+   PROFILE PAGE — Self-service credential management
+   ═══════════════════════════════════════════════════════════ */
+
+.pf-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+  max-width: 860px;
+}
+@media (max-width: 768px) {
+  .pf-grid { grid-template-columns: 1fr; }
+}
+
+/* Profile info card */
+.pf-info-card {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; gap: 1.25rem;
+  padding: 1.25rem 1.5rem;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.55);
+  backdrop-filter: blur(20px) saturate(130%);
+  -webkit-backdrop-filter: blur(20px) saturate(130%);
+  border: 1px solid rgba(17,17,68,0.06);
+}
+.pf-avatar {
+  width: 64px; height: 64px; border-radius: 14px;
+  background: linear-gradient(135deg, var(--brand, #0A8E6E), #14b88e);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.5rem; font-weight: 800; color: #fff;
+  letter-spacing: 0.02em; flex-shrink: 0;
+}
+.pf-details { flex: 1; min-width: 0; }
+.pf-username {
+  font-size: 1.15rem; font-weight: 700; color: var(--ink);
+  margin-bottom: 0.2rem; word-break: break-word;
+}
+.pf-meta {
+  display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center;
+}
+.pf-badge {
+  display: inline-flex; align-items: center; gap: 0.25rem;
+  padding: 0.18rem 0.6rem; border-radius: 999px;
+  font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.pf-badge-role { background: #ecf9f4; color: #067858; border: 1px solid #a8e6d4; }
+.pf-badge-dept { background: #eef2ff; color: #3b3fa0; border: 1px solid #c7d2fe; }
+
+/* Form cards */
+.pf-card {
+  padding: 1.25rem 1.5rem;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.55);
+  backdrop-filter: blur(20px) saturate(130%);
+  -webkit-backdrop-filter: blur(20px) saturate(130%);
+  border: 1px solid rgba(17,17,68,0.06);
+}
+.pf-card-title {
+  display: flex; align-items: center; gap: 0.5rem;
+  font-size: 0.88rem; font-weight: 700; color: var(--ink);
+  margin-bottom: 1rem;
+}
+.pf-card-title .i { width: 18px; height: 18px; color: var(--muted); }
+
+.pf-field { margin-bottom: 0.85rem; }
+.pf-field:last-of-type { margin-bottom: 1rem; }
+.pf-label {
+  display: block; font-size: 0.75rem; font-weight: 600;
+  color: var(--muted); margin-bottom: 0.3rem;
+  letter-spacing: 0.03em;
+}
+.pf-input {
+  width: 100%; padding: 0.55rem 0.75rem;
+  border-radius: 8px; border: 1px solid var(--line, #e2e8f0);
+  background: rgba(255,255,255,0.7);
+  font-size: 0.88rem; color: var(--ink);
+  transition: border-color 0.15s, box-shadow 0.15s;
+  font-family: inherit;
+}
+.pf-input:focus {
+  outline: none;
+  border-color: var(--brand, #0A8E6E);
+  box-shadow: 0 0 0 3px rgba(10,142,110,0.1);
+}
+.pf-input::placeholder { color: var(--muted-light, #94a3b8); }
+
+.pf-hint {
+  font-size: 0.7rem; color: var(--muted-light, #94a3b8);
+  margin-top: 0.25rem;
+}
+
+.pf-submit {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  padding: 0.5rem 1.25rem; border-radius: 8px; border: none;
+  font-size: 0.82rem; font-weight: 700; cursor: pointer;
+  transition: all 0.15s;
+}
+.pf-submit-primary {
+  background: var(--brand, #0A8E6E); color: #fff;
+}
+.pf-submit-primary:hover { background: #07755c; }
+.pf-submit-primary:disabled {
+  opacity: 0.5; cursor: not-allowed;
+}
+
+.pf-submit .pf-spinner {
+  display: none; width: 14px; height: 14px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff; border-radius: 50%;
+  animation: pf-spin 0.6s linear infinite;
+}
+.pf-submit.loading .pf-spinner { display: inline-block; }
+.pf-submit.loading .pf-btn-text { opacity: 0.7; }
+
+@keyframes pf-spin { to { transform: rotate(360deg); } }
+
+/* Success animation */
+.pf-card.pf-saved {
+  border-color: #a8e6d4;
+  animation: pf-flash 0.5s ease;
+}
+@keyframes pf-flash {
+  0% { border-color: rgba(17,17,68,0.06); }
+  40% { border-color: #34d399; }
+  100% { border-color: #a8e6d4; }
+}
+</style>
+{% endblock %}
+
+{% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}الملف الشخصي{% else %}My Profile{% endif %}{% endblock %}
+
+{% block page_chips %}
+          <span class="ph-chip ph-chip-page">{{ role }}</span>
+{% endblock %}
+
+{% block page_intro %}
+      <h2>{% if LANGUAGE_CODE == 'ar' %}الملف الشخصي{% else %}My Profile{% endif %}</h2>
+      <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}تغيير اسم المستخدم وكلمة المرور.{% else %}Change your username and password.{% endif %}</div>
+{% endblock %}
+
+{% block page_header_right %}
+<a href="/" class="btn btn-sm btn-outline-secondary">
+  {% if LANGUAGE_CODE == 'ar' %}العودة{% else %}Back{% endif %}
+</a>
+{% endblock %}
+
+{% block content %}
+<div class="pf-grid">
+
+  <!-- ── User Info Card ── -->
+  <div class="pf-info-card" id="pfInfoCard">
+    <div class="pf-avatar" id="pfAvatar">{{ user.username|slice:":2"|upper }}</div>
+    <div class="pf-details">
+      <div class="pf-username" id="pfDisplayName">{{ user.username }}</div>
+      <div class="pf-meta">
+        <span class="pf-badge pf-badge-role" id="pfRoleBadge">
+          {% if role == "SUPER_ADMIN" %}Super Admin
+          {% elif role == "GENERAL_ACADEMIC_ADVISOR" %}General Advisor
+          {% elif role == "ADVISOR" %}Advisor
+          {% else %}{{ role }}{% endif %}
+        </span>
+        {% if user_advisor_id %}
+        <span class="pf-badge pf-badge-dept" title="{% if LANGUAGE_CODE == 'ar' %}معرف المرشد{% else %}Advisor ID{% endif %}">{{ user_advisor_id }}</span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Change Username Card ── -->
+  <div class="pf-card" id="pfUsernameCard">
+    <div class="pf-card-title">
+      <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
+      {% if LANGUAGE_CODE == 'ar' %}تغيير اسم المستخدم{% else %}Change Username{% endif %}
+    </div>
+    <div class="pf-field">
+      <label class="pf-label" for="pfNewUsername">
+        {% if LANGUAGE_CODE == 'ar' %}اسم المستخدم الجديد{% else %}New Username{% endif %}
+      </label>
+      <input id="pfNewUsername" class="pf-input" type="text"
+             value="{{ user.username }}"
+             placeholder="{% if LANGUAGE_CODE == 'ar' %}أدخل اسم المستخدم الجديد{% else %}Enter new username{% endif %}"
+             autocomplete="off" maxlength="150" dir="auto">
+      <div class="pf-hint">
+        {% if LANGUAGE_CODE == 'ar' %}الحد الأقصى 150 حرف — يجب أن يكون فريداً{% else %}Max 150 characters — must be unique{% endif %}
+      </div>
+    </div>
+    <button class="pf-submit pf-submit-primary" id="pfSaveUsername" type="button">
+      <span class="pf-spinner"></span>
+      <span class="pf-btn-text">{% if LANGUAGE_CODE == 'ar' %}حفظ{% else %}Save{% endif %}</span>
+    </button>
+  </div>
+
+  <!-- ── Change Password Card ── -->
+  <div class="pf-card" id="pfPasswordCard">
+    <div class="pf-card-title">
+      <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
+      {% if LANGUAGE_CODE == 'ar' %}تغيير كلمة المرور{% else %}Change Password{% endif %}
+    </div>
+    <div class="pf-field">
+      <label class="pf-label" for="pfCurrentPwd">
+        {% if LANGUAGE_CODE == 'ar' %}كلمة المرور الحالية{% else %}Current Password{% endif %}
+      </label>
+      <input id="pfCurrentPwd" class="pf-input" type="password"
+             placeholder="{% if LANGUAGE_CODE == 'ar' %}أدخل كلمة المرور الحالية{% else %}Enter current password{% endif %}"
+             autocomplete="off">
+    </div>
+    <div class="pf-field">
+      <label class="pf-label" for="pfNewPwd">
+        {% if LANGUAGE_CODE == 'ar' %}كلمة المرور الجديدة{% else %}New Password{% endif %}
+      </label>
+      <input id="pfNewPwd" class="pf-input" type="password"
+             placeholder="{% if LANGUAGE_CODE == 'ar' %}6 أحرف على الأقل{% else %}At least 6 characters{% endif %}"
+             autocomplete="off">
+    </div>
+    <div class="pf-field">
+      <label class="pf-label" for="pfConfirmPwd">
+        {% if LANGUAGE_CODE == 'ar' %}تأكيد كلمة المرور{% else %}Confirm Password{% endif %}
+      </label>
+      <input id="pfConfirmPwd" class="pf-input" type="password"
+             placeholder="{% if LANGUAGE_CODE == 'ar' %}أعد إدخال كلمة المرور{% else %}Re-enter password{% endif %}"
+             autocomplete="off">
+    </div>
+    <button class="pf-submit pf-submit-primary" id="pfSavePassword" type="button">
+      <span class="pf-spinner"></span>
+      <span class="pf-btn-text">{% if LANGUAGE_CODE == 'ar' %}حفظ{% else %}Save{% endif %}</span>
+    </button>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+/* ═══════════════════════════════════════════════════════════
+   PROFILE PAGE — JavaScript
+   ═══════════════════════════════════════════════════════════ */
+(function() {
+  const csrfToken = '{{ csrf_token }}';
+
+  /* ── helpers ── */
+  async function postJSON(url, body) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': csrfToken,
+      },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Request failed');
+    return data;
+  }
+
+  function setLoading(btn, loading) {
+    btn.disabled = loading;
+    btn.classList.toggle('loading', loading);
+  }
+
+  function flashSaved(card) {
+    card.classList.remove('pf-saved');
+    void card.offsetWidth; // force reflow
+    card.classList.add('pf-saved');
+  }
+
+  /* ── Change Username ── */
+  const btnUsername = document.getElementById('pfSaveUsername');
+  const inputUsername = document.getElementById('pfNewUsername');
+  const displayName = document.getElementById('pfDisplayName');
+  const avatar = document.getElementById('pfAvatar');
+  const card1 = document.getElementById('pfUsernameCard');
+
+  btnUsername.addEventListener('click', async () => {
+    const newVal = inputUsername.value.trim();
+    if (!newVal) {
+      notify.error('{% if LANGUAGE_CODE == "ar" %}اسم المستخدم لا يمكن أن يكون فارغاً{% else %}Username cannot be empty{% endif %}');
+      inputUsername.focus();
+      return;
+    }
+    if (newVal === '{{ user.username|escapejs }}') {
+      notify.info('{% if LANGUAGE_CODE == "ar" %}اسم المستخدم هو نفسه{% else %}Username is the same{% endif %}');
+      return;
+    }
+    setLoading(btnUsername, true);
+    try {
+      const data = await postJSON('/ops/profile/change-username/', { new_username: newVal });
+      displayName.textContent = data.username;
+      avatar.textContent = data.username.slice(0, 2).toUpperCase();
+      // Also update the sidebar user card
+      const sidebarName = document.querySelector('.s-usr .u-nm');
+      const sidebarAvatar = document.querySelector('.s-usr .avatar');
+      if (sidebarName) sidebarName.textContent = data.username;
+      if (sidebarAvatar) sidebarAvatar.textContent = data.username.slice(0, 2).toUpperCase();
+      flashSaved(card1);
+      notify.success('{% if LANGUAGE_CODE == "ar" %}تم تغيير اسم المستخدم{% else %}Username updated{% endif %}');
+    } catch (err) {
+      notify.error(err.message);
+    } finally {
+      setLoading(btnUsername, false);
+    }
+  });
+
+  /* ── Change Password ── */
+  const btnPassword = document.getElementById('pfSavePassword');
+  const inputCurrent = document.getElementById('pfCurrentPwd');
+  const inputNew = document.getElementById('pfNewPwd');
+  const inputConfirm = document.getElementById('pfConfirmPwd');
+  const card2 = document.getElementById('pfPasswordCard');
+
+  btnPassword.addEventListener('click', async () => {
+    const cur = inputCurrent.value;
+    const pwd = inputNew.value;
+    const cfm = inputConfirm.value;
+
+    if (!cur) {
+      notify.error('{% if LANGUAGE_CODE == "ar" %}أدخل كلمة المرور الحالية{% else %}Enter current password{% endif %}');
+      inputCurrent.focus();
+      return;
+    }
+    if (!pwd) {
+      notify.error('{% if LANGUAGE_CODE == "ar" %}أدخل كلمة المرور الجديدة{% else %}Enter new password{% endif %}');
+      inputNew.focus();
+      return;
+    }
+    if (pwd.length < 6) {
+      notify.error('{% if LANGUAGE_CODE == "ar" %}كلمة المرور يجب أن تكون 6 أحرف على الأقل{% else %}Password must be at least 6 characters{% endif %}');
+      inputNew.focus();
+      return;
+    }
+    if (pwd !== cfm) {
+      notify.error('{% if LANGUAGE_CODE == "ar" %}كلمات المرور غير متطابقة{% else %}Passwords do not match{% endif %}');
+      inputConfirm.focus();
+      return;
+    }
+
+    setLoading(btnPassword, true);
+    try {
+      await postJSON('/ops/profile/change-password/', {
+        current_password: cur,
+        new_password: pwd,
+      });
+      inputCurrent.value = '';
+      inputNew.value = '';
+      inputConfirm.value = '';
+      flashSaved(card2);
+      notify.success('{% if LANGUAGE_CODE == "ar" %}تم تغيير كلمة المرور{% else %}Password updated{% endif %}');
+    } catch (err) {
+      notify.error(err.message);
+    } finally {
+      setLoading(btnPassword, false);
+    }
+  });
+
+  /* Allow Enter key to submit in each card */
+  inputUsername.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') btnUsername.click();
+  });
+  [inputCurrent, inputNew, inputConfirm].forEach(el => {
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') btnPassword.click();
+    });
+  });
+
+})();
+</script>
+{% endblock %}

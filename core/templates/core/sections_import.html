@@ -17,7 +17,7 @@
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}استيراد الشعب{% else %}Sections Import{% endif %}{% endblock %}
 
 {% block page_chips %}
-  <span class="ph-chip ph-chip-page">SUPER_ADMIN</span>
+  <span class="ph-chip ph-chip-page">{{ role }}</span>
   <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}تحليل → مراجعة → تأكيد{% else %}Parse → Review → Insert{% endif %}</span>
 {% endblock %}
 
@@ -29,7 +29,14 @@
 {% block content %}
   <div class="si-panel">
     <div class="row g-2 align-items-end">
-      <div class="col-md-4"><label class="form-label">{% if LANGUAGE_CODE == 'ar' %}ملف Oracle HTML{% else %}Oracle HTML file{% endif %}</label><input id="oracleFile" type="file" class="form-control" accept=".html,.htm,.txt"></div>
+      <div class="col-md-4">
+        <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}ملف Oracle HTML{% else %}Oracle HTML file{% endif %}</label>
+        <div style="display:flex;align-items:center;gap:8px">
+          <input id="oracleFile" type="file" accept=".html,.htm,.txt" style="display:none">
+          <button type="button" class="btn btn-outline-secondary btn-sm" onclick="document.getElementById('oracleFile').click()">{% if LANGUAGE_CODE == 'ar' %}اختر ملف{% else %}Choose file{% endif %}</button>
+          <span id="oracleFileName" style="font-size:0.82rem;color:var(--t3)">{% if LANGUAGE_CODE == 'ar' %}لم يتم اختيار ملف{% else %}No file chosen{% endif %}</span>
+        </div>
+      </div>
       <div class="col-md-3 form-check ms-3"><input id="dept" type="checkbox" class="form-check-input"><label class="form-check-label" for="dept">{% if LANGUAGE_CODE == 'ar' %}هل هي مقررات القسم؟{% else %}Is department courses?{% endif %}</label></div>
       <div class="col-md-3 form-check"><input id="truncate" type="checkbox" class="form-check-input" checked><label class="form-check-label" for="truncate">{% if LANGUAGE_CODE == 'ar' %}استبدال جميع الشعب الحالية{% else %}Replace all existing sections{% endif %}</label></div>
     </div>
@@ -148,6 +155,17 @@ function renderTable(rows){
 }
 
 ['fCode','fSection','fDay'].forEach(id=>q(id).addEventListener('input',()=>renderTable(filteredRows(rowsAll))));
+
+q('oracleFile').addEventListener('change', function(){
+  const lbl = q('oracleFileName');
+  if(this.files.length){
+    lbl.textContent = this.files[0].name;
+    lbl.style.color = 'var(--navy)';
+  } else {
+    lbl.textContent = IS_AR ? 'لم يتم اختيار ملف' : 'No file chosen';
+    lbl.style.color = 'var(--t3)';
+  }
+});
 
 q('toggleTech').onclick = ()=> q('techWrap').classList.toggle('d-none');
 

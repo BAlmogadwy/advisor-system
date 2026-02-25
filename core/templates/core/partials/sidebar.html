@@ -122,21 +122,26 @@
   <!-- Footer: user card + language switcher -->
   <div class="s-foot">
     {% if user.is_authenticated %}
-      <a class="s-usr text-decoration-none" href="/logout/" title="{% if LANGUAGE_CODE == 'ar' %}تسجيل الخروج{% else %}Click to logout{% endif %}" tabindex="0">
-        <div class="avatar">{{ user.username|slice:":2"|upper }}</div>
-        <div>
-          <div class="u-nm">{{ user.username }}</div>
-          {% if role %}
-            <div class="u-rl">
-              {% if role == "SUPER_ADMIN" %}super_admin
-              {% elif role == "GENERAL_ACADEMIC_ADVISOR" %}gen_advisor
-              {% elif role == "ADVISOR" %}advisor
-              {% else %}{{ role|lower }}
-              {% endif %}
-            </div>
-          {% endif %}
-        </div>
-      </a>
+      <div class="s-usr-row">
+        <a class="s-usr text-decoration-none" href="/profile/" title="{% if LANGUAGE_CODE == 'ar' %}الملف الشخصي{% else %}My Profile{% endif %}" tabindex="0">
+          <div class="avatar">{{ user.username|slice:":2"|upper }}</div>
+          <div>
+            <div class="u-nm">{{ user.username }}</div>
+            {% if role %}
+              <div class="u-rl">
+                {% if role == "SUPER_ADMIN" %}super_admin
+                {% elif role == "GENERAL_ACADEMIC_ADVISOR" %}gen_advisor
+                {% elif role == "ADVISOR" %}advisor
+                {% else %}{{ role|lower }}
+                {% endif %}
+              </div>
+            {% endif %}
+          </div>
+        </a>
+        <a class="s-usr-logout" href="/logout/" title="{% if LANGUAGE_CODE == 'ar' %}تسجيل الخروج{% else %}Logout{% endif %}" tabindex="0">
+          <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span>
+        </a>
+      </div>
     {% endif %}
     <form action="/i18n/setlang/" method="post" class="s-lang">
       {% csrf_token %}
@@ -153,6 +158,27 @@
 <div id="sidebarBackdrop" class="sidebar-backdrop"></div>
 
 <script>
+/* ── Sidebar active link — highlight current page ── */
+(function() {
+  const path = window.location.pathname;
+  // Skip dashboard pages (hash-panels handle their own active state)
+  if (path === '/' || path === '') return;
+  const links = document.querySelectorAll('.sidebar .nav-a[href]');
+  links.forEach(function(a) {
+    const href = a.getAttribute('href');
+    // Only match path-based links, skip hash links
+    if (!href || href.startsWith('/#')) return;
+    if (path === href || path === href.replace(/\/$/, '')) {
+      a.classList.add('active');
+    }
+  });
+  // Also highlight the user card if on /profile/
+  if (path === '/profile/' || path === '/profile') {
+    const usr = document.querySelector('.s-usr');
+    if (usr) usr.style.background = 'rgba(10,142,110,0.06)';
+  }
+})();
+
 /* ── Mobile sidebar toggle — runs on every page that includes sidebar ── */
 (function() {
   const sidebar   = document.querySelector('.sidebar');

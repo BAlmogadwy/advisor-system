@@ -105,7 +105,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         "debug_mode": bool(settings.DEBUG),
     }
 
-    if student_id_raw or year_raw or semester_raw:
+    if student_id_raw:
         try:
             student_id = int(student_id_raw)
             year = int(year_raw)

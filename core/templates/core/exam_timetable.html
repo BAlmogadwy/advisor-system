@@ -71,7 +71,7 @@
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}جدول الاختبارات{% else %}Exam Timetable{% endif %}{% endblock %}
 
 {% block page_chips %}
-  <span class="ph-chip ph-chip-page">SUPER_ADMIN</span>
+  <span class="ph-chip ph-chip-page">{{ role }}</span>
   <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}إنشاء → جدولة → تقرير{% else %}Create → Schedule → Report{% endif %}</span>
 {% endblock %}
 
