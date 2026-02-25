@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import csv
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 from bs4 import BeautifulSoup
 
-from core.models import TermSection
+from core.models import Course, StudentCourse, TermSection, TermSectionMeeting
 from core.services.student_sections import replace_student_term_sections
 
 DAY_COLS = ["SUN", "MON", "TUE", "WED", "THU"]
@@ -102,7 +103,111 @@ def _parse_rows(soup: BeautifulSoup) -> list[dict[str, str]]:
     return out
 
 
-def ingest_student_timetable_html(student_id: str, timetable_html: str, report_path: str | Path | None = None) -> dict[str, object]:
+def _ensure_external_course(
+    course_key: str,
+    course_code: str,
+    course_number: str,
+    course_name: str,
+    credits_str: str,
+) -> Course:
+    """Get or create a Course entry for an external (non-plan) course."""
+    course_obj = Course.objects.filter(course_code=course_key).first()
+    if course_obj is not None:
+        return course_obj
+
+    try:
+        credit_hours = int(re.sub(r"[^\d]", "", credits_str)) if credits_str else 0
+    except (ValueError, TypeError):
+        credit_hours = 0
+
+    return Course.objects.create(
+        course_code=course_key,
+        department=course_code,
+        description=course_name,
+        credit_hours=credit_hours,
+        is_external=True,
+    )
+
+
+def _ensure_external_term_section(
+    course_key: str,
+    course_code: str,
+    course_number: str,
+    course_name: str,
+    section: str,
+    meetings: list[dict[str, str]],
+) -> int:
+    """Get or create a TermSection (+ meetings) for an external course."""
+    ts = TermSection.objects.filter(course_key=course_key, section=section).first()
+    if ts is not None:
+        return ts.id
+
+    now_str = datetime.now(timezone.utc).isoformat()
+    ts = TermSection.objects.create(
+        source_tag="external",
+        course_name=course_name,
+        course_code=course_code,
+        course_number=course_number,
+        course_key=course_key,
+        section=section,
+        source_file="timetable_ingest_external",
+        created_at=now_str,
+        updated_at=now_str,
+    )
+
+    for m in meetings:
+        TermSectionMeeting.objects.get_or_create(
+            term_section=ts,
+            day=m.get("day", ""),
+            start_time=m.get("start_time", ""),
+            end_time=m.get("end_time", ""),
+            room=m.get("room", ""),
+            defaults={
+                "building": m.get("building", ""),
+                "floor_wing": m.get("floor_wing", ""),
+                "instructor": "",
+                "created_at": now_str,
+                "updated_at": now_str,
+            },
+        )
+
+    return ts.id
+
+
+def _ensure_student_course_studying(student_id: str | int, course: Course) -> None:
+    """Create a StudentCourse with status='studying' if one doesn't already exist."""
+    from core.models import Student
+
+    sid = int(student_id)
+    if not Student.objects.filter(student_id=sid).exists():
+        return
+
+    exists = StudentCourse.objects.filter(
+        student_id=sid,
+        course=course,
+        status="studying",
+    ).exists()
+    if not exists:
+        # Also skip if student already passed this course
+        if StudentCourse.objects.filter(student_id=sid, course=course, status="passed").exists():
+            return
+        StudentCourse.objects.create(
+            student_id=sid,
+            course=course,
+            programme_term=None,
+            status="studying",
+            grade="",
+            mark=None,
+            actual_term="",
+        )
+
+
+def ingest_student_timetable_html(
+    student_id: str,
+    timetable_html: str,
+    report_path: str | Path | None = None,
+    study_plan_codes: set[str] | None = None,
+) -> dict[str, object]:
     soup = BeautifulSoup(timetable_html or "", "html.parser")
     year, term = _parse_year_term(soup)
     if not year or not term:
@@ -114,15 +219,42 @@ def ingest_student_timetable_html(student_id: str, timetable_html: str, report_p
 
     missing: list[dict[str, str]] = []
     section_ids: list[int] = []
+    external_created: list[str] = []
+
+    # Collect meeting data per (course_code, course_number, section)
+    section_meetings: dict[tuple[str, str, str], list[dict[str, str]]] = {}
+    # Collect course metadata from the first row per course_key
+    course_meta: dict[str, dict[str, str]] = {}
 
     seen_section_key: set[tuple[str, str, str]] = set()
     for r in rows:
         key = (r["course_code"], r["course_number"], r["section"])
+        course_key = f"{r['course_code']}{r['course_number']}".replace(" ", "").upper()
+
+        # Collect meeting data for all rows (including continuation rows)
+        section_meetings.setdefault(key, []).append({
+            "day": r.get("day", ""),
+            "start_time": r.get("start_time", ""),
+            "end_time": r.get("end_time", ""),
+            "building": r.get("building", ""),
+            "floor_wing": r.get("floor_wing", ""),
+            "room": r.get("room", ""),
+        })
+
+        # Store course metadata once
+        if course_key not in course_meta:
+            course_meta[course_key] = {
+                "course_code": r["course_code"],
+                "course_number": r["course_number"],
+                "course_name": r.get("course_name", ""),
+                "credits": r.get("credits", ""),
+                "section": r["section"],
+            }
+
         if key in seen_section_key:
             continue
         seen_section_key.add(key)
 
-        course_key = f"{r['course_code']}{r['course_number']}".replace(' ', '').upper()
         ts_id = TermSection.objects.filter(
             course_key=course_key,
             section=r["section"],
@@ -130,14 +262,49 @@ def ingest_student_timetable_html(student_id: str, timetable_html: str, report_p
         if ts_id is not None:
             section_ids.append(int(ts_id))
         else:
-            missing.append({
-                "student_id": str(student_id),
-                "academic_year": year,
-                "term": term,
-                "course_code": r["course_code"],
-                "course_number": r["course_number"],
-                "section": r["section"],
-            })
+            # Check if this is an external course (not in the study plan)
+            is_external = False
+            if study_plan_codes is not None:
+                is_external = course_key not in study_plan_codes
+            else:
+                # If no study_plan_codes provided, check programme_requirements
+                from core.models import ProgrammeRequirement
+                is_external = not ProgrammeRequirement.objects.filter(
+                    course_code=course_key,
+                ).exists()
+
+            if is_external:
+                # Auto-create Course, TermSection, and StudentCourse
+                meta = course_meta[course_key]
+                meetings = section_meetings.get(key, [])
+
+                course_obj = _ensure_external_course(
+                    course_key=course_key,
+                    course_code=meta["course_code"],
+                    course_number=meta["course_number"],
+                    course_name=meta["course_name"],
+                    credits_str=meta["credits"],
+                )
+                ts_id_new = _ensure_external_term_section(
+                    course_key=course_key,
+                    course_code=meta["course_code"],
+                    course_number=meta["course_number"],
+                    course_name=meta["course_name"],
+                    section=meta["section"],
+                    meetings=meetings,
+                )
+                section_ids.append(ts_id_new)
+                _ensure_student_course_studying(student_id, course_obj)
+                external_created.append(course_key)
+            else:
+                missing.append({
+                    "student_id": str(student_id),
+                    "academic_year": year,
+                    "term": term,
+                    "course_code": r["course_code"],
+                    "course_number": r["course_number"],
+                    "section": r["section"],
+                })
 
     replace_student_term_sections(student_id, year, term, section_ids, source="scraper_timetable")
 
@@ -159,4 +326,6 @@ def ingest_student_timetable_html(student_id: str, timetable_html: str, report_p
         "parsed_rows": len(rows),
         "mapped_sections": len(section_ids),
         "missing_links": len(missing),
+        "external_courses_created": len(external_created),
+        "external_courses": external_created,
     }

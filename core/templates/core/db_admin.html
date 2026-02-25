@@ -372,6 +372,17 @@
           <span class="dba-risk-badge risk-warning">{% if LANGUAGE_CODE == 'ar' %}تحذير{% else %}Warning{% endif %}</span>
         </button>
 
+        <div class="dba-nav-label">{% if LANGUAGE_CODE == 'ar' %}إدارة{% else %}Manage{% endif %}</div>
+
+        <button class="dba-nav-item" data-panel="externalcourses" type="button">
+          <span class="dba-nav-icon icon-warning"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span></span>
+          <span class="dba-nav-text">
+            <span class="dba-nav-name">{% if LANGUAGE_CODE == 'ar' %}المواد الخارجية{% else %}External Courses{% endif %}</span>
+            <span class="dba-nav-desc">{% if LANGUAGE_CODE == 'ar' %}مواد من أقسام أخرى{% else %}Courses from other depts{% endif %}</span>
+          </span>
+          <span class="dba-risk-badge risk-warning">{% if LANGUAGE_CODE == 'ar' %}إدارة{% else %}Manage{% endif %}</span>
+        </button>
+
         <div class="dba-nav-label">{% if LANGUAGE_CODE == 'ar' %}النظام{% else %}System{% endif %}</div>
 
         <button class="dba-nav-item" data-panel="maintenance" type="button">
@@ -693,6 +704,43 @@
           </div>
 
           <pre id="bOut" class="dba-output" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد.{% else %}No action yet.{% endif %}</pre>
+        </div>
+
+        <!-- ══ PANEL: External Courses ═════════════════════ -->
+        <div class="dba-panel" id="panel-externalcourses">
+          <div class="dba-panel-header">
+            <div class="dba-panel-icon icon-warning"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span></div>
+            <div>
+              <div class="dba-panel-title">{% if LANGUAGE_CODE == 'ar' %}المواد الخارجية (اختياري حر / جامعة){% else %}External Courses (Free / University Electives){% endif %}</div>
+              <div class="dba-panel-subtitle">{% if LANGUAGE_CODE == 'ar' %}مواد من أقسام أخرى سجّلها الطلاب كمواد اختيارية. يتم إنشاؤها تلقائياً عند مسح الجداول الدراسية.{% else %}Courses from other departments registered by students as electives. Auto-created when scraping student timetables.{% endif %}</div>
+            </div>
+          </div>
+
+          <div class="dba-section">
+            <div class="d-flex align-items-center gap-2 mb-3">
+              <button id="extLoad" class="btn btn-outline-primary">{% if LANGUAGE_CODE == 'ar' %}تحميل المواد الخارجية{% else %}Load External Courses{% endif %}</button>
+              <button id="extDeleteAll" class="btn btn-outline-danger d-none">{% if LANGUAGE_CODE == 'ar' %}حذف الكل{% else %}Delete All{% endif %}</button>
+              <button id="extDeleteSel" class="btn btn-outline-danger d-none">{% if LANGUAGE_CODE == 'ar' %}حذف المحدد{% else %}Delete Selected{% endif %}</button>
+              <span id="extCount" class="small text-secondary"></span>
+            </div>
+            <div id="extTableWrap" class="d-none">
+              <table class="table table-sm table-hover align-middle" style="font-size:0.82rem;">
+                <thead class="table-light">
+                  <tr>
+                    <th style="width:32px"><input type="checkbox" id="extCheckAll"></th>
+                    <th>{% if LANGUAGE_CODE == 'ar' %}رمز المادة{% else %}Course Code{% endif %}</th>
+                    <th>{% if LANGUAGE_CODE == 'ar' %}القسم{% else %}Dept{% endif %}</th>
+                    <th>{% if LANGUAGE_CODE == 'ar' %}الوصف{% else %}Description{% endif %}</th>
+                    <th>{% if LANGUAGE_CODE == 'ar' %}الساعات{% else %}CH{% endif %}</th>
+                    <th>{% if LANGUAGE_CODE == 'ar' %}عدد الطلاب{% else %}Students{% endif %}</th>
+                  </tr>
+                </thead>
+                <tbody id="extBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <pre id="extOut" class="dba-output" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}اضغط "تحميل" لعرض المواد الخارجية.{% else %}Click "Load" to view external courses.{% endif %}</pre>
         </div>
 
       </div><!-- /.dba-work -->
@@ -1063,6 +1111,84 @@ q('bSnapshot').onclick = async () => {
 };
 q('bIntegrity').onclick = async () => {
   await callJson('/ops/db/integrity-report/', {}, 'bOut', q('bIntegrity'));
+};
+
+/* ── Section: External Courses ── */
+let extData = [];
+
+function extRender() {
+  const body = q('extBody');
+  body.innerHTML = '';
+  for (const c of extData) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><input type="checkbox" class="ext-chk" data-id="${c.course_id}"></td><td><strong>${c.course_code||''}</strong></td><td>${c.department||''}</td><td>${c.description||''}</td><td>${c.credit_hours||0}</td><td>${c.student_count||0}</td>`;
+    body.appendChild(tr);
+  }
+  q('extTableWrap').classList.toggle('d-none', extData.length === 0);
+  q('extDeleteAll').classList.toggle('d-none', extData.length === 0);
+  q('extDeleteSel').classList.add('d-none');
+  q('extCount').textContent = IS_AR ? `${extData.length} مادة خارجية` : `${extData.length} external course(s)`;
+  q('extCheckAll').checked = false;
+  body.querySelectorAll('.ext-chk').forEach(chk => {
+    chk.addEventListener('change', () => {
+      const anyChecked = body.querySelector('.ext-chk:checked');
+      q('extDeleteSel').classList.toggle('d-none', !anyChecked);
+    });
+  });
+}
+
+q('extCheckAll').addEventListener('change', function() {
+  q('extBody').querySelectorAll('.ext-chk').forEach(chk => { chk.checked = this.checked; });
+  q('extDeleteSel').classList.toggle('d-none', !this.checked || extData.length === 0);
+});
+
+q('extLoad').onclick = async () => {
+  const data = await callJson('/ops/db/external-courses/', {}, 'extOut', q('extLoad'));
+  if (data && Array.isArray(data.items)) {
+    extData = data.items;
+    extRender();
+  }
+};
+
+q('extDeleteAll').onclick = async () => {
+  const ok = await dlg.confirm({
+    title: IS_AR ? 'حذف جميع المواد الخارجية؟' : 'Delete all external courses?',
+    body: IS_AR
+      ? '<p>سيحذف جميع المواد الخارجية وسجلات الطلاب المرتبطة بها. سيتم إنشاء نسخة احتياطية أولاً.</p>'
+      : '<p>This will delete all external courses and their associated student records. A backup will be created first.</p>',
+    typed: 'DELETE',
+    confirmText: IS_AR ? 'حذف الكل' : 'Delete all',
+    kind: 'danger',
+  });
+  if (!ok) return;
+  const res = await callJson('/ops/db/delete-external-courses/', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ confirm: 'DELETE' })
+  }, 'extOut', q('extDeleteAll'));
+  if (res && res.ok) { extData = []; extRender(); }
+};
+
+q('extDeleteSel').onclick = async () => {
+  const ids = [...q('extBody').querySelectorAll('.ext-chk:checked')].map(c => +c.dataset.id);
+  if (!ids.length) return;
+  const ok = await dlg.confirm({
+    title: IS_AR ? `حذف ${ids.length} مادة؟` : `Delete ${ids.length} course(s)?`,
+    body: IS_AR
+      ? '<p>سيحذف المواد المحددة وسجلات الطلاب المرتبطة بها.</p>'
+      : '<p>This will delete the selected external courses and their associated student records.</p>',
+    typed: 'DELETE',
+    confirmText: IS_AR ? 'حذف المحدد' : 'Delete selected',
+    kind: 'danger',
+  });
+  if (!ok) return;
+  const res = await callJson('/ops/db/delete-external-courses/', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ confirm: 'DELETE', course_ids: ids })
+  }, 'extOut', q('extDeleteSel'));
+  if (res && res.ok) {
+    extData = extData.filter(c => !ids.includes(c.course_id));
+    extRender();
+  }
 };
 </script>
 {% endblock %}

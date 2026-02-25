@@ -7,11 +7,13 @@ from django.views.decorators.http import require_GET, require_POST
 from core.services.audit import log_audit_event
 from core.services.db_admin_ops import (
     create_backup_snapshot,
+    delete_external_courses,
     delete_program_catalog,
     delete_students,
     import_oracle_plan_from_rows,
     import_program_plan,
     legacy_load_department_files_exact,
+    list_external_courses,
     preview_delete_program_catalog,
     preview_delete_students,
     preview_oracle_plan,
@@ -370,5 +372,41 @@ def db_integrity_report_view(request: HttpRequest) -> JsonResponse:
         action="db.integrity_report",
         status="success",
         details={"ok": result.get("ok", False), "issues_count": len(result.get("issues", [])) if isinstance(result.get("issues"), list) else 0},
+    )
+    return JsonResponse(result)
+
+
+@require_GET
+def db_list_external_courses_view(request: HttpRequest) -> JsonResponse:
+    return JsonResponse(list_external_courses())
+
+
+@require_POST
+def db_delete_external_courses_view(request: HttpRequest) -> JsonResponse:
+    payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    confirm = str(payload.get("confirm", ""))
+    if confirm != "DELETE":
+        log_audit_event(
+            request,
+            action="db.delete_external_courses",
+            status="error",
+            error_text="missing confirm=DELETE",
+        )
+        return JsonResponse(
+            {"error": "Confirmation required: send confirm=DELETE"}, status=400
+        )
+
+    raw_ids = payload.get("course_ids")
+    course_ids = [int(x) for x in raw_ids] if isinstance(raw_ids, list) else None
+
+    result = delete_external_courses(course_ids=course_ids)
+    log_audit_event(
+        request,
+        action="db.delete_external_courses",
+        status="success",
+        details={
+            "course_ids": course_ids,
+            "courses_deleted": result.get("courses_deleted", 0),
+        },
     )
     return JsonResponse(result)

@@ -34,6 +34,7 @@ class Course(models.Model):
     department = models.TextField(blank=True, default="")
     description = models.TextField(blank=True, default="")
     credit_hours = models.IntegerField(null=True, default=0)
+    is_external = models.BooleanField(default=False)
 
     class Meta:
         db_table = "courses"

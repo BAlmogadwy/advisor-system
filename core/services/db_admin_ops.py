@@ -9,7 +9,7 @@ from django.conf import settings
 from django.db import connection, transaction
 from django.db.models import Q
 
-from core.models import Course, Prerequisite, ProgrammeRequirement, Student, StudentCourse
+from core.models import Course, Prerequisite, ProgrammeRequirement, Student, StudentCourse, TermSection, TermSectionMeeting, StudentTermSection
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_REQ_CSV = BASE_DIR / "import_old" / "data" / "department_courses.csv"
@@ -391,4 +391,64 @@ def import_oracle_plan_from_rows(
         "prerequisites_inserted": prerequisites_inserted,
         "courses_upserted": courses_upserted,
         "backup": backup,
+    }
+
+
+def list_external_courses() -> dict[str, Any]:
+    """List all external (non-plan) courses with student counts."""
+    from django.db.models import Count
+
+    courses = (
+        Course.objects.filter(is_external=True)
+        .annotate(student_count=Count("student_courses", filter=Q(student_courses__status="studying")))
+        .order_by("course_code")
+        .values("course_id", "course_code", "department", "description", "credit_hours", "student_count")
+    )
+    items = list(courses)
+    return {
+        "ok": True,
+        "count": len(items),
+        "items": items,
+    }
+
+
+def delete_external_courses(course_ids: list[int] | None = None) -> dict[str, Any]:
+    """Delete external courses and their associated records.
+
+    If *course_ids* is ``None``, deletes ALL external courses.
+    Otherwise deletes only the specified ones.
+    """
+    backup = create_backup_snapshot()
+
+    qs = Course.objects.filter(is_external=True)
+    if course_ids is not None:
+        qs = qs.filter(course_id__in=course_ids)
+
+    course_pks = list(qs.values_list("course_id", flat=True))
+    course_codes = list(qs.values_list("course_code", flat=True))
+
+    with transaction.atomic():
+        # Delete student_courses referencing these external courses
+        sc_deleted = StudentCourse.objects.filter(course_id__in=course_pks).delete()[0]
+
+        # Delete term_section_meetings and student_term_sections for external term_sections
+        ext_ts_ids = list(
+            TermSection.objects.filter(course_key__in=course_codes, source_tag="external")
+            .values_list("id", flat=True)
+        )
+        sts_deleted = StudentTermSection.objects.filter(term_section_id__in=ext_ts_ids).delete()[0] if ext_ts_ids else 0
+        tsm_deleted = TermSectionMeeting.objects.filter(term_section_id__in=ext_ts_ids).delete()[0] if ext_ts_ids else 0
+        ts_deleted = TermSection.objects.filter(id__in=ext_ts_ids).delete()[0] if ext_ts_ids else 0
+
+        # Delete the external courses themselves
+        courses_deleted = qs.delete()[0]
+
+    return {
+        "ok": True,
+        "backup": backup,
+        "courses_deleted": courses_deleted,
+        "student_courses_deleted": sc_deleted,
+        "term_sections_deleted": ts_deleted,
+        "term_section_meetings_deleted": tsm_deleted,
+        "student_term_sections_deleted": sts_deleted,
     }
