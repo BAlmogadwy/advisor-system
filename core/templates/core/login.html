@@ -207,43 +207,88 @@
   /* ─── RTL adjustments ─── */
   [dir="rtl"] .neu-input-group { flex-direction: row-reverse; }
 
-  /* ─── Visually-hidden labels for screen readers ─── */
-  .sr-only {
-    position: absolute; width: 1px; height: 1px;
-    padding: 0; margin: -1px; overflow: hidden;
-    clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+  /* ─── Button loading state ─── */
+  .neu-btn:disabled {
+    opacity: 0.6; cursor: not-allowed;
+    box-shadow: inset 3px 3px 7px rgba(163,177,198,0.3),
+                inset -3px -3px 7px rgba(255,255,255,0.7);
+  }
+
+  /* ─── Better focus ring for login inputs ─── */
+  .neu-input-group input:focus-visible {
+    outline: none !important;
+    box-shadow: none !important;
+  }
+
+  .neu-btn:focus-visible {
+    outline: 2px solid #0A8E6E;
+    outline-offset: 3px;
+    box-shadow: 0 0 0 4px rgba(10,142,110,0.18),
+                3px 3px 7px rgba(163,177,198,0.28),
+                -3px -3px 7px rgba(255,255,255,0.7);
+  }
+
+  /* ─── Alert icon ─── */
+  .login-alert {
+    display: flex; align-items: center; gap: 0.5rem; justify-content: center;
+  }
+  .login-alert::before {
+    content: ''; display: inline-block;
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #c53030; box-shadow: 0 0 4px #c53030;
+    flex-shrink: 0;
+  }
+
+  /* ─── Login card hover lift ─── */
+  .login-card {
+    transition: box-shadow 0.3s ease, transform 0.3s ease;
+  }
+  .login-card:hover {
+    box-shadow: 10px 10px 24px rgba(163,177,198,0.55),
+                -10px -10px 24px rgba(255,255,255,0.85);
+  }
+
+  /* ─── Responsive: mobile ─── */
+  @media (max-width: 480px) {
+    .login-wrap { padding: 1rem; }
+    .login-card { padding: 2rem 1.5rem 1.5rem; border-radius: 20px; }
+    .login-avatar { width: 64px; height: 64px; }
+    .login-avatar svg { width: 28px; height: 28px; }
+    .login-title { font-size: 1.25rem; }
   }
 </style>
 {% endblock %}
 
 {% block body %}
-  <div class="login-wrap">
+  <div class="login-wrap" role="main">
     <div class="login-card">
       <!-- Avatar -->
-      <div class="login-avatar">
+      <div class="login-avatar" aria-hidden="true">
         <svg viewBox="0 0 24 24"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c0 1.66 2.69 3 6 3s6-1.34 6-3v-5"/></svg>
       </div>
 
       <h1 class="login-title">{% if LANGUAGE_CODE == 'ar' %}لوحة تحكم المرشد{% else %}Advisor Dashboard{% endif %}</h1>
-      <div class="login-sub">{% if LANGUAGE_CODE == 'ar' %}أدخل بيانات اعتمادك للمتابعة{% else %}Sign in with your account to continue{% endif %}</div>
+      <p class="login-sub">{% if LANGUAGE_CODE == 'ar' %}أدخل بيانات اعتمادك للمتابعة{% else %}Sign in with your account to continue{% endif %}</p>
 
-      <div class="login-dots"><span></span><span></span><span></span></div>
+      <div class="login-dots" aria-hidden="true"><span></span><span></span><span></span></div>
 
-      {% if error %}<div class="login-alert" role="alert">{{ error }}</div>{% endif %}
+      <div aria-live="polite" aria-atomic="true">
+        {% if error %}<div class="login-alert" role="alert">{{ error }}</div>{% endif %}
+      </div>
 
-      <form method="post">
+      <form method="post" aria-label="{% if LANGUAGE_CODE == 'ar' %}نموذج تسجيل الدخول{% else %}Login form{% endif %}" novalidate>
         {% csrf_token %}
         <!-- Username -->
         <div class="neu-input-group">
-          <svg class="neu-icon" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          <svg class="neu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
           <label for="id_username" class="sr-only">{% if LANGUAGE_CODE == 'ar' %}اسم المستخدم{% else %}Username{% endif %}</label>
-          <input id="id_username" name="username" type="text" placeholder="{% if LANGUAGE_CODE == 'ar' %}اسم المستخدم{% else %}Username{% endif %}" required autocomplete="username" autofocus>
+          <input id="id_username" name="username" type="text" placeholder="{% if LANGUAGE_CODE == 'ar' %}اسم المستخدم{% else %}Username{% endif %}" required autocomplete="username" autofocus aria-required="true">
         </div>
         <!-- Password -->
         <div class="neu-input-group">
-          <svg class="neu-icon" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <svg class="neu-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
           <label for="id_password" class="sr-only">{% if LANGUAGE_CODE == 'ar' %}كلمة المرور{% else %}Password{% endif %}</label>
-          <input id="id_password" name="password" type="password" placeholder="{% if LANGUAGE_CODE == 'ar' %}كلمة المرور{% else %}Password{% endif %}" required autocomplete="current-password">
+          <input id="id_password" name="password" type="password" placeholder="{% if LANGUAGE_CODE == 'ar' %}كلمة المرور{% else %}Password{% endif %}" required autocomplete="current-password" aria-required="true">
         </div>
         <button type="submit" class="neu-btn">{% if LANGUAGE_CODE == 'ar' %}تسجيل الدخول{% else %}Sign in{% endif %}</button>
       </form>
@@ -253,7 +298,8 @@
       <form action="/i18n/setlang/" method="post" class="d-inline">
         {% csrf_token %}
         <input type="hidden" name="next" value="{{ request.get_full_path }}">
-        <select name="language" onchange="this.form.submit()">
+        <label for="login-lang-select" class="sr-only">{% if LANGUAGE_CODE == 'ar' %}اللغة{% else %}Language{% endif %}</label>
+        <select id="login-lang-select" name="language" onchange="this.form.submit()" aria-label="{% if LANGUAGE_CODE == 'ar' %}تغيير اللغة{% else %}Change language{% endif %}">
           <option value="en" {% if LANGUAGE_CODE == 'en' %}selected{% endif %}>English</option>
           <option value="ar" {% if LANGUAGE_CODE == 'ar' %}selected{% endif %}>العربية</option>
         </select>

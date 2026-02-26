@@ -25,10 +25,17 @@
   display: flex; align-items: center; gap: 1.25rem;
   padding: 1.25rem 1.5rem;
   border-radius: 14px;
-  background: rgba(255,255,255,0.55);
+  background: rgba(255,255,255,0.45);
   backdrop-filter: blur(20px) saturate(130%);
   -webkit-backdrop-filter: blur(20px) saturate(130%);
-  border: 1px solid rgba(17,17,68,0.06);
+  border: none;
+  box-shadow: 5px 5px 14px rgba(163,177,198,0.28),
+              -5px -5px 14px rgba(255,255,255,0.8);
+  transition: box-shadow 0.25s ease, transform 0.25s ease;
+}
+.pf-info-card:hover {
+  box-shadow: 7px 7px 18px rgba(163,177,198,0.35),
+              -7px -7px 18px rgba(255,255,255,0.9);
 }
 .pf-avatar {
   width: 64px; height: 64px; border-radius: 14px;
@@ -58,10 +65,17 @@
 .pf-card {
   padding: 1.25rem 1.5rem;
   border-radius: 14px;
-  background: rgba(255,255,255,0.55);
+  background: rgba(255,255,255,0.45);
   backdrop-filter: blur(20px) saturate(130%);
   -webkit-backdrop-filter: blur(20px) saturate(130%);
-  border: 1px solid rgba(17,17,68,0.06);
+  border: none;
+  box-shadow: 5px 5px 14px rgba(163,177,198,0.28),
+              -5px -5px 14px rgba(255,255,255,0.8);
+  transition: box-shadow 0.25s ease, border-color 0.25s ease;
+}
+.pf-card:hover {
+  box-shadow: 7px 7px 18px rgba(163,177,198,0.35),
+              -7px -7px 18px rgba(255,255,255,0.9);
 }
 .pf-card-title {
   display: flex; align-items: center; gap: 0.5rem;
@@ -78,17 +92,21 @@
   letter-spacing: 0.03em;
 }
 .pf-input {
-  width: 100%; box-sizing: border-box; padding: 0.55rem 0.75rem;
-  border-radius: 8px; border: 1px solid var(--line, #e2e8f0);
-  background: rgba(255,255,255,0.7);
+  width: 100%; box-sizing: border-box; padding: 0.6rem 0.85rem;
+  border-radius: 12px; border: none;
+  background: transparent;
   font-size: 0.88rem; color: var(--ink);
-  transition: border-color 0.15s, box-shadow 0.15s;
   font-family: inherit;
+  box-shadow: inset 3px 3px 6px rgba(163,177,198,0.35),
+              inset -3px -3px 6px rgba(255,255,255,0.9);
+  transition: box-shadow 0.2s ease;
+  outline: none;
 }
 .pf-input:focus {
   outline: none;
-  border-color: var(--brand, #0A8E6E);
-  box-shadow: 0 0 0 3px rgba(10,142,110,0.1);
+  box-shadow: inset 3px 3px 6px rgba(163,177,198,0.35),
+              inset -3px -3px 6px rgba(255,255,255,0.9),
+              0 0 0 2px rgba(10,142,110,0.25);
 }
 .pf-input::placeholder { color: var(--muted-light, #94a3b8); }
 
@@ -96,18 +114,22 @@
    toggle sits visually *inside* the rounded container. */
 .pf-pwd-wrap {
   position: relative;
-  border-radius: 8px;
-  border: 1px solid var(--line, #e2e8f0);
-  background: rgba(255,255,255,0.7);
-  transition: border-color 0.15s, box-shadow 0.15s;
+  border-radius: 12px;
+  border: none;
+  background: transparent;
+  box-shadow: inset 3px 3px 6px rgba(163,177,198,0.35),
+              inset -3px -3px 6px rgba(255,255,255,0.9);
+  transition: box-shadow 0.2s ease;
 }
 .pf-pwd-wrap:focus-within {
-  border-color: var(--brand, #0A8E6E);
-  box-shadow: 0 0 0 3px rgba(10,142,110,0.1);
+  box-shadow: inset 3px 3px 6px rgba(163,177,198,0.35),
+              inset -3px -3px 6px rgba(255,255,255,0.9),
+              0 0 0 2px rgba(10,142,110,0.25);
 }
 .pf-pwd-wrap .pf-input {
   padding-inline-end: 2.5rem;
   border: none; background: transparent;
+  box-shadow: none;
 }
 .pf-pwd-wrap .pf-input:focus { outline: none; box-shadow: none; }
 .pf-pwd-toggle {
@@ -130,16 +152,32 @@
 
 .pf-submit {
   display: inline-flex; align-items: center; gap: 0.4rem;
-  padding: 0.5rem 1.25rem; border-radius: 8px; border: none;
+  padding: 0.55rem 1.5rem; border-radius: 12px; border: none;
   font-size: 0.82rem; font-weight: 700; cursor: pointer;
-  transition: all 0.15s;
+  transition: all 0.2s ease;
+  box-shadow: 3px 3px 8px rgba(163,177,198,0.3),
+              -3px -3px 8px rgba(255,255,255,0.8);
+}
+.pf-submit:focus-visible {
+  outline: 2px solid var(--brand, #0A8E6E);
+  outline-offset: 2px;
 }
 .pf-submit-primary {
-  background: var(--brand, #0A8E6E); color: #fff;
+  background: rgba(10,142,110,0.08); color: #045a3e;
 }
-.pf-submit-primary:hover { background: #07755c; }
+.pf-submit-primary:hover {
+  background: rgba(10,142,110,0.15);
+  box-shadow: 4px 4px 12px rgba(163,177,198,0.35),
+              -4px -4px 10px rgba(255,255,255,0.9);
+}
+.pf-submit-primary:active {
+  box-shadow: inset 3px 3px 6px rgba(163,177,198,0.35),
+              inset -3px -3px 6px rgba(255,255,255,0.8);
+}
 .pf-submit-primary:disabled {
   opacity: 0.5; cursor: not-allowed;
+  box-shadow: 2px 2px 5px rgba(163,177,198,0.15),
+              -2px -2px 5px rgba(255,255,255,0.5);
 }
 
 .pf-submit .pf-spinner {
@@ -155,13 +193,12 @@
 
 /* Success animation */
 .pf-card.pf-saved {
-  border-color: #a8e6d4;
-  animation: pf-flash 0.5s ease;
+  animation: pf-flash 0.6s ease;
 }
 @keyframes pf-flash {
-  0% { border-color: rgba(17,17,68,0.06); }
-  40% { border-color: #34d399; }
-  100% { border-color: #a8e6d4; }
+  0% { box-shadow: 5px 5px 14px rgba(163,177,198,0.28), -5px -5px 14px rgba(255,255,255,0.8); }
+  40% { box-shadow: 0 0 0 3px rgba(10,142,110,0.2), 5px 5px 14px rgba(163,177,198,0.28), -5px -5px 14px rgba(255,255,255,0.8); }
+  100% { box-shadow: 5px 5px 14px rgba(163,177,198,0.28), -5px -5px 14px rgba(255,255,255,0.8); }
 }
 </style>
 {% endblock %}

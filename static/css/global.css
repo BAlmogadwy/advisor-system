@@ -2892,3 +2892,211 @@ kbd {
     scroll-behavior: auto !important;
   }
 }
+
+/* ============================================================
+   UI/UX POLISH — Global Improvements
+   ============================================================ */
+
+/* ── Visually-hidden helper (screen-reader only) ───────────── */
+.sr-only {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+}
+
+/* ── Enhanced empty state with recovery action ─────────────── */
+.empty-state-action {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  margin-top: 0.75rem; padding: 0.4rem 1rem;
+  border-radius: 10px; border: none;
+  font-size: 0.82rem; font-weight: 600;
+  color: var(--teal); background: rgba(10,142,110,0.06);
+  cursor: pointer; transition: all 0.18s ease;
+  text-decoration: none;
+  box-shadow: 2px 2px 6px rgba(163,177,198,0.25),
+              -2px -2px 6px rgba(255,255,255,0.7);
+}
+.empty-state-action:hover {
+  background: rgba(10,142,110,0.12);
+  box-shadow: 3px 3px 8px rgba(163,177,198,0.3),
+              -3px -3px 8px rgba(255,255,255,0.8);
+  color: var(--teal-deep);
+}
+.empty-state-action .i { width: 14px; height: 14px; }
+
+/* ── Error state card ──────────────────────────────────────── */
+.error-state {
+  text-align: center; padding: 2rem 1.5rem;
+  border: 1px solid rgba(192,48,48,0.12);
+  border-radius: var(--radius);
+  background: rgba(255,245,245,0.5);
+  backdrop-filter: blur(12px);
+}
+.error-state .error-icon {
+  display: flex; align-items: center; justify-content: center;
+  width: 48px; height: 48px; border-radius: 12px;
+  margin: 0 auto 0.75rem;
+  background: rgba(192,48,48,0.06); color: var(--danger);
+  box-shadow: inset 2px 2px 5px rgba(163,177,198,0.2),
+              inset -2px -2px 5px rgba(255,255,255,0.7);
+}
+.error-state .error-icon .i { width: 24px; height: 24px; }
+.error-state .error-title {
+  font-weight: 700; font-size: 0.95rem; color: var(--danger);
+  margin-bottom: 0.3rem;
+}
+.error-state .error-detail {
+  font-size: 0.82rem; color: var(--t3); line-height: 1.5;
+  max-width: 40ch; margin: 0 auto;
+}
+
+/* ── Skeleton loading card ─────────────────────────────────── */
+.skel-card {
+  border-radius: var(--radius);
+  padding: 1.25rem;
+  background: rgba(255,255,255,0.35);
+  backdrop-filter: blur(12px);
+  box-shadow: 5px 5px 14px rgba(163,177,198,0.2),
+              -5px -5px 14px rgba(255,255,255,0.6);
+}
+.skel-block {
+  height: 14px; border-radius: 6px;
+  background: linear-gradient(90deg, #e8edf5 25%, #f4f7fc 50%, #e8edf5 75%);
+  background-size: 200% 100%;
+  animation: skel-shimmer 1.4s ease infinite;
+  margin-bottom: 0.5rem;
+}
+.skel-block:last-child { margin-bottom: 0; }
+.skel-block-lg { height: 28px; }
+.skel-block-sm { height: 10px; }
+.skel-block-w50 { width: 50%; }
+.skel-block-w75 { width: 75%; }
+.skel-block-w30 { width: 30%; }
+
+/* ── Button disabled state polish ──────────────────────────── */
+html body .btn:disabled,
+html body .btn.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+  box-shadow: 2px 2px 5px rgba(163,177,198,0.15),
+              -2px -2px 5px rgba(255,255,255,0.5) !important;
+}
+
+/* ── Export button style (was undefined in audit_explorer) ──── */
+html body .btn-export {
+  color: var(--teal) !important;
+  background: transparent !important;
+  font-weight: 600 !important;
+  box-shadow: 3px 3px 8px rgba(163,177,198,0.3),
+              -3px -3px 8px rgba(255,255,255,0.8) !important;
+}
+html body .btn-export:hover {
+  background: rgba(10,142,110,0.05) !important;
+  color: var(--teal-deep) !important;
+  box-shadow: 4px 4px 12px rgba(163,177,198,0.35),
+              -4px -4px 10px rgba(255,255,255,0.9) !important;
+}
+
+/* ── Neumorphic audit table (replaces plain .audit-table) ──── */
+.audit-table-wrap {
+  background: rgba(255,255,255,0.45);
+  backdrop-filter: blur(20px) saturate(130%);
+  -webkit-backdrop-filter: blur(20px) saturate(130%);
+  border: none;
+  border-radius: var(--radius-lg);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  box-shadow: 6px 6px 16px rgba(163,177,198,0.28),
+              -6px -6px 16px rgba(255,255,255,0.8);
+}
+
+/* ── Glassmorphic filter row ───────────────────────────────── */
+.glass-filter-row {
+  display: flex; gap: 0.5rem; flex-wrap: wrap;
+  align-items: center; margin-bottom: 1rem;
+  padding: 0.75rem 1rem;
+  background: rgba(255,255,255,0.40);
+  backdrop-filter: blur(20px) saturate(130%);
+  -webkit-backdrop-filter: blur(20px) saturate(130%);
+  border: none; border-radius: var(--radius);
+  box-shadow: 5px 5px 14px rgba(163,177,198,0.25),
+              -5px -5px 14px rgba(255,255,255,0.75);
+}
+
+/* ── Table row status highlights — accessible colors ───────── */
+.audit-table tbody tr:hover td {
+  background: rgba(10,142,110,0.03) !important;
+}
+.audit-table tbody tr td.status-success { color: #047857; font-weight: 700; }
+.audit-table tbody tr td.status-error   { color: #b91c1c; font-weight: 700; }
+.audit-table tbody tr td.status-deny    { color: #b45309; font-weight: 700; }
+.audit-table tbody tr td.status-critical { color: #991b1b; font-weight: 700; background: rgba(255,240,240,0.5); }
+
+/* ── Consistent card heading pattern ───────────────────────── */
+.card-heading {
+  display: flex; align-items: center; gap: 0.5rem;
+  font-size: 0.72rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--muted); margin-bottom: 0.75rem;
+}
+.card-heading::before {
+  content: ""; display: inline-block;
+  width: 3px; height: 0.8rem; border-radius: 2px;
+  background: var(--brand); opacity: 0.6;
+}
+.card-heading .i { width: 16px; height: 16px; opacity: 0.5; }
+
+/* ── Smooth page transitions ───────────────────────────────── */
+.content-wrap {
+  animation: page-enter 0.3s ease both;
+}
+@keyframes page-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Interactive table row — highlight on focus for a11y ───── */
+.tbl-card tbody tr.cr-row:focus-within {
+  outline: 2px solid var(--teal);
+  outline-offset: -2px;
+  box-shadow: 6px 6px 16px rgba(163,177,198,0.35),
+              -6px -6px 16px rgba(255,255,255,0.85);
+}
+
+.table-wrap tbody tr:focus-within td {
+  background: rgba(10,142,110,0.04);
+}
+
+/* ── Mobile filter bar stacking ────────────────────────────── */
+@media (max-width: 768px) {
+  .glass-filter-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .glass-filter-row .form-control,
+  .glass-filter-row .form-select {
+    max-width: 100% !important;
+    width: 100%;
+  }
+  .glass-filter-row .btn {
+    width: 100%;
+  }
+
+  /* Profile grid: full-width on mobile */
+  .pf-grid { grid-template-columns: 1fr !important; }
+  .pf-info-card { flex-direction: column; text-align: center; }
+
+  /* Audit table: reduce font, enable scroll */
+  .audit-table { font-size: 11px; }
+  .audit-table th, .audit-table td { padding: 5px; white-space: nowrap; }
+}
+
+/* ── High contrast mode support ────────────────────────────── */
+@media (forced-colors: active) {
+  .pill-status, .ph-chip, .pill, .nav-badge {
+    border: 1px solid currentColor;
+  }
+  .sidebar { border-inline-end: 1px solid currentColor; }
+  .btn { border: 1px solid currentColor; }
+}

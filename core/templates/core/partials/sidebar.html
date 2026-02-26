@@ -2,7 +2,7 @@
 {% load i18n %}
 {% get_current_language as LANGUAGE_CODE %}
 
-<aside class="sidebar">
+<aside class="sidebar" role="complementary" aria-label="{% if LANGUAGE_CODE == 'ar' %}شريط التنقل الجانبي{% else %}Sidebar navigation{% endif %}">
   <!-- Logo area -->
   <div class="logo-area">
     <div class="logo-mark">
@@ -15,8 +15,8 @@
   </div>
 
   <!-- Navigation -->
-  <nav class="nav-sec" id="menu">
-    <div class="nav-lbl">{% if LANGUAGE_CODE == 'ar' %}أكاديمي{% else %}Academic{% endif %}</div>
+  <nav class="nav-sec" id="menu" aria-label="{% if LANGUAGE_CODE == 'ar' %}القائمة الرئيسية{% else %}Main menu{% endif %}">
+    <div class="nav-lbl" id="nav-lbl-academic">{% if LANGUAGE_CODE == 'ar' %}أكاديمي{% else %}Academic{% endif %}</div>
     <a class="nav-a nav-link" data-target="student" href="/#student" tabindex="0">
       <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
       {% if LANGUAGE_CODE == 'ar' %}توصية الطلاب{% else %}Student Recommender{% endif %}
@@ -134,7 +134,7 @@
             {% endif %}
           </div>
         </a>
-        <a class="s-usr-logout" href="/logout/" title="{% if LANGUAGE_CODE == 'ar' %}تسجيل الخروج{% else %}Logout{% endif %}" tabindex="0">
+        <a class="s-usr-logout" href="/logout/" title="{% if LANGUAGE_CODE == 'ar' %}تسجيل الخروج{% else %}Logout{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}تسجيل الخروج{% else %}Log out{% endif %}" tabindex="0">
           <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span>
         </a>
       </div>
@@ -142,7 +142,8 @@
     <form action="/i18n/setlang/" method="post" class="s-lang">
       {% csrf_token %}
       <input type="hidden" name="next" value="{{ request.get_full_path }}">
-      <select name="language" class="form-select form-select-sm" onchange="this.form.submit()">
+      <label for="sidebar-lang-select" class="sr-only">{% if LANGUAGE_CODE == 'ar' %}اللغة{% else %}Language{% endif %}</label>
+      <select id="sidebar-lang-select" name="language" class="form-select form-select-sm" onchange="this.form.submit()" aria-label="{% if LANGUAGE_CODE == 'ar' %}تغيير اللغة{% else %}Change language{% endif %}">
         <option value="en" {% if LANGUAGE_CODE == 'en' %}selected{% endif %}>English</option>
         <option value="ar" {% if LANGUAGE_CODE == 'ar' %}selected{% endif %}>العربية</option>
       </select>

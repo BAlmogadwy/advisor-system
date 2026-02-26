@@ -294,16 +294,19 @@
       <!-- ═══════════════════════════════════════════════════════
            TOOLBAR: Search + Bulk + Export
            ═══════════════════════════════════════════════════════ -->
-      <div class="um-toolbar">
+      <div class="um-toolbar" role="search" aria-label="{% if LANGUAGE_CODE == 'ar' %}تصفية المستخدمين{% else %}Filter users{% endif %}">
         <div class="um-search">
-          <input id="umSearch" class="form-control" type="search" placeholder="{% if LANGUAGE_CODE == 'ar' %}البحث عن مستخدمين…{% else %}Search users…{% endif %}" oninput="debouncedFilter()">
+          <label for="umSearch" class="sr-only">{% if LANGUAGE_CODE == 'ar' %}البحث عن مستخدمين{% else %}Search users{% endif %}</label>
+          <input id="umSearch" class="form-control" type="search" placeholder="{% if LANGUAGE_CODE == 'ar' %}البحث عن مستخدمين…{% else %}Search users…{% endif %}" oninput="debouncedFilter()" aria-label="{% if LANGUAGE_CODE == 'ar' %}البحث عن مستخدمين{% else %}Search users{% endif %}">
         </div>
+        <label for="umRoleFilter" class="sr-only">{% if LANGUAGE_CODE == 'ar' %}تصفية حسب الدور{% else %}Filter by role{% endif %}</label>
         <select id="umRoleFilter" class="form-select" style="width:auto;min-width:140px;" onchange="filterTable()">
           <option value="">{% if LANGUAGE_CODE == 'ar' %}جميع الأدوار{% else %}All Roles{% endif %}</option>
           <option value="SUPER_ADMIN">{% if LANGUAGE_CODE == 'ar' %}مشرف عام{% else %}Super Admin{% endif %}</option>
           <option value="GENERAL_ACADEMIC_ADVISOR">{% if LANGUAGE_CODE == 'ar' %}مرشد عام{% else %}Gen. Advisor{% endif %}</option>
           <option value="ADVISOR">{% if LANGUAGE_CODE == 'ar' %}مرشد{% else %}Advisor{% endif %}</option>
         </select>
+        <label for="umStatusFilter" class="sr-only">{% if LANGUAGE_CODE == 'ar' %}تصفية حسب الحالة{% else %}Filter by status{% endif %}</label>
         <select id="umStatusFilter" class="form-select" style="width:auto;min-width:120px;" onchange="filterTable()">
           <option value="">{% if LANGUAGE_CODE == 'ar' %}جميع الحالات{% else %}All Status{% endif %}</option>
           <option value="active">{% if LANGUAGE_CODE == 'ar' %}نشط{% else %}Active{% endif %}</option>
@@ -325,10 +328,10 @@
            USERS TABLE
            ═══════════════════════════════════════════════════════ -->
       <div class="table-wrap" style="max-height:600px;">
-        <table class="table table-sm mb-0" id="umTable">
+        <table class="table table-sm mb-0" id="umTable" aria-label="{% if LANGUAGE_CODE == 'ar' %}جدول المستخدمين{% else %}Users table{% endif %}">
           <thead>
             <tr>
-              <th scope="col" style="width:32px;"><input type="checkbox" class="um-check" id="umCheckAll" onclick="toggleAllChecks(this)"></th>
+              <th scope="col" style="width:32px;"><input type="checkbox" class="um-check" id="umCheckAll" onclick="toggleAllChecks(this)" aria-label="{% if LANGUAGE_CODE == 'ar' %}تحديد الكل{% else %}Select all users{% endif %}"></th>
               <th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}اسم المستخدم{% else %}Username{% endif %}</th>
               <th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}الدور{% else %}Role{% endif %}</th>
               <th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}معرّف المرشد{% else %}Advisor ID{% endif %}</th>

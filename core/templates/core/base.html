@@ -26,19 +26,19 @@
 {% block body %}
 <div class="d-flex shell">
   {% include 'core/partials/sidebar.html' %}
-  <main id="main-content" class="flex-grow-1 {% block main_padding %}p-4{% endblock %}" {% block main_attrs %}{% endblock %}>
+  <main id="main-content" class="flex-grow-1 {% block main_padding %}p-4{% endblock %}" role="main" {% block main_attrs %}{% endblock %}>
     <div class="content-wrap">
-    <div class="page-header">
+    <header class="page-header" role="banner">
       <div class="page-header-left">
         <h1 {% block page_h1_attrs %}class="page-header-module"{% endblock %}>{% block page_heading %}{% endblock %}</h1>
-        <div class="page-header-chips">
+        <div class="page-header-chips" aria-label="{% if LANGUAGE_CODE == 'ar' %}معلومات الصفحة{% else %}Page information{% endif %}">
           {% block page_chips %}{% endblock %}
         </div>
       </div>
       <div class="page-header-right">
-        {% block page_header_right %}<a href="/logout/" class="btn btn-sm btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}تسجيل الخروج{% else %}Logout{% endif %}</a>{% endblock %}
+        {% block page_header_right %}<a href="/logout/" class="btn btn-sm btn-outline-secondary" aria-label="{% if LANGUAGE_CODE == 'ar' %}تسجيل الخروج{% else %}Log out{% endif %}">{% if LANGUAGE_CODE == 'ar' %}تسجيل الخروج{% else %}Logout{% endif %}</a>{% endblock %}
       </div>
-    </div>
+    </header>
     <div class="page-intro">{% block page_intro %}{% endblock %}</div>
     {% block content %}{% endblock %}
     </div><!-- /.content-wrap -->
