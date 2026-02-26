@@ -569,6 +569,89 @@
           <span style="font-family:var(--font-mono);font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px;background:var(--teal-dim);color:var(--teal);border:1px solid var(--teal-border)">{% if LANGUAGE_CODE == 'ar' %}الفصول 1-10{% else %}Terms 1-10{% endif %}</span>
         </div>
         <div id="studentPlanMeta" class="small mb-2" style="color:var(--t3)">{% if LANGUAGE_CODE == 'ar' %}حمّل بيانات طالب لعرض مصفوفة الفصول الكاملة.{% else %}Load a student to view the full term matrix.{% endif %}</div>
+
+        <!-- ── Empty-state hero for Student Plan ── -->
+        <div id="studentEmptyState">
+          <div class="empty-state" style="padding:2.5rem 1.5rem 1.8rem">
+            <span class="i" style="width:48px;height:48px;opacity:0.30;margin-bottom:12px" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+            </span>
+            <div class="empty-title" style="font-size:17px;margin-bottom:6px">{% if LANGUAGE_CODE == 'ar' %}استكشف الخطة الأكاديمية لأي طالب{% else %}Explore any student's academic plan{% endif %}</div>
+            <div class="empty-hint" style="max-width:420px;margin-bottom:22px">{% if LANGUAGE_CODE == 'ar' %}أدخل <strong>رقم الطالب</strong> أعلاه ثم اضغط <strong>تحميل الخطة</strong> لعرض مصفوفة الفصول، تنبيهات المخاطر، وخطة العمل.{% else %}Enter a <strong>Student ID</strong> above, then click <strong>Load plan</strong> to see the full term matrix, risk alerts, and action plan.{% endif %}</div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:var(--teal-dim);border:1px solid var(--teal-border);color:var(--teal);font-family:var(--font-mono);font-size:11px;font-weight:700">1</span>
+              <span style="font-size:12px;color:var(--t3);font-weight:600">{% if LANGUAGE_CODE == 'ar' %}أدخل الرقم{% else %}Enter ID{% endif %}</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" style="stroke:var(--t5);fill:none;stroke-width:2;stroke-linecap:round"><polyline points="9 18 15 12 9 6"/></svg>
+              <span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:var(--teal-dim);border:1px solid var(--teal-border);color:var(--teal);font-family:var(--font-mono);font-size:11px;font-weight:700">2</span>
+              <span style="font-size:12px;color:var(--t3);font-weight:600">{% if LANGUAGE_CODE == 'ar' %}تحميل الخطة{% else %}Load plan{% endif %}</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" style="stroke:var(--t5);fill:none;stroke-width:2;stroke-linecap:round"><polyline points="9 18 15 12 9 6"/></svg>
+              <span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:var(--teal-dim);border:1px solid var(--teal-border);color:var(--teal);font-family:var(--font-mono);font-size:11px;font-weight:700">3</span>
+              <span style="font-size:12px;color:var(--t3);font-weight:600">{% if LANGUAGE_CODE == 'ar' %}استعرض النتائج{% else %}Explore results{% endif %}</span>
+            </div>
+          </div>
+
+          <!-- Ghost metric cards -->
+          <div style="display:flex;gap:12px;margin-bottom:16px">
+            <div style="flex:1;min-width:0"><div class="mc mc-teal" style="pointer-events:none;opacity:0.5">
+              <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span></div><div class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}مجتاز{% else %}Passed{% endif %}</div></div>
+              <div style="padding:0 14px 6px"><div class="skel-block skel-block-lg" style="width:50%;margin:0"></div></div>
+              <div class="spark"><div class="b" style="height:40%"></div><div class="b" style="height:70%"></div><div class="b" style="height:30%"></div><div class="b" style="height:90%"></div><div class="b" style="height:55%"></div></div>
+            </div></div>
+            <div style="flex:1;min-width:0"><div class="mc mc-royal" style="pointer-events:none;opacity:0.5">
+              <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span></div><div class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}يدرس حالياً{% else %}Studying{% endif %}</div></div>
+              <div style="padding:0 14px 6px"><div class="skel-block skel-block-lg" style="width:50%;margin:0"></div></div>
+              <div class="spark"><div class="b" style="height:60%"></div><div class="b" style="height:40%"></div><div class="b" style="height:80%"></div><div class="b" style="height:50%"></div><div class="b" style="height:35%"></div></div>
+            </div></div>
+            <div style="flex:1;min-width:0"><div class="mc mc-sky" style="pointer-events:none;opacity:0.5">
+              <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></div><div class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}يمكن تسجيله{% else %}Can Register{% endif %}</div></div>
+              <div style="padding:0 14px 6px"><div class="skel-block skel-block-lg" style="width:50%;margin:0"></div></div>
+              <div class="spark"><div class="b" style="height:45%"></div><div class="b" style="height:65%"></div><div class="b" style="height:85%"></div><div class="b" style="height:40%"></div><div class="b" style="height:70%"></div></div>
+            </div></div>
+            <div style="flex:1;min-width:0"><div class="mc mc-err" style="pointer-events:none;opacity:0.5">
+              <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span></div><div class="mc-lbl">Locked</div></div>
+              <div style="padding:0 14px 6px"><div class="skel-block skel-block-lg" style="width:50%;margin:0"></div></div>
+              <div class="spark"><div class="b" style="height:75%"></div><div class="b" style="height:50%"></div><div class="b" style="height:35%"></div><div class="b" style="height:60%"></div><div class="b" style="height:90%"></div></div>
+            </div></div>
+          </div>
+
+          <!-- Ghost terms table -->
+          <div class="cpanel" style="pointer-events:none;opacity:0.40">
+            <div class="cp-h">
+              <div class="skel-block" style="margin:0;width:120px;height:12px"></div>
+              <div style="flex:1"></div>
+              <div class="skel-block" style="margin:0;width:60px;height:10px"></div>
+            </div>
+            <div class="cp-b" style="display:flex;flex-direction:column;gap:10px">
+              <div style="display:flex;gap:12px;align-items:center">
+                <div class="skel-block" style="margin:0;width:70px;height:14px"></div>
+                <div class="skel-block" style="margin:0;width:75%;height:12px"></div>
+                <div class="skel-block" style="margin:0;width:50px;height:10px"></div>
+              </div>
+              <div style="display:flex;gap:12px;align-items:center">
+                <div class="skel-block" style="margin:0;width:70px;height:14px"></div>
+                <div class="skel-block" style="margin:0;width:60%;height:12px"></div>
+                <div class="skel-block" style="margin:0;width:50px;height:10px"></div>
+              </div>
+              <div style="display:flex;gap:12px;align-items:center">
+                <div class="skel-block" style="margin:0;width:70px;height:14px"></div>
+                <div class="skel-block" style="margin:0;width:50%;height:12px"></div>
+                <div class="skel-block" style="margin:0;width:50px;height:10px"></div>
+              </div>
+              <div style="display:flex;gap:12px;align-items:center">
+                <div class="skel-block" style="margin:0;width:70px;height:14px"></div>
+                <div class="skel-block" style="margin:0;width:65%;height:12px"></div>
+                <div class="skel-block" style="margin:0;width:50px;height:10px"></div>
+              </div>
+              <div style="display:flex;gap:12px;align-items:center">
+                <div class="skel-block" style="margin:0;width:70px;height:14px"></div>
+                <div class="skel-block" style="margin:0;width:70%;height:12px"></div>
+                <div class="skel-block" style="margin:0;width:50px;height:10px"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- ── /Empty-state ── -->
+
         <div id="studentPlanMetrics" style="display:none;gap:12px;margin-bottom:12px">
           <div style="flex:1;min-width:0"><div class="mc mc-teal">
             <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span></div><div class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}مجتاز{% else %}Passed{% endif %}</div></div>
@@ -2255,6 +2338,7 @@
       q('studentPlanMetrics').style.display = 'none';
       q('studentPlanActions').style.display = 'none';
       q('studentPlanLegend').style.display = 'none';
+      q('studentEmptyState').style.display = '';
       q('loadStudentPlan').disabled = false;
       q('loadStudentPlan').innerHTML = `<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>${T.loadPlanBtn}`;
       notify.error(T.failedLoadPlan, err.message || String(err));
@@ -2273,6 +2357,7 @@
       q('studentPlanMetrics').style.display = 'none';
       q('studentPlanActions').style.display = 'none';
       q('studentPlanLegend').style.display = 'none';
+      q('studentEmptyState').style.display = '';
       q('loadStudentPlan').disabled = false;
       q('loadStudentPlan').innerHTML = `<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>${T.loadPlanBtn}`;
       return;
@@ -2318,6 +2403,7 @@
     fillSpark('spSparkCan', termStats.map(t=>t.cr));
     fillSpark('spSparkLocked', termStats.map(t=>t.l));
 
+    q('studentEmptyState').style.display = 'none';
     q('studentPlanMetrics').style.display = 'flex';
     q('studentPlanActions').style.display = 'flex';
     q('studentPlanLegend').style.display = 'block';
