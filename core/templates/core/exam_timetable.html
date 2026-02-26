@@ -161,7 +161,7 @@
     <div class="row g-2">
       <div class="col-md-3">
         <label class="form-label" for="etLabel">{% if LANGUAGE_CODE == 'ar' %}التسمية{% else %}Label{% endif %}</label>
-        <input id="etLabel" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثال: اختبارات نهائية{% else %}e.g. Final Exams{% endif %}">
+        <input id="etLabel" class="form-control" autofocus placeholder="{% if LANGUAGE_CODE == 'ar' %}مثال: اختبارات نهائية{% else %}e.g. Final Exams{% endif %}">
       </div>
       <div class="col-md-2">
         <label class="form-label" for="etStartDay">{% if LANGUAGE_CODE == 'ar' %}يوم البداية{% else %}Starting day{% endif %}</label>
@@ -175,7 +175,7 @@
       </div>
       <div class="col-md-2">
         <label class="form-label" for="etNumDays">{% if LANGUAGE_CODE == 'ar' %}عدد أيام الاختبارات{% else %}Exam days{% endif %}</label>
-        <input id="etNumDays" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control" value="5" min="1" max="60">
+        <input id="etNumDays" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="5" min="1" max="60">
       </div>
       <div class="col-md-3">
         <label class="form-label" for="etPeriods">{% if LANGUAGE_CODE == 'ar' %}الفترات (مفصولة بفاصلة){% else %}Periods (comma-separated){% endif %}</label>
@@ -183,7 +183,7 @@
       </div>
       <div class="col-md-2">
         <label class="form-label" for="etMaxPerDay">{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى/يوم{% else %}Max exams/day{% endif %}</label>
-        <input id="etMaxPerDay" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control" value="2" min="1" max="10">
+        <input id="etMaxPerDay" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="2" min="1" max="10">
       </div>
     </div>
     <div class="mt-2">

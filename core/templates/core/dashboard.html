@@ -1469,8 +1469,16 @@
     const panel = document.getElementById(target);
     if (panel) {
       panel.classList.add('active');
-      /* Issue #7: Move focus to the panel heading for screen-reader users */
+      /* Auto-focus the primary input of the activated panel */
+      const PANEL_FOCUS = {
+        student:'studentIdInput', batch:'batchYear', prereq:'preProgram',
+        scrape:'scrapeConcurrency', debug:'dbgYear', eligibility:'elCourse',
+        advisoradmin:'advId', highpriority:'hpYear', planviewer:'planProgram'
+      };
       requestAnimationFrame(() => {
+        const focusId = PANEL_FOCUS[target];
+        const focusEl = focusId ? document.getElementById(focusId) : null;
+        if (focusEl) { focusEl.focus({ preventScroll: true }); return; }
         const heading = panel.querySelector('h2, h3, h6');
         if (heading) {
           if (!heading.hasAttribute('tabindex')) heading.setAttribute('tabindex', '-1');

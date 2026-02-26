@@ -299,7 +299,7 @@
       <div class="um-toolbar" role="search" aria-label="{% if LANGUAGE_CODE == 'ar' %}تصفية المستخدمين{% else %}Filter users{% endif %}">
         <div class="um-search">
           <label for="umSearch" class="sr-only">{% if LANGUAGE_CODE == 'ar' %}البحث عن مستخدمين{% else %}Search users{% endif %}</label>
-          <input id="umSearch" class="form-control" type="search" placeholder="{% if LANGUAGE_CODE == 'ar' %}البحث عن مستخدمين…{% else %}Search users…{% endif %}" oninput="debouncedFilter()" aria-label="{% if LANGUAGE_CODE == 'ar' %}البحث عن مستخدمين{% else %}Search users{% endif %}">
+          <input id="umSearch" class="form-control" type="search" autofocus placeholder="{% if LANGUAGE_CODE == 'ar' %}البحث عن مستخدمين…{% else %}Search users…{% endif %}" oninput="debouncedFilter()" aria-label="{% if LANGUAGE_CODE == 'ar' %}البحث عن مستخدمين{% else %}Search users{% endif %}">
         </div>
         <label for="umRoleFilter" class="sr-only">{% if LANGUAGE_CODE == 'ar' %}تصفية حسب الدور{% else %}Filter by role{% endif %}</label>
         <select id="umRoleFilter" class="form-select" style="width:auto;min-width:140px;" onchange="filterTable()">

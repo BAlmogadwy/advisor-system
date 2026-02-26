@@ -289,7 +289,7 @@
 {% block content %}
       <!-- ═══ Advisor selector bar (hidden for ADVISOR role) ═══ -->
       <div class="ap-advisor-bar" id="apAdvisorBar" {% if role == 'ADVISOR' %}style="display:none;"{% endif %}>
-        <select id="apAdvisorSelect" class="form-select">
+        <select id="apAdvisorSelect" class="form-select" autofocus>
           <option value="">{% if LANGUAGE_CODE == 'ar' %}اختر مرشدًا…{% else %}Select advisor…{% endif %}</option>
         </select>
         <input id="apProgramFilter" class="form-control" style="max-width:140px;" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program (AI/CS){% endif %}">

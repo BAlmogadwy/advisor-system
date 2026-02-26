@@ -675,6 +675,14 @@ main.p-3 .page-header {
   border:           none !important;
 }
 
+/* ── Compact inputs for small numeric values ───────────── */
+.form-control-compact {
+  max-width: 80px !important;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+
 /* Chrome autofill override — delay bg-color change forever */
 .form-control:-webkit-autofill,
 .form-control:-webkit-autofill:hover,
