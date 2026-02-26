@@ -5,140 +5,247 @@
 
 {% block extra_css %}
 <style>
-  /* Page-specific: center the login card */
-  body { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
-  .login-wrap { width: 100%; max-width: 480px; padding: 1rem; }
-</style>
+  body {
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh; margin: 0;
+    background: #e4e9ed;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  .login-wrap {
+    width: 100%; max-width: 420px; padding: 1.5rem;
+    animation: login-fade-up 0.5s ease both;
+  }
+  @keyframes login-fade-up {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
 
-<style id="login-ux-css">
-/* Login page polish */
-body {
-  background:
-    radial-gradient(ellipse 80% 60% at 0% 0%, rgba(10,142,110,0.14) 0%, transparent 60%),
-    radial-gradient(ellipse 60% 55% at 45% 0%, rgba(0,174,218,0.10) 0%, transparent 55%),
-    radial-gradient(ellipse 55% 50% at 100% 5%, rgba(64,86,227,0.12) 0%, transparent 55%),
-    radial-gradient(ellipse 70% 50% at 15% 45%, rgba(64,224,208,0.10) 0%, transparent 50%),
-    linear-gradient(160deg, #f2f5f2 0%, #f0f3f5 25%, #f2f0f3 50%, #f5f3f0 75%, #f2f5f3 100%) !important;
-  min-height: 100vh;
-}
+  /* ─── Neumorphic card ─── */
+  .login-card {
+    background: #e4e9ed;
+    border-radius: 24px;
+    padding: 2.5rem 2rem 2rem;
+    box-shadow:
+      8px 8px 20px rgba(163,177,198,0.6),
+      -8px -8px 20px rgba(255,255,255,0.8);
+    overflow: hidden;
+  }
 
-.login-wrap {
-  animation: login-fade-up 0.4s ease both;
-}
+  /* ─── Avatar circle ─── */
+  .login-avatar {
+    width: 80px; height: 80px;
+    border-radius: 50%;
+    margin: 0 auto 1.5rem;
+    display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, #0A8E6E, #00AEDA, #4056E3);
+    box-shadow:
+      6px 6px 14px rgba(163,177,198,0.5),
+      -6px -6px 14px rgba(255,255,255,0.7),
+      0 0 0 6px #e4e9ed;
+    position: relative;
+  }
+  .login-avatar svg {
+    width: 36px; height: 36px;
+    stroke: #fff; stroke-width: 1.8;
+    fill: none; stroke-linecap: round; stroke-linejoin: round;
+  }
 
-@keyframes login-fade-up {
-  from { opacity: 0; transform: translateY(16px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
+  /* ─── Title & subtitle ─── */
+  .login-title {
+    font-size: 1.5rem; font-weight: 700;
+    color: #2d3748; text-align: center;
+    margin-bottom: 0.3rem; letter-spacing: -0.02em;
+  }
+  .login-sub {
+    font-size: 0.85rem; color: #8492a6;
+    text-align: center; margin-bottom: 2rem;
+  }
 
-.login-logo {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 48px; height: 48px;
-  border-radius: 12px;
-  background: linear-gradient(135deg, var(--teal, #0A8E6E), var(--sky, #00AEDA), var(--royal, #4056E3));
-  color: #fff;
-  font-size: 1.4rem;
-  margin: 0 auto 1rem;
-  box-shadow: 0 4px 16px rgba(10,142,110,0.2), 0 2px 6px rgba(64,86,227,0.12), 0 1px 0 rgba(255,255,255,0.25) inset;
-  position: relative;
-}
-.login-logo::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: 12px;
-  background: linear-gradient(180deg, rgba(255,255,255,0.3), transparent 50%);
-}
+  /* ─── Neumorphic input groups ─── */
+  .neu-input-group {
+    display: flex; align-items: center; gap: 0.75rem;
+    background: #e4e9ed;
+    border-radius: 14px;
+    padding: 0 1rem;
+    box-shadow:
+      inset 4px 4px 8px rgba(163,177,198,0.45),
+      inset -4px -4px 8px rgba(255,255,255,0.7);
+    margin-bottom: 1.25rem;
+    transition: box-shadow 0.25s ease;
+  }
+  .neu-input-group:focus-within {
+    box-shadow:
+      inset 4px 4px 8px rgba(163,177,198,0.45),
+      inset -4px -4px 8px rgba(255,255,255,0.7),
+      0 0 0 2px rgba(10,142,110,0.25);
+  }
+  .neu-input-group .neu-icon {
+    flex-shrink: 0;
+    width: 20px; height: 20px;
+    stroke: #8492a6; stroke-width: 2;
+    fill: none; stroke-linecap: round; stroke-linejoin: round;
+    transition: stroke 0.2s;
+  }
+  .neu-input-group:focus-within .neu-icon {
+    stroke: #0A8E6E;
+  }
+  .neu-input-group input {
+    flex: 1; min-width: 0;
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    background-color: transparent !important;
+    padding: 0.6rem 0;
+    font-size: 0.95rem; color: #2d3748;
+    font-family: inherit;
+  }
+  .neu-input-group input:focus {
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+  }
+  /* Autofill: delay bg-color change forever so Chrome never paints it */
+  .neu-input-group input:-webkit-autofill,
+  .neu-input-group input:-webkit-autofill:hover,
+  .neu-input-group input:-webkit-autofill:focus,
+  .neu-input-group input:-webkit-autofill:active {
+    -webkit-text-fill-color: #2d3748 !important;
+    caret-color: #2d3748;
+    transition: background-color 9999s ease-in-out 0s,
+                color 9999s ease-in-out 0s !important;
+  }
+  .neu-input-group input::-ms-reveal,
+  .neu-input-group input::-ms-clear,
+  .neu-input-group input::-webkit-credentials-auto-fill-button {
+    display: none !important;
+  }
+  .neu-input-group input::placeholder {
+    color: #a0aec0;
+    -webkit-text-fill-color: #a0aec0;
+    opacity: 1;
+  }
 
-.login-title {
-  font-family: 'DM Serif Display', serif;
-  font-size: 1.35rem;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  color: var(--ink, #0d1526);
-  text-align: center;
-  margin-bottom: 0.2rem;
-}
+  /* ─── Neumorphic button ─── */
+  .neu-btn {
+    width: 100%;
+    border: none; outline: none; cursor: pointer;
+    background: linear-gradient(135deg, #0A8E6E, #00AEDA);
+    color: #fff;
+    font-size: 1rem; font-weight: 600;
+    font-family: inherit;
+    padding: 0.7rem 1.5rem;
+    border-radius: 14px;
+    margin-top: 0.5rem;
+    box-shadow:
+      4px 4px 12px rgba(10,142,110,0.3),
+      -2px -2px 8px rgba(255,255,255,0.15),
+      0 2px 6px rgba(0,174,218,0.2);
+    transition: all 0.25s ease;
+    position: relative; overflow: hidden;
+    letter-spacing: 0.02em;
+  }
+  .neu-btn:hover {
+    transform: translateY(-1px);
+    box-shadow:
+      6px 6px 16px rgba(10,142,110,0.35),
+      -3px -3px 10px rgba(255,255,255,0.2),
+      0 4px 10px rgba(0,174,218,0.25);
+  }
+  .neu-btn:active {
+    transform: translateY(1px);
+    box-shadow:
+      2px 2px 6px rgba(10,142,110,0.3),
+      -1px -1px 4px rgba(255,255,255,0.1);
+  }
 
-.login-sub {
-  font-size: 0.82rem;
-  color: var(--t3, #5c5c7a);
-  text-align: center;
-  margin-bottom: 1.5rem;
-}
+  /* ─── Divider dots ─── */
+  .login-dots {
+    display: flex; justify-content: center; gap: 6px;
+    margin-bottom: 1.75rem;
+  }
+  .login-dots span {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: linear-gradient(135deg, #0A8E6E, #00AEDA, #4056E3);
+    opacity: 0.5;
+  }
+  .login-dots span:nth-child(2) { opacity: 0.75; }
+  .login-dots span:nth-child(3) { opacity: 1; }
 
-.login-card {
-  background: rgba(255,255,255,0.55);
-  backdrop-filter: blur(30px) saturate(140%);
-  -webkit-backdrop-filter: blur(30px) saturate(140%);
-  border: 1px solid rgba(17,17,68,0.06);
-  border-radius: 16px;
-  box-shadow: 0 8px 32px rgba(17,17,68,0.08), 0 1px 0 rgba(255,255,255,0.4) inset;
-  padding: 1.5rem;
-}
+  /* ─── Alert ─── */
+  .login-alert {
+    background: rgba(220, 53, 69, 0.08);
+    color: #c53030;
+    border-radius: 10px; padding: 0.6rem 1rem;
+    font-size: 0.85rem; margin-bottom: 1.25rem;
+    text-align: center;
+  }
 
-.login-card::before {
-  content: '';
-  display: block;
-  height: 2px;
-  margin: -1.5rem -1.5rem 1.5rem;
-  border-radius: 16px 16px 0 0;
-  background: linear-gradient(90deg, transparent 5%, var(--teal, #0A8E6E) 25%, var(--sky, #00AEDA) 50%, var(--royal, #4056E3) 75%, transparent 95%);
-  opacity: 0.3;
-}
+  /* ─── Language select ─── */
+  .login-lang {
+    text-align: center; margin-top: 1.5rem;
+  }
+  .login-lang select {
+    border: none; outline: none; cursor: pointer;
+    background: #e4e9ed;
+    border-radius: 10px;
+    padding: 0.45rem 1.2rem 0.45rem 0.8rem;
+    font-size: 0.8rem; color: #8492a6;
+    font-family: inherit;
+    box-shadow:
+      3px 3px 8px rgba(163,177,198,0.4),
+      -3px -3px 8px rgba(255,255,255,0.65);
+    transition: box-shadow 0.2s;
+    -webkit-appearance: auto;
+  }
+  .login-lang select:focus {
+    box-shadow:
+      inset 2px 2px 4px rgba(163,177,198,0.35),
+      inset -2px -2px 4px rgba(255,255,255,0.6);
+  }
 
-/* Login button full width + loading state */
-.login-btn {
-  position: relative;
-  overflow: hidden;
-}
-
-.login-btn::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
-  transform: translateX(-100%);
-  transition: transform 0s;
-}
-
-.login-btn:active::after {
-  transform: translateX(100%);
-  transition: transform 0.4s ease;
-}
-
-.login-lang-select { width: auto; display: inline-block; }
+  /* ─── RTL adjustments ─── */
+  [dir="rtl"] .neu-input-group { flex-direction: row-reverse; }
 </style>
 {% endblock %}
 
 {% block body %}
   <div class="login-wrap">
     <div class="login-card">
-      <div class="login-logo"><span class="i" style="width:24px;height:24px" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c0 1.66 2.69 3 6 3s6-1.34 6-3v-5"/></svg></span></div>
+      <!-- Avatar -->
+      <div class="login-avatar">
+        <svg viewBox="0 0 24 24"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c0 1.66 2.69 3 6 3s6-1.34 6-3v-5"/></svg>
+      </div>
+
       <h1 class="login-title">{% if LANGUAGE_CODE == 'ar' %}لوحة تحكم المرشد{% else %}Advisor Dashboard{% endif %}</h1>
       <div class="login-sub">{% if LANGUAGE_CODE == 'ar' %}أدخل بيانات اعتمادك للمتابعة{% else %}Sign in with your account to continue{% endif %}</div>
-      {% if error %}<div class="alert alert-danger py-2 mb-3" role="alert">{{ error }}</div>{% endif %}
+
+      <div class="login-dots"><span></span><span></span><span></span></div>
+
+      {% if error %}<div class="login-alert" role="alert">{{ error }}</div>{% endif %}
+
       <form method="post">
         {% csrf_token %}
-        <div class="mb-3">
-          <label for="id_username" class="form-label fw-semibold">{% if LANGUAGE_CODE == 'ar' %}اسم المستخدم{% else %}Username{% endif %}</label>
-          <input id="id_username" name="username" class="form-control" required autocomplete="username" autofocus>
+        <!-- Username -->
+        <div class="neu-input-group">
+          <svg class="neu-icon" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          <input id="id_username" name="username" type="text" placeholder="{% if LANGUAGE_CODE == 'ar' %}اسم المستخدم{% else %}Username{% endif %}" required autocomplete="username" autofocus>
         </div>
-        <div class="mb-4">
-          <label for="id_password" class="form-label fw-semibold">{% if LANGUAGE_CODE == 'ar' %}كلمة المرور{% else %}Password{% endif %}</label>
-          <input id="id_password" name="password" type="password" class="form-control" required autocomplete="current-password">
+        <!-- Password -->
+        <div class="neu-input-group">
+          <svg class="neu-icon" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <input id="id_password" name="password" type="password" placeholder="{% if LANGUAGE_CODE == 'ar' %}كلمة المرور{% else %}Password{% endif %}" required autocomplete="current-password">
         </div>
-        <button class="btn btn-primary w-100 login-btn">{% if LANGUAGE_CODE == 'ar' %}تسجيل الدخول{% else %}Sign in{% endif %}</button>
+        <button type="submit" class="neu-btn">{% if LANGUAGE_CODE == 'ar' %}تسجيل الدخول{% else %}Sign in{% endif %}</button>
       </form>
     </div>
 
-    <div class="mt-3 text-center">
+    <div class="login-lang">
       <form action="/i18n/setlang/" method="post" class="d-inline">
         {% csrf_token %}
         <input type="hidden" name="next" value="{{ request.get_full_path }}">
-        <select name="language" class="form-select form-select-sm login-lang-select" onchange="this.form.submit()">
+        <select name="language" onchange="this.form.submit()">
           <option value="en" {% if LANGUAGE_CODE == 'en' %}selected{% endif %}>English</option>
           <option value="ar" {% if LANGUAGE_CODE == 'ar' %}selected{% endif %}>العربية</option>
         </select>

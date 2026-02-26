@@ -614,12 +614,13 @@ main.p-3 .page-header {
    CARDS
    ============================================================ */
 .soft-card {
-  border:           1px solid rgba(17,17,68,0.05) !important;
+  border:           none !important;
   border-radius:    var(--radius-lg) !important;
-  background:       rgba(255,255,255,0.55) !important;
+  background:       rgba(255,255,255,0.45) !important;
   backdrop-filter:  blur(20px) saturate(130%);
   -webkit-backdrop-filter: blur(20px) saturate(130%);
-  box-shadow:       var(--shadow-card) !important;
+  box-shadow:       6px 6px 16px rgba(163,177,198,0.3),
+                    -6px -6px 16px rgba(255,255,255,0.8) !important;
   padding:          1.25rem;
   margin-bottom:    1rem;
   transition:       all 0.25s ease;
@@ -628,9 +629,9 @@ main.p-3 .page-header {
 }
 
 .soft-card:hover {
-  border-color:     rgba(17,17,68,0.08) !important;
-  box-shadow:       var(--shadow-lift) !important;
-  background:       rgba(255,255,255,0.7) !important;
+  box-shadow:       8px 8px 20px rgba(163,177,198,0.35),
+                    -8px -8px 20px rgba(255,255,255,0.9) !important;
+  background:       rgba(255,255,255,0.55) !important;
   transform:        translateY(-1px);
 }
 
@@ -653,189 +654,239 @@ main.p-3 .page-header {
   font-family:      var(--font-body) !important;
   font-size:        0.875rem !important;
   color:            var(--ink) !important;
-  border:           1px solid rgba(17,17,68,0.08) !important;
-  border-radius:    999px !important;
-  background-color: rgba(255,255,255,0.65) !important;
-  backdrop-filter:  blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  padding:          0.55rem 1rem !important;
-  box-shadow:       0 1px 3px rgba(0,0,0,0.04) !important;
-  transition:       border-color .15s ease, box-shadow .15s ease, background-color .15s ease;
+  border:           none !important;
+  border-radius:    14px !important;
+  background-color: transparent !important;
+  padding:          0.45rem 1rem !important;
+  box-sizing:       border-box !important;
+  max-width:        100% !important;
+  box-shadow:       inset 4px 4px 8px rgba(163,177,198,0.35),
+                    inset -4px -4px 8px rgba(255,255,255,0.9) !important;
+  transition:       box-shadow .25s ease;
 }
 
 .form-control:focus,
 .form-select:focus {
-  border-color:     var(--teal) !important;
-  background-color: rgba(255,255,255,0.8) !important;
-  box-shadow:       0 0 0 3px rgba(10,142,110,0.1), 0 1px 3px rgba(0,0,0,0.04) !important;
-  outline:          none;
+  background-color: transparent !important;
+  box-shadow:       inset 4px 4px 8px rgba(163,177,198,0.35),
+                    inset -4px -4px 8px rgba(255,255,255,0.9),
+                    0 0 0 2px rgba(10,142,110,0.25) !important;
+  outline:          none !important;
+  border:           none !important;
 }
 
-/* Textareas keep rounded-rectangle, not pill */
+/* Chrome autofill override — delay bg-color change forever */
+.form-control:-webkit-autofill,
+.form-control:-webkit-autofill:hover,
+.form-control:-webkit-autofill:focus,
+.form-control:-webkit-autofill:active,
+.form-select:-webkit-autofill,
+.form-select:-webkit-autofill:hover,
+.form-select:-webkit-autofill:focus,
+.form-select:-webkit-autofill:active {
+  -webkit-text-fill-color: var(--ink, #0d1526) !important;
+  caret-color: var(--ink, #0d1526);
+  transition: background-color 9999s ease-in-out 0s,
+              color 9999s ease-in-out 0s !important;
+}
+
+/* Hide browser credential buttons */
+.form-control::-ms-reveal,
+.form-control::-ms-clear,
+.form-control::-webkit-credentials-auto-fill-button {
+  display: none !important;
+}
+
+/* Textareas keep rounded-rectangle */
 textarea.form-control {
-  border-radius: var(--radius) !important;
-  padding:       0.65rem 0.85rem !important;
+  border-radius: 14px !important;
+  padding:       0.45rem 1rem !important;
 }
 
 /* ============================================================
    BUTTONS  (html body prefix for specificity over Bootstrap)
+   Neumorphic raised style — lifted surface with soft shadows
    ============================================================ */
 html body .btn {
   font-family:     var(--font-body) !important;
   font-weight:     600 !important;
   font-size:       0.875rem !important;
-  border-radius:   999px !important;
-  min-height:      40px;
-  padding:         0.5rem 1.25rem !important;
+  border-radius:   14px !important;
+  border:          none !important;
+  min-height:      38px;
+  padding:         0.45rem 1.25rem !important;
   display:         inline-flex;
   align-items:     center;
   justify-content: center;
   gap:             0.4rem;
-  transition:      all .18s ease !important;
+  transition:      all .20s ease !important;
 }
 
+/* ── Filled buttons — raised neumorphic with colour fill ── */
 html body .btn-primary {
   background:   var(--teal) !important;
-  border-color: var(--teal) !important;
   color:        #fff !important;
-  box-shadow:   0 2px 8px rgba(10,142,110,0.25) !important;
+  box-shadow:   3px 3px 8px rgba(10,142,110,0.35),
+                -2px -2px 6px rgba(255,255,255,0.25) !important;
 }
-
 html body .btn-primary:hover,
 html body .btn-primary:focus {
   background:   var(--teal-bright) !important;
-  border-color: var(--teal-bright) !important;
-  transform:    translateY(-1px);
-  box-shadow:   0 4px 14px rgba(10,142,110,.35) !important;
+  box-shadow:   4px 4px 12px rgba(10,142,110,0.4),
+                -2px -2px 8px rgba(255,255,255,0.3) !important;
 }
-
 html body .btn-primary:active {
-  transform:    translateY(0);
   background:   var(--teal-deep) !important;
-  box-shadow:   0 1px 3px rgba(10,142,110,.20) !important;
+  box-shadow:   inset 2px 2px 6px rgba(0,0,0,0.15),
+                inset -2px -2px 6px rgba(255,255,255,0.1) !important;
 }
 
 html body .btn-success {
   background:   var(--teal) !important;
-  border-color: var(--teal) !important;
   color:        #fff !important;
-  box-shadow:   0 2px 8px rgba(10,142,110,0.25) !important;
+  box-shadow:   3px 3px 8px rgba(10,142,110,0.35),
+                -2px -2px 6px rgba(255,255,255,0.25) !important;
 }
-
 html body .btn-success:hover {
   background:   var(--teal-bright) !important;
-  transform:    translateY(-1px);
-  box-shadow:   0 4px 14px rgba(10,142,110,.35) !important;
+  box-shadow:   4px 4px 12px rgba(10,142,110,0.4),
+                -2px -2px 8px rgba(255,255,255,0.3) !important;
+}
+html body .btn-success:active {
+  box-shadow:   inset 2px 2px 6px rgba(0,0,0,0.15),
+                inset -2px -2px 6px rgba(255,255,255,0.1) !important;
 }
 
 html body .btn-danger {
   background:   var(--danger) !important;
-  border-color: var(--danger) !important;
   color:        #fff !important;
-  box-shadow:   0 2px 8px rgba(192,48,48,0.25) !important;
+  box-shadow:   3px 3px 8px rgba(192,48,48,0.3),
+                -2px -2px 6px rgba(255,255,255,0.2) !important;
 }
-
 html body .btn-danger:hover {
-  transform:    translateY(-1px);
-  box-shadow:   0 4px 14px rgba(192,48,48,.35) !important;
+  box-shadow:   4px 4px 12px rgba(192,48,48,0.4),
+                -2px -2px 8px rgba(255,255,255,0.25) !important;
 }
-
-html body .btn-outline-primary {
-  color:        var(--teal) !important;
-  border:       1.5px solid var(--teal) !important;
-  background:   rgba(255,255,255,0.55) !important;
-  box-shadow:   0 1px 3px rgba(0,0,0,0.04) !important;
-}
-
-html body .btn-outline-primary:hover {
-  background:   rgba(10,142,110,0.06) !important;
-  color:        var(--teal-deep) !important;
-  border-color: var(--teal-deep) !important;
-  box-shadow:   0 2px 8px rgba(10,142,110,0.15) !important;
-}
-
-html body .btn-outline-secondary {
-  color:        var(--t2) !important;
-  border:       1.5px solid rgba(17,17,68,0.12) !important;
-  background:   rgba(255,255,255,0.55) !important;
-  box-shadow:   0 1px 3px rgba(0,0,0,0.04) !important;
-}
-
-html body .btn-outline-secondary:hover {
-  background:   rgba(17,17,68,0.03) !important;
-  border-color: rgba(17,17,68,0.2) !important;
-  color:        var(--t1) !important;
-  box-shadow:   0 2px 8px rgba(0,0,0,0.06) !important;
+html body .btn-danger:active {
+  box-shadow:   inset 2px 2px 6px rgba(0,0,0,0.15),
+                inset -2px -2px 6px rgba(255,255,255,0.1) !important;
 }
 
 /* Warning (amber) */
 html body .btn-warning {
   background:   #d97706 !important;
-  border-color: #d97706 !important;
   color:        #fff !important;
-  box-shadow:   0 2px 8px rgba(217,119,6,0.25) !important;
+  box-shadow:   3px 3px 8px rgba(217,119,6,0.3),
+                -2px -2px 6px rgba(255,255,255,0.2) !important;
 }
 html body .btn-warning:hover {
   background:   #b45309 !important;
-  transform:    translateY(-1px);
-  box-shadow:   0 4px 14px rgba(217,119,6,.35) !important;
+  box-shadow:   4px 4px 12px rgba(217,119,6,0.4),
+                -2px -2px 8px rgba(255,255,255,0.25) !important;
+}
+html body .btn-warning:active {
+  box-shadow:   inset 2px 2px 6px rgba(0,0,0,0.15),
+                inset -2px -2px 6px rgba(255,255,255,0.1) !important;
 }
 
-/* ── Outline variants ─────────────────────────────────────── */
+/* ── Outline variants — soft raised surface ────────────── */
+html body .btn-outline-primary {
+  color:        var(--teal) !important;
+  background:   transparent !important;
+  box-shadow:   3px 3px 8px rgba(163,177,198,0.3),
+                -3px -3px 8px rgba(255,255,255,0.8) !important;
+}
+html body .btn-outline-primary:hover {
+  background:   rgba(10,142,110,0.05) !important;
+  color:        var(--teal-deep) !important;
+  box-shadow:   4px 4px 12px rgba(163,177,198,0.35),
+                -4px -4px 10px rgba(255,255,255,0.9) !important;
+}
+html body .btn-outline-primary:active {
+  box-shadow:   inset 3px 3px 6px rgba(163,177,198,0.35),
+                inset -3px -3px 6px rgba(255,255,255,0.8) !important;
+}
+
+html body .btn-outline-secondary {
+  color:        var(--t2) !important;
+  background:   transparent !important;
+  box-shadow:   3px 3px 8px rgba(163,177,198,0.3),
+                -3px -3px 8px rgba(255,255,255,0.8) !important;
+}
+html body .btn-outline-secondary:hover {
+  background:   rgba(17,17,68,0.03) !important;
+  color:        var(--t1) !important;
+  box-shadow:   4px 4px 12px rgba(163,177,198,0.35),
+                -4px -4px 10px rgba(255,255,255,0.9) !important;
+}
+html body .btn-outline-secondary:active {
+  box-shadow:   inset 3px 3px 6px rgba(163,177,198,0.35),
+                inset -3px -3px 6px rgba(255,255,255,0.8) !important;
+}
+
 html body .btn-outline-success {
   color:        var(--teal) !important;
-  border:       1.5px solid var(--teal) !important;
-  background:   rgba(255,255,255,0.55) !important;
-  box-shadow:   0 1px 3px rgba(0,0,0,0.04) !important;
+  background:   transparent !important;
+  box-shadow:   3px 3px 8px rgba(163,177,198,0.3),
+                -3px -3px 8px rgba(255,255,255,0.8) !important;
 }
 html body .btn-outline-success:hover {
-  background:   rgba(10,142,110,0.06) !important;
+  background:   rgba(10,142,110,0.05) !important;
   color:        var(--teal-deep) !important;
+  box-shadow:   4px 4px 12px rgba(163,177,198,0.35),
+                -4px -4px 10px rgba(255,255,255,0.9) !important;
 }
 
 html body .btn-outline-danger {
   color:        var(--danger) !important;
-  border:       1.5px solid var(--danger) !important;
-  background:   rgba(255,255,255,0.55) !important;
-  box-shadow:   0 1px 3px rgba(0,0,0,0.04) !important;
+  background:   transparent !important;
+  box-shadow:   3px 3px 8px rgba(163,177,198,0.3),
+                -3px -3px 8px rgba(255,255,255,0.8) !important;
 }
 html body .btn-outline-danger:hover {
-  background:   rgba(192,48,48,0.06) !important;
+  background:   rgba(192,48,48,0.05) !important;
   color:        #a02020 !important;
+  box-shadow:   4px 4px 12px rgba(163,177,198,0.35),
+                -4px -4px 10px rgba(255,255,255,0.9) !important;
 }
 
 html body .btn-outline-warning {
   color:        #92400e !important;
-  border:       1.5px solid #d97706 !important;
-  background:   rgba(255,255,255,0.55) !important;
-  box-shadow:   0 1px 3px rgba(0,0,0,0.04) !important;
+  background:   transparent !important;
+  box-shadow:   3px 3px 8px rgba(163,177,198,0.3),
+                -3px -3px 8px rgba(255,255,255,0.8) !important;
 }
 html body .btn-outline-warning:hover {
-  background:   rgba(217,119,6,0.06) !important;
+  background:   rgba(217,119,6,0.05) !important;
   color:        #78350f !important;
+  box-shadow:   4px 4px 12px rgba(163,177,198,0.35),
+                -4px -4px 10px rgba(255,255,255,0.9) !important;
 }
 
 html body .btn-outline-info {
   color:        var(--sky) !important;
-  border:       1.5px solid var(--sky) !important;
-  background:   rgba(255,255,255,0.55) !important;
-  box-shadow:   0 1px 3px rgba(0,0,0,0.04) !important;
+  background:   transparent !important;
+  box-shadow:   3px 3px 8px rgba(163,177,198,0.3),
+                -3px -3px 8px rgba(255,255,255,0.8) !important;
 }
 html body .btn-outline-info:hover {
-  background:   rgba(0,174,218,0.06) !important;
+  background:   rgba(0,174,218,0.05) !important;
   color:        #0284a0 !important;
+  box-shadow:   4px 4px 12px rgba(163,177,198,0.35),
+                -4px -4px 10px rgba(255,255,255,0.9) !important;
 }
 
 html body .btn-outline-dark {
   color:        var(--t1) !important;
-  border:       1.5px solid rgba(17,17,68,0.2) !important;
-  background:   rgba(255,255,255,0.55) !important;
-  box-shadow:   0 1px 3px rgba(0,0,0,0.04) !important;
+  background:   transparent !important;
+  box-shadow:   3px 3px 8px rgba(163,177,198,0.3),
+                -3px -3px 8px rgba(255,255,255,0.8) !important;
 }
 html body .btn-outline-dark:hover {
-  background:   rgba(17,17,68,0.04) !important;
+  background:   rgba(17,17,68,0.03) !important;
   color:        var(--navy) !important;
-  border-color: rgba(17,17,68,0.3) !important;
+  box-shadow:   4px 4px 12px rgba(163,177,198,0.35),
+                -4px -4px 10px rgba(255,255,255,0.9) !important;
 }
 
 /* ── Small button size ────────────────────────────────────── */
@@ -844,11 +895,15 @@ html body .btn.btn-sm {
   font-size:    0.8rem !important;
   min-height:   32px;
   padding:      0.3rem 0.85rem !important;
+  border-radius: 10px !important;
 }
 
 html body .btn:focus,
 html body .btn:focus-visible {
-  box-shadow: 0 0 0 3px var(--brand-glow) !important;
+  outline: none !important;
+  box-shadow: 0 0 0 2px rgba(10,142,110,0.25),
+              3px 3px 8px rgba(163,177,198,0.3),
+              -3px -3px 8px rgba(255,255,255,0.8) !important;
 }
 
 /* ============================================================
@@ -861,12 +916,13 @@ html body .btn:focus-visible {
   flex-wrap:       wrap;
   align-items:     center;
   padding:         0.5rem;
-  border:          1px solid var(--line);
-  border-radius:   var(--radius);
-  background:      rgba(255,255,255,.70);
-  backdrop-filter: blur(4px);
+  border:          none;
+  border-radius:   14px;
+  background:      rgba(255,255,255,.40);
+  backdrop-filter: blur(12px);
   margin-bottom:   1rem;
-  box-shadow:      0 1px 4px rgba(13,21,38,.04);
+  box-shadow:      5px 5px 14px rgba(163,177,198,0.28),
+                   -5px -5px 14px rgba(255,255,255,0.8);
 }
 
 .actions-row .btn,
@@ -884,12 +940,13 @@ html body .btn:focus-visible {
 .table-wrap {
   max-height:    420px;
   overflow:      auto;
-  border:        1px solid var(--line);
-  border-radius: var(--radius);
-  background:    rgba(255,255,255,0.5);
+  border:        none;
+  border-radius: 14px;
+  background:    rgba(255,255,255,0.40);
   backdrop-filter: blur(16px) saturate(120%);
   -webkit-backdrop-filter: blur(16px) saturate(120%);
-  box-shadow:    var(--shadow-card);
+  box-shadow:    6px 6px 16px rgba(163,177,198,0.28),
+                 -6px -6px 16px rgba(255,255,255,0.8);
   scrollbar-width: thin;
   scrollbar-color: var(--line-strong) transparent;
 }
@@ -951,7 +1008,8 @@ html body .btn:focus-visible {
 .tbl-cnt {
   font-family:var(--font-mono); font-size:10px; font-weight:700;
   padding:3px 9px; border-radius:999px;
-  background:var(--teal-dim); color:var(--teal); border:1px solid var(--teal-border);
+  background:rgba(10,142,110,0.06); color:var(--teal); border:none;
+  box-shadow:2px 2px 5px rgba(163,177,198,0.25), -2px -2px 5px rgba(255,255,255,0.7);
 }
 .tbl-actions { display:flex; gap:6px; }
 
@@ -976,10 +1034,11 @@ html body .btn:focus-visible {
 
 /* ── Card rows — glassmorphic table rows ── */
 .tbl-card tbody tr.cr-row {
-  background:rgba(255,255,255,0.5);
+  background:rgba(255,255,255,0.40);
   backdrop-filter:blur(16px) saturate(120%);
   -webkit-backdrop-filter:blur(16px) saturate(120%);
-  box-shadow:var(--shadow-card);
+  box-shadow:4px 4px 10px rgba(163,177,198,0.25),
+             -4px -4px 10px rgba(255,255,255,0.75);
   transition:all .2s var(--ease);
   cursor:pointer; position:relative;
 }
@@ -1006,8 +1065,9 @@ html body .btn:focus-visible {
 }
 .tbl-card tbody tr.cr-row:hover {
   transform:translateY(-2px);
-  box-shadow:var(--shadow-lift);
-  background:rgba(255,255,255,0.72);
+  box-shadow:6px 6px 16px rgba(163,177,198,0.35),
+             -6px -6px 16px rgba(255,255,255,0.85);
+  background:rgba(255,255,255,0.55);
 }
 .tbl-card tbody tr.cr-row:hover td:first-child {
   border-inline-start-color:var(--teal);
@@ -1069,18 +1129,25 @@ html body .btn:focus-visible {
 .btn-circle {
   width:32px; height:32px; border-radius:50%;
   display:flex; align-items:center; justify-content:center;
-  background:rgba(255,255,255,0.6); border:1px solid rgba(17,17,68,0.06);
-  color:var(--t3); cursor:pointer; transition:all .15s ease;
-  box-shadow:0 1px 0 rgba(255,255,255,0.6) inset, 0 1px 3px rgba(17,17,68,0.04);
-  backdrop-filter:blur(8px);
+  background:transparent; border:none;
+  color:var(--t3); cursor:pointer; transition:all .18s ease;
+  box-shadow:3px 3px 6px rgba(163,177,198,0.35),
+             -3px -3px 6px rgba(255,255,255,0.8);
 }
 .btn-circle:hover {
-  background:rgba(255,255,255,0.72); border-color:var(--teal-border); color:var(--teal);
+  color:var(--teal);
+  box-shadow:4px 4px 8px rgba(163,177,198,0.4),
+             -4px -4px 8px rgba(255,255,255,0.9);
+}
+.btn-circle:active {
+  box-shadow:inset 2px 2px 5px rgba(163,177,198,0.4),
+             inset -2px -2px 5px rgba(255,255,255,0.8);
 }
 .btn-circle.ac {
   background:linear-gradient(135deg, var(--teal), var(--sky));
-  color:#fff; border-color:rgba(10,142,110,0.3);
-  box-shadow:0 1px 0 rgba(255,255,255,0.15) inset, 0 2px 6px rgba(10,142,110,0.18);
+  color:#fff;
+  box-shadow:2px 2px 6px rgba(10,142,110,0.3),
+             -2px -2px 6px rgba(255,255,255,0.2);
 }
 .btn-circle .i { width:14px; height:14px; }
 
@@ -1090,20 +1157,24 @@ html body .btn:focus-visible {
   padding:14px 22px; margin-top:4px;
   background:rgba(255,255,255,0.35);
   backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
-  border:1px solid rgba(17,17,68,0.04); border-radius:var(--radius);
+  border:none; border-radius:14px;
+  box-shadow:4px 4px 12px rgba(163,177,198,0.22),
+             -4px -4px 12px rgba(255,255,255,0.7);
 }
 .pg-info { font-size:12px; color:var(--t3); font-weight:500; }
 .pg-info strong { color:var(--t1); font-weight:700; }
 .pg-nav { display:flex; align-items:center; gap:4px; }
 .pg-btn {
-  width:32px; height:32px; border-radius:var(--radius-sm);
+  width:32px; height:32px; border-radius:8px;
   display:flex; align-items:center; justify-content:center;
-  background:rgba(255,255,255,0.5); border:1px solid rgba(17,17,68,0.06);
+  background:transparent; border:none;
   color:var(--t3); font-size:12px; font-weight:600; cursor:pointer;
-  transition:all .12s ease; font-family:var(--font-mono);
+  transition:all .15s ease; font-family:var(--font-mono);
+  box-shadow:2px 2px 6px rgba(163,177,198,0.3),
+             -2px -2px 6px rgba(255,255,255,0.8);
 }
-.pg-btn:hover { background:rgba(255,255,255,0.72); border-color:var(--line-strong); color:var(--t1); }
-.pg-btn.active { background:var(--teal); color:#fff; border-color:var(--teal); box-shadow:0 2px 6px rgba(10,142,110,0.2); }
+.pg-btn:hover { color:var(--t1); box-shadow:3px 3px 8px rgba(163,177,198,0.35), -3px -3px 8px rgba(255,255,255,0.9); }
+.pg-btn.active { background:var(--teal); color:#fff; box-shadow:inset 2px 2px 5px rgba(0,0,0,0.12), inset -2px -2px 5px rgba(255,255,255,0.1); }
 .pg-btn:disabled { opacity:0.3; pointer-events:none; }
 
 /* ── Prereq Dependency Graph ── */
@@ -1122,14 +1193,15 @@ html body .btn:focus-visible {
    METRICS
    ============================================================ */
 .metric {
-  border:        1px solid rgba(17,17,68,0.05);
-  border-radius: var(--radius);
+  border:        none;
+  border-radius: 14px;
   padding:       0.875rem 1rem;
-  background:    rgba(255,255,255,0.55);
+  background:    rgba(255,255,255,0.40);
   backdrop-filter: blur(20px) saturate(130%);
   -webkit-backdrop-filter: blur(20px) saturate(130%);
   height:        100%;
-  box-shadow:    var(--shadow-card);
+  box-shadow:    5px 5px 14px rgba(163,177,198,0.28),
+                 -5px -5px 14px rgba(255,255,255,0.8);
   transition:    all .25s ease;
   position:      relative;
   overflow:      hidden;
@@ -1149,9 +1221,9 @@ html body .btn:focus-visible {
 
 .metric:hover {
   transform:    translateY(-2px);
-  box-shadow:   var(--shadow-lift);
-  border-color: rgba(17,17,68,0.08);
-  background:   rgba(255,255,255,0.7);
+  box-shadow:   7px 7px 18px rgba(163,177,198,0.35),
+                -7px -7px 18px rgba(255,255,255,0.9);
+  background:   rgba(255,255,255,0.55);
 }
 .metric:hover::before { left: 5%; right: 5%; opacity: 0.5; }
 
@@ -1178,15 +1250,16 @@ html body .btn:focus-visible {
    MC — Enhanced Metric Cards (Taibah design)
    ============================================================ */
 .mc {
-  background:      rgba(255,255,255,0.55);
+  background:      rgba(255,255,255,0.40);
   backdrop-filter:  blur(20px) saturate(130%);
   -webkit-backdrop-filter: blur(20px) saturate(130%);
-  border:          1px solid rgba(17,17,68,0.05);
-  border-radius:   var(--radius);
+  border:          none;
+  border-radius:   14px;
   padding:         20px;
   position:        relative;
   overflow:        hidden;
-  box-shadow:      var(--shadow-card);
+  box-shadow:      5px 5px 14px rgba(163,177,198,0.28),
+                   -5px -5px 14px rgba(255,255,255,0.8);
   transition:      all .25s var(--ease);
 }
 .mc::before {
@@ -1200,15 +1273,16 @@ html body .btn:focus-visible {
   width:70px; height:70px; background:var(--mc-c, var(--teal));
   opacity:0.04; border-radius:50%; filter:blur(22px); transition:opacity .25s ease;
 }
-.mc:hover { border-color:rgba(17,17,68,0.08); transform:translateY(-2px); box-shadow:var(--shadow-lift); background:rgba(255,255,255,0.7); }
+.mc:hover { transform:translateY(-2px); box-shadow:7px 7px 18px rgba(163,177,198,0.35), -7px -7px 18px rgba(255,255,255,0.9); background:rgba(255,255,255,0.55); }
 .mc:hover::after { opacity:0.07; }
 
 .mc-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
 .mc-icon {
-  width:38px; height:38px; border-radius:var(--radius-sm);
+  width:38px; height:38px; border-radius:10px;
   display:flex; align-items:center; justify-content:center;
-  border:1px solid rgba(17,17,68,0.04);
-  box-shadow:0 1px 0 rgba(255,255,255,0.6) inset;
+  border:none;
+  box-shadow:inset 2px 2px 5px rgba(163,177,198,0.3),
+             inset -2px -2px 5px rgba(255,255,255,0.8);
 }
 .mc-icon .i { width:18px; height:18px; }
 .mc-lbl {
@@ -1294,9 +1368,10 @@ html body .btn:focus-visible {
 .pill-status {
   display:inline-flex; align-items:center; gap:5px;
   padding:3px 10px; border-radius:999px;
-  font-size:11px; font-weight:600; border:1px solid;
+  font-size:11px; font-weight:600; border:none;
   position:relative;
-  box-shadow:0 1px 0 rgba(255,255,255,0.4) inset;
+  box-shadow:2px 2px 5px rgba(163,177,198,0.25),
+             -2px -2px 5px rgba(255,255,255,0.7);
 }
 .pill-status::before {
   content:''; position:absolute; top:0; left:0; right:0; height:50%;
@@ -1307,10 +1382,10 @@ html body .btn:focus-visible {
   width:5px; height:5px; border-radius:50%;
   background:currentColor; box-shadow:0 0 4px currentColor;
 }
-.pill-g { background:rgba(10,142,110,0.08); color:var(--teal); border-color:var(--teal-border); }
-.pill-r { background:rgba(192,48,48,0.07); color:var(--danger); border-color:rgba(192,48,48,0.16); }
-.pill-a { background:rgba(154,106,8,0.07); color:var(--warning); border-color:rgba(154,106,8,0.16); }
-.pill-b { background:rgba(64,86,227,0.07); color:var(--royal); border-color:var(--royal-border); }
+.pill-g { background:rgba(10,142,110,0.06); color:var(--teal); }
+.pill-r { background:rgba(192,48,48,0.06); color:var(--danger); }
+.pill-a { background:rgba(154,106,8,0.06); color:var(--warning); }
+.pill-b { background:rgba(64,86,227,0.06); color:var(--royal); }
 
 /* ============================================================
    FILTER BAR — Glassmorphic toolbar
@@ -1318,67 +1393,84 @@ html body .btn:focus-visible {
 .filter-bar {
   display:flex; align-items:center; gap:10px; margin-bottom:18px;
   padding:12px 18px;
-  background:rgba(255,255,255,0.4);
+  background:rgba(255,255,255,0.40);
   backdrop-filter:blur(24px) saturate(130%);
   -webkit-backdrop-filter:blur(24px) saturate(130%);
-  border:1px solid rgba(17,17,68,0.05);
-  border-radius:var(--radius);
-  box-shadow:var(--shadow-card);
+  border:none;
+  border-radius:14px;
+  box-shadow:5px 5px 14px rgba(163,177,198,0.28),
+             -5px -5px 14px rgba(255,255,255,0.8);
   flex-wrap:wrap;
 }
 .fb-search {
   display:flex; align-items:center; gap:8px; flex:1; max-width:320px;
-  padding:8px 14px; border-radius:var(--radius-sm);
-  background:rgba(255,255,255,0.6); border:1px solid rgba(17,17,68,0.05);
-  transition:all .15s ease; box-shadow:var(--shadow-input);
+  padding:0 1rem; border-radius:14px;
+  background:transparent; border:none;
+  box-shadow:inset 4px 4px 8px rgba(163,177,198,0.35),
+             inset -4px -4px 8px rgba(255,255,255,0.9);
+  transition:box-shadow .25s ease;
 }
 .fb-search:focus-within {
-  border-color:var(--teal); background:rgba(255,255,255,0.8);
-  box-shadow:0 0 0 3px rgba(10,142,110,0.06), 0 0 14px rgba(10,142,110,0.04);
+  background:transparent;
+  box-shadow:inset 4px 4px 8px rgba(163,177,198,0.35),
+             inset -4px -4px 8px rgba(255,255,255,0.9),
+             0 0 0 2px rgba(10,142,110,0.25);
 }
 .fb-search .i { color:var(--t5); }
 .fb-search input {
-  flex:1; background:none; border:none; outline:none;
-  color:var(--t1); font-size:13px; font-family:inherit;
+  flex:1; background:transparent; border:none; outline:none;
+  box-shadow:none; color:var(--t1); font-size:0.95rem; font-family:inherit;
+  padding:0.55rem 0;
 }
-/* Container already shows :focus-within ring — suppress the inner
-   input's *:focus-visible outline so it doesn't overflow the bar. */
 .fb-search input:focus,
 .fb-search input:focus-visible {
   outline:    none !important;
   box-shadow: none !important;
+  background: transparent !important;
+}
+.fb-search input:-webkit-autofill,
+.fb-search input:-webkit-autofill:hover,
+.fb-search input:-webkit-autofill:focus,
+.fb-search input:-webkit-autofill:active {
+  -webkit-text-fill-color: var(--t1) !important;
+  caret-color: var(--t1);
+  transition: background-color 9999s ease-in-out 0s,
+              color 9999s ease-in-out 0s !important;
 }
 .fb-search input::placeholder { color:var(--t5); }
 .fb-spacer { flex:1; }
 .fb-dd {
   display:flex; align-items:center; gap:6px;
-  padding:7px 14px; border-radius:999px;
-  background:rgba(255,255,255,0.55); border:1px solid rgba(17,17,68,0.05);
+  padding:7px 14px; border-radius:10px;
+  background:transparent; border:none;
   font-size:12px; font-weight:600; color:var(--t2);
-  cursor:pointer; transition:all .15s ease;
-  box-shadow:var(--shadow-input); backdrop-filter:blur(8px);
+  cursor:pointer; transition:all .18s ease;
+  box-shadow:3px 3px 8px rgba(163,177,198,0.3),
+             -3px -3px 8px rgba(255,255,255,0.8);
+  backdrop-filter:blur(8px);
 }
-.fb-dd:hover { background:rgba(255,255,255,0.75); border-color:var(--line-strong); }
-.fb-dd.active { background:rgba(10,142,110,0.08); border-color:var(--teal-border); color:var(--teal); }
+.fb-dd:hover { box-shadow:4px 4px 10px rgba(163,177,198,0.35), -4px -4px 10px rgba(255,255,255,0.9); color:var(--t1); }
+.fb-dd.active { background:rgba(10,142,110,0.06); color:var(--teal); box-shadow:inset 3px 3px 6px rgba(163,177,198,0.35), inset -3px -3px 6px rgba(255,255,255,0.8); }
 .fb-dd .i { opacity:0.4; }
 
 /* ============================================================
    CPANEL — Bottom Panel Cards (Recommendations, Activity)
    ============================================================ */
 .cpanel {
-  background:rgba(255,255,255,0.5);
+  background:rgba(255,255,255,0.40);
   backdrop-filter:blur(20px) saturate(130%);
   -webkit-backdrop-filter:blur(20px) saturate(130%);
-  border:1px solid rgba(17,17,68,0.05);
-  border-radius:var(--radius);
+  border:none;
+  border-radius:14px;
   overflow:hidden;
-  box-shadow:var(--shadow-card);
+  box-shadow:6px 6px 16px rgba(163,177,198,0.28),
+             -6px -6px 16px rgba(255,255,255,0.8);
   transition:all .25s var(--ease);
 }
 .cpanel:hover {
-  border-color:rgba(17,17,68,0.08);
-  box-shadow:var(--shadow-lift);
-  background:rgba(255,255,255,0.65);
+  box-shadow:8px 8px 20px rgba(163,177,198,0.35),
+             -8px -8px 20px rgba(255,255,255,0.9);
+  background:rgba(255,255,255,0.55);
 }
 .cpanel::before {
   content:''; display:block; height:2px;
@@ -1532,9 +1624,10 @@ tr.attention-row td { background: #fff7ed !important; }
    ZONE CARDS
    ============================================================ */
 .zone-card {
-  border: 1px solid rgba(17,17,68,0.05); border-radius: var(--radius);
-  background: rgba(255,255,255,0.55); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-  padding: 1rem; margin-top: 0.75rem; box-shadow: var(--shadow-card);
+  border: none; border-radius: 14px;
+  background: rgba(255,255,255,0.40); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  padding: 1rem; margin-top: 0.75rem;
+  box-shadow: 5px 5px 14px rgba(163,177,198,0.28), -5px -5px 14px rgba(255,255,255,0.8);
 }
 
 .zone-card .zone-title {
@@ -1555,10 +1648,10 @@ tr.attention-row td { background: #fff7ed !important; }
    TERM CARDS
    ============================================================ */
 .term-card {
-  border: 1px solid rgba(17,17,68,0.05); border-radius: var(--radius);
-  background: rgba(255,255,255,0.55); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  border: none; border-radius: 14px;
+  background: rgba(255,255,255,0.40); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
   padding: 0.875rem; margin-bottom: 0.75rem;
-  box-shadow: var(--shadow-card);
+  box-shadow: 5px 5px 14px rgba(163,177,198,0.28), -5px -5px 14px rgba(255,255,255,0.8);
 }
 
 .term-card h6 { margin-bottom: 0.4rem; font-weight: 600; }
@@ -1575,9 +1668,9 @@ tr.attention-row td { background: #fff7ed !important; }
 .term-summary:hover { background: rgba(10,142,110,0.03); }
 
 .term-details {
-  background: rgba(255,255,255,0.5); backdrop-filter: blur(20px) saturate(130%);
-  border: 1px solid rgba(17,17,68,0.05); border-radius: var(--radius);
-  overflow: hidden; box-shadow: var(--shadow-card); margin-bottom: 10px;
+  background: rgba(255,255,255,0.40); backdrop-filter: blur(20px) saturate(130%);
+  border: none; border-radius: 14px;
+  overflow: hidden; box-shadow: 5px 5px 14px rgba(163,177,198,0.28), -5px -5px 14px rgba(255,255,255,0.8); margin-bottom: 10px;
 }
 .term-details::before { content: ''; display: block; height: 2px; background: linear-gradient(90deg, transparent 5%, var(--teal) 25%, var(--sky) 50%, var(--royal) 75%, transparent 95%); opacity: 0.12; }
 
@@ -2042,9 +2135,11 @@ pre, .pre-output {
 }
 
 .dlg-box {
-  background:    #fff;
-  border-radius: var(--radius-lg);
-  box-shadow:    0 24px 64px rgba(10,18,40,.22), 0 4px 16px rgba(10,18,40,.12);
+  background:    #eef1f7;
+  border-radius: 20px;
+  border:        none;
+  box-shadow:    10px 10px 30px rgba(163,177,198,0.45),
+                 -10px -10px 30px rgba(255,255,255,0.85);
   width:         100%;
   max-width:     440px;
   overflow:      hidden;
@@ -2081,17 +2176,19 @@ pre, .pre-output {
   flex-shrink: 0;
   width:       40px;
   height:      40px;
-  border-radius: 10px;
+  border-radius: 12px;
   display:     flex;
   align-items: center;
   justify-content: center;
+  box-shadow:  inset 2px 2px 5px rgba(163,177,198,0.3),
+               inset -2px -2px 5px rgba(255,255,255,0.8);
 }
 .dlg-icon .i { width: 20px; height: 20px; }
 
-.dlg-icon-danger  { background: #fff1f2; color: #dc2626; }
-.dlg-icon-warning { background: #fff7ed; color: #d97706; }
-.dlg-icon-info    { background: #ecf9f4; color: var(--teal); }
-.dlg-icon-success { background: #f0fdf4; color: #16a34a; }
+.dlg-icon-danger  { background: rgba(220,38,38,0.06); color: #dc2626; }
+.dlg-icon-warning { background: rgba(217,119,6,0.06); color: #d97706; }
+.dlg-icon-info    { background: rgba(10,142,110,0.06); color: var(--teal); }
+.dlg-icon-success { background: rgba(22,163,74,0.06); color: #16a34a; }
 
 .dlg-title {
   font-weight:    700;
@@ -2140,20 +2237,23 @@ pre, .pre-output {
   box-sizing:    border-box;
   width:         100%;
   padding:       0.5rem 0.75rem;
-  border:        1.5px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  border:        none;
+  border-radius: 14px;
   font-family:   var(--font-mono);
   font-size:     0.875rem;
   font-weight:   600;
   color:         var(--ink);
-  background:    #fff;
-  transition:    border-color 0.15s, box-shadow 0.15s;
+  background:    transparent;
+  box-shadow:    inset 4px 4px 8px rgba(163,177,198,0.35),
+                 inset -4px -4px 8px rgba(255,255,255,0.9);
+  transition:    box-shadow 0.2s ease;
   outline:       none;
 }
 
 .dlg-input-row input:focus {
-  border-color: var(--brand);
-  box-shadow:   0 0 0 3px var(--brand-glow);
+  box-shadow:   inset 4px 4px 8px rgba(163,177,198,0.35),
+                inset -4px -4px 8px rgba(255,255,255,0.9),
+                0 0 0 2px rgba(10,142,110,0.25);
 }
 
 .dlg-input-row input.dlg-input-danger:focus {
@@ -2172,27 +2272,29 @@ pre, .pre-output {
   display:       flex;
   justify-content: flex-end;
   gap:           0.5rem;
-  border-top:    1px solid var(--line);
-  background:    #fafbfd;
+  border-top:    none;
+  background:    transparent;
 }
 
 .dlg-footer .btn-cancel {
-  background:    #fff;
-  border:        1.5px solid rgba(17,17,68,0.12);
+  background:    transparent;
+  border:        none;
   color:         var(--t2);
   font-family:   var(--font-body);
   font-weight:   600;
   font-size:     0.875rem;
   padding:       0.5rem 1.25rem;
-  border-radius: 999px;
+  border-radius: 14px;
   cursor:        pointer;
-  transition:    all 0.15s;
+  transition:    all 0.18s;
+  box-shadow:    3px 3px 8px rgba(163,177,198,0.3),
+                 -3px -3px 8px rgba(255,255,255,0.8);
 }
 
 .dlg-footer .btn-cancel:hover {
-  background:   #fff;
-  border-color: var(--ink-2);
   color:        var(--ink);
+  box-shadow:    4px 4px 10px rgba(163,177,198,0.35),
+                 -4px -4px 10px rgba(255,255,255,0.9);
 }
 
 .dlg-footer .btn-confirm {
@@ -2200,47 +2302,51 @@ pre, .pre-output {
   font-weight:   700;
   font-size:     0.875rem;
   padding:       0.5rem 1.5rem;
-  border-radius: 999px;
+  border-radius: 14px;
   border:        none;
   cursor:        pointer;
-  transition:    all 0.15s;
+  transition:    all 0.18s;
   min-width:     90px;
 }
 
 .dlg-footer .btn-confirm.danger {
   background: var(--danger);
   color:      #fff;
-  box-shadow: 0 2px 8px rgba(192,48,48,.25);
+  box-shadow: 3px 3px 8px rgba(192,48,48,0.3),
+              -2px -2px 6px rgba(255,255,255,0.2);
 }
 
 .dlg-footer .btn-confirm.danger:hover {
   background: #d43a3a;
-  transform:  translateY(-1px);
-  box-shadow: 0 4px 14px rgba(192,48,48,.35);
+  box-shadow: 4px 4px 12px rgba(192,48,48,0.4),
+              -2px -2px 8px rgba(255,255,255,0.25);
 }
 
 .dlg-footer .btn-confirm.primary {
   background: var(--teal);
   color:      #fff;
-  box-shadow: 0 2px 8px rgba(10,142,110,.25);
+  box-shadow: 3px 3px 8px rgba(10,142,110,0.35),
+              -2px -2px 6px rgba(255,255,255,0.25);
 }
 
 .dlg-footer .btn-confirm.primary:hover {
   background: var(--teal-bright);
-  transform:  translateY(-1px);
-  box-shadow: 0 4px 14px rgba(10,142,110,.35);
+  box-shadow: 4px 4px 12px rgba(10,142,110,0.4),
+              -2px -2px 8px rgba(255,255,255,0.3);
 }
 
 .dlg-footer .btn-confirm.warning {
   background: #d97706;
   color:      #fff;
-  box-shadow: 0 2px 8px rgba(217,119,6,.25);
+  box-shadow: 3px 3px 8px rgba(217,119,6,0.3),
+              -2px -2px 6px rgba(255,255,255,0.2);
 }
 
 .dlg-footer .btn-confirm:disabled {
   opacity:   0.45;
   cursor:    not-allowed;
-  transform: none;
+  box-shadow: 2px 2px 6px rgba(163,177,198,0.2),
+              -2px -2px 6px rgba(255,255,255,0.5);
 }
 
 /* ============================================================
@@ -2262,10 +2368,11 @@ pre, .pre-output {
   align-items:   flex-start;
   gap:           0.75rem;
   padding:       0.875rem 1rem;
-  background:    #fff;
-  border-radius: var(--radius);
-  border:        1px solid var(--line);
-  box-shadow:    0 8px 24px rgba(10,18,40,.12), 0 2px 8px rgba(10,18,40,.08);
+  background:    #eef1f7;
+  border-radius: 14px;
+  border:        none;
+  box-shadow:    8px 8px 20px rgba(163,177,198,0.4),
+                 -8px -8px 20px rgba(255,255,255,0.85);
   min-width:     260px;
   max-width:     340px;
   pointer-events: all;
@@ -2297,11 +2404,13 @@ pre, .pre-output {
   flex-shrink: 0;
   width:       28px;
   height:      28px;
-  border-radius: 7px;
+  border-radius: 8px;
   display:     flex;
   align-items: center;
   justify-content: center;
   font-size:   0.85rem;
+  box-shadow:  inset 2px 2px 4px rgba(163,177,198,0.25),
+               inset -2px -2px 4px rgba(255,255,255,0.7);
 }
 
 .ux-toast.success .ux-toast-icon { background: #f0fdf4; color: var(--success); }
@@ -2503,9 +2612,11 @@ kbd {
 /* Inputs already use box-shadow ring — keep consistent */
 .form-control:focus-visible,
 .form-select:focus-visible {
-  outline:    none !important;
-  box-shadow: 0 0 0 3px var(--brand-glow), var(--shadow-input) !important;
-  border-color: var(--brand) !important;
+  outline:      none !important;
+  border:       none !important;
+  box-shadow:   inset 4px 4px 8px rgba(163,177,198,0.35),
+                inset -4px -4px 8px rgba(255,255,255,0.9),
+                0 0 0 2px rgba(10,142,110,0.25) !important;
 }
 
 /* Sidebar links keyboard nav */
