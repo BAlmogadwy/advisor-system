@@ -9,11 +9,20 @@ from django.conf import settings
 from django.db import connection, transaction
 from django.db.models import Q
 
-from core.models import Course, Prerequisite, ProgrammeRequirement, Student, StudentCourse, TermSection, TermSectionMeeting, StudentTermSection
+from core.models import (
+    Course,
+    Prerequisite,
+    ProgrammeRequirement,
+    Student,
+    StudentCourse,
+    StudentTermSection,
+    TermSection,
+    TermSectionMeeting,
+)
 
 BASE_DIR = Path(__file__).resolve().parents[2]
-DEFAULT_REQ_CSV = BASE_DIR / "import_old" / "data" / "department_courses.csv"
-DEFAULT_PRE_CSV = BASE_DIR / "import_old" / "data" / "department_prerequisites.csv"
+DEFAULT_REQ_CSV = BASE_DIR / "data" / "department_courses.csv"
+DEFAULT_PRE_CSV = BASE_DIR / "data" / "department_prerequisites.csv"
 BACKUP_DIR = BASE_DIR / "runtime" / "db_backups"
 
 
@@ -44,6 +53,7 @@ def run_integrity_checks() -> dict[str, Any]:
 
     # Duplicate prerequisite triplets
     from django.db.models import Count
+
     duplicate_prereq_triplets = (
         Prerequisite.objects.values("program", "course_code", "prerequisite_course_code")
         .annotate(c=Count("id"))
@@ -55,11 +65,16 @@ def run_integrity_checks() -> dict[str, Any]:
         Q(credit_hours__isnull=True) | Q(credit_hours__lte=0)
     ).count()
 
-    invalid_term_rows = ProgrammeRequirement.objects.exclude(
-        programme_term__range=(1, 10),
-    ).filter(
-        Q(programme_term__isnull=False),
-    ).count() + ProgrammeRequirement.objects.filter(programme_term__isnull=True).count()
+    invalid_term_rows = (
+        ProgrammeRequirement.objects.exclude(
+            programme_term__range=(1, 10),
+        )
+        .filter(
+            Q(programme_term__isnull=False),
+        )
+        .count()
+        + ProgrammeRequirement.objects.filter(programme_term__isnull=True).count()
+    )
 
     return {
         "ok": True,
@@ -77,7 +92,9 @@ def run_integrity_checks() -> dict[str, Any]:
     }
 
 
-def preview_delete_students(program: str | None = None, section: str | None = None) -> dict[str, Any]:
+def preview_delete_students(
+    program: str | None = None, section: str | None = None
+) -> dict[str, Any]:
     qs = Student.objects.all()
     if program:
         qs = qs.filter(program=program)
@@ -141,7 +158,9 @@ def delete_program_catalog(program: str) -> dict[str, Any]:
     return {"ok": True, "backup": backup, **preview}
 
 
-def import_program_plan(program: str, csv_text: str, replace_existing: bool = False) -> dict[str, Any]:
+def import_program_plan(
+    program: str, csv_text: str, replace_existing: bool = False
+) -> dict[str, Any]:
     reader = csv.DictReader(io.StringIO(csv_text))
     required = {"course_code", "programme_term", "credit_hours"}
     if not required.issubset(set(reader.fieldnames or [])):
@@ -155,7 +174,15 @@ def import_program_plan(program: str, csv_text: str, replace_existing: bool = Fa
         pterm = int(str(row.get("programme_term", "0")).strip())
         credits = int(str(row.get("credit_hours", "0")).strip())
         ctype = str(row.get("type", "CORE")).strip() or "CORE"
-        rows.append({"program": program, "course_code": code, "type": ctype, "programme_term": pterm, "credit_hours": credits})
+        rows.append(
+            {
+                "program": program,
+                "course_code": code,
+                "type": ctype,
+                "programme_term": pterm,
+                "credit_hours": credits,
+            }
+        )
 
     if not rows:
         raise ValueError("CSV contains no valid rows")
@@ -239,7 +266,9 @@ def legacy_load_department_files_exact(
                 Prerequisite.objects.create(
                     program=str(row["program"]).strip(),
                     course_code=str(row["course_code"]).replace(" ", "").upper(),
-                    prerequisite_course_code=str(row["prerequisite_course_code"]).replace(" ", "").upper(),
+                    prerequisite_course_code=str(row["prerequisite_course_code"])
+                    .replace(" ", "")
+                    .upper(),
                 )
                 pre_count += 1
 
@@ -269,23 +298,25 @@ def preview_oracle_plan(
 
     # Flatten courses into a list the frontend can render as editable rows.
     preview_rows: list[dict[str, Any]] = []
-    for level_key, level_data in parsed["levels"].items():
+    for _level_key, level_data in parsed["levels"].items():
         for course in level_data["courses"]:
             delivery = course.get("delivery", "")
-            preview_rows.append({
-                "code": course["code"],
-                "code_ar": course.get("code_ar", ""),
-                "en_name": course["en_name"],
-                "ar_name": course.get("ar_name", ""),
-                "credits": course["credits"],
-                "level_number": course["level_number"],
-                "level_en": course["level_en"],
-                "level_ar": course.get("level_ar", ""),
-                "type": map_course_type(course.get("course_type", "")),
-                "prereqs_str": ", ".join(course.get("prereqs", [])),
-                "delivery": delivery,
-                "is_online": 1 if "إلكتروني" in delivery else 0,
-            })
+            preview_rows.append(
+                {
+                    "code": course["code"],
+                    "code_ar": course.get("code_ar", ""),
+                    "en_name": course["en_name"],
+                    "ar_name": course.get("ar_name", ""),
+                    "credits": course["credits"],
+                    "level_number": course["level_number"],
+                    "level_en": course["level_en"],
+                    "level_ar": course.get("level_ar", ""),
+                    "type": map_course_type(course.get("course_type", "")),
+                    "prereqs_str": ", ".join(course.get("prereqs", [])),
+                    "delivery": delivery,
+                    "is_online": 1 if "إلكتروني" in delivery else 0,
+                }
+            )
 
     # Existing DB row counts for this program (helps the user decide).
     existing_requirements = ProgrammeRequirement.objects.filter(program=program).count()
@@ -400,9 +431,13 @@ def list_external_courses() -> dict[str, Any]:
 
     courses = (
         Course.objects.filter(is_external=True)
-        .annotate(student_count=Count("student_courses", filter=Q(student_courses__status="studying")))
+        .annotate(
+            student_count=Count("student_courses", filter=Q(student_courses__status="studying"))
+        )
         .order_by("course_code")
-        .values("course_id", "course_code", "department", "description", "credit_hours", "student_count")
+        .values(
+            "course_id", "course_code", "department", "description", "credit_hours", "student_count"
+        )
     )
     items = list(courses)
     return {
@@ -433,11 +468,20 @@ def delete_external_courses(course_ids: list[int] | None = None) -> dict[str, An
 
         # Delete term_section_meetings and student_term_sections for external term_sections
         ext_ts_ids = list(
-            TermSection.objects.filter(course_key__in=course_codes, source_tag="external")
-            .values_list("id", flat=True)
+            TermSection.objects.filter(
+                course_key__in=course_codes, source_tag="external"
+            ).values_list("id", flat=True)
         )
-        sts_deleted = StudentTermSection.objects.filter(term_section_id__in=ext_ts_ids).delete()[0] if ext_ts_ids else 0
-        tsm_deleted = TermSectionMeeting.objects.filter(term_section_id__in=ext_ts_ids).delete()[0] if ext_ts_ids else 0
+        sts_deleted = (
+            StudentTermSection.objects.filter(term_section_id__in=ext_ts_ids).delete()[0]
+            if ext_ts_ids
+            else 0
+        )
+        tsm_deleted = (
+            TermSectionMeeting.objects.filter(term_section_id__in=ext_ts_ids).delete()[0]
+            if ext_ts_ids
+            else 0
+        )
         ts_deleted = TermSection.objects.filter(id__in=ext_ts_ids).delete()[0] if ext_ts_ids else 0
 
         # Delete the external courses themselves

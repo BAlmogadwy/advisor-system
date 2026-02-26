@@ -385,6 +385,15 @@
 
         <div class="dba-nav-label">{% if LANGUAGE_CODE == 'ar' %}النظام{% else %}System{% endif %}</div>
 
+        <button class="dba-nav-item" data-panel="defaults" type="button">
+          <span class="dba-nav-icon icon-system"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span></span>
+          <span class="dba-nav-text">
+            <span class="dba-nav-name">{% if LANGUAGE_CODE == 'ar' %}إعدادات النظام{% else %}System Defaults{% endif %}</span>
+            <span class="dba-nav-desc">{% if LANGUAGE_CODE == 'ar' %}السنة والفصل الدراسي{% else %}Academic year & term{% endif %}</span>
+          </span>
+          <span class="dba-risk-badge risk-safe">{% if LANGUAGE_CODE == 'ar' %}آمن{% else %}Safe{% endif %}</span>
+        </button>
+
         <button class="dba-nav-item" data-panel="maintenance" type="button">
           <span class="dba-nav-icon icon-system"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span></span>
           <span class="dba-nav-text">
@@ -661,11 +670,11 @@
             <div class="row g-2 align-items-end">
               <div class="col-md-5">
                 <label class="form-label" for="lReqPath">{% if LANGUAGE_CODE == 'ar' %}مسار CSV المتطلبات{% else %}Requirements CSV path{% endif %}</label>
-                <input id="lReqPath" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}الافتراضي: import_old/data/department_courses.csv{% else %}default: import_old/data/department_courses.csv{% endif %}">
+                <input id="lReqPath" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}الافتراضي: data/department_courses.csv{% else %}default: data/department_courses.csv{% endif %}">
               </div>
               <div class="col-md-5">
                 <label class="form-label" for="lPrePath">{% if LANGUAGE_CODE == 'ar' %}مسار CSV المكوّنات السابقة{% else %}Prerequisites CSV path{% endif %}</label>
-                <input id="lPrePath" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}الافتراضي: import_old/data/department_prerequisites.csv{% else %}default: import_old/data/department_prerequisites.csv{% endif %}">
+                <input id="lPrePath" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}الافتراضي: data/department_prerequisites.csv{% else %}default: data/department_prerequisites.csv{% endif %}">
               </div>
               <div class="col-md-2 d-grid">
                 <button id="lImport" class="btn btn-warning">{% if LANGUAGE_CODE == 'ar' %}تشغيل الاستيراد القديم{% else %}Run legacy import{% endif %}</button>
@@ -674,6 +683,54 @@
           </div>
 
           <pre id="lOut" class="dba-output" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد.{% else %}No action yet.{% endif %}</pre>
+        </div>
+
+        <!-- ══ PANEL: System Defaults ═════════════════════════ -->
+        <div class="dba-panel" id="panel-defaults">
+          <div class="dba-panel-header">
+            <div class="dba-panel-icon icon-system"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span></div>
+            <div>
+              <div class="dba-panel-title">{% if LANGUAGE_CODE == 'ar' %}إعدادات النظام{% else %}System Defaults{% endif %}</div>
+              <div class="dba-panel-subtitle">{% if LANGUAGE_CODE == 'ar' %}تعيين السنة الأكاديمية والفصل الدراسي الحالي. تُستخدم هذه القيم كافتراضيات في جميع أنحاء النظام.{% else %}Set the current academic year and semester. These values are used as defaults across the system.{% endif %}</div>
+            </div>
+          </div>
+
+          <div class="dba-section">
+            <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}الإعدادات الحالية{% else %}Current settings{% endif %}</div>
+            <div class="row g-3 align-items-end">
+              <div class="col-md-4">
+                <label class="form-label" for="dYear">{% if LANGUAGE_CODE == 'ar' %}السنة الأكاديمية{% else %}Academic Year{% endif %}</label>
+                <input id="dYear" class="form-control" type="number" min="1400" max="1600" placeholder="1447">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label" for="dTerm">{% if LANGUAGE_CODE == 'ar' %}الفصل الدراسي{% else %}Semester{% endif %}</label>
+                <select id="dTerm" class="form-select">
+                  <option value="1">{% if LANGUAGE_CODE == 'ar' %}١ — الفصل الأول{% else %}1 — First Semester{% endif %}</option>
+                  <option value="2">{% if LANGUAGE_CODE == 'ar' %}٢ — الفصل الثاني{% else %}2 — Second Semester{% endif %}</option>
+                  <option value="3">{% if LANGUAGE_CODE == 'ar' %}٣ — الفصل الصيفي{% else %}3 — Summer{% endif %}</option>
+                </select>
+              </div>
+            </div>
+            <div class="row g-3 align-items-end mt-1">
+              <div class="col-md-4">
+                <label class="form-label" for="dCurYear">{% if LANGUAGE_CODE == 'ar' %}السنة الحالية{% else %}Current Year{% endif %}</label>
+                <input id="dCurYear" class="form-control" type="number" min="1400" max="1600" placeholder="1447">
+              </div>
+              <div class="col-md-4">
+                <label class="form-label" for="dCurTerm">{% if LANGUAGE_CODE == 'ar' %}الفصل الحالي{% else %}Current Term{% endif %}</label>
+                <select id="dCurTerm" class="form-select">
+                  <option value="1">{% if LANGUAGE_CODE == 'ar' %}١ — الفصل الأول{% else %}1 — First Semester{% endif %}</option>
+                  <option value="2">{% if LANGUAGE_CODE == 'ar' %}٢ — الفصل الثاني{% else %}2 — Second Semester{% endif %}</option>
+                  <option value="3">{% if LANGUAGE_CODE == 'ar' %}٣ — الفصل الصيفي{% else %}3 — Summer{% endif %}</option>
+                </select>
+              </div>
+              <div class="col-md-4 d-grid">
+                <button id="dSave" class="btn btn-success">{% if LANGUAGE_CODE == 'ar' %}حفظ الإعدادات{% else %}Save Defaults{% endif %}</button>
+              </div>
+            </div>
+          </div>
+
+          <pre id="dOut" class="dba-output" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}جارٍ تحميل الإعدادات الحالية...{% else %}Loading current defaults...{% endif %}</pre>
         </div>
 
         <!-- ══ PANEL: Backup & Integrity ═════════════════════ -->
@@ -1103,6 +1160,52 @@ q('lImport').onclick = async () => {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({ requirements_csv_path: q('lReqPath').value, prerequisites_csv_path: q('lPrePath').value })
   }, 'lOut', q('lImport'));
+};
+
+/* ── Section: System Defaults ── */
+let defaultsLoaded = false;
+
+async function loadDefaults() {
+  const data = await callJson('/ops/settings/defaults/', {}, 'dOut');
+  if (!data.error) {
+    q('dYear').value = data.academic_year || '';
+    q('dTerm').value = String(data.term || 1);
+    q('dCurYear').value = data.currentYear || '';
+    q('dCurTerm').value = String(data.currentTerm || 1);
+    defaultsLoaded = true;
+    writeOut('dOut', {
+      message: IS_AR
+        ? `الإعدادات الحالية: السنة = ${data.academic_year}, الفصل = ${data.term}, السنة الحالية = ${data.currentYear}, الفصل الحالي = ${data.currentTerm}`
+        : `Current defaults: Year = ${data.academic_year}, Term = ${data.term}, Current Year = ${data.currentYear}, Current Term = ${data.currentTerm}`
+    });
+  }
+}
+
+/* Auto-load defaults when the panel becomes active */
+navItems.forEach(item => {
+  item.addEventListener('click', () => {
+    if (item.dataset.panel === 'defaults' && !defaultsLoaded) loadDefaults();
+  });
+});
+
+q('dSave').onclick = async () => {
+  const yr = parseInt(q('dYear').value, 10);
+  const tm = parseInt(q('dTerm').value, 10);
+  const cYr = parseInt(q('dCurYear').value, 10);
+  const cTm = parseInt(q('dCurTerm').value, 10);
+  if (!yr || yr < 1400 || yr > 1600) {
+    writeOut('dOut', { error: IS_AR ? 'السنة الأكاديمية يجب أن تكون بين 1400 و 1600.' : 'Academic year must be between 1400 and 1600.' });
+    return;
+  }
+  if (!cYr || cYr < 1400 || cYr > 1600) {
+    writeOut('dOut', { error: IS_AR ? 'السنة الحالية يجب أن تكون بين 1400 و 1600.' : 'Current year must be between 1400 and 1600.' });
+    return;
+  }
+  await callJson('/ops/settings/defaults/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ academic_year: yr, term: tm, currentYear: cYr, currentTerm: cTm })
+  }, 'dOut', q('dSave'));
 };
 
 /* ── Section: Maintenance ── */
