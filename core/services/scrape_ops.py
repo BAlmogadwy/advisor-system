@@ -11,8 +11,7 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 RUNTIME_DIR = BASE_DIR / "runtime"
 STATE_PATH = RUNTIME_DIR / "scrape_state.json"
 LOG_PATH = RUNTIME_DIR / "batch_scrape.log"
-IMPORT_OLD_DIR = BASE_DIR / "import_old"
-DEFAULT_STUDENTS_CSV = IMPORT_OLD_DIR / "data" / "students_list.csv"
+DEFAULT_STUDENTS_CSV = BASE_DIR / "data" / "students_list.csv"
 
 # bandit rationale:
 # - subprocess import/use is intentional for controlled local worker lifecycle management.
@@ -98,26 +97,21 @@ def start_batch_scrape(concurrency: int = 2, students_csv: str | None = None) ->
     csv_path = students_csv or str(DEFAULT_STUDENTS_CSV)
     _ensure_runtime_dir()
 
-    code = (
-        "import asyncio, sys; "
-        f"sys.path.insert(0, r'{IMPORT_OLD_DIR}'); "
-        "from phase_1_scraper.batch_scraper import batch_scrape_students; "
-        f"asyncio.run(batch_scrape_students(student_list_file=r'{csv_path}', concurrency={concurrency}, save_html=False, debug_snapshot=True, close_on_finish=True))"
-    )
-
-    # Ensure subprocess uses the Django db.sqlite3, not the legacy advisor.db
-    env = os.environ.copy()
-    env["ADVISOR_DB_PATH"] = str(BASE_DIR / "db.sqlite3")
+    cmd = [
+        sys.executable, str(BASE_DIR / "manage.py"), "scrape_students",
+        "--csv", csv_path,
+        "--concurrency", str(concurrency),
+        "--debug-dir", str(BASE_DIR / "data" / "debug_failures"),
+    ]
 
     with LOG_PATH.open("w", encoding="utf-8") as logf:
         # bandit: argv is fixed and derived from trusted local config; shell is not used.
         proc = subprocess.Popen(  # nosec
-            [sys.executable, "-c", code],
+            cmd,
             cwd=str(BASE_DIR),
             stdout=logf,
             stderr=subprocess.STDOUT,
             creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
-            env=env,
         )
 
     started_at = _now_local_str()

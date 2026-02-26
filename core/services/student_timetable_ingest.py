@@ -129,28 +129,29 @@ def _ensure_external_course(
     )
 
 
-def _ensure_external_term_section(
+def _ensure_term_section(
     course_key: str,
     course_code: str,
     course_number: str,
     course_name: str,
     section: str,
     meetings: list[dict[str, str]],
+    source_tag: str = "scraper_timetable",
 ) -> int:
-    """Get or create a TermSection (+ meetings) for an external course."""
+    """Get or create a TermSection (+ meetings) from timetable data."""
     ts = TermSection.objects.filter(course_key=course_key, section=section).first()
     if ts is not None:
         return ts.id
 
     now_str = datetime.now(timezone.utc).isoformat()
     ts = TermSection.objects.create(
-        source_tag="external",
+        source_tag=source_tag,
         course_name=course_name,
         course_code=course_code,
         course_number=course_number,
         course_key=course_key,
         section=section,
-        source_file="timetable_ingest_external",
+        source_file=f"timetable_ingest_{source_tag}",
         created_at=now_str,
         updated_at=now_str,
     )
@@ -255,29 +256,25 @@ def ingest_student_timetable_html(
             continue
         seen_section_key.add(key)
 
+        # Determine if this is an external course (not in the study plan)
+        is_external = False
+        if study_plan_codes is not None:
+            is_external = course_key not in study_plan_codes
+        else:
+            from core.models import ProgrammeRequirement
+            is_external = not ProgrammeRequirement.objects.filter(
+                course_code=course_key,
+            ).exists()
+
         ts_id = TermSection.objects.filter(
             course_key=course_key,
             section=r["section"],
         ).values_list("id", flat=True).first()
         if ts_id is not None:
             section_ids.append(int(ts_id))
-        else:
-            # Check if this is an external course (not in the study plan)
-            is_external = False
-            if study_plan_codes is not None:
-                is_external = course_key not in study_plan_codes
-            else:
-                # If no study_plan_codes provided, check programme_requirements
-                from core.models import ProgrammeRequirement
-                is_external = not ProgrammeRequirement.objects.filter(
-                    course_code=course_key,
-                ).exists()
-
+            # Ensure external Course + StudentCourse exist even when TermSection was pre-imported
             if is_external:
-                # Auto-create Course, TermSection, and StudentCourse
                 meta = course_meta[course_key]
-                meetings = section_meetings.get(key, [])
-
                 course_obj = _ensure_external_course(
                     course_key=course_key,
                     course_code=meta["course_code"],
@@ -285,26 +282,35 @@ def ingest_student_timetable_html(
                     course_name=meta["course_name"],
                     credits_str=meta["credits"],
                 )
-                ts_id_new = _ensure_external_term_section(
+                _ensure_student_course_studying(student_id, course_obj)
+                if course_key not in external_created:
+                    external_created.append(course_key)
+        else:
+            # TermSection not in DB — auto-create from timetable data
+            meta = course_meta[course_key]
+            meetings = section_meetings.get(key, [])
+
+            if is_external:
+                course_obj = _ensure_external_course(
                     course_key=course_key,
                     course_code=meta["course_code"],
                     course_number=meta["course_number"],
                     course_name=meta["course_name"],
-                    section=meta["section"],
-                    meetings=meetings,
+                    credits_str=meta["credits"],
                 )
-                section_ids.append(ts_id_new)
                 _ensure_student_course_studying(student_id, course_obj)
                 external_created.append(course_key)
-            else:
-                missing.append({
-                    "student_id": str(student_id),
-                    "academic_year": year,
-                    "term": term,
-                    "course_code": r["course_code"],
-                    "course_number": r["course_number"],
-                    "section": r["section"],
-                })
+
+            ts_id_new = _ensure_term_section(
+                course_key=course_key,
+                course_code=meta["course_code"],
+                course_number=meta["course_number"],
+                course_name=meta["course_name"],
+                section=meta["section"],
+                meetings=meetings,
+                source_tag="external" if is_external else "scraper_timetable",
+            )
+            section_ids.append(ts_id_new)
 
     replace_student_term_sections(student_id, year, term, section_ids, source="scraper_timetable")
 

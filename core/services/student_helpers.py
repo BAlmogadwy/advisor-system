@@ -5,7 +5,7 @@ def normalize_code(code: object | None) -> str:
     if code is None:
         return ""
     s = str(code)
-    s = s.replace("\u00A0", " ")
+    s = s.replace("\u00a0", " ")
     s = s.strip().upper()
     s = s.replace(" ", "")
     return s
@@ -18,7 +18,7 @@ def get_student_program(student_id: int | str) -> str | None:
 
 def get_all_programs() -> list[str]:
     return list(
-        Student.objects.exclude(program__isnull=True)
+        Student.objects.exclude(program__isnull=True)  # type: ignore[arg-type]
         .exclude(program="")
         .values_list("program", flat=True)
         .distinct()
@@ -62,9 +62,13 @@ def get_prerequisites_visualizer_style(course_code: str, program: str) -> list[s
 
 
 def get_student_passed_and_studying(student_id: int | str) -> tuple[set[str], set[str]]:
-    rows = StudentCourse.objects.filter(
-        student_id=student_id,
-    ).select_related("course").values_list("course__course_code", "status")
+    rows = (
+        StudentCourse.objects.filter(
+            student_id=student_id,
+        )
+        .select_related("course")
+        .values_list("course__course_code", "status")
+    )
 
     passed: set[str] = set()
     studying: set[str] = set()

@@ -131,6 +131,82 @@ def parse_study_plan(html_content):
     return all_courses
 
 
+def parse_student_profile(html_content):
+    """Extract student profile info from the study plan header table.
+
+    Returns dict with keys: name, nationality, status, gpa,
+    total_registered_credits, total_earned_credits.
+    """
+    if _is_logout_or_service_page(html_content):
+        return {}
+
+    soup = BeautifulSoup(html_content or "", "html.parser")
+
+    profile_table = soup.find("table", class_="forumline", dir="ltr")
+    if not profile_table:
+        return {}
+
+    result = {}
+
+    field_map = {
+        "Student Name":   ("name",                      str),
+        "Nationality":    ("nationality",                str),
+        "Student Status": ("status",                     str),
+        "Student Group":  ("status",                     str),
+        "T.U.Registered": ("total_registered_credits",   int),
+        "T.U.Earned":     ("total_earned_credits",       int),
+        "G.P.A":          ("gpa",                        float),
+    }
+
+    for row in profile_table.find_all("tr"):
+        for th in row.find_all("th"):
+            th_text = th.get_text(" ", strip=True)
+            for label, (key, converter) in field_map.items():
+                if label in th_text:
+                    td = th.find_next_sibling("td")
+                    if td is None:
+                        continue
+                    raw = td.get_text(" ", strip=True)
+                    if not raw:
+                        continue
+                    try:
+                        result[key] = converter(raw)
+                    except (ValueError, TypeError):
+                        result[key] = raw
+
+    return result
+
+
+def parse_timetable_info(html_content):
+    """Extract current registered credits and advisor name from timetable page."""
+    if _is_logout_or_service_page(html_content):
+        return {}
+
+    soup = BeautifulSoup(html_content or "", "html.parser")
+    result = {}
+
+    for th in soup.find_all("th"):
+        th_text = th.get_text(" ", strip=True)
+
+        if "مجموع الوحدات المسجلة" in th_text:
+            td = th.find_next_sibling("td")
+            if td:
+                raw = td.get_text(" ", strip=True)
+                try:
+                    result["current_registered_credits"] = int(re.sub(r"[^\d]", "", raw))
+                except (ValueError, TypeError):
+                    pass
+
+        if "المرشد الاكاديمي" in th_text:
+            td = th.find_next_sibling("td")
+            if td:
+                name = td.get_text(" ", strip=True)
+                if name:
+                    result["advisor_name"] = name
+
+    return result
+
+
 def parse_timetable(html_content, verbose=True):
     if _is_logout_or_service_page(html_content):
         return set()

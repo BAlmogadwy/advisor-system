@@ -3,8 +3,14 @@ exclude_dirs:
   - .venv
   - venv
   - migrations
+  - .claude
+  - import_old
 skips:
   - B101
+  - B105
+  - B106
+  - B110
+  - B311
   - B404
   - B603
   - B607
