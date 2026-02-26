@@ -34,7 +34,9 @@ def _ok(data: dict[str, object], status: int = 200) -> JsonResponse:
     return JsonResponse({"ok": True, **data}, status=status)
 
 
-def _err(message: str, *, code: str, status: int = 400, details: dict[str, object] | None = None) -> JsonResponse:
+def _err(
+    message: str, *, code: str, status: int = 400, details: dict[str, object] | None = None
+) -> JsonResponse:
     payload: dict[str, object] = {"ok": False, "error": {"code": code, "message": message}}
     if details:
         payload["error"]["details"] = details
@@ -42,7 +44,12 @@ def _err(message: str, *, code: str, status: int = 400, details: dict[str, objec
 
 
 def _internal_error(exc: Exception) -> JsonResponse:
-    return _err("Internal processing error", code="INTERNAL_ERROR", status=500, details={"type": type(exc).__name__})
+    return _err(
+        "Internal processing error",
+        code="INTERNAL_ERROR",
+        status=500,
+        details={"type": type(exc).__name__},
+    )
 
 
 def _require_staff(request: HttpRequest) -> JsonResponse | None:
@@ -89,8 +96,8 @@ def planner_page(request: HttpRequest) -> HttpResponse:
     _defs = load_defaults()
     ctx = {
         **get_sidebar_context(request),
-        "default_year": _defs["academic_year"],
-        "default_term": _defs["term"],
+        "default_year": _defs["currentYear"],
+        "default_term": _defs["currentTerm"],
     }
     return render(request, "core/planner.html", ctx)
 
@@ -112,7 +119,11 @@ def planner_context_view(request: HttpRequest) -> JsonResponse:
     term = str(payload.get("term", "")).strip()
 
     if not student_id or not year or not term:
-        return _err("student_id, academic_year, term are required", code="VALIDATION_REQUIRED_FIELDS", status=400)
+        return _err(
+            "student_id, academic_year, term are required",
+            code="VALIDATION_REQUIRED_FIELDS",
+            status=400,
+        )
 
     term_err = _validate_term_inputs(year, term)
     if term_err:
@@ -126,9 +137,19 @@ def planner_context_view(request: HttpRequest) -> JsonResponse:
     if scope_err:
         return scope_err
 
-    student = Student.objects.filter(student_id=student_id_int).values(
-        "student_id", "name", "program", "section", "advisor_id", "gpa", "total_registered_credits",
-    ).first()
+    student = (
+        Student.objects.filter(student_id=student_id_int)
+        .values(
+            "student_id",
+            "name",
+            "program",
+            "section",
+            "advisor_id",
+            "gpa",
+            "total_registered_credits",
+        )
+        .first()
+    )
     if not student:
         return _err(f"Student not found: {student_id}", code="STUDENT_NOT_FOUND", status=404)
 
@@ -147,20 +168,34 @@ def planner_context_view(request: HttpRequest) -> JsonResponse:
     if not baseline:
         # Auto-repair: build current snapshot mappings from studying courses when possible.
         from core.services.student_helpers import normalize_code
-        studying_codes_qs = StudentCourse.objects.filter(
-            student_id=student_id, status__iexact="studying",
-        ).select_related("course").values_list("course__course_code", flat=True).distinct()
+
+        studying_codes_qs = (
+            StudentCourse.objects.filter(
+                student_id=student_id,
+                status__iexact="studying",
+            )
+            .select_related("course")
+            .values_list("course__course_code", flat=True)
+            .distinct()
+        )
         wanted = [normalize_code(c) for c in studying_codes_qs if c]
         wanted = [w for w in wanted if w]
         if wanted:
             from django.db.models import Min
-            mapped_qs = TermSection.objects.filter(
-                course_key__in=wanted,
-            ).values("course_key").annotate(sid=Min("id"))
+
+            mapped_qs = (
+                TermSection.objects.filter(
+                    course_key__in=wanted,
+                )
+                .values("course_key")
+                .annotate(sid=Min("id"))
+            )
             mapped_ids = [int(x["sid"]) for x in mapped_qs if x["sid"] is not None]
             if mapped_ids:
                 try:
-                    replace_student_term_sections(student_id, year, term, mapped_ids, source="auto_from_studying")
+                    replace_student_term_sections(
+                        student_id, year, term, mapped_ids, source="auto_from_studying"
+                    )
                     baseline = get_student_term_baseline(student_id, year, term)
                 except Exception:
                     pass
@@ -168,15 +203,25 @@ def planner_context_view(request: HttpRequest) -> JsonResponse:
     if not baseline:
         # Fallback when no student->section mappings exist yet
         from core.services.student_helpers import normalize_code as _nc
-        fb_program = Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
+
+        fb_program = (
+            Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
+        )
         fb_credit_map: dict[str, int] = {}
         if fb_program:
-            for cc, ch in ProgrammeRequirement.objects.filter(program__iexact=fb_program).values_list("course_code", "credit_hours"):
+            for cc, ch in ProgrammeRequirement.objects.filter(
+                program__iexact=fb_program
+            ).values_list("course_code", "credit_hours"):
                 fb_credit_map[_nc(cc)] = ch or 0
 
-        fb_rows = StudentCourse.objects.filter(
-            student_id=student_id, status__iexact="studying",
-        ).select_related("course").order_by("course__course_code")
+        fb_rows = (
+            StudentCourse.objects.filter(
+                student_id=student_id,
+                status__iexact="studying",
+            )
+            .select_related("course")
+            .order_by("course__course_code")
+        )
         baseline = []
         for sc in fb_rows:
             c = sc.course
@@ -209,9 +254,12 @@ def planner_context_view(request: HttpRequest) -> JsonResponse:
     recommendations: list[dict[str, object]] = []
     # Build credit map for the program
     from core.services.student_helpers import normalize_code as _norm_code
+
     pr_credit_map: dict[str, int] = {}
     if program:
-        for pr_cc, pr_ch in ProgrammeRequirement.objects.filter(program__iexact=program).values_list("course_code", "credit_hours"):
+        for pr_cc, pr_ch in ProgrammeRequirement.objects.filter(
+            program__iexact=program
+        ).values_list("course_code", "credit_hours"):
             pr_credit_map[_norm_code(pr_cc)] = pr_ch or 0
 
     for idx, code in enumerate(rec_codes, start=1):
@@ -246,7 +294,11 @@ def planner_context_view(request: HttpRequest) -> JsonResponse:
     course_keys = set()
     credits_total = 0
     for r in baseline:
-        key = (str(r.get("course_code", "")), str(r.get("course_number", "")), str(r.get("section", "")))
+        key = (
+            str(r.get("course_code", "")),
+            str(r.get("course_number", "")),
+            str(r.get("section", "")),
+        )
         if key not in course_keys:
             course_keys.add(key)
             credits_total += int(r.get("credits", 0) or 0)
@@ -285,7 +337,11 @@ def planner_save_student_sections_view(request: HttpRequest) -> JsonResponse:
     confirm_replace = bool(payload.get("confirm_replace", False))
 
     if not student_id or not year or not term:
-        return _err("student_id, academic_year, term are required", code="VALIDATION_REQUIRED_FIELDS", status=400)
+        return _err(
+            "student_id, academic_year, term are required",
+            code="VALIDATION_REQUIRED_FIELDS",
+            status=400,
+        )
     if not isinstance(section_ids, list):
         return _err("term_section_ids must be a list", code="VALIDATION_LIST_REQUIRED", status=400)
 
@@ -343,7 +399,9 @@ def planner_sections_catalog_view(request: HttpRequest) -> JsonResponse:
     course_codes = payload.get("course_codes", [])
 
     if not year or not term:
-        return _err("academic_year and term are required", code="VALIDATION_REQUIRED_FIELDS", status=400)
+        return _err(
+            "academic_year and term are required", code="VALIDATION_REQUIRED_FIELDS", status=400
+        )
 
     term_err = _validate_term_inputs(year, term)
     if term_err:
@@ -352,7 +410,9 @@ def planner_sections_catalog_view(request: HttpRequest) -> JsonResponse:
     try:
         ts_qs = TermSection.objects.all()
         if isinstance(course_codes, list) and course_codes:
-            normalized = [str(c).replace(" ", "").strip().upper() for c in course_codes if str(c).strip()]
+            normalized = [
+                str(c).replace(" ", "").strip().upper() for c in course_codes if str(c).strip()
+            ]
             if normalized:
                 ts_qs = ts_qs.filter(course_key__in=normalized)
 
@@ -411,7 +471,9 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
     baseline = payload.get("baseline", [])
 
     if not year or not term:
-        return _err("academic_year and term are required", code="VALIDATION_REQUIRED_FIELDS", status=400)
+        return _err(
+            "academic_year and term are required", code="VALIDATION_REQUIRED_FIELDS", status=400
+        )
     if not isinstance(shortlist, list):
         return _err("shortlist must be list", code="VALIDATION_LIST_REQUIRED", status=400)
     term_err = _validate_term_inputs(year, term)
@@ -423,18 +485,37 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
     normalized_shortlist: list[dict[str, object]] = []
     for item in shortlist:
         if not isinstance(item, dict):
-            return _err("shortlist items must be objects", code="VALIDATION_SHORTLIST_ITEM", status=400)
+            return _err(
+                "shortlist items must be objects", code="VALIDATION_SHORTLIST_ITEM", status=400
+            )
         code = str(item.get("course_code", "")).strip().upper()
         if not code:
-            return _err("shortlist item missing course_code", code="VALIDATION_SHORTLIST_COURSE", status=400)
+            return _err(
+                "shortlist item missing course_code", code="VALIDATION_SHORTLIST_COURSE", status=400
+            )
+        pinned_raw = item.get("pinned_sections", [])
+        pinned_sections: list[dict[str, object]] = []
+        if isinstance(pinned_raw, list):
+            for ps in pinned_raw:
+                if isinstance(ps, dict) and ps.get("term_section_id"):
+                    pinned_sections.append(
+                        {
+                            "term_section_id": int(ps["term_section_id"]),
+                            "section": str(ps.get("section", "")),
+                        }
+                    )
+
         normalized_shortlist.append(
             {
                 "course_code": code,
                 "priority": str(item.get("priority", "Med")),
                 "score": int(item.get("score", 0) or 0),
                 "status": str(item.get("status", "Eligible")),
-                "missing_prerequisites": item.get("missing_prerequisites", []) if isinstance(item.get("missing_prerequisites", []), list) else [],
+                "missing_prerequisites": item.get("missing_prerequisites", [])
+                if isinstance(item.get("missing_prerequisites", []), list)
+                else [],
                 "must_take": bool(item.get("must_take", False)),
+                "pinned_sections": pinned_sections,
             }
         )
 

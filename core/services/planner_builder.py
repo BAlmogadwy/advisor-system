@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 
 from core.models import TermSection, TermSectionMeeting
@@ -10,11 +11,10 @@ except Exception:  # pragma: no cover
     cp_model = None
 
 DAY_MAP = {
-
     "OU,O�O-O_": "SUN",
     "OU,OO�U+USU+": "MON",
     "OU,O�U,OO�OO�": "TUE",
-    "OU,O�O�O\"O1OO�": "WED",
+    'OU,O�O�O"O1OO�': "WED",
     "OU,OrU.USO3": "THU",
     "Sunday": "SUN",
     "Monday": "MON",
@@ -148,23 +148,44 @@ def _section_meetings(term_section_id: int) -> list[Meeting]:
     for d, s, e in rows:
         if not s or not e:
             continue
-        out.append(Meeting(day=DAY_MAP.get(str(d or "").strip(), str(d or "").strip()), start=str(s), end=str(e)))
+        out.append(
+            Meeting(
+                day=DAY_MAP.get(str(d or "").strip(), str(d or "").strip()),
+                start=str(s),
+                end=str(e),
+            )
+        )
     return out
 
 
-def _catalog_for_courses(year: str, term: str, course_codes: list[str]) -> dict[str, list[dict[str, object]]]:  # year/term kept for API compatibility
+def _catalog_for_courses(
+    year: str, term: str, course_codes: list[str]
+) -> dict[str, list[dict[str, object]]]:  # year/term kept for API compatibility
     if not course_codes:
         return {}
     wanted = {str(c).replace(" ", "").upper() for c in course_codes}
-    rows = TermSection.objects.filter(
-        course_key__in=wanted,
-    ).order_by("course_code", "course_number", "section").values_list(
-        "id", "course_code", "course_number", "course_key", "section",
-        "course_name", "registered_count", "available_capacity",
+    rows = (
+        TermSection.objects.filter(
+            course_key__in=wanted,
+        )
+        .order_by("course_code", "course_number", "section")
+        .values_list(
+            "id",
+            "course_code",
+            "course_number",
+            "course_key",
+            "section",
+            "course_name",
+            "registered_count",
+            "available_capacity",
+        )
     )
     out: dict[str, list[dict[str, object]]] = {}
     for sid, code, num, course_key, sec, name, reg, cap in rows:
-        full = str(course_key or '').replace(' ', '').upper() or f"{str(code or '').strip()}{str(num or '').strip()}".upper()
+        full = (
+            str(course_key or "").replace(" ", "").upper()
+            or f"{str(code or '').strip()}{str(num or '').strip()}".upper()
+        )
         out.setdefault(full, []).append(
             {
                 "term_section_id": int(sid),
@@ -253,7 +274,9 @@ def _choose(
 
         options = catalog.get(code, [])
         if not options:
-            unscheduled.append({"course_code": code, "reason": "No sections available", "details": []})
+            unscheduled.append(
+                {"course_code": code, "reason": "No sections available", "details": []}
+            )
             continue
 
         picked = None
@@ -264,13 +287,15 @@ def _choose(
             for m in meetings:
                 overlaps = [occ for occ in occupied if _overlap(m, occ.meeting)]
                 for occ in overlaps:
-                    conflicts_for_opt.append(f"{_slot_text(m)} conflicts with {occ.label} ({_slot_text(occ.meeting)})")
+                    conflicts_for_opt.append(
+                        f"{_slot_text(m)} conflicts with {occ.label} ({_slot_text(occ.meeting)})"
+                    )
             if not conflicts_for_opt:
                 picked = opt
                 break
             option_conflicts.append(
                 {
-                    "tried_section": f"{opt.get('course_code','')}{opt.get('course_number','')}:{opt.get('section','')}",
+                    "tried_section": f"{opt.get('course_code', '')}{opt.get('course_number', '')}:{opt.get('section', '')}",
                     "conflicts": conflicts_for_opt,
                 }
             )
@@ -286,7 +311,7 @@ def _choose(
             occupied.append(
                 OccupiedSlot(
                     meeting=m,
-                    label=f"selected {picked.get('course_code','')}{picked.get('course_number','')} {picked.get('section','')}",
+                    label=f"selected {picked.get('course_code', '')}{picked.get('course_number', '')} {picked.get('section', '')}",
                 )
             )
         selected.append(picked)
@@ -345,6 +370,12 @@ def _bitmask_build_option_b(
     strict_per_course: bool,
     consider_capacity: bool,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    # Collect must_take codes for hard-constraint enforcement
+    must_take_codes: set[str] = set()
+    for c in shortlist:
+        if c.get("must_take"):
+            must_take_codes.add(str(c.get("course_code", "")).replace(" ", "").upper())
+
     eligible: list[dict[str, object]] = []
     unscheduled: list[dict[str, object]] = []
     unscheduled_codes: set[str] = set()
@@ -353,12 +384,20 @@ def _bitmask_build_option_b(
         code = str(c.get("course_code", "")).replace(" ", "").upper()
         if str(c.get("status", "Eligible")) != "Eligible":
             missing = c.get("missing_prerequisites", []) or []
-            unscheduled.append({"course_code": code, "reason": f"Blocked by prerequisites: {', '.join(missing)}", "details": []})
+            unscheduled.append(
+                {
+                    "course_code": code,
+                    "reason": f"Blocked by prerequisites: {', '.join(missing)}",
+                    "details": [],
+                }
+            )
             unscheduled_codes.add(code)
             continue
         opts = catalog.get(code, [])
         if not opts:
-            unscheduled.append({"course_code": code, "reason": "No sections available", "details": []})
+            unscheduled.append(
+                {"course_code": code, "reason": "No sections available", "details": []}
+            )
             unscheduled_codes.add(code)
             continue
         eligible.append({**c, "_code": code})
@@ -387,7 +426,13 @@ def _bitmask_build_option_b(
                 continue
             opts.append({**opt, "_mask": msk})
         if not opts:
-            unscheduled.append({"course_code": code, "reason": "No non-conflicting sections available", "details": []})
+            unscheduled.append(
+                {
+                    "course_code": code,
+                    "reason": "No non-conflicting sections available",
+                    "details": [],
+                }
+            )
             unscheduled_codes.add(code)
             if strict_per_course:
                 strict_blockers.append(code)
@@ -398,14 +443,25 @@ def _bitmask_build_option_b(
         for code in strict_blockers:
             if code in unscheduled_codes:
                 continue
-            unscheduled.append({"course_code": code, "reason": "Strict policy requires exactly one section, but none is available", "details": []})
+            unscheduled.append(
+                {
+                    "course_code": code,
+                    "reason": "Strict policy requires exactly one section, but none is available",
+                    "details": [],
+                }
+            )
             unscheduled_codes.add(code)
         return [], unscheduled
 
     if not course_options:
         return [], unscheduled
 
-    # smaller branching first
+    # Shuffle sections within each course so equal-weight picks vary per run
+    for _code, _opts in course_options:
+        random.shuffle(_opts)
+
+    # smaller branching first, random tie-break among equal branch counts
+    random.shuffle(course_options)
     course_options.sort(key=lambda x: len(x[1]))
 
     best_score: tuple[int, int, int, int] | None = None
@@ -433,15 +489,18 @@ def _bitmask_build_option_b(
 
         if i >= len(course_options):
             cur = score_of(chosen, used_mask)
-            if best_score is None or cur > best_score:
+            if best_score is None or cur > best_score or (
+                cur == best_score and random.random() < 0.5
+            ):
                 best_score = cur
                 best_selected = [dict(x) for x in chosen]
             return
 
         code, opts = course_options[i]
+        is_must = code in must_take_codes
 
-        # relaxed mode allows skipping a course
-        if not strict_per_course:
+        # relaxed mode allows skipping a course, but never a must-take
+        if not strict_per_course and not is_must:
             dfs(i + 1, used_mask, chosen)
 
         for opt in opts:
@@ -454,10 +513,7 @@ def _bitmask_build_option_b(
 
     dfs(0, baseline_mask if keep_registered else 0, [])
 
-    selected = [
-        {k: v for k, v in opt.items() if k != "_mask"}
-        for opt in best_selected
-    ]
+    selected = [{k: v for k, v in opt.items() if k != "_mask"} for opt in best_selected]
 
     chosen_course: set[str] = set()
     for s in selected:
@@ -473,7 +529,11 @@ def _bitmask_build_option_b(
                 {
                     "course_code": code,
                     "reason": "Could not fit with chosen constraints/objective",
-                    "details": [{"hint": "Profile B uses bitmask optimization: fewest days then smallest gaps"}],
+                    "details": [
+                        {
+                            "hint": "Profile B uses bitmask optimization: fewest days then smallest gaps"
+                        }
+                    ],
                 }
             )
 
@@ -487,6 +547,12 @@ def _bitmask_build_option_c(
     keep_registered: bool,
     strict_per_course: bool,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    # Collect must_take codes for hard-constraint enforcement
+    must_take_codes: set[str] = set()
+    for c in shortlist:
+        if c.get("must_take"):
+            must_take_codes.add(str(c.get("course_code", "")).replace(" ", "").upper())
+
     eligible: list[dict[str, object]] = []
     unscheduled: list[dict[str, object]] = []
     unscheduled_codes: set[str] = set()
@@ -495,12 +561,20 @@ def _bitmask_build_option_c(
         code = str(c.get("course_code", "")).replace(" ", "").upper()
         if str(c.get("status", "Eligible")) != "Eligible":
             missing = c.get("missing_prerequisites", []) or []
-            unscheduled.append({"course_code": code, "reason": f"Blocked by prerequisites: {', '.join(missing)}", "details": []})
+            unscheduled.append(
+                {
+                    "course_code": code,
+                    "reason": f"Blocked by prerequisites: {', '.join(missing)}",
+                    "details": [],
+                }
+            )
             unscheduled_codes.add(code)
             continue
         opts = catalog.get(code, [])
         if not opts:
-            unscheduled.append({"course_code": code, "reason": "No sections available", "details": []})
+            unscheduled.append(
+                {"course_code": code, "reason": "No sections available", "details": []}
+            )
             unscheduled_codes.add(code)
             continue
         eligible.append({**c, "_code": code})
@@ -531,7 +605,13 @@ def _bitmask_build_option_c(
                 continue
             opts.append({**opt, "_day_masks": day_masks})
         if not opts:
-            unscheduled.append({"course_code": code, "reason": "No non-conflicting sections available", "details": []})
+            unscheduled.append(
+                {
+                    "course_code": code,
+                    "reason": "No non-conflicting sections available",
+                    "details": [],
+                }
+            )
             unscheduled_codes.add(code)
             if strict_per_course:
                 strict_blockers.append(code)
@@ -542,13 +622,25 @@ def _bitmask_build_option_c(
         for code in strict_blockers:
             if code in unscheduled_codes:
                 continue
-            unscheduled.append({"course_code": code, "reason": "Strict policy requires exactly one section, but none is available", "details": []})
+            unscheduled.append(
+                {
+                    "course_code": code,
+                    "reason": "Strict policy requires exactly one section, but none is available",
+                    "details": [],
+                }
+            )
             unscheduled_codes.add(code)
         return [], unscheduled
 
     if not course_options:
         return [], unscheduled
 
+    # Shuffle sections within each course so equal-weight picks vary per run
+    for _code, _opts in course_options:
+        random.shuffle(_opts)
+
+    # smaller branching first, random tie-break among equal branch counts
+    random.shuffle(course_options)
     course_options.sort(key=lambda x: len(x[1]))
 
     best_key: tuple[int, int, int, int, int] | None = None
@@ -587,14 +679,18 @@ def _bitmask_build_option_c(
 
         if i >= len(course_options):
             key = score_key(chosen)
-            if best_key is None or key > best_key:
+            if best_key is None or key > best_key or (
+                key == best_key and random.random() < 0.5
+            ):
                 best_key = key
                 best_selected = [dict(x) for x in chosen]
             return
 
         code, opts = course_options[i]
+        is_must = code in must_take_codes
 
-        if not strict_per_course:
+        # relaxed mode allows skipping a course, but never a must-take
+        if not strict_per_course and not is_must:
             dfs(i + 1, cur_days, chosen)
 
         for opt in opts:
@@ -627,7 +723,11 @@ def _bitmask_build_option_c(
                 {
                     "course_code": code,
                     "reason": "Could not fit with chosen constraints/objective",
-                    "details": [{"hint": "Profile C uses bitmask DFS lexicographic optimization (days, gaps)"}],
+                    "details": [
+                        {
+                            "hint": "Profile C uses bitmask DFS lexicographic optimization (days, gaps)"
+                        }
+                    ],
                 }
             )
 
@@ -646,6 +746,12 @@ def _cp_build_option(
     if cp_model is None:
         return _choose(shortlist, catalog, baseline, keep_registered, strategy=profile)
 
+    # Collect must_take codes for hard-constraint enforcement
+    must_take_codes: set[str] = set()
+    for c in shortlist:
+        if c.get("must_take"):
+            must_take_codes.add(str(c.get("course_code", "")).replace(" ", "").upper())
+
     eligible: list[dict[str, object]] = []
     unscheduled: list[dict[str, object]] = []
     unscheduled_codes: set[str] = set()
@@ -653,12 +759,20 @@ def _cp_build_option(
         code = str(c.get("course_code", "")).replace(" ", "").upper()
         if str(c.get("status", "Eligible")) != "Eligible":
             missing = c.get("missing_prerequisites", []) or []
-            unscheduled.append({"course_code": code, "reason": f"Blocked by prerequisites: {', '.join(missing)}", "details": []})
+            unscheduled.append(
+                {
+                    "course_code": code,
+                    "reason": f"Blocked by prerequisites: {', '.join(missing)}",
+                    "details": [],
+                }
+            )
             unscheduled_codes.add(code)
             continue
         opts = catalog.get(code, [])
         if not opts:
-            unscheduled.append({"course_code": code, "reason": "No sections available", "details": []})
+            unscheduled.append(
+                {"course_code": code, "reason": "No sections available", "details": []}
+            )
             unscheduled_codes.add(code)
             continue
         eligible.append({**c, "_code": code})
@@ -700,18 +814,30 @@ def _cp_build_option(
             option_by_sid[sid] = opt
             course_to_sids.setdefault(code, []).append(sid)
 
-    # one section per course (strict ==1, relaxed <=1)
+    # one section per course (strict/must_take ==1, relaxed <=1)
     strict_blockers: list[str] = []
     for c in eligible:
         code = str(c["_code"])
         sids = course_to_sids.get(code, [])
+        is_must = code in must_take_codes
         if not sids:
-            unscheduled.append({"course_code": code, "reason": "No non-conflicting sections available", "details": []})
+            reason = (
+                "Must-take course has no non-conflicting sections"
+                if is_must
+                else "No non-conflicting sections available"
+            )
+            unscheduled.append(
+                {
+                    "course_code": code,
+                    "reason": reason,
+                    "details": [],
+                }
+            )
             unscheduled_codes.add(code)
-            if strict_per_course:
+            if strict_per_course or is_must:
                 strict_blockers.append(code)
             continue
-        if strict_per_course:
+        if strict_per_course or is_must:
             model.Add(sum(var_by_sid[s] for s in sids) == 1)
         else:
             model.Add(sum(var_by_sid[s] for s in sids) <= 1)
@@ -720,7 +846,13 @@ def _cp_build_option(
         for code in strict_blockers:
             if code in unscheduled_codes:
                 continue
-            unscheduled.append({"course_code": code, "reason": "Strict policy requires exactly one section, but none is available", "details": []})
+            unscheduled.append(
+                {
+                    "course_code": code,
+                    "reason": "Strict policy requires exactly one section, but none is available",
+                    "details": [],
+                }
+            )
             unscheduled_codes.add(code)
         return [], unscheduled
 
@@ -733,14 +865,24 @@ def _cp_build_option(
     selected_sum = sum(var_by_sid.values())
 
     # Capacity preference (prefer options with more open seats)
-    cap_sum = sum((int(option_by_sid[sid].get("available_capacity") or 0) * var_by_sid[sid]) for sid in var_by_sid)
+    cap_sum = sum(
+        (int(option_by_sid[sid].get("available_capacity") or 0) * var_by_sid[sid])
+        for sid in var_by_sid
+    )
     if not consider_capacity:
         cap_sum = 0
 
     # Prefer earlier finish (penalize late end times)
     late_terms = []
     for sid in var_by_sid:
-        latest_end = max((_to_minutes(m.end) for m in option_by_sid[sid].get("meetings", []) if getattr(m, "end", "")), default=0)
+        latest_end = max(
+            (
+                _to_minutes(m.end)
+                for m in option_by_sid[sid].get("meetings", [])
+                if getattr(m, "end", "")
+            ),
+            default=0,
+        )
         late_pen = max(0, latest_end - (16 * 60)) // 10
         late_terms.append(late_pen * var_by_sid[sid])
     late_sum = sum(late_terms) if late_terms else 0
@@ -751,7 +893,11 @@ def _cp_build_option(
     for d in day_keys:
         u = model.NewBoolVar(f"day_{d}")
         day_used[d] = u
-        sids_using_day = [sid for sid, opt in option_by_sid.items() if any(str(getattr(m, "day", "")) == d for m in opt.get("meetings", []))]
+        sids_using_day = [
+            sid
+            for sid, opt in option_by_sid.items()
+            if any(str(getattr(m, "day", "")) == d for m in opt.get("meetings", []))
+        ]
         if sids_using_day:
             for sid in sids_using_day:
                 model.Add(u >= var_by_sid[sid])
@@ -778,7 +924,11 @@ def _cp_build_option(
         y: dict[int, object] = {}
         for idx in range(first_slot_idx, last_slot_idx):
             y[idx] = model.NewBoolVar(f"y_{d}_{idx}")
-            covering = [sid for sid, opt in option_by_sid.items() if _covers(opt.get("meetings", []), d, idx)]
+            covering = [
+                sid
+                for sid, opt in option_by_sid.items()
+                if _covers(opt.get("meetings", []), d, idx)
+            ]
             if covering:
                 model.Add(y[idx] <= sum(var_by_sid[s] for s in covering))
                 for sid in covering:
@@ -823,11 +973,20 @@ def _cp_build_option(
         # Balanced
         w_sel, w_gap, w_days, w_late, w_cap = 11000, 20, 10, 10, 2
 
-    model.Maximize(w_sel * selected_sum - w_gap * gaps_sum - w_days * days_sum - w_late * late_sum + w_cap * cap_sum)
+    model.Maximize(
+        w_sel * selected_sum
+        - w_gap * gaps_sum
+        - w_days * days_sum
+        - w_late * late_sum
+        + w_cap * cap_sum
+    )
 
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = 8.0
     solver.parameters.num_search_workers = 8
+    # Randomize search so each run can produce different optimal/feasible results
+    solver.parameters.randomize_search = True
+    solver.parameters.random_seed = random.randint(0, 2**31 - 1)
     res = solver.Solve(model)
 
     if res not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
@@ -839,15 +998,25 @@ def _cp_build_option(
                 continue
             sids = course_to_sids.get(code, [])
             if not sids:
-                unscheduled.append({"course_code": code, "reason": "No candidate sections after hard filters", "details": [{"hint": "Try relaxed mode or refresh sections catalog"}]})
+                unscheduled.append(
+                    {
+                        "course_code": code,
+                        "reason": "No candidate sections after hard filters",
+                        "details": [{"hint": "Try relaxed mode or refresh sections catalog"}],
+                    }
+                )
                 unscheduled_codes.add(code)
                 continue
             conflict_edges = 0
             for sid in sids:
-                conflict_edges += sum(1 for other in option_by_sid.keys() if other != sid and (sid, other) in pair_set)
+                conflict_edges += sum(
+                    1 for other in option_by_sid.keys() if other != sid and (sid, other) in pair_set
+                )
             reason = "Model infeasible under current hard constraints"
             if strict_per_course:
-                reason = "Strict mode infeasible (exactly one section per course cannot be satisfied)"
+                reason = (
+                    "Strict mode infeasible (exactly one section per course cannot be satisfied)"
+                )
             unscheduled.append(
                 {
                     "course_code": code,
@@ -881,7 +1050,9 @@ def _cp_build_option(
             sids = course_to_sids.get(code, [])
             conflict_edges = 0
             for sid in sids:
-                conflict_edges += sum(1 for other in option_by_sid.keys() if other != sid and (sid, other) in pair_set)
+                conflict_edges += sum(
+                    1 for other in option_by_sid.keys() if other != sid and (sid, other) in pair_set
+                )
             unscheduled.append(
                 {
                     "course_code": code,
@@ -906,8 +1077,35 @@ def build_plans(
     strict_per_course: bool = False,
     consider_capacity: bool = True,
 ) -> dict[str, object]:
-    codes = sorted({str(x.get("course_code", "")).replace(" ", "").upper() for x in shortlist if str(x.get("course_code", "")).strip()})
+    codes = sorted(
+        {
+            str(x.get("course_code", "")).replace(" ", "").upper()
+            for x in shortlist
+            if str(x.get("course_code", "")).strip()
+        }
+    )
     catalog = _catalog_for_courses(year, term, codes)
+
+    # Filter catalog for courses with pinned (advisor-selected) sections.
+    # When pinned_sections is present, the builder only considers those
+    # specific term_section_ids instead of all available sections.
+    for item in shortlist:
+        pinned_raw = item.get("pinned_sections") or []
+        if not isinstance(pinned_raw, list) or not pinned_raw:
+            continue
+        code = str(item.get("course_code", "")).replace(" ", "").upper()
+        pinned_ids: set[int] = set()
+        for _p in pinned_raw:
+            if isinstance(_p, dict):
+                _tid = _p.get("term_section_id")
+                if _tid is not None:
+                    pinned_ids.add(int(_tid))  # type: ignore[call-overload]
+        if pinned_ids and code in catalog:
+            catalog[code] = [
+                s
+                for s in catalog[code]
+                if int(s.get("term_section_id") or 0) in pinned_ids  # type: ignore[call-overload]
+            ]
 
     def _catalog_without_sids(excluded: set[int]) -> dict[str, list[dict[str, object]]]:
         if not excluded:
@@ -918,16 +1116,43 @@ def build_plans(
         return out
 
     def _sig(sel: list[dict[str, object]]) -> tuple[int, ...]:
-        return tuple(sorted(int(s.get("term_section_id") or 0) for s in sel if int(s.get("term_section_id") or 0) > 0))
+        return tuple(
+            sorted(
+                int(s.get("term_section_id") or 0)
+                for s in sel
+                if int(s.get("term_section_id") or 0) > 0
+            )
+        )
 
-    def _run_method(method: str, cat: dict[str, list[dict[str, object]]]) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    def _run_method(
+        method: str, cat: dict[str, list[dict[str, object]]]
+    ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
         if method == "A":
-            return _cp_build_option(shortlist, cat, baseline, keep_registered, profile="A", strict_per_course=strict_per_course, consider_capacity=consider_capacity)
+            return _cp_build_option(
+                shortlist,
+                cat,
+                baseline,
+                keep_registered,
+                profile="A",
+                strict_per_course=strict_per_course,
+                consider_capacity=consider_capacity,
+            )
         if method == "B":
-            return _bitmask_build_option_b(shortlist, cat, baseline, keep_registered, strict_per_course=strict_per_course, consider_capacity=consider_capacity)
-        return _bitmask_build_option_c(shortlist, cat, baseline, keep_registered, strict_per_course=strict_per_course)
+            return _bitmask_build_option_b(
+                shortlist,
+                cat,
+                baseline,
+                keep_registered,
+                strict_per_course=strict_per_course,
+                consider_capacity=consider_capacity,
+            )
+        return _bitmask_build_option_c(
+            shortlist, cat, baseline, keep_registered, strict_per_course=strict_per_course
+        )
 
-    def _top_k_method(method: str, k: int = 3) -> list[tuple[list[dict[str, object]], list[dict[str, object]]]]:
+    def _top_k_method(
+        method: str, k: int = 3
+    ) -> list[tuple[list[dict[str, object]], list[dict[str, object]]]]:
         results: list[tuple[list[dict[str, object]], list[dict[str, object]]]] = []
         seen: set[tuple[int, ...]] = set()
         queue: list[set[int]] = [set()]
@@ -962,7 +1187,13 @@ def build_plans(
             results.append(_run_method(method, _catalog_without_sids(set())))
         return results
 
-    def fmt_option(name: str, method: str, rank: int, sel: list[dict[str, object]], uns: list[dict[str, object]]) -> dict[str, object]:
+    def fmt_option(
+        name: str,
+        method: str,
+        rank: int,
+        sel: list[dict[str, object]],
+        uns: list[dict[str, object]],
+    ) -> dict[str, object]:
         return {
             "name": name,
             "method": method,
@@ -991,7 +1222,11 @@ def build_plans(
         for i, (sel, uns) in enumerate(variants, start=1):
             options.append(fmt_option(f"{method}{i}", method, i, sel, uns))
 
-    best = max(options, key=lambda x: x["scheduled"]) if options else {"scheduled": 0, "target": len(shortlist), "unscheduled": []}
+    best = (
+        max(options, key=lambda x: x["scheduled"])
+        if options
+        else {"scheduled": 0, "target": len(shortlist), "unscheduled": []}
+    )
 
     swap_suggestions: list[dict[str, object]] = []
     if keep_registered and suggest_swaps and best["unscheduled"]:

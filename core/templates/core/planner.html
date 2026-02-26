@@ -330,6 +330,84 @@
       .command-bar-controls { display: block !important; }
     }
 
+    /* ── Available Courses & Sections grid ────────────────── */
+    .avail-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+    }
+    @media (max-width: 768px) { .avail-grid { grid-template-columns: 1fr; } }
+
+    .avail-course-card {
+      padding: 12px 14px; border-radius: var(--radius-sm);
+      background: rgba(255,255,255,0.5); border: 1px solid rgba(17,17,68,0.05);
+      box-shadow: 0 1px 4px rgba(17,17,68,0.04);
+    }
+    .avail-course-head {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 8px; padding-bottom: 6px;
+      border-bottom: 1px solid rgba(17,17,68,0.04);
+    }
+    .avail-course-code {
+      font-weight: 700; font-size: 13px; color: var(--navy);
+    }
+    .avail-course-name {
+      font-size: 11px; color: var(--t4); margin-top: 1px;
+    }
+    .avail-course-credits {
+      font-size: 11px; font-weight: 600; color: var(--t3);
+      padding: 2px 8px; border-radius: 6px;
+      background: rgba(17,17,68,0.04);
+    }
+
+    /* Section rows */
+    .avail-sec-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 8px; border-radius: 6px; margin-bottom: 4px;
+      font-size: 12px; cursor: pointer; transition: all 0.15s ease;
+    }
+    .avail-sec-row:hover { filter: brightness(0.97); }
+
+    /* 4-color status — project palette */
+    .sec-teal  { background: var(--teal-dim); border-left: 3px solid var(--teal); }
+    .sec-rose  { background: var(--rose-dim); border-left: 3px solid var(--rose); }
+    .sec-red   { background: rgba(192,48,48,0.06); border-left: 3px solid var(--danger); }
+    .sec-gray  { background: rgba(17,17,68,0.04); border-left: 3px solid var(--t5); }
+
+    .sec-dot {
+      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    }
+    .sec-dot-teal { background: var(--teal); }
+    .sec-dot-rose { background: #e8849e; }
+    .sec-dot-red  { background: var(--danger); }
+    .sec-dot-gray { background: var(--t5); }
+
+    .sec-id { font-weight: 700; min-width: 40px; }
+    .sec-time { color: var(--t3); font-size: 11px; }
+    .sec-capacity { margin-inline-start: auto; font-size: 11px; font-weight: 600; }
+
+    /* Summary bar */
+    .avail-summary-bar {
+      display: flex; gap: 16px; flex-wrap: wrap; align-items: center;
+      padding: 8px 14px; border-radius: var(--radius-sm);
+      background: rgba(17,17,68,0.025); border: 1px solid rgba(17,17,68,0.05);
+      font-size: 11.5px; color: var(--t4); margin-bottom: 10px;
+    }
+    .avail-summary-item {
+      display: flex; align-items: center; gap: 5px;
+    }
+
+    /* Search filter */
+    .avail-search {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 10px;
+    }
+    .avail-search input {
+      flex: 1; max-width: 280px; padding: 6px 12px;
+      border-radius: 8px; border: 1px solid rgba(17,17,68,0.08);
+      background: rgba(255,255,255,0.6); font-size: 12px;
+      outline: none; transition: border-color 0.2s;
+    }
+    .avail-search input:focus { border-color: var(--teal); }
+
   </style>
 
 {% endblock %}
@@ -340,7 +418,7 @@
 
 {% block page_chips %}
             <span class="ph-chip ph-chip-role">{{ role }}</span>
-            <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}خطوات أ → د{% else %}Steps A → D{% endif %}</span>
+            <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}خطوات أ → ج{% else %}Steps A → C{% endif %}</span>
             <span class="ph-chip ph-chip-gray" id="plannerContextChip" style="display:none;"></span>
 {% endblock %}
 
@@ -382,8 +460,8 @@
           <!-- Input bar -->
           <div class="filter-bar" style="margin-top:10px;margin-bottom:0;padding:10px 14px;flex-wrap:nowrap">
             <div class="fb-search" style="min-width:0;flex:1;max-width:140px"><span class="i i-sm" aria-hidden="true" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span><input id="studentId" placeholder="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}"></div>
-            <div class="fb-search" style="min-width:0;flex:0 0 80px"><span class="i i-sm" aria-hidden="true" style="flex-shrink:0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input id="year" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنة{% else %}Year{% endif %}" style="width:100%"></div>
-            <div class="fb-search" style="min-width:0;flex:0 0 55px"><input id="term" placeholder="{% if LANGUAGE_CODE == 'ar' %}فصل{% else %}Sem{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}فصل{% else %}Semester{% endif %}" style="width:100%"></div>
+            <div class="fb-search" style="min-width:0;flex:0 0 80px"><span class="i i-sm" aria-hidden="true" style="flex-shrink:0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input id="year" value="{{ default_year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنة{% else %}Year{% endif %}" style="width:100%"></div>
+            <div class="fb-search" style="min-width:0;flex:0 0 55px"><input id="term" value="{{ default_term }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}فصل{% else %}Sem{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}فصل{% else %}Semester{% endif %}" style="width:100%"></div>
             <div class="fb-search" style="min-width:0;flex:1;max-width:200px"><select id="mode" aria-label="{% if LANGUAGE_CODE == 'ar' %}وضع التسجيل{% else %}Registration mode{% endif %}" style="flex:1;background:none;border:none;outline:none;color:var(--t1);font-size:12px;font-family:inherit;cursor:pointer">
               <option value="keep">{% if LANGUAGE_CODE == 'ar' %}الإبقاء على المسجّل{% else %}Keep Registered{% endif %}</option>
               <option value="ignore">{% if LANGUAGE_CODE == 'ar' %}تجاهل المسجّل (تخطيط فقط){% else %}Ignore Registered (planning only){% endif %}</option>
@@ -411,8 +489,6 @@
             <button id="stepB" class="wf-step" type="button"><span class="wf-num">B</span>{% if LANGUAGE_CODE == 'ar' %}اختيار المقررات{% else %}Pick Courses{% endif %}</button>
             <div class="wf-sep"></div>
             <button id="stepC" class="wf-step" type="button"><span class="wf-num">C</span>{% if LANGUAGE_CODE == 'ar' %}بناء الخيارات{% else %}Build{% endif %}</button>
-            <div class="wf-sep"></div>
-            <button id="stepD" class="wf-step" type="button"><span class="wf-num">D</span>{% if LANGUAGE_CODE == 'ar' %}حفظ الربط{% else %}Save{% endif %}</button>
             <div class="wf-nav">
               <button id="prevStep" class="wf-back" type="button"><span class="i" aria-hidden="true" style="width:12px;height:12px"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}رجوع{% else %}Back{% endif %}</button>
               <button id="nextStep" class="wf-next" type="button">{% if LANGUAGE_CODE == 'ar' %}التالي{% else %}Next{% endif %}<span class="i" aria-hidden="true" style="width:12px;height:12px"><svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></span></button>
@@ -495,27 +571,32 @@
             </div>
           </div>
 
-          <!-- ─── Step B: Full plan palette (full width) ──────── -->
-          <div id="planCard" class="planner-panel step-panel pg-full" data-step="B">
+          <!-- ─── Step B: Available Courses & Sections (full width) ── -->
+          <div id="availableCard" class="planner-panel step-panel pg-full" data-step="B">
             <div class="pane-head">
-              <div class="pane-icon pane-icon-purple"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></span></div>
-              <div><h6 class="pane-title">{% if LANGUAGE_CODE == 'ar' %}الخطة الدراسية الكاملة (انقر لإضافة مقرر){% else %}Full student plan (click course to add){% endif %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}جميع مقررات الخطة — انقر لإضافة{% else %}All plan courses — click to add to shortlist{% endif %}</div></div>
-            </div>
-            <div class="chip-legend">
-              <div class="chip-legend-item"><span class="chip-legend-dot" style="background:#111827"></span>{% if LANGUAGE_CODE == 'ar' %}غير مطروح{% else %}Not offered{% endif %}</div>
-              <div class="chip-legend-item"><span class="chip-legend-dot" style="background:#dc2626"></span>{% if LANGUAGE_CODE == 'ar' %}مكتمل{% else %}Full{% endif %}</div>
-              <div class="chip-legend-item"><span class="chip-legend-dot" style="background:#16a34a"></span>{% if LANGUAGE_CODE == 'ar' %}متاح{% else %}Available{% endif %}</div>
-              <div class="chip-legend-item"><span class="chip-legend-dot" style="background:#7c3aed"></span>{% if LANGUAGE_CODE == 'ar' %}متطلب ناقص{% else %}Missing prereq{% endif %}</div>
+              <div class="pane-icon pane-icon-sky"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></span></div>
+              <div><h6 class="pane-title">{% if LANGUAGE_CODE == 'ar' %}المقررات والشعب المتاحة{% else %}Available Courses & Sections{% endif %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}الشعب مصنفة حسب التعارض والسعة{% else %}Sections color-coded by conflict & capacity{% endif %}</div></div>
             </div>
 
-            <div class="pl-checks" style="margin-bottom:10px">
-              <label><input id="fltNotTaken" type="checkbox" checked> {% if LANGUAGE_CODE == 'ar' %}غير المجتازة فقط{% else %}Only not taken{% endif %}</label>
-              <label><input id="fltGreen" type="checkbox"> {% if LANGUAGE_CODE == 'ar' %}المتاحة فقط{% else %}Only green{% endif %}</label>
-              <label><input id="fltHighImp" type="checkbox"> {% if LANGUAGE_CODE == 'ar' %}ذات الأهمية العالية فقط (>=1.0){% else %}Only high importance (>=1.0){% endif %}</label>
-              <button id="addSelectedPlan" class="pl-btn pl-btn-teal" style="margin-inline-start:auto"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}إضافة المحدد{% else %}Add selected{% endif %}</button>
+            <div class="chip-legend" style="margin-bottom:8px">
+              <div class="chip-legend-item"><span class="chip-legend-dot" style="background:var(--teal)"></span>{% if LANGUAGE_CODE == 'ar' %}متاح بدون تعارض{% else %}No conflict + seats{% endif %}</div>
+              <div class="chip-legend-item"><span class="chip-legend-dot" style="background:var(--rose)"></span>{% if LANGUAGE_CODE == 'ar' %}تعارض مع مقاعد{% else %}Conflict + seats{% endif %}</div>
+              <div class="chip-legend-item"><span class="chip-legend-dot" style="background:var(--danger)"></span>{% if LANGUAGE_CODE == 'ar' %}تعارض بدون مقاعد{% else %}Conflict + no seats{% endif %}</div>
+              <div class="chip-legend-item"><span class="chip-legend-dot" style="background:var(--t5)"></span>{% if LANGUAGE_CODE == 'ar' %}بدون تعارض ولا مقاعد{% else %}No conflict + no seats{% endif %}</div>
             </div>
 
-            <div id="planPalette" class="small"></div>
+            <div class="avail-search">
+              <input id="availSearch" placeholder="{% if LANGUAGE_CODE == 'ar' %}بحث في المقررات...{% else %}Search courses...{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}بحث في المقررات{% else %}Search courses{% endif %}">
+            </div>
+
+            <div id="availSummary" class="avail-summary-bar"></div>
+            <div id="availGrid" class="avail-grid">
+              <div class="pl-empty" style="grid-column:1/-1">
+                <div class="pl-empty-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></span></div>
+                <div class="pl-empty-title">{% if LANGUAGE_CODE == 'ar' %}لم يتم تحميل بيانات بعد{% else %}No data loaded yet{% endif %}</div>
+                <div class="pl-empty-hint">{% if LANGUAGE_CODE == 'ar' %}أدخل رقم الطالب واضغط جلب{% else %}Enter student ID and click Fetch{% endif %}</div>
+              </div>
+            </div>
           </div>
 
           <!-- ─── Step C: Builder (left col) ──────────────────── -->
@@ -582,17 +663,27 @@
             </div>
           </details>
 
-          <!-- ─── Step D: Section picker (full width) ─────────── -->
-          <div id="sectionCard" class="planner-panel step-panel pg-full" data-step="D">
+          <!-- ─── Step B: Full plan palette (moved to bottom, all functionality unchanged) ──── -->
+          <div id="planCard" class="planner-panel step-panel pg-full" data-step="B">
             <div class="pane-head">
-              <div class="pane-icon pane-icon-teal"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg></span></div>
-              <div><h6 class="pane-title">{% if LANGUAGE_CODE == 'ar' %}اختيار الشعب (تعيين ربط الطالب){% else %}Section picker (assign student mappings){% endif %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}ربط الشعب للمقررات المختارة{% else %}Assign sections to selected courses{% endif %}</div></div>
+              <div class="pane-icon pane-icon-purple"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></span></div>
+              <div><h6 class="pane-title">{% if LANGUAGE_CODE == 'ar' %}الخطة الدراسية الكاملة (انقر لإضافة مقرر){% else %}Full student plan (click course to add){% endif %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}جميع مقررات الخطة — انقر لإضافة{% else %}All plan courses — click to add to shortlist{% endif %}</div></div>
             </div>
-            <div style="display:flex;gap:8px;margin-bottom:12px">
-              <button id="loadSections" class="pl-btn pl-btn-outline"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}تحميل الشعب{% else %}Load sections{% endif %}</button>
-              <button id="saveSections" class="pl-btn pl-btn-success"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}حفظ للطالب{% else %}Save to student{% endif %}</button>
+            <div class="chip-legend">
+              <div class="chip-legend-item"><span class="chip-legend-dot" style="background:#111827"></span>{% if LANGUAGE_CODE == 'ar' %}غير مطروح{% else %}Not offered{% endif %}</div>
+              <div class="chip-legend-item"><span class="chip-legend-dot" style="background:#dc2626"></span>{% if LANGUAGE_CODE == 'ar' %}مكتمل{% else %}Full{% endif %}</div>
+              <div class="chip-legend-item"><span class="chip-legend-dot" style="background:#16a34a"></span>{% if LANGUAGE_CODE == 'ar' %}متاح{% else %}Available{% endif %}</div>
+              <div class="chip-legend-item"><span class="chip-legend-dot" style="background:#7c3aed"></span>{% if LANGUAGE_CODE == 'ar' %}متطلب ناقص{% else %}Missing prereq{% endif %}</div>
             </div>
-            <div id="sectionsPicker" class="small"></div>
+
+            <div class="pl-checks" style="margin-bottom:10px">
+              <label><input id="fltNotTaken" type="checkbox" checked> {% if LANGUAGE_CODE == 'ar' %}غير المجتازة فقط{% else %}Only not taken{% endif %}</label>
+              <label><input id="fltGreen" type="checkbox"> {% if LANGUAGE_CODE == 'ar' %}المتاحة فقط{% else %}Only green{% endif %}</label>
+              <label><input id="fltHighImp" type="checkbox"> {% if LANGUAGE_CODE == 'ar' %}ذات الأهمية العالية فقط (>=1.0){% else %}Only high importance (>=1.0){% endif %}</label>
+              <button id="addSelectedPlan" class="pl-btn pl-btn-teal" style="margin-inline-start:auto"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}إضافة المحدد{% else %}Add selected{% endif %}</button>
+            </div>
+
+            <div id="planPalette" class="small"></div>
           </div>
 
       </div>
@@ -657,7 +748,7 @@ function setBanner(kind, text){
 }
 
 let currentStep='A';
-const stepOrder=['A','B','C','D'];
+const stepOrder=['A','B','C'];
 function setStep(step){
   currentStep=step;
   const idx=stepOrder.indexOf(step);
@@ -682,7 +773,6 @@ function enforceBuilderProcessLayout(){
 
 let currentRecommendations=[];
 let shortlist=[];
-let selectedSectionIds=new Set();
 let currentCtx={student_id:'',academic_year:'',term:''};
 let currentBaseline=[];
 let lastBuilderOptions=[];
@@ -881,14 +971,14 @@ function renderVisualTimetable(source='baseline'){
 
 q('mode').addEventListener('change',()=>{
   q('planningBanner').classList.toggle('d-none', q('mode').value!=='ignore');
-  if(currentCtx?.student_id){ renderPlanPalette(currentCtx.student_id); }
+  if(currentCtx?.student_id){ renderPlanPalette(currentCtx.student_id); renderAvailableSections(); }
 });
 
 q('visualSource').addEventListener('change',(e)=>renderVisualTimetable(e.target.value));
-['A','B','C','D'].forEach(s=> q('step'+s)?.addEventListener('click',()=>setStep(s)));
+['A','B','C'].forEach(s=> q('step'+s)?.addEventListener('click',()=>setStep(s)));
 q('simpleMode')?.addEventListener('change',()=>setStep(currentStep));
-q('prevStep')?.addEventListener('click',()=>{ const order=['A','B','C','D']; const i=Math.max(0,order.indexOf(currentStep)-1); setStep(order[i]); });
-q('nextStep')?.addEventListener('click',()=>{ const order=['A','B','C','D']; const i=Math.min(order.length-1,order.indexOf(currentStep)+1); setStep(order[i]); });
+q('prevStep')?.addEventListener('click',()=>{ const order=['A','B','C']; const i=Math.max(0,order.indexOf(currentStep)-1); setStep(order[i]); });
+q('nextStep')?.addEventListener('click',()=>{ const order=['A','B','C']; const i=Math.min(order.length-1,order.indexOf(currentStep)+1); setStep(order[i]); });
 
 function renderShortlist(){
   const wrap=q('shortlist'); wrap.innerHTML='';
@@ -897,11 +987,21 @@ function renderShortlist(){
     credits += Number(c.credits||0);
     const row=document.createElement('div');
     row.className='border rounded p-2 mb-2';
+
+    const hasPinned=(c.pinned_sections&&c.pinned_sections.length>0);
+    const pinnedHtml=hasPinned
+      ? `<div style="margin-top:3px;display:flex;align-items:center;gap:4px;flex-wrap:wrap">
+           <span style="font-size:11px;font-weight:600;color:var(--teal)">${IS_AR?'شعب محددة:':'Pinned:'}</span>
+           ${c.pinned_sections.map((p,pi)=>`<span class="sl-pin-badge" data-pi="${pi}" style="display:inline-flex;align-items:center;gap:3px;padding:1px 7px;border-radius:5px;font-size:11px;font-weight:600;background:rgba(10,142,110,0.1);color:var(--teal);cursor:pointer" title="${IS_AR?'انقر للإزالة':'Click to remove'}">§${p.section} <span style="font-size:9px;opacity:0.6">✕</span></span>`).join('')}
+         </div>`
+      : `<div style="margin-top:2px;font-size:11px;color:var(--t4)">${IS_AR?'أي شعبة (البناء يختار الأنسب)':'Any section (builder picks best)'}</div>`;
+
     row.innerHTML=`
       <div class="d-flex justify-content-between">
-        <div>
+        <div style="flex:1">
           <strong>${c.course_code}</strong> ${c.course_name||''}
           <span class="text-secondary">(${c.credits||0} ${IS_AR?'ساعة':'cr'})</span>
+          ${pinnedHtml}
         </div>
         <button class="pl-btn pl-btn-red" data-i="${idx}"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span>${IS_AR?'إزالة':'Remove'}</button>
       </div>
@@ -909,9 +1009,21 @@ function renderShortlist(){
         <input type="checkbox" class="form-check-input" id="m${idx}" ${c.must_take?'checked':''}>
         <label class="form-check-label" for="m${idx}">${IS_AR?'إلزامي':'Must-take'}</label>
       </div>`;
+
+    /* Remove individual pinned section badges */
+    row.querySelectorAll('.sl-pin-badge').forEach(badge=>{
+      badge.onclick=(e)=>{
+        e.stopPropagation();
+        const pi=Number(badge.dataset.pi);
+        c.pinned_sections.splice(pi,1);
+        if(!c.pinned_sections.length) delete c.pinned_sections;
+        renderShortlist();
+      };
+    });
+
     wrap.appendChild(row);
-    row.querySelector('button').onclick=()=>{shortlist.splice(idx,1);renderShortlist();};
-    row.querySelector('input').onchange=(e)=>{shortlist[idx].must_take=e.target.checked;};
+    row.querySelector('button[data-i]').onclick=()=>{shortlist.splice(idx,1);renderShortlist();};
+    row.querySelector('input[type="checkbox"]').onchange=(e)=>{shortlist[idx].must_take=e.target.checked;};
   });
   q('shortCredits').textContent=String(credits);
 }
@@ -1041,30 +1153,211 @@ async function renderPlanPalette(studentId){
   }
 }
 
-function renderSectionPicker(sections){
-  const wrap=q('sectionsPicker');
-  wrap.innerHTML='';
-  if(!sections?.length){wrap.innerHTML=`<span class="text-secondary">${T.noSectionsForShortlist}</span>`; return;}
-  sections.forEach(s=>{
-    const meetingText=(s.meetings||[]).map(m=>{
-      const d=normalizeDay(m.day);
-      const label=UI.dayLong[d] || d;
-      return `${label} ${m.start_time||''}-${m.end_time||''}`.trim();
-    }).join(' | ');
-    const checked=selectedSectionIds.has(s.term_section_id)?'checked':'';
-    const row=document.createElement('label');
-    row.className='d-block border rounded p-2 mb-2';
-    row.innerHTML=`
-      <input type="checkbox" class="form-check-input me-2" data-sid="${s.term_section_id}" ${checked}>
-      <strong>${s.course_code}${s.course_number} - ${s.section}</strong>
-      <div class="small text-secondary">${s.course_name||''}</div>
-      <div class="small">${meetingText||T.noMeetings}</div>`;
-    wrap.appendChild(row);
-    row.querySelector('input').onchange=(e)=>{
-      const sid=Number(e.target.dataset.sid);
-      if(e.target.checked) selectedSectionIds.add(sid); else selectedSectionIds.delete(sid);
-    };
-  });
+/* ── Available Courses & Sections panel ─────────────────── */
+async function renderAvailableSections(){
+  const grid=q('availGrid');
+  const summary=q('availSummary');
+  if(!grid) return;
+  grid.innerHTML=`<span class="text-secondary">${IS_AR?'جارٍ تحميل الشعب...':'Loading sections...'}</span>`;
+
+  try{
+    /* 1. Get student plan */
+    const planRes=await fetch(`/report/student-plan/?student_id=${encodeURIComponent(currentCtx.student_id)}`);
+    const planData=await planRes.json();
+    if(planData.error){ grid.innerHTML=`<span class="text-danger">${planData.error}</span>`; return; }
+
+    /* 2. Collect eligible courses
+          Normal mode  → not_taken + can_register
+          Ignore mode  → not_taken + can_register  AND  studying (currently registered) */
+    const eligible=[];
+    const modeIgnore=(q('mode')?.value==='ignore');
+    (planData.terms||[]).forEach(t=>{
+      (t.courses||[]).forEach(c=>{
+        const status=String(c.status||'');
+        const includeNormal=(status==='not_taken'&&c.can_register);
+        const includeStudying=(modeIgnore&&status==='studying');
+        if(includeNormal||includeStudying){
+          eligible.push({
+            code: String(c.course_code||'').replace(/\s+/g,'').toUpperCase(),
+            name: c.course_name||c.description||'',
+            credits: Number(c.credit_hours||0),
+            importance: Number(c.importance_score||0)
+          });
+        }
+      });
+    });
+
+    if(!eligible.length){
+      grid.innerHTML=`<div class="pl-empty" style="grid-column:1/-1"><div class="pl-empty-title">${IS_AR?'لا توجد مقررات مؤهلة':'No eligible courses found'}</div></div>`;
+      if(summary) summary.innerHTML='';
+      return;
+    }
+
+    /* 3. Fetch sections catalog */
+    const codes=[...new Set(eligible.map(e=>e.code))];
+    const secRes=await fetch('/ops/planner/sections-catalog/',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
+      body:JSON.stringify({academic_year:currentCtx.academic_year,term:currentCtx.term,course_codes:codes})
+    });
+    const secData=await secRes.json();
+    const sections=secData.sections||[];
+
+    /* 4. Group sections by course key */
+    const secByCourse={};
+    sections.forEach(s=>{
+      const k=String((s.course_code||'')+(s.course_number||'')).replace(/\s+/g,'').toUpperCase();
+      (secByCourse[k]||=[]).push(s);
+    });
+
+    /* 5. Build baseline meetings for conflict detection */
+    const baseMeets=(currentBaseline||[])
+      .filter(b=>b.day&&b.start_time&&b.end_time)
+      .map(b=>({day:normalizeDay(b.day),st:toMins(b.start_time),en:toMins(b.end_time)}));
+
+    function hasConflict(meetings){
+      return (meetings||[]).some(m=>{
+        const mDay=normalizeDay(m.day);
+        const mSt=toMins(m.start_time), mEn=toMins(m.end_time);
+        if(mSt===null||mEn===null) return false;
+        return baseMeets.some(b=>b.day===mDay&&b.st<mEn&&mSt<b.en);
+      });
+    }
+
+    /* 6. Render course cards */
+    const counts={green:0,pink:0,red:0,gray:0};
+    grid.innerHTML='';
+
+    const coursesWithSections=eligible
+      .filter(e=>(secByCourse[e.code]||[]).length>0)
+      .sort((a,b)=>b.importance-a.importance);
+
+    if(!coursesWithSections.length){
+      grid.innerHTML=`<div class="pl-empty" style="grid-column:1/-1"><div class="pl-empty-title">${IS_AR?'لا توجد شعب متاحة هذا الفصل':'No sections available this term'}</div></div>`;
+      if(summary) summary.innerHTML='';
+      return;
+    }
+
+    coursesWithSections.forEach(course=>{
+      const secs=secByCourse[course.code]||[];
+      const card=document.createElement('div');
+      card.className='avail-course-card';
+      card.dataset.code=course.code;
+
+      let secHtml='';
+      secs.forEach(s=>{
+        const cap=Number(s.available_capacity||0);
+        const hasSeats=cap>0;
+        const conflict=hasConflict(s.meetings);
+
+        let colorClass, dotClass, statusLabel;
+        if(!conflict&&hasSeats){
+          colorClass='sec-teal'; dotClass='sec-dot-teal';
+          statusLabel=IS_AR?'متاح':'Open'; counts.green++;
+        }else if(conflict&&hasSeats){
+          colorClass='sec-rose'; dotClass='sec-dot-rose';
+          statusLabel=IS_AR?'تعارض':'Conflict'; counts.pink++;
+        }else if(conflict&&!hasSeats){
+          colorClass='sec-red'; dotClass='sec-dot-red';
+          statusLabel=IS_AR?'ممتلئ+تعارض':'Full+Conflict'; counts.red++;
+        }else{
+          colorClass='sec-gray'; dotClass='sec-dot-gray';
+          statusLabel=IS_AR?'ممتلئ':'Full'; counts.gray++;
+        }
+
+        const timeStr=(s.meetings||[]).map(m=>
+          `${UI.dayShort[normalizeDay(m.day)]||normalizeDay(m.day)} ${m.start_time||''}-${m.end_time||''}`
+        ).join(', ')||'TBA';
+
+        const totalSeats=(Number(s.registered_count||0)+cap);
+
+        secHtml+=`
+          <div class="avail-sec-row ${colorClass}" data-tsid="${s.term_section_id}" title="${statusLabel}">
+            <span class="sec-dot ${dotClass}"></span>
+            <span class="sec-id">${s.section||'?'}</span>
+            <span class="sec-time">${timeStr}</span>
+            <span class="sec-capacity">${s.registered_count||0}/${totalSeats}</span>
+          </div>`;
+      });
+
+      card.innerHTML=`
+        <div class="avail-course-head" style="cursor:pointer" title="${IS_AR?'انقر لإضافة المقرر (أي شعبة)':'Click to add course (any section)'}">
+          <div>
+            <div class="avail-course-code">${course.code}</div>
+            <div class="avail-course-name">${course.name}</div>
+          </div>
+          <span class="avail-course-credits">${course.credits} ${IS_AR?'ساعة':'cr'}</span>
+        </div>
+        ${secHtml}`;
+
+      /* Click section row → pin that specific section to the shortlist */
+      card.querySelectorAll('.avail-sec-row').forEach(row=>{
+        row.addEventListener('click',()=>{
+          const tsid=Number(row.dataset.tsid);
+          const secLabel=row.querySelector('.sec-id')?.textContent?.trim()||'?';
+
+          let existing=shortlist.find(x=>String(x.course_code||'').toUpperCase()===course.code);
+
+          if(!existing){
+            /* New entry with pinned section */
+            existing={
+              course_code:course.code, course_name:course.name,
+              credits:course.credits, priority:'Med',
+              score:Math.round(course.importance*20),
+              status:'Eligible', missing_prerequisites:[], must_take:false,
+              pinned_sections:[{term_section_id:tsid, section:secLabel}]
+            };
+            shortlist.push(existing);
+          } else {
+            /* Add section to existing entry */
+            if(!existing.pinned_sections) existing.pinned_sections=[];
+            if(!existing.pinned_sections.find(p=>p.term_section_id===tsid)){
+              existing.pinned_sections.push({term_section_id:tsid, section:secLabel});
+            } else {
+              setBanner('info', IS_AR?`الشعبة ${secLabel} مضافة مسبقاً`:`Section ${secLabel} already pinned`);
+              return;
+            }
+          }
+
+          renderShortlist();
+          setBanner('success', IS_AR?`تمت إضافة ${course.code} §${secLabel} للقائمة`:`Added ${course.code} §${secLabel} to shortlist`);
+        });
+      });
+
+      /* Click course header → add as full course (any section, no pinning) */
+      card.querySelector('.avail-course-head')?.addEventListener('click',(e)=>{
+        /* Don't fire if user clicked a child inside the credits badge etc. – keep it simple */
+        if(shortlist.find(x=>String(x.course_code||'').toUpperCase()===course.code)){
+          setBanner('info', IS_AR?`${course.code} مضاف مسبقاً في القائمة`:`${course.code} already in shortlist`);
+          return;
+        }
+        shortlist.push({
+          course_code:course.code, course_name:course.name,
+          credits:course.credits, priority:'Med',
+          score:Math.round(course.importance*20),
+          status:'Eligible', missing_prerequisites:[], must_take:false
+        });
+        renderShortlist();
+        setBanner('success', IS_AR?`تمت إضافة ${course.code} (أي شعبة)`:`Added ${course.code} (any section)`);
+      });
+
+      grid.appendChild(card);
+    });
+
+    /* 7. Summary bar */
+    const total=counts.green+counts.pink+counts.red+counts.gray;
+    if(summary){
+      summary.innerHTML=`
+        <span class="avail-summary-item"><span class="sec-dot sec-dot-teal"></span> ${counts.green} ${IS_AR?'متاح':'open'}</span>
+        <span class="avail-summary-item"><span class="sec-dot sec-dot-rose"></span> ${counts.pink} ${IS_AR?'تعارض':'conflict'}</span>
+        <span class="avail-summary-item"><span class="sec-dot sec-dot-red"></span> ${counts.red} ${IS_AR?'ممتلئ+تعارض':'full+conflict'}</span>
+        <span class="avail-summary-item"><span class="sec-dot sec-dot-gray"></span> ${counts.gray} ${IS_AR?'ممتلئ':'full'}</span>
+        <span style="margin-inline-start:auto;font-weight:600">${total} ${IS_AR?'شعبة':'sections'}</span>`;
+    }
+  }catch(e){
+    grid.innerHTML=`<span class="text-danger">${IS_AR?'فشل تحميل الشعب المتاحة':'Failed to load available sections'}</span>`;
+    console.error('renderAvailableSections error:',e);
+  }
 }
 
 q('resetShortlist').onclick=()=>{
@@ -1090,41 +1383,6 @@ q('addSelectedPlan').onclick=()=>{
   renderShortlist();
   setBanner('info', T.addedSelected(added));
   setStep('B');
-};
-
-q('loadSections').onclick=async()=>{
-  setStep('D');
-  const codes=[...new Set(shortlist.map(x=>x.course_code).filter(Boolean))];
-  if(!codes.length){ setBanner('warning', T.noCoursesShortlist); return; }
-  const r=await fetch('/ops/planner/sections-catalog/',{
-    method:'POST',
-    headers:{'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
-    body:JSON.stringify({academic_year:currentCtx.academic_year,term:currentCtx.term,course_codes:codes})
-  });
-  const data=await r.json();
-  if(data.error){setBanner('danger', errMsg(data)); return;}
-  renderSectionPicker(data.sections||[]);
-  setBanner('info', T.loadedSections(data.count||0));
-};
-
-q('saveSections').onclick=async()=>{
-  setStep('D');
-  if(!currentCtx.student_id) return notify.warning(T.fetchStudentFirst);
-  const r=await fetch('/ops/planner/save-student-sections/',{
-    method:'POST',
-    headers:{'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
-    body:JSON.stringify({
-      student_id:currentCtx.student_id,
-      academic_year:currentCtx.academic_year,
-      term:currentCtx.term,
-      term_section_ids:[...selectedSectionIds],
-      confirm_replace:true
-    })
-  });
-  const data=await r.json();
-  if(data.error){setBanner('danger', errMsg(data)); return;}
-  setBanner('success', T.savedMappings(data.inserted||0));
-  q('fetchBtn').click();
 };
 
 q('applyOption').onclick=async()=>{
@@ -1154,7 +1412,7 @@ q('applyOption').onclick=async()=>{
 
   setBanner('success', T.appliedOption(name, data.inserted||0));
   q('trustStrip').textContent=T.trustUpdated(name);
-  setStep('D');
+  setStep('C');
   q('fetchBtn').click();
 };
 
@@ -1321,7 +1579,6 @@ q('fetchBtn').onclick=async()=>{
   };
 
   currentBaseline=(data.baseline||[]);
-  selectedSectionIds=new Set((data.baseline||[]).map(x=>x.term_section_id).filter(Boolean));
 
   const st=data.student||{};
   q('studentSummary').innerHTML=`
@@ -1383,10 +1640,19 @@ q('fetchBtn').onclick=async()=>{
   shortlist=currentRecommendations.filter(x=>x.status==='Eligible').map(x=>({...x,must_take:false}));
   renderShortlist();
   renderPlanPalette(currentCtx.student_id);
+  renderAvailableSections();
 };
 
 enforceBuilderProcessLayout();
 setStep('A');
+
+/* ── Available sections search filter ──────────────────────── */
+q('availSearch')?.addEventListener('input',function(){
+  const val=this.value.trim().toUpperCase();
+  document.querySelectorAll('.avail-course-card').forEach(card=>{
+    card.style.display=card.dataset.code.includes(val)?'':'none';
+  });
+});
 
 /* ── URL param deep-link: /planner/?student=123456&year=1447&term=1 ──────
    Advisors can open the planner pre-loaded for a specific student by
