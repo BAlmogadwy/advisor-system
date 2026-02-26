@@ -530,7 +530,7 @@
         <div class="fb-search" style="max-width:110px"><input type="text" inputmode="numeric" pattern="[0-9]*" name="year" value="{{ year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" required></div>
         <div class="fb-search" style="max-width:110px"><input type="text" inputmode="numeric" pattern="[0-9]*" min="0" max="1" name="semester" value="{{ semester }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}" required></div>
         <div class="fb-spacer"></div>
-        <button class="btn btn-primary" style="padding:7px 20px;font-size:13px">
+        <button class="btn btn-primary">
           <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}توصية{% else %}Recommend{% endif %}
         </button>
         <button id="loadStudentPlan" type="button" class="fb-dd">
@@ -712,7 +712,7 @@
         <div class="fb-search" style="max-width:170px"><input id="batchProgram" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج (اختياري){% else %}Program (optional){% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج (اختياري){% else %}Program (optional){% endif %}"></div>
         <div class="fb-search" style="max-width:160px"><input id="batchSection" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة (اختياري){% else %}Section (optional){% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة (اختياري){% else %}Section (optional){% endif %}"></div>
         <div class="fb-spacer"></div>
-        <button id="runBatch" class="btn btn-primary" style="padding:7px 20px;font-size:13px"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></span>Run preview</button>
+        <button id="runBatch" class="btn btn-primary"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></span>Run preview</button>
         <button id="resetBatch" type="button" class="fb-dd">Reset</button>
       </div>
       <div style="display:flex;gap:6px;margin-top:8px;">
@@ -770,7 +770,7 @@
         <div class="fb-search" style="max-width:200px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><input id="preProgram" list="programs" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج مثال CS{% else %}Program  e.g. CS{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج مثال CS{% else %}Program{% endif %}"></div>
         <div class="fb-search" style="max-width:220px"><input id="preCourse" placeholder="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر (اختياري){% else %}Course code (optional){% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر (اختياري){% else %}Course code{% endif %}"></div>
         <div class="fb-spacer"></div>
-        <button id="loadPre" class="btn btn-primary" style="padding:7px 22px;font-size:13px">
+        <button id="loadPre" class="btn btn-primary">
           <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Load
         </button>
       </div>
@@ -817,7 +817,7 @@
             <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}</label>
             <div class="fb-search" style="max-width:none"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><input id="planProgram" list="programs" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثال CS{% else %}e.g. CS{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}"></div>
           </div>
-          <div style="flex:0 0 auto;padding-bottom:1px"><button id="loadPlan" class="btn btn-primary" style="padding:7px 20px;font-size:13px">{% if LANGUAGE_CODE == 'ar' %}تحميل الخطة{% else %}Load Plan{% endif %}</button></div>
+          <div style="flex:0 0 auto;padding-bottom:1px"><button id="loadPlan" class="btn btn-primary">{% if LANGUAGE_CODE == 'ar' %}تحميل الخطة{% else %}Load Plan{% endif %}</button></div>
         </div>
       </div>
       <div class="zone-card">
@@ -864,8 +864,8 @@
         <div class="fb-search" style="max-width:120px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></span><input id="scrapeConcurrency" type="text" inputmode="numeric" pattern="[0-9]*" min="1" max="8" value="2" placeholder="{% if LANGUAGE_CODE == 'ar' %}المسارات{% else %}Threads{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}المسارات{% else %}Concurrency threads{% endif %}"></div>
         <div class="fb-search" style="flex:1;min-width:180px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><input id="scrapeCsv" placeholder="{% if LANGUAGE_CODE == 'ar' %}مسار CSV{% else %}CSV path (default: data/students_list.csv){% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}مسار CSV{% else %}CSV file path{% endif %}"></div>
         <div class="fb-spacer"></div>
-        <button id="scrapeStart" class="btn btn-primary" style="padding:7px 16px;font-size:13px;background:linear-gradient(135deg,#e74c3c,#c0392b);border:none"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}بدء{% else %}Start{% endif %}</button>
-        <button id="scrapeStop" class="btn btn-primary" style="padding:7px 14px;font-size:13px;background:linear-gradient(135deg,#f39c12,#e67e22);border:none"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}إيقاف{% else %}Stop{% endif %}</button>
+        <button id="scrapeStart" class="btn btn-danger"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}بدء{% else %}Start{% endif %}</button>
+        <button id="scrapeStop" class="btn btn-warning"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}إيقاف{% else %}Stop{% endif %}</button>
         <button id="scrapeRefresh" class="btn-circle" title="{% if LANGUAGE_CODE == 'ar' %}تحديث الحالة{% else %}Refresh status{% endif %}"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></span></button>
       </div>
       <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px" id="scrapeMetrics">
@@ -938,7 +938,7 @@
         <div class="fb-search" style="max-width:110px"><input id="dbgJoin" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join yrs{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join years{% endif %}"></div>
         <div class="fb-search" style="max-width:100px"><input id="dbgLimit" type="text" inputmode="numeric" pattern="[0-9]*" value="80" placeholder="{% if LANGUAGE_CODE == 'ar' %}الحد{% else %}Limit{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الحد{% else %}Limit{% endif %}"></div>
         <div class="fb-spacer"></div>
-        <button id="dbgRun" class="btn btn-primary" style="padding:7px 20px;font-size:13px">
+        <button id="dbgRun" class="btn btn-primary">
           <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run
         </button>
       </div>
@@ -986,9 +986,9 @@
         <div class="fb-search" style="max-width:110px"><input id="elSection" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}"></div>
         <div class="fb-search" style="max-width:120px"><input id="elProgram" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}"></div>
         <div class="fb-search" style="max-width:110px"><input id="elJoin" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join yrs{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join years{% endif %}"></div>
-        <div class="fb-search" style="max-width:210px"><select id="elMode" style="flex:1;background:none;border:none;outline:none;color:var(--t1);font-size:13px;font-family:inherit;cursor:pointer"><option value="relaxed" selected>{% if LANGUAGE_CODE == 'ar' %}مرن (مجتاز+يدرس){% else %}Relaxed (passed+studying){% endif %}</option><option value="strict">{% if LANGUAGE_CODE == 'ar' %}صارم (مجتاز فقط){% else %}Strict (passed only){% endif %}</option></select></div>
+        <div class="fb-search" style="max-width:210px"><select id="elMode"><option value="relaxed" selected>{% if LANGUAGE_CODE == 'ar' %}مرن (مجتاز+يدرس){% else %}Relaxed (passed+studying){% endif %}</option><option value="strict">{% if LANGUAGE_CODE == 'ar' %}صارم (مجتاز فقط){% else %}Strict (passed only){% endif %}</option></select></div>
         <div class="fb-spacer"></div>
-        <button id="elRun" class="btn btn-primary" style="padding:7px 20px;font-size:13px">
+        <button id="elRun" class="btn btn-primary">
           <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Check
         </button>
       </div>
@@ -1070,7 +1070,7 @@
             <div class="fb-search" style="max-width:none"><input id="advDept" placeholder="CS,AI" maxlength="120" aria-label="Departments"></div>
             <div id="advDeptErr" class="field-error"></div>
           </div>
-          <div style="flex:0 0 auto;padding-bottom:1px"><button id="advSave" class="btn btn-primary" style="padding:7px 16px;font-size:13px">Save advisor</button></div>
+          <div style="flex:0 0 auto;padding-bottom:1px"><button id="advSave" class="btn btn-primary">Save advisor</button></div>
         </div>
       </div>
 
@@ -1101,7 +1101,7 @@
             <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}معرّف المرشد{% else %}Advisor ID{% endif %}</label>
             <div class="fb-search" style="max-width:none"><input id="advAssignAdvisorId" placeholder="A001" aria-label="{% if LANGUAGE_CODE == 'ar' %}معرّف المرشد{% else %}Advisor ID{% endif %}"></div>
           </div>
-          <div style="flex:0 0 auto;padding-bottom:1px"><button id="advAssignOneBtn" class="btn btn-outline-primary" type="button" style="padding:7px 16px;font-size:13px">{% if LANGUAGE_CODE == 'ar' %}تعيين طالب واحد{% else %}Assign one student{% endif %}</button></div>
+          <div style="flex:0 0 auto;padding-bottom:1px"><button id="advAssignOneBtn" class="btn btn-outline-primary" type="button">{% if LANGUAGE_CODE == 'ar' %}تعيين طالب واحد{% else %}Assign one student{% endif %}</button></div>
         </div>
       </div>
 
@@ -1143,9 +1143,9 @@
         <div class="fb-search" style="max-width:100px"><input id="hpSection" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}"></div>
         <div class="fb-search" style="max-width:110px"><input id="hpProgram" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}"></div>
         <div class="fb-search" style="max-width:110px"><input id="hpJoin" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join yrs{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join years{% endif %}"></div>
-        <div class="fb-search" style="max-width:130px"><select id="hpParity" style="flex:1;background:none;border:none;outline:none;color:var(--t1);font-size:13px;font-family:inherit;cursor:pointer"><option value="0" selected>0 (odd)</option><option value="1">1 (even)</option></select></div>
+        <div class="fb-search" style="max-width:130px"><select id="hpParity"><option value="0" selected>0 (odd)</option><option value="1">1 (even)</option></select></div>
         <div class="fb-spacer"></div>
-        <button id="hpRun" class="btn btn-primary" style="padding:7px 20px;font-size:13px"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run report</button>
+        <button id="hpRun" class="btn btn-primary"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run report</button>
         <a id="hpXlsx" class="fb-dd" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>XLSX</a>
       </div>
       <details class="hp-advanced" style="margin-bottom:8px">
@@ -1154,10 +1154,10 @@
           <span class="hp-adv-defaults-badge">Using defaults</span>
         </summary>
         <div class="filter-bar" style="margin-top:8px;padding:10px 14px">
-          <div class="fb-search" style="max-width:150px"><select id="hpDiscount" style="flex:1;background:none;border:none;outline:none;color:var(--t1);font-size:13px;font-family:inherit;cursor:pointer"><option value="1_over_d" selected>1_over_d</option><option value="half_power_d">half_power_d</option><option value="none">none</option></select></div>
+          <div class="fb-search" style="max-width:150px"><select id="hpDiscount"><option value="1_over_d" selected>1_over_d</option><option value="half_power_d">half_power_d</option><option value="none">none</option></select></div>
           <div class="fb-search" style="max-width:120px"><input id="hpMinScore" type="text" inputmode="decimal" pattern="[0-9.]*" value="2.0" placeholder="{% if LANGUAGE_CODE == 'ar' %}أقل درجة{% else %}Min score{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}أقل درجة{% else %}Minimum score{% endif %}"></div>
           <div class="fb-search" style="max-width:100px"><input id="hpTopK" type="text" inputmode="numeric" pattern="[0-9]*" value="10" placeholder="{% if LANGUAGE_CODE == 'ar' %}أفضل K{% else %}Top K{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}أفضل K{% else %}Top K{% endif %}"></div>
-          <div class="fb-search" style="max-width:210px"><select id="hpStudying" style="flex:1;background:none;border:none;outline:none;color:var(--t1);font-size:13px;font-family:inherit;cursor:pointer"><option value="false" selected>{% if LANGUAGE_CODE == 'ar' %}لا (الافتراضي الدقيق){% else %}No (exact default){% endif %}</option><option value="true">{% if LANGUAGE_CODE == 'ar' %}نعم{% else %}Yes{% endif %}</option></select></div>
+          <div class="fb-search" style="max-width:210px"><select id="hpStudying"><option value="false" selected>{% if LANGUAGE_CODE == 'ar' %}لا (الافتراضي الدقيق){% else %}No (exact default){% endif %}</option><option value="true">{% if LANGUAGE_CODE == 'ar' %}نعم{% else %}Yes{% endif %}</option></select></div>
         </div>
       </details>
       <div class="preset-row">

@@ -1419,6 +1419,7 @@ html body .btn:focus-visible {
   box-shadow:inset 4px 4px 8px rgba(163,177,198,0.35),
              inset -4px -4px 8px rgba(255,255,255,0.9);
   transition:box-shadow .25s ease;
+  overflow:hidden;
 }
 .fb-search:focus-within {
   background:transparent;
@@ -1448,6 +1449,24 @@ html body .btn:focus-visible {
               color 9999s ease-in-out 0s !important;
 }
 .fb-search input::placeholder { color:var(--t5); }
+.fb-search select {
+  flex:1; min-width:0; width:100%;
+  background:transparent; border:none; outline:none;
+  box-shadow:none; color:var(--t1); font-size:0.95rem; font-family:inherit;
+  padding:0.55rem 0; cursor:pointer;
+  -webkit-appearance:none; -moz-appearance:none; appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%239aa5b4'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;
+  background-position:right 0.4rem center;
+  padding-inline-end:1.5rem;
+  text-overflow:ellipsis;
+}
+.fb-search select:focus,
+.fb-search select:focus-visible {
+  outline:    none !important;
+  box-shadow: none !important;
+  background-color: transparent !important;
+}
 .fb-spacer { flex:1; }
 .fb-dd {
   display:flex; align-items:center; gap:6px;
