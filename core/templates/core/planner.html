@@ -610,9 +610,13 @@
               <button id="runBuilder" class="pl-btn pl-btn-primary"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}بناء{% else %}Build{% endif %}</button>
               <button id="applyOption" class="pl-btn pl-btn-success"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}تطبيق{% else %}Apply{% endif %}</button>
             </div>
-            <div class="pl-checks" style="margin-bottom:10px">
+            <div class="pl-checks" style="margin-bottom:10px;align-items:center">
               <label><input id="strictSections" type="checkbox"> {% if LANGUAGE_CODE == 'ar' %}صارم{% else %}Strict{% endif %}</label>
               <label><input id="ignoreCapacity" type="checkbox"> {% if LANGUAGE_CODE == 'ar' %}تجاهل السعة{% else %}Ignore capacity{% endif %}</label>
+              <label style="display:inline-flex;align-items:center;gap:4px">
+                {% if LANGUAGE_CODE == 'ar' %}الحد الأقصى ساعات{% else %}Max cr.{% endif %}
+                <input id="maxCredits" type="number" min="0" max="30" value="0" style="width:52px;padding:2px 4px;border:1px solid var(--border);border-radius:6px;font-size:12px;text-align:center">
+              </label>
             </div>
 
             <input id="selectedOption" type="hidden">
@@ -1286,7 +1290,8 @@ async function renderAvailableSections(){
             <div class="avail-course-code">${course.code}</div>
             <div class="avail-course-name">${course.name}</div>
           </div>
-          <span class="avail-course-credits">${course.credits} ${IS_AR?'ساعة':'cr'}</span>
+          <span class="avail-course-credits" style="margin-inline-end:4px">${course.credits} ${IS_AR?'ساعة':'cr'}</span>
+          <span class="avail-course-credits" style="background:${course.importance>=3?'rgba(0,178,169,0.12);color:var(--teal)':course.importance>=1?'rgba(245,166,35,0.12);color:var(--warning)':'rgba(17,17,68,0.04);color:var(--t4)'}">⚡${course.importance.toFixed(1)}</span>
         </div>
         ${secHtml}`;
 
@@ -1433,6 +1438,7 @@ q('runBuilder').onclick=async()=>{
       swap:q('swap').checked,
       strict_sections:q('strictSections')?.checked||false,
       ignore_capacity:q('ignoreCapacity')?.checked||false,
+      max_credits:Number(q('maxCredits')?.value||0),
       shortlist,
       baseline:currentBaseline
     })
@@ -1589,6 +1595,9 @@ q('fetchBtn').onclick=async()=>{
     <div><strong>${IS_AR ? 'المعدل التراكمي' : 'GPA'}:</strong> ${st.gpa??''}</div>
     <div><strong>${IS_AR ? 'الساعات المسجلة' : 'Registered credits'}:</strong> ${st.registered_credits||0}</div>
     <div><strong>${IS_AR ? 'الحد الأعلى للساعات' : 'Credit cap'}:</strong> ${st.credit_cap||0}</div>`;
+
+  /* Auto-fill max credits box from student credit cap */
+  if(st.credit_cap && Number(st.credit_cap)>0) q('maxCredits').value=Number(st.credit_cap);
 
   q('baselineTotals').textContent=`${IS_AR ? 'المقررات' : 'Courses'}: ${data.baseline_totals.courses} | ${IS_AR ? 'الساعات' : 'Credits'}: ${data.baseline_totals.credits}`;
 

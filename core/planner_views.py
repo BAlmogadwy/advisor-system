@@ -515,6 +515,7 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
                 if isinstance(item.get("missing_prerequisites", []), list)
                 else [],
                 "must_take": bool(item.get("must_take", False)),
+                "credits": int(item.get("credits", 0) or 0),
                 "pinned_sections": pinned_sections,
             }
         )
@@ -523,6 +524,7 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
     suggest_swaps = bool(payload.get("swap", False))
     strict_sections = bool(payload.get("strict_sections", False))
     consider_capacity = not bool(payload.get("ignore_capacity", False))
+    max_credits = int(payload.get("max_credits", 0) or 0)
     try:
         result = build_plans(
             year,
@@ -533,6 +535,7 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
             suggest_swaps=suggest_swaps,
             strict_per_course=strict_sections,
             consider_capacity=consider_capacity,
+            max_credits=max_credits,
         )
         result["mode"] = mode
         return _ok(result)

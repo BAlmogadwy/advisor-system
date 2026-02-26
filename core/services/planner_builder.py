@@ -369,6 +369,8 @@ def _bitmask_build_option_b(
     keep_registered: bool,
     strict_per_course: bool,
     consider_capacity: bool,
+    max_credits: int = 0,
+    credits_map: dict[str, int] | None = None,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     # Collect must_take codes for hard-constraint enforcement
     must_take_codes: set[str] = set()
@@ -480,7 +482,10 @@ def _bitmask_build_option_b(
         # maximize: scheduled, then fewer days, then fewer gaps, then more capacity
         return (scheduled, -day_count, -gap_minutes, cap_total)
 
-    def dfs(i: int, used_mask: int, chosen: list[dict[str, object]]) -> None:
+    _cr_map = credits_map or {}
+    _max_cr = max_credits if max_credits and max_credits > 0 else 0
+
+    def dfs(i: int, used_mask: int, chosen: list[dict[str, object]], used_cr: int) -> None:
         nonlocal best_score, best_selected
 
         remaining = len(course_options) - i
@@ -498,20 +503,25 @@ def _bitmask_build_option_b(
 
         code, opts = course_options[i]
         is_must = code in must_take_codes
+        course_cr = _cr_map.get(code, 0)
 
         # relaxed mode allows skipping a course, but never a must-take
         if not strict_per_course and not is_must:
-            dfs(i + 1, used_mask, chosen)
+            dfs(i + 1, used_mask, chosen, used_cr)
+
+        # credit-cap check: skip if adding this course would exceed the cap
+        if _max_cr and not is_must and (used_cr + course_cr) > _max_cr:
+            return
 
         for opt in opts:
             msk = int(opt.get("_mask") or 0)
             if (used_mask & msk) != 0:
                 continue
             chosen.append(opt)
-            dfs(i + 1, used_mask | msk, chosen)
+            dfs(i + 1, used_mask | msk, chosen, used_cr + course_cr)
             chosen.pop()
 
-    dfs(0, baseline_mask if keep_registered else 0, [])
+    dfs(0, baseline_mask if keep_registered else 0, [], 0)
 
     selected = [{k: v for k, v in opt.items() if k != "_mask"} for opt in best_selected]
 
@@ -546,6 +556,8 @@ def _bitmask_build_option_c(
     baseline: list[dict[str, object]],
     keep_registered: bool,
     strict_per_course: bool,
+    max_credits: int = 0,
+    credits_map: dict[str, int] | None = None,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     # Collect must_take codes for hard-constraint enforcement
     must_take_codes: set[str] = set()
@@ -670,7 +682,10 @@ def _bitmask_build_option_c(
         # maximize scheduled, then minimize days, gaps, latest finish, then prefer later earliest start
         return (len(chosen), -days, -gaps, -latest_finish, earliest_start)
 
-    def dfs(i: int, cur_days: list[int], chosen: list[dict[str, object]]) -> None:
+    _cr_map = credits_map or {}
+    _max_cr = max_credits if max_credits and max_credits > 0 else 0
+
+    def dfs(i: int, cur_days: list[int], chosen: list[dict[str, object]], used_cr: int) -> None:
         nonlocal best_key, best_selected
 
         remaining = len(course_options) - i
@@ -688,10 +703,15 @@ def _bitmask_build_option_c(
 
         code, opts = course_options[i]
         is_must = code in must_take_codes
+        course_cr = _cr_map.get(code, 0)
 
         # relaxed mode allows skipping a course, but never a must-take
         if not strict_per_course and not is_must:
-            dfs(i + 1, cur_days, chosen)
+            dfs(i + 1, cur_days, chosen, used_cr)
+
+        # credit-cap check: skip if adding this course would exceed the cap
+        if _max_cr and not is_must and (used_cr + course_cr) > _max_cr:
+            return
 
         for opt in opts:
             dm = opt.get("_day_masks")
@@ -700,12 +720,12 @@ def _bitmask_build_option_c(
             for d in range(7):
                 cur_days[d] |= dm[d]
             chosen.append(opt)
-            dfs(i + 1, cur_days, chosen)
+            dfs(i + 1, cur_days, chosen, used_cr + course_cr)
             chosen.pop()
             for d in range(7):
                 cur_days[d] ^= dm[d]
 
-    dfs(0, base_days[:], [])
+    dfs(0, base_days[:], [], 0)
 
     selected = [{k: v for k, v in o.items() if k != "_day_masks"} for o in best_selected]
 
@@ -742,6 +762,8 @@ def _cp_build_option(
     profile: str,
     strict_per_course: bool,
     consider_capacity: bool,
+    max_credits: int = 0,
+    credits_map: dict[str, int] | None = None,
 ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
     if cp_model is None:
         return _choose(shortlist, catalog, baseline, keep_registered, strategy=profile)
@@ -860,6 +882,20 @@ def _cp_build_option(
     for a, b in _get_conflict_pairs(option_by_sid):
         if a in var_by_sid and b in var_by_sid:
             model.Add(var_by_sid[a] + var_by_sid[b] <= 1)
+
+    # Credit-cap constraint: total scheduled credits ≤ max_credits
+    _cr_map = credits_map or {}
+    _max_cr = max_credits if max_credits and max_credits > 0 else 0
+    if _max_cr:
+        credit_terms = []
+        for code, sids in course_to_sids.items():
+            cr = _cr_map.get(code, 0)
+            if cr > 0:
+                for sid in sids:
+                    if sid in var_by_sid:
+                        credit_terms.append(cr * var_by_sid[sid])
+        if credit_terms:
+            model.Add(sum(credit_terms) <= _max_cr)
 
     # Soft objective terms
     selected_sum = sum(var_by_sid.values())
@@ -1076,6 +1112,7 @@ def build_plans(
     suggest_swaps: bool = False,
     strict_per_course: bool = False,
     consider_capacity: bool = True,
+    max_credits: int = 0,
 ) -> dict[str, object]:
     codes = sorted(
         {
@@ -1107,6 +1144,14 @@ def build_plans(
                 if int(s.get("term_section_id") or 0) in pinned_ids  # type: ignore[call-overload]
             ]
 
+    # Build course → credits mapping for max-credit enforcement
+    credits_map: dict[str, int] = {}
+    for item in shortlist:
+        code = str(item.get("course_code", "")).replace(" ", "").upper()
+        cr = int(item.get("credits", 0) or 0)
+        if cr > 0:
+            credits_map[code] = cr
+
     def _catalog_without_sids(excluded: set[int]) -> dict[str, list[dict[str, object]]]:
         if not excluded:
             return {k: list(v) for k, v in catalog.items()}
@@ -1136,6 +1181,8 @@ def build_plans(
                 profile="A",
                 strict_per_course=strict_per_course,
                 consider_capacity=consider_capacity,
+                max_credits=max_credits,
+                credits_map=credits_map,
             )
         if method == "B":
             return _bitmask_build_option_b(
@@ -1145,9 +1192,14 @@ def build_plans(
                 keep_registered,
                 strict_per_course=strict_per_course,
                 consider_capacity=consider_capacity,
+                max_credits=max_credits,
+                credits_map=credits_map,
             )
         return _bitmask_build_option_c(
-            shortlist, cat, baseline, keep_registered, strict_per_course=strict_per_course
+            shortlist, cat, baseline, keep_registered,
+            strict_per_course=strict_per_course,
+            max_credits=max_credits,
+            credits_map=credits_map,
         )
 
     def _top_k_method(
