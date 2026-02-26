@@ -175,6 +175,15 @@ def students_by_advisor_view(request: HttpRequest) -> JsonResponse:
     focus = (request.GET.get("focus") or "").strip() or None
     program_filter = (request.GET.get("program_filter") or "").strip() or None
 
+    try:
+        page = max(1, int(request.GET.get("page", "1")))
+    except (ValueError, TypeError):
+        page = 1
+    try:
+        page_size = max(0, min(int(request.GET.get("page_size", "50")), 500))
+    except (ValueError, TypeError):
+        page_size = 50
+
     scope = get_user_scope(request.user)
     role = str(scope.get("role", ""))
     forced_advisor_id = str(scope.get("advisor_id", "")).strip() if role != ROLE_SUPER_ADMIN else ""
@@ -191,5 +200,7 @@ def students_by_advisor_view(request: HttpRequest) -> JsonResponse:
             program_filter=program_filter,
             forced_advisor_id=forced_advisor_id,
             allowed_departments=allowed_departments,
+            page=page,
+            page_size=page_size,
         )
     )

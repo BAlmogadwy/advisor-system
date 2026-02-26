@@ -291,6 +291,8 @@ def list_students_by_advisor(
     program_filter: str | None = None,
     forced_advisor_id: str | None = None,
     allowed_departments: list[str] | None = None,
+    page: int = 1,
+    page_size: int = 0,
 ) -> dict[str, Any]:
     advisor_obj = (
         AcademicAdvisor.objects.filter(advisor_id=advisor_id)
@@ -434,18 +436,33 @@ def list_students_by_advisor(
         program_filter=program_filter,
     )
 
+    # Pagination: page_size=0 means return all (used by CSV export).
+    total_filtered = len(filtered_items)
+    if page_size > 0:
+        total_pages = max(1, -(-total_filtered // page_size))  # ceil division
+        clamped_page = max(1, min(page, total_pages))
+        start = (clamped_page - 1) * page_size
+        page_items = filtered_items[start : start + page_size]
+    else:
+        total_pages = 1
+        clamped_page = 1
+        page_items = filtered_items
+
     return {
         "advisor": advisor,
         "advisor_id": advisor_id,
         "mapping_ready": True,
         "count": len(items),
-        "shown_count": len(filtered_items),
+        "shown_count": total_filtered,
+        "page": clamped_page,
+        "page_size": page_size,
+        "total_pages": total_pages,
         "filters": {
             "search": search or "",
             "focus": (focus or "all"),
             "program_filter": program_filter or "",
         },
-        "items": filtered_items,
+        "items": page_items,
         "summary": {
             "avg_gpa": avg_gpa,
             "low_gpa_count": low_gpa_count,
