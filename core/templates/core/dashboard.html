@@ -73,49 +73,62 @@
   background: rgba(10,142,110,0.12); color: var(--teal);
 }
 
-/* ── Scrape terminal (mockup .term style) ────────────── */
+/* ── Scrape log viewer (neumorphic style) ────────────── */
 .scrape-term {
   border-radius: var(--radius); overflow: hidden;
-  border: 1px solid rgba(255,255,255,0.06);
-  box-shadow: 0 4px 20px rgba(17,17,68,0.12);
+  background: rgba(255,255,255,0.55);
+  backdrop-filter: blur(20px) saturate(130%);
+  -webkit-backdrop-filter: blur(20px) saturate(130%);
+  border: 1px solid rgba(255,255,255,0.5);
+  box-shadow: 6px 6px 16px rgba(163,177,198,0.35),
+              -6px -6px 16px rgba(255,255,255,0.65);
 }
 .scrape-term-head {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 14px;
-  background: #0c0c30;
-  border-bottom: 1px solid rgba(255,255,255,0.06);
+  padding: 10px 16px;
+  background: rgba(255,255,255,0.45);
+  border-bottom: 1px solid rgba(163,177,198,0.18);
 }
-.scrape-term-dots {
-  display: flex; gap: 6px;
+.scrape-term-status {
+  display: flex; align-items: center; gap: 8px;
 }
-.scrape-term-dots span {
-  width: 10px; height: 10px; border-radius: 50%;
-  display: block;
+.scrape-term-status-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--teal, #0A8E6E);
+  box-shadow: 0 0 6px rgba(10,142,110,0.4);
+  animation: scrape-pulse 2s ease-in-out infinite;
 }
-.scrape-term-dots span:nth-child(1) { background: #ff5f57; }
-.scrape-term-dots span:nth-child(2) { background: #febc2e; }
-.scrape-term-dots span:nth-child(3) { background: #28c840; }
+@keyframes scrape-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
 .scrape-term-label {
-  font-size: 11px; font-weight: 600; color: rgba(255,255,255,0.5);
-  letter-spacing: 0.04em; text-transform: uppercase;
+  font-size: 11px; font-weight: 700; color: #2d3748;
+  letter-spacing: 0.06em; text-transform: uppercase;
 }
 .scrape-term-file {
-  font-size: 10px; font-family: var(--font-mono); color: rgba(255,255,255,0.25);
+  font-size: 10px; font-family: var(--font-mono); color: #8492a6;
+  background: rgba(10,142,110,0.08); padding: 2px 8px; border-radius: 6px;
 }
 .scrape-term-body {
-  background: var(--navy); padding: 14px 16px;
-  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.9;
-  max-height: 280px; overflow-y: auto; color: rgba(255,255,255,0.5);
-  box-shadow: 0 2px 8px rgba(17,17,68,0.15) inset;
+  padding: 14px 16px;
+  background: rgba(240,243,246,0.6);
+  font-family: var(--font-mono); font-size: 11.5px; line-height: 1.85;
+  max-height: 280px; overflow-y: auto; color: #4a5568;
+  box-shadow: inset 3px 3px 8px rgba(163,177,198,0.3),
+              inset -3px -3px 8px rgba(255,255,255,0.5);
 }
 .scrape-term-body::-webkit-scrollbar { width: 6px; }
 .scrape-term-body::-webkit-scrollbar-track { background: transparent; }
-.scrape-term-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
-.t-ts  { color: rgba(255,255,255,0.22); }
-.t-ok  { color: #28c840; }
-.t-er  { color: #ff7070; }
-.t-hl  { color: #6ec6ff; }
-.t-wrn { color: #febc2e; }
+.scrape-term-body::-webkit-scrollbar-thumb { background: rgba(163,177,198,0.4); border-radius: 3px; }
+.scrape-term-body::-webkit-scrollbar-thumb:hover { background: rgba(163,177,198,0.6); }
+.scrape-term-body div { padding: 1px 0; border-bottom: 1px solid rgba(163,177,198,0.08); }
+.scrape-term-body div:last-child { border-bottom: none; }
+.t-ts  { color: #a0aec0; font-size: 10px; }
+.t-ok  { color: var(--teal, #0A8E6E); font-weight: 600; }
+.t-er  { color: #e53e3e; font-weight: 600; }
+.t-hl  { color: #2b6cb0; font-weight: 600; }
+.t-wrn { color: #d69e2e; font-weight: 600; }
 
 /* ── REC 8: Advisor admin wizard bar ────────────────── */
 .adm-wizard-bar {
@@ -362,10 +375,67 @@
 .batch-progress { height: 4px; background: rgba(10,142,110,0.1); border-radius: 2px; margin-bottom: 1rem; overflow: hidden; }
 .batch-progress-bar { height: 100%; background: var(--teal); border-radius: 2px; transition: width 0.3s ease; width: 0%; }
 
-/* ── Issue #28: Scrape terminal expanded ── */
+/* ── Issue #28: Scrape log expanded ── */
 .scrape-term-body.expanded { max-height: 600px; }
-.scrape-term-toggle { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.5); font-size: 10px; font-weight: 600; font-family: var(--font-mono); cursor: pointer; transition: all 0.15s; }
-.scrape-term-toggle:hover { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.7); }
+.scrape-term-toggle {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 10px; border-radius: 8px; border: none;
+  background: rgba(10,142,110,0.08); color: var(--teal, #0A8E6E);
+  font-size: 10px; font-weight: 700; font-family: var(--font-mono);
+  cursor: pointer; transition: all 0.2s; letter-spacing: 0.02em;
+  box-shadow: 2px 2px 5px rgba(163,177,198,0.2),
+              -2px -2px 5px rgba(255,255,255,0.6);
+}
+.scrape-term-toggle:hover {
+  background: rgba(10,142,110,0.14); color: #067858;
+  box-shadow: 3px 3px 6px rgba(163,177,198,0.25),
+              -3px -3px 6px rgba(255,255,255,0.7);
+}
+.scrape-term-toggle:active {
+  box-shadow: inset 2px 2px 4px rgba(163,177,198,0.3),
+              inset -2px -2px 4px rgba(255,255,255,0.5);
+}
+
+/* ── Scrape history pagination ── */
+.scrape-hist-pager {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px; margin-top: 6px;
+  background: rgba(255,255,255,0.45);
+  backdrop-filter: blur(12px);
+  border-radius: var(--radius-sm, 8px);
+  border: 1px solid rgba(255,255,255,0.5);
+  box-shadow: 3px 3px 8px rgba(163,177,198,0.2),
+              -3px -3px 8px rgba(255,255,255,0.5);
+}
+.scrape-hist-page-info {
+  font-size: 12px; color: #4a5568; font-family: var(--font-mono);
+}
+.scrape-hist-page-info strong { color: #2d3748; }
+.scrape-hist-page-btns {
+  display: flex; align-items: center; gap: 6px;
+}
+.sh-page-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 8px; border: none;
+  background: rgba(255,255,255,0.5); color: #4a5568; cursor: pointer;
+  box-shadow: 2px 2px 5px rgba(163,177,198,0.25),
+              -2px -2px 5px rgba(255,255,255,0.6);
+  transition: all 0.15s;
+}
+.sh-page-btn:hover:not(:disabled) {
+  color: var(--teal, #0A8E6E);
+  box-shadow: 3px 3px 6px rgba(163,177,198,0.3),
+              -3px -3px 6px rgba(255,255,255,0.7);
+}
+.sh-page-btn:active:not(:disabled) {
+  box-shadow: inset 2px 2px 4px rgba(163,177,198,0.3),
+              inset -2px -2px 4px rgba(255,255,255,0.5);
+}
+.sh-page-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.sh-page-num {
+  font-size: 12px; font-weight: 600; color: #2d3748; min-width: 50px;
+  text-align: center; font-family: var(--font-mono);
+}
 
 /* ── Command palette keyboard navigation ── */
 .cmd-item.kbd-active { background: #eff6ff; outline: 2px solid var(--teal); outline-offset: -2px; }
@@ -820,17 +890,17 @@
       <div id="scrapeUpdatedAt" style="font-size:11px;color:var(--t3);font-family:var(--font-mono);margin-bottom:14px">{% if LANGUAGE_CODE == 'ar' %}آخر تحديث: لا يوجد{% else %}Last update: never{% endif %}</div>
       <div class="scrape-term" style="margin-bottom:18px">
         <div class="scrape-term-head">
-          <div style="display:flex;align-items:center;gap:8px">
-            <div class="scrape-term-dots"><span></span><span></span><span></span></div>
-            <span class="scrape-term-label">Live Log Output</span>
+          <div class="scrape-term-status">
+            <span class="scrape-term-status-dot" id="scrapeLogDot" aria-hidden="true"></span>
+            <span class="scrape-term-label">{% if LANGUAGE_CODE == 'ar' %}سجل مباشر{% else %}Live Log{% endif %}</span>
           </div>
           <span class="scrape-term-file">scrape_students</span>
-          <button type="button" id="scrapeTermToggle" class="scrape-term-toggle" aria-label="{% if LANGUAGE_CODE == 'ar' %}تبديل حجم الطرفية{% else %}Toggle terminal size{% endif %}">
+          <button type="button" id="scrapeTermToggle" class="scrape-term-toggle" aria-label="{% if LANGUAGE_CODE == 'ar' %}تبديل حجم السجل{% else %}Toggle log size{% endif %}">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
             <span id="scrapeTermToggleLabel">{% if LANGUAGE_CODE == 'ar' %}توسيع{% else %}Expand{% endif %}</span>
           </button>
         </div>
-        <div id="scrapeOut" class="scrape-term-body"><span style="color:rgba(255,255,255,0.3)">No logs yet.</span></div>
+        <div id="scrapeOut" class="scrape-term-body"><span style="color:#a0aec0">{% if LANGUAGE_CODE == 'ar' %}لا توجد سجلات بعد.{% else %}No logs yet.{% endif %}</span></div>
       </div>
       <div class="tbl-section" style="margin-bottom:14px">
         <div class="tbl-header">
@@ -842,6 +912,20 @@
             <tbody><tr><td colspan="5"><div class="empty-state"><span class="i" style="width:32px;height:32px;color:var(--t5);margin-bottom:8px"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span><div class="empty-title">No scrape history</div><div class="empty-hint">Run a scrape to see history here</div></div></td></tr></tbody>
           </table>
         </div>
+        <nav class="scrape-hist-pager" id="scrapeHistPager" style="display:none" role="navigation" aria-label="{% if LANGUAGE_CODE == 'ar' %}تصفح سجل العمليات{% else %}Scrape history pagination{% endif %}">
+          <div class="scrape-hist-page-info" aria-live="polite">
+            {% if LANGUAGE_CODE == 'ar' %}عرض{% else %}Showing{% endif %} <strong id="shPageStart">1</strong>–<strong id="shPageEnd">5</strong> {% if LANGUAGE_CODE == 'ar' %}من{% else %}of{% endif %} <strong id="shPageTotal">0</strong>
+          </div>
+          <div class="scrape-hist-page-btns">
+            <button type="button" id="shPrev" class="sh-page-btn" aria-label="{% if LANGUAGE_CODE == 'ar' %}الصفحة السابقة{% else %}Previous page{% endif %}" disabled>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
+            <span class="sh-page-num" id="shPageNum">1 / 1</span>
+            <button type="button" id="shNext" class="sh-page-btn" aria-label="{% if LANGUAGE_CODE == 'ar' %}الصفحة التالية{% else %}Next page{% endif %}" disabled>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+          </div>
+        </nav>
       </div>
     </div>
 
@@ -2326,7 +2410,7 @@
     const logEl = q('scrapeOut');
     const rawLog = data.log_tail || '';
     if (!rawLog) {
-      logEl.innerHTML = `<span style="color:rgba(255,255,255,0.3)">${T.noLogsYet}</span>`;
+      logEl.innerHTML = `<span style="color:#a0aec0">${T.noLogsYet}</span>`;
     } else {
       const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
       logEl.innerHTML = rawLog.split('\n').map(line => {
@@ -2355,22 +2439,47 @@
     if (historyBody) {
       const history = Array.isArray(data.history) ? data.history : [];
       const cntEl = document.getElementById('scrapeHistoryCnt');
+      const pagerEl = document.getElementById('scrapeHistPager');
       if (history.length === 0) {
         historyBody.innerHTML = `<tr><td colspan="5"><div class="empty-state"><span class="i" style="width:32px;height:32px;color:var(--t5);margin-bottom:8px"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span><div class="empty-title">${T.noScrapeHistory}</div><div class="empty-hint">${T.runScrapeHint}</div></div></td></tr>`;
         if (cntEl) cntEl.textContent = '0';
+        if (pagerEl) pagerEl.style.display = 'none';
       } else {
-        const rows = history
-          .slice()
-          .reverse()
-          .map((h) => {
-            const evt = h.event ?? '-';
-            const evtPill = evt === 'started' ? 'pill-g' : evt === 'stopped' ? 'pill-a' : evt === 'failed' ? 'pill-r' : 'pill-b';
-            const evtLabel = evt === 'started' ? T.started : evt === 'stopped' ? T.stopped : evt === 'failed' ? T.failed : evt;
-            return `<tr class="cr-row"><td style="font-family:var(--font-mono);font-size:11px;color:var(--t3)">${h.at ?? '-'}</td><td><span class="pill ${evtPill}" style="font-size:11px;padding:3px 10px"><span class="pill-dot" style="width:6px;height:6px;border-radius:50%;display:inline-block;margin-inline-end:5px;background:currentColor;opacity:0.5"></span>${evtLabel}</span></td><td style="font-family:var(--font-mono)">${h.pid ?? '-'}</td><td>${h.concurrency ?? '-'}</td><td style="font-family:var(--font-mono);font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${h.students_csv ?? '-'}</td></tr>`;
-          })
-          .join('');
-        historyBody.innerHTML = rows;
+        const allRows = history.slice().reverse().map((h) => {
+          const evt = h.event ?? '-';
+          const evtPill = evt === 'started' ? 'pill-g' : evt === 'stopped' ? 'pill-a' : evt === 'failed' ? 'pill-r' : 'pill-b';
+          const evtLabel = evt === 'started' ? T.started : evt === 'stopped' ? T.stopped : evt === 'failed' ? T.failed : evt;
+          return `<tr class="cr-row"><td style="font-family:var(--font-mono);font-size:11px;color:var(--t3)">${h.at ?? '-'}</td><td><span class="pill ${evtPill}" style="font-size:11px;padding:3px 10px"><span class="pill-dot" style="width:6px;height:6px;border-radius:50%;display:inline-block;margin-inline-end:5px;background:currentColor;opacity:0.5"></span>${evtLabel}</span></td><td style="font-family:var(--font-mono)">${h.pid ?? '-'}</td><td>${h.concurrency ?? '-'}</td><td style="font-family:var(--font-mono);font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${h.students_csv ?? '-'}</td></tr>`;
+        });
         if (cntEl) cntEl.textContent = history.length;
+        /* ── Paginate scrape history (5 rows per page) ── */
+        const PER_PAGE = 5;
+        const total = allRows.length;
+        const pages = Math.ceil(total / PER_PAGE);
+        let curPage = 1;
+        const prevBtn = document.getElementById('shPrev');
+        const nextBtn = document.getElementById('shNext');
+        const pageNum = document.getElementById('shPageNum');
+        const pageStart = document.getElementById('shPageStart');
+        const pageEnd = document.getElementById('shPageEnd');
+        const pageTotal = document.getElementById('shPageTotal');
+        function renderHistPage() {
+          const start = (curPage - 1) * PER_PAGE;
+          const end = Math.min(start + PER_PAGE, total);
+          historyBody.innerHTML = allRows.slice(start, end).join('');
+          if (pageStart) pageStart.textContent = start + 1;
+          if (pageEnd) pageEnd.textContent = end;
+          if (pageTotal) pageTotal.textContent = total;
+          if (pageNum) pageNum.textContent = curPage + ' / ' + pages;
+          if (prevBtn) prevBtn.disabled = curPage <= 1;
+          if (nextBtn) nextBtn.disabled = curPage >= pages;
+        }
+        if (pagerEl) {
+          pagerEl.style.display = pages > 1 ? 'flex' : 'none';
+          if (prevBtn) prevBtn.onclick = () => { if (curPage > 1) { curPage--; renderHistPage(); } };
+          if (nextBtn) nextBtn.onclick = () => { if (curPage < pages) { curPage++; renderHistPage(); } };
+        }
+        renderHistPage();
       }
     }
 
