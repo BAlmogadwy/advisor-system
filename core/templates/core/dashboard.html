@@ -310,6 +310,66 @@
 /* Fix sidebar nav-link layout for badge */
 .sidebar .nav-link { display: flex; align-items: center; }
 
+/* ── Overview landing panel ─── */
+.ov-greeting { font-family: var(--font-serif); font-size: 1.4rem; color: var(--navy); margin-bottom: 0.25rem; }
+.ov-date { font-size: 0.82rem; color: var(--t3); margin-bottom: 1.5rem; }
+.ov-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+.ov-kpi { padding: 1.25rem; border-radius: var(--radius); background: rgba(255,255,255,0.55); backdrop-filter: blur(20px) saturate(130%); -webkit-backdrop-filter: blur(20px) saturate(130%); border: 1px solid rgba(17,17,68,0.05); box-shadow: var(--shadow-card); transition: transform 0.15s, box-shadow 0.15s; cursor: pointer; }
+.ov-kpi:hover { transform: translateY(-2px); box-shadow: var(--shadow-lift); }
+.ov-kpi-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--t3); font-family: var(--font-mono); margin-bottom: 0.35rem; }
+.ov-kpi-value { font-family: var(--font-serif); font-size: 2rem; color: var(--teal); font-weight: 700; line-height: 1; }
+.ov-kpi-icon { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; margin-bottom: 0.75rem; }
+.ov-kpi-icon svg { width: 20px; height: 20px; stroke-width: 1.8; }
+.ov-kpi-icon.teal { background: rgba(10,142,110,0.08); color: var(--teal); }
+.ov-kpi-icon.royal { background: rgba(64,86,227,0.08); color: var(--royal); }
+.ov-kpi-icon.warning { background: rgba(154,106,8,0.08); color: var(--warning); }
+.ov-kpi-icon.danger { background: rgba(192,48,48,0.08); color: var(--danger); }
+
+.ov-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem; margin-bottom: 1.5rem; }
+.ov-action { display: flex; align-items: center; gap: 0.75rem; padding: 1rem 1.25rem; border-radius: var(--radius); background: rgba(255,255,255,0.55); backdrop-filter: blur(20px) saturate(130%); border: 1px solid rgba(17,17,68,0.05); box-shadow: var(--shadow-card); cursor: pointer; transition: all 0.15s; text-decoration: none; color: inherit; }
+.ov-action:hover { border-color: var(--teal-border); box-shadow: 0 0 0 2px rgba(10,142,110,0.08), var(--shadow-card); }
+.ov-action-icon { width: 40px; height: 40px; border-radius: 10px; background: rgba(10,142,110,0.06); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.ov-action-icon svg { width: 20px; height: 20px; stroke: var(--teal); fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.ov-action-text { font-weight: 600; font-size: 0.9rem; color: var(--ink); }
+
+.ov-activity { padding: 1rem 1.25rem; border-radius: var(--radius); background: rgba(255,255,255,0.55); backdrop-filter: blur(20px) saturate(130%); border: 1px solid rgba(17,17,68,0.05); box-shadow: var(--shadow-card); }
+.ov-activity-title { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--t3); margin-bottom: 0.75rem; }
+.ov-activity-item { display: flex; gap: 0.75rem; padding: 0.5rem 0; border-bottom: 1px solid rgba(17,17,68,0.04); font-size: 0.85rem; color: var(--t2); }
+.ov-activity-item:last-child { border-bottom: none; }
+.ov-activity-ts { font-family: var(--font-mono); font-size: 0.75rem; color: var(--t4); white-space: nowrap; }
+
+/* ── Student context sidebar ── */
+.student-ctx-sidebar { width: 280px; flex-shrink: 0; transition: transform 0.25s ease, opacity 0.25s ease; }
+.student-ctx-sidebar.hidden { display: none; }
+.student-ctx-card { padding: 1rem; border-radius: var(--radius); background: rgba(255,255,255,0.55); backdrop-filter: blur(20px) saturate(130%); border: 1px solid rgba(17,17,68,0.05); box-shadow: var(--shadow-card); }
+.student-ctx-card h6 { font-family: var(--font-serif); font-size: 0.95rem; color: var(--navy); margin: 0 0 0.75rem; }
+.student-ctx-row { display: flex; justify-content: space-between; align-items: center; padding: 0.35rem 0; border-bottom: 1px solid rgba(17,17,68,0.04); font-size: 0.82rem; }
+.student-ctx-row:last-child { border-bottom: none; }
+.student-ctx-label { color: var(--t3); font-weight: 600; font-family: var(--font-mono); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.student-ctx-value { font-weight: 700; color: var(--ink); font-family: var(--font-mono); font-size: 0.85rem; }
+.student-ctx-link { display: inline-flex; align-items: center; gap: 0.35rem; margin-top: 0.75rem; padding: 0.45rem 0.85rem; border-radius: var(--radius-sm); background: rgba(10,142,110,0.06); border: 1px solid var(--teal-border); color: var(--teal); font-weight: 600; font-size: 0.78rem; text-decoration: none; transition: all 0.15s; }
+.student-ctx-link:hover { background: rgba(10,142,110,0.12); }
+@media (max-width: 991px) {
+  .student-ctx-sidebar { width: 100%; margin-top: 1rem; }
+}
+
+/* ── Issue #15: Export button loading state ── */
+.ux-loading { pointer-events: none; opacity: 0.7; position: relative; }
+.ux-loading::after { content: ''; position: absolute; top: 50%; right: 10px; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: ux-spin 0.6s linear infinite; margin-top: -7px; }
+@keyframes ux-spin { to { transform: rotate(360deg); } }
+
+/* ── Issue #20: Batch progress indicator ── */
+.batch-progress { height: 4px; background: rgba(10,142,110,0.1); border-radius: 2px; margin-bottom: 1rem; overflow: hidden; }
+.batch-progress-bar { height: 100%; background: var(--teal); border-radius: 2px; transition: width 0.3s ease; width: 0%; }
+
+/* ── Issue #28: Scrape terminal expanded ── */
+.scrape-term-body.expanded { max-height: 600px; }
+.scrape-term-toggle { display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05); color: rgba(255,255,255,0.5); font-size: 10px; font-weight: 600; font-family: var(--font-mono); cursor: pointer; transition: all 0.15s; }
+.scrape-term-toggle:hover { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.7); }
+
+/* ── Command palette keyboard navigation ── */
+.cmd-item.kbd-active { background: #eff6ff; outline: 2px solid var(--teal); outline-offset: -2px; }
+
 </style>
 {% endblock %}
 
@@ -328,7 +388,73 @@
 {% endblock %}
 
 {% block content %}
-    <div id="student" class="panel active" role="region">
+    <!-- ── Overview Landing Panel ── -->
+    <div id="overview" class="panel active" role="region" aria-label="{% if LANGUAGE_CODE == 'ar' %}نظرة عامة{% else %}Overview{% endif %}">
+      <h2 class="ov-greeting" id="ovGreeting" tabindex="-1">{% if LANGUAGE_CODE == 'ar' %}صباح الخير{% else %}Good morning{% endif %}, {{ user.get_short_name|default:user.username }}</h2>
+      <div class="ov-date" id="ovDate"></div>
+
+      <div class="ov-kpis">
+        <div class="ov-kpi" tabindex="0" role="button" aria-label="{% if LANGUAGE_CODE == 'ar' %}الطلاب المعينون{% else %}Students Assigned{% endif %}" onclick="activatePanel('batch');history.pushState(null,'','#batch')">
+          <div class="ov-kpi-icon teal">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </div>
+          <div class="ov-kpi-label">{% if LANGUAGE_CODE == 'ar' %}الطلاب المعينون{% else %}Students Assigned{% endif %}</div>
+          <div class="ov-kpi-value" id="ovKpiStudents">--</div>
+        </div>
+        <div class="ov-kpi" tabindex="0" role="button" aria-label="{% if LANGUAGE_CODE == 'ar' %}توصيات معلقة{% else %}Pending Recommendations{% endif %}" onclick="activatePanel('batch');history.pushState(null,'','#batch')">
+          <div class="ov-kpi-icon royal">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
+          </div>
+          <div class="ov-kpi-label">{% if LANGUAGE_CODE == 'ar' %}توصيات معلقة{% else %}Pending Recommendations{% endif %}</div>
+          <div class="ov-kpi-value" id="ovKpiPending">--</div>
+        </div>
+        <div class="ov-kpi" tabindex="0" role="button" aria-label="{% if LANGUAGE_CODE == 'ar' %}جداول متأخرة{% else %}Overdue Schedules{% endif %}" onclick="activatePanel('scrape');history.pushState(null,'','#scrape')">
+          <div class="ov-kpi-icon warning">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          </div>
+          <div class="ov-kpi-label">{% if LANGUAGE_CODE == 'ar' %}جداول متأخرة{% else %}Overdue Schedules{% endif %}</div>
+          <div class="ov-kpi-value" id="ovKpiOverdue">--</div>
+        </div>
+        <div class="ov-kpi" tabindex="0" role="button" aria-label="{% if LANGUAGE_CODE == 'ar' %}أولوية عالية مفقودة{% else %}High Priority Missing{% endif %}" onclick="activatePanel('highpriority');history.pushState(null,'','#highpriority')">
+          <div class="ov-kpi-icon danger">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          </div>
+          <div class="ov-kpi-label">{% if LANGUAGE_CODE == 'ar' %}أولوية عالية مفقودة{% else %}High Priority Missing{% endif %}</div>
+          <div class="ov-kpi-value" id="ovKpiHighPri">--</div>
+        </div>
+      </div>
+
+      <div class="ov-actions">
+        <a class="ov-action" href="#student" onclick="event.preventDefault();activatePanel('student');history.pushState(null,'','#student')">
+          <div class="ov-action-icon"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>
+          <div class="ov-action-text">{% if LANGUAGE_CODE == 'ar' %}البحث عن طالب{% else %}Look up a student{% endif %}</div>
+        </a>
+        <a class="ov-action" href="/planner/">
+          <div class="ov-action-icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div>
+          <div class="ov-action-text">{% if LANGUAGE_CODE == 'ar' %}بناء الجدول الزمني{% else %}Build timetable{% endif %}</div>
+        </a>
+        <a class="ov-action" href="#batch" onclick="event.preventDefault();activatePanel('batch');history.pushState(null,'','#batch')">
+          <div class="ov-action-icon"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></div>
+          <div class="ov-action-text">{% if LANGUAGE_CODE == 'ar' %}تشغيل التوصيات الجماعية{% else %}Run batch recommender{% endif %}</div>
+        </a>
+        <a class="ov-action" href="/advisor-portfolio/">
+          <div class="ov-action-icon"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+          <div class="ov-action-text">{% if LANGUAGE_CODE == 'ar' %}عرض الملف الشخصي{% else %}View portfolio{% endif %}</div>
+        </a>
+      </div>
+
+      <div class="ov-activity">
+        <div class="ov-activity-title">{% if LANGUAGE_CODE == 'ar' %}النشاط الأخير{% else %}Recent Activity{% endif %}</div>
+        <div id="ovActivityFeed">
+          <div class="ov-activity-item">
+            <span class="ov-activity-ts">--:--</span>
+            <span>{% if LANGUAGE_CODE == 'ar' %}لا يوجد نشاط حديث حتى الآن. استخدم لوحة التحكم لبدء العمل.{% else %}No recent activity yet. Use the dashboard modules to get started.{% endif %}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="student" class="panel" role="region">
       <form method="get" action="/" class="filter-bar sticky-cta" style="margin-bottom:14px">
         <div class="fb-search" style="max-width:170px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span><input id="studentIdInput" type="text" inputmode="numeric" pattern="[0-9]*" name="student_id" value="{{ student_id }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}" required></div>
         <div class="fb-search" style="max-width:110px"><input type="text" inputmode="numeric" pattern="[0-9]*" name="year" value="{{ year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" required></div>
@@ -468,6 +594,45 @@
           </div>
         </div>
       </div>
+
+      <!-- Student Context Sidebar -->
+      <div id="studentCtxSidebar" class="student-ctx-sidebar hidden" aria-label="{% if LANGUAGE_CODE == 'ar' %}سياق الطالب{% else %}Student Context{% endif %}">
+        <div class="student-ctx-card" style="position:sticky;top:16px;">
+          <h6 id="studentCtxTitle">{% if LANGUAGE_CODE == 'ar' %}ملف الطالب{% else %}Student Profile{% endif %}</h6>
+          <div class="student-ctx-row">
+            <span class="student-ctx-label">{% if LANGUAGE_CODE == 'ar' %}الرقم{% else %}ID{% endif %}</span>
+            <span class="student-ctx-value" id="studentCtxId">--</span>
+          </div>
+          <div class="student-ctx-row">
+            <span class="student-ctx-label">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}</span>
+            <span class="student-ctx-value" id="studentCtxProgram">--</span>
+          </div>
+          <div class="student-ctx-row">
+            <span class="student-ctx-label">{% if LANGUAGE_CODE == 'ar' %}المعدل{% else %}GPA{% endif %}</span>
+            <span class="student-ctx-value" id="studentCtxGpa">--</span>
+          </div>
+          <div class="student-ctx-row">
+            <span class="student-ctx-label">{% if LANGUAGE_CODE == 'ar' %}المكتسبة{% else %}Earned{% endif %}</span>
+            <span class="student-ctx-value" id="studentCtxEarned">--</span>
+          </div>
+          <div class="student-ctx-row">
+            <span class="student-ctx-label">{% if LANGUAGE_CODE == 'ar' %}المتبقية{% else %}Remaining{% endif %}</span>
+            <span class="student-ctx-value" id="studentCtxRemaining">--</span>
+          </div>
+          <div class="student-ctx-row">
+            <span class="student-ctx-label">{% if LANGUAGE_CODE == 'ar' %}متطلبات مكتملة{% else %}Prereqs Met{% endif %}</span>
+            <span class="student-ctx-value" id="studentCtxPrereqMet" style="color:var(--teal)">--</span>
+          </div>
+          <div class="student-ctx-row">
+            <span class="student-ctx-label">{% if LANGUAGE_CODE == 'ar' %}متطلبات معلقة{% else %}Prereqs Pending{% endif %}</span>
+            <span class="student-ctx-value" id="studentCtxPrereqPending" style="color:var(--warning)">--</span>
+          </div>
+          <a id="studentCtxFullProfile" class="student-ctx-link" href="#" style="display:none;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            {% if LANGUAGE_CODE == 'ar' %}عرض الملف الكامل{% else %}View Full Profile{% endif %}
+          </a>
+        </div>
+      </div>
     </div>
 
     <div id="batch" class="panel" role="region">
@@ -483,6 +648,9 @@
       <div style="display:flex;gap:6px;margin-top:8px;">
         <button id="batchSavePreset" type="button" class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span> Save preset</button>
         <button id="batchLoadPreset" type="button" class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span> Load preset</button>
+      </div>
+      <div id="batchProgressWrap" class="batch-progress" style="display:none;">
+        <div id="batchProgressBar" class="batch-progress-bar"></div>
       </div>
 
       <div class="row g-2 mt-3 mb-2" id="batchMetrics" style="display:none;">
@@ -590,7 +758,7 @@
           <div class="col-md-3"><div class="metric"><div class="k">Total credit hours</div><div class="v" id="planMetricCredits">0</div></div></div>
         </div>
         <div id="planUpdated" class="small text-secondary">{% if LANGUAGE_CODE == 'ar' %}آخر تحديث: لا يوجد{% else %}Last update: never{% endif %}</div>
-        <div class="table-wrap mt-3">
+        <div class="table-wrap mt-3" style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
           <table class="table table-sm mb-0" id="planTable">
             <thead><tr><th scope="col" data-sort="num">Term</th><th scope="col" data-sort="text">Course</th><th scope="col" data-sort="num">Credit Hours</th></tr></thead>
             <tbody><tr><td colspan="3"><div class="empty-state"><span class="empty-icon"><span class="i" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></span><div class="empty-title">No plan loaded</div><div class="empty-hint">Choose a program above, then click <strong>Load Plan</strong></div></div></td></tr></tbody>
@@ -657,6 +825,10 @@
             <span class="scrape-term-label">Live Log Output</span>
           </div>
           <span class="scrape-term-file">scrape_students</span>
+          <button type="button" id="scrapeTermToggle" class="scrape-term-toggle" aria-label="{% if LANGUAGE_CODE == 'ar' %}تبديل حجم الطرفية{% else %}Toggle terminal size{% endif %}">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+            <span id="scrapeTermToggleLabel">{% if LANGUAGE_CODE == 'ar' %}توسيع{% else %}Expand{% endif %}</span>
+          </button>
         </div>
         <div id="scrapeOut" class="scrape-term-body"><span style="color:rgba(255,255,255,0.3)">No logs yet.</span></div>
       </div>
@@ -1184,6 +1356,7 @@
   const panels = document.querySelectorAll('.panel');
   /* Panel descriptions for page_intro subtitle */
   const PANEL_SUBS = {
+    overview:     IS_AR ? 'نظرة عامة على لوحة المرشد الأكاديمي.' : 'Overview of your advisor dashboard.',
     student:      IS_AR ? 'احصل على قائمة توصيات لكل طالب وصدّرها فوراً.' : 'Get a per-student recommendation list and export it instantly.',
     batch:        IS_AR ? 'معاينة التوصيات على مستوى الدفعة وتصدير CSV.' : 'Run cohort-level preview, inspect top courses, and export aggregate CSV.',
     prereq:       IS_AR ? 'استكشف روابط المتطلبات حسب البرنامج أو المقرر.' : 'Explore prerequisite links by program and optionally by a specific course.',
@@ -1210,7 +1383,17 @@
     if (introTitle && link) introTitle.textContent = link.textContent?.trim() || target;
     if (introSub && PANEL_SUBS[target]) introSub.textContent = PANEL_SUBS[target];
     const panel = document.getElementById(target);
-    if (panel) panel.classList.add('active');
+    if (panel) {
+      panel.classList.add('active');
+      /* Issue #7: Move focus to the panel heading for screen-reader users */
+      requestAnimationFrame(() => {
+        const heading = panel.querySelector('h2, h3, h6');
+        if (heading) {
+          if (!heading.hasAttribute('tabindex')) heading.setAttribute('tabindex', '-1');
+          heading.focus({ preventScroll: true });
+        }
+      });
+    }
   }
 
   links.forEach(link => link.addEventListener('click', async (e) => {
@@ -2961,6 +3144,9 @@
     // Cancel the browser's native scroll-to-anchor that fires on page load
     // when a hash is present. We always want to start at the top of the page.
     window.scrollTo({ top: 0, behavior: 'instant' });
+  } else {
+    // Default to overview panel when no hash is present
+    activatePanel('overview');
   }
 
   window.addEventListener('hashchange', () => {
@@ -2974,6 +3160,245 @@
   refreshAdvisorsDropdown();
   refreshScrapeStatus();
   /* -- User Management JS → moved to standalone page at /user-management/ -- */
+
+  /* ═══════════════════════════════════════════════════════════════
+     ENHANCEMENT JS — Overview, Student Context, Issues 14/15/20/28
+     ═══════════════════════════════════════════════════════════════ */
+
+  /* ── Overview panel: greeting + date ── */
+  (() => {
+    const greetEl = q('ovGreeting');
+    const dateEl = q('ovDate');
+    if (!greetEl || !dateEl) return;
+
+    const now = new Date();
+    const hour = now.getHours();
+    let greeting;
+    if (IS_AR) {
+      greeting = hour < 12 ? 'صباح الخير' : hour < 17 ? 'مساء الخير' : 'مساء الخير';
+    } else {
+      greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+    }
+    const username = greetEl.textContent.split(',').pop()?.trim() || '';
+    greetEl.textContent = greeting + ', ' + username;
+
+    const opts = IS_AR
+      ? { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }
+      : { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+    dateEl.textContent = now.toLocaleDateString(IS_AR ? 'ar-SA' : 'en-US', opts);
+  })();
+
+  /* ── Overview panel: activity feed logger ── */
+  const ovActivityLog = [];
+  function logOverviewActivity(msg) {
+    const ts = new Date().toLocaleTimeString(IS_AR ? 'ar-SA' : 'en-US', { hour: '2-digit', minute: '2-digit' });
+    ovActivityLog.unshift({ ts, msg });
+    if (ovActivityLog.length > 8) ovActivityLog.length = 8;
+    const feed = q('ovActivityFeed');
+    if (!feed) return;
+    feed.innerHTML = ovActivityLog.map(a =>
+      `<div class="ov-activity-item"><span class="ov-activity-ts">${a.ts}</span><span>${a.msg}</span></div>`
+    ).join('');
+  }
+
+  /* Hook into toast to auto-log activities */
+  const _origNotifySuccess = notify.success;
+  const _origNotifyError = notify.error;
+  notify.success = function(title, body) {
+    _origNotifySuccess.call(notify, title, body);
+    logOverviewActivity(title + (body ? ': ' + body : ''));
+  };
+  notify.error = function(title, body) {
+    _origNotifyError.call(notify, title, body);
+    logOverviewActivity(title + (body ? ': ' + body : ''));
+  };
+
+  /* ── Overview KPIs: poll from loaded data ── */
+  function refreshOverviewKpis() {
+    /* Students assigned: from batch metric if loaded */
+    const batchStudents = q('batchMetricStudents');
+    if (batchStudents && batchStudents.textContent !== '0') {
+      const el = q('ovKpiStudents');
+      if (el) el.textContent = batchStudents.textContent;
+    }
+    /* Pending: from batch top count */
+    const batchTopCount = q('batchMetricTopCount');
+    if (batchTopCount && batchTopCount.textContent !== '0') {
+      const el = q('ovKpiPending');
+      if (el) el.textContent = batchTopCount.textContent;
+    }
+    /* Overdue: from scrape status */
+    const scrapeStatus = q('scrapeMetricStatus');
+    if (scrapeStatus) {
+      const isRunning = scrapeStatus.innerHTML.includes('status-running');
+      const el = q('ovKpiOverdue');
+      if (el) el.textContent = isRunning ? '1' : '0';
+    }
+    /* High priority: from HP table */
+    const hpTbody = document.querySelector('#hpTable tbody');
+    const hpEmpty = hpTbody?.querySelector('.empty-note, .empty-state');
+    const hpCount = hpTbody && !hpEmpty ? hpTbody.querySelectorAll('tr').length : 0;
+    const hpEl = q('ovKpiHighPri');
+    if (hpEl && hpCount > 0) hpEl.textContent = String(hpCount);
+  }
+  setInterval(refreshOverviewKpis, 4000);
+
+  /* ── Student Context Sidebar: populate when student plan loads ── */
+  (() => {
+    const sidebar = q('studentCtxSidebar');
+    if (!sidebar) return;
+
+    function updateStudentCtx() {
+      if (!studentPlanData) {
+        sidebar.classList.add('hidden');
+        return;
+      }
+      sidebar.classList.remove('hidden');
+
+      const d = studentPlanData;
+      const s = d.summary || {};
+      q('studentCtxId').textContent = d.student_id || '--';
+      q('studentCtxProgram').textContent = d.program || '--';
+      q('studentCtxGpa').textContent = d.gpa != null ? String(Number(d.gpa).toFixed(2)) : '--';
+
+      const passed = Number(s.passed || 0);
+      const studying = Number(s.studying || 0);
+      const canReg = Number(s.not_taken_can_register || 0);
+      const locked = Number(s.not_taken_locked || 0);
+      const total = passed + studying + canReg + locked;
+
+      /* Credits: derive from courses if available */
+      const allCourses = (d.terms || []).flatMap(t => t.courses || []);
+      const earnedCredits = allCourses.filter(c => c.status === 'passed').reduce((a, c) => a + (Number(c.credit_hours) || 0), 0);
+      const totalCredits = allCourses.reduce((a, c) => a + (Number(c.credit_hours) || 0), 0);
+
+      q('studentCtxEarned').textContent = String(earnedCredits) + ' CH';
+      q('studentCtxRemaining').textContent = String(totalCredits - earnedCredits) + ' CH';
+      q('studentCtxPrereqMet').textContent = String(passed);
+      q('studentCtxPrereqPending').textContent = String(locked);
+
+      const profileLink = q('studentCtxFullProfile');
+      if (profileLink && d.student_id) {
+        profileLink.href = `/planner/?student=${d.student_id}`;
+        profileLink.style.display = '';
+      }
+    }
+
+    /* Watch the student plan meta for changes to know when data loaded */
+    const meta = q('studentPlanMeta');
+    if (meta) {
+      new MutationObserver(updateStudentCtx).observe(meta, { childList: true, characterData: true, subtree: true });
+    }
+  })();
+
+  /* ── Issue #14: Scrape start double-click confirmation ── */
+  (() => {
+    const btn = q('scrapeStart');
+    if (!btn) return;
+    let confirmState = false;
+    let confirmTimer = null;
+    const origHandler = btn.onclick;
+    const origText = btn.innerHTML;
+
+    btn.onclick = async (e) => {
+      if (!confirmState) {
+        confirmState = true;
+        btn.innerHTML = IS_AR ? 'تأكيد البدء؟' : 'Confirm Start?';
+        btn.style.background = 'var(--danger)';
+        btn.style.borderColor = 'var(--danger)';
+        btn.style.color = '#fff';
+        confirmTimer = setTimeout(() => {
+          confirmState = false;
+          btn.innerHTML = origText;
+          btn.style.background = '';
+          btn.style.borderColor = '';
+          btn.style.color = '';
+        }, 3000);
+        return;
+      }
+      /* Second click within 3s: proceed */
+      clearTimeout(confirmTimer);
+      confirmState = false;
+      btn.innerHTML = origText;
+      btn.style.background = '';
+      btn.style.borderColor = '';
+      btn.style.color = '';
+      if (origHandler) await origHandler.call(btn, e);
+    };
+  })();
+
+  /* ── Issue #15: Export button loading state ── */
+  (() => {
+    const exportIds = [
+      'exStudentCsv', 'exAggregateCsv', 'exPlanCsv', 'exDebugCsv',
+      'exEligibilityCsv', 'exAdvisorCsv', 'exHighPriorityXlsx',
+      'batchCsv', 'dbgCsv', 'elCsv', 'hpXlsx', 'spCsvExport'
+    ];
+    exportIds.forEach(id => {
+      const el = q(id);
+      if (!el) return;
+      el.addEventListener('click', () => {
+        /* Only add loading state if the link actually has a valid href */
+        const href = el.getAttribute('href') || '';
+        if (!href || href === '#') return;
+        el.classList.add('ux-loading');
+        el.style.pointerEvents = 'none';
+        setTimeout(() => {
+          el.classList.remove('ux-loading');
+          el.style.pointerEvents = '';
+        }, 3000);
+      });
+    });
+  })();
+
+  /* ── Issue #20: Batch progress indicator ── */
+  (() => {
+    const origRunBatch = q('runBatch');
+    if (!origRunBatch) return;
+    const progressWrap = q('batchProgressWrap');
+    const progressBar = q('batchProgressBar');
+    if (!progressWrap || !progressBar) return;
+
+    let batchProgressInterval = null;
+
+    const origOnClick = origRunBatch.onclick;
+    origRunBatch.onclick = async (e) => {
+      /* Show progress bar */
+      progressWrap.style.display = '';
+      progressBar.style.width = '0%';
+      let pct = 0;
+      batchProgressInterval = setInterval(() => {
+        pct += Math.random() * 12 + 3;
+        if (pct > 90) pct = 90;
+        progressBar.style.width = pct + '%';
+      }, 300);
+
+      if (origOnClick) await origOnClick.call(origRunBatch, e);
+
+      /* Complete progress */
+      clearInterval(batchProgressInterval);
+      progressBar.style.width = '100%';
+      setTimeout(() => {
+        progressWrap.style.display = 'none';
+        progressBar.style.width = '0%';
+      }, 600);
+    };
+  })();
+
+  /* ── Issue #28: Scrape terminal expand/collapse toggle ── */
+  (() => {
+    const toggleBtn = q('scrapeTermToggle');
+    const termBody = q('scrapeOut');
+    const label = q('scrapeTermToggleLabel');
+    if (!toggleBtn || !termBody) return;
+
+    toggleBtn.addEventListener('click', () => {
+      const isExpanded = termBody.classList.toggle('expanded');
+      if (label) label.textContent = IS_AR
+        ? (isExpanded ? 'تصغير' : 'توسيع')
+        : (isExpanded ? 'Collapse' : 'Expand');
+    });
+  })();
 </script>
 
 <script>
@@ -2996,6 +3421,25 @@
       "Access scope:": "نطاق الصلاحيات:",
       "Allowed departments:": "الأقسام المسموح بها:",
       "Advisor ID:": "معرّف المرشد:",
+      // Overview panel
+      "Students Assigned": "الطلاب المعينون",
+      "Pending Recommendations": "توصيات معلقة",
+      "Overdue Schedules": "جداول متأخرة",
+      "High Priority Missing": "أولوية عالية مفقودة",
+      "Look up a student": "البحث عن طالب",
+      "Build timetable": "بناء الجدول الزمني",
+      "Run batch recommender": "تشغيل التوصيات الجماعية",
+      "View portfolio": "عرض الملف الشخصي",
+      "Recent Activity": "النشاط الأخير",
+      "No recent activity yet. Use the dashboard modules to get started.": "لا يوجد نشاط حديث حتى الآن. استخدم لوحة التحكم لبدء العمل.",
+      // Student context sidebar
+      "Student Profile": "ملف الطالب",
+      "ID": "الرقم",
+      "Earned": "المكتسبة",
+      "Remaining": "المتبقية",
+      "Prereqs Met": "متطلبات مكتملة",
+      "Prereqs Pending": "متطلبات معلقة",
+      "View Full Profile": "عرض الملف الكامل",
       // Sidebar modules
       "Student Recommender": "توصيات الطالب",
       "Batch Recommender": "توصيات الدفعة",
@@ -3368,36 +3812,123 @@
     if (meta) observer.observe(meta, { childList: true, characterData: true, subtree: true });
   })();
 
-  /* ── REC 6: ⌘K / Ctrl+K command palette ── */
+  /* ── REC 6: ⌘K / Ctrl+K command palette (enhanced with keyboard nav) ── */
   (() => {
     const palette = q('cmdPalette');
     const input   = q('cmdInput');
     const results = q('cmdResults');
     if (!palette || !input || !results) return;
 
+    /* Recent students — stored in localStorage */
+    const RECENT_KEY = 'cmd_recent_students';
+    function getRecentStudents() {
+      try { return JSON.parse(localStorage.getItem(RECENT_KEY) || '[]').slice(0, 5); } catch { return []; }
+    }
+    function addRecentStudent(sid) {
+      const list = getRecentStudents().filter(s => s !== String(sid));
+      list.unshift(String(sid));
+      if (list.length > 5) list.length = 5;
+      try { localStorage.setItem(RECENT_KEY, JSON.stringify(list)); } catch {}
+    }
+
+    let kbdIndex = -1;
+
+    function updateKbdHighlight() {
+      const items = results.querySelectorAll('.cmd-item');
+      items.forEach((el, i) => el.classList.toggle('kbd-active', i === kbdIndex));
+      if (kbdIndex >= 0 && items[kbdIndex]) items[kbdIndex].scrollIntoView({ block: 'nearest' });
+    }
+
+    function activateItem(item) {
+      if (!item) return;
+      const action = item.dataset.action;
+      if (action === 'open-student') {
+        const sid = item.dataset.sid;
+        addRecentStudent(sid);
+        q('studentIdInput').value = sid;
+        closePalette();
+        activatePanel('student');
+        history.pushState(null, '', '#student');
+        window.scrollTo({ top: 0, behavior: 'instant' });
+        q('loadStudentPlan')?.click();
+        toast(T.openingPlan(sid), true);
+      }
+    }
+
+    function showRecentStudents() {
+      const recent = getRecentStudents();
+      if (!recent.length) {
+        results.innerHTML = `<div class="cmd-hint">${T.paletteHint}</div>`;
+        return;
+      }
+      const recentLabel = IS_AR ? 'الطلاب الأخيرون' : 'Recent Students';
+      let html = `<div class="cmd-section-label">${recentLabel}</div>`;
+      html += recent.map(sid => `
+        <div class="cmd-item" data-action="open-student" data-sid="${sid}">
+          <span class="cmd-item-id">${sid}</span>
+          <span class="cmd-item-name">${T.navToStudentPlan}</span>
+          <span class="cmd-item-badge">${T.openPlan}</span>
+        </div>`).join('');
+      results.innerHTML = html;
+      bindItemClicks();
+    }
+
+    function bindItemClicks() {
+      results.querySelectorAll('.cmd-item').forEach(item => {
+        item.addEventListener('click', () => activateItem(item));
+      });
+    }
+
     const openPalette = () => {
       palette.style.display = '';
       input.value = '';
-      results.innerHTML = `<div class="cmd-hint">${T.paletteHint}</div>`;
+      kbdIndex = -1;
+      showRecentStudents();
       requestAnimationFrame(() => input.focus());
     };
 
-    const closePalette = () => { palette.style.display = 'none'; };
+    const closePalette = () => { palette.style.display = 'none'; kbdIndex = -1; };
 
     document.addEventListener('keydown', (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
         palette.style.display === 'none' ? openPalette() : closePalette();
       }
-      if (e.key === 'Escape') closePalette();
+      if (e.key === 'Escape' && palette.style.display !== 'none') {
+        e.preventDefault();
+        e.stopPropagation();
+        closePalette();
+      }
     });
 
     palette.addEventListener('click', (e) => { if (e.target === palette) closePalette(); });
 
+    /* Keyboard navigation in results */
+    input.addEventListener('keydown', (e) => {
+      const items = results.querySelectorAll('.cmd-item');
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        kbdIndex = Math.min(kbdIndex + 1, items.length - 1);
+        updateKbdHighlight();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        kbdIndex = Math.max(kbdIndex - 1, -1);
+        updateKbdHighlight();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (kbdIndex >= 0 && items[kbdIndex]) {
+          activateItem(items[kbdIndex]);
+        } else if (items.length === 1) {
+          activateItem(items[0]);
+        }
+      }
+    });
+
     input.addEventListener('input', () => {
       const val = input.value.trim();
+      kbdIndex = -1;
       if (!val) {
-        results.innerHTML = `<div class="cmd-hint">${T.paletteHint}</div>`;
+        showRecentStudents();
         return;
       }
 
@@ -3436,22 +3967,7 @@
       }
 
       results.innerHTML = html;
-
-      results.querySelectorAll('.cmd-item').forEach(item => {
-        item.addEventListener('click', () => {
-          const action = item.dataset.action;
-          if (action === 'open-student') {
-            const sid = item.dataset.sid;
-            q('studentIdInput').value = sid;
-            closePalette();
-            activatePanel('student');
-            history.pushState(null, '', '#student');
-            window.scrollTo({ top: 0, behavior: 'instant' });
-            q('loadStudentPlan')?.click();
-            toast(T.openingPlan(sid), true);
-          }
-        });
-      });
+      bindItemClicks();
     });
   })();
 

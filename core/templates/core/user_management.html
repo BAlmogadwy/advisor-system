@@ -73,6 +73,8 @@
   transition: all 0.12s;
 }
 .um-active-badge:hover { transform: scale(1.05); }
+.um-active-badge[role="button"] { user-select: none; }
+.um-active-badge:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
 .um-active-on  { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
 .um-active-off { background: #fee2e2; color: #b91c1c; border: 1px solid #fecaca; }
 
@@ -568,8 +570,8 @@ function renderTable(users) {
         : `<span class="um-role-badge um-role-adv">${T.advisor}</span>`;
 
     const activeBadge = u.is_active
-      ? `<span class="um-active-badge um-active-on" onclick="event.stopPropagation();toggleActive('${u.username}',false)" title="${T.clickToDisable}">${T.active}</span>`
-      : `<span class="um-active-badge um-active-off" onclick="event.stopPropagation();toggleActive('${u.username}',true)" title="${T.clickToEnable}">${T.disabled}</span>`;
+      ? `<span class="um-active-badge um-active-on" role="button" tabindex="0" onclick="event.stopPropagation();toggleActive('${u.username}',false)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();toggleActive('${u.username}',false)}" title="${T.clickToDisable}">${T.active}</span>`
+      : `<span class="um-active-badge um-active-off" role="button" tabindex="0" onclick="event.stopPropagation();toggleActive('${u.username}',true)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();toggleActive('${u.username}',true)}" title="${T.clickToEnable}">${T.disabled}</span>`;
 
     const lastLogin = u.last_login
       ? `<span class="um-time">${formatDate(u.last_login)}</span>`

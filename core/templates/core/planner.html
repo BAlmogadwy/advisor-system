@@ -30,7 +30,7 @@
       width: 22px; height: 22px; border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
       font-size: 11px; font-weight: 700;
-      background: rgba(17,17,68,0.06); color: var(--t3);
+      background: rgba(17,17,68,0.12); color: var(--t3);
       flex-shrink: 0; transition: all 0.2s ease;
     }
     .wf-step.active .wf-num { background: rgba(255,255,255,0.25); color: #fff; }
@@ -312,10 +312,11 @@
     @media (max-width: 768px) {
       .sticky-head { position: static; }
       .command-bar { border-radius: 0; margin: 0 -1rem; padding: 0.75rem 1rem !important; }
-      .wf-stepper { flex-wrap: wrap; gap: 4px; }
-      .wf-sep { display: none; }
-      .wf-step { padding: 6px 10px; font-size: 11.5px; }
-      .wf-nav { width: 100%; justify-content: flex-end; padding-top: 6px; }
+      .wf-stepper { flex-wrap: nowrap; gap: 0; overflow-x: auto; -webkit-overflow-scrolling: touch; padding-bottom: 4px; }
+      .wf-step .wf-label { display: none; }
+      .wf-step { padding: 8px 10px; }
+      .wf-sep { width: 12px; }
+      .wf-nav { padding-inline-start: 6px; }
       .command-bar-controls { display: none; }
       .command-bar-controls.expanded { display: block; }
       .command-bar-toggle {

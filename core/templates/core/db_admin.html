@@ -263,6 +263,15 @@
 
     .dba-step-arrow { color: var(--muted); font-size: 0.65rem; }
 
+    /* Double-confirm delete pattern */
+    .dba-delete-confirm {
+      background: #fff5f5 !important; color: #dc2626 !important;
+      border: 1px solid #fecaca !important;
+      animation: dba-pulse 0.5s ease;
+    }
+    @keyframes dba-pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+    .dba-confirm-text { font-size: 0.75rem; font-weight: 700; }
+
     /* Mobile: collapse nav to horizontal scroll strip */
     @media (max-width: 900px) {
       .dba-shell { flex-direction: column; }
@@ -810,7 +819,30 @@ const IS_AR = '{{ LANGUAGE_CODE }}' === 'ar';
 const T = {
   runPreviewFirst: IS_AR ? 'يرجى تشغيل تحليل + معاينة أولاً.' : 'Please run Parse + Preview first.',
   requestFailed:  IS_AR ? 'فشل الطلب' : 'Request failed',
+  confirmDelete:  IS_AR ? 'تأكيد الحذف؟' : 'Confirm Delete?',
 };
+
+/* ── Double-confirmation delete helper ── */
+function handleDeleteWithConfirm(btn, deleteFn) {
+  if (btn.dataset.confirming === 'true') {
+    btn.dataset.confirming = 'false';
+    btn.classList.remove('dba-delete-confirm');
+    if (btn._origHtml) btn.innerHTML = btn._origHtml;
+    deleteFn();
+    return;
+  }
+  btn._origHtml = btn.innerHTML;
+  btn.dataset.confirming = 'true';
+  btn.classList.add('dba-delete-confirm');
+  btn.innerHTML = '<span class="dba-confirm-text">' + T.confirmDelete + '</span>';
+  btn._confirmTimer = setTimeout(() => {
+    if (btn.dataset.confirming === 'true') {
+      btn.dataset.confirming = 'false';
+      btn.classList.remove('dba-delete-confirm');
+      btn.innerHTML = btn._origHtml;
+    }
+  }, 4000);
+}
 
 /* ── Nav switching ── */
 const navItems = document.querySelectorAll('.dba-nav-item[data-panel]');
@@ -875,21 +907,23 @@ q('sPreview').onclick = async () => {
   await callJson(u, {}, 'sOut', q('sPreview'));
 };
 
-q('sDelete').onclick = async () => {
-  const okS = await dlg.confirm({
-    title: IS_AR ? 'حذف الطلاب؟' : 'Delete students?',
-    body: IS_AR
-      ? '<p>سيحذف هذا جميع الطلاب المطابقين وسجلات <code>student_courses</code>.</p>'
-      : '<p>This will permanently delete all matching students and their <code>student_courses</code> records.</p>',
-    typed: 'DELETE',
-    confirmText: IS_AR ? 'حذف نهائي' : 'Delete permanently',
-    kind: 'danger',
+q('sDelete').onclick = () => {
+  handleDeleteWithConfirm(q('sDelete'), async () => {
+    const okS = await dlg.confirm({
+      title: IS_AR ? 'حذف الطلاب؟' : 'Delete students?',
+      body: IS_AR
+        ? '<p>سيحذف هذا جميع الطلاب المطابقين وسجلات <code>student_courses</code>.</p>'
+        : '<p>This will permanently delete all matching students and their <code>student_courses</code> records.</p>',
+      typed: 'DELETE',
+      confirmText: IS_AR ? 'حذف نهائي' : 'Delete permanently',
+      kind: 'danger',
+    });
+    if (!okS) return;
+    await callJson('/ops/db/delete-students/', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ program: q('sProgram').value, section: q('sSection').value, confirm: 'DELETE' })
+    }, 'sOut', q('sDelete'));
   });
-  if (!okS) return;
-  await callJson('/ops/db/delete-students/', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ program: q('sProgram').value, section: q('sSection').value, confirm: 'DELETE' })
-  }, 'sOut', q('sDelete'));
 };
 
 /* ── Section: Delete catalog ── */
@@ -898,22 +932,24 @@ q('pPreview').onclick = async () => {
   await callJson(u, {}, 'pOut', q('pPreview'));
 };
 
-q('pDelete').onclick = async () => {
-  const prog = (q('pProgram').value || '').trim().toUpperCase();
-  const okP = await dlg.confirm({
-    title: IS_AR ? `حذف كتالوج ${prog}؟` : `Delete program catalog?`,
-    body: IS_AR
-      ? `<p>سيحذف هذا كتالوج البرنامج بالكامل لـ <strong>${prog}</strong>. لا يمكن التراجع عن هذا.</p>`
-      : `<p>This will permanently delete all requirements and prerequisites for <strong>${prog}</strong>.</p><p>This cannot be undone.</p>`,
-    typed: `DELETE ${prog}`,
-    confirmText: IS_AR ? 'حذف الكتالوج' : 'Delete catalog',
-    kind: 'danger',
+q('pDelete').onclick = () => {
+  handleDeleteWithConfirm(q('pDelete'), async () => {
+    const prog = (q('pProgram').value || '').trim().toUpperCase();
+    const okP = await dlg.confirm({
+      title: IS_AR ? `حذف كتالوج ${prog}؟` : `Delete program catalog?`,
+      body: IS_AR
+        ? `<p>سيحذف هذا كتالوج البرنامج بالكامل لـ <strong>${prog}</strong>. لا يمكن التراجع عن هذا.</p>`
+        : `<p>This will permanently delete all requirements and prerequisites for <strong>${prog}</strong>.</p><p>This cannot be undone.</p>`,
+      typed: `DELETE ${prog}`,
+      confirmText: IS_AR ? 'حذف الكتالوج' : 'Delete catalog',
+      kind: 'danger',
+    });
+    if (!okP) return;
+    await callJson('/ops/db/delete-program-catalog/', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ program: q('pProgram').value, confirm: 'DELETE' })
+    }, 'pOut', q('pDelete'));
   });
-  if (!okP) return;
-  await callJson('/ops/db/delete-program-catalog/', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ program: q('pProgram').value, confirm: 'DELETE' })
-  }, 'pOut', q('pDelete'));
 };
 
 /* ── Section: Import program plan ── */
@@ -1253,45 +1289,49 @@ q('extLoad').onclick = async () => {
   }
 };
 
-q('extDeleteAll').onclick = async () => {
-  const ok = await dlg.confirm({
-    title: IS_AR ? 'حذف جميع المواد الخارجية؟' : 'Delete all external courses?',
-    body: IS_AR
-      ? '<p>سيحذف جميع المواد الخارجية وسجلات الطلاب المرتبطة بها. سيتم إنشاء نسخة احتياطية أولاً.</p>'
-      : '<p>This will delete all external courses and their associated student records. A backup will be created first.</p>',
-    typed: 'DELETE',
-    confirmText: IS_AR ? 'حذف الكل' : 'Delete all',
-    kind: 'danger',
+q('extDeleteAll').onclick = () => {
+  handleDeleteWithConfirm(q('extDeleteAll'), async () => {
+    const ok = await dlg.confirm({
+      title: IS_AR ? 'حذف جميع المواد الخارجية؟' : 'Delete all external courses?',
+      body: IS_AR
+        ? '<p>سيحذف جميع المواد الخارجية وسجلات الطلاب المرتبطة بها. سيتم إنشاء نسخة احتياطية أولاً.</p>'
+        : '<p>This will delete all external courses and their associated student records. A backup will be created first.</p>',
+      typed: 'DELETE',
+      confirmText: IS_AR ? 'حذف الكل' : 'Delete all',
+      kind: 'danger',
+    });
+    if (!ok) return;
+    const res = await callJson('/ops/db/delete-external-courses/', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ confirm: 'DELETE' })
+    }, 'extOut', q('extDeleteAll'));
+    if (res && res.ok) { extData = []; extRender(); }
   });
-  if (!ok) return;
-  const res = await callJson('/ops/db/delete-external-courses/', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ confirm: 'DELETE' })
-  }, 'extOut', q('extDeleteAll'));
-  if (res && res.ok) { extData = []; extRender(); }
 };
 
-q('extDeleteSel').onclick = async () => {
-  const ids = [...q('extBody').querySelectorAll('.ext-chk:checked')].map(c => +c.dataset.id);
-  if (!ids.length) return;
-  const ok = await dlg.confirm({
-    title: IS_AR ? `حذف ${ids.length} مادة؟` : `Delete ${ids.length} course(s)?`,
-    body: IS_AR
-      ? '<p>سيحذف المواد المحددة وسجلات الطلاب المرتبطة بها.</p>'
-      : '<p>This will delete the selected external courses and their associated student records.</p>',
-    typed: 'DELETE',
-    confirmText: IS_AR ? 'حذف المحدد' : 'Delete selected',
-    kind: 'danger',
+q('extDeleteSel').onclick = () => {
+  handleDeleteWithConfirm(q('extDeleteSel'), async () => {
+    const ids = [...q('extBody').querySelectorAll('.ext-chk:checked')].map(c => +c.dataset.id);
+    if (!ids.length) return;
+    const ok = await dlg.confirm({
+      title: IS_AR ? `حذف ${ids.length} مادة؟` : `Delete ${ids.length} course(s)?`,
+      body: IS_AR
+        ? '<p>سيحذف المواد المحددة وسجلات الطلاب المرتبطة بها.</p>'
+        : '<p>This will delete the selected external courses and their associated student records.</p>',
+      typed: 'DELETE',
+      confirmText: IS_AR ? 'حذف المحدد' : 'Delete selected',
+      kind: 'danger',
+    });
+    if (!ok) return;
+    const res = await callJson('/ops/db/delete-external-courses/', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ confirm: 'DELETE', course_ids: ids })
+    }, 'extOut', q('extDeleteSel'));
+    if (res && res.ok) {
+      extData = extData.filter(c => !ids.includes(c.course_id));
+      extRender();
+    }
   });
-  if (!ok) return;
-  const res = await callJson('/ops/db/delete-external-courses/', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ confirm: 'DELETE', course_ids: ids })
-  }, 'extOut', q('extDeleteSel'));
-  if (res && res.ok) {
-    extData = extData.filter(c => !ids.includes(c.course_id));
-    extRender();
-  }
 };
 </script>
 {% endblock %}

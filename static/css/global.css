@@ -670,7 +670,7 @@ main.p-3 .page-header {
   background-color: transparent !important;
   box-shadow:       inset 4px 4px 8px rgba(163,177,198,0.35),
                     inset -4px -4px 8px rgba(255,255,255,0.9),
-                    0 0 0 2px rgba(10,142,110,0.25) !important;
+                    0 0 0 2px rgba(10,142,110,0.5) !important;
   outline:          none !important;
   border:           none !important;
 }
@@ -901,7 +901,7 @@ html body .btn.btn-sm {
 html body .btn:focus,
 html body .btn:focus-visible {
   outline: none !important;
-  box-shadow: 0 0 0 2px rgba(10,142,110,0.25),
+  box-shadow: 0 0 0 2px rgba(10,142,110,0.5),
               3px 3px 8px rgba(163,177,198,0.3),
               -3px -3px 8px rgba(255,255,255,0.8) !important;
 }
@@ -929,6 +929,11 @@ html body .btn:focus-visible {
 .actions-row .form-select,
 .actions-row .form-control { min-height: 36px; }
 
+@media (max-width: 1280px) and (min-width: 1024px) {
+  .actions-row { gap: 0.35rem; }
+  .actions-row .btn { font-size: 0.8rem !important; padding: 0.35rem 0.9rem !important; }
+}
+
 #student .actions-row, #batch .actions-row, #plan .actions-row,
 #prereq .actions-row, #eligibility .actions-row, #advisoradmin .actions-row,
 #advisorportfolio .actions-row, #usermgmt .actions-row, #dbadmin .actions-row,
@@ -953,7 +958,7 @@ html body .btn:focus-visible {
 
 .table-wrap tbody tr { transition: background .10s ease; }
 
-.table-wrap tbody tr:hover td { background: rgba(10,142,110,0.03); }
+.table-wrap tbody tr:hover td { background: rgba(10,142,110,0.07); }
 
 .table-wrap thead th {
   position:      sticky;
@@ -977,6 +982,11 @@ html body .btn:focus-visible {
 }
 
 .table-wrap thead th:hover { background: rgba(255,255,255,0.72) !important; color: var(--t3); }
+
+/* Sorted-column visual indicator */
+.table-wrap thead th.sorted { color: var(--teal); }
+.table-wrap thead th.sorted::after { content: ' \25B2'; font-size: 0.55rem; opacity: 0.7; }
+.table-wrap thead th.sorted.desc::after { content: ' \25BC'; }
 
 .table-wrap tbody td {
   font-family:  var(--font-body);

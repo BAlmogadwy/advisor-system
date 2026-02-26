@@ -25,7 +25,8 @@
       background: transparent;
       transition: background 0.1s ease;
     }
-    .audit-table tbody tr:hover td { background: rgba(10,142,110,0.03); }
+    /* Issue #3 fix — row hover more visible */
+    .audit-table tbody tr:hover td { background: rgba(10,142,110,0.07); }
     .audit-table tbody tr:focus-within td { background: rgba(10,142,110,0.04); }
     .audit-status-success { color: #047857; font-weight: 700; }
     .audit-status-error   { color: #b91c1c; font-weight: 700; }
@@ -38,7 +39,7 @@
     .audit-endpoint { font-family: var(--font-mono); font-size: 11px; color: var(--t2); }
     .audit-filter-row {
       display: flex; gap: 0.5rem; flex-wrap: wrap;
-      margin-bottom: 1rem; align-items: center;
+      margin-bottom: 1rem; align-items: flex-end;
       padding: 0.75rem 1rem;
       background: rgba(255,255,255,0.40);
       backdrop-filter: blur(20px) saturate(130%);
@@ -69,6 +70,113 @@
     }
     .audit-count strong { color: var(--teal); }
 
+    /* -- Issue #5: Visible filter labels -- */
+    .audit-filter-group { display: flex; flex-direction: column; gap: 0.2rem; }
+    .audit-filter-label {
+      font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.04em; color: var(--t3); font-family: var(--font-mono);
+    }
+
+    /* -- Issue #5: Export CSV button styling -- */
+    .btn-export {
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      padding: 0.35rem 1rem; border-radius: 14px;
+      font-size: 0.82rem; font-weight: 600;
+      background: rgba(255,255,255,0.6); color: var(--teal);
+      text-decoration: none;
+      box-shadow: 3px 3px 8px rgba(163,177,198,0.3), -3px -3px 8px rgba(255,255,255,0.8);
+      transition: all 0.15s;
+    }
+    .btn-export:hover { color: var(--teal-bright); box-shadow: 4px 4px 10px rgba(163,177,198,0.35), -4px -4px 10px rgba(255,255,255,0.85); }
+
+    /* -- Issue #19: Color-only status indicators — icon prefixes -- */
+    .audit-status-icon { display: inline-flex; align-items: center; gap: 0.25rem; }
+    .audit-status-icon::before { font-size: 0.7rem; line-height: 1; }
+    .audit-status-icon.audit-status-success::before,
+    .audit-status-icon.audit-status-allow::before { content: '\2713'; }
+    .audit-status-icon.audit-status-error::before,
+    .audit-status-icon.audit-status-critical::before { content: '\26A0'; }
+    .audit-status-icon.audit-status-deny::before { content: '\2715'; }
+
+    /* -- Pagination controls -- */
+    .audit-pagination {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 1rem; flex-wrap: wrap; padding: 0.75rem 1rem; margin-top: 0.75rem;
+      background: rgba(255,255,255,0.40); backdrop-filter: blur(20px) saturate(130%);
+      -webkit-backdrop-filter: blur(20px) saturate(130%);
+      border-radius: var(--radius);
+      box-shadow: 5px 5px 14px rgba(163,177,198,0.25), -5px -5px 14px rgba(255,255,255,0.75);
+      font-size: 0.82rem; color: var(--t3);
+    }
+    .audit-page-nav { display: flex; align-items: center; gap: 0.35rem; }
+    .audit-page-btn {
+      width: 32px; height: 32px; border-radius: 8px; border: none;
+      background: rgba(255,255,255,0.6); color: var(--t3);
+      font-size: 1rem; font-weight: 700; cursor: pointer;
+      box-shadow: 2px 2px 5px rgba(163,177,198,0.25), -2px -2px 5px rgba(255,255,255,0.7);
+      transition: all 0.15s;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .audit-page-btn:hover:not(:disabled) { color: var(--teal); box-shadow: 3px 3px 7px rgba(163,177,198,0.3), -3px -3px 7px rgba(255,255,255,0.8); }
+    .audit-page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .audit-page-btn:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+    .audit-page-current { font-weight: 600; font-family: var(--font-mono); font-size: 0.78rem; }
+    .audit-page-info { font-family: var(--font-mono); font-size: 0.78rem; }
+    .audit-page-info strong { color: var(--teal); }
+    .audit-page-size { display: flex; align-items: center; gap: 0.5rem; font-size: 0.78rem; }
+
+    /* -- View toggle (table / timeline) -- */
+    .audit-view-toggle {
+      display: flex; gap: 0; border-radius: 10px; overflow: hidden; width: fit-content;
+      box-shadow: inset 3px 3px 7px rgba(163,177,198,0.3), inset -3px -3px 7px rgba(255,255,255,0.7);
+    }
+    .audit-view-btn {
+      padding: 0.4rem 1.2rem; border: none; background: transparent;
+      font-size: 0.78rem; font-weight: 700; color: var(--t3); cursor: pointer;
+      transition: all 0.15s; font-family: var(--font-mono);
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .audit-view-btn:focus-visible { outline: 2px solid var(--teal); outline-offset: -2px; }
+    .audit-view-btn.active { background: var(--teal); color: #fff; box-shadow: 0 2px 6px rgba(10,142,110,0.25); }
+
+    /* -- Timeline view -- */
+    .audit-timeline { max-height: 600px; overflow-y: auto; padding: 1rem; }
+    .atl-day { font-family: var(--font-serif); font-size: 1rem; color: var(--navy); margin-bottom: 0.75rem; margin-top: 1.25rem; }
+    .atl-day:first-child { margin-top: 0; }
+    .atl-item {
+      display: flex; gap: 1rem; padding: 0.75rem 0;
+      border-left: 2px solid rgba(10,142,110,0.15);
+      margin-left: 0.5rem; padding-left: 1rem; position: relative;
+    }
+    [dir="rtl"] .atl-item {
+      border-left: none; border-right: 2px solid rgba(10,142,110,0.15);
+      margin-left: 0; margin-right: 0.5rem; padding-left: 0; padding-right: 1rem;
+    }
+    .atl-item::before {
+      content: ''; position: absolute; left: -5px; top: 1rem;
+      width: 8px; height: 8px; border-radius: 50%; background: var(--teal);
+      border: 2px solid #fff; box-shadow: 0 0 0 2px rgba(10,142,110,0.15);
+    }
+    [dir="rtl"] .atl-item::before { left: auto; right: -5px; }
+    .atl-time { font-family: var(--font-mono); font-size: 0.75rem; color: var(--t4); white-space: nowrap; min-width: 70px; }
+    .atl-content { flex: 1; }
+    .atl-action { font-weight: 700; font-size: 0.85rem; color: var(--ink); text-transform: uppercase; letter-spacing: 0.02em; }
+    .atl-detail { font-size: 0.8rem; color: var(--t3); margin-top: 0.15rem; }
+    .atl-status { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 4px; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; }
+    .atl-status-success, .atl-status-allow { background: #dcfce7; color: #15803d; }
+    .atl-status-error { background: #fee2e2; color: #b91c1c; }
+    .atl-status-deny { background: #fff7ed; color: #9a3412; }
+    .atl-status-critical { background: #fef2f2; color: #991b1b; }
+    .atl-expand {
+      font-size: 0.75rem; color: var(--teal); cursor: pointer;
+      text-decoration: none; margin-top: 0.25rem; display: inline-block;
+      background: none; border: none; padding: 0; font-family: inherit;
+    }
+    .atl-expand:hover { text-decoration: underline; }
+    .atl-expand:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+    .atl-extra { display: none; margin-top: 0.35rem; font-family: var(--font-mono); font-size: 0.72rem; color: var(--t4); }
+    .atl-extra.open { display: block; }
+
     @media (max-width: 768px) {
       .audit-filter-row { flex-direction: column; align-items: stretch; }
       .audit-filter-row .form-control,
@@ -77,6 +185,12 @@
       .audit-table { font-size: 11px; }
       .audit-table th, .audit-table td { padding: 0.4rem 0.5rem; }
       .audit-table-wrap { max-height: none; }
+      .audit-pagination { flex-direction: column; align-items: stretch; text-align: center; }
+      .audit-page-nav { justify-content: center; }
+      .audit-page-size { justify-content: center; }
+      .audit-page-info { text-align: center; }
+      .audit-view-toggle { width: 100%; }
+      .audit-view-btn { flex: 1; text-align: center; }
     }
   </style>
 
@@ -102,27 +216,51 @@
     <div>
 
   <form method="get" class="audit-filter-row" role="search" aria-label="{% if LANGUAGE_CODE == 'ar' %}تصفية سجلات التدقيق{% else %}Filter audit records{% endif %}">
-    <label for="audit-f-action" class="sr-only">{% if LANGUAGE_CODE == 'ar' %}الإجراء{% else %}Action{% endif %}</label>
-    <input id="audit-f-action" name="action" class="form-control form-control-sm" placeholder="{% if LANGUAGE_CODE == 'ar' %}الإجراء{% else %}Action{% endif %}" value="{{ filters.action }}" />
-    <label for="audit-f-user" class="sr-only">{% if LANGUAGE_CODE == 'ar' %}المستخدم{% else %}User{% endif %}</label>
-    <input id="audit-f-user" name="user" class="form-control form-control-sm" placeholder="{% if LANGUAGE_CODE == 'ar' %}المستخدم{% else %}User{% endif %}" value="{{ filters.user }}" />
-    <label for="audit-f-status" class="sr-only">{% if LANGUAGE_CODE == 'ar' %}الحالة{% else %}Status{% endif %}</label>
-    <select id="audit-f-status" name="status" class="form-select form-select-sm">
-      <option value="" {% if not filters.status %}selected{% endif %}>{% if LANGUAGE_CODE == 'ar' %}جميع الحالات{% else %}All statuses{% endif %}</option>
-      <option value="success" {% if filters.status == 'success' %}selected{% endif %}>{% if LANGUAGE_CODE == 'ar' %}ناجح{% else %}Success{% endif %}</option>
-      <option value="error" {% if filters.status == 'error' %}selected{% endif %}>{% if LANGUAGE_CODE == 'ar' %}خطأ{% else %}Error{% endif %}</option>
-      <option value="allow" {% if filters.status == 'allow' %}selected{% endif %}>{% if LANGUAGE_CODE == 'ar' %}مسموح{% else %}Allow{% endif %}</option>
-      <option value="deny" {% if filters.status == 'deny' %}selected{% endif %}>{% if LANGUAGE_CODE == 'ar' %}مرفوض{% else %}Deny{% endif %}</option>
-      <option value="critical" {% if filters.status == 'critical' %}selected{% endif %}>{% if LANGUAGE_CODE == 'ar' %}حرج{% else %}Critical{% endif %}</option>
-    </select>
-    <label for="audit-f-from" class="sr-only">{% if LANGUAGE_CODE == 'ar' %}من{% else %}From{% endif %}</label>
-    <input id="audit-f-from" name="from" class="form-control form-control-sm" placeholder="{% if LANGUAGE_CODE == 'ar' %}من (ISO UTC){% else %}From (ISO UTC){% endif %}" value="{{ filters.from }}" />
-    <label for="audit-f-to" class="sr-only">{% if LANGUAGE_CODE == 'ar' %}إلى{% else %}To{% endif %}</label>
-    <input id="audit-f-to" name="to" class="form-control form-control-sm" placeholder="{% if LANGUAGE_CODE == 'ar' %}إلى (ISO UTC){% else %}To (ISO UTC){% endif %}" value="{{ filters.to }}" />
-    <label for="audit-f-limit" class="sr-only">{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى{% else %}Limit{% endif %}</label>
-    <input id="audit-f-limit" name="limit" class="form-control form-control-sm" type="text" inputmode="numeric" pattern="[0-9]*" min="1" max="5000" value="{{ filters.limit }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى{% else %}Limit{% endif %}" title="{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى لعدد الصفوف{% else %}Maximum number of rows{% endif %}" style="max-width:100px" />
-    <button type="submit" class="btn btn-sm btn-primary" aria-label="{% if LANGUAGE_CODE == 'ar' %}تطبيق الفلاتر{% else %}Apply filters{% endif %}">{% if LANGUAGE_CODE == 'ar' %}تطبيق الفلاتر{% else %}Apply filters{% endif %}</button>
-    <a class="btn btn-sm btn-export" href="/ops/audit/export.csv?action={{ filters.action|urlencode }}&user={{ filters.user|urlencode }}&status={{ filters.status|urlencode }}&from={{ filters.from|urlencode }}&to={{ filters.to|urlencode }}&limit={{ filters.limit }}" aria-label="{% if LANGUAGE_CODE == 'ar' %}تصدير سجلات التدقيق بصيغة CSV{% else %}Export audit records as CSV{% endif %}">{% if LANGUAGE_CODE == 'ar' %}تصدير CSV{% else %}Export CSV{% endif %}</a>
+    <div class="audit-filter-group">
+      <span class="audit-filter-label" id="lbl-action">{% if LANGUAGE_CODE == 'ar' %}الإجراء{% else %}Action{% endif %}</span>
+      <label for="audit-f-action" class="sr-only">{% if LANGUAGE_CODE == 'ar' %}الإجراء{% else %}Action{% endif %}</label>
+      <input id="audit-f-action" name="action" class="form-control form-control-sm" placeholder="{% if LANGUAGE_CODE == 'ar' %}الإجراء{% else %}Action{% endif %}" value="{{ filters.action }}" aria-labelledby="lbl-action" />
+    </div>
+    <div class="audit-filter-group">
+      <span class="audit-filter-label" id="lbl-user">{% if LANGUAGE_CODE == 'ar' %}المستخدم{% else %}User{% endif %}</span>
+      <label for="audit-f-user" class="sr-only">{% if LANGUAGE_CODE == 'ar' %}المستخدم{% else %}User{% endif %}</label>
+      <input id="audit-f-user" name="user" class="form-control form-control-sm" placeholder="{% if LANGUAGE_CODE == 'ar' %}المستخدم{% else %}User{% endif %}" value="{{ filters.user }}" aria-labelledby="lbl-user" />
+    </div>
+    <div class="audit-filter-group">
+      <span class="audit-filter-label" id="lbl-status">{% if LANGUAGE_CODE == 'ar' %}الحالة{% else %}Status{% endif %}</span>
+      <label for="audit-f-status" class="sr-only">{% if LANGUAGE_CODE == 'ar' %}الحالة{% else %}Status{% endif %}</label>
+      <select id="audit-f-status" name="status" class="form-select form-select-sm" aria-labelledby="lbl-status">
+        <option value="" {% if not filters.status %}selected{% endif %}>{% if LANGUAGE_CODE == 'ar' %}جميع الحالات{% else %}All statuses{% endif %}</option>
+        <option value="success" {% if filters.status == 'success' %}selected{% endif %}>{% if LANGUAGE_CODE == 'ar' %}ناجح{% else %}Success{% endif %}</option>
+        <option value="error" {% if filters.status == 'error' %}selected{% endif %}>{% if LANGUAGE_CODE == 'ar' %}خطأ{% else %}Error{% endif %}</option>
+        <option value="allow" {% if filters.status == 'allow' %}selected{% endif %}>{% if LANGUAGE_CODE == 'ar' %}مسموح{% else %}Allow{% endif %}</option>
+        <option value="deny" {% if filters.status == 'deny' %}selected{% endif %}>{% if LANGUAGE_CODE == 'ar' %}مرفوض{% else %}Deny{% endif %}</option>
+        <option value="critical" {% if filters.status == 'critical' %}selected{% endif %}>{% if LANGUAGE_CODE == 'ar' %}حرج{% else %}Critical{% endif %}</option>
+      </select>
+    </div>
+    <div class="audit-filter-group">
+      <span class="audit-filter-label" id="lbl-from">{% if LANGUAGE_CODE == 'ar' %}من{% else %}From{% endif %}</span>
+      <label for="audit-f-from" class="sr-only">{% if LANGUAGE_CODE == 'ar' %}من{% else %}From{% endif %}</label>
+      <input id="audit-f-from" name="from" type="datetime-local" class="form-control form-control-sm" value="{{ filters.from }}" aria-labelledby="lbl-from" />
+    </div>
+    <div class="audit-filter-group">
+      <span class="audit-filter-label" id="lbl-to">{% if LANGUAGE_CODE == 'ar' %}إلى{% else %}To{% endif %}</span>
+      <label for="audit-f-to" class="sr-only">{% if LANGUAGE_CODE == 'ar' %}إلى{% else %}To{% endif %}</label>
+      <input id="audit-f-to" name="to" type="datetime-local" class="form-control form-control-sm" value="{{ filters.to }}" aria-labelledby="lbl-to" />
+    </div>
+    <div class="audit-filter-group">
+      <span class="audit-filter-label" id="lbl-limit">{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى{% else %}Limit{% endif %}</span>
+      <label for="audit-f-limit" class="sr-only">{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى{% else %}Limit{% endif %}</label>
+      <input id="audit-f-limit" name="limit" class="form-control form-control-sm" type="text" inputmode="numeric" pattern="[0-9]*" min="1" max="5000" value="{{ filters.limit }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى{% else %}Limit{% endif %}" title="{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى لعدد الصفوف{% else %}Maximum number of rows{% endif %}" style="max-width:100px" aria-labelledby="lbl-limit" />
+    </div>
+    <div class="audit-filter-group" style="justify-content:flex-end;">
+      <span class="audit-filter-label" aria-hidden="true">&nbsp;</span>
+      <button type="submit" class="btn btn-sm btn-primary" aria-label="{% if LANGUAGE_CODE == 'ar' %}تطبيق الفلاتر{% else %}Apply filters{% endif %}">{% if LANGUAGE_CODE == 'ar' %}تطبيق الفلاتر{% else %}Apply filters{% endif %}</button>
+    </div>
+    <div class="audit-filter-group" style="justify-content:flex-end;">
+      <span class="audit-filter-label" aria-hidden="true">&nbsp;</span>
+      <a class="btn btn-sm btn-export" href="/ops/audit/export.csv?action={{ filters.action|urlencode }}&user={{ filters.user|urlencode }}&status={{ filters.status|urlencode }}&from={{ filters.from|urlencode }}&to={{ filters.to|urlencode }}&limit={{ filters.limit }}" aria-label="{% if LANGUAGE_CODE == 'ar' %}تصدير سجلات التدقيق بصيغة CSV{% else %}Export audit records as CSV{% endif %}">{% if LANGUAGE_CODE == 'ar' %}تصدير CSV{% else %}Export CSV{% endif %}</a>
+    </div>
   </form>
 
   {% if rows %}
@@ -131,8 +269,15 @@
   </div>
   {% endif %}
 
+  <!-- View toggle: Table / Timeline -->
+  <div class="audit-view-toggle" style="margin-bottom:0.75rem;" role="tablist" aria-label="{% if LANGUAGE_CODE == 'ar' %}تبديل طريقة العرض{% else %}Toggle view mode{% endif %}">
+    <button class="audit-view-btn active" data-view="table" role="tab" aria-selected="true" aria-controls="auditTableRegion auditPagination" id="tab-table">{% if LANGUAGE_CODE == 'ar' %}عرض الجدول{% else %}Table View{% endif %}</button>
+    <button class="audit-view-btn" data-view="timeline" role="tab" aria-selected="false" aria-controls="auditTimeline" id="tab-timeline">{% if LANGUAGE_CODE == 'ar' %}عرض الجدول الزمني{% else %}Timeline View{% endif %}</button>
+  </div>
+
+  <div id="auditTableRegion" role="tabpanel" aria-labelledby="tab-table">
   <div class="audit-table-wrap" tabindex="0" role="region" aria-label="{% if LANGUAGE_CODE == 'ar' %}جدول سجلات التدقيق{% else %}Audit records table{% endif %}">
-  <table class="audit-table" aria-describedby="audit-desc">
+  <table class="audit-table" id="auditTable" aria-describedby="audit-desc">
     <caption id="audit-desc" class="sr-only">{% if LANGUAGE_CODE == 'ar' %}سجلات التدقيق مع الإجراء والمستخدم والحالة والوقت{% else %}Audit records with action, user, status, and timestamp{% endif %}</caption>
     <thead>
       <tr>
@@ -156,7 +301,7 @@
         <td>{{ row.actor_username }}</td>
         <td>{{ row.actor_role }}</td>
         <td>{{ row.action }}</td>
-        <td class="audit-status-{{ row.status }}">{{ row.status }}</td>
+        <td class="audit-status-icon audit-status-{{ row.status }}">{{ row.status }}</td>
         <td>{{ row.details.reason_code|default:'' }}</td>
         <td class="audit-endpoint">{{ row.endpoint }} {{ row.method }}</td>
         <td>{{ row.error_text }}</td>
@@ -178,9 +323,306 @@
     </tbody>
   </table>
   </div>
+  </div>
+
+  <!-- Pagination controls -->
+  <nav class="audit-pagination" id="auditPagination" style="display:none;" role="navigation" aria-label="{% if LANGUAGE_CODE == 'ar' %}التنقل بين الصفحات{% else %}Pagination{% endif %}">
+    <div class="audit-page-info" aria-live="polite">
+      {% if LANGUAGE_CODE == 'ar' %}عرض{% else %}Showing{% endif %} <strong id="auditPageStart">1</strong>–<strong id="auditPageEnd">50</strong> {% if LANGUAGE_CODE == 'ar' %}من{% else %}of{% endif %} <strong id="auditTotal">0</strong> {% if LANGUAGE_CODE == 'ar' %}سجل{% else %}records{% endif %}
+    </div>
+    <div class="audit-page-nav">
+      <button class="audit-page-btn" id="auditFirstPage" title="{% if LANGUAGE_CODE == 'ar' %}الصفحة الأولى{% else %}First page{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الصفحة الأولى{% else %}First page{% endif %}">&laquo;</button>
+      <button class="audit-page-btn" id="auditPrevPage" title="{% if LANGUAGE_CODE == 'ar' %}الصفحة السابقة{% else %}Previous page{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الصفحة السابقة{% else %}Previous page{% endif %}">&lsaquo;</button>
+      <span class="audit-page-current">{% if LANGUAGE_CODE == 'ar' %}صفحة{% else %}Page{% endif %} <strong id="auditCurrentPage">1</strong> {% if LANGUAGE_CODE == 'ar' %}من{% else %}of{% endif %} <strong id="auditTotalPages">1</strong></span>
+      <button class="audit-page-btn" id="auditNextPage" title="{% if LANGUAGE_CODE == 'ar' %}الصفحة التالية{% else %}Next page{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الصفحة التالية{% else %}Next page{% endif %}">&rsaquo;</button>
+      <button class="audit-page-btn" id="auditLastPage" title="{% if LANGUAGE_CODE == 'ar' %}الصفحة الأخيرة{% else %}Last page{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الصفحة الأخيرة{% else %}Last page{% endif %}">&raquo;</button>
+    </div>
+    <div class="audit-page-size">
+      <label for="auditPageSize">{% if LANGUAGE_CODE == 'ar' %}صفوف لكل صفحة:{% else %}Rows per page:{% endif %}</label>
+      <select id="auditPageSize" class="form-select form-select-sm" style="width:auto;display:inline-block;min-width:70px;">
+        <option value="25">25</option>
+        <option value="50" selected>50</option>
+        <option value="100">100</option>
+        <option value="250">250</option>
+      </select>
+    </div>
+  </nav>
+
+  <!-- Timeline view (hidden by default) -->
+  <div id="auditTimeline" class="audit-timeline" style="display:none;" role="tabpanel" aria-labelledby="tab-timeline">
+    <!-- JS will populate this -->
+  </div>
+
     </div>
 {% endblock %}
 
 {% block extra_js %}
-<script>/* No async JS on this page */</script>
+<script>
+(function () {
+  'use strict';
+
+  var IS_AR = document.documentElement.lang === 'ar';
+
+  /* ================================================================
+     Bilingual labels
+     ================================================================ */
+  var L = {
+    showing:    IS_AR ? '\u0639\u0631\u0636'      : 'Showing',
+    of:         IS_AR ? '\u0645\u0646'             : 'of',
+    records:    IS_AR ? '\u0633\u062C\u0644'       : 'records',
+    page:       IS_AR ? '\u0635\u0641\u062D\u0629' : 'Page',
+    expand:     IS_AR ? '\u062A\u0641\u0627\u0635\u064A\u0644' : 'Details',
+    collapse:   IS_AR ? '\u0625\u062E\u0641\u0627\u0621' : 'Collapse',
+    noRecords:  IS_AR ? '\u0644\u0627 \u062A\u0648\u062C\u062F \u0633\u062C\u0644\u0627\u062A \u0644\u0639\u0631\u0636\u0647\u0627 \u0641\u064A \u0627\u0644\u062C\u062F\u0648\u0644 \u0627\u0644\u0632\u0645\u0646\u064A' : 'No records to show in timeline'
+  };
+
+  /* ================================================================
+     Client-side pagination
+     ================================================================ */
+  var table      = document.getElementById('auditTable');
+  var tbody      = table ? table.querySelector('tbody') : null;
+  var allRows    = [];
+  var pagination = document.getElementById('auditPagination');
+  var currentPage = 1;
+  var pageSize    = 50;
+
+  // Collect data rows (skip the empty-state row)
+  if (tbody) {
+    var trs = tbody.querySelectorAll('tr');
+    for (var i = 0; i < trs.length; i++) {
+      var cells = trs[i].querySelectorAll('td');
+      // A real data row has exactly 10 cells (matching thead columns)
+      if (cells.length === 10) {
+        allRows.push(trs[i]);
+      }
+    }
+  }
+
+  var totalRows  = allRows.length;
+  var totalPages = 1;
+
+  var elStart       = document.getElementById('auditPageStart');
+  var elEnd         = document.getElementById('auditPageEnd');
+  var elTotal       = document.getElementById('auditTotal');
+  var elCurrentPage = document.getElementById('auditCurrentPage');
+  var elTotalPages  = document.getElementById('auditTotalPages');
+  var elPageSize    = document.getElementById('auditPageSize');
+  var btnFirst      = document.getElementById('auditFirstPage');
+  var btnPrev       = document.getElementById('auditPrevPage');
+  var btnNext       = document.getElementById('auditNextPage');
+  var btnLast       = document.getElementById('auditLastPage');
+
+  function renderPage() {
+    totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+    if (currentPage > totalPages) currentPage = totalPages;
+    if (currentPage < 1) currentPage = 1;
+
+    var start = (currentPage - 1) * pageSize;
+    var end   = Math.min(start + pageSize, totalRows);
+
+    for (var i = 0; i < allRows.length; i++) {
+      allRows[i].style.display = (i >= start && i < end) ? '' : 'none';
+    }
+
+    elStart.textContent       = totalRows === 0 ? '0' : String(start + 1);
+    elEnd.textContent         = String(end);
+    elTotal.textContent       = String(totalRows);
+    elCurrentPage.textContent = String(currentPage);
+    elTotalPages.textContent  = String(totalPages);
+
+    btnFirst.disabled = currentPage <= 1;
+    btnPrev.disabled  = currentPage <= 1;
+    btnNext.disabled  = currentPage >= totalPages;
+    btnLast.disabled  = currentPage >= totalPages;
+  }
+
+  if (totalRows > 0 && pagination) {
+    pagination.style.display = '';
+    renderPage();
+
+    btnFirst.addEventListener('click', function () { currentPage = 1; renderPage(); });
+    btnPrev.addEventListener('click',  function () { currentPage--; renderPage(); });
+    btnNext.addEventListener('click',  function () { currentPage++; renderPage(); });
+    btnLast.addEventListener('click',  function () { currentPage = totalPages; renderPage(); });
+
+    elPageSize.addEventListener('change', function () {
+      pageSize = parseInt(this.value, 10) || 50;
+      currentPage = 1;
+      renderPage();
+    });
+  }
+
+  /* ================================================================
+     View toggle: Table <-> Timeline
+     ================================================================ */
+  var tableRegion   = document.getElementById('auditTableRegion');
+  var timelineEl    = document.getElementById('auditTimeline');
+  var viewBtns      = document.querySelectorAll('.audit-view-btn');
+  var timelineBuilt = false;
+
+  function setActiveView(view) {
+    for (var i = 0; i < viewBtns.length; i++) {
+      var btn = viewBtns[i];
+      var isActive = btn.getAttribute('data-view') === view;
+      btn.classList.toggle('active', isActive);
+      btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    }
+
+    if (view === 'table') {
+      tableRegion.style.display = '';
+      if (totalRows > 0) pagination.style.display = '';
+      timelineEl.style.display  = 'none';
+    } else {
+      tableRegion.style.display = 'none';
+      pagination.style.display  = 'none';
+      timelineEl.style.display  = '';
+      if (!timelineBuilt) {
+        buildTimeline();
+        timelineBuilt = true;
+      }
+    }
+  }
+
+  for (var v = 0; v < viewBtns.length; v++) {
+    viewBtns[v].addEventListener('click', function () {
+      setActiveView(this.getAttribute('data-view'));
+    });
+  }
+
+  /* ================================================================
+     Build timeline HTML from table rows
+     ================================================================ */
+  function esc(s) {
+    var d = document.createElement('div');
+    d.appendChild(document.createTextNode(s || ''));
+    return d.innerHTML;
+  }
+
+  function buildTimeline() {
+    if (allRows.length === 0) {
+      timelineEl.innerHTML = '<div class="empty-state" style="padding:2rem;text-align:center;">' +
+        '<div class="empty-title">' + esc(L.noRecords) + '</div></div>';
+      return;
+    }
+
+    // Parse rows into data objects
+    var records = [];
+    for (var i = 0; i < allRows.length; i++) {
+      var cells = allRows[i].querySelectorAll('td');
+      records.push({
+        id:       (cells[0] || {}).textContent || '',
+        ts:       (cells[1] || {}).textContent || '',
+        user:     (cells[2] || {}).textContent || '',
+        role:     (cells[3] || {}).textContent || '',
+        action:   (cells[4] || {}).textContent || '',
+        status:   (cells[5] || {}).textContent || '',
+        reason:   (cells[6] || {}).textContent || '',
+        endpoint: (cells[7] || {}).textContent || '',
+        error:    (cells[8] || {}).textContent || '',
+        hash:     (cells[9] || {}).textContent || ''
+      });
+    }
+
+    // Group by date
+    var groups = {};
+    var groupOrder = [];
+    for (var j = 0; j < records.length; j++) {
+      var r = records[j];
+      var ts = r.ts.trim();
+      // Extract date portion (YYYY-MM-DD or first 10 chars)
+      var datePart = ts.length >= 10 ? ts.substring(0, 10) : ts;
+      // Extract time portion
+      var timePart = ts.length > 11 ? ts.substring(11).replace(/\.\d+/, '') : ts;
+
+      if (!groups[datePart]) {
+        groups[datePart] = [];
+        groupOrder.push(datePart);
+      }
+      groups[datePart].push({
+        time: timePart,
+        id: r.id.trim(),
+        user: r.user.trim(),
+        role: r.role.trim(),
+        action: r.action.trim(),
+        status: r.status.trim().toLowerCase(),
+        reason: r.reason.trim(),
+        endpoint: r.endpoint.trim(),
+        error: r.error.trim(),
+        hash: r.hash.trim()
+      });
+    }
+
+    var html = '';
+    for (var g = 0; g < groupOrder.length; g++) {
+      var day = groupOrder[g];
+      var items = groups[day];
+      html += '<div class="atl-day">' + esc(day) + '</div>';
+      for (var k = 0; k < items.length; k++) {
+        var it = items[k];
+        var statusCls = 'atl-status-' + it.status;
+        var uid = 'atl-extra-' + g + '-' + k;
+        html += '<div class="atl-item">' +
+          '<div class="atl-time">' + esc(it.time) + '</div>' +
+          '<div class="atl-content">' +
+            '<div class="atl-action">' + esc(it.action) + '</div>' +
+            '<div class="atl-detail">' +
+              esc(it.user) + (it.role ? ' (' + esc(it.role) + ')' : '') +
+              ' &mdash; <span class="atl-status ' + statusCls + '">' + esc(it.status) + '</span>' +
+              (it.reason ? ' &middot; ' + esc(it.reason) : '') +
+            '</div>' +
+            '<button type="button" class="atl-expand" aria-expanded="false" aria-controls="' + uid + '" data-target="' + uid + '">' +
+              esc(L.expand) +
+            '</button>' +
+            '<div class="atl-extra" id="' + uid + '" role="region">' +
+              (it.endpoint ? '<div><strong>Endpoint:</strong> ' + esc(it.endpoint) + '</div>' : '') +
+              (it.hash     ? '<div><strong>Hash:</strong> ' + esc(it.hash) + '</div>' : '') +
+              (it.error    ? '<div><strong>Error:</strong> ' + esc(it.error) + '</div>' : '') +
+              '<div><strong>ID:</strong> ' + esc(it.id) + '</div>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+      }
+    }
+
+    timelineEl.innerHTML = html;
+
+    // Attach expand/collapse handlers
+    var expandBtns = timelineEl.querySelectorAll('.atl-expand');
+    for (var e = 0; e < expandBtns.length; e++) {
+      expandBtns[e].addEventListener('click', function () {
+        var targetId = this.getAttribute('data-target');
+        var target = document.getElementById(targetId);
+        if (!target) return;
+        var isOpen = target.classList.contains('open');
+        target.classList.toggle('open', !isOpen);
+        this.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
+        this.textContent = isOpen ? L.expand : L.collapse;
+      });
+    }
+  }
+
+  /* ================================================================
+     Keyboard support for view toggle
+     ================================================================ */
+  var toggleContainer = document.querySelector('.audit-view-toggle');
+  if (toggleContainer) {
+    toggleContainer.addEventListener('keydown', function (e) {
+      var tabs = Array.prototype.slice.call(toggleContainer.querySelectorAll('.audit-view-btn'));
+      var idx = tabs.indexOf(document.activeElement);
+      if (idx === -1) return;
+      var next = -1;
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        var dir = (e.key === 'ArrowRight') ? 1 : -1;
+        // In RTL, reverse direction
+        if (IS_AR) dir = -dir;
+        next = (idx + dir + tabs.length) % tabs.length;
+        tabs[next].focus();
+        tabs[next].click();
+      }
+    });
+  }
+
+})();
+</script>
 {% endblock %}

@@ -14,6 +14,31 @@
     /* Softer form label — the global .form-label is uppercase-bold which
        is too heavy for a simple file-upload label on this page. */
     .si-panel > .row .form-label { text-transform: none; font-weight: 600; letter-spacing: 0; }
+
+    /* ── Drag-and-drop file upload zone ── */
+    .si-dropzone {
+      border: 2px dashed rgba(10,142,110,0.25);
+      border-radius: var(--radius);
+      padding: 2rem;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      background: rgba(10,142,110,0.02);
+    }
+    .si-dropzone:hover, .si-dropzone.dragover {
+      border-color: var(--teal);
+      background: rgba(10,142,110,0.06);
+    }
+    .si-dropzone:focus-within {
+      outline: 2px solid var(--teal); outline-offset: 2px;
+    }
+    .si-dropzone-icon { color: var(--teal); margin-bottom: 0.75rem; opacity: 0.6; transition: all 0.2s; }
+    .si-dropzone.dragover .si-dropzone-icon { opacity: 1; transform: translateY(-4px); }
+    .si-dropzone-text { font-size: 0.9rem; color: var(--t2); margin-bottom: 0.5rem; }
+    .si-dropzone-text strong { display: block; margin-bottom: 0.2rem; }
+    .si-dropzone-text span { font-size: 0.8rem; color: var(--t4); }
+    .si-dropzone-file { font-size: 0.78rem; color: var(--teal); font-family: var(--font-mono); font-weight: 600; }
+    .si-dropzone.has-file { border-color: var(--teal); border-style: solid; background: rgba(10,142,110,0.04); }
   </style>
 {% endblock %}
 
@@ -34,10 +59,20 @@
     <div class="row g-2 align-items-end">
       <div class="col-md-4">
         <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}ملف Oracle HTML{% else %}Oracle HTML file{% endif %}</label>
-        <div style="display:flex;align-items:center;gap:8px">
+        <div class="si-dropzone" id="siDropzone" role="button" tabindex="0" aria-label="{% if LANGUAGE_CODE == 'ar' %}أسقط ملف Oracle HTML هنا أو انقر للاستعراض{% else %}Drop Oracle HTML file here or click to browse{% endif %}">
+          <div class="si-dropzone-icon">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/>
+              <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+          </div>
+          <div class="si-dropzone-text">
+            <strong>{% if LANGUAGE_CODE == 'ar' %}أسقط ملف Oracle HTML هنا{% else %}Drop Oracle HTML file here{% endif %}</strong>
+            <span>{% if LANGUAGE_CODE == 'ar' %}أو انقر للاستعراض{% else %}or click to browse{% endif %}</span>
+          </div>
+          <span id="oracleFileName" class="si-dropzone-file">{% if LANGUAGE_CODE == 'ar' %}لم يتم اختيار ملف{% else %}No file chosen{% endif %}</span>
           <input id="oracleFile" type="file" accept=".html,.htm,.txt" style="display:none">
-          <button type="button" class="btn btn-outline-secondary btn-sm" onclick="document.getElementById('oracleFile').click()">{% if LANGUAGE_CODE == 'ar' %}اختر ملف{% else %}Choose file{% endif %}</button>
-          <span id="oracleFileName" style="font-size:0.82rem;color:var(--t3)">{% if LANGUAGE_CODE == 'ar' %}لم يتم اختيار ملف{% else %}No file chosen{% endif %}</span>
         </div>
       </div>
       <div class="col-md-3 form-check ms-3"><input id="dept" type="checkbox" class="form-check-input"><label class="form-check-label" for="dept">{% if LANGUAGE_CODE == 'ar' %}هل هي مقررات القسم؟{% else %}Is department courses?{% endif %}</label></div>
@@ -159,16 +194,32 @@ function renderTable(rows){
 
 ['fCode','fSection','fDay'].forEach(id=>q(id).addEventListener('input',()=>renderTable(filteredRows(rowsAll))));
 
-q('oracleFile').addEventListener('change', function(){
-  const lbl = q('oracleFileName');
-  if(this.files.length){
-    lbl.textContent = this.files[0].name;
-    lbl.style.color = 'var(--navy)';
-  } else {
-    lbl.textContent = IS_AR ? 'لم يتم اختيار ملف' : 'No file chosen';
-    lbl.style.color = 'var(--t3)';
-  }
-});
+/* ── Drag-and-drop file upload zone ── */
+const dropzone = q('siDropzone');
+const fileInput = q('oracleFile');
+if (dropzone && fileInput) {
+  dropzone.addEventListener('click', () => fileInput.click());
+  dropzone.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); } });
+  dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+  dropzone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropzone.classList.remove('dragover');
+    if (e.dataTransfer.files.length) {
+      fileInput.files = e.dataTransfer.files;
+      fileInput.dispatchEvent(new Event('change'));
+    }
+  });
+  fileInput.addEventListener('change', () => {
+    const name = fileInput.files[0]?.name || (IS_AR ? 'لم يتم اختيار ملف' : 'No file chosen');
+    q('oracleFileName').textContent = name;
+    if (fileInput.files[0]) {
+      dropzone.classList.add('has-file');
+    } else {
+      dropzone.classList.remove('has-file');
+    }
+  });
+}
 
 q('toggleTech').onclick = ()=> q('techWrap').classList.toggle('d-none');
 

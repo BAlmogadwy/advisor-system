@@ -106,7 +106,7 @@
   outline: none;
   box-shadow: inset 3px 3px 6px rgba(163,177,198,0.35),
               inset -3px -3px 6px rgba(255,255,255,0.9),
-              0 0 0 2px rgba(10,142,110,0.25);
+              0 0 0 2px rgba(10,142,110,0.5);
 }
 .pf-input::placeholder { color: var(--muted-light, #94a3b8); }
 
@@ -124,7 +124,7 @@
 .pf-pwd-wrap:focus-within {
   box-shadow: inset 3px 3px 6px rgba(163,177,198,0.35),
               inset -3px -3px 6px rgba(255,255,255,0.9),
-              0 0 0 2px rgba(10,142,110,0.25);
+              0 0 0 2px rgba(10,142,110,0.5);
 }
 .pf-pwd-wrap .pf-input {
   padding-inline-end: 2.5rem;
@@ -199,6 +199,39 @@
   0% { box-shadow: 5px 5px 14px rgba(163,177,198,0.28), -5px -5px 14px rgba(255,255,255,0.8); }
   40% { box-shadow: 0 0 0 3px rgba(10,142,110,0.2), 5px 5px 14px rgba(163,177,198,0.28), -5px -5px 14px rgba(255,255,255,0.8); }
   100% { box-shadow: 5px 5px 14px rgba(163,177,198,0.28), -5px -5px 14px rgba(255,255,255,0.8); }
+}
+
+/* ── Password strength indicator ── */
+.pf-pw-strength {
+  margin-top: 0.35rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.pf-pw-bar-track {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(17,17,68,0.06);
+  overflow: hidden;
+}
+.pf-pw-bar {
+  height: 100%;
+  width: 0%;
+  border-radius: 2px;
+  transition: width 0.3s ease, background 0.3s ease;
+  background: #e53e3e;
+}
+.pf-pw-bar[data-level="1"] { width: 25%; background: #e53e3e; }
+.pf-pw-bar[data-level="2"] { width: 50%; background: #dd6b20; }
+.pf-pw-bar[data-level="3"] { width: 75%; background: #d69e2e; }
+.pf-pw-bar[data-level="4"] { width: 100%; background: #38a169; }
+.pf-pw-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  min-width: 3rem;
+  color: var(--muted-light, #94a3b8);
+  text-align: end;
 }
 </style>
 {% endblock %}
@@ -294,6 +327,10 @@
           <span class="i pf-eye-on" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span>
           <span class="i pf-eye-off" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg></span>
         </button>
+      </div>
+      <div class="pf-pw-strength" id="pfPwStrength" aria-live="polite">
+        <div class="pf-pw-bar-track"><div class="pf-pw-bar" id="pfPwBar" data-level="0"></div></div>
+        <span class="pf-pw-label" id="pfPwLabel"></span>
       </div>
     </div>
     <div class="pf-field">
@@ -396,6 +433,8 @@
   const inputNew = document.getElementById('pfNewPwd');
   const inputConfirm = document.getElementById('pfConfirmPwd');
   const card2 = document.getElementById('pfPasswordCard');
+  const pwBar = document.getElementById('pfPwBar');
+  const pwLabel = document.getElementById('pfPwLabel');
 
   btnPassword.addEventListener('click', async () => {
     const cur = inputCurrent.value;
@@ -432,6 +471,8 @@
       inputCurrent.value = '';
       inputNew.value = '';
       inputConfirm.value = '';
+      pwBar.setAttribute('data-level', '0');
+      pwLabel.textContent = '';
       flashSaved(card2);
       notify.success('{% if LANGUAGE_CODE == "ar" %}تم تغيير كلمة المرور{% else %}Password updated{% endif %}');
     } catch (err) {
@@ -449,6 +490,34 @@
     el.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') btnPassword.click();
     });
+  });
+
+  /* ── Password strength meter ── */
+  const IS_AR = '{{ LANGUAGE_CODE }}' === 'ar';
+  const strengthLabels = IS_AR
+    ? ['', '\u0636\u0639\u064a\u0641', '\u0645\u0642\u0628\u0648\u0644', '\u062c\u064a\u062f', '\u0642\u0648\u064a']
+    : ['', 'Weak', 'Fair', 'Good', 'Strong'];
+  const strengthColors = ['', '#e53e3e', '#dd6b20', '#d69e2e', '#38a169'];
+
+  function evaluateStrength(pw) {
+    if (!pw) return 0;
+    var score = 0;
+    if (pw.length >= 6) score++;
+    if (pw.length >= 10) score++;
+    if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) score++;
+    if (/\d/.test(pw)) score++;
+    if (/[^a-zA-Z0-9]/.test(pw)) score++;
+    if (score <= 1) return 1;
+    if (score <= 2) return 2;
+    if (score <= 3) return 3;
+    return 4;
+  }
+
+  inputNew.addEventListener('input', function() {
+    var level = evaluateStrength(this.value);
+    pwBar.setAttribute('data-level', level);
+    pwLabel.textContent = strengthLabels[level] || '';
+    pwLabel.style.color = strengthColors[level] || '';
   });
 
   /* ── Show / hide password toggles ── */
