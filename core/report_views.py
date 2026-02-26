@@ -23,11 +23,28 @@ from core.services.student_helpers import (
     get_student_program,
     normalize_code,
 )
+from core.settings_views import load_defaults
+
+
+def _safe_int(value: str | None, default: int) -> int:
+    try:
+        return int(value) if value else default
+    except (ValueError, TypeError):
+        return default
+
+
+def _safe_float(value: str | None, default: float) -> float:
+    try:
+        return float(value) if value else default
+    except (ValueError, TypeError):
+        return default
 
 
 def _parse_int(value: str | None, field: str) -> tuple[int | None, JsonResponse | None]:
     if value is None:
-        return None, JsonResponse({"error": f"Missing required query parameter: {field}"}, status=400)
+        return None, JsonResponse(
+            {"error": f"Missing required query parameter: {field}"}, status=400
+        )
     try:
         return int(value), None
     except ValueError:
@@ -91,20 +108,28 @@ def _program_importance_scores(program: str) -> dict[str, float]:
     return scores
 
 
-
 def _build_student_plan_payload(student_id: int) -> tuple[dict | None, JsonResponse | None]:
     program = get_student_program(student_id)
     if not program:
-        return None, JsonResponse({"error": f"Student not found or has no program: {student_id}"}, status=404)
+        return None, JsonResponse(
+            {"error": f"Student not found or has no program: {student_id}"}, status=404
+        )
 
     passed, studying = get_student_passed_and_studying(student_id)
     satisfied_pool = passed | studying
     importance_scores = _program_importance_scores(program)
 
-    pr_rows = ProgrammeRequirement.objects.filter(
-        program=program,
-    ).order_by("programme_term", "course_code").values_list(
-        "course_code", "type", "programme_term", "credit_hours",
+    pr_rows = (
+        ProgrammeRequirement.objects.filter(
+            program=program,
+        )
+        .order_by("programme_term", "course_code")
+        .values_list(
+            "course_code",
+            "type",
+            "programme_term",
+            "credit_hours",
+        )
     )
 
     terms: dict[int, list[dict[str, object]]] = {t: [] for t in range(1, 11)}
@@ -153,7 +178,10 @@ def _build_student_plan_payload(student_id: int) -> tuple[dict | None, JsonRespo
             for m in missing_list:
                 key = str(m)
                 if key not in blocker_stats:
-                    blocker_stats[key] = {"blocks": 0, "unlock_score": float(importance_scores.get(key, 0.0))}
+                    blocker_stats[key] = {
+                        "blocks": 0,
+                        "unlock_score": float(importance_scores.get(key, 0.0)),
+                    }
                 blocker_stats[key]["blocks"] = int(blocker_stats[key]["blocks"]) + 1
 
     blocker_hints_unsorted: list[dict[str, str | int | float]] = [
@@ -181,10 +209,16 @@ def _build_student_plan_payload(student_id: int) -> tuple[dict | None, JsonRespo
             "passed": len(passed),
             "studying": len(studying),
             "not_taken_can_register": sum(
-                1 for t in terms.values() for c in t if c["status"] == "not_taken" and c["can_register"]
+                1
+                for t in terms.values()
+                for c in t
+                if c["status"] == "not_taken" and c["can_register"]
             ),
             "not_taken_locked": sum(
-                1 for t in terms.values() for c in t if c["status"] == "not_taken" and not c["can_register"]
+                1
+                for t in terms.values()
+                for c in t
+                if c["status"] == "not_taken" and not c["can_register"]
             ),
         },
         "blocker_hints": blocker_hints,
@@ -298,7 +332,9 @@ def export_aggregate_csv_view(request: HttpRequest) -> HttpResponse:
 
     out = StringIO()
     writer = csv.writer(out)
-    writer.writerow(["year", "semester", "program", "section", "student_count", "course_code", "count"])
+    writer.writerow(
+        ["year", "semester", "program", "section", "student_count", "course_code", "count"]
+    )
     for code, count in aggregate.most_common():
         writer.writerow([year, semester, program or "", section or "", student_count, code, count])
 
@@ -398,19 +434,14 @@ def prerequisites_view(request: HttpRequest) -> JsonResponse:
     qs = Prerequisite.objects.filter(program=program)
     if course_code:
         # Filter by normalized course code
-        matching_codes = [
-            p.course_code for p in qs
-            if normalize_code(p.course_code) == course_code
-        ]
+        matching_codes = [p.course_code for p in qs if normalize_code(p.course_code) == course_code]
         qs = qs.filter(course_code__in=matching_codes) if matching_codes else qs.none()
 
     rows = qs.order_by("course_code", "prerequisite_course_code").values_list(
-        "course_code", "prerequisite_course_code",
+        "course_code",
+        "prerequisite_course_code",
     )
-    data = [
-        {"course_code": str(r[0]), "prerequisite_course_code": str(r[1])}
-        for r in rows
-    ]
+    data = [{"course_code": str(r[0]), "prerequisite_course_code": str(r[1])} for r in rows]
     return JsonResponse({"program": program, "count": len(data), "items": data})
 
 
@@ -425,10 +456,16 @@ def program_plan_view(request: HttpRequest) -> JsonResponse:
     if scope_err:
         return scope_err
 
-    pp_rows = ProgrammeRequirement.objects.filter(
-        program=program,
-    ).order_by("programme_term", "course_code").values_list(
-        "course_code", "programme_term", "credit_hours",
+    pp_rows = (
+        ProgrammeRequirement.objects.filter(
+            program=program,
+        )
+        .order_by("programme_term", "course_code")
+        .values_list(
+            "course_code",
+            "programme_term",
+            "credit_hours",
+        )
     )
 
     items = [
@@ -445,10 +482,14 @@ def program_plan_view(request: HttpRequest) -> JsonResponse:
 @role_required(ROLE_ADVISOR)
 @require_GET
 def recommendation_debug_view(request: HttpRequest) -> JsonResponse:
-    year, err = _parse_int(request.GET.get("year"), "year")
+    _defaults = load_defaults()
+    year_raw = request.GET.get("year", "").strip() or str(_defaults["academic_year"])
+    semester_raw = request.GET.get("semester", "").strip() or str(_defaults["term"])
+
+    year, err = _parse_int(year_raw, "year")
     if err:
         return err
-    semester, err = _parse_int(request.GET.get("semester"), "semester")
+    semester, err = _parse_int(semester_raw, "semester")
     if err:
         return err
 
@@ -458,8 +499,10 @@ def recommendation_debug_view(request: HttpRequest) -> JsonResponse:
     section = (request.GET.get("section") or "").strip().upper() or None
     program = (request.GET.get("program") or "").strip().upper() or None
     join_years_raw = (request.GET.get("join_years") or "").strip()
-    join_years = [x.strip() for x in join_years_raw.split(",") if x.strip()] if join_years_raw else None
-    limit = int(request.GET.get("limit") or 150)
+    join_years = (
+        [x.strip() for x in join_years_raw.split(",") if x.strip()] if join_years_raw else None
+    )
+    limit = _safe_int(request.GET.get("limit"), 150)
 
     scope_err = require_program_scope(request, program)
     if scope_err:
@@ -486,7 +529,9 @@ def course_eligibility_view(request: HttpRequest) -> JsonResponse:
     section = (request.GET.get("section") or "").strip().upper() or None
     program = (request.GET.get("program") or "").strip().upper() or None
     join_years_raw = (request.GET.get("join_years") or "").strip()
-    join_years = [x.strip() for x in join_years_raw.split(",") if x.strip()] if join_years_raw else None
+    join_years = (
+        [x.strip() for x in join_years_raw.split(",") if x.strip()] if join_years_raw else None
+    )
     strict_mode = (request.GET.get("mode") or "").strip().lower() == "strict"
 
     scope_err = require_program_scope(request, program)
@@ -506,10 +551,14 @@ def course_eligibility_view(request: HttpRequest) -> JsonResponse:
 @role_required(ROLE_ADVISOR)
 @require_GET
 def export_recommendation_debug_csv_view(request: HttpRequest) -> HttpResponse:
-    year, err = _parse_int(request.GET.get("year"), "year")
+    _defaults = load_defaults()
+    year_raw = request.GET.get("year", "").strip() or str(_defaults["academic_year"])
+    semester_raw = request.GET.get("semester", "").strip() or str(_defaults["term"])
+
+    year, err = _parse_int(year_raw, "year")
     if err:
         return err
-    semester, err = _parse_int(request.GET.get("semester"), "semester")
+    semester, err = _parse_int(semester_raw, "semester")
     if err:
         return err
     if year is None or semester is None:
@@ -518,8 +567,10 @@ def export_recommendation_debug_csv_view(request: HttpRequest) -> HttpResponse:
     section = (request.GET.get("section") or "").strip().upper() or None
     program = (request.GET.get("program") or "").strip().upper() or None
     join_years_raw = (request.GET.get("join_years") or "").strip()
-    join_years = [x.strip() for x in join_years_raw.split(",") if x.strip()] if join_years_raw else None
-    limit = int(request.GET.get("limit") or 150)
+    join_years = (
+        [x.strip() for x in join_years_raw.split(",") if x.strip()] if join_years_raw else None
+    )
+    limit = _safe_int(request.GET.get("limit"), 150)
 
     scope_err = require_program_scope(request, program)
     if scope_err:
@@ -529,17 +580,29 @@ def export_recommendation_debug_csv_view(request: HttpRequest) -> HttpResponse:
 
     out = StringIO()
     writer = csv.writer(out)
-    writer.writerow(["student_id", "program", "real_term", "next_term", "passed", "studying", "recommended_courses"])
+    writer.writerow(
+        [
+            "student_id",
+            "program",
+            "real_term",
+            "next_term",
+            "passed",
+            "studying",
+            "recommended_courses",
+        ]
+    )
     for item in payload.get("items", []):
-        writer.writerow([
-            item.get("student_id"),
-            item.get("program"),
-            item.get("real_term"),
-            item.get("next_term"),
-            ",".join(item.get("passed", [])),
-            ",".join(item.get("studying", [])),
-            ",".join(item.get("recommended_courses", [])),
-        ])
+        writer.writerow(
+            [
+                item.get("student_id"),
+                item.get("program"),
+                item.get("real_term"),
+                item.get("next_term"),
+                ",".join(item.get("passed", [])),
+                ",".join(item.get("studying", [])),
+                ",".join(item.get("recommended_courses", [])),
+            ]
+        )
 
     return _excel_csv_response("recommendation_debug.csv", out.getvalue())
 
@@ -554,29 +617,45 @@ def export_course_eligibility_csv_view(request: HttpRequest) -> HttpResponse:
     section = (request.GET.get("section") or "").strip().upper() or None
     program = (request.GET.get("program") or "").strip().upper() or None
     join_years_raw = (request.GET.get("join_years") or "").strip()
-    join_years = [x.strip() for x in join_years_raw.split(",") if x.strip()] if join_years_raw else None
+    join_years = (
+        [x.strip() for x in join_years_raw.split(",") if x.strip()] if join_years_raw else None
+    )
     strict_mode = (request.GET.get("mode") or "").strip().lower() == "strict"
 
     scope_err = require_program_scope(request, program)
     if scope_err:
         return scope_err
 
-    payload = build_course_eligibility_report(course_code, section, program, join_years, strict_mode)
+    payload = build_course_eligibility_report(
+        course_code, section, program, join_years, strict_mode
+    )
 
     out = StringIO()
     writer = csv.writer(out)
-    writer.writerow(["course_code", "mode", "program", "students", "eligible_count", "eligible_student_ids", "prerequisites"])
+    writer.writerow(
+        [
+            "course_code",
+            "mode",
+            "program",
+            "students",
+            "eligible_count",
+            "eligible_student_ids",
+            "prerequisites",
+        ]
+    )
     mode = "strict" if strict_mode else "relaxed"
     for row in payload.get("per_program", []):
-        writer.writerow([
-            payload.get("course_code"),
-            mode,
-            row.get("program"),
-            row.get("students"),
-            row.get("eligible_count"),
-            ",".join(str(x) for x in row.get("eligible_student_ids", [])),
-            ",".join(row.get("prerequisites", [])),
-        ])
+        writer.writerow(
+            [
+                payload.get("course_code"),
+                mode,
+                row.get("program"),
+                row.get("students"),
+                row.get("eligible_count"),
+                ",".join(str(x) for x in row.get("eligible_student_ids", [])),
+                ",".join(row.get("prerequisites", [])),
+            ]
+        )
 
     return _excel_csv_response("course_eligibility.csv", out.getvalue())
 
@@ -596,17 +675,24 @@ def missing_high_priority_view(request: HttpRequest) -> JsonResponse:
     section = (request.GET.get("section") or "").strip().upper() or None
     program = (request.GET.get("program") or "").strip().upper() or None
     join_years_raw = (request.GET.get("join_years") or "").strip()
-    join_years = [x.strip() for x in join_years_raw.split(",") if x.strip()] if join_years_raw else None
+    join_years = (
+        [x.strip() for x in join_years_raw.split(",") if x.strip()] if join_years_raw else None
+    )
 
     scope_err = require_program_scope(request, program)
     if scope_err:
         return scope_err
 
-    term_parity = int(request.GET.get("term_parity") or 0)
+    term_parity = _safe_int(request.GET.get("term_parity"), 0)
     discount = (request.GET.get("discount") or "1_over_d").strip()
-    min_score = float(request.GET.get("min_score") or 2.0)
-    top_k = int(request.GET.get("top_k") or 10)
-    studying_counts = (request.GET.get("studying_counts_as_passed") or "false").strip().lower() in {"1", "true", "yes", "y"}
+    min_score = _safe_float(request.GET.get("min_score"), 2.0)
+    top_k = _safe_int(request.GET.get("top_k"), 10)
+    studying_counts = (request.GET.get("studying_counts_as_passed") or "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "y",
+    }
 
     payload = run_missing_high_priority_report(
         year=year,
@@ -637,7 +723,11 @@ def export_students_by_advisor_csv_view(request: HttpRequest) -> HttpResponse:
     scope = get_user_scope(request.user)
     role = str(scope.get("role", ""))
     forced_advisor_id = str(scope.get("advisor_id", "")).strip() if role != ROLE_SUPER_ADMIN else ""
-    allowed_departments = [str(x).upper() for x in scope.get("departments", [])] if role == ROLE_GENERAL_ADVISOR else None
+    allowed_departments = (
+        [str(x).upper() for x in scope.get("departments", [])]
+        if role == ROLE_GENERAL_ADVISOR
+        else None
+    )
 
     payload = list_students_by_advisor(
         advisor_id,
@@ -648,28 +738,33 @@ def export_students_by_advisor_csv_view(request: HttpRequest) -> HttpResponse:
         allowed_departments=allowed_departments,
     )
     if payload.get("mapping_ready") is False:
-        return JsonResponse({"error": payload.get("message", "students.advisor_id column is not added yet.")}, status=400)
+        return JsonResponse(
+            {"error": payload.get("message", "students.advisor_id column is not added yet.")},
+            status=400,
+        )
 
     out = StringIO()
     writer = csv.writer(out)
-    writer.writerow([
-        "advisor_id",
-        "student_id",
-        "registration_no",
-        "name",
-        "program",
-        "section",
-        "status",
-        "gpa",
-        "total_earned_credits",
-        "total_registered_credits",
-        "current_term_registered_hours",
-        "has_high_priority_missing",
-        "needs_attention",
-        "risk_score",
-        "attention_reasons",
-        "missing_courses_compact",
-    ])
+    writer.writerow(
+        [
+            "advisor_id",
+            "student_id",
+            "registration_no",
+            "name",
+            "program",
+            "section",
+            "status",
+            "gpa",
+            "total_earned_credits",
+            "total_registered_credits",
+            "current_term_registered_hours",
+            "has_high_priority_missing",
+            "needs_attention",
+            "risk_score",
+            "attention_reasons",
+            "missing_courses_compact",
+        ]
+    )
     for row in payload.get("items", []):
         writer.writerow(
             [
@@ -710,17 +805,24 @@ def export_missing_high_priority_xlsx_view(request: HttpRequest) -> HttpResponse
     section = (request.GET.get("section") or "").strip().upper() or None
     program = (request.GET.get("program") or "").strip().upper() or None
     join_years_raw = (request.GET.get("join_years") or "").strip()
-    join_years = [x.strip() for x in join_years_raw.split(",") if x.strip()] if join_years_raw else None
+    join_years = (
+        [x.strip() for x in join_years_raw.split(",") if x.strip()] if join_years_raw else None
+    )
 
     scope_err = require_program_scope(request, program)
     if scope_err:
         return scope_err
 
-    term_parity = int(request.GET.get("term_parity") or 0)
+    term_parity = _safe_int(request.GET.get("term_parity"), 0)
     discount = (request.GET.get("discount") or "1_over_d").strip()
-    min_score = float(request.GET.get("min_score") or 2.0)
-    top_k = int(request.GET.get("top_k") or 10)
-    studying_counts = (request.GET.get("studying_counts_as_passed") or "false").strip().lower() in {"1", "true", "yes", "y"}
+    min_score = _safe_float(request.GET.get("min_score"), 2.0)
+    top_k = _safe_int(request.GET.get("top_k"), 10)
+    studying_counts = (request.GET.get("studying_counts_as_passed") or "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "y",
+    }
 
     try:
         path = export_missing_high_priority_xlsx(
@@ -738,5 +840,6 @@ def export_missing_high_priority_xlsx_view(request: HttpRequest) -> HttpResponse
     except RuntimeError as exc:
         return JsonResponse({"error": str(exc)}, status=500)
 
-    return FileResponse(path.open("rb"), as_attachment=True, filename="flagged_students_missing_high_priority.xlsx")
-
+    return FileResponse(
+        path.open("rb"), as_attachment=True, filename="flagged_students_missing_high_priority.xlsx"
+    )

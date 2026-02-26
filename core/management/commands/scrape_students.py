@@ -20,7 +20,7 @@ from typing import Any
 from django.conf import settings
 from django.core.management.base import BaseCommand
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
-from tqdm import tqdm
+from tqdm import tqdm  # type: ignore[import-untyped]
 
 from core.services.portal_scraper import (
     close_browser,
@@ -45,7 +45,7 @@ def _sid_to_str(student_id: object) -> str:
         if isinstance(student_id, float) and student_id.is_integer():
             return str(int(student_id))
     except Exception:
-        pass
+        logger.debug("student_id conversion failed for %r", student_id, exc_info=True)
     return str(student_id)
 
 
@@ -291,7 +291,7 @@ class Command(BaseCommand):
             student_id = _sid_to_str(student["student_id"])
             program = student.get("program", "")
             section = student.get("section", "")
-            worker_page = await create_fresh_page_from_context(self._shared["context"])
+            worker_page = await create_fresh_page_from_context(self._shared["context"])  # type: ignore[arg-type]
 
             try:
                 for attempt in range(1, max_retries + 1):
@@ -337,7 +337,7 @@ class Command(BaseCommand):
                         if "SESSION_LOGGED_OUT_HTML" in str(exc):
                             await self._force_relogin(relogin_lock)
                             worker_page = await create_fresh_page_from_context(
-                                self._shared["context"],
+                                self._shared["context"],  # type: ignore[arg-type]
                             )
                             continue
                         raise
@@ -348,7 +348,7 @@ class Command(BaseCommand):
                         backoff = min(30, 1.5**attempt) + random.uniform(0, 1.0)
                         await asyncio.sleep(backoff)
                         worker_page = await create_fresh_page_from_context(
-                            self._shared["context"],
+                            self._shared["context"],  # type: ignore[arg-type]
                         )
 
             except Exception as exc:
@@ -360,7 +360,7 @@ class Command(BaseCommand):
                 try:
                     await worker_page.close()
                 except Exception:
-                    pass
+                    logger.debug("Worker page close failed", exc_info=True)
 
         return student_id  # all retries exhausted
 
@@ -383,13 +383,13 @@ class Command(BaseCommand):
         async with lock:
             logger.warning("Session expired — performing re-login")
 
-            for p in list(self._shared["context"].pages):
+            for p in list(self._shared["context"].pages):  # type: ignore[attr-defined]
                 try:
                     await p.close()
                 except Exception:
-                    pass
+                    logger.debug("Page close failed during relogin", exc_info=True)
 
-            page = await self._shared["context"].new_page()
+            page = await self._shared["context"].new_page()  # type: ignore[attr-defined]
             from core.services.portal_scraper import (
                 _safe_goto,
             )

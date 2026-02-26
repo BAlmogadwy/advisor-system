@@ -122,7 +122,7 @@ body {
 .skip-link {
   position: absolute;
   top: -100%;
-  left: 0;
+  inset-inline-start: 0;
   z-index: 10000;
   padding: 8px 16px;
   background: var(--teal);
@@ -173,12 +173,12 @@ body::after {
 
 .ambience { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; }
 .amb { position: absolute; border-radius: 50%; animation: ambF 28s ease-in-out infinite; }
-.amb-1 { width: 500px; height: 420px; top: -5%; left: 5%; background: rgba(10,142,110,0.06); filter: blur(120px); }
-.amb-2 { width: 400px; height: 350px; top: 0%; right: 8%; background: rgba(64,86,227,0.05); filter: blur(130px); animation-delay: -9s; animation-duration: 32s; }
-.amb-3 { width: 380px; height: 320px; top: 25%; left: 35%; background: rgba(0,174,218,0.04); filter: blur(140px); animation-delay: -16s; animation-duration: 26s; }
-.amb-4 { width: 350px; height: 300px; top: 40%; left: 0%; background: rgba(64,224,208,0.05); filter: blur(130px); animation-delay: -5s; animation-duration: 30s; }
-.amb-5 { width: 300px; height: 300px; top: 30%; right: 0%; background: rgba(255,209,220,0.08); filter: blur(120px); animation-delay: -20s; animation-duration: 24s; }
-.amb-6 { width: 280px; height: 240px; bottom: 20%; left: 40%; background: rgba(229,198,3,0.04); filter: blur(140px); animation-delay: -12s; animation-duration: 34s; }
+.amb-1 { width: 500px; height: 420px; top: -5%; inset-inline-start: 5%; background: rgba(10,142,110,0.06); filter: blur(120px); }
+.amb-2 { width: 400px; height: 350px; top: 0%; inset-inline-end: 8%; background: rgba(64,86,227,0.05); filter: blur(130px); animation-delay: -9s; animation-duration: 32s; }
+.amb-3 { width: 380px; height: 320px; top: 25%; inset-inline-start: 35%; background: rgba(0,174,218,0.04); filter: blur(140px); animation-delay: -16s; animation-duration: 26s; }
+.amb-4 { width: 350px; height: 300px; top: 40%; inset-inline-start: 0%; background: rgba(64,224,208,0.05); filter: blur(130px); animation-delay: -5s; animation-duration: 30s; }
+.amb-5 { width: 300px; height: 300px; top: 30%; inset-inline-end: 0%; background: rgba(255,209,220,0.08); filter: blur(120px); animation-delay: -20s; animation-duration: 24s; }
+.amb-6 { width: 280px; height: 240px; bottom: 20%; inset-inline-start: 40%; background: rgba(229,198,3,0.04); filter: blur(140px); animation-delay: -12s; animation-duration: 34s; }
 @keyframes ambF { 0%,100%{transform:translate(0,0) scale(1)} 25%{transform:translate(18px,-15px) scale(1.03)} 50%{transform:translate(-14px,18px) scale(0.97)} 75%{transform:translate(10px,-10px) scale(1.02)} }
 
 /* ============================================================
@@ -485,8 +485,8 @@ main.flex-grow-1 {
   content:    '';
   position:   absolute;
   bottom:     -1px;
-  left:       0;
-  right:      0;
+  inset-inline-start: 0;
+  inset-inline-end:   0;
   height:     2px;
   background: linear-gradient(90deg, var(--teal), var(--sky) 35%, var(--royal) 65%, transparent);
   opacity:    0.15;
@@ -521,7 +521,7 @@ main.p-3 .page-header {
 
 /* ── Top loading bar ── */
 #ux-loading-bar {
-  position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 9999;
+  position: fixed; top: 0; inset-inline-start: 0; inset-inline-end: 0; height: 3px; z-index: 9999;
   background: linear-gradient(90deg, transparent 0%, #0A8E6E 30%, #0CA87E 70%, transparent 100%);
   background-size: 200% 100%;
   animation: ux-loading-sweep 1.2s linear infinite;
@@ -1211,8 +1211,8 @@ html body .btn:focus-visible {
   content:    '';
   position:   absolute;
   top:        0;
-  left:       15%;
-  right:      15%;
+  inset-inline-start: 15%;
+  inset-inline-end:   15%;
   height:     1.5px;
   background: var(--teal);
   opacity:    0.3;
@@ -1225,7 +1225,7 @@ html body .btn:focus-visible {
                 -7px -7px 18px rgba(255,255,255,0.9);
   background:   rgba(255,255,255,0.55);
 }
-.metric:hover::before { left: 5%; right: 5%; opacity: 0.5; }
+.metric:hover::before { inset-inline-start: 5%; inset-inline-end: 5%; opacity: 0.5; }
 
 .metric .k {
   font-family:    var(--font-mono);
@@ -1263,11 +1263,11 @@ html body .btn:focus-visible {
   transition:      all .25s var(--ease);
 }
 .mc::before {
-  content:''; position:absolute; top:0; left:15%; right:15%; height:1.5px;
+  content:''; position:absolute; top:0; inset-inline-start:15%; inset-inline-end:15%; height:1.5px;
   background: var(--mc-c, var(--teal)); opacity:0.4;
   box-shadow: 0 0 12px var(--mc-c, var(--teal)); transition:all .25s ease;
 }
-.mc:hover::before { left:5%; right:5%; opacity:0.65; }
+.mc:hover::before { inset-inline-start:5%; inset-inline-end:5%; opacity:0.65; }
 .mc::after {
   content:''; position:absolute; top:-10px; inset-inline-end:-10px;
   width:70px; height:70px; background:var(--mc-c, var(--teal));
@@ -1374,7 +1374,7 @@ html body .btn:focus-visible {
              -2px -2px 5px rgba(255,255,255,0.7);
 }
 .pill-status::before {
-  content:''; position:absolute; top:0; left:0; right:0; height:50%;
+  content:''; position:absolute; top:0; inset-inline-start:0; inset-inline-end:0; height:50%;
   background:linear-gradient(180deg, rgba(255,255,255,0.3), transparent);
   border-radius:999px 999px 0 0; pointer-events:none;
 }
@@ -1912,6 +1912,65 @@ pre, .pre-output {
 @keyframes sb-fade-in { from { opacity: 0; } to { opacity: 1; } }
 
 
+/* ── 1024px — Tablet: stack sidebar, reduce card padding ──────── */
+@media (max-width: 1024px) {
+
+  /* Dashboard metric cards: 2-column grid */
+  .row.g-2 > [class*="col-md-3"],
+  .row.g-2 > [class*="col-md-4"] {
+    flex: 0 0 50%;
+    max-width: 50%;
+  }
+
+  /* MC metric cards: reduce padding on tablet */
+  .mc {
+    padding: 14px;
+  }
+  .mc-val {
+    font-size: 22px;
+  }
+  .mc-hero .mc-val {
+    font-size: 28px;
+  }
+
+  /* KPI cards (exam timetable): 2-column grid */
+  .kpi {
+    padding: 0.5rem;
+  }
+
+  /* ET panel: tighter padding */
+  .et-panel {
+    padding: 12px 14px;
+  }
+
+  /* ET grid: reduce cell padding for tablet */
+  .et-grid th, .et-grid td {
+    padding: 5px 4px;
+    font-size: 0.75rem;
+  }
+  .et-grid td {
+    min-width: 70px;
+  }
+
+  /* ET conflict matrix: smaller cells on tablet */
+  .et-matrix td {
+    width: 22px;
+    height: 22px;
+    min-width: 22px;
+    font-size: 0.55rem;
+  }
+
+  /* Tbl-card rows: reduce padding */
+  .tbl-card tbody tr.cr-row td {
+    padding: 10px 10px;
+  }
+
+  /* Content wrap: allow full width */
+  .content-wrap {
+    max-width: 100%;
+  }
+}
+
 /* ── 992px — Narrow desktop / large tablet ──────────────────── */
 @media (max-width: 992px) {
   .sidebar {
@@ -2043,6 +2102,53 @@ pre, .pre-output {
 
   /* Advisor block: tighter */
   .advisor-block { padding: 0.75rem; }
+
+  /* Dashboard: full-width cards */
+  .row.g-2 > [class*="col-md-3"],
+  .row.g-2 > [class*="col-md-4"] {
+    flex: 0 0 50%;
+    max-width: 50%;
+  }
+
+  /* MC cards: compact on mobile */
+  .mc { padding: 12px; }
+  .mc-val { font-size: 20px; }
+  .mc-hero .mc-val { font-size: 26px; }
+
+  /* ET panel: full-width, tighter */
+  .et-panel { padding: 10px 12px; }
+
+  /* ET form inputs: stack vertically */
+  .et-panel .row > [class*="col-md-"] {
+    flex: 0 0 100%;
+    max-width: 100%;
+  }
+
+  /* ET grid: enable horizontal scroll, reduce cell sizes */
+  .et-grid { font-size: 0.7rem; }
+  .et-grid th, .et-grid td { padding: 4px 3px; font-size: 0.68rem; }
+  .et-grid td { min-width: 60px; }
+
+  /* ET matrix: horizontal scroll container */
+  .et-matrix { font-size: 0.55rem; }
+  .et-matrix td { width: 20px; height: 20px; min-width: 20px; font-size: 0.5rem; }
+  .et-matrix thead th { height: 60px; }
+  .et-matrix thead th > span { font-size: 0.55rem; }
+
+  /* KPI cards: 2-col on mobile */
+  .kpi { padding: 0.4rem; }
+  .kpi .v { font-size: 1.1rem; }
+
+  /* Hide non-essential table columns on mobile */
+  .tbl-card thead th:nth-child(n+5),
+  .tbl-card tbody td:nth-child(n+5) {
+    display: none;
+  }
+
+  /* Ensure tbl-card rows fit mobile */
+  .tbl-card tbody tr.cr-row td { padding: 8px 8px; font-size: 12px; }
+  .cr-id { font-size: 11px; }
+  .cr-nm { font-size: 12px; }
 }
 
 
@@ -2084,7 +2190,7 @@ pre, .pre-output {
 
   /* Adm wizard: stack vertically */
   .adm-wizard-bar { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
-  .adm-step-line  { width: 2px; height: 20px; margin: 0 0 0 15px; }
+  .adm-step-line  { width: 2px; height: 20px; margin-block: 0; margin-inline: 0; margin-inline-start: 15px; }
 
   /* Student plan actions: wrap */
   #studentPlanActions { flex-wrap: wrap; overflow-x: visible; }
@@ -2199,7 +2305,9 @@ pre, .pre-output {
 }
 
 .dlg-body {
-  padding:        0.35rem 1.5rem 1rem calc(1.5rem + 40px + 0.875rem);
+  padding-block:        0.35rem 1rem;
+  padding-inline-start: calc(1.5rem + 40px + 0.875rem);
+  padding-inline-end:   1.5rem;
   font-size:      0.875rem;
   color:          var(--ink-2);
   line-height:    1.55;
@@ -2220,7 +2328,9 @@ pre, .pre-output {
 }
 
 .dlg-input-row {
-  padding:       0 1.5rem 1rem calc(1.5rem + 40px + 0.875rem);
+  padding-block:        0 1rem;
+  padding-inline-start: calc(1.5rem + 40px + 0.875rem);
+  padding-inline-end:   1.5rem;
 }
 
 .dlg-input-row label {
@@ -2457,11 +2567,14 @@ pre, .pre-output {
 /* Drain bar */
 .ux-toast-progress {
   position:  absolute;
-  bottom:    0; left: 0;
+  bottom:    0; inset-inline-start: 0;
   height:    2px;
   border-radius: 0 0 0 2px;
   animation: toast-drain linear forwards;
   transform-origin: left;
+}
+[dir="rtl"] .ux-toast-progress {
+  transform-origin: right;
 }
 
 .ux-toast.success .ux-toast-progress { background: var(--success); }
@@ -2764,5 +2877,18 @@ kbd {
     color:          var(--brand);
     background:     var(--brand-soft);
     border-color:   #a8e6d4;
+  }
+}
+
+/* ============================================================
+   REDUCED MOTION — Accessibility: disable animations for users
+   who prefer reduced motion (vestibular disorders, etc.)
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

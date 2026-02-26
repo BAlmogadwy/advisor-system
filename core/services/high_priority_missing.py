@@ -14,7 +14,9 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 RUNTIME_DIR = BASE_DIR / "runtime"
 
 
-def _get_all_filtered_students(section: str | None, program: str | None, join_year_prefixes: list[str] | None) -> list[int]:
+def _get_all_filtered_students(
+    section: str | None, program: str | None, join_year_prefixes: list[str] | None
+) -> list[int]:
     qs = Student.objects.all()
     if section:
         qs = qs.filter(section=section)
@@ -22,6 +24,7 @@ def _get_all_filtered_students(section: str | None, program: str | None, join_ye
         qs = qs.filter(program=program)
     if join_year_prefixes:
         from django.db.models import Q
+
         parts = Q()
         for p in join_year_prefixes:
             if p:
@@ -68,7 +71,9 @@ def _single_source_dist(graph: dict[str, set[str]], source: str) -> dict[str, in
     return dist
 
 
-def _compute_priority_scores(graph: dict[str, set[str]], discount: str = "1_over_d") -> dict[str, float]:
+def _compute_priority_scores(
+    graph: dict[str, set[str]], discount: str = "1_over_d"
+) -> dict[str, float]:
     scores: dict[str, float] = {}
     for node in graph.keys():
         dist_map = _single_source_dist(graph, node)
@@ -119,7 +124,9 @@ def _prereqs_visual_style(course: str, program: str) -> set[str]:
     return out
 
 
-def _is_eligible(course: str, program: str, passed: set[str], studying: set[str], studying_counts_as_passed: bool) -> bool:
+def _is_eligible(
+    course: str, program: str, passed: set[str], studying: set[str], studying_counts_as_passed: bool
+) -> bool:
     prereqs = _prereqs_visual_style(course, program)
     satisfied = set(passed) | (set(studying) if studying_counts_as_passed else set())
     return prereqs.issubset(satisfied)
@@ -153,7 +160,11 @@ def run_missing_high_priority_report(
             scores = _compute_priority_scores(g, discount=discount)
             term_map = _build_course_term_map(student_program)
             universe = set(term_map.keys())
-            program_cache[student_program] = {"scores": scores, "term_map": term_map, "universe": universe}
+            program_cache[student_program] = {
+                "scores": scores,
+                "term_map": term_map,
+                "universe": universe,
+            }
 
         scores = program_cache[student_program]["scores"]
         term_map = program_cache[student_program]["term_map"]
@@ -170,7 +181,9 @@ def run_missing_high_priority_report(
             score = float(scores.get(course, 0.0))
             if score < min_score:
                 continue
-            if _is_eligible(course, student_program, passed_n, studying_n, studying_counts_as_passed):
+            if _is_eligible(
+                course, student_program, passed_n, studying_n, studying_counts_as_passed
+            ):
                 candidates.append((course, score))
 
         candidates.sort(key=lambda x: x[1], reverse=True)
@@ -241,12 +254,19 @@ def export_missing_high_priority_xlsx(**kwargs: Any) -> Path:
     ws.title = "Flagged Students"
     ws.append(["student_id", "program", "missing_this_parity", "missing_other", "missing_total"])
     for item in report.get("items", []):
-        ws.append([
-            item.get("student_id"),
-            item.get("program"),
-            ";".join(f"{x['course_code']}({x['score']:.2f})" for x in item.get("missing_this_parity", [])),
-            ";".join(f"{x['course_code']}({x['score']:.2f})" for x in item.get("missing_other", [])),
-            item.get("missing_total"),
-        ])
+        ws.append(
+            [
+                item.get("student_id"),
+                item.get("program"),
+                ";".join(
+                    f"{x['course_code']}({x['score']:.2f})"
+                    for x in item.get("missing_this_parity", [])
+                ),
+                ";".join(
+                    f"{x['course_code']}({x['score']:.2f})" for x in item.get("missing_other", [])
+                ),
+                item.get("missing_total"),
+            ]
+        )
     wb.save(str(out))
     return out

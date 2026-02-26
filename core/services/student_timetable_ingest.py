@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from bs4 import BeautifulSoup
@@ -25,9 +25,19 @@ def _normalize_ar_text(t: str) -> str:
 
 def _parse_year_term(soup: BeautifulSoup) -> tuple[str, str]:
     txt = _normalize_ar_text(soup.get_text(" ", strip=True))
-    y = re.search(r"\u0627\u0644\u0639\u0627\u0645\s*\u0627\u0644\u062f\u0631\u0627\u0633\u064a\s*:?\s*(\d{4})", txt)
-    term_ar = re.search(r"\u0627\u0644\u0641\u0635\u0644\s*\u0627\u0644\u062f\u0631\u0627\u0633\u064a\s*:?\s*(\u0627\u0644\u0623\u0648\u0644|\u0627\u0644\u062b\u0627\u0646\u064a|\u0627\u0644\u062b\u0627\u0644\u062b)", txt)
-    term_map = {"\u0627\u0644\u0623\u0648\u0644": "1", "\u0627\u0644\u062b\u0627\u0646\u064a": "2", "\u0627\u0644\u062b\u0627\u0644\u062b": "3"}
+    y = re.search(
+        r"\u0627\u0644\u0639\u0627\u0645\s*\u0627\u0644\u062f\u0631\u0627\u0633\u064a\s*:?\s*(\d{4})",
+        txt,
+    )
+    term_ar = re.search(
+        r"\u0627\u0644\u0641\u0635\u0644\s*\u0627\u0644\u062f\u0631\u0627\u0633\u064a\s*:?\s*(\u0627\u0644\u0623\u0648\u0644|\u0627\u0644\u062b\u0627\u0646\u064a|\u0627\u0644\u062b\u0627\u0644\u062b)",
+        txt,
+    )
+    term_map = {
+        "\u0627\u0644\u0623\u0648\u0644": "1",
+        "\u0627\u0644\u062b\u0627\u0646\u064a": "2",
+        "\u0627\u0644\u062b\u0627\u0644\u062b": "3",
+    }
     year = y.group(1) if y else ""
     term = term_map.get(term_ar.group(1), "") if term_ar else ""
     return year, term
@@ -37,14 +47,25 @@ def _parse_rows(soup: BeautifulSoup) -> list[dict[str, str]]:
     target = None
     for t in soup.find_all("table", class_="forumline"):
         head = _clean(" ".join(th.get_text(" ", strip=True) for th in t.find_all("th")[:20]))
-        if "\u0627\u0644\u0645\u0627\u062f\u0629" in head and "\u0634\u0639\u0628\u0629" in head and "\u0623\u062d\u062f" in head and "\u0642\u0627\u0639\u0629" in head:
+        if (
+            "\u0627\u0644\u0645\u0627\u062f\u0629" in head
+            and "\u0634\u0639\u0628\u0629" in head
+            and "\u0623\u062d\u062f" in head
+            and "\u0642\u0627\u0639\u0629" in head
+        ):
             target = t
             break
     if target is None:
         return []
 
     out: list[dict[str, str]] = []
-    current = {"course_name": "", "course_code": "", "course_number": "", "credits": "", "section": ""}
+    current = {
+        "course_name": "",
+        "course_code": "",
+        "course_number": "",
+        "credits": "",
+        "section": "",
+    }
 
     for tr in target.find_all("tr"):
         if tr.find("th"):
@@ -53,7 +74,7 @@ def _parse_rows(soup: BeautifulSoup) -> list[dict[str, str]]:
         if len(tds) < 8:
             continue
 
-        first_colspan = int(tds[0].get("colspan") or 1)
+        first_colspan = int(tds[0].get("colspan") or 1)  # type: ignore[arg-type]
         is_cont = first_colspan >= 6
 
         if not is_cont:
@@ -83,9 +104,15 @@ def _parse_rows(soup: BeautifulSoup) -> list[dict[str, str]]:
             if has_mark:
                 days.append(DAY_COLS[i])
 
-        building = _clean(tds[start_idx + 7].get_text(" ", strip=True)) if len(tds) > start_idx + 7 else ""
-        floor_wing = _clean(tds[start_idx + 8].get_text(" ", strip=True)) if len(tds) > start_idx + 8 else ""
-        room = _clean(tds[start_idx + 9].get_text(" ", strip=True)) if len(tds) > start_idx + 9 else ""
+        building = (
+            _clean(tds[start_idx + 7].get_text(" ", strip=True)) if len(tds) > start_idx + 7 else ""
+        )
+        floor_wing = (
+            _clean(tds[start_idx + 8].get_text(" ", strip=True)) if len(tds) > start_idx + 8 else ""
+        )
+        room = (
+            _clean(tds[start_idx + 9].get_text(" ", strip=True)) if len(tds) > start_idx + 9 else ""
+        )
 
         for d in days:
             out.append(
@@ -143,7 +170,7 @@ def _ensure_term_section(
     if ts is not None:
         return ts.id
 
-    now_str = datetime.now(timezone.utc).isoformat()
+    now_str = datetime.now(UTC).isoformat()
     ts = TermSection.objects.create(
         source_tag=source_tag,
         course_name=course_name,
@@ -216,7 +243,12 @@ def ingest_student_timetable_html(
 
     rows = _parse_rows(soup)
     if not rows:
-        return {"ok": False, "error": "No timetable rows parsed", "academic_year": year, "term": term}
+        return {
+            "ok": False,
+            "error": "No timetable rows parsed",
+            "academic_year": year,
+            "term": term,
+        }
 
     missing: list[dict[str, str]] = []
     section_ids: list[int] = []
@@ -233,14 +265,16 @@ def ingest_student_timetable_html(
         course_key = f"{r['course_code']}{r['course_number']}".replace(" ", "").upper()
 
         # Collect meeting data for all rows (including continuation rows)
-        section_meetings.setdefault(key, []).append({
-            "day": r.get("day", ""),
-            "start_time": r.get("start_time", ""),
-            "end_time": r.get("end_time", ""),
-            "building": r.get("building", ""),
-            "floor_wing": r.get("floor_wing", ""),
-            "room": r.get("room", ""),
-        })
+        section_meetings.setdefault(key, []).append(
+            {
+                "day": r.get("day", ""),
+                "start_time": r.get("start_time", ""),
+                "end_time": r.get("end_time", ""),
+                "building": r.get("building", ""),
+                "floor_wing": r.get("floor_wing", ""),
+                "room": r.get("room", ""),
+            }
+        )
 
         # Store course metadata once
         if course_key not in course_meta:
@@ -262,14 +296,19 @@ def ingest_student_timetable_html(
             is_external = course_key not in study_plan_codes
         else:
             from core.models import ProgrammeRequirement
+
             is_external = not ProgrammeRequirement.objects.filter(
                 course_code=course_key,
             ).exists()
 
-        ts_id = TermSection.objects.filter(
-            course_key=course_key,
-            section=r["section"],
-        ).values_list("id", flat=True).first()
+        ts_id = (
+            TermSection.objects.filter(
+                course_key=course_key,
+                section=r["section"],
+            )
+            .values_list("id", flat=True)
+            .first()
+        )
         if ts_id is not None:
             section_ids.append(int(ts_id))
             # Ensure external Course + StudentCourse exist even when TermSection was pre-imported
@@ -319,7 +358,17 @@ def ingest_student_timetable_html(
         p.parent.mkdir(parents=True, exist_ok=True)
         write_header = not p.exists()
         with p.open("a", encoding="utf-8-sig", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=["student_id", "academic_year", "term", "course_code", "course_number", "section"])
+            w = csv.DictWriter(
+                f,
+                fieldnames=[
+                    "student_id",
+                    "academic_year",
+                    "term",
+                    "course_code",
+                    "course_number",
+                    "section",
+                ],
+            )
             if write_header:
                 w.writeheader()
             for m in missing:

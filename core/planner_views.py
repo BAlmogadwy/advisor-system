@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 
 from django.contrib.auth.decorators import login_required
@@ -29,6 +30,8 @@ from core.services.student_sections import (
 from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
 
+logger = logging.getLogger(__name__)
+
 
 def _ok(data: dict[str, object], status: int = 200) -> JsonResponse:
     return JsonResponse({"ok": True, **data}, status=status)
@@ -39,7 +42,7 @@ def _err(
 ) -> JsonResponse:
     payload: dict[str, object] = {"ok": False, "error": {"code": code, "message": message}}
     if details:
-        payload["error"]["details"] = details
+        payload["error"]["details"] = details  # type: ignore[index]
     return JsonResponse(payload, status=status)
 
 
@@ -132,6 +135,7 @@ def planner_context_view(request: HttpRequest) -> JsonResponse:
     student_id_int, sid_err = _parse_student_id(student_id)
     if sid_err:
         return sid_err
+    assert student_id_int is not None
 
     scope_err = require_student_scope(request, student_id_int)
     if scope_err:
@@ -198,7 +202,9 @@ def planner_context_view(request: HttpRequest) -> JsonResponse:
                     )
                     baseline = get_student_term_baseline(student_id, year, term)
                 except Exception:
-                    pass
+                    logger.warning(
+                        "Auto-map sections failed for student %s", student_id, exc_info=True
+                    )
 
     if not baseline:
         # Fallback when no student->section mappings exist yet
@@ -249,7 +255,7 @@ def planner_context_view(request: HttpRequest) -> JsonResponse:
         recommendation_warning = f"Recommendation engine fallback: {type(exc).__name__}"
 
     passed, studying = get_student_passed_and_studying(student_id)
-    program = (student_summary["program"] or "").strip()
+    program = str(student_summary["program"] or "").strip()
 
     recommendations: list[dict[str, object]] = []
     # Build credit map for the program
@@ -262,13 +268,12 @@ def planner_context_view(request: HttpRequest) -> JsonResponse:
         ).values_list("course_code", "credit_hours"):
             pr_credit_map[_norm_code(pr_cc)] = pr_ch or 0
 
+    # Pre-build normalized-code → Course dict to avoid N+1 queries
+    _course_lookup: dict[str, Course] = {_norm_code(c.course_code): c for c in Course.objects.all()}
+
     for idx, code in enumerate(rec_codes, start=1):
         code_n = _norm_code(code)
-        course_obj = None
-        for c in Course.objects.all():
-            if _norm_code(c.course_code) == code_n:
-                course_obj = c
-                break
+        course_obj = _course_lookup.get(code_n)
         if course_obj:
             credits = pr_credit_map.get(code_n, course_obj.credit_hours or 0)
             info = (course_obj.course_code, course_obj.description, credits)
@@ -301,7 +306,7 @@ def planner_context_view(request: HttpRequest) -> JsonResponse:
         )
         if key not in course_keys:
             course_keys.add(key)
-            credits_total += int(r.get("credits", 0) or 0)
+            credits_total += int(r.get("credits", 0) or 0)  # type: ignore[call-overload]
 
     return _ok(
         {
@@ -352,6 +357,7 @@ def planner_save_student_sections_view(request: HttpRequest) -> JsonResponse:
     student_id_int, sid_err = _parse_student_id(student_id)
     if sid_err:
         return sid_err
+    assert student_id_int is not None
 
     scope_err = require_student_scope(request, student_id_int)
     if scope_err:
@@ -379,7 +385,7 @@ def planner_save_student_sections_view(request: HttpRequest) -> JsonResponse:
                 )
 
         result = replace_student_term_sections(student_id, year, term, cleaned, source="planner")
-        return _ok(result)
+        return _ok(result)  # type: ignore[arg-type]
     except Exception as exc:
         return _internal_error(exc)
 
@@ -438,7 +444,7 @@ def planner_sections_catalog_view(request: HttpRequest) -> JsonResponse:
             ).order_by("day", "start_time")
             for m in meetings_qs:
                 if m.day or m.start_time or m.end_time:
-                    grouped[m.term_section_id]["meetings"].append(
+                    grouped[m.term_section_id]["meetings"].append(  # type: ignore[attr-defined]
                         {
                             "day": m.day or "",
                             "start_time": m.start_time or "",
@@ -524,7 +530,7 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
     suggest_swaps = bool(payload.get("swap", False))
     strict_sections = bool(payload.get("strict_sections", False))
     consider_capacity = not bool(payload.get("ignore_capacity", False))
-    max_credits = int(payload.get("max_credits", 0) or 0)
+    max_credits = int(payload.get("max_credits", 0) or 0)  # type: ignore[call-overload]
     try:
         result = build_plans(
             year,

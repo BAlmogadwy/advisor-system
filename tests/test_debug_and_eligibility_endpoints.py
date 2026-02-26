@@ -22,7 +22,12 @@ def test_recommendation_debug_endpoint(monkeypatch: MonkeyPatch) -> None:
     _login_superadmin()
     monkeypatch.setattr(
         "core.report_views.build_recommendation_debug_report",
-        lambda current_academic_year, current_semester, section=None, program=None, join_year_prefixes=None, limit=150: {
+        lambda current_academic_year,
+        current_semester,
+        section=None,
+        program=None,
+        join_year_prefixes=None,
+        limit=150: {
             "count": 1,
             "filters": {"year": current_academic_year, "semester": current_semester},
             "items": [
@@ -52,7 +57,11 @@ def test_course_eligibility_endpoint(monkeypatch: MonkeyPatch) -> None:
     _login_superadmin()
     monkeypatch.setattr(
         "core.report_views.build_course_eligibility_report",
-        lambda course_code, section=None, program=None, join_year_prefixes=None, strict_passed_only=False: {
+        lambda course_code,
+        section=None,
+        program=None,
+        join_year_prefixes=None,
+        strict_passed_only=False: {
             "course_code": course_code,
             "strict_passed_only": strict_passed_only,
             "total_students": 20,
@@ -83,7 +92,12 @@ def test_export_recommendation_debug_csv(monkeypatch: MonkeyPatch) -> None:
     _login_superadmin()
     monkeypatch.setattr(
         "core.report_views.build_recommendation_debug_report",
-        lambda current_academic_year, current_semester, section=None, program=None, join_year_prefixes=None, limit=150: {
+        lambda current_academic_year,
+        current_semester,
+        section=None,
+        program=None,
+        join_year_prefixes=None,
+        limit=150: {
             "count": 1,
             "items": [
                 {

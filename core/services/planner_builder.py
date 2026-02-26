@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
+from typing import Any
 
 from core.models import TermSection, TermSectionMeeting
 
@@ -160,7 +161,7 @@ def _section_meetings(term_section_id: int) -> list[Meeting]:
 
 def _catalog_for_courses(
     year: str, term: str, course_codes: list[str]
-) -> dict[str, list[dict[str, object]]]:  # year/term kept for API compatibility
+) -> dict[str, list[dict[str, Any]]]:  # year/term kept for API compatibility
     if not course_codes:
         return {}
     wanted = {str(c).replace(" ", "").upper() for c in course_codes}
@@ -180,7 +181,7 @@ def _catalog_for_courses(
             "available_capacity",
         )
     )
-    out: dict[str, list[dict[str, object]]] = {}
+    out: dict[str, list[dict[str, Any]]] = {}
     for sid, code, num, course_key, sec, name, reg, cap in rows:
         full = (
             str(course_key or "").replace(" ", "").upper()
@@ -202,12 +203,12 @@ def _catalog_for_courses(
 
 
 def _choose(
-    shortlist: list[dict[str, object]],
-    catalog: dict[str, list[dict[str, object]]],
-    baseline: list[dict[str, object]],
+    shortlist: list[dict[str, Any]],
+    catalog: dict[str, list[dict[str, Any]]],
+    baseline: list[dict[str, Any]],
     keep_registered: bool,
     strategy: str = "A",
-) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     occupied: list[OccupiedSlot] = []
     if keep_registered:
         for r in baseline:
@@ -219,8 +220,8 @@ def _choose(
                 label = f"baseline {r.get('course_code', '')}{r.get('course_number', '')} {r.get('section', '')}".strip()
                 occupied.append(OccupiedSlot(meeting=m, label=label))
 
-    selected: list[dict[str, object]] = []
-    unscheduled: list[dict[str, object]] = []
+    selected: list[dict[str, Any]] = []
+    unscheduled: list[dict[str, Any]] = []
 
     items = shortlist[:]
 
@@ -280,7 +281,7 @@ def _choose(
             continue
 
         picked = None
-        option_conflicts: list[dict[str, object]] = []
+        option_conflicts: list[dict[str, Any]] = []
         for opt in options:
             meetings = opt.get("meetings", [])
             conflicts_for_opt: list[str] = []
@@ -319,7 +320,7 @@ def _choose(
     return selected, unscheduled
 
 
-def _conflict_cache_key(option_by_sid: dict[int, dict[str, object]]) -> tuple:
+def _conflict_cache_key(option_by_sid: dict[int, dict[str, Any]]) -> tuple:
     sig: list[tuple] = []
     for sid in sorted(option_by_sid.keys()):
         opt = option_by_sid[sid]
@@ -330,7 +331,7 @@ def _conflict_cache_key(option_by_sid: dict[int, dict[str, object]]) -> tuple:
     return tuple(sig)
 
 
-def _get_conflict_pairs(option_by_sid: dict[int, dict[str, object]]) -> list[tuple[int, int]]:
+def _get_conflict_pairs(option_by_sid: dict[int, dict[str, Any]]) -> list[tuple[int, int]]:
     key = _conflict_cache_key(option_by_sid)
     if key in _CONFLICT_MATRIX_CACHE:
         return _CONFLICT_MATRIX_CACHE[key]
@@ -363,23 +364,23 @@ def _get_conflict_pairs(option_by_sid: dict[int, dict[str, object]]) -> list[tup
 
 
 def _bitmask_build_option_b(
-    shortlist: list[dict[str, object]],
-    catalog: dict[str, list[dict[str, object]]],
-    baseline: list[dict[str, object]],
+    shortlist: list[dict[str, Any]],
+    catalog: dict[str, list[dict[str, Any]]],
+    baseline: list[dict[str, Any]],
     keep_registered: bool,
     strict_per_course: bool,
     consider_capacity: bool,
     max_credits: int = 0,
     credits_map: dict[str, int] | None = None,
-) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     # Collect must_take codes for hard-constraint enforcement
     must_take_codes: set[str] = set()
     for c in shortlist:
         if c.get("must_take"):
             must_take_codes.add(str(c.get("course_code", "")).replace(" ", "").upper())
 
-    eligible: list[dict[str, object]] = []
-    unscheduled: list[dict[str, object]] = []
+    eligible: list[dict[str, Any]] = []
+    unscheduled: list[dict[str, Any]] = []
     unscheduled_codes: set[str] = set()
 
     for c in shortlist:
@@ -416,18 +417,18 @@ def _bitmask_build_option_b(
             if d and s and e:
                 baseline_mask |= _meeting_mask(Meeting(day=DAY_MAP.get(d, d), start=s, end=e))
 
-    course_options: list[tuple[str, list[dict[str, object]]]] = []
+    course_options: list[tuple[str, list[dict[str, Any]]]] = []
     strict_blockers: list[str] = []
     for c in eligible:
         code = str(c["_code"])
-        opts: list[dict[str, object]] = []
+        filtered_opts: list[dict[str, Any]] = []
         for opt in catalog.get(code, []):
             meetings = opt.get("meetings", [])
             msk = _section_mask(meetings)
             if keep_registered and (msk & baseline_mask) != 0:
                 continue
-            opts.append({**opt, "_mask": msk})
-        if not opts:
+            filtered_opts.append({**opt, "_mask": msk})
+        if not filtered_opts:
             unscheduled.append(
                 {
                     "course_code": code,
@@ -439,7 +440,7 @@ def _bitmask_build_option_b(
             if strict_per_course:
                 strict_blockers.append(code)
             continue
-        course_options.append((code, opts))
+        course_options.append((code, filtered_opts))
 
     if strict_per_course and strict_blockers:
         for code in strict_blockers:
@@ -467,9 +468,9 @@ def _bitmask_build_option_b(
     course_options.sort(key=lambda x: len(x[1]))
 
     best_score: tuple[int, int, int, int] | None = None
-    best_selected: list[dict[str, object]] = []
+    best_selected: list[dict[str, Any]] = []
 
-    def score_of(selected_opts: list[dict[str, object]], mask: int) -> tuple[int, int, int, int]:
+    def score_of(selected_opts: list[dict[str, Any]], mask: int) -> tuple[int, int, int, int]:
         scheduled = len(selected_opts)
         day_count = _day_count_from_mask(mask)
         all_meetings: list[Meeting] = []
@@ -485,7 +486,7 @@ def _bitmask_build_option_b(
     _cr_map = credits_map or {}
     _max_cr = max_credits if max_credits and max_credits > 0 else 0
 
-    def dfs(i: int, used_mask: int, chosen: list[dict[str, object]], used_cr: int) -> None:
+    def dfs(i: int, used_mask: int, chosen: list[dict[str, Any]], used_cr: int) -> None:
         nonlocal best_score, best_selected
 
         remaining = len(course_options) - i
@@ -494,8 +495,10 @@ def _bitmask_build_option_b(
 
         if i >= len(course_options):
             cur = score_of(chosen, used_mask)
-            if best_score is None or cur > best_score or (
-                cur == best_score and random.random() < 0.5
+            if (
+                best_score is None
+                or cur > best_score
+                or (cur == best_score and random.random() < 0.5)
             ):
                 best_score = cur
                 best_selected = [dict(x) for x in chosen]
@@ -526,8 +529,8 @@ def _bitmask_build_option_b(
     selected = [{k: v for k, v in opt.items() if k != "_mask"} for opt in best_selected]
 
     chosen_course: set[str] = set()
-    for s in selected:
-        code = str(s.get("course_code", "")) + str(s.get("course_number", ""))
+    for sel_item in selected:
+        code = str(sel_item.get("course_code", "")) + str(sel_item.get("course_number", ""))
         chosen_course.add(code.replace(" ", "").upper())
 
     for c in eligible:
@@ -551,22 +554,22 @@ def _bitmask_build_option_b(
 
 
 def _bitmask_build_option_c(
-    shortlist: list[dict[str, object]],
-    catalog: dict[str, list[dict[str, object]]],
-    baseline: list[dict[str, object]],
+    shortlist: list[dict[str, Any]],
+    catalog: dict[str, list[dict[str, Any]]],
+    baseline: list[dict[str, Any]],
     keep_registered: bool,
     strict_per_course: bool,
     max_credits: int = 0,
     credits_map: dict[str, int] | None = None,
-) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     # Collect must_take codes for hard-constraint enforcement
     must_take_codes: set[str] = set()
     for c in shortlist:
         if c.get("must_take"):
             must_take_codes.add(str(c.get("course_code", "")).replace(" ", "").upper())
 
-    eligible: list[dict[str, object]] = []
-    unscheduled: list[dict[str, object]] = []
+    eligible: list[dict[str, Any]] = []
+    unscheduled: list[dict[str, Any]] = []
     unscheduled_codes: set[str] = set()
 
     for c in shortlist:
@@ -605,18 +608,18 @@ def _bitmask_build_option_c(
                 for i in range(7):
                     base_days[i] |= ms[i]
 
-    course_options: list[tuple[str, list[dict[str, object]]]] = []
+    course_options: list[tuple[str, list[dict[str, Any]]]] = []
     strict_blockers: list[str] = []
     for c in eligible:
         code = str(c["_code"])
-        opts: list[dict[str, object]] = []
+        filtered_opts: list[dict[str, Any]] = []
         for opt in catalog.get(code, []):
             meetings = opt.get("meetings", [])
             day_masks = _section_day_masks(meetings)
             if keep_registered and any((day_masks[i] & base_days[i]) != 0 for i in range(7)):
                 continue
-            opts.append({**opt, "_day_masks": day_masks})
-        if not opts:
+            filtered_opts.append({**opt, "_day_masks": day_masks})
+        if not filtered_opts:
             unscheduled.append(
                 {
                     "course_code": code,
@@ -628,7 +631,7 @@ def _bitmask_build_option_c(
             if strict_per_course:
                 strict_blockers.append(code)
             continue
-        course_options.append((code, opts))
+        course_options.append((code, filtered_opts))
 
     if strict_per_course and strict_blockers:
         for code in strict_blockers:
@@ -656,9 +659,9 @@ def _bitmask_build_option_c(
     course_options.sort(key=lambda x: len(x[1]))
 
     best_key: tuple[int, int, int, int, int] | None = None
-    best_selected: list[dict[str, object]] = []
+    best_selected: list[dict[str, Any]] = []
 
-    def score_key(chosen: list[dict[str, object]]) -> tuple[int, int, int, int, int]:
+    def score_key(chosen: list[dict[str, Any]]) -> tuple[int, int, int, int, int]:
         meetings: list[Meeting] = []
         by_day: dict[str, list[tuple[int, int]]] = {}
         latest_finish = 0
@@ -685,7 +688,7 @@ def _bitmask_build_option_c(
     _cr_map = credits_map or {}
     _max_cr = max_credits if max_credits and max_credits > 0 else 0
 
-    def dfs(i: int, cur_days: list[int], chosen: list[dict[str, object]], used_cr: int) -> None:
+    def dfs(i: int, cur_days: list[int], chosen: list[dict[str, Any]], used_cr: int) -> None:
         nonlocal best_key, best_selected
 
         remaining = len(course_options) - i
@@ -694,9 +697,7 @@ def _bitmask_build_option_c(
 
         if i >= len(course_options):
             key = score_key(chosen)
-            if best_key is None or key > best_key or (
-                key == best_key and random.random() < 0.5
-            ):
+            if best_key is None or key > best_key or (key == best_key and random.random() < 0.5):
                 best_key = key
                 best_selected = [dict(x) for x in chosen]
             return
@@ -714,7 +715,7 @@ def _bitmask_build_option_c(
             return
 
         for opt in opts:
-            dm = opt.get("_day_masks")
+            dm: list[int] = opt.get("_day_masks") or [0] * 7
             if any((cur_days[d] & dm[d]) != 0 for d in range(7)):
                 continue
             for d in range(7):
@@ -730,8 +731,8 @@ def _bitmask_build_option_c(
     selected = [{k: v for k, v in o.items() if k != "_day_masks"} for o in best_selected]
 
     chosen_course: set[str] = set()
-    for s in selected:
-        code = str(s.get("course_code", "")) + str(s.get("course_number", ""))
+    for sel_item in selected:
+        code = str(sel_item.get("course_code", "")) + str(sel_item.get("course_number", ""))
         chosen_course.add(code.replace(" ", "").upper())
 
     for c in eligible:
@@ -755,16 +756,16 @@ def _bitmask_build_option_c(
 
 
 def _cp_build_option(
-    shortlist: list[dict[str, object]],
-    catalog: dict[str, list[dict[str, object]]],
-    baseline: list[dict[str, object]],
+    shortlist: list[dict[str, Any]],
+    catalog: dict[str, list[dict[str, Any]]],
+    baseline: list[dict[str, Any]],
     keep_registered: bool,
     profile: str,
     strict_per_course: bool,
     consider_capacity: bool,
     max_credits: int = 0,
     credits_map: dict[str, int] | None = None,
-) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if cp_model is None:
         return _choose(shortlist, catalog, baseline, keep_registered, strategy=profile)
 
@@ -774,8 +775,8 @@ def _cp_build_option(
         if c.get("must_take"):
             must_take_codes.add(str(c.get("course_code", "")).replace(" ", "").upper())
 
-    eligible: list[dict[str, object]] = []
-    unscheduled: list[dict[str, object]] = []
+    eligible: list[dict[str, Any]] = []
+    unscheduled: list[dict[str, Any]] = []
     unscheduled_codes: set[str] = set()
     for c in shortlist:
         code = str(c.get("course_code", "")).replace(" ", "").upper()
@@ -803,8 +804,8 @@ def _cp_build_option(
         return [], unscheduled
 
     model = cp_model.CpModel()
-    var_by_sid: dict[int, object] = {}
-    option_by_sid: dict[int, dict[str, object]] = {}
+    var_by_sid: dict[int, Any] = {}
+    option_by_sid: dict[int, dict[str, Any]] = {}
     course_to_sids: dict[str, list[int]] = {}
 
     baseline_slots: list[Meeting] = []
@@ -925,7 +926,7 @@ def _cp_build_option(
 
     # Day usage penalty
     day_keys = ["SUN", "MON", "TUE", "WED", "THU"]
-    day_used: dict[str, object] = {}
+    day_used: dict[str, Any] = {}
     for d in day_keys:
         u = model.NewBoolVar(f"day_{d}")
         day_used[d] = u
@@ -945,7 +946,7 @@ def _cp_build_option(
     slot = 10
     first_slot_idx = 8 * 60 // slot
     last_slot_idx = 20 * 60 // slot
-    total_gaps_terms: list[object] = []
+    total_gaps_terms: list[Any] = []
 
     def _covers(meetings: list[Meeting], day: str, idx: int) -> bool:
         t = idx * slot
@@ -957,7 +958,7 @@ def _cp_build_option(
         return False
 
     for d in day_keys:
-        y: dict[int, object] = {}
+        y: dict[int, Any] = {}
         for idx in range(first_slot_idx, last_slot_idx):
             y[idx] = model.NewBoolVar(f"y_{d}_{idx}")
             covering = [
@@ -1066,7 +1067,7 @@ def _cp_build_option(
             unscheduled_codes.add(code)
         return [], unscheduled
 
-    selected: list[dict[str, object]] = []
+    selected: list[dict[str, Any]] = []
     chosen_course: set[str] = set()
     for sid, v in var_by_sid.items():
         if solver.Value(v) == 1:
@@ -1106,14 +1107,14 @@ def _cp_build_option(
 def build_plans(
     year: str,
     term: str,
-    shortlist: list[dict[str, object]],
-    baseline: list[dict[str, object]],
+    shortlist: list[dict[str, Any]],
+    baseline: list[dict[str, Any]],
     keep_registered: bool,
     suggest_swaps: bool = False,
     strict_per_course: bool = False,
     consider_capacity: bool = True,
     max_credits: int = 0,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     codes = sorted(
         {
             str(x.get("course_code", "")).replace(" ", "").upper()
@@ -1152,15 +1153,15 @@ def build_plans(
         if cr > 0:
             credits_map[code] = cr
 
-    def _catalog_without_sids(excluded: set[int]) -> dict[str, list[dict[str, object]]]:
+    def _catalog_without_sids(excluded: set[int]) -> dict[str, list[dict[str, Any]]]:
         if not excluded:
             return {k: list(v) for k, v in catalog.items()}
-        out: dict[str, list[dict[str, object]]] = {}
+        out: dict[str, list[dict[str, Any]]] = {}
         for code, opts in catalog.items():
             out[code] = [o for o in opts if int(o.get("term_section_id") or 0) not in excluded]
         return out
 
-    def _sig(sel: list[dict[str, object]]) -> tuple[int, ...]:
+    def _sig(sel: list[dict[str, Any]]) -> tuple[int, ...]:
         return tuple(
             sorted(
                 int(s.get("term_section_id") or 0)
@@ -1170,8 +1171,8 @@ def build_plans(
         )
 
     def _run_method(
-        method: str, cat: dict[str, list[dict[str, object]]]
-    ) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+        method: str, cat: dict[str, list[dict[str, Any]]]
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         if method == "A":
             return _cp_build_option(
                 shortlist,
@@ -1196,7 +1197,10 @@ def build_plans(
                 credits_map=credits_map,
             )
         return _bitmask_build_option_c(
-            shortlist, cat, baseline, keep_registered,
+            shortlist,
+            cat,
+            baseline,
+            keep_registered,
             strict_per_course=strict_per_course,
             max_credits=max_credits,
             credits_map=credits_map,
@@ -1204,8 +1208,8 @@ def build_plans(
 
     def _top_k_method(
         method: str, k: int = 3
-    ) -> list[tuple[list[dict[str, object]], list[dict[str, object]]]]:
-        results: list[tuple[list[dict[str, object]], list[dict[str, object]]]] = []
+    ) -> list[tuple[list[dict[str, Any]], list[dict[str, Any]]]]:
+        results: list[tuple[list[dict[str, Any]], list[dict[str, Any]]]] = []
         seen: set[tuple[int, ...]] = set()
         queue: list[set[int]] = [set()]
         visited_excl: set[tuple[int, ...]] = set()
@@ -1243,9 +1247,9 @@ def build_plans(
         name: str,
         method: str,
         rank: int,
-        sel: list[dict[str, object]],
-        uns: list[dict[str, object]],
-    ) -> dict[str, object]:
+        sel: list[dict[str, Any]],
+        uns: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         return {
             "name": name,
             "method": method,
@@ -1268,7 +1272,7 @@ def build_plans(
             "unscheduled": uns,
         }
 
-    options: list[dict[str, object]] = []
+    options: list[dict[str, Any]] = []
     for method in ("A", "B", "C"):
         variants = _top_k_method(method, k=3)
         for i, (sel, uns) in enumerate(variants, start=1):
@@ -1280,7 +1284,7 @@ def build_plans(
         else {"scheduled": 0, "target": len(shortlist), "unscheduled": []}
     )
 
-    swap_suggestions: list[dict[str, object]] = []
+    swap_suggestions: list[dict[str, Any]] = []
     if keep_registered and suggest_swaps and best["unscheduled"]:
         for u in best["unscheduled"]:
             swap_suggestions.append(

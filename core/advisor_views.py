@@ -16,6 +16,17 @@ from core.services.audit import log_audit_event
 from core.services.rbac import ROLE_ADVISOR, ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_scope
 
 
+def _parse_json_body(request: HttpRequest) -> tuple[dict, JsonResponse | None]:
+    """Safely parse JSON body. Returns (payload, error_response)."""
+    if not request.body:
+        return {}, None
+    try:
+        data = json.loads(request.body.decode("utf-8"))
+        return (data if isinstance(data, dict) else {}), None
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return {}, JsonResponse({"error": "Invalid JSON body"}, status=400)
+
+
 @role_required(ROLE_GENERAL_ADVISOR)
 @require_GET
 def advisors_list_view(request: HttpRequest) -> JsonResponse:
@@ -30,9 +41,7 @@ def advisors_list_view(request: HttpRequest) -> JsonResponse:
     if role == ROLE_GENERAL_ADVISOR:
         allowed = {str(x).upper() for x in scope.get("departments", [])}
         items = [
-            a
-            for a in items
-            if any(str(d).upper() in allowed for d in a.get("departments", []))
+            a for a in items if any(str(d).upper() in allowed for d in a.get("departments", []))
         ]
     else:
         own = str(scope.get("advisor_id", "")).strip()
@@ -44,7 +53,9 @@ def advisors_list_view(request: HttpRequest) -> JsonResponse:
 @role_required(ROLE_SUPER_ADMIN)
 @require_POST
 def advisor_upsert_view(request: HttpRequest) -> JsonResponse:
-    payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    payload, err = _parse_json_body(request)
+    if err:
+        return err
 
     advisor_id = str(payload.get("advisor_id", "")).strip()
     full_name = str(payload.get("full_name", "")).strip()
@@ -109,7 +120,9 @@ def ensure_students_advisor_column_view(request: HttpRequest) -> JsonResponse:
 @role_required(ROLE_SUPER_ADMIN)
 @require_POST
 def assign_students_advisors_view(request: HttpRequest) -> JsonResponse:
-    payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    payload, err = _parse_json_body(request)
+    if err:
+        return err
 
     mappings = payload.get("mappings")
     csv_text = str(payload.get("csv_text", "")).strip()

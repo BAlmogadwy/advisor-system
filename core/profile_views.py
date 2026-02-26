@@ -30,16 +30,18 @@ def profile_page(request: HttpRequest) -> HttpResponse:
 def profile_me_view(request: HttpRequest) -> JsonResponse:
     """Return current user info."""
     scope = get_user_scope(request.user)
-    return JsonResponse({
-        "ok": True,
-        "user": {
-            "id": request.user.id,
-            "username": request.user.username,
-            "role": get_user_role(request.user),
-            "advisor_id": scope.get("advisor_id", ""),
-            "departments": scope.get("departments", []),
-        },
-    })
+    return JsonResponse(
+        {
+            "ok": True,
+            "user": {
+                "id": request.user.id,
+                "username": request.user.username,
+                "role": get_user_role(request.user),
+                "advisor_id": scope.get("advisor_id", ""),
+                "departments": scope.get("departments", []),
+            },
+        }
+    )
 
 
 @login_required(login_url="login")
@@ -58,12 +60,14 @@ def profile_change_username_view(request: HttpRequest) -> JsonResponse:
     if len(new_username) > 150:
         return JsonResponse({"error": "Username too long (max 150)"}, status=400)
 
-    if User.objects.filter(username=new_username).exclude(id=request.user.id).exists():
+    user = request.user
+    assert isinstance(user, User)
+    if User.objects.filter(username=new_username).exclude(id=user.id).exists():
         return JsonResponse({"error": "Username already taken"}, status=400)
 
-    old_username = request.user.username
-    request.user.username = new_username
-    request.user.save(update_fields=["username"])
+    old_username = user.username
+    user.username = new_username
+    user.save(update_fields=["username"])
 
     log_audit_event(
         request,
@@ -93,19 +97,19 @@ def profile_change_password_view(request: HttpRequest) -> JsonResponse:
             status=400,
         )
 
-    if not request.user.check_password(current_password):
+    user = request.user
+    assert isinstance(user, User)
+    if not user.check_password(current_password):
         return JsonResponse({"error": "Current password is incorrect"}, status=400)
 
     if len(new_password) < 6:
-        return JsonResponse(
-            {"error": "New password must be at least 6 characters"}, status=400
-        )
+        return JsonResponse({"error": "New password must be at least 6 characters"}, status=400)
 
-    request.user.set_password(new_password)
-    request.user.save(update_fields=["password"])
+    user.set_password(new_password)
+    user.save(update_fields=["password"])
 
     # Keep the session alive after password change
-    update_session_auth_hash(request, request.user)
+    update_session_auth_hash(request, user)
 
     log_audit_event(
         request,

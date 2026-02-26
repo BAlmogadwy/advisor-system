@@ -22,7 +22,7 @@ def test_export_students_by_advisor_csv(monkeypatch: MonkeyPatch) -> None:
     _login_general()
     seen: dict[str, object] = {}
 
-    def fake_list(advisor_id, **kwargs):
+    def fake_list(advisor_id: str, **kwargs: object) -> dict[str, object]:
         seen["advisor_id"] = advisor_id
         seen.update(kwargs)
         return {
@@ -57,8 +57,14 @@ def test_export_students_by_advisor_csv(monkeypatch: MonkeyPatch) -> None:
     assert response.status_code == 200
     assert response["Content-Type"].startswith("text/csv")
     text = response.content.decode("utf-8")
-    assert "advisor_id,student_id,registration_no,name,program,section,status,gpa,total_earned_credits,total_registered_credits,current_term_registered_hours,has_high_priority_missing,needs_attention,risk_score,attention_reasons,missing_courses_compact" in text
-    assert "A001,4410001,R-001,Student One,AI,M,active,3.42,64,70,15,True,True,11.3,low_gpa,high_priority_missing,CS211(4.00); AI201(2.50)" in text.replace('"','')
+    assert (
+        "advisor_id,student_id,registration_no,name,program,section,status,gpa,total_earned_credits,total_registered_credits,current_term_registered_hours,has_high_priority_missing,needs_attention,risk_score,attention_reasons,missing_courses_compact"
+        in text
+    )
+    assert (
+        "A001,4410001,R-001,Student One,AI,M,active,3.42,64,70,15,True,True,11.3,low_gpa,high_priority_missing,CS211(4.00); AI201(2.50)"
+        in text.replace('"', "")
+    )
 
     assert seen["advisor_id"] == "A001"
     assert seen["search"] == "44"

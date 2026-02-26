@@ -21,24 +21,38 @@ def _setup_fixture_data() -> None:
     Course.objects.get_or_create(course_code="TCS201", defaults={"credit_hours": 3})
     Course.objects.get_or_create(course_code="TGS101", defaults={"credit_hours": 2})
 
-    StudentCourse.objects.get_or_create(student_id=441234, course=cs101, defaults={"status": "passed"})
-    StudentCourse.objects.get_or_create(student_id=441234, course=cs102, defaults={"status": "studying"})
+    StudentCourse.objects.get_or_create(
+        student_id=441234, course=cs101, defaults={"status": "passed"}
+    )
+    StudentCourse.objects.get_or_create(
+        student_id=441234, course=cs102, defaults={"status": "studying"}
+    )
 
     ProgrammeRequirement.objects.update_or_create(
-        program=_PROGRAM, course_code="TCS101", defaults={"type": "core", "programme_term": 1, "credit_hours": 3},
+        program=_PROGRAM,
+        course_code="TCS101",
+        defaults={"type": "core", "programme_term": 1, "credit_hours": 3},
     )
     ProgrammeRequirement.objects.update_or_create(
-        program=_PROGRAM, course_code="TCS102", defaults={"type": "core", "programme_term": 1, "credit_hours": 3},
+        program=_PROGRAM,
+        course_code="TCS102",
+        defaults={"type": "core", "programme_term": 1, "credit_hours": 3},
     )
     ProgrammeRequirement.objects.update_or_create(
-        program=_PROGRAM, course_code="TCS201", defaults={"type": "core", "programme_term": 3, "credit_hours": 3},
+        program=_PROGRAM,
+        course_code="TCS201",
+        defaults={"type": "core", "programme_term": 2, "credit_hours": 3},
     )
     ProgrammeRequirement.objects.update_or_create(
-        program=_PROGRAM, course_code="TGS101", defaults={"type": "gs", "programme_term": 3, "credit_hours": 2},
+        program=_PROGRAM,
+        course_code="TGS101",
+        defaults={"type": "gs", "programme_term": 2, "credit_hours": 2},
     )
 
     Prerequisite.objects.get_or_create(
-        program=_PROGRAM, course_code="TCS201", prerequisite_course_code="TCS102",
+        program=_PROGRAM,
+        course_code="TCS201",
+        prerequisite_course_code="TCS102",
     )
 
 

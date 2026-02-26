@@ -1,5 +1,6 @@
 import json
 
+from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.http import require_GET, require_POST
 
@@ -19,6 +20,7 @@ def _parse_int(value: str | None, field: str) -> tuple[int | None, JsonResponse 
         return None, JsonResponse({"error": f"Invalid integer for {field}: {value}"}, status=400)
 
 
+@login_required(login_url="login")
 @require_GET
 def recommend_view(request: HttpRequest, student_id: int) -> JsonResponse:
     year, err = _parse_int(request.GET.get("year"), "year")
@@ -49,6 +51,7 @@ def recommend_view(request: HttpRequest, student_id: int) -> JsonResponse:
     )
 
 
+@login_required(login_url="login")
 @require_POST
 def classify_view(request: HttpRequest) -> JsonResponse:
     try:
@@ -68,6 +71,7 @@ def classify_view(request: HttpRequest) -> JsonResponse:
     return JsonResponse(result)
 
 
+@login_required(login_url="login")
 @require_POST
 def parse_and_classify_view(request: HttpRequest) -> JsonResponse:
     try:

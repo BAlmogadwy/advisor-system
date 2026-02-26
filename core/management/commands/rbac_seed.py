@@ -19,7 +19,9 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser: ArgumentParser) -> None:
         parser.add_argument("username")
-        parser.add_argument("--role", choices=[ROLE_SUPER_ADMIN, ROLE_GENERAL_ADVISOR, ROLE_ADVISOR], required=True)
+        parser.add_argument(
+            "--role", choices=[ROLE_SUPER_ADMIN, ROLE_GENERAL_ADVISOR, ROLE_ADVISOR], required=True
+        )
         parser.add_argument("--advisor-id", default="")
         parser.add_argument("--departments", default="")
 

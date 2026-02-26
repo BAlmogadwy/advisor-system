@@ -62,6 +62,15 @@ class StudentCourse(models.Model):
 
     class Meta:
         db_table = "student_courses"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["student", "course"],
+                name="uq_student_courses_student_course",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["student", "status"], name="idx_sc_student_status"),
+        ]
 
     def __str__(self) -> str:
         return f"SC({self.student_id}->{self.course_id})"
@@ -98,6 +107,12 @@ class Prerequisite(models.Model):
 
     class Meta:
         db_table = "prerequisites"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["program", "course_code", "prerequisite_course_code"],
+                name="uq_prerequisites_program_course_prereq",
+            ),
+        ]
         indexes = [
             models.Index(
                 fields=["program", "course_code"],

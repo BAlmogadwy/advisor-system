@@ -9,8 +9,22 @@ def classify_courses(study_plan_courses: list[dict], timetable_courses: set[str]
     normalized_timetable = {global_normalize_code(code) for code in timetable_courses}
 
     passing_letter_grades = {
-        "A", "A+", "B", "B+", "C", "C+", "D", "D+",
-        "أ", "أ+", "ب", "ب+", "ج", "ج+", "د", "د+",
+        "A",
+        "A+",
+        "B",
+        "B+",
+        "C",
+        "C+",
+        "D",
+        "D+",
+        "أ",
+        "أ+",
+        "ب",
+        "ب+",
+        "ج",
+        "ج+",
+        "د",
+        "د+",
     }
 
     for course in study_plan_courses:

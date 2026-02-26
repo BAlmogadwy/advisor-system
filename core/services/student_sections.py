@@ -10,13 +10,21 @@ def ensure_student_section_schema() -> None:
     return
 
 
-def get_student_term_baseline(student_id: int | str, academic_year: str, term: str) -> list[dict[str, object]]:
-    sts_qs = StudentTermSection.objects.filter(
-        student_id=student_id,
-    ).select_related("term_section").prefetch_related("term_section__meetings")
+def get_student_term_baseline(
+    student_id: int | str, academic_year: str, term: str
+) -> list[dict[str, object]]:
+    sts_qs = (
+        StudentTermSection.objects.filter(
+            student_id=student_id,
+        )
+        .select_related("term_section")
+        .prefetch_related("term_section__meetings")
+    )
 
     # Get student's program for credit lookup
-    student_program = Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
+    student_program = (
+        Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
+    )
 
     # Build a credit lookup from programme_requirements
     credit_map: dict[str, int] = {}
@@ -43,11 +51,15 @@ def get_student_term_baseline(student_id: int | str, academic_year: str, term: s
             for m in meetings:
                 out.append(
                     {
-                        "course_code": f"{(ts.course_code or '')}{(ts.course_number or '')}".replace(' ', ''),
+                        "course_code": f"{(ts.course_code or '')}{(ts.course_number or '')}".replace(
+                            " ", ""
+                        ),
                         "course_name": ts.course_name or "",
                         "course_number": ts.course_number or "",
                         "section": ts.section or "",
-                        "registered_count": ts.registered_count if ts.registered_count is not None else None,
+                        "registered_count": ts.registered_count
+                        if ts.registered_count is not None
+                        else None,
                         "credits": credits,
                         "day": m.day or "",
                         "start_time": m.start_time or "",
@@ -61,11 +73,15 @@ def get_student_term_baseline(student_id: int | str, academic_year: str, term: s
         else:
             out.append(
                 {
-                    "course_code": f"{(ts.course_code or '')}{(ts.course_number or '')}".replace(' ', ''),
+                    "course_code": f"{(ts.course_code or '')}{(ts.course_number or '')}".replace(
+                        " ", ""
+                    ),
                     "course_name": ts.course_name or "",
                     "course_number": ts.course_number or "",
                     "section": ts.section or "",
-                    "registered_count": ts.registered_count if ts.registered_count is not None else None,
+                    "registered_count": ts.registered_count
+                    if ts.registered_count is not None
+                    else None,
                     "credits": credits,
                     "day": "",
                     "start_time": "",

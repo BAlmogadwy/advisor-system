@@ -9,6 +9,13 @@ from core.services.rbac import ROLE_SUPER_ADMIN
 from core.sidebar_context import get_sidebar_context
 
 
+def _safe_int(value: str | None, default: int) -> int:
+    try:
+        return int(value) if value else default
+    except (ValueError, TypeError):
+        return default
+
+
 def _excel_csv_response(filename: str, content: str) -> HttpResponse:
     response = HttpResponse(content_type="text/csv; charset=utf-8")
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
@@ -25,7 +32,7 @@ def audit_explorer_page(request: HttpRequest) -> HttpResponse:
     status = (request.GET.get("status") or "").strip() or None
     from_utc = (request.GET.get("from") or "").strip() or None
     to_utc = (request.GET.get("to") or "").strip() or None
-    limit = int(request.GET.get("limit") or 200)
+    limit = _safe_int(request.GET.get("limit"), 200)
 
     try:
         rows = query_audit_logs(
@@ -68,7 +75,7 @@ def audit_explorer_api(request: HttpRequest) -> JsonResponse:
     status = (request.GET.get("status") or "").strip() or None
     from_utc = (request.GET.get("from") or "").strip() or None
     to_utc = (request.GET.get("to") or "").strip() or None
-    limit = int(request.GET.get("limit") or 200)
+    limit = _safe_int(request.GET.get("limit"), 200)
 
     try:
         rows = query_audit_logs(
@@ -94,7 +101,7 @@ def audit_export_csv_view(request: HttpRequest) -> HttpResponse:
     status = (request.GET.get("status") or "").strip() or None
     from_utc = (request.GET.get("from") or "").strip() or None
     to_utc = (request.GET.get("to") or "").strip() or None
-    limit = int(request.GET.get("limit") or 2000)
+    limit = _safe_int(request.GET.get("limit"), 2000)
 
     try:
         rows = query_audit_logs(

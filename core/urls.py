@@ -38,12 +38,6 @@ from .exam_views import (
     exam_timetable_page,
     exam_timetable_preview_courses_view,
 )
-from .profile_views import (
-    profile_change_password_view,
-    profile_change_username_view,
-    profile_me_view,
-    profile_page,
-)
 from .planner_views import (
     planner_build_view,
     planner_context_view,
@@ -52,6 +46,12 @@ from .planner_views import (
     planner_sections_catalog_view,
 )
 from .portfolio_views import advisor_portfolio_page
+from .profile_views import (
+    profile_change_password_view,
+    profile_change_username_view,
+    profile_me_view,
+    profile_page,
+)
 from .report_views import (
     course_eligibility_view,
     export_aggregate_csv_view,
@@ -208,8 +208,14 @@ urlpatterns = [
     ),
     path("ops/db/backup-snapshot/", db_backup_snapshot_view, name="db_backup_snapshot"),
     path("ops/db/integrity-report/", db_integrity_report_view, name="db_integrity_report"),
-    path("ops/db/external-courses/", db_list_external_courses_view, name="db_list_external_courses"),
-    path("ops/db/delete-external-courses/", db_delete_external_courses_view, name="db_delete_external_courses"),
+    path(
+        "ops/db/external-courses/", db_list_external_courses_view, name="db_list_external_courses"
+    ),
+    path(
+        "ops/db/delete-external-courses/",
+        db_delete_external_courses_view,
+        name="db_delete_external_courses",
+    ),
     path("ops/settings/defaults/", defaults_settings_view, name="settings_defaults"),
     path("ops/users/list/", users_list_view, name="users_list"),
     path("user-management/", user_management_page, name="user_management_page"),
@@ -220,8 +226,12 @@ urlpatterns = [
     path("ops/users/delete/", users_delete_view, name="users_delete"),
     path("profile/", profile_page, name="profile_page"),
     path("ops/profile/me/", profile_me_view, name="profile_me"),
-    path("ops/profile/change-username/", profile_change_username_view, name="profile_change_username"),
-    path("ops/profile/change-password/", profile_change_password_view, name="profile_change_password"),
+    path(
+        "ops/profile/change-username/", profile_change_username_view, name="profile_change_username"
+    ),
+    path(
+        "ops/profile/change-password/", profile_change_password_view, name="profile_change_password"
+    ),
     path("exam-timetable/", login_required(exam_timetable_page), name="exam_timetable_page"),
     path(
         "ops/exam-timetable/filters/",

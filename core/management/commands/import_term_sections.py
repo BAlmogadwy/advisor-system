@@ -1,3 +1,6 @@
+from argparse import ArgumentParser
+from typing import Any
+
 from django.core.management.base import BaseCommand, CommandError
 
 from core.services.term_sections import import_term_sections_from_csv
@@ -6,7 +9,7 @@ from core.services.term_sections import import_term_sections_from_csv
 class Command(BaseCommand):
     help = "Import cleaned term course sections CSV into advisor DB table term_course_sections"
 
-    def add_arguments(self, parser):
+    def add_arguments(self, parser: ArgumentParser) -> None:
         parser.add_argument("--csv", required=True, help="Path to cleaned CSV")
         parser.add_argument("--year", required=True, help="Academic year label (e.g. 1447)")
         parser.add_argument("--term", required=True, help="Term label (e.g. 1 or Fall)")
@@ -21,7 +24,7 @@ class Command(BaseCommand):
             help="Delete existing rows for this year+term before import",
         )
 
-    def handle(self, *args, **options):
+    def handle(self, *args: Any, **options: Any) -> None:
         try:
             summary = import_term_sections_from_csv(
                 csv_path=options["csv"],

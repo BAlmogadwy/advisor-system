@@ -21,6 +21,7 @@ import json
 import random
 from collections import defaultdict
 from pathlib import Path
+from typing import Any
 
 from core.models import Course, ExamTimetableRun, ProgrammeRequirement, StudentCourse
 
@@ -32,8 +33,8 @@ _CREDIT_DEFAULT = 3  # fallback for NULL / 0 / missing credit_hours
 # Key = (max_credits, min_credits); value = penalty weight.
 _CREDIT_PAIR_WEIGHTS: dict[tuple[int, int], int] = {
     (4, 4): 100,  # worst – two heavy courses
-    (4, 3): 30,   # acceptable
-    (4, 2): 0,    # ideal pairing
+    (4, 3): 30,  # acceptable
+    (4, 2): 0,  # ideal pairing
 }
 _CREDIT_PAIR_FALLBACK = 5  # other combos (3+3, 3+2, 2+2, …)
 
@@ -47,9 +48,7 @@ def build_credit_map(course_codes: list[str] | set[str]) -> dict[str, int]:
     rows = Course.objects.filter(
         course_code__in=list(course_codes),
     ).values_list("course_code", "credit_hours")
-    cm: dict[str, int] = {
-        cc: (ch if ch and ch > 0 else _CREDIT_DEFAULT) for cc, ch in rows
-    }
+    cm: dict[str, int] = {cc: (ch if ch and ch > 0 else _CREDIT_DEFAULT) for cc, ch in rows}
     for cc in course_codes:
         cm.setdefault(cc, _CREDIT_DEFAULT)
     return cm
@@ -154,7 +153,7 @@ def build_plan_term_buckets(
     course_buckets: dict[str, list[tuple[str, int]]] = defaultdict(list)
 
     for program, course_code, programme_term in rows:
-        key = (program, int(programme_term))
+        key = (program, int(programme_term or 0))
         buckets[key].add(course_code)
         course_buckets[course_code].append(key)
 
@@ -254,8 +253,8 @@ def schedule(
 
     # Shorthand aliases for optional dicts (avoid repeated `or {}` everywhere)
     _ptb = plan_term_buckets or {}  # (program, term) → {course_codes}
-    _cb = course_buckets or {}      # course_code → [(program, term), …]
-    _cm = credit_map or {}          # course_code → credit_hours
+    _cb = course_buckets or {}  # course_code → [(program, term), …]
+    _cm = credit_map or {}  # course_code → credit_hours
 
     def _constraint_degree(c: str) -> int:
         """Heuristic: courses with more conflicts + more bucket-mates are harder
@@ -297,9 +296,7 @@ def schedule(
 
     student_day_count: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
-    student_day_courses: dict[int, dict[str, list[str]]] = defaultdict(
-        lambda: defaultdict(list)
-    )
+    student_day_courses: dict[int, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
 
     slot_load: dict[int, int] = defaultdict(int)
 
@@ -416,7 +413,9 @@ def schedule(
                     for sid in course_students:
                         existing = student_day_courses[sid][day]
                         if existing:
-                            day_credits = [_cm.get(ec, _CREDIT_DEFAULT) for ec in existing] + [this_cr]
+                            day_credits = [_cm.get(ec, _CREDIT_DEFAULT) for ec in existing] + [
+                                this_cr
+                            ]
                             credit_penalty += _credit_pair_penalty(day_credits)
 
                 # Level 2 — Spacing within programme-plan buckets:
@@ -526,14 +525,14 @@ def _build_qa(
     _cm = credit_map or {}
 
     # ── Accumulators ──
-    same_slot_conflicts: list[dict] = []       # hard-constraint violations
-    max_exams_per_day: int = 0                  # worst-case day load globally
-    students_over_limit_per_day: int = 0        # students exceeding soft cap
-    max_credit_load_per_day: int = 0            # worst-case credit sum on a day
-    heavy_day_students: int = 0                 # students with heavy credit pair
+    same_slot_conflicts: list[dict] = []  # hard-constraint violations
+    max_exams_per_day: int = 0  # worst-case day load globally
+    students_over_limit_per_day: int = 0  # students exceeding soft cap
+    max_credit_load_per_day: int = 0  # worst-case credit sum on a day
+    heavy_day_students: int = 0  # students with heavy credit pair
 
     # Detail records for KPI drilldown panel in the UI
-    overload_details: list[dict] = []   # per-student, per-day overload records
+    overload_details: list[dict] = []  # per-student, per-day overload records
     heavy_day_details: list[dict] = []  # per-student, per-day heavy-credit records
 
     # ── Per-student validation ──
@@ -561,7 +560,7 @@ def _build_qa(
                 )
 
         # ── Soft-constraint metrics per day ──
-        has_overload = False   # does this student exceed the per-day cap?
+        has_overload = False  # does this student exceed the per-day cap?
         has_heavy_day = False  # does this student have a heavy credit pairing?
         for _day, ccs in day_groups.items():
             if _day == "OVERFLOW":
@@ -573,15 +572,17 @@ def _build_qa(
             # Day-overload check: student exceeds the soft cap
             if day_count > max_per_day:
                 has_overload = True
-                overload_details.append({
-                    "student_id": sid,
-                    "day": _day,
-                    "count": day_count,
-                    "courses": [
-                        {"code": c, "credits": _cm.get(c, _CREDIT_DEFAULT) if _cm else None}
-                        for c in sorted(ccs)
-                    ],
-                })
+                overload_details.append(
+                    {
+                        "student_id": sid,
+                        "day": _day,
+                        "count": day_count,
+                        "courses": [
+                            {"code": c, "credits": _cm.get(c, _CREDIT_DEFAULT) if _cm else None}
+                            for c in sorted(ccs)
+                        ],
+                    }
+                )
 
             # Credit-load check: evaluate the top-2 heaviest exams on this day.
             # Only relevant when credit_map is available AND student has ≥2 exams.
@@ -594,16 +595,18 @@ def _build_qa(
                 # (4,3)→30, but NOT mild combos like (3,3)→5 or (3,2)→5.
                 if pair_penalty >= 30:
                     has_heavy_day = True
-                    heavy_day_details.append({
-                        "student_id": sid,
-                        "day": _day,
-                        "penalty": pair_penalty,
-                        "total_credits": total_credits,
-                        "courses": [
-                            {"code": c, "credits": _cm.get(c, _CREDIT_DEFAULT)}
-                            for c in sorted(ccs)
-                        ],
-                    })
+                    heavy_day_details.append(
+                        {
+                            "student_id": sid,
+                            "day": _day,
+                            "penalty": pair_penalty,
+                            "total_credits": total_credits,
+                            "courses": [
+                                {"code": c, "credits": _cm.get(c, _CREDIT_DEFAULT)}
+                                for c in sorted(ccs)
+                            ],
+                        }
+                    )
 
         if has_overload:
             students_over_limit_per_day += 1
@@ -809,16 +812,22 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
 
     Returns the Path to the written file (in the runtime/ directory).
     """
-    from openpyxl import Workbook
-    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-    from openpyxl.utils import get_column_letter
+    from openpyxl import Workbook  # type: ignore[import-untyped]
+    from openpyxl.styles import (  # type: ignore[import-untyped]
+        Alignment,
+        Border,
+        Font,
+        PatternFill,
+        Side,
+    )
+    from openpyxl.utils import get_column_letter  # type: ignore[import-untyped]
 
     run = ExamTimetableRun.objects.get(id=run_id)
     data = json.loads(run.result_json)
 
     schedule = data.get("schedule", [])  # list of {course_code, slot_index, day, period}
-    slots = data.get("slots", [])        # list of {index, day, period}
-    qa = data.get("qa", {})              # QA metrics dict from _build_qa()
+    slots = data.get("slots", [])  # list of {index, day, period}
+    qa = data.get("qa", {})  # QA metrics dict from _build_qa()
 
     # ── Styling constants ──
     header_font = Font(bold=True, size=11)
@@ -835,7 +844,7 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
     warn_fill = PatternFill("solid", fgColor="FFF3CD")  # light yellow
     danger_fill = PatternFill("solid", fgColor="F8D7DA")  # light red
 
-    def style_header_row(ws, col_count: int) -> None:
+    def style_header_row(ws: Any, col_count: int) -> None:
         """Apply teal background + white bold font to the first row."""
         for col in range(1, col_count + 1):
             cell = ws.cell(row=1, column=col)
@@ -981,11 +990,13 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
             cell.fill = PatternFill("solid", fgColor="EEEEEE")
             cell.border = thin_border
         for conflict in same_slot:
-            ws3.append([
-                conflict.get("student_id", ""),
-                conflict.get("slot_index", ""),
-                ", ".join(conflict.get("courses", [])),
-            ])
+            ws3.append(
+                [
+                    conflict.get("student_id", ""),
+                    conflict.get("slot_index", ""),
+                    ", ".join(conflict.get("courses", [])),
+                ]
+            )
 
     # Append bucket day violation details (if any)
     bucket_viols = qa.get("bucket_day_violations", [])
@@ -1001,12 +1012,14 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
             cell.fill = PatternFill("solid", fgColor="EEEEEE")
             cell.border = thin_border
         for v in bucket_viols:
-            ws3.append([
-                v.get("program", ""),
-                v.get("programme_term", ""),
-                v.get("day", ""),
-                ", ".join(v.get("courses", [])),
-            ])
+            ws3.append(
+                [
+                    v.get("program", ""),
+                    v.get("programme_term", ""),
+                    v.get("day", ""),
+                    ", ".join(v.get("courses", [])),
+                ]
+            )
 
     ws3.column_dimensions["A"].width = 26
     ws3.column_dimensions["B"].width = 16

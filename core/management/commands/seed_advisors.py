@@ -2,13 +2,19 @@
 
 Reads distinct advisor names from the students table and creates:
 - AcademicAdvisor records
-- Django User accounts (username = first Arabic name, password = 123456)
+- Django User accounts (username = first_second Arabic name parts)
 - ADVISOR role assignment + UserScope linking
+
+Password resolution order:
+  1. --password CLI argument
+  2. SEED_ADVISOR_PASSWORD environment variable
+  3. Randomly generated 12-char token (printed to stdout)
 """
 
 import io
+import os
+import secrets
 import sys
-from collections import defaultdict
 from typing import Any
 
 from django.contrib.auth.models import Group, User
@@ -75,15 +81,38 @@ class Command(BaseCommand):
             action="store_true",
             help="Preview without making changes",
         )
+        parser.add_argument(
+            "--password",
+            type=str,
+            default=None,
+            help="Password for all seeded advisor accounts (overrides SEED_ADVISOR_PASSWORD env var)",
+        )
 
     def handle(self, *args: Any, **opts: Any) -> None:
         # Force UTF-8 stdout on Windows to handle Arabic names
         if sys.platform == "win32" and not isinstance(self.stdout, io.TextIOWrapper):
-            self.stdout._out = io.TextIOWrapper(
-                self.stdout._out.buffer, encoding="utf-8", errors="replace"
+            self.stdout._out = io.TextIOWrapper(  # type: ignore[attr-defined]
+                self.stdout._out.buffer,  # type: ignore[attr-defined]
+                encoding="utf-8",
+                errors="replace",
             )
 
         dry_run = opts["dry_run"]
+
+        # Resolve password: CLI flag > env var > random
+        password = opts.get("password") or os.getenv("SEED_ADVISOR_PASSWORD") or None
+        password_generated = False
+        if not password:
+            password = secrets.token_urlsafe(9)  # 12-char URL-safe random string
+            password_generated = True
+
+        if password_generated:
+            self.stdout.write(
+                self.style.WARNING(f"No password provided. Generated random password: {password}")
+            )
+            self.stdout.write(
+                self.style.WARNING("Save this password now -- it will not be shown again.")
+            )
 
         # 1. Ensure role groups exist
         ensure_role_groups()
@@ -114,12 +143,12 @@ class Command(BaseCommand):
                 .values_list("program", flat=True)
                 .distinct()
             )
-            dept_map[name] = ";".join(sorted(programs)) if programs else ""
+            dept_map[name] = (
+                ";".join(sorted(p for p in programs if p is not None)) if programs else ""
+            )
 
         # 5. Print preview table
-        self.stdout.write(
-            f"\n{'#':>3}  {'Username':<25} {'Department':<15} {'Full Name'}"
-        )
+        self.stdout.write(f"\n{'#':>3}  {'Username':<25} {'Department':<15} {'Full Name'}")
         self.stdout.write("-" * 90)
 
         for i, name in enumerate(advisor_names, 1):
@@ -161,14 +190,12 @@ class Command(BaseCommand):
 
                 user = User.objects.create_user(
                     username=username,
-                    password="123456",
+                    password=password,
                 )
                 user.groups.add(advisor_group)
                 set_user_scope(user.id, advisor_id=name, departments=dept)
                 created += 1
 
         self.stdout.write(
-            self.style.SUCCESS(
-                f"Done: {created} advisors created, {skipped} skipped."
-            )
+            self.style.SUCCESS(f"Done: {created} advisors created, {skipped} skipped.")
         )

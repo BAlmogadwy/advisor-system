@@ -9,18 +9,23 @@ from core.services.student_helpers import (
 
 def _course_exists_in_program(course_code: str, program: str) -> bool:
     code_n = normalize_code(course_code)
-    for row in ProgrammeRequirement.objects.filter(program=program).values_list("course_code", flat=True):
+    for row in ProgrammeRequirement.objects.filter(program=program).values_list(
+        "course_code", flat=True
+    ):
         if normalize_code(row) == code_n:
             return True
     return False
 
 
-def _get_filtered_students(section: str | None, program: str, join_year_prefixes: list[str] | None) -> list[int]:
+def _get_filtered_students(
+    section: str | None, program: str, join_year_prefixes: list[str] | None
+) -> list[int]:
     qs = Student.objects.filter(program=program)
     if section:
         qs = qs.filter(section=section)
     if join_year_prefixes:
         from django.db.models import Q
+
         prefix_q = Q()
         for p in join_year_prefixes:
             if not p:
@@ -53,7 +58,9 @@ def build_course_eligibility_report(
         if not _course_exists_in_program(code, prog):
             continue
 
-        students = _get_filtered_students(section=section, program=prog, join_year_prefixes=join_year_prefixes)
+        students = _get_filtered_students(
+            section=section, program=prog, join_year_prefixes=join_year_prefixes
+        )
         eligible_ids: list[int] = []
         blocked_samples: list[dict] = []
         missing_counter: dict[str, int] = {}

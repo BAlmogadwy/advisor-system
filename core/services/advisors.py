@@ -9,6 +9,7 @@ from django.db.models.functions import Coalesce
 
 from core.models import AcademicAdvisor, Student
 from core.services.high_priority_missing import run_missing_high_priority_report
+from core.settings_views import load_defaults
 
 
 def normalize_arabic(text: str) -> str:
@@ -67,19 +68,27 @@ def _get_high_priority_by_program(program: str) -> dict[int, list[dict[str, obje
     if cached and (now - cached[0]) < _HP_CACHE_TTL_SECONDS:
         return cached[1]
 
+    # Use only the new system defaults (currentYear / currentTerm)
+    defaults = load_defaults()
+    current_year = defaults.get("currentYear", 1447)
+    term_parity = defaults.get("currentTerm", 1)
+
     report = run_missing_high_priority_report(
-        year=0,
-        semester=0,
+        year=current_year,
+        semester=term_parity,
         section=None,
         program=program,
         join_year_prefixes=None,
-        term_parity=0,
+        term_parity=term_parity,
         discount="1_over_d",
-        min_score=2.0,
+        min_score=1.0,
         top_k_per_student=5,
         studying_counts_as_passed=False,
     )
 
+    # Only include "this_parity" courses — courses matching the current
+    # semester.  The "other" bucket (opposite-semester courses) is excluded
+    # so the advisor sees only what's actionable right now.
     parsed: dict[int, list[dict[str, object]]] = {}
     for r in report.get("items", []):
         if not isinstance(r, dict):
@@ -96,15 +105,8 @@ def _get_high_priority_by_program(program: str) -> dict[int, list[dict[str, obje
                     "bucket": "this_parity",
                 }
             )
-        for c in r.get("missing_other", []) or []:
-            merged.append(
-                {
-                    "course_code": str(c.get("course_code", "")),
-                    "score": _to_float(c.get("score", 0.0)),
-                    "bucket": "other",
-                }
-            )
-        parsed[sid] = merged
+        if merged:
+            parsed[sid] = merged
 
     _hp_missing_cache[program] = (now, parsed)
     return parsed
@@ -150,7 +152,10 @@ def upsert_academic_advisor(advisor_id: str, full_name: str, email: str, departm
 
 def list_academic_advisors() -> dict:
     rows = AcademicAdvisor.objects.order_by("full_name", "advisor_id").values_list(
-        "advisor_id", "full_name", "email", "department",
+        "advisor_id",
+        "full_name",
+        "email",
+        "department",
     )
     items = []
     for r in rows:
@@ -187,16 +192,36 @@ def assign_students_to_advisors(mappings: list[dict[str, Any]]) -> dict[str, Any
                 continue
 
             if not advisor_id:
-                errors.append({"index": i, "student_id": row.get("student_id"), "error": "advisor_id is required"})
+                errors.append(
+                    {
+                        "index": i,
+                        "student_id": row.get("student_id"),
+                        "error": "advisor_id is required",
+                    }
+                )
                 continue
 
             if not AcademicAdvisor.objects.filter(advisor_id=advisor_id).exists():
-                errors.append({"index": i, "student_id": student_id, "advisor_id": advisor_id, "error": "advisor not found"})
+                errors.append(
+                    {
+                        "index": i,
+                        "student_id": student_id,
+                        "advisor_id": advisor_id,
+                        "error": "advisor not found",
+                    }
+                )
                 continue
 
             count = Student.objects.filter(student_id=student_id).update(advisor_id=advisor_id)
             if count == 0:
-                errors.append({"index": i, "student_id": student_id, "advisor_id": advisor_id, "error": "student not found"})
+                errors.append(
+                    {
+                        "index": i,
+                        "student_id": student_id,
+                        "advisor_id": advisor_id,
+                        "error": "student not found",
+                    }
+                )
                 continue
 
             updated += count
@@ -267,9 +292,16 @@ def list_students_by_advisor(
     forced_advisor_id: str | None = None,
     allowed_departments: list[str] | None = None,
 ) -> dict[str, Any]:
-    advisor_obj = AcademicAdvisor.objects.filter(advisor_id=advisor_id).values_list(
-        "advisor_id", "full_name", "email", "department",
-    ).first()
+    advisor_obj = (
+        AcademicAdvisor.objects.filter(advisor_id=advisor_id)
+        .values_list(
+            "advisor_id",
+            "full_name",
+            "email",
+            "department",
+        )
+        .first()
+    )
     advisor = None
     if advisor_obj:
         dep_text, deps = _normalize_departments(str(advisor_obj[3]))
@@ -299,15 +331,19 @@ def list_students_by_advisor(
         }
 
     # Annotate students with current_term_registered_hours via subquery
-    students_qs = Student.objects.filter(advisor_id=advisor_id).annotate(
-        current_term_registered_hours=Coalesce(
-            Sum(
-                "student_courses__course__credit_hours",
-                filter=Q(student_courses__status="studying"),
+    students_qs = (
+        Student.objects.filter(advisor_id=advisor_id)
+        .annotate(
+            current_term_registered_hours=Coalesce(
+                Sum(
+                    "student_courses__course__credit_hours",
+                    filter=Q(student_courses__status="studying"),
+                ),
+                0,
             ),
-            0,
-        ),
-    ).order_by("student_id")
+        )
+        .order_by("student_id")
+    )
 
     items: list[dict[str, Any]] = []
     for s in students_qs:
@@ -335,8 +371,8 @@ def list_students_by_advisor(
     low_gpa_count = sum(1 for x in gpas if x < 2.0)
 
     by_program: dict[str, int] = {}
-    for s in items:
-        p = str(s.get("program") or "")
+    for item in items:
+        p = str(item.get("program") or "")
         by_program[p] = by_program.get(p, 0) + 1
 
     high_priority_by_student: dict[int, list[dict[str, object]]] = {}
@@ -347,17 +383,17 @@ def list_students_by_advisor(
         for sid, courses in hp_for_program.items():
             high_priority_by_student[sid] = courses
 
-    for s in items:
-        sid = _to_int(s.get("student_id", 0))
+    for item in items:
+        sid = _to_int(item.get("student_id", 0))
         missing_courses = high_priority_by_student.get(sid, [])
         has_missing = len(missing_courses) > 0
-        s["has_high_priority_missing"] = has_missing
-        s["high_priority_missing_courses"] = missing_courses
+        item["has_high_priority_missing"] = has_missing
+        item["high_priority_missing_courses"] = missing_courses
 
-        gpa_val = s.get("gpa")
+        gpa_val = item.get("gpa")
         gpa_num = _to_float(gpa_val, 0.0) if gpa_val is not None else None
         low_gpa = gpa_num is not None and gpa_num < 2.0
-        zero_hours = _to_int(s.get("current_term_registered_hours", 0)) == 0
+        zero_hours = _to_int(item.get("current_term_registered_hours", 0)) == 0
 
         attention_reasons: list[str] = []
         if low_gpa:
@@ -372,11 +408,12 @@ def list_students_by_advisor(
         zero_penalty = 3.0 if zero_hours else 0.0
         risk_score = round(gpa_penalty + missing_score + zero_penalty, 2)
 
-        s["needs_attention"] = bool(attention_reasons)
-        s["attention_reasons"] = attention_reasons
-        s["risk_score"] = risk_score
-        s["missing_courses_compact"] = "; ".join(
-            f"{str(c.get('course_code', ''))}({_to_float(c.get('score', 0.0)):.2f})" for c in missing_courses
+        item["needs_attention"] = bool(attention_reasons)
+        item["attention_reasons"] = attention_reasons
+        item["risk_score"] = risk_score
+        item["missing_courses_compact"] = "; ".join(
+            f"{str(c.get('course_code', ''))}({_to_float(c.get('score', 0.0)):.2f})"
+            for c in missing_courses
         )
 
     items.sort(
@@ -413,17 +450,28 @@ def list_students_by_advisor(
             "avg_gpa": avg_gpa,
             "low_gpa_count": low_gpa_count,
             "program_breakdown": by_program,
-            "high_priority_missing_count": sum(1 for s in items if bool(s.get("has_high_priority_missing"))),
+            "high_priority_missing_count": sum(
+                1 for s in items if bool(s.get("has_high_priority_missing"))
+            ),
             "needs_attention_count": sum(1 for s in items if bool(s.get("needs_attention"))),
-            "very_high_risk_count": sum(1 for s in items if _to_float(s.get("risk_score", 0.0)) >= 8.0),
+            "very_high_risk_count": sum(
+                1 for s in items if _to_float(s.get("risk_score", 0.0)) >= 8.0
+            ),
             "zero_current_term_hours_count": sum(
                 1 for s in items if _to_int(s.get("current_term_registered_hours", 0)) == 0
             ),
             "two_plus_high_priority_missing_count": sum(
                 1
                 for s in items
-                if len(s.get("high_priority_missing_courses", []) if isinstance(s.get("high_priority_missing_courses"), list) else []) >= 2
+                if len(
+                    s.get("high_priority_missing_courses", [])
+                    if isinstance(s.get("high_priority_missing_courses"), list)
+                    else []
+                )
+                >= 2
             ),
-            "current_term_registered_hours_total": sum(_to_int(s.get("current_term_registered_hours", 0)) for s in items),
+            "current_term_registered_hours_total": sum(
+                _to_int(s.get("current_term_registered_hours", 0)) for s in items
+            ),
         },
     }

@@ -24,13 +24,13 @@ from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
 from core.models import ExamTimetableRun, Student
+from core.services.audit import log_audit_event
 from core.services.exam_timetable import (
     build_credit_map,
     build_enrolled_sets,
     build_exam_timetable,
     export_exam_timetable_xlsx,
 )
-from core.services.audit import log_audit_event
 from core.services.rbac import ROLE_SUPER_ADMIN, get_user_role
 from core.sidebar_context import get_sidebar_context
 
@@ -59,10 +59,12 @@ def exam_timetable_filters_view(request: HttpRequest) -> JsonResponse:
         return deny
 
     programs = sorted(
-        Student.objects.exclude(program__isnull=True)
+        p
+        for p in Student.objects.exclude(program__isnull=True)
         .exclude(program="")
         .values_list("program", flat=True)
         .distinct()
+        if p is not None
     )
     sections = sorted(
         Student.objects.exclude(section="").values_list("section", flat=True).distinct()
@@ -113,7 +115,7 @@ def exam_timetable_preview_courses_view(request: HttpRequest) -> JsonResponse:
             }
             for cc, sids in enrolled_sets.items()
         ],
-        key=lambda c: c["course_code"],
+        key=lambda c: str(c["course_code"]),
     )
 
     return JsonResponse({"ok": True, "courses": courses})
@@ -189,18 +191,17 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
 
     # Pinned overrides: courses the user dragged to a specific slot.
     # Each entry must have course_code, day, and period; skip invalid ones.
-    pinned = None
+    pinned: list[dict[str, str]] | None = None
     if isinstance(pinned_raw, list):
-        pinned = []
+        pinned_items: list[dict[str, str]] = []
         for p in pinned_raw:
             if isinstance(p, dict):
                 cc = str(p.get("course_code", "")).strip()
                 d = str(p.get("day", "")).strip()
                 pr = str(p.get("period", "")).strip()
                 if cc and d and pr:
-                    pinned.append({"course_code": cc, "day": d, "period": pr})
-        if not pinned:
-            pinned = None
+                    pinned_items.append({"course_code": cc, "day": d, "period": pr})
+        pinned = pinned_items if pinned_items else None
 
     if not days or not periods:
         return JsonResponse({"ok": False, "error": "days and periods are required"}, status=400)
@@ -209,6 +210,7 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
     # Each build produces a different timetable variant; the seed is stored
     # in the result so it can be reproduced if needed.
     import random as _rnd
+
     seed = _rnd.randint(1, 2**31 - 1) if randomize else None
 
     try:
@@ -252,15 +254,17 @@ def exam_timetable_list_view(request: HttpRequest) -> JsonResponse:
     start = (page - 1) * PAGE_SIZE
     runs = list(qs[start : start + PAGE_SIZE])
     for r in runs:
-        r["created_at"] = r["created_at"].isoformat() if r["created_at"] else ""
+        r["created_at"] = r["created_at"].isoformat() if r["created_at"] else ""  # type: ignore[typeddict-item]
 
-    return JsonResponse({
-        "ok": True,
-        "runs": runs,
-        "page": page,
-        "total_pages": total_pages,
-        "total": total,
-    })
+    return JsonResponse(
+        {
+            "ok": True,
+            "runs": runs,
+            "page": page,
+            "total_pages": total_pages,
+            "total": total,
+        }
+    )
 
 
 @require_GET

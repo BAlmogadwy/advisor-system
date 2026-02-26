@@ -16,6 +16,17 @@ from core.services.term_sections import import_term_sections_from_csv
 from core.sidebar_context import get_sidebar_context
 
 
+def _parse_json_body(request: HttpRequest) -> tuple[dict, JsonResponse | None]:
+    """Safely parse JSON body. Returns (payload, error_response)."""
+    if not request.body:
+        return {}, None
+    try:
+        data = json.loads(request.body.decode("utf-8"))
+        return (data if isinstance(data, dict) else {}), None
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return {}, JsonResponse({"error": "Invalid JSON body"}, status=400)
+
+
 def _require_super_admin(request: HttpRequest) -> JsonResponse | None:
     if get_user_role(request.user) != ROLE_SUPER_ADMIN:
         return JsonResponse({"error": "SUPER_ADMIN access required"}, status=403)
@@ -78,7 +89,9 @@ def sections_import_insert_view(request: HttpRequest) -> JsonResponse:
     if deny:
         return deny
 
-    payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    payload, err = _parse_json_body(request)
+    if err:
+        return err
     token = str(payload.get("token", "")).strip()
     is_department = bool(payload.get("is_department", False))
     trunc_raw = payload.get("truncate_existing", True)
@@ -93,7 +106,9 @@ def sections_import_insert_view(request: HttpRequest) -> JsonResponse:
     source_tag = "department" if is_department else "other"
     csv_path = Path(settings.BASE_DIR) / "tmp" / "sections_import" / f"{token}.csv"
     if not csv_path.exists():
-        return JsonResponse({"error": "Preview token not found or expired. Please parse again."}, status=400)
+        return JsonResponse(
+            {"error": "Preview token not found or expired. Please parse again."}, status=400
+        )
 
     try:
         result = import_term_sections_from_csv(
@@ -112,5 +127,7 @@ def sections_import_insert_view(request: HttpRequest) -> JsonResponse:
         )
         return JsonResponse(result)
     except Exception as exc:
-        log_audit_event(request, action="sections_import.insert", status="error", error_text=str(exc))
+        log_audit_event(
+            request, action="sections_import.insert", status="error", error_text=str(exc)
+        )
         return JsonResponse({"error": str(exc)}, status=400)

@@ -19,6 +19,17 @@ from core.services.rbac import (
 from core.sidebar_context import get_sidebar_context
 
 
+def _parse_json_body(request: HttpRequest) -> tuple[dict, JsonResponse | None]:
+    """Safely parse JSON body. Returns (payload, error_response)."""
+    if not request.body:
+        return {}, None
+    try:
+        data = json.loads(request.body.decode("utf-8"))
+        return (data if isinstance(data, dict) else {}), None
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return {}, JsonResponse({"error": "Invalid JSON body"}, status=400)
+
+
 @role_required(ROLE_SUPER_ADMIN)
 @require_GET
 def user_management_page(request: HttpRequest) -> HttpResponse:
@@ -63,7 +74,9 @@ def users_list_view(request: HttpRequest) -> JsonResponse:
 def users_create_view(request: HttpRequest) -> JsonResponse:
     ensure_role_groups()
     ensure_scope_schema()
-    payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    payload, err = _parse_json_body(request)
+    if err:
+        return err
 
     username = str(payload.get("username", "")).strip()
     password = str(payload.get("password", "")).strip()
@@ -72,7 +85,9 @@ def users_create_view(request: HttpRequest) -> JsonResponse:
     departments = str(payload.get("departments", "")).strip()
 
     if not username or not password or role not in ROLE_NAMES:
-        return JsonResponse({"error": "username, password, and valid role are required"}, status=400)
+        return JsonResponse(
+            {"error": "username, password, and valid role are required"}, status=400
+        )
 
     if User.objects.filter(username=username).exists():
         return JsonResponse({"error": "username already exists"}, status=400)
@@ -87,7 +102,12 @@ def users_create_view(request: HttpRequest) -> JsonResponse:
         request,
         action="user.create",
         status="success",
-        details={"username": username, "role": role, "advisor_id": advisor_id, "departments": departments},
+        details={
+            "username": username,
+            "role": role,
+            "advisor_id": advisor_id,
+            "departments": departments,
+        },
     )
     return JsonResponse({"ok": True, "username": username, "role": role})
 
@@ -97,7 +117,9 @@ def users_create_view(request: HttpRequest) -> JsonResponse:
 def users_update_role_view(request: HttpRequest) -> JsonResponse:
     ensure_role_groups()
     ensure_scope_schema()
-    payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    payload, err = _parse_json_body(request)
+    if err:
+        return err
 
     username = str(payload.get("username", "")).strip()
     role = str(payload.get("role", "")).strip()
@@ -119,7 +141,12 @@ def users_update_role_view(request: HttpRequest) -> JsonResponse:
         request,
         action="user.update_role",
         status="success",
-        details={"username": username, "role": role, "advisor_id": advisor_id, "departments": departments},
+        details={
+            "username": username,
+            "role": role,
+            "advisor_id": advisor_id,
+            "departments": departments,
+        },
     )
     return JsonResponse({"ok": True, "username": username, "role": role})
 
@@ -127,7 +154,9 @@ def users_update_role_view(request: HttpRequest) -> JsonResponse:
 @role_required(ROLE_SUPER_ADMIN)
 @require_POST
 def users_set_password_view(request: HttpRequest) -> JsonResponse:
-    payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    payload, err = _parse_json_body(request)
+    if err:
+        return err
     username = str(payload.get("username", "")).strip()
     new_password = str(payload.get("new_password", "")).strip()
 
@@ -140,14 +169,18 @@ def users_set_password_view(request: HttpRequest) -> JsonResponse:
 
     user.set_password(new_password)
     user.save(update_fields=["password"])
-    log_audit_event(request, action="user.set_password", status="success", details={"username": username})
+    log_audit_event(
+        request, action="user.set_password", status="success", details={"username": username}
+    )
     return JsonResponse({"ok": True, "username": username})
 
 
 @role_required(ROLE_SUPER_ADMIN)
 @require_POST
 def users_set_active_view(request: HttpRequest) -> JsonResponse:
-    payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    payload, err = _parse_json_body(request)
+    if err:
+        return err
     username = str(payload.get("username", "")).strip()
     is_active = bool(payload.get("is_active", True))
 
@@ -162,20 +195,31 @@ def users_set_active_view(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "user not found"}, status=404)
 
     if get_user_role(user) == ROLE_SUPER_ADMIN and not is_active:
-        super_admin_count = sum(1 for u in User.objects.all() if get_user_role(u) == ROLE_SUPER_ADMIN and u.is_active)
+        super_admin_count = sum(
+            1 for u in User.objects.all() if get_user_role(u) == ROLE_SUPER_ADMIN and u.is_active
+        )
         if super_admin_count <= 1:
-            return JsonResponse({"error": "Cannot deactivate the last active SUPER_ADMIN user."}, status=400)
+            return JsonResponse(
+                {"error": "Cannot deactivate the last active SUPER_ADMIN user."}, status=400
+            )
 
     user.is_active = is_active
     user.save(update_fields=["is_active"])
-    log_audit_event(request, action="user.set_active", status="success", details={"username": username, "is_active": is_active})
+    log_audit_event(
+        request,
+        action="user.set_active",
+        status="success",
+        details={"username": username, "is_active": is_active},
+    )
     return JsonResponse({"ok": True, "username": username, "is_active": is_active})
 
 
 @role_required(ROLE_SUPER_ADMIN)
 @require_POST
 def users_delete_view(request: HttpRequest) -> JsonResponse:
-    payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    payload, err = _parse_json_body(request)
+    if err:
+        return err
     username = str(payload.get("username", "")).strip()
 
     if not username:
@@ -189,7 +233,9 @@ def users_delete_view(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "user not found"}, status=404)
 
     if get_user_role(user) == ROLE_SUPER_ADMIN:
-        super_admin_count = sum(1 for u in User.objects.all() if get_user_role(u) == ROLE_SUPER_ADMIN)
+        super_admin_count = sum(
+            1 for u in User.objects.all() if get_user_role(u) == ROLE_SUPER_ADMIN
+        )
         if super_admin_count <= 1:
             return JsonResponse({"error": "Cannot delete the last SUPER_ADMIN user."}, status=400)
 

@@ -21,6 +21,7 @@ def _build_students_query(
         qs = qs.filter(program=program)
     if join_prefixes:
         from django.db.models import Q
+
         prefixes = [p for p in join_prefixes if p]
         if prefixes:
             prefix_q = Q()
@@ -55,7 +56,9 @@ def build_recommendation_debug_report(
             prereq_status = [
                 {
                     "prerequisite": p,
-                    "status": "PASSED" if p in passed else ("STUDYING" if p in studying else "MISSING"),
+                    "status": "PASSED"
+                    if p in passed
+                    else ("STUDYING" if p in studying else "MISSING"),
                 }
                 for p in prereqs
             ]

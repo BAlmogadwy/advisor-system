@@ -102,11 +102,11 @@ async def _safe_wait_network(page: Page, timeout_ms: int = 20000) -> None:
     try:
         await page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
     except Exception:
-        pass
+        logger.debug("domcontentloaded wait timed out", exc_info=True)
     try:
         await page.wait_for_load_state("networkidle", timeout=timeout_ms)
     except Exception:
-        pass
+        logger.debug("networkidle wait timed out", exc_info=True)
 
 
 async def _safe_goto(page: Page, url: str, timeout_ms: int = 30000) -> None:
@@ -298,9 +298,9 @@ async def close_browser(playwright: Playwright, browser: Browser) -> None:
     try:
         await browser.close()
     except Exception:
-        pass
+        logger.debug("Browser close failed", exc_info=True)
     try:
         await playwright.stop()
     except Exception:
-        pass
+        logger.debug("Playwright stop failed", exc_info=True)
     logger.info("Browser closed.")

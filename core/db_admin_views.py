@@ -4,6 +4,7 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
+from core.authz import role_required
 from core.services.audit import log_audit_event
 from core.services.db_admin_ops import (
     create_backup_snapshot,
@@ -19,6 +20,7 @@ from core.services.db_admin_ops import (
     preview_oracle_plan,
     run_integrity_checks,
 )
+from core.services.rbac import ROLE_SUPER_ADMIN
 from core.services.term_sections import (
     import_term_sections_from_csv,
     preview_term_sections_from_csv,
@@ -26,11 +28,24 @@ from core.services.term_sections import (
 from core.sidebar_context import get_sidebar_context
 
 
+def _parse_json_body(request: HttpRequest) -> tuple[dict, JsonResponse | None]:
+    """Safely parse JSON body. Returns (payload, error_response)."""
+    if not request.body:
+        return {}, None
+    try:
+        data = json.loads(request.body.decode("utf-8"))
+        return (data if isinstance(data, dict) else {}), None
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return {}, JsonResponse({"error": "Invalid JSON body"}, status=400)
+
+
+@role_required(ROLE_SUPER_ADMIN)
 @require_GET
 def db_admin_page(request: HttpRequest) -> HttpResponse:
     return render(request, "core/db_admin.html", get_sidebar_context(request))
 
 
+@role_required(ROLE_SUPER_ADMIN)
 @require_GET
 def db_preview_delete_students_view(request: HttpRequest) -> JsonResponse:
     program = (request.GET.get("program") or "").strip() or None
@@ -38,9 +53,12 @@ def db_preview_delete_students_view(request: HttpRequest) -> JsonResponse:
     return JsonResponse(preview_delete_students(program=program, section=section))
 
 
+@role_required(ROLE_SUPER_ADMIN)
 @require_POST
 def db_delete_students_view(request: HttpRequest) -> JsonResponse:
-    payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    payload, err = _parse_json_body(request)
+    if err:
+        return err
     confirm = str(payload.get("confirm", ""))
     if confirm != "DELETE":
         log_audit_event(
@@ -49,9 +67,7 @@ def db_delete_students_view(request: HttpRequest) -> JsonResponse:
             status="error",
             error_text="missing confirm=DELETE",
         )
-        return JsonResponse(
-            {"error": "Confirmation required: send confirm=DELETE"}, status=400
-        )
+        return JsonResponse({"error": "Confirmation required: send confirm=DELETE"}, status=400)
 
     program = str(payload.get("program", "")).strip() or None
     section = str(payload.get("section", "")).strip() or None
@@ -69,6 +85,7 @@ def db_delete_students_view(request: HttpRequest) -> JsonResponse:
     return JsonResponse(result)
 
 
+@role_required(ROLE_SUPER_ADMIN)
 @require_GET
 def db_preview_delete_program_catalog_view(request: HttpRequest) -> JsonResponse:
     program = (request.GET.get("program") or "").strip()
@@ -77,9 +94,12 @@ def db_preview_delete_program_catalog_view(request: HttpRequest) -> JsonResponse
     return JsonResponse(preview_delete_program_catalog(program=program))
 
 
+@role_required(ROLE_SUPER_ADMIN)
 @require_POST
 def db_delete_program_catalog_view(request: HttpRequest) -> JsonResponse:
-    payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    payload, err = _parse_json_body(request)
+    if err:
+        return err
     confirm = str(payload.get("confirm", ""))
     if confirm != "DELETE":
         log_audit_event(
@@ -88,9 +108,7 @@ def db_delete_program_catalog_view(request: HttpRequest) -> JsonResponse:
             status="error",
             error_text="missing confirm=DELETE",
         )
-        return JsonResponse(
-            {"error": "Confirmation required: send confirm=DELETE"}, status=400
-        )
+        return JsonResponse({"error": "Confirmation required: send confirm=DELETE"}, status=400)
 
     program = str(payload.get("program", "")).strip()
     if not program:
@@ -116,9 +134,12 @@ def db_delete_program_catalog_view(request: HttpRequest) -> JsonResponse:
     return JsonResponse(result)
 
 
+@role_required(ROLE_SUPER_ADMIN)
 @require_POST
 def db_import_program_plan_view(request: HttpRequest) -> JsonResponse:
-    payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    payload, err = _parse_json_body(request)
+    if err:
+        return err
     program = str(payload.get("program", "")).strip()
     csv_text = str(payload.get("csv_text", ""))
     replace_existing = bool(payload.get("replace_existing", False))
@@ -170,9 +191,12 @@ def db_import_program_plan_view(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": str(exc)}, status=400)
 
 
+@role_required(ROLE_SUPER_ADMIN)
 @require_POST
 def db_import_legacy_exact_view(request: HttpRequest) -> JsonResponse:
-    payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    payload, err = _parse_json_body(request)
+    if err:
+        return err
     req_path = str(payload.get("requirements_csv_path", "")).strip() or None
     pre_path = str(payload.get("prerequisites_csv_path", "")).strip() or None
 
@@ -185,7 +209,10 @@ def db_import_legacy_exact_view(request: HttpRequest) -> JsonResponse:
             request,
             action="db.import_legacy_exact",
             status="success",
-            details={"requirements_csv_path": req_path or "", "prerequisites_csv_path": pre_path or ""},
+            details={
+                "requirements_csv_path": req_path or "",
+                "prerequisites_csv_path": pre_path or "",
+            },
         )
         return JsonResponse(result)
     except ValueError as exc:
@@ -193,15 +220,21 @@ def db_import_legacy_exact_view(request: HttpRequest) -> JsonResponse:
             request,
             action="db.import_legacy_exact",
             status="error",
-            details={"requirements_csv_path": req_path or "", "prerequisites_csv_path": pre_path or ""},
+            details={
+                "requirements_csv_path": req_path or "",
+                "prerequisites_csv_path": pre_path or "",
+            },
             error_text=str(exc),
         )
         return JsonResponse({"error": str(exc)}, status=400)
 
 
+@role_required(ROLE_SUPER_ADMIN)
 @require_POST
 def db_preview_term_sections_view(request: HttpRequest) -> JsonResponse:
-    payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    payload, err = _parse_json_body(request)
+    if err:
+        return err
 
     csv_path = str(payload.get("csv_path", "")).strip()
     academic_year = str(payload.get("academic_year", "")).strip()
@@ -225,9 +258,12 @@ def db_preview_term_sections_view(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": str(exc)}, status=400)
 
 
+@role_required(ROLE_SUPER_ADMIN)
 @require_POST
 def db_import_term_sections_view(request: HttpRequest) -> JsonResponse:
-    payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    payload, err = _parse_json_body(request)
+    if err:
+        return err
 
     csv_path = str(payload.get("csv_path", "")).strip()
     academic_year = str(payload.get("academic_year", "")).strip()
@@ -267,15 +303,23 @@ def db_import_term_sections_view(request: HttpRequest) -> JsonResponse:
             request,
             action="db.import_term_sections",
             status="error",
-            details={"csv_path": csv_path, "academic_year": academic_year, "term": term, "source_tag": source_tag},
+            details={
+                "csv_path": csv_path,
+                "academic_year": academic_year,
+                "term": term,
+                "source_tag": source_tag,
+            },
             error_text=str(exc),
         )
         return JsonResponse({"error": str(exc)}, status=400)
 
 
+@role_required(ROLE_SUPER_ADMIN)
 @require_POST
 def db_preview_oracle_plan_view(request: HttpRequest) -> JsonResponse:
-    payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    payload, err = _parse_json_body(request)
+    if err:
+        return err
     filepath = str(payload.get("filepath", "")).strip()
     program = str(payload.get("program", "")).strip()
 
@@ -297,9 +341,12 @@ def db_preview_oracle_plan_view(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": str(exc)}, status=400)
 
 
+@role_required(ROLE_SUPER_ADMIN)
 @require_POST
 def db_import_oracle_plan_view(request: HttpRequest) -> JsonResponse:
-    payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    payload, err = _parse_json_body(request)
+    if err:
+        return err
     program = str(payload.get("program", "")).strip()
     rows = payload.get("rows", [])
     replace_existing = bool(payload.get("replace_existing", False))
@@ -352,6 +399,7 @@ def db_import_oracle_plan_view(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": str(exc)}, status=400)
 
 
+@role_required(ROLE_SUPER_ADMIN)
 @require_POST
 def db_backup_snapshot_view(request: HttpRequest) -> JsonResponse:
     result = create_backup_snapshot()
@@ -364,6 +412,7 @@ def db_backup_snapshot_view(request: HttpRequest) -> JsonResponse:
     return JsonResponse(result)
 
 
+@role_required(ROLE_SUPER_ADMIN)
 @require_GET
 def db_integrity_report_view(request: HttpRequest) -> JsonResponse:
     result = run_integrity_checks()
@@ -371,19 +420,28 @@ def db_integrity_report_view(request: HttpRequest) -> JsonResponse:
         request,
         action="db.integrity_report",
         status="success",
-        details={"ok": result.get("ok", False), "issues_count": len(result.get("issues", [])) if isinstance(result.get("issues"), list) else 0},
+        details={
+            "ok": result.get("ok", False),
+            "issues_count": len(result.get("issues", []))
+            if isinstance(result.get("issues"), list)
+            else 0,
+        },
     )
     return JsonResponse(result)
 
 
+@role_required(ROLE_SUPER_ADMIN)
 @require_GET
 def db_list_external_courses_view(request: HttpRequest) -> JsonResponse:
     return JsonResponse(list_external_courses())
 
 
+@role_required(ROLE_SUPER_ADMIN)
 @require_POST
 def db_delete_external_courses_view(request: HttpRequest) -> JsonResponse:
-    payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    payload, err = _parse_json_body(request)
+    if err:
+        return err
     confirm = str(payload.get("confirm", ""))
     if confirm != "DELETE":
         log_audit_event(
@@ -392,9 +450,7 @@ def db_delete_external_courses_view(request: HttpRequest) -> JsonResponse:
             status="error",
             error_text="missing confirm=DELETE",
         )
-        return JsonResponse(
-            {"error": "Confirmation required: send confirm=DELETE"}, status=400
-        )
+        return JsonResponse({"error": "Confirmation required: send confirm=DELETE"}, status=400)
 
     raw_ids = payload.get("course_ids")
     course_ids = [int(x) for x in raw_ids] if isinstance(raw_ids, list) else None

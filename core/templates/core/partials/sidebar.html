@@ -125,9 +125,9 @@
             <div class="u-nm">{{ user.username }}</div>
             {% if role %}
               <div class="u-rl">
-                {% if role == "SUPER_ADMIN" %}super_admin
-                {% elif role == "GENERAL_ACADEMIC_ADVISOR" %}gen_advisor
-                {% elif role == "ADVISOR" %}advisor
+                {% if role == "SUPER_ADMIN" %}{% if LANGUAGE_CODE == 'ar' %}مدير النظام{% else %}Super Admin{% endif %}
+                {% elif role == "GENERAL_ACADEMIC_ADVISOR" %}{% if LANGUAGE_CODE == 'ar' %}مرشد عام{% else %}General Advisor{% endif %}
+                {% elif role == "ADVISOR" %}{% if LANGUAGE_CODE == 'ar' %}مرشد{% else %}Advisor{% endif %}
                 {% else %}{{ role|lower }}
                 {% endif %}
               </div>

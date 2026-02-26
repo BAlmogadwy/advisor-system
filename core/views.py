@@ -65,9 +65,9 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     student_id_raw = request.GET.get("student_id", "").strip()
 
     # Fall back to saved global defaults when year/semester not in GET params
-    _defaults      = load_defaults()
-    year_raw       = request.GET.get("year",     "").strip() or str(_defaults["academic_year"])
-    semester_raw   = request.GET.get("semester", "").strip() or str(_defaults["term"])
+    _defaults = load_defaults()
+    year_raw = request.GET.get("year", "").strip() or str(_defaults["academic_year"])
+    semester_raw = request.GET.get("semester", "").strip() or str(_defaults["term"])
 
     programs = list(
         ProgrammeRequirement.objects.exclude(program__isnull=True)

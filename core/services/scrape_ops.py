@@ -98,10 +98,15 @@ def start_batch_scrape(concurrency: int = 2, students_csv: str | None = None) ->
     _ensure_runtime_dir()
 
     cmd = [
-        sys.executable, str(BASE_DIR / "manage.py"), "scrape_students",
-        "--csv", csv_path,
-        "--concurrency", str(concurrency),
-        "--debug-dir", str(BASE_DIR / "data" / "debug_failures"),
+        sys.executable,
+        str(BASE_DIR / "manage.py"),
+        "scrape_students",
+        "--csv",
+        csv_path,
+        "--concurrency",
+        str(concurrency),
+        "--debug-dir",
+        str(BASE_DIR / "data" / "debug_failures"),
     ]
 
     with LOG_PATH.open("w", encoding="utf-8") as logf:

@@ -58,13 +58,19 @@ def allowed_programs_for_request(request: HttpRequest) -> set[str] | None:
     if not own_advisor:
         return set()
 
-    programs = Student.objects.filter(
-        advisor_id=own_advisor,
-    ).exclude(
-        program__isnull=True,
-    ).exclude(
-        program="",
-    ).values_list("program", flat=True).distinct()
+    programs = (
+        Student.objects.filter(
+            advisor_id=own_advisor,
+        )
+        .exclude(
+            program__isnull=True,
+        )
+        .exclude(
+            program="",
+        )
+        .values_list("program", flat=True)
+        .distinct()
+    )
     return {str(p).strip().upper() for p in programs if p is not None}
 
 

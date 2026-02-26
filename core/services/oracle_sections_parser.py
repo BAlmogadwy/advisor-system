@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import re
 from pathlib import Path
+from typing import Any
 
 from bs4 import BeautifulSoup
 
@@ -23,7 +24,7 @@ def read_html(path: Path) -> str:
         return data.decode("cp1256", errors="replace")
 
 
-def get_bg(td) -> str:
+def get_bg(td: Any) -> str:  # BeautifulSoup Tag
     bg = (td.get("bgcolor") or "").strip().lower()
     if bg:
         return bg
@@ -32,12 +33,12 @@ def get_bg(td) -> str:
     return m.group(1).strip().lower() if m else ""
 
 
-def is_red(td) -> bool:
+def is_red(td: Any) -> bool:  # BeautifulSoup Tag
     bg = get_bg(td).replace(" ", "").lower()
     return bg in ("#ff0000", "red") or bg.startswith("rgb(255,0,0)")
 
 
-def is_small_filler_td(td) -> bool:
+def is_small_filler_td(td: Any) -> bool:  # BeautifulSoup Tag
     cs = int(td.get("colspan") or 1)
     if cs != 1:
         return False
@@ -49,7 +50,7 @@ def is_small_filler_td(td) -> bool:
     return True
 
 
-def keep_td(td) -> bool:
+def keep_td(td: Any) -> bool:  # BeautifulSoup Tag
     return not is_small_filler_td(td)
 
 

@@ -47,7 +47,9 @@ def test_missing_high_priority_report_endpoint(monkeypatch: MonkeyPatch) -> None
     assert payload["items"][0]["student_id"] == 4410001
 
 
-def test_export_missing_high_priority_xlsx_endpoint(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
+def test_export_missing_high_priority_xlsx_endpoint(
+    monkeypatch: MonkeyPatch, tmp_path: Path
+) -> None:
     _login_superadmin()
     out_file = tmp_path / "flagged_students_missing_high_priority.xlsx"
     out_file.write_bytes(b"dummy-xlsx")

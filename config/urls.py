@@ -15,16 +15,15 @@ Including another URLconf
     1. Import the include() function: from django.urls import include, path
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
+
 from django.contrib import admin
 from django.urls import include, path
 
 urlpatterns = [
     path("admin/", admin.site.urls),
-
     # Django built-in language switching endpoints:
     # POST /i18n/setlang/  (used by your sidebar form)
     path("i18n/", include("django.conf.urls.i18n")),
-
     # App routes (dashboard panels + standalone pages)
     path("", include("core.urls")),
 ]

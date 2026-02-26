@@ -27,7 +27,7 @@ def test_visualizer_prereqs_and_programs() -> None:
     assert {"CS", "SE"}.issubset(set(get_all_programs()))
     exact = get_prerequisites_visualizer_style("CS 300", "CS")
     assert exact == ["CS 201", "MATH 101"]
-    assert normalize_code("CS\u00A0300") == "CS300"
+    assert normalize_code("CS\u00a0300") == "CS300"
 
 
 def test_parser_handles_logout_and_table_parsing() -> None:

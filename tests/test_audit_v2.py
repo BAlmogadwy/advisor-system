@@ -40,7 +40,7 @@ def test_audit_explorer_page_and_csv() -> None:
     assert "text/csv" in csv_resp["Content-Type"]
 
 
-def test_policy_reason_code_and_hash_chain_present(monkeypatch) -> None:
+def test_policy_reason_code_and_hash_chain_present(monkeypatch: pytest.MonkeyPatch) -> None:
     _login_as("audit-general", ROLE_GENERAL_ADVISOR, departments="AI")
 
     monkeypatch.setattr("core.report_views.build_aggregate_counts", lambda **kwargs: (0, {}))

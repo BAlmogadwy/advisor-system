@@ -13,23 +13,24 @@ import re
 from collections import OrderedDict
 from typing import Any
 
-
 # ═══════════════════════════════════════════════════════════════════════
 #  Constants
 # ═══════════════════════════════════════════════════════════════════════
 
-LEVEL_MAP: OrderedDict[str, tuple[str, int]] = OrderedDict([
-    ("FIRST",   ("الأول",   1)),
-    ("SECOND",  ("الثاني",  2)),
-    ("THIRD",   ("الثالث",  3)),
-    ("FOURTH",  ("الرابع",  4)),
-    ("FIFTH",   ("الخامس",  5)),
-    ("SIXTH",   ("السادس",  6)),
-    ("SEVENTH", ("السابع",  7)),
-    ("EIGHTH",  ("الثامن",  8)),
-    ("NINTH",   ("التاسع",  9)),
-    ("TENTH",   ("العاشر", 10)),
-])
+LEVEL_MAP: OrderedDict[str, tuple[str, int]] = OrderedDict(
+    [
+        ("FIRST", ("الأول", 1)),
+        ("SECOND", ("الثاني", 2)),
+        ("THIRD", ("الثالث", 3)),
+        ("FOURTH", ("الرابع", 4)),
+        ("FIFTH", ("الخامس", 5)),
+        ("SIXTH", ("السادس", 6)),
+        ("SEVENTH", ("السابع", 7)),
+        ("EIGHTH", ("الثامن", 8)),
+        ("NINTH", ("التاسع", 9)),
+        ("TENTH", ("العاشر", 10)),
+    ]
+)
 
 COURSE_KEYWORDS: list[str] = ["مقرر", "إختياري"]
 MIN_COURSE_FIELDS: int = 41
@@ -47,6 +48,7 @@ COURSE_TYPE_MAP: dict[str, str] = {
 # ═══════════════════════════════════════════════════════════════════════
 #  Utility Functions
 # ═══════════════════════════════════════════════════════════════════════
+
 
 def detect_delimiter(first_line: str) -> str:
     """Auto-detect the delimiter used in the Oracle export."""
@@ -99,6 +101,7 @@ def map_course_type(oracle_type: str) -> str:
 #  Core Parser
 # ═══════════════════════════════════════════════════════════════════════
 
+
 def parse_oracle_plan(filepath: str, encoding: str = "windows-1256") -> dict[str, Any]:
     """Parse an Oracle study plan export file.
 
@@ -109,7 +112,7 @@ def parse_oracle_plan(filepath: str, encoding: str = "windows-1256") -> dict[str
     Returns:
         A dict with keys ``metadata``, ``levels``, ``summary``, ``warnings``.
     """
-    with open(filepath, "r", encoding=encoding) as f:
+    with open(filepath, encoding=encoding) as f:
         content = f.read()
 
     lines = [line.rstrip("\r") for line in content.strip().split("\n")]
@@ -123,8 +126,8 @@ def parse_oracle_plan(filepath: str, encoding: str = "windows-1256") -> dict[str
     f0 = lines[0].split(delim)
     metadata: dict[str, str] = {
         "college_ar": strip_trailing_id(f0[3]) if len(f0) > 3 else "",
-        "dept_ar":    strip_trailing_id(f0[5]) if len(f0) > 5 else "",
-        "major_ar":   strip_trailing_id(f0[7]) if len(f0) > 7 else "",
+        "dept_ar": strip_trailing_id(f0[5]) if len(f0) > 5 else "",
+        "major_ar": strip_trailing_id(f0[7]) if len(f0) > 7 else "",
         "study_type": f0[1].strip().split(" ")[0] if len(f0) > 1 else "",
     }
 
@@ -137,9 +140,7 @@ def parse_oracle_plan(filepath: str, encoding: str = "windows-1256") -> dict[str
         n = len(fields)
 
         # COURSE LINE: 41+ fields with keyword at [29]
-        if n >= MIN_COURSE_FIELDS and any(
-            kw in fields[29].strip() for kw in COURSE_KEYWORDS
-        ):
+        if n >= MIN_COURSE_FIELDS and any(kw in fields[29].strip() for kw in COURSE_KEYWORDS):
             if current is not None:
                 courses.append(current)
 
@@ -151,10 +152,7 @@ def parse_oracle_plan(filepath: str, encoding: str = "windows-1256") -> dict[str
                 credits = int(credits_raw)
             except ValueError:
                 credits = 0
-                warnings.append(
-                    f"Non-numeric credits '{credits_raw}' for "
-                    f"{fields[36]}{fields[39]}"
-                )
+                warnings.append(f"Non-numeric credits '{credits_raw}' for {fields[36]}{fields[39]}")
 
             raw_prereqs: list[str] = []
             prereq_label = fields[42].strip() if n > 42 else ""
@@ -167,21 +165,19 @@ def parse_oracle_plan(filepath: str, encoding: str = "windows-1256") -> dict[str
                     raw_prereqs.append(p)
 
             current = {
-                "level_en":     level_en,
-                "level_ar":     level_ar,
+                "level_en": level_en,
+                "level_ar": level_ar,
                 "level_number": level_num,
-                "seq":          fields[37].strip(),
-                "code":         normalize_code(
-                    f"{fields[36].strip()}{fields[39].strip()}"
-                ),
-                "code_ar":      f"{fields[30].strip()} {fields[31].strip()}",
-                "en_name":      fields[40].strip().upper(),
-                "ar_name":      fields[38].strip(),
-                "credits":      credits,
-                "delivery":     fields[41].strip(),
-                "course_type":  fields[29].strip(),
+                "seq": fields[37].strip(),
+                "code": normalize_code(f"{fields[36].strip()}{fields[39].strip()}"),
+                "code_ar": f"{fields[30].strip()} {fields[31].strip()}",
+                "en_name": fields[40].strip().upper(),
+                "ar_name": fields[38].strip(),
+                "credits": credits,
+                "delivery": fields[41].strip(),
+                "course_type": fields[29].strip(),
                 "_prereqs_raw": raw_prereqs,
-                "prereqs":      [],
+                "prereqs": [],
             }
             continue
 
@@ -207,7 +203,9 @@ def parse_oracle_plan(filepath: str, encoding: str = "windows-1256") -> dict[str
     for c in courses:
         seen: set[str] = set()
         c["prereqs"] = [
-            p for p in c["_prereqs_raw"] if p not in seen and not seen.add(p)  # type: ignore[func-returns-value]
+            p
+            for p in c["_prereqs_raw"]
+            if p not in seen and not seen.add(p)  # type: ignore[func-returns-value]
         ]
         del c["_prereqs_raw"]
 
@@ -216,9 +214,7 @@ def parse_oracle_plan(filepath: str, encoding: str = "windows-1256") -> dict[str
     for c in courses:
         for p in c["prereqs"]:
             if p not in all_codes:
-                warnings.append(
-                    f"{c['code']}: prerequisite '{p}' not found in plan"
-                )
+                warnings.append(f"{c['code']}: prerequisite '{p}' not found in plan")
 
     # ── Group by level (preserving Oracle order) ──
     levels: OrderedDict[str, dict[str, Any]] = OrderedDict()
@@ -226,10 +222,10 @@ def parse_oracle_plan(filepath: str, encoding: str = "windows-1256") -> dict[str
         key = c["level_en"]
         if key not in levels:
             levels[key] = {
-                "level_en":      key,
-                "level_ar":      c["level_ar"],
-                "level_number":  c["level_number"],
-                "courses":       [],
+                "level_en": key,
+                "level_ar": c["level_ar"],
+                "level_number": c["level_number"],
+                "courses": [],
                 "total_credits": 0,
             }
         levels[key]["courses"].append(c)
@@ -237,11 +233,11 @@ def parse_oracle_plan(filepath: str, encoding: str = "windows-1256") -> dict[str
 
     return {
         "metadata": metadata,
-        "levels":   levels,
+        "levels": levels,
         "summary": {
             "total_courses": len(courses),
             "total_credits": sum(c["credits"] for c in courses),
-            "total_levels":  len(levels),
+            "total_levels": len(levels),
         },
         "warnings": warnings,
     }

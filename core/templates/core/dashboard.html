@@ -1286,8 +1286,19 @@
       tbody.innerHTML = `<tr><td colspan="4" class="empty-note">${T.running}</td></tr>`;
     }
 
-    const res = await fetch(url);
-    const data = await res.json();
+    let res, data;
+    try {
+      res = await fetch(url);
+      data = await res.json();
+    } catch (err) {
+      if (tbody) tbody.innerHTML = `<tr><td colspan="4" class="text-danger">Network error</td></tr>`;
+      q('batchMetrics').style.display = 'none';
+      setUpdated('batchUpdated', true);
+      notify.error(T.batchLoadFailed, err.message || String(err));
+      runBtn.disabled = false;
+      runBtn.textContent = T.runPreview;
+      return;
+    }
 
     q('batchCsv').href = `/export/aggregate.csv?year=${year}&semester=${semester}&program=${encodeURIComponent(program)}&section=${encodeURIComponent(section)}`;
     q('batchSummary').href = url;
@@ -1457,8 +1468,16 @@
     btn.textContent = T.loading;
 
     const program = q('preProgram').value, code = q('preCourse').value;
-    const res = await fetch(`/report/prerequisites/?program=${encodeURIComponent(program)}&course_code=${encodeURIComponent(code)}`);
-    const data = await res.json();
+    let res, data;
+    try {
+      res = await fetch(`/report/prerequisites/?program=${encodeURIComponent(program)}&course_code=${encodeURIComponent(code)}`);
+      data = await res.json();
+    } catch (err) {
+      notify.error(T.noPrereqRows, err.message || String(err));
+      setUpdated('preUpdated', true);
+      btn.disabled = false; btn.textContent = T.load;
+      return;
+    }
 
     const tbody = document.querySelector('#preTable tbody');
     const preGraph = q('preGraph');
@@ -1503,8 +1522,15 @@
     if (!meta || !tbody) return;
 
     meta.textContent = `Loading prerequisites for ${courseCode}...`;
-    const res = await fetch(`/report/prerequisites/?program=${encodeURIComponent(program)}&course_code=${encodeURIComponent(courseCode)}`);
-    const data = await res.json();
+    let res, data;
+    try {
+      res = await fetch(`/report/prerequisites/?program=${encodeURIComponent(program)}&course_code=${encodeURIComponent(courseCode)}`);
+      data = await res.json();
+    } catch (err) {
+      meta.textContent = `Failed to load prerequisites for ${courseCode}.`;
+      notify.error('Failed to load prerequisites', err.message || String(err));
+      return;
+    }
 
     if (!res.ok || !Array.isArray(data.items) || data.items.length === 0) {
       meta.textContent = `No prerequisites found for ${courseCode} in program ${program}.`;
@@ -1525,8 +1551,17 @@
     btn.textContent = T.loading;
 
     const program = q('planProgram').value;
-    const res = await fetch(`/report/program-plan/?program=${encodeURIComponent(program)}`);
-    const data = await res.json();
+    let res, data;
+    try {
+      res = await fetch(`/report/program-plan/?program=${encodeURIComponent(program)}`);
+      data = await res.json();
+    } catch (err) {
+      notify.error(T.noPlanRows, err.message || String(err));
+      setUpdated('planUpdated', true);
+      btn.disabled = false;
+      btn.textContent = T.loadPlan;
+      return;
+    }
 
     const tbody = document.querySelector('#planTable tbody');
     const termBars = q('termBars');
@@ -1935,8 +1970,27 @@
     q('loadStudentPlan').innerHTML = `<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>${T.loading}`;
     container.innerHTML = `<div class="empty-note">${T.loadingPlanMatrix}</div>`;
 
-    const res = await fetch(`/report/student-plan/?student_id=${encodeURIComponent(studentId)}`);
-    const data = await res.json();
+    let res, data;
+    try {
+      res = await fetch(`/report/student-plan/?student_id=${encodeURIComponent(studentId)}`);
+      data = await res.json();
+    } catch (err) {
+      meta.textContent = T.failedLoadPlan;
+      container.innerHTML = `<div class="empty-note">${T.failedRenderPlan}</div>`;
+      q('studentPlanRiskAlerts').innerHTML = '';
+      q('studentPlanTopImportant').innerHTML = '';
+      q('studentPlanHints').innerHTML = '';
+      q('studentPlanActionPlan').innerHTML = '';
+      studentPlanSelectedCourse = null;
+      renderCourseDrawer();
+      q('studentPlanMetrics').style.display = 'none';
+      q('studentPlanActions').style.display = 'none';
+      q('studentPlanLegend').style.display = 'none';
+      q('loadStudentPlan').disabled = false;
+      q('loadStudentPlan').innerHTML = `<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>${T.loadPlanBtn}`;
+      notify.error(T.failedLoadPlan, err.message || String(err));
+      return;
+    }
 
     if (!res.ok || !Array.isArray(data.terms)) {
       meta.textContent = preciseError(res, data, T.failedLoadPlan);
@@ -2067,8 +2121,15 @@
   }
 
   async function refreshScrapeStatus() {
-    const res = await fetch('/ops/scrape/status/');
-    const data = await res.json();
+    let res, data;
+    try {
+      res = await fetch('/ops/scrape/status/');
+      data = await res.json();
+    } catch (err) {
+      console.error('[refreshScrapeStatus] Network error:', err);
+      notify.error('Failed to refresh scrape status', err.message || String(err));
+      return;
+    }
 
     const hasFailureTrace = typeof data.log_tail === 'string' && data.log_tail.includes('Traceback');
     let statusHtml = '<span class="status-dot status-stopped"></span>' + T.idle;
@@ -2163,8 +2224,10 @@
       const res = await fetch(url);
       const data = await res.json();
       q('scrapeMeta').textContent = JSON.stringify(data, null, 2);
+      if (!res.ok) notify.error(T.failedStartScrape(data.error || res.statusText));
     } catch (err) {
       q('scrapeMeta').textContent = T.failedStartScrape(err);
+      notify.error('Failed to start scrape', err.message || String(err));
     }
     await refreshScrapeStatus();
   };
@@ -2182,8 +2245,10 @@
       const res = await fetch('/ops/scrape/stop/');
       const data = await res.json();
       q('scrapeMeta').textContent = JSON.stringify(data, null, 2);
+      if (!res.ok) notify.error(T.failedStopScrape(data.error || res.statusText));
     } catch (err) {
       q('scrapeMeta').textContent = T.failedStopScrape(err);
+      notify.error('Failed to stop scrape', err.message || String(err));
     }
     await refreshScrapeStatus();
   };

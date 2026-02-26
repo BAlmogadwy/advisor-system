@@ -1,6 +1,7 @@
 import csv
 import hashlib
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from io import StringIO
 from typing import Any
@@ -8,6 +9,8 @@ from typing import Any
 from django.http import HttpRequest
 
 from core.models import AuditLog
+
+logger = logging.getLogger(__name__)
 
 
 def ensure_audit_schema() -> None:
@@ -58,7 +61,9 @@ def _parse_ts(raw: str) -> datetime | None:
         return None
 
 
-def _emit_security_alert(request: HttpRequest | None, *, rule: str, details: dict[str, Any]) -> None:
+def _emit_security_alert(
+    request: HttpRequest | None, *, rule: str, details: dict[str, Any]
+) -> None:
     try:
         ts_utc = datetime.now(UTC).isoformat()
         actor_username = "system"
@@ -116,21 +121,29 @@ def _check_critical_alerts(
     if status == "error" and (action.startswith("db.") or action.startswith("advisor.")):
         try:
             cutoff = (datetime.now(UTC) - timedelta(minutes=10)).isoformat()
-            count = AuditLog.objects.filter(
-                ts_utc__gte=cutoff,
-                actor_username=actor_username,
-                status="error",
-            ).filter(
-                models_Q_action_db_or_advisor(),
-            ).count()
+            count = (
+                AuditLog.objects.filter(
+                    ts_utc__gte=cutoff,
+                    actor_username=actor_username,
+                    status="error",
+                )
+                .filter(
+                    models_Q_action_db_or_advisor(),
+                )
+                .count()
+            )
             if count >= 3:
                 _emit_security_alert(
                     request,
                     rule="REPEATED_FAILED_ADMIN_MUTATIONS",
-                    details={"actor_username": actor_username, "window_minutes": 10, "count": count},
+                    details={
+                        "actor_username": actor_username,
+                        "window_minutes": 10,
+                        "count": count,
+                    },
                 )
         except Exception:
-            pass
+            logger.warning("Security alert check failed", exc_info=True)
 
     # 2) unusual bulk assignment patterns
     if action == "advisor.assign_students" and status == "success":
@@ -141,12 +154,17 @@ def _check_critical_alerts(
             _emit_security_alert(
                 request,
                 rule="UNUSUAL_BULK_ASSIGNMENT",
-                details={"actor_username": actor_username, "updated": updated, "received": received},
+                details={
+                    "actor_username": actor_username,
+                    "updated": updated,
+                    "received": received,
+                },
             )
 
 
-def models_Q_action_db_or_advisor():
+def models_Q_action_db_or_advisor() -> object:
     from django.db.models import Q
+
     return Q(action__startswith="db.") | Q(action__startswith="advisor.")
 
 
@@ -159,11 +177,17 @@ def log_audit_event(
     error_text: str = "",
 ) -> None:
     try:
-        actor_username = request.user.username if getattr(request, "user", None) and request.user.is_authenticated else ""
+        actor_username = (
+            request.user.username
+            if getattr(request, "user", None) and request.user.is_authenticated
+            else ""
+        )
         actor_role = ""
         if getattr(request, "user", None) and request.user.is_authenticated:
             groups = list(request.user.groups.values_list("name", flat=True))
-            actor_role = groups[0] if groups else ("SUPER_ADMIN" if request.user.is_superuser else "")
+            actor_role = (
+                groups[0] if groups else ("SUPER_ADMIN" if request.user.is_superuser else "")
+            )
 
         ts_utc = datetime.now(UTC).isoformat()
         endpoint = request.path

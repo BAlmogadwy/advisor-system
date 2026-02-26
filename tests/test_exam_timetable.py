@@ -366,7 +366,7 @@ def test_preview_courses() -> None:
     assert len(enrolled) == 4
     courses = sorted(
         [{"course_code": cc, "enrolled_count": len(sids)} for cc, sids in enrolled.items()],
-        key=lambda c: c["course_code"],
+        key=lambda c: str(c["course_code"]),
     )
     assert courses[0] == {"course_code": "EX101", "enrolled_count": 2}
     assert courses[1] == {"course_code": "EX102", "enrolled_count": 2}
@@ -505,7 +505,7 @@ def test_export_exam_timetable_xlsx() -> None:
     assert path.suffix == ".xlsx"
 
     # Open with openpyxl and verify structure
-    from openpyxl import load_workbook
+    from openpyxl import load_workbook  # type: ignore[import-untyped]
 
     wb = load_workbook(path)
     sheet_names = wb.sheetnames

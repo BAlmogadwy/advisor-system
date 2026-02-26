@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 import os
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
 from django.utils.translation import gettext_lazy as _
 from dotenv import load_dotenv
 
@@ -26,16 +27,23 @@ load_dotenv(BASE_DIR / ".env")
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "django-insecure-dev-only-change-me")
-
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv("DJANGO_DEBUG", "true").lower() == "true"
+DEBUG = os.getenv("DJANGO_DEBUG", "false").lower() == "true"
+
+# SECURITY WARNING: keep the secret key used in production secret!
+_secret_key_env = os.getenv("DJANGO_SECRET_KEY", "")
+if _secret_key_env:
+    SECRET_KEY = _secret_key_env
+elif DEBUG:
+    # Allow insecure fallback ONLY in local development (DEBUG=True)
+    SECRET_KEY = "django-insecure-dev-only-change-me"  # noqa: S105
+else:
+    raise ImproperlyConfigured(
+        "DJANGO_SECRET_KEY environment variable is required when DEBUG is False."
+    )
 
 ALLOWED_HOSTS: list[str] = [
-    h.strip()
-    for h in os.getenv("DJANGO_ALLOWED_HOSTS", "").split(",")
-    if h.strip()
+    h.strip() for h in os.getenv("DJANGO_ALLOWED_HOSTS", "").split(",") if h.strip()
 ]
 
 
@@ -54,10 +62,8 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
-
     # Must be after SessionMiddleware and before CommonMiddleware.
     "django.middleware.locale.LocaleMiddleware",
-
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",

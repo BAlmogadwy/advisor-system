@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNS = ROOT / "agent_runs"
@@ -39,14 +41,14 @@ NEXT_STAGE = {
 class Decision:
     ok: bool
     msg: str
-    next_stage: Optional[str] = None
+    next_stage: str | None = None
 
 
 def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
-def parse_status(md_text: str) -> Optional[str]:
+def parse_status(md_text: str) -> str | None:
     for line in md_text.splitlines():
         if line.strip().startswith("- STATUS:"):
             raw = line.split(":", 1)[1].strip().upper()
@@ -127,17 +129,17 @@ def process_task(task_dir: Path) -> Decision:
 
 def main() -> int:
     if not RUNS.exists():
-        print("agent_runs directory not found")
+        logger.warning("agent_runs directory not found")
         return 1
 
     task_dirs = [p for p in RUNS.iterdir() if p.is_dir() and not p.name.startswith("templates")]
     if not task_dirs:
-        print("no tasks")
+        logger.info("no tasks")
         return 0
 
     for t in sorted(task_dirs):
         d = process_task(t)
-        print(d.msg)
+        logger.info(d.msg)
     return 0
 
 

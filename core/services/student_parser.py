@@ -1,8 +1,11 @@
+import logging
 import re
 
 from bs4 import BeautifulSoup
 
 from core.services.student_helpers import normalize_code
+
+logger = logging.getLogger(__name__)
 
 
 def _is_logout_or_service_page(html: str) -> bool:
@@ -149,13 +152,13 @@ def parse_student_profile(html_content):
     result = {}
 
     field_map = {
-        "Student Name":   ("name",                      str),
-        "Nationality":    ("nationality",                str),
-        "Student Status": ("status",                     str),
-        "Student Group":  ("status",                     str),
-        "T.U.Registered": ("total_registered_credits",   int),
-        "T.U.Earned":     ("total_earned_credits",       int),
-        "G.P.A":          ("gpa",                        float),
+        "Student Name": ("name", str),
+        "Nationality": ("nationality", str),
+        "Student Status": ("status", str),
+        "Student Group": ("status", str),
+        "T.U.Registered": ("total_registered_credits", int),
+        "T.U.Earned": ("total_earned_credits", int),
+        "G.P.A": ("gpa", float),
     }
 
     for row in profile_table.find_all("tr"):
@@ -249,7 +252,7 @@ def parse_timetable(html_content, verbose=True):
         raw_code = f"{dept} {number}"
         normal_code = normalize_code(raw_code)
         if verbose:
-            print(f"🧪 Timetable Course Parsed: {raw_code} → {normal_code}")
+            logger.debug("Timetable Course Parsed: %s -> %s", raw_code, normal_code)
         timetable_courses.add(normal_code)
 
     return timetable_courses

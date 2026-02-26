@@ -472,13 +472,19 @@ function apiError(res, data, fallback) {
 }
 
 async function apiPost(url, payload) {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: csrfHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify(payload),
-  });
-  const data = await res.json();
-  return { res, data };
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: csrfHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    return { res, data };
+  } catch (err) {
+    notify.error(T.networkError, err.message || String(err));
+    /* Return a synthetic failed response so callers' res.ok checks still work */
+    return { res: { ok: false, status: 0, statusText: 'Network Error' }, data: { error: err.message || String(err) } };
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════════

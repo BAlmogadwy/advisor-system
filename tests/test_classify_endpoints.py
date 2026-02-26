@@ -1,9 +1,19 @@
 import json
 
+import pytest
+from django.contrib.auth.models import User
 from django.test.client import Client
+
+pytestmark = pytest.mark.django_db
+
+
+def _login(client: Client) -> None:
+    user, _ = User.objects.get_or_create(username="test-user")
+    client.force_login(user)
 
 
 def test_classify_endpoint_success(client: Client) -> None:
+    _login(client)
     payload = {
         "study_plan": [
             {"dept": "CS", "no": "101", "marks": "", "letter": "A"},
@@ -23,6 +33,7 @@ def test_classify_endpoint_success(client: Client) -> None:
 
 
 def test_parse_and_classify_endpoint_success(client: Client) -> None:
+    _login(client)
     study_html = """
     <html><body>
     <table dir='rtl'>

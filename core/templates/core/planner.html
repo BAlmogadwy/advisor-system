@@ -367,10 +367,10 @@
     .avail-sec-row:hover { filter: brightness(0.97); }
 
     /* 4-color status — project palette */
-    .sec-teal  { background: var(--teal-dim); border-left: 3px solid var(--teal); }
-    .sec-rose  { background: var(--rose-dim); border-left: 3px solid var(--rose); }
-    .sec-red   { background: rgba(192,48,48,0.06); border-left: 3px solid var(--danger); }
-    .sec-gray  { background: rgba(17,17,68,0.04); border-left: 3px solid var(--t5); }
+    .sec-teal  { background: var(--teal-dim); border-inline-start: 3px solid var(--teal); }
+    .sec-rose  { background: var(--rose-dim); border-inline-start: 3px solid var(--rose); }
+    .sec-red   { background: rgba(192,48,48,0.06); border-inline-start: 3px solid var(--danger); }
+    .sec-gray  { background: rgba(17,17,68,0.04); border-inline-start: 3px solid var(--t5); }
 
     .sec-dot {
       width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
@@ -1154,6 +1154,7 @@ async function renderPlanPalette(studentId){
     if(!terms.length) wrap.innerHTML=`<span class="text-secondary">${T.noCoursesFoundStudentPlan}</span>`;
   }catch(e){
     wrap.innerHTML=`<span class="text-danger">${T.failedLoadStudentPlanPanel}</span>`;
+    notify.error(T.failedLoadStudentPlanPanel, e.message || String(e));
   }
 }
 
@@ -1361,6 +1362,7 @@ async function renderAvailableSections(){
     }
   }catch(e){
     grid.innerHTML=`<span class="text-danger">${IS_AR?'فشل تحميل الشعب المتاحة':'Failed to load available sections'}</span>`;
+    notify.error(IS_AR?'فشل تحميل الشعب المتاحة':'Failed to load available sections', e.message || String(e));
     console.error('renderAvailableSections error:',e);
   }
 }
@@ -1401,18 +1403,25 @@ q('applyOption').onclick=async()=>{
   const ids=(opt.mappings||[]).map(m=>m.term_section_id).filter(Boolean);
   if(!ids.length){ setBanner('warning', T.noMappableInOption(name)); return; }
 
-  const r=await fetch('/ops/planner/save-student-sections/',{
-    method:'POST',
-    headers:{'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
-    body:JSON.stringify({
-      student_id:currentCtx.student_id,
-      academic_year:currentCtx.academic_year,
-      term:currentCtx.term,
-      term_section_ids:ids,
-      confirm_replace:true
-    })
-  });
-  const data=await r.json();
+  let r, data;
+  try{
+    r=await fetch('/ops/planner/save-student-sections/',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
+      body:JSON.stringify({
+        student_id:currentCtx.student_id,
+        academic_year:currentCtx.academic_year,
+        term:currentCtx.term,
+        term_section_ids:ids,
+        confirm_replace:true
+      })
+    });
+    data=await r.json();
+  }catch(err){
+    setBanner('danger', IS_AR?'فشل حفظ الشعب':'Failed to save sections');
+    notify.error(IS_AR?'فشل حفظ الشعب':'Failed to save sections', err.message||String(err));
+    return;
+  }
   if(data.error){ setBanner('danger', errMsg(data)); return; }
 
   setBanner('success', T.appliedOption(name, data.inserted||0));
@@ -1428,23 +1437,29 @@ q('runBuilder').onclick=async()=>{
   if(!currentCtx.student_id) return notify.warning(T.fetchStudentFirst);
   if(!currentCtx.academic_year || !currentCtx.term) return notify.warning(T.enterYearTerm);
 
-  const r=await fetch('/ops/planner/build/',{
-    method:'POST',
-    headers:{'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
-    body:JSON.stringify({
-      academic_year:currentCtx.academic_year,
-      term:currentCtx.term,
-      mode:q('mode').value,
-      swap:q('swap').checked,
-      strict_sections:q('strictSections')?.checked||false,
-      ignore_capacity:q('ignoreCapacity')?.checked||false,
-      max_credits:Number(q('maxCredits')?.value||0),
-      shortlist,
-      baseline:currentBaseline
-    })
-  });
-
-  const data=await r.json();
+  let r, data;
+  try{
+    r=await fetch('/ops/planner/build/',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
+      body:JSON.stringify({
+        academic_year:currentCtx.academic_year,
+        term:currentCtx.term,
+        mode:q('mode').value,
+        swap:q('swap').checked,
+        strict_sections:q('strictSections')?.checked||false,
+        ignore_capacity:q('ignoreCapacity')?.checked||false,
+        max_credits:Number(q('maxCredits')?.value||0),
+        shortlist,
+        baseline:currentBaseline
+      })
+    });
+    data=await r.json();
+  }catch(err){
+    setBanner('danger', IS_AR?'فشل تشغيل المُنشئ':'Builder request failed');
+    notify.error(IS_AR?'فشل تشغيل المُنشئ':'Builder request failed', err.message||String(err));
+    return;
+  }
   if(data.error){setBanner('danger', errMsg(data)); return;}
 
   const s=data.summary||{};
@@ -1559,17 +1574,24 @@ q('fetchBtn').onclick=async()=>{
   q('fetchState').textContent = IS_AR ? 'جارٍ التحميل...' : 'Loading...';
   setBanner('info', IS_AR ? 'جارٍ جلب بيانات الطالب...' : 'Fetching student context...');
 
-  const r=await fetch('/ops/planner/context/',{
-    method:'POST',
-    headers:{'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
-    body:JSON.stringify({
-      student_id:q('studentId').value,
-      academic_year:q('year').value,
-      term:q('term').value
-    })
-  });
-
-  const data=await r.json();
+  let r, data;
+  try{
+    r=await fetch('/ops/planner/context/',{
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
+      body:JSON.stringify({
+        student_id:q('studentId').value,
+        academic_year:q('year').value,
+        term:q('term').value
+      })
+    });
+    data=await r.json();
+  }catch(err){
+    q('fetchState').textContent = IS_AR ? 'خطأ' : 'Error';
+    setBanner('danger', IS_AR?'فشل جلب بيانات الطالب':'Failed to fetch student context');
+    notify.error(IS_AR?'فشل جلب بيانات الطالب':'Failed to fetch student context', err.message||String(err));
+    return;
+  }
   if(data.error){
     q('fetchState').textContent = IS_AR ? 'خطأ' : 'Error';
     setBanner('danger', errMsg(data));

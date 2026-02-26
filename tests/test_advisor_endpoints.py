@@ -112,7 +112,7 @@ def test_assign_students_advisors_endpoint(monkeypatch: MonkeyPatch) -> None:
 def test_advisor_upsert_duplicate_email_error(monkeypatch: MonkeyPatch) -> None:
     _login_superadmin()
 
-    def _boom(advisor_id, full_name, email, department):
+    def _boom(advisor_id: str, full_name: str, email: str, department: str) -> None:
         raise Exception("UNIQUE constraint failed: academic_advisors.email")
 
     monkeypatch.setattr("core.advisor_views.upsert_academic_advisor", _boom)
@@ -131,7 +131,7 @@ def test_students_by_advisor_endpoint(monkeypatch: MonkeyPatch) -> None:
     _login_superadmin()
     seen: dict[str, object] = {}
 
-    def fake_list(advisor_id, **kwargs):
+    def fake_list(advisor_id: str, **kwargs: object) -> dict[str, object]:
         seen["advisor_id"] = advisor_id
         seen.update(kwargs)
         return {
