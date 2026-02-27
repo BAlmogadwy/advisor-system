@@ -42,8 +42,8 @@
       margin-bottom: 1rem; align-items: flex-end;
       padding: 0.75rem 1rem;
       background: rgba(255,255,255,0.40);
-      backdrop-filter: blur(20px) saturate(130%);
-      -webkit-backdrop-filter: blur(20px) saturate(130%);
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
       border: none; border-radius: var(--radius);
       box-shadow: 5px 5px 14px rgba(163,177,198,0.25),
                   -5px -5px 14px rgba(255,255,255,0.75);
@@ -52,8 +52,8 @@
     .audit-filter-row .form-select { max-width: 180px; }
     .audit-table-wrap {
       background: rgba(255,255,255,0.45);
-      backdrop-filter: blur(20px) saturate(130%);
-      -webkit-backdrop-filter: blur(20px) saturate(130%);
+      backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
       border: none; border-radius: 14px;
       overflow-x: auto; overflow-y: auto;
       max-height: 520px;
@@ -82,9 +82,9 @@
       display: inline-flex; align-items: center; gap: 0.4rem;
       padding: 0.35rem 1rem; border-radius: 14px;
       font-size: 0.82rem; font-weight: 600;
-      background: rgba(255,255,255,0.6); color: var(--teal);
+      background: var(--glass-bg); color: var(--teal);
       text-decoration: none;
-      box-shadow: 3px 3px 8px rgba(163,177,198,0.3), -3px -3px 8px rgba(255,255,255,0.8);
+      box-shadow: var(--shadow-neu-sm);
       transition: all 0.15s;
     }
     .btn-export:hover { color: var(--teal-bright); box-shadow: 4px 4px 10px rgba(163,177,198,0.35), -4px -4px 10px rgba(255,255,255,0.85); }
@@ -102,8 +102,8 @@
     .audit-pagination {
       display: flex; align-items: center; justify-content: space-between;
       gap: 1rem; flex-wrap: wrap; padding: 0.75rem 1rem; margin-top: 0.75rem;
-      background: rgba(255,255,255,0.40); backdrop-filter: blur(20px) saturate(130%);
-      -webkit-backdrop-filter: blur(20px) saturate(130%);
+      background: rgba(255,255,255,0.40); backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
       border-radius: var(--radius);
       box-shadow: 5px 5px 14px rgba(163,177,198,0.25), -5px -5px 14px rgba(255,255,255,0.75);
       font-size: 0.82rem; color: var(--t3);
@@ -111,7 +111,7 @@
     .audit-page-nav { display: flex; align-items: center; gap: 0.35rem; }
     .audit-page-btn {
       width: 32px; height: 32px; border-radius: 8px; border: none;
-      background: rgba(255,255,255,0.6); color: var(--t3);
+      background: var(--glass-bg); color: var(--t3);
       font-size: 1rem; font-weight: 700; cursor: pointer;
       box-shadow: 2px 2px 5px rgba(163,177,198,0.25), -2px -2px 5px rgba(255,255,255,0.7);
       transition: all 0.15s;
@@ -326,7 +326,7 @@
   </div>
 
   <!-- Pagination controls -->
-  <nav class="audit-pagination" id="auditPagination" style="display:none;" role="navigation" aria-label="{% if LANGUAGE_CODE == 'ar' %}التنقل بين الصفحات{% else %}Pagination{% endif %}">
+  <nav class="audit-pagination d-none" id="auditPagination" role="navigation" aria-label="{% if LANGUAGE_CODE == 'ar' %}التنقل بين الصفحات{% else %}Pagination{% endif %}">
     <div class="audit-page-info" aria-live="polite">
       {% if LANGUAGE_CODE == 'ar' %}عرض{% else %}Showing{% endif %} <strong id="auditPageStart">1</strong>–<strong id="auditPageEnd">50</strong> {% if LANGUAGE_CODE == 'ar' %}من{% else %}of{% endif %} <strong id="auditTotal">0</strong> {% if LANGUAGE_CODE == 'ar' %}سجل{% else %}records{% endif %}
     </div>
@@ -349,7 +349,7 @@
   </nav>
 
   <!-- Timeline view (hidden by default) -->
-  <div id="auditTimeline" class="audit-timeline" style="display:none;" role="tabpanel" aria-labelledby="tab-timeline">
+  <div id="auditTimeline" class="audit-timeline d-none" role="tabpanel" aria-labelledby="tab-timeline">
     <!-- JS will populate this -->
   </div>
 
@@ -437,7 +437,7 @@
   }
 
   if (totalRows > 0 && pagination) {
-    pagination.style.display = '';
+    pagination.classList.remove('d-none');
     renderPage();
 
     btnFirst.addEventListener('click', function () { currentPage = 1; renderPage(); });
@@ -470,12 +470,12 @@
 
     if (view === 'table') {
       tableRegion.style.display = '';
-      if (totalRows > 0) pagination.style.display = '';
-      timelineEl.style.display  = 'none';
+      if (totalRows > 0) pagination.classList.remove('d-none');
+      timelineEl.classList.add('d-none');
     } else {
       tableRegion.style.display = 'none';
-      pagination.style.display  = 'none';
-      timelineEl.style.display  = '';
+      pagination.classList.add('d-none');
+      timelineEl.classList.remove('d-none');
       if (!timelineBuilt) {
         buildTimeline();
         timelineBuilt = true;

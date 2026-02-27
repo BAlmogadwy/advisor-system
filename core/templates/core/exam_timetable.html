@@ -6,8 +6,8 @@
 
 {% block extra_css %}
   <style>
-    .et-panel { padding: 16px 20px; margin-bottom: 12px; border-radius: var(--radius); background: rgba(255,255,255,0.55); backdrop-filter: blur(20px) saturate(130%); -webkit-backdrop-filter: blur(20px) saturate(130%); border: 1px solid rgba(17,17,68,0.05); box-shadow: var(--shadow-card); }
-    .kpi { border: 1px solid rgba(17,17,68,0.05); border-radius: var(--radius); padding: .6rem; background: rgba(255,255,255,0.55); backdrop-filter: blur(20px) saturate(130%); -webkit-backdrop-filter: blur(20px) saturate(130%); box-shadow: var(--shadow-card); }
+    .et-panel { padding: 16px 20px; margin-bottom: 12px; border-radius: var(--radius); background: var(--glass-bg); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); border: var(--border-subtle); box-shadow: var(--shadow-card); }
+    .kpi { border: var(--border-subtle); border-radius: var(--radius); padding: .6rem; background: var(--glass-bg); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); box-shadow: var(--shadow-card); }
     .kpi .k { font-size: .7rem; color: var(--t3); text-transform: uppercase; font-family: var(--font-mono); letter-spacing: 0.06em; font-weight: 700; }
     .kpi .v { font-weight: 700; font-family: var(--font-serif); font-size: 1.4rem; color: var(--teal); }
     .kpi .v.warn { color: var(--red, #dc3545); }
@@ -41,7 +41,7 @@
     .et-level-row { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; margin-bottom: 2px; }
     .et-level-badge { font-size: .58rem; font-weight: 700; color: var(--t3, #666); background: rgba(10,142,110,0.08); padding: 1px 5px; border-radius: 3px; white-space: nowrap; min-width: 20px; text-align: center; flex-shrink: 0; }
     .et-grid { width: 100%; border-collapse: collapse; }
-    .et-grid th, .et-grid td { border: 1px solid rgba(17,17,68,0.08); padding: 7px 6px; text-align: center; vertical-align: middle; }
+    .et-grid th, .et-grid td { border: var(--border-mid); padding: 7px 6px; text-align: center; vertical-align: middle; }
     .et-grid thead th { font-size: .73rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--t3, #666); background: rgba(10,142,110,0.04); white-space: nowrap; }
     .et-grid tbody th { font-size: .78rem; font-weight: 700; white-space: nowrap; color: var(--t2, #333); background: rgba(10,142,110,0.04); min-width: 70px; }
     .et-grid td { font-size: .82rem; font-weight: 600; min-width: 90px; }
@@ -119,7 +119,7 @@
     .et-zoom-controls { display: flex; align-items: center; gap: 0.35rem; }
     .et-zoom-btn {
       width: 28px; height: 28px; border-radius: 6px; border: none;
-      background: rgba(255,255,255,0.6); color: var(--t3);
+      background: var(--glass-bg); color: var(--t3);
       font-size: 0.85rem; font-weight: 700; cursor: pointer;
       box-shadow: 2px 2px 5px rgba(163,177,198,0.25), -2px -2px 5px rgba(255,255,255,0.7);
       transition: all 0.15s;
@@ -211,10 +211,10 @@
         <input id="etRandomize" class="form-check-input" type="checkbox" checked>
         <span class="form-check-label small">{% if LANGUAGE_CODE == 'ar' %}عشوائي{% else %}Shuffle{% endif %}</span>
       </label>
-      <small id="etSeedInfo" class="text-secondary ms-1" style="display:none;"></small>
+      <small id="etSeedInfo" class="text-secondary ms-1 d-none"></small>
     </div>
     <!-- Course preview list (populated after Load Courses) -->
-    <div id="coursePreview" class="mt-2" style="display:none;">
+    <div id="coursePreview" class="mt-2 d-none">
       <div class="d-flex align-items-center gap-2 mb-1">
         <label class="form-label mb-0">{% if LANGUAGE_CODE == 'ar' %}المقررات{% else %}Courses{% endif %} <small class="text-secondary" id="courseCount"></small></label>
         <a href="#" id="toggleAllCourses" class="small text-decoration-none"></a>
@@ -225,7 +225,7 @@
   </div>
 
   <!-- ─── Results (hidden until built) ─── -->
-  <div id="etResults" style="display:none;">
+  <div id="etResults" class="d-none">
     <!-- KPI Row -->
     <div class="et-panel">
       <h6 class="mb-2">{% if LANGUAGE_CODE == 'ar' %}الملخص{% else %}Summary{% endif %}</h6>
@@ -247,7 +247,7 @@
         <div class="col-md-3"><div class="kpi kpi-click" data-drill="heavy"><div class="k">{% if LANGUAGE_CODE == 'ar' %}طلاب بيوم ثقيل{% else %}Heavy day students{% endif %}</div><div class="v" id="kHeavyDay">0</div></div></div>
       </div>
       <!-- Drilldown detail panel (hidden until a KPI is clicked) -->
-      <div id="kpiDrill" style="display:none;" class="mt-2">
+      <div id="kpiDrill" class="mt-2 d-none">
         <div class="d-flex align-items-center justify-content-between mb-1">
           <h6 class="mb-0" id="kpiDrillTitle"></h6>
           <button id="kpiDrillClose" class="btn btn-sm btn-outline-secondary py-0 px-2">&times;</button>
@@ -262,7 +262,7 @@
     </div>
 
     <!-- QA Warnings -->
-    <div id="qaWarnings" class="et-panel" style="display:none;">
+    <div id="qaWarnings" class="et-panel d-none">
       <h6 class="mb-2" style="color:var(--red,#dc3545)">{% if LANGUAGE_CODE == 'ar' %}تحذيرات الجودة{% else %}QA Warnings{% endif %}</h6>
       <div id="qaBody"></div>
     </div>
@@ -272,7 +272,7 @@
       <div class="d-flex align-items-center justify-content-between mb-2 gap-2">
         <h6 class="mb-0">{% if LANGUAGE_CODE == 'ar' %}جدول الاختبارات{% else %}Exam Schedule{% endif %}</h6>
         <div class="d-flex align-items-center gap-2 ms-auto">
-          <a id="exportXlsx" href="#" class="btn btn-sm btn-outline-success" style="display:none;">
+          <a id="exportXlsx" href="#" class="btn btn-sm btn-outline-success d-none">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" style="vertical-align:-2px;margin-inline-end:3px"><path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5"/><path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708z"/></svg>
             {% if LANGUAGE_CODE == 'ar' %}تصدير إكسل{% else %}Export Excel{% endif %}
           </a>
@@ -280,7 +280,7 @@
         </div>
       </div>
       <div class="table-responsive" id="schedGrid"></div>
-      <div id="pinBar" class="et-pin-bar" style="display:none;">
+      <div id="pinBar" class="et-pin-bar d-none">
         <span id="pinCount"></span>
         <a href="#" id="clearPins">{% if LANGUAGE_CODE == 'ar' %}مسح التثبيت{% else %}Clear all pins{% endif %}</a>
         <small class="text-secondary">{% if LANGUAGE_CODE == 'ar' %}انقر نقراً مزدوجاً لإلغاء تثبيت مقرر{% else %}Double-click a pinned course to unpin{% endif %}</small>
@@ -293,7 +293,7 @@
         <h6 class="mb-0">{% if LANGUAGE_CODE == 'ar' %}مصفوفة التعارضات{% else %}Conflict Matrix{% endif %}</h6>
         <button id="toggleMatrix" class="btn btn-sm btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}عرض{% else %}Show{% endif %}</button>
       </div>
-      <div id="conflictMatrix" style="display:none;">
+      <div id="conflictMatrix" class="d-none">
         <div class="et-matrix-toolbar">
           <span class="et-matrix-title">{% if LANGUAGE_CODE == 'ar' %}مصفوفة التعارضات{% else %}Conflict Matrix{% endif %}</span>
           <div class="et-zoom-controls">
@@ -323,7 +323,7 @@
   <div class="et-panel">
     <h6 class="mb-2">{% if LANGUAGE_CODE == 'ar' %}السجل السابق{% else %}Previous Runs{% endif %}</h6>
     <div id="historyList"><small class="text-secondary">{% if LANGUAGE_CODE == 'ar' %}جارٍ التحميل...{% else %}Loading...{% endif %}</small></div>
-    <div id="historyPagination" class="pg-bar" style="margin-top:8px;display:none;">
+    <div id="historyPagination" class="pg-bar d-none" style="margin-top:8px;">
       <div class="pg-info" id="historyShowing"></div>
       <div class="pg-nav" id="historyPages"></div>
     </div>
@@ -474,7 +474,7 @@ loadFilters();
 let _coursesLoaded = false;
 
 function clearCoursePreview() {
-  $('coursePreview').style.display = 'none';
+  $('coursePreview').classList.add('d-none');
   $('courseList').innerHTML = '';
   $('courseCount').textContent = '';
   $('buildBtn').disabled = true;
@@ -623,7 +623,7 @@ $('loadCoursesBtn').addEventListener('click', async () => {
     if (!data.ok) throw new Error(data.error || T.reqFailed);
 
     const courses = data.courses ?? [];
-    $('coursePreview').style.display = '';
+    $('coursePreview').classList.remove('d-none');
     renderCourseChips(courses);
 
     if (courses.length > 0) {
@@ -730,7 +730,7 @@ let _creditMap = {};        // { course_code: credit_hours }
 let _drillData = { overload: [], heavy: [] };
 
 function closeDrill() {
-  $('kpiDrill').style.display = 'none';
+  $('kpiDrill').classList.add('d-none');
   document.querySelectorAll('.kpi-click.active').forEach(el => el.classList.remove('active'));
 }
 
@@ -794,7 +794,7 @@ function openDrill(type) {
     $('kpiDrillBody').innerHTML = `<tr><td colspan="5" class="text-center text-secondary py-3">${IS_AR ? 'لا توجد بيانات' : 'No records'}</td></tr>`;
   }
 
-  panel.style.display = '';
+  panel.classList.remove('d-none');
 }
 
 // Click handlers for KPI cards
@@ -824,25 +824,25 @@ function buildProgramCoursesMap(bucketsSummary) {
 /* ── Render Results ── */
 function renderResults(data) {
   buildProgramCoursesMap(data.buckets_summary);
-  $('etResults').style.display = '';
+  $('etResults').classList.remove('d-none');
 
   // Track run_id for Excel export link
   _currentRunId = data.run_id ?? null;
   const exportBtn = $('exportXlsx');
   if (_currentRunId) {
     exportBtn.href = `/ops/exam-timetable/${_currentRunId}/export.xlsx`;
-    exportBtn.style.display = '';
+    exportBtn.classList.remove('d-none');
   } else {
-    exportBtn.style.display = 'none';
+    exportBtn.classList.add('d-none');
   }
 
   // Show seed info if the timetable was built with randomised tie-breaking
   const seedInfo = $('etSeedInfo');
   if (data.seed != null) {
     seedInfo.textContent = IS_AR ? `بذرة: ${data.seed}` : `Seed: ${data.seed}`;
-    seedInfo.style.display = '';
+    seedInfo.classList.remove('d-none');
   } else {
-    seedInfo.style.display = 'none';
+    seedInfo.classList.add('d-none');
   }
 
   // KPIs
@@ -893,7 +893,7 @@ function renderResults(data) {
   const hasWarnings = conflicts.length > 0 || bucketViols.length > 0;
 
   if (hasWarnings) {
-    $('qaWarnings').style.display = '';
+    $('qaWarnings').classList.remove('d-none');
     let warningHtml = '';
     warningHtml += conflicts.map(c =>
       `<div class="alert alert-danger py-1 px-2 mb-1 small">${
@@ -915,7 +915,7 @@ function renderResults(data) {
     ).join('');
     $('qaBody').innerHTML = warningHtml;
   } else {
-    $('qaWarnings').style.display = 'none';
+    $('qaWarnings').classList.add('d-none');
   }
 
   // Schedule grid
@@ -1102,7 +1102,7 @@ $('schedFilter').addEventListener('input', function() {
 // • Clear   → removes all pins
 function updatePinBar() {
   const n = Object.keys(_pinnedCourses).length;
-  $('pinBar').style.display = n > 0 ? '' : 'none';
+  $('pinBar').classList.toggle('d-none', n === 0);
   $('pinCount').textContent = T.pinCount.replace('{n}', n);
   // Update build button text
   $('buildBtn').textContent = n > 0
@@ -1197,7 +1197,7 @@ function renderConflictMatrix(conflicts, courses) {
   const viewportEl = $('etMatrixViewport');
 
   // Reset toggle state
-  $('conflictMatrix').style.display = 'none';
+  $('conflictMatrix').classList.add('d-none');
   $('toggleMatrix').textContent = T.show;
 
   if (!conflicts.length || courses.length < 2) {
@@ -1321,8 +1321,8 @@ function renderConflictMatrix(conflicts, courses) {
 /* ── Toggle conflict matrix ── */
 $('toggleMatrix').addEventListener('click', () => {
   const el = $('conflictMatrix');
-  const show = el.style.display === 'none';
-  el.style.display = show ? '' : 'none';
+  const show = el.classList.contains('d-none');
+  el.classList.toggle('d-none', !show);
   $('toggleMatrix').textContent = show ? T.hide : T.show;
 });
 
@@ -1352,7 +1352,7 @@ async function loadHistory(page) {
 
     if (!runs.length) {
       $('historyList').innerHTML = `<small class="text-secondary">${T.noHistory}</small>`;
-      $('historyPagination').style.display = 'none';
+      $('historyPagination').classList.add('d-none');
       return;
     }
 
@@ -1384,9 +1384,9 @@ async function loadHistory(page) {
       const to = Math.min(_historyPage * 10, total);
       $('historyShowing').textContent = T.showingRuns.replace('{from}', from).replace('{to}', to).replace('{total}', total);
       renderHistoryPagination(totalPages);
-      $('historyPagination').style.display = '';
+      $('historyPagination').classList.remove('d-none');
     } else {
-      $('historyPagination').style.display = 'none';
+      $('historyPagination').classList.add('d-none');
     }
   } catch (err) {
     notify.error(IS_AR ? 'فشل تحميل السجل' : 'Failed to load history', err.message || String(err));
@@ -1432,11 +1432,11 @@ async function deleteRun(runId, label) {
     // We hide (not clear innerHTML) so the DOM elements remain for the next build.
     if (String(_currentRunId) === String(runId)) {
       _currentRunId = null;
-      $('etResults').style.display = 'none';
+      $('etResults').classList.add('d-none');
       $('etStatus').textContent = T.ready;
       $('etStatus').className = 'alert alert-info mt-2 py-2 mb-0';
       const exportBtn = $('exportXlsx');
-      if (exportBtn) { exportBtn.style.display = 'none'; exportBtn.removeAttribute('href'); }
+      if (exportBtn) { exportBtn.classList.add('d-none'); exportBtn.removeAttribute('href'); }
     }
 
     loadHistory();

@@ -1,10 +1,46 @@
+# Environment & secrets
 .env
 .venv/
+venv/
+
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Tool caches
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+.coverage
+htmlcov/
+
+# Database
 db.sqlite3
+db.sqlite3-journal
+
+# Runtime & temp
 tmp/
+runtime/
+data/debug_failures/
+
+# Legacy
 import_old/
+
+# IDE & editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude agent workspace
+.claude/
+
+# Misc assets not in static/
+*.png
+*.webp
+!static/**/*.png
+!static/**/*.webp

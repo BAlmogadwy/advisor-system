@@ -224,18 +224,25 @@
     });
   });
 
-  /* Inject button into page-header if it exists, otherwise before <main> */
-  const pageHeader = document.querySelector('.page-header');
-  if (pageHeader) {
-    const left = pageHeader.querySelector('.page-header-left');
-    if (left) {
-      pageHeader.insertBefore(toggle, left);
+  /* Inject button into page-header (deferred because sidebar renders before <main>) */
+  function injectToggle() {
+    const pageHeader = document.querySelector('.page-header');
+    if (pageHeader) {
+      const left = pageHeader.querySelector('.page-header-left');
+      if (left) {
+        pageHeader.insertBefore(toggle, left);
+      } else {
+        pageHeader.prepend(toggle);
+      }
     } else {
-      pageHeader.prepend(toggle);
+      toggle.style.cssText = 'position:fixed;top:0.75rem;inset-inline-start:0.75rem;z-index:301;';
+      document.body.appendChild(toggle);
     }
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', injectToggle);
   } else {
-    toggle.style.cssText = 'position:fixed;top:0.75rem;inset-inline-start:0.75rem;z-index:301;';
-    document.body.appendChild(toggle);
+    injectToggle();
   }
 })();
 </script>

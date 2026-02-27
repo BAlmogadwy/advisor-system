@@ -76,9 +76,9 @@
 /* ── Scrape log viewer (neumorphic style) ────────────── */
 .scrape-term {
   border-radius: var(--radius); overflow: hidden;
-  background: rgba(255,255,255,0.55);
-  backdrop-filter: blur(20px) saturate(130%);
-  -webkit-backdrop-filter: blur(20px) saturate(130%);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
   border: 1px solid rgba(255,255,255,0.5);
   box-shadow: 6px 6px 16px rgba(163,177,198,0.35),
               -6px -6px 16px rgba(255,255,255,0.65);
@@ -298,7 +298,7 @@
   padding: 0.15rem 0.45rem;
   border-radius: 999px;
   background: #dcf5ee;
-  color: #067858;
+  color: var(--teal-deep);
   border: 1px solid #a8e6d4;
   flex-shrink: 0;
 }
@@ -327,7 +327,7 @@
 .ov-greeting { font-family: var(--font-serif); font-size: 1.4rem; color: var(--navy); margin-bottom: 0.25rem; }
 .ov-date { font-size: 0.82rem; color: var(--t3); margin-bottom: 1.5rem; }
 .ov-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
-.ov-kpi { padding: 1.25rem; border-radius: var(--radius); background: rgba(255,255,255,0.55); backdrop-filter: blur(20px) saturate(130%); -webkit-backdrop-filter: blur(20px) saturate(130%); border: 1px solid rgba(17,17,68,0.05); box-shadow: var(--shadow-card); transition: transform 0.15s, box-shadow 0.15s; cursor: pointer; }
+.ov-kpi { padding: 1.25rem; border-radius: var(--radius); background: var(--glass-bg); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); border: var(--border-subtle); box-shadow: var(--shadow-card); transition: transform 0.15s, box-shadow 0.15s; cursor: pointer; }
 .ov-kpi:hover { transform: translateY(-2px); box-shadow: var(--shadow-lift); }
 .ov-kpi-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--t3); font-family: var(--font-mono); margin-bottom: 0.35rem; }
 .ov-kpi-value { font-family: var(--font-serif); font-size: 2rem; color: var(--teal); font-weight: 700; line-height: 1; }
@@ -339,13 +339,13 @@
 .ov-kpi-icon.danger { background: rgba(192,48,48,0.08); color: var(--danger); }
 
 .ov-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem; margin-bottom: 1.5rem; }
-.ov-action { display: flex; align-items: center; gap: 0.75rem; padding: 1rem 1.25rem; border-radius: var(--radius); background: rgba(255,255,255,0.55); backdrop-filter: blur(20px) saturate(130%); border: 1px solid rgba(17,17,68,0.05); box-shadow: var(--shadow-card); cursor: pointer; transition: all 0.15s; text-decoration: none; color: inherit; }
+.ov-action { display: flex; align-items: center; gap: 0.75rem; padding: 1rem 1.25rem; border-radius: var(--radius); background: var(--glass-bg); backdrop-filter: var(--glass-blur); border: var(--border-subtle); box-shadow: var(--shadow-card); cursor: pointer; transition: all 0.15s; text-decoration: none; color: inherit; }
 .ov-action:hover { border-color: var(--teal-border); box-shadow: 0 0 0 2px rgba(10,142,110,0.08), var(--shadow-card); }
 .ov-action-icon { width: 40px; height: 40px; border-radius: 10px; background: rgba(10,142,110,0.06); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .ov-action-icon svg { width: 20px; height: 20px; stroke: var(--teal); fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .ov-action-text { font-weight: 600; font-size: 0.9rem; color: var(--ink); }
 
-.ov-activity { padding: 1rem 1.25rem; border-radius: var(--radius); background: rgba(255,255,255,0.55); backdrop-filter: blur(20px) saturate(130%); border: 1px solid rgba(17,17,68,0.05); box-shadow: var(--shadow-card); }
+.ov-activity { padding: 1rem 1.25rem; border-radius: var(--radius); background: var(--glass-bg); backdrop-filter: var(--glass-blur); border: var(--border-subtle); box-shadow: var(--shadow-card); }
 .ov-activity-title { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--t3); margin-bottom: 0.75rem; }
 .ov-activity-item { display: flex; gap: 0.75rem; padding: 0.5rem 0; border-bottom: 1px solid rgba(17,17,68,0.04); font-size: 0.85rem; color: var(--t2); }
 .ov-activity-item:last-child { border-bottom: none; }
@@ -354,7 +354,7 @@
 /* ── Student context sidebar ── */
 .student-ctx-sidebar { width: 280px; flex-shrink: 0; transition: transform 0.25s ease, opacity 0.25s ease; }
 .student-ctx-sidebar.hidden { display: none; }
-.student-ctx-card { padding: 1rem; border-radius: var(--radius); background: rgba(255,255,255,0.55); backdrop-filter: blur(20px) saturate(130%); border: 1px solid rgba(17,17,68,0.05); box-shadow: var(--shadow-card); }
+.student-ctx-card { padding: 1rem; border-radius: var(--radius); background: var(--glass-bg); backdrop-filter: var(--glass-blur); border: var(--border-subtle); box-shadow: var(--shadow-card); }
 .student-ctx-card h6 { font-family: var(--font-serif); font-size: 0.95rem; color: var(--navy); margin: 0 0 0.75rem; }
 .student-ctx-row { display: flex; justify-content: space-between; align-items: center; padding: 0.35rem 0; border-bottom: 1px solid rgba(17,17,68,0.04); font-size: 0.82rem; }
 .student-ctx-row:last-child { border-bottom: none; }
@@ -387,7 +387,7 @@
               -2px -2px 5px rgba(255,255,255,0.6);
 }
 .scrape-term-toggle:hover {
-  background: rgba(10,142,110,0.14); color: #067858;
+  background: rgba(10,142,110,0.14); color: var(--teal-deep);
   box-shadow: 3px 3px 6px rgba(163,177,198,0.25),
               -3px -3px 6px rgba(255,255,255,0.7);
 }
@@ -417,7 +417,7 @@
 .sh-page-btn {
   display: inline-flex; align-items: center; justify-content: center;
   width: 30px; height: 30px; border-radius: 8px; border: none;
-  background: rgba(255,255,255,0.5); color: #4a5568; cursor: pointer;
+  background: var(--glass-bg); color: #4a5568; cursor: pointer;
   box-shadow: 2px 2px 5px rgba(163,177,198,0.25),
               -2px -2px 5px rgba(255,255,255,0.6);
   transition: all 0.15s;
@@ -449,7 +449,7 @@
           <span class="ph-chip ph-chip-role">{{ role }}</span>
           <span class="ph-chip ph-chip-scope" title="{{ role_scope_hint }}">{{ role_scope_hint|truncatechars:40 }}</span>
           {% if scope_departments %}<span class="ph-chip ph-chip-dept">{{ scope_departments|join:", " }}</span>{% endif %}
-          <span class="ph-chip ph-chip-context" id="phContextChip" style="display:none;"></span>
+          <span class="ph-chip ph-chip-context d-none" id="phContextChip"></span>
 {% endblock %}
 
 {% block page_intro %}
@@ -652,7 +652,7 @@
         </div>
         <!-- ── /Empty-state ── -->
 
-        <div id="studentPlanMetrics" style="display:none;gap:12px;margin-bottom:12px">
+        <div id="studentPlanMetrics" class="d-none" style="display:flex;gap:12px;margin-bottom:12px">
           <div style="flex:1;min-width:0"><div class="mc mc-teal">
             <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span></div><div class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}مجتاز{% else %}Passed{% endif %}</div></div>
             <div class="mc-val" id="spPassed">0</div>
@@ -674,14 +674,14 @@
             <div class="spark" id="spSparkLocked"></div>
           </div></div>
         </div>
-        <div id="studentPlanLegend" class="small mb-2" style="display:none;">
+        <div id="studentPlanLegend" class="small mb-2 d-none">
           <span style="color:var(--t3);margin-inline-end:6px">Legend:</span>
           <span class="pill-status pill-g"><span class="pill-dot"></span>Passed</span>
           <span class="pill-status pill-b"><span class="pill-dot"></span>Studying</span>
           <span class="pill-status pill-g" style="background:rgba(10,142,110,0.14)"><span class="pill-dot"></span>Can register</span>
           <span class="pill-status pill-r"><span class="pill-dot"></span>Locked</span>
         </div>
-        <div class="filter-bar mb-2" id="studentPlanActions" style="display:none;">
+        <div class="filter-bar mb-2 d-none" id="studentPlanActions">
           <button id="spFocusNext" type="button" class="fb-dd active"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg></span> Focus next</button>
           <button id="spBuildTargetPlan" type="button" class="fb-dd" style="background:rgba(10,142,110,0.08);border-color:var(--teal-border);color:var(--teal)"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span> Build plan</button>
           <a id="spCsvExport" class="fb-dd" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span> CSV</a>
@@ -780,7 +780,7 @@
             <span class="student-ctx-label">{% if LANGUAGE_CODE == 'ar' %}متطلبات معلقة{% else %}Prereqs Pending{% endif %}</span>
             <span class="student-ctx-value" id="studentCtxPrereqPending" style="color:var(--warning)">--</span>
           </div>
-          <a id="studentCtxFullProfile" class="student-ctx-link" href="#" style="display:none;">
+          <a id="studentCtxFullProfile" class="student-ctx-link d-none" href="#">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
             {% if LANGUAGE_CODE == 'ar' %}عرض الملف الكامل{% else %}View Full Profile{% endif %}
           </a>
@@ -802,11 +802,11 @@
         <button id="batchSavePreset" type="button" class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span> Save preset</button>
         <button id="batchLoadPreset" type="button" class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span> Load preset</button>
       </div>
-      <div id="batchProgressWrap" class="batch-progress" style="display:none;">
+      <div id="batchProgressWrap" class="batch-progress d-none">
         <div id="batchProgressBar" class="batch-progress-bar"></div>
       </div>
 
-      <div class="row g-2 mt-3 mb-2" id="batchMetrics" style="display:none;">
+      <div class="row g-2 mt-3 mb-2 d-none" id="batchMetrics">
         <div class="col-md-4"><div class="mc mc-royal">
           <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></div><div class="mc-lbl">Year / Semester</div></div>
           <div class="mc-val" id="batchMetricTerm">-</div>
@@ -858,7 +858,7 @@
         </button>
       </div>
       <!-- Metrics -->
-      <div id="preMetrics" style="display:none;gap:14px;margin-bottom:16px">
+      <div id="preMetrics" class="d-none" style="display:flex;gap:14px;margin-bottom:16px">
         <div style="flex:1;min-width:0"><div class="mc mc-royal">
           <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span></div><div class="mc-lbl">Program</div></div>
           <div class="mc-val" id="preMetricProgram">—</div>
@@ -882,7 +882,7 @@
       </div>
       <!-- Table below -->
       <div class="cpanel">
-        <div class="cp-h"><span class="cp-t">Prerequisite Links</span><span class="pill-status pill-b" id="preLinkCount" style="display:none"><span class="pill-dot"></span><span id="preLinkNum">0</span> links</span></div>
+        <div class="cp-h"><span class="cp-t">Prerequisite Links</span><span class="pill-status pill-b d-none" id="preLinkCount"><span class="pill-dot"></span><span id="preLinkNum">0</span> links</span></div>
         <div class="cp-b" style="padding:0;max-height:420px;overflow-y:auto">
           <table class="tbl-card mb-0" id="preTable" style="border-spacing:0 4px">
             <thead><tr><th scope="col" data-sort="text">Course</th><th scope="col" style="width:32px;text-align:center">→</th><th scope="col" data-sort="text">Requires</th></tr></thead>
@@ -905,7 +905,7 @@
       </div>
       <div class="zone-card">
         <div class="zone-title">Results</div>
-        <div class="row g-2 mt-1 mb-2" id="planMetrics" style="display:none;">
+        <div class="row g-2 mt-1 mb-2 d-none" id="planMetrics">
           <div class="col-md-3"><div class="metric"><div class="k">Program</div><div class="v" id="planMetricProgram">-</div></div></div>
           <div class="col-md-3"><div class="metric"><div class="k">Total courses</div><div class="v" id="planMetricCount">0</div></div></div>
           <div class="col-md-3"><div class="metric"><div class="k">Total credit hours</div><div class="v" id="planMetricCredits">0</div></div></div>
@@ -995,7 +995,7 @@
             <tbody><tr><td colspan="5"><div class="empty-state"><span class="i" style="width:32px;height:32px;color:var(--t5);margin-bottom:8px"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span><div class="empty-title">No scrape history</div><div class="empty-hint">Run a scrape to see history here</div></div></td></tr></tbody>
           </table>
         </div>
-        <nav class="scrape-hist-pager" id="scrapeHistPager" style="display:none" role="navigation" aria-label="{% if LANGUAGE_CODE == 'ar' %}تصفح سجل العمليات{% else %}Scrape history pagination{% endif %}">
+        <nav class="scrape-hist-pager d-none" id="scrapeHistPager" role="navigation" aria-label="{% if LANGUAGE_CODE == 'ar' %}تصفح سجل العمليات{% else %}Scrape history pagination{% endif %}">
           <div class="scrape-hist-page-info" aria-live="polite">
             {% if LANGUAGE_CODE == 'ar' %}عرض{% else %}Showing{% endif %} <strong id="shPageStart">1</strong>–<strong id="shPageEnd">5</strong> {% if LANGUAGE_CODE == 'ar' %}من{% else %}of{% endif %} <strong id="shPageTotal">0</strong>
           </div>
@@ -1032,7 +1032,7 @@
         <a id="dbgCsv" class="fb-dd" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>CSV</a>
       </div>
       <div id="dbgMeta" class="meta-banner meta-info" style="font-family:var(--font-mono);font-size:12px;border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:14px">No debug report loaded.</div>
-      <div id="dbgSummary" style="display:none;gap:14px;margin-bottom:18px">
+      <div id="dbgSummary" class="d-none" style="display:flex;gap:14px;margin-bottom:18px">
         <div style="flex:1;min-width:0"><div class="mc mc-royal">
           <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span></div><div class="mc-lbl">Students</div></div>
           <div class="mc-val" id="dbgCount">0</div>
@@ -1051,7 +1051,7 @@
         <div class="tbl-header">
           <div class="tbl-title">Debug Details <span class="tbl-cnt" id="dbgTableCnt">0</span></div>
           <div class="tbl-actions">
-            <button class="btn btn-outline-secondary btn-sm" style="font-size:11px;padding:4px 10px;border-radius:var(--radius-sm);background:rgba(255,255,255,0.5);border:1px solid rgba(17,17,68,0.06);color:var(--t3);cursor:pointer" onclick="document.getElementById('dbgTable').scrollIntoView({behavior:'smooth'})"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span> Columns</button>
+            <button class="btn btn-outline-secondary btn-sm" style="font-size:11px;padding:4px 10px;border-radius:var(--radius-sm);background:var(--glass-bg);border:1px solid rgba(17,17,68,0.06);color:var(--t3);cursor:pointer" onclick="document.getElementById('dbgTable').scrollIntoView({behavior:'smooth'})"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span> Columns</button>
           </div>
         </div>
         <div style="overflow-x:auto">
@@ -1082,7 +1082,7 @@
         <a id="elCsv" class="fb-dd" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>CSV</a>
       </div>
       <div id="elMeta" class="meta-banner meta-info" style="font-family:var(--font-mono);font-size:12px;border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:14px">No eligibility report loaded.</div>
-      <div id="elSummary" style="display:none;gap:14px;margin-bottom:18px">
+      <div id="elSummary" class="d-none" style="display:flex;gap:14px;margin-bottom:18px">
         <div style="flex:1;min-width:0"><div class="mc mc-teal">
           <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></span></div><div class="mc-lbl">Eligible</div></div>
           <div class="mc-val" id="elCount">0</div>
@@ -1164,7 +1164,7 @@
           <div style="flex:0 0 auto"><button id="advEnsureColumn" class="fb-dd" style="padding:8px 14px">Enable students.advisor_id</button></div>
           <div style="flex:1;min-width:220px">
             <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}ربط جماعي CSV (student_id,advisor_id){% else %}Bulk assign CSV (student_id,advisor_id){% endif %}</label>
-            <textarea id="advAssignCsv" class="form-control" rows="3" placeholder="student_id,advisor_id&#10;4410001,A001" aria-label="Assignment CSV data" style="border-radius:var(--radius-sm);border:1px solid rgba(17,17,68,0.05);background:rgba(255,255,255,0.6);font-size:13px"></textarea>
+            <textarea id="advAssignCsv" class="form-control" rows="3" placeholder="student_id,advisor_id&#10;4410001,A001" aria-label="Assignment CSV data" style="border-radius:var(--radius-sm);border:var(--border-subtle);background:var(--glass-bg);font-size:13px"></textarea>
           </div>
         </div>
         <div style="margin-top:8px">
@@ -1263,7 +1263,7 @@
 
 <!-- toast-container injected by JS -->
 
-<div class="dlg-backdrop" id="eligibilityDetailsModal" style="display:none;" role="dialog" aria-modal="true">
+<div class="dlg-backdrop d-none" id="eligibilityDetailsModal" role="dialog" aria-modal="true">
   <div class="dlg-box" style="max-width:800px;">
     <div class="dlg-header">
       <div><div class="dlg-title">Eligibility Details</div></div>
@@ -1273,7 +1273,7 @@
   </div>
 </div>
 
-<div class="dlg-backdrop" id="debugTraceModal" style="display:none;" role="dialog" aria-modal="true">
+<div class="dlg-backdrop d-none" id="debugTraceModal" role="dialog" aria-modal="true">
   <div class="dlg-box" style="max-width:800px;">
     <div class="dlg-header">
       <div><div class="dlg-title">Recommendation Trace</div></div>
@@ -1287,7 +1287,7 @@
 
 
 <!-- ⌘K Command Palette -->
-<div id="cmdPalette" class="cmd-backdrop" style="display:none;" role="dialog" aria-modal="true" aria-label="{% if LANGUAGE_CODE == 'ar' %}بحث سريع{% else %}Quick search{% endif %}">
+<div id="cmdPalette" class="cmd-backdrop d-none" role="dialog" aria-modal="true" aria-label="{% if LANGUAGE_CODE == 'ar' %}بحث سريع{% else %}Quick search{% endif %}">
   <div class="cmd-modal">
     <div class="cmd-search-row">
       <span class="cmd-search-icon">⌕</span>
@@ -1588,6 +1588,7 @@
 
   /* ── Custom dialog open/close helpers for dlg-backdrop modals ── */
   function openDlgModal(el) {
+    el.classList.remove('d-none');
     el.style.display = 'flex';
     const box = el.querySelector('.dlg-box');
     if (box) { box.style.animation = ''; void box.offsetWidth; box.style.animation = 'dlg-slide-up 0.22s cubic-bezier(0.34,1.56,0.64,1)'; }
@@ -1595,7 +1596,7 @@
   function closeDlgModal(el) {
     const box = el.querySelector('.dlg-box');
     if (box) box.style.animation = 'dlg-slide-up 0.15s ease reverse';
-    setTimeout(() => { el.style.display = 'none'; }, 140);
+    setTimeout(() => { el.classList.add('d-none'); el.style.display = ''; }, 140);
   }
   document.querySelectorAll('.dlg-backdrop .dlg-close').forEach(btn => {
     btn.addEventListener('click', () => closeDlgModal(btn.closest('.dlg-backdrop')));
@@ -1615,7 +1616,7 @@
     q('batchSection').value = '';
     const tbody = document.querySelector('#batchTable tbody');
     if (tbody) tbody.innerHTML = `<tr><td colspan="4"><div class="ap-empty"><span class="ap-empty-icon"><span class="i" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span></span><div class="ap-empty-title">${T.noBatchData}</div><div class="ap-empty-hint">${T.setBatchFilters}</div></div></td></tr>`;
-    q('batchMetrics').style.display = 'none';
+    q('batchMetrics').classList.add('d-none');
     q('batchCsv').href = '#';
     q('batchSummary').href = '#';
     q('batchTopChips').innerHTML = `<div class="empty-note">${T.runBatchHint}</div>`;
@@ -1644,7 +1645,7 @@
       data = await res.json();
     } catch (err) {
       if (tbody) tbody.innerHTML = `<tr><td colspan="4" class="text-danger">Network error</td></tr>`;
-      q('batchMetrics').style.display = 'none';
+      q('batchMetrics').classList.add('d-none');
       setUpdated('batchUpdated', true);
       notify.error(T.batchLoadFailed, err.message || String(err));
       runBtn.disabled = false;
@@ -1660,7 +1661,7 @@
         tbody.innerHTML = `<tr><td colspan="4" class="text-danger">${preciseError(res, data, T.batchLoadFailed)}</td></tr>`;
       }
       q('batchTopChips').innerHTML = `<div class="empty-note">${T.batchRecFailed}</div>`;
-      q('batchMetrics').style.display = 'none';
+      q('batchMetrics').classList.add('d-none');
       setUpdated('batchUpdated', true);
       runBtn.disabled = false;
       runBtn.textContent = T.runPreview;
@@ -1670,7 +1671,7 @@
     q('batchMetricTerm').textContent = `${data.year}/${data.semester}`;
     q('batchMetricStudents').textContent = String(data.student_count ?? 0);
     q('batchMetricTopCount').textContent = String(data.top_recommended_courses.length);
-    q('batchMetrics').style.display = 'flex';
+    q('batchMetrics').classList.remove('d-none');
 
     if (tbody) {
       if (data.top_recommended_courses.length === 0) {
@@ -1837,8 +1838,8 @@
 
     if (!res.ok || !Array.isArray(data.items) || data.items.length === 0) {
       tbody.innerHTML = `<tr><td colspan="3" class="empty-note">${T.noPrereqRows}</td></tr>`;
-      q('preMetrics').style.display = 'none';
-      const lc = q('preLinkCount'); if (lc) lc.style.display = 'none';
+      q('preMetrics').classList.add('d-none');
+      const lc = q('preLinkCount'); if (lc) lc.classList.add('d-none');
       preGraph.innerHTML = `<div class="empty-state"><span class="empty-icon"><span class="i" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg></span></span><div class="empty-title">${T.noGraphData}</div><div class="empty-hint">${T.noPrereqMap}</div></div>`;
       setUpdated('preUpdated', true);
       btn.disabled = false; btn.textContent = T.load; return;
@@ -1851,9 +1852,9 @@
     q('preMetricProgram').textContent = data.program || '-';
     q('preMetricCourses').textContent = String(allSet.size);
     q('preMetricLinks').textContent = String(norm.length);
-    q('preMetrics').style.display = 'flex';
+    q('preMetrics').classList.remove('d-none');
     const lc = q('preLinkCount');
-    if (lc) { lc.style.display = ''; q('preLinkNum').textContent = String(norm.length); }
+    if (lc) { lc.classList.remove('d-none'); q('preLinkNum').textContent = String(norm.length); }
 
     /* table — card-rows: one row per individual prerequisite edge */
     tbody.innerHTML = norm
@@ -1933,7 +1934,7 @@
       tbody.innerHTML = `<tr><td colspan="3" class="empty-note">${T.noPlanRows}</td></tr>`;
       termBars.innerHTML = `<div class="empty-note">${T.noTermDist}</div>`;
       termCards.innerHTML = `<div class="empty-note">${T.noTermCards}</div>`;
-      q('planMetrics').style.display = 'none';
+      q('planMetrics').classList.add('d-none');
       setUpdated('planUpdated', true);
       btn.disabled = false;
       btn.textContent = T.loadPlan;
@@ -1944,7 +1945,7 @@
     q('planMetricProgram').textContent = data.program || '-';
     q('planMetricCount').textContent = String(data.count ?? data.items.length);
     q('planMetricCredits').textContent = String(totalCredits);
-    q('planMetrics').style.display = 'flex';
+    q('planMetrics').classList.remove('d-none');
 
     tbody.innerHTML = data.items
       .map((row) => `<tr><td>${row.programme_term ?? '-'}</td><td><button type="button" class="btn btn-link p-0 plan-course-link" data-program="${data.program || ''}" data-course="${row.course_code}">${row.course_code}</button></td><td>${row.credit_hours ?? '-'}</td></tr>`)
@@ -2107,7 +2108,7 @@
         </div>
         <div class="kv" style="margin-bottom:6px"><strong style="color:var(--t3);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">${T.prerequisites}</strong><div style="margin-top:2px;font-size:13px">${prereqs}</div></div>
         <div class="kv" style="margin-bottom:6px;color:var(--danger)"><strong style="color:var(--danger);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">${T.missing}</strong><div style="margin-top:2px;font-size:13px">${missing}</div></div>
-        <div style="border-top:1px solid rgba(17,17,68,0.05);margin:10px 0;"></div>
+        <div style="border-top:var(--border-subtle);margin:10px 0;"></div>
         <div class="kv"><strong style="color:var(--t3);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">${T.unlocks}</strong><div style="margin-top:4px">${downstream.length ? downstream.map(d => `<span class="pill">${d}</span>`).join(' ') : `<span class="empty-note">${T.noDownstream}</span>`}</div></div>
       </div>`;
   }
@@ -2335,9 +2336,9 @@
       q('studentPlanActionPlan').innerHTML = '';
       studentPlanSelectedCourse = null;
       renderCourseDrawer();
-      q('studentPlanMetrics').style.display = 'none';
-      q('studentPlanActions').style.display = 'none';
-      q('studentPlanLegend').style.display = 'none';
+      q('studentPlanMetrics').classList.add('d-none');
+      q('studentPlanActions').classList.add('d-none');
+      q('studentPlanLegend').classList.add('d-none');
       q('studentEmptyState').style.display = '';
       q('loadStudentPlan').disabled = false;
       q('loadStudentPlan').innerHTML = `<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>${T.loadPlanBtn}`;
@@ -2354,9 +2355,9 @@
       q('studentPlanActionPlan').innerHTML = '';
       studentPlanSelectedCourse = null;
       renderCourseDrawer();
-      q('studentPlanMetrics').style.display = 'none';
-      q('studentPlanActions').style.display = 'none';
-      q('studentPlanLegend').style.display = 'none';
+      q('studentPlanMetrics').classList.add('d-none');
+      q('studentPlanActions').classList.add('d-none');
+      q('studentPlanLegend').classList.add('d-none');
       q('studentEmptyState').style.display = '';
       q('loadStudentPlan').disabled = false;
       q('loadStudentPlan').innerHTML = `<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>${T.loadPlanBtn}`;
@@ -2404,9 +2405,9 @@
     fillSpark('spSparkLocked', termStats.map(t=>t.l));
 
     q('studentEmptyState').style.display = 'none';
-    q('studentPlanMetrics').style.display = 'flex';
-    q('studentPlanActions').style.display = 'flex';
-    q('studentPlanLegend').style.display = 'block';
+    q('studentPlanMetrics').classList.remove('d-none');
+    q('studentPlanActions').classList.remove('d-none');
+    q('studentPlanLegend').classList.remove('d-none');
     q('spCsvExport').href = `/export/student-plan.csv?student_id=${encodeURIComponent(studentId)}`;
 
     const canCount = Number(data.summary?.not_taken_can_register ?? 0);
@@ -2537,7 +2538,7 @@
       if (history.length === 0) {
         historyBody.innerHTML = `<tr><td colspan="5"><div class="empty-state"><span class="i" style="width:32px;height:32px;color:var(--t5);margin-bottom:8px"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span><div class="empty-title">${T.noScrapeHistory}</div><div class="empty-hint">${T.runScrapeHint}</div></div></td></tr>`;
         if (cntEl) cntEl.textContent = '0';
-        if (pagerEl) pagerEl.style.display = 'none';
+        if (pagerEl) pagerEl.classList.add('d-none');
       } else {
         const allRows = history.slice().reverse().map((h) => {
           const evt = h.event ?? '-';
@@ -2569,7 +2570,7 @@
           if (nextBtn) nextBtn.disabled = curPage >= pages;
         }
         if (pagerEl) {
-          pagerEl.style.display = pages > 1 ? 'flex' : 'none';
+          pagerEl.classList.toggle('d-none', pages <= 1);
           if (prevBtn) prevBtn.onclick = () => { if (curPage > 1) { curPage--; renderHistPage(); } };
           if (nextBtn) nextBtn.onclick = () => { if (curPage < pages) { curPage++; renderHistPage(); } };
         }
@@ -2767,7 +2768,7 @@
       tbody.innerHTML = `<tr><td colspan="7" class="text-danger">${T.networkErrorDebug}</td></tr>`;
       q('dbgMeta').textContent = preciseError(null, null, 'Unable to load debug report.', err);
       q('dbgMeta').className = 'meta-banner meta-danger';
-      q('dbgSummary').style.display = 'none';
+      q('dbgSummary').classList.add('d-none');
       setUpdated('dbgUpdated', true);
       toast(T.debugFailed, false);
       btn.disabled = false;
@@ -2779,7 +2780,7 @@
       tbody.innerHTML = `<tr><td colspan="7" class="text-danger">${T.failedLoadDebug}</td></tr>`;
       q('dbgMeta').textContent = preciseError(res, data, T.failedLoadDebug);
       q('dbgMeta').className = 'meta-banner meta-warn';
-      q('dbgSummary').style.display = 'none';
+      q('dbgSummary').classList.add('d-none');
       setUpdated('dbgUpdated', true);
       btn.disabled = false;
       btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>' + T.run;
@@ -2791,7 +2792,7 @@
     q('dbgCount').textContent = String(data.count || 0);
     q('dbgWithRec').textContent = String(withRec);
     q('dbgWithoutRec').textContent = String((data.count || 0) - withRec);
-    q('dbgSummary').style.display = 'flex';
+    q('dbgSummary').classList.remove('d-none');
     if (q('dbgTableCnt')) q('dbgTableCnt').textContent = String(data.count || 0);
     tbody.innerHTML = data.items.map((x) => {
       const tracePayload = encodeURIComponent(JSON.stringify(x.recommendation_details || []));
@@ -2857,7 +2858,7 @@
     } catch (err) {
       q('elMeta').textContent = preciseError(null, null, 'Unable to load eligibility report.', err);
       q('elMeta').className = 'meta-banner meta-danger';
-      q('elSummary').style.display = 'none';
+      q('elSummary').classList.add('d-none');
       setUpdated('elUpdated', true);
       tbody.innerHTML = `<tr><td class="text-danger">${T.networkErrorEligibility}</td></tr>`;
       toast(T.eligibilityFailed, false);
@@ -2868,7 +2869,7 @@
     if (!res.ok || !Array.isArray(data.per_program)) {
       q('elMeta').textContent = preciseError(res, data, T.failedLoadEligibility);
       q('elMeta').className = 'meta-banner meta-warn';
-      q('elSummary').style.display = 'none';
+      q('elSummary').classList.add('d-none');
       setUpdated('elUpdated', true);
       tbody.innerHTML = `<tr><td class="text-danger">${T.failedLoadEligibility}</td></tr>`;
       btn.disabled = false;
@@ -2886,7 +2887,7 @@
     q('elCount').textContent = String(eligibleIds.length);
     q('elModeBadge').textContent = data.strict_passed_only ? 'strict' : 'relaxed';
     q('elCourseBadge').textContent = String(data.course_code || '-');
-    q('elSummary').style.display = 'flex';
+    q('elSummary').classList.remove('d-none');
     if (q('elTableCnt')) q('elTableCnt').textContent = String(eligibleIds.length);
 
     tbody.innerHTML = eligibleIds.length
@@ -3484,7 +3485,7 @@
       const profileLink = q('studentCtxFullProfile');
       if (profileLink && d.student_id) {
         profileLink.href = `/planner/?student=${d.student_id}`;
-        profileLink.style.display = '';
+        profileLink.classList.remove('d-none');
       }
     }
 
@@ -3568,7 +3569,7 @@
     const origOnClick = origRunBatch.onclick;
     origRunBatch.onclick = async (e) => {
       /* Show progress bar */
-      progressWrap.style.display = '';
+      progressWrap.classList.remove('d-none');
       progressBar.style.width = '0%';
       let pct = 0;
       batchProgressInterval = setInterval(() => {
@@ -3583,7 +3584,7 @@
       clearInterval(batchProgressInterval);
       progressBar.style.width = '100%';
       setTimeout(() => {
-        progressWrap.style.display = 'none';
+        progressWrap.classList.add('d-none');
         progressBar.style.width = '0%';
       }, 600);
     };
@@ -4009,7 +4010,7 @@
       const meta = q('studentPlanMeta');
       if (meta && meta.textContent && meta.textContent.includes('Student')) {
         chip.textContent = meta.textContent.split('•')[0].trim();
-        chip.style.display = '';
+        chip.classList.remove('d-none');
       }
     });
     const meta = q('studentPlanMeta');
@@ -4084,21 +4085,21 @@
     }
 
     const openPalette = () => {
-      palette.style.display = '';
+      palette.classList.remove('d-none');
       input.value = '';
       kbdIndex = -1;
       showRecentStudents();
       requestAnimationFrame(() => input.focus());
     };
 
-    const closePalette = () => { palette.style.display = 'none'; kbdIndex = -1; };
+    const closePalette = () => { palette.classList.add('d-none'); kbdIndex = -1; };
 
     document.addEventListener('keydown', (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
         e.preventDefault();
-        palette.style.display === 'none' ? openPalette() : closePalette();
+        palette.classList.contains('d-none') ? openPalette() : closePalette();
       }
-      if (e.key === 'Escape' && palette.style.display !== 'none') {
+      if (e.key === 'Escape' && !palette.classList.contains('d-none')) {
         e.preventDefault();
         e.stopPropagation();
         closePalette();

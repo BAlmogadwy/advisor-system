@@ -12,7 +12,7 @@
       display: flex; align-items: center; gap: 0;
       padding: 6px 8px; border-radius: var(--radius);
       background: rgba(255,255,255,0.45); backdrop-filter: blur(16px);
-      border: 1px solid rgba(17,17,68,0.05);
+      border: var(--border-subtle);
     }
     .wf-step {
       display: flex; align-items: center; gap: 8px;
@@ -65,7 +65,7 @@
     }
     .command-bar {
       border: 1px solid rgba(17,17,68,0.06);
-      background: rgba(255,255,255,0.5); backdrop-filter: blur(24px) saturate(130%);
+      background: var(--glass-bg); backdrop-filter: blur(24px) saturate(130%);
       -webkit-backdrop-filter: blur(24px) saturate(130%);
       padding: 14px 18px; border-radius: var(--radius);
       box-shadow: 0 2px 12px rgba(17,17,68,0.05);
@@ -73,7 +73,7 @@
     .cb-header {
       display: flex; align-items: center; justify-content: space-between;
       margin-bottom: 10px; padding-bottom: 10px;
-      border-bottom: 1px solid rgba(17,17,68,0.05);
+      border-bottom: var(--border-subtle);
     }
     .cb-title {
       font-family: var(--font-serif); font-size: 16px; font-weight: 700;
@@ -126,7 +126,7 @@
     .trust-strip {
       display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
       padding: 7px 14px; margin-top: 8px; border-radius: var(--radius-sm);
-      background: rgba(17,17,68,0.025); border: 1px solid rgba(17,17,68,0.05);
+      background: rgba(17,17,68,0.025); border: var(--border-subtle);
       font-size: 11.5px; font-family: var(--font-mono); color: var(--t4);
     }
     .trust-strip .i { width: 13px; height: 13px; opacity: 0.5; }
@@ -169,15 +169,15 @@
     @media (max-width: 992px) { .pg-full { grid-column: auto; } }
     .planner-panel {
       padding: 16px 20px; border-radius: var(--radius);
-      background: rgba(255,255,255,0.55); backdrop-filter: blur(20px) saturate(130%);
-      -webkit-backdrop-filter: blur(20px) saturate(130%);
-      border: 1px solid rgba(17,17,68,0.05);
+      background: var(--glass-bg); backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
+      border: var(--border-subtle);
       box-shadow: var(--shadow-card); margin-bottom: 10px;
     }
     .pane-head {
       display: flex; align-items: center; gap: 10px;
       margin-bottom: 12px; padding-bottom: 10px;
-      border-bottom: 1px solid rgba(17,17,68,0.05);
+      border-bottom: var(--border-subtle);
     }
     .pane-icon {
       width: 30px; height: 30px; border-radius: 8px;
@@ -187,7 +187,7 @@
     .pane-icon .i { width: 16px; height: 16px; }
     .pane-icon-teal  { background: rgba(10,142,110,0.1); color: var(--teal); }
     .pane-icon-royal { background: rgba(64,86,227,0.1); color: var(--royal); }
-    .pane-icon-sky   { background: rgba(0,174,218,0.1); color: #00aeda; }
+    .pane-icon-sky   { background: rgba(0,174,218,0.1); color: var(--sky); }
     .pane-icon-amber { background: rgba(245,158,11,0.1); color: #d97706; }
     .pane-icon-purple { background: rgba(124,58,237,0.1); color: #7c3aed; }
     .pane-title {
@@ -237,7 +237,7 @@
     .pl-btn-red:hover { background: rgba(220,38,38,0.14); }
     .pl-btn-outline {
       background: rgba(17,17,68,0.04); color: var(--t3);
-      border: 1px solid rgba(17,17,68,0.08);
+      border: var(--border-mid);
     }
     .pl-btn-outline:hover { background: rgba(17,17,68,0.08); }
     .pl-btn-primary {
@@ -281,8 +281,8 @@
     .dock-card {
       position: sticky; bottom: .5rem; z-index: 30;
       border: 1px solid rgba(17,17,68,0.06);
-      background: rgba(255,255,255,0.55); backdrop-filter: blur(20px) saturate(130%);
-      -webkit-backdrop-filter: blur(20px) saturate(130%);
+      background: var(--glass-bg); backdrop-filter: var(--glass-blur);
+      -webkit-backdrop-filter: var(--glass-blur);
     }
 
     /* ── Table styling within panels ─────────────────────────── */
@@ -339,7 +339,7 @@
 
     .avail-course-card {
       padding: 12px 14px; border-radius: var(--radius-sm);
-      background: rgba(255,255,255,0.5); border: 1px solid rgba(17,17,68,0.05);
+      background: var(--glass-bg); border: var(--border-subtle);
       box-shadow: 0 1px 4px rgba(17,17,68,0.04);
     }
     .avail-course-head {
@@ -389,7 +389,7 @@
     .avail-summary-bar {
       display: flex; gap: 16px; flex-wrap: wrap; align-items: center;
       padding: 8px 14px; border-radius: var(--radius-sm);
-      background: rgba(17,17,68,0.025); border: 1px solid rgba(17,17,68,0.05);
+      background: rgba(17,17,68,0.025); border: var(--border-subtle);
       font-size: 11.5px; color: var(--t4); margin-bottom: 10px;
     }
     .avail-summary-item {
@@ -403,8 +403,8 @@
     }
     .avail-search input {
       flex: 1; max-width: 280px; padding: 6px 12px;
-      border-radius: 8px; border: 1px solid rgba(17,17,68,0.08);
-      background: rgba(255,255,255,0.6); font-size: 12px;
+      border-radius: 8px; border: var(--border-mid);
+      background: var(--glass-bg); font-size: 12px;
       outline: none; transition: border-color 0.2s;
     }
     .avail-search input:focus { border-color: var(--teal); }
@@ -420,7 +420,7 @@
 {% block page_chips %}
             <span class="ph-chip ph-chip-role">{{ role }}</span>
             <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}خطوات أ → ج{% else %}Steps A → C{% endif %}</span>
-            <span class="ph-chip ph-chip-gray" id="plannerContextChip" style="display:none;"></span>
+            <span class="ph-chip ph-chip-gray d-none" id="plannerContextChip"></span>
 {% endblock %}
 
 {% block page_intro %}
@@ -566,7 +566,7 @@
               </div>
             </div>
             <div id="shortlist" class="small"><div class="pl-empty-state" id="shortlistEmpty" style="text-align:center;padding:20px;color:var(--t3)">{% if LANGUAGE_CODE == 'ar' %}لا توجد مقررات مختارة{% else %}No courses shortlisted{% endif %}</div></div>
-            <div style="display:flex;align-items:center;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid rgba(17,17,68,0.05)">
+            <div style="display:flex;align-items:center;gap:8px;margin-top:10px;padding-top:10px;border-top:var(--border-subtle)">
               <span class="i" aria-hidden="true" style="width:14px;height:14px;color:var(--t4)"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></span>
               <span style="font-size:13px;font-weight:600;color:var(--t2)">{% if LANGUAGE_CODE == 'ar' %}إجمالي الساعات{% else %}Total credits{% endif %}: <span id="shortCredits" style="color:var(--teal)">0</span></span>
             </div>
@@ -1712,7 +1712,7 @@ q('availSearch')?.addEventListener('input',function(){
   const chip = q('plannerContextChip');
   if (chip) {
     chip.textContent = `${student}`;
-    chip.style.display = '';
+    chip.classList.remove('d-none');
   }
 
   /* Auto-trigger fetch after a short delay so the page is fully painted */
@@ -1732,7 +1732,7 @@ if (_origFetchBtn) {
     const tm  = q('term')?.value;
     if (sid) {
       chip.textContent = `${sid} · ${yr || ''}/${tm || ''}`;
-      chip.style.display = '';
+      chip.classList.remove('d-none');
     }
   });
 }

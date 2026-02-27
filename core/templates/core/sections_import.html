@@ -7,10 +7,10 @@
 {% block extra_css %}
   <style>
     /* Page-specific: KPI summary tiles */
-    .kpi { border: 1px solid rgba(17,17,68,0.05); border-radius: var(--radius); padding: .6rem; background: rgba(255,255,255,0.55); backdrop-filter: blur(20px) saturate(130%); -webkit-backdrop-filter: blur(20px) saturate(130%); box-shadow: var(--shadow-card); }
+    .kpi { border: var(--border-subtle); border-radius: var(--radius); padding: .6rem; background: var(--glass-bg); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); box-shadow: var(--shadow-card); }
     .kpi .k { font-size: .7rem; color: var(--t3); text-transform: uppercase; font-family: var(--font-mono); letter-spacing: 0.06em; font-weight: 700; }
     .kpi .v { font-weight: 700; font-family: var(--font-serif); font-size: 1.4rem; color: var(--teal); }
-    .si-panel { padding: 16px 20px; margin-bottom: 12px; border-radius: var(--radius); background: rgba(255,255,255,0.55); backdrop-filter: blur(20px) saturate(130%); -webkit-backdrop-filter: blur(20px) saturate(130%); border: 1px solid rgba(17,17,68,0.05); box-shadow: var(--shadow-card); }
+    .si-panel { padding: 16px 20px; margin-bottom: 12px; border-radius: var(--radius); background: var(--glass-bg); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); border: var(--border-subtle); box-shadow: var(--shadow-card); }
     /* Softer form label — the global .form-label is uppercase-bold which
        is too heavy for a simple file-upload label on this page. */
     .si-panel > .row .form-label { text-transform: none; font-weight: 600; letter-spacing: 0; }
@@ -72,7 +72,7 @@
             <span>{% if LANGUAGE_CODE == 'ar' %}أو انقر للاستعراض{% else %}or click to browse{% endif %}</span>
           </div>
           <span id="oracleFileName" class="si-dropzone-file">{% if LANGUAGE_CODE == 'ar' %}لم يتم اختيار ملف{% else %}No file chosen{% endif %}</span>
-          <input id="oracleFile" type="file" accept=".html,.htm,.txt" style="display:none">
+          <input id="oracleFile" type="file" accept=".html,.htm,.txt" class="d-none">
         </div>
       </div>
       <div class="col-md-3 form-check ms-3"><input id="dept" type="checkbox" class="form-check-input"><label class="form-check-label" for="dept">{% if LANGUAGE_CODE == 'ar' %}هل هي مقررات القسم؟{% else %}Is department courses?{% endif %}</label></div>

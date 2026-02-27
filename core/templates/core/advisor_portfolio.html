@@ -34,7 +34,7 @@
 }
 .ap-insight-danger { background: #fff1f2; color: #be123c; border: 1px solid #fecdd3; }
 .ap-insight-warn   { background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa; }
-.ap-insight-info   { background: #ecf9f4; color: #067858; border: 1px solid #a8e6d4; }
+.ap-insight-info   { background: #ecf9f4; color: var(--teal-deep); border: 1px solid #a8e6d4; }
 
 /* ── Program breakdown + GPA chart row ─── */
 .ap-breakdown-row {
@@ -169,7 +169,7 @@
 }
 
 .ap-drawer-name {
-  font-size: 1.25rem; font-weight: 700; color: #111144; margin-bottom: 0.15rem;
+  font-size: 1.25rem; font-weight: 700; color: var(--navy); margin-bottom: 0.15rem;
 }
 .ap-drawer-id {
   font-family: var(--font-mono); font-size: 0.82rem; color: var(--muted);
@@ -182,7 +182,7 @@
 
 .ap-drawer-section {
   margin-bottom: 0.75rem;
-  background: rgba(255,255,255,0.5); border-radius: 12px; padding: 12px 14px;
+  background: var(--glass-bg); border-radius: 12px; padding: 12px 14px;
   box-shadow: inset 2px 2px 5px rgba(163,177,198,0.2), inset -2px -2px 5px rgba(255,255,255,0.7);
 }
 .ap-drawer-section-title {
@@ -192,13 +192,13 @@
 }
 .ap-drawer-section-title::before {
   content: ""; width: 3px; height: 0.7rem; border-radius: 2px;
-  background: #0A8E6E; opacity: 1;
+  background: var(--teal); opacity: 1;
 }
 .ap-drawer-kv {
   display: grid; grid-template-columns: 1fr 1fr; gap: 0.35rem;
 }
 .ap-drawer-kv-item { font-size: 0.88rem; }
-.ap-drawer-kv-item strong { color: #111144; }
+.ap-drawer-kv-item strong { color: var(--navy); }
 .ap-drawer-kv-label {
   font-size: 0.65rem; font-weight: 700; color: var(--muted);
   text-transform: uppercase; letter-spacing: 0.05em;
@@ -206,7 +206,7 @@
 
 /* HP Missing table inside drawer — neumorphic inset */
 .ap-drawer-section .table-wrap {
-  background: rgba(255,255,255,0.5); border-radius: 10px;
+  background: var(--glass-bg); border-radius: 10px;
   box-shadow: inset 2px 2px 5px rgba(163,177,198,0.15), inset -2px -2px 5px rgba(255,255,255,0.5);
   overflow: hidden;
 }
@@ -233,7 +233,7 @@
 }
 .ap-drawer-actions .btn-outline-primary,
 .ap-drawer-actions a.btn-outline-primary {
-  background: #0A8E6E; color: #fff; border: none;
+  background: var(--teal); color: #fff; border: none;
   box-shadow: 3px 3px 7px rgba(163,177,198,0.35), -3px -3px 7px rgba(255,255,255,0.7);
 }
 .ap-drawer-actions .btn-outline-primary:hover,
@@ -288,18 +288,18 @@
 
 {% block content %}
       <!-- ═══ Advisor selector bar (hidden for ADVISOR role) ═══ -->
-      <div class="ap-advisor-bar" id="apAdvisorBar" {% if role == 'ADVISOR' %}style="display:none;"{% endif %}>
+      <div class="ap-advisor-bar{% if role == 'ADVISOR' %} d-none{% endif %}" id="apAdvisorBar">
         <select id="apAdvisorSelect" class="form-select" autofocus>
           <option value="">{% if LANGUAGE_CODE == 'ar' %}اختر مرشدًا…{% else %}Select advisor…{% endif %}</option>
         </select>
         <input id="apProgramFilter" class="form-control" style="max-width:140px;" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program (AI/CS){% endif %}">
-        <span class="ap-loaded-label" id="apLoadedLabel" style="display:none;">
+        <span class="ap-loaded-label d-none" id="apLoadedLabel">
           {% if LANGUAGE_CODE == 'ar' %}تم التحميل{% else %}Loaded{% endif %} <span class="ap-loaded-time" id="apLoadedTime"></span>
         </span>
       </div>
 
       <!-- ═══ Metrics (hidden until loaded) ═══ -->
-      <div id="apMetricsWrap" style="display:none;">
+      <div id="apMetricsWrap" class="d-none">
 
         <div class="row g-2 mb-3" id="apMetrics">
           <div class="col-md-2"><div class="mc mc-err">
@@ -579,9 +579,9 @@ async function loadStudents(advisorId) {
 
     q('apAdvisorChip').textContent = advisorId;
     q('apCountChip').textContent = T.nStudents(allStudents.length);
-    q('apLoadedLabel').style.display = '';
+    q('apLoadedLabel').classList.remove('d-none');
     q('apLoadedTime').textContent = new Date().toLocaleTimeString();
-    q('apMetricsWrap').style.display = '';
+    q('apMetricsWrap').classList.remove('d-none');
 
     updateMetrics();
     updateCsvLink();
@@ -598,8 +598,8 @@ function clearPortfolio() {
   allStudents = [];
   summaryCache = {};
   filteredStudents = [];
-  q('apMetricsWrap').style.display = 'none';
-  q('apLoadedLabel').style.display = 'none';
+  q('apMetricsWrap').classList.add('d-none');
+  q('apLoadedLabel').classList.add('d-none');
   q('apAdvisorChip').textContent = T.noAdvisor;
   q('apCountChip').textContent = T.zeroStudents;
   const tbody = q('apTable').querySelector('tbody');
@@ -801,7 +801,7 @@ function renderTable(rows) {
         <button class="btn-circle ap-expand" data-detail="${detailId}" aria-expanded="false" onclick="toggleDetail(this)" title="${T.expandDetails}"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></span></button>
       </td>
     </tr>
-    <tr id="${detailId}" class="ap-detail-row" style="display:none;">
+    <tr id="${detailId}" class="ap-detail-row d-none">
       <td colspan="10">
         <div class="ap-detail-grid">
           <div><span class="ap-detail-label">${T.section}</span>${esc(s.section||'—')}</div>
@@ -941,7 +941,7 @@ function toggleDetail(btn) {
   if (!row) return;
   const open = btn.getAttribute('aria-expanded') === 'true';
   btn.setAttribute('aria-expanded', open ? 'false' : 'true');
-  row.style.display = open ? 'none' : '';
+  row.classList.toggle('d-none', open);
 }
 
 /* ═══════════════════════════════════════════════════════════════

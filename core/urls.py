@@ -1,4 +1,3 @@
-from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.urls import path
 
@@ -268,9 +267,6 @@ urlpatterns = [
         login_required(exam_timetable_detail_view),
         name="exam_timetable_detail",
     ),
+    # Dev-only endpoint (view enforces DEBUG guard, always registered for testability)
+    path("ops/dev/switch-role/", dev_role_switch_view, name="dev_role_switch"),
 ]
-
-if settings.DEBUG:
-    urlpatterns.append(
-        path("ops/dev/switch-role/", dev_role_switch_view, name="dev_role_switch"),
-    )
