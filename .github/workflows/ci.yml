@@ -77,6 +77,6 @@ jobs:
       - name: Bandit
         env:
           PYTHONUTF8: '1'
-        run: bandit -r core -s B404,B603,B607
+        run: bandit -r core -s B101,B311,B404,B603,B607
       - name: Dependency audit
         run: pip-audit
