@@ -583,10 +583,10 @@ function renderTable(users) {
 
     return `<tr class="${isSelected ? 'um-selected' : ''}" data-username="${esc(u.username)}" onclick="selectUserFromRow(this)">
       <td onclick="event.stopPropagation()"><input type="checkbox" class="um-check" ${isChecked ? 'checked' : ''} onchange="toggleBulkCheck('${esc(u.username)}', this.checked)"></td>
-      <td><strong>${esc(u.username)}</strong></td>
+      <td dir="auto"><strong>${esc(u.username)}</strong></td>
       <td>${roleBadge}</td>
-      <td>${esc(u.advisor_id || '—')}</td>
-      <td>${(u.departments || []).join(', ') || '—'}</td>
+      <td dir="auto">${esc(u.advisor_id || '—')}</td>
+      <td dir="auto">${(u.departments || []).join(', ') || '—'}</td>
       <td>${activeBadge}</td>
       <td>${lastLogin}</td>
       <td>${created}</td>

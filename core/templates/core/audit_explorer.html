@@ -70,6 +70,27 @@
     }
     .audit-count strong { color: var(--teal); }
 
+    /* -- AE-02: Hash chain info tooltip icon -- */
+    .hash-chain-info {
+      display: inline-flex; align-items: center; justify-content: center;
+      margin-inline-start: 0.35rem; cursor: help;
+      text-decoration: none; border-bottom: none;
+      color: inherit; opacity: 0.7; vertical-align: middle;
+      border-radius: 50%;
+    }
+    .hash-chain-info:hover, .hash-chain-info:focus-visible {
+      opacity: 1;
+    }
+    .hash-chain-info:focus-visible {
+      outline: 2px solid var(--teal); outline-offset: 2px;
+    }
+    .hash-chain-info-icon { display: block; }
+
+    /* -- AE-04: Truncated cell tooltip for Endpoint / resource columns -- */
+    .audit-cell-truncate {
+      max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+
     /* -- Issue #5: Visible filter labels -- */
     .audit-filter-group { display: flex; flex-direction: column; gap: 0.2rem; }
     .audit-filter-label {
@@ -201,9 +222,9 @@
 {% block page_chips %}
           <span class="ph-chip ph-chip-role">{{ role }}</span>
           {% if chain.ok %}
-          <span class="ph-chip ph-chip-status" role="status">{% if LANGUAGE_CODE == 'ar' %}سلسلة التحقق: سليمة{% else %}Hash chain: OK{% endif %} · {{ chain.checked }} {% if LANGUAGE_CODE == 'ar' %}سجل{% else %}records{% endif %}</span>
+          <span class="ph-chip ph-chip-status" role="status">{% if LANGUAGE_CODE == 'ar' %}سلسلة التحقق: سليمة{% else %}Hash chain: OK{% endif %} · {{ chain.checked }} {% if LANGUAGE_CODE == 'ar' %}سجل{% else %}records{% endif %}<abbr class="hash-chain-info" tabindex="0" role="img" aria-label="{% if LANGUAGE_CODE == 'ar' %}يتم ربط سجلات التدقيق بسلسلة تحقق للكشف عن التلاعب. سليمة يعني أن السلسلة سليمة ولم يتم تعديل أي سجلات أو حذفها.{% else %}Audit log entries are hash-chained to detect tampering. OK means the chain is intact — no entries have been modified or deleted.{% endif %}" title="{% if LANGUAGE_CODE == 'ar' %}يتم ربط سجلات التدقيق بسلسلة تحقق للكشف عن التلاعب. سليمة يعني أن السلسلة سليمة ولم يتم تعديل أي سجلات أو حذفها.{% else %}Audit log entries are hash-chained to detect tampering. OK means the chain is intact — no entries have been modified or deleted.{% endif %}"><svg class="hash-chain-info-icon" aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></abbr></span>
           {% else %}
-          <span class="ph-chip ph-chip-danger" role="alert">{% if LANGUAGE_CODE == 'ar' %}سلسلة التحقق: فشلت{% else %}Hash chain: FAILED{% endif %} · {{ chain.checked }} {% if LANGUAGE_CODE == 'ar' %}سجل{% else %}records{% endif %}</span>
+          <span class="ph-chip ph-chip-danger" role="alert">{% if LANGUAGE_CODE == 'ar' %}سلسلة التحقق: فشلت{% else %}Hash chain: FAILED{% endif %} · {{ chain.checked }} {% if LANGUAGE_CODE == 'ar' %}سجل{% else %}records{% endif %}<abbr class="hash-chain-info" tabindex="0" role="img" aria-label="{% if LANGUAGE_CODE == 'ar' %}يتم ربط سجلات التدقيق بسلسلة تحقق للكشف عن التلاعب. فشلت يعني أن السلسلة مكسورة — ربما تم تعديل بعض السجلات أو حذفها.{% else %}Audit log entries are hash-chained to detect tampering. FAILED means the chain is broken — some entries may have been modified or deleted.{% endif %}" title="{% if LANGUAGE_CODE == 'ar' %}يتم ربط سجلات التدقيق بسلسلة تحقق للكشف عن التلاعب. فشلت يعني أن السلسلة مكسورة — ربما تم تعديل بعض السجلات أو حذفها.{% else %}Audit log entries are hash-chained to detect tampering. FAILED means the chain is broken — some entries may have been modified or deleted.{% endif %}"><svg class="hash-chain-info-icon" aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></abbr></span>
           {% endif %}
 {% endblock %}
 
@@ -241,12 +262,12 @@
     <div class="audit-filter-group">
       <span class="audit-filter-label" id="lbl-from">{% if LANGUAGE_CODE == 'ar' %}من{% else %}From{% endif %}</span>
       <label for="audit-f-from" class="sr-only">{% if LANGUAGE_CODE == 'ar' %}من{% else %}From{% endif %}</label>
-      <input id="audit-f-from" name="from" type="datetime-local" class="form-control form-control-sm" value="{{ filters.from }}" aria-labelledby="lbl-from" />
+      <input id="audit-f-from" name="from" type="datetime-local" dir="ltr" class="form-control form-control-sm" value="{{ filters.from }}" aria-labelledby="lbl-from" />
     </div>
     <div class="audit-filter-group">
       <span class="audit-filter-label" id="lbl-to">{% if LANGUAGE_CODE == 'ar' %}إلى{% else %}To{% endif %}</span>
       <label for="audit-f-to" class="sr-only">{% if LANGUAGE_CODE == 'ar' %}إلى{% else %}To{% endif %}</label>
-      <input id="audit-f-to" name="to" type="datetime-local" class="form-control form-control-sm" value="{{ filters.to }}" aria-labelledby="lbl-to" />
+      <input id="audit-f-to" name="to" type="datetime-local" dir="ltr" class="form-control form-control-sm" value="{{ filters.to }}" aria-labelledby="lbl-to" />
     </div>
     <div class="audit-filter-group">
       <span class="audit-filter-label" id="lbl-limit">{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى{% else %}Limit{% endif %}</span>
@@ -302,9 +323,9 @@
         <td>{{ row.actor_role }}</td>
         <td>{{ row.action }}</td>
         <td class="audit-status-icon audit-status-{{ row.status }}">{{ row.status }}</td>
-        <td>{{ row.details.reason_code|default:'' }}</td>
-        <td class="audit-endpoint">{{ row.endpoint }} {{ row.method }}</td>
-        <td>{{ row.error_text }}</td>
+        <td class="audit-cell-truncate" title="{{ row.details.reason_code|default:'' }}">{{ row.details.reason_code|default:'' }}</td>
+        <td class="audit-endpoint audit-cell-truncate" title="{{ row.endpoint }} {{ row.method }}">{{ row.endpoint }} {{ row.method }}</td>
+        <td class="audit-cell-truncate" title="{{ row.error_text }}">{{ row.error_text }}</td>
         <td class="audit-hash"><code>{{ row.entry_hash|slice:":12" }}</code></td>
       </tr>
       {% empty %}
@@ -362,6 +383,39 @@
   'use strict';
 
   var IS_AR = document.documentElement.lang === 'ar';
+
+  /* ================================================================
+     AE-03: Format ISO timestamps to readable "Mon DD, YYYY HH:MM"
+     Full ISO string is preserved in the title attribute on hover.
+     ================================================================ */
+  var MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  var MONTHS_AR = ['\u064A\u0646\u0627\u064A\u0631','\u0641\u0628\u0631\u0627\u064A\u0631','\u0645\u0627\u0631\u0633','\u0623\u0628\u0631\u064A\u0644','\u0645\u0627\u064A\u0648','\u064A\u0648\u0646\u064A\u0648','\u064A\u0648\u0644\u064A\u0648','\u0623\u063A\u0633\u0637\u0633','\u0633\u0628\u062A\u0645\u0628\u0631','\u0623\u0643\u062A\u0648\u0628\u0631','\u0646\u0648\u0641\u0645\u0628\u0631','\u062F\u064A\u0633\u0645\u0628\u0631'];
+
+  function formatTimestamp(isoStr) {
+    if (!isoStr || isoStr.length < 16) return isoStr;
+    var d = new Date(isoStr);
+    if (isNaN(d.getTime())) return isoStr;
+    var months = IS_AR ? MONTHS_AR : MONTHS;
+    var month = months[d.getUTCMonth()];
+    var day = d.getUTCDate();
+    var year = d.getUTCFullYear();
+    var hh = String(d.getUTCHours()).padStart(2, '0');
+    var mm = String(d.getUTCMinutes()).padStart(2, '0');
+    return month + ' ' + day + ', ' + year + ' ' + hh + ':' + mm;
+  }
+
+  (function reformatTimestamps() {
+    var tsCells = document.querySelectorAll('.audit-ts');
+    for (var i = 0; i < tsCells.length; i++) {
+      var raw = tsCells[i].textContent.trim();
+      if (!raw) continue;
+      var formatted = formatTimestamp(raw);
+      if (formatted !== raw) {
+        tsCells[i].setAttribute('title', raw);
+        tsCells[i].textContent = formatted;
+      }
+    }
+  })();
 
   /* ================================================================
      Bilingual labels
@@ -512,6 +566,7 @@
       records.push({
         id:       (cells[0] || {}).textContent || '',
         ts:       (cells[1] || {}).textContent || '',
+        tsRaw:    (cells[1] ? cells[1].getAttribute('title') : '') || (cells[1] || {}).textContent || '',
         user:     (cells[2] || {}).textContent || '',
         role:     (cells[3] || {}).textContent || '',
         action:   (cells[4] || {}).textContent || '',
@@ -528,11 +583,17 @@
     var groupOrder = [];
     for (var j = 0; j < records.length; j++) {
       var r = records[j];
-      var ts = r.ts.trim();
-      // Extract date portion (YYYY-MM-DD or first 10 chars)
-      var datePart = ts.length >= 10 ? ts.substring(0, 10) : ts;
-      // Extract time portion
-      var timePart = ts.length > 11 ? ts.substring(11).replace(/\.\d+/, '') : ts;
+      var tsRaw = r.tsRaw.trim();
+      var tsDisplay = r.ts.trim();
+      // Use raw ISO for grouping by date; fall back to display text
+      var datePart, timePart;
+      if (tsRaw.length >= 10 && tsRaw.charAt(4) === '-') {
+        datePart = tsRaw.substring(0, 10);
+        timePart = tsRaw.length > 11 ? tsRaw.substring(11).replace(/\.\d+.*$/, '') : tsDisplay;
+      } else {
+        datePart = tsDisplay.length >= 10 ? tsDisplay.substring(0, 10) : tsDisplay;
+        timePart = tsDisplay;
+      }
 
       if (!groups[datePart]) {
         groups[datePart] = [];
@@ -540,6 +601,7 @@
       }
       groups[datePart].push({
         time: timePart,
+        timeRaw: tsRaw,
         id: r.id.trim(),
         user: r.user.trim(),
         role: r.role.trim(),
@@ -562,7 +624,7 @@
         var statusCls = 'atl-status-' + it.status;
         var uid = 'atl-extra-' + g + '-' + k;
         html += '<div class="atl-item">' +
-          '<div class="atl-time">' + esc(it.time) + '</div>' +
+          '<div class="atl-time" title="' + esc(it.timeRaw) + '">' + esc(it.time) + '</div>' +
           '<div class="atl-content">' +
             '<div class="atl-action">' + esc(it.action) + '</div>' +
             '<div class="atl-detail">' +

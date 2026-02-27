@@ -120,8 +120,9 @@
       border-radius: 5px;
     }
     .risk-danger  { background: #fee2e2; color: #991b1b; }
+    .risk-danger-icon { font-size: 0.72em; line-height: 1; }
     .risk-warning { background: #fef3c7; color: #92400e; }
-    .risk-safe    { background: #dcfce7; color: #166534; }
+    .risk-safe    { background: #c6f6d5; color: #14532d; border: 1px solid #86efac; }
 
     /* RIGHT: work area */
     .dba-work {
@@ -331,7 +332,7 @@
             <span class="dba-nav-name">{% if LANGUAGE_CODE == 'ar' %}حذف الطلاب{% else %}Delete Students{% endif %}</span>
             <span class="dba-nav-desc">{% if LANGUAGE_CODE == 'ar' %}حسب البرنامج / القسم{% else %}By program / section{% endif %}</span>
           </span>
-          <span class="dba-risk-badge risk-danger">{% if LANGUAGE_CODE == 'ar' %}خطر{% else %}Danger{% endif %}</span>
+          <span class="dba-risk-badge risk-danger"><span aria-hidden="true" class="risk-danger-icon">&#9888;</span> {% if LANGUAGE_CODE == 'ar' %}خطر{% else %}Danger{% endif %}</span>
         </button>
 
         <button class="dba-nav-item danger-item" data-panel="catalog" type="button">
@@ -340,7 +341,7 @@
             <span class="dba-nav-name">{% if LANGUAGE_CODE == 'ar' %}حذف الكتالوج{% else %}Delete Catalog{% endif %}</span>
             <span class="dba-nav-desc">{% if LANGUAGE_CODE == 'ar' %}متطلبات + مكوّنات{% else %}Requirements + prerequisites{% endif %}</span>
           </span>
-          <span class="dba-risk-badge risk-danger">{% if LANGUAGE_CODE == 'ar' %}خطر{% else %}Danger{% endif %}</span>
+          <span class="dba-risk-badge risk-danger"><span aria-hidden="true" class="risk-danger-icon">&#9888;</span> {% if LANGUAGE_CODE == 'ar' %}خطر{% else %}Danger{% endif %}</span>
         </button>
 
         <div class="dba-nav-label">{% if LANGUAGE_CODE == 'ar' %}استيراد البيانات{% else %}Import Data{% endif %}</div>
@@ -440,7 +441,7 @@
               </div>
               <div class="col-md-4 d-flex gap-2">
                 <button id="sPreview" class="btn btn-outline-primary flex-fill">{% if LANGUAGE_CODE == 'ar' %}معاينة{% else %}Preview{% endif %}</button>
-                <button id="sDelete" class="btn btn-danger flex-fill">{% if LANGUAGE_CODE == 'ar' %}حذف{% else %}Delete{% endif %}</button>
+                <button id="sDelete" class="btn btn-danger flex-fill" disabled aria-disabled="true">{% if LANGUAGE_CODE == 'ar' %}حذف{% else %}Delete{% endif %}</button>
               </div>
             </div>
           </div>
@@ -467,7 +468,7 @@
               </div>
               <div class="col-md-7 d-flex gap-2">
                 <button id="pPreview" class="btn btn-outline-primary flex-fill">{% if LANGUAGE_CODE == 'ar' %}معاينة{% else %}Preview{% endif %}</button>
-                <button id="pDelete" class="btn btn-danger flex-fill">{% if LANGUAGE_CODE == 'ar' %}حذف الكتالوج{% else %}Delete catalog{% endif %}</button>
+                <button id="pDelete" class="btn btn-danger flex-fill" disabled aria-disabled="true">{% if LANGUAGE_CODE == 'ar' %}حذف الكتالوج{% else %}Delete catalog{% endif %}</button>
               </div>
             </div>
           </div>
@@ -901,11 +902,39 @@ async function callJson(url, options = {}, outId = null, btn = null) {
 
 let termPreviewReady = false;
 
+/* ── Helpers: enable / disable delete buttons ── */
+function enableDeleteBtn(btn) {
+  btn.disabled = false;
+  btn.removeAttribute('aria-disabled');
+}
+function disableDeleteBtn(btn) {
+  btn.disabled = true;
+  btn.setAttribute('aria-disabled', 'true');
+  /* also cancel any pending double-confirm state */
+  if (btn.dataset.confirming === 'true') {
+    btn.dataset.confirming = 'false';
+    btn.classList.remove('dba-delete-confirm');
+    if (btn._origHtml) btn.innerHTML = btn._origHtml;
+    clearTimeout(btn._confirmTimer);
+  }
+}
+
 /* ── Section: Delete students ── */
 q('sPreview').onclick = async () => {
   const u = `/ops/db/preview-delete-students/?program=${encodeURIComponent(q('sProgram').value)}&section=${encodeURIComponent(q('sSection').value)}`;
-  await callJson(u, {}, 'sOut', q('sPreview'));
+  const data = await callJson(u, {}, 'sOut', q('sPreview'));
+  /* Enable delete only when preview returns matching results */
+  if (data && !data.error && (data.count > 0 || data.total > 0 || (Array.isArray(data.students) && data.students.length > 0))) {
+    enableDeleteBtn(q('sDelete'));
+  } else {
+    disableDeleteBtn(q('sDelete'));
+  }
 };
+
+/* Re-disable delete when filter inputs change after a preview */
+['sProgram', 'sSection'].forEach(id => {
+  q(id).addEventListener('input', () => disableDeleteBtn(q('sDelete')));
+});
 
 q('sDelete').onclick = () => {
   handleDeleteWithConfirm(q('sDelete'), async () => {
@@ -923,14 +952,25 @@ q('sDelete').onclick = () => {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ program: q('sProgram').value, section: q('sSection').value, confirm: 'DELETE' })
     }, 'sOut', q('sDelete'));
+    /* Re-disable after delete — previewed data no longer valid */
+    disableDeleteBtn(q('sDelete'));
   });
 };
 
 /* ── Section: Delete catalog ── */
 q('pPreview').onclick = async () => {
   const u = `/ops/db/preview-delete-program-catalog/?program=${encodeURIComponent(q('pProgram').value)}`;
-  await callJson(u, {}, 'pOut', q('pPreview'));
+  const data = await callJson(u, {}, 'pOut', q('pPreview'));
+  /* Enable delete only when preview returns matching results */
+  if (data && !data.error && (data.count > 0 || data.total > 0 || data.requirements > 0 || data.prerequisites > 0)) {
+    enableDeleteBtn(q('pDelete'));
+  } else {
+    disableDeleteBtn(q('pDelete'));
+  }
 };
+
+/* Re-disable delete when filter input changes after a preview */
+q('pProgram').addEventListener('input', () => disableDeleteBtn(q('pDelete')));
 
 q('pDelete').onclick = () => {
   handleDeleteWithConfirm(q('pDelete'), async () => {
@@ -949,6 +989,8 @@ q('pDelete').onclick = () => {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ program: q('pProgram').value, confirm: 'DELETE' })
     }, 'pOut', q('pDelete'));
+    /* Re-disable after delete — previewed data no longer valid */
+    disableDeleteBtn(q('pDelete'));
   });
 };
 

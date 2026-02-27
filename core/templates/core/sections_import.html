@@ -76,7 +76,7 @@
         </div>
       </div>
       <div class="col-md-3 form-check ms-3"><input id="dept" type="checkbox" class="form-check-input"><label class="form-check-label" for="dept">{% if LANGUAGE_CODE == 'ar' %}هل هي مقررات القسم؟{% else %}Is department courses?{% endif %}</label></div>
-      <div class="col-md-3 form-check"><input id="truncate" type="checkbox" class="form-check-input" checked><label class="form-check-label" for="truncate">{% if LANGUAGE_CODE == 'ar' %}استبدال جميع الشعب الحالية{% else %}Replace all existing sections{% endif %}</label></div>
+      <div class="col-md-3 form-check"><input id="truncate" type="checkbox" class="form-check-input"><label class="form-check-label" for="truncate">{% if LANGUAGE_CODE == 'ar' %}استبدال جميع الشعب الحالية{% else %}Replace all existing sections{% endif %}</label></div>
     </div>
     <div class="mt-3 d-flex gap-2">
       <button id="parseBtn" class="btn btn-outline-primary">{% if LANGUAGE_CODE == 'ar' %}تحليل + معاينة{% else %}Parse + Preview{% endif %}</button>

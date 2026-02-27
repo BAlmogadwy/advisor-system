@@ -352,12 +352,12 @@
           <input id="apSearch" type="search" placeholder="{% if LANGUAGE_CODE == 'ar' %}بحث بالمعرف أو الاسم…{% else %}Search by ID or name…{% endif %}" oninput="debouncedApFilter()">
         </div>
         <div class="fb-spacer"></div>
-        <div class="ap-filters" id="apFilters">
-          <button class="fb-dd active" data-focus="all" onclick="setFocus(this)">{% if LANGUAGE_CODE == 'ar' %}الكل{% else %}All{% endif %}</button>
-          <button class="fb-dd" data-focus="attention" onclick="setFocus(this)" style="color:var(--danger)">{% if LANGUAGE_CODE == 'ar' %}تنبيه{% else %}Attention{% endif %}</button>
-          <button class="fb-dd" data-focus="risk" onclick="setFocus(this)" style="color:var(--danger)">{% if LANGUAGE_CODE == 'ar' %}مخاطر{% else %}At Risk{% endif %}</button>
-          <button class="fb-dd" data-focus="missing" onclick="setFocus(this)" style="color:var(--warning)">{% if LANGUAGE_CODE == 'ar' %}أولوية مفقودة{% else %}HP Missing{% endif %}</button>
-          <button class="fb-dd" data-focus="zerohours" onclick="setFocus(this)" style="color:var(--warning)">{% if LANGUAGE_CODE == 'ar' %}بدون ساعات{% else %}Zero Hours{% endif %}</button>
+        <div class="ap-filters" id="apFilters" role="group" aria-label="{% if LANGUAGE_CODE == 'ar' %}تصفية الطلاب{% else %}Student filters{% endif %}">
+          <button class="fb-dd active" data-focus="all" aria-pressed="true" onclick="setFocus(this)">{% if LANGUAGE_CODE == 'ar' %}الكل{% else %}All{% endif %}</button>
+          <button class="fb-dd" data-focus="attention" aria-pressed="false" onclick="setFocus(this)" style="color:var(--danger)">{% if LANGUAGE_CODE == 'ar' %}تنبيه{% else %}Attention{% endif %}</button>
+          <button class="fb-dd" data-focus="risk" aria-pressed="false" onclick="setFocus(this)" style="color:var(--danger)">{% if LANGUAGE_CODE == 'ar' %}مخاطر{% else %}At Risk{% endif %}</button>
+          <button class="fb-dd" data-focus="missing" aria-pressed="false" onclick="setFocus(this)" style="color:var(--warning)">{% if LANGUAGE_CODE == 'ar' %}أولوية مفقودة{% else %}HP Missing{% endif %}</button>
+          <button class="fb-dd" data-focus="zerohours" aria-pressed="false" onclick="setFocus(this)" style="color:var(--warning)">{% if LANGUAGE_CODE == 'ar' %}بدون ساعات{% else %}Zero Hours{% endif %}</button>
         </div>
         <a id="apCsvLink" class="fb-dd" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span> CSV</a>
         <button class="fb-dd" type="button" onclick="copyFilteredIds()">{% if LANGUAGE_CODE == 'ar' %}نسخ المعرفات{% else %}Copy IDs{% endif %}</button>
@@ -668,8 +668,12 @@ function buildGpaChart() {
 function setFocus(btn) {
   currentFocus = btn.dataset.focus;
   currentPage = 1;
-  document.querySelectorAll('#apFilters .fb-dd').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('#apFilters .fb-dd').forEach(p => {
+    p.classList.remove('active');
+    p.setAttribute('aria-pressed', 'false');
+  });
   btn.classList.add('active');
+  btn.setAttribute('aria-pressed', 'true');
   apFilter();
 }
 
