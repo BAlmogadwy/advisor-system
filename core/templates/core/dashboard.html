@@ -197,13 +197,14 @@
   background: rgba(13,21,38,0.5);
   backdrop-filter: blur(4px);
   z-index: 2000;
-  display: flex !important;
+  display: flex;
   align-items: flex-start;
   justify-content: center;
   padding-top: 12vh;
 }
 
-.cmd-backdrop[style*="display:none"] { display: none !important; }
+/* .d-none (!important) hides the palette; this class re-shows it when d-none is removed */
+.cmd-backdrop.d-none { display: none !important; }
 
 .cmd-modal {
   background: #fff;
