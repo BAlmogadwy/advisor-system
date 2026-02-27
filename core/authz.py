@@ -59,6 +59,12 @@ def throttle(
     def deco(fn: Callable[..., HttpResponseBase]) -> Callable[..., HttpResponseBase]:
         @wraps(fn)
         def wrapper(request: HttpRequest, *args: Any, **kwargs: Any) -> HttpResponseBase:
+            # SUPER_ADMIN is exempt from rate limits
+            if request.user.is_authenticated:
+                scope = get_user_scope(request.user)
+                if scope.get("role") == ROLE_SUPER_ADMIN:
+                    return fn(request, *args, **kwargs)
+
             uid = getattr(request.user, "pk", None) or "anon"
             key = f"throttle:{fn.__qualname__}:{uid}"
             now = time.monotonic()

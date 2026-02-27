@@ -26,7 +26,20 @@ DEFAULT_PRE_CSV = BASE_DIR / "data" / "department_prerequisites.csv"
 BACKUP_DIR = BASE_DIR / "runtime" / "db_backups"
 
 
+def _is_sqlite() -> bool:
+    """Return True if the default database engine is SQLite."""
+    engine = settings.DATABASES["default"].get("ENGINE", "")
+    return "sqlite" in engine.lower()
+
+
 def create_backup_snapshot() -> dict[str, Any]:
+    if not _is_sqlite():
+        # PostgreSQL backups are managed by the hosting provider (e.g. Render).
+        return {
+            "ok": True,
+            "skipped": True,
+            "message": "Database backups are managed by the hosting provider. File-level snapshots are only available for SQLite.",
+        }
     db_path = Path(str(settings.DATABASES["default"]["NAME"]))
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -41,10 +54,14 @@ def create_backup_snapshot() -> dict[str, Any]:
 
 
 def run_integrity_checks() -> dict[str, Any]:
-    with connection.cursor() as cur:
-        cur.execute("PRAGMA integrity_check")
-        pragma_row = cur.fetchone()
-        integrity_result = str(pragma_row[0]) if pragma_row else "unknown"
+    if _is_sqlite():
+        with connection.cursor() as cur:
+            cur.execute("PRAGMA integrity_check")
+            pragma_row = cur.fetchone()
+            integrity_result = str(pragma_row[0]) if pragma_row else "unknown"
+    else:
+        # PostgreSQL: no PRAGMA equivalent; managed databases handle integrity.
+        integrity_result = "ok (managed database)"
 
     # Orphan student_courses (student_id not in students table)
     orphan_student_courses = StudentCourse.objects.filter(

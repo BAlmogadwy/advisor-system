@@ -3,6 +3,7 @@ services:
     name: advisor-system
     runtime: python
     plan: starter
+    preDeployCommand: python manage.py migrate --noinput
     buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
     startCommand: gunicorn config.wsgi --bind 0.0.0.0:$PORT --workers 2 --timeout 120
     envVars:
