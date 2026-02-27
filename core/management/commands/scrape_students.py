@@ -112,29 +112,36 @@ def _process_student(
 
     # ── Serialize all DB writes (SQLite single-writer) ─────
     with _db_lock:
+        defaults = {
+            "registration_no": student_id,
+            "name": profile.get("name", "Unknown"),
+            "nationality": profile.get("nationality", "Unknown"),
+            "status": profile.get("status", "Active"),
+            "gpa": profile.get("gpa", 0.0)
+            if isinstance(profile.get("gpa"), int | float)
+            else 0.0,
+            "total_registered_credits": profile.get("total_registered_credits")
+            if isinstance(profile.get("total_registered_credits"), int)
+            else 0,
+            "total_earned_credits": profile.get("total_earned_credits")
+            if isinstance(profile.get("total_earned_credits"), int)
+            else 0,
+            "current_registered_credits": tt_info.get("current_registered_credits")
+            if isinstance(tt_info.get("current_registered_credits"), int)
+            else 0,
+            "program": program,
+            "section": section,
+        }
+
+        # Only set advisor_id if the student is new or has no advisor yet.
+        # This preserves integer IDs assigned by seed_advisors on re-scrape.
+        existing = Student.objects.filter(student_id=sid).values_list("advisor_id", flat=True).first()
+        if not existing:
+            defaults["advisor_id"] = tt_info.get("advisor_name", "")
+
         Student.objects.update_or_create(
             student_id=sid,
-            defaults={
-                "registration_no": student_id,
-                "name": profile.get("name", "Unknown"),
-                "nationality": profile.get("nationality", "Unknown"),
-                "status": profile.get("status", "Active"),
-                "gpa": profile.get("gpa", 0.0)
-                if isinstance(profile.get("gpa"), int | float)
-                else 0.0,
-                "total_registered_credits": profile.get("total_registered_credits")
-                if isinstance(profile.get("total_registered_credits"), int)
-                else 0,
-                "total_earned_credits": profile.get("total_earned_credits")
-                if isinstance(profile.get("total_earned_credits"), int)
-                else 0,
-                "current_registered_credits": tt_info.get("current_registered_credits")
-                if isinstance(tt_info.get("current_registered_credits"), int)
-                else 0,
-                "program": program,
-                "section": section,
-                "advisor_id": tt_info.get("advisor_name", ""),
-            },
+            defaults=defaults,
         )
 
         bridge_res = ingest_student_timetable_html(
