@@ -441,6 +441,88 @@
 /* ── Command palette keyboard navigation ── */
 .cmd-item.kbd-active { background: #eff6ff; outline: 2px solid var(--teal); outline-offset: -2px; }
 
+/* ── Client-side table pagination ── */
+.tbl-pager { display:flex; align-items:center; gap:12px; justify-content:space-between; padding:10px 0; font-size:0.85rem; color:var(--t4,#6c6c8a); }
+.tbl-pager button { background:none; border:1px solid var(--line,#dde3ed); border-radius:8px; padding:4px 12px; cursor:pointer; font-size:0.85rem; }
+.tbl-pager button:disabled { opacity:0.4; cursor:default; }
+.tbl-pager button:hover:not(:disabled) { background:rgba(10,142,110,0.08); }
+.tbl-pager select { border:1px solid var(--line,#dde3ed); border-radius:6px; padding:2px 6px; font-size:0.85rem; }
+
+/* ── Extracted utility classes (inline → class) ──── */
+.mb-14   { margin-bottom: 14px; }
+.mb-12   { margin-bottom: 12px; }
+.mb-18   { margin-bottom: 18px; }
+.mb-16   { margin-bottom: 16px; }
+.mb-8    { margin-bottom: 8px; }
+.mb-6    { margin-bottom: 6px; }
+.mb-10   { margin-bottom: 10px; }
+.mt-8    { margin-top: 8px; }
+
+.flex-card      { flex: 1; min-width: 0; }
+.flex-field     { flex: 1; min-width: 140px; }
+.flex-spacer    { flex: 1; }
+.flex-shrink-0  { flex-shrink: 0; }
+
+.field-row      { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+.field-row-mt   { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; margin-top: 4px; }
+.field-action   { flex: 0 0 auto; padding-bottom: 1px; }
+
+.metrics-row-12 { display: flex; gap: 12px; }
+.metrics-row-14 { display: flex; gap: 14px; }
+.skel-row       { display: flex; gap: 12px; align-items: center; }
+
+.ghost-muted    { pointer-events: none; opacity: 0.5; }
+.ghost-faded    { pointer-events: none; opacity: 0.40; }
+.skel-pad       { padding: 0 14px 6px; }
+
+.overflow-x     { overflow-x: auto; }
+
+.empty-icon-32  { width: 32px; height: 32px; }
+.empty-icon-48  { width: 48px; height: 48px; opacity: 0.30; margin-bottom: 12px; }
+.empty-icon-muted { width: 32px; height: 32px; color: var(--t5); margin-bottom: 8px; }
+
+.fb-search-full { max-width: none; }
+.fb-w-110 { max-width: 110px; }
+.fb-w-120 { max-width: 120px; }
+.fb-w-100 { max-width: 100px; }
+.filter-bar-sm  { padding: 8px 14px; }
+
+.meta-mono      { font-family: var(--font-mono); font-size: 12px; border-radius: var(--radius-sm); padding: 10px 14px; }
+.ts-updated     { font-size: 11px; color: var(--t3); font-family: var(--font-mono); }
+.color-t3       { color: var(--t3); }
+.i-faint        { opacity: 0.4; }
+.filter-pad     { padding: 8px 0; }
+
+.step-circle    { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; background: var(--teal-dim); border: 1px solid var(--teal-border); color: var(--teal); font-family: var(--font-mono); font-size: 11px; font-weight: 700; }
+.step-label     { font-size: 12px; color: var(--t3); font-weight: 600; }
+.step-arrow     { stroke: var(--t5); fill: none; stroke-width: 2; stroke-linecap: round; }
+
+.section-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.section-heading h3 { font-family: var(--font-serif); font-size: 18px; color: var(--navy); margin: 0; }
+.section-badge  { font-family: var(--font-mono); font-size: 10px; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: var(--teal-dim); color: var(--teal); border: 1px solid var(--teal-border); }
+
+.dlg-box-lg     { max-width: 800px; }
+.dlg-body-scroll { max-height: 70vh; overflow-y: auto; }
+
+.mc-val-lg      { font-size: 20px; }
+.mc-val-sm      { font-size: 18px; }
+.mc-val-mono-sm { font-size: 16px; font-family: var(--font-mono); letter-spacing: 0; }
+
+.adv-textarea   { border-radius: var(--radius-sm); border: var(--border-subtle); background: var(--glass-bg); font-size: 13px; }
+.cp-flex-col    { display: flex; flex-direction: column; gap: 10px; }
+.sticky-16      { position: sticky; top: 16px; }
+
+.plan-side-col  { width: 340px; flex-shrink: 0; }
+.plan-layout    { display: flex; gap: 16px; align-items: flex-start; }
+
+.can-register-pill { background: rgba(10,142,110,0.14); }
+.skel-m0       { margin: 0; }
+.skel-code     { width: 70px; height: 14px; }
+.skel-status   { width: 50px; height: 10px; }
+.skel-half     { width: 50%; }
+.preset-actions { display: flex; gap: 6px; margin-top: 8px; }
+.scrape-metrics-row { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
+
 </style>
 {% endblock %}
 
@@ -526,10 +608,10 @@
     </div>
 
     <div id="student" class="panel" role="region">
-      <form method="get" action="/" class="filter-bar sticky-cta" style="margin-bottom:14px">
-        <div class="fb-search" style="max-width:170px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span><input id="studentIdInput" type="text" inputmode="numeric" pattern="[0-9]*" name="student_id" value="{{ student_id }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}" required></div>
-        <div class="fb-search" style="max-width:110px"><input type="text" inputmode="numeric" pattern="[0-9]*" name="year" value="{{ year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" required></div>
-        <div class="fb-search" style="max-width:110px"><input type="text" inputmode="numeric" pattern="[0-9]*" min="0" max="1" name="semester" value="{{ semester }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}" required></div>
+      <form method="get" action="/" class="filter-bar sticky-cta mb-14">
+        <div class="fb-search" style="max-width:170px"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span><input id="studentIdInput" type="text" inputmode="numeric" pattern="[0-9]*" name="student_id" value="{{ student_id }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}" required></div>
+        <div class="fb-search fb-w-110"><input type="text" inputmode="numeric" pattern="[0-9]*" name="year" value="{{ year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" required></div>
+        <div class="fb-search fb-w-110"><input type="text" inputmode="numeric" pattern="[0-9]*" min="0" max="1" name="semester" value="{{ semester }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}" required></div>
         <div class="fb-spacer"></div>
         <button class="btn btn-primary">
           <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}توصية{% else %}Recommend{% endif %}
@@ -541,10 +623,10 @@
       {% if recommendations is not None %}
       <div class="cpanel mt-4">
         <div class="cp-h">
-          <span class="i" style="opacity:0.4"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></span>
+          <span class="i i-faint"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></span>
           <div class="cp-t">{% if LANGUAGE_CODE == 'ar' %}التوصيات{% else %}Recommendations{% endif %}</div>
           <span class="cp-live">{{ recommendations|length }} courses</span>
-          <div style="flex:1"></div>
+          <div class="flex-spacer"></div>
           <a id="studentCsvLink" class="btn btn-outline-primary btn-sm" href="/export/student.csv?student_id={{ student_id }}&year={{ year }}&semester={{ semester }}">{% if LANGUAGE_CODE == 'ar' %}تصدير CSV{% else %}Export CSV{% endif %}</a>
           <button id="copyStudentCsv" type="button" class="btn btn-outline-secondary btn-sm">Copy link</button>
         </div>
@@ -565,111 +647,111 @@
       {% if error %}<div class="alert alert-danger mt-3 mb-0" role="alert">{{ error }}</div>{% endif %}
 
       <div class="mt-4">
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-          <h3 style="font-family:var(--font-serif);font-size:18px;color:var(--navy);margin:0">{% if LANGUAGE_CODE == 'ar' %}مصفوفة خطة الطالب{% else %}Student Plan Matrix{% endif %}</h3>
-          <span style="font-family:var(--font-mono);font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px;background:var(--teal-dim);color:var(--teal);border:1px solid var(--teal-border)">{% if LANGUAGE_CODE == 'ar' %}الفصول 1-10{% else %}Terms 1-10{% endif %}</span>
+        <div class="section-heading">
+          <h3>{% if LANGUAGE_CODE == 'ar' %}مصفوفة خطة الطالب{% else %}Student Plan Matrix{% endif %}</h3>
+          <span class="section-badge">{% if LANGUAGE_CODE == 'ar' %}الفصول 1-10{% else %}Terms 1-10{% endif %}</span>
         </div>
-        <div id="studentPlanMeta" class="small mb-2" style="color:var(--t3)">{% if LANGUAGE_CODE == 'ar' %}حمّل بيانات طالب لعرض مصفوفة الفصول الكاملة.{% else %}Load a student to view the full term matrix.{% endif %}</div>
+        <div id="studentPlanMeta" class="small mb-2 color-t3">{% if LANGUAGE_CODE == 'ar' %}حمّل بيانات طالب لعرض مصفوفة الفصول الكاملة.{% else %}Load a student to view the full term matrix.{% endif %}</div>
 
         <!-- ── Empty-state hero for Student Plan ── -->
         <div id="studentEmptyState">
           <div class="empty-state" style="padding:2.5rem 1.5rem 1.8rem">
-            <span class="i" style="width:48px;height:48px;opacity:0.30;margin-bottom:12px" aria-hidden="true">
+            <span class="i empty-icon-48" aria-hidden="true">
               <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
             </span>
             <div class="empty-title" style="font-size:17px;margin-bottom:6px">{% if LANGUAGE_CODE == 'ar' %}استكشف الخطة الأكاديمية لأي طالب{% else %}Explore any student's academic plan{% endif %}</div>
             <div class="empty-hint" style="max-width:420px;margin-bottom:22px">{% if LANGUAGE_CODE == 'ar' %}أدخل <strong>رقم الطالب</strong> أعلاه ثم اضغط <strong>تحميل الخطة</strong> لعرض مصفوفة الفصول، تنبيهات المخاطر، وخطة العمل.{% else %}Enter a <strong>Student ID</strong> above, then click <strong>Load plan</strong> to see the full term matrix, risk alerts, and action plan.{% endif %}</div>
-            <div style="display:flex;align-items:center;gap:10px">
-              <span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:var(--teal-dim);border:1px solid var(--teal-border);color:var(--teal);font-family:var(--font-mono);font-size:11px;font-weight:700">1</span>
-              <span style="font-size:12px;color:var(--t3);font-weight:600">{% if LANGUAGE_CODE == 'ar' %}أدخل الرقم{% else %}Enter ID{% endif %}</span>
-              <svg width="14" height="14" viewBox="0 0 24 24" style="stroke:var(--t5);fill:none;stroke-width:2;stroke-linecap:round"><polyline points="9 18 15 12 9 6"/></svg>
-              <span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:var(--teal-dim);border:1px solid var(--teal-border);color:var(--teal);font-family:var(--font-mono);font-size:11px;font-weight:700">2</span>
-              <span style="font-size:12px;color:var(--t3);font-weight:600">{% if LANGUAGE_CODE == 'ar' %}تحميل الخطة{% else %}Load plan{% endif %}</span>
-              <svg width="14" height="14" viewBox="0 0 24 24" style="stroke:var(--t5);fill:none;stroke-width:2;stroke-linecap:round"><polyline points="9 18 15 12 9 6"/></svg>
-              <span style="display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;background:var(--teal-dim);border:1px solid var(--teal-border);color:var(--teal);font-family:var(--font-mono);font-size:11px;font-weight:700">3</span>
-              <span style="font-size:12px;color:var(--t3);font-weight:600">{% if LANGUAGE_CODE == 'ar' %}استعرض النتائج{% else %}Explore results{% endif %}</span>
+            <div class="section-heading">
+              <span class="step-circle">1</span>
+              <span class="step-label">{% if LANGUAGE_CODE == 'ar' %}أدخل الرقم{% else %}Enter ID{% endif %}</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" class="step-arrow"><polyline points="9 18 15 12 9 6"/></svg>
+              <span class="step-circle">2</span>
+              <span class="step-label">{% if LANGUAGE_CODE == 'ar' %}تحميل الخطة{% else %}Load plan{% endif %}</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" class="step-arrow"><polyline points="9 18 15 12 9 6"/></svg>
+              <span class="step-circle">3</span>
+              <span class="step-label">{% if LANGUAGE_CODE == 'ar' %}استعرض النتائج{% else %}Explore results{% endif %}</span>
             </div>
           </div>
 
           <!-- Ghost metric cards -->
-          <div style="display:flex;gap:12px;margin-bottom:16px">
-            <div style="flex:1;min-width:0"><div class="mc mc-teal" style="pointer-events:none;opacity:0.5">
+          <div class="metrics-row-12 mb-16">
+            <div class="flex-card"><div class="mc mc-teal ghost-muted">
               <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span></div><div class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}مجتاز{% else %}Passed{% endif %}</div></div>
-              <div style="padding:0 14px 6px"><div class="skel-block skel-block-lg" style="width:50%;margin:0"></div></div>
+              <div class="skel-pad"><div class="skel-block skel-block-lg skel-m0 skel-half"></div></div>
               <div class="spark"><div class="b" style="height:40%"></div><div class="b" style="height:70%"></div><div class="b" style="height:30%"></div><div class="b" style="height:90%"></div><div class="b" style="height:55%"></div></div>
             </div></div>
-            <div style="flex:1;min-width:0"><div class="mc mc-royal" style="pointer-events:none;opacity:0.5">
+            <div class="flex-card"><div class="mc mc-royal ghost-muted">
               <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span></div><div class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}يدرس حالياً{% else %}Studying{% endif %}</div></div>
-              <div style="padding:0 14px 6px"><div class="skel-block skel-block-lg" style="width:50%;margin:0"></div></div>
+              <div class="skel-pad"><div class="skel-block skel-block-lg skel-m0 skel-half"></div></div>
               <div class="spark"><div class="b" style="height:60%"></div><div class="b" style="height:40%"></div><div class="b" style="height:80%"></div><div class="b" style="height:50%"></div><div class="b" style="height:35%"></div></div>
             </div></div>
-            <div style="flex:1;min-width:0"><div class="mc mc-sky" style="pointer-events:none;opacity:0.5">
+            <div class="flex-card"><div class="mc mc-sky ghost-muted">
               <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></div><div class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}يمكن تسجيله{% else %}Can Register{% endif %}</div></div>
-              <div style="padding:0 14px 6px"><div class="skel-block skel-block-lg" style="width:50%;margin:0"></div></div>
+              <div class="skel-pad"><div class="skel-block skel-block-lg skel-m0 skel-half"></div></div>
               <div class="spark"><div class="b" style="height:45%"></div><div class="b" style="height:65%"></div><div class="b" style="height:85%"></div><div class="b" style="height:40%"></div><div class="b" style="height:70%"></div></div>
             </div></div>
-            <div style="flex:1;min-width:0"><div class="mc mc-err" style="pointer-events:none;opacity:0.5">
+            <div class="flex-card"><div class="mc mc-err ghost-muted">
               <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span></div><div class="mc-lbl">Locked</div></div>
-              <div style="padding:0 14px 6px"><div class="skel-block skel-block-lg" style="width:50%;margin:0"></div></div>
+              <div class="skel-pad"><div class="skel-block skel-block-lg skel-m0 skel-half"></div></div>
               <div class="spark"><div class="b" style="height:75%"></div><div class="b" style="height:50%"></div><div class="b" style="height:35%"></div><div class="b" style="height:60%"></div><div class="b" style="height:90%"></div></div>
             </div></div>
           </div>
 
           <!-- Ghost terms table -->
-          <div class="cpanel" style="pointer-events:none;opacity:0.40">
+          <div class="cpanel ghost-faded">
             <div class="cp-h">
-              <div class="skel-block" style="margin:0;width:120px;height:12px"></div>
-              <div style="flex:1"></div>
-              <div class="skel-block" style="margin:0;width:60px;height:10px"></div>
+              <div class="skel-block skel-m0" style="width:120px;height:12px"></div>
+              <div class="flex-spacer"></div>
+              <div class="skel-block skel-m0" style="width:60px;height:10px"></div>
             </div>
-            <div class="cp-b" style="display:flex;flex-direction:column;gap:10px">
-              <div style="display:flex;gap:12px;align-items:center">
-                <div class="skel-block" style="margin:0;width:70px;height:14px"></div>
-                <div class="skel-block" style="margin:0;width:75%;height:12px"></div>
-                <div class="skel-block" style="margin:0;width:50px;height:10px"></div>
+            <div class="cp-b cp-flex-col">
+              <div class="skel-row">
+                <div class="skel-block skel-m0 skel-code"></div>
+                <div class="skel-block skel-m0" style="width:75%;height:12px"></div>
+                <div class="skel-block skel-m0 skel-status"></div>
               </div>
-              <div style="display:flex;gap:12px;align-items:center">
-                <div class="skel-block" style="margin:0;width:70px;height:14px"></div>
-                <div class="skel-block" style="margin:0;width:60%;height:12px"></div>
-                <div class="skel-block" style="margin:0;width:50px;height:10px"></div>
+              <div class="skel-row">
+                <div class="skel-block skel-m0 skel-code"></div>
+                <div class="skel-block skel-m0" style="width:60%;height:12px"></div>
+                <div class="skel-block skel-m0 skel-status"></div>
               </div>
-              <div style="display:flex;gap:12px;align-items:center">
-                <div class="skel-block" style="margin:0;width:70px;height:14px"></div>
-                <div class="skel-block" style="margin:0;width:50%;height:12px"></div>
-                <div class="skel-block" style="margin:0;width:50px;height:10px"></div>
+              <div class="skel-row">
+                <div class="skel-block skel-m0 skel-code"></div>
+                <div class="skel-block skel-m0" style="width:50%;height:12px"></div>
+                <div class="skel-block skel-m0 skel-status"></div>
               </div>
-              <div style="display:flex;gap:12px;align-items:center">
-                <div class="skel-block" style="margin:0;width:70px;height:14px"></div>
-                <div class="skel-block" style="margin:0;width:65%;height:12px"></div>
-                <div class="skel-block" style="margin:0;width:50px;height:10px"></div>
+              <div class="skel-row">
+                <div class="skel-block skel-m0 skel-code"></div>
+                <div class="skel-block skel-m0" style="width:65%;height:12px"></div>
+                <div class="skel-block skel-m0 skel-status"></div>
               </div>
-              <div style="display:flex;gap:12px;align-items:center">
-                <div class="skel-block" style="margin:0;width:70px;height:14px"></div>
-                <div class="skel-block" style="margin:0;width:70%;height:12px"></div>
-                <div class="skel-block" style="margin:0;width:50px;height:10px"></div>
+              <div class="skel-row">
+                <div class="skel-block skel-m0 skel-code"></div>
+                <div class="skel-block skel-m0" style="width:70%;height:12px"></div>
+                <div class="skel-block skel-m0 skel-status"></div>
               </div>
             </div>
           </div>
         </div>
         <!-- ── /Empty-state ── -->
 
-        <div id="studentPlanMetrics" class="d-none" style="display:flex;gap:12px;margin-bottom:12px">
-          <div style="flex:1;min-width:0"><div class="mc mc-teal">
+        <div id="studentPlanMetrics" class="d-none metrics-row-12 mb-12">
+          <div class="flex-card"><div class="mc mc-teal">
             <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span></div><div class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}مجتاز{% else %}Passed{% endif %}</div></div>
             <div class="mc-val" id="spPassed">0</div>
             <div class="spark" id="spSparkPassed"></div>
           </div></div>
-          <div style="flex:1;min-width:0"><div class="mc mc-royal">
+          <div class="flex-card"><div class="mc mc-royal">
             <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span></div><div class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}يدرس حالياً{% else %}Studying{% endif %}</div></div>
             <div class="mc-val" id="spStudying">0</div>
             <div class="spark" id="spSparkStudying"></div>
           </div></div>
-          <div style="flex:1;min-width:0"><div class="mc mc-sky">
+          <div class="flex-card"><div class="mc mc-sky">
             <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></div><div class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}يمكن تسجيله{% else %}Can Register{% endif %}</div></div>
             <div class="mc-val" id="spCan">0</div>
             <div class="spark" id="spSparkCan"></div>
           </div></div>
-          <div style="flex:1;min-width:0"><div class="mc mc-err">
+          <div class="flex-card"><div class="mc mc-err">
             <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span></div><div class="mc-lbl">Locked</div></div>
             <div class="mc-val" id="spLocked">0</div>
             <div class="spark" id="spSparkLocked"></div>
@@ -679,7 +761,7 @@
           <span style="color:var(--t3);margin-inline-end:6px">Legend:</span>
           <span class="pill-status pill-g"><span class="pill-dot"></span>Passed</span>
           <span class="pill-status pill-b"><span class="pill-dot"></span>Studying</span>
-          <span class="pill-status pill-g" style="background:rgba(10,142,110,0.14)"><span class="pill-dot"></span>Can register</span>
+          <span class="pill-status pill-g can-register-pill"><span class="pill-dot"></span>Can register</span>
           <span class="pill-status pill-r"><span class="pill-dot"></span>Locked</span>
         </div>
         <div class="filter-bar mb-2 d-none" id="studentPlanActions">
@@ -690,7 +772,7 @@
 
           <details class="d-inline-block">
             <summary class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/></svg></span> Filters</summary>
-            <div class="d-flex flex-wrap gap-2 mt-2" style="padding:8px 0;">
+            <div class="d-flex flex-wrap gap-2 mt-2 filter-pad">
               <button id="spShowAll" type="button" class="fb-dd active" aria-pressed="true">Show all</button>
               <button id="spShowCanOnly" type="button" class="fb-dd" style="color:var(--teal)" aria-pressed="false">Can register</button>
               <button id="spShowLockedOnly" type="button" class="fb-dd" style="color:var(--danger)" aria-pressed="false">Locked</button>
@@ -702,7 +784,7 @@
 
           <details class="d-inline-block">
             <summary class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg></span> Sort</summary>
-            <div class="d-flex flex-wrap gap-2 mt-2" style="padding:8px 0;">
+            <div class="d-flex flex-wrap gap-2 mt-2 filter-pad">
               <button id="spSortImportance" type="button" class="fb-dd" style="color:var(--warning)">Importance</button>
               <button id="spSortStatus" type="button" class="fb-dd" style="color:var(--sky)">Status</button>
               <button id="spSortCode" type="button" class="fb-dd" style="color:var(--sky)">Code</button>
@@ -711,8 +793,8 @@
 
           <details class="d-inline-block">
             <summary class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span> Target</summary>
-            <div class="d-flex flex-wrap gap-2 mt-2 align-items-center" style="padding:8px 0;">
-              <label class="small" style="color:var(--t3)">{% if LANGUAGE_CODE == 'ar' %}الساعات{% else %}Credits{% endif %}</label>
+            <div class="d-flex flex-wrap gap-2 mt-2 align-items-center filter-pad">
+              <label class="small color-t3">{% if LANGUAGE_CODE == 'ar' %}الساعات{% else %}Credits{% endif %}</label>
               <select id="spTargetCredits" class="form-select form-select-sm" style="width:auto;" aria-label="{% if LANGUAGE_CODE == 'ar' %}الساعات المستهدفة{% else %}Target credit hours{% endif %}">
                 <option value="12">12</option>
                 <option value="15">15</option>
@@ -730,14 +812,14 @@
         <div id="studentPlanTopImportant" class="mb-3"></div>
         <div id="studentPlanHints" class="mb-3"></div>
         <div id="studentPlanActionPlan" class="mb-3"></div>
-        <div style="display:flex;gap:16px;align-items:flex-start">
-          <div style="flex:1;min-width:0">
+        <div class="plan-layout">
+          <div class="flex-card">
             <div id="studentPlanTerms"></div>
           </div>
-          <div style="width:340px;flex-shrink:0">
-            <div id="studentCourseDrawer" class="cpanel" style="position:sticky;top:16px;">
+          <div class="plan-side-col">
+            <div id="studentCourseDrawer" class="cpanel sticky-16">
               <div class="cp-h">
-                <span class="i" style="opacity:0.4"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+                <span class="i i-faint"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
                 <div class="cp-t">Course Inspector</div>
                 <span class="cp-live">LIVE</span>
               </div>
@@ -751,7 +833,7 @@
 
       <!-- Student Context Sidebar -->
       <div id="studentCtxSidebar" class="student-ctx-sidebar hidden" aria-label="{% if LANGUAGE_CODE == 'ar' %}سياق الطالب{% else %}Student Context{% endif %}">
-        <div class="student-ctx-card" style="position:sticky;top:16px;">
+        <div class="student-ctx-card sticky-16">
           <h3 id="studentCtxTitle">{% if LANGUAGE_CODE == 'ar' %}ملف الطالب{% else %}Student Profile{% endif %}</h3>
           <div class="student-ctx-row">
             <span class="student-ctx-label">{% if LANGUAGE_CODE == 'ar' %}الرقم{% else %}ID{% endif %}</span>
@@ -790,16 +872,16 @@
     </div>
 
     <div id="batch" class="panel" role="region">
-      <div class="filter-bar sticky-cta" style="margin-bottom:14px">
-        <div class="fb-search" style="max-width:120px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input id="batchYear" type="text" inputmode="numeric" pattern="[0-9]*" value="{{ year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}"></div>
-        <div class="fb-search" style="max-width:110px"><input id="batchSemester" type="text" inputmode="numeric" pattern="[0-9]*" min="0" max="1" value="{{ semester }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}"></div>
+      <div class="filter-bar sticky-cta mb-14">
+        <div class="fb-search fb-w-120"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input id="batchYear" type="text" inputmode="numeric" pattern="[0-9]*" value="{{ year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}"></div>
+        <div class="fb-search fb-w-110"><input id="batchSemester" type="text" inputmode="numeric" pattern="[0-9]*" min="0" max="1" value="{{ semester }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}"></div>
         <div class="fb-search" style="max-width:170px"><input id="batchProgram" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج (اختياري){% else %}Program (optional){% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج (اختياري){% else %}Program (optional){% endif %}"></div>
         <div class="fb-search" style="max-width:160px"><input id="batchSection" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة (اختياري){% else %}Section (optional){% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة (اختياري){% else %}Section (optional){% endif %}"></div>
         <div class="fb-spacer"></div>
         <button id="runBatch" class="btn btn-primary"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></span>Run preview</button>
         <button id="resetBatch" type="button" class="fb-dd">Reset</button>
       </div>
-      <div style="display:flex;gap:6px;margin-top:8px;">
+      <div class="preset-actions">
         <button id="batchSavePreset" type="button" class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span> Save preset</button>
         <button id="batchLoadPreset" type="button" class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span> Load preset</button>
       </div>
@@ -822,24 +904,25 @@
         </div></div>
       </div>
 
-      <div class="filter-bar mt-2 mb-3" style="display:flex;align-items:center;">
+      <div class="filter-bar mt-2 mb-3">
         <a id="batchCsv" class="fb-dd" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span> CSV</a>
         <a id="batchSummary" class="fb-dd" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span> Summary JSON</a>
         <button id="copyBatchCsv" type="button" class="fb-dd">Copy CSV link</button>
         <div class="fb-spacer"></div>
-        <div id="batchUpdated" class="small" style="color:var(--t3)">{% if LANGUAGE_CODE == 'ar' %}آخر تحديث: لا يوجد{% else %}Last update: never{% endif %}</div>
+        <div id="batchUpdated" class="small color-t3">{% if LANGUAGE_CODE == 'ar' %}آخر تحديث: لا يوجد{% else %}Last update: never{% endif %}</div>
       </div>
 
-      <div style="margin-bottom:6px;">
+      <div class="mb-6">
         <table class="tbl-card" id="batchTable">
           <thead><tr><th scope="col" data-sort="num"># <span class="sort-arrow">▲</span></th><th scope="col" data-sort="text">Course</th><th scope="col" data-sort="num">Count</th><th scope="col">Share</th></tr></thead>
-          <tbody><tr><td colspan="4"><div class="ap-empty"><span class="ap-empty-icon"><span class="i" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span></span><div class="ap-empty-title">No batch data yet</div><div class="ap-empty-hint">Set Year &amp; Semester above, then click <strong>Run preview</strong></div></div></td></tr></tbody>
+          <tbody><tr><td colspan="4"><div class="ap-empty"><span class="ap-empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span></span><div class="ap-empty-title">No batch data yet</div><div class="ap-empty-hint">Set Year &amp; Semester above, then click <strong>Run preview</strong></div></div></td></tr></tbody>
         </table>
       </div>
+      <nav class="tbl-pager" id="batchPager" aria-label="Batch table pagination"></nav>
 
       <div class="cpanel mt-3">
         <div class="cp-h">
-          <span class="i" style="opacity:0.4"><svg viewBox="0 0 24 24"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-6"/></svg></span>
+          <span class="i i-faint"><svg viewBox="0 0 24 24"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-6"/></svg></span>
           <div class="cp-t">Top Recommendations</div>
           <span class="cp-live">LIVE</span>
         </div>
@@ -850,8 +933,8 @@
     </div>
 
     <div id="prereq" class="panel" role="region">
-      <div class="filter-bar" style="margin-bottom:14px">
-        <div class="fb-search" style="max-width:200px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><input id="preProgram" list="programs" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج مثال CS{% else %}Program  e.g. CS{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج مثال CS{% else %}Program{% endif %}"></div>
+      <div class="filter-bar mb-14">
+        <div class="fb-search" style="max-width:200px"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><input id="preProgram" list="programs" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج مثال CS{% else %}Program  e.g. CS{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج مثال CS{% else %}Program{% endif %}"></div>
         <div class="fb-search" style="max-width:220px"><input id="preCourse" placeholder="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر (اختياري){% else %}Course code (optional){% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر (اختياري){% else %}Course code{% endif %}"></div>
         <div class="fb-spacer"></div>
         <button id="loadPre" class="btn btn-primary">
@@ -859,16 +942,16 @@
         </button>
       </div>
       <!-- Metrics -->
-      <div id="preMetrics" class="d-none" style="display:flex;gap:14px;margin-bottom:16px">
-        <div style="flex:1;min-width:0"><div class="mc mc-royal">
+      <div id="preMetrics" class="d-none metrics-row-14 mb-16">
+        <div class="flex-card"><div class="mc mc-royal">
           <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span></div><div class="mc-lbl">Program</div></div>
           <div class="mc-val" id="preMetricProgram">—</div>
         </div></div>
-        <div style="flex:1;min-width:0"><div class="mc mc-teal">
+        <div class="flex-card"><div class="mc mc-teal">
           <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></span></div><div class="mc-lbl">Courses</div></div>
           <div class="mc-val" id="preMetricCourses">0</div>
         </div></div>
-        <div style="flex:1;min-width:0"><div class="mc mc-sky">
+        <div class="flex-card"><div class="mc mc-sky">
           <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span></div><div class="mc-lbl">Prereq Links</div></div>
           <div class="mc-val" id="preMetricLinks">0</div>
         </div></div>
@@ -878,7 +961,7 @@
       <div class="cpanel mb-3">
         <div class="cp-h"><span class="cp-t">Dependency Graph</span><span class="cp-live">VISUAL</span></div>
         <div class="cp-b" id="preGraph" style="min-height:320px;overflow-x:auto;overflow-y:auto;padding:16px">
-          <div class="empty-state"><span class="empty-icon"><span class="i" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg></span></span><div class="empty-title">No graph data</div><div class="empty-hint">Load prerequisites to visualize dependency chains</div></div>
+          <div class="empty-state"><span class="empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg></span></span><div class="empty-title">No graph data</div><div class="empty-hint">Load prerequisites to visualize dependency chains</div></div>
         </div>
       </div>
       <!-- Table below -->
@@ -887,7 +970,7 @@
         <div class="cp-b" style="padding:0;max-height:420px;overflow-y:auto">
           <table class="tbl-card mb-0" id="preTable" style="border-spacing:0 4px">
             <thead><tr><th scope="col" data-sort="text">Course</th><th scope="col" style="width:32px;text-align:center">→</th><th scope="col" data-sort="text">Requires</th></tr></thead>
-            <tbody><tr><td colspan="3"><div class="empty-state"><span class="empty-icon"><span class="i" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg></span></span><div class="empty-title">No prerequisites loaded</div><div class="empty-hint">Choose a program above, then click <strong>Load</strong></div></div></td></tr></tbody>
+            <tbody><tr><td colspan="3"><div class="empty-state"><span class="empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg></span></span><div class="empty-title">No prerequisites loaded</div><div class="empty-hint">Choose a program above, then click <strong>Load</strong></div></div></td></tr></tbody>
           </table>
         </div>
       </div>
@@ -896,12 +979,12 @@
     <div id="plan" class="panel" role="region">
       <div class="zone-card">
         <div class="zone-title">Filters</div>
-        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
-          <div style="flex:1;min-width:140px;max-width:220px">
+        <div class="field-row">
+          <div class="flex-field" style="max-width:220px">
             <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}</label>
-            <div class="fb-search" style="max-width:none"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><input id="planProgram" list="programs" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثال CS{% else %}e.g. CS{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}"></div>
+            <div class="fb-search fb-search-full"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><input id="planProgram" list="programs" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثال CS{% else %}e.g. CS{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}"></div>
           </div>
-          <div style="flex:0 0 auto;padding-bottom:1px"><button id="loadPlan" class="btn btn-primary">{% if LANGUAGE_CODE == 'ar' %}تحميل الخطة{% else %}Load Plan{% endif %}</button></div>
+          <div class="field-action"><button id="loadPlan" class="btn btn-primary">{% if LANGUAGE_CODE == 'ar' %}تحميل الخطة{% else %}Load Plan{% endif %}</button></div>
         </div>
       </div>
       <div class="zone-card">
@@ -912,10 +995,10 @@
           <div class="col-md-3"><div class="metric"><div class="k">Total credit hours</div><div class="v" id="planMetricCredits">0</div></div></div>
         </div>
         <div id="planUpdated" class="small text-secondary">{% if LANGUAGE_CODE == 'ar' %}آخر تحديث: لا يوجد{% else %}Last update: never{% endif %}</div>
-        <div class="table-wrap mt-3" style="overflow-x:auto;-webkit-overflow-scrolling:touch;">
+        <div class="table-wrap mt-3 overflow-x">
           <table class="table table-sm mb-0" id="planTable">
             <thead><tr><th scope="col" data-sort="num">Term</th><th scope="col" data-sort="text">Course</th><th scope="col" data-sort="num">Credit Hours</th></tr></thead>
-            <tbody><tr><td colspan="3"><div class="empty-state"><span class="empty-icon"><span class="i" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></span><div class="empty-title">No plan loaded</div><div class="empty-hint">Choose a program above, then click <strong>Load Plan</strong></div></div></td></tr></tbody>
+            <tbody><tr><td colspan="3"><div class="empty-state"><span class="empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></span><div class="empty-title">No plan loaded</div><div class="empty-hint">Choose a program above, then click <strong>Load Plan</strong></div></div></td></tr></tbody>
           </table>
         </div>
       </div>
@@ -937,42 +1020,42 @@
         <div class="table-wrap mt-2">
           <table class="table table-sm mb-0" id="planPrereqTable">
             <thead><tr><th scope="col" data-sort="text">Course</th><th scope="col" data-sort="text">Prerequisite</th></tr></thead>
-            <tbody><tr><td colspan="2"><div class="empty-state"><span class="empty-icon"><span class="i" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg></span></span><div class="empty-title">No course selected</div><div class="empty-hint">Click any course row in the plan table above</div></div></td></tr></tbody>
+            <tbody><tr><td colspan="2"><div class="empty-state"><span class="empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg></span></span><div class="empty-title">No course selected</div><div class="empty-hint">Click any course row in the plan table above</div></div></td></tr></tbody>
           </table>
         </div>
       </div>
     </div>
 
     <div id="scrape" class="panel" role="region">
-      <div class="filter-bar sticky-cta" style="margin-bottom:14px">
-        <div class="fb-search" style="max-width:120px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></span><input id="scrapeConcurrency" type="text" inputmode="numeric" pattern="[0-9]*" min="1" max="8" value="2" placeholder="{% if LANGUAGE_CODE == 'ar' %}المسارات{% else %}Threads{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}المسارات{% else %}Concurrency threads{% endif %}"></div>
-        <div class="fb-search" style="flex:1;min-width:180px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><input id="scrapeCsv" placeholder="{% if LANGUAGE_CODE == 'ar' %}مسار CSV{% else %}CSV path (default: data/students_list.csv){% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}مسار CSV{% else %}CSV file path{% endif %}"></div>
+      <div class="filter-bar sticky-cta mb-14">
+        <div class="fb-search fb-w-120"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></span><input id="scrapeConcurrency" type="text" inputmode="numeric" pattern="[0-9]*" min="1" max="8" value="2" placeholder="{% if LANGUAGE_CODE == 'ar' %}المسارات{% else %}Threads{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}المسارات{% else %}Concurrency threads{% endif %}"></div>
+        <div class="fb-search" style="flex:1;min-width:180px"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><input id="scrapeCsv" placeholder="{% if LANGUAGE_CODE == 'ar' %}مسار CSV{% else %}CSV path (default: data/students_list.csv){% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}مسار CSV{% else %}CSV file path{% endif %}"></div>
         <div class="fb-spacer"></div>
         <button id="scrapeStart" class="btn btn-danger"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}بدء{% else %}Start{% endif %}</button>
         <button id="scrapeStop" class="btn btn-warning" disabled><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}إيقاف{% else %}Stop{% endif %}</button>
         <button id="scrapeRefresh" class="btn-circle" title="{% if LANGUAGE_CODE == 'ar' %}تحديث الحالة{% else %}Refresh status{% endif %}"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></span></button>
       </div>
-      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px" id="scrapeMetrics">
-        <div style="flex:1;min-width:140px"><div class="mc mc-teal">
+      <div class="scrape-metrics-row" id="scrapeMetrics">
+        <div class="flex-field"><div class="mc mc-teal">
           <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span></div><div class="mc-lbl">Status</div></div>
-          <div class="mc-val" id="scrapeMetricStatus" style="font-size:20px"><span class="status-dot status-stopped"></span>Idle</div>
+          <div class="mc-val mc-val-lg" id="scrapeMetricStatus"><span class="status-dot status-stopped"></span>Idle</div>
         </div></div>
         <div style="flex:0.6;min-width:100px"><div class="mc mc-royal">
           <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg></span></div><div class="mc-lbl">PID</div></div>
-          <div class="mc-val" id="scrapeMetricPid" style="font-size:20px">-</div>
+          <div class="mc-val mc-val-lg" id="scrapeMetricPid">-</div>
         </div></div>
-        <div style="flex:1;min-width:140px"><div class="mc mc-sky">
+        <div class="flex-field"><div class="mc mc-sky">
           <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span></div><div class="mc-lbl">Started</div></div>
-          <div class="mc-val" id="scrapeMetricStarted" style="font-size:16px;font-family:var(--font-mono);letter-spacing:0">-</div>
+          <div class="mc-val mc-val-mono-sm" id="scrapeMetricStarted">-</div>
         </div></div>
-        <div style="flex:1;min-width:140px"><div class="mc mc-warn">
+        <div class="flex-field"><div class="mc mc-warn">
           <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></span></div><div class="mc-lbl">Stopped</div></div>
-          <div class="mc-val" id="scrapeMetricStopped" style="font-size:16px;font-family:var(--font-mono);letter-spacing:0">-</div>
+          <div class="mc-val mc-val-mono-sm" id="scrapeMetricStopped">-</div>
         </div></div>
       </div>
-      <div id="scrapeMeta" class="meta-banner meta-info" style="font-family:var(--font-mono);font-size:12px;border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:10px">No scrape run started.</div>
-      <div id="scrapeUpdatedAt" style="font-size:11px;color:var(--t3);font-family:var(--font-mono);margin-bottom:14px">{% if LANGUAGE_CODE == 'ar' %}آخر تحديث: لا يوجد{% else %}Last update: never{% endif %}</div>
-      <div class="scrape-term" style="margin-bottom:18px">
+      <div id="scrapeMeta" class="meta-banner meta-info meta-mono mb-10">No scrape run started.</div>
+      <div id="scrapeUpdatedAt" class="ts-updated mb-14">{% if LANGUAGE_CODE == 'ar' %}آخر تحديث: لا يوجد{% else %}Last update: never{% endif %}</div>
+      <div class="scrape-term mb-18">
         <div class="scrape-term-head">
           <div class="scrape-term-status">
             <span class="scrape-term-status-dot" id="scrapeLogDot" aria-hidden="true"></span>
@@ -986,14 +1069,14 @@
         </div>
         <div id="scrapeOut" class="scrape-term-body" aria-live="polite" aria-atomic="false" role="log"><span style="color:#a0aec0">{% if LANGUAGE_CODE == 'ar' %}لا توجد سجلات بعد.{% else %}No logs yet.{% endif %}</span></div>
       </div>
-      <div class="tbl-section" style="margin-bottom:14px">
+      <div class="tbl-section mb-14">
         <div class="tbl-header">
           <div class="tbl-title">Scrape History <span class="tbl-cnt" id="scrapeHistoryCnt">0</span></div>
         </div>
-        <div style="overflow-x:auto">
+        <div class="overflow-x">
           <table class="tbl-card" id="scrapeHistoryTable">
             <thead><tr><th scope="col">Time (UTC)</th><th scope="col">Event</th><th scope="col">PID</th><th scope="col">Concurrency</th><th scope="col">CSV</th></tr></thead>
-            <tbody><tr><td colspan="5"><div class="empty-state"><span class="i" style="width:32px;height:32px;color:var(--t5);margin-bottom:8px"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span><div class="empty-title">No scrape history</div><div class="empty-hint">Run a scrape to see history here</div></div></td></tr></tbody>
+            <tbody><tr><td colspan="5"><div class="empty-state"><span class="i empty-icon-muted"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span><div class="empty-title">No scrape history</div><div class="empty-hint">Run a scrape to see history here</div></div></td></tr></tbody>
           </table>
         </div>
         <nav class="scrape-hist-pager d-none" id="scrapeHistPager" role="navigation" aria-label="{% if LANGUAGE_CODE == 'ar' %}تصفح سجل العمليات{% else %}Scrape history pagination{% endif %}">
@@ -1014,40 +1097,40 @@
     </div>
 
     <div id="debug" class="panel" role="region">
-      <div class="filter-bar sticky-cta" style="margin-bottom:14px">
-        <div class="fb-search" style="max-width:110px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input id="dbgYear" type="text" inputmode="numeric" pattern="[0-9]*" value="{{ year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}"></div>
+      <div class="filter-bar sticky-cta mb-14">
+        <div class="fb-search fb-w-110"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input id="dbgYear" type="text" inputmode="numeric" pattern="[0-9]*" value="{{ year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}"></div>
         <div class="fb-search" style="max-width:90px"><input id="dbgSemester" type="text" inputmode="numeric" pattern="[0-9]*" min="0" max="1" value="{{ semester }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Sem{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}"></div>
-        <div class="fb-search" style="max-width:110px"><input id="dbgSection" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}"></div>
-        <div class="fb-search" style="max-width:120px"><input id="dbgProgram" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}"></div>
-        <div class="fb-search" style="max-width:110px"><input id="dbgJoin" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join yrs{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join years{% endif %}"></div>
-        <div class="fb-search" style="max-width:100px"><input id="dbgLimit" type="text" inputmode="numeric" pattern="[0-9]*" value="80" placeholder="{% if LANGUAGE_CODE == 'ar' %}الحد{% else %}Limit{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الحد{% else %}Limit{% endif %}"></div>
+        <div class="fb-search fb-w-110"><input id="dbgSection" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}"></div>
+        <div class="fb-search fb-w-120"><input id="dbgProgram" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}"></div>
+        <div class="fb-search fb-w-110"><input id="dbgJoin" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join yrs{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join years{% endif %}"></div>
+        <div class="fb-search fb-w-100"><input id="dbgLimit" type="text" inputmode="numeric" pattern="[0-9]*" value="80" placeholder="{% if LANGUAGE_CODE == 'ar' %}الحد{% else %}Limit{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الحد{% else %}Limit{% endif %}"></div>
         <div class="fb-spacer"></div>
         <button id="dbgRun" class="btn btn-primary">
           <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run
         </button>
       </div>
-      <div class="filter-bar" style="padding:8px 14px;margin-bottom:14px">
+      <div class="filter-bar filter-bar-sm mb-14">
         <button id="dbgSavePreset" type="button" class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span>Save preset</button>
         <button id="dbgLoadPreset" type="button" class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 15v4c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg></span>Load preset</button>
         <div class="fb-spacer"></div>
         <a id="dbgCsv" class="fb-dd" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>CSV</a>
       </div>
-      <div id="dbgMeta" class="meta-banner meta-info" style="font-family:var(--font-mono);font-size:12px;border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:14px">No debug report loaded.</div>
-      <div id="dbgSummary" class="d-none" style="display:flex;gap:14px;margin-bottom:18px">
-        <div style="flex:1;min-width:0"><div class="mc mc-royal">
+      <div id="dbgMeta" class="meta-banner meta-info meta-mono mb-14">No debug report loaded.</div>
+      <div id="dbgSummary" class="d-none metrics-row-14 mb-18">
+        <div class="flex-card"><div class="mc mc-royal">
           <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span></div><div class="mc-lbl">Students</div></div>
           <div class="mc-val" id="dbgCount">0</div>
         </div></div>
-        <div style="flex:1;min-width:0"><div class="mc mc-teal">
+        <div class="flex-card"><div class="mc mc-teal">
           <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span></div><div class="mc-lbl">With Recs</div></div>
           <div class="mc-val" id="dbgWithRec">0</div>
         </div></div>
-        <div style="flex:1;min-width:0"><div class="mc mc-err">
+        <div class="flex-card"><div class="mc mc-err">
           <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg></span></div><div class="mc-lbl">Empty Recs</div></div>
           <div class="mc-val" id="dbgWithoutRec">0</div>
         </div></div>
       </div>
-      <div id="dbgUpdated" style="font-size:11px;color:var(--t3);font-family:var(--font-mono);margin-bottom:10px">Last update: —</div>
+      <div id="dbgUpdated" class="ts-updated mb-10">Last update: —</div>
       <div class="tbl-section">
         <div class="tbl-header">
           <div class="tbl-title">Debug Details <span class="tbl-cnt" id="dbgTableCnt">0</span></div>
@@ -1055,59 +1138,61 @@
             <button class="btn btn-outline-secondary btn-sm" style="font-size:11px;padding:4px 10px;border-radius:var(--radius-sm);background:var(--glass-bg);border:1px solid rgba(17,17,68,0.06);color:var(--t3);cursor:pointer" onclick="document.getElementById('dbgTable').scrollIntoView({behavior:'smooth'})"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span> Columns</button>
           </div>
         </div>
-        <div style="overflow-x:auto">
+        <div class="overflow-x">
           <table class="tbl-card" id="dbgTable">
             <thead><tr><th scope="col">Student</th><th scope="col">Program</th><th scope="col">Real→Next</th><th scope="col">Passed</th><th scope="col">Studying</th><th scope="col">Recommended</th><th scope="col">Trace</th></tr></thead>
-            <tbody><tr><td colspan="7"><div class="empty-state"><span class="i" style="width:32px;height:32px;color:var(--t5);margin-bottom:8px"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span><div class="empty-title">No debug data</div><div class="empty-hint">Fill filters above, then click <strong>Run</strong></div></div></td></tr></tbody>
+            <tbody><tr><td colspan="7"><div class="empty-state"><span class="i empty-icon-muted"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span><div class="empty-title">No debug data</div><div class="empty-hint">Fill filters above, then click <strong>Run</strong></div></div></td></tr></tbody>
           </table>
         </div>
+        <nav class="tbl-pager" id="dbgPager" aria-label="Debug table pagination"></nav>
       </div>
     </div>
 
     <div id="eligibility" class="panel" role="region">
-      <div class="filter-bar sticky-cta" style="margin-bottom:14px">
-        <div class="fb-search" style="max-width:140px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><input id="elCourse" placeholder="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر{% else %}Course code{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر{% else %}Course code{% endif %}"></div>
-        <div class="fb-search" style="max-width:110px"><input id="elSection" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}"></div>
-        <div class="fb-search" style="max-width:120px"><input id="elProgram" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}"></div>
-        <div class="fb-search" style="max-width:110px"><input id="elJoin" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join yrs{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join years{% endif %}"></div>
+      <div class="filter-bar sticky-cta mb-14">
+        <div class="fb-search" style="max-width:140px"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><input id="elCourse" placeholder="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر{% else %}Course code{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر{% else %}Course code{% endif %}"></div>
+        <div class="fb-search fb-w-110"><input id="elSection" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}"></div>
+        <div class="fb-search fb-w-120"><input id="elProgram" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}"></div>
+        <div class="fb-search fb-w-110"><input id="elJoin" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join yrs{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join years{% endif %}"></div>
         <div class="fb-search" style="max-width:210px"><select id="elMode" aria-label="{% if LANGUAGE_CODE == 'ar' %}وضع التأهيل{% else %}Eligibility mode{% endif %}"><option value="relaxed" selected>{% if LANGUAGE_CODE == 'ar' %}مرن (مجتاز+يدرس){% else %}Relaxed (passed+studying){% endif %}</option><option value="strict">{% if LANGUAGE_CODE == 'ar' %}صارم (مجتاز فقط){% else %}Strict (passed only){% endif %}</option></select></div>
         <div class="fb-spacer"></div>
         <button id="elRun" class="btn btn-primary">
           <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Check
         </button>
       </div>
-      <div class="filter-bar" style="padding:8px 14px;margin-bottom:14px">
+      <div class="filter-bar filter-bar-sm mb-14">
         <button id="elSavePreset" type="button" class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span>Save preset</button>
         <button id="elLoadPreset" type="button" class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 15v4c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg></span>Load preset</button>
         <div class="fb-spacer"></div>
         <a id="elCsv" class="fb-dd" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>CSV</a>
       </div>
-      <div id="elMeta" class="meta-banner meta-info" style="font-family:var(--font-mono);font-size:12px;border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:14px">No eligibility report loaded.</div>
-      <div id="elSummary" class="d-none" style="display:flex;gap:14px;margin-bottom:18px">
-        <div style="flex:1;min-width:0"><div class="mc mc-teal">
+      <div id="elMeta" class="meta-banner meta-info meta-mono mb-14">No eligibility report loaded.</div>
+      <div id="elSummary" class="d-none metrics-row-14 mb-18">
+        <div class="flex-card"><div class="mc mc-teal">
           <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg></span></div><div class="mc-lbl">Eligible</div></div>
           <div class="mc-val" id="elCount">0</div>
         </div></div>
-        <div style="flex:1;min-width:0"><div class="mc mc-royal">
+        <div class="flex-card"><div class="mc mc-royal">
           <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span></div><div class="mc-lbl">Mode</div></div>
-          <div class="mc-val" id="elModeBadge" style="font-size:18px">relaxed</div>
+          <div class="mc-val mc-val-sm" id="elModeBadge">relaxed</div>
         </div></div>
-        <div style="flex:1;min-width:0"><div class="mc mc-sky">
+        <div class="flex-card"><div class="mc mc-sky">
           <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></span></div><div class="mc-lbl">Course</div></div>
-          <div class="mc-val" id="elCourseBadge" style="font-size:18px">—</div>
+          <div class="mc-val mc-val-sm" id="elCourseBadge">—</div>
         </div></div>
       </div>
-      <div id="elUpdated" style="font-size:11px;color:var(--t3);font-family:var(--font-mono);margin-bottom:10px">Last update: —</div>
+      <div id="elUpdated" class="ts-updated mb-10">Last update: —</div>
       <div class="tbl-section">
         <div class="tbl-header">
           <div class="tbl-title">Eligible Students <span class="tbl-cnt" id="elTableCnt">0</span></div>
         </div>
-        <div style="overflow-x:auto">
+        <div class="overflow-x">
           <table class="tbl-card" id="elTable">
             <thead><tr><th scope="col">Eligible Student IDs</th></tr></thead>
-            <tbody><tr><td><div class="empty-state"><span class="i" style="width:32px;height:32px;color:var(--t5);margin-bottom:8px"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span><div class="empty-title">No eligibility results</div><div class="empty-hint">Enter a course code above, then click <strong>Check</strong></div></div></td></tr></tbody>
+            <tbody><tr><td><div class="empty-state"><span class="i empty-icon-muted"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span><div class="empty-title">No eligibility results</div><div class="empty-hint">Enter a course code above, then click <strong>Check</strong></div></div></td></tr></tbody>
           </table>
         </div>
+        <nav class="tbl-pager" id="elPager" aria-label="Eligibility table pagination"></nav>
       </div>
     </div>
 
@@ -1133,42 +1218,42 @@
       <div class="advisor-block">
         <h3><span class="badge text-bg-primary">Step 1</span> Create / Update Advisor Profile</h3>
         <div class="small text-secondary mb-2">Use a unique advisor ID and valid institutional email.</div>
-        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
-          <div style="flex:1;min-width:110px">
+        <div class="field-row">
+          <div class="flex-field" style="min-width:110px">
             <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}معرّف المرشد{% else %}Advisor ID{% endif %}</label>
-            <div class="fb-search" style="max-width:none"><input id="advId" placeholder="A001" maxlength="30" aria-label="{% if LANGUAGE_CODE == 'ar' %}معرّف المرشد{% else %}Advisor ID{% endif %}"></div>
+            <div class="fb-search fb-search-full"><input id="advId" placeholder="A001" maxlength="30" aria-label="{% if LANGUAGE_CODE == 'ar' %}معرّف المرشد{% else %}Advisor ID{% endif %}"></div>
             <div id="advIdErr" class="field-error"></div>
           </div>
           <div style="flex:1.5;min-width:150px">
             <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}الاسم الكامل{% else %}Full name{% endif %}</label>
-            <div class="fb-search" style="max-width:none"><input id="advName" placeholder="Dr. Name" maxlength="120" aria-label="Advisor name"></div>
+            <div class="fb-search fb-search-full"><input id="advName" placeholder="Dr. Name" maxlength="120" aria-label="Advisor name"></div>
             <div id="advNameErr" class="field-error"></div>
           </div>
           <div style="flex:1.5;min-width:160px">
             <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}البريد الإلكتروني{% else %}Email{% endif %}</label>
-            <div class="fb-search" style="max-width:none"><input id="advEmail" type="email" placeholder="advisor@uni.edu" maxlength="120" aria-label="Advisor email"></div>
+            <div class="fb-search fb-search-full"><input id="advEmail" type="email" placeholder="advisor@uni.edu" maxlength="120" aria-label="Advisor email"></div>
             <div id="advEmailErr" class="field-error"></div>
           </div>
-          <div style="flex:1;min-width:110px">
+          <div class="flex-field" style="min-width:110px">
             <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}الأقسام{% else %}Departments{% endif %}</label>
-            <div class="fb-search" style="max-width:none"><input id="advDept" placeholder="CS,AI" maxlength="120" aria-label="Departments"></div>
+            <div class="fb-search fb-search-full"><input id="advDept" placeholder="CS,AI" maxlength="120" aria-label="Departments"></div>
             <div id="advDeptErr" class="field-error"></div>
           </div>
-          <div style="flex:0 0 auto;padding-bottom:1px"><button id="advSave" class="btn btn-primary">Save advisor</button></div>
+          <div class="field-action"><button id="advSave" class="btn btn-primary">Save advisor</button></div>
         </div>
       </div>
 
       <div class="advisor-block">
         <h3><span class="badge text-bg-primary">Step 2</span> Bulk Mapping</h3>
         <div class="small text-secondary mb-2">Paste CSV rows to map many students at once.</div>
-        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-top:4px">
+        <div class="field-row-mt">
           <div style="flex:0 0 auto"><button id="advEnsureColumn" class="fb-dd" style="padding:8px 14px">Enable students.advisor_id</button></div>
-          <div style="flex:1;min-width:220px">
+          <div class="flex-field" style="min-width:220px">
             <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}ربط جماعي CSV (student_id,advisor_id){% else %}Bulk assign CSV (student_id,advisor_id){% endif %}</label>
-            <textarea id="advAssignCsv" class="form-control" rows="3" placeholder="student_id,advisor_id&#10;4410001,A001" aria-label="Assignment CSV data" style="border-radius:var(--radius-sm);border:var(--border-subtle);background:var(--glass-bg);font-size:13px"></textarea>
+            <textarea id="advAssignCsv" class="form-control" rows="3" placeholder="student_id,advisor_id&#10;4410001,A001" aria-label="Assignment CSV data" class="adv-textarea"></textarea>
           </div>
         </div>
-        <div style="margin-top:8px">
+        <div class="mt-8">
           <button id="advAssignCsvBtn" class="btn btn-outline-success btn-sm" type="button" style="padding:6px 14px;font-size:12px">Apply CSV mapping</button>
         </div>
       </div>
@@ -1176,16 +1261,16 @@
       <div class="advisor-block">
         <h3><span class="badge text-bg-primary">Step 3</span> Quick Single Assignment</h3>
         <div class="small text-secondary mb-2">Use for quick corrections without re-uploading CSV.</div>
-        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-top:4px">
-          <div style="flex:1;min-width:140px">
+        <div class="field-row-mt">
+          <div class="flex-field">
             <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}</label>
-            <div class="fb-search" style="max-width:none"><input id="advAssignStudentId" placeholder="4410001" aria-label="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}"></div>
+            <div class="fb-search fb-search-full"><input id="advAssignStudentId" placeholder="4410001" aria-label="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}"></div>
           </div>
-          <div style="flex:1;min-width:140px">
+          <div class="flex-field">
             <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}معرّف المرشد{% else %}Advisor ID{% endif %}</label>
-            <div class="fb-search" style="max-width:none"><input id="advAssignAdvisorId" placeholder="A001" aria-label="{% if LANGUAGE_CODE == 'ar' %}معرّف المرشد{% else %}Advisor ID{% endif %}"></div>
+            <div class="fb-search fb-search-full"><input id="advAssignAdvisorId" placeholder="A001" aria-label="{% if LANGUAGE_CODE == 'ar' %}معرّف المرشد{% else %}Advisor ID{% endif %}"></div>
           </div>
-          <div style="flex:0 0 auto;padding-bottom:1px"><button id="advAssignOneBtn" class="btn btn-outline-primary" type="button">{% if LANGUAGE_CODE == 'ar' %}تعيين طالب واحد{% else %}Assign one student{% endif %}</button></div>
+          <div class="field-action"><button id="advAssignOneBtn" class="btn btn-outline-primary" type="button">{% if LANGUAGE_CODE == 'ar' %}تعيين طالب واحد{% else %}Assign one student{% endif %}</button></div>
         </div>
       </div>
 
@@ -1221,26 +1306,26 @@
         <div class="k">Task</div>
         <div class="small text-secondary">Use this report to flag students missing high-impact unlock courses; export XLSX for advisor intervention lists.</div>
       </div>
-      <div class="filter-bar sticky-cta" style="margin-bottom:14px">
-        <div class="fb-search" style="max-width:110px"><span class="i i-sm" style="flex-shrink:0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input id="hpYear" type="text" inputmode="numeric" pattern="[0-9]*" value="{{ year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}"></div>
-        <div class="fb-search" style="max-width:110px"><input id="hpSemester" type="text" inputmode="numeric" pattern="[0-9]*" min="0" max="1" value="{{ semester }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}"></div>
-        <div class="fb-search" style="max-width:100px"><input id="hpSection" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}"></div>
-        <div class="fb-search" style="max-width:110px"><input id="hpProgram" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}"></div>
-        <div class="fb-search" style="max-width:110px"><input id="hpJoin" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join yrs{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join years{% endif %}"></div>
+      <div class="filter-bar sticky-cta mb-14">
+        <div class="fb-search fb-w-110"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input id="hpYear" type="text" inputmode="numeric" pattern="[0-9]*" value="{{ year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}"></div>
+        <div class="fb-search fb-w-110"><input id="hpSemester" type="text" inputmode="numeric" pattern="[0-9]*" min="0" max="1" value="{{ semester }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}"></div>
+        <div class="fb-search fb-w-100"><input id="hpSection" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}"></div>
+        <div class="fb-search fb-w-110"><input id="hpProgram" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}"></div>
+        <div class="fb-search fb-w-110"><input id="hpJoin" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join yrs{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join years{% endif %}"></div>
         <div class="fb-search" style="max-width:130px"><select id="hpParity" aria-label="Term parity"><option value="0" selected>Odd semesters (1, 3, 5...)</option><option value="1">Even semesters (2, 4, 6...)</option></select></div>
         <div class="fb-spacer"></div>
         <button id="hpRun" class="btn btn-primary"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run report</button>
         <a id="hpXlsx" class="fb-dd" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>XLSX</a>
       </div>
-      <details class="hp-advanced" style="margin-bottom:8px">
+      <details class="hp-advanced mb-8">
         <summary class="hp-advanced-toggle">
           <span class="hp-adv-arrow">▶</span> Advanced settings
           <span class="hp-adv-defaults-badge">Using defaults</span>
         </summary>
-        <div class="filter-bar" style="margin-top:8px;padding:10px 14px">
+        <div class="filter-bar filter-bar-sm mt-8">
           <div class="fb-search" style="max-width:150px"><select id="hpDiscount" aria-label="Discount function"><option value="1_over_d" selected>Standard decay (1/d)</option><option value="half_power_d">Gentle decay (1/&#x221A;d)</option><option value="none">No decay</option></select></div>
-          <div class="fb-search" style="max-width:120px"><input id="hpMinScore" type="text" inputmode="decimal" pattern="[0-9.]*" value="2.0" placeholder="{% if LANGUAGE_CODE == 'ar' %}أقل درجة{% else %}Min score{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}أقل درجة{% else %}Minimum score{% endif %}"></div>
-          <div class="fb-search" style="max-width:100px"><input id="hpTopK" type="text" inputmode="numeric" pattern="[0-9]*" value="10" placeholder="{% if LANGUAGE_CODE == 'ar' %}أفضل K{% else %}Top K{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}أفضل K{% else %}Top K{% endif %}"></div>
+          <div class="fb-search fb-w-120"><input id="hpMinScore" type="text" inputmode="decimal" pattern="[0-9.]*" value="2.0" placeholder="{% if LANGUAGE_CODE == 'ar' %}أقل درجة{% else %}Min score{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}أقل درجة{% else %}Minimum score{% endif %}"></div>
+          <div class="fb-search fb-w-100"><input id="hpTopK" type="text" inputmode="numeric" pattern="[0-9]*" value="10" placeholder="{% if LANGUAGE_CODE == 'ar' %}أفضل K{% else %}Top K{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}أفضل K{% else %}Top K{% endif %}"></div>
           <div class="fb-search" style="max-width:210px"><select id="hpStudying" aria-label="Include studying"><option value="false" selected>{% if LANGUAGE_CODE == 'ar' %}لا (الافتراضي الدقيق){% else %}No (exact default){% endif %}</option><option value="true">{% if LANGUAGE_CODE == 'ar' %}نعم{% else %}Yes{% endif %}</option></select></div>
         </div>
       </details>
@@ -1253,9 +1338,10 @@
       <div class="table-wrap mt-2">
         <table class="table table-sm mb-0" id="hpTable">
           <thead><tr><th scope="col">Student</th><th scope="col">Program</th><th scope="col">Missing this parity</th><th scope="col">Missing other</th><th scope="col">Total</th></tr></thead>
-          <tbody><tr><td colspan="5"><div class="empty-state"><span class="empty-icon"><span class="i" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span></span><div class="empty-title">No report loaded</div><div class="empty-hint">Set filters above, then click <strong>Run report</strong></div></div></td></tr></tbody>
+          <tbody><tr><td colspan="5"><div class="empty-state"><span class="empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span></span><div class="empty-title">No report loaded</div><div class="empty-hint">Set filters above, then click <strong>Run report</strong></div></div></td></tr></tbody>
         </table>
       </div>
+      <nav class="tbl-pager" id="hpPager" aria-label="High priority table pagination"></nav>
     </div>
 
     <datalist id="programs">
@@ -1265,22 +1351,22 @@
 <!-- toast-container injected by JS -->
 
 <div class="dlg-backdrop d-none" id="eligibilityDetailsModal" role="dialog" aria-modal="true">
-  <div class="dlg-box" style="max-width:800px;">
+  <div class="dlg-box dlg-box-lg">
     <div class="dlg-header">
       <div><div class="dlg-title">Eligibility Details</div></div>
       <button type="button" class="dlg-close" aria-label="{% if LANGUAGE_CODE == 'ar' %}إغلاق{% else %}Close{% endif %}">&times;</button>
     </div>
-    <div class="dlg-body" id="eligibilityDetailsBody" style="max-height:70vh;overflow-y:auto;"></div>
+    <div class="dlg-body" id="eligibilityDetailsBody" class="dlg-body-scroll"></div>
   </div>
 </div>
 
 <div class="dlg-backdrop d-none" id="debugTraceModal" role="dialog" aria-modal="true">
-  <div class="dlg-box" style="max-width:800px;">
+  <div class="dlg-box dlg-box-lg">
     <div class="dlg-header">
       <div><div class="dlg-title">Recommendation Trace</div></div>
       <button type="button" class="dlg-close" aria-label="{% if LANGUAGE_CODE == 'ar' %}إغلاق{% else %}Close{% endif %}">&times;</button>
     </div>
-    <div class="dlg-body" id="debugTraceBody" style="max-height:70vh;overflow-y:auto;"></div>
+    <div class="dlg-body" id="debugTraceBody" class="dlg-body-scroll"></div>
   </div>
 </div>
 
@@ -1616,11 +1702,12 @@
     q('batchProgram').value = '';
     q('batchSection').value = '';
     const tbody = document.querySelector('#batchTable tbody');
-    if (tbody) tbody.innerHTML = `<tr><td colspan="4"><div class="ap-empty"><span class="ap-empty-icon"><span class="i" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span></span><div class="ap-empty-title">${T.noBatchData}</div><div class="ap-empty-hint">${T.setBatchFilters}</div></div></td></tr>`;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="4"><div class="ap-empty"><span class="ap-empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span></span><div class="ap-empty-title">${T.noBatchData}</div><div class="ap-empty-hint">${T.setBatchFilters}</div></div></td></tr>`;
     q('batchMetrics').classList.add('d-none');
     q('batchCsv').href = '#';
     q('batchSummary').href = '#';
     q('batchTopChips').innerHTML = `<div class="empty-note">${T.runBatchHint}</div>`;
+    const bpEl = document.getElementById('batchPager'); if (bpEl) bpEl.innerHTML = '';
     setUpdated('batchUpdated');
   };
 
@@ -1700,6 +1787,7 @@
     toast(T.batchLoaded, true);
     runBtn.disabled = false;
     runBtn.textContent = T.runPreview;
+    paginateTable('batchTable', 'batchPager', 25);
   };
 
   /* ── Normalize prereq data: split comma-separated prerequisites ── */
@@ -1841,7 +1929,7 @@
       tbody.innerHTML = `<tr><td colspan="3" class="empty-note">${T.noPrereqRows}</td></tr>`;
       q('preMetrics').classList.add('d-none');
       const lc = q('preLinkCount'); if (lc) lc.classList.add('d-none');
-      preGraph.innerHTML = `<div class="empty-state"><span class="empty-icon"><span class="i" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg></span></span><div class="empty-title">${T.noGraphData}</div><div class="empty-hint">${T.noPrereqMap}</div></div>`;
+      preGraph.innerHTML = `<div class="empty-state"><span class="empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg></span></span><div class="empty-title">${T.noGraphData}</div><div class="empty-hint">${T.noPrereqMap}</div></div>`;
       setUpdated('preUpdated', true);
       btn.disabled = false; btn.textContent = T.load; return;
     }
@@ -2064,7 +2152,7 @@
     const drawer = q('studentCourseDrawer');
     if (!drawer) return;
     if (!studentPlanSelectedCourse) {
-      drawer.innerHTML = `<div class="cp-h"><span class="i" style="opacity:0.4"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span><div class="cp-t">${T.courseInspector}</div><span class="cp-live">${T.live}</span></div><div class="cp-b"><div class="empty-note">${T.inspectorHint}</div></div>`;
+      drawer.innerHTML = `<div class="cp-h"><span class="i i-faint"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span><div class="cp-t">${T.courseInspector}</div><span class="cp-live">${T.live}</span></div><div class="cp-b"><div class="empty-note">${T.inspectorHint}</div></div>`;
       return;
     }
 
@@ -2096,7 +2184,7 @@
 
     drawer.innerHTML = `
       <div class="cp-h">
-        <span class="i" style="opacity:0.4"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+        <span class="i i-faint"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
         <div class="cp-t">${c.course_code}</div>
         ${statusPill}
       </div>
@@ -2214,7 +2302,7 @@
               : c.status === 'studying'
               ? `<span class="pill-status pill-b"><span class="pill-dot"></span>${T.studying}</span>`
               : c.can_register
-              ? `<span class="pill-status pill-g" style="background:rgba(10,142,110,0.14)"><span class="pill-dot"></span>${T.canRegisterShort}</span>`
+              ? `<span class="pill-status pill-g can-register-pill"><span class="pill-dot"></span>${T.canRegisterShort}</span>`
               : `<span class="pill-status pill-r"><span class="pill-dot"></span>${T.locked}</span>`;
             const importanceNum = Number(c.importance_score || 0);
             const importance = importanceNum.toFixed(2);
@@ -2546,7 +2634,7 @@
       const cntEl = document.getElementById('scrapeHistoryCnt');
       const pagerEl = document.getElementById('scrapeHistPager');
       if (history.length === 0) {
-        historyBody.innerHTML = `<tr><td colspan="5"><div class="empty-state"><span class="i" style="width:32px;height:32px;color:var(--t5);margin-bottom:8px"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span><div class="empty-title">${T.noScrapeHistory}</div><div class="empty-hint">${T.runScrapeHint}</div></div></td></tr>`;
+        historyBody.innerHTML = `<tr><td colspan="5"><div class="empty-state"><span class="i empty-icon-muted"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span><div class="empty-title">${T.noScrapeHistory}</div><div class="empty-hint">${T.runScrapeHint}</div></div></td></tr>`;
         if (cntEl) cntEl.textContent = '0';
         if (pagerEl) pagerEl.classList.add('d-none');
       } else {
@@ -2854,6 +2942,7 @@
     toast(T.debugLoaded, true);
     btn.disabled = false;
     btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>' + T.run;
+    paginateTable('dbgTable', 'dbgPager', 25);
   };
 
   q('elRun').onclick = async () => {
@@ -2912,6 +3001,7 @@
     toast(T.eligibilityLoaded, true);
     btn.disabled = false;
     btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>' + T.check;
+    paginateTable('elTable', 'elPager', 25);
   };
 
   async function refreshAdvisorsDropdown(selectAdvisorId = '') {
@@ -3182,6 +3272,7 @@
     toast(T.hpLoaded, true);
     btn.disabled = false;
     btn.textContent = T.runReport;
+    paginateTable('hpTable', 'hpPager', 25);
   };
 
   async function copyLinkFrom(elId, label) {
@@ -3341,6 +3432,83 @@
       if (e.key === 'Escape' || e.key === '?') { overlay.remove(); document.removeEventListener('keydown', closeHelp); }
     }, { once: false });
   });
+
+  /* ── Client-side table pagination ── */
+  function paginateTable(tableId, pagerId, perPage) {
+    perPage = perPage || 25;
+    const table = document.getElementById(tableId);
+    const pager = document.getElementById(pagerId);
+    if (!table || !pager) return;
+
+    const tbody = table.querySelector('tbody');
+    if (!tbody) return;
+
+    const allRows = Array.from(tbody.querySelectorAll('tr'));
+    /* If the table shows an empty-state / empty-note placeholder, or has 0 real data rows, hide pager */
+    const hasEmpty = allRows.length <= 1 && (
+      tbody.querySelector('.empty-state, .empty-note, .ap-empty') ||
+      allRows.length === 0
+    );
+    if (hasEmpty) { pager.innerHTML = ''; return; }
+
+    const totalRows = allRows.length;
+    /* Hide pager entirely when total rows fit within default page size */
+    if (totalRows <= perPage) { pager.innerHTML = ''; return; }
+
+    let currentPage = 1;
+    let rowsPerPage = perPage;
+
+    function render() {
+      const total = totalRows;
+      const totalPages = rowsPerPage === 0 ? 1 : Math.ceil(total / rowsPerPage);
+      if (currentPage > totalPages) currentPage = totalPages;
+      if (currentPage < 1) currentPage = 1;
+
+      const start = rowsPerPage === 0 ? 0 : (currentPage - 1) * rowsPerPage;
+      const end = rowsPerPage === 0 ? total : Math.min(start + rowsPerPage, total);
+
+      allRows.forEach((row, i) => {
+        row.style.display = (i >= start && i < end) ? '' : 'none';
+      });
+
+      const showStart = total === 0 ? 0 : start + 1;
+      const showEnd = end;
+      const isAr = typeof IS_AR !== 'undefined' && IS_AR;
+      const prevLabel = isAr ? 'السابق' : 'Prev';
+      const nextLabel = isAr ? 'التالي' : 'Next';
+      const pageLabel = isAr ? '\u0635\u0641\u062D\u0629' : 'Page';
+      const ofLabel = isAr ? '\u0645\u0646' : 'of';
+      const showingLabel = isAr ? '\u0639\u0631\u0636' : 'Showing';
+      const allLabel = isAr ? '\u0627\u0644\u0643\u0644' : 'All';
+
+      pager.innerHTML =
+        '<span class="tbl-pager-info">' + showingLabel + ' ' + showStart + '\u2013' + showEnd + ' ' + ofLabel + ' ' + total + '</span>' +
+        '<span class="tbl-pager-nav" style="display:flex;align-items:center;gap:8px;">' +
+          '<button type="button" class="tbl-pg-prev" ' + (currentPage <= 1 ? 'disabled' : '') + ' aria-label="' + prevLabel + '">\u2039 ' + prevLabel + '</button>' +
+          '<span class="tbl-pg-num">' + pageLabel + ' ' + currentPage + ' ' + ofLabel + ' ' + totalPages + '</span>' +
+          '<button type="button" class="tbl-pg-next" ' + (currentPage >= totalPages ? 'disabled' : '') + ' aria-label="' + nextLabel + '">' + nextLabel + ' \u203A</button>' +
+        '</span>' +
+        '<span class="tbl-pager-size" style="display:flex;align-items:center;gap:4px;">' +
+          '<label for="' + pagerId + 'Sel" style="margin:0;font-weight:400">' + (isAr ? '\u0635\u0641\u0648\u0641' : 'Rows') + ':</label>' +
+          '<select id="' + pagerId + 'Sel" aria-label="Rows per page">' +
+            '<option value="10"' + (rowsPerPage === 10 ? ' selected' : '') + '>10</option>' +
+            '<option value="25"' + (rowsPerPage === 25 ? ' selected' : '') + '>25</option>' +
+            '<option value="50"' + (rowsPerPage === 50 ? ' selected' : '') + '>50</option>' +
+            '<option value="0"' + (rowsPerPage === 0 ? ' selected' : '') + '>' + allLabel + '</option>' +
+          '</select>' +
+        '</span>';
+
+      const prevBtn = pager.querySelector('.tbl-pg-prev');
+      const nextBtn = pager.querySelector('.tbl-pg-next');
+      const sel = pager.querySelector('select');
+
+      if (prevBtn) prevBtn.onclick = function() { if (currentPage > 1) { currentPage--; render(); } };
+      if (nextBtn) nextBtn.onclick = function() { if (currentPage < totalPages) { currentPage++; render(); } };
+      if (sel) sel.onchange = function() { rowsPerPage = parseInt(sel.value, 10); currentPage = 1; render(); };
+    }
+
+    render();
+  }
 
   /* Wire up sortable tables (provided by shared-ux.js) */
   wireSortableTable('batchTable');

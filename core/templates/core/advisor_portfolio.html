@@ -360,14 +360,14 @@
           <button class="fb-dd" data-focus="zerohours" aria-pressed="false" onclick="setFocus(this)" style="color:var(--warning)">{% if LANGUAGE_CODE == 'ar' %}بدون ساعات{% else %}Zero Hours{% endif %}</button>
         </div>
         <a id="apCsvLink" class="fb-dd" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span> CSV</a>
-        <button class="fb-dd" type="button" onclick="copyFilteredIds()">{% if LANGUAGE_CODE == 'ar' %}نسخ المعرفات{% else %}Copy IDs{% endif %}</button>
-        <button class="fb-dd" type="button" onclick="copyHighRiskIds()">{% if LANGUAGE_CODE == 'ar' %}نسخ معرفات المخاطر{% else %}Copy Risk IDs{% endif %}</button>
+        <button class="fb-dd" type="button" onclick="copyFilteredIds(this)" title="{% if LANGUAGE_CODE == 'ar' %}نسخ معرفات الطلاب المصفّين إلى الحافظة{% else %}Copy filtered student IDs to clipboard{% endif %}">{% if LANGUAGE_CODE == 'ar' %}نسخ المعرفات{% else %}Copy IDs{% endif %}</button>
+        <button class="fb-dd" type="button" onclick="copyHighRiskIds(this)" title="{% if LANGUAGE_CODE == 'ar' %}نسخ معرفات الطلاب ذوي الخطورة العالية إلى الحافظة{% else %}Copy high-risk student IDs to clipboard{% endif %}">{% if LANGUAGE_CODE == 'ar' %}نسخ معرفات المخاطر{% else %}Copy Risk IDs{% endif %}</button>
       </div>
 
       <!-- Batch bar -->
       <div class="ap-batch-bar" id="apBatchBar" role="status" aria-live="polite">
         <span><span class="ap-batch-count" id="apBatchCount">0</span> {% if LANGUAGE_CODE == 'ar' %}محدد{% else %}selected{% endif %}</span>
-        <button class="btn btn-sm btn-export" onclick="copySelectedIds()">{% if LANGUAGE_CODE == 'ar' %}نسخ المعرفات{% else %}Copy selected IDs{% endif %}</button>
+        <button class="btn btn-sm btn-export" onclick="copySelectedIds(this)" title="{% if LANGUAGE_CODE == 'ar' %}نسخ معرفات الطلاب المحددين إلى الحافظة{% else %}Copy selected student IDs to clipboard{% endif %}">{% if LANGUAGE_CODE == 'ar' %}نسخ المعرفات{% else %}Copy selected IDs{% endif %}</button>
         <button class="btn btn-sm btn-export" onclick="exportSelectedCsv()">{% if LANGUAGE_CODE == 'ar' %}تصدير CSV{% else %}Export selected CSV{% endif %}</button>
         <button class="btn btn-sm btn-outline-secondary" onclick="clearBatch()">{% if LANGUAGE_CODE == 'ar' %}مسح{% else %}Clear{% endif %}</button>
       </div>
@@ -515,8 +515,17 @@ const T = {
 
 /* q, esc, getCookie, csrfToken, csrfHeaders — provided by shared-utils.js */
 
-async function copyText(text) {
-  try { await navigator.clipboard.writeText(text); notify.success(T.copied); }
+async function copyText(text, triggerBtn) {
+  try {
+    await navigator.clipboard.writeText(text);
+    notify.success(T.copied);
+    if (triggerBtn) {
+      const orig = triggerBtn.textContent;
+      triggerBtn.textContent = IS_AR ? 'تم النسخ!' : 'Copied!';
+      triggerBtn.disabled = true;
+      setTimeout(() => { triggerBtn.textContent = orig; triggerBtn.disabled = false; }, 2000);
+    }
+  }
   catch { notify.warning(T.copyFailed); }
 }
 
@@ -883,8 +892,8 @@ function openDrawer(sid) {
 
       <div class="ap-drawer-actions">
         <a href="${plannerHref}" target="_blank" class="btn btn-sm btn-outline-primary"><span class="i" style="width:14px;height:14px;vertical-align:-2px" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span> ${T.openPlanner}</a>
-        <button class="btn btn-sm btn-export" onclick="copyText('${sid}')">${T.copyId}</button>
-        ${hpList.length ? `<button class="btn btn-sm btn-export" onclick="copyHpCourses('${sid}')">${T.copyHpCourses}</button>` : ''}
+        <button class="btn btn-sm btn-export" onclick="copyText('${sid}', this)" title="${IS_AR ? 'نسخ معرّف الطالب إلى الحافظة' : 'Copy student ID to clipboard'}">${T.copyId}</button>
+        ${hpList.length ? `<button class="btn btn-sm btn-export" onclick="copyHpCourses('${sid}', this)" title="${IS_AR ? 'نسخ المقررات ذات الأولوية إلى الحافظة' : 'Copy high-priority missing courses to clipboard'}">${T.copyHpCourses}</button>` : ''}
       </div>
     </div>`;
 
@@ -928,12 +937,12 @@ function drawerKeyHandler(e) {
   else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
 }
 
-function copyHpCourses(sid) {
+function copyHpCourses(sid, triggerBtn) {
   const s = allStudents.find(x => String(x.student_id) === String(sid));
   if (!s) return;
   const courses = Array.isArray(s.high_priority_missing_courses) ? s.high_priority_missing_courses : [];
   const txt = courses.map(c => `${c.course_code}(${Number(c.score||0).toFixed(2)})`).join(', ');
-  copyText(txt);
+  copyText(txt, triggerBtn);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -990,9 +999,9 @@ function updateBatchBar() {
   q('apBatchBar').classList.toggle('active', batchSelected.size > 0);
 }
 
-function copySelectedIds() {
+function copySelectedIds(triggerBtn) {
   if (!batchSelected.size) return;
-  copyText(Array.from(batchSelected).join(','));
+  copyText(Array.from(batchSelected).join(','), triggerBtn);
 }
 
 function exportSelectedCsv() {
@@ -1013,15 +1022,15 @@ function exportSelectedCsv() {
 /* ═══════════════════════════════════════════════════════════════
    COPY IDS + CSV LINK — Fix #5
    ═══════════════════════════════════════════════════════════════ */
-function copyFilteredIds() {
+function copyFilteredIds(triggerBtn) {
   if (!filteredStudents.length) { notify.warning(T.noStudentsCopy); return; }
-  copyText(filteredStudents.map(s => s.student_id).join(','));
+  copyText(filteredStudents.map(s => s.student_id).join(','), triggerBtn);
 }
 
-function copyHighRiskIds() {
+function copyHighRiskIds(triggerBtn) {
   const ids = allStudents.filter(s => Number(s.risk_score || 0) >= 8).map(s => s.student_id);
   if (!ids.length) { notify.warning(T.noHighRisk); return; }
-  copyText(ids.join(','));
+  copyText(ids.join(','), triggerBtn);
 }
 
 function updateCsvLink() {

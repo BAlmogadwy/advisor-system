@@ -147,16 +147,34 @@
 }
 .um-gen-pw:hover { background: #fff; border-color: var(--brand); color: var(--brand); }
 
-/* Bulk bar */
-.um-bulk-bar {
-  display: none; align-items: center; gap: 0.75rem;
-  padding: 0.5rem 0.75rem; border-radius: var(--radius);
-  background: var(--brand-soft); border: 1px solid #a8e6d4;
-  margin-bottom: 0.75rem; font-size: 0.85rem; color: var(--brand-dark);
-  animation: dlg-fade-in 0.15s ease;
+/* (Bulk bar styles moved to fixed-bottom .bulk-bar below) */
+
+/* ── Fixed-bottom floating bulk action bar ─────────────────── */
+.bulk-bar {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 900;
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 24px;
+  background: rgba(255,255,255,0.95);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  border-top: 1px solid var(--line, #dde3ed);
+  box-shadow: 0 -4px 20px rgba(0,0,0,0.08);
+  transform: translateY(100%);
+  transition: transform 0.25s ease;
 }
-.um-bulk-bar.active { display: flex; }
-.um-bulk-count { font-weight: 700; font-family: var(--font-mono); }
+.bulk-bar.visible { transform: translateY(0); }
+.bulk-bar .bulk-count { font-weight: 600; color: var(--teal, #0A8E6E); }
+.bulk-bar button {
+  border-radius: 8px; padding: 6px 16px; font-size: 0.85rem;
+  border: 1px solid var(--line, #dde3ed); cursor: pointer;
+  transition: opacity 0.15s, background 0.15s;
+}
+.bulk-bar button:focus-visible { outline: 2px solid var(--teal, #0A8E6E); outline-offset: 2px; }
+.bulk-bar .bulk-deactivate { background: #fef2f2; color: #b91c1c; border-color: #fca5a5; }
+.bulk-bar .bulk-deactivate:hover { background: #fee2e2; }
+.bulk-bar .bulk-activate { background: #f0fdf4; color: #166534; border-color: #86efac; }
+.bulk-bar .bulk-activate:hover { background: #dcfce7; }
+.bulk-bar .bulk-cancel { background: transparent; }
+.bulk-bar .bulk-cancel:hover { background: #f1f5f9; }
 
 /* Subtle time display */
 .um-time { font-size: 0.78rem; color: var(--muted); white-space: nowrap; }
@@ -318,12 +336,14 @@
         <button class="btn btn-outline-secondary btn-sm" type="button" onclick="exportCSV()"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span> {% if LANGUAGE_CODE == 'ar' %}تصدير CSV{% else %}Export CSV{% endif %}</button>
       </div>
 
-      <!-- Bulk actions bar -->
-      <div class="um-bulk-bar" id="bulkBar" role="status" aria-live="polite">
-        <span><span class="um-bulk-count" id="bulkCount">0</span> {% if LANGUAGE_CODE == 'ar' %}محدد{% else %}selected{% endif %}</span>
-        <button class="btn btn-sm btn-outline-dark" type="button" onclick="bulkDisable()">{% if LANGUAGE_CODE == 'ar' %}تعطيل المحدد{% else %}Disable Selected{% endif %}</button>
-        <button class="btn btn-sm btn-outline-success" type="button" onclick="bulkEnable()">{% if LANGUAGE_CODE == 'ar' %}تفعيل المحدد{% else %}Enable Selected{% endif %}</button>
-        <button class="btn btn-sm btn-outline-secondary" type="button" onclick="clearBulk()">{% if LANGUAGE_CODE == 'ar' %}مسح{% else %}Clear{% endif %}</button>
+      <!-- ═══════════════════════════════════════════════════════
+           FLOATING BULK ACTION BAR (fixed bottom)
+           ═══════════════════════════════════════════════════════ -->
+      <div class="bulk-bar" id="bulkBar" role="status" aria-live="polite">
+        <span class="bulk-count" id="bulkCount">0 {% if LANGUAGE_CODE == 'ar' %}محدد{% else %}selected{% endif %}</span>
+        <button class="bulk-deactivate" type="button" onclick="bulkDisable()" aria-label="{% if LANGUAGE_CODE == 'ar' %}تعطيل المحدد{% else %}Deactivate selected users{% endif %}">{% if LANGUAGE_CODE == 'ar' %}تعطيل{% else %}Deactivate{% endif %}</button>
+        <button class="bulk-activate" type="button" onclick="bulkEnable()" aria-label="{% if LANGUAGE_CODE == 'ar' %}تفعيل المحدد{% else %}Activate selected users{% endif %}">{% if LANGUAGE_CODE == 'ar' %}تفعيل{% else %}Activate{% endif %}</button>
+        <button class="bulk-cancel" type="button" onclick="clearBulk()" aria-label="{% if LANGUAGE_CODE == 'ar' %}إلغاء التحديد{% else %}Cancel selection{% endif %}">{% if LANGUAGE_CODE == 'ar' %}إلغاء{% else %}Cancel{% endif %}</button>
       </div>
 
       <!-- ═══════════════════════════════════════════════════════
@@ -853,13 +873,20 @@ function clearBulk() {
   bulkSelected.clear();
   document.querySelectorAll('#umTable tbody .um-check').forEach(cb => cb.checked = false);
   q('umCheckAll').checked = false;
+  q('umCheckAll').indeterminate = false;
   updateBulkBar();
 }
 
 function updateBulkBar() {
   const bar = q('bulkBar');
-  q('bulkCount').textContent = bulkSelected.size;
-  bar.classList.toggle('active', bulkSelected.size > 0);
+  const n = bulkSelected.size;
+  q('bulkCount').textContent = IS_AR ? `${n} محدد` : `${n} selected`;
+  bar.classList.toggle('visible', n > 0);
+  /* Keep header "select all" checkbox in sync */
+  const visibleCbs = document.querySelectorAll('#umTable tbody .um-check');
+  const allChecked = visibleCbs.length > 0 && Array.from(visibleCbs).every(cb => cb.checked);
+  q('umCheckAll').checked = allChecked;
+  q('umCheckAll').indeterminate = !allChecked && n > 0;
 }
 
 async function bulkDisable() {

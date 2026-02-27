@@ -485,11 +485,11 @@
 
           <!-- Workflow stepper -->
           <div class="wf-stepper" style="margin-top:10px">
-            <button id="stepA" class="wf-step active" type="button"><span class="wf-num">A</span>{% if LANGUAGE_CODE == 'ar' %}جلب الطالب{% else %}Fetch{% endif %}</button>
+            <button id="step1" class="wf-step active" type="button"><span class="wf-num">1</span>{% if LANGUAGE_CODE == 'ar' %}جلب الطالب{% else %}Fetch{% endif %}</button>
             <div class="wf-sep"></div>
-            <button id="stepB" class="wf-step" type="button"><span class="wf-num">B</span>{% if LANGUAGE_CODE == 'ar' %}اختيار المقررات{% else %}Pick Courses{% endif %}</button>
+            <button id="step2" class="wf-step" type="button"><span class="wf-num">2</span>{% if LANGUAGE_CODE == 'ar' %}اختيار المقررات{% else %}Pick Courses{% endif %}</button>
             <div class="wf-sep"></div>
-            <button id="stepC" class="wf-step" type="button"><span class="wf-num">C</span>{% if LANGUAGE_CODE == 'ar' %}بناء الخيارات{% else %}Build{% endif %}</button>
+            <button id="step3" class="wf-step" type="button"><span class="wf-num">3</span>{% if LANGUAGE_CODE == 'ar' %}بناء الخيارات{% else %}Build{% endif %}</button>
             <div class="wf-nav">
               <button id="prevStep" class="wf-back" type="button"><span class="i" aria-hidden="true" style="width:12px;height:12px"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}رجوع{% else %}Back{% endif %}</button>
               <button id="nextStep" class="wf-next" type="button">{% if LANGUAGE_CODE == 'ar' %}التالي{% else %}Next{% endif %}<span class="i" aria-hidden="true" style="width:12px;height:12px"><svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></span></button>
@@ -509,8 +509,8 @@
       <!-- ═══ Content panels ═══════════════════════════════════ -->
       <div class="planner-grid">
 
-          <!-- ─── Step A: Student Summary (full width) ────────── -->
-          <div id="studentSummaryCard" class="planner-panel step-panel pg-full" data-step="A">
+          <!-- ─── Step 1: Student Summary (full width) ────────── -->
+          <div id="studentSummaryCard" class="planner-panel step-panel pg-full" data-step="1">
             <div class="pane-head">
               <div class="pane-icon pane-icon-teal"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span></div>
               <div><h6 class="pane-title">{% if LANGUAGE_CODE == 'ar' %}ملخص الطالب{% else %}Student summary{% endif %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}ملخص بيانات الطالب الأكاديمية{% else %}Academic profile overview{% endif %}</div></div>
@@ -524,8 +524,8 @@
             </div>
           </div>
 
-          <!-- ─── Step B: Recommended (left col) ──────────────── -->
-          <div id="recCard" class="planner-panel step-panel" data-step="B">
+          <!-- ─── Step 2: Recommended (left col) ──────────────── -->
+          <div id="recCard" class="planner-panel step-panel" data-step="2">
             <div class="pane-head">
               <div class="pane-icon pane-icon-teal"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span></div>
               <div><h6 class="pane-title">{% if LANGUAGE_CODE == 'ar' %}مقررات مقترحة للإضافة{% else %}Suggested to add{% endif %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}المقررات المؤهلة بحسب الأولوية{% else %}Eligible courses ranked by priority{% endif %}</div></div>
@@ -545,8 +545,8 @@
             </div>
           </div>
 
-          <!-- ─── Step B: Baseline timetable (right col) ──────── -->
-          <div id="baselineCard" class="planner-panel step-panel" data-step="B">
+          <!-- ─── Step 2: Baseline timetable (right col) ──────── -->
+          <div id="baselineCard" class="planner-panel step-panel" data-step="2">
             <div class="pane-head">
               <div class="pane-icon pane-icon-sky"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span></div>
               <div><h6 class="pane-title">{% if LANGUAGE_CODE == 'ar' %}الجدول المسجّل{% else %}Registered timetable{% endif %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}الجدول المسجل حالياً{% else %}Currently registered schedule{% endif %}</div></div>
@@ -555,8 +555,8 @@
             <div id="baselineWeekly" class="small"></div>
           </div>
 
-          <!-- ─── Step B: Shortlist (full width) ──────────────── -->
-          <div id="shortlistCard" class="planner-panel step-panel pg-full" data-step="B">
+          <!-- ─── Step 2: Shortlist (full width) ──────────────── -->
+          <div id="shortlistCard" class="planner-panel step-panel pg-full" data-step="2">
             <div class="pane-head">
               <div class="pane-icon pane-icon-royal"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span></div>
               <div><h6 class="pane-title">{% if LANGUAGE_CODE == 'ar' %}قائمة المقررات المختارة{% else %}Selected add list{% endif %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}المقررات المختارة للإضافة{% else %}Courses selected for scheduling{% endif %}</div></div>
@@ -572,8 +572,8 @@
             </div>
           </div>
 
-          <!-- ─── Step B: Available Courses & Sections (full width) ── -->
-          <div id="availableCard" class="planner-panel step-panel pg-full" data-step="B">
+          <!-- ─── Step 2: Available Courses & Sections (full width) ── -->
+          <div id="availableCard" class="planner-panel step-panel pg-full" data-step="2">
             <div class="pane-head">
               <div class="pane-icon pane-icon-sky"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></span></div>
               <div><h6 class="pane-title">{% if LANGUAGE_CODE == 'ar' %}المقررات والشعب المتاحة{% else %}Available Courses & Sections{% endif %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}الشعب مصنفة حسب التعارض والسعة{% else %}Sections color-coded by conflict & capacity{% endif %}</div></div>
@@ -600,8 +600,8 @@
             </div>
           </div>
 
-          <!-- ─── Step C: Builder (left col) ──────────────────── -->
-          <div id="builderCard" class="planner-panel step-panel" data-step="C">
+          <!-- ─── Step 3: Builder (left col) ──────────────────── -->
+          <div id="builderCard" class="planner-panel step-panel" data-step="3">
             <div class="pane-head">
               <div class="pane-icon pane-icon-amber"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span></div>
               <div><h6 class="pane-title">{% if LANGUAGE_CODE == 'ar' %}تشغيل البناء{% else %}Builder run{% endif %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}إنشاء وتقييم خيارات الجدول{% else %}Generate & evaluate schedule options{% endif %}</div></div>
@@ -632,8 +632,8 @@
             </div>
           </div>
 
-          <!-- ─── Step C: Visual Timetable (right col) ────────── -->
-          <div id="visualCard" class="planner-panel step-panel" data-step="C">
+          <!-- ─── Step 3: Visual Timetable (right col) ────────── -->
+          <div id="visualCard" class="planner-panel step-panel" data-step="3">
             <div class="pane-head">
               <div class="pane-icon pane-icon-sky"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></div>
               <div style="flex:1"><h6 class="pane-title" style="margin:0">{% if LANGUAGE_CODE == 'ar' %}الجدول المرئي{% else %}Visual Timetable{% endif %}</h6></div>
@@ -655,8 +655,8 @@
             <div id="visualGrid" class="small"></div>
           </div>
 
-          <!-- ─── Step C: Advanced diagnostics (full width) ───── -->
-          <details id="advancedDiag" class="planner-panel step-panel pg-full" data-step="C">
+          <!-- ─── Step 3: Advanced diagnostics (full width) ───── -->
+          <details id="advancedDiag" class="planner-panel step-panel pg-full" data-step="3">
             <summary style="font-size:12.5px;font-weight:600;color:var(--t3);cursor:pointer;padding:4px 0;list-style:none;display:flex;align-items:center;gap:8px">
               <span class="i" aria-hidden="true" style="width:14px;height:14px;transition:transform 0.2s"><svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></span>
               {% if LANGUAGE_CODE == 'ar' %}تشخيصات متقدمة{% else %}Advanced diagnostics{% endif %}
@@ -668,8 +668,8 @@
             </div>
           </details>
 
-          <!-- ─── Step B: Full plan palette (moved to bottom, all functionality unchanged) ──── -->
-          <div id="planCard" class="planner-panel step-panel pg-full" data-step="B">
+          <!-- ─── Step 2: Full plan palette (moved to bottom, all functionality unchanged) ──── -->
+          <div id="planCard" class="planner-panel step-panel pg-full" data-step="2">
             <div class="pane-head">
               <div class="pane-icon pane-icon-purple"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></span></div>
               <div><h6 class="pane-title">{% if LANGUAGE_CODE == 'ar' %}الخطة الدراسية الكاملة (انقر لإضافة مقرر){% else %}Full student plan (click course to add){% endif %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}جميع مقررات الخطة — انقر لإضافة{% else %}All plan courses — click to add to shortlist{% endif %}</div></div>
@@ -752,8 +752,8 @@ function setBanner(kind, text){
   if(dot) dot.className='cb-dot'+(cls==='ok'?' ready':cls==='warn'||cls==='err'?'':' ready');
 }
 
-let currentStep='A';
-const stepOrder=['A','B','C'];
+let currentStep='1';
+const stepOrder=['1','2','3'];
 function setStep(step){
   currentStep=step;
   const idx=stepOrder.indexOf(step);
@@ -980,10 +980,10 @@ q('mode').addEventListener('change',()=>{
 });
 
 q('visualSource').addEventListener('change',(e)=>renderVisualTimetable(e.target.value));
-['A','B','C'].forEach(s=> q('step'+s)?.addEventListener('click',()=>setStep(s)));
+['1','2','3'].forEach(s=> q('step'+s)?.addEventListener('click',()=>setStep(s)));
 q('simpleMode')?.addEventListener('change',()=>setStep(currentStep));
-q('prevStep')?.addEventListener('click',()=>{ const order=['A','B','C']; const i=Math.max(0,order.indexOf(currentStep)-1); setStep(order[i]); });
-q('nextStep')?.addEventListener('click',()=>{ const order=['A','B','C']; const i=Math.min(order.length-1,order.indexOf(currentStep)+1); setStep(order[i]); });
+q('prevStep')?.addEventListener('click',()=>{ const order=['1','2','3']; const i=Math.max(0,order.indexOf(currentStep)-1); setStep(order[i]); });
+q('nextStep')?.addEventListener('click',()=>{ const order=['1','2','3']; const i=Math.min(order.length-1,order.indexOf(currentStep)+1); setStep(order[i]); });
 
 function renderShortlist(){
   const wrap=q('shortlist'); wrap.innerHTML='';
@@ -1139,7 +1139,7 @@ async function renderPlanPalette(studentId){
             must_take:false, score:Math.round(Number(c.importance_score||0)*20)
           });
           renderShortlist();
-          setStep('B');
+          setStep('2');
         };
 
         tr.querySelector('button').onclick=(e)=>{ e.stopPropagation(); addCourse(); };
@@ -1370,9 +1370,9 @@ async function renderAvailableSections(){
 
 q('resetShortlist').onclick=()=>{
   shortlist=currentRecommendations.filter(x=>x.status==='Eligible').map(x=>({...x,must_take:false}));
-  renderShortlist(); setStep('B');
+  renderShortlist(); setStep('2');
 };
-q('clearShortlist').onclick=()=>{shortlist=[];renderShortlist(); setStep('B');};
+q('clearShortlist').onclick=()=>{shortlist=[];renderShortlist(); setStep('2');};
 
 ['fltNotTaken','fltGreen','fltHighImp'].forEach(id=>
   q(id)?.addEventListener('change',()=>{ if(currentCtx.student_id) renderPlanPalette(currentCtx.student_id); })
@@ -1390,7 +1390,7 @@ q('addSelectedPlan').onclick=()=>{
   });
   renderShortlist();
   setBanner('info', T.addedSelected(added));
-  setStep('B');
+  setStep('2');
 };
 
 q('applyOption').onclick=async()=>{
@@ -1427,12 +1427,12 @@ q('applyOption').onclick=async()=>{
 
   setBanner('success', T.appliedOption(name, data.inserted||0));
   q('trustStrip').textContent=T.trustUpdated(name);
-  setStep('C');
+  setStep('3');
   q('fetchBtn').click();
 };
 
 q('runBuilder').onclick=async()=>{
-  setStep('C');
+  setStep('3');
 
   /* Fix: correct preconditions + correct message */
   if(!currentCtx.student_id) return notify.warning(T.fetchStudentFirst);
@@ -1571,7 +1571,7 @@ q('runBuilder').onclick=async()=>{
 };
 
 q('fetchBtn').onclick=async()=>{
-  setStep('A');
+  setStep('1');
   q('fetchState').textContent = IS_AR ? 'جارٍ التحميل...' : 'Loading...';
   setBanner('info', IS_AR ? 'جارٍ جلب بيانات الطالب...' : 'Fetching student context...');
 
@@ -1639,7 +1639,7 @@ q('fetchBtn').onclick=async()=>{
     : `Mapping quality: ${quality} | Unresolved: - | Last build: -`;
 
   setBanner('success', IS_AR ? 'تم تحميل بيانات الطالب بنجاح.' : 'Student context loaded successfully.');
-  setStep('B');
+  setStep('2');
 
   renderBaselineWeeklyCompact(data.baseline||[]);
   renderVisualTimetable(q('visualSource').value || 'baseline');
@@ -1676,7 +1676,7 @@ q('fetchBtn').onclick=async()=>{
 };
 
 enforceBuilderProcessLayout();
-setStep('A');
+setStep('1');
 
 /* ── Available sections search filter ──────────────────────── */
 q('availSearch')?.addEventListener('input',function(){

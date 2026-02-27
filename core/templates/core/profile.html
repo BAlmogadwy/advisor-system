@@ -288,7 +288,8 @@
         {% if LANGUAGE_CODE == 'ar' %}الحد الأقصى 150 حرف — يجب أن يكون فريداً{% else %}Max 150 characters — must be unique{% endif %}
       </div>
     </div>
-    <button class="pf-submit pf-submit-primary" id="pfSaveUsername" type="button">
+    <button class="pf-submit pf-submit-primary" id="pfSaveUsername" type="button"
+            title="{% if LANGUAGE_CODE == 'ar' %}حفظ اسم المستخدم الجديد{% else %}Save new username{% endif %}">
       <span class="pf-spinner"></span>
       <span class="pf-btn-text">{% if LANGUAGE_CODE == 'ar' %}حفظ{% else %}Save{% endif %}</span>
     </button>
@@ -346,7 +347,8 @@
         </button>
       </div>
     </div>
-    <button class="pf-submit pf-submit-primary" id="pfSavePassword" type="button">
+    <button class="pf-submit pf-submit-primary" id="pfSavePassword" type="button"
+            title="{% if LANGUAGE_CODE == 'ar' %}حفظ كلمة المرور الجديدة{% else %}Save new password{% endif %}">
       <span class="pf-spinner"></span>
       <span class="pf-btn-text">{% if LANGUAGE_CODE == 'ar' %}حفظ{% else %}Save{% endif %}</span>
     </button>
@@ -419,6 +421,9 @@
       if (sidebarAvatar) sidebarAvatar.textContent = data.username.slice(0, 2).toUpperCase();
       flashSaved(card1);
       notify.success('{% if LANGUAGE_CODE == "ar" %}تم تغيير اسم المستخدم{% else %}Username updated{% endif %}');
+      const origTxt1 = btnUsername.querySelector('.pf-btn-text').textContent;
+      btnUsername.querySelector('.pf-btn-text').textContent = '{% if LANGUAGE_CODE == "ar" %}تم الحفظ!{% else %}Saved!{% endif %}';
+      setTimeout(() => { btnUsername.querySelector('.pf-btn-text').textContent = origTxt1; }, 2000);
     } catch (err) {
       notify.error(err.message);
     } finally {
@@ -474,6 +479,9 @@
       pwLabel.textContent = '';
       flashSaved(card2);
       notify.success('{% if LANGUAGE_CODE == "ar" %}تم تغيير كلمة المرور{% else %}Password updated{% endif %}');
+      const origTxt2 = btnPassword.querySelector('.pf-btn-text').textContent;
+      btnPassword.querySelector('.pf-btn-text').textContent = '{% if LANGUAGE_CODE == "ar" %}تم الحفظ!{% else %}Saved!{% endif %}';
+      setTimeout(() => { btnPassword.querySelector('.pf-btn-text').textContent = origTxt2; }, 2000);
     } catch (err) {
       notify.error(err.message);
     } finally {

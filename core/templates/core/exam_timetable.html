@@ -272,7 +272,8 @@
       <div class="d-flex align-items-center justify-content-between mb-2 gap-2">
         <h6 class="mb-0">{% if LANGUAGE_CODE == 'ar' %}جدول الاختبارات{% else %}Exam Schedule{% endif %}</h6>
         <div class="d-flex align-items-center gap-2 ms-auto">
-          <a id="exportXlsx" href="#" class="btn btn-sm btn-outline-success d-none">
+          <a id="exportXlsx" href="#" class="btn btn-sm btn-outline-success d-none"
+             title="{% if LANGUAGE_CODE == 'ar' %}تحميل جدول الامتحانات كملف إكسل{% else %}Download exam timetable as Excel file{% endif %}">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" style="vertical-align:-2px;margin-inline-end:3px"><path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5"/><path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708z"/></svg>
             {% if LANGUAGE_CODE == 'ar' %}تصدير إكسل{% else %}Export Excel{% endif %}
           </a>
@@ -1476,6 +1477,13 @@ async function loadRun(runId) {
 
 // Load history on page load
 loadHistory();
+
+/* ── Export Excel click feedback ── */
+$('exportXlsx')?.addEventListener('click', function() {
+  if (this.href && this.href !== '#') {
+    notify.success(IS_AR ? 'جارٍ تحميل ملف إكسل...' : 'Downloading Excel file...');
+  }
+});
 
 /* ── Matrix Zoom Controls ── */
 (function() {
