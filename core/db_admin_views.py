@@ -1,5 +1,3 @@
-import json
-
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
@@ -26,17 +24,7 @@ from core.services.term_sections import (
     preview_term_sections_from_csv,
 )
 from core.sidebar_context import get_sidebar_context
-
-
-def _parse_json_body(request: HttpRequest) -> tuple[dict, JsonResponse | None]:
-    """Safely parse JSON body. Returns (payload, error_response)."""
-    if not request.body:
-        return {}, None
-    try:
-        data = json.loads(request.body.decode("utf-8"))
-        return (data if isinstance(data, dict) else {}), None
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return {}, JsonResponse({"error": "Invalid JSON body"}, status=400)
+from core.utils import parse_json_body as _parse_json_body
 
 
 @role_required(ROLE_SUPER_ADMIN)

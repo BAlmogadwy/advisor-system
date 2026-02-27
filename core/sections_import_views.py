@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import uuid
 from pathlib import Path
 
@@ -14,17 +13,7 @@ from core.services.oracle_sections_parser import extract_rows_from_oracle_html, 
 from core.services.rbac import ROLE_SUPER_ADMIN, get_user_role
 from core.services.term_sections import import_term_sections_from_csv
 from core.sidebar_context import get_sidebar_context
-
-
-def _parse_json_body(request: HttpRequest) -> tuple[dict, JsonResponse | None]:
-    """Safely parse JSON body. Returns (payload, error_response)."""
-    if not request.body:
-        return {}, None
-    try:
-        data = json.loads(request.body.decode("utf-8"))
-        return (data if isinstance(data, dict) else {}), None
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return {}, JsonResponse({"error": "Invalid JSON body"}, status=400)
+from core.utils import parse_json_body as _parse_json_body
 
 
 def _require_super_admin(request: HttpRequest) -> JsonResponse | None:

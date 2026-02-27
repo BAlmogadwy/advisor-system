@@ -115,6 +115,11 @@ const dlg = (() => {
     const previouslyFocused = document.activeElement;
     return new Promise(resolve => {
       const { bd, o } = build(opts);
+
+      /* Hide background from screen readers while dialog is open */
+      const mainEl = document.querySelector('main');
+      if (mainEl) mainEl.setAttribute('aria-hidden', 'true');
+
       document.body.appendChild(bd);
       requestAnimationFrame(() => bd.classList.add('open'));
       const releaseTrap = trapFocus(bd);
@@ -128,6 +133,7 @@ const dlg = (() => {
       function close(val) {
         bd.classList.remove('open');
         releaseTrap();
+        if (mainEl) mainEl.removeAttribute('aria-hidden');
         setTimeout(() => { bd.remove(); if (previouslyFocused) previouslyFocused.focus(); }, 200);
         resolve(val);
       }

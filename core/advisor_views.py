@@ -1,5 +1,3 @@
-import json
-
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.http import require_GET, require_POST
 
@@ -14,17 +12,7 @@ from core.services.advisors import (
 )
 from core.services.audit import log_audit_event
 from core.services.rbac import ROLE_ADVISOR, ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_scope
-
-
-def _parse_json_body(request: HttpRequest) -> tuple[dict, JsonResponse | None]:
-    """Safely parse JSON body. Returns (payload, error_response)."""
-    if not request.body:
-        return {}, None
-    try:
-        data = json.loads(request.body.decode("utf-8"))
-        return (data if isinstance(data, dict) else {}), None
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return {}, JsonResponse({"error": "Invalid JSON body"}, status=400)
+from core.utils import parse_json_body as _parse_json_body
 
 
 @role_required(ROLE_GENERAL_ADVISOR)

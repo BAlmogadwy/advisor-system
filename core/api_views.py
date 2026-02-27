@@ -5,6 +5,7 @@ from django.http import HttpRequest, JsonResponse
 from django.views.decorators.http import require_GET, require_POST
 
 from core.services.course_classifier import classify_courses
+from core.services.policy import require_student_scope
 from core.services.recommender import recommend_next_courses
 from core.services.student_parser import parse_study_plan, parse_timetable
 
@@ -23,6 +24,10 @@ def _parse_int(value: str | None, field: str) -> tuple[int | None, JsonResponse 
 @login_required(login_url="login")
 @require_GET
 def recommend_view(request: HttpRequest, student_id: int) -> JsonResponse:
+    scope_err = require_student_scope(request, student_id)
+    if scope_err:
+        return scope_err
+
     year, err = _parse_int(request.GET.get("year"), "year")
     if err:
         return err

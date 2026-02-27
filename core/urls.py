@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.urls import path
 
@@ -91,7 +92,6 @@ urlpatterns = [
     path("logout/", logout_view, name="logout"),
     path("", login_required(dashboard, login_url="login"), name="dashboard"),
     path("health/", health, name="health"),
-    path("ops/dev/switch-role/", dev_role_switch_view, name="dev_role_switch"),
     path("recommend/<int:student_id>/", recommend_view, name="recommend"),
     path("classify/", classify_view, name="classify"),
     path("parse-and-classify/", parse_and_classify_view, name="parse_and_classify"),
@@ -269,3 +269,8 @@ urlpatterns = [
         name="exam_timetable_detail",
     ),
 ]
+
+if settings.DEBUG:
+    urlpatterns.append(
+        path("ops/dev/switch-role/", dev_role_switch_view, name="dev_role_switch"),
+    )

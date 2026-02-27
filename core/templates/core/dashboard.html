@@ -464,28 +464,28 @@
       <div class="ov-date" id="ovDate"></div>
 
       <div class="ov-kpis">
-        <div class="ov-kpi" tabindex="0" role="button" aria-label="{% if LANGUAGE_CODE == 'ar' %}الطلاب المعينون{% else %}Students Assigned{% endif %}" onclick="activatePanel('batch');history.pushState(null,'','#batch')">
+        <div class="ov-kpi" tabindex="0" role="button" aria-label="{% if LANGUAGE_CODE == 'ar' %}الطلاب المعينون{% else %}Students Assigned{% endif %}" onclick="activatePanel('batch');history.pushState(null,'','#batch')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">
           <div class="ov-kpi-icon teal">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
           </div>
           <div class="ov-kpi-label">{% if LANGUAGE_CODE == 'ar' %}الطلاب المعينون{% else %}Students Assigned{% endif %}</div>
           <div class="ov-kpi-value" id="ovKpiStudents">--</div>
         </div>
-        <div class="ov-kpi" tabindex="0" role="button" aria-label="{% if LANGUAGE_CODE == 'ar' %}توصيات معلقة{% else %}Pending Recommendations{% endif %}" onclick="activatePanel('batch');history.pushState(null,'','#batch')">
+        <div class="ov-kpi" tabindex="0" role="button" aria-label="{% if LANGUAGE_CODE == 'ar' %}توصيات معلقة{% else %}Pending Recommendations{% endif %}" onclick="activatePanel('batch');history.pushState(null,'','#batch')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">
           <div class="ov-kpi-icon royal">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
           </div>
           <div class="ov-kpi-label">{% if LANGUAGE_CODE == 'ar' %}توصيات معلقة{% else %}Pending Recommendations{% endif %}</div>
           <div class="ov-kpi-value" id="ovKpiPending">--</div>
         </div>
-        <div class="ov-kpi" tabindex="0" role="button" aria-label="{% if LANGUAGE_CODE == 'ar' %}جداول متأخرة{% else %}Overdue Schedules{% endif %}" onclick="activatePanel('scrape');history.pushState(null,'','#scrape')">
+        <div class="ov-kpi" tabindex="0" role="button" aria-label="{% if LANGUAGE_CODE == 'ar' %}جداول متأخرة{% else %}Overdue Schedules{% endif %}" onclick="activatePanel('scrape');history.pushState(null,'','#scrape')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">
           <div class="ov-kpi-icon warning">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
           </div>
           <div class="ov-kpi-label">{% if LANGUAGE_CODE == 'ar' %}جداول متأخرة{% else %}Overdue Schedules{% endif %}</div>
           <div class="ov-kpi-value" id="ovKpiOverdue">--</div>
         </div>
-        <div class="ov-kpi" tabindex="0" role="button" aria-label="{% if LANGUAGE_CODE == 'ar' %}أولوية عالية مفقودة{% else %}High Priority Missing{% endif %}" onclick="activatePanel('highpriority');history.pushState(null,'','#highpriority')">
+        <div class="ov-kpi" tabindex="0" role="button" aria-label="{% if LANGUAGE_CODE == 'ar' %}أولوية عالية مفقودة{% else %}High Priority Missing{% endif %}" onclick="activatePanel('highpriority');history.pushState(null,'','#highpriority')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">
           <div class="ov-kpi-icon danger">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
           </div>

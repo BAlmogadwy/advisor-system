@@ -1,6 +1,7 @@
 /**
  * safeFetch — Advisor Portal
- * Global fetch() wrapper with automatic error handling and toast feedback.
+ * Global fetch() wrapper with automatic error handling, CSRF injection,
+ * and toast feedback.
  *
  * Usage:
  *   const data = await safeFetch('/api/endpoint/', opts, 'Failed to load data');
@@ -8,7 +9,26 @@
  *   // ... use data normally ...
  *
  * For non-JSON responses, use safeFetchRaw() which returns the Response object.
+ *
+ * CSRF tokens are automatically injected for same-origin mutating requests
+ * (POST, PUT, PATCH, DELETE) so callers don't need to add them manually.
  */
+
+/* ── CSRF auto-injection helper ─────────────────────────────── */
+const _SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS', 'TRACE']);
+
+function _injectCsrf(options) {
+  const method = (options.method || 'GET').toUpperCase();
+  if (_SAFE_METHODS.has(method)) return options;
+
+  /* Only inject for same-origin requests */
+  const headers = new Headers(options.headers || {});
+  if (!headers.has('X-CSRFToken')) {
+    const token = typeof getCsrfToken === 'function' ? getCsrfToken() : csrfToken;
+    if (token) headers.set('X-CSRFToken', token);
+  }
+  return { ...options, headers };
+}
 
 /**
  * Fetch JSON from a URL with automatic error handling.
@@ -20,7 +40,7 @@
  */
 async function safeFetch(url, options = {}, errorMessage = 'Request failed') {
   try {
-    const response = await fetch(url, options);
+    const response = await fetch(url, _injectCsrf(options));
     if (!response.ok) {
       /* Try to extract a server error message from the JSON body */
       let serverMsg = `${response.status} ${response.statusText}`;
@@ -54,7 +74,7 @@ async function safeFetch(url, options = {}, errorMessage = 'Request failed') {
  */
 async function safeFetchRaw(url, options = {}, errorMessage = 'Request failed') {
   try {
-    const response = await fetch(url, options);
+    const response = await fetch(url, _injectCsrf(options));
     if (!response.ok) {
       notify.error(errorMessage, `${response.status} ${response.statusText}`);
       console.error('[safeFetchRaw]', url, response.status, response.statusText);

@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>404 — Page Not Found</title>
+  <style>
+    /* ── Reset & base ──────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:           #e4e9ed;
+      --teal:         #0A8E6E;
+      --teal-bright:  #0CA87E;
+      --teal-deep:    #067858;
+      --navy:         #111144;
+      --ink:          #2d3748;
+      --muted:        #5c5c7a;
+      --muted-light:  #8492a6;
+      --danger:       #C03030;
+    }
+
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      background: var(--bg);
+      font-family: 'Inter', 'Noto Kufi Arabic', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      color: var(--ink);
+      overflow-x: hidden;
+    }
+
+    /* ── RTL override ──────────────────────────────────── */
+    [dir="rtl"] body {
+      font-family: 'Noto Kufi Arabic', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+
+    /* ── Container ─────────────────────────────────────── */
+    .error-wrap {
+      width: 100%;
+      max-width: 520px;
+      padding: 2rem 1.5rem;
+      text-align: center;
+      animation: error-fade-up 0.6s ease both;
+    }
+
+    @keyframes error-fade-up {
+      from { opacity: 0; transform: translateY(24px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── Neumorphic card ───────────────────────────────── */
+    .error-card {
+      background: var(--bg);
+      border-radius: 24px;
+      padding: 2.5rem 2rem 2rem;
+      box-shadow:
+        8px 8px 20px rgba(163, 177, 198, 0.6),
+       -8px -8px 20px rgba(255, 255, 255, 0.8);
+      transition: box-shadow 0.3s ease;
+    }
+    .error-card:hover {
+      box-shadow:
+        10px 10px 24px rgba(163, 177, 198, 0.55),
+       -10px -10px 24px rgba(255, 255, 255, 0.85);
+    }
+
+    /* ── SVG illustration circle ───────────────────────── */
+    .error-icon {
+      width: 120px;
+      height: 120px;
+      border-radius: 50%;
+      margin: 0 auto 1.75rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, #0A8E6E, #00AEDA, #4056E3);
+      box-shadow:
+        6px 6px 14px rgba(163, 177, 198, 0.5),
+       -6px -6px 14px rgba(255, 255, 255, 0.7),
+        0 0 0 6px var(--bg);
+      position: relative;
+    }
+    .error-icon svg {
+      width: 56px;
+      height: 56px;
+    }
+
+    /* ── Floating question marks animation ─────────────── */
+    .error-icon::before,
+    .error-icon::after {
+      content: '?';
+      position: absolute;
+      font-weight: 700;
+      color: var(--teal);
+      opacity: 0.25;
+      animation: float-question 3s ease-in-out infinite;
+    }
+    .error-icon::before {
+      font-size: 1.5rem;
+      top: -8px;
+      right: -12px;
+      animation-delay: 0s;
+    }
+    .error-icon::after {
+      font-size: 1.1rem;
+      bottom: -4px;
+      left: -10px;
+      animation-delay: 1.5s;
+    }
+    @keyframes float-question {
+      0%, 100% { transform: translateY(0) rotate(0deg); opacity: 0.25; }
+      50%      { transform: translateY(-8px) rotate(10deg); opacity: 0.5; }
+    }
+
+    /* ── Error code ────────────────────────────────────── */
+    .error-code {
+      font-size: 4rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      background: linear-gradient(135deg, var(--teal), #00AEDA);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      margin-bottom: 0.25rem;
+      line-height: 1.1;
+    }
+
+    /* ── Title & description ───────────────────────────── */
+    .error-title {
+      font-size: 1.35rem;
+      font-weight: 700;
+      color: var(--navy);
+      margin-bottom: 0.5rem;
+      letter-spacing: -0.02em;
+    }
+    .error-desc {
+      font-size: 0.9rem;
+      color: var(--muted);
+      line-height: 1.6;
+      margin-bottom: 0.3rem;
+    }
+
+    /* ── Decorative dots ───────────────────────────────── */
+    .error-dots {
+      display: flex;
+      justify-content: center;
+      gap: 6px;
+      margin: 1.5rem 0;
+    }
+    .error-dots span {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #0A8E6E, #00AEDA, #4056E3);
+    }
+    .error-dots span:nth-child(1) { opacity: 0.4; }
+    .error-dots span:nth-child(2) { opacity: 0.65; }
+    .error-dots span:nth-child(3) { opacity: 1; }
+    .error-dots span:nth-child(4) { opacity: 0.65; }
+    .error-dots span:nth-child(5) { opacity: 0.4; }
+
+    /* ── Neumorphic button ─────────────────────────────── */
+    .error-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      text-decoration: none;
+      background: var(--teal);
+      color: #fff;
+      font-size: 0.78rem;
+      font-weight: 700;
+      font-family: inherit;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      padding: 0.7rem 1.8rem;
+      border-radius: 999px;
+      border: none;
+      cursor: pointer;
+      box-shadow:
+        3px 3px 7px rgba(163, 177, 198, 0.28),
+       -3px -3px 7px rgba(255, 255, 255, 0.7);
+      transition: all 0.25s ease;
+    }
+    .error-btn:hover {
+      background: var(--teal-bright);
+      box-shadow:
+        4px 4px 10px rgba(163, 177, 198, 0.32),
+       -4px -4px 10px rgba(255, 255, 255, 0.8);
+      transform: translateY(-1px);
+    }
+    .error-btn:active {
+      background: var(--teal-deep);
+      transform: translateY(0);
+      box-shadow:
+        inset 3px 3px 7px rgba(10, 142, 110, 0.3),
+        inset -3px -3px 7px rgba(255, 255, 255, 0.15);
+    }
+    .error-btn:focus-visible {
+      outline: 2px solid var(--teal);
+      outline-offset: 3px;
+      box-shadow:
+        0 0 0 4px rgba(10, 142, 110, 0.18),
+        3px 3px 7px rgba(163, 177, 198, 0.28),
+       -3px -3px 7px rgba(255, 255, 255, 0.7);
+    }
+    .error-btn svg {
+      width: 16px;
+      height: 16px;
+      stroke: #fff;
+      stroke-width: 2;
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    /* ── Language toggle area ──────────────────────────── */
+    .lang-hint {
+      margin-top: 1.5rem;
+      font-size: 0.78rem;
+      color: var(--muted-light);
+    }
+    .lang-hint a {
+      color: var(--teal);
+      text-decoration: none;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .lang-hint a:hover { text-decoration: underline; }
+    .lang-hint a:focus-visible {
+      outline: 2px solid var(--teal);
+      outline-offset: 2px;
+      border-radius: 2px;
+    }
+
+    /* ── Bilingual blocks ──────────────────────────────── */
+    .lang-en, .lang-ar { transition: opacity 0.3s ease; }
+    body.show-ar .lang-en { display: none; }
+    body.show-ar .lang-ar { display: block; }
+    body:not(.show-ar) .lang-ar { display: none; }
+    body:not(.show-ar) .lang-en { display: block; }
+
+    /* ── RTL spacing ───────────────────────────────────── */
+    [dir="rtl"] .error-btn { flex-direction: row-reverse; }
+
+    /* ── Responsive ────────────────────────────────────── */
+    @media (max-width: 480px) {
+      .error-wrap { padding: 1rem; }
+      .error-card { padding: 2rem 1.25rem 1.5rem; border-radius: 20px; }
+      .error-icon { width: 96px; height: 96px; }
+      .error-icon svg { width: 44px; height: 44px; }
+      .error-code { font-size: 3rem; }
+      .error-title { font-size: 1.15rem; }
+      .error-desc { font-size: 0.85rem; }
+    }
+    @media (max-width: 360px) {
+      .error-dots { display: none; }
+      .error-code { font-size: 2.5rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="error-wrap" role="main">
+    <div class="error-card">
+
+      <!-- Illustration: confused compass / broken link -->
+      <div class="error-icon" aria-hidden="true">
+        <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Broken chain link icon -->
+          <path d="M26 38L38 26" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>
+          <!-- Left link -->
+          <path d="M22 34l-4 4a8 8 0 0 0 11.3 11.3l4-4" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <!-- Right link -->
+          <path d="M42 30l4-4a8 8 0 0 0-11.3-11.3l-4 4" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <!-- Break marks -->
+          <path d="M24 20l-2-2" stroke="#fff" stroke-width="2" stroke-linecap="round" opacity="0.6"/>
+          <path d="M44 40l-2-2" stroke="#fff" stroke-width="2" stroke-linecap="round" opacity="0.6"/>
+          <path d="M20 24l-3 1" stroke="#fff" stroke-width="2" stroke-linecap="round" opacity="0.6"/>
+          <path d="M47 39l-1 3" stroke="#fff" stroke-width="2" stroke-linecap="round" opacity="0.6"/>
+        </svg>
+      </div>
+
+      <!-- English content -->
+      <div class="lang-en">
+        <div class="error-code">404</div>
+        <h1 class="error-title">Page Not Found</h1>
+        <p class="error-desc">
+          The page you are looking for does not exist or has been moved.
+        </p>
+        <p class="error-desc">
+          Please check the URL or return to the dashboard.
+        </p>
+      </div>
+
+      <!-- Arabic content -->
+      <div class="lang-ar" dir="rtl">
+        <div class="error-code">404</div>
+        <h1 class="error-title">الصفحة غير موجودة</h1>
+        <p class="error-desc">
+          الصفحة التي تبحث عنها غير موجودة أو تم نقلها.
+        </p>
+        <p class="error-desc">
+          يرجى التحقق من الرابط أو العودة إلى لوحة التحكم.
+        </p>
+      </div>
+
+      <div class="error-dots" aria-hidden="true">
+        <span></span><span></span><span></span><span></span><span></span>
+      </div>
+
+      <!-- Back to Dashboard -->
+      <div class="lang-en">
+        <a href="/" class="error-btn" aria-label="Back to Dashboard">
+          <svg viewBox="0 0 24 24"><path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1"/></svg>
+          Back to Dashboard
+        </a>
+      </div>
+      <div class="lang-ar" dir="rtl">
+        <a href="/" class="error-btn" aria-label="العودة إلى لوحة التحكم">
+          <svg viewBox="0 0 24 24"><path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1"/></svg>
+          العودة إلى لوحة التحكم
+        </a>
+      </div>
+
+      <!-- Language toggle -->
+      <div class="lang-hint">
+        <span class="lang-en"><a href="#" id="switch-ar" role="button">العربية</a></span>
+        <span class="lang-ar"><a href="#" id="switch-en" role="button">English</a></span>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+  (function() {
+    // Detect language from cookie or browser preference
+    var isAr = false;
+    var match = document.cookie.match(/django_language=(\w+)/);
+    if (match) {
+      isAr = match[1] === 'ar';
+    } else if (navigator.language && navigator.language.startsWith('ar')) {
+      isAr = true;
+    }
+
+    function applyLang(ar) {
+      var html = document.documentElement;
+      if (ar) {
+        document.body.classList.add('show-ar');
+        html.setAttribute('lang', 'ar');
+        html.setAttribute('dir', 'rtl');
+        document.title = '404 \u2014 \u0627\u0644\u0635\u0641\u062D\u0629 \u063A\u064A\u0631 \u0645\u0648\u062C\u0648\u062F\u0629';
+      } else {
+        document.body.classList.remove('show-ar');
+        html.setAttribute('lang', 'en');
+        html.setAttribute('dir', 'ltr');
+        document.title = '404 \u2014 Page Not Found';
+      }
+    }
+
+    applyLang(isAr);
+
+    var switchAr = document.getElementById('switch-ar');
+    var switchEn = document.getElementById('switch-en');
+
+    if (switchAr) {
+      switchAr.addEventListener('click', function(e) {
+        e.preventDefault();
+        applyLang(true);
+      });
+    }
+    if (switchEn) {
+      switchEn.addEventListener('click', function(e) {
+        e.preventDefault();
+        applyLang(false);
+      });
+    }
+
+    // Keyboard: Enter activates lang toggles
+    [switchAr, switchEn].forEach(function(el) {
+      if (el) {
+        el.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            el.click();
+          }
+        });
+      }
+    });
+  })();
+  </script>
+
+</body>
+</html>

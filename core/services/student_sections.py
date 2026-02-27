@@ -46,9 +46,9 @@ def get_student_term_baseline(
         course_key_norm = normalize_code(f"{ts.course_code or ''}{ts.course_number or ''}")
         credits = credit_map.get(course_key_norm, 0)
 
-        meetings = ts.meetings.order_by("day", "start_time")
-        if meetings.exists():
-            for m in meetings:
+        meetings_list = sorted(ts.meetings.all(), key=lambda m: (m.day, m.start_time))
+        if meetings_list:
+            for m in meetings_list:
                 out.append(
                     {
                         "course_code": f"{(ts.course_code or '')}{(ts.course_number or '')}".replace(

@@ -5,11 +5,17 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="{% if LANGUAGE_CODE == 'ar' %}لوحة تحكم المرشد الأكاديمي — جامعة طيبة{% else %}Academic Advisor Dashboard — Taibah University{% endif %}">
+  <meta name="theme-color" content="#0A8E6E">
+  <meta name="color-scheme" content="light">
   <title>{% block title %}{% if LANGUAGE_CODE == 'ar' %}لوحة تحكم المرشد{% else %}Advisor Dashboard{% endif %}{% endblock %}</title>
-  <link rel="icon" href="data:,">
+  {# SVG favicon — teal graduation cap matching brand #}
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230A8E6E'/%3E%3Cpath d='M16 7L4 13l12 6 12-6z' fill='%23fff' opacity='.9'/%3E%3Cpath d='M8 16v5c0 2 3.6 4 8 4s8-2 8-4v-5' fill='none' stroke='%23fff' stroke-width='1.5' stroke-linecap='round'/%3E%3Cline x1='28' y1='13' x2='28' y2='21' stroke='%23fff' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E">
+  {# Preconnect for faster Google Fonts loading #}
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="{% static 'css/global.css' %}" rel="stylesheet">
   <link href="{% static 'css/bootstrap-compat.css' %}" rel="stylesheet">
-  {# Fonts loaded via @import in global.css — no duplicate <link> needed #}
   {% block extra_css %}{% endblock %}
 </head>
 <body>
@@ -37,7 +43,7 @@
         </div>
       </div>
       <div class="page-header-right">
-        {% block page_header_right %}<a href="/logout/" class="btn btn-sm btn-outline-secondary" aria-label="{% if LANGUAGE_CODE == 'ar' %}تسجيل الخروج{% else %}Log out{% endif %}">{% if LANGUAGE_CODE == 'ar' %}تسجيل الخروج{% else %}Logout{% endif %}</a>{% endblock %}
+        {% block page_header_right %}<form method="post" action="/logout/" style="display:inline">{% csrf_token %}<button type="submit" class="btn btn-sm btn-outline-secondary" aria-label="{% if LANGUAGE_CODE == 'ar' %}تسجيل الخروج{% else %}Log out{% endif %}">{% if LANGUAGE_CODE == 'ar' %}تسجيل الخروج{% else %}Logout{% endif %}</button></form>{% endblock %}
       </div>
     </header>
     <div class="page-intro">{% block page_intro %}{% endblock %}</div>
@@ -46,11 +52,34 @@
   </main>
 </div>
 {% endblock %}
+<!-- Back to top button -->
+<button class="back-to-top" id="backToTop" aria-label="{% if LANGUAGE_CODE == 'ar' %}العودة إلى الأعلى{% else %}Back to top{% endif %}">
+  <svg viewBox="0 0 24 24"><polyline points="18 15 12 9 6 15"/></svg>
+</button>
 <script src="{% static 'js/shared-utils.js' %}"></script>
 <script src="{% static 'js/notify.js' %}"></script>
 <script src="{% static 'js/safe-fetch.js' %}"></script>
 <script src="{% static 'js/dialog.js' %}"></script>
 <script src="{% static 'js/shared-ux.js' %}"></script>
+<script>
+/* ── Back to top button ── */
+(function(){
+  var btn = document.getElementById('backToTop');
+  if (!btn) return;
+  var main = document.querySelector('main') || window;
+  var scrollEl = (main !== window && main.scrollHeight > main.clientHeight) ? main : document.documentElement;
+  function check(){
+    var top = (scrollEl === document.documentElement) ? window.scrollY : scrollEl.scrollTop;
+    btn.classList.toggle('visible', top > 400);
+  }
+  (scrollEl === document.documentElement ? window : scrollEl).addEventListener('scroll', check, {passive:true});
+  btn.addEventListener('click', function(){
+    if(scrollEl === document.documentElement) window.scrollTo({top:0,behavior:'smooth'});
+    else scrollEl.scrollTo({top:0,behavior:'smooth'});
+  });
+  check();
+})();
+</script>
 {% block extra_js %}{% endblock %}
 </body>
 </html>

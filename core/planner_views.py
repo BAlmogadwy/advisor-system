@@ -11,6 +11,7 @@ from django.views.decorators.http import require_GET, require_POST
 
 from core.models import (
     Course,
+    Prerequisite,
     ProgrammeRequirement,
     Student,
     StudentCourse,
@@ -21,7 +22,7 @@ from core.services.planner_builder import build_plans
 from core.services.policy import require_student_scope
 from core.services.rbac import ROLE_ADVISOR, ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_role
 from core.services.recommender import recommend_next_courses
-from core.services.student_helpers import get_prerequisites, get_student_passed_and_studying
+from core.services.student_helpers import get_student_passed_and_studying, normalize_code
 from core.services.student_sections import (
     ensure_student_section_schema,
     get_student_term_baseline,
@@ -171,8 +172,6 @@ def planner_context_view(request: HttpRequest) -> JsonResponse:
     baseline = get_student_term_baseline(student_id, year, term)
     if not baseline:
         # Auto-repair: build current snapshot mappings from studying courses when possible.
-        from core.services.student_helpers import normalize_code
-
         studying_codes_qs = (
             StudentCourse.objects.filter(
                 student_id=student_id,
@@ -208,8 +207,6 @@ def planner_context_view(request: HttpRequest) -> JsonResponse:
 
     if not baseline:
         # Fallback when no student->section mappings exist yet
-        from core.services.student_helpers import normalize_code as _nc
-
         fb_program = (
             Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
         )
@@ -218,7 +215,7 @@ def planner_context_view(request: HttpRequest) -> JsonResponse:
             for cc, ch in ProgrammeRequirement.objects.filter(
                 program__iexact=fb_program
             ).values_list("course_code", "credit_hours"):
-                fb_credit_map[_nc(cc)] = ch or 0
+                fb_credit_map[normalize_code(cc)] = ch or 0
 
         fb_rows = (
             StudentCourse.objects.filter(
@@ -231,7 +228,7 @@ def planner_context_view(request: HttpRequest) -> JsonResponse:
         baseline = []
         for sc in fb_rows:
             c = sc.course
-            code_norm = _nc(c.course_code)
+            code_norm = normalize_code(c.course_code)
             credits = fb_credit_map.get(code_norm, c.credit_hours or 0)
             baseline.append(
                 {
@@ -259,20 +256,38 @@ def planner_context_view(request: HttpRequest) -> JsonResponse:
 
     recommendations: list[dict[str, object]] = []
     # Build credit map for the program
-    from core.services.student_helpers import normalize_code as _norm_code
-
     pr_credit_map: dict[str, int] = {}
     if program:
         for pr_cc, pr_ch in ProgrammeRequirement.objects.filter(
             program__iexact=program
         ).values_list("course_code", "credit_hours"):
-            pr_credit_map[_norm_code(pr_cc)] = pr_ch or 0
+            pr_credit_map[normalize_code(pr_cc)] = pr_ch or 0
 
-    # Pre-build normalized-code → Course dict to avoid N+1 queries
-    _course_lookup: dict[str, Course] = {_norm_code(c.course_code): c for c in Course.objects.all()}
+    # Pre-build normalized-code → Course dict — only load courses matching rec_codes
+    _needed_codes = {normalize_code(c) for c in rec_codes if c}
+    _needed_codes.discard("")
+    _course_lookup: dict[str, Course] = {}
+    if _needed_codes:
+        # Include raw rec_codes too in case DB stores un-normalized forms
+        _filter_codes = _needed_codes | {str(c).strip() for c in rec_codes if str(c).strip()}
+        for c in Course.objects.filter(course_code__in=_filter_codes):
+            _course_lookup[normalize_code(c.course_code)] = c
+
+    # Batch-load all prerequisites for the program to avoid N+1 queries
+    _all_prereqs: dict[str, list[str]] = {}
+    if program:
+        for row in Prerequisite.objects.filter(program=program):
+            key = normalize_code(row.course_code)
+            prereq_code = row.prerequisite_course_code
+            if prereq_code is None:
+                continue
+            for part in str(prereq_code).split(","):
+                p = normalize_code(part)
+                if p:
+                    _all_prereqs.setdefault(key, []).append(p)
 
     for idx, code in enumerate(rec_codes, start=1):
-        code_n = _norm_code(code)
+        code_n = normalize_code(code)
         course_obj = _course_lookup.get(code_n)
         if course_obj:
             credits = pr_credit_map.get(code_n, course_obj.credit_hours or 0)
@@ -280,7 +295,7 @@ def planner_context_view(request: HttpRequest) -> JsonResponse:
         else:
             info = (code, "", pr_credit_map.get(code_n, 0))
 
-        prereqs = get_prerequisites(code, program) if program else []
+        prereqs = _all_prereqs.get(code_n, []) if program else []
         missing = [p for p in prereqs if p not in passed and p not in studying]
         status = "Eligible" if not missing else "Blocked"
         recommendations.append(
@@ -296,16 +311,16 @@ def planner_context_view(request: HttpRequest) -> JsonResponse:
             }
         )
 
-    course_keys = set()
+    seen_keys: set[tuple[str, str, str]] = set()
     credits_total = 0
     for r in baseline:
-        key = (
+        row_key = (
             str(r.get("course_code", "")),
             str(r.get("course_number", "")),
             str(r.get("section", "")),
         )
-        if key not in course_keys:
-            course_keys.add(key)
+        if row_key not in seen_keys:
+            seen_keys.add(row_key)
             credits_total += int(r.get("credits", 0) or 0)  # type: ignore[call-overload]
 
     return _ok(
@@ -313,7 +328,7 @@ def planner_context_view(request: HttpRequest) -> JsonResponse:
             "student": student_summary,
             "baseline": baseline,
             "baseline_totals": {
-                "courses": len(course_keys),
+                "courses": len(seen_keys),
                 "credits": credits_total,
             },
             "recommendations": recommendations,

@@ -215,6 +215,20 @@
       inset -2px -2px 4px rgba(255,255,255,0.6);
   }
 
+  /* ─── Password visibility toggle ─── */
+  .pw-toggle {
+    flex-shrink: 0;
+    background: none; border: none; outline: none; cursor: pointer;
+    color: #8492a6; padding: 4px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 6px;
+    transition: color 0.2s, background 0.2s;
+  }
+  .pw-toggle:hover { color: #0A8E6E; background: rgba(10,142,110,0.08); }
+  .pw-toggle:focus-visible {
+    outline: 2px solid #0A8E6E; outline-offset: 1px;
+  }
+
   /* ─── RTL adjustments ─── */
   [dir="rtl"] .neu-input-group { flex-direction: row-reverse; }
 
@@ -318,6 +332,10 @@
           <svg class="neu-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
           <label for="id_password" class="sr-only">{% if LANGUAGE_CODE == 'ar' %}كلمة المرور{% else %}Password{% endif %}</label>
           <input id="id_password" name="password" type="password" placeholder="{% if LANGUAGE_CODE == 'ar' %}كلمة المرور{% else %}Password{% endif %}" required autocomplete="current-password" aria-required="true">
+          <button type="button" class="pw-toggle" id="pwToggle" aria-label="{% if LANGUAGE_CODE == 'ar' %}إظهار كلمة المرور{% else %}Show password{% endif %}" tabindex="0">
+            <svg class="pw-eye-open" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            <svg class="pw-eye-shut" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+          </button>
         </div>
         <button type="submit" class="neu-btn" id="loginBtn">
           <span class="neu-btn-spinner" aria-hidden="true"></span>
@@ -341,12 +359,28 @@
 
   <script>
   (function() {
+    /* Login form loading state */
     var form = document.querySelector('form[method="post"][novalidate]');
     var btn = document.getElementById('loginBtn');
     if (form && btn) {
       form.addEventListener('submit', function() {
         btn.disabled = true;
         btn.classList.add('is-loading');
+      });
+    }
+    /* Password visibility toggle */
+    var toggle = document.getElementById('pwToggle');
+    var pw = document.getElementById('id_password');
+    if (toggle && pw) {
+      var eyeOpen = toggle.querySelector('.pw-eye-open');
+      var eyeShut = toggle.querySelector('.pw-eye-shut');
+      toggle.addEventListener('click', function() {
+        var show = pw.type === 'password';
+        pw.type = show ? 'text' : 'password';
+        eyeOpen.style.display = show ? 'none' : '';
+        eyeShut.style.display = show ? '' : 'none';
+        toggle.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+        pw.focus();
       });
     }
   })();
