@@ -38,81 +38,90 @@
   flex: 1; min-width: 200px; max-width: 360px;
 }
 .um-toolbar .um-search input {
-  padding-inline-start: 2.2rem;
+  padding-inline-start: 2.4rem !important;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='%2394a3b8' viewBox='0 0 16 16'%3E%3Cpath d='M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85zm-5.242.156a5 5 0 1 1 0-10 5 5 0 0 1 0 10z'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: 0.7rem center;
+  background-position: 0.75rem center;
   background-size: 14px;
 }
 [dir="rtl"] .um-toolbar .um-search input {
-  background-position: calc(100% - 0.7rem) center;
-  padding-inline-start: 2.2rem;
+  background-position: calc(100% - 0.75rem) center;
+  padding-inline-start: 2.4rem !important;
 }
 
 /* Table enhancements */
+#umTable { border-collapse: separate; border-spacing: 0; }
+#umTable thead th {
+  padding: 6px 10px; font-size: 0.7rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--muted); white-space: nowrap;
+  border-bottom: 2px solid var(--line, #e2e8f0);
+  background: rgba(248,250,252,0.97);
+  position: sticky; top: 0; z-index: 2;
+}
+#umTable tbody td {
+  padding: 5px 10px; font-size: 0.82rem;
+  vertical-align: middle; border-bottom: 1px solid rgba(0,0,0,0.04);
+}
 #umTable tbody tr { cursor: pointer; transition: background 0.1s, box-shadow 0.1s; }
+#umTable tbody tr:hover td { background: rgba(0,0,0,0.015); }
 #umTable tbody tr.um-selected td { background: rgba(10,142,110,0.04) !important; }
 #umTable tbody tr.um-selected { box-shadow: inset 3px 0 0 var(--teal); }
 [dir="rtl"] #umTable tbody tr.um-selected { box-shadow: inset -3px 0 0 var(--brand); }
 
-/* Role badges in table */
+/* Role badges — compact inline pills */
 .um-role-badge {
-  display: inline-block; padding: 0.15rem 0.5rem;
-  border-radius: 999px; font-size: 0.7rem; font-weight: 700;
-  letter-spacing: 0.04em; text-transform: uppercase;
+  display: inline-block; padding: 2px 8px;
+  border-radius: 4px; font-size: 0.65rem; font-weight: 700;
+  letter-spacing: 0.03em; text-transform: uppercase;
+  line-height: 1.4; white-space: nowrap;
 }
 .um-role-super { background: #fff1f2; color: #be123c; border: 1px solid #fecdd3; }
 .um-role-gen   { background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa; }
 .um-role-adv   { background: #ecf9f4; color: var(--teal-deep); border: 1px solid #a8e6d4; }
 
-/* Active badge */
+/* Status — compact dot + label */
 .um-active-badge {
-  display: inline-flex; align-items: center; gap: 0.3rem;
-  padding: 0.15rem 0.5rem; border-radius: 999px;
-  font-size: 0.72rem; font-weight: 700; cursor: pointer;
-  transition: all 0.12s;
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 8px; border-radius: 4px;
+  font-size: 0.68rem; font-weight: 600; cursor: pointer;
+  transition: all 0.12s; line-height: 1.4; white-space: nowrap;
 }
-.um-active-badge:hover { transform: scale(1.05); }
+.um-active-badge:hover { filter: brightness(0.95); }
 .um-active-badge[role="button"] { user-select: none; }
 .um-active-badge:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
-.um-active-on  { background: #dcfce7; color: #15803d; border: 1px solid #bbf7d0; }
-.um-active-off { background: #fee2e2; color: #b91c1c; border: 1px solid #fecaca; }
+.um-active-on  { background: #dcfce7; color: #15803d; }
+.um-active-off { background: #fee2e2; color: #b91c1c; }
 
-/* Row actions */
+/* Row actions — always visible, compact icons */
 .um-row-actions {
-  display: flex; gap: 0.25rem; opacity: 0;
-  transition: opacity 0.12s;
+  display: inline-flex; gap: 2px;
 }
-#umTable tbody tr:hover .um-row-actions,
-#umTable tbody tr.um-selected .um-row-actions { opacity: 1; }
-
 .um-row-btn {
-  width: 36px; height: 36px; border-radius: 6px; border: 1px solid transparent;
+  width: 26px; height: 26px; border-radius: 5px; border: 1px solid transparent;
   background: transparent; cursor: pointer; display: inline-flex;
-  align-items: center; justify-content: center; font-size: 0.78rem;
-  color: var(--muted); transition: all 0.1s;
+  align-items: center; justify-content: center;
+  color: #94a3b8; transition: all 0.1s; padding: 0;
 }
 .um-row-btn:hover { background: #f1f5f9; color: var(--ink); border-color: var(--line); }
 .um-row-btn.um-btn-edit:hover { color: var(--brand); background: var(--brand-soft); border-color: #a8e6d4; }
 .um-row-btn.um-btn-key:hover { color: #d97706; background: #fffbeb; border-color: #fde68a; }
 .um-row-btn.um-btn-del:hover { color: #dc2626; background: #fff5f5; border-color: #fecaca; }
 
-/* Mobile: always show row actions */
-@media (max-width: 768px) {
-  .um-row-actions { opacity: 1; }
-}
+/* Empty cell — subtle muted dash */
+.um-empty-cell { color: #cbd5e1; font-size: 0.75rem; }
 
 /* Panels: Create & Edit */
 .um-panel {
   border: var(--border-subtle); border-radius: var(--radius);
   background: var(--glass-bg); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
-  padding: 1.25rem; margin-bottom: 1rem;
+  padding: 1rem 1.25rem; margin-bottom: 1rem;
   transition: box-shadow 0.15s;
 }
 .um-panel:hover { box-shadow: var(--shadow-card); }
 .um-panel-header {
   display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 1rem;
+  margin-bottom: 0.75rem;
 }
 .um-panel-title {
   font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
@@ -126,26 +135,131 @@
 .um-panel-title.edit::before { background: #f59e0b; }
 .um-panel-title.danger::before { background: var(--danger); }
 
-/* Edit panel highlight */
-.um-panel-edit {
-  border-color: var(--teal-border); background: rgba(245,252,249,0.55);
+/* Create panel — compact single-row form */
+.um-create-row {
+  display: flex; align-items: flex-end; gap: 10px; flex-wrap: nowrap;
 }
-.um-panel-edit .um-editing-user {
-  display: flex; align-items: center; gap: 0.5rem;
-  padding: 0.4rem 0.75rem; border-radius: var(--radius-sm);
-  background: var(--brand-soft); border: 1px solid #a8e6d4;
-  font-size: 0.85rem; font-weight: 600; color: var(--brand-dark);
+.um-create-row .um-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.um-create-row .um-field label {
+  font-size: 0.62rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--muted); white-space: nowrap;
+}
+/* Inherit project form-control / form-select styles; only override size for compact row */
+.um-create-row .um-field .form-control,
+.um-create-row .um-field .form-select {
+  height: 36px; min-height: 36px !important;
+  padding: 0.3rem 0.85rem !important;
+  font-size: 0.82rem !important;
+  width: 100%;
+}
+.um-create-row .um-field-user { flex: 1.2; }
+.um-create-row .um-field-pw { flex: 1.4; }
+.um-create-row .um-field-role { flex: 1; }
+.um-create-row .um-field-scope { flex: 0.9; }
+.um-pw-wrap { display: flex; gap: 0; }
+.um-pw-wrap .form-control {
+  border-radius: 14px 0 0 14px !important;
+  border-right: none !important;
+}
+.um-pw-wrap .um-gen-pw {
+  height: 36px; border-radius: 0 14px 14px 0;
+  border: 1px solid rgba(17,17,68,0.07); border-left: none;
+  padding: 0 12px; white-space: nowrap;
+  font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.03em; background: rgba(248,250,252,0.6); color: var(--muted);
+  cursor: pointer; transition: all 0.12s; display: flex; align-items: center; gap: 4px;
+  box-shadow: inset -4px 0 8px rgba(163,177,198,0.15);
+}
+.um-pw-wrap .um-gen-pw:hover { background: #fff; color: var(--brand); border-color: var(--brand); }
+.um-create-btn {
+  height: 36px; padding: 0 20px; border: none; border-radius: 14px;
+  background: var(--teal, #0A8E6E); color: #fff; font-size: 0.78rem;
+  font-weight: 700; cursor: pointer; white-space: nowrap;
+  transition: background 0.12s, transform 0.1s; flex-shrink: 0;
+  box-shadow: 2px 2px 6px rgba(10,142,110,0.2), -1px -1px 4px rgba(255,255,255,0.7);
+}
+.um-create-btn:hover { background: var(--teal-deep, #067a5e); }
+.um-create-btn:active { transform: scale(0.97); }
+@media (max-width: 768px) {
+  .um-create-row { flex-wrap: wrap; }
+  .um-create-row .um-field { flex: 1 1 calc(50% - 6px); min-width: 120px; }
+  .um-create-btn { width: 100%; margin-top: 4px; }
 }
 
-/* Generate password button */
-.um-gen-pw {
-  font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
-  letter-spacing: 0.05em; padding: 0.35rem 0.65rem;
-  border-radius: var(--radius-sm); border: 1px solid var(--line-strong);
-  background: rgba(255,255,255,0.7); color: var(--ink-2); cursor: pointer;
-  transition: all 0.12s; white-space: nowrap;
+/* Edit panel highlight */
+.um-panel-edit {
+  border-color: #a8e6d4; background: rgba(245,252,249,0.55);
 }
-.um-gen-pw:hover { background: #fff; border-color: var(--brand); color: var(--brand); }
+.um-panel-edit .um-edit-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 10px;
+}
+.um-panel-edit .um-editing-user {
+  display: inline-flex; align-items: center; gap: 0.35rem;
+  padding: 0.25rem 0.6rem; border-radius: 10px;
+  background: var(--brand-soft); border: 1px solid #a8e6d4;
+  font-size: 0.78rem; font-weight: 600; color: var(--brand-dark);
+}
+.um-panel-edit .um-close-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 4px 10px; border-radius: 10px; font-size: 0.72rem;
+  font-weight: 600; border: 1px solid var(--line, #dde3ed);
+  background: rgba(255,255,255,0.6); color: var(--muted); cursor: pointer;
+  transition: all 0.12s;
+}
+.um-panel-edit .um-close-btn:hover { border-color: var(--danger); color: var(--danger); background: #fff; }
+
+/* Edit row — compact single-line like create panel */
+.um-edit-row {
+  display: flex; align-items: flex-end; gap: 10px; flex-wrap: nowrap;
+}
+.um-edit-row .um-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.um-edit-row .um-field label {
+  font-size: 0.62rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.04em; color: var(--muted); white-space: nowrap;
+}
+.um-edit-row .um-field .form-control,
+.um-edit-row .um-field .form-select {
+  height: 36px; min-height: 36px !important;
+  padding: 0.3rem 0.85rem !important;
+  font-size: 0.82rem !important;
+  width: 100%;
+}
+.um-edit-row .um-field-role { flex: 1; }
+.um-edit-row .um-field-scope { flex: 0.9; }
+.um-edit-row .um-edit-actions {
+  display: flex; align-items: center; gap: 6px; flex-shrink: 0;
+  padding-bottom: 1px;
+}
+.um-edit-row .um-edit-actions .um-act-btn {
+  height: 36px; padding: 0 14px; border: none; border-radius: 14px;
+  font-size: 0.74rem; font-weight: 700; cursor: pointer;
+  white-space: nowrap; transition: all 0.12s; display: inline-flex;
+  align-items: center; gap: 5px;
+}
+.um-act-btn.um-act-save {
+  background: var(--teal, #0A8E6E); color: #fff;
+  box-shadow: 2px 2px 6px rgba(10,142,110,0.2), -1px -1px 4px rgba(255,255,255,0.7);
+}
+.um-act-btn.um-act-save:hover { background: var(--teal-deep, #067a5e); }
+.um-act-btn.um-act-reset {
+  background: rgba(255,255,255,0.7); color: #92610a;
+  border: 1px solid rgba(217,170,67,0.3) !important;
+  box-shadow: inset 2px 2px 4px rgba(163,177,198,0.15), inset -2px -2px 4px rgba(255,255,255,0.6);
+}
+.um-act-btn.um-act-reset:hover { background: #fffbeb; border-color: #d9aa43 !important; }
+.um-act-btn.um-act-delete {
+  background: rgba(255,255,255,0.7); color: #b91c1c;
+  border: 1px solid rgba(239,68,68,0.2) !important;
+  box-shadow: inset 2px 2px 4px rgba(163,177,198,0.15), inset -2px -2px 4px rgba(255,255,255,0.6);
+}
+.um-act-btn.um-act-delete:hover { background: #fef2f2; border-color: #ef4444 !important; }
+@media (max-width: 768px) {
+  .um-edit-row { flex-wrap: wrap; }
+  .um-edit-row .um-field { flex: 1 1 calc(50% - 6px); min-width: 120px; }
+  .um-edit-row .um-edit-actions { width: 100%; justify-content: stretch; }
+  .um-edit-row .um-edit-actions .um-act-btn { flex: 1; justify-content: center; }
+}
 
 /* (Bulk bar styles moved to fixed-bottom .bulk-bar below) */
 
@@ -177,11 +291,11 @@
 .bulk-bar .bulk-cancel:hover { background: #f1f5f9; }
 
 /* Subtle time display */
-.um-time { font-size: 0.78rem; color: var(--muted); white-space: nowrap; }
-.um-time-never { font-size: 0.75rem; color: var(--muted-light); font-style: italic; }
+.um-time { font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
+.um-time-never { font-size: 0.7rem; color: #cbd5e1; font-style: italic; }
 
 /* Checkbox in table */
-#umTable .um-check { width: 16px; height: 16px; cursor: pointer; accent-color: var(--brand); }
+#umTable .um-check { width: 14px; height: 14px; cursor: pointer; accent-color: var(--brand); }
 
 /* Empty state */
 .um-empty {
@@ -195,8 +309,9 @@
 .um-scope-field { transition: opacity 0.2s, max-height 0.25s; overflow: hidden; }
 .um-scope-field.hidden { opacity: 0; max-height: 0; padding: 0; margin: 0; }
 
-/* Remove table-striped odd-row override */
-.table-striped > tbody > tr:nth-of-type(odd) > * { --bs-table-accent-bg: transparent; }
+/* Subtle alternating rows */
+#umTable tbody tr:nth-child(even) td { background: rgba(0,0,0,0.012); }
+#umTable tbody tr:hover td { background: rgba(0,0,0,0.025) !important; }
 
 </style>
 {% endblock %}
@@ -236,37 +351,35 @@
           </button>
         </div>
         <div id="createFields">
-          <div class="row g-2 align-items-end">
-            <div class="col-md-2">
-              <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}اسم المستخدم{% else %}Username{% endif %}</label>
+          <div class="um-create-row">
+            <div class="um-field um-field-user">
+              <label for="cUsername">{% if LANGUAGE_CODE == 'ar' %}اسم المستخدم{% else %}Username{% endif %}</label>
               <input id="cUsername" class="form-control" placeholder="john.doe" autocomplete="off">
             </div>
-            <div class="col-md-2">
-              <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}كلمة المرور{% else %}Password{% endif %}</label>
-              <div class="d-flex gap-1">
-                <input id="cPassword" type="text" class="form-control" placeholder="•••••••" autocomplete="new-password">
+            <div class="um-field um-field-pw">
+              <label for="cPassword">{% if LANGUAGE_CODE == 'ar' %}كلمة المرور{% else %}Password{% endif %}</label>
+              <div class="um-pw-wrap">
+                <input id="cPassword" class="form-control" type="text" placeholder="•••••••" autocomplete="new-password">
                 <button type="button" class="um-gen-pw" onclick="generatePassword()" title="{% if LANGUAGE_CODE == 'ar' %}إنشاء كلمة مرور قوية{% else %}Generate strong password{% endif %}">⟳ Gen</button>
               </div>
             </div>
-            <div class="col-md-2">
-              <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}الدور{% else %}Role{% endif %}</label>
+            <div class="um-field um-field-role">
+              <label for="cRole">{% if LANGUAGE_CODE == 'ar' %}الدور{% else %}Role{% endif %}</label>
               <select id="cRole" class="form-select" onchange="updateCreateScopeFields()">
                 <option value="SUPER_ADMIN">SUPER_ADMIN</option>
                 <option value="GENERAL_ACADEMIC_ADVISOR">GEN. ADVISOR</option>
                 <option value="ADVISOR" selected>ADVISOR</option>
               </select>
             </div>
-            <div class="col-md-2 um-scope-field" id="cAdvisorWrap">
-              <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}معرّف المرشد{% else %}Advisor ID{% endif %}</label>
+            <div class="um-field um-field-scope um-scope-field" id="cAdvisorWrap">
+              <label for="cAdvisorId">{% if LANGUAGE_CODE == 'ar' %}معرّف المرشد{% else %}Advisor ID{% endif %}</label>
               <input id="cAdvisorId" class="form-control" placeholder="A001">
             </div>
-            <div class="col-md-2 um-scope-field" id="cDeptWrap">
-              <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}الأقسام{% else %}Departments{% endif %}</label>
+            <div class="um-field um-field-scope um-scope-field" id="cDeptWrap">
+              <label for="cDepartments">{% if LANGUAGE_CODE == 'ar' %}الأقسام{% else %}Depts{% endif %}</label>
               <input id="cDepartments" class="form-control" placeholder="AI, CS">
             </div>
-            <div class="col-md-2 d-grid">
-              <button id="cCreateBtn" class="btn btn-success" type="button" onclick="createUser()">{% if LANGUAGE_CODE == 'ar' %}إنشاء مستخدم{% else %}Create User{% endif %}</button>
-            </div>
+            <button id="cCreateBtn" class="um-create-btn" type="button" onclick="createUser()">{% if LANGUAGE_CODE == 'ar' %}إنشاء{% else %}Create{% endif %}</button>
           </div>
         </div>
       </div>
@@ -275,38 +388,43 @@
            EDIT USER PANEL (hidden until a user is selected)
            ═══════════════════════════════════════════════════════ -->
       <div class="um-panel um-panel-edit d-none" id="editPanel">
-        <div class="um-panel-header">
-          <div class="um-panel-title edit">{% if LANGUAGE_CODE == 'ar' %}تعديل المستخدم{% else %}Editing User{% endif %}</div>
+        <div class="um-edit-header">
           <div class="d-flex align-items-center gap-2">
+            <div class="um-panel-title edit">{% if LANGUAGE_CODE == 'ar' %}تعديل المستخدم{% else %}Editing{% endif %}</div>
             <div class="um-editing-user" id="editingLabel">—</div>
-            <button class="btn btn-sm btn-outline-secondary" type="button" onclick="deselectUser()"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span> {% if LANGUAGE_CODE == 'ar' %}إغلاق{% else %}Close{% endif %}</button>
           </div>
+          <button class="um-close-btn" type="button" onclick="deselectUser()"><span class="i" aria-hidden="true" style="width:12px;height:12px"><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span> {% if LANGUAGE_CODE == 'ar' %}إغلاق{% else %}Close{% endif %}</button>
         </div>
-        <div class="row g-2 align-items-end">
-          <div class="col-md-2">
-            <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}الدور{% else %}Role{% endif %}</label>
+        <div class="um-edit-row">
+          <div class="um-field um-field-role">
+            <label for="eRole">{% if LANGUAGE_CODE == 'ar' %}الدور{% else %}Role{% endif %}</label>
             <select id="eRole" class="form-select" onchange="updateEditScopeFields()">
               <option value="SUPER_ADMIN">SUPER_ADMIN</option>
               <option value="GENERAL_ACADEMIC_ADVISOR">GEN. ADVISOR</option>
               <option value="ADVISOR">ADVISOR</option>
             </select>
           </div>
-          <div class="col-md-2 um-scope-field" id="eAdvisorWrap">
-            <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}معرّف المرشد{% else %}Advisor ID{% endif %}</label>
+          <div class="um-field um-field-scope um-scope-field" id="eAdvisorWrap">
+            <label for="eAdvisorId">{% if LANGUAGE_CODE == 'ar' %}معرّف المرشد{% else %}Advisor ID{% endif %}</label>
             <input id="eAdvisorId" class="form-control" placeholder="A001">
           </div>
-          <div class="col-md-2 um-scope-field" id="eDeptWrap">
-            <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}الأقسام{% else %}Departments{% endif %}</label>
+          <div class="um-field um-field-scope um-scope-field" id="eDeptWrap">
+            <label for="eDepartments">{% if LANGUAGE_CODE == 'ar' %}الأقسام{% else %}Depts{% endif %}</label>
             <input id="eDepartments" class="form-control" placeholder="AI, CS">
           </div>
-          <div class="col-md-2 d-grid">
-            <button class="btn btn-primary" type="button" onclick="updateRole()">{% if LANGUAGE_CODE == 'ar' %}تحديث الدور والصلاحيات{% else %}Update Role & Scope{% endif %}</button>
-          </div>
-          <div class="col-md-2 d-grid">
-            <button class="btn btn-outline-warning" type="button" onclick="resetPassword()">{% if LANGUAGE_CODE == 'ar' %}إعادة تعيين كلمة المرور{% else %}Reset Password{% endif %}</button>
-          </div>
-          <div class="col-md-2 d-grid">
-            <button class="btn btn-danger" type="button" onclick="deleteUser()">{% if LANGUAGE_CODE == 'ar' %}حذف المستخدم{% else %}Delete User{% endif %}</button>
+          <div class="um-edit-actions">
+            <button class="um-act-btn um-act-save" type="button" onclick="updateRole()">
+              <span class="i" aria-hidden="true" style="width:13px;height:13px"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></span>
+              {% if LANGUAGE_CODE == 'ar' %}حفظ{% else %}Save{% endif %}
+            </button>
+            <button class="um-act-btn um-act-reset" type="button" onclick="resetPassword()">
+              <span class="i" aria-hidden="true" style="width:13px;height:13px"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
+              {% if LANGUAGE_CODE == 'ar' %}كلمة مرور{% else %}Reset PW{% endif %}
+            </button>
+            <button class="um-act-btn um-act-delete" type="button" onclick="deleteUser()">
+              <span class="i" aria-hidden="true" style="width:13px;height:13px"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></span>
+              {% if LANGUAGE_CODE == 'ar' %}حذف{% else %}Delete{% endif %}
+            </button>
           </div>
         </div>
       </div>
@@ -353,15 +471,15 @@
         <table class="table table-sm mb-0" id="umTable" aria-label="{% if LANGUAGE_CODE == 'ar' %}جدول المستخدمين{% else %}Users table{% endif %}">
           <thead>
             <tr>
-              <th scope="col" style="width:32px;"><input type="checkbox" class="um-check" id="umCheckAll" onclick="toggleAllChecks(this)" aria-label="{% if LANGUAGE_CODE == 'ar' %}تحديد الكل{% else %}Select all users{% endif %}"></th>
+              <th scope="col" style="width:28px;padding-inline-start:10px"><input type="checkbox" class="um-check" id="umCheckAll" onclick="toggleAllChecks(this)" aria-label="{% if LANGUAGE_CODE == 'ar' %}تحديد الكل{% else %}Select all users{% endif %}"></th>
               <th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}اسم المستخدم{% else %}Username{% endif %}</th>
               <th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}الدور{% else %}Role{% endif %}</th>
               <th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}معرّف المرشد{% else %}Advisor ID{% endif %}</th>
-              <th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}الأقسام{% else %}Departments{% endif %}</th>
-              <th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}الحالة{% else %}Status{% endif %}</th>
+              <th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}الأقسام{% else %}Depts{% endif %}</th>
+              <th scope="col" data-sort="text" style="width:72px">{% if LANGUAGE_CODE == 'ar' %}الحالة{% else %}Status{% endif %}</th>
               <th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}آخر دخول{% else %}Last Login{% endif %}</th>
               <th scope="col" data-sort="text">{% if LANGUAGE_CODE == 'ar' %}تاريخ الإنشاء{% else %}Created{% endif %}</th>
-              <th scope="col" style="width:100px;">{% if LANGUAGE_CODE == 'ar' %}الإجراءات{% else %}Actions{% endif %}</th>
+              <th scope="col" style="width:84px;">{% if LANGUAGE_CODE == 'ar' %}الإجراءات{% else %}Actions{% endif %}</th>
             </tr>
           </thead>
           <tbody>
@@ -603,18 +721,18 @@ function renderTable(users) {
 
     return `<tr class="${isSelected ? 'um-selected' : ''}" data-username="${esc(u.username)}" onclick="selectUserFromRow(this)">
       <td onclick="event.stopPropagation()"><input type="checkbox" class="um-check" ${isChecked ? 'checked' : ''} onchange="toggleBulkCheck('${esc(u.username)}', this.checked)"></td>
-      <td dir="auto"><strong>${esc(u.username)}</strong></td>
+      <td dir="auto"><span style="font-weight:600">${esc(u.username)}</span></td>
       <td>${roleBadge}</td>
-      <td dir="auto">${esc(u.advisor_id || '—')}</td>
-      <td dir="auto">${(u.departments || []).join(', ') || '—'}</td>
+      <td dir="auto">${u.advisor_id ? esc(u.advisor_id) : '<span class="um-empty-cell">—</span>'}</td>
+      <td dir="auto">${(u.departments || []).length ? esc((u.departments||[]).join(', ')) : '<span class="um-empty-cell">—</span>'}</td>
       <td>${activeBadge}</td>
       <td>${lastLogin}</td>
       <td>${created}</td>
       <td>
         <div class="um-row-actions">
-          <button class="um-row-btn um-btn-edit" title="${T.editRoleScope}" aria-label="${T.edit}" onclick="event.stopPropagation();selectUser('${esc(u.username)}')"><span class="i" aria-hidden="true" style="width:14px;height:14px"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></span></button>
-          <button class="um-row-btn um-btn-key" title="${T.resetPassword}" aria-label="${T.resetPassword}" onclick="event.stopPropagation();resetPasswordFor('${esc(u.username)}')"><span class="i" aria-hidden="true" style="width:14px;height:14px"><svg viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg></span></button>
-          <button class="um-row-btn um-btn-del" title="${T.deleteUser}" aria-label="${T.deleteLabel}" onclick="event.stopPropagation();deleteUserFor('${esc(u.username)}')"><span class="i" aria-hidden="true" style="width:14px;height:14px"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></span></button>
+          <button class="um-row-btn um-btn-edit" title="${T.editRoleScope}" aria-label="${T.edit}" onclick="event.stopPropagation();selectUser('${esc(u.username)}')"><span class="i" aria-hidden="true" style="width:13px;height:13px"><svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></span></button>
+          <button class="um-row-btn um-btn-key" title="${T.resetPassword}" aria-label="${T.resetPassword}" onclick="event.stopPropagation();resetPasswordFor('${esc(u.username)}')"><span class="i" aria-hidden="true" style="width:13px;height:13px"><svg viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg></span></button>
+          <button class="um-row-btn um-btn-del" title="${T.deleteUser}" aria-label="${T.deleteLabel}" onclick="event.stopPropagation();deleteUserFor('${esc(u.username)}')"><span class="i" aria-hidden="true" style="width:13px;height:13px"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></span></button>
         </div>
       </td>
     </tr>`;
