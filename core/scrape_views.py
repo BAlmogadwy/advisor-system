@@ -51,7 +51,7 @@ def _to_int(value: str | None, default: int) -> int:
 @throttle(max_calls=3, window_seconds=120)
 def scrape_start_view(request: HttpRequest) -> JsonResponse:
     concurrency = _to_int(request.GET.get("concurrency"), 2)
-    students_csv = request.GET.get("students_csv")
+    students_csv = request.GET.get("students_csv", "").strip() or None
 
     if students_csv is not None:
         path, error = _validate_csv_path(students_csv)

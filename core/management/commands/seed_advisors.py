@@ -29,7 +29,7 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from core.models import AcademicAdvisor, Student
-from core.services.advisors import normalize_arabic, upsert_academic_advisor
+from core.services.advisors import transliterate_arabic, upsert_academic_advisor
 from core.services.rbac import (
     ROLE_ADVISOR,
     ensure_role_groups,
@@ -47,33 +47,35 @@ def _is_integer_id(value: str) -> bool:
 
 
 def _build_username_map(advisor_names: list[str]) -> dict[str, str]:
-    """Map each full advisor name to a unique username (firstname_secondname).
+    """Map each full Arabic advisor name to a unique English username (firstname_secondname).
 
-    Always uses first two name parts for safety. If still duplicate,
-    appends an incrementing suffix.
+    Transliterates Arabic to English, then uses first two name parts.
+    If still duplicate, appends an incrementing suffix.
     """
     username_map: dict[str, str] = {}
-    seen_usernames: dict[str, str] = {}  # normalised username -> full_name
+    seen_usernames: dict[str, str] = {}  # lowercase username -> full_name
 
     for full_name in advisor_names:
-        parts = full_name.split()
-        # Always use first_second format
+        # Transliterate to English, then split
+        english = transliterate_arabic(full_name)
+        parts = english.split()
+        # Use first_second format
         if len(parts) >= 2:
             candidate = f"{parts[0]}_{parts[1]}"
         else:
-            candidate = parts[0] if parts else full_name
+            candidate = parts[0] if parts else english or "advisor"
 
-        # Check for collision (normalise for comparison)
-        norm = normalize_arabic(candidate)
-        if norm in seen_usernames:
+        # Check for collision
+        key = candidate.lower()
+        if key in seen_usernames:
             # Add incrementing suffix
             i = 2
-            while normalize_arabic(f"{candidate}_{i}") in seen_usernames:
+            while f"{candidate}_{i}".lower() in seen_usernames:
                 i += 1
             candidate = f"{candidate}_{i}"
-            norm = normalize_arabic(candidate)
+            key = candidate.lower()
 
-        seen_usernames[norm] = full_name
+        seen_usernames[key] = full_name
         username_map[full_name] = candidate
 
     # Final check against existing Django users

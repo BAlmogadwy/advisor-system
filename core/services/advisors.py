@@ -1,5 +1,6 @@
 import csv
 import io
+import re
 import time
 import unicodedata
 from typing import Any
@@ -19,6 +20,67 @@ def normalize_arabic(text: str) -> str:
     text = text.replace("\u0623", "\u0627")  # أ -> ا
     text = text.replace("\u0622", "\u0627")  # آ -> ا
     return text.strip()
+
+
+# ── Arabic → English transliteration ─────────────────────────────────
+_AR_TO_EN: dict[str, str] = {
+    "ا": "a",
+    "أ": "a",
+    "إ": "i",
+    "آ": "a",
+    "ب": "b",
+    "ت": "t",
+    "ث": "th",
+    "ج": "j",
+    "ح": "h",
+    "خ": "kh",
+    "د": "d",
+    "ذ": "dh",
+    "ر": "r",
+    "ز": "z",
+    "س": "s",
+    "ش": "sh",
+    "ص": "s",
+    "ض": "d",
+    "ط": "t",
+    "ظ": "dh",
+    "ع": "a",
+    "غ": "gh",
+    "ف": "f",
+    "ق": "q",
+    "ك": "k",
+    "ل": "l",
+    "م": "m",
+    "ن": "n",
+    "ه": "h",
+    "و": "w",
+    "ي": "y",
+    "ى": "a",
+    "ة": "h",
+    "ء": "a",
+    "ئ": "e",
+    "ؤ": "o",
+}
+
+
+def transliterate_arabic(text: str) -> str:
+    """Convert Arabic text to a lowercase English transliteration.
+
+    Keeps existing ASCII letters/digits. Strips diacritics (tashkeel).
+    Non-mappable characters are dropped.
+    """
+    # Strip tashkeel (Arabic diacritics: fatha, damma, kasra, sukun, shadda, etc.)
+    text = re.sub(r"[\u0610-\u061A\u064B-\u065F\u0670]", "", text)
+    result: list[str] = []
+    for ch in text:
+        if ch.isascii() and (ch.isalnum() or ch in "_ "):
+            result.append(ch.lower())
+        elif ch in _AR_TO_EN:
+            result.append(_AR_TO_EN[ch])
+        elif ch == " ":
+            result.append(" ")
+        # else: skip unmappable characters
+    return "".join(result).strip()
 
 
 def _normalize_departments(raw: str) -> tuple[str, list[str]]:

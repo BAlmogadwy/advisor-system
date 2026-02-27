@@ -2287,41 +2287,8 @@
     }
   })();
 
-  /* ── Issue #14: Scrape start double-click confirmation ── */
-  (() => {
-    const btn = q('scrapeStart');
-    if (!btn) return;
-    let confirmState = false;
-    let confirmTimer = null;
-    const origHandler = btn.onclick;
-    const origText = btn.innerHTML;
-
-    btn.onclick = async (e) => {
-      if (!confirmState) {
-        confirmState = true;
-        btn.innerHTML = IS_AR ? 'تأكيد البدء؟' : 'Confirm Start?';
-        btn.style.background = 'var(--danger)';
-        btn.style.borderColor = 'var(--danger)';
-        btn.style.color = '#fff';
-        confirmTimer = setTimeout(() => {
-          confirmState = false;
-          btn.innerHTML = origText;
-          btn.style.background = '';
-          btn.style.borderColor = '';
-          btn.style.color = '';
-        }, 3000);
-        return;
-      }
-      /* Second click within 3s: proceed */
-      clearTimeout(confirmTimer);
-      confirmState = false;
-      btn.innerHTML = origText;
-      btn.style.background = '';
-      btn.style.borderColor = '';
-      btn.style.color = '';
-      if (origHandler) await origHandler.call(btn, e);
-    };
-  })();
+  /* Issue #14 double-click wrapper removed — dlg.confirm() already provides
+     a proper confirmation dialog before starting the scrape. */
 
   /* ── Issue #15: Export button loading state ── */
   (() => {

@@ -21,10 +21,15 @@ htmlcov/
 # Database
 db.sqlite3
 db.sqlite3-journal
+db.sqlite3-shm
+db.sqlite3-wal
 
 # Runtime & temp
 tmp/
 runtime/
+_adv_check.json
+_adv_emails.json
+scripts/_fix_fetch.py
 data/debug_failures/
 data/students_list.csv
 data/failed_scrapes.csv
