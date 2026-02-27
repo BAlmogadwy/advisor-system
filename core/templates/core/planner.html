@@ -485,7 +485,7 @@
 
           <!-- Workflow stepper -->
           <div class="wf-stepper" style="margin-top:10px">
-            <button id="step1" class="wf-step active" type="button"><span class="wf-num">1</span>{% if LANGUAGE_CODE == 'ar' %}جلب الطالب{% else %}Fetch{% endif %}</button>
+            <button id="step1" class="wf-step active" type="button"><span class="wf-num">1</span>{% if LANGUAGE_CODE == 'ar' %}الطالب{% else %}Student{% endif %}</button>
             <div class="wf-sep"></div>
             <button id="step2" class="wf-step" type="button"><span class="wf-num">2</span>{% if LANGUAGE_CODE == 'ar' %}اختيار المقررات{% else %}Pick Courses{% endif %}</button>
             <div class="wf-sep"></div>
@@ -615,8 +615,8 @@
               <label><input id="strictSections" type="checkbox"> {% if LANGUAGE_CODE == 'ar' %}صارم{% else %}Strict{% endif %}</label>
               <label><input id="ignoreCapacity" type="checkbox"> {% if LANGUAGE_CODE == 'ar' %}تجاهل السعة{% else %}Ignore capacity{% endif %}</label>
               <label style="display:inline-flex;align-items:center;gap:4px">
-                {% if LANGUAGE_CODE == 'ar' %}الحد الأقصى ساعات{% else %}Max cr.{% endif %}
-                <input id="maxCredits" type="number" min="0" max="30" value="0" style="width:52px;padding:2px 4px;border:1px solid var(--border);border-radius:6px;font-size:12px;text-align:center">
+                {% if LANGUAGE_CODE == 'ar' %}الحد الأقصى ساعات{% else %}Max credits{% endif %}
+                <input id="maxCredits" type="text" inputmode="numeric" pattern="[0-9]*" value="17" dir="ltr" style="width:52px;padding:2px 4px;border:1px solid var(--border);border-radius:6px;font-size:12px;text-align:center;font-family:'Courier New',monospace">
               </label>
             </div>
 

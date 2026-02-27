@@ -19,17 +19,23 @@ from typing import Any
 
 from django.conf import settings
 from django.core.management.base import BaseCommand
-from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from tqdm import tqdm  # type: ignore[import-untyped]
 
-from core.services.portal_scraper import (
-    close_browser,
-    create_fresh_page_from_context,
-    login_to_portal,
-    navigate_to_student_study_plan,
-    navigate_to_student_timetable,
-    safe_page_content,
-)
+try:
+    from playwright.async_api import TimeoutError as PlaywrightTimeoutError
+
+    from core.services.portal_scraper import (
+        close_browser,
+        create_fresh_page_from_context,
+        login_to_portal,
+        navigate_to_student_study_plan,
+        navigate_to_student_timetable,
+        safe_page_content,
+    )
+
+    HAS_PLAYWRIGHT = True
+except ImportError:
+    HAS_PLAYWRIGHT = False
 
 logger = logging.getLogger(__name__)
 BASE_DIR = Path(settings.BASE_DIR)
@@ -189,6 +195,15 @@ class Command(BaseCommand):
         parser.add_argument("--debug-dir", default="data/debug_failures")
 
     def handle(self, *args: Any, **options: Any) -> None:
+        if not HAS_PLAYWRIGHT:
+            self.stderr.write(
+                self.style.ERROR(
+                    "playwright is not installed. "
+                    "Install requirements-dev.txt for scraping:\n"
+                    "  pip install -r requirements-dev.txt"
+                )
+            )
+            return
         asyncio.run(self._run(options))
 
     # ──────────────────────────────────────────────────────────

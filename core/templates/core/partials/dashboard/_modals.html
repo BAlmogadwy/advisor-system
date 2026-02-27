@@ -1,0 +1,42 @@
+    <datalist id="programs">
+      {% for p in programs %}<option value="{{ p }}"></option>{% endfor %}
+    </datalist>
+
+<!-- toast-container injected by JS -->
+
+<div class="dlg-backdrop d-none" id="eligibilityDetailsModal" role="dialog" aria-modal="true">
+  <div class="dlg-box dlg-box-lg">
+    <div class="dlg-header">
+      <div><div class="dlg-title">Eligibility Details</div></div>
+      <button type="button" class="dlg-close" aria-label="{% if LANGUAGE_CODE == 'ar' %}إغلاق{% else %}Close{% endif %}">&times;</button>
+    </div>
+    <div class="dlg-body" id="eligibilityDetailsBody" class="dlg-body-scroll"></div>
+  </div>
+</div>
+
+<div class="dlg-backdrop d-none" id="debugTraceModal" role="dialog" aria-modal="true">
+  <div class="dlg-box dlg-box-lg">
+    <div class="dlg-header">
+      <div><div class="dlg-title">Recommendation Trace</div></div>
+      <button type="button" class="dlg-close" aria-label="{% if LANGUAGE_CODE == 'ar' %}إغلاق{% else %}Close{% endif %}">&times;</button>
+    </div>
+    <div class="dlg-body" id="debugTraceBody" class="dlg-body-scroll"></div>
+  </div>
+</div>
+
+
+
+
+<!-- ⌘K Command Palette -->
+<div id="cmdPalette" class="cmd-backdrop d-none" role="dialog" aria-modal="true" aria-label="{% if LANGUAGE_CODE == 'ar' %}بحث سريع{% else %}Quick search{% endif %}">
+  <div class="cmd-modal">
+    <div class="cmd-search-row">
+      <span class="cmd-search-icon">⌕</span>
+      <input id="cmdInput" class="cmd-input" type="text" placeholder="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب، رمز المقرر، أو معرّف المرشد…{% else %}Student ID, course code, or advisor ID…{% endif %}" autocomplete="off" aria-label="{% if LANGUAGE_CODE == 'ar' %}بحث سريع{% else %}Quick search{% endif %}" role="combobox" aria-expanded="false" aria-haspopup="listbox">
+      <kbd class="cmd-esc">ESC</kbd>
+    </div>
+    <div id="cmdResults" class="cmd-results">
+      <div class="cmd-hint">Type a student ID to jump directly to their plan</div>
+    </div>
+  </div>
+</div>

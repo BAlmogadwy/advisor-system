@@ -24,7 +24,7 @@ const notify = (() => {
     t.setAttribute('role', 'alert');
     t.innerHTML =
       `<div class="ux-toast-icon">${I[kind] || I.info}</div>` +
-      `<div class="ux-toast-body"><div class="ux-toast-title">${title}</div>${sub ? `<div class="ux-toast-sub">${sub}</div>` : ''}</div>` +
+      `<div class="ux-toast-body"><div class="ux-toast-title">${esc(title)}</div>${sub ? `<div class="ux-toast-sub">${esc(sub)}</div>` : ''}</div>` +
       `<button class="ux-toast-close" aria-label="Dismiss"><span class="i" style="width:12px;height:12px" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></span></button>` +
       `<div class="ux-toast-progress" style="animation-duration:${dur}ms;"></div>`;
     c.appendChild(t);

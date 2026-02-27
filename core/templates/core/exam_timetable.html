@@ -104,6 +104,7 @@
       .et-dept-chips { padding-inline-start: 6px; margin-inline-start: 4px; }
       .et-chip { font-size: .7rem; padding: 1px 7px; }
       .et-legend { font-size: .65rem; gap: 6px; }
+      .kpi { padding: 0.4rem; }
       .kpi .v { font-size: 1.1rem; }
     }
 
@@ -177,9 +178,31 @@
         <label class="form-label" for="etNumDays">{% if LANGUAGE_CODE == 'ar' %}عدد أيام الاختبارات{% else %}Exam days{% endif %}</label>
         <input id="etNumDays" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="5" min="1" max="60">
       </div>
-      <div class="col-md-3">
-        <label class="form-label" for="etPeriods">{% if LANGUAGE_CODE == 'ar' %}الفترات (مفصولة بفاصلة){% else %}Periods (comma-separated){% endif %}</label>
-        <input id="etPeriods" class="form-control" value="08:00-10:00,10:30-12:30,13:00-15:00">
+      <div class="col-md-5">
+        <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}الفترات{% else %}Periods{% endif %}</label>
+        <div id="etPeriodsRepeater" class="d-flex flex-column gap-1">
+          <div class="et-period-row d-flex align-items-center gap-1">
+            <input type="time" class="form-control form-control-compact et-period-start" value="08:00" style="max-width:110px">
+            <span style="font-size:0.75rem;color:var(--t3)">–</span>
+            <input type="time" class="form-control form-control-compact et-period-end" value="10:00" style="max-width:110px">
+            <button type="button" class="btn btn-sm btn-outline-secondary et-period-remove" title="{% if LANGUAGE_CODE == 'ar' %}إزالة{% else %}Remove{% endif %}" style="padding:2px 6px;font-size:0.7rem;line-height:1">&times;</button>
+          </div>
+          <div class="et-period-row d-flex align-items-center gap-1">
+            <input type="time" class="form-control form-control-compact et-period-start" value="10:30" style="max-width:110px">
+            <span style="font-size:0.75rem;color:var(--t3)">–</span>
+            <input type="time" class="form-control form-control-compact et-period-end" value="12:30" style="max-width:110px">
+            <button type="button" class="btn btn-sm btn-outline-secondary et-period-remove" title="{% if LANGUAGE_CODE == 'ar' %}إزالة{% else %}Remove{% endif %}" style="padding:2px 6px;font-size:0.7rem;line-height:1">&times;</button>
+          </div>
+          <div class="et-period-row d-flex align-items-center gap-1">
+            <input type="time" class="form-control form-control-compact et-period-start" value="13:00" style="max-width:110px">
+            <span style="font-size:0.75rem;color:var(--t3)">–</span>
+            <input type="time" class="form-control form-control-compact et-period-end" value="15:00" style="max-width:110px">
+            <button type="button" class="btn btn-sm btn-outline-secondary et-period-remove" title="{% if LANGUAGE_CODE == 'ar' %}إزالة{% else %}Remove{% endif %}" style="padding:2px 6px;font-size:0.7rem;line-height:1">&times;</button>
+          </div>
+        </div>
+        <button type="button" id="etAddPeriod" class="btn btn-sm btn-outline-secondary mt-1" style="font-size:0.72rem">＋ {% if LANGUAGE_CODE == 'ar' %}إضافة فترة{% else %}Add period{% endif %}</button>
+        <!-- Hidden input keeps backward compatibility for API -->
+        <input type="hidden" id="etPeriods" value="08:00-10:00,10:30-12:30,13:00-15:00">
       </div>
       <div class="col-md-2">
         <label class="form-label" for="etMaxPerDay">{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى/يوم{% else %}Max exams/day{% endif %}</label>
@@ -420,6 +443,41 @@ function updateDayPreview() {
 $('etStartDay').addEventListener('change', updateDayPreview);
 $('etNumDays').addEventListener('input', updateDayPreview);
 updateDayPreview();
+
+/* ── Structured period repeater ── */
+function syncPeriodsHidden() {
+  const rows = document.querySelectorAll('#etPeriodsRepeater .et-period-row');
+  const vals = [];
+  rows.forEach(r => {
+    const s = r.querySelector('.et-period-start')?.value;
+    const e = r.querySelector('.et-period-end')?.value;
+    if (s && e) vals.push(`${s}-${e}`);
+  });
+  $('etPeriods').value = vals.join(',');
+}
+
+function addPeriodRow(startVal, endVal) {
+  const row = document.createElement('div');
+  row.className = 'et-period-row d-flex align-items-center gap-1';
+  row.innerHTML =
+    `<input type="time" class="form-control form-control-compact et-period-start" value="${startVal || ''}" style="max-width:110px">` +
+    `<span style="font-size:0.75rem;color:var(--t3)">–</span>` +
+    `<input type="time" class="form-control form-control-compact et-period-end" value="${endVal || ''}" style="max-width:110px">` +
+    `<button type="button" class="btn btn-sm btn-outline-secondary et-period-remove" title="${IS_AR ? 'إزالة' : 'Remove'}" style="padding:2px 6px;font-size:0.7rem;line-height:1">&times;</button>`;
+  $('etPeriodsRepeater').appendChild(row);
+  row.querySelector('.et-period-remove').addEventListener('click', () => { row.remove(); syncPeriodsHidden(); });
+  row.querySelectorAll('input').forEach(inp => inp.addEventListener('change', syncPeriodsHidden));
+}
+
+/* Wire existing remove buttons & inputs */
+document.querySelectorAll('#etPeriodsRepeater .et-period-remove').forEach(btn => {
+  btn.addEventListener('click', () => { btn.closest('.et-period-row').remove(); syncPeriodsHidden(); });
+});
+document.querySelectorAll('#etPeriodsRepeater input[type="time"]').forEach(inp => {
+  inp.addEventListener('change', syncPeriodsHidden);
+});
+
+$('etAddPeriod')?.addEventListener('click', () => addPeriodRow('', ''));
 
 /* ── Filter chips (programs & sections) ── */
 // Render toggle-able chips for a list of items (e.g. programs or sections).

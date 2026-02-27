@@ -1,0 +1,51 @@
+    <div id="debug" class="panel" role="region">
+      <div class="filter-bar sticky-cta mb-14">
+        <div class="fb-search fb-w-110"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input id="dbgYear" type="text" inputmode="numeric" pattern="[0-9]*" value="{{ year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}"></div>
+        <div class="fb-search" style="max-width:90px"><input id="dbgSemester" type="text" inputmode="numeric" pattern="[0-9]*" min="0" max="1" value="{{ semester }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Sem{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}"></div>
+        <div class="fb-search fb-w-110"><input id="dbgSection" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}"></div>
+        <div class="fb-search fb-w-120"><input id="dbgProgram" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}"></div>
+        <div class="fb-search fb-w-110"><input id="dbgJoin" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join yrs{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join years{% endif %}"></div>
+        <div class="fb-search fb-w-100"><input id="dbgLimit" type="text" inputmode="numeric" pattern="[0-9]*" value="80" placeholder="{% if LANGUAGE_CODE == 'ar' %}الحد{% else %}Limit{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الحد{% else %}Limit{% endif %}"></div>
+        <div class="fb-spacer"></div>
+        <button id="dbgRun" class="btn btn-primary">
+          <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run
+        </button>
+      </div>
+      <div class="filter-bar filter-bar-sm mb-14">
+        <button id="dbgSavePreset" type="button" class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span>Save preset</button>
+        <button id="dbgLoadPreset" type="button" class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 15v4c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg></span>Load preset</button>
+        <div class="fb-spacer"></div>
+        <a id="dbgCsv" class="fb-dd" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>CSV</a>
+      </div>
+      <div id="dbgMeta" class="meta-banner meta-info meta-mono mb-14">No debug report loaded.</div>
+      <div id="dbgSummary" class="d-none metrics-row-14 mb-18">
+        <div class="flex-card"><div class="mc mc-royal">
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span></div><div class="mc-lbl">Students</div></div>
+          <div class="mc-val" id="dbgCount">0</div>
+        </div></div>
+        <div class="flex-card"><div class="mc mc-teal">
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span></div><div class="mc-lbl">With Recs</div></div>
+          <div class="mc-val" id="dbgWithRec">0</div>
+        </div></div>
+        <div class="flex-card"><div class="mc mc-err">
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg></span></div><div class="mc-lbl">Empty Recs</div></div>
+          <div class="mc-val" id="dbgWithoutRec">0</div>
+        </div></div>
+      </div>
+      <div id="dbgUpdated" class="ts-updated mb-10">Last update: —</div>
+      <div class="tbl-section">
+        <div class="tbl-header">
+          <div class="tbl-title">Debug Details <span class="tbl-cnt" id="dbgTableCnt">0</span></div>
+          <div class="tbl-actions">
+            <button class="btn btn-outline-secondary btn-sm" style="font-size:11px;padding:4px 10px;border-radius:var(--radius-sm);background:var(--glass-bg);border:1px solid rgba(17,17,68,0.06);color:var(--t3);cursor:pointer" onclick="document.getElementById('dbgTable').scrollIntoView({behavior:'smooth'})"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span> Columns</button>
+          </div>
+        </div>
+        <div class="overflow-x">
+          <table class="tbl-card" id="dbgTable">
+            <thead><tr><th scope="col">Student</th><th scope="col">Program</th><th scope="col">Real→Next</th><th scope="col">Passed</th><th scope="col">Studying</th><th scope="col">Recommended</th><th scope="col">Trace</th></tr></thead>
+            <tbody><tr><td colspan="7"><div class="empty-state"><span class="i empty-icon-muted"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span><div class="empty-title">No debug data</div><div class="empty-hint">Fill filters above, then click <strong>Run</strong></div></div></td></tr></tbody>
+          </table>
+        </div>
+        <nav class="tbl-pager" id="dbgPager" aria-label="Debug table pagination"></nav>
+      </div>
+    </div>

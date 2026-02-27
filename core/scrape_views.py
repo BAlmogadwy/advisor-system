@@ -4,7 +4,7 @@ from django.conf import settings
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.http import require_GET
 
-from core.authz import role_required
+from core.authz import role_required, throttle
 from core.services.rbac import ROLE_SUPER_ADMIN
 from core.services.scrape_ops import get_scrape_status, start_batch_scrape, stop_batch_scrape
 
@@ -48,6 +48,7 @@ def _to_int(value: str | None, default: int) -> int:
 
 @role_required(ROLE_SUPER_ADMIN)
 @require_GET
+@throttle(max_calls=3, window_seconds=120)
 def scrape_start_view(request: HttpRequest) -> JsonResponse:
     concurrency = _to_int(request.GET.get("concurrency"), 2)
     students_csv = request.GET.get("students_csv")

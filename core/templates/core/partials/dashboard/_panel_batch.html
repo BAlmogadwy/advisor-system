@@ -1,0 +1,60 @@
+    <div id="batch" class="panel" role="region">
+      <div class="filter-bar sticky-cta mb-14">
+        <div class="fb-search fb-w-120"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input id="batchYear" type="text" inputmode="numeric" pattern="[0-9]*" value="{{ year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}"></div>
+        <div class="fb-search fb-w-110"><input id="batchSemester" type="text" inputmode="numeric" pattern="[0-9]*" min="0" max="1" value="{{ semester }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}"></div>
+        <div class="fb-search" style="max-width:170px"><input id="batchProgram" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج (اختياري){% else %}Program (optional){% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج (اختياري){% else %}Program (optional){% endif %}"></div>
+        <div class="fb-search" style="max-width:160px"><input id="batchSection" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة (اختياري){% else %}Section (optional){% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة (اختياري){% else %}Section (optional){% endif %}"></div>
+        <div class="fb-spacer"></div>
+        <button id="runBatch" class="btn btn-primary"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></span>Run preview</button>
+        <button id="resetBatch" type="button" class="fb-dd">Reset</button>
+      </div>
+      <div class="preset-actions">
+        <button id="batchSavePreset" type="button" class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span> Save preset</button>
+        <button id="batchLoadPreset" type="button" class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span> Load preset</button>
+      </div>
+      <div id="batchProgressWrap" class="batch-progress d-none">
+        <div id="batchProgressBar" class="batch-progress-bar"></div>
+      </div>
+
+      <div class="row g-2 mt-3 mb-2 d-none" id="batchMetrics">
+        <div class="col-md-4"><div class="mc mc-royal">
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></div><div class="mc-lbl">Year / Semester</div></div>
+          <div class="mc-val" id="batchMetricTerm">-</div>
+        </div></div>
+        <div class="col-md-4"><div class="mc mc-teal mc-hero">
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span></div><div class="mc-lbl">Students Scanned</div></div>
+          <div class="mc-val" id="batchMetricStudents">0</div>
+        </div></div>
+        <div class="col-md-4"><div class="mc mc-sky">
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span></div><div class="mc-lbl">Top List Size</div></div>
+          <div class="mc-val" id="batchMetricTopCount">0</div>
+        </div></div>
+      </div>
+
+      <div class="filter-bar mt-2 mb-3">
+        <a id="batchCsv" class="fb-dd" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span> CSV</a>
+        <a id="batchSummary" class="fb-dd" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span> Summary JSON</a>
+        <button id="copyBatchCsv" type="button" class="fb-dd">Copy CSV link</button>
+        <div class="fb-spacer"></div>
+        <div id="batchUpdated" class="small color-t3">{% if LANGUAGE_CODE == 'ar' %}آخر تحديث: لا يوجد{% else %}Last update: never{% endif %}</div>
+      </div>
+
+      <div class="mb-6">
+        <table class="tbl-card" id="batchTable">
+          <thead><tr><th scope="col" data-sort="num"># <span class="sort-arrow">▲</span></th><th scope="col" data-sort="text">Course</th><th scope="col" data-sort="num">Count</th><th scope="col">Share</th></tr></thead>
+          <tbody><tr><td colspan="4"><div class="ap-empty"><span class="ap-empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span></span><div class="ap-empty-title">No batch data yet</div><div class="ap-empty-hint">Set Year &amp; Semester above, then click <strong>Run preview</strong></div></div></td></tr></tbody>
+        </table>
+      </div>
+      <nav class="tbl-pager" id="batchPager" aria-label="Batch table pagination"></nav>
+
+      <div class="cpanel mt-3">
+        <div class="cp-h">
+          <span class="i i-faint"><svg viewBox="0 0 24 24"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-6"/></svg></span>
+          <div class="cp-t">Top Recommendations</div>
+          <span class="cp-live">LIVE</span>
+        </div>
+        <div class="cp-b" id="batchTopChips">
+          <div class="empty-note">Run a batch preview to see top course recommendations.</div>
+        </div>
+      </div>
+    </div>

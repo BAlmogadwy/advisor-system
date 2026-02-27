@@ -12,17 +12,23 @@ import logging
 import time
 
 from django.conf import settings
-from playwright.async_api import (
-    Browser,
-    BrowserContext,
-    Locator,
-    Page,
-    Playwright,
-    async_playwright,
-)
-from playwright.async_api import (
-    TimeoutError as PlaywrightTimeoutError,
-)
+
+try:
+    from playwright.async_api import (
+        Browser,
+        BrowserContext,
+        Locator,
+        Page,
+        Playwright,
+        async_playwright,
+    )
+    from playwright.async_api import (
+        TimeoutError as PlaywrightTimeoutError,
+    )
+
+    HAS_PLAYWRIGHT = True
+except ImportError:
+    HAS_PLAYWRIGHT = False
 
 logger = logging.getLogger(__name__)
 

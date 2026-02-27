@@ -4,6 +4,7 @@ from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.http import require_GET, require_POST
 
+from core.authz import throttle
 from core.services.course_classifier import classify_courses
 from core.services.policy import require_student_scope
 from core.services.recommender import recommend_next_courses
@@ -23,6 +24,7 @@ def _parse_int(value: str | None, field: str) -> tuple[int | None, JsonResponse 
 
 @login_required(login_url="login")
 @require_GET
+@throttle(max_calls=20, window_seconds=60)
 def recommend_view(request: HttpRequest, student_id: int) -> JsonResponse:
     scope_err = require_student_scope(request, student_id)
     if scope_err:
@@ -58,6 +60,7 @@ def recommend_view(request: HttpRequest, student_id: int) -> JsonResponse:
 
 @login_required(login_url="login")
 @require_POST
+@throttle(max_calls=15, window_seconds=60)
 def classify_view(request: HttpRequest) -> JsonResponse:
     try:
         payload = json.loads(request.body.decode("utf-8"))
@@ -78,6 +81,7 @@ def classify_view(request: HttpRequest) -> JsonResponse:
 
 @login_required(login_url="login")
 @require_POST
+@throttle(max_calls=10, window_seconds=60)
 def parse_and_classify_view(request: HttpRequest) -> JsonResponse:
     try:
         payload = json.loads(request.body.decode("utf-8"))

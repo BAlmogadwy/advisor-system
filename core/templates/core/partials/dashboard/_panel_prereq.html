@@ -1,0 +1,43 @@
+    <div id="prereq" class="panel" role="region">
+      <div class="filter-bar mb-14">
+        <div class="fb-search" style="max-width:200px"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span><input id="preProgram" list="programs" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج مثال CS{% else %}Program  e.g. CS{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج مثال CS{% else %}Program{% endif %}"></div>
+        <div class="fb-search" style="max-width:220px"><input id="preCourse" placeholder="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر (اختياري){% else %}Course code (optional){% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}رمز المقرر (اختياري){% else %}Course code{% endif %}"></div>
+        <div class="fb-spacer"></div>
+        <button id="loadPre" class="btn btn-primary">
+          <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Load
+        </button>
+      </div>
+      <!-- Metrics -->
+      <div id="preMetrics" class="d-none metrics-row-14 mb-16">
+        <div class="flex-card"><div class="mc mc-royal">
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span></div><div class="mc-lbl">Program</div></div>
+          <div class="mc-val" id="preMetricProgram">—</div>
+        </div></div>
+        <div class="flex-card"><div class="mc mc-teal">
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></span></div><div class="mc-lbl">Courses</div></div>
+          <div class="mc-val" id="preMetricCourses">0</div>
+        </div></div>
+        <div class="flex-card"><div class="mc mc-sky">
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg></span></div><div class="mc-lbl">Prereq Links</div></div>
+          <div class="mc-val" id="preMetricLinks">0</div>
+        </div></div>
+      </div>
+      <div id="preUpdated" class="small text-secondary mb-3">{% if LANGUAGE_CODE == 'ar' %}آخر تحديث: لا يوجد{% else %}Last update: never{% endif %}</div>
+      <!-- Graph full width on top -->
+      <div class="cpanel mb-3">
+        <div class="cp-h"><span class="cp-t">Dependency Graph</span><span class="cp-live">VISUAL</span></div>
+        <div class="cp-b" id="preGraph" style="min-height:320px;overflow-x:auto;overflow-y:auto;padding:16px">
+          <div class="empty-state"><span class="empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg></span></span><div class="empty-title">No graph data</div><div class="empty-hint">Load prerequisites to visualize dependency chains</div></div>
+        </div>
+      </div>
+      <!-- Table below -->
+      <div class="cpanel">
+        <div class="cp-h"><span class="cp-t">Prerequisite Links</span><span class="pill-status pill-b d-none" id="preLinkCount"><span class="pill-dot"></span><span id="preLinkNum">0</span> links</span></div>
+        <div class="cp-b" style="padding:0;max-height:420px;overflow-y:auto">
+          <table class="tbl-card mb-0" id="preTable" style="border-spacing:0 4px">
+            <thead><tr><th scope="col" data-sort="text">Course</th><th scope="col" style="width:32px;text-align:center">→</th><th scope="col" data-sort="text">Requires</th></tr></thead>
+            <tbody><tr><td colspan="3"><div class="empty-state"><span class="empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg></span></span><div class="empty-title">No prerequisites loaded</div><div class="empty-hint">Choose a program above, then click <strong>Load</strong></div></div></td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>

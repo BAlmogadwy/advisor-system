@@ -26,6 +26,10 @@ db.sqlite3-journal
 tmp/
 runtime/
 data/debug_failures/
+data/students_list.csv
+data/failed_scrapes.csv
+staticfiles/
+nul
 
 # Legacy
 import_old/

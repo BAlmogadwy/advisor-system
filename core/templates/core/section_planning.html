@@ -1,0 +1,611 @@
+{% extends "core/base.html" %}
+{% load i18n %}
+{% get_current_language as LANGUAGE_CODE %}
+
+{% block title %}{% if LANGUAGE_CODE == 'ar' %}تخطيط الشعب{% else %}Section Planning{% endif %}{% endblock %}
+
+{% block extra_css %}
+  <style>
+    .sp-panel { padding: 16px 20px; margin-bottom: 12px; border-radius: var(--radius); background: var(--glass-bg); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); border: var(--border-subtle); box-shadow: var(--shadow-card); }
+    .sp-caps { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; padding: 10px 16px; border-radius: var(--radius); background: rgba(10,142,110,0.03); border: 1px dashed rgba(10,142,110,0.2); margin-bottom: 4px; }
+    .sp-caps-lbl { font-size: .72rem; color: var(--t3); text-transform: uppercase; font-family: var(--font-mono); letter-spacing: 0.04em; font-weight: 700; margin-bottom: 2px; }
+    .sp-cap-grp { display: flex; flex-direction: column; min-width: 100px; }
+    .sp-cap-grp input { width: 80px; text-align: center; }
+    .sp-caps-info { font-size: .72rem; color: var(--t3); align-self: center; margin-inline-start: auto; }
+    .sp-toggle-caps { font-size: .78rem; color: var(--teal); cursor: pointer; background: none; border: none; font-weight: 600; padding: 2px 0; text-decoration: underline; text-underline-offset: 2px; }
+
+    /* KPI cards */
+    .sp-kpi { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 14px; }
+    .sp-mc { border: var(--border-subtle); border-radius: var(--radius); padding: .65rem .85rem; background: var(--glass-bg); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); box-shadow: var(--shadow-card); }
+    .sp-mc .k { font-size: .68rem; color: var(--t3); text-transform: uppercase; font-family: var(--font-mono); letter-spacing: 0.06em; font-weight: 700; }
+    .sp-mc .v { font-weight: 700; font-family: var(--font-serif); font-size: 1.35rem; color: var(--teal); }
+    .sp-mc.mc-navy .v { color: var(--navy); }
+    .sp-mc.mc-hero { border-inline-start: 3px solid var(--teal); }
+
+    /* Progress bar */
+    .sp-progress { height: 3px; border-radius: 2px; background: var(--t5, #eee); overflow: hidden; margin-bottom: 10px; }
+    .sp-progress-bar { height: 100%; background: var(--teal); width: 0%; transition: width 0.3s ease; }
+
+    /* Status pills */
+    .sp-pill { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: .72rem; font-weight: 700; text-transform: capitalize; }
+    .sp-pill-full { background: rgba(10,142,110,0.12); color: #0a6e54; }
+    .sp-pill-under { background: rgba(220,53,69,0.10); color: #b02a37; }
+    .sp-pill-ext { background: rgba(100,120,140,0.10); color: #5a6a7a; font-size: .68rem; font-weight: 600; }
+
+    /* Fill bar */
+    .sp-fill-wrap { width: 100%; height: 6px; border-radius: 3px; background: var(--t5, #eee); overflow: hidden; }
+    .sp-fill { height: 100%; border-radius: 3px; transition: width 0.3s ease; }
+    .sp-fill-hi { background: var(--teal); }
+    .sp-fill-md { background: #f0ad4e; }
+    .sp-fill-lo { background: #dc3545; }
+
+    /* Department summary */
+    .sp-dept-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; }
+    .sp-dept-card { border: var(--border-subtle); border-radius: var(--radius); padding: .55rem .75rem; background: var(--glass-bg); }
+    .sp-dept-card .dept-name { font-weight: 700; font-size: .82rem; color: var(--navy); margin-bottom: 4px; }
+    .sp-dept-card .dept-stat { font-size: .72rem; color: var(--t3); }
+    .sp-dept-card .dept-stat b { color: var(--t1); }
+
+    /* Export bar */
+    .sp-export-bar { display: flex; align-items: center; gap: 10px; margin-top: 10px; padding: 8px 0; }
+    .sp-export-bar .sp-ts { font-size: .72rem; color: var(--t3); margin-inline-start: auto; }
+
+    /* Alert */
+    .sp-alert { padding: 8px 14px; border-radius: var(--radius); font-size: .82rem; margin-bottom: 10px; }
+    .sp-alert-ok { background: rgba(10,142,110,0.08); color: #0a6e54; border: 1px solid rgba(10,142,110,0.15); }
+    .sp-alert-err { background: rgba(220,53,69,0.08); color: #b02a37; border: 1px solid rgba(220,53,69,0.15); }
+
+    /* Advanced per-course table */
+    .sp-adv-header { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
+    .sp-adv-search { width: 220px; }
+    .sp-adv-count { font-size: .72rem; color: var(--t3); margin-inline-start: auto; }
+    .sp-adv-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+    .sp-adv-table th { font-size: .68rem; text-transform: uppercase; letter-spacing: .04em; color: var(--t3); font-weight: 700; font-family: var(--font-mono); padding: 5px 8px; border-bottom: 1.5px solid var(--t5, #ddd); text-align: start; white-space: nowrap; }
+    .sp-adv-table td { padding: 4px 8px; border-bottom: 1px solid var(--t5, #eee); vertical-align: middle; }
+    .sp-adv-table tr:hover { background: rgba(10,142,110,0.03); }
+    .sp-adv-table .adv-input { width: 60px; text-align: center; padding: 2px 4px; font-size: .8rem; }
+    .sp-adv-table .adv-input:not(:placeholder-shown) { border-color: var(--teal); background: rgba(10,142,110,0.04); font-weight: 700; }
+    .sp-adv-table .adv-default { color: var(--t3); font-size: .72rem; }
+    .sp-adv-wrap { max-height: 400px; overflow-y: auto; border: var(--border-subtle); border-radius: var(--radius); padding: 0; }
+    .sp-adv-reset { font-size: .75rem; color: var(--t3); cursor: pointer; background: none; border: 1px solid var(--t4, #ccc); border-radius: 4px; padding: 2px 8px; }
+    .sp-adv-reset:hover { color: #dc3545; border-color: #dc3545; }
+    .sp-adv-badge { display: inline-block; padding: 0 6px; border-radius: 8px; font-size: .68rem; font-weight: 700; background: var(--teal); color: #fff; margin-inline-start: 4px; }
+
+    /* Responsive */
+    @media(max-width:768px) {
+      .sp-kpi { grid-template-columns: repeat(2, 1fr); }
+      .sp-caps { flex-direction: column; align-items: stretch; }
+      .sp-cap-grp input { width: 100%; }
+      .sp-adv-search { width: 100%; }
+    }
+  </style>
+{% endblock %}
+
+{% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}تخطيط الشعب{% else %}Section Planning{% endif %}{% endblock %}
+
+{% block page_chips %}
+  <span class="ph-chip ph-chip-role">{{ role }}</span>
+  <span class="ph-chip ph-chip-gray">{% if LANGUAGE_CODE == 'ar' %}توصيات → حساب الشعب → تصدير{% else %}Recommendations → Section Calc → Export{% endif %}</span>
+{% endblock %}
+
+{% block page_intro %}
+  <h2>{% if LANGUAGE_CODE == 'ar' %}تخطيط شعب الفصل القادم{% else %}Next Semester Section Planning{% endif %}</h2>
+  <div class="panel-sub">{% if LANGUAGE_CODE == 'ar' %}حساب عدد الشعب المطلوبة لكل مقرر بناءً على توصيات الطلاب ومعايير الطاقة الاستيعابية.{% else %}Calculate required sections per course based on student recommendations and capacity rules.{% endif %}</div>
+{% endblock %}
+
+{% block content %}
+
+<!-- ─── Filter Bar ─── -->
+<div class="sp-panel">
+  <div class="filter-bar sticky-cta mb-0">
+    <div class="fb-search fb-w-120">
+      <label class="fb-lbl" for="spYear">{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}</label>
+      <input id="spYear" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="{{ default_year }}">
+    </div>
+    <div class="fb-search fb-w-110">
+      <label class="fb-lbl" for="spSemester">{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}</label>
+      <input id="spSemester" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="{{ default_term }}">
+    </div>
+    <div class="fb-search" style="max-width:200px">
+      <label class="fb-lbl" for="spProgram">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}</label>
+      <input id="spProgram" class="form-control form-control-compact" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثلاً AI,DS{% else %}e.g. AI,DS{% endif %}" style="text-transform:uppercase">
+    </div>
+    <div class="fb-search" style="max-width:160px">
+      <label class="fb-lbl" for="spSection">{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}</label>
+      <input id="spSection" class="form-control form-control-compact" placeholder="{% if LANGUAGE_CODE == 'ar' %}اختياري{% else %}Optional{% endif %}">
+    </div>
+    <div class="fb-spacer"></div>
+    <button id="spGenerate" class="btn btn-primary">{% if LANGUAGE_CODE == 'ar' %}حساب{% else %}Generate{% endif %}</button>
+    <button id="spReset" type="button" class="fb-dd">{% if LANGUAGE_CODE == 'ar' %}إعادة{% else %}Reset{% endif %}</button>
+  </div>
+
+  <!-- Capacity toggle -->
+  <div style="margin-top:8px">
+    <button id="spToggleCaps" class="sp-toggle-caps">{% if LANGUAGE_CODE == 'ar' %}⚙ إعدادات الطاقة{% else %}⚙ Capacity settings{% endif %}</button>
+  </div>
+
+  <!-- Collapsible capacity settings -->
+  <div id="spCapsWrap" class="sp-caps d-none" style="margin-top:8px">
+    <div class="sp-cap-grp">
+      <div class="sp-caps-lbl">{% if LANGUAGE_CODE == 'ar' %}محلي 4+ ساعات{% else %}Local 4+ cr{% endif %}</div>
+      <input id="spCapLocal4" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="25">
+    </div>
+    <div class="sp-cap-grp">
+      <div class="sp-caps-lbl">{% if LANGUAGE_CODE == 'ar' %}محلي أخرى{% else %}Local other{% endif %}</div>
+      <input id="spCapLocalOther" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="40">
+    </div>
+    <div class="sp-cap-grp">
+      <div class="sp-caps-lbl">{% if LANGUAGE_CODE == 'ar' %}خارجي{% else %}External{% endif %}</div>
+      <input id="spCapExternal" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="50">
+    </div>
+    <div class="sp-caps-info">{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى للطلاب في كل شعبة{% else %}Max students per section by type{% endif %}</div>
+  </div>
+
+  <!-- Advanced per-course button -->
+  <div style="margin-top:8px">
+    <button id="spToggleAdv" class="sp-toggle-caps">
+      {% if LANGUAGE_CODE == 'ar' %}📋 إعدادات متقدمة لكل مقرر{% else %}📋 Advanced: Per-course limits{% endif %}
+      <span id="spAdvBadge" class="sp-adv-badge d-none">0</span>
+    </button>
+  </div>
+
+  <!-- Advanced per-course panel -->
+  <div id="spAdvPanel" class="d-none" style="margin-top:8px">
+    <div class="sp-adv-header">
+      <input id="spAdvSearch" type="text" class="form-control form-control-compact sp-adv-search"
+             placeholder="{% if LANGUAGE_CODE == 'ar' %}بحث عن مقرر...{% else %}Search courses...{% endif %}">
+      <button id="spAdvReset" class="sp-adv-reset">{% if LANGUAGE_CODE == 'ar' %}إعادة الكل{% else %}Reset all{% endif %}</button>
+      <span id="spAdvCount" class="sp-adv-count"></span>
+    </div>
+    <div class="sp-adv-wrap">
+      <table class="sp-adv-table">
+        <thead>
+          <tr>
+            <th>{% if LANGUAGE_CODE == 'ar' %}المقرر{% else %}Course{% endif %}</th>
+            <th>{% if LANGUAGE_CODE == 'ar' %}القسم{% else %}Dept{% endif %}</th>
+            <th>{% if LANGUAGE_CODE == 'ar' %}ساعات{% else %}Cr{% endif %}</th>
+            <th>{% if LANGUAGE_CODE == 'ar' %}خارجي{% else %}Ext{% endif %}</th>
+            <th>{% if LANGUAGE_CODE == 'ar' %}الافتراضي{% else %}Default{% endif %}</th>
+            <th>{% if LANGUAGE_CODE == 'ar' %}تخصيص{% else %}Override{% endif %}</th>
+          </tr>
+        </thead>
+        <tbody id="spAdvBody">
+          <tr><td colspan="6" class="empty-note" style="text-align:center;padding:20px">
+            {% if LANGUAGE_CODE == 'ar' %}جارٍ التحميل...{% else %}Loading courses...{% endif %}
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ─── Progress ─── -->
+<div id="spProgressWrap" class="sp-progress d-none">
+  <div id="spProgressBar" class="sp-progress-bar"></div>
+</div>
+
+<!-- ─── Status alert ─── -->
+<div id="spStatus" class="d-none"></div>
+
+<!-- ─── Results (hidden until generated) ─── -->
+<div id="spResults" class="d-none">
+
+  <!-- KPI Summary -->
+  <div class="sp-kpi" id="spKpi">
+    <div class="sp-mc mc-hero">
+      <div class="k">{% if LANGUAGE_CODE == 'ar' %}الطلاب{% else %}Students Scanned{% endif %}</div>
+      <div class="v" id="spKpiStudents">0</div>
+    </div>
+    <div class="sp-mc">
+      <div class="k">{% if LANGUAGE_CODE == 'ar' %}المقررات{% else %}Courses{% endif %}</div>
+      <div class="v" id="spKpiCourses">0</div>
+    </div>
+    <div class="sp-mc">
+      <div class="k">{% if LANGUAGE_CODE == 'ar' %}الشعب المطلوبة{% else %}Sections Needed{% endif %}</div>
+      <div class="v" id="spKpiSections">0</div>
+    </div>
+    <div class="sp-mc mc-navy">
+      <div class="k">{% if LANGUAGE_CODE == 'ar' %}متوسط الامتلاء{% else %}Avg Fill Rate{% endif %}</div>
+      <div class="v" id="spKpiFill">0%</div>
+    </div>
+  </div>
+
+  <!-- Export + timestamp -->
+  <div class="sp-export-bar">
+    <button id="spExport" class="btn btn-sm btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}📥 تصدير XLSX{% else %}📥 Export XLSX{% endif %}</button>
+    <div class="sp-ts" id="spTimestamp"></div>
+  </div>
+
+  <!-- Results table -->
+  <table class="tbl-card" id="spTable">
+    <thead>
+      <tr>
+        <th data-sort="num">#</th>
+        <th data-sort="text">{% if LANGUAGE_CODE == 'ar' %}القسم{% else %}Dept{% endif %}</th>
+        <th data-sort="text">{% if LANGUAGE_CODE == 'ar' %}المقرر{% else %}Course{% endif %}</th>
+        <th data-sort="num">{% if LANGUAGE_CODE == 'ar' %}ساعات{% else %}Cr{% endif %}</th>
+        <th data-sort="num">{% if LANGUAGE_CODE == 'ar' %}الطلاب{% else %}Students{% endif %}</th>
+        <th data-sort="num">{% if LANGUAGE_CODE == 'ar' %}الشعب{% else %}Sections{% endif %}</th>
+        <th data-sort="num">{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى{% else %}Max{% endif %}</th>
+        <th data-sort="num">{% if LANGUAGE_CODE == 'ar' %}المتوسط{% else %}Avg{% endif %}</th>
+        <th>{% if LANGUAGE_CODE == 'ar' %}الامتلاء{% else %}Fill{% endif %}</th>
+        <th data-sort="text">{% if LANGUAGE_CODE == 'ar' %}الحالة{% else %}Status{% endif %}</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td colspan="10" class="empty-note">{% if LANGUAGE_CODE == 'ar' %}حدد السنة والفصل ثم انقر حساب.{% else %}Set Year &amp; Semester, then click Generate.{% endif %}</td></tr>
+    </tbody>
+  </table>
+  <nav class="tbl-pager" id="spPager"></nav>
+
+  <!-- Department Summary -->
+  <div class="sp-panel" style="margin-top:14px">
+    <h6 style="margin-bottom:8px; font-size:.82rem">{% if LANGUAGE_CODE == 'ar' %}ملخص الأقسام{% else %}Department Summary{% endif %}</h6>
+    <div class="sp-dept-grid" id="spDeptGrid"></div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+/* ── Section Planning — client-side logic ── */
+const IS_AR = '{{ LANGUAGE_CODE }}' === 'ar';
+const T = {
+  generating:  IS_AR ? 'جارٍ الحساب...' : 'Generating...',
+  done:        IS_AR ? 'تم حساب خطة الشعب بنجاح.' : 'Section plan generated successfully.',
+  error:       IS_AR ? 'خطأ' : 'Error',
+  fillAll:     IS_AR ? 'يرجى إدخال السنة والفصل.' : 'Please enter Year and Semester.',
+  reqFailed:   IS_AR ? 'فشل الطلب' : 'Request failed',
+  exporting:   IS_AR ? 'جارٍ التصدير...' : 'Exporting...',
+  exported:    IS_AR ? 'تم تصدير الملف.' : 'File exported successfully.',
+  full:        IS_AR ? 'ممتلئ' : 'Full',
+  underfilled: IS_AR ? 'ناقص' : 'Underfilled',
+  courses:     IS_AR ? 'مقررات' : 'courses',
+  sections:    IS_AR ? 'شعب' : 'sections',
+  students:    IS_AR ? 'طلاب' : 'students',
+  lastUpdate:  IS_AR ? 'آخر تحديث' : 'Last update',
+};
+
+const CSRF = document.querySelector('[name=csrfmiddlewaretoken]')?.value
+  || '{{ csrf_token }}';
+
+const $ = id => document.getElementById(id);
+
+/* ── Toggle capacity settings ── */
+$('spToggleCaps').onclick = () => {
+  $('spCapsWrap').classList.toggle('d-none');
+};
+
+/* ── Advanced per-course overrides ── */
+let _advCourses = [];     // cached course list from server
+let _advLoaded = false;   // loaded at least once?
+
+$('spToggleAdv').onclick = () => {
+  const panel = $('spAdvPanel');
+  const isHidden = panel.classList.contains('d-none');
+  panel.classList.toggle('d-none');
+  if (isHidden && !_advLoaded) loadAdvancedCourses();
+};
+
+async function loadAdvancedCourses() {
+  const local4  = parseInt($('spCapLocal4').value, 10) || 25;
+  const localO  = parseInt($('spCapLocalOther').value, 10) || 40;
+  const ext     = parseInt($('spCapExternal').value, 10) || 50;
+  try {
+    const res = await fetch(
+      `/ops/section-planning/courses/?max_local_4cr=${local4}&max_local_other=${localO}&max_external=${ext}`,
+      { headers: { 'X-CSRFToken': CSRF } }
+    );
+    const data = await res.json();
+    if (!data.ok) { showStatus(data.error || T.reqFailed, 'err'); return; }
+    _advCourses = data.courses || [];
+    _advLoaded = true;
+    renderAdvancedTable(_advCourses);
+    $('spAdvCount').textContent = _advCourses.length + (IS_AR ? ' مقرر' : ' courses');
+  } catch (err) {
+    showStatus(T.reqFailed + ': ' + err.message, 'err');
+  }
+}
+
+function renderAdvancedTable(courses) {
+  const tbody = $('spAdvBody');
+  if (!courses.length) {
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-note" style="text-align:center;padding:20px">${
+      IS_AR ? 'لا توجد مقررات.' : 'No courses found.'}</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = courses.map(c => `<tr data-code="${c.course_code}">
+    <td><span class="cr-id">${c.course_code}</span></td>
+    <td>${c.department}</td>
+    <td style="text-align:center">${c.credit_hours}</td>
+    <td style="text-align:center">${c.is_external ? '✓' : ''}</td>
+    <td style="text-align:center" class="adv-default">${c.default_max}</td>
+    <td style="text-align:center"><input type="text" inputmode="numeric" pattern="[0-9]*"
+        class="form-control form-control-compact adv-input"
+        placeholder="${c.default_max}"
+        data-code="${c.course_code}" data-default="${c.default_max}"></td>
+  </tr>`).join('');
+  /* Wire input change to update badge */
+  tbody.querySelectorAll('.adv-input').forEach(inp => {
+    inp.addEventListener('input', updateAdvBadge);
+  });
+}
+
+function updateAdvBadge() {
+  const count = getOverrideCount();
+  const badge = $('spAdvBadge');
+  if (count > 0) {
+    badge.textContent = count;
+    badge.classList.remove('d-none');
+  } else {
+    badge.classList.add('d-none');
+  }
+}
+
+function getOverrideCount() {
+  let n = 0;
+  $('spAdvBody').querySelectorAll('.adv-input').forEach(inp => {
+    const val = inp.value.trim();
+    if (val && parseInt(val, 10) > 0) n++;
+  });
+  return n;
+}
+
+function collectOverrides() {
+  const overrides = {};
+  $('spAdvBody').querySelectorAll('.adv-input').forEach(inp => {
+    const val = inp.value.trim();
+    const v = parseInt(val, 10);
+    if (val && v > 0) {
+      overrides[inp.dataset.code] = v;
+    }
+  });
+  return overrides;
+}
+
+/* Search filter for advanced table */
+$('spAdvSearch').addEventListener('input', function() {
+  const q = this.value.trim().toUpperCase();
+  $('spAdvBody').querySelectorAll('tr[data-code]').forEach(tr => {
+    const code = tr.dataset.code || '';
+    tr.style.display = (!q || code.toUpperCase().includes(q)) ? '' : 'none';
+  });
+});
+
+/* Reset all overrides */
+$('spAdvReset').onclick = () => {
+  $('spAdvBody').querySelectorAll('.adv-input').forEach(inp => { inp.value = ''; });
+  updateAdvBadge();
+};
+
+/* Reload defaults when global capacity settings change */
+['spCapLocal4', 'spCapLocalOther', 'spCapExternal'].forEach(id => {
+  $(id).addEventListener('change', () => {
+    if (_advLoaded) loadAdvancedCourses();
+  });
+});
+
+/* ── Collect payload ── */
+function getPayload() {
+  const overrides = collectOverrides();
+  const payload = {
+    year:            parseInt($('spYear').value, 10) || 0,
+    semester:        parseInt($('spSemester').value, 10) || 0,
+    program:         $('spProgram').value.trim().toUpperCase(),
+    section:         $('spSection').value.trim(),
+    max_local_4cr:   parseInt($('spCapLocal4').value, 10) || 25,
+    max_local_other: parseInt($('spCapLocalOther').value, 10) || 40,
+    max_external:    parseInt($('spCapExternal').value, 10) || 50,
+  };
+  if (Object.keys(overrides).length) payload.course_overrides = overrides;
+  return payload;
+}
+
+/* ── Progress bar ── */
+let _progressInterval = null;
+function showProgress() {
+  const wrap = $('spProgressWrap');
+  const bar  = $('spProgressBar');
+  wrap.classList.remove('d-none');
+  bar.style.width = '0%';
+  let pct = 0;
+  _progressInterval = setInterval(() => {
+    pct += Math.random() * 10 + 3;
+    if (pct > 92) pct = 92;
+    bar.style.width = pct + '%';
+  }, 300);
+}
+
+function hideProgress() {
+  clearInterval(_progressInterval);
+  const bar = $('spProgressBar');
+  bar.style.width = '100%';
+  setTimeout(() => {
+    $('spProgressWrap').classList.add('d-none');
+    bar.style.width = '0%';
+  }, 500);
+}
+
+/* ── Status messages ── */
+function showStatus(msg, type) {
+  const el = $('spStatus');
+  el.className = type === 'ok' ? 'sp-alert sp-alert-ok' : 'sp-alert sp-alert-err';
+  el.textContent = msg;
+  el.classList.remove('d-none');
+}
+function hideStatus() {
+  $('spStatus').classList.add('d-none');
+}
+
+/* ── Render results ── */
+let _lastPayload = null;
+
+function renderResults(data) {
+  $('spResults').classList.remove('d-none');
+
+  /* KPIs */
+  $('spKpiStudents').textContent = String(data.student_count ?? 0);
+  $('spKpiCourses').textContent = String(data.summary.total_courses);
+  $('spKpiSections').textContent = String(data.summary.total_sections);
+  $('spKpiFill').textContent = data.summary.avg_fill_percent + '%';
+
+  /* Timestamp */
+  $('spTimestamp').textContent = T.lastUpdate + ': ' + new Date().toLocaleTimeString();
+
+  /* Table */
+  const tbody = $('spTable').querySelector('tbody');
+  const plan = data.plan || [];
+
+  if (!plan.length) {
+    tbody.innerHTML = `<tr><td colspan="10" class="empty-note">${IS_AR ? 'لا توجد توصيات.' : 'No recommendations found.'}</td></tr>`;
+    $('spDeptGrid').innerHTML = '';
+    return;
+  }
+
+  tbody.innerHTML = plan.map((row, idx) => {
+    const fillCls = row.fill_percent >= 80 ? 'sp-fill-hi'
+                  : row.fill_percent >= 40 ? 'sp-fill-md'
+                  : 'sp-fill-lo';
+    let statusHtml = '';
+    if (row.status === 'full') {
+      statusHtml = `<span class="sp-pill sp-pill-full">${T.full}</span>`;
+    } else if (row.status === 'underfilled') {
+      statusHtml = `<span class="sp-pill sp-pill-under">${T.underfilled}</span>`;
+    }
+
+    const extBadge = row.is_external ? ` <span class="sp-pill sp-pill-ext">EXT</span>` : '';
+
+    return `<tr>
+      <td>${idx + 1}</td>
+      <td><strong>${row.department}</strong></td>
+      <td><span class="cr-id">${row.course_code}</span>${extBadge}</td>
+      <td style="text-align:center">${row.credit_hours}</td>
+      <td style="text-align:center"><strong>${row.total_students}</strong></td>
+      <td style="text-align:center"><strong>${row.num_sections}</strong></td>
+      <td style="text-align:center">${row.max_per_section}</td>
+      <td style="text-align:center">${row.avg_per_section}</td>
+      <td style="min-width:80px">
+        <div class="d-flex align-items-center gap-1">
+          <div class="sp-fill-wrap"><div class="sp-fill ${fillCls}" style="width:${row.fill_percent}%"></div></div>
+          <span style="font-size:.72rem;color:var(--t3);min-width:30px">${row.fill_percent}%</span>
+        </div>
+      </td>
+      <td>${statusHtml}</td>
+    </tr>`;
+  }).join('');
+
+  /* Wire sorting + pagination */
+  if (typeof wireSortableTable === 'function') wireSortableTable();
+  if (typeof paginateTable === 'function') paginateTable('spTable', 'spPager', 30);
+
+  /* Department summary */
+  const depts = data.summary.departments || [];
+  $('spDeptGrid').innerHTML = depts.map(d => `
+    <div class="sp-dept-card">
+      <div class="dept-name">${d.department}</div>
+      <div class="dept-stat"><b>${d.courses}</b> ${T.courses} · <b>${d.sections}</b> ${T.sections} · <b>${d.students}</b> ${T.students}</div>
+    </div>
+  `).join('');
+}
+
+/* ── Generate click ── */
+$('spGenerate').onclick = async () => {
+  const payload = getPayload();
+  if (!payload.year || !payload.semester) {
+    showStatus(T.fillAll, 'err');
+    return;
+  }
+
+  const btn = $('spGenerate');
+  btn.disabled = true;
+  btn.textContent = T.generating;
+  hideStatus();
+  showProgress();
+
+  try {
+    const res = await fetch('/ops/section-planning/generate/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok || !data.ok) {
+      showStatus(data.error || T.reqFailed, 'err');
+      return;
+    }
+
+    _lastPayload = payload;
+    renderResults(data);
+    showStatus(T.done, 'ok');
+    if (typeof notify !== 'undefined') notify.success(T.done);
+
+  } catch (err) {
+    showStatus(T.reqFailed + ': ' + err.message, 'err');
+  } finally {
+    hideProgress();
+    btn.disabled = false;
+    btn.textContent = IS_AR ? 'حساب' : 'Generate';
+  }
+};
+
+/* ── Export click ── */
+$('spExport').onclick = async () => {
+  if (!_lastPayload) return;
+
+  const btn = $('spExport');
+  btn.disabled = true;
+  btn.textContent = T.exporting;
+
+  try {
+    const res = await fetch('/ops/section-planning/export/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      body: JSON.stringify(_lastPayload),
+    });
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      showStatus(errData.error || T.reqFailed, 'err');
+      return;
+    }
+
+    /* Download the blob as .xlsx */
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `section_plan_${_lastPayload.year}_${_lastPayload.semester}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+
+    if (typeof notify !== 'undefined') notify.success(T.exported);
+
+  } catch (err) {
+    showStatus(T.reqFailed + ': ' + err.message, 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = IS_AR ? '📥 تصدير XLSX' : '📥 Export XLSX';
+  }
+};
+
+/* ── Reset click ── */
+$('spReset').onclick = () => {
+  $('spProgram').value = '';
+  $('spSection').value = '';
+  $('spResults').classList.add('d-none');
+  hideStatus();
+  _lastPayload = null;
+  $('spTable').querySelector('tbody').innerHTML =
+    `<tr><td colspan="10" class="empty-note">${IS_AR ? 'حدد السنة والفصل ثم انقر حساب.' : 'Set Year & Semester, then click Generate.'}</td></tr>`;
+  $('spDeptGrid').innerHTML = '';
+  /* Reset advanced overrides */
+  $('spAdvBody').querySelectorAll('.adv-input').forEach(inp => { inp.value = ''; });
+  updateAdvBadge();
+};
+</script>
+{% endblock %}

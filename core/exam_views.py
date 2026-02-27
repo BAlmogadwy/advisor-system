@@ -23,6 +23,7 @@ from django.http import FileResponse, HttpRequest, HttpResponse, HttpResponseBas
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
+from core.authz import throttle
 from core.models import ExamTimetableRun, Student
 from core.services.audit import log_audit_event
 from core.services.exam_timetable import (
@@ -122,6 +123,7 @@ def exam_timetable_preview_courses_view(request: HttpRequest) -> JsonResponse:
 
 
 @require_POST
+@throttle(max_calls=3, window_seconds=120)
 def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
     """Build (or rebuild) the exam timetable.
 

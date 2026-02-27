@@ -180,22 +180,45 @@
 
     /* Output pre block */
     .dba-output {
-      background:    #0d1117;
-      color:         #b8d4f8;
+      background:    rgba(248,250,252,0.85);
+      backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+      color:         var(--t2, #3e3e52);
       border-radius: var(--radius);
-      padding:       1rem 1.125rem;
+      padding:       0.875rem 1rem;
       font-family:   var(--font-mono);
-      font-size:     0.8rem;
-      line-height:   1.65;
-      border:        1px solid rgba(255,255,255,.06);
-      min-height:    80px;
-      margin-top:    1rem;
+      font-size:     0.78rem;
+      line-height:   1.7;
+      border:        1px solid rgba(10,142,110,0.1);
+      min-height:    60px;
+      margin-top:    0.75rem;
       white-space:   pre-wrap;
       word-break:    break-all;
+      box-shadow:    inset 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .dba-output:empty::before { content: '—'; color: var(--t4); }
+
+    .dba-output.has-error {
+      color: #991b1b;
+      background: rgba(254,226,226,0.6);
+      border-color: rgba(220,53,69,0.18);
+    }
+    .dba-output.has-success {
+      color: #065f46;
+      background: rgba(209,250,229,0.5);
+      border-color: rgba(10,142,110,0.18);
     }
 
-    .dba-output.has-error { color: #fca5a5; }
-    .dba-output.has-success { color: #86efac; }
+    /* Output wrapper (collapsible details) */
+    .dba-output-wrap { margin-top: 0.75rem; }
+    .dba-output-wrap summary {
+      cursor: pointer; font-size: 0.72rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.04em;
+      color: var(--t3); padding: 4px 0; user-select: none;
+      display: inline-flex; align-items: center; gap: 4px;
+    }
+    .dba-output-wrap summary::marker { content: ''; }
+    .dba-output-wrap summary::before { content: '▸'; font-size: 0.7rem; transition: transform 0.15s; }
+    .dba-output-wrap[open] summary::before { transform: rotate(90deg); }
 
     /* Action section within panel */
     .dba-section {
@@ -446,7 +469,10 @@
             </div>
           </div>
 
-          <pre id="sOut" class="dba-output" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد. ابدأ بـ «معاينة» للتحقق من النطاق.{% else %}No action yet. Run Preview first to confirm scope.{% endif %}</pre>
+          <details class="dba-output-wrap" open>
+            <summary>{% if LANGUAGE_CODE == 'ar' %}المخرجات{% else %}Output{% endif %}</summary>
+            <pre id="sOut" class="dba-output" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد. ابدأ بـ «معاينة» للتحقق من النطاق.{% else %}No action yet. Run Preview first to confirm scope.{% endif %}</pre>
+          </details>
         </div>
 
         <!-- ══ PANEL: Delete Catalog ════════════════════════ -->
@@ -473,7 +499,10 @@
             </div>
           </div>
 
-          <pre id="pOut" class="dba-output" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد. ابدأ بـ «معاينة» للتحقق من النطاق.{% else %}No action yet. Run Preview first to confirm scope.{% endif %}</pre>
+          <details class="dba-output-wrap" open>
+            <summary>{% if LANGUAGE_CODE == 'ar' %}المخرجات{% else %}Output{% endif %}</summary>
+            <pre id="pOut" class="dba-output" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد. ابدأ بـ «معاينة» للتحقق من النطاق.{% else %}No action yet. Run Preview first to confirm scope.{% endif %}</pre>
+          </details>
         </div>
 
         <!-- ══ PANEL: Import Program Plan ═══════════════════ -->
@@ -582,7 +611,10 @@
             </div>
           </div>
 
-          <pre id="tOut" class="dba-output" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد. ابدأ بـ «تحليل + معاينة».{% else %}No action yet. Start with Parse + Preview.{% endif %}</pre>
+          <details class="dba-output-wrap" open>
+            <summary>{% if LANGUAGE_CODE == 'ar' %}المخرجات{% else %}Output{% endif %}</summary>
+            <pre id="tOut" class="dba-output" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد. ابدأ بـ «تحليل + معاينة».{% else %}No action yet. Start with Parse + Preview.{% endif %}</pre>
+          </details>
         </div>
 
         <!-- ══ PANEL: Import Oracle Plan ═════════════════════ -->
@@ -662,7 +694,10 @@
             </div>
           </div>
 
-          <pre id="oOut" class="dba-output" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد. ابدأ بـ «تحليل + معاينة».{% else %}No action yet. Start with Parse + Preview.{% endif %}</pre>
+          <details class="dba-output-wrap" open>
+            <summary>{% if LANGUAGE_CODE == 'ar' %}المخرجات{% else %}Output{% endif %}</summary>
+            <pre id="oOut" class="dba-output" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد. ابدأ بـ «تحليل + معاينة».{% else %}No action yet. Start with Parse + Preview.{% endif %}</pre>
+          </details>
         </div>
 
         <!-- ══ PANEL: Legacy Import ══════════════════════════ -->
@@ -753,24 +788,18 @@
             </div>
           </div>
 
-          <div class="row g-3">
-            <div class="col-md-6">
-              <div class="dba-section h-100">
-                <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}النسخ الاحتياطي{% else %}Backup{% endif %}</div>
-                <p class="small text-secondary mb-3">{% if LANGUAGE_CODE == 'ar' %}ينشئ نسخة احتياطية بطابع زمني لقاعدة البيانات الحالية.{% else %}Creates a timestamped copy of the current database file.{% endif %}</p>
-                <button id="bSnapshot" class="btn btn-outline-dark w-100">{% if LANGUAGE_CODE == 'ar' %}إنشاء لقطة قاعدة البيانات{% else %}Create DB snapshot{% endif %}</button>
-              </div>
-            </div>
-            <div class="col-md-6">
-              <div class="dba-section h-100">
-                <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}التحقق من التكامل{% else %}Integrity{% endif %}</div>
-                <p class="small text-secondary mb-3">{% if LANGUAGE_CODE == 'ar' %}يتحقق من الأعداد والعلاقات عبر الجداول الرئيسية.{% else %}Checks counts and relationships across all key tables.{% endif %}</p>
-                <button id="bIntegrity" class="btn btn-outline-primary w-100">{% if LANGUAGE_CODE == 'ar' %}تشغيل تقرير التحقق{% else %}Run integrity report{% endif %}</button>
-              </div>
+          <div class="dba-section">
+            <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}الإجراءات{% else %}Actions{% endif %}</div>
+            <div class="d-flex flex-wrap gap-2">
+              <button id="bSnapshot" class="btn btn-outline-dark"><span class="i" aria-hidden="true" style="width:15px;height:15px;vertical-align:-2px;margin-inline-end:5px"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}إنشاء لقطة قاعدة البيانات{% else %}Create DB Snapshot{% endif %}</button>
+              <button id="bIntegrity" class="btn btn-outline-primary"><span class="i" aria-hidden="true" style="width:15px;height:15px;vertical-align:-2px;margin-inline-end:5px"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}تشغيل تقرير التحقق{% else %}Run Integrity Report{% endif %}</button>
             </div>
           </div>
 
-          <pre id="bOut" class="dba-output" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد.{% else %}No action yet.{% endif %}</pre>
+          <details class="dba-output-wrap" open>
+            <summary>{% if LANGUAGE_CODE == 'ar' %}المخرجات{% else %}Output{% endif %}</summary>
+            <pre id="bOut" class="dba-output" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}لا يوجد إجراء بعد.{% else %}No action yet.{% endif %}</pre>
+          </details>
         </div>
 
         <!-- ══ PANEL: External Courses ═════════════════════ -->
@@ -823,26 +852,9 @@ const T = {
   confirmDelete:  IS_AR ? 'تأكيد الحذف؟' : 'Confirm Delete?',
 };
 
-/* ── Double-confirmation delete helper ── */
+/* ── Delete helper — delegates to typed dlg.confirm ── */
 function handleDeleteWithConfirm(btn, deleteFn) {
-  if (btn.dataset.confirming === 'true') {
-    btn.dataset.confirming = 'false';
-    btn.classList.remove('dba-delete-confirm');
-    if (btn._origHtml) btn.innerHTML = btn._origHtml;
-    deleteFn();
-    return;
-  }
-  btn._origHtml = btn.innerHTML;
-  btn.dataset.confirming = 'true';
-  btn.classList.add('dba-delete-confirm');
-  btn.innerHTML = '<span class="dba-confirm-text">' + T.confirmDelete + '</span>';
-  btn._confirmTimer = setTimeout(() => {
-    if (btn.dataset.confirming === 'true') {
-      btn.dataset.confirming = 'false';
-      btn.classList.remove('dba-delete-confirm');
-      btn.innerHTML = btn._origHtml;
-    }
-  }, 4000);
+  deleteFn();
 }
 
 /* ── Nav switching ── */
@@ -923,8 +935,8 @@ function disableDeleteBtn(btn) {
 q('sPreview').onclick = async () => {
   const u = `/ops/db/preview-delete-students/?program=${encodeURIComponent(q('sProgram').value)}&section=${encodeURIComponent(q('sSection').value)}`;
   const data = await callJson(u, {}, 'sOut', q('sPreview'));
-  /* Enable delete only when preview returns matching results */
-  if (data && !data.error && (data.count > 0 || data.total > 0 || (Array.isArray(data.students) && data.students.length > 0))) {
+  /* Enable delete only when preview returns matching students */
+  if (data && !data.error && data.students_count > 0) {
     enableDeleteBtn(q('sDelete'));
   } else {
     disableDeleteBtn(q('sDelete'));
@@ -962,7 +974,7 @@ q('pPreview').onclick = async () => {
   const u = `/ops/db/preview-delete-program-catalog/?program=${encodeURIComponent(q('pProgram').value)}`;
   const data = await callJson(u, {}, 'pOut', q('pPreview'));
   /* Enable delete only when preview returns matching results */
-  if (data && !data.error && (data.count > 0 || data.total > 0 || data.requirements > 0 || data.prerequisites > 0)) {
+  if (data && !data.error && (data.requirements_count > 0 || data.prerequisites_count > 0)) {
     enableDeleteBtn(q('pDelete'));
   } else {
     disableDeleteBtn(q('pDelete'));

@@ -1,3 +1,6 @@
+import os
+from unittest import mock
+
 import pytest
 from django.contrib.auth.models import Group, User
 from django.test import Client, override_settings
@@ -29,6 +32,7 @@ def _login_as_advisor(username: str = "dev-switch-user") -> User:
 
 
 @override_settings(DEBUG=True)
+@mock.patch.dict(os.environ, {"ALLOW_DEV_ROLE_SWITCH": "true"})
 def test_dev_role_switch_changes_scope_in_debug() -> None:
     user = _login_as_advisor()
 
@@ -47,5 +51,14 @@ def test_dev_role_switch_changes_scope_in_debug() -> None:
 @override_settings(DEBUG=False)
 def test_dev_role_switch_blocked_outside_debug() -> None:
     _login_as_advisor("dev-switch-user-2")
+    resp = client.post("/ops/dev/switch-role/", data={"role": ROLE_GENERAL_ADVISOR})
+    assert resp.status_code == 403
+
+
+@override_settings(DEBUG=True)
+@mock.patch.dict(os.environ, {"ALLOW_DEV_ROLE_SWITCH": ""})
+def test_dev_role_switch_blocked_without_env_var() -> None:
+    """Even with DEBUG=True, endpoint is blocked unless ALLOW_DEV_ROLE_SWITCH=true."""
+    _login_as_advisor("dev-switch-user-3")
     resp = client.post("/ops/dev/switch-role/", data={"role": ROLE_GENERAL_ADVISOR})
     assert resp.status_code == 403

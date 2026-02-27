@@ -4,13 +4,13 @@
  * Includes focus trapping and focus restoration.
  *
  * Accepted options:
- *   title          – dialog heading text
- *   body           – HTML body content
+ *   title          – dialog heading text (plain text, auto-escaped)
+ *   body           – HTML body content   (caller must pre-escape user data)
  *   icon / kind    – 'danger' | 'warning' | 'info' (sets icon + button style)
- *   confirmText    – label for the confirm button  (alias: confirmLabel)
- *   cancelText     – label for the cancel button   (alias: cancelLabel)
+ *   confirmText    – label for the confirm button  (alias: confirmLabel, auto-escaped)
+ *   cancelText     – label for the cancel button   (alias: cancelLabel, auto-escaped)
  *   typed          – require the user to type this string to enable confirm (alias: typedConfirm)
- *   inputLabel     – show an input field with this label
+ *   inputLabel     – show an input field with this label (auto-escaped)
  *   inputPlaceholder / inputHint / inputType – input configuration
  */
 const dlg = (() => {
@@ -71,8 +71,8 @@ const dlg = (() => {
     if (o.typedConfirm) {
       inputHtml =
         `<div class="dlg-input-row">` +
-          `<label for="dlg-typed-field">Type <strong>${o.typedConfirm}</strong> to confirm</label>` +
-          `<input id="dlg-typed-field" class="dlg-input" type="text" placeholder="${o.typedConfirm}" autocomplete="off">` +
+          `<label for="dlg-typed-field">Type <strong>${esc(o.typedConfirm)}</strong> to confirm</label>` +
+          `<input id="dlg-typed-field" class="dlg-input" type="text" placeholder="${esc(o.typedConfirm)}" autocomplete="off">` +
         `</div>`;
     }
 
@@ -80,9 +80,9 @@ const dlg = (() => {
     if (o.inputLabel && !o.typedConfirm) {
       inputHtml =
         `<div class="dlg-input-row">` +
-          `<label for="dlg-input-field">${o.inputLabel}</label>` +
-          `<input id="dlg-input-field" class="dlg-input" type="${o.inputType}" placeholder="${o.inputPlaceholder}" autocomplete="off">` +
-          (o.inputHint ? `<div class="dlg-input-hint">${o.inputHint}</div>` : '') +
+          `<label for="dlg-input-field">${esc(o.inputLabel)}</label>` +
+          `<input id="dlg-input-field" class="dlg-input" type="${esc(o.inputType)}" placeholder="${esc(o.inputPlaceholder)}" autocomplete="off">` +
+          (o.inputHint ? `<div class="dlg-input-hint">${esc(o.inputHint)}</div>` : '') +
         `</div>`;
     }
 
@@ -97,14 +97,14 @@ const dlg = (() => {
         `<div class="dlg-header">` +
           iconHtml +
           `<div>` +
-            `<div id="${titleId}" class="dlg-title">${o.title}</div>` +
+            `<div id="${titleId}" class="dlg-title">${esc(o.title)}</div>` +
           `</div>` +
         `</div>` +
-        (o.body ? `<div class="dlg-body">${o.body}</div>` : '') +
+        (o.body ? `<div class="dlg-body">${o.body}</div>` : '') +  /* body is intentional HTML — callers must pre-escape */
         inputHtml +
         `<div class="dlg-footer">` +
-          `<button class="btn-cancel">${o.cancelLabel}</button>` +
-          `<button class="btn-confirm ${btnClass}">${o.confirmLabel}</button>` +
+          `<button class="btn-cancel">${esc(o.cancelLabel)}</button>` +
+          `<button class="btn-confirm ${btnClass}">${esc(o.confirmLabel)}</button>` +
         `</div>` +
       `</div>`;
 

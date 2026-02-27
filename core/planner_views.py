@@ -9,6 +9,7 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
+from core.authz import throttle
 from core.models import (
     Course,
     Prerequisite,
@@ -142,6 +143,21 @@ def planner_context_view(request: HttpRequest) -> JsonResponse:
     if scope_err:
         return scope_err
 
+    try:
+        return _planner_context_inner(request, student_id, student_id_int, year, term)
+    except Exception as exc:
+        logger.error("planner_context_view error for student=%s", student_id, exc_info=True)
+        return _internal_error(exc)
+
+
+def _planner_context_inner(
+    request: HttpRequest,
+    student_id: str,
+    student_id_int: int,
+    year: str,
+    term: str,
+) -> JsonResponse:
+    """Core logic extracted so the caller can catch unexpected exceptions."""
     student = (
         Student.objects.filter(student_id=student_id_int)
         .values(
@@ -476,6 +492,7 @@ def planner_sections_catalog_view(request: HttpRequest) -> JsonResponse:
 
 @login_required(login_url="login")
 @require_POST
+@throttle(max_calls=5, window_seconds=60)
 def planner_build_view(request: HttpRequest) -> JsonResponse:
     deny = _require_staff(request)
     if deny:

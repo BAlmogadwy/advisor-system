@@ -1,3 +1,4 @@
+import os
 from typing import Any, cast
 
 from django.conf import settings
@@ -23,13 +24,22 @@ from core.sidebar_context import get_sidebar_context
 
 
 def health(request: HttpRequest) -> JsonResponse:
+    try:
+        from django.db import connection
+
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+    except Exception:
+        return JsonResponse({"status": "error", "db": "unreachable"}, status=503)
     return JsonResponse({"status": "ok"})
 
 
 @login_required(login_url="login")
 @require_POST
 def dev_role_switch_view(request: HttpRequest) -> JsonResponse:
-    if not settings.DEBUG:
+    # Double-guard: require both DEBUG=True AND an explicit opt-in env var.
+    # This prevents accidental exposure if DEBUG is ever left on in production.
+    if not settings.DEBUG or os.getenv("ALLOW_DEV_ROLE_SWITCH", "").lower() != "true":
         return JsonResponse({"error": "Not available outside DEBUG mode."}, status=403)
 
     role = (request.POST.get("role") or "").strip()

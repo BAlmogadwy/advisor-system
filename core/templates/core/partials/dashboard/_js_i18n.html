@@ -1,0 +1,648 @@
+<script>
+  // Lightweight in-template i18n (domain-aware Arabic)
+  // - Keeps English as source-of-truth in markup
+  // - For Arabic (LANG=ar), replaces visible UI strings + common placeholders
+  // - Avoids touching dynamic values (IDs, numbers, codes)
+  (function () {
+    const LANG = "{{ LANGUAGE_CODE|default:'en' }}";
+    if (LANG !== "ar") return;
+
+    const MAP = {
+      // Shell
+      "Advisor Dashboard": "لوحة المرشد الأكاديمي",
+      "Advisor Console": "لوحة التحكم",
+      "Main functions": "الوظائف الرئيسية",
+      "Current module": "الوحدة الحالية",
+      "Role:": "الدور:",
+      "Logout": "تسجيل الخروج",
+      "Access scope:": "نطاق الصلاحيات:",
+      "Allowed departments:": "الأقسام المسموح بها:",
+      "Advisor ID:": "معرّف المرشد:",
+      // Overview panel
+      "Students Assigned": "الطلاب المعينون",
+      "Pending Recommendations": "توصيات معلقة",
+      "Overdue Schedules": "جداول متأخرة",
+      "High Priority Missing": "أولوية عالية مفقودة",
+      "Look up a student": "البحث عن طالب",
+      "Build timetable": "بناء الجدول الزمني",
+      "Run batch recommender": "تشغيل التوصيات الجماعية",
+      "View portfolio": "عرض الملف الشخصي",
+      "Recent Activity": "النشاط الأخير",
+      "No recent activity yet. Use the dashboard modules to get started.": "لا يوجد نشاط حديث حتى الآن. استخدم لوحة التحكم لبدء العمل.",
+      // Student context sidebar
+      "Student Profile": "ملف الطالب",
+      "ID": "الرقم",
+      "Earned": "المكتسبة",
+      "Remaining": "المتبقية",
+      "Prereqs Met": "متطلبات مكتملة",
+      "Prereqs Pending": "متطلبات معلقة",
+      "View Full Profile": "عرض الملف الكامل",
+      // Sidebar modules
+      "Student Recommender": "توصيات الطالب",
+      "Batch Recommender": "توصيات الدفعة",
+      "Course Prerequisites": "متطلبات المقررات",
+      "Course Prerequisites View": "عرض متطلبات المقررات",
+      "Program Plan Viewer": "عارض الخطة الدراسية",
+      "Batch Scraping (legacy)": "استخراج الدفعات (إصدار قديم)",
+      "Recommendation Debug": "تشخيص التوصيات",
+      "Recommendation Debug Report": "تقرير تشخيص التوصيات",
+      "Course Eligibility": "أهلية تسجيل المقرر",
+      "Course Eligibility Inspector": "فحص أهلية تسجيل المقرر",
+      "Advisor Admin": "إدارة المرشدين",
+      "User Management": "إدارة المستخدمين",
+      "Advisor Portfolio": "ملف المرشد",
+      "Export Center": "مركز التصدير",
+      "Missing High Priority": "نواقص عالية الأولوية",
+      "Missing High Priority Courses": "مقررات عالية الأولوية غير مكتملة",
+      "Student Timetable Builder": "منشئ جدول الطالب",
+      "Database Admin Console": "وحدة إدارة قاعدة البيانات",
+      "Sections Import (Oracle HTML)": "استيراد الشعب (Oracle HTML)",
+      "Open Audit Explorer": "فتح مستكشف التدقيق",
+      // Student module
+      "Get a per-student recommendation list and export it instantly.": "استخرج قائمة توصيات لكل طالب مع إمكانية التصدير فوراً.",
+      "Student ID": "الرقم الجامعي",
+      "Year": "السنة",
+      "Semester": "الفصل",
+      "Recommend courses": "توليد التوصيات",
+      "Load plan": "تحميل الخطة",
+      "Recommendations:": "التوصيات:",
+      "Export CSV": "تصدير CSV",
+      "Copy link": "نسخ الرابط",
+      "Student Plan Matrix (Terms 1-10)": "مصفوفة خطة الطالب (الفصول 1–10)",
+      "Load a student to view the full term matrix.": "حمّل بيانات طالب لعرض مصفوفة الخطة الكاملة.",
+      "Passed": "مُجتاز",
+      "Studying": "قيد الدراسة",
+      "Can register": "متاح للتسجيل",
+      "Locked": "مُقفل",
+      "Legend:": "المفتاح:",
+      "passed": "مجتاز",
+      "studying": "قيد الدراسة",
+      "not taken (can register)": "غير مُسجّل (متاح للتسجيل)",
+      "locked not taken": "غير مُسجّل (مقفل)",
+      "Focus next term": "التركيز على الفصل التالي",
+      "Build target plan": "بناء خطة مستهدفة",
+      "View filters": "عرض عوامل التصفية",
+      "Show all": "عرض الكل",
+      "Can register only": "المتاح للتسجيل فقط",
+      "Locked only": "المقفل فقط",
+      "Compact rows": "صفوف مختصرة",
+      "Expand all": "توسيع الكل",
+      "Collapse all": "طيّ الكل",
+      "Sort options": "خيارات الفرز",
+      "Importance": "الأهمية",
+      "Status": "الحالة",
+      "Code": "الرمز",
+      "Target settings": "إعدادات الهدف",
+      "Credits": "الساعات",
+      "Max importance": "تعظيم الأهمية",
+      "Balanced by term load": "موازنة حسب عبء الفصل",
+      "Print / PDF": "طباعة / PDF",
+      "Course Explain Drawer": "لوحة شرح المقرر",
+      "Click any course row to inspect lock reason, missing prereqs, and unlock impact.": "انقر على أي مقرر لعرض سبب الإقفال، المتطلبات الناقصة، وتأثير فتح المسار.",
+      // Batch module
+      "Run cohort-level preview, inspect top courses, and export aggregate CSV.": "نفّذ معاينة على مستوى الدفعة، استعرض أعلى المقررات، وصدّر ملف CSV تجميعي.",
+      "Program (optional)": "البرنامج (اختياري)",
+      "Section (optional)": "الشعبة (اختياري)",
+      "Run preview": "تشغيل المعاينة",
+      "Reset": "إعادة ضبط",
+      "Save preset": "حفظ الإعداد",
+      "Load preset": "تحميل الإعداد",
+      "Year/Semester": "السنة/الفصل",
+      "Students scanned": "عدد الطلاب المفحوصين",
+      "Top list size": "حجم قائمة الأعلى",
+      "Download aggregate CSV": "تنزيل CSV تجميعي",
+      "Open summary JSON": "فتح ملخص JSON",
+      "Copy aggregate CSV link": "نسخ رابط CSV التجميعي",
+      "Last update: never": "آخر تحديث: لا يوجد",
+      "Details": "التفاصيل",
+      "No data yet. Next step: set filters and click Run Preview.": "لا توجد بيانات بعد. الخطوة التالية: حدّد المرشحات ثم اضغط «تشغيل المعاينة».",
+      "Top recommendation chips": "أعلى التوصيات",
+      // Prereq module
+      "Explore prerequisite links by program and optionally by a specific course.": "استكشف علاقات المتطلبات حسب البرنامج ويمكن تقييدها بمقرر محدد.",
+      "Filters": "المرشحات",
+      "Program": "البرنامج",
+      "Course code (optional)": "رمز المقرر (اختياري)",
+      "Load": "تحميل",
+      "Results": "النتائج",
+      "Courses in view": "عدد المقررات المعروضة",
+      "Prerequisite links": "روابط المتطلبات",
+      "No data loaded yet. Next step: choose filters and click Load.": "لم يتم تحميل بيانات بعد. الخطوة التالية: اختر المرشحات ثم اضغط «تحميل».",
+      "Graph": "الرسم البياني",
+      "Load prerequisites to visualize dependency chains.": "حمّل المتطلبات لعرض سلاسل الاعتماد بين المقررات.",
+      // Plan module
+      "Inspect full program requirements, term breakdown, and credit totals.": "استعرض متطلبات البرنامج كاملة، توزيعها على الفصول، وإجمالي الساعات.",
+      "Load Plan": "تحميل الخطة",
+      "Total courses": "إجمالي المقررات",
+      "Total credit hours": "إجمالي الساعات المعتمدة",
+      "Visuals": "تصوّرات",
+      "Term distribution": "توزيع الساعات على الفصول",
+      "Term cards": "بطاقات الفصول",
+      "Selected course prerequisites": "متطلبات المقرر المحدد",
+      "Click a course in Program Plan table to load its prerequisites.": "انقر على مقرر في جدول الخطة لتحميل متطلباته.",
+      "No course selected.": "لم يتم تحديد مقرر.",
+      "No prerequisite data loaded.": "لا توجد بيانات متطلبات محمّلة.",
+      // Scrape module
+      "Batch Scraping (Legacy)": "استخراج الدفعات (إصدار قديم)",
+      "Run legacy scraper in background, monitor logs, and track run history metadata.": "شغّل أداة الاستخراج القديمة في الخلفية مع متابعة السجلات وسجل التشغيل.",
+      "Concurrency": "التوازي",
+      "Students CSV path (optional)": "مسار CSV للطلاب (اختياري)",
+      "Start scrape": "بدء الاستخراج",
+      "Stop": "إيقاف",
+      "Refresh": "تحديث",
+      "Current status": "الحالة الحالية",
+      "PID": "PID",
+      "Started": "بدأ",
+      "Stopped": "توقّف",
+      "Idle": "متوقف",
+      "No scrape run started.": "لم يبدأ أي تشغيل للاستخراج.",
+      "No history yet.": "لا يوجد سجل بعد.",
+      "No logs yet.": "لا توجد سجلات بعد.",
+      "Time (UTC)": "الوقت (UTC)",
+      "Event": "الحدث",
+      // Debug module
+      "Legacy-style student debug report for recommendation traceability.": "تقرير تشخيص بأسلوب قديم لتتبع منطق التوصيات.",
+      "Section": "الشعبة",
+      "Join years": "سنوات الالتحاق",
+      "Limit": "الحد",
+      "Run": "تشغيل",
+      "Export debug CSV": "تصدير CSV للتشخيص",
+      "No debug report loaded.": "لم يتم تحميل تقرير تشخيص.",
+      "Students matched": "الطلاب المطابقون",
+      "With recommendations": "لديهم توصيات",
+      "Empty recommendations": "بدون توصيات",
+      // Eligibility module
+      "Old-style output: eligible student IDs only.": "مخرجات مختصرة: أرقام الطلاب المؤهلين فقط.",
+      "Course code": "رمز المقرر",
+      "Mode": "الوضع",
+      "Relaxed (passed+studying)": "مرن (مجتاز + قيد الدراسة)",
+      "Strict (passed only)": "صارم (مجتاز فقط)",
+      "Check eligibility": "فحص الأهلية",
+      "Export eligibility CSV": "تصدير CSV للأهلية",
+      "No eligibility report loaded.": "لم يتم تحميل تقرير أهلية.",
+      "Eligible IDs": "الأرقام المؤهلة",
+      "Eligible Student IDs": "أرقام الطلاب المؤهلين",
+      "No eligibility rows yet. Next step: enter course code and click Check eligibility.": "لا توجد نتائج بعد. الخطوة التالية: أدخل رمز المقرر ثم اضغط «فحص الأهلية».",
+      // Advisor admin
+      "Create advisors and manage student-to-advisor assignments.": "إنشاء حسابات المرشدين وإدارة ربط الطلاب بالمرشد.",
+      "Step 1": "الخطوة 1",
+      "Create / Update Advisor Profile": "إنشاء/تحديث ملف المرشد",
+      "Use a unique advisor ID and valid institutional email.": "استخدم معرّفاً فريداً وبريداً مؤسسياً صحيحاً.",
+      "Full name": "الاسم الكامل",
+      "Email": "البريد الإلكتروني",
+      "Departments": "الأقسام",
+      "Save advisor": "حفظ المرشد",
+      "Step 2": "الخطوة 2",
+      "Bulk Mapping": "ربط جماعي",
+      "Paste CSV rows to map many students at once.": "الصق بيانات CSV لربط عدد كبير من الطلاب دفعة واحدة.",
+      "Enable students.advisor_id": "تفعيل students.advisor_id",
+      "Bulk assign CSV (student_id,advisor_id)": "ربط جماعي عبر CSV (student_id,advisor_id)",
+      "Apply CSV mapping": "تطبيق الربط",
+      "Copy shown student IDs": "نسخ أرقام الطلاب المعروضة",
+      "Step 3": "الخطوة 3",
+      "Quick Single Assignment": "ربط فردي سريع",
+      "Use for quick corrections without re-uploading CSV.": "للتصحيحات السريعة دون إعادة رفع CSV.",
+      "Quick assign student ID": "رقم الطالب (ربط سريع)",
+      "Quick assign advisor ID": "معرّف المرشد (ربط سريع)",
+      "Assign one student": "ربط طالب واحد",
+      // Portfolio
+      "View students for a selected advisor with risk, attention, and missing-high-priority insights.": "عرض طلاب مرشد محدد مع مؤشرات المخاطر والتنبيه ونواقص الأولوية العالية.",
+      "Portfolio Selection & Export": "اختيار الملف والتصدير",
+      "Choose advisor, load roster, then export exactly what is filtered.": "اختر المرشد ثم حمّل القائمة ثم صدّر النتائج وفق عوامل التصفية الحالية.",
+      "Advisor selector": "اختيار المرشد",
+      "Select advisor": "اختر المرشد",
+      "Load students": "تحميل الطلاب",
+      "Export students CSV": "تصدير CSV للطلاب",
+      "Copy CSV link": "نسخ رابط CSV",
+      "Filtering & Quick Focus": "التصفية والتركيز السريع",
+      "Narrow the list to high-priority advising cases in one click.": "قلّص القائمة إلى حالات الإرشاد ذات الأولوية بنقرة واحدة.",
+      "Search student (ID/Name)": "بحث عن طالب (رقم/اسم)",
+      "Focus": "التركيز",
+      "All students": "جميع الطلاب",
+      "Needs attention": "تحتاج متابعة",
+      "At risk GPA (<2.0)": "مخاطر (معدل < 2.0)",
+      "Has high priority missing": "لديه نواقص عالية الأولوية",
+      "Zero current term hours": "ساعات فصل حالي = صفر",
+      "Program filter": "تصفية حسب البرنامج",
+      "Apply filters": "تطبيق التصفية",
+      "Needs Attention": "تحتاج متابعة",
+      "At Risk Only": "المخاطر فقط",
+      "High Priority Missing": "نواقص عالية الأولوية",
+      "Zero Term Hours": "ساعات الفصل = صفر",
+      "Clear Focus": "إلغاء التركيز",
+      "Copy high-risk IDs": "نسخ أرقام عالي المخاطر",
+      "Advisor Snapshot": "ملخص المرشد",
+      "Students": "الطلاب",
+      "Average GPA": "متوسط المعدل",
+      "Term hours (total)": "ساعات الفصل (الإجمالي)",
+      "Student Portfolio Table": "جدول طلاب المرشد",
+      "Student ID": "رقم الطالب",
+      "Name": "الاسم",
+      "Status": "الحالة",
+      "Attention": "تنبيه",
+      "Risk Score": "درجة المخاطر",
+      "GPA": "المعدل",
+      "Current Term Hours": "ساعات الفصل الحالي",
+      "High Priority Missing": "نواقص عالية الأولوية",
+      "Reasons": "الأسباب",
+      "Earned/Registered": "المكتسبة/المسجلة",
+      "Registration No": "رقم التسجيل",
+      "Select an advisor to view students.": "اختر مرشداً لعرض الطلاب.",
+      // Exports
+      "Quick links for all operational exports in one place.": "روابط سريعة لجميع عمليات التصدير في مكان واحد.",
+      "What these exports contain": "محتوى هذه الصادرات",
+      "Tip: run each module once to auto-fill parameterized export links.": "ملاحظة: شغّل كل وحدة مرة واحدة لتعبئة روابط التصدير تلقائياً.",
+      "Download": "تنزيل",
+      "Copy": "نسخ",
+      "Contains": "المحتوى",
+      "Action": "الإجراء",
+      "Copy Link": "نسخ الرابط",
+      "Student recommendations CSV": "CSV توصيات الطالب",
+      "Single student": "طالب واحد",
+      "Aggregate recommendations CSV": "CSV توصيات تجميعية",
+      "Batch summary": "ملخص الدفعة",
+      "Student plan matrix CSV": "CSV مصفوفة الخطة",
+      "Filtered cohort debug": "تشخيص الدفعة (مصفّى)",
+      "Course eligibility CSV": "CSV أهلية المقرر",
+      "Eligibility inspector": "فحص الأهلية",
+      "Students by advisor CSV": "CSV طلاب المرشد",
+      "Advisor roster": "قائمة المرشد",
+      "Missing high priority XLSX": "XLSX نواقص عالية الأولوية",
+      "High-priority checker": "فحص الأولوية العالية",
+      // High priority
+      "Exact legacy logic from old script (unlock-graph priority + parity split).": "منطق مطابق للأداة القديمة (أولوية فتح المسار + فصل حسب الفردي/الزوجي).",
+      "Task": "المهمة",
+      "Use this report to flag students missing high-impact unlock courses; export XLSX for advisor intervention lists.": "استخدم التقرير لرصد الطلاب الذين تنقصهم مقررات مفصلية لفتح المسار، ثم صدّر XLSX لقوائم التدخل.",
+      "Parity": "الفردي/الزوجي",
+      "Discount": "الخصم",
+      "Min score": "الحد الأدنى للنقاط",
+      "Top K": "أعلى K",
+      "Studying counts as passed": "اعتبار قيد الدراسة كمجتاز",
+      "No (exact default)": "لا (الافتراضي الدقيق)",
+      "Yes": "نعم",
+      "Run report": "تشغيل التقرير",
+      "Export XLSX": "تصدير XLSX",
+      "No report loaded.": "لم يتم تحميل تقرير.",
+      "Student": "الطالب",
+      "Missing this parity": "النواقص لهذا النمط",
+      "Missing other": "النواقص للنمط الآخر",
+      "Total": "الإجمالي",
+      "No flagged students shown yet. Next step: set filters and click Run report.": "لا توجد حالات معروضة بعد. الخطوة التالية: حدّد المرشحات ثم اضغط «تشغيل التقرير».",
+      // User mgmt
+      "SUPER_ADMIN only: create users, update role/scope, then manage account state safely.": "لـ SUPER_ADMIN فقط: إنشاء مستخدمين، تحديث الدور/النطاق، ثم إدارة حالة الحساب بأمان.",
+      "User Identity & Scope": "هوية المستخدم والنطاق",
+      "Username": "اسم المستخدم",
+      "Password (create)": "كلمة المرور (إنشاء)",
+      "Role": "الدور",
+      "Departments CSV": "الأقسام (CSV)",
+      "Create user": "إنشاء مستخدم",
+      "Update role/scope": "تحديث الدور/النطاق",
+      "Refresh list": "تحديث القائمة",
+      "Account maintenance": "صيانة الحساب",
+      "Reset password": "إعادة تعيين كلمة المرور",
+      "Disable user": "تعطيل المستخدم",
+      "Enable user": "تفعيل المستخدم",
+      "Danger zone": "منطقة خطرة",
+      "Deletion is permanent. Username confirmation is required.": "الحذف نهائي. يلزم تأكيد اسم المستخدم.",
+      "Delete user permanently": "حذف المستخدم نهائياً",
+      "No action yet.": "لا توجد عملية بعد.",
+      "Load users list.": "حمّل قائمة المستخدمين.",
+      "Active": "نشط"
+    };
+
+    const PLACEHOLDERS = {
+      "e.g. CS": "مثال: CS",
+      "e.g. CS323": "مثال: CS323",
+      "M/F": "M/F",
+      "AI/CS": "AI/CS",
+      "43,44": "43,44",
+      "A001": "A001",
+      "AI,CS": "AI,CS",
+      "Dr. Name": "د. الاسم",
+      "advisor@uni.edu": "advisor@uni.edu",
+      "student_id,advisor_id\n4410001,A001": "student_id,advisor_id\n4410001,A001",
+      "e.g. 4410 or Ahmed": "مثال: 4410 أو أحمد",
+      "default: data/students_list.csv": "افتراضي: data/students_list.csv"
+    };
+
+    function translateNodeText(el) {
+      if (!el) return;
+      // Avoid translating inputs/selects/textarea values directly here
+      const tag = (el.tagName || "").toLowerCase();
+      if (["script", "style", "code", "pre"].includes(tag)) return;
+      // Only translate leaf nodes (no nested element children)
+      if (el.children && el.children.length) return;
+
+      const raw = (el.textContent || "").trim();
+      if (!raw) return;
+
+      // Handle common prefixes like "Role: X" or "Last update: never"
+      for (const [en, ar] of Object.entries(MAP)) {
+        if (raw === en) { el.textContent = ar; return; }
+        // Prefix case: "Role: {{ role }}" etc.
+        if (raw.startsWith(en) && raw.length > en.length) {
+          el.textContent = ar + raw.slice(en.length);
+          return;
+        }
+      }
+    }
+
+    function translateAttributes(root) {
+      root.querySelectorAll("[placeholder]").forEach(el => {
+        const p = el.getAttribute("placeholder");
+        if (p && PLACEHOLDERS[p]) el.setAttribute("placeholder", PLACEHOLDERS[p]);
+      });
+      root.querySelectorAll("a[title],button[title],input[title],select[title],textarea[title]").forEach(el => {
+        const t = el.getAttribute("title");
+        if (t && MAP[t]) el.setAttribute("title", MAP[t]);
+      });
+    }
+
+    function translateOptions(root) {
+      root.querySelectorAll("option").forEach(opt => {
+        const raw = (opt.textContent || "").trim();
+        if (MAP[raw]) opt.textContent = MAP[raw];
+      });
+    }
+
+    function walkAndTranslate(root) {
+      // Translate common UI text nodes
+      const candidates = root.querySelectorAll("h1,h2,h3,h4,h5,h6,div,span,p,a,button,label,th,td,summary,li,small,strong,badge,pre");
+      candidates.forEach(translateNodeText);
+      translateOptions(root);
+      translateAttributes(root);
+    }
+
+    // Initial pass
+    walkAndTranslate(document);
+
+    // Translate module title when navigation changes (JS in page may update it)
+    const cm = document.getElementById("currentModule");
+    if (cm) {
+      const obs = new MutationObserver(() => translateNodeText(cm));
+      obs.observe(cm, { childList: true, characterData: true, subtree: true });
+    }
+
+    // If page renders more content later, re-translate once after load
+    window.addEventListener("load", () => {
+      walkAndTranslate(document);
+    });
+  })();
+
+  /* ════════════════════════════════════════════════════════════════
+     UX ADDITIONS — purely additive, zero existing logic changed
+     ════════════════════════════════════════════════════════════════ */
+
+  /* ── REC 5: Update context chip when student plan loads ── */
+  (() => {
+    const origLoadPlan = q('loadStudentPlan');
+    if (!origLoadPlan) return;
+    const chip = q('phContextChip');
+    if (!chip) return;
+    const observer = new MutationObserver(() => {
+      const meta = q('studentPlanMeta');
+      if (meta && meta.textContent && meta.textContent.includes('Student')) {
+        chip.textContent = meta.textContent.split('•')[0].trim();
+        chip.classList.remove('d-none');
+      }
+    });
+    const meta = q('studentPlanMeta');
+    if (meta) observer.observe(meta, { childList: true, characterData: true, subtree: true });
+  })();
+
+  /* ── REC 6: ⌘K / Ctrl+K command palette (enhanced with keyboard nav) ── */
+  (() => {
+    const palette = q('cmdPalette');
+    const input   = q('cmdInput');
+    const results = q('cmdResults');
+    if (!palette || !input || !results) return;
+
+    /* Recent students — stored in localStorage */
+    const RECENT_KEY = 'cmd_recent_students';
+    function getRecentStudents() {
+      try { return JSON.parse(localStorage.getItem(RECENT_KEY) || '[]').slice(0, 5); } catch { return []; }
+    }
+    function addRecentStudent(sid) {
+      const list = getRecentStudents().filter(s => s !== String(sid));
+      list.unshift(String(sid));
+      if (list.length > 5) list.length = 5;
+      try { localStorage.setItem(RECENT_KEY, JSON.stringify(list)); } catch {}
+    }
+
+    let kbdIndex = -1;
+
+    function updateKbdHighlight() {
+      const items = results.querySelectorAll('.cmd-item');
+      items.forEach((el, i) => el.classList.toggle('kbd-active', i === kbdIndex));
+      if (kbdIndex >= 0 && items[kbdIndex]) items[kbdIndex].scrollIntoView({ block: 'nearest' });
+    }
+
+    function activateItem(item) {
+      if (!item) return;
+      const action = item.dataset.action;
+      if (action === 'open-student') {
+        const sid = item.dataset.sid;
+        addRecentStudent(sid);
+        q('studentIdInput').value = sid;
+        closePalette();
+        activatePanel('student');
+        history.pushState(null, '', '#student');
+        window.scrollTo({ top: 0, behavior: 'instant' });
+        q('loadStudentPlan')?.click();
+        toast(T.openingPlan(sid), true);
+      }
+    }
+
+    function showRecentStudents() {
+      const recent = getRecentStudents();
+      if (!recent.length) {
+        results.innerHTML = `<div class="cmd-hint">${T.paletteHint}</div>`;
+        return;
+      }
+      const recentLabel = IS_AR ? 'الطلاب الأخيرون' : 'Recent Students';
+      let html = `<div class="cmd-section-label">${recentLabel}</div>`;
+      html += recent.map(sid => `
+        <div class="cmd-item" data-action="open-student" data-sid="${sid}">
+          <span class="cmd-item-id">${sid}</span>
+          <span class="cmd-item-name">${T.navToStudentPlan}</span>
+          <span class="cmd-item-badge">${T.openPlan}</span>
+        </div>`).join('');
+      results.innerHTML = html;
+      bindItemClicks();
+    }
+
+    function bindItemClicks() {
+      results.querySelectorAll('.cmd-item').forEach(item => {
+        item.addEventListener('click', () => activateItem(item));
+      });
+    }
+
+    const openPalette = () => {
+      palette.classList.remove('d-none');
+      input.value = '';
+      kbdIndex = -1;
+      showRecentStudents();
+      requestAnimationFrame(() => input.focus());
+    };
+
+    const closePalette = () => { palette.classList.add('d-none'); kbdIndex = -1; };
+
+    document.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        palette.classList.contains('d-none') ? openPalette() : closePalette();
+      }
+      if (e.key === 'Escape' && !palette.classList.contains('d-none')) {
+        e.preventDefault();
+        e.stopPropagation();
+        closePalette();
+      }
+    });
+
+    palette.addEventListener('click', (e) => { if (e.target === palette) closePalette(); });
+
+    /* Keyboard navigation in results */
+    input.addEventListener('keydown', (e) => {
+      const items = results.querySelectorAll('.cmd-item');
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        kbdIndex = Math.min(kbdIndex + 1, items.length - 1);
+        updateKbdHighlight();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        kbdIndex = Math.max(kbdIndex - 1, -1);
+        updateKbdHighlight();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (kbdIndex >= 0 && items[kbdIndex]) {
+          activateItem(items[kbdIndex]);
+        } else if (items.length === 1) {
+          activateItem(items[0]);
+        }
+      }
+    });
+
+    input.addEventListener('input', () => {
+      const val = input.value.trim();
+      kbdIndex = -1;
+      if (!val) {
+        showRecentStudents();
+        return;
+      }
+
+      // Search in loaded student cache
+      const cached = window._advisorStudentsCache || [];
+      const matches = cached.filter(s =>
+        String(s.student_id || '').includes(val) ||
+        String(s.name || '').toLowerCase().includes(val.toLowerCase())
+      ).slice(0, 8);
+
+      // Always offer direct navigation by ID if it looks numeric
+      const isNum = /^\d+$/.test(val);
+      let html = '';
+
+      if (matches.length) {
+        html += `<div class="cmd-section-label">${T.students}</div>`;
+        html += matches.map(s => `
+          <div class="cmd-item" data-action="open-student" data-sid="${s.student_id}">
+            <span class="cmd-item-id">${s.student_id}</span>
+            <span class="cmd-item-name">${s.name || ''} ${s.program ? '· ' + s.program : ''}</span>
+            <span class="cmd-item-badge">${T.openPlan}</span>
+          </div>`).join('');
+      }
+
+      if (isNum && !matches.find(s => String(s.student_id) === val)) {
+        html += `<div class="cmd-section-label">${T.directNav}</div>`;
+        html += `<div class="cmd-item" data-action="open-student" data-sid="${val}">
+          <span class="cmd-item-id">${val}</span>
+          <span class="cmd-item-name">${T.navToStudentPlan}</span>
+          <span class="cmd-item-badge">${T.openPlan}</span>
+        </div>`;
+      }
+
+      if (!html) {
+        html = `<div class="cmd-hint">${T.noMatchesFound}</div>`;
+      }
+
+      results.innerHTML = html;
+      bindItemClicks();
+    });
+  })();
+
+
+  /* ── REC 8: Advisor admin step activation ── */
+  (() => {
+    const step1 = q('admStep1'), step2 = q('admStep2'), step3 = q('admStep3');
+    if (!step1) return;
+
+    const markDone = (stepEl) => {
+      stepEl.classList.remove('adm-step-inactive');
+      const circle = stepEl.querySelector('.adm-step-circle');
+      if (circle) circle.textContent = '✓';
+    };
+
+    // Mark step 1 done when advisor is saved
+    const saveBtn = q('advSave');
+    if (saveBtn) {
+      saveBtn.addEventListener('click', () => {
+        setTimeout(() => {
+          // only mark done if no field errors visible
+          const hasErr = document.querySelector('.field-error:not([style*="display: none"]):not([style*="display:none"])');
+          if (!hasErr) {
+            markDone(step1);
+            step2?.classList.remove('adm-step-inactive');
+          }
+        }, 600);
+      });
+    }
+
+    // Mark step 2 done when CSV applied
+    const csvBtn = q('advAssignCsvBtn');
+    if (csvBtn) {
+      csvBtn.addEventListener('click', () => {
+        setTimeout(() => { markDone(step2); step3?.classList.remove('adm-step-inactive'); }, 400);
+      });
+    }
+
+    // Mark step 3 done when single assign done
+    const oneBtn = q('advAssignOneBtn');
+    if (oneBtn) {
+      oneBtn.addEventListener('click', () => {
+        setTimeout(() => markDone(step3), 400);
+      });
+    }
+  })();
+
+  /* ── REC 3: Sidebar badges — populated from cached data ── */
+  (() => {
+    function updateSidebarBadges() {
+      // High priority: from last loaded HP report
+      const hpTbody = document.querySelector('#hpTable tbody');
+      const hpFirstCell = hpTbody?.querySelector('td.empty-note, td .empty-state');
+      const hpRows = hpTbody && !hpFirstCell ? hpTbody.querySelectorAll('tr').length : 0;
+      const sbHp = document.querySelector('.sb-badge-hp');
+      if (sbHp && hpRows > 0) {
+        sbHp.textContent = hpRows;
+        sbHp.className = 'nav-badge sidebar-badge warning';
+        sbHp.style.display = '';
+      }
+
+      // Export: show "Ready" if any export link is set
+      const sbExport = document.querySelector('.sb-badge-export');
+      const exportReady = Boolean(q('exStudentCsv')?.href?.includes('?'));
+      if (sbExport) {
+        sbExport.textContent = exportReady ? 'Ready' : '';
+        sbExport.className = 'nav-badge sidebar-badge ready';
+        sbExport.style.display = exportReady ? '' : 'none';
+      }
+    }
+
+    // Re-check badges after any toast (toast fires after data loads)
+    const origToast = window._origToast || toast;
+    window._origToast = origToast;
+    const origToastFn = toast;
+    // Poll every 3 seconds as a lightweight approach
+    setInterval(updateSidebarBadges, 3000);
+    updateSidebarBadges();
+  })();
+
+</script>

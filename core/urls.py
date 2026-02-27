@@ -69,6 +69,12 @@ from .report_views import (
     student_plan_view,
 )
 from .scrape_views import scrape_start_view, scrape_status_view, scrape_stop_view
+from .section_plan_views import (
+    section_plan_courses_view,
+    section_plan_export_view,
+    section_plan_generate_view,
+    section_plan_page,
+)
 from .sections_import_views import (
     sections_import_insert_view,
     sections_import_page,
@@ -166,6 +172,22 @@ urlpatterns = [
         name="planner_sections_catalog",
     ),
     path("ops/planner/build/", planner_build_view, name="planner_build"),
+    path("section-planning/", section_plan_page, name="section_plan_page"),
+    path(
+        "ops/section-planning/generate/",
+        section_plan_generate_view,
+        name="section_plan_generate",
+    ),
+    path(
+        "ops/section-planning/export/",
+        section_plan_export_view,
+        name="section_plan_export",
+    ),
+    path(
+        "ops/section-planning/courses/",
+        section_plan_courses_view,
+        name="section_plan_courses",
+    ),
     path("audit-explorer/", audit_explorer_page, name="audit_explorer_page"),
     path("ops/audit/explorer/", audit_explorer_api, name="audit_explorer_api"),
     path("ops/audit/export.csv", audit_export_csv_view, name="audit_export_csv"),

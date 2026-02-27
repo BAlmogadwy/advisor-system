@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 import os
 from pathlib import Path
 
+import dj_database_url
 from django.core.exceptions import ImproperlyConfigured
 from django.utils.translation import gettext_lazy as _
 from dotenv import load_dotenv
@@ -61,6 +62,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     # Must be after SessionMiddleware and before CommonMiddleware.
     "django.middleware.locale.LocaleMiddleware",
@@ -93,16 +95,22 @@ WSGI_APPLICATION = "config.wsgi.application"
 
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
+# In production, set DATABASE_URL (e.g. postgres://user:pass@host:5432/dbname).
+# Locally falls back to SQLite.
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
-        "OPTIONS": {
-            "timeout": 30,
-        },
+_database_url = os.getenv("DATABASE_URL")
+if _database_url:
+    DATABASES = {"default": dj_database_url.parse(_database_url, conn_max_age=600)}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": str(BASE_DIR / "db.sqlite3"),
+            "OPTIONS": {
+                "timeout": 30,
+            },
+        }
     }
-}
 
 # Legacy parity DB used by migrated advisor logic (can be overridden via env var)
 DB_PATH = os.getenv("ADVISOR_DB_PATH", str(BASE_DIR / "db.sqlite3"))
@@ -167,10 +175,15 @@ USE_I18N = True
 
 STATIC_URL = "static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
+STATIC_ROOT = BASE_DIR / "staticfiles"
 
-# If you later collect static in production, you may want:
-# STATIC_ROOT = BASE_DIR / "staticfiles"
-# STATICFILES_DIRS = [BASE_DIR / "static"]
+# WhiteNoise: compressed + forever-cacheable static files in production
+if not DEBUG:
+    STORAGES = {
+        "staticfiles": {
+            "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -186,7 +199,7 @@ if not DEBUG:
 # ---------------------------------------------------------------------------
 # CSRF security
 # ---------------------------------------------------------------------------
-CSRF_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = False  # Must be False — JS reads the cookie for X-CSRFToken headers
 CSRF_COOKIE_SAMESITE = "Lax"
 
 # ---------------------------------------------------------------------------
@@ -196,6 +209,22 @@ if not DEBUG:
     SECURE_BROWSER_XSS_FILTER = True
     SECURE_CONTENT_TYPE_NOSNIFF = True
     X_FRAME_OPTIONS = "DENY"
+
+    # HTTPS enforcement
+    SECURE_SSL_REDIRECT = True
+    SECURE_HSTS_SECONDS = 31_536_000  # 1 year
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+    # Secure cookies over HTTPS only
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+
+# CSRF trusted origins (required for Django 4+ behind HTTPS reverse proxies)
+_csrf_origins = os.getenv("CSRF_TRUSTED_ORIGINS", "")
+if _csrf_origins:
+    CSRF_TRUSTED_ORIGINS = [o.strip() for o in _csrf_origins.split(",") if o.strip()]
 
 # ---------------------------------------------------------------------------
 # Authentication redirects

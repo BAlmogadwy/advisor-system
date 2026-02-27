@@ -1,0 +1,65 @@
+    <!-- ── Overview Landing Panel ── -->
+    <div id="overview" class="panel active" role="region" aria-label="{% if LANGUAGE_CODE == 'ar' %}نظرة عامة{% else %}Overview{% endif %}">
+      <h2 class="ov-greeting" id="ovGreeting" tabindex="-1">{% if LANGUAGE_CODE == 'ar' %}صباح الخير{% else %}Good morning{% endif %}, {{ user.get_short_name|default:user.username }}</h2>
+      <div class="ov-date" id="ovDate"></div>
+
+      <div class="ov-kpis">
+        <div class="ov-kpi" tabindex="0" role="button" aria-label="{% if LANGUAGE_CODE == 'ar' %}الطلاب المعينون{% else %}Students Assigned{% endif %}" onclick="activatePanel('batch');history.pushState(null,'','#batch')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">
+          <div class="ov-kpi-icon teal">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          </div>
+          <div class="ov-kpi-label">{% if LANGUAGE_CODE == 'ar' %}الطلاب المعينون{% else %}Students Assigned{% endif %}</div>
+          <div class="ov-kpi-value" id="ovKpiStudents">0</div>
+        </div>
+        <div class="ov-kpi" tabindex="0" role="button" aria-label="{% if LANGUAGE_CODE == 'ar' %}توصيات معلقة{% else %}Pending Recommendations{% endif %}" onclick="activatePanel('batch');history.pushState(null,'','#batch')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">
+          <div class="ov-kpi-icon royal">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
+          </div>
+          <div class="ov-kpi-label">{% if LANGUAGE_CODE == 'ar' %}توصيات معلقة{% else %}Pending Recommendations{% endif %}</div>
+          <div class="ov-kpi-value" id="ovKpiPending">0</div>
+        </div>
+        <div class="ov-kpi" tabindex="0" role="button" aria-label="{% if LANGUAGE_CODE == 'ar' %}جداول متأخرة{% else %}Overdue Schedules{% endif %}" onclick="activatePanel('scrape');history.pushState(null,'','#scrape')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">
+          <div class="ov-kpi-icon warning">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          </div>
+          <div class="ov-kpi-label">{% if LANGUAGE_CODE == 'ar' %}جداول متأخرة{% else %}Overdue Schedules{% endif %}</div>
+          <div class="ov-kpi-value" id="ovKpiOverdue">0</div>
+        </div>
+        <div class="ov-kpi" tabindex="0" role="button" aria-label="{% if LANGUAGE_CODE == 'ar' %}أولوية عالية مفقودة{% else %}High Priority Missing{% endif %}" onclick="activatePanel('highpriority');history.pushState(null,'','#highpriority')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">
+          <div class="ov-kpi-icon danger">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          </div>
+          <div class="ov-kpi-label">{% if LANGUAGE_CODE == 'ar' %}أولوية عالية مفقودة{% else %}High Priority Missing{% endif %}</div>
+          <div class="ov-kpi-value" id="ovKpiHighPri">0</div>
+        </div>
+      </div>
+
+      <div class="ov-actions">
+        <a class="ov-action" href="#student" onclick="event.preventDefault();activatePanel('student');history.pushState(null,'','#student')">
+          <div class="ov-action-icon"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>
+          <div class="ov-action-text">{% if LANGUAGE_CODE == 'ar' %}البحث عن طالب{% else %}Look up a student{% endif %}</div>
+        </a>
+        <a class="ov-action" href="/planner/">
+          <div class="ov-action-icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div>
+          <div class="ov-action-text">{% if LANGUAGE_CODE == 'ar' %}بناء الجدول الزمني{% else %}Build timetable{% endif %}</div>
+        </a>
+        <a class="ov-action" href="#batch" onclick="event.preventDefault();activatePanel('batch');history.pushState(null,'','#batch')">
+          <div class="ov-action-icon"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></div>
+          <div class="ov-action-text">{% if LANGUAGE_CODE == 'ar' %}تشغيل التوصيات الجماعية{% else %}Run batch recommender{% endif %}</div>
+        </a>
+        <a class="ov-action" href="/advisor-portfolio/">
+          <div class="ov-action-icon"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
+          <div class="ov-action-text">{% if LANGUAGE_CODE == 'ar' %}عرض الملف الشخصي{% else %}View portfolio{% endif %}</div>
+        </a>
+      </div>
+
+      <div class="ov-activity">
+        <div class="ov-activity-title">{% if LANGUAGE_CODE == 'ar' %}النشاط الأخير{% else %}Recent Activity{% endif %}</div>
+        <div id="ovActivityFeed">
+          <div class="ov-activity-item">
+            <span class="ov-activity-ts">--:--</span>
+            <span>{% if LANGUAGE_CODE == 'ar' %}لا يوجد نشاط حديث حتى الآن. استخدم لوحة التحكم لبدء العمل.{% else %}No recent activity yet. Use the dashboard modules to get started.{% endif %}</span>
+          </div>
+        </div>
+      </div>
+    </div>

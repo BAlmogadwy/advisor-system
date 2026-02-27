@@ -1,0 +1,21 @@
+    <div id="exports" class="panel" role="region">
+      <div class="task-card mb-2">
+        <div class="k">What these exports contain</div>
+        <div class="small text-secondary">Student/aggregate recommendations, student plan matrix, debug diagnostics, eligibility IDs, advisor roster, and high-priority XLSX snapshot based on current filters.</div>
+      </div>
+      <div class="table-wrap">
+        <table class="table table-sm mb-0" id="exportsTable">
+          <thead><tr><th scope="col">Export</th><th scope="col">Contains</th><th scope="col">Action</th><th scope="col">Copy Link</th></tr></thead>
+          <tbody>
+            <tr><td>Student recommendations CSV</td><td>Single student</td><td><a id="exStudentCsv" class="btn btn-sm btn-outline-primary" href="#">Download</a></td><td><button class="btn btn-sm btn-outline-secondary ex-copy" data-link-id="exStudentCsv">Copy</button></td></tr>
+            <tr><td>Aggregate recommendations CSV</td><td>Batch summary</td><td><a id="exAggregateCsv" class="btn btn-sm btn-outline-primary" href="#">Download</a></td><td><button class="btn btn-sm btn-outline-secondary ex-copy" data-link-id="exAggregateCsv">Copy</button></td></tr>
+            <tr><td>Student plan matrix CSV</td><td>Single student</td><td><a id="exPlanCsv" class="btn btn-sm btn-outline-primary" href="#">Download</a></td><td><button class="btn btn-sm btn-outline-secondary ex-copy" data-link-id="exPlanCsv">Copy</button></td></tr>
+            <tr><td>Recommendation debug CSV</td><td>Filtered cohort debug</td><td><a id="exDebugCsv" class="btn btn-sm btn-outline-primary" href="#">Download</a></td><td><button class="btn btn-sm btn-outline-secondary ex-copy" data-link-id="exDebugCsv">Copy</button></td></tr>
+            <tr><td>Course eligibility CSV</td><td>Eligibility inspector</td><td><a id="exEligibilityCsv" class="btn btn-sm btn-outline-primary" href="#">Download</a></td><td><button class="btn btn-sm btn-outline-secondary ex-copy" data-link-id="exEligibilityCsv">Copy</button></td></tr>
+            <tr><td>{% if LANGUAGE_CODE == 'ar' %}طلاب حسب المرشد CSV{% else %}Students by advisor CSV{% endif %}</td><td>{% if LANGUAGE_CODE == 'ar' %}قائمة المرشدين{% else %}Advisor roster{% endif %}</td><td><a id="exAdvisorCsv" class="btn btn-sm btn-outline-primary" href="#">Download</a></td><td><button class="btn btn-sm btn-outline-secondary ex-copy" data-link-id="exAdvisorCsv">Copy</button></td></tr>
+            <tr><td>{% if LANGUAGE_CODE == 'ar' %}المقررات عالية الأولوية المفقودة XLSX{% else %}Missing high priority XLSX{% endif %}</td><td>{% if LANGUAGE_CODE == 'ar' %}فاحص الأولوية العالية{% else %}High-priority checker{% endif %}</td><td><a id="exHighPriorityXlsx" class="btn btn-sm btn-outline-primary" href="#">Download</a></td><td><button class="btn btn-sm btn-outline-secondary ex-copy" data-link-id="exHighPriorityXlsx">Copy</button></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="exportsMeta" class="small text-secondary mt-2">Tip: run each module once to auto-fill parameterized export links.</div>
+    </div>

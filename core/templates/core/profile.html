@@ -162,19 +162,19 @@
   outline-offset: 2px;
 }
 .pf-submit-primary {
-  background: rgba(10,142,110,0.08); color: #045a3e;
+  background: var(--teal, #0A8E6E); color: #fff;
+  box-shadow: 0 2px 8px rgba(10,142,110,0.25);
 }
 .pf-submit-primary:hover {
-  background: rgba(10,142,110,0.15);
-  box-shadow: 4px 4px 12px rgba(163,177,198,0.35),
-              -4px -4px 10px rgba(255,255,255,0.9);
+  background: #07775d; color: #fff;
+  box-shadow: 0 4px 12px rgba(10,142,110,0.35);
 }
 .pf-submit-primary:active {
-  box-shadow: inset 3px 3px 6px rgba(163,177,198,0.35),
-              inset -3px -3px 6px rgba(255,255,255,0.8);
+  background: #045a3e; color: #fff;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,0.15);
 }
 .pf-submit-primary:disabled {
-  opacity: 0.5; cursor: not-allowed;
+  opacity: 0.5; cursor: not-allowed; color: #fff;
   box-shadow: 2px 2px 5px rgba(163,177,198,0.15),
               -2px -2px 5px rgba(255,255,255,0.5);
 }
@@ -332,6 +332,7 @@
         <div class="pf-pw-bar-track"><div class="pf-pw-bar" id="pfPwBar" data-level="0"></div></div>
         <span class="pf-pw-label" id="pfPwLabel"></span>
       </div>
+      <div class="pf-pw-hint" style="font-size:0.72rem;color:var(--t3);margin-top:0.3rem;">{% if LANGUAGE_CODE == 'ar' %}8 أحرف على الأقل، تشمل أحرف كبيرة وصغيرة ورقم{% else %}Minimum 8 characters, including uppercase, lowercase, and a number{% endif %}</div>
     </div>
     <div class="pf-field">
       <label class="pf-label" for="pfConfirmPwd">

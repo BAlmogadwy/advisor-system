@@ -313,8 +313,6 @@
       <h1 class="login-title">{% if LANGUAGE_CODE == 'ar' %}لوحة تحكم المرشد{% else %}Advisor Dashboard{% endif %}</h1>
       <p class="login-sub">{% if LANGUAGE_CODE == 'ar' %}أدخل بيانات اعتمادك للمتابعة{% else %}Sign in with your account to continue{% endif %}</p>
 
-      <div class="login-dots" aria-hidden="true"><span></span><span></span><span></span></div>
-
       <div aria-live="polite" aria-atomic="true">
         {% if error %}<div class="login-alert" role="alert">{{ error }}</div>{% endif %}
       </div>
@@ -374,12 +372,14 @@
     if (toggle && pw) {
       var eyeOpen = toggle.querySelector('.pw-eye-open');
       var eyeShut = toggle.querySelector('.pw-eye-shut');
+      toggle.setAttribute('aria-pressed', 'false');
       toggle.addEventListener('click', function() {
         var show = pw.type === 'password';
         pw.type = show ? 'text' : 'password';
         eyeOpen.classList.toggle('d-none', show);
         eyeShut.classList.toggle('d-none', !show);
         toggle.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+        toggle.setAttribute('aria-pressed', String(show));
         pw.focus();
       });
     }

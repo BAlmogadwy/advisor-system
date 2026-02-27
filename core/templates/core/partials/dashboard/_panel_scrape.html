@@ -1,0 +1,69 @@
+    <div id="scrape" class="panel" role="region">
+      <div class="filter-bar sticky-cta mb-14">
+        <div class="fb-search fb-w-120"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></span><input id="scrapeConcurrency" type="text" inputmode="numeric" pattern="[0-9]*" min="1" max="8" value="2" placeholder="{% if LANGUAGE_CODE == 'ar' %}المسارات{% else %}Threads{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}المسارات{% else %}Concurrency threads{% endif %}"></div>
+        <div class="fb-search" style="flex:1;min-width:180px"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><input id="scrapeCsv" placeholder="{% if LANGUAGE_CODE == 'ar' %}مسار CSV{% else %}CSV path (default: data/students_list.csv){% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}مسار CSV{% else %}CSV file path{% endif %}"></div>
+        <div class="fb-spacer"></div>
+        <button id="scrapeStart" class="btn btn-danger"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}بدء{% else %}Start{% endif %}</button>
+        <button id="scrapeStop" class="btn btn-warning" disabled><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}إيقاف{% else %}Stop{% endif %}</button>
+        <button id="scrapeRefresh" class="btn-circle" title="{% if LANGUAGE_CODE == 'ar' %}تحديث الحالة{% else %}Refresh status{% endif %}"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></span></button>
+      </div>
+      <div class="scrape-metrics-row" id="scrapeMetrics">
+        <div class="flex-field"><div class="mc mc-teal">
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span></div><div class="mc-lbl">Status</div></div>
+          <div class="mc-val mc-val-lg" id="scrapeMetricStatus"><span class="status-dot status-stopped"></span>Idle</div>
+        </div></div>
+        <div style="flex:0.6;min-width:100px"><div class="mc mc-royal">
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2" ry="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg></span></div><div class="mc-lbl">PID</div></div>
+          <div class="mc-val mc-val-lg" id="scrapeMetricPid">-</div>
+        </div></div>
+        <div class="flex-field"><div class="mc mc-sky">
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span></div><div class="mc-lbl">Started</div></div>
+          <div class="mc-val mc-val-mono-sm" id="scrapeMetricStarted">-</div>
+        </div></div>
+        <div class="flex-field"><div class="mc mc-warn">
+          <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg></span></div><div class="mc-lbl">Stopped</div></div>
+          <div class="mc-val mc-val-mono-sm" id="scrapeMetricStopped">-</div>
+        </div></div>
+      </div>
+      <div id="scrapeMeta" class="meta-banner meta-info meta-mono mb-10">No scrape run started.</div>
+      <div id="scrapeUpdatedAt" class="ts-updated mb-14">{% if LANGUAGE_CODE == 'ar' %}آخر تحديث: لا يوجد{% else %}Last update: never{% endif %}</div>
+      <div class="scrape-term mb-18">
+        <div class="scrape-term-head">
+          <div class="scrape-term-status">
+            <span class="scrape-term-status-dot" id="scrapeLogDot" aria-hidden="true"></span>
+            <span class="scrape-term-label">{% if LANGUAGE_CODE == 'ar' %}سجل مباشر{% else %}Live Log{% endif %}</span>
+          </div>
+          <span class="scrape-term-file">scrape_students</span>
+          <button type="button" id="scrapeTermToggle" class="scrape-term-toggle" aria-label="{% if LANGUAGE_CODE == 'ar' %}تبديل حجم السجل{% else %}Toggle log size{% endif %}">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+            <span id="scrapeTermToggleLabel">{% if LANGUAGE_CODE == 'ar' %}توسيع{% else %}Expand{% endif %}</span>
+          </button>
+        </div>
+        <div id="scrapeOut" class="scrape-term-body" aria-live="polite" aria-atomic="false" role="log"><span style="color:#a0aec0">{% if LANGUAGE_CODE == 'ar' %}لا توجد سجلات بعد.{% else %}No logs yet.{% endif %}</span></div>
+      </div>
+      <div class="tbl-section mb-14">
+        <div class="tbl-header">
+          <div class="tbl-title">Scrape History <span class="tbl-cnt" id="scrapeHistoryCnt">0</span></div>
+        </div>
+        <div class="overflow-x">
+          <table class="tbl-card" id="scrapeHistoryTable">
+            <thead><tr><th scope="col">Time (UTC)</th><th scope="col">Event</th><th scope="col">PID</th><th scope="col">Concurrency</th><th scope="col">CSV</th></tr></thead>
+            <tbody><tr><td colspan="5"><div class="empty-state"><span class="i empty-icon-muted"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span><div class="empty-title">No scrape history</div><div class="empty-hint">Run a scrape to see history here</div></div></td></tr></tbody>
+          </table>
+        </div>
+        <nav class="scrape-hist-pager d-none" id="scrapeHistPager" role="navigation" aria-label="{% if LANGUAGE_CODE == 'ar' %}تصفح سجل العمليات{% else %}Scrape history pagination{% endif %}">
+          <div class="scrape-hist-page-info" aria-live="polite">
+            {% if LANGUAGE_CODE == 'ar' %}عرض{% else %}Showing{% endif %} <strong id="shPageStart">1</strong>–<strong id="shPageEnd">5</strong> {% if LANGUAGE_CODE == 'ar' %}من{% else %}of{% endif %} <strong id="shPageTotal">0</strong>
+          </div>
+          <div class="scrape-hist-page-btns">
+            <button type="button" id="shPrev" class="sh-page-btn" aria-label="{% if LANGUAGE_CODE == 'ar' %}الصفحة السابقة{% else %}Previous page{% endif %}" disabled>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
+            <span class="sh-page-num" id="shPageNum">1 / 1</span>
+            <button type="button" id="shNext" class="sh-page-btn" aria-label="{% if LANGUAGE_CODE == 'ar' %}الصفحة التالية{% else %}Next page{% endif %}" disabled>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+          </div>
+        </nav>
+      </div>
+    </div>

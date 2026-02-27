@@ -198,7 +198,17 @@
     .atl-extra { display: none; margin-top: 0.35rem; font-family: var(--font-mono); font-size: 0.72rem; color: var(--t4); }
     .atl-extra.open { display: block; }
 
+    /* Mobile filter details: collapsed on mobile, open on desktop */
+    .audit-filter-details { border: none; }
+    .audit-filter-details summary {
+      display: none; /* hidden on desktop */
+      cursor: pointer; font-weight: 600; font-size: 0.82rem; color: var(--teal);
+      padding: 0.5rem 0; list-style: none;
+    }
+    .audit-filter-details summary::-webkit-details-marker { display: none; }
+
     @media (max-width: 768px) {
+      .audit-filter-details summary { display: block; }
       .audit-filter-row { flex-direction: column; align-items: stretch; }
       .audit-filter-row .form-control,
       .audit-filter-row .form-select { max-width: 100% !important; width: 100%; }
@@ -212,6 +222,11 @@
       .audit-page-info { text-align: center; }
       .audit-view-toggle { width: 100%; }
       .audit-view-btn { flex: 1; text-align: center; }
+      /* Hide low-priority columns on mobile: Role, Reason, Error, Hash */
+      .audit-table th:nth-child(4),  .audit-table td:nth-child(4),
+      .audit-table th:nth-child(7),  .audit-table td:nth-child(7),
+      .audit-table th:nth-child(9),  .audit-table td:nth-child(9),
+      .audit-table th:nth-child(10), .audit-table td:nth-child(10) { display: none; }
     }
   </style>
 
@@ -225,6 +240,8 @@
           <span class="ph-chip ph-chip-status" role="status">{% if LANGUAGE_CODE == 'ar' %}سلسلة التحقق: سليمة{% else %}Hash chain: OK{% endif %} · {{ chain.checked }} {% if LANGUAGE_CODE == 'ar' %}سجل{% else %}records{% endif %}<abbr class="hash-chain-info" tabindex="0" role="img" aria-label="{% if LANGUAGE_CODE == 'ar' %}يتم ربط سجلات التدقيق بسلسلة تحقق للكشف عن التلاعب. سليمة يعني أن السلسلة سليمة ولم يتم تعديل أي سجلات أو حذفها.{% else %}Audit log entries are hash-chained to detect tampering. OK means the chain is intact — no entries have been modified or deleted.{% endif %}" title="{% if LANGUAGE_CODE == 'ar' %}يتم ربط سجلات التدقيق بسلسلة تحقق للكشف عن التلاعب. سليمة يعني أن السلسلة سليمة ولم يتم تعديل أي سجلات أو حذفها.{% else %}Audit log entries are hash-chained to detect tampering. OK means the chain is intact — no entries have been modified or deleted.{% endif %}"><svg class="hash-chain-info-icon" aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></abbr></span>
           {% else %}
           <span class="ph-chip ph-chip-danger" role="alert">{% if LANGUAGE_CODE == 'ar' %}سلسلة التحقق: فشلت{% else %}Hash chain: FAILED{% endif %} · {{ chain.checked }} {% if LANGUAGE_CODE == 'ar' %}سجل{% else %}records{% endif %}<abbr class="hash-chain-info" tabindex="0" role="img" aria-label="{% if LANGUAGE_CODE == 'ar' %}يتم ربط سجلات التدقيق بسلسلة تحقق للكشف عن التلاعب. فشلت يعني أن السلسلة مكسورة — ربما تم تعديل بعض السجلات أو حذفها.{% else %}Audit log entries are hash-chained to detect tampering. FAILED means the chain is broken — some entries may have been modified or deleted.{% endif %}" title="{% if LANGUAGE_CODE == 'ar' %}يتم ربط سجلات التدقيق بسلسلة تحقق للكشف عن التلاعب. فشلت يعني أن السلسلة مكسورة — ربما تم تعديل بعض السجلات أو حذفها.{% else %}Audit log entries are hash-chained to detect tampering. FAILED means the chain is broken — some entries may have been modified or deleted.{% endif %}"><svg class="hash-chain-info-icon" aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></abbr></span>
+          <a href="?status=error" class="ph-chip ph-chip-status" style="font-size:0.72rem;text-decoration:none;margin-inline-start:0.5rem;background:rgba(192,48,48,0.08);color:var(--danger);border-radius:8px;padding:3px 10px">{% if LANGUAGE_CODE == 'ar' %}تحقيق{% else %}Investigate{% endif %} →</a>
+          <div style="font-size:0.72rem;color:var(--t3);margin-top:0.25rem">{% if LANGUAGE_CODE == 'ar' %}قد يكون تم التلاعب بواحد أو أكثر من سجلات التدقيق{% else %}One or more audit records may have been tampered with{% endif %}</div>
           {% endif %}
 {% endblock %}
 
@@ -236,6 +253,8 @@
 {% block content %}
     <div>
 
+  <details class="audit-filter-details" open>
+    <summary>{% if LANGUAGE_CODE == 'ar' %}فلاتر{% else %}Filters{% endif %} ▾</summary>
   <form method="get" class="audit-filter-row" role="search" aria-label="{% if LANGUAGE_CODE == 'ar' %}تصفية سجلات التدقيق{% else %}Filter audit records{% endif %}">
     <div class="audit-filter-group">
       <span class="audit-filter-label" id="lbl-action">{% if LANGUAGE_CODE == 'ar' %}الإجراء{% else %}Action{% endif %}</span>
@@ -283,6 +302,7 @@
       <a class="btn btn-sm btn-export" href="/ops/audit/export.csv?action={{ filters.action|urlencode }}&user={{ filters.user|urlencode }}&status={{ filters.status|urlencode }}&from={{ filters.from|urlencode }}&to={{ filters.to|urlencode }}&limit={{ filters.limit }}" aria-label="{% if LANGUAGE_CODE == 'ar' %}تصدير سجلات التدقيق بصيغة CSV{% else %}Export audit records as CSV{% endif %}">{% if LANGUAGE_CODE == 'ar' %}تصدير CSV{% else %}Export CSV{% endif %}</a>
     </div>
   </form>
+  </details>
 
   {% if rows %}
   <div class="audit-count" style="margin-bottom:0.5rem;" role="status" aria-live="polite">

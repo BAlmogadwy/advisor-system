@@ -97,6 +97,8 @@
 
   /* glassmorphism */
   --glass-bg:       rgba(255,255,255,0.55);
+  --glass-bg-data:  rgba(255,255,255,0.72);   /* tables, data cards — stronger for readability */
+  --glass-bg-header:rgba(255,255,255,0.82);   /* table headers — strongest */
   --glass-blur:     blur(20px) saturate(130%);
 
   /* focus (teal ring for accessibility) */
@@ -235,15 +237,15 @@ body::after {
 .color-mesh {
   position: fixed; inset: 0; z-index: 0; pointer-events: none;
   background:
-    radial-gradient(ellipse 80% 60% at 0% 0%, rgba(10,142,110,0.14) 0%, transparent 60%),
-    radial-gradient(ellipse 60% 55% at 45% 0%, rgba(0,174,218,0.10) 0%, transparent 55%),
-    radial-gradient(ellipse 55% 50% at 100% 5%, rgba(64,86,227,0.12) 0%, transparent 55%),
-    radial-gradient(ellipse 70% 50% at 15% 45%, rgba(64,224,208,0.10) 0%, transparent 50%),
-    radial-gradient(ellipse 50% 40% at 55% 40%, rgba(229,198,3,0.10) 0%, transparent 45%),
-    radial-gradient(ellipse 55% 50% at 95% 45%, rgba(255,209,220,0.16) 0%, transparent 50%),
-    radial-gradient(ellipse 60% 45% at 40% 90%, rgba(10,142,110,0.08) 0%, transparent 50%),
-    radial-gradient(ellipse 50% 45% at 85% 85%, rgba(0,174,218,0.09) 0%, transparent 50%),
-    radial-gradient(ellipse 45% 40% at 10% 90%, rgba(64,86,227,0.06) 0%, transparent 45%),
+    radial-gradient(ellipse 80% 60% at 0% 0%, rgba(10,142,110,0.10) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 55% at 45% 0%, rgba(0,174,218,0.07) 0%, transparent 55%),
+    radial-gradient(ellipse 55% 50% at 100% 5%, rgba(64,86,227,0.08) 0%, transparent 55%),
+    radial-gradient(ellipse 70% 50% at 15% 45%, rgba(64,224,208,0.07) 0%, transparent 50%),
+    radial-gradient(ellipse 50% 40% at 55% 40%, rgba(229,198,3,0.07) 0%, transparent 45%),
+    radial-gradient(ellipse 55% 50% at 95% 45%, rgba(255,209,220,0.11) 0%, transparent 50%),
+    radial-gradient(ellipse 60% 45% at 40% 90%, rgba(10,142,110,0.05) 0%, transparent 50%),
+    radial-gradient(ellipse 50% 45% at 85% 85%, rgba(0,174,218,0.06) 0%, transparent 50%),
+    radial-gradient(ellipse 45% 40% at 10% 90%, rgba(64,86,227,0.04) 0%, transparent 45%),
     linear-gradient(160deg, #f2f5f2 0%, #f0f3f5 25%, #f2f0f3 50%, #f5f3f0 75%, #f2f5f3 100%);
 }
 
@@ -274,7 +276,7 @@ body::after {
   background-repeat: no-repeat;
   background-size: auto 105%;          /* slight over-scale so ribbon fills full height */
   background-position: center center;
-  opacity: 0.55;
+  opacity: 0.35;
   transition: opacity 0.6s ease;
 }
 
@@ -767,7 +769,7 @@ main.p-3 .page-header {
 .soft-card {
   border:           none !important;
   border-radius:    var(--radius-lg) !important;
-  background:       rgba(255,255,255,0.45) !important;
+  background:       var(--glass-bg-data) !important;
   backdrop-filter:  var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
   box-shadow:       6px 6px 16px rgba(163,177,198,0.3),
@@ -805,7 +807,7 @@ main.p-3 .page-header {
   font-family:      var(--font-body) !important;
   font-size:        clamp(0.8rem, 0.78rem + 0.09vw, 0.875rem) !important; /* ~12.8px → 14px */
   color:            var(--ink) !important;
-  border:           none !important;
+  border:           1px solid rgba(17,17,68,0.07) !important;
   border-radius:    14px !important;
   background-color: transparent !important;
   padding:          0.45rem 1rem !important;
@@ -813,7 +815,12 @@ main.p-3 .page-header {
   max-width:        100% !important;
   box-shadow:       inset 4px 4px 8px rgba(163,177,198,0.35),
                     inset -4px -4px 8px rgba(255,255,255,0.9) !important;
-  transition:       box-shadow .25s ease;
+  transition:       box-shadow .25s ease, border-color .25s ease;
+}
+
+.form-control:hover,
+.form-select:hover {
+  border-color: rgba(17,17,68,0.12) !important;
 }
 
 .form-control:focus,
@@ -823,7 +830,7 @@ main.p-3 .page-header {
                     inset -4px -4px 8px rgba(255,255,255,0.9),
                     0 0 0 2px rgba(10,142,110,0.5) !important;
   outline:          none !important;
-  border:           none !important;
+  border-color:     rgba(10,142,110,0.3) !important;
 }
 
 /* ── Compact inputs for small numeric values ───────────── */
@@ -1126,7 +1133,7 @@ html body .btn:focus-visible {
   overflow:      auto;
   border:        none;
   border-radius: 14px;
-  background:    rgba(255,255,255,0.40);
+  background:    var(--glass-bg-data);
   backdrop-filter: blur(16px) saturate(120%);
   -webkit-backdrop-filter: blur(16px) saturate(120%);
   box-shadow:    6px 6px 16px rgba(163,177,198,0.28),
@@ -1142,10 +1149,10 @@ html body .btn:focus-visible {
 .table-wrap thead th {
   position:      sticky;
   top:           0;
-  background:    var(--glass-bg) !important;
+  background:    var(--glass-bg-header) !important;
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-  border-bottom: 1px solid rgba(17,17,68,0.06);
+  border-bottom: 2px solid rgba(10,142,110,0.15);
   z-index:       2;
   cursor:        pointer;
   font-family:   var(--font-mono);
@@ -1223,7 +1230,7 @@ html body .btn:focus-visible {
 
 /* ── Card rows — glassmorphic table rows ── */
 .tbl-card tbody tr.cr-row {
-  background:rgba(255,255,255,0.40);
+  background:var(--glass-bg-data);
   backdrop-filter:blur(16px) saturate(120%);
   -webkit-backdrop-filter:blur(16px) saturate(120%);
   box-shadow:4px 4px 10px rgba(163,177,198,0.25),
@@ -1582,7 +1589,7 @@ html body .btn:focus-visible {
 .filter-bar {
   display:flex; align-items:center; gap:10px; margin-bottom:18px;
   padding:12px 18px;
-  background:rgba(255,255,255,0.40);
+  background:var(--glass-bg-data);
   backdrop-filter:blur(24px) saturate(130%);
   -webkit-backdrop-filter:blur(24px) saturate(130%);
   border:none;
@@ -1628,6 +1635,11 @@ html body .btn:focus-visible {
               color 9999s ease-in-out 0s !important;
 }
 .fb-search input::placeholder { color:var(--t5); }
+/* Datalist inputs: position the native dropdown arrow cleanly */
+.fb-search input[list] { padding-inline-end: 0.25rem; }
+.fb-search input[list]::-webkit-calendar-picker-indicator {
+  color: var(--t4); cursor: pointer; margin-inline-start: 4px; flex-shrink: 0;
+}
 .fb-search select {
   flex:1; min-width:0; width:100%;
   background:transparent; border:none; outline:none;
@@ -1659,6 +1671,13 @@ html body .btn:focus-visible {
 .fb-dd:hover { box-shadow:4px 4px 10px rgba(163,177,198,0.35), -4px -4px 10px rgba(255,255,255,0.9); color:var(--t1); }
 .fb-dd.active { background:rgba(10,142,110,0.06); color:var(--teal); box-shadow:inset 3px 3px 6px rgba(163,177,198,0.35), inset -3px -3px 6px rgba(255,255,255,0.8); }
 .fb-dd .i { opacity:0.4; }
+.fb-dd-count {
+  display:inline-flex; align-items:center; justify-content:center;
+  min-width:20px; height:18px; padding:0 5px;
+  border-radius:9px; font-family:var(--font-mono); font-size:0.65rem; font-weight:700;
+  background:rgba(10,142,110,0.1); color:var(--teal); margin-inline-start:4px;
+}
+.fb-dd.active .fb-dd-count { background:rgba(10,142,110,0.2); }
 
 /* ============================================================
    CPANEL — Bottom Panel Cards (Recommendations, Activity)
@@ -2250,6 +2269,13 @@ pre, .pre-output {
   .sidebar.sidebar-open ~ * .sidebar-backdrop,
   .sidebar-backdrop.active { display: block; }
 
+  /* Toast: full-width top bar on mobile */
+  #toast-container {
+    inset-inline-start: 0.5rem;
+    inset-inline-end: 0.5rem;
+  }
+  .ux-toast { max-width: 100%; min-width: 0; }
+
   /* page-header: bleeds to edges, stays sticky at top */
   .page-header {
     position:      sticky;
@@ -2498,6 +2524,64 @@ pre, .pre-output {
 
   /* High-priority filter: grid stacks */
   .hp-advanced .row > * { flex: 0 0 100%; max-width: 100%; }
+
+  /* ── Mobile density: tighter padding for admin screens ── */
+  .soft-card { padding: 0.75rem; margin-bottom: 0.5rem; }
+  .filter-bar { padding: 8px 12px; gap: 6px; margin-bottom: 12px; }
+  html body .btn { min-height: 34px; padding: 0.35rem 0.9rem !important; font-size: 0.78rem !important; }
+  .form-control, .form-select { padding: 0.35rem 0.75rem !important; }
+  .form-label { margin-bottom: 0.15rem; }
+  .page-intro h2 { font-size: 1.05rem !important; margin-bottom: 2px; }
+  .panel-sub, .page-intro .panel-sub { font-size: 0.72rem; margin-bottom: 0.5rem; }
+
+  /* ── Mobile Cards — table-to-card transform ──────────────── */
+  .mobile-cards thead { display: none; }
+  .mobile-cards tbody { display: flex; flex-direction: column; gap: 0.75rem; }
+  .mobile-cards tbody tr {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.35rem 0.75rem;
+    padding: 0.85rem 1rem;
+    border-radius: var(--radius, 12px);
+    background: var(--glass-bg-data);
+    backdrop-filter: blur(16px) saturate(120%);
+    -webkit-backdrop-filter: blur(16px) saturate(120%);
+    box-shadow: 4px 4px 10px rgba(163,177,198,0.25),
+                -4px -4px 10px rgba(255,255,255,0.75);
+  }
+  .mobile-cards tbody tr td {
+    display: flex;
+    flex-direction: column;
+    padding: 0.2rem 0;
+    border: none;
+    font-size: 0.8rem;
+  }
+  .mobile-cards tbody tr td::before {
+    content: attr(data-label);
+    font-family: var(--font-mono, monospace);
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--t3, #6b7280);
+    margin-bottom: 0.15rem;
+  }
+  .mobile-cards tbody tr td.mc-primary {
+    grid-column: 1 / -1;
+    font-weight: 700;
+    font-size: 0.88rem;
+    color: var(--navy, #111144);
+  }
+  .mobile-cards tbody tr td.mc-actions {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding-top: 0.35rem;
+    border-top: 1px solid rgba(17,17,68,0.06);
+    margin-top: 0.25rem;
+  }
+  .mobile-cards tbody tr td.mc-hide { display: none; }
 }
 
 /* ── RTL mobile: sidebar slides from the RIGHT ─────────────── */
@@ -2758,7 +2842,7 @@ pre, .pre-output {
    ============================================================ */
 #toast-container {
   position:    fixed;
-  bottom:      1.5rem;
+  top:         1rem;
   inset-inline-end: 1.5rem;
   z-index:     3000;
   display:     flex;
@@ -2791,7 +2875,7 @@ pre, .pre-output {
 }
 
 @keyframes toast-in {
-  from { opacity: 0; transform: translateY(12px) scale(0.95); }
+  from { opacity: 0; transform: translateY(-12px) scale(0.95); }
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 

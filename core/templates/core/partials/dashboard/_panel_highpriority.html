@@ -1,0 +1,42 @@
+    <div id="highpriority" class="panel" role="region">
+      <div class="task-card mb-2">
+        <div class="k">Task</div>
+        <div class="small text-secondary">Use this report to flag students missing high-impact unlock courses; export XLSX for advisor intervention lists.</div>
+      </div>
+      <div class="filter-bar sticky-cta mb-14">
+        <div class="fb-search fb-w-110"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input id="hpYear" type="text" inputmode="numeric" pattern="[0-9]*" value="{{ year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}"></div>
+        <div class="fb-search fb-w-110"><input id="hpSemester" type="text" inputmode="numeric" pattern="[0-9]*" min="0" max="1" value="{{ semester }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}"></div>
+        <div class="fb-search fb-w-100"><input id="hpSection" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}"></div>
+        <div class="fb-search fb-w-110"><input id="hpProgram" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}"></div>
+        <div class="fb-search fb-w-110"><input id="hpJoin" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join yrs{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنوات الالتحاق{% else %}Join years{% endif %}"></div>
+        <div class="fb-search" style="max-width:130px"><select id="hpParity" aria-label="Term parity"><option value="0" selected>Odd semesters (1, 3, 5...)</option><option value="1">Even semesters (2, 4, 6...)</option></select></div>
+        <div class="fb-spacer"></div>
+        <button id="hpRun" class="btn btn-primary"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>Run report</button>
+        <a id="hpXlsx" class="fb-dd" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>XLSX</a>
+      </div>
+      <details class="hp-advanced mb-8">
+        <summary class="hp-advanced-toggle">
+          <span class="hp-adv-arrow">▶</span> Advanced settings
+          <span class="hp-adv-defaults-badge">Using defaults</span>
+        </summary>
+        <div class="filter-bar filter-bar-sm mt-8">
+          <div class="fb-search" style="max-width:150px"><select id="hpDiscount" aria-label="Discount function"><option value="1_over_d" selected>Standard decay (1/d)</option><option value="half_power_d">Gentle decay (1/&#x221A;d)</option><option value="none">No decay</option></select></div>
+          <div class="fb-search fb-w-120"><input id="hpMinScore" type="text" inputmode="decimal" pattern="[0-9.]*" value="2.0" placeholder="{% if LANGUAGE_CODE == 'ar' %}أقل درجة{% else %}Min score{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}أقل درجة{% else %}Minimum score{% endif %}"></div>
+          <div class="fb-search fb-w-100"><input id="hpTopK" type="text" inputmode="numeric" pattern="[0-9]*" value="10" placeholder="{% if LANGUAGE_CODE == 'ar' %}أفضل K{% else %}Top K{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}أفضل K{% else %}Top K{% endif %}"></div>
+          <div class="fb-search" style="max-width:210px"><select id="hpStudying" aria-label="Include studying"><option value="false" selected>{% if LANGUAGE_CODE == 'ar' %}لا (الافتراضي الدقيق){% else %}No (exact default){% endif %}</option><option value="true">{% if LANGUAGE_CODE == 'ar' %}نعم{% else %}Yes{% endif %}</option></select></div>
+        </div>
+      </details>
+      <div class="preset-row">
+        <button id="hpSavePreset" type="button" class="btn btn-outline-secondary btn-sm">Save preset</button>
+        <button id="hpLoadPreset" type="button" class="btn btn-outline-secondary btn-sm">Load preset</button>
+      </div>
+      <div id="hpMeta" class="small text-secondary mt-2">No report loaded.</div>
+      <div id="hpUpdated" class="small text-secondary">{% if LANGUAGE_CODE == 'ar' %}آخر تحديث: لا يوجد{% else %}Last update: never{% endif %}</div>
+      <div class="table-wrap mt-2">
+        <table class="table table-sm mb-0" id="hpTable">
+          <thead><tr><th scope="col">Student</th><th scope="col">Program</th><th scope="col">Missing this parity</th><th scope="col">Missing other</th><th scope="col">Total</th></tr></thead>
+          <tbody><tr><td colspan="5"><div class="empty-state"><span class="empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span></span><div class="empty-title">No report loaded</div><div class="empty-hint">Set filters above, then click <strong>Run report</strong></div></div></td></tr></tbody>
+        </table>
+      </div>
+      <nav class="tbl-pager" id="hpPager" aria-label="High priority table pagination"></nav>
+    </div>

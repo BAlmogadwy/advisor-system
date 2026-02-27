@@ -715,6 +715,29 @@ function apFilter() {
   filteredStudents = rows;
   updateCsvLink();
   renderPage();
+  updatePillCounts();
+}
+
+function updatePillCounts() {
+  const search = (q('apSearch')?.value || '').trim().toLowerCase();
+  const progFilter = (q('apProgramFilter')?.value || '').trim().toUpperCase();
+  let base = [...allStudents];
+  if (search) base = base.filter(s => String(s.student_id||'').toLowerCase().includes(search) || String(s.name||'').toLowerCase().includes(search));
+  if (progFilter) base = base.filter(s => String(s.program||'').toUpperCase() === progFilter);
+
+  const counts = {
+    all:       base.length,
+    attention: base.filter(s => s.needs_attention).length,
+    risk:      base.filter(s => s.gpa != null && Number(s.gpa) < 2.0).length,
+    missing:   base.filter(s => s.has_high_priority_missing).length,
+    zerohours: base.filter(s => Number(s.current_term_registered_hours || 0) === 0).length,
+  };
+  document.querySelectorAll('#apFilters .fb-dd').forEach(btn => {
+    const key = btn.dataset.focus;
+    let badge = btn.querySelector('.fb-dd-count');
+    if (!badge) { badge = document.createElement('span'); badge.className = 'fb-dd-count'; btn.appendChild(badge); }
+    badge.textContent = counts[key] ?? '';
+  });
 }
 
 function renderPage() {
@@ -798,7 +821,7 @@ function renderTable(rows) {
 
     const reasonMap = { low_gpa: T.lowGpa, high_priority_missing: T.hpMissing, zero_current_term_hours: T.zeroHours };
     const reasons = (Array.isArray(s.attention_reasons) ? s.attention_reasons : [])
-      .map(r => `<span class="pill-status pill-a" style="font-size:10px;padding:2px 7px;"><span class="pill-dot"></span>${reasonMap[r]||r}</span>`).join(' ') || '<span style="color:var(--t3)">—</span>';
+      .map(r => `<span class="pill-status pill-a" style="font-size:10px;padding:2px 7px;"><span class="pill-dot"></span>${esc(reasonMap[r]||r)}</span>`).join(' ') || '<span style="color:var(--t3)">—</span>';
 
     return `<tr class="${trCls}" data-sid="${sid}" onclick="onRowClick(event, '${sid}')">
       <td onclick="event.stopPropagation()" style="padding-inline-start:14px;"><input type="checkbox" class="ap-check" ${checked} onchange="toggleBatch('${sid}',this.checked)" style="accent-color:var(--teal);"></td>
@@ -849,7 +872,7 @@ function openDrawer(sid) {
   const rs = Number(s.risk_score || 0);
   const riskCls = rs >= 8 ? 'ap-risk-high' : rs >= 4 ? 'ap-risk-mid' : 'ap-risk-low';
   const reasonMap = { low_gpa: T.lowGpa, high_priority_missing: T.hpMissing, zero_current_term_hours: T.zeroHours };
-  const reasons = (Array.isArray(s.attention_reasons) ? s.attention_reasons : []).map(r => reasonMap[r]||r).join(', ') || T.none;
+  const reasons = (Array.isArray(s.attention_reasons) ? s.attention_reasons : []).map(r => esc(reasonMap[r]||r)).join(', ') || T.none;
   const hpList = Array.isArray(s.high_priority_missing_courses) ? s.high_priority_missing_courses : [];
   const hpHtml = hpList.length
     ? `<div class="table-wrap" style="max-height:200px;margin-top:0.4rem;"><table class="table table-sm mb-0"><thead><tr><th scope="col">${T.course}</th><th scope="col">${T.score}</th><th scope="col">${T.bucket}</th></tr></thead><tbody>${hpList.map(c=>`<tr><td>${esc(c.course_code||'—')}</td><td>${Number(c.score||0).toFixed(2)}</td><td>${c.bucket==='this_parity'?T.thisParity:T.other}</td></tr>`).join('')}</tbody></table></div>`
@@ -1082,6 +1105,16 @@ q('apProgramFilter').addEventListener('input', debounce(() => { currentPage = 1;
    INIT
    ═══════════════════════════════════════════════════════════════ */
 wireSortableTable('apTable');
+
+/* Mobile card layout for ≤768px */
+wireMobileCards('apTable', {
+  labels: IS_AR
+    ? ['', 'المعرف', 'الاسم', 'البرنامج', 'الحالة', 'المعدل', 'المخاطر', 'س.م. مسجلة', 'أولوية مفقودة', '']
+    : ['', 'ID', 'Name', 'Program', 'Status', 'GPA', 'Risk', 'Reg. Cr.', 'HP Missing', ''],
+  primaryCols: [1, 2],
+  hideCols: [0, 7, 8],
+  actionCol: 9,
+});
 
 const USER_ROLE = '{{ role }}';
 const USER_ADVISOR_ID = '{{ user_advisor_id|escapejs }}';

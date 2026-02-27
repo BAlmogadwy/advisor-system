@@ -1,0 +1,263 @@
+    <div id="student" class="panel" role="region">
+      <form method="get" action="/" class="filter-bar sticky-cta mb-14">
+        <div class="fb-search" style="max-width:170px"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span><input id="studentIdInput" type="text" inputmode="numeric" pattern="[0-9]*" name="student_id" value="{{ student_id }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}" required></div>
+        <div class="fb-search fb-w-110"><input type="text" inputmode="numeric" pattern="[0-9]*" name="year" value="{{ year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}" required></div>
+        <div class="fb-search fb-w-110"><input type="text" inputmode="numeric" pattern="[0-9]*" min="0" max="1" name="semester" value="{{ semester }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}" required></div>
+        <div class="fb-spacer"></div>
+        <button class="btn btn-primary">
+          <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}توصية{% else %}Recommend{% endif %}
+        </button>
+        <button id="loadStudentPlan" type="button" class="fb-dd">
+          <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}تحميل الخطة{% else %}Load plan{% endif %}
+        </button>
+      </form>
+      {% if recommendations is not None %}
+      <div class="cpanel mt-4">
+        <div class="cp-h">
+          <span class="i i-faint"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg></span>
+          <div class="cp-t">{% if LANGUAGE_CODE == 'ar' %}التوصيات{% else %}Recommendations{% endif %}</div>
+          <span class="cp-live">{{ recommendations|length }} courses</span>
+          <div class="flex-spacer"></div>
+          <a id="studentCsvLink" class="btn btn-outline-primary btn-sm" href="/export/student.csv?student_id={{ student_id }}&year={{ year }}&semester={{ semester }}">{% if LANGUAGE_CODE == 'ar' %}تصدير CSV{% else %}Export CSV{% endif %}</a>
+          <button id="copyStudentCsv" type="button" class="btn btn-outline-secondary btn-sm">Copy link</button>
+        </div>
+        <div class="cp-b">
+          {% for code in recommendations %}
+          <div class="rec">
+            <div>
+              <div class="rec-code">{{ code }}</div>
+            </div>
+            <span class="pill-status pill-g"><span class="pill-dot"></span>{% if LANGUAGE_CODE == 'ar' %}جاهز{% else %}Ready{% endif %}</span>
+          </div>
+          {% empty %}
+          <div class="empty-note">{% if LANGUAGE_CODE == 'ar' %}لا توجد مقررات موصى بها لهذا الطالب/الفصل.{% else %}No courses recommended for this student/term combination.{% endif %}</div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+      {% if error %}<div class="alert alert-danger mt-3 mb-0" role="alert">{{ error }}</div>{% endif %}
+
+      <div class="mt-4">
+        <div class="section-heading">
+          <h3>{% if LANGUAGE_CODE == 'ar' %}مصفوفة خطة الطالب{% else %}Student Plan Matrix{% endif %}</h3>
+          <span class="section-badge">{% if LANGUAGE_CODE == 'ar' %}الفصول 1-10{% else %}Terms 1-10{% endif %}</span>
+        </div>
+        <div id="studentPlanMeta" class="small mb-2 color-t3">{% if LANGUAGE_CODE == 'ar' %}حمّل بيانات طالب لعرض مصفوفة الفصول الكاملة.{% else %}Load a student to view the full term matrix.{% endif %}</div>
+
+        <!-- ── Empty-state hero for Student Plan ── -->
+        <div id="studentEmptyState">
+          <div class="empty-state" style="padding:2.5rem 1.5rem 1.8rem">
+            <span class="i empty-icon-48" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+            </span>
+            <div class="empty-title" style="font-size:17px;margin-bottom:6px">{% if LANGUAGE_CODE == 'ar' %}استكشف الخطة الأكاديمية لأي طالب{% else %}Explore any student's academic plan{% endif %}</div>
+            <div class="empty-hint" style="max-width:420px;margin-bottom:22px">{% if LANGUAGE_CODE == 'ar' %}أدخل <strong>رقم الطالب</strong> أعلاه ثم اضغط <strong>تحميل الخطة</strong> لعرض مصفوفة الفصول، تنبيهات المخاطر، وخطة العمل.{% else %}Enter a <strong>Student ID</strong> above, then click <strong>Load plan</strong> to see the full term matrix, risk alerts, and action plan.{% endif %}</div>
+            <div class="section-heading">
+              <span class="step-circle">1</span>
+              <span class="step-label">{% if LANGUAGE_CODE == 'ar' %}أدخل الرقم{% else %}Enter ID{% endif %}</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" class="step-arrow"><polyline points="9 18 15 12 9 6"/></svg>
+              <span class="step-circle">2</span>
+              <span class="step-label">{% if LANGUAGE_CODE == 'ar' %}تحميل الخطة{% else %}Load plan{% endif %}</span>
+              <svg width="14" height="14" viewBox="0 0 24 24" class="step-arrow"><polyline points="9 18 15 12 9 6"/></svg>
+              <span class="step-circle">3</span>
+              <span class="step-label">{% if LANGUAGE_CODE == 'ar' %}استعرض النتائج{% else %}Explore results{% endif %}</span>
+            </div>
+          </div>
+
+          <!-- Ghost metric cards -->
+          <div class="metrics-row-12 mb-16">
+            <div class="flex-card"><div class="mc mc-teal ghost-muted">
+              <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span></div><div class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}مجتاز{% else %}Passed{% endif %}</div></div>
+              <div class="skel-pad"><div class="skel-block skel-block-lg skel-m0 skel-half"></div></div>
+              <div class="spark"><div class="b" style="height:40%"></div><div class="b" style="height:70%"></div><div class="b" style="height:30%"></div><div class="b" style="height:90%"></div><div class="b" style="height:55%"></div></div>
+            </div></div>
+            <div class="flex-card"><div class="mc mc-royal ghost-muted">
+              <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span></div><div class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}يدرس حالياً{% else %}Studying{% endif %}</div></div>
+              <div class="skel-pad"><div class="skel-block skel-block-lg skel-m0 skel-half"></div></div>
+              <div class="spark"><div class="b" style="height:60%"></div><div class="b" style="height:40%"></div><div class="b" style="height:80%"></div><div class="b" style="height:50%"></div><div class="b" style="height:35%"></div></div>
+            </div></div>
+            <div class="flex-card"><div class="mc mc-sky ghost-muted">
+              <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></div><div class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}يمكن تسجيله{% else %}Can Register{% endif %}</div></div>
+              <div class="skel-pad"><div class="skel-block skel-block-lg skel-m0 skel-half"></div></div>
+              <div class="spark"><div class="b" style="height:45%"></div><div class="b" style="height:65%"></div><div class="b" style="height:85%"></div><div class="b" style="height:40%"></div><div class="b" style="height:70%"></div></div>
+            </div></div>
+            <div class="flex-card"><div class="mc mc-err ghost-muted">
+              <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span></div><div class="mc-lbl">Locked</div></div>
+              <div class="skel-pad"><div class="skel-block skel-block-lg skel-m0 skel-half"></div></div>
+              <div class="spark"><div class="b" style="height:75%"></div><div class="b" style="height:50%"></div><div class="b" style="height:35%"></div><div class="b" style="height:60%"></div><div class="b" style="height:90%"></div></div>
+            </div></div>
+          </div>
+
+          <!-- Ghost terms table -->
+          <div class="cpanel ghost-faded">
+            <div class="cp-h">
+              <div class="skel-block skel-m0" style="width:120px;height:12px"></div>
+              <div class="flex-spacer"></div>
+              <div class="skel-block skel-m0" style="width:60px;height:10px"></div>
+            </div>
+            <div class="cp-b cp-flex-col">
+              <div class="skel-row">
+                <div class="skel-block skel-m0 skel-code"></div>
+                <div class="skel-block skel-m0" style="width:75%;height:12px"></div>
+                <div class="skel-block skel-m0 skel-status"></div>
+              </div>
+              <div class="skel-row">
+                <div class="skel-block skel-m0 skel-code"></div>
+                <div class="skel-block skel-m0" style="width:60%;height:12px"></div>
+                <div class="skel-block skel-m0 skel-status"></div>
+              </div>
+              <div class="skel-row">
+                <div class="skel-block skel-m0 skel-code"></div>
+                <div class="skel-block skel-m0" style="width:50%;height:12px"></div>
+                <div class="skel-block skel-m0 skel-status"></div>
+              </div>
+              <div class="skel-row">
+                <div class="skel-block skel-m0 skel-code"></div>
+                <div class="skel-block skel-m0" style="width:65%;height:12px"></div>
+                <div class="skel-block skel-m0 skel-status"></div>
+              </div>
+              <div class="skel-row">
+                <div class="skel-block skel-m0 skel-code"></div>
+                <div class="skel-block skel-m0" style="width:70%;height:12px"></div>
+                <div class="skel-block skel-m0 skel-status"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- ── /Empty-state ── -->
+
+        <div id="studentPlanMetrics" class="d-none metrics-row-12 mb-12">
+          <div class="flex-card"><div class="mc mc-teal">
+            <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span></div><div class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}مجتاز{% else %}Passed{% endif %}</div></div>
+            <div class="mc-val" id="spPassed">0</div>
+            <div class="spark" id="spSparkPassed"></div>
+          </div></div>
+          <div class="flex-card"><div class="mc mc-royal">
+            <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span></div><div class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}يدرس حالياً{% else %}Studying{% endif %}</div></div>
+            <div class="mc-val" id="spStudying">0</div>
+            <div class="spark" id="spSparkStudying"></div>
+          </div></div>
+          <div class="flex-card"><div class="mc mc-sky">
+            <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></div><div class="mc-lbl">{% if LANGUAGE_CODE == 'ar' %}يمكن تسجيله{% else %}Can Register{% endif %}</div></div>
+            <div class="mc-val" id="spCan">0</div>
+            <div class="spark" id="spSparkCan"></div>
+          </div></div>
+          <div class="flex-card"><div class="mc mc-err">
+            <div class="mc-head"><div class="mc-icon"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span></div><div class="mc-lbl">Locked</div></div>
+            <div class="mc-val" id="spLocked">0</div>
+            <div class="spark" id="spSparkLocked"></div>
+          </div></div>
+        </div>
+        <div id="studentPlanLegend" class="small mb-2 d-none">
+          <span style="color:var(--t3);margin-inline-end:6px">Legend:</span>
+          <span class="pill-status pill-g"><span class="pill-dot"></span>Passed</span>
+          <span class="pill-status pill-b"><span class="pill-dot"></span>Studying</span>
+          <span class="pill-status pill-g can-register-pill"><span class="pill-dot"></span>Can register</span>
+          <span class="pill-status pill-r"><span class="pill-dot"></span>Locked</span>
+        </div>
+        <div class="filter-bar mb-2 d-none" id="studentPlanActions">
+          <button id="spFocusNext" type="button" class="fb-dd active"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="13 17 18 12 13 7"/><polyline points="6 17 11 12 6 7"/></svg></span> Focus next</button>
+          <button id="spBuildTargetPlan" type="button" class="fb-dd" style="background:rgba(10,142,110,0.08);border-color:var(--teal-border);color:var(--teal)"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span> Build plan</button>
+          <a id="spCsvExport" class="fb-dd" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span> CSV</a>
+          <div class="fb-spacer"></div>
+
+          <details class="d-inline-block">
+            <summary class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/></svg></span> Filters</summary>
+            <div class="d-flex flex-wrap gap-2 mt-2 filter-pad">
+              <button id="spShowAll" type="button" class="fb-dd active" aria-pressed="true">Show all</button>
+              <button id="spShowCanOnly" type="button" class="fb-dd" style="color:var(--teal)" aria-pressed="false">Can register</button>
+              <button id="spShowLockedOnly" type="button" class="fb-dd" style="color:var(--danger)" aria-pressed="false">Locked</button>
+              <button id="spCompact" type="button" class="fb-dd">Compact</button>
+              <button id="spExpandAll" type="button" class="fb-dd">Expand all</button>
+              <button id="spCollapseAll" type="button" class="fb-dd">Collapse all</button>
+            </div>
+          </details>
+
+          <details class="d-inline-block">
+            <summary class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg></span> Sort</summary>
+            <div class="d-flex flex-wrap gap-2 mt-2 filter-pad">
+              <button id="spSortImportance" type="button" class="fb-dd" style="color:var(--warning)">Importance</button>
+              <button id="spSortStatus" type="button" class="fb-dd" style="color:var(--sky)">Status</button>
+              <button id="spSortCode" type="button" class="fb-dd" style="color:var(--sky)">Code</button>
+            </div>
+          </details>
+
+          <details class="d-inline-block">
+            <summary class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span> Target</summary>
+            <div class="d-flex flex-wrap gap-2 mt-2 align-items-center filter-pad">
+              <label class="small color-t3">{% if LANGUAGE_CODE == 'ar' %}الساعات{% else %}Credits{% endif %}</label>
+              <select id="spTargetCredits" class="form-select form-select-sm" style="width:auto;" aria-label="{% if LANGUAGE_CODE == 'ar' %}الساعات المستهدفة{% else %}Target credit hours{% endif %}">
+                <option value="12">12</option>
+                <option value="15">15</option>
+                <option value="18" selected>18</option>
+              </select>
+              <select id="spTargetStrategy" class="form-select form-select-sm" style="width:auto;" aria-label="{% if LANGUAGE_CODE == 'ar' %}استراتيجية الاختيار{% else %}Selection strategy{% endif %}">
+                <option value="max" selected>{% if LANGUAGE_CODE == 'ar' %}الأهمية القصوى{% else %}Max importance{% endif %}</option>
+                <option value="balanced">{% if LANGUAGE_CODE == 'ar' %}موازنة حسب العبء الدراسي{% else %}Balanced by term load{% endif %}</option>
+              </select>
+              <button id="spPrintPdf" type="button" class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg></span> Print / PDF</button>
+            </div>
+          </details>
+        </div>
+        <div id="studentPlanRiskAlerts" class="mb-3"></div>
+        <div id="studentPlanTopImportant" class="mb-3"></div>
+        <div id="studentPlanHints" class="mb-3"></div>
+        <div id="studentPlanActionPlan" class="mb-3"></div>
+        <div class="plan-layout">
+          <div class="flex-card">
+            <div id="studentPlanTerms"></div>
+          </div>
+          <div class="plan-side-col">
+            <div id="studentCourseDrawer" class="cpanel sticky-16">
+              <div class="cp-h">
+                <span class="i i-faint"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+                <div class="cp-t">Course Inspector</div>
+                <span class="cp-live">LIVE</span>
+              </div>
+              <div class="cp-b">
+                <div class="empty-note">Click any course row to inspect lock reason, missing prereqs, and unlock impact.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Student Context Sidebar -->
+      <div id="studentCtxSidebar" class="student-ctx-sidebar hidden" aria-label="{% if LANGUAGE_CODE == 'ar' %}سياق الطالب{% else %}Student Context{% endif %}">
+        <div class="student-ctx-card sticky-16">
+          <h3 id="studentCtxTitle">{% if LANGUAGE_CODE == 'ar' %}ملف الطالب{% else %}Student Profile{% endif %}</h3>
+          <div class="student-ctx-row">
+            <span class="student-ctx-label">{% if LANGUAGE_CODE == 'ar' %}الرقم{% else %}ID{% endif %}</span>
+            <span class="student-ctx-value" id="studentCtxId">--</span>
+          </div>
+          <div class="student-ctx-row">
+            <span class="student-ctx-label">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}</span>
+            <span class="student-ctx-value" id="studentCtxProgram">--</span>
+          </div>
+          <div class="student-ctx-row">
+            <span class="student-ctx-label">{% if LANGUAGE_CODE == 'ar' %}المعدل{% else %}GPA{% endif %}</span>
+            <span class="student-ctx-value" id="studentCtxGpa">--</span>
+          </div>
+          <div class="student-ctx-row">
+            <span class="student-ctx-label">{% if LANGUAGE_CODE == 'ar' %}المكتسبة{% else %}Earned{% endif %}</span>
+            <span class="student-ctx-value" id="studentCtxEarned">--</span>
+          </div>
+          <div class="student-ctx-row">
+            <span class="student-ctx-label">{% if LANGUAGE_CODE == 'ar' %}المتبقية{% else %}Remaining{% endif %}</span>
+            <span class="student-ctx-value" id="studentCtxRemaining">--</span>
+          </div>
+          <div class="student-ctx-row">
+            <span class="student-ctx-label">{% if LANGUAGE_CODE == 'ar' %}متطلبات مكتملة{% else %}Prereqs Met{% endif %}</span>
+            <span class="student-ctx-value" id="studentCtxPrereqMet" style="color:var(--teal)">--</span>
+          </div>
+          <div class="student-ctx-row">
+            <span class="student-ctx-label">{% if LANGUAGE_CODE == 'ar' %}متطلبات معلقة{% else %}Prereqs Pending{% endif %}</span>
+            <span class="student-ctx-value" id="studentCtxPrereqPending" style="color:var(--warning)">--</span>
+          </div>
+          <a id="studentCtxFullProfile" class="student-ctx-link d-none" href="#">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            {% if LANGUAGE_CODE == 'ar' %}عرض الملف الكامل{% else %}View Full Profile{% endif %}
+          </a>
+        </div>
+      </div>
+    </div>
