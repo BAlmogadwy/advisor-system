@@ -7,7 +7,7 @@ on:
 env:
   DJANGO_SETTINGS_MODULE: config.settings
   DJANGO_SECRET_KEY: ci-test-secret-key-not-for-production
-  DEBUG: 'True'
+  DJANGO_DEBUG: 'true'
 
 jobs:
   lint:

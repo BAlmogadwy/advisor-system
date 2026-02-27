@@ -158,6 +158,7 @@ def section_plan_generate_view(request: HttpRequest) -> JsonResponse:
     params, err = _parse_payload(request)
     if err:
         return err
+    assert params is not None
 
     try:
         student_count, aggregate = build_aggregate_counts(
@@ -228,6 +229,7 @@ def section_plan_export_view(request: HttpRequest) -> HttpResponseBase:
     params, err = _parse_payload(request)
     if err:
         return err
+    assert params is not None
 
     try:
         _student_count, aggregate = build_aggregate_counts(

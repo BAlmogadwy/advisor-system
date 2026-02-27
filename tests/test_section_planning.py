@@ -177,7 +177,7 @@ def test_section_plan_page_requires_login(client: Client) -> None:
     """Unauthenticated → redirect to login."""
     r = client.get("/section-planning/")
     assert r.status_code == 302
-    assert "/login/" in r.url
+    assert "/login/" in r["Location"]
 
 
 def test_section_plan_page_requires_role(client: Client) -> None:
