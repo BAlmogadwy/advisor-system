@@ -232,6 +232,91 @@
   color: var(--muted-light, #94a3b8);
   text-align: end;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   DARK MODE — Deep Navy overrides
+   html[data-theme="dark"]
+   ═══════════════════════════════════════════════════════════ */
+
+/* Info card + form cards: glass bg → dark glass, neumorphic → dark shadows */
+html[data-theme="dark"] .pf-info-card {
+  background: rgba(255,255,255,0.04);
+  box-shadow: 5px 5px 14px rgba(0,0,0,0.4),
+              -5px -5px 14px rgba(255,255,255,0.02);
+}
+html[data-theme="dark"] .pf-info-card:hover {
+  box-shadow: 7px 7px 18px rgba(0,0,0,0.5),
+              -7px -7px 18px rgba(255,255,255,0.03);
+}
+
+html[data-theme="dark"] .pf-card {
+  background: rgba(255,255,255,0.04);
+  box-shadow: 5px 5px 14px rgba(0,0,0,0.4),
+              -5px -5px 14px rgba(255,255,255,0.02);
+}
+html[data-theme="dark"] .pf-card:hover {
+  box-shadow: 7px 7px 18px rgba(0,0,0,0.5),
+              -7px -7px 18px rgba(255,255,255,0.03);
+}
+
+/* Badge backgrounds */
+html[data-theme="dark"] .pf-badge-role {
+  background: rgba(10,142,110,0.12);
+  color: #2ec9a0;
+  border-color: rgba(10,142,110,0.25);
+}
+html[data-theme="dark"] .pf-badge-dept {
+  background: rgba(64,86,227,0.12);
+  color: #8b9cf7;
+  border-color: rgba(64,86,227,0.25);
+}
+
+/* Inputs: inset neumorphic → dark inset shadows */
+html[data-theme="dark"] .pf-input {
+  color: #e2e4ec;
+  box-shadow: inset 3px 3px 6px rgba(0,0,0,0.45),
+              inset -3px -3px 6px rgba(255,255,255,0.03);
+}
+html[data-theme="dark"] .pf-input:focus {
+  box-shadow: inset 3px 3px 6px rgba(0,0,0,0.45),
+              inset -3px -3px 6px rgba(255,255,255,0.03),
+              0 0 0 2px rgba(12,168,126,0.5);
+}
+html[data-theme="dark"] .pf-input::placeholder {
+  color: #7a7e92;
+}
+
+/* Password field wrapper: inset neumorphic → dark inset shadows */
+html[data-theme="dark"] .pf-pwd-wrap {
+  box-shadow: inset 3px 3px 6px rgba(0,0,0,0.45),
+              inset -3px -3px 6px rgba(255,255,255,0.03);
+}
+html[data-theme="dark"] .pf-pwd-wrap:focus-within {
+  box-shadow: inset 3px 3px 6px rgba(0,0,0,0.45),
+              inset -3px -3px 6px rgba(255,255,255,0.03),
+              0 0 0 2px rgba(12,168,126,0.5);
+}
+
+/* Disabled submit button shadow */
+html[data-theme="dark"] .pf-submit-primary:disabled {
+  box-shadow: 2px 2px 5px rgba(0,0,0,0.3),
+              -2px -2px 5px rgba(255,255,255,0.02);
+}
+
+/* Password strength bar track */
+html[data-theme="dark"] .pf-pw-bar-track {
+  background: rgba(255,255,255,0.06);
+}
+
+/* Saved flash animation — dark neumorphic variant */
+html[data-theme="dark"] .pf-card.pf-saved {
+  animation: pf-flash-dark 0.6s ease;
+}
+@keyframes pf-flash-dark {
+  0%  { box-shadow: 5px 5px 14px rgba(0,0,0,0.4), -5px -5px 14px rgba(255,255,255,0.02); }
+  40% { box-shadow: 0 0 0 3px rgba(12,168,126,0.25), 5px 5px 14px rgba(0,0,0,0.4), -5px -5px 14px rgba(255,255,255,0.02); }
+  100%{ box-shadow: 5px 5px 14px rgba(0,0,0,0.4), -5px -5px 14px rgba(255,255,255,0.02); }
+}
 </style>
 {% endblock %}
 

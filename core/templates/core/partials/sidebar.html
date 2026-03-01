@@ -147,15 +147,23 @@
         </button></form>
       </div>
     {% endif %}
-    <form action="/i18n/setlang/" method="post" class="s-lang">
-      {% csrf_token %}
-      <input type="hidden" name="next" value="{{ request.get_full_path }}">
-      <label for="sidebar-lang-select" class="sr-only">{% if LANGUAGE_CODE == 'ar' %}اللغة{% else %}Language{% endif %}</label>
-      <select id="sidebar-lang-select" name="language" class="form-select form-select-sm" onchange="this.form.submit()" aria-label="{% if LANGUAGE_CODE == 'ar' %}تغيير اللغة{% else %}Change language{% endif %}">
-        <option value="en" {% if LANGUAGE_CODE == 'en' %}selected{% endif %}>English</option>
-        <option value="ar" {% if LANGUAGE_CODE == 'ar' %}selected{% endif %}>العربية</option>
-      </select>
-    </form>
+    <div class="d-flex align-items-center gap-2">
+      <button id="themeToggle" class="theme-toggle" type="button"
+        title="{% if LANGUAGE_CODE == 'ar' %}تبديل الوضع{% else %}Toggle dark mode{% endif %}"
+        aria-label="{% if LANGUAGE_CODE == 'ar' %}تبديل الوضع الداكن{% else %}Toggle dark mode{% endif %}">
+        <span class="theme-icon-light" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg></span>
+        <span class="theme-icon-dark" aria-hidden="true" style="display:none"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></span>
+      </button>
+      <form action="/i18n/setlang/" method="post" class="s-lang" style="flex:1">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+        <label for="sidebar-lang-select" class="sr-only">{% if LANGUAGE_CODE == 'ar' %}اللغة{% else %}Language{% endif %}</label>
+        <select id="sidebar-lang-select" name="language" class="form-select form-select-sm" onchange="this.form.submit()" aria-label="{% if LANGUAGE_CODE == 'ar' %}تغيير اللغة{% else %}Change language{% endif %}">
+          <option value="en" {% if LANGUAGE_CODE == 'en' %}selected{% endif %}>English</option>
+          <option value="ar" {% if LANGUAGE_CODE == 'ar' %}selected{% endif %}>العربية</option>
+        </select>
+      </form>
+    </div>
   </div>
 </aside>
 
@@ -250,5 +258,28 @@
   } else {
     injectToggle();
   }
+})();
+
+/* ── Theme toggle (dark / light) ── */
+(function() {
+  var btn = document.getElementById('themeToggle');
+  if (!btn) return;
+  var iconLight = btn.querySelector('.theme-icon-light');
+  var iconDark  = btn.querySelector('.theme-icon-dark');
+
+  function syncIcons() {
+    var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    if (iconLight) iconLight.style.display = isDark ? 'none' : '';
+    if (iconDark)  iconDark.style.display  = isDark ? '' : 'none';
+  }
+  syncIcons();
+
+  btn.addEventListener('click', function() {
+    var current = document.documentElement.getAttribute('data-theme') || 'light';
+    var next = current === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('theme', next);
+    syncIcons();
+  });
 })();
 </script>

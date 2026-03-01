@@ -277,9 +277,9 @@
     .pl-empty-title { font-size: 13px; font-weight: 600; color: var(--t3); margin-bottom: 4px; }
     .pl-empty-hint { font-size: 12px; color: var(--t3); }
 
-    /* ── Dock card (sticky bottom) ───────────────────────────── */
+    /* ── Dock card ───────────────────────────── */
     .dock-card {
-      position: sticky; bottom: .5rem; z-index: 30;
+      z-index: 30;
       border: 1px solid rgba(17,17,68,0.06);
       background: var(--glass-bg); backdrop-filter: var(--glass-blur);
       -webkit-backdrop-filter: var(--glass-blur);
@@ -408,6 +408,67 @@
       outline: none; transition: border-color 0.2s;
     }
     .avail-search input:focus { border-color: var(--teal); }
+
+    /* ── Dark mode overrides ───────────────────────────── */
+    html[data-theme="dark"] .wf-stepper { background: rgba(255,255,255,0.04); }
+    html[data-theme="dark"] .wf-step:hover { background: rgba(255,255,255,0.04); }
+    html[data-theme="dark"] .wf-num { background: rgba(255,255,255,0.12); }
+    html[data-theme="dark"] .wf-sep { background: rgba(255,255,255,0.1); }
+    html[data-theme="dark"] .wf-nav .wf-back { background: rgba(255,255,255,0.06); }
+    html[data-theme="dark"] .wf-nav .wf-back:hover { background: rgba(255,255,255,0.1); }
+    html[data-theme="dark"] .command-bar {
+      border-color: rgba(255,255,255,0.06);
+      box-shadow: 0 2px 12px rgba(0,0,0,0.2);
+    }
+    html[data-theme="dark"] .planner-banner-warn { color: #f59e0b; }
+    html[data-theme="dark"] .planner-banner-ok { color: #2ec9a0; }
+    html[data-theme="dark"] .planner-banner-err { color: #f06060; }
+    html[data-theme="dark"] .planner-banner-neutral {
+      background: rgba(255,255,255,0.03);
+      border-color: rgba(255,255,255,0.06);
+    }
+    html[data-theme="dark"] .trust-strip { background: rgba(255,255,255,0.025); }
+    html[data-theme="dark"] .mode-toggle input[type="checkbox"] { background: rgba(255,255,255,0.12); }
+    html[data-theme="dark"] .pl-empty-icon { background: rgba(255,255,255,0.04); }
+    html[data-theme="dark"] .dock-card { border-color: rgba(255,255,255,0.06); }
+    html[data-theme="dark"] .planner-panel .table thead th {
+      border-bottom-color: rgba(255,255,255,0.06);
+    }
+    html[data-theme="dark"] .planner-panel .table tbody td {
+      border-bottom-color: rgba(255,255,255,0.03);
+    }
+    html[data-theme="dark"] .pl-btn-outline {
+      background: rgba(255,255,255,0.04);
+    }
+    html[data-theme="dark"] .pl-btn-outline:hover {
+      background: rgba(255,255,255,0.08);
+    }
+    html[data-theme="dark"] .pl-btn-red { color: #f06060; }
+    html[data-theme="dark"] .avail-course-card {
+      box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+    }
+    html[data-theme="dark"] .avail-course-head {
+      border-bottom-color: rgba(255,255,255,0.04);
+    }
+    html[data-theme="dark"] .avail-course-credits {
+      background: rgba(255,255,255,0.04);
+    }
+    html[data-theme="dark"] .sec-gray { background: rgba(255,255,255,0.04); }
+    html[data-theme="dark"] .avail-summary-bar {
+      background: rgba(255,255,255,0.025);
+    }
+
+    /* ── Dark: timetable grid cell text on dark course bg ── */
+    html[data-theme="dark"] #visualGrid td,
+    html[data-theme="dark"] #baselineWeekly td { color: #e2e4ec; }
+    html[data-theme="dark"] #visualGrid td .text-secondary,
+    html[data-theme="dark"] #baselineWeekly td .text-secondary { color: #a0a4b8 !important; }
+    html[data-theme="dark"] #visualGrid th,
+    html[data-theme="dark"] #baselineWeekly th { color: #a0a4b8; }
+    html[data-theme="dark"] #visualGrid .table,
+    html[data-theme="dark"] #baselineWeekly .table { border-color: rgba(255,255,255,0.06); }
+    html[data-theme="dark"] #visualGrid .table td,
+    html[data-theme="dark"] #baselineWeekly .table td { border-color: rgba(255,255,255,0.06); }
 
   </style>
 
@@ -803,10 +864,11 @@ function toMins(t){
   return h*60+m;
 }
 
+const _isDark = () => document.documentElement.getAttribute('data-theme') === 'dark';
 function colorForCourse(code){
   let h=0; const s=String(code||'');
   for(let i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))%360;
-  return `hsl(${h} 70% 92%)`;
+  return _isDark() ? `hsl(${h} 45% 22%)` : `hsl(${h} 70% 92%)`;
 }
 
 function renderBaselineWeeklyCompact(baseline){
@@ -954,7 +1016,7 @@ function renderVisualTimetable(source='baseline'){
       if(!m){ html += '<td></td>'; return; }
       carry[d]=Math.max(0,(m.span||1)-1);
 
-      const bg = m.conflict ? '#fecaca' : colorForCourse(m.label);
+      const bg = m.conflict ? (_isDark() ? 'hsl(0 40% 22%)' : '#fecaca') : colorForCourse(m.label);
       const badge = m.conflict
         ? `<span class="badge text-bg-danger">${IS_AR ? 'تعارض' : 'conflict'}</span>`
         : (m.kind==='planned'

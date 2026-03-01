@@ -393,3 +393,100 @@ hr {
   border-top: 1px solid var(--line, #dde3ed);
   opacity: 0.25;
 }
+
+/* ═══════════════════════════════════════════════════════
+   DARK MODE OVERRIDES  (Deep Navy theme)
+   ═══════════════════════════════════════════════════════ */
+
+/* ── Backgrounds ─────────────────────────────────────── */
+html[data-theme="dark"] .bg-light { background-color: rgba(255,255,255,0.04) !important; }
+
+/* ── Badges ──────────────────────────────────────────── */
+html[data-theme="dark"] .text-bg-light {
+  background-color: rgba(255,255,255,0.06) !important;
+  color: #c0c4d4 !important;
+}
+
+/* ── Alerts ──────────────────────────────────────────── */
+html[data-theme="dark"] .alert-danger {
+  color: #f8a0a8;
+  background-color: rgba(220,53,69,0.12);
+  border-color: rgba(220,53,69,0.2);
+}
+html[data-theme="dark"] .alert-info {
+  color: #7ed4e6;
+  background-color: rgba(13,202,240,0.1);
+  border-color: rgba(13,202,240,0.18);
+}
+html[data-theme="dark"] .alert-warning {
+  color: #f5cf6e;
+  background-color: rgba(255,193,7,0.1);
+  border-color: rgba(255,193,7,0.18);
+}
+html[data-theme="dark"] .alert-secondary {
+  color: #c0c4d4;
+  background-color: rgba(255,255,255,0.04);
+  border-color: rgba(255,255,255,0.08);
+}
+html[data-theme="dark"] .alert-light {
+  color: #c0c4d4;
+  background-color: rgba(255,255,255,0.03);
+  border-color: rgba(255,255,255,0.06);
+}
+
+/* ── Forms ────────────────────────────────────────────── */
+html[data-theme="dark"] .form-control {
+  background-color: rgba(255,255,255,0.05);
+  border-color: rgba(255,255,255,0.08);
+  color: #e2e4ec;
+}
+html[data-theme="dark"] .form-control:focus {
+  background-color: rgba(255,255,255,0.08);
+  border-color: var(--brand, #0A8E6E);
+}
+html[data-theme="dark"] .form-control::placeholder {
+  color: #505468;
+}
+
+html[data-theme="dark"] .form-select {
+  background-color: rgba(255,255,255,0.05);
+  border-color: rgba(255,255,255,0.08);
+  color: #e2e4ec;
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%23a0a4b8' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e");
+}
+html[data-theme="dark"] .form-select:focus {
+  background-color: rgba(255,255,255,0.08);
+  border-color: var(--brand, #0A8E6E);
+}
+html[data-theme="dark"] .form-select option {
+  background: #151826;
+  color: #e2e4ec;
+}
+
+html[data-theme="dark"] .form-check-input {
+  background-color: rgba(255,255,255,0.06);
+  border-color: rgba(255,255,255,0.15);
+}
+
+/* ── Buttons ─────────────────────────────────────────── */
+html[data-theme="dark"] .btn-close {
+  filter: invert(1) grayscale(100%) brightness(200%);
+}
+
+/* ── Tables ──────────────────────────────────────────── */
+html[data-theme="dark"] .table-hover > tbody > tr:hover > * {
+  background-color: rgba(255,255,255,0.03);
+}
+
+/* ── Progress ────────────────────────────────────────── */
+html[data-theme="dark"] .progress {
+  background-color: rgba(255,255,255,0.06);
+}
+
+/* ── Modal ────────────────────────────────────────────── */
+html[data-theme="dark"] .modal {
+  background: rgba(0,0,0,0.7);
+}
+html[data-theme="dark"] .modal-content {
+  box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+}

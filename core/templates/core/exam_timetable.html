@@ -66,7 +66,7 @@
     .et-matrix thead th { height: 80px; white-space: nowrap; vertical-align: bottom; padding: 4px 0; }
     .et-matrix thead th > span { display: inline-block; transform: rotate(-55deg); transform-origin: left bottom; width: 1.6em; font-size: .65rem; font-weight: 700; color: var(--t2, #333); }
     [dir="rtl"] .et-matrix thead th > span { transform: rotate(55deg); transform-origin: right bottom; }
-    .et-matrix tbody th { font-size: .65rem; font-weight: 700; white-space: nowrap; padding: 0 5px; text-align: end; color: var(--t2, #333); background: rgba(10,142,110,0.03); position: sticky; inset-inline-start: 0; z-index: 1; }
+    .et-matrix tbody th { font-size: .65rem; font-weight: 700; white-space: nowrap; padding: 0 5px; text-align: end; color: var(--t2, #333); background: rgba(10,142,110,0.03); }
     .et-matrix .cm-0 { background: transparent; color: transparent; }
     .et-matrix .cm-1 { background: hsl(45 90% 88%); color: #8b7000; }
     .et-matrix .cm-2 { background: hsl(33 90% 78%); color: #7a4400; }
@@ -143,10 +143,29 @@
     .et-matrix-empty { display: none; }
     .et-matrix-empty.visible { display: block; }
 
+    /* ── Dark mode overrides ───────────────────────────── */
+    html[data-theme="dark"] .et-matrix th,
+    html[data-theme="dark"] .et-matrix td {
+      border-color: rgba(255,255,255,0.06);
+    }
+    html[data-theme="dark"] .et-zoom-btn {
+      box-shadow: 2px 2px 5px rgba(0,0,0,0.3), -2px -2px 5px rgba(255,255,255,0.04);
+    }
+    html[data-theme="dark"] .et-zoom-btn:hover {
+      box-shadow: 3px 3px 6px rgba(0,0,0,0.35), -3px -3px 6px rgba(255,255,255,0.05);
+    }
+    html[data-theme="dark"] .et-matrix .cm-diag { background: rgba(255,255,255,0.08); }
+
+    /* ── Dark: course chip text on dark bg ── */
+    html[data-theme="dark"] .drill-course-chip { color: #e2e4ec; }
+    html[data-theme="dark"] .drill-course-chip small { color: #a0a4b8; }
+    html[data-theme="dark"] #scheduleGrid td { color: #e2e4ec; }
+    html[data-theme="dark"] #scheduleGrid th { color: #a0a4b8; }
+
     /* ── Conflict Matrix Fullscreen ── */
     .et-panel.matrix-fullscreen {
       position: fixed; inset: 0; z-index: 10001;
-      background: #fff; margin: 0; border-radius: 0;
+      background: var(--card, #fff); margin: 0; border-radius: 0;
       display: flex; flex-direction: column;
       padding: 12px 18px;
       overflow: hidden;
@@ -1004,18 +1023,19 @@ function renderResults(data) {
 }
 
 /* ── Color helper (reused from planner) ── */
+const _isDark = () => document.documentElement.getAttribute('data-theme') === 'dark';
 function colorForCourse(code) {
   let h = 0;
   const s = String(code || '');
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
-  return `hsl(${h} 70% 92%)`;
+  return _isDark() ? `hsl(${h} 45% 22%)` : `hsl(${h} 70% 92%)`;
 }
 
 function colorForCourseBorder(code) {
   let h = 0;
   const s = String(code || '');
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
-  return `hsl(${h} 50% 72%)`;
+  return _isDark() ? `hsl(${h} 40% 40%)` : `hsl(${h} 50% 72%)`;
 }
 
 /* ── Render schedule as day×period grid ── */

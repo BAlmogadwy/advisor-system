@@ -110,6 +110,516 @@
 }
 
 /* ============================================================
+   DARK MODE — Deep Navy
+   ============================================================ */
+html[data-theme="dark"] {
+  /* backgrounds */
+  --bg:             #0d0f1a;
+  --card:           #151826;
+
+  /* ink — inverted text hierarchy */
+  --ink:            #e2e4ec;
+  --ink-2:          #d0d2dc;
+  --t0:             #e2e4ec;
+  --t1:             #d0d2dc;
+  --t2:             #c0c4d4;
+  --t3:             #a0a4b8;
+  --t4:             #7a7e92;
+  --t5:             #505468;
+  --muted:          #a0a4b8;
+  --muted-light:    #7a7e92;
+
+  /* borders */
+  --line:           rgba(255,255,255,0.06);
+  --line-strong:    rgba(255,255,255,0.10);
+  --line-h:         rgba(255,255,255,0.06);
+  --line-a:         rgba(255,255,255,0.10);
+
+  /* brand — slightly brighter teal for dark bg */
+  --brand:          #0CA87E;
+  --brand-dark:     #2EC9A0;
+  --brand-soft:     rgba(10,142,110,0.12);
+  --brand-glow:     rgba(10,142,110,0.25);
+
+  /* Extended teal */
+  --teal:           #0CA87E;
+  --teal-bright:    #2EC9A0;
+  --teal-pale:      #4DD9B4;
+  --teal-deep:      #0CA87E;
+  --teal-dim:       rgba(10,142,110,0.12);
+  --teal-border:    rgba(10,142,110,0.24);
+
+  /* Extended palette */
+  --royal:          #5068F0;
+  --royal-bright:   #6B80FF;
+  --royal-dim:      rgba(64,86,227,0.12);
+  --royal-border:   rgba(64,86,227,0.24);
+  --sky:            #10C0EC;
+  --sky-bright:     #40D0F8;
+  --sky-dim:        rgba(0,174,218,0.12);
+
+  --navy:           #e2e4ec; /* inverted for readability */
+
+  /* sidebar accent */
+  --sidebar-bar:    #2EC9A0;
+  --sidebar-glow:   rgba(10,142,110,0.35);
+
+  /* semantic */
+  --success:        #2EC9A0;
+  --danger:         #F06060;
+  --warning:        #F5B731;
+
+  /* shadows — darker */
+  --shadow-card:    0 1px 3px rgba(0,0,0,.20), 0 8px 24px rgba(0,0,0,.30);
+  --shadow-lift:    0 4px 12px rgba(0,0,0,.25), 0 16px 40px rgba(0,0,0,.35);
+  --shadow-input:   0 1px 2px rgba(0,0,0,.15);
+  --shadow-neu:     4px 4px 12px rgba(0,0,0,0.40), -4px -4px 12px rgba(255,255,255,0.03);
+  --shadow-neu-sm:  2px 2px 6px rgba(0,0,0,0.35), -2px -2px 6px rgba(255,255,255,0.02);
+  --shadow-neu-inset: inset 2px 2px 5px rgba(0,0,0,0.35), inset -2px -2px 5px rgba(255,255,255,0.02);
+
+  /* borders */
+  --border-subtle:  1px solid rgba(255,255,255,0.05);
+  --border-mid:     1px solid rgba(255,255,255,0.08);
+
+  /* glassmorphism — dark glass */
+  --glass-bg:       rgba(255,255,255,0.04);
+  --glass-bg-data:  rgba(255,255,255,0.06);
+  --glass-bg-header:rgba(255,255,255,0.08);
+
+  /* focus ring */
+  --focus-ring:     0 0 0 2px #0d0f1a, 0 0 0 4px var(--teal);
+
+  color-scheme: dark;
+}
+
+/* ── Dark body background ── */
+html[data-theme="dark"] body {
+  background: #0d0f1a !important;
+  color: var(--t2) !important;
+}
+
+/* ── Dark sidebar ── */
+html[data-theme="dark"] .sidebar {
+  background: rgba(255,255,255,0.03);
+  border-inline-end-color: rgba(255,255,255,0.05);
+}
+html[data-theme="dark"] .sidebar .form-select {
+  background-color: rgba(255,255,255,0.06) !important;
+  color: var(--t2) !important;
+  border-color: rgba(255,255,255,0.08) !important;
+}
+html[data-theme="dark"] .sidebar .form-select:focus {
+  background-color: rgba(255,255,255,0.1) !important;
+}
+html[data-theme="dark"] .logo-area {
+  border-block-end-color: rgba(255,255,255,0.06);
+}
+
+/* ── Dark page header ── */
+html[data-theme="dark"] .page-header {
+  background: rgba(13,15,26,0.6);
+}
+
+/* ── Dark color mesh ── */
+html[data-theme="dark"] .color-mesh {
+  background:
+    radial-gradient(ellipse 80% 60% at 0% 0%, rgba(10,142,110,0.06) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 55% at 45% 0%, rgba(0,174,218,0.04) 0%, transparent 55%),
+    radial-gradient(ellipse 55% 50% at 100% 5%, rgba(64,86,227,0.05) 0%, transparent 55%),
+    radial-gradient(ellipse 70% 50% at 15% 45%, rgba(64,224,208,0.04) 0%, transparent 50%),
+    radial-gradient(ellipse 50% 40% at 55% 40%, rgba(229,198,3,0.03) 0%, transparent 45%),
+    radial-gradient(ellipse 55% 50% at 95% 45%, rgba(255,209,220,0.04) 0%, transparent 50%),
+    radial-gradient(ellipse 60% 45% at 40% 90%, rgba(10,142,110,0.03) 0%, transparent 50%),
+    radial-gradient(ellipse 50% 45% at 85% 85%, rgba(0,174,218,0.03) 0%, transparent 50%),
+    radial-gradient(ellipse 45% 40% at 10% 90%, rgba(64,86,227,0.02) 0%, transparent 45%),
+    linear-gradient(160deg, #0a0c14 0%, #0c0f1c 25%, #0d0f1a 50%, #0b0e18 75%, #0d101c 100%);
+}
+
+/* ── Dark ambience blobs ── */
+html[data-theme="dark"] .amb-1 { background: rgba(10,142,110,0.04); }
+html[data-theme="dark"] .amb-2 { background: rgba(64,86,227,0.035); }
+html[data-theme="dark"] .amb-3 { background: rgba(0,174,218,0.025); }
+html[data-theme="dark"] .amb-4 { background: rgba(64,224,208,0.03); }
+html[data-theme="dark"] .amb-5 { background: rgba(255,209,220,0.03); }
+html[data-theme="dark"] .amb-6 { background: rgba(229,198,3,0.02); }
+
+/* ── Dark side decor ── */
+html[data-theme="dark"] .side-decor { opacity: 0.12; }
+
+/* ── Dark selection ── */
+html[data-theme="dark"] ::selection { background: var(--teal); color: #fff; }
+
+/* ── Dark form inputs ── */
+html[data-theme="dark"] .form-control,
+html[data-theme="dark"] .form-select {
+  background-color: rgba(255,255,255,0.05) !important;
+  color: var(--t1) !important;
+  border-color: rgba(255,255,255,0.08) !important;
+}
+html[data-theme="dark"] .form-control:focus,
+html[data-theme="dark"] .form-select:focus {
+  background-color: rgba(255,255,255,0.08) !important;
+  border-color: var(--teal) !important;
+  box-shadow: 0 0 0 3px rgba(10,142,110,0.2) !important;
+}
+html[data-theme="dark"] .form-control::placeholder {
+  color: var(--t5) !important;
+}
+
+/* ── Dark buttons ── */
+html[data-theme="dark"] .btn-outline-secondary {
+  color: var(--t3) !important;
+  border-color: rgba(255,255,255,0.1) !important;
+}
+html[data-theme="dark"] .btn-outline-secondary:hover {
+  background: rgba(255,255,255,0.06) !important;
+  color: var(--t1) !important;
+}
+html[data-theme="dark"] .btn-outline-dark {
+  color: var(--t2) !important;
+  border-color: rgba(255,255,255,0.12) !important;
+}
+html[data-theme="dark"] .btn-outline-dark:hover {
+  background: rgba(255,255,255,0.08) !important;
+  color: #fff !important;
+}
+
+/* ── Dark table ── */
+html[data-theme="dark"] table th {
+  color: var(--t3);
+}
+html[data-theme="dark"] table td {
+  border-color: rgba(255,255,255,0.04);
+}
+html[data-theme="dark"] table thead th {
+  border-bottom-color: rgba(255,255,255,0.06);
+}
+
+/* ── Dark scrollbar ── */
+html[data-theme="dark"] ::-webkit-scrollbar-track {
+  background: rgba(255,255,255,0.02);
+}
+html[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.08);
+}
+html[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.14);
+}
+
+/* ── Dark pills ── */
+html[data-theme="dark"] .pill-teal {
+  background: rgba(10,142,110,0.15);
+}
+html[data-theme="dark"] .pill-royal {
+  background: rgba(64,86,227,0.15);
+}
+html[data-theme="dark"] .pill-muted {
+  background: rgba(255,255,255,0.06);
+}
+
+/* ── Dark back-to-top ── */
+html[data-theme="dark"] .btt {
+  background: rgba(255,255,255,0.06) !important;
+  border-color: rgba(255,255,255,0.1) !important;
+  color: var(--t3) !important;
+}
+
+/* ── Dark mode: background + shadow overrides ─────────────
+   Kill hardcoded rgba(255,255,255,0.40) backgrounds AND
+   neumorphic shadows (rgba(163,177,198,...) + rgba(255,255,255,0.7+))
+   ─────────────────────────────────────────────────────────── */
+
+/* Cards & panels — dark background + subtle shadow */
+html[data-theme="dark"] .soft-card,
+html[data-theme="dark"] .zone-card,
+html[data-theme="dark"] .term-card,
+html[data-theme="dark"] .term-details,
+html[data-theme="dark"] .metric,
+html[data-theme="dark"] .mc,
+html[data-theme="dark"] .cpanel,
+html[data-theme="dark"] .filter-bar,
+html[data-theme="dark"] .actions-row,
+html[data-theme="dark"] .table-wrap,
+html[data-theme="dark"] .page-nav,
+html[data-theme="dark"] .skel-card,
+html[data-theme="dark"] .glass-filter-row,
+html[data-theme="dark"] .audit-table-wrap,
+html[data-theme="dark"] .tbl-card tbody tr.cr-row,
+html[data-theme="dark"] .mobile-cards tbody tr,
+html[data-theme="dark"] .advisor-block,
+html[data-theme="dark"] .drawer,
+html[data-theme="dark"] .task-card {
+  background: rgba(255,255,255,0.04) !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25) !important;
+}
+
+/* Advisor block & drawer — fix hardcoded light borders/text */
+html[data-theme="dark"] .advisor-block,
+html[data-theme="dark"] .drawer {
+  border-color: rgba(10,142,110,0.2) !important;
+}
+html[data-theme="dark"] .advisor-block h3 {
+  color: #2ec9a0;
+}
+html[data-theme="dark"] .drawer h3 {
+  color: #e2e4ec;
+}
+
+/* Panels with stronger glass for data readability */
+html[data-theme="dark"] .table-wrap,
+html[data-theme="dark"] .soft-card {
+  background: rgba(255,255,255,0.06) !important;
+}
+
+/* Pagination bar */
+html[data-theme="dark"] .pg-bar {
+  background: rgba(255,255,255,0.04) !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25) !important;
+}
+
+/* Recommendation items */
+html[data-theme="dark"] .rec {
+  background: rgba(255,255,255,0.04) !important;
+  box-shadow: none !important;
+}
+html[data-theme="dark"] .rec:hover {
+  background: rgba(10,142,110,0.08) !important;
+  box-shadow: none !important;
+}
+
+/* Table header hover */
+html[data-theme="dark"] .table-wrap thead th:hover {
+  background: rgba(255,255,255,0.08) !important;
+}
+
+/* Table header row */
+html[data-theme="dark"] .table-wrap thead {
+  background: rgba(255,255,255,0.06) !important;
+}
+
+/* Batch metrics — kill the hardcoded light green */
+html[data-theme="dark"] #batchMetrics .metric {
+  background: rgba(255,255,255,0.04) !important;
+  border-color: rgba(255,255,255,0.06) !important;
+}
+
+/* Card/panel hover — slightly deeper */
+html[data-theme="dark"] .soft-card:hover,
+html[data-theme="dark"] .metric:hover,
+html[data-theme="dark"] .mc:hover,
+html[data-theme="dark"] .cpanel:hover,
+html[data-theme="dark"] .tbl-card tbody tr.cr-row:hover,
+html[data-theme="dark"] .tbl-card tbody tr.cr-row:focus-within {
+  background: rgba(255,255,255,0.06) !important;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.35) !important;
+}
+
+/* Buttons — flat with subtle shadow */
+html[data-theme="dark"] .btn-circle,
+html[data-theme="dark"] .pg-btn,
+html[data-theme="dark"] .fb-dd,
+html[data-theme="dark"] .tbl-cnt,
+html[data-theme="dark"] .pill-status,
+html[data-theme="dark"] .empty-state-action,
+html[data-theme="dark"] html body .btn:disabled,
+html[data-theme="dark"] html body .btn.disabled {
+  box-shadow: 0 1px 4px rgba(0,0,0,0.2) !important;
+}
+
+/* Button hover — slight lift */
+html[data-theme="dark"] .btn-circle:hover,
+html[data-theme="dark"] .pg-btn:hover,
+html[data-theme="dark"] .fb-dd:hover,
+html[data-theme="dark"] html body .btn-outline-primary:hover,
+html[data-theme="dark"] html body .btn-outline-secondary:hover,
+html[data-theme="dark"] html body .btn-outline-success:hover,
+html[data-theme="dark"] html body .btn-outline-danger:hover,
+html[data-theme="dark"] html body .btn-outline-warning:hover,
+html[data-theme="dark"] html body .btn-outline-info:hover,
+html[data-theme="dark"] html body .btn-outline-dark:hover,
+html[data-theme="dark"] html body .btn-export:hover,
+html[data-theme="dark"] .page-header-right .btn-outline-secondary:hover {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3) !important;
+}
+
+/* Button active / pressed — inset dark */
+html[data-theme="dark"] .btn-circle:active,
+html[data-theme="dark"] .pg-btn.active,
+html[data-theme="dark"] .fb-dd.active,
+html[data-theme="dark"] html body .btn-outline-primary:active,
+html[data-theme="dark"] html body .btn-outline-secondary:active {
+  box-shadow: inset 1px 1px 3px rgba(0,0,0,0.3) !important;
+}
+
+/* Button/input focus ring — keep teal ring, kill neumorphic */
+html[data-theme="dark"] html body .btn:focus,
+html[data-theme="dark"] html body .btn:focus-visible,
+html[data-theme="dark"] .form-control:focus-visible,
+html[data-theme="dark"] .form-select:focus-visible {
+  box-shadow: 0 0 0 3px rgba(10,142,110,0.2) !important;
+}
+
+/* Inputs — subtle inset */
+html[data-theme="dark"] .form-control,
+html[data-theme="dark"] .form-select {
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.15) !important;
+}
+html[data-theme="dark"] .fb-search {
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.2) !important;
+}
+html[data-theme="dark"] .fb-search:focus-within {
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.2), 0 0 0 3px rgba(10,142,110,0.2) !important;
+}
+
+/* Dialogs — clean dark shadow */
+html[data-theme="dark"] .dlg-box {
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5) !important;
+}
+html[data-theme="dark"] .dlg-icon {
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.2) !important;
+}
+html[data-theme="dark"] .dlg-input-row input {
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.2) !important;
+}
+html[data-theme="dark"] .dlg-input-row input:focus {
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.2), 0 0 0 3px rgba(10,142,110,0.2) !important;
+}
+html[data-theme="dark"] .dlg-footer .btn-cancel:hover {
+  box-shadow: 0 2px 6px rgba(0,0,0,0.25) !important;
+}
+html[data-theme="dark"] .dlg-footer .btn-confirm:disabled {
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15) !important;
+}
+
+/* Toast — dark shadow */
+html[data-theme="dark"] .ux-toast {
+  box-shadow: 0 4px 16px rgba(0,0,0,0.4) !important;
+}
+html[data-theme="dark"] .ux-toast-icon {
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.2) !important;
+}
+
+/* Misc icon containers */
+html[data-theme="dark"] .mc-icon {
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.2) !important;
+}
+html[data-theme="dark"] .page-header-right .btn-outline-secondary {
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15) !important;
+}
+
+/* ── Dark: cpanel header ─── */
+html[data-theme="dark"] .cp-h {
+  background: rgba(255,255,255,0.06) !important;
+}
+
+/* ── Dark: dialog box ─── */
+html[data-theme="dark"] .dlg-box {
+  background: #151826 !important;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5) !important;
+}
+html[data-theme="dark"] .dlg-overlay {
+  background: rgba(0,0,0,0.6) !important;
+}
+
+/* ── Dark: mc hover bg ─── */
+html[data-theme="dark"] .mc:hover {
+  background: rgba(255,255,255,0.06) !important;
+}
+
+/* ── Dark: .fb-dd & other button-like elements bg ─── */
+html[data-theme="dark"] .fb-dd {
+  background: rgba(255,255,255,0.03) !important;
+}
+html[data-theme="dark"] .fb-dd:hover {
+  background: rgba(255,255,255,0.06) !important;
+}
+html[data-theme="dark"] .fb-dd.active {
+  background: rgba(10,142,110,0.08) !important;
+}
+
+/* ── Dark: btn-outline-dark hover (was hardcoded navy bg) ─── */
+html[data-theme="dark"] html body .btn-outline-dark:hover {
+  background: rgba(255,255,255,0.08) !important;
+}
+
+/* ── Dark: .page-header bg ─── */
+html[data-theme="dark"] .page-header {
+  background: rgba(13,15,26,0.6) !important;
+}
+
+/* ── Dark: table-wrap thead sticky bg ─── */
+html[data-theme="dark"] .table-wrap thead th {
+  background: rgba(255,255,255,0.06) !important;
+}
+html[data-theme="dark"] .table-wrap thead th:hover {
+  background: rgba(255,255,255,0.10) !important;
+}
+
+/* ── Dark: .ov- overview components (uses CSS vars, ensure borders) ─── */
+html[data-theme="dark"] .ov-activity-item {
+  border-bottom-color: rgba(255,255,255,0.04);
+}
+
+/* ── Dark: mc spark bars ─── */
+html[data-theme="dark"] .mc .spark .b {
+  background: rgba(255,255,255,0.08);
+}
+
+/* ── Dark: panel-specific hardcoded backgrounds ─── */
+html[data-theme="dark"] #batchMetrics .metric {
+  background: rgba(255,255,255,0.04) !important;
+  border-color: rgba(10,142,110,0.2) !important;
+}
+html[data-theme="dark"] #advisorportfolio #advTable thead th {
+  background: rgba(10,142,110,0.08) !important;
+  color: var(--teal-bright) !important;
+}
+html[data-theme="dark"] #advisorportfolio .metric {
+  border-color: rgba(255,255,255,0.06) !important;
+}
+
+/* ── Dark: .tbl-card backgrounds ─── */
+html[data-theme="dark"] .tbl-card {
+  background: transparent !important;
+}
+html[data-theme="dark"] .tbl-card thead th {
+  background: rgba(255,255,255,0.06) !important;
+  border-bottom-color: rgba(255,255,255,0.06) !important;
+}
+html[data-theme="dark"] .tbl-card tbody tr {
+  border-bottom-color: rgba(255,255,255,0.04) !important;
+}
+
+/* ── Dark: skel-block (skeleton loading) ─── */
+html[data-theme="dark"] .skel-block {
+  background: rgba(255,255,255,0.06) !important;
+}
+
+/* ── Dark: .rec inset shadow (sticky-cta gradient) ─── */
+html[data-theme="dark"] .sticky-cta::before {
+  opacity: 0.4;
+}
+
+/* ── Theme toggle button ── */
+.theme-toggle {
+  display: flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; border-radius: 8px;
+  border: 1px solid rgba(17,17,68,0.08);
+  background: transparent; cursor: pointer;
+  color: var(--t4); font-size: 16px;
+  transition: all 0.2s ease;
+}
+.theme-toggle:hover { background: rgba(17,17,68,0.05); color: var(--t2); }
+html[data-theme="dark"] .theme-toggle {
+  border-color: rgba(255,255,255,0.08);
+  color: var(--t4);
+}
+html[data-theme="dark"] .theme-toggle:hover {
+  background: rgba(255,255,255,0.06);
+  color: #F5B731;
+}
+
+/* ============================================================
    REUSABLE UTILITY CLASSES
    ============================================================ */
 /* Glass card — the most repeated pattern across all templates */
@@ -1147,13 +1657,10 @@ html body .btn:focus-visible {
 .table-wrap tbody tr:hover td { background: rgba(10,142,110,0.07); }
 
 .table-wrap thead th {
-  position:      sticky;
-  top:           0;
   background:    var(--glass-bg-header) !important;
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   border-bottom: 2px solid rgba(10,142,110,0.15);
-  z-index:       2;
   cursor:        pointer;
   font-family:   var(--font-mono);
   font-weight:   700;
@@ -1924,7 +2431,6 @@ tr.attention-row td { background: #fff7ed !important; }
 .plan-course-link { cursor: pointer; }
 
 .drawer {
-  position: sticky; top: 1rem;
   border: 1px solid #a8e6d4; background: linear-gradient(160deg, #f0faf6 0%, #fff 100%);
   border-radius: var(--radius); padding: 0.875rem;
   box-shadow: 0 4px 16px rgba(10,142,110,.08);
@@ -1967,7 +2473,7 @@ tr.attention-row td { background: #fff7ed !important; }
 }
 
 .sticky-cta {
-  position: sticky; top: 0.5rem; z-index: 6;
+  z-index: 6;
 }
 
 .mini-bar-wrap {
@@ -2276,10 +2782,8 @@ pre, .pre-output {
   }
   .ux-toast { max-width: 100%; min-width: 0; }
 
-  /* page-header: bleeds to edges, stays sticky at top */
+  /* page-header: bleeds to edges */
   .page-header {
-    position:      sticky;
-    top:           0;
     margin:        0 -1rem 1.25rem -1rem !important;  /* bleeds out of main's 1rem padding */
     padding:       0.4rem 0.65rem !important;
     border-radius: 0;
@@ -3655,7 +4159,6 @@ textarea:focus-visible {
   color: var(--t4, #6c6c8a); padding: 10px 12px;
   border-bottom: var(--border-mid, 1px solid rgba(17,17,68,0.08));
   background: rgba(255,255,255,0.3);
-  position: sticky; top: 0; z-index: 2;
 }
 .data-table tbody td {
   padding: 9px 12px; font-size: 0.875rem; color: var(--t2, #2d2d5e);

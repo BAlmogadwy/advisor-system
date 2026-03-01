@@ -78,6 +78,98 @@
       .sp-cap-grp input { width: 100%; }
       .sp-adv-search { width: 100%; }
     }
+
+    /* ═══════════════════════════════════════════════════════════
+       DARK MODE — Deep Navy overrides
+       html[data-theme="dark"]
+       ═══════════════════════════════════════════════════════════ */
+    html[data-theme="dark"] .sp-panel {
+      background: rgba(255,255,255,0.04);
+      border-color: rgba(255,255,255,0.06);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    }
+    html[data-theme="dark"] .sp-caps {
+      background: rgba(10,142,110,0.06);
+      border-color: rgba(10,142,110,0.15);
+    }
+    html[data-theme="dark"] .sp-mc {
+      background: rgba(255,255,255,0.04);
+      border-color: rgba(255,255,255,0.06);
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    }
+    html[data-theme="dark"] .sp-dept-card {
+      background: rgba(255,255,255,0.04);
+      border-color: rgba(255,255,255,0.06);
+    }
+
+    /* Status pills */
+    html[data-theme="dark"] .sp-pill-full {
+      background: rgba(12,168,126,0.15);
+      color: #2ec9a0;
+    }
+    html[data-theme="dark"] .sp-pill-under {
+      background: rgba(220,53,69,0.15);
+      color: #f06060;
+    }
+    html[data-theme="dark"] .sp-pill-ext {
+      background: rgba(255,255,255,0.06);
+      color: #a0a4b8;
+    }
+
+    /* Fill bars */
+    html[data-theme="dark"] .sp-fill-md {
+      background: rgba(240,173,78,0.15);
+    }
+    html[data-theme="dark"] .sp-fill-lo {
+      background: rgba(220,53,69,0.15);
+    }
+    html[data-theme="dark"] .sp-fill-wrap {
+      background: rgba(255,255,255,0.06);
+    }
+
+    /* Progress bar track */
+    html[data-theme="dark"] .sp-progress {
+      background: rgba(255,255,255,0.06);
+    }
+
+    /* Alerts */
+    html[data-theme="dark"] .sp-alert-ok {
+      background: rgba(12,168,126,0.10);
+      color: #2ec9a0;
+      border-color: rgba(12,168,126,0.20);
+    }
+    html[data-theme="dark"] .sp-alert-err {
+      background: rgba(220,53,69,0.10);
+      color: #f06060;
+      border-color: rgba(220,53,69,0.20);
+    }
+
+    /* Advanced table */
+    html[data-theme="dark"] .sp-adv-table th {
+      border-bottom-color: rgba(255,255,255,0.08);
+    }
+    html[data-theme="dark"] .sp-adv-table td {
+      border-bottom-color: rgba(255,255,255,0.04);
+    }
+    html[data-theme="dark"] .sp-adv-table tr:hover {
+      background: rgba(12,168,126,0.06);
+    }
+    html[data-theme="dark"] .sp-adv-table .adv-input:not(:placeholder-shown) {
+      border-color: rgba(12,168,126,0.4);
+      background: rgba(12,168,126,0.08);
+    }
+    html[data-theme="dark"] .sp-adv-wrap {
+      border-color: rgba(255,255,255,0.06);
+    }
+
+    /* Reset button hover */
+    html[data-theme="dark"] .sp-adv-reset {
+      border-color: rgba(255,255,255,0.10);
+    }
+    html[data-theme="dark"] .sp-adv-reset:hover {
+      color: #f06060;
+      border-color: #f06060;
+    }
   </style>
 {% endblock %}
 
