@@ -12,75 +12,75 @@
     .kpi { border: var(--border-subtle); border-radius: var(--radius); padding: .6rem; background: var(--glass-bg); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); box-shadow: var(--shadow-card); }
     .kpi .k { font-size: .7rem; color: var(--t3); text-transform: uppercase; font-family: var(--font-mono); letter-spacing: 0.06em; font-weight: 700; }
     .kpi .v { font-weight: 700; font-family: var(--font-serif); font-size: 1.4rem; color: var(--teal); }
-    .kpi .v.warn { color: var(--red, #dc3545); }
+    .kpi .v.warn { color: var(--danger); }
     .kpi-click { cursor: pointer; transition: border-color 0.15s, box-shadow 0.15s; }
-    .kpi-click:hover { border-color: var(--teal, #0a8e6e); box-shadow: 0 0 0 2px rgba(10,142,110,0.12); }
+    .kpi-click:hover { border-color: var(--teal); box-shadow: 0 0 0 2px var(--teal-border); }
     .kpi-click .v { text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px; }
-    .kpi-click.active { border-color: var(--teal, #0a8e6e); box-shadow: 0 0 0 2px rgba(10,142,110,0.18); }
-    #kpiDrill { border-top: 2px solid var(--teal, #0a8e6e); padding-top: 10px; }
-    #kpiDrill table th { font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; color: var(--t3, #666); white-space: nowrap; }
+    .kpi-click.active { border-color: var(--teal); box-shadow: 0 0 0 2px var(--brand-glow); }
+    #kpiDrill { border-top: 2px solid var(--teal); padding-top: 10px; }
+    #kpiDrill table th { font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; color: var(--t3); white-space: nowrap; }
     #kpiDrill table td { vertical-align: middle; }
     .drill-course-chip { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: .75rem; font-weight: 600; margin: 1px 2px; }
     .et-history-item { cursor: pointer; padding: 6px 10px; border-radius: 6px; transition: background 0.15s; }
-    .et-history-item:hover { background: rgba(10,142,110,0.06); }
-    .et-history-item.active { background: rgba(10,142,110,0.10); font-weight: 600; }
+    .et-history-item:hover { background: var(--teal-dim); }
+    .et-history-item.active { background: var(--brand-soft); font-weight: 600; }
     .et-history-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .et-history-item .et-run-info { flex: 1; min-width: 0; }
     .et-del-btn { background: none; border: none; cursor: pointer; padding: 4px 6px; border-radius: 4px; color: var(--t3); font-size: .85rem; opacity: 0; transition: opacity 0.15s, color 0.15s, background 0.15s; flex-shrink: 0; }
     .et-history-item:hover .et-del-btn { opacity: 1; }
-    .et-del-btn:hover { color: var(--red, #dc3545); background: rgba(220,53,69,0.08); }
-    .et-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; border-radius: 20px; font-size: .78rem; font-weight: 600; cursor: pointer; border: 1.5px solid var(--t4, #ccc); background: transparent; color: var(--t2, #555); transition: all 0.15s; user-select: none; }
-    .et-chip:hover { border-color: var(--teal, #0a8e6e); }
-    .et-chip.active { background: var(--teal, #0a8e6e); color: #fff; border-color: var(--teal, #0a8e6e); }
+    .et-del-btn:hover { color: var(--danger); background: rgba(192,48,48,0.08); }
+    .et-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; border-radius: 20px; font-size: .78rem; font-weight: 600; cursor: pointer; border: 1.5px solid var(--t4); background: transparent; color: var(--t2); transition: all 0.15s; user-select: none; }
+    .et-chip:hover { border-color: var(--teal); }
+    .et-chip.active { background: var(--teal); color: #fff; border-color: var(--teal); }
     .et-chip input { display: none; }
     .et-dept-group { margin-bottom: 4px; }
     .et-dept-header { display: flex; align-items: center; gap: 6px; padding: 3px 4px; font-size: .75rem; cursor: pointer; border-radius: 4px; transition: background 0.15s; }
-    .et-dept-header:hover { background: rgba(10,142,110,0.05); }
-    .et-dept-header .dept-name { font-weight: 700; color: var(--t2, #333); font-size: .8rem; }
-    .et-dept-header .dept-count { color: var(--t3, #666); font-weight: 400; }
-    .et-dept-header .dept-toggle { margin-inline-start: auto; font-size: .68rem; color: var(--teal, #0a8e6e); text-decoration: none; }
-    .et-dept-chips { padding-block: 2px 4px; padding-inline-start: 12px; padding-inline-end: 0; border-inline-start: 2px solid rgba(10,142,110,0.12); margin-inline-start: 6px; }
+    .et-dept-header:hover { background: var(--teal-dim); }
+    .et-dept-header .dept-name { font-weight: 700; color: var(--t2); font-size: .8rem; }
+    .et-dept-header .dept-count { color: var(--t3); font-weight: 400; }
+    .et-dept-header .dept-toggle { margin-inline-start: auto; font-size: .68rem; color: var(--teal); text-decoration: none; }
+    .et-dept-chips { padding-block: 2px 4px; padding-inline-start: 12px; padding-inline-end: 0; border-inline-start: 2px solid var(--teal-border); margin-inline-start: 6px; }
     .et-level-row { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; margin-bottom: 2px; }
-    .et-level-badge { font-size: .58rem; font-weight: 700; color: var(--t3, #666); background: rgba(10,142,110,0.08); padding: 1px 5px; border-radius: 3px; white-space: nowrap; min-width: 20px; text-align: center; flex-shrink: 0; }
+    .et-level-badge { font-size: .58rem; font-weight: 700; color: var(--t3); background: var(--brand-soft); padding: 1px 5px; border-radius: 3px; white-space: nowrap; min-width: 20px; text-align: center; flex-shrink: 0; }
     .et-grid { width: 100%; border-collapse: collapse; }
     .et-grid th, .et-grid td { border: var(--border-mid); padding: 7px 6px; text-align: center; vertical-align: middle; }
-    .et-grid thead th { font-size: .73rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--t3, #666); background: rgba(10,142,110,0.04); white-space: nowrap; }
-    .et-grid tbody th { font-size: .78rem; font-weight: 700; white-space: nowrap; color: var(--t2, #333); background: rgba(10,142,110,0.04); min-width: 70px; }
+    .et-grid thead th { font-size: .73rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--t3); background: var(--teal-dim); white-space: nowrap; }
+    .et-grid tbody th { font-size: .78rem; font-weight: 700; white-space: nowrap; color: var(--t2); background: var(--teal-dim); min-width: 70px; }
     .et-grid td { font-size: .82rem; font-weight: 600; min-width: 90px; }
-    .et-grid .et-empty { color: var(--t5, #a8a8be); font-weight: 400; font-size: .75rem; }
+    .et-grid .et-empty { color: var(--t5); font-weight: 400; font-size: .75rem; }
     .et-grid .et-course { display: inline-block; padding: 3px 8px; border-radius: 6px; margin: 2px 1px; font-size: .78rem; font-weight: 600; }
-    .et-grid .et-overflow-row th, .et-grid .et-overflow-row td { background: rgba(220,53,69,0.06); }
-    .et-grid .et-highlight { outline: 2.5px solid var(--teal, #0a8e6e); outline-offset: -2px; }
+    .et-grid .et-overflow-row th, .et-grid .et-overflow-row td { background: rgba(192,48,48,0.06); }
+    .et-grid .et-highlight { outline: 2.5px solid var(--teal); outline-offset: -2px; }
     .et-grid .et-dim { opacity: 0.25; }
     /* Drag & drop pin */
     .et-course[draggable="true"] { cursor: grab; }
     .et-course[draggable="true"]:active { cursor: grabbing; }
-    .et-course.et-pinned { outline: 2px dashed #d35400; outline-offset: -1px; }
-    .et-grid td.et-drag-over { background: rgba(10,142,110,0.12) !important; outline: 2px dashed var(--teal, #0a8e6e); outline-offset: -2px; }
-    .et-pin-bar { display: flex; align-items: center; gap: 8px; font-size: .75rem; color: var(--t3, #666); margin-top: 6px; }
-    .et-pin-bar a { color: var(--red, #dc3545); text-decoration: none; font-size: .72rem; }
+    .et-course.et-pinned { outline: 2px dashed var(--warning); outline-offset: -1px; }
+    .et-grid td.et-drag-over { background: var(--brand-soft) !important; outline: 2px dashed var(--teal); outline-offset: -2px; }
+    .et-pin-bar { display: flex; align-items: center; gap: 8px; font-size: .75rem; color: var(--t3); margin-top: 6px; }
+    .et-pin-bar a { color: var(--danger); text-decoration: none; font-size: .72rem; }
     /* Conflict matrix heatmap */
     .et-matrix { border-collapse: collapse; font-size: .62rem; }
-    .et-matrix th, .et-matrix td { border: 1px solid rgba(17,17,68,0.06); padding: 0; text-align: center; vertical-align: middle; }
+    .et-matrix th, .et-matrix td { border: 1px solid var(--line-h); padding: 0; text-align: center; vertical-align: middle; }
     .et-matrix td { width: 32px; height: 32px; min-width: 32px; cursor: default; font-weight: 600; font-size: .6rem; }
     .et-matrix thead th { height: 80px; white-space: nowrap; vertical-align: bottom; padding: 4px 0; }
-    .et-matrix thead th > span { display: inline-block; transform: rotate(-55deg); transform-origin: left bottom; width: 1.6em; font-size: .65rem; font-weight: 700; color: var(--t2, #333); }
+    .et-matrix thead th > span { display: inline-block; transform: rotate(-55deg); transform-origin: left bottom; width: 1.6em; font-size: .65rem; font-weight: 700; color: var(--t2); }
     [dir="rtl"] .et-matrix thead th > span { transform: rotate(55deg); transform-origin: right bottom; }
-    .et-matrix tbody th { font-size: .65rem; font-weight: 700; white-space: nowrap; padding: 0 5px; text-align: end; color: var(--t2, #333); background: rgba(10,142,110,0.03); }
+    .et-matrix tbody th { font-size: .65rem; font-weight: 700; white-space: nowrap; padding: 0 5px; text-align: end; color: var(--t2); background: var(--teal-dim); }
     .et-matrix .cm-0 { background: transparent; color: transparent; }
-    .et-matrix .cm-1 { background: hsl(45 90% 88%); color: #8b7000; }
+    .et-matrix .cm-1 { background: hsl(45 90% 88%); color: var(--warning); }
     .et-matrix .cm-2 { background: hsl(33 90% 78%); color: #7a4400; }
     .et-matrix .cm-3 { background: hsl(15 85% 68%); color: #fff; }
     .et-matrix .cm-4 { background: hsl(0 80% 55%); color: #fff; }
-    .et-matrix .cm-diag { background: var(--t5, #ddd); color: transparent; }
-    .et-matrix tbody tr:hover > td, .et-matrix tbody tr:hover > th { box-shadow: inset 0 0 0 50px rgba(10,142,110,0.09); }
-    .et-matrix .cm-col-hl { box-shadow: inset 0 0 0 50px rgba(10,142,110,0.09); }
-    .et-matrix tbody tr:hover > .cm-col-hl { box-shadow: inset 0 0 0 50px rgba(10,142,110,0.18); }
+    .et-matrix .cm-diag { background: var(--t5); color: transparent; }
+    .et-matrix tbody tr:hover > td, .et-matrix tbody tr:hover > th { box-shadow: inset 0 0 0 50px var(--brand-soft); }
+    .et-matrix .cm-col-hl { box-shadow: inset 0 0 0 50px var(--brand-soft); }
+    .et-matrix tbody tr:hover > .cm-col-hl { box-shadow: inset 0 0 0 50px var(--brand-glow); }
     .et-matrix thead th { cursor: pointer; }
     .et-matrix tbody th { cursor: pointer; }
     .et-matrix td:not(.cm-0):not(.cm-diag) { cursor: pointer; }
-    .et-legend { display: flex; gap: 12px; align-items: center; font-size: .72rem; color: var(--t3, #666); margin-top: 8px; flex-wrap: wrap; }
-    .et-legend-box { display: inline-block; width: 18px; height: 18px; border-radius: 3px; vertical-align: middle; border: 1px solid rgba(0,0,0,0.1); }
+    .et-legend { display: flex; gap: 12px; align-items: center; font-size: .72rem; color: var(--t3); margin-top: 8px; flex-wrap: wrap; }
+    .et-legend-box { display: inline-block; width: 18px; height: 18px; border-radius: 3px; vertical-align: middle; border: var(--border-mid); }
 
     /* ── Responsive: Tablet (1024px) ── */
     @media (max-width: 1024px) {
@@ -124,7 +124,7 @@
       width: 28px; height: 28px; border-radius: 6px; border: none;
       background: var(--glass-bg); color: var(--t3);
       font-size: 0.85rem; font-weight: 700; cursor: pointer;
-      box-shadow: 2px 2px 5px rgba(163,177,198,0.25), -2px -2px 5px rgba(255,255,255,0.7);
+      box-shadow: var(--shadow-neu-sm);
       transition: all 0.15s;
       display: flex; align-items: center; justify-content: center;
     }
@@ -143,29 +143,52 @@
     .et-matrix-empty { display: none; }
     .et-matrix-empty.visible { display: block; }
 
+    /* ── Utility classes (replace inline styles) ── */
+    .et-period-sep { font-size: 0.75rem; color: var(--t3); }
+    .et-period-remove-btn { padding: 2px 6px; font-size: 0.7rem; line-height: 1; }
+    .et-add-period-btn { font-size: 0.72rem; }
+    .et-drill-table { font-size: 0.82rem; }
+    .et-credit-tag { opacity: 0.6; font-weight: 400; }
+    .et-qa-title { color: var(--danger); }
+    .et-overflow-label { color: var(--danger); }
+    .et-pagination-ellipsis { padding: 0 0.2rem; color: var(--t3); }
+
     /* ── Dark mode overrides ───────────────────────────── */
     html[data-theme="dark"] .et-matrix th,
     html[data-theme="dark"] .et-matrix td {
-      border-color: rgba(255,255,255,0.06);
+      border-color: var(--line);
     }
     html[data-theme="dark"] .et-zoom-btn {
-      box-shadow: 2px 2px 5px rgba(0,0,0,0.3), -2px -2px 5px rgba(255,255,255,0.04);
+      box-shadow: var(--shadow-neu-sm);
     }
     html[data-theme="dark"] .et-zoom-btn:hover {
-      box-shadow: 3px 3px 6px rgba(0,0,0,0.35), -3px -3px 6px rgba(255,255,255,0.05);
+      box-shadow: var(--shadow-neu);
     }
-    html[data-theme="dark"] .et-matrix .cm-diag { background: rgba(255,255,255,0.08); }
+    html[data-theme="dark"] .et-matrix .cm-diag { background: var(--glass-bg-header); }
+
+    /* ── Dark: heatmap text readability ── */
+    html[data-theme="dark"] .et-matrix .cm-1 { background: hsl(45 60% 22%); color: hsl(45 90% 72%); }
+    html[data-theme="dark"] .et-matrix .cm-2 { background: hsl(33 60% 22%); color: hsl(33 80% 72%); }
+    html[data-theme="dark"] .et-matrix .cm-3 { background: hsl(15 55% 28%); color: #fff; }
+    html[data-theme="dark"] .et-matrix .cm-4 { background: hsl(0 60% 32%); color: #fff; }
+
+    /* ── Dark: overflow row ── */
+    html[data-theme="dark"] .et-grid .et-overflow-row th,
+    html[data-theme="dark"] .et-grid .et-overflow-row td { background: rgba(240,96,96,0.08); }
+
+    /* ── Dark: del button hover ── */
+    html[data-theme="dark"] .et-del-btn:hover { color: var(--danger); background: rgba(240,96,96,0.10); }
 
     /* ── Dark: course chip text on dark bg ── */
-    html[data-theme="dark"] .drill-course-chip { color: #e2e4ec; }
-    html[data-theme="dark"] .drill-course-chip small { color: #a0a4b8; }
-    html[data-theme="dark"] #scheduleGrid td { color: #e2e4ec; }
-    html[data-theme="dark"] #scheduleGrid th { color: #a0a4b8; }
+    html[data-theme="dark"] .drill-course-chip { color: var(--t0); }
+    html[data-theme="dark"] .drill-course-chip small { color: var(--t3); }
+    html[data-theme="dark"] #scheduleGrid td { color: var(--t0); }
+    html[data-theme="dark"] #scheduleGrid th { color: var(--t3); }
 
     /* ── Conflict Matrix Fullscreen ── */
     .et-panel.matrix-fullscreen {
       position: fixed; inset: 0; z-index: 10001;
-      background: var(--card, #fff); margin: 0; border-radius: 0;
+      background: var(--card); margin: 0; border-radius: 0;
       display: flex; flex-direction: column;
       padding: 12px 18px;
       overflow: hidden;
@@ -216,24 +239,24 @@
         <div id="etPeriodsRepeater" class="d-flex flex-column gap-1" lang="en" dir="ltr">
           <div class="et-period-row d-flex align-items-center gap-1">
             <input type="text" inputmode="numeric" pattern="\d{2}:\d{2}" placeholder="HH:MM" class="form-control form-control-compact et-period-start" value="08:00">
-            <span style="font-size:0.75rem;color:var(--t3)">–</span>
+            <span class="et-period-sep">–</span>
             <input type="text" inputmode="numeric" pattern="\d{2}:\d{2}" placeholder="HH:MM" class="form-control form-control-compact et-period-end" value="10:00">
-            <button type="button" class="btn btn-sm btn-outline-secondary et-period-remove" title="{% if LANGUAGE_CODE == 'ar' %}إزالة{% else %}Remove{% endif %}" style="padding:2px 6px;font-size:0.7rem;line-height:1">&times;</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary et-period-remove et-period-remove-btn" title="{% if LANGUAGE_CODE == 'ar' %}إزالة{% else %}Remove{% endif %}">&times;</button>
           </div>
           <div class="et-period-row d-flex align-items-center gap-1">
             <input type="text" inputmode="numeric" pattern="\d{2}:\d{2}" placeholder="HH:MM" class="form-control form-control-compact et-period-start" value="10:30">
-            <span style="font-size:0.75rem;color:var(--t3)">–</span>
+            <span class="et-period-sep">–</span>
             <input type="text" inputmode="numeric" pattern="\d{2}:\d{2}" placeholder="HH:MM" class="form-control form-control-compact et-period-end" value="12:30">
-            <button type="button" class="btn btn-sm btn-outline-secondary et-period-remove" title="{% if LANGUAGE_CODE == 'ar' %}إزالة{% else %}Remove{% endif %}" style="padding:2px 6px;font-size:0.7rem;line-height:1">&times;</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary et-period-remove et-period-remove-btn" title="{% if LANGUAGE_CODE == 'ar' %}إزالة{% else %}Remove{% endif %}">&times;</button>
           </div>
           <div class="et-period-row d-flex align-items-center gap-1">
             <input type="text" inputmode="numeric" pattern="\d{2}:\d{2}" placeholder="HH:MM" class="form-control form-control-compact et-period-start" value="13:00">
-            <span style="font-size:0.75rem;color:var(--t3)">–</span>
+            <span class="et-period-sep">–</span>
             <input type="text" inputmode="numeric" pattern="\d{2}:\d{2}" placeholder="HH:MM" class="form-control form-control-compact et-period-end" value="15:00">
-            <button type="button" class="btn btn-sm btn-outline-secondary et-period-remove" title="{% if LANGUAGE_CODE == 'ar' %}إزالة{% else %}Remove{% endif %}" style="padding:2px 6px;font-size:0.7rem;line-height:1">&times;</button>
+            <button type="button" class="btn btn-sm btn-outline-secondary et-period-remove et-period-remove-btn" title="{% if LANGUAGE_CODE == 'ar' %}إزالة{% else %}Remove{% endif %}">&times;</button>
           </div>
         </div>
-        <button type="button" id="etAddPeriod" class="btn btn-sm btn-outline-secondary mt-1" style="font-size:0.72rem">＋ {% if LANGUAGE_CODE == 'ar' %}إضافة فترة{% else %}Add period{% endif %}</button>
+        <button type="button" id="etAddPeriod" class="btn btn-sm btn-outline-secondary mt-1 et-add-period-btn">＋ {% if LANGUAGE_CODE == 'ar' %}إضافة فترة{% else %}Add period{% endif %}</button>
         <!-- Hidden input keeps backward compatibility for API -->
         <input type="hidden" id="etPeriods" value="08:00-10:00,10:30-12:30,13:00-15:00">
       </div>
@@ -309,7 +332,7 @@
           <button id="kpiDrillClose" class="btn btn-sm btn-outline-secondary py-0 px-2">&times;</button>
         </div>
         <div class="table-responsive" style="max-height:340px;overflow-y:auto;">
-          <table class="table table-sm table-hover mb-0" style="font-size:.82rem;">
+          <table class="table table-sm table-hover mb-0 et-drill-table">
             <thead id="kpiDrillHead"></thead>
             <tbody id="kpiDrillBody"></tbody>
           </table>
@@ -319,7 +342,7 @@
 
     <!-- QA Warnings -->
     <div id="qaWarnings" class="et-panel d-none">
-      <h6 class="mb-2" style="color:var(--red,#dc3545)">{% if LANGUAGE_CODE == 'ar' %}تحذيرات الجودة{% else %}QA Warnings{% endif %}</h6>
+      <h6 class="mb-2 et-qa-title">{% if LANGUAGE_CODE == 'ar' %}تحذيرات الجودة{% else %}QA Warnings{% endif %}</h6>
       <div id="qaBody"></div>
     </div>
 
@@ -497,9 +520,9 @@ function addPeriodRow(startVal, endVal) {
   row.className = 'et-period-row d-flex align-items-center gap-1';
   row.innerHTML =
     `<input type="text" inputmode="numeric" pattern="\\d{2}:\\d{2}" placeholder="HH:MM" class="form-control form-control-compact et-period-start" value="${startVal || ''}">` +
-    `<span style="font-size:0.75rem;color:var(--t3)">–</span>` +
+    `<span class="et-period-sep">–</span>` +
     `<input type="text" inputmode="numeric" pattern="\\d{2}:\\d{2}" placeholder="HH:MM" class="form-control form-control-compact et-period-end" value="${endVal || ''}">` +
-    `<button type="button" class="btn btn-sm btn-outline-secondary et-period-remove" title="${IS_AR ? 'إزالة' : 'Remove'}" style="padding:2px 6px;font-size:0.7rem;line-height:1">&times;</button>`;
+    `<button type="button" class="btn btn-sm btn-outline-secondary et-period-remove et-period-remove-btn" title="${IS_AR ? 'إزالة' : 'Remove'}">&times;</button>`;
   $('etPeriodsRepeater').appendChild(row);
   row.querySelector('.et-period-remove').addEventListener('click', () => { row.remove(); syncPeriodsHidden(); });
   row.querySelectorAll('input').forEach(inp => inp.addEventListener('change', syncPeriodsHidden));
@@ -857,7 +880,7 @@ function openDrill(type) {
       <td>${r.day}</td>
       <td><span class="badge bg-danger">${r.count}</span></td>
       <td>${r.courses.map(c =>
-        `<span class="drill-course-chip" style="background:${colorForCourse(c.code)};border:1px solid ${colorForCourseBorder(c.code)}">${c.code}${c.credits != null ? ` <small style="opacity:.6">${c.credits}cr</small>` : ''}</span>`
+        `<span class="drill-course-chip" style="background:${colorForCourse(c.code)};border:1px solid ${colorForCourseBorder(c.code)}">${c.code}${c.credits != null ? ` <small class="et-credit-tag">${c.credits}cr</small>` : ''}</span>`
       ).join('')}</td>
     </tr>`).join('');
   } else {
@@ -879,7 +902,7 @@ function openDrill(type) {
         <td>${r.total_credits}</td>
         <td>${sev}</td>
         <td>${r.courses.map(c =>
-          `<span class="drill-course-chip" style="background:${colorForCourse(c.code)};border:1px solid ${colorForCourseBorder(c.code)}">${c.code} <small style="opacity:.6">${c.credits}cr</small></span>`
+          `<span class="drill-course-chip" style="background:${colorForCourse(c.code)};border:1px solid ${colorForCourseBorder(c.code)}">${c.code} <small class="et-credit-tag">${c.credits}cr</small></span>`
         ).join('')}</td>
       </tr>`;
     }).join('');
@@ -1108,7 +1131,7 @@ function renderScheduleGrid(schedule, slots) {
         const chips = courses.map(c => {
           const pinCls = _pinnedCourses[c] ? ' et-pinned' : '';
           const cr = _creditMap[c];
-          const crTag = cr ? ` <small style="opacity:.6;font-weight:400">${cr}cr</small>` : '';
+          const crTag = cr ? ` <small class="et-credit-tag">${cr}cr</small>` : '';
           return `<span class="et-course${pinCls}" data-course="${c}" draggable="true" style="background:${colorForCourse(c)};border:1px solid ${colorForCourseBorder(c)}">${c}${crTag}</span>`;
         }).join(' ');
         html += `<td data-day="${day}" data-period="${period}">${chips}</td>`;
@@ -1120,10 +1143,10 @@ function renderScheduleGrid(schedule, slots) {
   // Overflow row (if any)
   if (overflowCourses.length > 0) {
     html += `<tr class="et-overflow-row">`;
-    html += `<th style="color:var(--red,#dc3545)">${T.overflow}</th>`;
+    html += `<th class="et-overflow-label">${T.overflow}</th>`;
     const chips = overflowCourses.map(c => {
       const cr = _creditMap[c];
-      const crTag = cr ? ` <small style="opacity:.6;font-weight:400">${cr}cr</small>` : '';
+      const crTag = cr ? ` <small class="et-credit-tag">${cr}cr</small>` : '';
       return `<span class="et-course" data-course="${c}" draggable="true" style="background:${colorForCourse(c)};border:1px solid ${colorForCourseBorder(c)}">${c}${crTag}</span>`;
     }).join(' ');
     html += `<td colspan="${periodOrder.length}">${chips}</td>`;
@@ -1494,7 +1517,7 @@ function renderHistoryPagination(pages) {
   let html = `<button class="pg-btn" onclick="loadHistory(${_historyPage-1})" ${_historyPage<=1?'disabled':''}>‹</button>`;
   for (let i = 1; i <= pages; i++) {
     if (pages > 7 && i > 2 && i < pages - 1 && Math.abs(i - _historyPage) > 1) {
-      if (i === 3 || i === pages - 2) html += '<span style="padding:0 0.2rem;color:var(--t3);">…</span>';
+      if (i === 3 || i === pages - 2) html += '<span class="et-pagination-ellipsis">…</span>';
       continue;
     }
     html += `<button class="pg-btn ${i===_historyPage?'active':''}" onclick="loadHistory(${i})">${i}</button>`;

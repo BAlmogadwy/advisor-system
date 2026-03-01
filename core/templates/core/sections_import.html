@@ -27,7 +27,7 @@
     }
     .si-dropzone:hover, .si-dropzone.dragover {
       border-color: var(--teal);
-      background: rgba(10,142,110,0.06);
+      background: var(--teal-dim);
     }
     .si-dropzone:focus-within {
       outline: 2px solid var(--teal); outline-offset: 2px;
@@ -49,20 +49,20 @@
     .si-filter-pop {
       display: none; position: absolute; top: 100%; inset-inline-start: 0; z-index: 20;
       min-width: 180px; padding: 8px; margin-top: 4px;
-      background: #fff; border: 1px solid rgba(0,0,0,0.1); border-radius: 8px;
+      background: var(--card); border: 1px solid rgba(0,0,0,0.1); border-radius: 8px;
       box-shadow: 0 6px 20px rgba(0,0,0,0.12);
     }
     .si-filter-pop.open { display: block; }
     .si-filter-pop input {
       width: 100%; font-size: 0.78rem; padding: 6px 10px;
       border: 1px solid rgba(0,0,0,0.12); border-radius: 6px;
-      background: #fafafa; color: var(--t1); outline: none;
+      background: var(--bg); color: var(--t1); outline: none;
     }
-    .si-filter-pop input:focus { border-color: var(--teal); box-shadow: 0 0 0 2px rgba(10,142,110,0.12); background: #fff; }
+    .si-filter-pop input:focus { border-color: var(--teal); box-shadow: 0 0 0 2px rgba(10,142,110,0.12); background: var(--card); }
     .si-filter-pop input::placeholder { color: var(--t4); }
     .si-filter-clear {
       display: none; margin-top: 6px; width: 100%; padding: 4px 0;
-      font-size: 0.7rem; color: var(--red, #dc3545); background: none;
+      font-size: 0.7rem; color: var(--danger); background: none;
       border: none; cursor: pointer; text-align: center; border-radius: 4px;
     }
     .si-filter-clear:hover { background: rgba(220,53,69,0.06); }

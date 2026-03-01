@@ -49,14 +49,14 @@
         <h3><span class="badge text-bg-primary">Step 2</span> Bulk Mapping</h3>
         <div class="small text-secondary mb-2">Paste CSV rows to map many students at once.</div>
         <div class="field-row-mt">
-          <div style="flex:0 0 auto"><button id="advEnsureColumn" class="fb-dd" style="padding:8px 14px">Enable students.advisor_id</button></div>
+          <div style="flex:0 0 auto"><button id="advEnsureColumn" class="fb-dd btn-adv-ensure">Enable students.advisor_id</button></div>
           <div class="flex-field" style="min-width:220px">
             <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}ربط جماعي CSV (student_id,advisor_id){% else %}Bulk assign CSV (student_id,advisor_id){% endif %}</label>
             <textarea id="advAssignCsv" class="form-control" rows="3" placeholder="student_id,advisor_id&#10;4410001,A001" aria-label="Assignment CSV data" class="adv-textarea"></textarea>
           </div>
         </div>
         <div class="mt-8">
-          <button id="advAssignCsvBtn" class="btn btn-outline-success btn-sm" type="button" style="padding:6px 14px;font-size:12px">Apply CSV mapping</button>
+          <button id="advAssignCsvBtn" class="btn btn-outline-success btn-sm btn-compact" type="button">Apply CSV mapping</button>
         </div>
       </div>
 

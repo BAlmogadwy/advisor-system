@@ -39,7 +39,7 @@
 }
 .pf-avatar {
   width: 64px; height: 64px; border-radius: 14px;
-  background: linear-gradient(135deg, var(--brand, #0A8E6E), #14b88e);
+  background: linear-gradient(135deg, var(--brand), var(--teal-bright));
   display: flex; align-items: center; justify-content: center;
   font-size: 1.5rem; font-weight: 800; color: #fff;
   letter-spacing: 0.02em; flex-shrink: 0;
@@ -108,7 +108,7 @@
               inset -3px -3px 6px rgba(255,255,255,0.9),
               0 0 0 2px rgba(10,142,110,0.5);
 }
-.pf-input::placeholder { color: var(--muted-light, #94a3b8); }
+.pf-input::placeholder { color: var(--muted-light); }
 
 /* Password field wrapper — border lives on the wrapper so the eye
    toggle sits visually *inside* the rounded container. */
@@ -135,7 +135,7 @@
 .pf-pwd-toggle {
   position: absolute; inset-inline-end: 0.5rem; top: 50%; transform: translateY(-50%);
   background: none; border: none; cursor: pointer; padding: 0.25rem;
-  color: var(--muted, #64748b); border-radius: 6px;
+  color: var(--muted); border-radius: 6px;
   display: flex; align-items: center; justify-content: center;
   transition: color 0.15s;
 }
@@ -146,7 +146,7 @@
 .pf-pwd-toggle.showing .pf-eye-off { display: block; }
 
 .pf-hint {
-  font-size: 0.7rem; color: var(--muted-light, #94a3b8);
+  font-size: 0.7rem; color: var(--muted-light);
   margin-top: 0.25rem;
 }
 
@@ -158,11 +158,11 @@
   box-shadow: var(--shadow-neu-sm);
 }
 .pf-submit:focus-visible {
-  outline: 2px solid var(--brand, #0A8E6E);
+  outline: 2px solid var(--brand);
   outline-offset: 2px;
 }
 .pf-submit-primary {
-  background: var(--teal, #0A8E6E); color: #fff;
+  background: var(--teal); color: #fff;
   box-shadow: 0 2px 8px rgba(10,142,110,0.25);
 }
 .pf-submit-primary:hover {
@@ -219,17 +219,17 @@
   width: 0%;
   border-radius: 2px;
   transition: width 0.3s ease, background 0.3s ease;
-  background: #e53e3e;
+  background: var(--danger);
 }
-.pf-pw-bar[data-level="1"] { width: 25%; background: #e53e3e; }
+.pf-pw-bar[data-level="1"] { width: 25%; background: var(--danger); }
 .pf-pw-bar[data-level="2"] { width: 50%; background: #dd6b20; }
-.pf-pw-bar[data-level="3"] { width: 75%; background: #d69e2e; }
-.pf-pw-bar[data-level="4"] { width: 100%; background: #38a169; }
+.pf-pw-bar[data-level="3"] { width: 75%; background: var(--warning); }
+.pf-pw-bar[data-level="4"] { width: 100%; background: var(--success); }
 .pf-pw-label {
   font-size: 0.68rem;
   font-weight: 600;
   min-width: 3rem;
-  color: var(--muted-light, #94a3b8);
+  color: var(--muted-light);
   text-align: end;
 }
 
@@ -590,7 +590,7 @@ html[data-theme="dark"] .pf-card.pf-saved {
   const strengthLabels = IS_AR
     ? ['', '\u0636\u0639\u064a\u0641', '\u0645\u0642\u0628\u0648\u0644', '\u062c\u064a\u062f', '\u0642\u0648\u064a']
     : ['', 'Weak', 'Fair', 'Good', 'Strong'];
-  const strengthColors = ['', '#e53e3e', '#dd6b20', '#d69e2e', '#38a169'];
+  const strengthColors = ['', 'var(--danger)', '#dd6b20', 'var(--warning)', 'var(--success)'];
 
   function evaluateStrength(pw) {
     if (!pw) return 0;

@@ -55,12 +55,12 @@
     }
 
     .dba-nav-item:hover {
-      background:   rgba(255,255,255,0.7);
+      background:   var(--glass-bg-data);
       border-color: rgba(17,17,68,0.08);
     }
 
     .dba-nav-item.active {
-      background:   rgba(255,255,255,0.7);
+      background:   var(--glass-bg-data);
       border-color: var(--teal);
       box-shadow:   0 0 0 3px rgba(10,142,110,0.08), var(--shadow-card);
     }
@@ -139,7 +139,7 @@
       gap:          0.875rem;
       margin-bottom: 1.25rem;
       padding-bottom: 1rem;
-      border-bottom: 1px solid rgba(17,17,68,0.06);
+      border-bottom: var(--border-subtle);
     }
 
     .dba-panel-icon {
@@ -180,7 +180,7 @@
     .dba-output {
       background:    rgba(248,250,252,0.85);
       backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-      color:         var(--t2, #3e3e52);
+      color:         var(--t2);
       border-radius: var(--radius);
       padding:       0.875rem 1rem;
       font-family:   var(--font-mono);
@@ -287,7 +287,7 @@
 
     /* Double-confirm delete pattern */
     .dba-delete-confirm {
-      background: #fff5f5 !important; color: #dc2626 !important;
+      background: #fff5f5 !important; color: var(--danger) !important;
       border: 1px solid #fecaca !important;
       animation: dba-pulse 0.5s ease;
     }

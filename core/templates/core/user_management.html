@@ -55,8 +55,8 @@
   padding: 6px 10px; font-size: 0.7rem; font-weight: 700;
   text-transform: uppercase; letter-spacing: 0.05em;
   color: var(--muted); white-space: nowrap;
-  border-bottom: 2px solid var(--line, #e2e8f0);
-  background: rgba(248,250,252,0.97);
+  border-bottom: 2px solid var(--line);
+  background: var(--glass-bg-header);
 }
 #umTable tbody td {
   padding: 5px 10px; font-size: 0.82rem;
@@ -100,7 +100,7 @@
   width: 26px; height: 26px; border-radius: 5px; border: 1px solid transparent;
   background: transparent; cursor: pointer; display: inline-flex;
   align-items: center; justify-content: center;
-  color: #94a3b8; transition: all 0.1s; padding: 0;
+  color: var(--t5); transition: all 0.1s; padding: 0;
 }
 .um-row-btn:hover { background: #f1f5f9; color: var(--ink); border-color: var(--line); }
 .um-row-btn.um-btn-edit:hover { color: var(--brand); background: var(--brand-soft); border-color: #a8e6d4; }
@@ -108,7 +108,7 @@
 .um-row-btn.um-btn-del:hover { color: #dc2626; background: #fff5f5; border-color: #fecaca; }
 
 /* Empty cell — subtle muted dash */
-.um-empty-cell { color: #cbd5e1; font-size: 0.75rem; }
+.um-empty-cell { color: var(--t5); font-size: 0.75rem; }
 
 /* Panels: Create & Edit */
 .um-panel {
@@ -172,12 +172,12 @@
 .um-pw-wrap .um-gen-pw:hover { background: #fff; color: var(--brand); border-color: var(--brand); }
 .um-create-btn {
   height: 36px; padding: 0 20px; border: none; border-radius: 14px;
-  background: var(--teal, #0A8E6E); color: #fff; font-size: 0.78rem;
+  background: var(--teal); color: #fff; font-size: 0.78rem;
   font-weight: 700; cursor: pointer; white-space: nowrap;
   transition: background 0.12s, transform 0.1s; flex-shrink: 0;
   box-shadow: 2px 2px 6px rgba(10,142,110,0.2), -1px -1px 4px rgba(255,255,255,0.7);
 }
-.um-create-btn:hover { background: var(--teal-deep, #067a5e); }
+.um-create-btn:hover { background: var(--teal-deep); }
 .um-create-btn:active { transform: scale(0.97); }
 @media (max-width: 768px) {
   .um-create-row { flex-wrap: wrap; }
@@ -202,7 +202,7 @@
 .um-panel-edit .um-close-btn {
   display: inline-flex; align-items: center; gap: 4px;
   padding: 4px 10px; border-radius: 10px; font-size: 0.72rem;
-  font-weight: 600; border: 1px solid var(--line, #dde3ed);
+  font-weight: 600; border: 1px solid var(--line);
   background: rgba(255,255,255,0.6); color: var(--muted); cursor: pointer;
   transition: all 0.12s;
 }
@@ -237,10 +237,10 @@
   align-items: center; gap: 5px;
 }
 .um-act-btn.um-act-save {
-  background: var(--teal, #0A8E6E); color: #fff;
+  background: var(--teal); color: #fff;
   box-shadow: 2px 2px 6px rgba(10,142,110,0.2), -1px -1px 4px rgba(255,255,255,0.7);
 }
-.um-act-btn.um-act-save:hover { background: var(--teal-deep, #067a5e); }
+.um-act-btn.um-act-save:hover { background: var(--teal-deep); }
 .um-act-btn.um-act-reset {
   background: rgba(255,255,255,0.7); color: #92610a;
   border: 1px solid rgba(217,170,67,0.3) !important;
@@ -269,19 +269,19 @@
   padding: 12px 24px;
   background: rgba(255,255,255,0.95);
   backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-  border-top: 1px solid var(--line, #dde3ed);
+  border-top: 1px solid var(--line);
   box-shadow: 0 -4px 20px rgba(0,0,0,0.08);
   transform: translateY(100%);
   transition: transform 0.25s ease;
 }
 .bulk-bar.visible { transform: translateY(0); }
-.bulk-bar .bulk-count { font-weight: 600; color: var(--teal, #0A8E6E); }
+.bulk-bar .bulk-count { font-weight: 600; color: var(--teal); }
 .bulk-bar button {
   border-radius: 8px; padding: 6px 16px; font-size: 0.85rem;
-  border: 1px solid var(--line, #dde3ed); cursor: pointer;
+  border: 1px solid var(--line); cursor: pointer;
   transition: opacity 0.15s, background 0.15s;
 }
-.bulk-bar button:focus-visible { outline: 2px solid var(--teal, #0A8E6E); outline-offset: 2px; }
+.bulk-bar button:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
 .bulk-bar .bulk-deactivate { background: #fef2f2; color: #b91c1c; border-color: #fca5a5; }
 .bulk-bar .bulk-deactivate:hover { background: #fee2e2; }
 .bulk-bar .bulk-activate { background: #f0fdf4; color: #166534; border-color: #86efac; }
@@ -291,18 +291,18 @@
 
 /* Subtle time display */
 .um-time { font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
-.um-time-never { font-size: 0.7rem; color: #cbd5e1; font-style: italic; }
+.um-time-never { font-size: 0.7rem; color: var(--t5); font-style: italic; }
 
 /* Checkbox in table */
 #umTable .um-check { width: 14px; height: 14px; cursor: pointer; accent-color: var(--brand); }
 
 /* Empty state */
 .um-empty {
-  text-align: center; padding: 2.5rem 1.5rem; color: #94a3b8;
+  text-align: center; padding: 2.5rem 1.5rem; color: var(--t5);
 }
 .um-empty-icon { display: block; font-size: 2.2rem; margin-bottom: 0.5rem; opacity: 0.6; }
-.um-empty-title { font-weight: 600; font-size: 0.9rem; color: #64748b; margin-bottom: 0.3rem; }
-.um-empty-hint { font-size: 0.78rem; color: #94a3b8; }
+.um-empty-title { font-weight: 600; font-size: 0.9rem; color: var(--t4); margin-bottom: 0.3rem; }
+.um-empty-hint { font-size: 0.78rem; color: var(--t5); }
 
 /* Scope fields fade animation */
 .um-scope-field { transition: opacity 0.2s, max-height 0.25s; overflow: hidden; }
