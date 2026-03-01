@@ -6,6 +6,8 @@
 
 {% block extra_css %}
   <style>
+    .et-period-start,
+    .et-period-end { direction: ltr; text-align: center; width: 80px; max-width: 80px; font-variant-numeric: tabular-nums; font-family: var(--font-mono, monospace); }
     .et-panel { padding: 16px 20px; margin-bottom: 12px; border-radius: var(--radius); background: var(--glass-bg); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); border: var(--border-subtle); box-shadow: var(--shadow-card); }
     .kpi { border: var(--border-subtle); border-radius: var(--radius); padding: .6rem; background: var(--glass-bg); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); box-shadow: var(--shadow-card); }
     .kpi .k { font-size: .7rem; color: var(--t3); text-transform: uppercase; font-family: var(--font-mono); letter-spacing: 0.06em; font-weight: 700; }
@@ -140,6 +142,18 @@
     .et-matrix-scaler { transition: transform 0.2s ease; }
     .et-matrix-empty { display: none; }
     .et-matrix-empty.visible { display: block; }
+
+    /* ── Conflict Matrix Fullscreen ── */
+    .et-panel.matrix-fullscreen {
+      position: fixed; inset: 0; z-index: 10001;
+      background: #fff; margin: 0; border-radius: 0;
+      display: flex; flex-direction: column;
+      padding: 12px 18px;
+      overflow: hidden;
+    }
+    .et-panel.matrix-fullscreen .et-matrix-viewport {
+      max-height: none; flex: 1 1 auto;
+    }
   </style>
 {% endblock %}
 
@@ -180,23 +194,23 @@
       </div>
       <div class="col-md-5">
         <label class="form-label">{% if LANGUAGE_CODE == 'ar' %}الفترات{% else %}Periods{% endif %}</label>
-        <div id="etPeriodsRepeater" class="d-flex flex-column gap-1">
+        <div id="etPeriodsRepeater" class="d-flex flex-column gap-1" lang="en" dir="ltr">
           <div class="et-period-row d-flex align-items-center gap-1">
-            <input type="time" class="form-control form-control-compact et-period-start" value="08:00" style="max-width:110px">
+            <input type="text" inputmode="numeric" pattern="\d{2}:\d{2}" placeholder="HH:MM" class="form-control form-control-compact et-period-start" value="08:00">
             <span style="font-size:0.75rem;color:var(--t3)">–</span>
-            <input type="time" class="form-control form-control-compact et-period-end" value="10:00" style="max-width:110px">
+            <input type="text" inputmode="numeric" pattern="\d{2}:\d{2}" placeholder="HH:MM" class="form-control form-control-compact et-period-end" value="10:00">
             <button type="button" class="btn btn-sm btn-outline-secondary et-period-remove" title="{% if LANGUAGE_CODE == 'ar' %}إزالة{% else %}Remove{% endif %}" style="padding:2px 6px;font-size:0.7rem;line-height:1">&times;</button>
           </div>
           <div class="et-period-row d-flex align-items-center gap-1">
-            <input type="time" class="form-control form-control-compact et-period-start" value="10:30" style="max-width:110px">
+            <input type="text" inputmode="numeric" pattern="\d{2}:\d{2}" placeholder="HH:MM" class="form-control form-control-compact et-period-start" value="10:30">
             <span style="font-size:0.75rem;color:var(--t3)">–</span>
-            <input type="time" class="form-control form-control-compact et-period-end" value="12:30" style="max-width:110px">
+            <input type="text" inputmode="numeric" pattern="\d{2}:\d{2}" placeholder="HH:MM" class="form-control form-control-compact et-period-end" value="12:30">
             <button type="button" class="btn btn-sm btn-outline-secondary et-period-remove" title="{% if LANGUAGE_CODE == 'ar' %}إزالة{% else %}Remove{% endif %}" style="padding:2px 6px;font-size:0.7rem;line-height:1">&times;</button>
           </div>
           <div class="et-period-row d-flex align-items-center gap-1">
-            <input type="time" class="form-control form-control-compact et-period-start" value="13:00" style="max-width:110px">
+            <input type="text" inputmode="numeric" pattern="\d{2}:\d{2}" placeholder="HH:MM" class="form-control form-control-compact et-period-start" value="13:00">
             <span style="font-size:0.75rem;color:var(--t3)">–</span>
-            <input type="time" class="form-control form-control-compact et-period-end" value="15:00" style="max-width:110px">
+            <input type="text" inputmode="numeric" pattern="\d{2}:\d{2}" placeholder="HH:MM" class="form-control form-control-compact et-period-end" value="15:00">
             <button type="button" class="btn btn-sm btn-outline-secondary et-period-remove" title="{% if LANGUAGE_CODE == 'ar' %}إزالة{% else %}Remove{% endif %}" style="padding:2px 6px;font-size:0.7rem;line-height:1">&times;</button>
           </div>
         </div>
@@ -312,10 +326,13 @@
     </div>
 
     <!-- Conflict Matrix (collapsed by default) -->
-    <div class="et-panel">
+    <div class="et-panel" id="matrixPanel">
       <div class="d-flex align-items-center justify-content-between mb-2">
         <h6 class="mb-0">{% if LANGUAGE_CODE == 'ar' %}مصفوفة التعارضات{% else %}Conflict Matrix{% endif %}</h6>
-        <button id="toggleMatrix" class="btn btn-sm btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}عرض{% else %}Show{% endif %}</button>
+        <div class="d-flex gap-2">
+          <button id="matrixFullscreen" class="btn btn-sm btn-outline-secondary" title="{% if LANGUAGE_CODE == 'ar' %}ملء الشاشة{% else %}Fullscreen{% endif %}">&#x26F6;</button>
+          <button id="toggleMatrix" class="btn btn-sm btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}عرض{% else %}Show{% endif %}</button>
+        </div>
       </div>
       <div id="conflictMatrix" class="d-none">
         <div class="et-matrix-toolbar">
@@ -460,9 +477,9 @@ function addPeriodRow(startVal, endVal) {
   const row = document.createElement('div');
   row.className = 'et-period-row d-flex align-items-center gap-1';
   row.innerHTML =
-    `<input type="time" class="form-control form-control-compact et-period-start" value="${startVal || ''}" style="max-width:110px">` +
+    `<input type="text" inputmode="numeric" pattern="\\d{2}:\\d{2}" placeholder="HH:MM" class="form-control form-control-compact et-period-start" value="${startVal || ''}">` +
     `<span style="font-size:0.75rem;color:var(--t3)">–</span>` +
-    `<input type="time" class="form-control form-control-compact et-period-end" value="${endVal || ''}" style="max-width:110px">` +
+    `<input type="text" inputmode="numeric" pattern="\\d{2}:\\d{2}" placeholder="HH:MM" class="form-control form-control-compact et-period-end" value="${endVal || ''}">` +
     `<button type="button" class="btn btn-sm btn-outline-secondary et-period-remove" title="${IS_AR ? 'إزالة' : 'Remove'}" style="padding:2px 6px;font-size:0.7rem;line-height:1">&times;</button>`;
   $('etPeriodsRepeater').appendChild(row);
   row.querySelector('.et-period-remove').addEventListener('click', () => { row.remove(); syncPeriodsHidden(); });
@@ -473,7 +490,7 @@ function addPeriodRow(startVal, endVal) {
 document.querySelectorAll('#etPeriodsRepeater .et-period-remove').forEach(btn => {
   btn.addEventListener('click', () => { btn.closest('.et-period-row').remove(); syncPeriodsHidden(); });
 });
-document.querySelectorAll('#etPeriodsRepeater input[type="time"]').forEach(inp => {
+document.querySelectorAll('#etPeriodsRepeater input[type="text"]').forEach(inp => {
   inp.addEventListener('change', syncPeriodsHidden);
 });
 
@@ -1572,6 +1589,50 @@ $('exportXlsx')?.addEventListener('click', function() {
     const sw = scaler.scrollWidth / zoom;
     zoom = Math.min(1.5, Math.max(0.5, +(vw / sw).toFixed(2)));
     updateZoom();
+  });
+})();
+
+/* ── Matrix Fullscreen Toggle ── */
+/* ── Matrix Fullscreen Toggle ── */
+(function() {
+  let originalParent = null;
+  let originalNext = null;
+
+  $('matrixFullscreen')?.addEventListener('click', () => {
+    const panel = $('matrixPanel');
+    const matrix = $('conflictMatrix');
+    const btn = $('matrixFullscreen');
+    if (!panel) return;
+    const entering = !panel.classList.contains('matrix-fullscreen');
+
+    if (entering) {
+      // Save original position in DOM
+      originalParent = panel.parentElement;
+      originalNext = panel.nextElementSibling;
+      // Move to body to escape stacking contexts (content-wrap has transform)
+      document.body.appendChild(panel);
+      panel.classList.add('matrix-fullscreen');
+      matrix?.classList.remove('d-none');
+      document.body.style.overflow = 'hidden';
+    } else {
+      panel.classList.remove('matrix-fullscreen');
+      document.body.style.overflow = '';
+      // Restore to original DOM position
+      if (originalParent) {
+        if (originalNext) originalParent.insertBefore(panel, originalNext);
+        else originalParent.appendChild(panel);
+      }
+    }
+
+    btn.innerHTML = entering ? '&#x2716;' : '&#x26F6;';
+    btn.title = entering ? 'Exit fullscreen' : 'Fullscreen';
+
+    if (entering) {
+      const onEsc = (e) => {
+        if (e.key === 'Escape') { btn.click(); document.removeEventListener('keydown', onEsc); }
+      };
+      document.addEventListener('keydown', onEsc);
+    }
   });
 })();
 </script>
