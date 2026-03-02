@@ -183,6 +183,8 @@ def import_program_plan(
     if not required.issubset(set(reader.fieldnames or [])):
         raise ValueError("CSV must include headers: course_code, programme_term, credit_hours")
 
+    has_max_capacity = "max_capacity" in (reader.fieldnames or [])
+
     rows: list[dict[str, Any]] = []
     for row in reader:
         code = str(row.get("course_code", "")).strip().upper().replace(" ", "")
@@ -191,15 +193,17 @@ def import_program_plan(
         pterm = int(str(row.get("programme_term", "0")).strip())
         credits = int(str(row.get("credit_hours", "0")).strip())
         ctype = str(row.get("type", "CORE")).strip() or "CORE"
-        rows.append(
-            {
-                "program": program,
-                "course_code": code,
-                "type": ctype,
-                "programme_term": pterm,
-                "credit_hours": credits,
-            }
-        )
+        entry: dict[str, Any] = {
+            "program": program,
+            "course_code": code,
+            "type": ctype,
+            "programme_term": pterm,
+            "credit_hours": credits,
+        }
+        if has_max_capacity:
+            raw_cap = str(row.get("max_capacity", "")).strip()
+            entry["max_capacity"] = int(raw_cap) if raw_cap else None
+        rows.append(entry)
 
     if not rows:
         raise ValueError("CSV contains no valid rows")
@@ -214,14 +218,17 @@ def import_program_plan(
             ProgrammeRequirement.objects.filter(program=program).delete()
 
         for r in rows:
+            defaults: dict[str, Any] = {
+                "type": r["type"],
+                "programme_term": r["programme_term"],
+                "credit_hours": r["credit_hours"],
+            }
+            if "max_capacity" in r:
+                defaults["max_capacity"] = r["max_capacity"]
             ProgrammeRequirement.objects.update_or_create(
                 program=r["program"],
                 course_code=r["course_code"],
-                defaults={
-                    "type": r["type"],
-                    "programme_term": r["programme_term"],
-                    "credit_hours": r["credit_hours"],
-                },
+                defaults=defaults,
             )
             inserted += 1
 

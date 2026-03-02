@@ -87,6 +87,32 @@ def _build_course_info(
     return info
 
 
+def _load_programme_capacities(
+    program: str,
+    course_codes: list[str],
+) -> dict[str, int]:
+    """Load non-null max_capacity values from ProgrammeRequirement for one program.
+
+    Returns dict of normalised course_code -> max_capacity (only entries with
+    non-null values >= 1).
+    """
+    qs = ProgrammeRequirement.objects.filter(
+        program=program,
+        course_code__in=course_codes,
+        max_capacity__isnull=False,
+    ).values_list("course_code", "max_capacity")
+    result: dict[str, int] = {}
+    for code, cap in qs:
+        ncode = normalize_code(code)
+        if cap is not None and cap >= 1:
+            result[ncode] = cap
+    return result
+
+
+# Public alias for use by views
+load_programme_capacities = _load_programme_capacities
+
+
 def _get_max_section_size(
     credit_hours: int,
     is_external: bool,
@@ -105,14 +131,31 @@ def get_all_courses_with_defaults(
     max_local_4cr: int = DEFAULT_MAX_LOCAL_4CR,
     max_local_other: int = DEFAULT_MAX_LOCAL_OTHER,
     max_external: int = DEFAULT_MAX_EXTERNAL,
+    program: str | list[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """Return every distinct course from ProgrammeRequirement with its computed default capacity.
+    """Return distinct courses from ProgrammeRequirement with computed default capacity.
+
+    When *program* is provided (a single program string or a list of program
+    strings), only courses that belong to those programmes are returned.
+    When *program* is ``None``, all courses across every programme are returned
+    (the original behaviour).
 
     Used by the "Advanced per-course settings" UI so the user can see and override
     individual course capacities before generating.
     """
+    # Normalise program param into a list (or None)
+    if isinstance(program, str):
+        program_list: list[str] | None = [program]
+    elif isinstance(program, list):
+        program_list = list(program)  # defensive copy
+    else:
+        program_list = None
+
     # Collect unique courses from ProgrammeRequirement (the curriculum catalog)
-    pr_qs = ProgrammeRequirement.objects.values_list(
+    pr_qs = ProgrammeRequirement.objects.all()
+    if program_list is not None:
+        pr_qs = pr_qs.filter(program__in=program_list)
+    pr_qs = pr_qs.values_list(
         "course_code",
         "credit_hours",
     ).order_by("course_code")
@@ -167,6 +210,27 @@ def get_all_courses_with_defaults(
             }
         )
 
+    # Overlay programme-specific max_capacity when a program is specified
+    if program_list is not None and len(program_list) > 0:
+        all_codes = list(seen.keys())
+        if len(program_list) == 1:
+            pr_caps = _load_programme_capacities(program_list[0], all_codes)
+        else:
+            # Multiple programs: take the minimum max_capacity across programs
+            pr_caps: dict[str, int] = {}
+            for prog in program_list:
+                caps = _load_programme_capacities(prog, all_codes)
+                for code, cap in caps.items():
+                    if code in pr_caps:
+                        pr_caps[code] = min(pr_caps[code], cap)
+                    else:
+                        pr_caps[code] = cap
+        for entry in result:
+            entry["programme_max"] = pr_caps.get(entry["course_code"])
+    else:
+        for entry in result:
+            entry["programme_max"] = None
+
     return result
 
 
@@ -176,6 +240,7 @@ def compute_section_plan(
     max_local_other: int = DEFAULT_MAX_LOCAL_OTHER,
     max_external: int = DEFAULT_MAX_EXTERNAL,
     course_overrides: dict[str, int] | None = None,
+    programme_capacities: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     """Compute section demand from aggregate recommendation counts.
 
@@ -192,6 +257,10 @@ def compute_section_plan(
     course_overrides : dict[str, int] | None
         Optional per-course capacity overrides. Keys are normalised course codes,
         values are the custom max-per-section for that course.
+    programme_capacities : dict[str, int] | None
+        Optional per-programme per-course capacity limits from ProgrammeRequirement.
+        Keys are normalised course codes, values are max_capacity.
+        Priority: course_overrides > programme_capacities > global rules.
 
     Returns
     -------
@@ -202,6 +271,7 @@ def compute_section_plan(
         return []
 
     overrides = course_overrides or {}
+    pr_caps = programme_capacities or {}
     course_codes = list(aggregate.keys())
     course_info = _build_course_info(course_codes)
 
@@ -218,9 +288,11 @@ def compute_section_plan(
             },
         )
 
-        # Use per-course override if provided, otherwise use global rule
+        # 3-tier capacity resolution: override > programme > global rule
         if ncode in overrides:
             max_per_section = max(1, overrides[ncode])
+        elif ncode in pr_caps:
+            max_per_section = max(1, pr_caps[ncode])
         else:
             max_per_section = _get_max_section_size(
                 ci["credit_hours"],
@@ -279,10 +351,11 @@ def compute_plan_summary(plan: list[dict[str, Any]]) -> dict[str, Any]:
     for row in plan:
         d = row["department"]
         if d not in dept_map:
-            dept_map[d] = {"courses": 0, "sections": 0, "students": 0}
+            dept_map[d] = {"courses": 0, "sections": 0, "students": 0, "total_credits": 0}
         dept_map[d]["courses"] += 1
         dept_map[d]["sections"] += row["num_sections"]
         dept_map[d]["students"] += row["total_students"]
+        dept_map[d]["total_credits"] += row["credit_hours"] * row["num_sections"]
 
     departments = [{"department": d, **v} for d, v in sorted(dept_map.items())]
 

@@ -83,6 +83,7 @@ class ProgrammeRequirement(models.Model):
     programme_term = models.IntegerField(null=True, blank=True)
     credit_hours = models.IntegerField(null=True, blank=True)
     is_online = models.BooleanField(default=False)
+    max_capacity = models.IntegerField(null=True, blank=True)
 
     class Meta:
         db_table = "programme_requirements"

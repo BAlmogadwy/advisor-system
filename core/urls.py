@@ -27,6 +27,8 @@ from .db_admin_views import (
     db_preview_delete_students_view,
     db_preview_oracle_plan_view,
     db_preview_term_sections_view,
+    db_programme_capacities_view,
+    db_update_programme_capacities_view,
 )
 from .exam_views import (
     exam_timetable_build_view,
@@ -74,6 +76,7 @@ from .section_plan_views import (
     section_plan_export_view,
     section_plan_generate_view,
     section_plan_page,
+    section_plan_save_capacity_view,
 )
 from .sections_import_views import (
     sections_import_insert_view,
@@ -188,6 +191,11 @@ urlpatterns = [
         section_plan_courses_view,
         name="section_plan_courses",
     ),
+    path(
+        "ops/section-planning/save-capacity/",
+        section_plan_save_capacity_view,
+        name="section_plan_save_capacity",
+    ),
     path("audit-explorer/", audit_explorer_page, name="audit_explorer_page"),
     path("ops/audit/explorer/", audit_explorer_api, name="audit_explorer_api"),
     path("ops/audit/export.csv", audit_export_csv_view, name="audit_export_csv"),
@@ -236,6 +244,16 @@ urlpatterns = [
         "ops/db/delete-external-courses/",
         db_delete_external_courses_view,
         name="db_delete_external_courses",
+    ),
+    path(
+        "ops/db/programme-capacities/",
+        db_programme_capacities_view,
+        name="db_programme_capacities",
+    ),
+    path(
+        "ops/db/update-programme-capacities/",
+        db_update_programme_capacities_view,
+        name="db_update_programme_capacities",
     ),
     path("ops/settings/defaults/", defaults_settings_view, name="settings_defaults"),
     path("ops/users/list/", users_list_view, name="users_list"),

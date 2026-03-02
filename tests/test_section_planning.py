@@ -28,7 +28,12 @@ from core.services.rbac import (
     ensure_scope_schema,
     set_user_scope,
 )
-from core.services.section_planning import compute_plan_summary, compute_section_plan
+from core.services.section_planning import (
+    _load_programme_capacities,
+    compute_plan_summary,
+    compute_section_plan,
+    get_all_courses_with_defaults,
+)
 
 pytestmark = pytest.mark.django_db
 
@@ -361,3 +366,129 @@ def test_section_plan_generate_with_overrides(client: Client) -> None:
     assert r.status_code == 200
     data = r.json()
     assert data["ok"] is True
+
+
+# ── Programme capacities (3-tier resolution) ──────────────────
+
+
+def test_load_programme_capacities_returns_non_null() -> None:
+    """_load_programme_capacities returns only entries with max_capacity >= 1."""
+    ProgrammeRequirement.objects.create(
+        program="CS",
+        course_code="CS110",
+        credit_hours=3,
+        max_capacity=30,
+    )
+    ProgrammeRequirement.objects.create(
+        program="CS",
+        course_code="CS120",
+        credit_hours=3,
+        max_capacity=None,
+    )
+    ProgrammeRequirement.objects.create(
+        program="CS",
+        course_code="CS130",
+        credit_hours=3,
+        max_capacity=0,
+    )
+    caps = _load_programme_capacities("CS", ["CS110", "CS120", "CS130"])
+    assert caps == {"CS110": 30}
+
+
+def test_load_programme_capacities_filters_by_program() -> None:
+    """Capacities from a different program are not returned."""
+    ProgrammeRequirement.objects.create(
+        program="AI",
+        course_code="AI310",
+        credit_hours=3,
+        max_capacity=20,
+    )
+    ProgrammeRequirement.objects.create(
+        program="DS",
+        course_code="AI310",
+        credit_hours=3,
+        max_capacity=35,
+    )
+    caps = _load_programme_capacities("AI", ["AI310"])
+    assert caps == {"AI310": 20}
+
+
+def test_compute_section_plan_programme_capacities_middle_tier() -> None:
+    """programme_capacities is used when no per-course override exists."""
+    _create_course("CS810", credit_hours=3, is_external=False)
+    aggregate: Counter[str] = Counter({"CS810": 60})
+    # Global rule would give 40 (local other), programme says 20
+    plan = compute_section_plan(
+        aggregate,
+        programme_capacities={"CS810": 20},
+    )
+    assert len(plan) == 1
+    row = plan[0]
+    assert row["max_per_section"] == 20
+    assert row["num_sections"] == 3  # ceil(60/20)
+
+
+def test_compute_section_plan_override_beats_programme() -> None:
+    """Per-course override takes priority over programme_capacities."""
+    _create_course("CS820", credit_hours=3, is_external=False)
+    aggregate: Counter[str] = Counter({"CS820": 60})
+    plan = compute_section_plan(
+        aggregate,
+        course_overrides={"CS820": 10},
+        programme_capacities={"CS820": 20},
+    )
+    assert len(plan) == 1
+    row = plan[0]
+    assert row["max_per_section"] == 10
+    assert row["num_sections"] == 6  # ceil(60/10)
+
+
+def test_compute_section_plan_programme_caps_fallback_to_global() -> None:
+    """Courses not in programme_capacities still use global rules."""
+    _create_course("CS830", credit_hours=4, is_external=False)
+    _create_course("CS840", credit_hours=3, is_external=False)
+    aggregate: Counter[str] = Counter({"CS830": 50, "CS840": 80})
+    # Only CS830 has a programme cap; CS840 should use global rule (40)
+    plan = compute_section_plan(
+        aggregate,
+        programme_capacities={"CS830": 15},
+    )
+    by_code = {r["course_code"]: r for r in plan}
+    assert by_code["CS830"]["max_per_section"] == 15
+    assert by_code["CS830"]["num_sections"] == 4  # ceil(50/15)
+    assert by_code["CS840"]["max_per_section"] == 40  # global local-other
+    assert by_code["CS840"]["num_sections"] == 2  # ceil(80/40)
+
+
+def test_get_all_courses_with_defaults_programme_max_overlay() -> None:
+    """get_all_courses_with_defaults overlays programme_max when program is given."""
+    ProgrammeRequirement.objects.create(
+        program="AI",
+        course_code="AI510",
+        credit_hours=3,
+        max_capacity=18,
+    )
+    ProgrammeRequirement.objects.create(
+        program="AI",
+        course_code="AI520",
+        credit_hours=4,
+        max_capacity=None,
+    )
+    result = get_all_courses_with_defaults(program="AI")
+    by_code = {r["course_code"]: r for r in result}
+    assert by_code["AI510"]["programme_max"] == 18
+    assert by_code["AI520"]["programme_max"] is None
+
+
+def test_get_all_courses_with_defaults_no_program() -> None:
+    """Without program, programme_max is always None."""
+    ProgrammeRequirement.objects.create(
+        program="DS",
+        course_code="DS610",
+        credit_hours=3,
+        max_capacity=22,
+    )
+    result = get_all_courses_with_defaults()
+    by_code = {r["course_code"]: r for r in result}
+    if "DS610" in by_code:
+        assert by_code["DS610"]["programme_max"] is None

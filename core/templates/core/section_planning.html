@@ -71,6 +71,16 @@
     .sp-adv-reset:hover { color: var(--danger); border-color: var(--danger); }
     .sp-adv-badge { display: inline-block; padding: 0 6px; border-radius: 8px; font-size: .68rem; font-weight: 700; background: var(--teal); color: #fff; margin-inline-start: 4px; }
 
+    /* Multi-program headings */
+    .sp-prog-heading { font-size: .95rem; font-weight: 700; color: var(--navy); padding: 10px 0 6px; margin-top: 18px; border-bottom: 2px solid var(--teal); display: flex; align-items: baseline; gap: 8px; }
+    .sp-prog-heading:first-child { margin-top: 0; }
+    .sp-prog-heading .sp-prog-count { font-size: .75rem; font-weight: 600; color: var(--t3); font-family: var(--font-mono); }
+    .sp-prog-heading.sp-collapsible:hover { opacity: .85; }
+    .sp-collapse-arrow { font-size: .7rem; color: var(--t3); transition: transform .15s; min-width: 12px; }
+    .sp-prog-block { margin-bottom: 20px; }
+    .sp-prog-block .tbl-card { margin-bottom: 8px; }
+    .sp-prog-block .sp-dept-grid { margin-top: 8px; }
+
     /* Responsive */
     @media(max-width:768px) {
       .sp-kpi { grid-template-columns: repeat(2, 1fr); }
@@ -160,6 +170,15 @@
     }
     html[data-theme="dark"] .sp-adv-wrap {
       border-color: rgba(255,255,255,0.06);
+    }
+
+    /* Multi-program headings */
+    html[data-theme="dark"] .sp-prog-heading {
+      color: #e2e4ec;
+      border-bottom-color: rgba(12,168,126,0.35);
+    }
+    html[data-theme="dark"] .sp-prog-heading .sp-prog-count {
+      color: #a0a4b8;
     }
 
     /* Reset button hover */
@@ -330,6 +349,9 @@
   </table>
   <nav class="tbl-pager" id="spPager"></nav>
 
+  <!-- Multi-program results (hidden until multi mode) -->
+  <div id="spMultiPrograms" class="d-none"></div>
+
   <!-- Department Summary -->
   <div class="sp-panel" style="margin-top:14px">
     <h6 style="margin-bottom:8px; font-size:.82rem">{% if LANGUAGE_CODE == 'ar' %}ملخص الأقسام{% else %}Department Summary{% endif %}</h6>
@@ -356,7 +378,11 @@ const T = {
   courses:     IS_AR ? 'مقررات' : 'courses',
   sections:    IS_AR ? 'شعب' : 'sections',
   students:    IS_AR ? 'طلاب' : 'students',
+  credits:     IS_AR ? 'ساعة' : 'cr',
   lastUpdate:  IS_AR ? 'آخر تحديث' : 'Last update',
+  deptSummary: IS_AR ? 'ملخص الأقسام' : 'Department Summary',
+  noRecs:      IS_AR ? 'لا توجد توصيات.' : 'No recommendations found.',
+  progLabel:   IS_AR ? 'طالب' : 'students',
 };
 
 const CSRF = document.querySelector('[name=csrfmiddlewaretoken]')?.value
@@ -373,22 +399,28 @@ $('spToggleCaps').onclick = () => {
 let _advCourses = [];     // cached course list from server
 let _advLoaded = false;   // loaded at least once?
 
+let _advProgram = '';  // program(s) when panel was last loaded
+
 $('spToggleAdv').onclick = () => {
   const panel = $('spAdvPanel');
   const isHidden = panel.classList.contains('d-none');
   panel.classList.toggle('d-none');
-  if (isHidden && !_advLoaded) loadAdvancedCourses();
+  if (isHidden) {
+    const prog = $('spProgram').value.trim().toUpperCase();
+    if (!_advLoaded || prog !== _advProgram) loadAdvancedCourses();
+  }
 };
 
 async function loadAdvancedCourses() {
   const local4  = parseInt($('spCapLocal4').value, 10) || 25;
   const localO  = parseInt($('spCapLocalOther').value, 10) || 40;
   const ext     = parseInt($('spCapExternal').value, 10) || 50;
+  const prog    = $('spProgram').value.trim().toUpperCase();
+  _advProgram   = prog;
+  let url = `/ops/section-planning/courses/?max_local_4cr=${local4}&max_local_other=${localO}&max_external=${ext}`;
+  if (prog) url += `&program=${encodeURIComponent(prog)}`;
   try {
-    const res = await fetch(
-      `/ops/section-planning/courses/?max_local_4cr=${local4}&max_local_other=${localO}&max_external=${ext}`,
-      { headers: { 'X-CSRFToken': CSRF } }
-    );
+    const res = await fetch(url, { headers: { 'X-CSRFToken': CSRF } });
     const data = await res.json();
     if (!data.ok) { showStatus(data.error || T.reqFailed, 'err'); return; }
     _advCourses = data.courses || [];
@@ -404,10 +436,13 @@ function renderAdvancedTable(courses) {
   const tbody = $('spAdvBody');
   if (!courses.length) {
     tbody.innerHTML = `<tr><td colspan="6" class="empty-note" style="text-align:center;padding:20px">${
-      IS_AR ? 'لا توجد مقررات.' : 'No courses found.'}</td></tr>`;
+      IS_AR ? 'لا توجد مقررات — أدخل البرنامج أولاً.' : 'No courses found — enter a Program first.'}</td></tr>`;
     return;
   }
-  tbody.innerHTML = courses.map(c => `<tr data-code="${c.course_code}">
+  tbody.innerHTML = courses.map(c => {
+    const saved = c.programme_max;
+    const dispVal = saved != null ? saved : '';
+    return `<tr data-code="${c.course_code}">
     <td><span class="cr-id">${c.course_code}</span></td>
     <td>${c.department}</td>
     <td style="text-align:center">${c.credit_hours}</td>
@@ -415,13 +450,42 @@ function renderAdvancedTable(courses) {
     <td style="text-align:center" class="adv-default">${c.default_max}</td>
     <td style="text-align:center"><input type="text" inputmode="numeric" pattern="[0-9]*"
         class="form-control form-control-compact adv-input"
+        value="${dispVal}"
         placeholder="${c.default_max}"
         data-code="${c.course_code}" data-default="${c.default_max}"></td>
-  </tr>`).join('');
-  /* Wire input change to update badge */
+  </tr>`;
+  }).join('');
+  /* Wire input change → badge + auto-save to DB */
   tbody.querySelectorAll('.adv-input').forEach(inp => {
     inp.addEventListener('input', updateAdvBadge);
+    inp.addEventListener('change', () => saveCapacityToDB(inp));
   });
+}
+
+/* Save a single course capacity to DB for all selected programs */
+async function saveCapacityToDB(inp) {
+  const prog = _advProgram;
+  if (!prog) return;  // no program → nothing to save
+  const programs = prog.includes(',')
+    ? prog.split(',').map(p => p.trim()).filter(Boolean)
+    : [prog];
+  const code = inp.dataset.code;
+  const raw = inp.value.trim();
+  const cap = raw ? parseInt(raw, 10) : null;
+  if (raw && (isNaN(cap) || cap < 1)) return;  // invalid → skip
+  try {
+    const res = await fetch('/ops/section-planning/save-capacity/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      body: JSON.stringify({ programs, course_code: code, max_capacity: cap }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      /* Brief green flash to confirm save */
+      inp.style.borderColor = 'var(--teal)';
+      setTimeout(() => { inp.style.borderColor = ''; }, 800);
+    }
+  } catch (_) { /* silent — user will see no flash if save fails */ }
 }
 
 function updateAdvBadge() {
@@ -478,6 +542,11 @@ $('spAdvReset').onclick = () => {
   });
 });
 
+/* Reload when program input changes (courses are program-specific) */
+$('spProgram').addEventListener('change', () => {
+  if (_advLoaded) loadAdvancedCourses();
+});
+
 /* ── Collect payload ── */
 function getPayload() {
   const overrides = collectOverrides();
@@ -532,30 +601,22 @@ function hideStatus() {
 
 /* ── Render results ── */
 let _lastPayload = null;
+const CS_DEPTS = new Set(['AI', 'DS', 'CS', 'IS', 'CYB', 'COE']);
 
 function renderResults(data) {
-  $('spResults').classList.remove('d-none');
-
-  /* KPIs */
-  $('spKpiStudents').textContent = String(data.student_count ?? 0);
-  $('spKpiCourses').textContent = String(data.summary.total_courses);
-  $('spKpiSections').textContent = String(data.summary.total_sections);
-  $('spKpiFill').textContent = data.summary.avg_fill_percent + '%';
-
-  /* Timestamp */
-  $('spTimestamp').textContent = T.lastUpdate + ': ' + new Date().toLocaleTimeString();
-
-  /* Table */
-  const tbody = $('spTable').querySelector('tbody');
-  const plan = data.plan || [];
-
-  if (!plan.length) {
-    tbody.innerHTML = `<tr><td colspan="10" class="empty-note">${IS_AR ? 'لا توجد توصيات.' : 'No recommendations found.'}</td></tr>`;
-    $('spDeptGrid').innerHTML = '';
-    return;
+  if (data.mode === 'multi') {
+    renderMultiProgramResults(data);
+  } else {
+    renderSingleProgramResults(data);
   }
+}
 
-  tbody.innerHTML = plan.map((row, idx) => {
+/* ── Build table rows HTML from a plan array ── */
+function buildPlanRows(plan) {
+  if (!plan.length) {
+    return `<tr><td colspan="10" class="empty-note">${T.noRecs}</td></tr>`;
+  }
+  return plan.map((row, idx) => {
     const fillCls = row.fill_percent >= 80 ? 'sp-fill-hi'
                   : row.fill_percent >= 40 ? 'sp-fill-md'
                   : 'sp-fill-lo';
@@ -565,9 +626,7 @@ function renderResults(data) {
     } else if (row.status === 'underfilled') {
       statusHtml = `<span class="sp-pill sp-pill-under">${T.underfilled}</span>`;
     }
-
     const extBadge = row.is_external ? ` <span class="sp-pill sp-pill-ext">EXT</span>` : '';
-
     return `<tr>
       <td>${idx + 1}</td>
       <td><strong>${row.department}</strong></td>
@@ -586,19 +645,175 @@ function renderResults(data) {
       <td>${statusHtml}</td>
     </tr>`;
   }).join('');
+}
+
+/* ── Build department summary HTML ── */
+function buildDeptSummaryHtml(departments) {
+  const depts = (departments || []).filter(d => CS_DEPTS.has(d.department));
+  if (!depts.length) return '';
+  return depts.map(d => `
+    <div class="sp-dept-card">
+      <div class="dept-name">${d.department}</div>
+      <div class="dept-stat"><b>${d.courses}</b> ${T.courses} · <b>${d.sections}</b> ${T.sections} · <b>${d.students}</b> ${T.students} · <b>${d.total_credits}</b> ${T.credits}</div>
+    </div>
+  `).join('');
+}
+
+/* ── Table header HTML (shared between single and multi) ── */
+function buildTableHeaderHtml() {
+  return `<tr>
+    <th data-sort="num">#</th>
+    <th data-sort="text">${IS_AR ? 'القسم' : 'Dept'}</th>
+    <th data-sort="text">${IS_AR ? 'المقرر' : 'Course'}</th>
+    <th data-sort="num">${IS_AR ? 'ساعات' : 'Cr'}</th>
+    <th data-sort="num">${IS_AR ? 'الطلاب' : 'Students'}</th>
+    <th data-sort="num">${IS_AR ? 'الشعب' : 'Sections'}</th>
+    <th data-sort="num">${IS_AR ? 'الحد الأقصى' : 'Max'}</th>
+    <th data-sort="num">${IS_AR ? 'المتوسط' : 'Avg'}</th>
+    <th>${IS_AR ? 'الامتلاء' : 'Fill'}</th>
+    <th data-sort="text">${IS_AR ? 'الحالة' : 'Status'}</th>
+  </tr>`;
+}
+
+/* ── Single-program mode (original behavior) ── */
+function renderSingleProgramResults(data) {
+  $('spResults').classList.remove('d-none');
+
+  /* Show single table, hide multi container */
+  $('spTable').style.display = '';
+  $('spPager').style.display = '';
+  $('spMultiPrograms').classList.add('d-none');
+  $('spMultiPrograms').innerHTML = '';
+
+  /* Show the single-mode dept summary panel */
+  $('spDeptGrid').parentElement.style.display = '';
+
+  /* KPIs */
+  $('spKpiStudents').textContent = String(data.student_count ?? 0);
+  $('spKpiCourses').textContent = String(data.summary.total_courses);
+  $('spKpiSections').textContent = String(data.summary.total_sections);
+  $('spKpiFill').textContent = data.summary.avg_fill_percent + '%';
+
+  /* Timestamp */
+  $('spTimestamp').textContent = T.lastUpdate + ': ' + new Date().toLocaleTimeString();
+
+  /* Table */
+  const tbody = $('spTable').querySelector('tbody');
+  const plan = data.plan || [];
+
+  if (!plan.length) {
+    tbody.innerHTML = `<tr><td colspan="10" class="empty-note">${T.noRecs}</td></tr>`;
+    $('spDeptGrid').innerHTML = '';
+    return;
+  }
+
+  tbody.innerHTML = buildPlanRows(plan);
 
   /* Wire sorting + pagination */
-  if (typeof wireSortableTable === 'function') wireSortableTable();
+  if (typeof wireSortableTable === 'function') wireSortableTable('spTable');
   if (typeof paginateTable === 'function') paginateTable('spTable', 'spPager', 30);
 
   /* Department summary */
-  const depts = data.summary.departments || [];
-  $('spDeptGrid').innerHTML = depts.map(d => `
-    <div class="sp-dept-card">
-      <div class="dept-name">${d.department}</div>
-      <div class="dept-stat"><b>${d.courses}</b> ${T.courses} · <b>${d.sections}</b> ${T.sections} · <b>${d.students}</b> ${T.students}</div>
-    </div>
-  `).join('');
+  $('spDeptGrid').innerHTML = buildDeptSummaryHtml(data.summary.departments);
+}
+
+/* ── Multi-program mode ── */
+let _multiTableCounter = 0;
+
+function renderMultiProgramResults(data) {
+  $('spResults').classList.remove('d-none');
+
+  /* Show combined union in the main table, show multi container for per-program */
+  $('spTable').style.display = '';
+  $('spPager').style.display = '';
+  $('spDeptGrid').parentElement.style.display = '';
+  const container = $('spMultiPrograms');
+  container.classList.remove('d-none');
+  container.innerHTML = '';
+
+  /* KPIs from combined summary */
+  const cs = data.combined_summary || {};
+  $('spKpiStudents').textContent = String(data.student_count ?? 0);
+  $('spKpiCourses').textContent = String(cs.total_courses || 0);
+  $('spKpiSections').textContent = String(cs.total_sections || 0);
+  $('spKpiFill').textContent = (cs.avg_fill_percent || 0) + '%';
+
+  /* Timestamp */
+  $('spTimestamp').textContent = T.lastUpdate + ': ' + new Date().toLocaleTimeString();
+
+  /* ── Union table (main table) ── */
+  const combinedPlan = data.combined_plan || [];
+  const tbody = $('spTable').querySelector('tbody');
+  if (!combinedPlan.length) {
+    tbody.innerHTML = `<tr><td colspan="10" class="empty-note">${T.noRecs}</td></tr>`;
+    $('spDeptGrid').innerHTML = '';
+  } else {
+    tbody.innerHTML = buildPlanRows(combinedPlan);
+    if (typeof wireSortableTable === 'function') wireSortableTable('spTable');
+    if (typeof paginateTable === 'function') paginateTable('spTable', 'spPager', 30);
+    $('spDeptGrid').innerHTML = buildDeptSummaryHtml(cs.departments);
+  }
+
+  /* ── Collapsible per-program blocks ── */
+  (data.programs || []).forEach(prog => {
+    _multiTableCounter++;
+    const tableId = 'spMultiTable_' + _multiTableCounter;
+    const bodyId  = 'spMultiBody_' + _multiTableCounter;
+    const plan = prog.plan || [];
+    const summary = prog.summary || {};
+
+    const block = document.createElement('div');
+    block.className = 'sp-prog-block';
+    block.style.marginTop = '14px';
+
+    /* Collapsible heading — starts collapsed */
+    const heading = document.createElement('h5');
+    heading.className = 'sp-prog-heading sp-collapsible';
+    heading.style.cursor = 'pointer';
+    heading.style.userSelect = 'none';
+    heading.innerHTML = `<span class="sp-collapse-arrow">▶</span>
+      <span>${esc(prog.program)}</span>
+      <span class="sp-prog-count">(${prog.student_count ?? 0} ${T.progLabel}
+        · ${summary.total_courses || 0} ${T.courses}
+        · ${summary.total_sections || 0} ${T.sections})</span>`;
+    block.appendChild(heading);
+
+    /* Collapsible body — hidden by default */
+    const body = document.createElement('div');
+    body.id = bodyId;
+    body.className = 'd-none';
+
+    /* Table */
+    const table = document.createElement('table');
+    table.className = 'tbl-card';
+    table.id = tableId;
+    table.setAttribute('role', 'table');
+    table.innerHTML = `<thead>${buildTableHeaderHtml()}</thead><tbody>${buildPlanRows(plan)}</tbody>`;
+    body.appendChild(table);
+
+    /* Department summary for this program */
+    const deptHtml = buildDeptSummaryHtml(summary.departments);
+    if (deptHtml) {
+      const deptPanel = document.createElement('div');
+      deptPanel.className = 'sp-panel';
+      deptPanel.style.marginTop = '8px';
+      deptPanel.innerHTML = `<h6 style="margin-bottom:8px; font-size:.82rem">${T.deptSummary}</h6>
+        <div class="sp-dept-grid">${deptHtml}</div>`;
+      body.appendChild(deptPanel);
+    }
+
+    block.appendChild(body);
+    container.appendChild(block);
+
+    /* Toggle collapse on click */
+    heading.addEventListener('click', () => {
+      const hidden = body.classList.toggle('d-none');
+      heading.querySelector('.sp-collapse-arrow').textContent = hidden ? '▶' : '▼';
+      if (!hidden && plan.length && typeof wireSortableTable === 'function') {
+        wireSortableTable(tableId);
+      }
+    });
+  });
 }
 
 /* ── Generate click ── */
@@ -692,9 +907,19 @@ $('spReset').onclick = () => {
   $('spResults').classList.add('d-none');
   hideStatus();
   _lastPayload = null;
+
+  /* Restore single-mode table visibility */
+  $('spTable').style.display = '';
+  $('spPager').style.display = '';
   $('spTable').querySelector('tbody').innerHTML =
     `<tr><td colspan="10" class="empty-note">${IS_AR ? 'حدد السنة والفصل ثم انقر حساب.' : 'Set Year & Semester, then click Generate.'}</td></tr>`;
   $('spDeptGrid').innerHTML = '';
+  $('spDeptGrid').parentElement.style.display = '';
+
+  /* Clear multi-program container */
+  $('spMultiPrograms').innerHTML = '';
+  $('spMultiPrograms').classList.add('d-none');
+
   /* Reset advanced overrides */
   $('spAdvBody').querySelectorAll('.adv-input').forEach(inp => { inp.value = ''; });
   updateAdvBadge();

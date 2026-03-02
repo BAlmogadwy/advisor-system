@@ -525,6 +525,15 @@
           <span class="dba-risk-badge risk-warning">{% if LANGUAGE_CODE == 'ar' %}إدارة{% else %}Manage{% endif %}</span>
         </button>
 
+        <button class="dba-nav-item" data-panel="capacities" type="button">
+          <span class="dba-nav-icon icon-safe"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span></span>
+          <span class="dba-nav-text">
+            <span class="dba-nav-name">{% if LANGUAGE_CODE == 'ar' %}سعة البرامج{% else %}Programme Capacities{% endif %}</span>
+            <span class="dba-nav-desc">{% if LANGUAGE_CODE == 'ar' %}الحد الأقصى لكل مقرر{% else %}Max capacity per course{% endif %}</span>
+          </span>
+          <span class="dba-risk-badge risk-safe">{% if LANGUAGE_CODE == 'ar' %}إدارة{% else %}Manage{% endif %}</span>
+        </button>
+
         <div class="dba-nav-label">{% if LANGUAGE_CODE == 'ar' %}النظام{% else %}System{% endif %}</div>
 
         <button class="dba-nav-item" data-panel="defaults" type="button">
@@ -946,6 +955,51 @@
           </div>
 
           <pre id="extOut" class="dba-output" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}اضغط "تحميل" لعرض المواد الخارجية.{% else %}Click "Load" to view external courses.{% endif %}</pre>
+        </div>
+
+        <!-- ══ PANEL: Programme Capacities ═══════════════════ -->
+        <div class="dba-panel" id="panel-capacities">
+          <div class="dba-panel-header">
+            <div class="dba-panel-icon icon-safe"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span></div>
+            <div>
+              <div class="dba-panel-title">{% if LANGUAGE_CODE == 'ar' %}سعة البرامج{% else %}Programme Capacities{% endif %}</div>
+              <div class="dba-panel-subtitle">{% if LANGUAGE_CODE == 'ar' %}عرض وتعديل الحد الأقصى للسعة (<code>max_capacity</code>) لكل مقرر في <code>programme_requirements</code>.{% else %}View and edit the <code>max_capacity</code> value for each course in <code>programme_requirements</code>.{% endif %}</div>
+            </div>
+          </div>
+
+          <div class="dba-section">
+            <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}تحديد البرنامج{% else %}Select program{% endif %}</div>
+            <div class="row g-2 align-items-end">
+              <div class="col-md-5">
+                <label class="form-label" for="capProgram">{% if LANGUAGE_CODE == 'ar' %}رمز البرنامج{% else %}Program code{% endif %}</label>
+                <input id="capProgram" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثال: AI{% else %}e.g. AI{% endif %}">
+              </div>
+              <div class="col-md-7 d-flex gap-2 align-items-end">
+                <button id="capLoad" class="btn btn-outline-primary">{% if LANGUAGE_CODE == 'ar' %}تحميل{% else %}Load{% endif %}</button>
+                <button id="capSave" class="btn btn-success d-none">{% if LANGUAGE_CODE == 'ar' %}حفظ الكل{% else %}Save All{% endif %}</button>
+                <span id="capCount" class="small text-secondary ms-2"></span>
+              </div>
+            </div>
+          </div>
+
+          <div id="capTableWrap" class="dba-section d-none">
+            <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}سعة المقررات{% else %}Course capacities{% endif %}</div>
+            <div class="table-wrap" style="max-height:60vh;overflow:auto;">
+              <table class="table table-sm table-hover align-middle mb-0" style="font-size:0.82rem;">
+                <thead class="table-light">
+                  <tr>
+                    <th>{% if LANGUAGE_CODE == 'ar' %}رمز المقرر{% else %}Course Code{% endif %}</th>
+                    <th>{% if LANGUAGE_CODE == 'ar' %}الساعات{% else %}Credit Hours{% endif %}</th>
+                    <th>{% if LANGUAGE_CODE == 'ar' %}السعة الحالية{% else %}Current Capacity{% endif %}</th>
+                    <th style="width:160px">{% if LANGUAGE_CODE == 'ar' %}السعة الجديدة{% else %}New Capacity{% endif %}</th>
+                  </tr>
+                </thead>
+                <tbody id="capBody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <pre id="capOut" class="dba-output" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}أدخل رمز البرنامج واضغط "تحميل".{% else %}Enter a program code and click "Load".{% endif %}</pre>
         </div>
 
       </div><!-- /.dba-work -->
@@ -1495,6 +1549,87 @@ q('extDeleteSel').onclick = () => {
       extRender();
     }
   });
+};
+
+/* ── Section: Programme Capacities ── */
+let capRows = [];
+
+function capRender() {
+  const body = q('capBody');
+  body.innerHTML = '';
+  for (const row of capRows) {
+    const tr = document.createElement('tr');
+    const curCap = row.max_capacity != null ? row.max_capacity : '';
+    const displayCap = row.max_capacity != null ? row.max_capacity : '--';
+    tr.innerHTML =
+      `<td><strong>${esc(row.course_code)}</strong></td>` +
+      `<td>${row.credit_hours != null ? row.credit_hours : '--'}</td>` +
+      `<td>${esc(String(displayCap))}</td>` +
+      `<td><input class="form-control form-control-sm cap-input" type="number" min="1" data-code="${esc(row.course_code)}" value="${esc(String(curCap))}" placeholder="--"></td>`;
+    body.appendChild(tr);
+  }
+  q('capTableWrap').classList.toggle('d-none', capRows.length === 0);
+  q('capSave').classList.toggle('d-none', capRows.length === 0);
+  q('capCount').textContent = IS_AR
+    ? `${capRows.length} مقرر`
+    : `${capRows.length} course(s)`;
+}
+
+q('capLoad').onclick = async () => {
+  const program = (q('capProgram').value || '').trim().toUpperCase();
+  if (!program) {
+    writeOut('capOut', { error: IS_AR ? 'رمز البرنامج مطلوب.' : 'Program code is required.' });
+    return;
+  }
+  const data = await callJson(
+    `/ops/db/programme-capacities/?program=${encodeURIComponent(program)}`,
+    {}, 'capOut', q('capLoad')
+  );
+  if (data && !data.error && Array.isArray(data.rows)) {
+    capRows = data.rows;
+    capRender();
+    if (capRows.length === 0) {
+      writeOut('capOut', {
+        error: IS_AR
+          ? `لا توجد مقررات للبرنامج "${program}".`
+          : `No courses found for program "${program}".`
+      });
+    } else {
+      writeOut('capOut', {
+        message: IS_AR
+          ? `تم تحميل ${capRows.length} مقرر للبرنامج "${program}".`
+          : `Loaded ${capRows.length} course(s) for program "${program}".`
+      });
+    }
+  }
+};
+
+q('capSave').onclick = async () => {
+  const program = (q('capProgram').value || '').trim().toUpperCase();
+  if (!program) {
+    writeOut('capOut', { error: IS_AR ? 'رمز البرنامج مطلوب.' : 'Program code is required.' });
+    return;
+  }
+  const capacities = {};
+  q('capBody').querySelectorAll('.cap-input').forEach(inp => {
+    const code = inp.dataset.code;
+    const val = inp.value.trim();
+    capacities[code] = val === '' ? null : parseInt(val, 10);
+  });
+  const data = await callJson('/ops/db/update-programme-capacities/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ program: program, capacities: capacities })
+  }, 'capOut', q('capSave'));
+  if (data && data.ok) {
+    writeOut('capOut', {
+      message: IS_AR
+        ? `تم تحديث ${data.updated} صف بنجاح.`
+        : `Successfully updated ${data.updated} row(s).`
+    });
+    /* Reload to reflect saved values */
+    q('capLoad').click();
+  }
 };
 </script>
 {% endblock %}
