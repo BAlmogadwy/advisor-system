@@ -220,6 +220,27 @@ def section_plan_generate_view(request: HttpRequest) -> JsonResponse:
             )
             combined_summary = compute_plan_summary(combined_plan)
 
+            # Build additive department summary (sum per-program dept stats)
+            # This reflects actual teaching load across programs, not recomputed
+            additive_dept: dict[str, dict[str, int]] = {}
+            for prog_data in result_programs:
+                for dept in (prog_data.get("summary") or {}).get("departments", []):
+                    d = dept["department"]
+                    if d not in additive_dept:
+                        additive_dept[d] = {
+                            "courses": 0,
+                            "sections": 0,
+                            "students": 0,
+                            "total_credits": 0,
+                        }
+                    additive_dept[d]["courses"] += dept["courses"]
+                    additive_dept[d]["sections"] += dept["sections"]
+                    additive_dept[d]["students"] += dept["students"]
+                    additive_dept[d]["total_credits"] += dept["total_credits"]
+            combined_summary["departments"] = [
+                {"department": d, **v} for d, v in sorted(additive_dept.items())
+            ]
+
             return JsonResponse(
                 {
                     "ok": True,
