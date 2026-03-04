@@ -308,24 +308,26 @@ def db_import_term_sections_view(request: HttpRequest) -> JsonResponse:
 @role_required(ROLE_SUPER_ADMIN)
 @require_POST
 def db_preview_oracle_plan_view(request: HttpRequest) -> JsonResponse:
-    payload, err = _parse_json_body(request)
-    if err:
-        return err
-    filepath = str(payload.get("filepath", "")).strip()
-    program = str(payload.get("program", "")).strip()
+    uploaded_file = request.FILES.get("file")
+    program = request.POST.get("program", "").strip()
+    encoding = request.POST.get("encoding", "windows-1256").strip() or "windows-1256"
 
-    if not filepath:
-        return JsonResponse({"error": "filepath is required"}, status=400)
+    if not uploaded_file:
+        return JsonResponse({"error": "file is required"}, status=400)
     if not program:
         return JsonResponse({"error": "program is required"}, status=400)
 
-    encoding = str(payload.get("encoding", "windows-1256")).strip() or "windows-1256"
+    try:
+        raw_bytes = uploaded_file.read()
+        content = raw_bytes.decode(encoding)
+    except (UnicodeDecodeError, LookupError) as exc:
+        return JsonResponse({"error": f"Encoding error: {exc}"}, status=400)
 
     try:
         result = preview_oracle_plan(
-            filepath=filepath,
             program=program,
             encoding=encoding,
+            content=content,
         )
         return JsonResponse(result)
     except (ValueError, FileNotFoundError, OSError) as exc:

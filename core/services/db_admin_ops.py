@@ -307,9 +307,10 @@ def legacy_load_department_files_exact(
 
 
 def preview_oracle_plan(
-    filepath: str,
     program: str,
     encoding: str = "windows-1256",
+    filepath: str | None = None,
+    content: str | None = None,
 ) -> dict[str, Any]:
     """Parse an Oracle study-plan export and return a preview (no DB writes).
 
@@ -318,7 +319,7 @@ def preview_oracle_plan(
     """
     from core.services.oracle_plan_parser import map_course_type, parse_oracle_plan
 
-    parsed = parse_oracle_plan(filepath, encoding=encoding)
+    parsed = parse_oracle_plan(filepath, encoding=encoding, content=content)
 
     # Flatten courses into a list the frontend can render as editable rows.
     preview_rows: list[dict[str, Any]] = []

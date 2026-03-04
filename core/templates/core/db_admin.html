@@ -8,50 +8,45 @@
     /* ── DB Admin Console layout ─────────────────────────── */
     pre { white-space: pre-wrap; word-break: break-all; overflow-x: auto; }
 
-    /* Split layout: nav | work area */
+    /* Stacked layout: horizontal tabs on top, work area below */
     .dba-shell {
-      display:     flex;
-      gap:         1.25rem;
-      align-items: flex-start;
-      min-height:  calc(100vh - 120px);
+      display:        flex;
+      flex-direction: column;
+      gap:            1rem;
+      min-height:     calc(100vh - 120px);
     }
 
-    /* LEFT: operation nav list */
+    /* TOP: horizontal tab bar */
     .dba-nav {
-      flex-shrink:   0;
-      width:         260px;
-      display:       flex;
-      flex-direction: column;
-      gap:           0.35rem;
+      display:        flex;
+      flex-wrap:      wrap;
+      gap:            0.35rem;
+      width:          100%;
+      padding-bottom: 0.5rem;
+      border-bottom:  1px solid rgba(17,17,68,0.08);
     }
 
     .dba-nav-label {
-      font-size:      0.65rem;
-      font-weight:    700;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color:          var(--muted);
-      padding:        0.75rem 0.75rem 0.3rem;
-      margin-top:     0.25rem;
+      display:        none;
     }
-    .dba-nav-label:first-child { margin-top: 0; }
 
     .dba-nav-item {
       display:        flex;
       align-items:    center;
-      gap:            0.65rem;
-      padding:        0.7rem 0.875rem;
-      border-radius:  var(--radius);
+      gap:            0.4rem;
+      padding:        0.4rem 0.7rem;
+      border-radius:  var(--radius-sm, 7px);
       border:         1px solid transparent;
       cursor:         pointer;
       transition:     background 0.12s, border-color 0.12s, box-shadow 0.12s;
       background:     var(--glass-bg);
       backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur);
       border-color:   rgba(17,17,68,0.05);
-      box-shadow:     var(--shadow-card);
+      box-shadow:     0 1px 2px rgba(13,21,38,.04);
       user-select:    none;
       text-decoration: none;
       color:          inherit;
+      white-space:    nowrap;
     }
 
     .dba-nav-item:hover {
@@ -62,25 +57,25 @@
     .dba-nav-item.active {
       background:   var(--glass-bg-data);
       border-color: var(--teal);
-      box-shadow:   0 0 0 3px rgba(10,142,110,0.08), var(--shadow-card);
+      box-shadow:   0 0 0 2px rgba(10,142,110,0.1);
     }
 
     .dba-nav-item.danger-item.active {
       background:   rgba(255,245,245,0.7);
       border-color: var(--danger);
-      box-shadow:   0 0 0 3px rgba(224,52,52,.12), var(--shadow-card);
+      box-shadow:   0 0 0 2px rgba(224,52,52,.1);
     }
 
     .dba-nav-icon {
       flex-shrink: 0;
-      width:       36px;
-      height:      36px;
-      border-radius: 9px;
+      width:       26px;
+      height:      26px;
+      border-radius: 6px;
       display:     flex;
       align-items: center;
       justify-content: center;
     }
-    .dba-nav-icon .i { width: 18px; height: 18px; }
+    .dba-nav-icon .i { width: 14px; height: 14px; }
 
     .icon-safe    { background: #f0fdf4; color: #16a34a; }
     .icon-danger  { background: #fff1f2; color: #dc2626; }
@@ -90,42 +85,35 @@
     .dba-nav-text { flex: 1; min-width: 0; }
 
     .dba-nav-name {
-      font-size:   0.875rem;
+      font-size:   0.78rem;
       font-weight: 600;
       color:       var(--ink);
       line-height: 1.2;
-      white-space: nowrap;
-      overflow:    hidden;
-      text-overflow: ellipsis;
     }
 
     .dba-nav-desc {
-      font-size:   0.72rem;
-      color:       var(--muted);
-      margin-top:  0.1rem;
-      white-space: nowrap;
-      overflow:    hidden;
-      text-overflow: ellipsis;
+      display: none;
     }
 
     .dba-risk-badge {
       flex-shrink: 0;
-      font-size:   0.58rem;
+      font-size:   0.52rem;
       font-weight: 700;
       letter-spacing: 0.05em;
       text-transform: uppercase;
-      padding:     0.15rem 0.4rem;
-      border-radius: 5px;
+      padding:     0.1rem 0.3rem;
+      border-radius: 4px;
     }
     .risk-danger  { background: #fee2e2; color: #991b1b; }
     .risk-danger-icon { font-size: 0.72em; line-height: 1; }
     .risk-warning { background: #fef3c7; color: #92400e; }
     .risk-safe    { background: #c6f6d5; color: #14532d; border: 1px solid #86efac; }
 
-    /* RIGHT: work area */
+    /* BOTTOM: work area — full width */
     .dba-work {
       flex:     1;
       min-width: 0;
+      width:    100%;
     }
 
     /* Individual panels */
@@ -294,32 +282,19 @@
     @keyframes dba-pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.05); } }
     .dba-confirm-text { font-size: 0.75rem; font-weight: 700; }
 
-    /* Mobile: collapse nav to horizontal scroll strip */
-    @media (max-width: 900px) {
-      .dba-shell { flex-direction: column; }
+    /* Mobile: single-row scrollable strip */
+    @media (max-width: 768px) {
       .dba-nav {
-        width:      100%;
-        position:   static;
-        flex-direction: row;
+        flex-wrap:  nowrap;
         overflow-x: auto;
-        gap:        0.5rem;
-        padding-bottom: 0.25rem;
         scrollbar-width: thin;
+        padding-bottom: 0.35rem;
       }
-      .dba-nav-label { display: none; }
       .dba-nav-item {
         flex-shrink: 0;
-        flex-direction: column;
-        align-items: center;
-        text-align:  center;
-        padding:     0.6rem 0.875rem;
-        min-width:   80px;
-        gap:         0.3rem;
       }
-      .dba-nav-desc  { display: none; }
       .dba-risk-badge { display: none; }
-      .dba-nav-icon { width: 28px; height: 28px; font-size: 0.85rem; }
-      .dba-nav-name  { font-size: 0.72rem; white-space: normal; text-align: center; }
+      .dba-nav-name  { font-size: 0.72rem; }
     }
 
     /* ═══════════════════════════════════════════════════════════
@@ -428,9 +403,23 @@
       border-color: rgba(255,255,255,0.06);
     }
 
+    /* Nav bar border */
+    html[data-theme="dark"] .dba-nav {
+      border-bottom-color: rgba(255,255,255,0.08);
+    }
+
     /* Nav item borders */
     html[data-theme="dark"] .dba-nav-item {
       border-color: rgba(255,255,255,0.06);
+    }
+
+    /* Flat inputs inside oracle preview table */
+    #oTableBody .form-control,
+    #oTableBody .form-select,
+    #oTableBody .form-control-sm,
+    #oTableBody .form-select-sm {
+      border-radius: 2px !important;
+      padding: 0.25rem 0.4rem !important;
     }
   </style>
 
@@ -758,8 +747,8 @@
             <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}مصدر الملف وإعدادات البرنامج{% else %}File source &amp; program settings{% endif %}</div>
             <div class="row g-2 align-items-end">
               <div class="col-md-5">
-                <label class="form-label" for="oFilePath">{% if LANGUAGE_CODE == 'ar' %}مسار ملف Oracle{% else %}Oracle file path{% endif %}</label>
-                <input id="oFilePath" class="form-control" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثال: C:\...\getjobid31100{% else %}e.g. C:\...\getjobid31100{% endif %}">
+                <label class="form-label" for="oFile">{% if LANGUAGE_CODE == 'ar' %}ملف Oracle{% else %}Oracle file{% endif %}</label>
+                <input id="oFile" type="file" class="form-control" accept=".csv,.tsv,.txt,.dat">
               </div>
               <div class="col-md-3">
                 <label class="form-label" for="oProgram">{% if LANGUAGE_CODE == 'ar' %}رمز البرنامج{% else %}Program code{% endif %}</label>
@@ -795,17 +784,17 @@
               <button id="oAddRow" class="btn btn-sm btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}+ إضافة صف{% else %}+ Add row{% endif %}</button>
             </div>
             <div class="table-wrap" style="max-height:60vh;overflow:auto;">
-              <table class="table table-sm table-bordered mb-0" style="font-size:.82rem;">
+              <table class="table table-sm table-bordered mb-0" style="font-size:.82rem;min-width:1100px;">
                 <thead class="table-light"><tr>
-                  <th style="width:3%">#</th>
-                  <th style="width:6%">{% if LANGUAGE_CODE == 'ar' %}المستوى{% else %}Level{% endif %}</th>
-                  <th style="width:10%">{% if LANGUAGE_CODE == 'ar' %}الرمز{% else %}Code{% endif %}</th>
-                  <th style="width:20%">{% if LANGUAGE_CODE == 'ar' %}اسم المقرر (EN){% else %}Course Name (EN){% endif %}</th>
-                  <th style="width:5%">{% if LANGUAGE_CODE == 'ar' %}الساعات{% else %}Cr{% endif %}</th>
-                  <th style="width:13%">{% if LANGUAGE_CODE == 'ar' %}النوع{% else %}Type{% endif %}</th>
-                  <th style="width:5%">{% if LANGUAGE_CODE == 'ar' %}عن بُعد{% else %}Online{% endif %}</th>
-                  <th style="width:14%">{% if LANGUAGE_CODE == 'ar' %}المتطلبات{% else %}Prerequisites{% endif %}</th>
-                  <th style="width:4%"></th>
+                  <th style="width:38px">#</th>
+                  <th style="width:52px">{% if LANGUAGE_CODE == 'ar' %}المستوى{% else %}Level{% endif %}</th>
+                  <th style="min-width:95px">{% if LANGUAGE_CODE == 'ar' %}الرمز{% else %}Code{% endif %}</th>
+                  <th style="min-width:340px">{% if LANGUAGE_CODE == 'ar' %}اسم المقرر (EN){% else %}Course Name (EN){% endif %}</th>
+                  <th style="min-width:70px;width:70px">{% if LANGUAGE_CODE == 'ar' %}الساعات{% else %}Cr{% endif %}</th>
+                  <th style="min-width:140px">{% if LANGUAGE_CODE == 'ar' %}النوع{% else %}Type{% endif %}</th>
+                  <th style="width:52px">{% if LANGUAGE_CODE == 'ar' %}عن بُعد{% else %}Online{% endif %}</th>
+                  <th style="min-width:150px">{% if LANGUAGE_CODE == 'ar' %}المتطلبات{% else %}Prerequisites{% endif %}</th>
+                  <th style="width:36px"></th>
                 </tr></thead>
                 <tbody id="oTableBody"></tbody>
               </table>
@@ -1274,10 +1263,10 @@ function oracleAddRow(row, idx) {
   const isOnline = parseInt(row.is_online || 0, 10);
   tr.innerHTML =
     `<td class="text-muted">${idx}</td>` +
-    `<td><input class="form-control form-control-sm o-level" value="${esc(String(row.level_number || ''))}" style="width:50px"></td>` +
+    `<td><input class="form-control form-control-sm o-level" value="${esc(String(row.level_number || ''))}"></td>` +
     `<td><input class="form-control form-control-sm o-code" value="${esc(row.code || '')}"></td>` +
     `<td><input class="form-control form-control-sm o-name" value="${esc(row.en_name || '')}"></td>` +
-    `<td><input class="form-control form-control-sm o-credits" value="${esc(String(row.credits || ''))}" style="width:55px"></td>` +
+    `<td><input class="form-control form-control-sm o-credits" value="${esc(String(row.credits || ''))}"></td>` +
     `<td class="o-type-cell">${oracleTypeSelect(row.type || 'Mandatory')}</td>` +
     `<td class="text-center"><input class="form-check-input o-online" type="checkbox"${isOnline ? ' checked' : ''}></td>` +
     `<td><input class="form-control form-control-sm o-prereqs" value="${esc(row.prereqs_str || '')}"></td>` +
@@ -1326,14 +1315,16 @@ function renderOracleSummary(data) {
 }
 
 q('oPreview').onclick = async () => {
+  const fileInput = q('oFile');
+  if (!fileInput.files.length) { notify.warning(IS_AR ? 'يرجى اختيار ملف.' : 'Please select a file.'); return; }
   setOracleStep(2);
+  const fd = new FormData();
+  fd.append('file', fileInput.files[0]);
+  fd.append('program', q('oProgram').value);
+  fd.append('encoding', q('oEncoding').value);
   const data = await callJson('/ops/db/preview-oracle-plan/', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({
-      filepath:  q('oFilePath').value,
-      program:   q('oProgram').value,
-      encoding:  q('oEncoding').value,
-    })
+    method:'POST',
+    body: fd,
   }, 'oOut', q('oPreview'));
 
   const body = q('oTableBody');

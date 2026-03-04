@@ -1,5 +1,6 @@
 import pytest
 from django.contrib.auth.models import Group, User
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client
 from pytest import MonkeyPatch
 
@@ -126,7 +127,7 @@ def test_preview_oracle_plan_endpoint(monkeypatch: MonkeyPatch) -> None:
     _login_superadmin()
     monkeypatch.setattr(
         "core.db_admin_views.preview_oracle_plan",
-        lambda filepath, program, encoding="windows-1256": {
+        lambda program, encoding="windows-1256", filepath=None, content=None: {
             "ok": True,
             "metadata": {
                 "college_ar": "كلية",
@@ -160,10 +161,10 @@ def test_preview_oracle_plan_endpoint(monkeypatch: MonkeyPatch) -> None:
         },
     )
 
+    fake_file = SimpleUploadedFile("plan.csv", b"fake,data", content_type="text/csv")
     response = client.post(
         "/ops/db/preview-oracle-plan/",
-        data='{"filepath":"C:/fake/getjobid31100","program":"AI"}',
-        content_type="application/json",
+        data={"file": fake_file, "program": "AI", "encoding": "windows-1256"},
     )
 
     assert response.status_code == 200

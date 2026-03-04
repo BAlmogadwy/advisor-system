@@ -102,18 +102,27 @@ def map_course_type(oracle_type: str) -> str:
 # ═══════════════════════════════════════════════════════════════════════
 
 
-def parse_oracle_plan(filepath: str, encoding: str = "windows-1256") -> dict[str, Any]:
+def parse_oracle_plan(
+    filepath: str | None = None,
+    encoding: str = "windows-1256",
+    *,
+    content: str | None = None,
+) -> dict[str, Any]:
     """Parse an Oracle study plan export file.
 
     Args:
         filepath: Path to the Oracle export (CSV, TSV, semicolon, or pipe).
         encoding: File encoding (default ``windows-1256`` for Arabic Oracle).
+        content: Raw file content as a string (if provided, *filepath* is ignored).
 
     Returns:
         A dict with keys ``metadata``, ``levels``, ``summary``, ``warnings``.
     """
-    with open(filepath, encoding=encoding) as f:
-        content = f.read()
+    if content is None:
+        if not filepath:
+            raise ValueError("Either filepath or content must be provided")
+        with open(filepath, encoding=encoding) as f:
+            content = f.read()
 
     lines = [line.rstrip("\r") for line in content.strip().split("\n")]
     if not lines:
