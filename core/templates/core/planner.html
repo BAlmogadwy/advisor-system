@@ -90,8 +90,8 @@
       border: var(--border-mid);
       background: var(--glass-bg); backdrop-filter: blur(24px) saturate(130%);
       -webkit-backdrop-filter: blur(24px) saturate(130%);
-      padding: 14px 18px; border-radius: var(--radius);
-      box-shadow: var(--shadow-card);
+      padding: 14px 18px; border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-neu);
     }
     .cb-header {
       display: flex; align-items: center; justify-content: space-between;
@@ -192,9 +192,8 @@
     @media (max-width: 992px) { .pg-full { grid-column: auto; } }
     .planner-panel {
       padding: 16px 20px; border-radius: var(--radius);
-      background: var(--glass-bg); backdrop-filter: var(--glass-blur);
-      -webkit-backdrop-filter: var(--glass-blur);
-      border: var(--border-subtle);
+      background: linear-gradient(160deg, var(--teal-dim) 0%, var(--card) 100%);
+      border: 1px solid var(--teal-border);
       box-shadow: var(--shadow-card); margin-bottom: 10px;
     }
     .pane-head {
@@ -463,8 +462,15 @@
     }
 
     html[data-theme="dark"] .wf-step.active .wf-num { background: rgba(255,255,255,0.15); }
+    html[data-theme="dark"] .planner-panel {
+      background: rgba(255,255,255,0.04) !important;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.25) !important;
+      border-color: rgba(10,142,110,0.2) !important;
+    }
     html[data-theme="dark"] .command-bar {
-      box-shadow: 0 2px 12px rgba(0,0,0,0.2);
+      background: rgba(255,255,255,0.04) !important;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.25) !important;
+      border-color: rgba(10,142,110,0.2) !important;
     }
     html[data-theme="dark"] .pl-btn-red { color: var(--pl-danger-text); }
     html[data-theme="dark"] .avail-course-card {

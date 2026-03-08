@@ -322,7 +322,7 @@
 .ov-greeting { font-family: var(--font-serif); font-size: 1.4rem; color: var(--navy); margin-bottom: 0.25rem; padding-bottom: 0.5rem; border: none; border-bottom: 2px solid var(--teal-border); box-shadow: none; outline: none; }
 .ov-date { font-size: 0.82rem; color: var(--t3); margin-bottom: 1.5rem; }
 .ov-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
-.ov-kpi { padding: 1.25rem; border-radius: var(--radius); background: var(--glass-bg); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); border: var(--border-subtle); box-shadow: var(--shadow-card); transition: transform 0.15s, box-shadow 0.15s; cursor: pointer; }
+.ov-kpi { padding: 1.25rem; border-radius: var(--radius); background: linear-gradient(160deg, var(--teal-dim) 0%, var(--card) 100%); border: 1px solid var(--teal-border); box-shadow: var(--shadow-card); transition: transform 0.15s, box-shadow 0.15s; cursor: pointer; }
 .ov-kpi:hover { transform: translateY(-2px); box-shadow: var(--shadow-lift); }
 .ov-kpi-label { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--t3); font-family: var(--font-mono); margin-bottom: 0.35rem; }
 .ov-kpi-value { font-family: var(--font-serif); font-size: 2rem; color: var(--teal); font-weight: 700; line-height: 1; }
@@ -334,13 +334,13 @@
 .ov-kpi-icon.danger { background: rgba(192,48,48,0.08); color: var(--danger); }
 
 .ov-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem; margin-bottom: 1.5rem; }
-.ov-action { display: flex; align-items: center; gap: 0.75rem; padding: 1rem 1.25rem; border-radius: var(--radius); background: var(--glass-bg); backdrop-filter: var(--glass-blur); border: var(--border-subtle); box-shadow: var(--shadow-card); cursor: pointer; transition: all 0.15s; text-decoration: none; color: inherit; }
-.ov-action:hover { border-color: var(--teal-border); box-shadow: 0 0 0 2px var(--teal-dim), var(--shadow-card); }
+.ov-action { display: flex; align-items: center; gap: 0.75rem; padding: 1rem 1.25rem; border-radius: var(--radius); background: linear-gradient(160deg, var(--teal-dim) 0%, var(--card) 100%); border: 1px solid var(--teal-border); box-shadow: var(--shadow-card); cursor: pointer; transition: all 0.15s; text-decoration: none; color: inherit; }
+.ov-action:hover { border-color: var(--teal); box-shadow: 0 0 0 2px var(--teal-dim), var(--shadow-card); }
 .ov-action-icon { width: 40px; height: 40px; border-radius: 10px; background: var(--teal-dim); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .ov-action-icon svg { width: 20px; height: 20px; stroke: var(--teal); fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .ov-action-text { font-weight: 600; font-size: 0.9rem; color: var(--ink); }
 
-.ov-activity { padding: 1rem 1.25rem; border-radius: var(--radius); background: var(--glass-bg); backdrop-filter: var(--glass-blur); border: var(--border-subtle); box-shadow: var(--shadow-card); }
+.ov-activity { padding: 1rem 1.25rem; border-radius: var(--radius); background: linear-gradient(160deg, var(--teal-dim) 0%, var(--card) 100%); border: 1px solid var(--teal-border); box-shadow: var(--shadow-card); }
 .ov-activity-title { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--t3); margin-bottom: 0.75rem; }
 .ov-activity-item { display: flex; gap: 0.75rem; padding: 0.5rem 0; border-bottom: var(--border-subtle); font-size: 0.85rem; color: var(--t2); }
 .ov-activity-item:last-child { border-bottom: none; }
@@ -349,7 +349,7 @@
 /* ── Student context sidebar ── */
 .student-ctx-sidebar { width: 280px; flex-shrink: 0; transition: transform 0.25s ease, opacity 0.25s ease; }
 .student-ctx-sidebar.hidden { display: none; }
-.student-ctx-card { padding: 1rem; border-radius: var(--radius); background: var(--glass-bg); backdrop-filter: var(--glass-blur); border: var(--border-subtle); box-shadow: var(--shadow-card); }
+.student-ctx-card { padding: 1rem; border-radius: var(--radius); background: linear-gradient(160deg, var(--teal-dim) 0%, var(--card) 100%); border: 1px solid var(--teal-border); box-shadow: var(--shadow-card); }
 .student-ctx-card h3 { font-family: var(--font-serif); font-size: 0.95rem; color: var(--navy); margin: 0 0 0.75rem; }
 .student-ctx-row { display: flex; justify-content: space-between; align-items: center; padding: 0.35rem 0; border-bottom: var(--border-subtle); font-size: 0.82rem; }
 .student-ctx-row:last-child { border-bottom: none; }
@@ -677,7 +677,15 @@ html[data-theme="dark"] .sh-page-num { color: var(--t1) !important; }
 /* ── Trace btn copy hardcoded color ─── */
 html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
 
-/* ── Student ctx card ─── */
+/* ── Dashboard cards — flat dark style matching .advisor-block ─── */
+html[data-theme="dark"] .ov-kpi,
+html[data-theme="dark"] .ov-action,
+html[data-theme="dark"] .ov-activity,
+html[data-theme="dark"] .student-ctx-card {
+  background: rgba(255,255,255,0.04) !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25) !important;
+  border: 1px solid rgba(10,142,110,0.2) !important;
+}
 html[data-theme="dark"] .student-ctx-row { border-bottom-color: rgba(255,255,255,0.04); }
 html[data-theme="dark"] .ov-activity-item { border-bottom-color: rgba(255,255,255,0.04); }
 

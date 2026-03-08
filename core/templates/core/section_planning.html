@@ -6,7 +6,7 @@
 
 {% block extra_css %}
   <style>
-    .sp-panel { padding: 16px 20px; margin-bottom: 12px; border-radius: var(--radius); background: var(--glass-bg); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); border: var(--border-subtle); box-shadow: var(--shadow-card); }
+    .sp-panel { padding: 16px 20px; margin-bottom: 12px; border-radius: var(--radius); background: linear-gradient(160deg, var(--teal-dim) 0%, var(--card) 100%); border: 1px solid var(--teal-border); box-shadow: var(--shadow-card); }
     .sp-caps { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; padding: 10px 16px; border-radius: var(--radius); background: rgba(10,142,110,0.03); border: 1px dashed rgba(10,142,110,0.2); margin-bottom: 4px; }
     .sp-caps-lbl { font-size: .72rem; color: var(--t3); text-transform: uppercase; font-family: var(--font-mono); letter-spacing: 0.04em; font-weight: 700; margin-bottom: 2px; }
     .sp-cap-grp { display: flex; flex-direction: column; min-width: 100px; }
@@ -16,7 +16,7 @@
 
     /* KPI cards */
     .sp-kpi { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; margin-bottom: 14px; }
-    .sp-mc { border: var(--border-subtle); border-radius: var(--radius); padding: .65rem .85rem; background: var(--glass-bg); backdrop-filter: var(--glass-blur); -webkit-backdrop-filter: var(--glass-blur); box-shadow: var(--shadow-card); }
+    .sp-mc { border: 1px solid var(--teal-border); border-radius: var(--radius); padding: .65rem .85rem; background: linear-gradient(160deg, var(--teal-dim) 0%, var(--card) 100%); box-shadow: var(--shadow-card); }
     .sp-mc .k { font-size: .68rem; color: var(--t3); text-transform: uppercase; font-family: var(--font-mono); letter-spacing: 0.06em; font-weight: 700; }
     .sp-mc .v { font-weight: 700; font-family: var(--font-serif); font-size: 1.35rem; color: var(--teal); }
     .sp-mc.mc-navy .v { color: var(--navy); }
@@ -93,19 +93,15 @@
        DARK MODE — Deep Navy overrides
        html[data-theme="dark"]
        ═══════════════════════════════════════════════════════════ */
-    html[data-theme="dark"] .sp-panel {
-      background: rgba(255,255,255,0.04);
-      border-color: rgba(255,255,255,0.06);
-      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    html[data-theme="dark"] .sp-panel,
+    html[data-theme="dark"] .sp-mc {
+      background: rgba(255,255,255,0.04) !important;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.25) !important;
+      border-color: rgba(10,142,110,0.2) !important;
     }
     html[data-theme="dark"] .sp-caps {
       background: rgba(10,142,110,0.06);
       border-color: rgba(10,142,110,0.15);
-    }
-    html[data-theme="dark"] .sp-mc {
-      background: rgba(255,255,255,0.04);
-      border-color: rgba(255,255,255,0.06);
-      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
     }
     html[data-theme="dark"] .sp-dept-card {
       background: rgba(255,255,255,0.04);
