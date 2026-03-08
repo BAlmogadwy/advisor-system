@@ -75,6 +75,17 @@ def classify_view(request: HttpRequest) -> JsonResponse:
     if not isinstance(timetable, list):
         return JsonResponse({"error": "timetable must be a list"}, status=400)
 
+    required_keys = {"dept", "no", "marks", "letter"}
+    for i, item in enumerate(study_plan):
+        if not isinstance(item, dict):
+            return JsonResponse({"error": f"study_plan[{i}] must be an object"}, status=400)
+        missing = required_keys - set(item.keys())
+        if missing:
+            return JsonResponse(
+                {"error": f"study_plan[{i}] missing keys: {', '.join(sorted(missing))}"},
+                status=400,
+            )
+
     result = classify_courses(study_plan, set(str(x) for x in timetable))
     return JsonResponse(result)
 

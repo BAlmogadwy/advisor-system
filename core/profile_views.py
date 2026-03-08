@@ -9,6 +9,8 @@ import json
 from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import User
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
@@ -102,8 +104,10 @@ def profile_change_password_view(request: HttpRequest) -> JsonResponse:
     if not user.check_password(current_password):
         return JsonResponse({"error": "Current password is incorrect"}, status=400)
 
-    if len(new_password) < 6:
-        return JsonResponse({"error": "New password must be at least 6 characters"}, status=400)
+    try:
+        validate_password(new_password, user)
+    except ValidationError as exc:
+        return JsonResponse({"error": " ".join(exc.messages)}, status=400)
 
     user.set_password(new_password)
     user.save(update_fields=["password"])

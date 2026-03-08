@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import threading
 from dataclasses import dataclass
 from typing import Any
 
@@ -42,6 +43,7 @@ class OccupiedSlot:
 _CONFLICT_MATRIX_CACHE: dict[tuple, list[tuple[int, int]]] = {}
 _CONFLICT_MATRIX_CACHE_ORDER: list[tuple] = []
 _CONFLICT_MATRIX_CACHE_MAX = 64
+_CACHE_LOCK = threading.Lock()
 
 _DAY_INDEX = {"SUN": 0, "MON": 1, "TUE": 2, "WED": 3, "THU": 4, "FRI": 5, "SAT": 6}
 _SLOT_MINUTES = 5
@@ -333,8 +335,9 @@ def _conflict_cache_key(option_by_sid: dict[int, dict[str, Any]]) -> tuple:
 
 def _get_conflict_pairs(option_by_sid: dict[int, dict[str, Any]]) -> list[tuple[int, int]]:
     key = _conflict_cache_key(option_by_sid)
-    if key in _CONFLICT_MATRIX_CACHE:
-        return _CONFLICT_MATRIX_CACHE[key]
+    with _CACHE_LOCK:
+        if key in _CONFLICT_MATRIX_CACHE:
+            return _CONFLICT_MATRIX_CACHE[key]
 
     sid_list = sorted(option_by_sid.keys())
     pairs: list[tuple[int, int]] = []
@@ -355,11 +358,12 @@ def _get_conflict_pairs(option_by_sid: dict[int, dict[str, Any]]) -> list[tuple[
             if conflict:
                 pairs.append((a, b))
 
-    _CONFLICT_MATRIX_CACHE[key] = pairs
-    _CONFLICT_MATRIX_CACHE_ORDER.append(key)
-    if len(_CONFLICT_MATRIX_CACHE_ORDER) > _CONFLICT_MATRIX_CACHE_MAX:
-        old = _CONFLICT_MATRIX_CACHE_ORDER.pop(0)
-        _CONFLICT_MATRIX_CACHE.pop(old, None)
+    with _CACHE_LOCK:
+        _CONFLICT_MATRIX_CACHE[key] = pairs
+        _CONFLICT_MATRIX_CACHE_ORDER.append(key)
+        if len(_CONFLICT_MATRIX_CACHE_ORDER) > _CONFLICT_MATRIX_CACHE_MAX:
+            old = _CONFLICT_MATRIX_CACHE_ORDER.pop(0)
+            _CONFLICT_MATRIX_CACHE.pop(old, None)
     return pairs
 
 

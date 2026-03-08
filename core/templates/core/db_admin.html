@@ -748,7 +748,7 @@
             <div class="row g-2 align-items-end">
               <div class="col-md-5">
                 <label class="form-label" for="oFile">{% if LANGUAGE_CODE == 'ar' %}ملف Oracle{% else %}Oracle file{% endif %}</label>
-                <input id="oFile" type="file" class="form-control" accept=".csv,.tsv,.txt,.dat">
+                <input id="oFile" type="file" class="form-control" accept=".csv,.tsv,.txt,.dat,.html,.htm">
               </div>
               <div class="col-md-3">
                 <label class="form-label" for="oProgram">{% if LANGUAGE_CODE == 'ar' %}رمز البرنامج{% else %}Program code{% endif %}</label>
@@ -1142,8 +1142,8 @@ q('pDelete').onclick = () => {
     const okP = await dlg.confirm({
       title: IS_AR ? `حذف كتالوج ${prog}؟` : `Delete program catalog?`,
       body: IS_AR
-        ? `<p>سيحذف هذا كتالوج البرنامج بالكامل لـ <strong>${prog}</strong>. لا يمكن التراجع عن هذا.</p>`
-        : `<p>This will permanently delete all requirements and prerequisites for <strong>${prog}</strong>.</p><p>This cannot be undone.</p>`,
+        ? `<p>سيحذف هذا كتالوج البرنامج بالكامل لـ <strong>${esc(prog)}</strong>. لا يمكن التراجع عن هذا.</p>`
+        : `<p>This will permanently delete all requirements and prerequisites for <strong>${esc(prog)}</strong>.</p><p>This cannot be undone.</p>`,
       typed: `DELETE ${prog}`,
       confirmText: IS_AR ? 'حذف الكتالوج' : 'Delete catalog',
       kind: 'danger',
@@ -1194,7 +1194,7 @@ q('tPreview').onclick = async () => {
   if (!data.error && Array.isArray(data.preview_rows)) {
     for (const row of data.preview_rows) {
       const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${row.course_code||''}</td><td>${row.course_number||''}</td><td>${row.section||''}</td><td>${row.day||''}</td><td>${row.start_time||''}</td><td>${row.end_time||''}</td><td>${row.room||''}</td><td>${row.instructor||''}</td><td><span class="badge text-bg-secondary">${row.source_tag||''}</span></td>`;
+      tr.innerHTML = `<td>${esc(row.course_code||'')}</td><td>${esc(row.course_number||'')}</td><td>${esc(row.section||'')}</td><td>${esc(row.day||'')}</td><td>${esc(row.start_time||'')}</td><td>${esc(row.end_time||'')}</td><td>${esc(row.room||'')}</td><td>${esc(row.instructor||'')}</td><td><span class="badge text-bg-secondary">${esc(row.source_tag||'')}</span></td>`;
       body.appendChild(tr);
     }
     q('tTableWrap').classList.remove('d-none');
@@ -1468,7 +1468,7 @@ function extRender() {
   body.innerHTML = '';
   for (const c of extData) {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td><input type="checkbox" class="ext-chk" data-id="${c.course_id}"></td><td><strong>${c.course_code||''}</strong></td><td>${c.department||''}</td><td>${c.description||''}</td><td>${c.credit_hours||0}</td><td>${c.student_count||0}</td>`;
+    tr.innerHTML = `<td><input type="checkbox" class="ext-chk" data-id="${c.course_id}"></td><td><strong>${esc(c.course_code||'')}</strong></td><td>${esc(c.department||'')}</td><td>${esc(c.description||'')}</td><td>${c.credit_hours||0}</td><td>${c.student_count||0}</td>`;
     body.appendChild(tr);
   }
   q('extTableWrap').classList.toggle('d-none', extData.length === 0);

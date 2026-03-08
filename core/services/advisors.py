@@ -171,6 +171,10 @@ def _get_high_priority_by_program(program: str) -> dict[int, list[dict[str, obje
             parsed[sid] = merged
 
     _hp_missing_cache[program] = (now, parsed)
+    # Cap cache size to prevent unbounded memory growth
+    if len(_hp_missing_cache) > 20:
+        oldest_key = min(_hp_missing_cache, key=lambda k: _hp_missing_cache[k][0])
+        del _hp_missing_cache[oldest_key]
     return parsed
 
 

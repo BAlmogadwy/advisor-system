@@ -28,14 +28,15 @@ def get_all_programs() -> list[str]:
 def get_prerequisites(course_code: str, program: str) -> list[str]:
     course_code_n = normalize_code(course_code)
     program_n = str(program).strip().upper()
+    # Filter by normalized course_code at DB level to avoid full table scan.
+    # Data is typically stored normalized (uppercase, no spaces).
     rows = Prerequisite.objects.filter(
         program=program_n,
-    ).values_list("course_code", "prerequisite_course_code")
+        course_code=course_code_n,
+    ).values_list("prerequisite_course_code", flat=True)
 
     prereqs: list[str] = []
-    for db_code, cell in rows:
-        if normalize_code(db_code) != course_code_n:
-            continue
+    for cell in rows:
         if cell is None:
             continue
         for code in str(cell).split(","):

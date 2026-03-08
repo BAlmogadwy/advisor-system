@@ -44,11 +44,13 @@ def create_backup_snapshot() -> dict[str, Any]:
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_path = BACKUP_DIR / f"db_{ts}.sqlite3"
+    # Flush WAL to main database file for a consistent backup
+    with connection.cursor() as cur:
+        cur.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     shutil.copy2(db_path, backup_path)
     return {
         "ok": True,
-        "db_path": str(db_path),
-        "backup_path": str(backup_path),
+        "backup_file": backup_path.name,  # filename only, no full path
         "size_bytes": int(backup_path.stat().st_size),
     }
 

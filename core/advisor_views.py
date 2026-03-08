@@ -175,6 +175,10 @@ def students_by_advisor_view(request: HttpRequest) -> JsonResponse:
     scope = get_user_scope(request.user)
     role = str(scope.get("role", ""))
     forced_advisor_id = str(scope.get("advisor_id", "")).strip() if role != ROLE_SUPER_ADMIN else ""
+    if forced_advisor_id and advisor_id != forced_advisor_id:
+        return JsonResponse(
+            {"error": "You can only access your assigned advisor portfolio."}, status=403
+        )
     if role == ROLE_GENERAL_ADVISOR:
         allowed_departments = [str(x).upper() for x in scope.get("departments", [])]
     else:

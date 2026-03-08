@@ -83,7 +83,6 @@ def get_scrape_status() -> dict[str, Any]:
         "stopped_at": state.get("stopped_at"),
         "last_action": state.get("last_action"),
         "params": state.get("params"),
-        "log_path": str(LOG_PATH),
         "log_tail": _tail_log(),
         "history": history,
     }
@@ -143,7 +142,7 @@ def start_batch_scrape(concurrency: int = 2, students_csv: str | None = None) ->
         }
     )
 
-    return {"ok": True, "pid": proc.pid, "log_path": str(LOG_PATH), "params": state["params"]}
+    return {"ok": True, "pid": proc.pid, "params": state["params"]}
 
 
 def stop_batch_scrape() -> dict[str, Any]:

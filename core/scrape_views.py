@@ -2,11 +2,12 @@ from pathlib import Path
 
 from django.conf import settings
 from django.http import HttpRequest, JsonResponse
-from django.views.decorators.http import require_GET
+from django.views.decorators.http import require_GET, require_POST
 
 from core.authz import role_required, throttle
 from core.services.rbac import ROLE_SUPER_ADMIN
 from core.services.scrape_ops import get_scrape_status, start_batch_scrape, stop_batch_scrape
+from core.utils import parse_json_body as _parse_json_body
 
 # Allowed directory for CSV uploads (data/ under project root)
 _ALLOWED_CSV_DIR = Path(settings.BASE_DIR) / "data"
@@ -47,11 +48,14 @@ def _to_int(value: str | None, default: int) -> int:
 
 
 @role_required(ROLE_SUPER_ADMIN)
-@require_GET
+@require_POST
 @throttle(max_calls=3, window_seconds=120)
 def scrape_start_view(request: HttpRequest) -> JsonResponse:
-    concurrency = _to_int(request.GET.get("concurrency"), 2)
-    students_csv = request.GET.get("students_csv", "").strip() or None
+    payload, err = _parse_json_body(request)
+    if err:
+        return err
+    concurrency = _to_int(str(payload.get("concurrency", "")), 2)
+    students_csv = str(payload.get("students_csv", "")).strip() or None
 
     if students_csv is not None:
         path, error = _validate_csv_path(students_csv)
@@ -71,7 +75,7 @@ def scrape_status_view(request: HttpRequest) -> JsonResponse:
 
 
 @role_required(ROLE_SUPER_ADMIN)
-@require_GET
+@require_POST
 def scrape_stop_view(request: HttpRequest) -> JsonResponse:
     result = stop_batch_scrape()
     code = 200 if result.get("ok") else 409

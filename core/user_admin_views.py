@@ -1,4 +1,6 @@
 from django.contrib.auth.models import Group, User
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
@@ -77,6 +79,11 @@ def users_create_view(request: HttpRequest) -> JsonResponse:
             {"error": "username, password, and valid role are required"}, status=400
         )
 
+    try:
+        validate_password(password)
+    except ValidationError as exc:
+        return JsonResponse({"error": " ".join(exc.messages)}, status=400)
+
     if User.objects.filter(username=username).exists():
         return JsonResponse({"error": "username already exists"}, status=400)
 
@@ -121,9 +128,10 @@ def users_update_role_view(request: HttpRequest) -> JsonResponse:
     if user is None:
         return JsonResponse({"error": "user not found"}, status=404)
 
-    user.groups.clear()
-    user.groups.add(Group.objects.get(name=role))
-    set_user_scope(int(user.id), advisor_id=advisor_id, departments=departments)
+    with transaction.atomic():
+        user.groups.clear()
+        user.groups.add(Group.objects.get(name=role))
+        set_user_scope(int(user.id), advisor_id=advisor_id, departments=departments)
 
     log_audit_event(
         request,
@@ -154,6 +162,11 @@ def users_set_password_view(request: HttpRequest) -> JsonResponse:
     user = User.objects.filter(username=username).first()
     if user is None:
         return JsonResponse({"error": "user not found"}, status=404)
+
+    try:
+        validate_password(new_password, user)
+    except ValidationError as exc:
+        return JsonResponse({"error": " ".join(exc.messages)}, status=400)
 
     user.set_password(new_password)
     user.save(update_fields=["password"])

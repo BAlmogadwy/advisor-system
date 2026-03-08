@@ -281,7 +281,10 @@ def exam_timetable_detail_view(request: HttpRequest, run_id: int) -> JsonRespons
     except ExamTimetableRun.DoesNotExist:
         return JsonResponse({"ok": False, "error": "Run not found"}, status=404)
 
-    result = json.loads(run.result_json)
+    try:
+        result = json.loads(run.result_json)
+    except (json.JSONDecodeError, TypeError):
+        return JsonResponse({"ok": False, "error": "Corrupt run data"}, status=500)
     result["run_id"] = run.id
     result["label"] = run.label
     result["created_at"] = run.created_at.isoformat() if run.created_at else ""
@@ -317,7 +320,10 @@ def exam_timetable_delete_view(request: HttpRequest, run_id: int) -> JsonRespons
     if deny:
         return deny
 
-    payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    try:
+        payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse({"ok": False, "error": "Invalid JSON"}, status=400)
     confirm = str(payload.get("confirm", ""))
     if confirm != "DELETE":
         log_audit_event(

@@ -112,6 +112,14 @@ else:
         }
     }
 
+# Cache backend for rate limiting and login throttling
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+        "LOCATION": "django_cache_table",
+    }
+}
+
 # Legacy parity DB used by migrated advisor logic (can be overridden via env var)
 DB_PATH = os.getenv("ADVISOR_DB_PATH", str(BASE_DIR / "db.sqlite3"))
 
@@ -269,6 +277,8 @@ LOGGING = {
     },
 }
 
+
+DATA_UPLOAD_MAX_MEMORY_SIZE = 10_485_760  # 10 MB
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

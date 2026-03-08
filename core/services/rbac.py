@@ -11,15 +11,28 @@ ROLE_ADVISOR = "ADVISOR"
 
 ROLE_NAMES = [ROLE_SUPER_ADMIN, ROLE_GENERAL_ADVISOR, ROLE_ADVISOR]
 
+_groups_ensured = False
+
 
 def ensure_role_groups() -> None:
+    global _groups_ensured
+    if _groups_ensured:
+        return
     for name in ROLE_NAMES:
         Group.objects.get_or_create(name=name)
+    _groups_ensured = True
+
+
+_scope_schema_ensured = False
 
 
 def ensure_scope_schema() -> None:
+    global _scope_schema_ensured
+    if _scope_schema_ensured:
+        return
     # Schema is managed by Django migrations.
     # Keep this function as a compatibility no-op for existing call sites.
+    _scope_schema_ensured = True
     return
 
 

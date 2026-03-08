@@ -28,6 +28,7 @@ from core.services.term_sections import (
 )
 from core.sidebar_context import get_sidebar_context
 from core.utils import parse_json_body as _parse_json_body
+from core.utils import validate_import_path
 
 
 @role_required(ROLE_SUPER_ADMIN)
@@ -191,6 +192,17 @@ def db_import_legacy_exact_view(request: HttpRequest) -> JsonResponse:
     req_path = str(payload.get("requirements_csv_path", "")).strip() or None
     pre_path = str(payload.get("prerequisites_csv_path", "")).strip() or None
 
+    if req_path:
+        resolved, err_msg = validate_import_path(req_path)
+        if err_msg:
+            return JsonResponse({"error": f"requirements_csv_path: {err_msg}"}, status=400)
+        req_path = str(resolved)
+    if pre_path:
+        resolved, err_msg = validate_import_path(pre_path)
+        if err_msg:
+            return JsonResponse({"error": f"prerequisites_csv_path: {err_msg}"}, status=400)
+        pre_path = str(resolved)
+
     try:
         result = legacy_load_department_files_exact(
             requirements_csv_path=req_path,
@@ -235,6 +247,11 @@ def db_preview_term_sections_view(request: HttpRequest) -> JsonResponse:
     if not csv_path or not academic_year or not term:
         return JsonResponse({"error": "csv_path, academic_year, and term are required"}, status=400)
 
+    resolved, err_msg = validate_import_path(csv_path)
+    if err_msg:
+        return JsonResponse({"error": f"csv_path: {err_msg}"}, status=400)
+    csv_path = str(resolved)
+
     source_tag = "department" if is_department else "other"
 
     try:
@@ -264,6 +281,11 @@ def db_import_term_sections_view(request: HttpRequest) -> JsonResponse:
 
     if not csv_path or not academic_year or not term:
         return JsonResponse({"error": "csv_path, academic_year, and term are required"}, status=400)
+
+    resolved, err_msg = validate_import_path(csv_path)
+    if err_msg:
+        return JsonResponse({"error": f"csv_path: {err_msg}"}, status=400)
+    csv_path = str(resolved)
 
     source_tag = "department" if is_department else "other"
 
@@ -316,6 +338,26 @@ def db_preview_oracle_plan_view(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "file is required"}, status=400)
     if not program:
         return JsonResponse({"error": "program is required"}, status=400)
+
+    # File size check: 5 MB max
+    max_size = 5 * 1024 * 1024
+    if uploaded_file.size and uploaded_file.size > max_size:
+        return JsonResponse(
+            {"error": f"File too large ({uploaded_file.size} bytes). Maximum is 5 MB."},
+            status=400,
+        )
+
+    # File extension validation
+    allowed_extensions = {".csv", ".tsv", ".txt", ".dat"}
+    file_name = uploaded_file.name or ""
+    file_ext = ("." + file_name.rsplit(".", 1)[-1]).lower() if "." in file_name else ""
+    if file_ext not in allowed_extensions:
+        return JsonResponse(
+            {
+                "error": f"Unsupported file extension '{file_ext}'. Allowed: {', '.join(sorted(allowed_extensions))}"
+            },
+            status=400,
+        )
 
     try:
         raw_bytes = uploaded_file.read()
@@ -400,7 +442,7 @@ def db_backup_snapshot_view(request: HttpRequest) -> JsonResponse:
         request,
         action="db.backup_snapshot",
         status="success",
-        details={"backup_path": result.get("backup_path", "")},
+        details={"backup_file": result.get("backup_file", "")},
     )
     return JsonResponse(result)
 
@@ -446,7 +488,10 @@ def db_delete_external_courses_view(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "Confirmation required: send confirm=DELETE"}, status=400)
 
     raw_ids = payload.get("course_ids")
-    course_ids = [int(x) for x in raw_ids] if isinstance(raw_ids, list) else None
+    try:
+        course_ids = [int(x) for x in raw_ids] if isinstance(raw_ids, list) else None
+    except (ValueError, TypeError):
+        return JsonResponse({"error": "course_ids must be a list of integers"}, status=400)
 
     result = delete_external_courses(course_ids=course_ids)
     log_audit_event(

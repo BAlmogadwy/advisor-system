@@ -41,6 +41,21 @@ def role_required(
 # In-process sliding-window store.  Acceptable for single-process / gunicorn
 # deployments.  For multi-process horizontal scale, swap to Django cache.
 _rate_buckets: dict[str, list[float]] = {}
+_eviction_counter: int = 0
+
+
+def _do_eviction_sweep(window_seconds: int) -> None:
+    """Periodically evict stale entries from _rate_buckets to prevent memory leaks."""
+    global _eviction_counter
+    _eviction_counter += 1
+    if _eviction_counter < 100:
+        return
+    _eviction_counter = 0
+    now = time.monotonic()
+    cutoff = now - window_seconds
+    stale = [k for k, v in _rate_buckets.items() if not v or v[-1] < cutoff]
+    for k in stale:
+        _rate_buckets.pop(k, None)
 
 
 def throttle(
@@ -59,11 +74,15 @@ def throttle(
     def deco(fn: Callable[..., HttpResponseBase]) -> Callable[..., HttpResponseBase]:
         @wraps(fn)
         def wrapper(request: HttpRequest, *args: Any, **kwargs: Any) -> HttpResponseBase:
-            # SUPER_ADMIN is exempt from rate limits
+            # SUPER_ADMIN gets 5x the normal limit
             if request.user.is_authenticated:
                 scope = get_user_scope(request.user)
                 if scope.get("role") == ROLE_SUPER_ADMIN:
-                    return fn(request, *args, **kwargs)
+                    effective_max = max_calls * 5
+                else:
+                    effective_max = max_calls
+            else:
+                effective_max = max_calls
 
             uid = getattr(request.user, "pk", None) or "anon"
             key = f"throttle:{fn.__qualname__}:{uid}"
@@ -74,7 +93,7 @@ def throttle(
             hits = _rate_buckets.get(key, [])
             hits = [t for t in hits if t > window_start]
 
-            if len(hits) >= max_calls:
+            if len(hits) >= effective_max:
                 retry_after = int(hits[0] - window_start) + 1
                 resp = JsonResponse(
                     {"error": "Rate limit exceeded. Please try again later."},
@@ -85,6 +104,10 @@ def throttle(
 
             hits.append(now)
             _rate_buckets[key] = hits
+
+            # Periodic eviction of stale entries
+            _do_eviction_sweep(window_seconds)
+
             return fn(request, *args, **kwargs)
 
         return wrapper

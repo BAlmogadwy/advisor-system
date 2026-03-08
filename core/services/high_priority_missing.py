@@ -125,9 +125,13 @@ def _prereqs_visual_style(course: str, program: str) -> set[str]:
 
 
 def _is_eligible(
-    course: str, program: str, passed: set[str], studying: set[str], studying_counts_as_passed: bool
+    course: str,
+    prereqs_map: dict[str, set[str]],
+    passed: set[str],
+    studying: set[str],
+    studying_counts_as_passed: bool,
 ) -> bool:
-    prereqs = _prereqs_visual_style(course, program)
+    prereqs = prereqs_map.get(course, set())
     satisfied = set(passed) | (set(studying) if studying_counts_as_passed else set())
     return prereqs.issubset(satisfied)
 
@@ -160,15 +164,29 @@ def run_missing_high_priority_report(
             scores = _compute_priority_scores(g, discount=discount)
             term_map = _build_course_term_map(student_program)
             universe = set(term_map.keys())
+            # Pre-load all prerequisites for this program in one query
+            prereqs_map: dict[str, set[str]] = {}
+            for row in Prerequisite.objects.filter(
+                program=student_program,
+            ).values_list("course_code", "prerequisite_course_code"):
+                cc = normalize_code(row[0])
+                if row[1] is None:
+                    continue
+                for p in str(row[1]).split(","):
+                    pn = normalize_code(p)
+                    if pn:
+                        prereqs_map.setdefault(cc, set()).add(pn)
             program_cache[student_program] = {
                 "scores": scores,
                 "term_map": term_map,
                 "universe": universe,
+                "prereqs_map": prereqs_map,
             }
 
         scores = program_cache[student_program]["scores"]
         term_map = program_cache[student_program]["term_map"]
         universe = program_cache[student_program]["universe"]
+        prereqs_map = program_cache[student_program]["prereqs_map"]
 
         passed, studying = get_student_passed_and_studying(sid)
         passed_n = {normalize_code(x) for x in passed}
@@ -181,9 +199,7 @@ def run_missing_high_priority_report(
             score = float(scores.get(course, 0.0))
             if score < min_score:
                 continue
-            if _is_eligible(
-                course, student_program, passed_n, studying_n, studying_counts_as_passed
-            ):
+            if _is_eligible(course, prereqs_map, passed_n, studying_n, studying_counts_as_passed):
                 candidates.append((course, score))
 
         candidates.sort(key=lambda x: x[1], reverse=True)

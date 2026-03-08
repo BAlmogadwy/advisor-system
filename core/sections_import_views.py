@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time as _time
 import uuid
 from pathlib import Path
 
@@ -8,34 +9,24 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
+from core.authz import role_required
 from core.services.audit import log_audit_event
 from core.services.oracle_sections_parser import extract_rows_from_oracle_html, write_rows_to_csv
-from core.services.rbac import ROLE_SUPER_ADMIN, get_user_role
+from core.services.rbac import ROLE_SUPER_ADMIN
 from core.services.term_sections import import_term_sections_from_csv
 from core.sidebar_context import get_sidebar_context
 from core.utils import parse_json_body as _parse_json_body
 
 
-def _require_super_admin(request: HttpRequest) -> JsonResponse | None:
-    if get_user_role(request.user) != ROLE_SUPER_ADMIN:
-        return JsonResponse({"error": "SUPER_ADMIN access required"}, status=403)
-    return None
-
-
+@role_required(ROLE_SUPER_ADMIN)
 @require_GET
 def sections_import_page(request: HttpRequest) -> HttpResponse:
-    deny = _require_super_admin(request)
-    if deny:
-        return deny
     return render(request, "core/sections_import.html", get_sidebar_context(request))
 
 
+@role_required(ROLE_SUPER_ADMIN)
 @require_POST
 def sections_import_preview_view(request: HttpRequest) -> JsonResponse:
-    deny = _require_super_admin(request)
-    if deny:
-        return deny
-
     upload = request.FILES.get("oracle_file")
     is_department = (request.POST.get("is_department") or "").lower() in {"1", "true", "yes", "on"}
 
@@ -46,6 +37,15 @@ def sections_import_preview_view(request: HttpRequest) -> JsonResponse:
 
     temp_dir = Path(settings.BASE_DIR) / "tmp" / "sections_import"
     temp_dir.mkdir(parents=True, exist_ok=True)
+
+    # Clean up old temp files (older than 1 hour)
+    for old_file in temp_dir.glob("*"):
+        try:
+            if _time.time() - old_file.stat().st_mtime > 3600:
+                old_file.unlink()
+        except OSError:
+            pass
+
     token = uuid.uuid4().hex
     html_path = temp_dir / f"{token}.html"
     csv_path = temp_dir / f"{token}.csv"
@@ -72,12 +72,9 @@ def sections_import_preview_view(request: HttpRequest) -> JsonResponse:
     )
 
 
+@role_required(ROLE_SUPER_ADMIN)
 @require_POST
 def sections_import_insert_view(request: HttpRequest) -> JsonResponse:
-    deny = _require_super_admin(request)
-    if deny:
-        return deny
-
     payload, err = _parse_json_body(request)
     if err:
         return err
@@ -114,6 +111,15 @@ def sections_import_insert_view(request: HttpRequest) -> JsonResponse:
                 "rows_total": result.get("rows_total", 0),
             },
         )
+
+        # Clean up temp files after successful import
+        try:
+            csv_path.unlink(missing_ok=True)
+            html_path = csv_path.with_suffix(".html")
+            html_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
         return JsonResponse(result)
     except Exception as exc:
         log_audit_event(
