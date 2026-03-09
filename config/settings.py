@@ -115,8 +115,8 @@ else:
 # Cache backend for rate limiting and login throttling
 CACHES = {
     "default": {
-        "BACKEND": "django.core.cache.backends.db.DatabaseCache",
-        "LOCATION": "django_cache_table",
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "LOCATION": "advisor-cache",
     }
 }
 
