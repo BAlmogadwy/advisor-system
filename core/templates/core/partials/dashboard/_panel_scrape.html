@@ -25,6 +25,32 @@
           <div class="mc-val mc-val-mono-sm" id="scrapeMetricStopped">-</div>
         </div></div>
       </div>
+      <!-- Oracle Student List Generator -->
+      <div class="cpanel mb-14">
+        <div class="cp-h">
+          <span class="i i-faint"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>
+          <div class="cp-t">{% if LANGUAGE_CODE == 'ar' %}استيراد قائمة الطلاب من Oracle{% else %}Generate Student List from Oracle{% endif %}</div>
+        </div>
+        <div class="cp-b">
+          <div class="filter-bar" style="flex-wrap:wrap;gap:8px">
+            <div class="fb-search" style="flex:1;min-width:200px">
+              <input type="file" id="oracleStudentsFile" accept=".csv,.tsv,.txt,.dat" style="font-size:0.85rem">
+            </div>
+            <div class="fb-search fb-w-110">
+              <input id="oracleStudentsProgram" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}" aria-label="Program" value="AI">
+            </div>
+            <div class="fb-search fb-w-110">
+              <input id="oracleStudentsSection" placeholder="{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}" aria-label="Section" value="M">
+            </div>
+            <button id="oracleStudentsBtn" class="btn btn-primary" type="button">
+              <span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>
+              {% if LANGUAGE_CODE == 'ar' %}توليد CSV{% else %}Generate CSV{% endif %}
+            </button>
+          </div>
+          <div id="oracleStudentsResult" class="meta-banner meta-info meta-mono mt-8 d-none"></div>
+        </div>
+      </div>
+
       <div id="scrapeMeta" class="meta-banner meta-info meta-mono mb-10">No scrape run started.</div>
       <div id="scrapeUpdatedAt" class="ts-updated mb-14">{% if LANGUAGE_CODE == 'ar' %}آخر تحديث: لا يوجد{% else %}Last update: never{% endif %}</div>
       <div class="scrape-term mb-18">

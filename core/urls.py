@@ -70,7 +70,12 @@ from .report_views import (
     report_summary_view,
     student_plan_view,
 )
-from .scrape_views import scrape_start_view, scrape_status_view, scrape_stop_view
+from .scrape_views import (
+    oracle_students_csv_view,
+    scrape_start_view,
+    scrape_status_view,
+    scrape_stop_view,
+)
 from .section_plan_views import (
     section_plan_courses_view,
     section_plan_export_view,
@@ -155,6 +160,7 @@ urlpatterns = [
     path("ops/scrape/start/", scrape_start_view, name="scrape_start"),
     path("ops/scrape/status/", scrape_status_view, name="scrape_status"),
     path("ops/scrape/stop/", scrape_stop_view, name="scrape_stop"),
+    path("ops/scrape/oracle-students-csv/", oracle_students_csv_view, name="oracle_students_csv"),
     path("db-admin/", db_admin_page, name="db_admin_page"),
     path("ops/sections-import/", sections_import_page, name="sections_import_page"),
     path(

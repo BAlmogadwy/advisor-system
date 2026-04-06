@@ -1345,6 +1345,55 @@
     await refreshScrapeStatus();
   };
 
+  /* ── Oracle Student List Generator ──────────────────────────── */
+  q('oracleStudentsBtn').onclick = async () => {
+    const fileInput = q('oracleStudentsFile');
+    const program = q('oracleStudentsProgram').value.trim();
+    const section = q('oracleStudentsSection').value.trim();
+    const resultEl = q('oracleStudentsResult');
+
+    if (!fileInput.files.length) {
+      notify.error('Please select an Oracle file.');
+      return;
+    }
+    if (!program || !section) {
+      notify.error('Program and Section are required.');
+      return;
+    }
+
+    const fd = new FormData();
+    fd.append('file', fileInput.files[0]);
+    fd.append('program', program);
+    fd.append('section', section);
+
+    q('oracleStudentsBtn').disabled = true;
+    resultEl.classList.remove('d-none');
+    resultEl.textContent = 'Parsing…';
+
+    try {
+      const res = await fetch('/ops/scrape/oracle-students-csv/', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrfToken },
+        body: fd,
+      });
+      const data = await res.json();
+      if (data.ok) {
+        resultEl.textContent = `✅ Generated ${data.count} students → ${data.path} (skipped: ${data.skipped})`;
+        // Auto-fill the CSV path field
+        q('scrapeCsv').value = data.path;
+        notify.success(`Student list generated: ${data.count} students`);
+      } else {
+        resultEl.textContent = `❌ ${data.error}`;
+        notify.error(data.error);
+      }
+    } catch (err) {
+      resultEl.textContent = `❌ ${err.message || err}`;
+      notify.error('Failed to generate CSV', err.message || String(err));
+    } finally {
+      q('oracleStudentsBtn').disabled = false;
+    }
+  };
+
   function toast(message, ok = true) {
     /* Proxy to new notify engine */
     if (ok) notify.success(message);
