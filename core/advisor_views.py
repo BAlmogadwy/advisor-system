@@ -1,3 +1,6 @@
+import io
+
+from django.core.management import call_command
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.http import require_GET, require_POST
 
@@ -196,3 +199,28 @@ def students_by_advisor_view(request: HttpRequest) -> JsonResponse:
             page_size=page_size,
         )
     )
+
+
+@role_required(ROLE_SUPER_ADMIN)
+@require_POST
+def seed_advisors_view(request: HttpRequest) -> JsonResponse:
+    """Run the seed_advisors management command from the UI."""
+    try:
+        out = io.StringIO()
+        call_command("seed_advisors", stdout=out)
+        output = out.getvalue()
+        log_audit_event(
+            request,
+            action="advisor.seed",
+            status="ok",
+            details={"output_length": len(output)},
+        )
+        return JsonResponse({"ok": True, "output": output})
+    except Exception as exc:
+        log_audit_event(
+            request,
+            action="advisor.seed",
+            status="error",
+            error_text=str(exc),
+        )
+        return JsonResponse({"ok": False, "error": str(exc)}, status=500)

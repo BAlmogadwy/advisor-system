@@ -6,6 +6,7 @@ from .advisor_views import (
     advisors_list_view,
     assign_students_advisors_view,
     ensure_students_advisor_column_view,
+    seed_advisors_view,
     students_by_advisor_view,
 )
 from .api_views import classify_view, parse_and_classify_view, recommend_view
@@ -157,6 +158,7 @@ urlpatterns = [
         assign_students_advisors_view,
         name="assign_students_advisors",
     ),
+    path("ops/advisors/seed/", seed_advisors_view, name="seed_advisors"),
     path("ops/scrape/start/", scrape_start_view, name="scrape_start"),
     path("ops/scrape/status/", scrape_status_view, name="scrape_status"),
     path("ops/scrape/stop/", scrape_stop_view, name="scrape_stop"),

@@ -76,6 +76,15 @@
         </div>
       </div>
 
+      <div class="advisor-block">
+        <h3><span class="badge text-bg-warning">{% if LANGUAGE_CODE == 'ar' %}متقدم{% else %}Advanced{% endif %}</span> {% if LANGUAGE_CODE == 'ar' %}بذر المرشدين من بيانات الطلاب{% else %}Seed Advisors from Student Data{% endif %}</h3>
+        <div class="small text-secondary mb-2">{% if LANGUAGE_CODE == 'ar' %}إنشاء سجلات المرشدين تلقائياً من بيانات الطلاب المستخرجة وتحويل الأسماء العربية إلى معرّفات رقمية.{% else %}Auto-create advisor records from scraped student data and convert Arabic names to integer IDs.{% endif %}</div>
+        <div class="field-row-mt">
+          <button id="advSeedBtn" class="btn btn-warning" type="button">{% if LANGUAGE_CODE == 'ar' %}بذر المرشدين{% else %}Seed Advisors{% endif %}</button>
+        </div>
+        <pre id="advSeedOutput" class="small text-secondary mt-8" style="max-height:200px;overflow-y:auto;white-space:pre-wrap;font-family:monospace;display:none"></pre>
+      </div>
+
       <div id="advMeta" class="small text-secondary mt-2">No advisor action yet.</div>
       <div id="advUpdated" class="small text-secondary">{% if LANGUAGE_CODE == 'ar' %}آخر تحديث: لا يوجد{% else %}Last update: never{% endif %}</div>
 

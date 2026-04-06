@@ -1809,6 +1809,44 @@
     }
   };
 
+  /* ── Seed Advisors from Student Data ──────────────────────── */
+  q('advSeedBtn').onclick = async () => {
+    const btn = q('advSeedBtn');
+    const outputEl = q('advSeedOutput');
+    btn.disabled = true;
+    btn.textContent = IS_AR ? 'جاري البذر...' : 'Seeding...';
+    outputEl.style.display = 'block';
+    outputEl.textContent = IS_AR ? 'جاري المعالجة...' : 'Processing...';
+
+    try {
+      const res = await fetch('/ops/advisors/seed/', {
+        method: 'POST',
+        headers: csrfHeaders(),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        q('advMeta').textContent = preciseError(res, data, 'Seed advisors failed.');
+        outputEl.textContent = data.error || 'Unknown error';
+        setUpdated('advUpdated', true);
+        toast(IS_AR ? 'فشل بذر المرشدين' : 'Seed advisors failed', false);
+        return;
+      }
+      q('advMeta').textContent = IS_AR ? 'تم بذر المرشدين بنجاح' : 'Advisors seeded successfully';
+      outputEl.textContent = data.output || 'Done';
+      setUpdated('advUpdated');
+      toast(IS_AR ? 'تم بذر المرشدين' : 'Advisors seeded', true);
+      await refreshAdvisorsDropdown();
+    } catch (err) {
+      q('advMeta').textContent = preciseError(null, null, 'Network request failed.', err);
+      outputEl.textContent = err.message || 'Network error';
+      setUpdated('advUpdated', true);
+      toast(IS_AR ? 'فشل بذر المرشدين' : 'Seed advisors failed', false);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = IS_AR ? 'بذر المرشدين' : 'Seed Advisors';
+    }
+  };
+
   q('advAssignCsvBtn').onclick = async () => {
     const csv_text = (q('advAssignCsv').value || '').trim();
     if (!csv_text) {
