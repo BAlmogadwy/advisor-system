@@ -625,15 +625,26 @@ def _export_section_plan_xlsx(
             ws.column_dimensions[chr(64 + col_idx)].width = 16
 
     if mode == "multi" and programs_data:
-        # Remove the default empty sheet, then create per-program sheet pairs
+        # ── Combined sheet first (all programs merged) ──
+        combined_plan: list[dict] = []
+        for prog_entry in programs_data:
+            combined_plan.extend(prog_entry["plan"])
+        combined_plan.sort(key=lambda r: (r.get("department", ""), r.get("course_code", "")))
+        combined_summary = compute_plan_summary(combined_plan)
+
         default_sheet = wb.active
+        default_sheet.title = "Sections-All"
+        _write_sections_sheet(default_sheet, combined_plan)
+        sum_all_ws = wb.create_sheet("Summary-All")
+        _write_summary_sheet(sum_all_ws, combined_summary, params or {})
+
+        # ── Per-program sheet pairs ──
         for prog_entry in programs_data:
             prog_name = prog_entry["program"]
             sec_ws = wb.create_sheet(f"Sections-{prog_name}")
             _write_sections_sheet(sec_ws, prog_entry["plan"])
             sum_ws = wb.create_sheet(f"Summary-{prog_name}")
             _write_summary_sheet(sum_ws, prog_entry["summary"], params or {})
-        wb.remove(default_sheet)
     else:
         # Single or combined — keep existing behaviour exactly
         ws = wb.active
