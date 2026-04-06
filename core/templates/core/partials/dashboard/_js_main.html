@@ -1309,9 +1309,12 @@
 
     q('scrapeStart').disabled = true;
     q('scrapeStop').disabled = false;
-    const url = `/ops/scrape/start/?concurrency=${encodeURIComponent(concurrency)}&students_csv=${encodeURIComponent(studentsCsv)}`;
     try {
-      const res = await fetch(url);
+      const res = await fetch('/ops/scrape/start/', {
+        method: 'POST',
+        headers: csrfHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ concurrency: Number(concurrency), students_csv: studentsCsv || undefined }),
+      });
       const data = await res.json();
       q('scrapeMeta').textContent = JSON.stringify(data, null, 2);
       if (!res.ok) notify.error(T.failedStartScrape(data.error || res.statusText));
