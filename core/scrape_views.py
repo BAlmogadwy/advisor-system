@@ -73,7 +73,6 @@ def scrape_status_view(request: HttpRequest) -> JsonResponse:
 
 
 @role_required(ROLE_SUPER_ADMIN)
-@require_POST
 def scrape_stop_view(request: HttpRequest) -> JsonResponse:
     result = stop_batch_scrape()
     code = 200 if result.get("ok") else 409
