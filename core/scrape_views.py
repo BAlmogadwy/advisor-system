@@ -160,11 +160,15 @@ def oracle_students_csv_view(request: HttpRequest) -> JsonResponse:
     out_path.write_text(buf.getvalue(), encoding="utf-8")
 
     log_audit_event(
-        actor=getattr(request, "user_id", "unknown"),
+        request,
         action="scrape.oracle_students_csv",
         status="ok",
-        details=f"Generated students_list.csv: {len(student_ids)} students, "
-        f"program={program}, section={section}, skipped={skipped}",
+        details={
+            "count": len(student_ids),
+            "program": program,
+            "section": section,
+            "skipped": skipped,
+        },
     )
 
     return JsonResponse(
