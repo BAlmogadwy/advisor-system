@@ -151,7 +151,7 @@ def oracle_students_csv_view(request: HttpRequest) -> JsonResponse:
     out_dir.mkdir(exist_ok=True)
     out_path = out_dir / "students_list.csv"
 
-    buf = io.StringIO()
+    buf = io.StringIO(newline="")
     writer = csv.writer(buf)
     writer.writerow(["student_id", "program", "section"])
     for sid in student_ids:
