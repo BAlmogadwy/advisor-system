@@ -213,11 +213,11 @@
       <label class="fb-lbl" for="spSemester">{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}</label>
       <input id="spSemester" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="{{ default_term }}">
     </div>
-    <div class="fb-search" style="max-width:200px">
+    <div class="fb-search" style="min-width:160px;max-width:280px">
       <label class="fb-lbl" for="spProgram">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}</label>
       <input id="spProgram" class="form-control form-control-compact" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثلاً AI,DS{% else %}e.g. AI,DS{% endif %}" style="text-transform:uppercase">
     </div>
-    <div class="fb-search" style="max-width:160px">
+    <div class="fb-search" style="min-width:120px;max-width:200px">
       <label class="fb-lbl" for="spSection">{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}</label>
       <input id="spSection" class="form-control form-control-compact" placeholder="{% if LANGUAGE_CODE == 'ar' %}اختياري{% else %}Optional{% endif %}">
     </div>
