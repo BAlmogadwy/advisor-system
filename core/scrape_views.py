@@ -52,6 +52,12 @@ def _to_int(value: str | None, default: int) -> int:
 @role_required(ROLE_SUPER_ADMIN)
 @throttle(max_calls=3, window_seconds=120)
 def scrape_start_view(request: HttpRequest) -> JsonResponse:
+    """Start batch scrape.  Accepts GET with query params (legacy JS compat).
+
+    CSRF note: protected by @role_required (auth check) + @throttle.
+    The dashboard JS sends ``fetch(url)`` (GET) — changing to POST would
+    require a coordinated frontend update.
+    """
     concurrency = _to_int(request.GET.get("concurrency"), 2)
     students_csv = request.GET.get("students_csv", "").strip() or None
 
@@ -74,6 +80,7 @@ def scrape_status_view(request: HttpRequest) -> JsonResponse:
 
 @role_required(ROLE_SUPER_ADMIN)
 def scrape_stop_view(request: HttpRequest) -> JsonResponse:
+    """Stop batch scrape.  GET for legacy JS compat (see scrape_start_view)."""
     result = stop_batch_scrape()
     code = 200 if result.get("ok") else 409
     return JsonResponse(result, status=code)

@@ -38,6 +38,8 @@ nul
 
 # Legacy
 import_old/
+csv_export/
+datadump.json
 
 # IDE & editor
 .vscode/
