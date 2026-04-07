@@ -28,8 +28,8 @@ def _get_all_filtered_students(
         parts = Q()
         for p in join_year_prefixes:
             if p:
-                low = int(p) * (10 ** (6 - len(p)))
-                high = (int(p) + 1) * (10 ** (6 - len(p)))
+                low = int(p) * (10 ** (7 - len(p)))
+                high = (int(p) + 1) * (10 ** (7 - len(p)))
                 parts |= Q(student_id__gte=low, student_id__lt=high)
         if parts:
             qs = qs.filter(parts)

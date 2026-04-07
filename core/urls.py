@@ -56,8 +56,10 @@ from .profile_views import (
     profile_page,
 )
 from .report_views import (
+    conflict_matrix_view,
     course_eligibility_view,
     export_aggregate_csv_view,
+    export_conflict_matrix_xlsx_view,
     export_course_eligibility_csv_view,
     export_missing_high_priority_xlsx_view,
     export_recommendation_debug_csv_view,
@@ -116,6 +118,12 @@ urlpatterns = [
     path("report/program-plan/", program_plan_view, name="program_plan_view"),
     path(
         "report/recommendation-debug/", recommendation_debug_view, name="recommendation_debug_view"
+    ),
+    path("report/conflict-matrix/", conflict_matrix_view, name="conflict_matrix_view"),
+    path(
+        "export/conflict-matrix.xlsx",
+        export_conflict_matrix_xlsx_view,
+        name="export_conflict_matrix_xlsx",
     ),
     path("report/course-eligibility/", course_eligibility_view, name="course_eligibility_view"),
     path(

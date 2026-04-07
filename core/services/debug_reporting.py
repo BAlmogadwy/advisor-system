@@ -26,8 +26,8 @@ def _build_students_query(
         if prefixes:
             prefix_q = Q()
             for p in prefixes:
-                low = int(p) * (10 ** (6 - len(p)))
-                high = (int(p) + 1) * (10 ** (6 - len(p)))
+                low = int(p) * (10 ** (7 - len(p)))
+                high = (int(p) + 1) * (10 ** (7 - len(p)))
                 prefix_q |= Q(student_id__gte=low, student_id__lt=high)
             qs = qs.filter(prefix_q)
     return list(qs.order_by("student_id").values_list("student_id", flat=True))

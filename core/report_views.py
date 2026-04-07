@@ -7,6 +7,7 @@ from django.views.decorators.http import require_GET
 from core.authz import role_required
 from core.models import Prerequisite, ProgrammeRequirement
 from core.services.advisors import list_students_by_advisor
+from core.services.conflict_matrix import build_conflict_matrix_report, export_conflict_matrix_xlsx
 from core.services.debug_reporting import build_recommendation_debug_report
 from core.services.eligibility import build_course_eligibility_report
 from core.services.high_priority_missing import (
@@ -517,6 +518,89 @@ def recommendation_debug_view(request: HttpRequest) -> JsonResponse:
         limit=limit,
     )
     return JsonResponse(payload)
+
+
+@role_required(ROLE_ADVISOR)
+@require_GET
+def conflict_matrix_view(request: HttpRequest) -> JsonResponse:
+    _defaults = load_defaults()
+    year_raw = request.GET.get("year", "").strip() or str(_defaults["academic_year"])
+    semester_raw = request.GET.get("semester", "").strip() or str(_defaults["term"])
+
+    year, err = _parse_int(year_raw, "year")
+    if err:
+        return err
+    semester, err = _parse_int(semester_raw, "semester")
+    if err:
+        return err
+
+    if year is None or semester is None:
+        return JsonResponse({"error": "Invalid parameters"}, status=400)
+
+    section = (request.GET.get("section") or "").strip().upper() or None
+    program = (request.GET.get("program") or "").strip().upper() or None
+    join_years_raw = (request.GET.get("join_years") or "").strip()
+    join_years = (
+        [x.strip() for x in join_years_raw.split(",") if x.strip()] if join_years_raw else None
+    )
+    limit = _safe_int(request.GET.get("limit"), 150)
+
+    scope_err = require_program_scope(request, program)
+    if scope_err:
+        return scope_err
+
+    payload = build_conflict_matrix_report(
+        current_academic_year=year,
+        current_semester=semester,
+        section=section,
+        program=program,
+        join_year_prefixes=join_years,
+        limit=limit,
+    )
+    return JsonResponse(payload)
+
+
+@role_required(ROLE_ADVISOR)
+@require_GET
+def export_conflict_matrix_xlsx_view(request: HttpRequest) -> HttpResponseBase:
+    _defaults = load_defaults()
+    year_raw = request.GET.get("year", "").strip() or str(_defaults["academic_year"])
+    semester_raw = request.GET.get("semester", "").strip() or str(_defaults["term"])
+
+    year, err = _parse_int(year_raw, "year")
+    if err:
+        return err
+    semester, err = _parse_int(semester_raw, "semester")
+    if err:
+        return err
+
+    if year is None or semester is None:
+        return JsonResponse({"error": "Invalid parameters"}, status=400)
+
+    section = (request.GET.get("section") or "").strip().upper() or None
+    program = (request.GET.get("program") or "").strip().upper() or None
+    join_years_raw = (request.GET.get("join_years") or "").strip()
+    join_years = (
+        [x.strip() for x in join_years_raw.split(",") if x.strip()] if join_years_raw else None
+    )
+    limit = _safe_int(request.GET.get("limit"), 150)
+
+    scope_err = require_program_scope(request, program)
+    if scope_err:
+        return scope_err
+
+    try:
+        path = export_conflict_matrix_xlsx(
+            current_academic_year=year,
+            current_semester=semester,
+            section=section,
+            program=program,
+            join_year_prefixes=join_years,
+            limit=limit,
+        )
+        return FileResponse(path.open("rb"), as_attachment=True, filename="conflict_matrix.xlsx")
+    except Exception as exc:
+        return JsonResponse({"error": str(exc)}, status=500)
 
 
 @role_required(ROLE_ADVISOR)

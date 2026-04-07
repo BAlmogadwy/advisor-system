@@ -30,8 +30,8 @@ def _get_filtered_students(
         for p in join_year_prefixes:
             if not p:
                 continue
-            low = int(p) * (10 ** (6 - len(p)))
-            high = (int(p) + 1) * (10 ** (6 - len(p)))
+            low = int(p) * (10 ** (7 - len(p)))
+            high = (int(p) + 1) * (10 ** (7 - len(p)))
             prefix_q |= Q(student_id__gte=low, student_id__lt=high)
         if prefix_q:
             qs = qs.filter(prefix_q)

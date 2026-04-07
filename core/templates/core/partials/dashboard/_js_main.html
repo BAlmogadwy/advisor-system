@@ -123,6 +123,13 @@
     debugLoaded: IS_AR ? 'تم تحميل تقرير التشخيص' : 'Debug report loaded',
     debugMeta: (count, section, program, join) => IS_AR ? `تم تحميل ${count} طالب • الفلاتر: الشعبة=${section} البرنامج=${program} سنة الالتحاق=${join}.` : `Loaded ${count} students • filters: section=${section} program=${program} join=${join}.`,
 
+    // ── Conflict Matrix ──
+    conflictMatrix: IS_AR ? 'مصفوفة التعارض' : 'Conflict Matrix',
+    conflictMatrixLoaded: IS_AR ? 'تم تحميل مصفوفة التعارض' : 'Conflict matrix loaded',
+    conflictMatrixFailed: IS_AR ? 'فشل تحميل مصفوفة التعارض' : 'Conflict matrix failed',
+    networkErrorConflict: IS_AR ? 'خطأ في الاتصال أثناء تحميل مصفوفة التعارض.' : 'Network error while loading conflict matrix.',
+    conflictMeta: (students, courses, conflicts) => IS_AR ? `${students} طالب • ${courses} مقرر • ${conflicts} تعارض` : `${students} students \u2022 ${courses} courses \u2022 ${conflicts} conflicts`,
+
     // ── Eligibility ──
     eligibility: IS_AR ? 'الأهلية' : 'Eligibility',
     networkErrorEligibility: IS_AR ? 'خطأ في الاتصال أثناء تحميل تقرير الأهلية.' : 'Network error while loading eligibility report.',
@@ -251,8 +258,9 @@
       /* Auto-focus the primary input of the activated panel */
       const PANEL_FOCUS = {
         student:'studentIdInput', batch:'batchYear', prereq:'preProgram',
-        scrape:'scrapeConcurrency', debug:'dbgYear', eligibility:'elCourse',
-        advisoradmin:'advId', highpriority:'hpYear', planviewer:'planProgram'
+        scrape:'scrapeConcurrency', debug:'dbgYear', conflictmatrix:'cmYear',
+        eligibility:'elCourse', advisoradmin:'advId', highpriority:'hpYear',
+        planviewer:'planProgram'
       };
       requestAnimationFrame(() => {
         const focusId = PANEL_FOCUS[target];
@@ -468,7 +476,7 @@
     }
 
     /* build SVG */
-    let s = `<svg class="prereq-svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">`;
+    let s = `<svg class="prereq-svg" viewBox="0 0 ${svgW} ${svgH}" style="width:100%;height:auto">`;
     s += `<defs><marker id="pgA" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="var(--teal)" opacity="0.5"/></marker>`;
     s += `<filter id="nSh"><feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="rgba(17,17,68,0.07)"/></filter></defs>`;
 
@@ -1603,6 +1611,98 @@
     paginateTable('dbgTable', 'dbgPager', 25);
   };
 
+  /* ── Conflict Matrix ── */
+  q('cmRun').onclick = async () => {
+    if (!requireFields(['cmYear','cmSemester'], 'cmMeta', T.conflictMatrix)) return;
+    const btn = q('cmRun');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>' + T.loading;
+
+    const url = `/report/conflict-matrix/?year=${encodeURIComponent(q('cmYear').value)}&semester=${encodeURIComponent(q('cmSemester').value)}&section=${encodeURIComponent(q('cmSection').value)}&program=${encodeURIComponent(q('cmProgram').value)}&join_years=${encodeURIComponent(q('cmJoin').value)}&limit=${encodeURIComponent(q('cmLimit').value)}`;
+    q('cmXlsx').href = `/export/conflict-matrix.xlsx?year=${encodeURIComponent(q('cmYear').value)}&semester=${encodeURIComponent(q('cmSemester').value)}&section=${encodeURIComponent(q('cmSection').value)}&program=${encodeURIComponent(q('cmProgram').value)}&join_years=${encodeURIComponent(q('cmJoin').value)}&limit=${encodeURIComponent(q('cmLimit').value)}`;
+
+    let res, data;
+    try {
+      ({ res, data } = await fetchJsonWithRetry(url));
+    } catch (err) {
+      q('cmMeta').textContent = T.networkErrorConflict;
+      q('cmMeta').className = 'meta-banner meta-error meta-mono mb-14';
+      btn.disabled = false;
+      btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>' + T.run;
+      return;
+    }
+
+    if (!res.ok || !Array.isArray(data.courses)) {
+      toast(T.conflictMatrixFailed, false);
+      q('cmMeta').textContent = data.error || T.conflictMatrixFailed;
+      q('cmMeta').className = 'meta-banner meta-error meta-mono mb-14';
+      btn.disabled = false;
+      btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>' + T.run;
+      return;
+    }
+
+    const courses = data.courses;
+    const matrix = data.matrix;
+    const n = courses.length;
+
+    // Count non-zero off-diagonal conflicts
+    let conflictCount = 0;
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) if (matrix[i][j] > 0) conflictCount++;
+
+    // Find max off-diagonal value for heat-map scaling
+    let maxVal = 1;
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) if (i !== j && matrix[i][j] > maxVal) maxVal = matrix[i][j];
+
+    // Update metrics
+    q('cmMetrics').classList.remove('d-none');
+    q('cmStudentCount').textContent = data.student_count;
+    q('cmCourseCount').textContent = n;
+    q('cmConflictCount').textContent = conflictCount;
+
+    // Update meta
+    const sec = q('cmSection').value || '-';
+    const prog = q('cmProgram').value || '-';
+    const join = q('cmJoin').value || '-';
+    q('cmMeta').textContent = IS_AR
+      ? `تم تحميل ${data.student_count} طالب • الفلاتر: الشعبة=${sec} البرنامج=${prog} سنة الالتحاق=${join}.`
+      : `Loaded ${data.student_count} students \u2022 filters: section=${sec} program=${prog} join=${join}.`;
+    q('cmMeta').className = 'meta-banner meta-info meta-mono mb-14';
+
+    // Build matrix table
+    let html = '<table class="cm-table"><thead><tr><th class="cm-corner"></th>';
+    courses.forEach(c => {
+      html += `<th class="cm-col-hdr"><span>${c}</span></th>`;
+    });
+    html += '</tr></thead><tbody>';
+
+    courses.forEach((rowCourse, i) => {
+      html += `<tr><th class="cm-row-hdr">${rowCourse}</th>`;
+      matrix[i].forEach((val, j) => {
+        if (i === j) {
+          html += `<td class="cm-cell cm-diag">${val}</td>`;
+        } else if (val === 0) {
+          html += `<td class="cm-cell cm-zero">0</td>`;
+        } else {
+          const t = Math.min(val / maxVal, 1);
+          /* teal → royal gradient: low=soft teal, high=deep royal */
+          const r = Math.round(10 + (64 - 10) * t);
+          const g = Math.round(142 - (142 - 86) * t);
+          const b = Math.round(110 + (227 - 110) * t);
+          const alpha = 0.12 + t * 0.65;
+          const textColor = t > 0.45 ? '#fff' : 'var(--ink)';
+          html += `<td class="cm-cell" style="background:rgba(${r},${g},${b},${alpha.toFixed(2)});color:${textColor}">${val}</td>`;
+        }
+      });
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+
+    q('cmMatrixWrap').innerHTML = html;
+    toast(T.conflictMatrixLoaded, true);
+    btn.disabled = false;
+    btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>' + T.run;
+  };
+
   q('elRun').onclick = async () => {
     if (!requireFields(['elCourse'], 'elMeta', T.eligibility)) return;
     const btn = q('elRun');
@@ -2013,7 +2113,7 @@
     });
   });
 
-  ['studentIdInput','batchYear','batchSemester','batchProgram','batchSection','dbgYear','dbgSemester','dbgSection','dbgProgram','dbgJoin','dbgLimit','elCourse','elSection','elProgram','elJoin','elMode','hpYear','hpSemester','hpSection','hpProgram','hpJoin','hpParity','hpDiscount','hpMinScore','hpTopK','hpStudying'].forEach((id) => {
+  ['studentIdInput','batchYear','batchSemester','batchProgram','batchSection','dbgYear','dbgSemester','dbgSection','dbgProgram','dbgJoin','dbgLimit','cmYear','cmSemester','cmSection','cmProgram','cmJoin','cmLimit','elCourse','elSection','elProgram','elJoin','elMode','hpYear','hpSemester','hpSection','hpProgram','hpJoin','hpParity','hpDiscount','hpMinScore','hpTopK','hpStudying'].forEach((id) => {
     const el = q(id);
     if (el) el.addEventListener('change', syncExportCenterLinks);
   });
@@ -2023,6 +2123,8 @@
   q('batchLoadPreset')?.addEventListener('click', () => loadPreset('batch', ['batchYear','batchSemester','batchProgram','batchSection']));
   q('dbgSavePreset')?.addEventListener('click', () => savePreset('debug', ['dbgYear','dbgSemester','dbgSection','dbgProgram','dbgJoin','dbgLimit']));
   q('dbgLoadPreset')?.addEventListener('click', () => loadPreset('debug', ['dbgYear','dbgSemester','dbgSection','dbgProgram','dbgJoin','dbgLimit']));
+  q('cmSavePreset')?.addEventListener('click', () => savePreset('conflictmatrix', ['cmYear','cmSemester','cmSection','cmProgram','cmJoin','cmLimit']));
+  q('cmLoadPreset')?.addEventListener('click', () => loadPreset('conflictmatrix', ['cmYear','cmSemester','cmSection','cmProgram','cmJoin','cmLimit']));
   q('elSavePreset')?.addEventListener('click', () => savePreset('eligibility', ['elCourse','elSection','elProgram','elJoin','elMode']));
   q('elLoadPreset')?.addEventListener('click', () => loadPreset('eligibility', ['elCourse','elSection','elProgram','elJoin','elMode']));
   q('hpSavePreset')?.addEventListener('click', () => savePreset('highpriority', ['hpYear','hpSemester','hpSection','hpProgram','hpJoin','hpParity','hpDiscount','hpMinScore','hpTopK','hpStudying']));
