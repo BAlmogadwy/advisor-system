@@ -268,6 +268,14 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
             ws.cell(row=info_row, column=INFO_START_COL + 4).border = thin_border
             ws.cell(row=info_row, column=INFO_START_COL + 4).alignment = center_align
 
+            # ── Per-Term Conflict Matrix (below course info) ─────
+            info_row += 2
+            term_courses = {b.course_code for b in term_budget}
+            _write_mini_conflict_matrix(
+                ws, info_row, INFO_START_COL, scenario, term_num, term_courses,
+                hdr_fill, hdr_font, hdr_align, thin_border, normal_font, center_align,
+            )
+
         # Column widths
         ws.column_dimensions["A"].width = 16
         for col_letter in ["B", "C", "D", "E", "F"]:
@@ -373,14 +381,124 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
     return Path(tmp.name)
 
 
+def _write_mini_conflict_matrix(
+    ws, start_row, start_col, scenario, term_num, term_courses,
+    hdr_fill, hdr_font, hdr_align, thin_border, normal_font, center_align,
+):
+    """Write a small conflict matrix for one term level on an existing sheet.
+
+    Only includes students who are primary on this term OR visitors to this term,
+    and only their courses that belong to this term's course set.
+    """
+    from openpyxl.styles import Font, PatternFill
+
+    # Get students relevant to this term (primary + visitors)
+    from core.models import BoardStudentLink
+    board_ids = list(
+        DeliveryBoard.objects.filter(
+            scenario=scenario, nominal_term=term_num
+        ).values_list("id", flat=True)
+    )
+    student_ids = set(
+        BoardStudentLink.objects.filter(
+            board_id__in=board_ids
+        ).values_list("student_id", flat=True)
+    )
+
+    # Get their recommended courses, filtered to this term's courses only
+    student_maps = ScenarioStudentMap.objects.filter(
+        scenario=scenario, student_id__in=student_ids
+    )
+    course_students: dict[str, set[int]] = defaultdict(set)
+    for sm in student_maps:
+        for code in sm.recommended_courses:
+            if code in term_courses:
+                course_students[code].add(sm.student_id)
+
+    courses = sorted(course_students.keys())
+    n = len(courses)
+    if n == 0:
+        return
+
+    # Title
+    r = start_row
+    ws.cell(row=r, column=start_col, value=f"Conflict Matrix — Term {term_num}").font = Font(
+        bold=True, size=10
+    )
+    ws.cell(row=r + 1, column=start_col, value=f"{len(student_ids)} students, {n} courses").font = Font(
+        size=8, color="666666"
+    )
+    r += 3
+
+    # Build matrix
+    sets = [course_students[c] for c in courses]
+    matrix = [[0] * n for _ in range(n)]
+    max_val = 0
+    for i in range(n):
+        matrix[i][i] = len(sets[i])
+        for j in range(i + 1, n):
+            shared = len(sets[i] & sets[j])
+            matrix[i][j] = shared
+            matrix[j][i] = shared
+            if shared > max_val:
+                max_val = shared
+
+    # Header row
+    ws.cell(row=r, column=start_col).border = thin_border
+    for j, code in enumerate(courses):
+        cell = ws.cell(row=r, column=start_col + 1 + j)
+        cell.value = code
+        cell.fill = hdr_fill
+        cell.font = Font(name="Consolas", size=8, bold=True, color="FFFFFF")
+        cell.alignment = center_align
+        cell.border = thin_border
+    r += 1
+
+    diag_fill = PatternFill(start_color="E8F5F0", end_color="E8F5F0", fill_type="solid")
+    zero_font = Font(name="Consolas", size=8, color="CCCCCC")
+
+    for i, code in enumerate(courses):
+        cell = ws.cell(row=r, column=start_col)
+        cell.value = code
+        cell.fill = hdr_fill
+        cell.font = Font(name="Consolas", size=8, bold=True, color="FFFFFF")
+        cell.border = thin_border
+
+        for j in range(n):
+            cell = ws.cell(row=r, column=start_col + 1 + j)
+            val = matrix[i][j]
+            cell.value = val
+            cell.border = thin_border
+            cell.alignment = center_align
+
+            if i == j:
+                cell.fill = diag_fill
+                cell.font = Font(name="Consolas", size=8, bold=True, color="0A8E6E")
+            elif val == 0:
+                cell.font = zero_font
+            elif max_val > 0:
+                t = min(val / max_val, 1.0)
+                rc = int(200 - 150 * t)
+                gc = int(230 - 140 * t)
+                bc = int(220 - 10 * t)
+                cell.fill = PatternFill(
+                    start_color=f"{rc:02X}{gc:02X}{bc:02X}",
+                    end_color=f"{rc:02X}{gc:02X}{bc:02X}",
+                    fill_type="solid",
+                )
+                cell.font = Font(name="Consolas", size=8, bold=True)
+
+        r += 1
+
+
 def _build_conflict_matrix_sheet(wb, scenario, hdr_fill, hdr_font, hdr_align,
                                   thin_border, normal_font, bold_font, center_align):
     """Build a Conflict Matrix sheet showing student overlap between courses."""
     from openpyxl.styles import Alignment, Font, PatternFill
 
-    ws = wb.create_sheet(title="Conflict Matrix")
+    ws = wb.create_sheet(title="Conflicts (All)")
 
-    # Load student-course data from ScenarioStudentMap
+    # Load student-course data from ScenarioStudentMap (all students, all courses)
     student_maps = ScenarioStudentMap.objects.filter(scenario=scenario)
     course_students: dict[str, set[int]] = defaultdict(set)
     for sm in student_maps:
