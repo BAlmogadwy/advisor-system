@@ -23,7 +23,7 @@ from core.models import (
     TermSectionMeeting,
     TimetableScenario,
 )
-from core.services.timetable_autoplace import WEEKDAYS, get_meeting_pattern
+from core.services.timetable_autoplace import DEFAULT_SLOTS, WEEKDAYS, get_meeting_pattern
 from core.services.timetable_workspace import compute_scenario_budget, detect_board_conflicts
 
 
@@ -70,8 +70,9 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
     info_hdr_font = Font(name="Consolas", size=9, bold=True, color="FFFFFF")
 
     DAY_LABELS = ["SUN", "MON", "TUE", "WED", "THU"]
-    # Course info sidebar starts at column H (8)
-    INFO_START_COL = 8
+    # Course info sidebar: after slots (col B+) + 1 gap column
+    # With 5 slots: B-F = slots, G = gap, H = info start (col 8)
+    INFO_START_COL = 2 + len(DEFAULT_SLOTS) + 1  # dynamic based on slot count
 
     # ── Distinct pastel colors for courses ───────────────────────
     # 20 visually distinct pastels with good contrast for dark text
@@ -157,21 +158,9 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
             # Slot config
             slot_config = scenario.slot_config or []
             if not slot_config:
-                from core.services.timetable_autoplace import DEFAULT_SLOTS
                 slot_config = DEFAULT_SLOTS
 
-            # Timetable grid header
-            headers = ["Time"] + DAY_LABELS
-            for col_idx, hdr in enumerate(headers, start=1):
-                cell = ws.cell(row=row, column=col_idx)
-                cell.value = hdr
-                cell.fill = hdr_fill
-                cell.font = hdr_font
-                cell.alignment = hdr_align
-                cell.border = thin_border
-
-            grid_header_row = row
-            row += 1
+            DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"]
 
             # Load placements
             placements = list(
@@ -181,118 +170,140 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
             )
 
             # ── Split placements into student groups ─────────────
-            # Group 1 = S1 of each course, Group 2 = S2, etc.
-            # Find max section number to determine group count
             from collections import defaultdict as _dd
             course_sections: dict[str, list] = _dd(list)
             for p in placements:
                 course_sections[p.term_section.course_code].append(p)
 
             max_groups = max((len(secs) for secs in course_sections.values()), default=1)
-            # Normalize: for each course, sort sections by label (S1, S2...)
             for code in course_sections:
                 course_sections[code].sort(key=lambda p: p.term_section.section)
 
             # Assign distinct pastel color per course (shared across all groups)
             course_color_map: dict[str, str] = {}
 
+            num_slots = len(slot_config)
+
             for group_idx in range(max_groups):
                 if group_idx > 0:
-                    row += 1  # gap between groups
+                    row += 1
 
                 # Group header
-                group_label = f"Group {group_idx + 1}" if max_groups > 1 else ""
-                if group_label:
-                    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=6)
-                    gcell = ws.cell(row=row, column=1)
-                    # Count courses in this group
+                if max_groups > 1:
                     group_course_count = sum(
                         1 for secs in course_sections.values() if len(secs) > group_idx
                     )
+                    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=1 + num_slots)
+                    gcell = ws.cell(row=row, column=1)
                     gcell.value = f"Group {group_idx + 1} — {group_course_count} courses"
                     gcell.font = Font(bold=True, size=9, color="4056E3")
                     gcell.alignment = center_align
                     row += 1
 
-                # Grid header
-                for col_idx, hdr in enumerate(["Time"] + DAY_LABELS, start=1):
-                    cell = ws.cell(row=row, column=col_idx)
-                    cell.value = hdr
+                # ── Transposed layout: columns=slots, rows=days ──
+                # Row 1: Slot numbers (1, 2, 3...)
+                # Row 2: Time ranges
+                grid_start_row = row
+                ws.cell(row=row, column=1).border = thin_border  # empty corner
+                for s_idx, slot in enumerate(slot_config):
+                    cell = ws.cell(row=row, column=2 + s_idx)
+                    cell.value = s_idx + 1
                     cell.fill = hdr_fill
                     cell.font = hdr_font
                     cell.alignment = hdr_align
                     cell.border = thin_border
-                grid_header_row = row
                 row += 1
 
-                # Get placements for this group: pick section[group_idx] from each course
+                ws.cell(row=row, column=1).border = thin_border
+                for s_idx, slot in enumerate(slot_config):
+                    cell = ws.cell(row=row, column=2 + s_idx)
+                    cell.value = f"{slot['start']}-{slot['end']}"
+                    cell.fill = hdr_fill
+                    cell.font = Font(name="Consolas", size=8, bold=True, color="FFFFFF")
+                    cell.alignment = hdr_align
+                    cell.border = thin_border
+                row += 1
+
+                # Get placements for this group
                 group_placements = []
                 for code, secs in course_sections.items():
                     if group_idx < len(secs):
                         group_placements.append(secs[group_idx])
 
-                # Build grid for this group
+                # Build grid: day → slot → {text, courses}
                 grid: dict[str, dict[str, dict]] = {}
-                for slot in slot_config:
-                    slot_key = f"{slot['start']}-{slot['end']}"
-                    grid[slot_key] = {d: {"text": "", "courses": []} for d in DAY_LABELS}
+                for day in DAY_LABELS:
+                    grid[day] = {}
+                    for slot in slot_config:
+                        sk = f"{slot['start']}-{slot['end']}"
+                        grid[day][sk] = {"text": "", "courses": []}
 
-                # Collect ALL meeting placements for each section in this group
+                # Also track merged slots (100min)
+                merged_slot_keys: set[str] = set()
                 for p in group_placements:
-                    # Get all placements for this term_section on this board
-                    ts_placements = [
-                        pp for pp in placements
-                        if pp.term_section_id == p.term_section_id
-                    ]
+                    ts_placements = [pp for pp in placements if pp.term_section_id == p.term_section_id]
                     for pp in ts_placements:
                         slot_key = f"{pp.start_time}-{pp.end_time}"
                         day = pp.day.upper()[:3]
-                        if slot_key not in grid:
+
+                        if day not in grid:
+                            continue
+
+                        if slot_key not in grid[day]:
+                            # Might be a merged slot
                             for i, slot in enumerate(slot_config):
-                                if slot["start"] == pp.start_time:
-                                    if i + 1 < len(slot_config) and slot_config[i + 1]["end"] == pp.end_time:
-                                        slot_key = f"{slot['start']}-{slot_config[i + 1]['end']}"
-                                        if slot_key not in grid:
-                                            grid[slot_key] = {d: {"text": "", "courses": []} for d in DAY_LABELS}
+                                if slot["start"] == pp.start_time and i + 1 < len(slot_config) and slot_config[i + 1]["end"] == pp.end_time:
+                                    slot_key = f"{slot['start']}-{slot_config[i + 1]['end']}"
+                                    merged_slot_keys.add(slot_key)
+                                    if slot_key not in grid[day]:
+                                        grid[day][slot_key] = {"text": "", "courses": []}
                                     break
 
                         ts = pp.term_section
                         meeting = TermSectionMeeting.objects.filter(term_section=ts, day=day).first()
                         instructor = meeting.instructor if meeting else ""
                         room = meeting.room if meeting else pp.room
-
                         text = f"{ts.course_code} {ts.section}"
                         if instructor:
                             text += f"\n{instructor}"
                         if room:
                             text += f"\n{room}"
 
-                        if slot_key in grid and day in grid[slot_key]:
-                            cd = grid[slot_key][day]
+                        if day in grid and slot_key in grid[day]:
+                            cd = grid[day][slot_key]
                             if cd["text"]:
                                 cd["text"] += f"\n---\n{text}"
                             else:
                                 cd["text"] = text
                             cd["courses"].append(ts.course_code)
 
-                # Write grid rows
-                for slot_key in sorted(grid.keys()):
+                # Write day rows (each day = 1 row)
+                for day_idx, (day_code, day_name) in enumerate(zip(DAY_LABELS, DAY_NAMES)):
                     cell = ws.cell(row=row, column=1)
-                    cell.value = slot_key
+                    cell.value = day_name
                     cell.font = bold_font
                     cell.fill = slot_fill
                     cell.border = thin_border
-                    cell.alignment = center_align
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
 
-                    for day_idx, day in enumerate(DAY_LABELS):
-                        cell = ws.cell(row=row, column=day_idx + 2)
-                        cd = grid[slot_key].get(day, {"text": "", "courses": []})
+                    for s_idx, slot in enumerate(slot_config):
+                        sk = f"{slot['start']}-{slot['end']}"
+                        cell = ws.cell(row=row, column=2 + s_idx)
+                        cd = grid.get(day_code, {}).get(sk, {"text": "", "courses": []})
+
+                        # Check if a merged slot covers this position
+                        if not cd["text"]:
+                            for msk in merged_slot_keys:
+                                mcd = grid.get(day_code, {}).get(msk, {"text": "", "courses": []})
+                                if mcd["text"] and msk.startswith(slot["start"]):
+                                    cd = mcd
+                                    break
+
                         cell.value = cd["text"]
                         cell.font = normal_font
                         cell.border = thin_border
-                        cell.alignment = Alignment(
-                            horizontal="center", vertical="center", wrap_text=True
-                        )
+                        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
                         if len(cd["courses"]) > 1:
                             cell.fill = conflict_fill
                         elif len(cd["courses"]) == 1:
@@ -301,7 +312,7 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                     row += 1
 
                 # Outer border for this group's grid
-                _apply_outer_border(ws, grid_header_row, 1, row - 1, 6)
+                _apply_outer_border(ws, grid_start_row, 1, row - 1, 1 + num_slots)
 
             # Conflicts below grid
             conflicts = detect_board_conflicts(board.id)
@@ -391,16 +402,18 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                 hdr_fill, hdr_font, hdr_align, thin_border, normal_font, center_align,
             )
 
-        # Column widths
-        ws.column_dimensions["A"].width = 16
-        for col_letter in ["B", "C", "D", "E", "F"]:
-            ws.column_dimensions[col_letter].width = 22
-        ws.column_dimensions["G"].width = 3  # gap
-        ws.column_dimensions["H"].width = 12  # Course
-        ws.column_dimensions["I"].width = 30  # Name
-        ws.column_dimensions["J"].width = 6   # Cr
-        ws.column_dimensions["K"].width = 6   # Sec
-        ws.column_dimensions["L"].width = 10  # Students
+        # Column widths: A = day name, B..F+ = time slots
+        ws.column_dimensions["A"].width = 13
+        for s_idx in range(num_slots):
+            cl = chr(ord("B") + s_idx) if s_idx < 25 else None
+            if cl:
+                ws.column_dimensions[cl].width = 18
+        # Gap + course info sidebar columns
+        gap_col_idx = 1 + num_slots + 1  # after slots + 1 gap
+        for ci, w in enumerate([3, 12, 30, 6, 6, 10]):  # gap, Course, Name, Cr, Sec, Students
+            cl = chr(ord("A") + gap_col_idx - 1 + ci) if (gap_col_idx + ci - 1) < 26 else None
+            if cl:
+                ws.column_dimensions[cl].width = w
 
     # ── Conflict Matrix Sheet ────────────────────────────────────
     _build_conflict_matrix_sheet(wb, scenario, hdr_fill, hdr_font, hdr_align, thin_border,
