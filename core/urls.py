@@ -101,6 +101,31 @@ from .user_admin_views import (
     users_set_password_view,
     users_update_role_view,
 )
+from .timetable_workspace_views import (
+    timetable_workspace_page,
+    tw_generate_workspace_view,
+    tw_scenario_budget_view,
+    tw_scenario_export_view,
+    tw_placement_create_planned_view,
+    tw_board_capacity_view,
+    tw_board_conflicts_view,
+    tw_board_create_view,
+    tw_board_detail_view,
+    tw_board_summary_view,
+    tw_board_unplaced_view,
+    tw_boards_list_view,
+    tw_placement_create_view,
+    tw_placement_lock_view,
+    tw_placement_move_view,
+    tw_placement_remove_view,
+    tw_scenario_create_view,
+    tw_scenario_detail_view,
+    tw_scenario_publish_view,
+    tw_scenario_slots_update_view,
+    tw_scenarios_list_view,
+    tw_slot_template_create_view,
+    tw_slot_templates_list_view,
+)
 from .views import dashboard, dev_role_switch_view, health
 
 urlpatterns = [
@@ -322,6 +347,78 @@ urlpatterns = [
         "ops/exam-timetable/<int:run_id>/",
         login_required(exam_timetable_detail_view),
         name="exam_timetable_detail",
+    ),
+    # ── Timetable Workspace ──
+    path("timetable-workspace/", timetable_workspace_page, name="timetable_workspace_page"),
+    path("ops/tw/generate-workspace/", tw_generate_workspace_view, name="tw_generate_workspace"),
+    path(
+        "ops/tw/scenarios/<int:scenario_id>/budget/",
+        tw_scenario_budget_view,
+        name="tw_scenario_budget",
+    ),
+    path(
+        "ops/tw/scenarios/<int:scenario_id>/export.xlsx",
+        tw_scenario_export_view,
+        name="tw_scenario_export",
+    ),
+    path("ops/tw/scenarios/", tw_scenarios_list_view, name="tw_scenarios_list"),
+    path("ops/tw/scenarios/create/", tw_scenario_create_view, name="tw_scenario_create"),
+    path("ops/tw/scenarios/<int:scenario_id>/", tw_scenario_detail_view, name="tw_scenario_detail"),
+    path(
+        "ops/tw/scenarios/<int:scenario_id>/slots/update/",
+        tw_scenario_slots_update_view,
+        name="tw_scenario_slots_update",
+    ),
+    path(
+        "ops/tw/scenarios/<int:scenario_id>/publish/",
+        tw_scenario_publish_view,
+        name="tw_scenario_publish",
+    ),
+    path("ops/tw/boards/", tw_boards_list_view, name="tw_boards_list"),
+    path("ops/tw/boards/create/", tw_board_create_view, name="tw_board_create"),
+    path("ops/tw/boards/<int:board_id>/", tw_board_detail_view, name="tw_board_detail"),
+    path("ops/tw/boards/<int:board_id>/summary/", tw_board_summary_view, name="tw_board_summary"),
+    path(
+        "ops/tw/boards/<int:board_id>/conflicts/",
+        tw_board_conflicts_view,
+        name="tw_board_conflicts",
+    ),
+    path(
+        "ops/tw/boards/<int:board_id>/capacity/",
+        tw_board_capacity_view,
+        name="tw_board_capacity",
+    ),
+    path(
+        "ops/tw/boards/<int:board_id>/unplaced/",
+        tw_board_unplaced_view,
+        name="tw_board_unplaced",
+    ),
+    path("ops/tw/placements/create/", tw_placement_create_view, name="tw_placement_create"),
+    path(
+        "ops/tw/placements/create-planned/",
+        tw_placement_create_planned_view,
+        name="tw_placement_create_planned",
+    ),
+    path(
+        "ops/tw/placements/<int:placement_id>/move/",
+        tw_placement_move_view,
+        name="tw_placement_move",
+    ),
+    path(
+        "ops/tw/placements/<int:placement_id>/remove/",
+        tw_placement_remove_view,
+        name="tw_placement_remove",
+    ),
+    path(
+        "ops/tw/placements/<int:placement_id>/lock/",
+        tw_placement_lock_view,
+        name="tw_placement_lock",
+    ),
+    path("ops/tw/slot-templates/", tw_slot_templates_list_view, name="tw_slot_templates_list"),
+    path(
+        "ops/tw/slot-templates/create/",
+        tw_slot_template_create_view,
+        name="tw_slot_template_create",
     ),
     # Dev role switch — guarded inside the view itself (requires DEBUG + env var)
     path("ops/dev/switch-role/", dev_role_switch_view, name="dev_role_switch"),

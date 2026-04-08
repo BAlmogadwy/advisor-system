@@ -295,3 +295,221 @@ class ExamTimetableRun(models.Model):
 
     def __str__(self) -> str:
         return f"ExamTimetableRun({self.id}/{self.label})"
+
+
+# ── Timetable Builder Workspace ─────────────────────────────────
+
+
+class TimetableScenario(models.Model):
+    academic_year = models.TextField()
+    term = models.TextField()
+    name = models.TextField()
+    status = models.TextField(default="draft")
+    slot_config = models.JSONField(default=list)
+    created_by = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    notes = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "timetable_scenarios"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["academic_year", "term", "name"],
+                name="ux_tt_scenario_year_term_name",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"Scenario({self.id}/{self.name})"
+
+
+class DeliveryBoard(models.Model):
+    scenario = models.ForeignKey(
+        TimetableScenario,
+        on_delete=models.CASCADE,
+        related_name="boards",
+    )
+    label = models.TextField()
+    nominal_term = models.IntegerField(null=True, blank=True)
+    board_type = models.TextField(default="standard")
+    program = models.TextField(blank=True, null=True)  # noqa: DJ001
+    target_size = models.IntegerField(default=0)
+    display_order = models.IntegerField(default=0)
+    notes = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "delivery_boards"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["scenario", "label"],
+                name="ux_delivery_board_scenario_label",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["scenario"], name="idx_db_scenario"),
+        ]
+
+    def __str__(self) -> str:
+        return f"Board({self.id}/{self.label})"
+
+
+class SectionPlacement(models.Model):
+    board = models.ForeignKey(
+        DeliveryBoard,
+        on_delete=models.CASCADE,
+        related_name="placements",
+    )
+    term_section = models.ForeignKey(
+        TermSection,
+        on_delete=models.CASCADE,
+        related_name="placements",
+    )
+    day = models.TextField()
+    start_time = models.TextField()
+    end_time = models.TextField()
+    room = models.TextField(blank=True, default="")
+    is_locked = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "section_placements"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["board", "term_section", "day", "start_time"],
+                name="ux_placement_board_section_day_start",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["board"], name="idx_sp_board"),
+            models.Index(fields=["term_section"], name="idx_sp_term_section"),
+        ]
+
+    def __str__(self) -> str:
+        return f"Placement({self.id}/{self.term_section_id})"
+
+
+class BoardSectionVisibility(models.Model):
+    board = models.ForeignKey(
+        DeliveryBoard,
+        on_delete=models.CASCADE,
+        related_name="visible_sections",
+    )
+    term_section = models.ForeignKey(
+        TermSection,
+        on_delete=models.CASCADE,
+        related_name="board_visibility",
+    )
+
+    class Meta:
+        db_table = "board_section_visibility"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["board", "term_section"],
+                name="ux_bsv_board_section",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"BSV({self.board_id}->{self.term_section_id})"
+
+
+class TimeSlotTemplate(models.Model):
+    name = models.TextField()
+    slots = models.JSONField(default=list)
+    is_default = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "time_slot_templates"
+
+    def __str__(self) -> str:
+        return f"SlotTemplate({self.id}/{self.name})"
+
+
+# ── Timetable Workspace: Cohort Classification ─────────────────
+
+
+class ScenarioStudentMap(models.Model):
+    scenario = models.ForeignKey(
+        TimetableScenario,
+        on_delete=models.CASCADE,
+        related_name="student_maps",
+    )
+    student_id = models.IntegerField()
+    primary_term = models.IntegerField()
+    is_cross_term = models.BooleanField(default=False)
+    recommended_courses = models.JSONField(default=list)
+
+    class Meta:
+        db_table = "scenario_student_maps"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["scenario", "student_id"],
+                name="ux_ssm_scenario_student",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["scenario"], name="idx_ssm_scenario"),
+            models.Index(fields=["scenario", "primary_term"], name="idx_ssm_scenario_pt"),
+        ]
+
+    def __str__(self) -> str:
+        return f"SSM({self.scenario_id}/{self.student_id}→T{self.primary_term})"
+
+
+class ScenarioSectionBudget(models.Model):
+    scenario = models.ForeignKey(
+        TimetableScenario,
+        on_delete=models.CASCADE,
+        related_name="section_budgets",
+    )
+    course_code = models.TextField()
+    department = models.TextField(blank=True, default="")
+    credit_hours = models.IntegerField(default=0)
+    planned_sections = models.IntegerField(default=0)
+    max_per_section = models.IntegerField(default=40)
+    total_demand = models.IntegerField(default=0)
+    programme_term = models.IntegerField(null=True, blank=True)
+
+    class Meta:
+        db_table = "scenario_section_budgets"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["scenario", "course_code"],
+                name="ux_ssb_scenario_course",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["scenario"], name="idx_ssb_scenario"),
+        ]
+
+    def __str__(self) -> str:
+        return f"Budget({self.scenario_id}/{self.course_code})"
+
+
+class BoardStudentLink(models.Model):
+    board = models.ForeignKey(
+        DeliveryBoard,
+        on_delete=models.CASCADE,
+        related_name="student_links",
+    )
+    student_id = models.IntegerField()
+    link_type = models.TextField(default="primary")
+
+    class Meta:
+        db_table = "board_student_links"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["board", "student_id"],
+                name="ux_bsl_board_student",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["board"], name="idx_bsl_board"),
+            models.Index(fields=["board", "link_type"], name="idx_bsl_board_type"),
+        ]
+
+    def __str__(self) -> str:
+        return f"BSL({self.board_id}/{self.student_id}/{self.link_type})"
