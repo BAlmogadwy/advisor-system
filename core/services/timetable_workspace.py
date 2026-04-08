@@ -96,12 +96,13 @@ def _load_board_placements(board_id: int) -> list[PlacementInfo]:
     placements = (
         SectionPlacement.objects.filter(board_id=board_id)
         .select_related("term_section")
+        .prefetch_related("term_section__meetings")
     )
     result = []
     for p in placements:
-        # Get primary instructor from meetings
-        meeting = TermSectionMeeting.objects.filter(term_section_id=p.term_section_id).first()
-        instructor = meeting.instructor if meeting else ""
+        # Get primary instructor from prefetched meetings (no extra query)
+        meetings = list(p.term_section.meetings.all())
+        instructor = meetings[0].instructor if meetings else ""
 
         result.append(PlacementInfo(
             id=p.id,

@@ -102,19 +102,22 @@ def generate_workspace_scenario(
     Returns dict with scenario, boards, budget, and student summary.
     """
 
-    # ── Step 1: Collect recommendations ──────────────────────────
+    # ── Step 1: Collect recommendations (batch-optimized) ─────────
+
+    from core.services.recommender_batch import batch_recommend
 
     student_ids = get_student_ids(program=program)
+    all_recs = batch_recommend(student_ids, program, year, semester)
+
+    # Filter out non-schedulable courses
     aggregate: Counter[str] = Counter()
     student_recs: dict[int, list[str]] = {}
 
-    for sid in student_ids:
-        recs = recommend_next_courses(sid, year, semester)
-        # Filter out non-schedulable courses (graduation projects, free electives)
-        recs = [c for c in recs if not _is_excluded_course(c)]
-        if recs:
-            aggregate.update(recs)
-            student_recs[sid] = recs
+    for sid, recs in all_recs.items():
+        filtered = [c for c in recs if not _is_excluded_course(c)]
+        if filtered:
+            aggregate.update(filtered)
+            student_recs[sid] = filtered
 
     # ── Step 2: Classify students by primary term ────────────────
 
