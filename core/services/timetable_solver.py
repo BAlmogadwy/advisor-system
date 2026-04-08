@@ -203,40 +203,119 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
                                         assign[i_a][m_a][oa] + assign[i_b][m_b][ob] <= 1
                                     )
 
-    # ── Soft objective ───────────────────────────────────────────
+    # ── Soft objective: directly model idle gaps ───────────────────
+    #
+    # For each pair of sections in the same student group, if their meetings
+    # land on the same day, the idle gap (start_b - end_a) is penalized.
+    # This is the ACTUAL gap students experience, not a slot-index proxy.
+    #
+    # We use indicator variables: for each pair (meeting_a at option_oa,
+    # meeting_b at option_ob), if both are chosen AND on the same day,
+    # the gap in minutes is added to the penalty.
+
     penalties = []
 
-    for i, sec in enumerate(sections):
-        w = 10 if sec["sec_num"] == 1 else 2  # S1 group priority
+    # Pre-compute slot end times in minutes for gap calculation
+    slot_end_min = {}
+    for s_idx, s in enumerate(slot_config):
+        slot_end_min[s_idx] = _to_min(s["end"])
+    # Also for merged slots (100min)
+    for s_idx in range(len(slot_config) - 1):
+        slot_end_min[(s_idx, s_idx + 1)] = _to_min(slot_config[s_idx + 1]["end"])
 
+    # (1) REAL GAP PENALTIES between sections in same group on same day
+    for group_num, indices in by_group.items():
+        # Only model real gaps for S1 (primary group) — too many variables otherwise
+        # S2+ uses slot-index proxy below
+        if group_num > 1:
+            continue
+
+        w = 10  # S1 highest priority
+
+        # For each pair of sections in the group
+        for a_pos in range(len(indices)):
+            for b_pos in range(a_pos + 1, len(indices)):
+                i_a, i_b = indices[a_pos], indices[b_pos]
+
+                # Skip if either is online (no campus presence)
+                if sections[i_a]["is_online"] or sections[i_b]["is_online"]:
+                    continue
+
+                # For each meeting of section A × each meeting of section B
+                for m_a in range(len(sections[i_a]["pattern"])):
+                    for m_b in range(len(sections[i_b]["pattern"])):
+                        opts_a = sec_options[i_a][m_a]
+                        opts_b = sec_options[i_b][m_b]
+
+                        # Group by day to reduce combinations
+                        day_pairs: dict[int, list[tuple]] = defaultdict(list)
+                        for oa, opt_a in enumerate(opts_a):
+                            day_pairs[opt_a[0]].append(("a", oa, opt_a))
+                        for ob, opt_b in enumerate(opts_b):
+                            day_pairs[opt_b[0]].append(("b", ob, opt_b))
+
+                        for day_idx, entries in day_pairs.items():
+                            a_entries = [(oa, opt) for side, oa, opt in entries if side == "a"]
+                            b_entries = [(ob, opt) for side, ob, opt in entries if side == "b"]
+                            for oa, opt_a in a_entries:
+                                for ob, opt_b in b_entries:
+                                    start_a, end_a = opt_a[6], _to_min(opt_a[4])
+                                    start_b, end_b = opt_b[6], _to_min(opt_b[4])
+                                    gap = (start_b - end_a) if start_a < start_b else (start_a - end_b)
+
+                                    if gap <= 15:
+                                        continue
+
+                                    crosses = (end_a <= PRAYER_BOUNDARY < start_b) or \
+                                              (end_b <= PRAYER_BOUNDARY < start_a)
+                                    if crosses:
+                                        gap = int(gap * 1.5)
+
+                                    both = model.new_bool_var(f"g_{i_a}_{m_a}_{oa}_{i_b}_{m_b}_{ob}")
+                                    # both = 1 iff assign_a AND assign_b are both 1
+                                    model.add(assign[i_a][m_a][oa] + assign[i_b][m_b][ob] - 1 <= both)
+                                    model.add(both <= assign[i_a][m_a][oa])
+                                    model.add(both <= assign[i_b][m_b][ob])
+
+                                    penalties.append(both * gap * w)
+
+    # (1b) SLOT-INDEX PROXY for S2+ groups (fast approximation)
+    for group_num, indices in by_group.items():
+        if group_num <= 1:
+            continue  # S1 handled with real gap model above
+        w = 2
+        for i_sec in indices:
+            if sections[i_sec]["is_online"]:
+                continue
+            for m_idx in range(len(sections[i_sec]["pattern"])):
+                options = sec_options[i_sec][m_idx]
+                for o_idx, opt in enumerate(options):
+                    slot_idx = opt[1]
+                    prayer_p = 3 if slot_idx >= 2 else 0
+                    penalties.append(assign[i_sec][m_idx][o_idx] * (slot_idx + prayer_p) * w)
+
+    # (2) Online courses: prefer late slots
+    for i, sec in enumerate(sections):
+        if not sec["is_online"]:
+            continue
         for m_idx in range(len(sec["pattern"])):
             options = sec_options[i][m_idx]
             for o_idx, opt in enumerate(options):
-                day_idx, slot_idx, day, start, end, mask, start_min = opt
-                var = assign[i][m_idx][o_idx]
+                slot_idx = opt[1]
+                # Reward late slots (penalize early)
+                early_penalty = max(0, (num_slots - 1 - slot_idx)) * 5
+                penalties.append(assign[i][m_idx][o_idx] * early_penalty)
 
-                # Slot position penalty: prefer compact adjacent slots
-                # Slot 0=0, Slot 1=1, Slot 2=3(after prayer), Slot 3=4, Slot 4=5
-                prayer_penalty = 2 if slot_idx >= 2 else 0  # crossing prayer
-                slot_cost = slot_idx + prayer_penalty
-                penalties.append(var * slot_cost * w)
-
-                # Online: prefer late slots (invert)
-                if sec["is_online"]:
-                    online_cost = (num_slots - 1 - slot_idx) * 5
-                    penalties.append(var * online_cost)
-
-    # Time consistency: prefer same slot_idx across meetings of same section
-    # Use per-meeting slot_idx penalty instead of pairwise products
-    # (pairwise BoolVar products aren't supported directly in CP-SAT)
+    # (3) Time consistency: prefer same slot_idx across meetings
     for i, sec in enumerate(sections):
         if len(sec["pattern"]) <= 1:
             continue
         w = 3 if sec["sec_num"] == 1 else 1
-        # For each meeting, the slot_idx is already penalized above.
-        # Add extra penalty for variance: penalize slot_idx deviation from first meeting
-        # Approximation: penalize each meeting's slot_idx independently
-        # (the per-slot penalty above already encourages consistency)
+        for m_idx in range(len(sec["pattern"])):
+            options = sec_options[i][m_idx]
+            for o_idx, opt in enumerate(options):
+                # Penalize high slot indices slightly (encourages consistent early placement)
+                penalties.append(assign[i][m_idx][o_idx] * opt[1] * w)
 
     if penalties:
         model.minimize(sum(penalties))
@@ -334,7 +413,7 @@ def solve_and_persist_board(board_id: int, time_limit_seconds: float = 10.0) -> 
     return result
 
 
-def solve_scenario(scenario_id: int, time_limit_seconds: float = 10.0) -> dict:
+def solve_scenario(scenario_id: int, time_limit_seconds: float = 5.0) -> dict:
     """Solve all boards in a scenario."""
     boards = DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order")
     results = {}

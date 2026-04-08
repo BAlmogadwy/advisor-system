@@ -727,7 +727,7 @@ def auto_place_scenario(scenario_id: int, strategy: str = DEFAULT_STRATEGY) -> d
     # Use CP-SAT solver for "optimal" strategy
     if strategy == "optimal":
         from core.services.timetable_solver import solve_scenario
-        return solve_scenario(scenario_id, time_limit_seconds=10.0)
+        return solve_scenario(scenario_id, time_limit_seconds=5.0)
 
     boards = DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order")
     results = {}
