@@ -268,11 +268,13 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
             ws.cell(row=info_row, column=INFO_START_COL + 4).border = thin_border
             ws.cell(row=info_row, column=INFO_START_COL + 4).alignment = center_align
 
-            # ── Per-Term Conflict Matrix (below course info) ─────
-            info_row += 2
+            # ── Per-Term Conflict Matrix (right of course info table) ─
+            # Course info ends at column L (INFO_START_COL + 4 = col 12)
+            # Gap column M (13), matrix starts at column N (14)
+            MATRIX_START_COL = INFO_START_COL + 6  # col 14 = N
             term_courses = {b.course_code for b in term_budget}
             _write_mini_conflict_matrix(
-                ws, info_row, INFO_START_COL, scenario, term_num, term_courses,
+                ws, 1, MATRIX_START_COL, scenario, term_num, term_courses,
                 hdr_fill, hdr_font, hdr_align, thin_border, normal_font, center_align,
             )
 
