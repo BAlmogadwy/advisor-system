@@ -340,6 +340,11 @@ def auto_place_board(board_id: int) -> dict:
     max_sections_needed = max((cd["to_place"] for cd in course_data), default=0)
 
     for sec_round in range(1, max_sections_needed + 1):
+        # Group 1 (S1) = regular students taking full courses → BEST timetable, zero gaps
+        # Group 2+ = overflow → gaps acceptable
+        # Weight gap penalty higher for earlier groups
+        gap_weight = max(1, 11 - sec_round)  # S1=10x, S2=9x, S3=8x, ...
+
         for cd in course_data:
             sec_idx = cd["already"] + sec_round
             if sec_round > cd["to_place"]:
@@ -360,13 +365,15 @@ def auto_place_board(board_id: int) -> dict:
             is_online = cd.get("is_online", False)
 
             for option in all_options:
-                score = _score_option(
+                raw_score = _score_option(
                     option, same_group, course_students, my_students,
                     my_code=code,
                     same_group_schedule=same_sched,
                     other_sections_masks=all_placed_masks,
                     is_online=is_online,
                 )
+                # Weight gap by group priority: S1 gets 10x gap penalty
+                score = (raw_score[0], raw_score[1], raw_score[2] * gap_weight, raw_score[3], raw_score[4])
                 if score < best_score:
                     best_score = score
                     best_option = option
