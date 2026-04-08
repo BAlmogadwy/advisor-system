@@ -280,46 +280,100 @@ def _score_option(
     is_online: bool = False,
     online_codes_in_group: set[str] | None = None,
 ) -> tuple[int, int, int, int, int]:
-    """Score a meeting option. Lower is better.
+    """Score a candidate meeting option.  **Lower is better.**
 
-    Returns (hard_conflict, same_course_overlap, student_gap, instructor_spread, time_variance).
+    The returned 5-tuple is compared lexicographically by the caller, so
+    earlier elements dominate.  The ordering encodes priority:
 
-    - hard_conflict: direct time overlap with another course in the same student group
-    - same_course_overlap: overlap with OTHER sections of the SAME course (instructor can't teach both)
-    - student_gap: idle time between on-campus classes (online courses excluded from gap calc)
-    - instructor_spread: for online courses, penalize early slots (prefer late/last slot)
-    - time_variance: penalty for different slot indices across days
+    1. ``hard_conflict`` -- highest priority.  Direct bitmask overlap with
+       an already-placed section in the *same student group*.  Any non-zero
+       value here means students physically cannot attend both courses.
+    2. ``same_course_overlap`` -- overlap with another section of the *same*
+       course code across all groups.  A single instructor typically teaches
+       all sections, so they must not collide.
+    3. ``student_gap`` -- total idle minutes between consecutive on-campus
+       meetings for the student group on each day.  Large gaps waste student
+       time.  Online courses are excluded from this calculation because
+       students need not be on campus for them.
+    4. ``instructor_spread`` -- online-course scheduling preference.  For
+       online courses, earlier slot indices receive higher penalty, pushing
+       them toward the end of the day so students can leave campus first.
+    5. ``time_variance`` -- number of distinct slot indices used minus one.
+       Zero means all meetings happen at the same time of day across
+       different weekdays, which is easier for students to remember.
+
+    Parameters
+    ----------
+    option : list[dict]
+        A candidate set of meetings (from ``_generate_meeting_options``).
+    same_group_masks : list[tuple[str, int]]
+        ``(course_code, bitmask)`` pairs for sections already placed in
+        the *same* student group.
+    course_students : dict[str, set[int]]
+        Mapping of course code to the set of student IDs enrolled in that
+        course (used for future weighted-conflict scoring -- currently
+        reserved).
+    my_students : set[int]
+        Student IDs enrolled in the course being placed (reserved for
+        weighted scoring).
+    my_code : str
+        Course code of the section being placed.
+    same_group_schedule : list[tuple[str, str, str]] | None
+        ``(day, start, end)`` triples of meetings already placed in the
+        same student group, used for gap calculation.
+    other_sections_masks : list[tuple[str, int]] | None
+        ``(course_code, bitmask)`` pairs for *all* sections placed so far
+        across *all* groups.  Used to detect same-course overlap.
+    is_online : bool
+        Whether the course being placed is delivered online.
+    online_codes_in_group : set[str] | None
+        Course codes flagged as online within the current group (reserved
+        for future per-entry gap filtering).
+
+    Returns
+    -------
+    tuple[int, int, int, int, int]
+        ``(hard_conflict, same_course_overlap, student_gap,
+        instructor_spread, time_variance)``
     """
     _online_in_group = online_codes_in_group or set()
+
+    # Build a combined bitmask for all meetings in this option.
+    # Each bit represents a 5-minute block on a specific day (see _time_mask).
     total_mask = 0
     for m in option:
         total_mask |= _time_mask(m["day"], m["start"], m["end"])
 
-    # (1) Hard conflict: time overlap with same student group
+    # ── (1) Hard conflict: bitmask overlap with same student group ────
     hard_conflict = 0
     for placed_code, placed_mask in same_group_masks:
         if total_mask & placed_mask:
             hard_conflict += 1
 
-    # (2) Same-course overlap: can't teach two sections at the same time
+    # ── (2) Same-course overlap across ALL groups ─────────────────────
+    # Prevents the same instructor from being double-booked.
     same_course_overlap = 0
     if other_sections_masks:
         for other_code, other_mask in other_sections_masks:
             if other_code == my_code and (total_mask & other_mask):
                 same_course_overlap += 1
 
-    # (3) Student gap: idle time between ON-CAMPUS classes (online excluded)
-    # Online courses don't require campus presence, so gaps before/after them don't count
+    # ── (3) Student gap: idle minutes between on-campus classes ───────
+    # Online courses are excluded because students do not need to be
+    # physically present.  When placing an online course (is_online=True),
+    # it is not added to the day's interval list, so it does not inflate
+    # the gap metric.
     day_intervals: dict[str, list[tuple[int, int]]] = defaultdict(list)
     if same_group_schedule:
         for d, s, e in same_group_schedule:
-            # Only include non-online courses in gap calculation
-            # We don't have per-entry code tracking in schedule, so include all
-            # (the online course itself will be excluded when it's the one being placed)
+            # NOTE: the schedule does not track per-entry online status, so
+            # all previously placed meetings are included.  The online
+            # course currently being scored is excluded below via the
+            # is_online guard.
             day_intervals[d].append((_to_min(s), _to_min(e)))
 
     if not is_online:
-        # This is an on-campus course — add it and measure gaps against other on-campus
+        # On-campus course: include its meetings in the gap calculation.
         for m in option:
             day_intervals[m["day"]].append((_to_min(m["start"]), _to_min(m["end"])))
 
@@ -332,16 +386,18 @@ def _score_option(
                 if idle > 0:
                     student_gap += idle
 
-    # (4) Online preference: late slots. For online courses, penalize early time slots.
-    # Prefer the LAST available slot so students can leave campus first.
+    # ── (4) Online preference: push to late slots ─────────────────────
+    # For online courses, penalise early time-slot indices.  The formula
+    # ``10 - slot_idx`` means slot 0 (earliest) adds 10, while slot 4
+    # (latest) adds only 6, making later slots cheaper.
     instructor_spread = 0
     if is_online:
-        # Invert slot index: lower slot_idx = higher penalty (earlier = bad for online)
-        # Max slot_idx is best (latest slot)
         for m in option:
-            instructor_spread += (10 - m["slot_idx"])  # lower idx = higher penalty
+            instructor_spread += (10 - m["slot_idx"])
 
-    # (5) Time consistency (prefer same slot index across days)
+    # ── (5) Time consistency across days ──────────────────────────────
+    # Zero if all meetings share the same slot index; +1 for each
+    # additional distinct index.
     slot_indices = [m["slot_idx"] for m in option]
     time_variance = len(set(slot_indices)) - 1
 
@@ -349,16 +405,40 @@ def _score_option(
 
 
 def auto_place_board(board_id: int) -> dict:
-    """Auto-place sections on a board using greedy conflict minimization.
+    """Auto-place all unplaced sections on a single delivery board.
 
-    Algorithm:
-    1. Get courses for this board from the budget, sorted by demand (highest first)
-    2. Build student overlap data from ScenarioStudentMap
-    3. For each course × each section to place:
-       a. Generate all valid meeting options (respecting day/pattern rules)
-       b. Score each option by (student_conflicts, time_variance)
-       c. Pick the option with minimum score
-       d. Create TermSection + TermSectionMeeting + SectionPlacement
+    This is the main entry point for the greedy placement algorithm.  It
+    operates on one board (one nominal term-level) and proceeds as follows:
+
+    1. Load the board's scenario, slot configuration, and section budgets
+       (sorted by descending ``total_demand`` so high-demand courses get
+       first pick of slots).
+    2. Build a ``course_students`` map from ``ScenarioStudentMap`` -- this
+       records which students need each course and drives conflict scoring.
+    3. Pre-compute feasible meeting options for every course (respecting
+       credit hours, prayer break, etc.).
+    4. Place sections in **round-robin by group index**: all S1 sections
+       first (round 1), then all S2 sections (round 2), and so on.
+       Within each round, courses are sorted by credit hours descending
+       (4-credit courses first) then by student count, so the most
+       constrained courses claim slots first.
+    5. For each section to place, score every candidate option against the
+       current state of the board using ``_score_option``, pick the
+       minimum-score option, and persist it as ``TermSection`` +
+       ``TermSectionMeeting`` + ``SectionPlacement`` rows.
+
+    Parameters
+    ----------
+    board_id : int
+        Primary key of the ``DeliveryBoard`` to populate.
+
+    Returns
+    -------
+    dict
+        ``{"placed": int, "skipped": int, "placements": list[dict]}``
+        where each placement dict contains ``course_code``, ``section``,
+        ``credit_hours``, ``meetings`` (list of day/start/end dicts),
+        and ``conflict_score``.
     """
     try:
         board = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
@@ -368,7 +448,9 @@ def auto_place_board(board_id: int) -> dict:
     scenario = board.scenario
     slot_config = scenario.slot_config if scenario.slot_config else DEFAULT_SLOTS
 
-    # Get courses for this board's term level
+    # ── 1. Load section budgets for this board's term level ───────────
+    # Ordered by descending demand so the most popular courses are placed
+    # first and get the best (least-conflicting) slots.
     budgets = list(
         ScenarioSectionBudget.objects.filter(
             scenario=scenario,
@@ -379,25 +461,33 @@ def auto_place_board(board_id: int) -> dict:
     if not budgets:
         return {"placed": 0, "skipped": 0, "placements": []}
 
-    # Build student-course overlap
+    # ── 2. Build student-to-course mapping ────────────────────────────
+    # For each course code, collect the set of student IDs that need it.
     student_maps = ScenarioStudentMap.objects.filter(scenario=scenario)
     course_students: dict[str, set[int]] = defaultdict(set)
     for sm in student_maps:
         for code in sm.recommended_courses:
             course_students[code].add(sm.student_id)
 
-    # Track placed masks per section group number
-    # group_masks[1] = masks for all S1 sections, group_masks[2] = all S2, etc.
-    # Sections in the same group MUST NOT overlap (same student cohort)
-    # Sections in different groups CAN overlap (different student cohorts)
+    # ── Placement tracking structures ─────────────────────────────────
+    # group_masks  : per-group bitmasks used for hard-conflict detection.
+    #                group_masks[1] holds masks for all S1 sections;
+    #                sections in the same group MUST NOT overlap (same
+    #                student cohort), while sections in different groups
+    #                CAN overlap (different cohorts).
+    # group_schedule: per-group (day, start, end) triples for gap calc.
+    # all_placed_masks: global list across all groups, used for
+    #                   same-course overlap detection.
     group_masks: dict[int, list[tuple[str, int]]] = defaultdict(list)
-    group_schedule: dict[int, list[tuple[str, str, str]]] = defaultdict(list)  # sec_idx -> [(day,start,end)]
-    all_placed_masks: list[tuple[str, int]] = []  # all sections, all groups
+    group_schedule: dict[int, list[tuple[str, str, str]]] = defaultdict(list)
+    all_placed_masks: list[tuple[str, int]] = []
     placement_results: list[dict] = []
     total_placed = 0
     total_skipped = 0
 
-    # Load online course flags
+    # ── 3. Identify online courses (from ProgrammeRequirement) ────────
+    # Online courses receive a late-slot preference penalty so they are
+    # scheduled after on-campus classes, letting students leave first.
     from core.models import ProgrammeRequirement as PR
     online_codes: set[str] = set()
     if board.program:
@@ -441,12 +531,19 @@ def auto_place_board(board_id: int) -> dict:
     max_sections_needed = max((cd["to_place"] for cd in course_data), default=0)
 
     for sec_round in range(1, max_sections_needed + 1):
-        # Group 1 (S1) = regular students taking full courses → BEST timetable, zero gaps
+        # Group 1 (S1) = regular students taking full courses → BEST timetable
         # Group 2+ = overflow → gaps acceptable
         # Weight gap penalty higher for earlier groups
         gap_weight = max(1, 11 - sec_round)  # S1=10x, S2=9x, S3=8x, ...
 
-        for cd in course_data:
+        # Sort courses by credit hours descending — place 4cr (3 meetings) first
+        # so they claim the best adjacent slot patterns, then 3cr, then 2cr
+        course_data_sorted = sorted(
+            course_data,
+            key=lambda cd: (-cd["credit_hours"], -len(cd["students"])),
+        )
+
+        for cd in course_data_sorted:
             sec_idx = cd["already"] + sec_round
             if sec_round > cd["to_place"]:
                 continue
