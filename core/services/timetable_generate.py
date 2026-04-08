@@ -157,6 +157,7 @@ def generate_workspace_scenario(
     program: str | list[str],
     section: str | None = None,
     scenario_name: str = "",
+    strategy: str = "compact",
     max_local_4cr: int = DEFAULT_MAX_LOCAL_4CR,
     max_local_other: int = DEFAULT_MAX_LOCAL_OTHER,
     max_external: int = DEFAULT_MAX_EXTERNAL,
@@ -469,7 +470,7 @@ def generate_workspace_scenario(
 
     from core.services.timetable_autoplace import auto_place_scenario, get_meeting_pattern
 
-    auto_result = auto_place_scenario(scenario.id)
+    auto_result = auto_place_scenario(scenario.id, strategy=strategy)
 
     # ── Build response ───────────────────────────────────────────
     # Assemble a comprehensive response dict that the frontend and API

@@ -307,6 +307,14 @@ html[data-theme="dark"] #twDrawer{background:var(--card); border-color:rgba(255,
     <label class="fb-lbl" for="twSection">{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}</label>
     <input id="twSection" class="form-control form-control-compact" placeholder="{% if LANGUAGE_CODE == 'ar' %}اختياري{% else %}Optional{% endif %}">
   </div>
+  <div class="fb-search" style="min-width:130px;max-width:180px">
+    <label class="fb-lbl" for="twStrategy">{% if LANGUAGE_CODE == 'ar' %}الخوارزمية{% else %}Strategy{% endif %}</label>
+    <select id="twStrategy" class="form-control form-control-compact">
+      <option value="compact">{% if LANGUAGE_CODE == 'ar' %}مضغوط{% else %}Compact{% endif %}</option>
+      <option value="morning">{% if LANGUAGE_CODE == 'ar' %}صباحي{% else %}Morning-first{% endif %}</option>
+      <option value="balanced">{% if LANGUAGE_CODE == 'ar' %}متوازن{% else %}Balanced{% endif %}</option>
+    </select>
+  </div>
   <div class="fb-spacer"></div>
   <button id="twGenerate" class="btn btn-primary" type="button">
     <span class="i i-sm" aria-hidden="true" style="margin-inline-end:4px"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>
@@ -528,6 +536,7 @@ async function runGenerate() {
   const term = $('twTerm').value.trim();
   const program = $('twProgram').value.trim().toUpperCase();
   const section = $('twSection').value.trim().toUpperCase() || null;
+  const strategy = $('twStrategy').value || 'compact';
 
   if (!year || !term || !program) {
     notify.error(IS_AR ? 'أدخل السنة والفصل والبرنامج' : 'Enter year, term, and program');
@@ -545,6 +554,7 @@ async function runGenerate() {
       semester: parseInt(term),
       program: program,
       section: section,
+      strategy: strategy,
     }),
   });
 

@@ -258,6 +258,35 @@ def _generate_meeting_options(
     return all_options
 
 
+# ── Placement Strategies ─────────────────────────────────────────
+#
+# Each strategy adjusts how the scoring tuple is weighted.
+# The auto_place_board function applies these weights when comparing options.
+
+STRATEGIES: dict[str, dict] = {
+    "compact": {
+        "label": "Compact",
+        "description": "Pack courses back-to-back, minimize idle time between classes",
+        "gap_multiplier": 10,     # very strong gap penalty
+        "slot_preference": 0,     # no slot position preference
+    },
+    "morning": {
+        "label": "Morning-first",
+        "description": "Pack courses into early slots, free afternoons for study",
+        "gap_multiplier": 2,      # low gap penalty (gaps less important than being early)
+        "slot_preference": 50,    # very strong preference for early slots
+    },
+    "balanced": {
+        "label": "Balanced",
+        "description": "Moderate gaps, try to use fewer days per course",
+        "gap_multiplier": 5,      # moderate gap penalty
+        "slot_preference": 0,
+    },
+}
+
+DEFAULT_STRATEGY = "compact"
+
+
 def _to_min(t: str) -> int:
     """Convert an "HH:MM" string to total minutes since midnight.
 
@@ -377,14 +406,27 @@ def _score_option(
         for m in option:
             day_intervals[m["day"]].append((_to_min(m["start"]), _to_min(m["end"])))
 
+    # Calculate idle gaps. The prayer break (11:45→13:00 = 75min) is
+    # treated as a REAL gap — the algorithm should try to keep all
+    # courses either before or after the break on each day.
+    PRAYER_END = 13 * 60  # 13:00
+
     student_gap = 0
     for day, intervals in day_intervals.items():
         if len(intervals) >= 2:
             intervals.sort()
+            has_morning = any(s < PRAYER_END for s, e in intervals)
+            has_afternoon = any(s >= PRAYER_END for s, e in intervals)
+            crosses_prayer = has_morning and has_afternoon
+
             for i in range(len(intervals) - 1):
                 idle = intervals[i + 1][0] - intervals[i][1]
                 if idle > 0:
-                    student_gap += idle
+                    # Extra penalty for crossing the prayer break
+                    if crosses_prayer and idle >= 60:
+                        student_gap += idle * 2  # double penalty
+                    else:
+                        student_gap += idle
 
     # ── (4) Online preference: push to late slots ─────────────────────
     # For online courses, penalise early time-slot indices.  The formula
@@ -404,7 +446,7 @@ def _score_option(
     return hard_conflict, same_course_overlap, student_gap, instructor_spread, time_variance
 
 
-def auto_place_board(board_id: int) -> dict:
+def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
     """Auto-place all unplaced sections on a single delivery board.
 
     This is the main entry point for the greedy placement algorithm.  It
@@ -540,7 +582,10 @@ def auto_place_board(board_id: int) -> dict:
         # compact, zero-gap schedule.  Overflow groups (S2, S3, ...) get
         # progressively lower weights since their students are less likely
         # to take a full course load.
-        gap_weight = max(1, 11 - sec_round)  # S1=10x, S2=9x, S3=8x, ...
+        strat = STRATEGIES.get(strategy, STRATEGIES[DEFAULT_STRATEGY])
+        gap_base = strat["gap_multiplier"]
+        slot_pref = strat["slot_preference"]
+        gap_weight = max(1, gap_base + 1 - sec_round)  # S1 gets highest, diminishing
 
         # Sort courses by credit hours descending -- place 4-credit courses
         # (3 meetings/week) first so they claim the best adjacent slot
@@ -581,7 +626,17 @@ def auto_place_board(board_id: int) -> dict:
                 )
                 # Apply the group-dependent gap weight (element [2] is
                 # student_gap).  This makes S1 gap-averse and S2+ tolerant.
-                score = (raw_score[0], raw_score[1], raw_score[2] * gap_weight, raw_score[3], raw_score[4])
+                # Apply strategy weights:
+                # - gap_weight: amplifies idle gap penalty
+                # - slot_pref: for morning strategy, heavily penalize afternoon slots
+                slot_penalty = 0
+                if slot_pref > 0:
+                    # Each meeting in slot 2+ (afternoon) gets a big penalty
+                    # Slot 0,1 = morning (free), slot 2,3,4 = afternoon (penalized)
+                    for m in option:
+                        if m["slot_idx"] >= 2:  # afternoon slots
+                            slot_penalty += slot_pref * (m["slot_idx"] - 1)
+                score = (raw_score[0], raw_score[1], raw_score[2] * gap_weight + slot_penalty, raw_score[3], raw_score[4])
                 if score < best_score:
                     best_score = score
                     best_option = option
@@ -645,7 +700,7 @@ def auto_place_board(board_id: int) -> dict:
     }
 
 
-def auto_place_scenario(scenario_id: int) -> dict:
+def auto_place_scenario(scenario_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
     """Auto-place sections on every board in a scenario.
 
     Iterates over all ``DeliveryBoard`` rows belonging to the scenario
@@ -668,7 +723,7 @@ def auto_place_scenario(scenario_id: int) -> dict:
     total_placed = 0
     total_skipped = 0
     for board in boards:
-        r = auto_place_board(board.id)
+        r = auto_place_board(board.id, strategy=strategy)
         results[board.label] = r
         total_placed += r["placed"]
         total_skipped += r["skipped"]
