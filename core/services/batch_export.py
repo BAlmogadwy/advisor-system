@@ -78,16 +78,23 @@ def export_batch_recommender_xlsx(
                     if p and p not in prereq_map[cc_n]:
                         prereq_map[cc_n].append(p)
 
-    # Studying counts per prerequisite
+    # Studying counts per prerequisite — ONLY among students who need
+    # the recommended course (not ALL students university-wide)
     all_prereq_codes = set()
     for prereqs in prereq_map.values():
         all_prereq_codes.update(prereqs)
 
+    # Get student IDs who are in the filtered scope (same program/section)
+    from core.services.reporting import get_student_ids
+    scoped_student_ids = set(get_student_ids(program=program, section=section))
+
     prereq_studying_count: dict[str, int] = {}
-    if all_prereq_codes:
+    if all_prereq_codes and scoped_student_ids:
         for row in (
             StudentCourse.objects.filter(
-                course__course_code__in=all_prereq_codes, status="studying",
+                course__course_code__in=all_prereq_codes,
+                status="studying",
+                student_id__in=scoped_student_ids,
             )
             .values("course__course_code")
             .annotate(cnt=DjCount("id"))
