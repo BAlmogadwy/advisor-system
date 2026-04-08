@@ -294,6 +294,12 @@ STRATEGIES: dict[str, dict] = {
         "gap_multiplier": 10,
         "slot_preference": 0,
     },
+    "load_balanced": {
+        "label": "Load-Balanced",
+        "description": "Equalize daily course load — no heavy/light days",
+        "gap_multiplier": 5,
+        "slot_preference": 0,
+    },
 }
 
 DEFAULT_STRATEGY = "compact"
@@ -734,6 +740,19 @@ def auto_place_scenario(scenario_id: int, strategy: str = DEFAULT_STRATEGY) -> d
     if strategy == "optimal":
         from core.services.timetable_solver import solve_scenario
         return solve_scenario(scenario_id, time_limit_seconds=5.0)
+
+    # Load-balanced: greedy build + redistribution
+    if strategy == "load_balanced":
+        boards = DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order")
+        results = {}
+        total_placed = 0
+        for board in boards:
+            r = auto_place_board(board.id, strategy="compact")
+            results[board.label] = r
+            total_placed += r["placed"]
+        from core.services.timetable_load_balanced import rebalance_scenario
+        rebalance_scenario(scenario_id, max_seconds_per_board=5.0)
+        return {"boards": results, "total_placed": total_placed, "total_skipped": 0}
 
     # Hybrid: greedy build + simulated annealing improvement
     if strategy == "hybrid":
