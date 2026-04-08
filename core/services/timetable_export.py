@@ -174,81 +174,134 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
             row += 1
 
             # Load placements
-            placements = (
+            placements = list(
                 SectionPlacement.objects.filter(board=board)
                 .select_related("term_section")
                 .order_by("day", "start_time")
             )
 
-            # Build grid: slot → day → {text, courses list}
-            grid: dict[str, dict[str, dict]] = {}
-            for slot in slot_config:
-                slot_key = f"{slot['start']}-{slot['end']}"
-                grid[slot_key] = {d: {"text": "", "courses": []} for d in DAY_LABELS}
-
+            # ── Split placements into student groups ─────────────
+            # Group 1 = S1 of each course, Group 2 = S2, etc.
+            # Find max section number to determine group count
+            from collections import defaultdict as _dd
+            course_sections: dict[str, list] = _dd(list)
             for p in placements:
-                slot_key = f"{p.start_time}-{p.end_time}"
-                day = p.day.upper()[:3]
-                if slot_key not in grid:
-                    for i, slot in enumerate(slot_config):
-                        if slot["start"] == p.start_time:
-                            if i + 1 < len(slot_config) and slot_config[i + 1]["end"] == p.end_time:
-                                slot_key = f"{slot['start']}-{slot_config[i + 1]['end']}"
-                                if slot_key not in grid:
-                                    grid[slot_key] = {d: {"text": "", "courses": []} for d in DAY_LABELS}
-                            break
+                course_sections[p.term_section.course_code].append(p)
 
-                ts = p.term_section
-                meeting = TermSectionMeeting.objects.filter(term_section=ts, day=day).first()
-                instructor = meeting.instructor if meeting else ""
-                room = meeting.room if meeting else p.room
+            max_groups = max((len(secs) for secs in course_sections.values()), default=1)
+            # Normalize: for each course, sort sections by label (S1, S2...)
+            for code in course_sections:
+                course_sections[code].sort(key=lambda p: p.term_section.section)
 
-                text = f"{ts.course_code} {ts.section}"
-                if instructor:
-                    text += f"\n{instructor}"
-                if room:
-                    text += f"\n{room}"
-
-                if slot_key in grid and day in grid[slot_key]:
-                    cd = grid[slot_key][day]
-                    if cd["text"]:
-                        cd["text"] += f"\n---\n{text}"
-                    else:
-                        cd["text"] = text
-                    cd["courses"].append(ts.course_code)
-
-            # Assign distinct pastel color per course for this board
+            # Assign distinct pastel color per course (shared across all groups)
             course_color_map: dict[str, str] = {}
 
-            # Write grid rows
-            for slot_key in sorted(grid.keys()):
-                cell = ws.cell(row=row, column=1)
-                cell.value = slot_key
-                cell.font = bold_font
-                cell.fill = slot_fill
-                cell.border = thin_border
-                cell.alignment = center_align
+            for group_idx in range(max_groups):
+                if group_idx > 0:
+                    row += 1  # gap between groups
 
-                for day_idx, day in enumerate(DAY_LABELS):
-                    cell = ws.cell(row=row, column=day_idx + 2)
-                    cd = grid[slot_key].get(day, {"text": "", "courses": []})
-                    cell.value = cd["text"]
-                    cell.font = normal_font
-                    cell.border = thin_border
-                    cell.alignment = Alignment(
-                        horizontal="center", vertical="center", wrap_text=True
+                # Group header
+                group_label = f"Group {group_idx + 1}" if max_groups > 1 else ""
+                if group_label:
+                    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=6)
+                    gcell = ws.cell(row=row, column=1)
+                    # Count courses in this group
+                    group_course_count = sum(
+                        1 for secs in course_sections.values() if len(secs) > group_idx
                     )
-                    if len(cd["courses"]) > 1:
-                        # Conflict: multiple courses in same cell
-                        cell.fill = conflict_fill
-                    elif len(cd["courses"]) == 1:
-                        # Single course: distinct color per course
-                        cell.fill = _course_fill(cd["courses"][0], course_color_map)
+                    gcell.value = f"Group {group_idx + 1} — {group_course_count} courses"
+                    gcell.font = Font(bold=True, size=9, color="4056E3")
+                    gcell.alignment = center_align
+                    row += 1
 
+                # Grid header
+                for col_idx, hdr in enumerate(["Time"] + DAY_LABELS, start=1):
+                    cell = ws.cell(row=row, column=col_idx)
+                    cell.value = hdr
+                    cell.fill = hdr_fill
+                    cell.font = hdr_font
+                    cell.alignment = hdr_align
+                    cell.border = thin_border
+                grid_header_row = row
                 row += 1
 
-            # Outer border for timetable grid
-            _apply_outer_border(ws, grid_header_row, 1, row - 1, 6)
+                # Get placements for this group: pick section[group_idx] from each course
+                group_placements = []
+                for code, secs in course_sections.items():
+                    if group_idx < len(secs):
+                        group_placements.append(secs[group_idx])
+
+                # Build grid for this group
+                grid: dict[str, dict[str, dict]] = {}
+                for slot in slot_config:
+                    slot_key = f"{slot['start']}-{slot['end']}"
+                    grid[slot_key] = {d: {"text": "", "courses": []} for d in DAY_LABELS}
+
+                # Collect ALL meeting placements for each section in this group
+                for p in group_placements:
+                    # Get all placements for this term_section on this board
+                    ts_placements = [
+                        pp for pp in placements
+                        if pp.term_section_id == p.term_section_id
+                    ]
+                    for pp in ts_placements:
+                        slot_key = f"{pp.start_time}-{pp.end_time}"
+                        day = pp.day.upper()[:3]
+                        if slot_key not in grid:
+                            for i, slot in enumerate(slot_config):
+                                if slot["start"] == pp.start_time:
+                                    if i + 1 < len(slot_config) and slot_config[i + 1]["end"] == pp.end_time:
+                                        slot_key = f"{slot['start']}-{slot_config[i + 1]['end']}"
+                                        if slot_key not in grid:
+                                            grid[slot_key] = {d: {"text": "", "courses": []} for d in DAY_LABELS}
+                                    break
+
+                        ts = pp.term_section
+                        meeting = TermSectionMeeting.objects.filter(term_section=ts, day=day).first()
+                        instructor = meeting.instructor if meeting else ""
+                        room = meeting.room if meeting else pp.room
+
+                        text = f"{ts.course_code} {ts.section}"
+                        if instructor:
+                            text += f"\n{instructor}"
+                        if room:
+                            text += f"\n{room}"
+
+                        if slot_key in grid and day in grid[slot_key]:
+                            cd = grid[slot_key][day]
+                            if cd["text"]:
+                                cd["text"] += f"\n---\n{text}"
+                            else:
+                                cd["text"] = text
+                            cd["courses"].append(ts.course_code)
+
+                # Write grid rows
+                for slot_key in sorted(grid.keys()):
+                    cell = ws.cell(row=row, column=1)
+                    cell.value = slot_key
+                    cell.font = bold_font
+                    cell.fill = slot_fill
+                    cell.border = thin_border
+                    cell.alignment = center_align
+
+                    for day_idx, day in enumerate(DAY_LABELS):
+                        cell = ws.cell(row=row, column=day_idx + 2)
+                        cd = grid[slot_key].get(day, {"text": "", "courses": []})
+                        cell.value = cd["text"]
+                        cell.font = normal_font
+                        cell.border = thin_border
+                        cell.alignment = Alignment(
+                            horizontal="center", vertical="center", wrap_text=True
+                        )
+                        if len(cd["courses"]) > 1:
+                            cell.fill = conflict_fill
+                        elif len(cd["courses"]) == 1:
+                            cell.fill = _course_fill(cd["courses"][0], course_color_map)
+
+                    row += 1
+
+                # Outer border for this group's grid
+                _apply_outer_border(ws, grid_header_row, 1, row - 1, 6)
 
             # Conflicts below grid
             conflicts = detect_board_conflicts(board.id)
