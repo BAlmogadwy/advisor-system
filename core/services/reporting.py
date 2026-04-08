@@ -3,6 +3,7 @@ from collections import Counter
 
 from core.models import Student
 from core.services.recommender import recommend_next_courses
+from core.services.recommender_batch import batch_recommend
 
 _aggregate_cache: dict[tuple, tuple[float, tuple[int, "Counter[str]"]]] = {}
 _AGGREGATE_CACHE_TTL = 300  # 5 minutes
@@ -39,9 +40,16 @@ def build_aggregate_counts(
     student_ids = get_student_ids(program=program, section=section)
     aggregate: Counter[str] = Counter()
 
-    for student_id in student_ids:
-        recs = recommend_next_courses(student_id, year, semester)
-        aggregate.update(recs)
+    # Use batch recommender when filtering by a single program (common case)
+    if program and isinstance(program, str):
+        all_recs = batch_recommend(student_ids, program, year, semester)
+        for recs in all_recs.values():
+            aggregate.update(recs)
+    else:
+        # Multi-program or no-program: fall back to per-student (rare)
+        for student_id in student_ids:
+            recs = recommend_next_courses(student_id, year, semester)
+            aggregate.update(recs)
 
     result = (len(student_ids), aggregate)
     _aggregate_cache[cache_key] = (time.time(), result)

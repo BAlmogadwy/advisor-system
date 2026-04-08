@@ -1,11 +1,14 @@
+from collections import defaultdict
 from collections.abc import Iterable
 
-from core.models import Student
+from core.models import Prerequisite, Student, StudentCourse
 from core.services.recommender import calculate_real_student_term, recommend_next_courses
+from core.services.recommender_batch import batch_recommend
 from core.services.student_helpers import (
     get_prerequisites,
     get_student_passed_and_studying,
     get_student_program,
+    normalize_code,
 )
 
 
@@ -43,16 +46,80 @@ def build_recommendation_debug_report(
 ) -> dict:
     student_ids = _build_students_query(section, program, join_year_prefixes)[:limit]
 
+    if not student_ids:
+        return {
+            "count": 0,
+            "filters": {
+                "section": section, "program": program,
+                "join_year_prefixes": join_year_prefixes or [],
+                "limit": limit, "year": current_academic_year, "semester": current_semester,
+            },
+            "items": [],
+        }
+
+    # ── Batch-load all data (3 queries instead of N*M) ───────────
+    # 1. Student programs
+    student_programs: dict[int, str] = {}
+    for sid_val, prog_val in Student.objects.filter(
+        student_id__in=student_ids
+    ).values_list("student_id", "program"):
+        student_programs[sid_val] = prog_val or ""
+
+    # 2. Student courses (passed + studying)
+    sc_rows = list(
+        StudentCourse.objects.filter(student_id__in=student_ids)
+        .select_related("course")
+        .values_list("student_id", "course__course_code", "status")
+    )
+    student_passed: dict[int, set[str]] = defaultdict(set)
+    student_studying: dict[int, set[str]] = defaultdict(set)
+    for sid_val, code, status in sc_rows:
+        c = normalize_code(code)
+        if status == "passed":
+            student_passed[sid_val].add(c)
+        elif status == "studying":
+            student_studying[sid_val].add(c)
+
+    # 3. All prerequisites for involved programs
+    involved_programs = set(student_programs.values())
+    prereq_map: dict[str, dict[str, list[str]]] = {}  # program -> course -> [prereqs]
+    for prog_val in involved_programs:
+        if not prog_val:
+            continue
+        prereq_map[prog_val] = defaultdict(list)
+        for course_code, prereq_code in Prerequisite.objects.filter(
+            program=prog_val
+        ).values_list("course_code", "prerequisite_course_code"):
+            cc = normalize_code(course_code)
+            for part in str(prereq_code).split(","):
+                p = normalize_code(part)
+                if p:
+                    prereq_map[prog_val][cc].append(p)
+
+    # 4. Batch recommendations
+    if program:
+        all_recs = batch_recommend(student_ids, program, current_academic_year, current_semester)
+    else:
+        # Mixed programs — fall back to per-student
+        all_recs = {}
+        for sid_val in student_ids:
+            recs = recommend_next_courses(sid_val, current_academic_year, current_semester)
+            if recs:
+                all_recs[sid_val] = recs
+
+    # ── Build items from pre-loaded data ─────────────────────────
     items: list[dict] = []
     for sid in student_ids:
-        prog = get_student_program(sid) or ""
-        passed, studying = get_student_passed_and_studying(sid)
-        recs = recommend_next_courses(sid, current_academic_year, current_semester)
+        prog = student_programs.get(sid, "")
+        passed = student_passed.get(sid, set())
+        studying = student_studying.get(sid, set())
+        recs = all_recs.get(sid, [])
         real_term = calculate_real_student_term(sid, current_academic_year, current_semester)
 
+        prog_prereqs = prereq_map.get(prog, {})
         rec_details: list[dict] = []
         for code in recs:
-            prereqs = get_prerequisites(code, prog)
+            prereqs = prog_prereqs.get(normalize_code(code), [])
             prereq_status = [
                 {
                     "prerequisite": p,

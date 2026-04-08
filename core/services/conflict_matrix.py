@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from core.models import Student
 from core.services.debug_reporting import _build_students_query
 from core.services.recommender import recommend_next_courses
+from core.services.recommender_batch import batch_recommend
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 RUNTIME_DIR = BASE_DIR / "runtime"
@@ -27,16 +29,24 @@ def build_conflict_matrix_report(
     """
     student_ids = _build_students_query(section, program, join_year_prefixes)[:limit]
 
-    # Build course→students mapping
+    # Build course→students mapping using batch recommender when possible
     course_to_students: dict[str, set[int]] = {}
     student_rows: list[dict] = []
 
-    for sid in student_ids:
-        recs = recommend_next_courses(sid, current_academic_year, current_semester)
-        if recs:
+    if program:
+        all_recs = batch_recommend(student_ids, program, current_academic_year, current_semester)
+        for sid, recs in all_recs.items():
             student_rows.append({"student_id": sid, "recommended_courses": recs})
             for code in recs:
                 course_to_students.setdefault(code, set()).add(sid)
+    else:
+        # No program filter — need per-student program lookup
+        for sid in student_ids:
+            recs = recommend_next_courses(sid, current_academic_year, current_semester)
+            if recs:
+                student_rows.append({"student_id": sid, "recommended_courses": recs})
+                for code in recs:
+                    course_to_students.setdefault(code, set()).add(sid)
 
     # Build NxN matrix
     courses = sorted(course_to_students.keys())
