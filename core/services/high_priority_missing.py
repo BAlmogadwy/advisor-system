@@ -1,8 +1,8 @@
-from collections import deque
+from collections import defaultdict, deque
 from pathlib import Path
 from typing import Any
 
-from core.models import Prerequisite, Student
+from core.models import Prerequisite, Student, StudentCourse
 from core.services.recommender import get_all_department_courses
 from core.services.student_helpers import (
     get_student_passed_and_studying,
@@ -152,8 +152,34 @@ def run_missing_high_priority_report(
     program_cache: dict[str, dict[str, Any]] = {}
     per_student_grouped: dict[int, dict[str, Any]] = {}
 
+    if not students:
+        return {"count": 0, "results": [], "filters": {}}
+
+    # Batch-load student programs (1 query instead of N)
+    _student_programs: dict[int, str] = {}
+    for sid_val, prog_val in Student.objects.filter(
+        student_id__in=students
+    ).values_list("student_id", "program"):
+        if prog_val:
+            _student_programs[sid_val] = prog_val
+
+    # Batch-load passed/studying (1 query instead of N)
+    _sc_rows = list(
+        StudentCourse.objects.filter(student_id__in=students)
+        .select_related("course")
+        .values_list("student_id", "course__course_code", "status")
+    )
+    _student_passed: dict[int, set[str]] = defaultdict(set)
+    _student_studying: dict[int, set[str]] = defaultdict(set)
+    for sid_val, code, status in _sc_rows:
+        c = normalize_code(code)
+        if status == "passed":
+            _student_passed[sid_val].add(c)
+        elif status == "studying":
+            _student_studying[sid_val].add(c)
+
     for sid in students:
-        student_program = get_student_program(sid)
+        student_program = _student_programs.get(sid)
         if not student_program:
             continue
         if program and student_program != program:
@@ -188,9 +214,8 @@ def run_missing_high_priority_report(
         universe = program_cache[student_program]["universe"]
         prereqs_map = program_cache[student_program]["prereqs_map"]
 
-        passed, studying = get_student_passed_and_studying(sid)
-        passed_n = {normalize_code(x) for x in passed}
-        studying_n = {normalize_code(x) for x in studying}
+        passed_n = _student_passed.get(sid, set())
+        studying_n = _student_studying.get(sid, set())
 
         candidates: list[tuple[str, float]] = []
         for course in universe:

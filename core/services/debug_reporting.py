@@ -3,7 +3,7 @@ from collections.abc import Iterable
 
 from core.models import Prerequisite, Student, StudentCourse
 from core.services.recommender import calculate_real_student_term, recommend_next_courses
-from core.services.recommender_batch import batch_recommend
+from core.services.recommender_batch import batch_recommend, batch_recommend_multi_program
 from core.services.student_helpers import (
     get_prerequisites,
     get_student_passed_and_studying,
@@ -100,12 +100,7 @@ def build_recommendation_debug_report(
     if program:
         all_recs = batch_recommend(student_ids, program, current_academic_year, current_semester)
     else:
-        # Mixed programs — fall back to per-student
-        all_recs = {}
-        for sid_val in student_ids:
-            recs = recommend_next_courses(sid_val, current_academic_year, current_semester)
-            if recs:
-                all_recs[sid_val] = recs
+        all_recs = batch_recommend_multi_program(student_ids, current_academic_year, current_semester)
 
     # ── Build items from pre-loaded data ─────────────────────────
     items: list[dict] = []

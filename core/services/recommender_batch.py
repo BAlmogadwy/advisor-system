@@ -142,3 +142,42 @@ def batch_recommend(
             results[sid] = recs
 
     return results
+
+
+def batch_recommend_multi_program(
+    student_ids: list[int],
+    current_academic_year: int,
+    current_semester: int,
+) -> dict[int, list[str]]:
+    """Recommend courses for students across ALL programs.
+
+    Groups students by program, runs batch_recommend per group.
+    Works when no program filter is specified.
+
+    Total queries: ~5 per program (not per student).
+    """
+    if not student_ids:
+        return {}
+
+    # Group students by program (1 query)
+    student_programs: dict[int, str] = {}
+    for sid, prog in Student.objects.filter(
+        student_id__in=student_ids
+    ).values_list("student_id", "program"):
+        if prog:
+            student_programs[sid] = prog
+
+    # Group student IDs by program
+    by_program: dict[str, list[int]] = defaultdict(list)
+    for sid in student_ids:
+        prog = student_programs.get(sid)
+        if prog:
+            by_program[prog].append(sid)
+
+    # Run batch per program
+    results: dict[int, list[str]] = {}
+    for prog, prog_sids in by_program.items():
+        prog_results = batch_recommend(prog_sids, prog, current_academic_year, current_semester)
+        results.update(prog_results)
+
+    return results
