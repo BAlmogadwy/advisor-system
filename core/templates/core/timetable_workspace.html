@@ -1390,7 +1390,8 @@ function renderRightPanel(tab) {
     const overlaps = TW.conflicts.overlaps || [];
     const iClashes = TW.conflicts.instructor_clashes || [];
     const rClashes = TW.conflicts.room_clashes || [];
-    const total = overlaps.length + iClashes.length + rClashes.length;
+    const xConflictsEarly = TW.conflicts.cross_board_conflicts || [];
+    const total = overlaps.length + iClashes.length + rClashes.length + xConflictsEarly.length;
 
     if (total === 0) {
       body.innerHTML = `<div class="tw-empty" style="padding:24px"><p>${T.noIssues}</p></div>`;
