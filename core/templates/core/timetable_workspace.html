@@ -688,9 +688,9 @@ async function selectBoard(boardId) {
 
   renderBoardsNav();
   renderBoardTabs();
+  await loadConflicts();   // load conflicts BEFORE rendering grid so colors are correct
   renderGrid();
   renderBoardStrip();
-  await loadConflicts();
   await loadCapacity();
   await loadBudget();
 }
