@@ -288,6 +288,12 @@ STRATEGIES: dict[str, dict] = {
         "gap_multiplier": 10,
         "slot_preference": 0,
     },
+    "hybrid": {
+        "label": "Hybrid (Greedy + Annealing)",
+        "description": "Best quality — greedy build + simulated annealing improvement",
+        "gap_multiplier": 10,
+        "slot_preference": 0,
+    },
 }
 
 DEFAULT_STRATEGY = "compact"
@@ -728,6 +734,30 @@ def auto_place_scenario(scenario_id: int, strategy: str = DEFAULT_STRATEGY) -> d
     if strategy == "optimal":
         from core.services.timetable_solver import solve_scenario
         return solve_scenario(scenario_id, time_limit_seconds=5.0)
+
+    # Hybrid: greedy build + simulated annealing improvement
+    if strategy == "hybrid":
+        # Phase 1: greedy (compact) — build feasible solution
+        boards = DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order")
+        results = {}
+        total_placed = 0
+        total_skipped = 0
+        for board in boards:
+            r = auto_place_board(board.id, strategy="compact")
+            results[board.label] = r
+            total_placed += r["placed"]
+            total_skipped += r["skipped"]
+
+        # Phase 2: simulated annealing improvement
+        from core.services.timetable_local_search import optimize_scenario
+        sa_result = optimize_scenario(scenario_id, max_seconds_per_board=5.0)
+
+        return {
+            "boards": results,
+            "total_placed": total_placed,
+            "total_skipped": total_skipped,
+            "optimization": sa_result,
+        }
 
     boards = DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order")
     results = {}
