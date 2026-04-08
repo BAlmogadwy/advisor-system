@@ -429,29 +429,44 @@ def validate_placement(
 
 
 def compute_affected_students(board_id: int) -> dict:
-    """Compute directly affected students for overlapping placements on a board.
+    """Assess student impact of time-overlapping placements on a board.
 
-    For each overlap pair:
-    1. Find courses involved
-    2. Find students who need BOTH courses (status='studying')
-    3. For each affected student, check if an alternative section exists
-       (same course, different section, no time conflict with the other course)
-    4. Return affected/blocked/resolvable counts
+    For every pair of overlapping placements (detected by
+    :func:`detect_board_conflicts`):
+
+    1. Extract the two course codes from the ``"CS101-A"`` labels.
+    2. Query ``StudentCourse`` for students currently ``status='studying'``
+       *both* courses -- these are the "affected" students.
+    3. Search for **alternative sections** of either course that do not
+       overlap with the *other* placement's time slot.  If at least one
+       alternative exists, the overlap is "resolvable"; otherwise
+       affected students are "blocked" (no schedule exists for them).
+
+    Parameters:
+        board_id: PK of the ``DeliveryBoard``.
 
     Returns:
-        {
-            "affected_count": int,
-            "blocked_count": int,
-            "resolvable_count": int,
-            "overlap_details": [
-                {
-                    "courses": [code_a, code_b],
-                    "affected": int,
-                    "blocked": int,
-                    "students": [student_id, ...] (first 20)
-                }
-            ]
-        }
+        A dict with the shape::
+
+            {
+                "affected_count":   int,  # total students across all overlaps
+                "blocked_count":    int,  # students with NO alternative section
+                "resolvable_count": int,  # affected - blocked
+                "overlap_details":  [
+                    {
+                        "courses":    [code_a, code_b],
+                        "affected":   int,
+                        "blocked":    int,
+                        "resolvable": bool,
+                        "students":   [student_id, ...]  # first 20
+                    },
+                    ...
+                ]
+            }
+
+    Business rule:
+        Same-course overlaps (two sections of ``CS101``) are skipped
+        because a student only registers for one section of a course.
     """
     from core.models import Course, StudentCourse
 
@@ -461,9 +476,9 @@ def compute_affected_students(board_id: int) -> dict:
     if not overlaps:
         return {"affected_count": 0, "blocked_count": 0, "resolvable_count": 0, "overlap_details": []}
 
-    # Build a set of all placed section masks for alternative checking
+    # All placed sections on this board -- needed to look up masks and
+    # to exclude already-placed sections when searching for alternatives.
     all_placements = _load_board_placements(board_id)
-    # Build course → available TermSections (all, not just placed)
     from core.models import TermSectionMeeting as TSM
 
     total_affected = 0
@@ -481,7 +496,9 @@ def compute_affected_students(board_id: int) -> dict:
         code_b = sections[1].rsplit("-", 1)[0] if "-" in sections[1] else sections[1]
 
         if code_a == code_b:
-            continue  # Same course different sections — not a student conflict
+            # Same course, different sections -- a student only takes one
+            # section of a course, so this is not a real student conflict.
+            continue
 
         # Find students studying BOTH courses
         students_a = set(
@@ -499,9 +516,13 @@ def compute_affected_students(board_id: int) -> dict:
         if not affected_students:
             continue
 
-        # Check if alternatives exist: other sections of course_a or course_b
-        # that don't overlap with the conflicting placement
-        # Get the masks of the two conflicting placements
+        # --- Alternative-section search ---
+        # If we can find at least one *unplaced* section of course_a
+        # whose meetings do not overlap with placement_b (or vice versa),
+        # then the conflict is "resolvable" -- the student could be moved
+        # to the alternative section.
+
+        # Retrieve the bitmasks of the two conflicting placements.
         mask_a = 0
         mask_b = 0
         for p in all_placements:
@@ -510,7 +531,7 @@ def compute_affected_students(board_id: int) -> dict:
             elif p.id == ids[1]:
                 mask_b = p.mask
 
-        # Find alternative sections for course_a (not overlapping with placement_b)
+        # Alternative sections for course_a that don't clash with placement_b
         alt_a_sections = TermSection.objects.filter(course_code=code_a).exclude(
             id__in=[p.term_section_id for p in all_placements if p.course_code == code_a]
         )
@@ -520,11 +541,11 @@ def compute_affected_students(board_id: int) -> dict:
             alt_mask = 0
             for m in alt_meetings:
                 alt_mask |= _time_mask(m.day, m.start_time, m.end_time)
-            if not (alt_mask & mask_b):
+            if not (alt_mask & mask_b):  # No overlap with placement_b
                 has_alt_a = True
                 break
 
-        # Find alternative sections for course_b (not overlapping with placement_a)
+        # Alternative sections for course_b that don't clash with placement_a
         alt_b_sections = TermSection.objects.filter(course_code=code_b).exclude(
             id__in=[p.term_section_id for p in all_placements if p.course_code == code_b]
         )
@@ -534,10 +555,11 @@ def compute_affected_students(board_id: int) -> dict:
             alt_mask = 0
             for m in alt_meetings:
                 alt_mask |= _time_mask(m.day, m.start_time, m.end_time)
-            if not (alt_mask & mask_a):
+            if not (alt_mask & mask_a):  # No overlap with placement_a
                 has_alt_b = True
                 break
 
+        # Either direction resolves the overlap for the student.
         resolvable = has_alt_a or has_alt_b
         affected_count = len(affected_students)
         blocked_count = 0 if resolvable else affected_count
@@ -565,7 +587,16 @@ def compute_affected_students(board_id: int) -> dict:
 
 
 def compute_board_summary(board_id: int) -> dict:
-    """Compute summary stats for a board."""
+    """Return high-level statistics for a single board.
+
+    Parameters:
+        board_id: PK of the ``DeliveryBoard``.
+
+    Returns:
+        A dict with ``board_id``, ``label``, ``placed_sections``,
+        ``target_size``, ``critical_conflicts``, and
+        ``warning_conflicts``.  Empty dict if the board does not exist.
+    """
     try:
         board = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
     except DeliveryBoard.DoesNotExist:
@@ -588,7 +619,18 @@ def compute_board_summary(board_id: int) -> dict:
 
 
 def get_scenario_boards_summary(scenario_id: int) -> list[dict]:
-    """Get all boards for a scenario with conflict summaries and student counts."""
+    """Return a summary row for every board in a scenario.
+
+    Each row includes placement count, primary/visitor student counts,
+    and critical/warning conflict tallies.  Used by the scenario
+    overview panel in the workspace UI.
+
+    Parameters:
+        scenario_id: PK of the parent ``Scenario``.
+
+    Returns:
+        List of dicts ordered by ``DeliveryBoard.display_order``.
+    """
     boards = DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order")
     result = []
     for b in boards:
@@ -615,19 +657,34 @@ def get_scenario_boards_summary(scenario_id: int) -> list[dict]:
 
 
 def compute_scenario_budget(scenario_id: int) -> list[dict]:
-    """Compute section budget consumption across all boards in a scenario.
+    """Compare planned section budgets against actual board usage.
 
-    Returns per-course: planned, used, remaining, which boards are using it.
+    For every ``ScenarioSectionBudget`` row (one per course), counts how
+    many **distinct sections** have been placed across all boards in the
+    scenario and reports planned / used / remaining.
+
+    Important:
+        A 4-credit section typically generates 3 ``SectionPlacement``
+        rows (lecture + lab + tutorial).  The budget counts **distinct
+        section labels** (e.g. ``{"A", "B"}``), not raw placement rows.
+
+    Parameters:
+        scenario_id: PK of the parent ``Scenario``.
+
+    Returns:
+        List of per-course dicts sorted by ``(programme_term, course_code)``.
     """
     budgets = ScenarioSectionBudget.objects.filter(scenario_id=scenario_id)
 
-    # Count DISTINCT sections per course (not placement rows — a 4cr section has 3 placements)
+    # Count DISTINCT sections per course -- keyed by course_code, valued
+    # by the *set* of section labels (e.g. {"A", "B"}).  This avoids
+    # double-counting multi-placement sections (lecture + lab rows).
     placements = (
         SectionPlacement.objects.filter(board__scenario_id=scenario_id)
         .select_related("term_section")
     )
-    used_sections: dict[str, set[str]] = defaultdict(set)  # course_code -> set of section labels
-    board_usage: dict[str, set[int]] = defaultdict(set)
+    used_sections: dict[str, set[str]] = defaultdict(set)  # course_code -> {section labels}
+    board_usage: dict[str, set[int]] = defaultdict(set)    # course_code -> {board PKs}
     for p in placements:
         code = p.term_section.course_code
         sec = p.term_section.section
@@ -659,10 +716,29 @@ def compute_scenario_budget(scenario_id: int) -> list[dict]:
 
 
 def detect_cross_board_conflicts(scenario_id: int) -> list[dict]:
-    """Detect conflicts between placements on different boards that affect shared students.
+    """Find time-overlapping placements across *different* boards that
+    impact shared students.
 
-    For each pair of boards, checks if any placements overlap in time AND
-    have students who need courses from both boards.
+    Unlike :func:`detect_board_conflicts` (single-board), this checks
+    every (board_a, board_b) pair.  A cross-board conflict is reported
+    only when:
+
+    1. A placement on board_a and a placement on board_b overlap in time
+       (bitmask AND), **and**
+    2. At least one student in ``ScenarioStudentMap`` needs courses from
+       *both* placements (set intersection of recommended_courses).
+
+    De-duplicated by sorted course-code pair so each course-pair appears
+    at most once.  Results are sorted by descending ``overlap_count``
+    (most-impacted pair first).
+
+    Parameters:
+        scenario_id: PK of the parent ``Scenario``.
+
+    Returns:
+        List of conflict dicts, each containing board labels, section
+        labels, overlap count, and time description.  Empty list if
+        fewer than two boards exist.
     """
     boards = list(DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order"))
     if len(boards) < 2:
@@ -673,7 +749,8 @@ def detect_cross_board_conflicts(scenario_id: int) -> list[dict]:
     for b in boards:
         board_placements[b.id] = _load_board_placements(b.id)
 
-    # Load student course needs from ScenarioStudentMap
+    # Build an inverted index: course_code -> set of student IDs that
+    # need that course (from the scenario's pre-computed recommendations).
     student_maps = ScenarioStudentMap.objects.filter(scenario_id=scenario_id)
     course_students: dict[str, set[int]] = defaultdict(set)
     for sm in student_maps:
@@ -681,6 +758,8 @@ def detect_cross_board_conflicts(scenario_id: int) -> list[dict]:
             course_students[code].add(sm.student_id)
 
     conflicts: list[dict] = []
+    # De-duplicate by sorted (course_a, course_b) so each course pair
+    # is reported at most once regardless of how many section combos clash.
     seen: set[tuple] = set()
 
     for i, board_a in enumerate(boards):
@@ -690,8 +769,9 @@ def detect_cross_board_conflicts(scenario_id: int) -> list[dict]:
 
             for pa in pa_list:
                 for pb in pb_list:
-                    if pa.mask & pb.mask:  # Time overlap
-                        # How many students need BOTH courses?
+                    # Bitmask AND: non-zero means the two slots overlap
+                    if pa.mask & pb.mask:
+                        # Students needing BOTH courses
                         shared = course_students.get(pa.course_code, set()) & course_students.get(
                             pb.course_code, set()
                         )
@@ -726,10 +806,22 @@ def detect_cross_board_conflicts(scenario_id: int) -> list[dict]:
 
 
 def check_publish_readiness(scenario_id: int) -> dict:
-    """Check if a scenario is ready for publish.
+    """Determine whether a scenario can be published (finalised).
+
+    Blockers (prevent publish):
+        - No boards exist in the scenario.
+        - A board has zero placements.
+        - A board has any **critical** conflicts (time overlaps or
+          instructor double-bookings).
+
+    Warnings (advisory, do not block):
+        - A board has room-clash warnings.
+
+    Parameters:
+        scenario_id: PK of the ``Scenario``.
 
     Returns:
-        {"ready": bool, "blockers": [...], "warnings": [...]}
+        ``{"ready": bool, "blockers": [...], "warnings": [...]}``
     """
     boards = DeliveryBoard.objects.filter(scenario_id=scenario_id)
     blockers: list[str] = []

@@ -334,14 +334,21 @@ def generate_workspace_scenario(
     summary = compute_plan_summary(plan)
 
     # ── Step 4: Create scenario + boards ─────────────────────────
+    # A TimetableScenario is the top-level container.  Each scenario
+    # holds one DeliveryBoard per active curriculum-term level (e.g.
+    # "Term 3", "Term 5").  Boards group students and section
+    # placements that belong to the same cohort.
 
+    # Auto-generate a descriptive name when none is supplied.
     if not scenario_name:
         import datetime
         ts = datetime.datetime.now().strftime("%H%M%S")
         sec_label = f" {section}" if section else ""
         scenario_name = f"{program_label}{sec_label} T{semester} Draft {ts}"
 
-    # Get default slot template, or use standard academic slots
+    # Resolve the time-slot grid.  Prefer the admin-configured default
+    # template; fall back to the hardcoded DEFAULT_SLOTS from the
+    # auto-placement engine if no template has been marked as default.
     slot_config: list[object] = []
     default_tpl = TimeSlotTemplate.objects.filter(is_default=True).first()
     if default_tpl:
@@ -358,10 +365,13 @@ def generate_workspace_scenario(
         created_by=created_by,
     )
 
-    # Create one board per active term level
+    # Create one DeliveryBoard per active term level.  "Active" means
+    # at least one classified student has that term as their primary.
     active_terms = sorted(term_student_counts.keys())
     board_by_term: dict[int, DeliveryBoard] = {}
 
+    # For multi-program scenarios the board's ``program`` field stores
+    # the comma-joined label (e.g. "AI,DS,CS").
     board_program = programs[0] if len(programs) == 1 else program_label
     for pt in active_terms:
         board = DeliveryBoard.objects.create(
@@ -376,8 +386,11 @@ def generate_workspace_scenario(
         board_by_term[pt] = board
 
     # ── Step 5: Persist classification + budget + links ──────────
+    # Three bulk-create operations store the generated data so it can
+    # be queried later by the workspace UI and the auto-placer.
 
-    # Persist student classification
+    # 5a. ScenarioStudentMap — one row per classified student, recording
+    #     their primary term, cross-term flag, and recommended courses.
     ssm_objs = [
         ScenarioStudentMap(
             scenario=scenario,
@@ -390,10 +403,14 @@ def generate_workspace_scenario(
     ]
     ScenarioStudentMap.objects.bulk_create(ssm_objs, ignore_conflicts=True)
 
-    # Persist section budget
+    # 5b. ScenarioSectionBudget — one row per course, recording the
+    #     number of planned sections, capacity per section, total
+    #     demand, and the curriculum term the course belongs to.
     budget_objs = []
     for entry in plan:
         code = entry["course_code"]
+        # Look up which curriculum term this course belongs to so it
+        # can be associated with the correct board later.
         pt = course_term_map.get(normalize_code(code))
         budget_objs.append(
             ScenarioSectionBudget(
@@ -409,9 +426,15 @@ def generate_workspace_scenario(
         )
     ScenarioSectionBudget.objects.bulk_create(budget_objs, ignore_conflicts=True)
 
-    # Persist board-student links
+    # 5c. BoardStudentLink — connects students to boards.
+    #     Two link types:
+    #       "primary" — the student's main board (their primary term).
+    #       "visitor" — boards the student must also attend because
+    #                   some of their courses belong to a different
+    #                   term level (cross-term students only).
     bsl_objs = []
     for s in classified:
+        # Every classified student gets exactly one primary link.
         primary_board = board_by_term.get(s["primary_term"])
         if primary_board:
             bsl_objs.append(
@@ -422,7 +445,8 @@ def generate_workspace_scenario(
                 )
             )
 
-        # Visitor links for cross-term courses
+        # Cross-term students additionally get visitor links to every
+        # other board whose courses they need.
         if s["is_cross_term"]:
             for code in s["recommended_courses"]:
                 ct = course_term_map.get(normalize_code(code))
@@ -438,30 +462,41 @@ def generate_workspace_scenario(
     BoardStudentLink.objects.bulk_create(bsl_objs, ignore_conflicts=True)
 
     # ── Step 6: Auto-place first draft ───────────────────────────
+    # Run the constraint-based auto-placement engine, which assigns
+    # each budgeted section to a (day, slot) on its board while
+    # respecting conflict and capacity constraints.  The result is a
+    # first-draft timetable that advisors can fine-tune manually.
 
     from core.services.timetable_autoplace import auto_place_scenario, get_meeting_pattern
 
     auto_result = auto_place_scenario(scenario.id)
 
     # ── Build response ───────────────────────────────────────────
+    # Assemble a comprehensive response dict that the frontend and API
+    # consumers use to render the workspace.
 
     boards_response = []
     for pt in active_terms:
         board = board_by_term[pt]
+
+        # Count primary and visitor students linked to this board.
         primary_count = BoardStudentLink.objects.filter(
             board=board, link_type="primary"
         ).count()
         visitor_count = BoardStudentLink.objects.filter(
             board=board, link_type="visitor"
         ).count()
+        # How many section placements the auto-placer created on this board.
         placement_count = SectionPlacement.objects.filter(board=board).count()
 
+        # Courses that belong to this board's term level.
         board_courses = [
             b.course_code
             for b in budget_objs
             if b.programme_term == pt
         ]
 
+        # Auto-placement statistics for this board (placed vs skipped).
         board_auto = auto_result["boards"].get(board.label, {})
 
         boards_response.append({
@@ -479,17 +514,21 @@ def generate_workspace_scenario(
             "warning": 0,
         })
 
-    # Budget with meeting pattern + actual used count after auto-placement
+    # Re-compute the budget from the DB (now includes actual placement
+    # counts) and enrich each entry with meeting-pattern info so the UI
+    # can show how many meetings per week each course requires and their
+    # durations (e.g. a 3-credit course meets 3x50min or 2x75min).
     from core.services.timetable_workspace import compute_scenario_budget
 
     budget_response = compute_scenario_budget(scenario.id)
-    # Enrich with meeting pattern
     for b in budget_response:
         cr = b.get("credit_hours", 3)
         pattern = get_meeting_pattern(cr)
         b["meetings_per_week"] = len(pattern)
         b["meeting_durations"] = pattern
 
+    # Student summary: how many are on-plan (all courses in one term)
+    # vs cross-term (courses spanning multiple term levels).
     on_plan = sum(1 for s in classified if not s["is_cross_term"])
     cross_term = sum(1 for s in classified if s["is_cross_term"])
 

@@ -2,10 +2,32 @@
 core/services/timetable_export.py
 XLSX export for the Timetable Workspace.
 
-Exports all boards in a scenario to a styled workbook:
-- One sheet per term level with timetable grid + course info sidebar
-- Summary sheet with budget, student counts, conflict overview
-- Conflict Matrix sheet showing student overlap between courses
+Exports all boards in a scenario to a styled, print-ready workbook using
+openpyxl.  The workbook structure is:
+
+Sheets
+------
+* **Term N** (one per term level) -- contains:
+    - A day-vs-slot timetable grid for each delivery board, with pastel
+      colour-coding per course and red highlighting for time conflicts.
+    - A course info sidebar (right of the grid) showing course name,
+      credits, planned sections, and student demand.
+    - A per-term conflict matrix showing how many students need each pair
+      of courses simultaneously.
+* **Conflicts (All)** -- a global NxN student-overlap heatmap across every
+  course in the scenario.
+* **Summary** -- scenario metadata, per-board stats (primary / visitor
+  counts, conflict tallies), and the full section budget table.
+
+Styling
+-------
+* Teal header fills (``#0A8E6E``), navy board headers (``#111144``),
+  royal-blue info headers (``#4056E3``).
+* 20 distinct pastel fills for course cells, conflict cells highlighted
+  in salmon (``#F4CCCC``).
+* Thick outer borders around every table block.
+
+Called from ``timetable_workspace_views.tw_scenario_export_view``.
 """
 
 from __future__ import annotations
@@ -28,7 +50,26 @@ from core.services.timetable_workspace import compute_scenario_budget, detect_bo
 
 
 def export_scenario_xlsx(scenario_id: int) -> Path:
-    """Export a scenario's timetable to a styled XLSX workbook."""
+    """Export a scenario's timetable to a styled XLSX workbook.
+
+    Parameters
+    ----------
+    scenario_id : int
+        Primary key of the ``TimetableScenario`` to export.
+
+    Returns
+    -------
+    Path
+        Path to a temporary ``.xlsx`` file.  The caller is responsible for
+        serving it (e.g. via ``FileResponse``) and cleaning up afterwards.
+
+    Raises
+    ------
+    RuntimeError
+        If ``openpyxl`` is not installed.
+    TimetableScenario.DoesNotExist
+        If the scenario ID is invalid.
+    """
     try:
         from openpyxl import Workbook
         from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -49,7 +90,10 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
     thin_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
 
     def _apply_outer_border(ws, min_row, min_col, max_row, max_col):
-        """Apply thick outer border around a rectangular range."""
+        """Apply a thick (medium-weight) outer border around a rectangular cell range.
+
+        Preserves existing inner borders; only overwrites the edge sides.
+        """
         for r in range(min_row, max_row + 1):
             for c in range(min_col, max_col + 1):
                 cell = ws.cell(row=r, column=c)
@@ -100,7 +144,12 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
     ]
 
     def _course_fill(course_code: str, color_map: dict[str, str]) -> PatternFill:
-        """Get or assign a distinct pastel fill for a course."""
+        """Get or assign a distinct pastel fill for a course.
+
+        Colours are assigned in round-robin order from ``COURSE_COLORS``.
+        The mapping is shared across all groups/boards so the same course
+        always gets the same colour within a single term sheet.
+        """
         if course_code not in color_map:
             idx = len(color_map) % len(COURSE_COLORS)
             color_map[course_code] = COURSE_COLORS[idx]
@@ -170,8 +219,10 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
             )
 
             # ── Split placements into student groups ─────────────
-            # Group by unique (course_code, section) — not by placement rows
-            # A 4cr course has 3 placement rows (3 meetings) but is ONE section
+            # A single section may have multiple placement rows (one per
+            # weekly meeting, e.g. a 4-credit course meets 3 times/week).
+            # We group by unique (course_code, section) so each section
+            # appears once in the timetable grid, not once per meeting.
             from collections import defaultdict as _dd
             seen_sections: dict[str, dict[str, list]] = _dd(dict)  # code -> {sec_label -> [placements]}
             for p in placements:
@@ -195,13 +246,20 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
             for p in placements:
                 section_all_placements[p.term_section_id].append(p)
 
-            # ── Smart group assignment: minimize conflicts per group ──
-            # Instead of S1→Group1, S2→Group2 mechanically,
-            # assign the best-fitting section to each group using bitmasks
+            # ── Smart group assignment: minimise time conflicts per group ──
+            # When a course has multiple sections (e.g. S1, S2, S3), we need
+            # to assign one section per group.  Instead of a naive round-robin
+            # (S1->G1, S2->G2), we use bitmask overlap counting to greedily
+            # pick the section that clashes least with sections already in
+            # that group.  This produces cleaner, more printable timetables.
             from core.services.timetable_workspace import _time_mask
 
             def _section_bitmask(ts_id: int) -> int:
-                """Compute combined bitmask for all placements of a section."""
+                """Compute a combined time-slot bitmask for all meetings of a section.
+
+                Each bit represents a unique (day, time-slot) combination.
+                Two sections overlap iff their bitmasks have common set bits.
+                """
                 mask = 0
                 for pp in section_all_placements.get(ts_id, []):
                     mask |= _time_mask(pp.day, pp.start_time, pp.end_time)
@@ -579,12 +637,30 @@ def _write_mini_conflict_matrix(
     ws, start_row, start_col, scenario, term_num, term_courses,
     hdr_fill, hdr_font, hdr_align, thin_border, normal_font, center_align,
 ):
-    """Write a conflict matrix for one term level on an existing sheet.
+    """Write a per-term conflict matrix on an existing worksheet.
 
-    Includes ALL courses that the board's students need (not just the term's
-    curriculum courses). Cross-term courses are marked with an asterisk.
-    This is critical because a Term 3 student repeating MATH105 (Term 1) must
-    not have it overlap with their Term 3 courses.
+    The matrix shows how many students need each pair of courses
+    simultaneously.  It includes **all** courses that the board's students
+    need -- not just courses from this term's curriculum -- because a
+    Term 3 student repeating MATH105 (Term 1) must not have it overlap
+    with their Term 3 courses.  Cross-term courses are prefixed with
+    ``*`` in both row and column headers and given a distinct header colour.
+
+    Parameters
+    ----------
+    ws : openpyxl.worksheet.Worksheet
+        The worksheet to write into.
+    start_row, start_col : int
+        Top-left cell coordinates for the matrix block.
+    scenario : TimetableScenario
+        The parent scenario (used to look up student maps).
+    term_num : int
+        The nominal term level for this matrix.
+    term_courses : set[str]
+        Course codes that belong to this term's curriculum (used to
+        distinguish native vs cross-term courses).
+    hdr_fill, hdr_font, hdr_align, thin_border, normal_font, center_align
+        Pre-built openpyxl style objects shared across the workbook.
     """
     from openpyxl.styles import Border, Font, PatternFill, Side
 
@@ -713,7 +789,23 @@ def _write_mini_conflict_matrix(
 
 def _build_conflict_matrix_sheet(wb, scenario, hdr_fill, hdr_font, hdr_align,
                                   thin_border, normal_font, bold_font, center_align):
-    """Build a Conflict Matrix sheet showing student overlap between courses."""
+    """Build the global "Conflicts (All)" sheet -- an NxN student overlap heatmap.
+
+    Unlike the per-term mini matrices, this sheet includes *every* course in
+    the scenario regardless of term level.  The diagonal cells show total
+    student count per course; off-diagonal cells show how many students need
+    both courses.  Cells are colour-coded with a teal-to-royal gradient
+    proportional to the overlap count.
+
+    Parameters
+    ----------
+    wb : openpyxl.Workbook
+        The workbook to add the sheet to.
+    scenario : TimetableScenario
+        The scenario whose ``ScenarioStudentMap`` records provide the data.
+    hdr_fill, hdr_font, hdr_align, thin_border, normal_font, bold_font, center_align
+        Pre-built openpyxl style objects shared across the workbook.
+    """
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
     ws = wb.create_sheet(title="Conflicts (All)")

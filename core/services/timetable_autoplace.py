@@ -497,7 +497,9 @@ def auto_place_board(board_id: int) -> dict:
         )
         online_codes = {c.strip().upper() for c in online_qs}
 
-    # Pre-compute per-course data
+    # ── 4. Pre-compute per-course data ────────────────────────────────
+    # For each budgeted course, determine how many sections still need
+    # placing and pre-generate all feasible meeting options.
     course_data: list[dict] = []
     for budget in budgets:
         code = budget.course_code
@@ -525,19 +527,25 @@ def auto_place_board(board_id: int) -> dict:
             "is_online": code.upper() in online_codes,
         })
 
-    # Place section-by-section across ALL courses: all S1s first, then all S2s, etc.
-    # This ensures S1 of different courses don't overlap (same student group 1),
-    # S2 of different courses don't overlap (same student group 2), etc.
+    # ── 5. Round-robin placement: all S1s, then all S2s, ... ──────────
+    # By placing all sections of the same group index together, we ensure
+    # that S1 of different courses (which serve the *same* primary student
+    # cohort) never overlap.  S2 sections get their own independent
+    # conflict space, and so on.
     max_sections_needed = max((cd["to_place"] for cd in course_data), default=0)
 
     for sec_round in range(1, max_sections_needed + 1):
-        # Group 1 (S1) = regular students taking full courses → BEST timetable
-        # Group 2+ = overflow → gaps acceptable
-        # Weight gap penalty higher for earlier groups
+        # Gap weighting: the primary group (S1) receives a 10x multiplier
+        # on gap penalty, making the algorithm work hard to give them a
+        # compact, zero-gap schedule.  Overflow groups (S2, S3, ...) get
+        # progressively lower weights since their students are less likely
+        # to take a full course load.
         gap_weight = max(1, 11 - sec_round)  # S1=10x, S2=9x, S3=8x, ...
 
-        # Sort courses by credit hours descending — place 4cr (3 meetings) first
-        # so they claim the best adjacent slot patterns, then 3cr, then 2cr
+        # Sort courses by credit hours descending -- place 4-credit courses
+        # (3 meetings/week) first so they claim the best adjacent slot
+        # patterns, then 3-credit, then 2-credit.  Ties broken by student
+        # count descending (higher demand = higher priority).
         course_data_sorted = sorted(
             course_data,
             key=lambda cd: (-cd["credit_hours"], -len(cd["students"])),
@@ -553,7 +561,7 @@ def auto_place_board(board_id: int) -> dict:
             my_students = cd["students"]
             all_options = cd["all_options"]
 
-            # Score against SAME GROUP's masks (same student cohort = must not overlap)
+            # Retrieve the bitmasks and schedule for the SAME group only.
             same_group = group_masks.get(sec_idx, [])
             same_sched = group_schedule.get(sec_idx)
 
@@ -562,6 +570,7 @@ def auto_place_board(board_id: int) -> dict:
 
             is_online = cd.get("is_online", False)
 
+            # ── Score every candidate option and keep the best ────────
             for option in all_options:
                 raw_score = _score_option(
                     option, same_group, course_students, my_students,
@@ -570,7 +579,8 @@ def auto_place_board(board_id: int) -> dict:
                     other_sections_masks=all_placed_masks,
                     is_online=is_online,
                 )
-                # Weight gap by group priority: S1 gets 10x gap penalty
+                # Apply the group-dependent gap weight (element [2] is
+                # student_gap).  This makes S1 gap-averse and S2+ tolerant.
                 score = (raw_score[0], raw_score[1], raw_score[2] * gap_weight, raw_score[3], raw_score[4])
                 if score < best_score:
                     best_score = score
@@ -580,7 +590,8 @@ def auto_place_board(board_id: int) -> dict:
                 total_skipped += 1
                 continue
 
-            # Create TermSection
+            # ── Persist the chosen placement ──────────────────────────
+            # TermSection: the logical section record (e.g. "MATH101 S1").
             ts, _ = TermSection.objects.get_or_create(
                 course_key=code,
                 section=sec_label,
@@ -593,6 +604,9 @@ def auto_place_board(board_id: int) -> dict:
                 },
             )
 
+            # TermSectionMeeting + SectionPlacement: one row per meeting
+            # day.  Also update the in-memory tracking structures so
+            # subsequent placements see the new constraints.
             meeting_results = []
             for m in best_option:
                 TermSectionMeeting.objects.get_or_create(
@@ -632,7 +646,23 @@ def auto_place_board(board_id: int) -> dict:
 
 
 def auto_place_scenario(scenario_id: int) -> dict:
-    """Auto-place sections on ALL boards in a scenario."""
+    """Auto-place sections on every board in a scenario.
+
+    Iterates over all ``DeliveryBoard`` rows belonging to the scenario
+    (ordered by ``display_order``) and calls ``auto_place_board`` for each.
+
+    Parameters
+    ----------
+    scenario_id : int
+        Primary key of the ``TimetableScenario``.
+
+    Returns
+    -------
+    dict
+        ``{"boards": {label: board_result, ...}, "total_placed": int,
+        "total_skipped": int}`` where each *board_result* has the same
+        shape as the return value of ``auto_place_board``.
+    """
     boards = DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order")
     results = {}
     total_placed = 0

@@ -1,27 +1,55 @@
 """
 core/timetable_workspace_views.py
-Timetable Builder Workspace — page view + API endpoints.
+Timetable Builder Workspace -- page view + JSON API endpoints.
 
-Endpoints:
-    GET  timetable_workspace_page       – render the workspace page
-    GET  tw_scenarios_list_view         – list scenarios for year/term
-    POST tw_scenario_create_view        – create a new scenario
-    GET  tw_scenario_detail_view        – get scenario detail
-    POST tw_scenario_slots_update_view  – edit scenario slot config
-    POST tw_scenario_publish_view       – publish scenario
-    GET  tw_boards_list_view            – list boards for scenario
-    POST tw_board_create_view           – create a board
-    GET  tw_board_detail_view           – board detail + placements
-    GET  tw_board_summary_view          – board summary stats
-    GET  tw_board_conflicts_view        – full conflict analysis
-    GET  tw_board_capacity_view         – demand vs raw capacity
-    GET  tw_board_unplaced_view         – unplaced sections for board
-    POST tw_placement_create_view       – place section on board
-    POST tw_placement_move_view         – move placement
-    POST tw_placement_remove_view       – remove placement
-    POST tw_placement_lock_view         – toggle lock
-    GET  tw_slot_templates_list_view    – list slot templates
-    POST tw_slot_template_create_view   – create slot template
+All API endpoints return ``JsonResponse`` with a top-level ``"ok"`` boolean.
+Successful responses include ``"ok": true`` plus the data payload; errors
+include ``"ok": false`` plus an ``"error"`` object with ``code`` and
+``message`` fields.
+
+Authentication / Authorisation
+------------------------------
+Every endpoint requires ``@login_required`` **and** the General Advisor or
+Super Admin role (enforced by ``_require_general_advisor``).  Published
+scenarios are immutable -- any mutation attempt returns
+``SCENARIO_PUBLISHED`` (HTTP 400).
+
+Endpoint catalogue
+------------------
+Page
+    GET  timetable_workspace_page        -- render the SPA shell
+
+Scenarios
+    GET  tw_scenarios_list_view          -- list scenarios for year/term
+    POST tw_scenario_create_view         -- create a new scenario
+    GET  tw_scenario_detail_view         -- get scenario detail
+    POST tw_scenario_slots_update_view   -- edit scenario slot config
+    POST tw_scenario_publish_view        -- publish (lock) a scenario
+    GET  tw_scenario_budget_view         -- section budget consumption
+    GET  tw_scenario_export_view         -- download XLSX export
+
+Generate
+    POST tw_generate_workspace_view      -- create scenario + boards + students
+
+Boards
+    GET  tw_boards_list_view             -- list boards for a scenario
+    POST tw_board_create_view            -- create a board
+    GET  tw_board_detail_view            -- board detail + placements
+    GET  tw_board_summary_view           -- board summary stats
+    GET  tw_board_conflicts_view         -- full conflict analysis
+    GET  tw_board_capacity_view          -- demand vs raw capacity
+    GET  tw_board_unplaced_view          -- unplaced sections for a board
+
+Placements
+    POST tw_placement_create_view        -- place an existing section on a board
+    POST tw_placement_create_planned_view -- auto-create section + place it
+    POST tw_placement_move_view          -- move placement to new slot
+    POST tw_placement_remove_view        -- remove placement
+    POST tw_placement_lock_view          -- toggle lock on a placement
+
+Slot Templates
+    GET  tw_slot_templates_list_view     -- list slot templates
+    POST tw_slot_template_create_view    -- create a slot template
 """
 
 from __future__ import annotations
@@ -69,12 +97,26 @@ logger = logging.getLogger(__name__)
 
 
 def _ok(data: dict[str, object], status: int = 200) -> JsonResponse:
+    """Return a success JSON envelope: ``{"ok": true, ...data}``."""
     return JsonResponse({"ok": True, **data}, status=status)
 
 
 def _err(
     message: str, *, code: str, status: int = 400, details: dict[str, object] | None = None
 ) -> JsonResponse:
+    """Return an error JSON envelope: ``{"ok": false, "error": {...}}``.
+
+    Parameters
+    ----------
+    message : str
+        Human-readable error description.
+    code : str
+        Machine-readable error code (e.g. ``"NOT_FOUND"``).
+    status : int
+        HTTP status code (default 400).
+    details : dict, optional
+        Extra structured data attached to the error object.
+    """
     payload: dict[str, object] = {"ok": False, "error": {"code": code, "message": message}}
     if details:
         payload["error"]["details"] = details  # type: ignore[index]
@@ -82,6 +124,11 @@ def _err(
 
 
 def _require_general_advisor(request: HttpRequest) -> JsonResponse | None:
+    """Guard: returns a 403 error response if the user lacks the required role.
+
+    Returns ``None`` if the user is a General Advisor or Super Admin,
+    allowing the caller to proceed.
+    """
     role = get_user_role(request.user)
     if role not in {ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN}:
         return _err("General Advisor access required", code="ROLE_REQUIRED", status=403)
@@ -89,6 +136,11 @@ def _require_general_advisor(request: HttpRequest) -> JsonResponse | None:
 
 
 def _safe_json(request: HttpRequest) -> tuple[dict[str, object], JsonResponse | None]:
+    """Parse the request body as JSON, returning ``(payload, None)`` on success.
+
+    On failure returns ``({}, error_response)``.  An empty body is treated as
+    an empty dict (not an error), to support POST endpoints with optional bodies.
+    """
     if not request.body:
         return {}, None
     try:
@@ -103,6 +155,10 @@ def _safe_json(request: HttpRequest) -> tuple[dict[str, object], JsonResponse | 
 
 
 def _validate_term_inputs(year: str, term: str) -> JsonResponse | None:
+    """Validate academic year (4 digits) and term (1, 2, or 3).
+
+    Returns ``None`` on success or a 400 error response on failure.
+    """
     if not re.fullmatch(r"\d{4}", year):
         return _err("academic_year must be 4 digits", code="VALIDATION_YEAR", status=400)
     if term not in {"1", "2", "3"}:
@@ -111,6 +167,7 @@ def _validate_term_inputs(year: str, term: str) -> JsonResponse | None:
 
 
 def _scenario_to_dict(s: TimetableScenario) -> dict[str, object]:
+    """Serialise a ``TimetableScenario`` instance to a JSON-safe dict."""
     return {
         "id": s.id,
         "academic_year": s.academic_year,
@@ -126,6 +183,7 @@ def _scenario_to_dict(s: TimetableScenario) -> dict[str, object]:
 
 
 def _board_to_dict(b: DeliveryBoard) -> dict[str, object]:
+    """Serialise a ``DeliveryBoard`` instance to a JSON-safe dict."""
     return {
         "id": b.id,
         "scenario_id": b.scenario_id,
@@ -140,6 +198,11 @@ def _board_to_dict(b: DeliveryBoard) -> dict[str, object]:
 
 
 def _placement_to_dict(p: SectionPlacement) -> dict[str, object]:
+    """Serialise a ``SectionPlacement`` with its meetings to a JSON-safe dict.
+
+    Includes the related ``TermSection`` fields (course code, capacity, etc.)
+    and all ``TermSectionMeeting`` records for that section.
+    """
     ts = p.term_section
     meetings = list(
         TermSectionMeeting.objects.filter(term_section=ts).values(
@@ -171,6 +234,11 @@ def _placement_to_dict(p: SectionPlacement) -> dict[str, object]:
 @login_required(login_url="login")
 @require_GET
 def timetable_workspace_page(request: HttpRequest) -> HttpResponse:
+    """Render the Timetable Workspace SPA shell page.
+
+    Injects default academic year and term from the system settings so the
+    frontend can pre-populate filter controls.
+    """
     deny = _require_general_advisor(request)
     if deny:
         return deny
@@ -204,7 +272,9 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
     year = payload.get("year")
     semester = payload.get("semester")
     program_raw = str(payload.get("program", "")).strip().upper()
-    # Accept comma-separated programs: "AI,DS" → ["AI", "DS"]
+    # Accept comma-separated programmes: "AI,DS" -> ["AI", "DS"].
+    # When a single programme is given, pass it as a string to the generator;
+    # when multiple are given, pass the list so boards are created per programme.
     programs = [p.strip() for p in program_raw.split(",") if p.strip()] if program_raw else []
     program = programs[0] if len(programs) == 1 else None
 
@@ -262,7 +332,10 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
 @login_required(login_url="login")
 @require_GET
 def tw_scenario_budget_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
-    """Section budget consumption for a scenario."""
+    """Return the section budget consumption table for a scenario.
+
+    Shows planned vs used vs remaining sections and total demand per course.
+    """
     deny = _require_general_advisor(request)
     if deny:
         return deny
@@ -281,6 +354,7 @@ def tw_scenario_budget_view(request: HttpRequest, scenario_id: int) -> JsonRespo
 @login_required(login_url="login")
 @require_GET
 def tw_scenarios_list_view(request: HttpRequest) -> JsonResponse:
+    """List all scenarios, optionally filtered by ``?year=`` and ``?term=``."""
     deny = _require_general_advisor(request)
     if deny:
         return deny
@@ -297,6 +371,12 @@ def tw_scenarios_list_view(request: HttpRequest) -> JsonResponse:
 @login_required(login_url="login")
 @require_POST
 def tw_scenario_create_view(request: HttpRequest) -> JsonResponse:
+    """Create a new empty scenario.
+
+    Accepts ``academic_year``, ``term``, ``name``, optional ``template_id``
+    for slot config seeding, and optional ``notes``.  If no template is
+    given, the system default template is used (if one exists).
+    """
     deny = _require_general_advisor(request)
     if deny:
         return deny
@@ -358,6 +438,7 @@ def tw_scenario_create_view(request: HttpRequest) -> JsonResponse:
 @login_required(login_url="login")
 @require_GET
 def tw_scenario_detail_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
+    """Return the full detail of a single scenario."""
     deny = _require_general_advisor(request)
     if deny:
         return deny
@@ -371,6 +452,11 @@ def tw_scenario_detail_view(request: HttpRequest, scenario_id: int) -> JsonRespo
 @login_required(login_url="login")
 @require_POST
 def tw_scenario_slots_update_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
+    """Replace the slot configuration (time periods) for a draft scenario.
+
+    Blocked if the scenario is already published.  Accepts a JSON body
+    with ``slot_config`` (array of ``{start, end}`` objects).
+    """
     deny = _require_general_advisor(request)
     if deny:
         return deny
@@ -405,6 +491,11 @@ def tw_scenario_slots_update_view(request: HttpRequest, scenario_id: int) -> Jso
 @login_required(login_url="login")
 @require_POST
 def tw_scenario_publish_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
+    """Publish (lock) a scenario, preventing further modifications.
+
+    Runs a readiness check first; if critical blockers exist the publish
+    is rejected with ``PUBLISH_BLOCKED`` and the list of blockers/warnings.
+    """
     deny = _require_general_advisor(request)
     if deny:
         return deny
@@ -469,6 +560,7 @@ def tw_scenario_export_view(request: HttpRequest, scenario_id: int) -> HttpRespo
 @login_required(login_url="login")
 @require_GET
 def tw_boards_list_view(request: HttpRequest) -> JsonResponse:
+    """List all boards for a scenario with summary stats (``?scenario_id=``)."""
     deny = _require_general_advisor(request)
     if deny:
         return deny
@@ -482,6 +574,12 @@ def tw_boards_list_view(request: HttpRequest) -> JsonResponse:
 @login_required(login_url="login")
 @require_POST
 def tw_board_create_view(request: HttpRequest) -> JsonResponse:
+    """Create a new delivery board within a draft scenario.
+
+    Requires ``scenario_id`` and ``label``; optional fields include
+    ``nominal_term``, ``board_type``, ``program``, ``target_size``,
+    ``display_order``, and ``notes``.
+    """
     deny = _require_general_advisor(request)
     if deny:
         return deny
@@ -532,6 +630,7 @@ def tw_board_create_view(request: HttpRequest) -> JsonResponse:
 @login_required(login_url="login")
 @require_GET
 def tw_board_detail_view(request: HttpRequest, board_id: int) -> JsonResponse:
+    """Return a board's metadata, slot config, all placements, and student counts."""
     deny = _require_general_advisor(request)
     if deny:
         return deny
@@ -557,6 +656,7 @@ def tw_board_detail_view(request: HttpRequest, board_id: int) -> JsonResponse:
 @login_required(login_url="login")
 @require_GET
 def tw_board_summary_view(request: HttpRequest, board_id: int) -> JsonResponse:
+    """Return aggregate summary stats for a board (sections, students, etc.)."""
     deny = _require_general_advisor(request)
     if deny:
         return deny
@@ -572,6 +672,11 @@ def tw_board_summary_view(request: HttpRequest, board_id: int) -> JsonResponse:
 @login_required(login_url="login")
 @require_GET
 def tw_board_conflicts_view(request: HttpRequest, board_id: int) -> JsonResponse:
+    """Return the full conflict analysis for a board.
+
+    Includes time-slot overlaps, instructor clashes, room clashes, the
+    student impact count, and cross-board conflicts involving this board.
+    """
     deny = _require_general_advisor(request)
     if deny:
         return deny
@@ -606,6 +711,10 @@ def tw_board_conflicts_view(request: HttpRequest, board_id: int) -> JsonResponse
 @login_required(login_url="login")
 @require_GET
 def tw_board_capacity_view(request: HttpRequest, board_id: int) -> JsonResponse:
+    """Return demand vs raw capacity for each course on a board.
+
+    Includes per-course deficit and aggregate totals.
+    """
     deny = _require_general_advisor(request)
     if deny:
         return deny
@@ -633,6 +742,11 @@ def tw_board_capacity_view(request: HttpRequest, board_id: int) -> JsonResponse:
 @login_required(login_url="login")
 @require_GET
 def tw_board_unplaced_view(request: HttpRequest, board_id: int) -> JsonResponse:
+    """Return sections not yet placed on this board.
+
+    Supports ``?search=`` to filter by course code, name, or section label.
+    Used by the UI's section picker sidebar.
+    """
     deny = _require_general_advisor(request)
     if deny:
         return deny
@@ -788,6 +902,11 @@ def tw_placement_create_planned_view(request: HttpRequest) -> JsonResponse:
 @login_required(login_url="login")
 @require_POST
 def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
+    """Place an existing ``TermSection`` onto a board at a given day/time.
+
+    Validates the placement for conflicts before persisting but still creates
+    it even if warnings exist (the validation result is returned alongside).
+    """
     deny = _require_general_advisor(request)
     if deny:
         return deny
@@ -869,6 +988,11 @@ def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
 @login_required(login_url="login")
 @require_POST
 def tw_placement_move_view(request: HttpRequest, placement_id: int) -> JsonResponse:
+    """Move an existing placement to a new day/time/room.
+
+    Locked placements require ``override: true`` in the payload.
+    Returns updated placement data plus the new validation result.
+    """
     deny = _require_general_advisor(request)
     if deny:
         return deny
@@ -937,6 +1061,10 @@ def tw_placement_move_view(request: HttpRequest, placement_id: int) -> JsonRespo
 @login_required(login_url="login")
 @require_POST
 def tw_placement_remove_view(request: HttpRequest, placement_id: int) -> JsonResponse:
+    """Remove a placement from its board.
+
+    Locked placements require ``override: true`` in the payload.
+    """
     deny = _require_general_advisor(request)
     if deny:
         return deny
@@ -978,6 +1106,7 @@ def tw_placement_remove_view(request: HttpRequest, placement_id: int) -> JsonRes
 @login_required(login_url="login")
 @require_POST
 def tw_placement_lock_view(request: HttpRequest, placement_id: int) -> JsonResponse:
+    """Toggle the lock flag on a placement (locked placements resist move/remove)."""
     deny = _require_general_advisor(request)
     if deny:
         return deny
@@ -1001,6 +1130,7 @@ def tw_placement_lock_view(request: HttpRequest, placement_id: int) -> JsonRespo
 @login_required(login_url="login")
 @require_GET
 def tw_slot_templates_list_view(request: HttpRequest) -> JsonResponse:
+    """List all saved slot templates, ordered newest first."""
     deny = _require_general_advisor(request)
     if deny:
         return deny
@@ -1022,6 +1152,11 @@ def tw_slot_templates_list_view(request: HttpRequest) -> JsonResponse:
 @login_required(login_url="login")
 @require_POST
 def tw_slot_template_create_view(request: HttpRequest) -> JsonResponse:
+    """Create a new slot template.
+
+    Accepts ``name``, ``slots`` (array), and optional ``is_default``.
+    If ``is_default`` is true, all other templates are un-defaulted first.
+    """
     deny = _require_general_advisor(request)
     if deny:
         return deny

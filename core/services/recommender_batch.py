@@ -158,6 +158,9 @@ def batch_recommend(
             student_studying[sid].add(c)
 
     # ── Pre-compute unlock counts (in-memory) ────────────────────────
+    # "Unlock count" = how many other courses list this course as a
+    # prerequisite.  Higher unlock count means the course is more
+    # strategically important (unblocks more of the curriculum).
     def count_unlocks(code: str) -> int:
         return sum(1 for p in all_prereq_codes if code in p)
 
@@ -175,34 +178,43 @@ def batch_recommend(
         next_term_parity = next_term % 2
 
         def prereqs_ok(code: str) -> bool:
+            """True if every prerequisite for *code* has been passed or is being studied."""
             return all(pr in passed or pr in studying for pr in prereq_map.get(code, []))
 
+        # Build candidate list: courses this student is eligible to take
         candidates: list[dict] = []
         for c in dept_courses:
             code = c["code"]
             if code in passed or code in studying:
-                continue
+                continue  # already completed or in-progress
             if not prereqs_ok(code):
-                continue
+                continue  # missing prerequisites
             if c["term"] is None:
-                continue
+                continue  # no term assigned in the plan
             if c["term"] % 2 != next_term_parity:
-                continue
+                continue  # course offered in the wrong semester parity
             if c["term"] > next_term:
-                continue
+                continue  # course is for a future term the student hasn't reached
 
             unlock = count_unlocks(code)
-            is_past = c["term"] < next_term
+            is_past = c["term"] < next_term  # past-due course from an earlier term
             cc = dict(c)
-            cc["_unlock"] = unlock
-            cc["_past_rank"] = 0 if is_past else 1
-            cc["_gs_rank"] = 1 if normalize_code(code).startswith("GS") else 0
+            cc["_unlock"] = unlock          # higher = unblocks more courses
+            cc["_past_rank"] = 0 if is_past else 1  # 0 = past-due (prioritised)
+            cc["_gs_rank"] = 1 if normalize_code(code).startswith("GS") else 0  # deprioritise GS
             candidates.append(cc)
 
+        # Sort candidates by priority:
+        #   1. Most unlocks first (descending)
+        #   2. Past-due courses first (0 < 1)
+        #   3. Earlier programme term first
+        #   4. Non-GS courses first (0 < 1)
+        #   5. Alphabetical by code (tie-breaker for determinism)
         candidates.sort(
             key=lambda x: (-x["_unlock"], x["_past_rank"], x["term"], x["_gs_rank"], x["code"])
         )
 
+        # Greedy knapsack: take courses in priority order until credit cap
         recs: list[str] = []
         total_credits = 0
         for course in candidates:
@@ -221,12 +233,31 @@ def batch_recommend_multi_program(
     current_academic_year: int,
     current_semester: int,
 ) -> dict[int, list[str]]:
-    """Recommend courses for students across ALL programs.
+    """Recommend courses for students across ALL programmes.
 
-    Groups students by program, runs batch_recommend per group.
-    Works when no program filter is specified.
+    When the caller has no programme filter (e.g. the "all programmes"
+    aggregate view), this function groups students by their enrolled
+    programme and delegates to ``batch_recommend`` once per group.
 
-    Total queries: ~5 per program (not per student).
+    Parameters
+    ----------
+    student_ids : list[int]
+        University IDs of students to process.
+    current_academic_year : int
+        Current Hijri academic year.
+    current_semester : int
+        Current semester number (1, 2, or 3).
+
+    Returns
+    -------
+    dict[int, list[str]]
+        Combined mapping of ``student_id`` -> recommended course codes,
+        merging results from all programme-specific batches.
+
+    Query Complexity
+    ----------------
+    1 query to group students by programme, then ~5 queries per distinct
+    programme.  Still O(P) not O(N) where P = number of programmes.
     """
     if not student_ids:
         return {}
