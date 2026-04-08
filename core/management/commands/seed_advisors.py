@@ -108,12 +108,15 @@ class Command(BaseCommand):
 
     def handle(self, *args: Any, **opts: Any) -> None:
         # Force UTF-8 stdout on Windows to handle Arabic names
+        # Skip when called via call_command() with StringIO (no buffer attribute)
         if sys.platform == "win32" and not isinstance(self.stdout, io.TextIOWrapper):
-            self.stdout._out = io.TextIOWrapper(  # type: ignore[attr-defined]
-                self.stdout._out.buffer,  # type: ignore[attr-defined]
-                encoding="utf-8",
-                errors="replace",
-            )
+            inner = getattr(self.stdout, "_out", None)
+            if inner and hasattr(inner, "buffer"):
+                self.stdout._out = io.TextIOWrapper(  # type: ignore[attr-defined]
+                    inner.buffer,
+                    encoding="utf-8",
+                    errors="replace",
+                )
 
         dry_run = opts["dry_run"]
 
