@@ -221,6 +221,7 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
     except (TypeError, ValueError):
         return _err("year and semester must be integers", code="VALIDATION_GENERATE", status=400)
 
+    section = str(payload.get("section", "")).strip().upper() or None
     scenario_name = str(payload.get("scenario_name", "")).strip()
     max_local_4cr = int(payload.get("max_local_4cr", 25))
     max_local_other = int(payload.get("max_local_other", 40))
@@ -232,6 +233,7 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
             year=year_int,
             semester=semester_int,
             program=programs if len(programs) > 1 else programs[0],
+            section=section,
             scenario_name=scenario_name,
             max_local_4cr=max_local_4cr,
             max_local_other=max_local_other,

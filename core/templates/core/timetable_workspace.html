@@ -527,6 +527,7 @@ async function runGenerate() {
   const year = $('twYear').value.trim();
   const term = $('twTerm').value.trim();
   const program = $('twProgram').value.trim().toUpperCase();
+  const section = $('twSection').value.trim().toUpperCase() || null;
 
   if (!year || !term || !program) {
     notify.error(IS_AR ? 'أدخل السنة والفصل والبرنامج' : 'Enter year, term, and program');
@@ -543,6 +544,7 @@ async function runGenerate() {
       year: parseInt(year),
       semester: parseInt(term),
       program: program,
+      section: section,
     }),
   });
 

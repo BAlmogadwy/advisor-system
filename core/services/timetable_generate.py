@@ -84,6 +84,7 @@ def generate_workspace_scenario(
     year: int,
     semester: int,
     program: str | list[str],
+    section: str | None = None,
     scenario_name: str = "",
     max_local_4cr: int = DEFAULT_MAX_LOCAL_4CR,
     max_local_other: int = DEFAULT_MAX_LOCAL_OTHER,
@@ -113,7 +114,10 @@ def generate_workspace_scenario(
     programs = [program] if isinstance(program, str) else list(program)
     program_label = ",".join(programs)
 
-    student_ids = get_student_ids(program=programs if len(programs) > 1 else programs[0])
+    student_ids = get_student_ids(
+        program=programs if len(programs) > 1 else programs[0],
+        section=section,
+    )
 
     if len(programs) == 1:
         all_recs = batch_recommend(student_ids, programs[0], year, semester)
@@ -195,8 +199,9 @@ def generate_workspace_scenario(
 
     if not scenario_name:
         import datetime
-        ts = datetime.datetime.now().strftime("%H%M")
-        scenario_name = f"{program_label} T{semester} Draft {ts}"
+        ts = datetime.datetime.now().strftime("%H%M%S")
+        sec_label = f" {section}" if section else ""
+        scenario_name = f"{program_label}{sec_label} T{semester} Draft {ts}"
 
     # Get default slot template, or use standard academic slots
     slot_config: list[object] = []
