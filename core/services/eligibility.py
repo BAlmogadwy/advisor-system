@@ -28,7 +28,7 @@ def _get_filtered_students(
 
         prefix_q = Q()
         for p in join_year_prefixes:
-            if not p:
+            if not p or not p.isdigit():
                 continue
             low = int(p) * (10 ** (7 - len(p)))
             high = (int(p) + 1) * (10 ** (7 - len(p)))

@@ -16,6 +16,8 @@ def get_student_term_baseline(
     sts_qs = (
         StudentTermSection.objects.filter(
             student_id=student_id,
+            academic_year=str(academic_year),
+            term=str(term),
         )
         .select_related("term_section")
         .prefetch_related("term_section__meetings")
@@ -105,7 +107,11 @@ def replace_student_term_sections(
     from django.db import transaction
 
     with transaction.atomic():
-        StudentTermSection.objects.filter(student_id=student_id).delete()
+        StudentTermSection.objects.filter(
+            student_id=student_id,
+            academic_year=str(academic_year),
+            term=str(term),
+        ).delete()
 
         objs = [
             StudentTermSection(

@@ -71,7 +71,8 @@ def db_delete_students_view(request: HttpRequest) -> JsonResponse:
         details={
             "program": program or "",
             "section": section or "",
-            "deleted": result.get("deleted", 0),
+            "deleted_students": result.get("students_count", 0),
+            "deleted_student_courses": result.get("student_courses_count", 0),
         },
     )
     return JsonResponse(result)
@@ -119,8 +120,8 @@ def db_delete_program_catalog_view(request: HttpRequest) -> JsonResponse:
         status="success",
         details={
             "program": program,
-            "deleted_requirements": result.get("deleted_requirements", 0),
-            "deleted_prerequisites": result.get("deleted_prerequisites", 0),
+            "deleted_requirements": result.get("requirements_count", 0),
+            "deleted_prerequisites": result.get("prerequisites_count", 0),
         },
     )
     return JsonResponse(result)
@@ -167,8 +168,7 @@ def db_import_program_plan_view(request: HttpRequest) -> JsonResponse:
             details={
                 "program": program,
                 "replace_existing": replace_existing,
-                "inserted": result.get("inserted", 0),
-                "updated": result.get("updated", 0),
+                "rows_upserted": result.get("rows_upserted", 0),
             },
         )
         return JsonResponse(result)

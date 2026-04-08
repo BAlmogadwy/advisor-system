@@ -52,7 +52,7 @@ def allowed_programs_for_request(request: HttpRequest) -> set[str] | None:
 
     if role == ROLE_GENERAL_ADVISOR:
         allowed = {str(x).upper() for x in scope.get("departments", []) if str(x).strip()}
-        return allowed or None
+        return allowed if allowed else set()
 
     own_advisor = str(scope.get("advisor_id", "")).strip()
     if not own_advisor:
@@ -152,7 +152,7 @@ def require_student_scope(request: HttpRequest, student_id: int) -> JsonResponse
 
     if role == ROLE_GENERAL_ADVISOR:
         allowed = {str(x).upper() for x in scope.get("departments", []) if str(x).strip()}
-        if allowed and student_program not in allowed:
+        if not allowed or student_program not in allowed:
             return _policy_deny(
                 request,
                 action="policy.student_scope",

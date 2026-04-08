@@ -27,7 +27,7 @@ def _get_all_filtered_students(
 
         parts = Q()
         for p in join_year_prefixes:
-            if p:
+            if p and p.isdigit():
                 low = int(p) * (10 ** (7 - len(p)))
                 high = (int(p) + 1) * (10 ** (7 - len(p)))
                 parts |= Q(student_id__gte=low, student_id__lt=high)

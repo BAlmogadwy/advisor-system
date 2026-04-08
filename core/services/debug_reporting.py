@@ -22,7 +22,7 @@ def _build_students_query(
     if join_prefixes:
         from django.db.models import Q
 
-        prefixes = [p for p in join_prefixes if p]
+        prefixes = [p for p in join_prefixes if p and p.isdigit()]
         if prefixes:
             prefix_q = Q()
             for p in prefixes:
