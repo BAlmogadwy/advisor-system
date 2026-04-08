@@ -195,32 +195,81 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
             for p in placements:
                 section_all_placements[p.term_section_id].append(p)
 
+            # ── Smart group assignment: minimize conflicts per group ──
+            # Instead of S1→Group1, S2→Group2 mechanically,
+            # assign the best-fitting section to each group using bitmasks
+            from core.services.timetable_workspace import _time_mask
+
+            def _section_bitmask(ts_id: int) -> int:
+                """Compute combined bitmask for all placements of a section."""
+                mask = 0
+                for pp in section_all_placements.get(ts_id, []):
+                    mask |= _time_mask(pp.day, pp.start_time, pp.end_time)
+                return mask
+
+            # Build: code -> [(representative_placement, bitmask)] sorted by section label
+            course_options: dict[str, list[tuple]] = {}
+            for code, secs in course_sections.items():
+                course_options[code] = [
+                    (s, _section_bitmask(s.term_section_id)) for s in secs
+                ]
+
+            # Greedy assignment: for each group, pick the section per course
+            # that has the least overlap with already-assigned sections in this group
+            group_assignments: list[list] = []  # group_idx -> [placement representatives]
+            used_sections: dict[str, set[int]] = _dd(set)  # code -> set of used indices
+
+            for g in range(max_groups):
+                group_mask = 0  # combined bitmask of all sections assigned to this group
+                group = []
+                # Sort courses by demand descending (most constrained first)
+                sorted_codes = sorted(
+                    course_options.keys(),
+                    key=lambda c: -len(course_options[c])
+                )
+                for code in sorted_codes:
+                    options = course_options[code]
+                    best_idx = None
+                    best_conflicts = float("inf")
+                    for idx, (sec_p, sec_mask) in enumerate(options):
+                        if idx in used_sections[code]:
+                            continue  # already assigned to a previous group
+                        # Count overlap bits with current group
+                        overlap = bin(group_mask & sec_mask).count("1")
+                        if overlap < best_conflicts:
+                            best_conflicts = overlap
+                            best_idx = idx
+                    if best_idx is not None:
+                        sec_p, sec_mask = options[best_idx]
+                        group.append(sec_p)
+                        group_mask |= sec_mask
+                        used_sections[code].add(best_idx)
+
+                group_assignments.append(group)
+
             # Assign distinct pastel color per course (shared across all groups)
             course_color_map: dict[str, str] = {}
 
             num_slots = len(slot_config)
 
-            for group_idx in range(max_groups):
+            for group_idx, group_placements in enumerate(group_assignments):
+                if not group_placements:
+                    continue
                 if group_idx > 0:
                     row += 1
 
                 # Group header
                 if max_groups > 1:
-                    group_course_count = sum(
-                        1 for secs in course_sections.values() if len(secs) > group_idx
-                    )
                     ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=1 + num_slots)
                     gcell = ws.cell(row=row, column=1)
-                    gcell.value = f"Group {group_idx + 1} — {group_course_count} courses"
+                    gcell.value = f"Group {group_idx + 1} — {len(group_placements)} courses"
                     gcell.font = Font(bold=True, size=9, color="4056E3")
                     gcell.alignment = center_align
                     row += 1
 
                 # ── Transposed layout: columns=slots, rows=days ──
-                # Row 1: Slot numbers (1, 2, 3...)
-                # Row 2: Time ranges
                 grid_start_row = row
-                ws.cell(row=row, column=1).border = thin_border  # empty corner
+                ws.cell(row=row, column=1).border = thin_border
                 for s_idx, slot in enumerate(slot_config):
                     cell = ws.cell(row=row, column=2 + s_idx)
                     cell.value = s_idx + 1
@@ -239,12 +288,6 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                     cell.alignment = hdr_align
                     cell.border = thin_border
                 row += 1
-
-                # Get placements for this group
-                group_placements = []
-                for code, secs in course_sections.items():
-                    if group_idx < len(secs):
-                        group_placements.append(secs[group_idx])
 
                 # Build grid: day → slot → {text, courses}
                 grid: dict[str, dict[str, dict]] = {}
