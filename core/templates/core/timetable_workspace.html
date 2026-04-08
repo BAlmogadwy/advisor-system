@@ -957,13 +957,13 @@ function renderGrid() {
   const slots = (TW.scenario && TW.scenario.slot_config) || [];
 
   if (slots.length === 0) {
-    // Default slots if none configured (75min lectures + 15min break)
+    // Default slots (75min lectures, prayer break 11:35-12:59)
     const defaults = [
       {label:'09:00-10:15', start:'09:00', end:'10:15'},
       {label:'10:30-11:45', start:'10:30', end:'11:45'},
-      {label:'12:00-13:15', start:'12:00', end:'13:15'},
-      {label:'13:30-14:45', start:'13:30', end:'14:45'},
-      {label:'15:00-16:15', start:'15:00', end:'16:15'},
+      {label:'13:00-14:15', start:'13:00', end:'14:15'},
+      {label:'14:30-15:45', start:'14:30', end:'15:45'},
+      {label:'16:00-17:15', start:'16:00', end:'17:15'},
     ];
     if (TW.scenario) TW.scenario.slot_config = defaults;
     renderGridWithSlots(defaults);
@@ -1618,7 +1618,7 @@ async function openSlotEditor() {
 
   const slots = TW.scenario.slot_config || [];
   const slotsText = slots.map(s => `${s.label || ''}\t${s.start}\t${s.end}`).join('\n')
-    || '09:00-10:15\t09:00\t10:15\n10:30-11:45\t10:30\t11:45\n12:00-13:15\t12:00\t13:15\n13:30-14:45\t13:30\t14:45\n15:00-16:15\t15:00\t16:15';
+    || '09:00-10:15\t09:00\t10:15\n10:30-11:45\t10:30\t11:45\n13:00-14:15\t13:00\t14:15\n14:30-15:45\t14:30\t15:45\n16:00-17:15\t16:00\t17:15';
 
   const result = await dlg.confirm({
     title: IS_AR ? 'تعديل الفترات الزمنية' : 'Edit Time Slots',

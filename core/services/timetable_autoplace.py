@@ -29,7 +29,7 @@ from core.models import (
     TermSectionMeeting,
     TimetableScenario,
 )
-from core.services.timetable_workspace import _time_mask
+from core.services.timetable_workspace import _time_mask, _to_minutes
 
 # ── Meeting Patterns ─────────────────────────────────────────────
 
@@ -53,10 +53,22 @@ def get_meeting_pattern(credit_hours: int) -> list[int]:
 DEFAULT_SLOTS = [
     {"label": "09:00-10:15", "start": "09:00", "end": "10:15"},
     {"label": "10:30-11:45", "start": "10:30", "end": "11:45"},
-    {"label": "12:00-13:15", "start": "12:00", "end": "13:15"},
-    {"label": "13:30-14:45", "start": "13:30", "end": "14:45"},
-    {"label": "15:00-16:15", "start": "15:00", "end": "16:15"},
+    # No slot starts between 11:35-12:59 (prayer break)
+    {"label": "13:00-14:15", "start": "13:00", "end": "14:15"},
+    {"label": "14:30-15:45", "start": "14:30", "end": "15:45"},
+    {"label": "16:00-17:15", "start": "16:00", "end": "17:15"},
 ]
+
+# Hard constraint: no course may START between these times (prayer break)
+BLOCKED_START_WINDOW = ("11:35", "12:59")
+
+
+def _start_is_blocked(start_time: str) -> bool:
+    """Return True if a course starting at this time violates the prayer break."""
+    start_min = _to_minutes(start_time)
+    block_from = _to_minutes(BLOCKED_START_WINDOW[0])
+    block_to = _to_minutes(BLOCKED_START_WINDOW[1])
+    return block_from <= start_min <= block_to
 
 
 def _get_slots(slot_config: list[dict]) -> list[dict]:
@@ -93,11 +105,13 @@ def _generate_meeting_options(
         if duration <= 75:
             # 75min lecture → fits in a single slot
             for i, s in enumerate(slots):
-                positions.append((i, s["start"], s["end"]))
+                if not _start_is_blocked(s["start"]):
+                    positions.append((i, s["start"], s["end"]))
         else:
             # 100min lecture → two consecutive slots merged
             for i in range(len(slots) - 1):
-                positions.append((i, slots[i]["start"], slots[i + 1]["end"]))
+                if not _start_is_blocked(slots[i]["start"]):
+                    positions.append((i, slots[i]["start"], slots[i + 1]["end"]))
         slot_options_per_duration.append(positions)
 
     all_options: list[list[dict]] = []
