@@ -36,10 +36,10 @@ from core.services.timetable_workspace import _time_mask
 WEEKDAYS = ["SUN", "MON", "TUE", "WED", "THU"]
 
 MEETING_PATTERNS: dict[int, list[int]] = {
-    4: [50, 50, 100],   # 3 meetings: two 50min + one 100min
-    3: [50, 50],         # 2 meetings: two 50min
+    4: [75, 75, 100],   # 3 meetings: two 75min + one 100min
+    3: [75, 75],         # 2 meetings: two 75min
     2: [100],            # 1 meeting: 100min
-    1: [50],             # fallback
+    1: [75],             # fallback
 }
 
 
@@ -51,13 +51,11 @@ def get_meeting_pattern(credit_hours: int) -> list[int]:
 # ── Default Slots ────────────────────────────────────────────────
 
 DEFAULT_SLOTS = [
-    {"label": "08:00-08:50", "start": "08:00", "end": "08:50"},
-    {"label": "09:00-09:50", "start": "09:00", "end": "09:50"},
-    {"label": "10:00-10:50", "start": "10:00", "end": "10:50"},
-    {"label": "11:00-11:50", "start": "11:00", "end": "11:50"},
-    {"label": "12:00-12:50", "start": "12:00", "end": "12:50"},
-    {"label": "13:00-13:50", "start": "13:00", "end": "13:50"},
-    {"label": "14:00-14:50", "start": "14:00", "end": "14:50"},
+    {"label": "09:00-10:15", "start": "09:00", "end": "10:15"},
+    {"label": "10:30-11:45", "start": "10:30", "end": "11:45"},
+    {"label": "12:00-13:15", "start": "12:00", "end": "13:15"},
+    {"label": "13:30-14:45", "start": "13:30", "end": "14:45"},
+    {"label": "15:00-16:15", "start": "15:00", "end": "16:15"},
 ]
 
 
@@ -92,11 +90,12 @@ def _generate_meeting_options(
     slot_options_per_duration: list[list[tuple[int, str, str]]] = []
     for duration in pattern:
         positions = []
-        if duration <= 50:
+        if duration <= 75:
+            # 75min lecture → fits in a single slot
             for i, s in enumerate(slots):
                 positions.append((i, s["start"], s["end"]))
         else:
-            # 100min → two consecutive slots merged
+            # 100min lecture → two consecutive slots merged
             for i in range(len(slots) - 1):
                 positions.append((i, slots[i]["start"], slots[i + 1]["end"]))
         slot_options_per_duration.append(positions)
