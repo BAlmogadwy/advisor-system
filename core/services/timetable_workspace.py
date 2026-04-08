@@ -274,8 +274,14 @@ def detect_board_conflicts(board_id: int) -> dict:
             a, b = items[i], items[j]
             pair = (a.id, b.id)
 
-            # ---- Time overlap: bitwise AND of 2016-bit masks ----
-            if a.mask & b.mask and pair not in seen_overlap_pairs:
+            # Sections in DIFFERENT student groups (e.g. S1 vs S2) CAN overlap
+            # — they serve different cohorts. Only flag conflicts within
+            # the SAME group or between same-course sections (instructor).
+            same_group = a.section == b.section  # e.g. both "S1"
+            same_course = a.course_code == b.course_code
+
+            # ---- Time overlap: only within same student group ----
+            if same_group and a.mask & b.mask and pair not in seen_overlap_pairs:
                 seen_overlap_pairs.add(pair)
                 overlaps.append({
                     "ids": [a.id, b.id],
@@ -283,7 +289,7 @@ def detect_board_conflicts(board_id: int) -> dict:
                     "detail": f"{a.day} {a.start_time}-{a.end_time} vs {b.day} {b.start_time}-{b.end_time}",
                 })
 
-            # ---- Instructor clash: same name + time overlap ----
+            # ---- Instructor clash: same instructor at same time (any group) ----
             if (
                 a.instructor
                 and b.instructor
