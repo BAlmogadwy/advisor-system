@@ -61,11 +61,17 @@ def export_recommendation_debug_xlsx(payload: dict) -> Path:
     # ── Students Sheet ───────────────────────────────────────────
     ws = wb.create_sheet(title="Students")
 
+    # Find max number of recommended courses (for prerequisite columns)
+    max_recs = max((len(i.get("recommended_courses", [])) for i in items), default=0)
+
     headers = [
         "Student ID", "Program", "Real Term", "Next Term",
         "Passed", "Studying", "Recommended Courses",
-        "Prerequisite Details",
     ]
+    # Add one prerequisite column per possible recommended course
+    for i in range(max_recs):
+        headers.append(f"Prereq {i + 1}")
+
     for col, hdr in enumerate(headers, start=1):
         cell = ws.cell(row=1, column=col)
         cell.value = hdr
@@ -133,23 +139,51 @@ def export_recommendation_debug_xlsx(payload: dict) -> Path:
         cell.alignment = wrap_align
         cell.fill = rec_fill if has_recs else no_rec_fill
 
-        # Prerequisite details
-        prereq_parts = []
+        # Prerequisite details — one column per recommended course
+        # Each cell shows: "PREREQ1(P), PREREQ2(S)" with color:
+        #   PASSED = green text, STUDYING = red text, MISSING = dark red bold
+        col = 8
         for rd in rec_details:
             code = rd.get("course_code", "")
             prereqs = rd.get("prerequisite_status", [])
-            if prereqs:
-                statuses = ", ".join(
-                    f"{ps['prerequisite']}({ps['status'][0]})"
-                    for ps in prereqs
-                )
-                prereq_parts.append(f"{code}: {statuses}")
+
+            if not prereqs:
+                cell = ws.cell(row=row, column=col, value=f"{code}: no prereqs")
+                cell.font = Font(size=8, color="0A8E6E")
+                cell.border = thin_border
+                cell.alignment = wrap_align
+                cell.fill = passed_fill
             else:
-                prereq_parts.append(f"{code}: no prereqs")
-        cell = ws.cell(row=row, column=8, value="\n".join(prereq_parts) if prereq_parts else "—")
-        cell.font = Font(size=8, color="666666")
-        cell.border = thin_border
-        cell.alignment = wrap_align
+                parts = []
+                has_studying = False
+                has_missing = False
+                for ps in prereqs:
+                    status = ps.get("status", "")
+                    prereq_code = ps.get("prerequisite", "")
+                    if status == "PASSED":
+                        parts.append(f"{prereq_code}(P)")
+                    elif status == "STUDYING":
+                        parts.append(f"{prereq_code}(S)")
+                        has_studying = True
+                    else:
+                        parts.append(f"{prereq_code}(X)")
+                        has_missing = True
+
+                cell = ws.cell(row=row, column=col, value=f"{code}: {', '.join(parts)}")
+                cell.border = thin_border
+                cell.alignment = wrap_align
+
+                if has_missing:
+                    cell.font = Font(size=8, bold=True, color="C03030")
+                    cell.fill = PatternFill(start_color="F4CCCC", end_color="F4CCCC", fill_type="solid")
+                elif has_studying:
+                    cell.font = Font(size=8, bold=True, color="C03030")
+                    cell.fill = PatternFill(start_color="FADBD8", end_color="FADBD8", fill_type="solid")
+                else:
+                    cell.font = Font(size=8, color="0A8E6E")
+                    cell.fill = passed_fill
+
+            col += 1
 
         row += 1
 
@@ -174,7 +208,11 @@ def export_recommendation_debug_xlsx(payload: dict) -> Path:
     ws.column_dimensions["E"].width = 8
     ws.column_dimensions["F"].width = 10
     ws.column_dimensions["G"].width = 35
-    ws.column_dimensions["H"].width = 45
+    # Prerequisite columns
+    for i in range(max_recs):
+        cl = chr(ord("H") + i) if (ord("H") + i) <= ord("Z") else None
+        if cl:
+            ws.column_dimensions[cl].width = 22
     ws.freeze_panes = "A2"
 
     # ── Summary Sheet ────────────────────────────────────────────
