@@ -235,42 +235,67 @@ def auto_place_board(board_id: int) -> dict:
         for code in sm.recommended_courses:
             course_students[code].add(sm.student_id)
 
-    # Track placed masks for conflict scoring
-    placed_masks: list[tuple[str, int]] = []
+    # Track placed masks per section group number
+    # group_masks[1] = masks for all S1 sections, group_masks[2] = all S2, etc.
+    # Sections in the same group MUST NOT overlap (same student cohort)
+    # Sections in different groups CAN overlap (different student cohorts)
+    group_masks: dict[int, list[tuple[str, int]]] = defaultdict(list)
+    all_placed_masks: list[tuple[str, int]] = []  # global for fallback
     placement_results: list[dict] = []
     total_placed = 0
     total_skipped = 0
 
+    # Pre-compute per-course data
+    course_data: list[dict] = []
     for budget in budgets:
         code = budget.course_code
         credit_hours = budget.credit_hours or 3
         pattern = get_meeting_pattern(credit_hours)
-
-        # How many sections still to place
         already = SectionPlacement.objects.filter(
             board=board, term_section__course_code=code
         ).count()
         to_place = max(0, budget.planned_sections - already)
         if to_place == 0:
             continue
-
-        my_students = course_students.get(code, set())
-
-        # Pre-generate all valid meeting options for this pattern
         all_options = _generate_meeting_options(pattern, slot_config)
         if not all_options:
             total_skipped += to_place
             continue
+        course_data.append({
+            "code": code,
+            "budget": budget,
+            "credit_hours": credit_hours,
+            "pattern": pattern,
+            "already": already,
+            "to_place": to_place,
+            "all_options": all_options,
+            "students": course_students.get(code, set()),
+        })
 
-        for sec_idx in range(already + 1, already + to_place + 1):
+    # Place section-by-section across ALL courses: all S1s first, then all S2s, etc.
+    # This ensures S1 of different courses don't overlap (same student group 1),
+    # S2 of different courses don't overlap (same student group 2), etc.
+    max_sections_needed = max((cd["to_place"] for cd in course_data), default=0)
+
+    for sec_round in range(1, max_sections_needed + 1):
+        for cd in course_data:
+            sec_idx = cd["already"] + sec_round
+            if sec_round > cd["to_place"]:
+                continue
+
+            code = cd["code"]
             sec_label = f"S{sec_idx}"
+            my_students = cd["students"]
+            all_options = cd["all_options"]
 
-            # Score all options — tuple comparison: (hard, student, variance)
+            # Score against SAME GROUP's masks (same student cohort = must not overlap)
+            same_group = group_masks.get(sec_idx, [])
+
             best_score = (float("inf"), float("inf"), float("inf"))
             best_option = None
 
             for option in all_options:
-                score = _score_option(option, placed_masks, course_students, my_students)
+                score = _score_option(option, same_group, course_students, my_students)
                 if score < best_score:
                     best_score = score
                     best_option = option
@@ -287,7 +312,7 @@ def auto_place_board(board_id: int) -> dict:
                     "course_code": code,
                     "course_number": code,
                     "course_name": code,
-                    "available_capacity": budget.max_per_section,
+                    "available_capacity": cd["budget"].max_per_section,
                     "source_tag": "tw_auto",
                 },
             )
@@ -308,14 +333,16 @@ def auto_place_board(board_id: int) -> dict:
                     start_time=m["start"],
                     defaults={"end_time": m["end"]},
                 )
-                placed_masks.append((code, _time_mask(m["day"], m["start"], m["end"])))
+                mask = _time_mask(m["day"], m["start"], m["end"])
+                group_masks[sec_idx].append((code, mask))
+                all_placed_masks.append((code, mask))
                 meeting_results.append({"day": m["day"], "start": m["start"], "end": m["end"]})
 
             total_placed += 1
             placement_results.append({
                 "course_code": code,
                 "section": sec_label,
-                "credit_hours": credit_hours,
+                "credit_hours": cd["credit_hours"],
                 "meetings": meeting_results,
                 "conflict_score": best_score[0],
             })
