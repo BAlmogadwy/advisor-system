@@ -78,28 +78,52 @@ def export_batch_recommender_xlsx(
                     if p and p not in prereq_map[cc_n]:
                         prereq_map[cc_n].append(p)
 
-    # Studying counts per prerequisite — ONLY among students who need
-    # the recommended course (not ALL students university-wide)
+    # ── Per-course prerequisite studying count ──────────────────
+    # For each recommended course, count how many of the students who
+    # NEED that course are currently studying each of its prerequisites.
+    #
+    # Step 1: Get per-student recommendations to know WHO needs WHAT
+    from core.services.recommender_batch import batch_recommend, batch_recommend_multi_program
+    from core.services.reporting import get_student_ids
+
+    scoped_sids = get_student_ids(program=program, section=section)
+    if program and "," not in (program or ""):
+        all_recs = batch_recommend(scoped_sids, program, year, semester)
+    else:
+        all_recs = batch_recommend_multi_program(scoped_sids, year, semester)
+
+    # Build: course_code -> set of student_ids who need it
+    course_to_students: dict[str, set[int]] = defaultdict(set)
+    for sid, recs in all_recs.items():
+        for code in recs:
+            course_to_students[normalize_code(code)].add(sid)
+
+    # Step 2: For each prereq, get which students are studying it
     all_prereq_codes = set()
     for prereqs in prereq_map.values():
         all_prereq_codes.update(prereqs)
 
-    # Get student IDs who are in the filtered scope (same program/section)
-    from core.services.reporting import get_student_ids
-    scoped_student_ids = set(get_student_ids(program=program, section=section))
+    # Build: student_id -> set of courses they're currently studying
+    studying_by_student: dict[int, set[str]] = defaultdict(set)
+    if all_prereq_codes:
+        for sid_val, code in StudentCourse.objects.filter(
+            course__course_code__in=all_prereq_codes,
+            status="studying",
+            student_id__in=scoped_sids,
+        ).values_list("student_id", "course__course_code"):
+            studying_by_student[sid_val].add(normalize_code(code))
 
-    prereq_studying_count: dict[str, int] = {}
-    if all_prereq_codes and scoped_student_ids:
-        for row in (
-            StudentCourse.objects.filter(
-                course__course_code__in=all_prereq_codes,
-                status="studying",
-                student_id__in=scoped_student_ids,
-            )
-            .values("course__course_code")
-            .annotate(cnt=DjCount("id"))
-        ):
-            prereq_studying_count[normalize_code(row["course__course_code"])] = row["cnt"]
+    # Step 3: For each (recommended_course, prerequisite), count how many
+    # students who need the course are studying the prerequisite
+    # prereq_studying_per_course[course_code][prereq_code] = count
+    prereq_studying_per_course: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for code_n in course_codes:
+        cn = normalize_code(code_n)
+        prereqs = prereq_map.get(cn, [])
+        students_needing = course_to_students.get(cn, set())
+        for pr in prereqs:
+            cnt = sum(1 for sid in students_needing if pr in studying_by_student.get(sid, set()))
+            prereq_studying_per_course[cn][pr] = cnt
 
     # Prereq course names
     prereq_names: dict[str, str] = {}
@@ -175,15 +199,16 @@ def export_batch_recommender_xlsx(
             cell.fill = PatternFill(start_color="D5F5E3", end_color="D5F5E3", fill_type="solid")
 
         # Prereq summary in course row
+        code_n = normalize_code(code)
         if not prereqs:
             cell = ws.cell(row=row, column=5, value="No prerequisites")
             cell.font = no_prereq_font
             cell.fill = course_fill
             cell.border = thin_border
         else:
-            studying_total = sum(prereq_studying_count.get(p, 0) for p in prereqs)
+            studying_total = sum(prereq_studying_per_course[code_n].get(p, 0) for p in prereqs)
             if studying_total > 0:
-                cell = ws.cell(row=row, column=5, value=f"{len(prereqs)} prerequisites ({studying_total} students still studying)")
+                cell = ws.cell(row=row, column=5, value=f"{len(prereqs)} prerequisites ({studying_total} of {count} still studying)")
                 cell.font = Font(size=8, bold=True, color="C03030")
                 cell.fill = studying_fill
             else:
@@ -196,7 +221,7 @@ def export_batch_recommender_xlsx(
 
         # ── Prerequisite sub-rows ────────────────────────────────
         for pr in prereqs:
-            studying_cnt = prereq_studying_count.get(pr, 0)
+            studying_cnt = prereq_studying_per_course[code_n].get(pr, 0)
             pr_name = prereq_names.get(pr.upper(), "")
 
             ws.cell(row=row, column=1).border = thin_border
@@ -212,13 +237,13 @@ def export_batch_recommender_xlsx(
 
             ws.cell(row=row, column=4).border = thin_border
 
-            # Studying count
+            # Studying count — among students who need THIS course
             if studying_cnt > 0:
-                cell = ws.cell(row=row, column=5, value=f"{studying_cnt} students currently studying")
+                cell = ws.cell(row=row, column=5, value=f"{studying_cnt} of {count} students still studying")
                 cell.font = studying_font
                 cell.fill = studying_fill
             else:
-                cell = ws.cell(row=row, column=5, value="All students passed")
+                cell = ws.cell(row=row, column=5, value="All passed")
                 cell.font = passed_font
                 cell.fill = passed_fill
             cell.border = thin_border
