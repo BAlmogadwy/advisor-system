@@ -30,6 +30,13 @@ def build_aggregate_counts(
     program: str | list[str] | None = None,
     section: str | None = None,
 ) -> tuple[int, Counter[str]]:
+    # Normalize comma-separated program string into a list
+    if isinstance(program, str) and "," in program:
+        program = [p.strip() for p in program.split(",") if p.strip()]
+    # Single-item list → unwrap to string for efficiency
+    if isinstance(program, list) and len(program) == 1:
+        program = program[0]
+
     # Normalize program for cache key (lists are not hashable)
     prog_key = tuple(program) if isinstance(program, list) else (str(program),)
     cache_key = (year, semester, prog_key, str(section))
