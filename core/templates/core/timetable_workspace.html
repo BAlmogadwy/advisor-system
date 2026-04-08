@@ -290,40 +290,39 @@ html[data-theme="dark"] #twDrawer{background:var(--card); border-color:rgba(255,
 {% csrf_token %}
 
 <!-- A1. Generate Filter Bar (matches section planning + conflict matrix pattern) -->
-<div class="filter-bar sticky-cta mb-0" id="twGenBar" style="background:var(--glass-bg-header);backdrop-filter:var(--glass-blur);border-bottom:1px solid var(--line);padding:10px 16px;">
-  <div class="fb-search fb-w-120">
+<div class="filter-bar sticky-cta mb-0" id="twGenBar" style="background:var(--glass-bg-header);backdrop-filter:var(--glass-blur);border-bottom:1px solid var(--line);padding:8px 12px;gap:6px;">
+  <div class="fb-search" style="width:75px">
     <label class="fb-lbl" for="twYear">{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}</label>
     <input id="twYear" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="{{ default_year }}">
   </div>
-  <div class="fb-search fb-w-110">
-    <label class="fb-lbl" for="twTerm">{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Semester{% endif %}</label>
+  <div class="fb-search" style="width:50px">
+    <label class="fb-lbl" for="twTerm">{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Sem{% endif %}</label>
     <input id="twTerm" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="{{ default_term }}">
   </div>
-  <div class="fb-search" style="min-width:160px;max-width:280px">
+  <div class="fb-search" style="width:110px">
     <label class="fb-lbl" for="twProgram">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}</label>
-    <input id="twProgram" class="form-control form-control-compact" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثلاً AI,DS{% else %}e.g. AI,CS{% endif %}" style="text-transform:uppercase">
+    <input id="twProgram" class="form-control form-control-compact" placeholder="{% if LANGUAGE_CODE == 'ar' %}AI,DS{% else %}AI,CS{% endif %}" style="text-transform:uppercase">
   </div>
-  <div class="fb-search" style="min-width:120px;max-width:200px">
-    <label class="fb-lbl" for="twSection">{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}</label>
-    <input id="twSection" class="form-control form-control-compact" placeholder="{% if LANGUAGE_CODE == 'ar' %}اختياري{% else %}Optional{% endif %}">
+  <div class="fb-search" style="width:55px">
+    <label class="fb-lbl" for="twSection">{% if LANGUAGE_CODE == 'ar' %}شعبة{% else %}Sec{% endif %}</label>
+    <input id="twSection" class="form-control form-control-compact" placeholder="M/F" style="text-transform:uppercase">
   </div>
-  <div class="fb-search" style="min-width:130px;max-width:180px">
+  <div class="fb-search" style="width:155px">
     <label class="fb-lbl" for="twStrategy">{% if LANGUAGE_CODE == 'ar' %}الخوارزمية{% else %}Strategy{% endif %}</label>
-    <select id="twStrategy" class="form-control form-control-compact">
+    <select id="twStrategy" class="form-control form-control-compact" style="font-size:.78rem;">
       <option value="compact">{% if LANGUAGE_CODE == 'ar' %}مضغوط{% else %}Compact{% endif %}</option>
       <option value="morning">{% if LANGUAGE_CODE == 'ar' %}صباحي{% else %}Morning-first{% endif %}</option>
       <option value="balanced">{% if LANGUAGE_CODE == 'ar' %}متوازن{% else %}Balanced{% endif %}</option>
-      <option value="optimal">{% if LANGUAGE_CODE == 'ar' %}الأمثل (بطيء){% else %}Optimal (CP-SAT){% endif %}</option>
-      <option value="hybrid">{% if LANGUAGE_CODE == 'ar' %}هجين (الأفضل){% else %}Hybrid (Best){% endif %}</option>
+      <option value="optimal">{% if LANGUAGE_CODE == 'ar' %}الأمثل{% else %}Optimal (CP-SAT){% endif %}</option>
+      <option value="hybrid">{% if LANGUAGE_CODE == 'ar' %}هجين{% else %}Hybrid (Best){% endif %}</option>
       <option value="load_balanced">{% if LANGUAGE_CODE == 'ar' %}متوازن الأيام{% else %}Load-Balanced{% endif %}</option>
     </select>
   </div>
-  <div class="fb-spacer"></div>
-  <button id="twGenerate" class="btn btn-primary" type="button">
-    <span class="i i-sm" aria-hidden="true" style="margin-inline-end:4px"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>
+  <button id="twGenerate" class="btn btn-primary" type="button" style="padding:6px 16px;">
+    <span class="i i-sm" aria-hidden="true" style="margin-inline-end:3px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>
     {% if LANGUAGE_CODE == 'ar' %}توليد{% else %}Generate{% endif %}
   </button>
-  <span id="twGenStatus" style="font-size:.75rem;color:var(--t4);white-space:nowrap"></span>
+  <span id="twGenStatus" style="font-size:.72rem;color:var(--t4);white-space:nowrap"></span>
 </div>
 
 <!-- A2. Workspace Command Bar (hidden until scenario active) -->
