@@ -170,14 +170,30 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
             )
 
             # ── Split placements into student groups ─────────────
+            # Group by unique (course_code, section) — not by placement rows
+            # A 4cr course has 3 placement rows (3 meetings) but is ONE section
             from collections import defaultdict as _dd
-            course_sections: dict[str, list] = _dd(list)
+            seen_sections: dict[str, dict[str, list]] = _dd(dict)  # code -> {sec_label -> [placements]}
             for p in placements:
-                course_sections[p.term_section.course_code].append(p)
+                code = p.term_section.course_code
+                sec = p.term_section.section
+                if sec not in seen_sections[code]:
+                    seen_sections[code][sec] = []
+                seen_sections[code][sec].append(p)
+
+            # course_sections: code -> [representative placement per unique section], sorted by label
+            course_sections: dict[str, list] = {}
+            for code, sec_dict in seen_sections.items():
+                course_sections[code] = [
+                    sec_dict[sec][0]  # pick first placement as representative
+                    for sec in sorted(sec_dict.keys())
+                ]
 
             max_groups = max((len(secs) for secs in course_sections.values()), default=1)
-            for code in course_sections:
-                course_sections[code].sort(key=lambda p: p.term_section.section)
+            # Also keep all placements per section for grid building
+            section_all_placements: dict[int, list] = _dd(list)  # term_section_id -> [all placements]
+            for p in placements:
+                section_all_placements[p.term_section_id].append(p)
 
             # Assign distinct pastel color per course (shared across all groups)
             course_color_map: dict[str, str] = {}
@@ -241,7 +257,7 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                 # Also track merged slots (100min)
                 merged_slot_keys: set[str] = set()
                 for p in group_placements:
-                    ts_placements = [pp for pp in placements if pp.term_section_id == p.term_section_id]
+                    ts_placements = section_all_placements.get(p.term_section_id, [])
                     for pp in ts_placements:
                         slot_key = f"{pp.start_time}-{pp.end_time}"
                         day = pp.day.upper()[:3]
