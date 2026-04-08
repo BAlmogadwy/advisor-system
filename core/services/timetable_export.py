@@ -44,12 +44,21 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
     hdr_fill = PatternFill(start_color="0A8E6E", end_color="0A8E6E", fill_type="solid")
     hdr_font = Font(name="Consolas", size=9, bold=True, color="FFFFFF")
     hdr_align = Alignment(horizontal="center", vertical="center")
-    thin_border = Border(
-        left=Side(style="thin", color="CCCCCC"),
-        right=Side(style="thin", color="CCCCCC"),
-        top=Side(style="thin", color="CCCCCC"),
-        bottom=Side(style="thin", color="CCCCCC"),
-    )
+    thin_side = Side(style="thin", color="CCCCCC")
+    thick_side = Side(style="medium", color="333333")
+    thin_border = Border(left=thin_side, right=thin_side, top=thin_side, bottom=thin_side)
+
+    def _apply_outer_border(ws, min_row, min_col, max_row, max_col):
+        """Apply thick outer border around a rectangular range."""
+        for r in range(min_row, max_row + 1):
+            for c in range(min_col, max_col + 1):
+                cell = ws.cell(row=r, column=c)
+                existing = cell.border
+                left = thick_side if c == min_col else existing.left
+                right = thick_side if c == max_col else existing.right
+                top = thick_side if r == min_row else existing.top
+                bottom = thick_side if r == max_row else existing.bottom
+                cell.border = Border(left=left, right=right, top=top, bottom=bottom)
     bold_font = Font(bold=True, size=9)
     normal_font = Font(name="Consolas", size=9)
     center_align = Alignment(horizontal="center", vertical="center")
@@ -238,6 +247,9 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
 
                 row += 1
 
+            # Outer border for timetable grid
+            _apply_outer_border(ws, grid_header_row, 1, row - 1, 6)
+
             # Conflicts below grid
             conflicts = detect_board_conflicts(board.id)
             summary = conflicts["summary"]
@@ -313,6 +325,9 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
             ws.cell(row=info_row, column=INFO_START_COL + 4).border = thin_border
             ws.cell(row=info_row, column=INFO_START_COL + 4).alignment = center_align
 
+            # Outer border for course info table
+            _apply_outer_border(ws, 1, INFO_START_COL, info_row, INFO_START_COL + 4)
+
             # ── Per-Term Conflict Matrix (right of course info table) ─
             # Course info ends at column L (INFO_START_COL + 4 = col 12)
             # Gap column M (13), matrix starts at column N (14)
@@ -383,6 +398,9 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
         w_cell.border = thin_border
         row += 1
 
+    # Outer border for boards table (header row to last data row)
+    _apply_outer_border(ws_sum, 6, 1, row - 1, 7)
+
     # Section budget
     row += 2
     ws_sum.cell(row=row, column=1, value="Section Budget").font = Font(bold=True, size=11)
@@ -416,6 +434,10 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
         ws_sum.cell(row=row, column=8, value=b["total_demand"]).border = thin_border
         row += 1
 
+    # Outer border for budget table
+    budget_hdr_row = row - len(budget) - 1  # header row of budget table
+    _apply_outer_border(ws_sum, budget_hdr_row, 1, row - 1, 8)
+
     ws_sum.column_dimensions["A"].width = 16
     for col_letter in ["B", "C", "D", "E", "F", "G", "H"]:
         ws_sum.column_dimensions[col_letter].width = 14
@@ -439,7 +461,7 @@ def _write_mini_conflict_matrix(
     This is critical because a Term 3 student repeating MATH105 (Term 1) must
     not have it overlap with their Term 3 courses.
     """
-    from openpyxl.styles import Font, PatternFill
+    from openpyxl.styles import Border, Font, PatternFill, Side
 
     # Get students relevant to this term (primary + visitors)
     from core.models import BoardStudentLink
@@ -546,11 +568,28 @@ def _write_mini_conflict_matrix(
 
         r += 1
 
+    # Outer border for mini conflict matrix (header row to last data row)
+    matrix_hdr_row = start_row + 3
+    matrix_end_row = r - 1
+    matrix_end_col = start_col + n
+    if matrix_end_row >= matrix_hdr_row:
+        thick = Side(style="medium", color="333333")
+        for mr in range(matrix_hdr_row, matrix_end_row + 1):
+            for mc in range(start_col, matrix_end_col + 1):
+                cl = ws.cell(row=mr, column=mc)
+                ex = cl.border
+                cl.border = Border(
+                    left=thick if mc == start_col else ex.left,
+                    right=thick if mc == matrix_end_col else ex.right,
+                    top=thick if mr == matrix_hdr_row else ex.top,
+                    bottom=thick if mr == matrix_end_row else ex.bottom,
+                )
+
 
 def _build_conflict_matrix_sheet(wb, scenario, hdr_fill, hdr_font, hdr_align,
                                   thin_border, normal_font, bold_font, center_align):
     """Build a Conflict Matrix sheet showing student overlap between courses."""
-    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
     ws = wb.create_sheet(title="Conflicts (All)")
 
@@ -637,6 +676,22 @@ def _build_conflict_matrix_sheet(wb, scenario, hdr_fill, hdr_font, hdr_align,
                         start_color=hex_color, end_color=hex_color, fill_type="solid"
                     )
                     cell.font = Font(name="Consolas", size=9, bold=True)
+
+    # Outer border for global conflict matrix
+    if n > 0:
+        thick = Side(style="medium", color="333333")
+        end_row = start_row + n
+        end_col = 1 + n
+        for mr in range(start_row, end_row + 1):
+            for mc in range(1, end_col + 1):
+                cl = ws.cell(row=mr, column=mc)
+                ex = cl.border
+                cl.border = Border(
+                    left=thick if mc == 1 else ex.left,
+                    right=thick if mc == end_col else ex.right,
+                    top=thick if mr == start_row else ex.top,
+                    bottom=thick if mr == end_row else ex.bottom,
+                )
 
     # Column widths
     ws.column_dimensions["A"].width = 12
