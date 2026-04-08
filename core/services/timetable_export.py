@@ -64,6 +64,39 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
     # Course info sidebar starts at column H (8)
     INFO_START_COL = 8
 
+    # ── Distinct pastel colors for courses ───────────────────────
+    # 20 visually distinct pastels with good contrast for dark text
+    COURSE_COLORS = [
+        "D4E6F1",  # light blue
+        "D5F5E3",  # light green
+        "FADBD8",  # light pink
+        "FCF3CF",  # light yellow
+        "D7BDE2",  # light purple
+        "A9DFBF",  # mint
+        "F9E79F",  # gold
+        "AED6F1",  # sky blue
+        "F5CBA7",  # peach
+        "A3E4D7",  # teal light
+        "E8DAEF",  # lavender
+        "FDEBD0",  # cream
+        "ABB2B9",  # silver
+        "A2D9CE",  # sea green
+        "F5B7B1",  # salmon
+        "D6DBDF",  # light gray
+        "ABEBC6",  # pale green
+        "FAD7A0",  # light orange
+        "D2B4DE",  # orchid
+        "AEB6BF",  # cool gray
+    ]
+
+    def _course_fill(course_code: str, color_map: dict[str, str]) -> PatternFill:
+        """Get or assign a distinct pastel fill for a course."""
+        if course_code not in color_map:
+            idx = len(color_map) % len(COURSE_COLORS)
+            color_map[course_code] = COURSE_COLORS[idx]
+        hex_c = color_map[course_code]
+        return PatternFill(start_color=hex_c, end_color=hex_c, fill_type="solid")
+
     wb = Workbook()
     wb.remove(wb.active)
 
@@ -138,11 +171,11 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                 .order_by("day", "start_time")
             )
 
-            # Build grid
-            grid: dict[str, dict[str, str]] = {}
+            # Build grid: slot → day → {text, courses list}
+            grid: dict[str, dict[str, dict]] = {}
             for slot in slot_config:
                 slot_key = f"{slot['start']}-{slot['end']}"
-                grid[slot_key] = {d: "" for d in DAY_LABELS}
+                grid[slot_key] = {d: {"text": "", "courses": []} for d in DAY_LABELS}
 
             for p in placements:
                 slot_key = f"{p.start_time}-{p.end_time}"
@@ -153,7 +186,7 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                             if i + 1 < len(slot_config) and slot_config[i + 1]["end"] == p.end_time:
                                 slot_key = f"{slot['start']}-{slot_config[i + 1]['end']}"
                                 if slot_key not in grid:
-                                    grid[slot_key] = {d: "" for d in DAY_LABELS}
+                                    grid[slot_key] = {d: {"text": "", "courses": []} for d in DAY_LABELS}
                             break
 
                 ts = p.term_section
@@ -168,10 +201,15 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                     text += f"\n{room}"
 
                 if slot_key in grid and day in grid[slot_key]:
-                    if grid[slot_key][day]:
-                        grid[slot_key][day] += f"\n---\n{text}"
+                    cd = grid[slot_key][day]
+                    if cd["text"]:
+                        cd["text"] += f"\n---\n{text}"
                     else:
-                        grid[slot_key][day] = text
+                        cd["text"] = text
+                    cd["courses"].append(ts.course_code)
+
+            # Assign distinct pastel color per course for this board
+            course_color_map: dict[str, str] = {}
 
             # Write grid rows
             for slot_key in sorted(grid.keys()):
@@ -184,15 +222,19 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
 
                 for day_idx, day in enumerate(DAY_LABELS):
                     cell = ws.cell(row=row, column=day_idx + 2)
-                    content = grid[slot_key].get(day, "")
-                    cell.value = content
+                    cd = grid[slot_key].get(day, {"text": "", "courses": []})
+                    cell.value = cd["text"]
                     cell.font = normal_font
                     cell.border = thin_border
                     cell.alignment = Alignment(
                         horizontal="center", vertical="center", wrap_text=True
                     )
-                    if "---" in content:
+                    if len(cd["courses"]) > 1:
+                        # Conflict: multiple courses in same cell
                         cell.fill = conflict_fill
+                    elif len(cd["courses"]) == 1:
+                        # Single course: distinct color per course
+                        cell.fill = _course_fill(cd["courses"][0], course_color_map)
 
                 row += 1
 
@@ -238,8 +280,11 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
             for b in sorted(term_budget, key=lambda x: x.course_code):
                 cr = b.credit_hours or 0
                 pattern = get_meeting_pattern(cr)
-                ws.cell(row=info_row, column=INFO_START_COL, value=b.course_code).font = Font(bold=True, size=9)
-                ws.cell(row=info_row, column=INFO_START_COL, value=b.course_code).border = thin_border
+                c_cell = ws.cell(row=info_row, column=INFO_START_COL, value=b.course_code)
+                c_cell.font = Font(bold=True, size=9)
+                c_cell.border = thin_border
+                # Match the timetable grid color for this course
+                c_cell.fill = _course_fill(b.course_code, course_color_map)
                 name = course_names.get(b.course_code.upper(), b.course_code)
                 ws.cell(row=info_row, column=INFO_START_COL + 1, value=name).font = normal_font
                 ws.cell(row=info_row, column=INFO_START_COL + 1).border = thin_border
