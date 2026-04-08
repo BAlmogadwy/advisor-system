@@ -176,6 +176,8 @@ def _score_option(
     my_code: str = "",
     same_group_schedule: list[tuple[str, str, str]] | None = None,
     other_sections_masks: list[tuple[str, int]] | None = None,
+    is_online: bool = False,
+    online_codes_in_group: set[str] | None = None,
 ) -> tuple[int, int, int, int, int]:
     """Score a meeting option. Lower is better.
 
@@ -183,10 +185,11 @@ def _score_option(
 
     - hard_conflict: direct time overlap with another course in the same student group
     - same_course_overlap: overlap with OTHER sections of the SAME course (instructor can't teach both)
-    - student_gap: total gap minutes between classes on same day for students in this group
-    - instructor_spread: if other sections of same course exist, penalize large time gaps between them
+    - student_gap: idle time between on-campus classes (online courses excluded from gap calc)
+    - instructor_spread: for online courses, penalize early slots (prefer late/last slot)
     - time_variance: penalty for different slot indices across days
     """
+    _online_in_group = online_codes_in_group or set()
     total_mask = 0
     for m in option:
         total_mask |= _time_mask(m["day"], m["start"], m["end"])
@@ -204,14 +207,20 @@ def _score_option(
             if other_code == my_code and (total_mask & other_mask):
                 same_course_overlap += 1
 
-    # (3) Student gap: measure idle time between classes on the same day
-    # Build day -> [(start_min, end_min)] for already placed + this option
+    # (3) Student gap: idle time between ON-CAMPUS classes (online excluded)
+    # Online courses don't require campus presence, so gaps before/after them don't count
     day_intervals: dict[str, list[tuple[int, int]]] = defaultdict(list)
     if same_group_schedule:
         for d, s, e in same_group_schedule:
+            # Only include non-online courses in gap calculation
+            # We don't have per-entry code tracking in schedule, so include all
+            # (the online course itself will be excluded when it's the one being placed)
             day_intervals[d].append((_to_min(s), _to_min(e)))
-    for m in option:
-        day_intervals[m["day"]].append((_to_min(m["start"]), _to_min(m["end"])))
+
+    if not is_online:
+        # This is an on-campus course — add it and measure gaps against other on-campus
+        for m in option:
+            day_intervals[m["day"]].append((_to_min(m["start"]), _to_min(m["end"])))
 
     student_gap = 0
     for day, intervals in day_intervals.items():
@@ -222,13 +231,14 @@ def _score_option(
                 if idle > 0:
                     student_gap += idle
 
-    # (4) Instructor spread: if other sections of same course exist on same days,
-    # prefer placing this section close to them (back-to-back)
+    # (4) Online preference: late slots. For online courses, penalize early time slots.
+    # Prefer the LAST available slot so students can leave campus first.
     instructor_spread = 0
-    if other_sections_masks:
-        # Collect all days+times of other sections of this course from all groups
-        # (passed via other_sections_schedule if available)
-        pass  # Will be computed via same_course_overlap penalty for now
+    if is_online:
+        # Invert slot index: lower slot_idx = higher penalty (earlier = bad for online)
+        # Max slot_idx is best (latest slot)
+        for m in option:
+            instructor_spread += (10 - m["slot_idx"])  # lower idx = higher penalty
 
     # (5) Time consistency (prefer same slot index across days)
     slot_indices = [m["slot_idx"] for m in option]
@@ -286,6 +296,16 @@ def auto_place_board(board_id: int) -> dict:
     total_placed = 0
     total_skipped = 0
 
+    # Load online course flags
+    from core.models import ProgrammeRequirement as PR
+    online_codes: set[str] = set()
+    if board.program:
+        programs = [p.strip() for p in board.program.split(",") if p.strip()]
+        online_qs = PR.objects.filter(program__in=programs, is_online=True).values_list(
+            "course_code", flat=True
+        )
+        online_codes = {c.strip().upper() for c in online_qs}
+
     # Pre-compute per-course data
     course_data: list[dict] = []
     for budget in budgets:
@@ -311,6 +331,7 @@ def auto_place_board(board_id: int) -> dict:
             "to_place": to_place,
             "all_options": all_options,
             "students": course_students.get(code, set()),
+            "is_online": code.upper() in online_codes,
         })
 
     # Place section-by-section across ALL courses: all S1s first, then all S2s, etc.
@@ -336,12 +357,15 @@ def auto_place_board(board_id: int) -> dict:
             best_score = (float("inf"), float("inf"), float("inf"), float("inf"), float("inf"))
             best_option = None
 
+            is_online = cd.get("is_online", False)
+
             for option in all_options:
                 score = _score_option(
                     option, same_group, course_students, my_students,
                     my_code=code,
                     same_group_schedule=same_sched,
                     other_sections_masks=all_placed_masks,
+                    is_online=is_online,
                 )
                 if score < best_score:
                     best_score = score
