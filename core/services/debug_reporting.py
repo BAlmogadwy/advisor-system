@@ -21,7 +21,12 @@ def _build_students_query(
     if section:
         qs = qs.filter(section=section)
     if program:
-        qs = qs.filter(program=program)
+        # Support comma-separated programs: "AI,DS" -> filter by list
+        if "," in program:
+            progs = [p.strip() for p in program.split(",") if p.strip()]
+            qs = qs.filter(program__in=progs)
+        else:
+            qs = qs.filter(program=program)
     if join_prefixes:
         from django.db.models import Q
 
@@ -97,7 +102,7 @@ def build_recommendation_debug_report(
                     prereq_map[prog_val][cc].append(p)
 
     # 4. Batch recommendations
-    if program:
+    if program and "," not in program:
         all_recs = batch_recommend(student_ids, program, current_academic_year, current_semester)
     else:
         all_recs = batch_recommend_multi_program(student_ids, current_academic_year, current_semester)

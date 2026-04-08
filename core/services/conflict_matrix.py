@@ -33,7 +33,7 @@ def build_conflict_matrix_report(
     course_to_students: dict[str, set[int]] = {}
     student_rows: list[dict] = []
 
-    if program:
+    if program and "," not in program:
         all_recs = batch_recommend(student_ids, program, current_academic_year, current_semester)
     else:
         all_recs = batch_recommend_multi_program(student_ids, current_academic_year, current_semester)
