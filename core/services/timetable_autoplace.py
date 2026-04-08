@@ -282,6 +282,12 @@ STRATEGIES: dict[str, dict] = {
         "gap_multiplier": 5,      # moderate gap penalty
         "slot_preference": 0,
     },
+    "optimal": {
+        "label": "Optimal (CP-SAT Solver)",
+        "description": "OR-Tools constraint solver — finds globally optimal solution (slower)",
+        "gap_multiplier": 10,
+        "slot_preference": 0,
+    },
 }
 
 DEFAULT_STRATEGY = "compact"
@@ -718,6 +724,11 @@ def auto_place_scenario(scenario_id: int, strategy: str = DEFAULT_STRATEGY) -> d
         "total_skipped": int}`` where each *board_result* has the same
         shape as the return value of ``auto_place_board``.
     """
+    # Use CP-SAT solver for "optimal" strategy
+    if strategy == "optimal":
+        from core.services.timetable_solver import solve_scenario
+        return solve_scenario(scenario_id, time_limit_seconds=10.0)
+
     boards = DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order")
     results = {}
     total_placed = 0
