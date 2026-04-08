@@ -83,7 +83,7 @@ def _is_excluded_course(code: str) -> bool:
 def generate_workspace_scenario(
     year: int,
     semester: int,
-    program: str,
+    program: str | list[str],
     scenario_name: str = "",
     max_local_4cr: int = DEFAULT_MAX_LOCAL_4CR,
     max_local_other: int = DEFAULT_MAX_LOCAL_OTHER,
@@ -93,7 +93,10 @@ def generate_workspace_scenario(
 ) -> dict:
     """Generate a fully scaffolded workspace scenario.
 
-    1. Run recommender for all students in the program
+    Args:
+        program: single program code ("AI") or list (["AI", "DS"])
+
+    1. Run recommender for all students in the program(s)
     2. Classify each student by primary term
     3. Compute section plan (budget)
     4. Create scenario + one board per active term level
@@ -104,10 +107,18 @@ def generate_workspace_scenario(
 
     # ── Step 1: Collect recommendations (batch-optimized) ─────────
 
-    from core.services.recommender_batch import batch_recommend
+    from core.services.recommender_batch import batch_recommend, batch_recommend_multi_program
 
-    student_ids = get_student_ids(program=program)
-    all_recs = batch_recommend(student_ids, program, year, semester)
+    # Normalize to list for uniform handling
+    programs = [program] if isinstance(program, str) else list(program)
+    program_label = ",".join(programs)
+
+    student_ids = get_student_ids(program=programs if len(programs) > 1 else programs[0])
+
+    if len(programs) == 1:
+        all_recs = batch_recommend(student_ids, programs[0], year, semester)
+    else:
+        all_recs = batch_recommend_multi_program(student_ids, year, semester)
 
     # Filter out non-schedulable courses
     aggregate: Counter[str] = Counter()
@@ -121,8 +132,8 @@ def generate_workspace_scenario(
 
     # ── Step 2: Classify students by primary term ────────────────
 
-    # Load course → programme_term mapping for this program
-    pr_qs = ProgrammeRequirement.objects.filter(program=program).values_list(
+    # Load course → programme_term mapping for all involved programs
+    pr_qs = ProgrammeRequirement.objects.filter(program__in=programs).values_list(
         "course_code", "programme_term"
     )
     course_term_map: dict[str, int] = {}
@@ -159,7 +170,12 @@ def generate_workspace_scenario(
 
     programme_capacities: dict[str, int] = {}
     if aggregate:
-        programme_capacities = load_programme_capacities(program, list(aggregate.keys()))
+        # Merge capacities from all programs (use min if same course in multiple programs)
+        for prog in programs:
+            caps = load_programme_capacities(prog, list(aggregate.keys()))
+            for code, cap in caps.items():
+                if code not in programme_capacities or cap < programme_capacities[code]:
+                    programme_capacities[code] = cap
 
     norm_overrides: dict[str, int] | None = None
     if course_overrides:
@@ -180,7 +196,7 @@ def generate_workspace_scenario(
     if not scenario_name:
         import datetime
         ts = datetime.datetime.now().strftime("%H%M")
-        scenario_name = f"{program} T{semester} Draft {ts}"
+        scenario_name = f"{program_label} T{semester} Draft {ts}"
 
     # Get default slot template, or use standard academic slots
     slot_config: list[object] = []
@@ -203,13 +219,14 @@ def generate_workspace_scenario(
     active_terms = sorted(term_student_counts.keys())
     board_by_term: dict[int, DeliveryBoard] = {}
 
+    board_program = programs[0] if len(programs) == 1 else program_label
     for pt in active_terms:
         board = DeliveryBoard.objects.create(
             scenario=scenario,
             label=f"Term {pt}",
             nominal_term=pt,
             board_type="standard",
-            program=program,
+            program=board_program,
             target_size=term_student_counts[pt],
             display_order=pt,
         )
@@ -308,7 +325,7 @@ def generate_workspace_scenario(
             "id": board.id,
             "label": board.label,
             "nominal_term": pt,
-            "program": program,
+            "program": board_program,
             "primary_count": primary_count,
             "visitor_count": visitor_count,
             "courses": board_courses,

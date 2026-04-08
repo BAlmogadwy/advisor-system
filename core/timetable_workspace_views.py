@@ -203,9 +203,12 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
 
     year = payload.get("year")
     semester = payload.get("semester")
-    program = str(payload.get("program", "")).strip().upper()
+    program_raw = str(payload.get("program", "")).strip().upper()
+    # Accept comma-separated programs: "AI,DS" → ["AI", "DS"]
+    programs = [p.strip() for p in program_raw.split(",") if p.strip()] if program_raw else []
+    program = programs[0] if len(programs) == 1 else None
 
-    if not year or not semester or not program:
+    if not year or not semester or not programs:
         return _err(
             "year, semester, and program are required",
             code="VALIDATION_GENERATE",
@@ -228,7 +231,7 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
         result = generate_workspace_scenario(
             year=year_int,
             semester=semester_int,
-            program=program,
+            program=programs if len(programs) > 1 else programs[0],
             scenario_name=scenario_name,
             max_local_4cr=max_local_4cr,
             max_local_other=max_local_other,
