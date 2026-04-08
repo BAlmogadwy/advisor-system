@@ -344,6 +344,43 @@ def export_aggregate_csv_view(request: HttpRequest) -> HttpResponse:
 
 @role_required(ROLE_ADVISOR)
 @require_GET
+def export_aggregate_xlsx_view(request: HttpRequest) -> HttpResponse:
+    """Export batch recommender results as styled XLSX."""
+    year, err = _parse_int(request.GET.get("year"), "year")
+    if err:
+        return err
+    semester, err = _parse_int(request.GET.get("semester"), "semester")
+    if err:
+        return err
+    if year is None or semester is None:
+        return JsonResponse({"error": "Invalid parameters"}, status=400)
+
+    program = request.GET.get("program") or None
+    section = request.GET.get("section") or None
+
+    scope_err = require_program_scope(request, program)
+    if scope_err:
+        return scope_err
+
+    student_count, aggregate = build_aggregate_counts(
+        year=year, semester=semester, program=program, section=section,
+    )
+
+    from core.services.batch_export import export_batch_recommender_xlsx
+
+    path = export_batch_recommender_xlsx(year, semester, program, section, student_count, dict(aggregate))
+    prog_label = program or "all"
+    filename = f"batch_recommender_{prog_label}_{year}_T{semester}.xlsx"
+    response = FileResponse(
+        open(path, "rb"),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+@role_required(ROLE_ADVISOR)
+@require_GET
 def student_plan_view(request: HttpRequest) -> JsonResponse:
     student_id, err = _parse_int(request.GET.get("student_id"), "student_id")
     if err:

@@ -322,6 +322,7 @@
     if (tbody) tbody.innerHTML = `<tr><td colspan="4"><div class="ap-empty"><span class="ap-empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span></span><div class="ap-empty-title">${T.noBatchData}</div><div class="ap-empty-hint">${T.setBatchFilters}</div></div></td></tr>`;
     q('batchMetrics').classList.add('d-none');
     q('batchCsv').href = '#';
+    q('batchXlsx').href = '#';
     q('batchSummary').href = '#';
     q('batchTopChips').innerHTML = `<div class="empty-note">${T.runBatchHint}</div>`;
     const bpEl = document.getElementById('batchPager'); if (bpEl) bpEl.innerHTML = '';
@@ -359,6 +360,7 @@
     }
 
     q('batchCsv').href = `/export/aggregate.csv?year=${year}&semester=${semester}&program=${encodeURIComponent(program)}&section=${encodeURIComponent(section)}`;
+    q('batchXlsx').href = `/export/aggregate.xlsx?year=${year}&semester=${semester}&program=${encodeURIComponent(program)}&section=${encodeURIComponent(section)}`;
     q('batchSummary').href = url;
 
     if (!res.ok || !Array.isArray(data.top_recommended_courses)) {
