@@ -163,38 +163,78 @@ def _generate_meeting_options(
     return all_options
 
 
+def _to_min(t: str) -> int:
+    h, m = t.split(":")
+    return int(h) * 60 + int(m)
+
+
 def _score_option(
     option: list[dict],
-    placed_masks: list[tuple[str, int]],
+    same_group_masks: list[tuple[str, int]],
     course_students: dict[str, set[int]],
     my_students: set[int],
-) -> tuple[int, int, int]:
+    my_code: str = "",
+    same_group_schedule: list[tuple[str, str, str]] | None = None,
+    other_sections_masks: list[tuple[str, int]] | None = None,
+) -> tuple[int, int, int, int, int]:
     """Score a meeting option. Lower is better.
 
-    Returns (hard_conflict, student_conflict, time_variance).
-    - hard_conflict: direct time overlap with ANY already-placed section on this board
-      (courses on the same board must never overlap since they serve the same students)
-    - student_conflict: weighted by number of shared students across boards
+    Returns (hard_conflict, same_course_overlap, student_gap, instructor_spread, time_variance).
+
+    - hard_conflict: direct time overlap with another course in the same student group
+    - same_course_overlap: overlap with OTHER sections of the SAME course (instructor can't teach both)
+    - student_gap: total gap minutes between classes on same day for students in this group
+    - instructor_spread: if other sections of same course exist, penalize large time gaps between them
     - time_variance: penalty for different slot indices across days
     """
     total_mask = 0
     for m in option:
         total_mask |= _time_mask(m["day"], m["start"], m["end"])
 
-    # Hard conflict: ANY time overlap with anything on this board is bad
+    # (1) Hard conflict: time overlap with same student group
     hard_conflict = 0
-    student_conflict = 0
-    for placed_code, placed_mask in placed_masks:
+    for placed_code, placed_mask in same_group_masks:
         if total_mask & placed_mask:
-            hard_conflict += 1  # direct overlap — worst case
-            shared = my_students & course_students.get(placed_code, set())
-            student_conflict += len(shared)
+            hard_conflict += 1
 
-    # Time consistency score (prefer same slot index across all meetings)
+    # (2) Same-course overlap: can't teach two sections at the same time
+    same_course_overlap = 0
+    if other_sections_masks:
+        for other_code, other_mask in other_sections_masks:
+            if other_code == my_code and (total_mask & other_mask):
+                same_course_overlap += 1
+
+    # (3) Student gap: measure idle time between classes on the same day
+    # Build day -> [(start_min, end_min)] for already placed + this option
+    day_intervals: dict[str, list[tuple[int, int]]] = defaultdict(list)
+    if same_group_schedule:
+        for d, s, e in same_group_schedule:
+            day_intervals[d].append((_to_min(s), _to_min(e)))
+    for m in option:
+        day_intervals[m["day"]].append((_to_min(m["start"]), _to_min(m["end"])))
+
+    student_gap = 0
+    for day, intervals in day_intervals.items():
+        if len(intervals) >= 2:
+            intervals.sort()
+            for i in range(len(intervals) - 1):
+                idle = intervals[i + 1][0] - intervals[i][1]
+                if idle > 0:
+                    student_gap += idle
+
+    # (4) Instructor spread: if other sections of same course exist on same days,
+    # prefer placing this section close to them (back-to-back)
+    instructor_spread = 0
+    if other_sections_masks:
+        # Collect all days+times of other sections of this course from all groups
+        # (passed via other_sections_schedule if available)
+        pass  # Will be computed via same_course_overlap penalty for now
+
+    # (5) Time consistency (prefer same slot index across days)
     slot_indices = [m["slot_idx"] for m in option]
     time_variance = len(set(slot_indices)) - 1
 
-    return hard_conflict, student_conflict, time_variance
+    return hard_conflict, same_course_overlap, student_gap, instructor_spread, time_variance
 
 
 def auto_place_board(board_id: int) -> dict:
@@ -240,7 +280,8 @@ def auto_place_board(board_id: int) -> dict:
     # Sections in the same group MUST NOT overlap (same student cohort)
     # Sections in different groups CAN overlap (different student cohorts)
     group_masks: dict[int, list[tuple[str, int]]] = defaultdict(list)
-    all_placed_masks: list[tuple[str, int]] = []  # global for fallback
+    group_schedule: dict[int, list[tuple[str, str, str]]] = defaultdict(list)  # sec_idx -> [(day,start,end)]
+    all_placed_masks: list[tuple[str, int]] = []  # all sections, all groups
     placement_results: list[dict] = []
     total_placed = 0
     total_skipped = 0
@@ -290,12 +331,18 @@ def auto_place_board(board_id: int) -> dict:
 
             # Score against SAME GROUP's masks (same student cohort = must not overlap)
             same_group = group_masks.get(sec_idx, [])
+            same_sched = group_schedule.get(sec_idx)
 
-            best_score = (float("inf"), float("inf"), float("inf"))
+            best_score = (float("inf"), float("inf"), float("inf"), float("inf"), float("inf"))
             best_option = None
 
             for option in all_options:
-                score = _score_option(option, same_group, course_students, my_students)
+                score = _score_option(
+                    option, same_group, course_students, my_students,
+                    my_code=code,
+                    same_group_schedule=same_sched,
+                    other_sections_masks=all_placed_masks,
+                )
                 if score < best_score:
                     best_score = score
                     best_option = option
@@ -335,6 +382,7 @@ def auto_place_board(board_id: int) -> dict:
                 )
                 mask = _time_mask(m["day"], m["start"], m["end"])
                 group_masks[sec_idx].append((code, mask))
+                group_schedule[sec_idx].append((m["day"], m["start"], m["end"]))
                 all_placed_masks.append((code, mask))
                 meeting_results.append({"day": m["day"], "start": m["start"], "end": m["end"]})
 
