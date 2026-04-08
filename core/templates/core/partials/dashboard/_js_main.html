@@ -1526,6 +1526,7 @@
     btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg></span>' + T.running;
     const url = `/report/recommendation-debug/?year=${encodeURIComponent(q('dbgYear').value)}&semester=${encodeURIComponent(q('dbgSemester').value)}&section=${encodeURIComponent(q('dbgSection').value)}&program=${encodeURIComponent(q('dbgProgram').value)}&join_years=${encodeURIComponent(q('dbgJoin').value)}&limit=${encodeURIComponent(q('dbgLimit').value)}`;
     q('dbgCsv').href = `/export/recommendation-debug.csv?year=${encodeURIComponent(q('dbgYear').value)}&semester=${encodeURIComponent(q('dbgSemester').value)}&section=${encodeURIComponent(q('dbgSection').value)}&program=${encodeURIComponent(q('dbgProgram').value)}&join_years=${encodeURIComponent(q('dbgJoin').value)}&limit=${encodeURIComponent(q('dbgLimit').value)}`;
+    q('dbgXlsx').href = `/export/recommendation-debug.xlsx?year=${encodeURIComponent(q('dbgYear').value)}&semester=${encodeURIComponent(q('dbgSemester').value)}&section=${encodeURIComponent(q('dbgSection').value)}&program=${encodeURIComponent(q('dbgProgram').value)}&join_years=${encodeURIComponent(q('dbgJoin').value)}&limit=${encodeURIComponent(q('dbgLimit').value)}`;
     const tbody = document.querySelector('#dbgTable tbody');
     if (!tbody) return;
 

@@ -693,6 +693,50 @@ def export_recommendation_debug_csv_view(request: HttpRequest) -> HttpResponse:
 
 @role_required(ROLE_ADVISOR)
 @require_GET
+def export_recommendation_debug_xlsx_view(request: HttpRequest) -> HttpResponse:
+    """Export recommendation debug report as styled XLSX workbook."""
+    _defaults = load_defaults()
+    year_raw = request.GET.get("year", "").strip() or str(_defaults["academic_year"])
+    semester_raw = request.GET.get("semester", "").strip() or str(_defaults["term"])
+
+    year, err = _parse_int(year_raw, "year")
+    if err:
+        return err
+    semester, err = _parse_int(semester_raw, "semester")
+    if err:
+        return err
+    if year is None or semester is None:
+        return JsonResponse({"error": "Invalid parameters"}, status=400)
+
+    section = (request.GET.get("section") or "").strip().upper() or None
+    program = (request.GET.get("program") or "").strip().upper() or None
+    join_years_raw = (request.GET.get("join_years") or "").strip()
+    join_years = (
+        [x.strip() for x in join_years_raw.split(",") if x.strip()] if join_years_raw else None
+    )
+    limit = _safe_int(request.GET.get("limit"), 150)
+
+    scope_err = require_program_scope(request, program)
+    if scope_err:
+        return scope_err
+
+    payload = build_recommendation_debug_report(year, semester, section, program, join_years, limit)
+
+    from core.services.debug_export import export_recommendation_debug_xlsx
+
+    path = export_recommendation_debug_xlsx(payload)
+    prog_label = program or "all"
+    filename = f"recommendation_debug_{prog_label}_{year}_T{semester}.xlsx"
+    response = FileResponse(
+        open(path, "rb"),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+@role_required(ROLE_ADVISOR)
+@require_GET
 def export_course_eligibility_csv_view(request: HttpRequest) -> HttpResponse:
     course_code = (request.GET.get("course_code") or "").strip().upper()
     if not course_code:

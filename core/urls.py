@@ -63,6 +63,7 @@ from .report_views import (
     export_course_eligibility_csv_view,
     export_missing_high_priority_xlsx_view,
     export_recommendation_debug_csv_view,
+    export_recommendation_debug_xlsx_view,
     export_student_csv_view,
     export_student_plan_csv_view,
     export_students_by_advisor_csv_view,
@@ -160,6 +161,11 @@ urlpatterns = [
         "export/recommendation-debug.csv",
         export_recommendation_debug_csv_view,
         name="export_recommendation_debug_csv",
+    ),
+    path(
+        "export/recommendation-debug.xlsx",
+        export_recommendation_debug_xlsx_view,
+        name="export_recommendation_debug_xlsx",
     ),
     path(
         "export/course-eligibility.csv",
