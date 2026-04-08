@@ -2,8 +2,20 @@
 core/services/timetable_demand.py
 Board-level demand and capacity computation for the Timetable Workspace.
 
-Bridges reporting.build_aggregate_counts() and section_planning capacity rules
-to produce per-course demand vs raw capacity for a delivery board.
+Bridges ``reporting.build_aggregate_counts()`` and section-planning capacity
+rules to produce per-course demand vs raw capacity for a delivery board.
+
+Workflow
+--------
+1. ``compute_board_demand()`` resolves which courses belong to a board's
+   nominal term / programme and counts how many students need each course
+   (via the batch recommender aggregation pipeline).
+2. ``compute_board_capacity()`` pairs that demand with the raw seat capacity
+   of sections already placed on the board, producing a deficit figure that
+   drives the UI's "capacity gap" indicators.
+
+Both functions are called from the timetable workspace API layer
+(``timetable_workspace_views.py``) and the XLSX export pipeline.
 """
 
 from __future__ import annotations
@@ -20,12 +32,26 @@ from core.models import (
 
 
 def compute_board_demand(board: DeliveryBoard) -> Counter[str]:
-    """Compute course demand relevant to a delivery board.
+    """Compute course demand (student counts) relevant to a delivery board.
 
-    Uses ProgrammeRequirement to find courses for the board's nominal_term/program,
-    then counts students who need those courses from StudentCourse status='studying'.
-    Falls back to aggregate recommendation counts if available.
+    Delegates to ``reporting.build_aggregate_counts`` to run the batch
+    recommender for the board's academic year, term, and programme.  If the
+    board has a ``nominal_term`` set, the result is filtered to only those
+    courses that appear in ``ProgrammeRequirement`` for that term level.
+
+    Parameters
+    ----------
+    board : DeliveryBoard
+        The board whose demand should be computed.  Must have a related
+        ``scenario`` with ``academic_year`` and ``term`` populated.
+
+    Returns
+    -------
+    Counter[str]
+        Mapping of course_code -> number of students who need that course.
+        If no ``nominal_term`` is set, returns the *full* unfiltered aggregate.
     """
+    # Lazy import to avoid circular dependency with reporting module
     from core.services.reporting import build_aggregate_counts
 
     year = int(board.scenario.academic_year) if board.scenario.academic_year else 0
@@ -34,10 +60,12 @@ def compute_board_demand(board: DeliveryBoard) -> Counter[str]:
     program = board.program or None
     student_count, full_aggregate = build_aggregate_counts(year, term, program=program)
 
+    # No nominal_term means this board covers all terms — return everything
     if not board.nominal_term:
         return full_aggregate
 
-    # Filter to courses that belong to the board's nominal_term
+    # Filter to courses that belong to the board's nominal_term in the
+    # programme requirements table (e.g. only Term 3 courses for a Term 3 board)
     relevant_codes = set(
         ProgrammeRequirement.objects.filter(
             programme_term=board.nominal_term,
@@ -53,10 +81,28 @@ def compute_board_demand(board: DeliveryBoard) -> Counter[str]:
 
 
 def compute_board_capacity(board_id: int) -> list[dict]:
-    """Compute demand vs raw capacity for each course on a board.
+    """Compute demand vs raw capacity for every course on a board.
 
-    Returns list of dicts:
-        [{course_code, course_name, demand, raw_capacity, placed_sections, deficit}]
+    Merges two data sources:
+    * **Demand** — how many students need each course (from the recommender).
+    * **Capacity** — how many seats are available from sections already placed
+      on this board (summing ``TermSection.available_capacity``).
+
+    The *deficit* for a course is ``max(0, demand - raw_capacity)`` when
+    demand > 0, indicating how many additional seats are needed.
+
+    Parameters
+    ----------
+    board_id : int
+        Primary key of the ``DeliveryBoard``.
+
+    Returns
+    -------
+    list[dict]
+        Each dict contains: ``course_code``, ``course_name``, ``demand``,
+        ``raw_capacity``, ``placed_sections``, ``deficit``.
+        Sorted by deficit descending, then demand descending, so the
+        biggest capacity gaps appear first.
     """
     try:
         board = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
@@ -65,13 +111,13 @@ def compute_board_capacity(board_id: int) -> list[dict]:
 
     demand = compute_board_demand(board)
 
-    # Get placed sections on this board
+    # ── Step 1: Get placed sections on this board ────────────────
     placements = (
         SectionPlacement.objects.filter(board_id=board_id)
         .select_related("term_section")
     )
 
-    # Aggregate raw capacity per course from placed sections
+    # ── Step 2: Aggregate raw capacity per course from placed sections ──
     course_capacity: dict[str, dict] = {}
     for p in placements:
         code = p.term_section.course_code
@@ -86,7 +132,9 @@ def compute_board_capacity(board_id: int) -> list[dict]:
         course_capacity[code]["raw_capacity"] += cap
         course_capacity[code]["placed_sections"] += 1
 
-    # Merge demand and capacity
+    # ── Step 3: Merge demand and capacity into a unified result ───
+    # Include courses that appear in *either* set — a course may have
+    # demand but no placed sections, or be placed but have zero demand.
     all_codes = set(demand.keys()) | set(course_capacity.keys())
     result = []
     for code in sorted(all_codes):
@@ -96,7 +144,8 @@ def compute_board_capacity(board_id: int) -> list[dict]:
         placed = cap_info.get("placed_sections", 0)
         name = cap_info.get("course_name", "")
 
-        # Try to get course name from Course table if not from placement
+        # Fall back to Course table for the display name when a course
+        # appears only in demand (no placement to read the name from)
         if not name:
             try:
                 name = Course.objects.get(course_code=code).description or code

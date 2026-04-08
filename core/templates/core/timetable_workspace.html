@@ -148,13 +148,13 @@
 
 .tw-card{
   padding:5px 8px; border-radius:var(--radius-sm);
-  background:var(--bg); border-left:3px solid var(--teal);
+  background:var(--bg); border:1px solid rgba(0,0,0,.08);
   font-size:.72rem; cursor:grab; position:relative;
   transition:box-shadow .12s, transform .1s;
 }
 .tw-card:hover{box-shadow:var(--shadow-card); transform:translateY(-1px);}
-.tw-card.warning{border-left-color:var(--amber);}
-.tw-card.critical{border-left-color:var(--danger);}
+.tw-card.warning{background:rgba(217,119,6,.15) !important; border-color:var(--amber);}
+.tw-card.critical{background:rgba(192,48,48,.15) !important; border-color:var(--danger);}
 .tw-card.locked{opacity:.7;}
 .tw-card.highlight{outline:2px solid var(--royal); outline-offset:1px; animation:tw-pulse .6s ease 2;}
 .tw-card .cc{font-weight:700; color:var(--ink);}
@@ -255,10 +255,10 @@ html[data-theme="dark"] .tw-cell{border-color:rgba(255,255,255,.06);}
 html[data-theme="dark"] .tw-cell.drop-valid{background:rgba(10,142,110,.1);}
 html[data-theme="dark"] .tw-cell.drop-warning{background:rgba(217,119,6,.1);}
 html[data-theme="dark"] .tw-cell.drop-critical{background:rgba(192,48,48,.1);}
-html[data-theme="dark"] .tw-card{background:rgba(255,255,255,.04); border-left-color:var(--teal);}
+html[data-theme="dark"] .tw-card{border-color:rgba(255,255,255,.1);}
 html[data-theme="dark"] .tw-card:hover{box-shadow:0 2px 8px rgba(0,0,0,.3);}
-html[data-theme="dark"] .tw-card.warning{border-left-color:var(--amber);}
-html[data-theme="dark"] .tw-card.critical{border-left-color:var(--danger);}
+html[data-theme="dark"] .tw-card.warning{background:rgba(217,119,6,.2) !important;}
+html[data-theme="dark"] .tw-card.critical{background:rgba(192,48,48,.2) !important;}
 html[data-theme="dark"] .tw-panel-tabs{background:rgba(255,255,255,.02); border-color:rgba(255,255,255,.06);}
 html[data-theme="dark"] .tw-issue-row{background:rgba(255,255,255,.03);}
 html[data-theme="dark"] .tw-issue-row:hover{background:rgba(10,142,110,.08);}
@@ -972,59 +972,141 @@ function renderGrid() {
   }
 }
 
+// 20 distinct pastel colors matching XLSX export
+const COURSE_COLORS = [
+  '#D4E6F1','#D5F5E3','#FADBD8','#FCF3CF','#D7BDE2',
+  '#A9DFBF','#F9E79F','#AED6F1','#F5CBA7','#A3E4D7',
+  '#E8DAEF','#FDEBD0','#ABB2B9','#A2D9CE','#F5B7B1',
+  '#D6DBDF','#ABEBC6','#FAD7A0','#D2B4DE','#AEB6BF',
+];
+const _courseColorMap = {};
+function courseColor(code) {
+  if (!_courseColorMap[code]) {
+    const idx = Object.keys(_courseColorMap).length % COURSE_COLORS.length;
+    _courseColorMap[code] = COURSE_COLORS[idx];
+  }
+  return _courseColorMap[code];
+}
+
 function renderGridWithSlots(slots) {
   const gridEl = $('twGrid');
   $('twEmptyState').style.display = 'none';
-  gridEl.style.display = 'grid';
-
-  const cols = DAYS.length + 1; // +1 for slot label column
-  gridEl.style.gridTemplateColumns = `80px repeat(${DAYS.length}, 1fr)`;
+  gridEl.style.display = 'block';
   gridEl.innerHTML = '';
 
-  // Header row
+  // ── Split placements into student groups by section label ──
+  const bySec = {};
+  TW.placements.forEach(p => {
+    const sec = p.section || 'S1';
+    if (!bySec[sec]) bySec[sec] = [];
+    bySec[sec].push(p);
+  });
+  const groupKeys = Object.keys(bySec).sort();
+  const numGroups = groupKeys.length;
+
+  // If no placements, show empty grid
+  if (numGroups === 0) {
+    _renderSingleGrid(gridEl, slots, [], 'tw-grid-inner', null);
+    return;
+  }
+
+  groupKeys.forEach((secKey, gi) => {
+    const groupPlacements = bySec[secKey];
+    // Collect all placements for each unique term_section in this group
+    const tsIds = new Set(groupPlacements.map(p => p.term_section_id));
+    const allForGroup = TW.placements.filter(p => tsIds.has(p.term_section_id));
+
+    // Group header
+    if (numGroups > 1) {
+      const courses = new Set(groupPlacements.map(p => p.course_code));
+      const hdr = document.createElement('div');
+      hdr.style.cssText = 'text-align:center;font-size:.82rem;font-weight:700;color:var(--royal);padding:8px 0 4px;';
+      hdr.textContent = `Group ${gi+1} — ${courses.size} courses`;
+      gridEl.appendChild(hdr);
+    }
+
+    const gridInner = document.createElement('div');
+    gridInner.className = 'tw-grid-inner';
+    _renderSingleGrid(gridInner, slots, allForGroup, 'tw-grid-table', secKey);
+    gridEl.appendChild(gridInner);
+  });
+}
+
+function _renderSingleGrid(container, slots, placements, className, secKey) {
+  // Transposed: columns = time slots, rows = days
+  const numSlots = slots.length;
+  const table = document.createElement('div');
+  table.className = className;
+  table.style.cssText = `display:grid;grid-template-columns:90px repeat(${numSlots},1fr);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:var(--card);margin-bottom:8px;`;
+
+  // Row 1: Slot numbers
   const corner = document.createElement('div');
   corner.className = 'tw-grid-header';
-  gridEl.appendChild(corner);
-
-  DAYS.forEach((d, i) => {
+  table.appendChild(corner);
+  slots.forEach((s, i) => {
     const hdr = document.createElement('div');
     hdr.className = 'tw-grid-header';
-    hdr.textContent = DAY_LABELS[i];
-    gridEl.appendChild(hdr);
+    hdr.textContent = i + 1;
+    table.appendChild(hdr);
   });
 
-  // Slot rows
-  slots.forEach(slot => {
-    // Slot label
+  // Row 2: Time ranges
+  const corner2 = document.createElement('div');
+  corner2.className = 'tw-grid-header';
+  corner2.style.fontSize = '.65rem';
+  table.appendChild(corner2);
+  slots.forEach(s => {
+    const hdr = document.createElement('div');
+    hdr.className = 'tw-grid-header';
+    hdr.style.fontSize = '.65rem';
+    hdr.textContent = `${s.start}-${s.end}`;
+    table.appendChild(hdr);
+  });
+
+  // Day rows
+  DAYS.forEach((day, di) => {
+    // Day label
     const lbl = document.createElement('div');
     lbl.className = 'tw-grid-slot-label';
-    lbl.textContent = slot.label || `${slot.start}-${slot.end}`;
-    gridEl.appendChild(lbl);
+    lbl.textContent = DAY_LABELS[di];
+    table.appendChild(lbl);
 
-    // Day cells
-    DAYS.forEach(day => {
+    // Slot cells
+    slots.forEach(slot => {
       const cell = document.createElement('div');
       cell.className = 'tw-cell';
       cell.dataset.day = day;
       cell.dataset.start = slot.start;
       cell.dataset.end = slot.end;
 
-      // Drop zone events
       cell.addEventListener('dragover', onDragOver);
       cell.addEventListener('dragleave', onDragLeave);
       cell.addEventListener('drop', onDrop);
 
-      // Render placed sections in this cell
-      const cellPlacements = TW.placements.filter(
+      // Find placements in this cell
+      const cellPlacements = placements.filter(
         p => p.day === day && p.start_time === slot.start
       );
-      cellPlacements.forEach(p => {
-        cell.appendChild(createPlacementCard(p));
-      });
 
-      gridEl.appendChild(cell);
+      if (cellPlacements.length === 1) {
+        const p = cellPlacements[0];
+        const card = createPlacementCard(p);
+        card.style.background = courseColor(p.course_code);
+        cell.appendChild(card);
+      } else if (cellPlacements.length > 1) {
+        // Conflict: multiple in same cell
+        cellPlacements.forEach(p => {
+          const card = createPlacementCard(p);
+          card.classList.add('critical');
+          cell.appendChild(card);
+        });
+      }
+
+      table.appendChild(cell);
     });
   });
+
+  container.appendChild(table);
 }
 
 function createPlacementCard(p) {

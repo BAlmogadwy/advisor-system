@@ -1,8 +1,46 @@
 """
 core/services/timetable_workspace.py
-Conflict detection and board analysis for the Timetable Workspace.
+Conflict detection, student feasibility, and board analysis for the
+Timetable Workspace feature.
 
-Reuses bitmask utilities from planner_builder.py for O(1) time-overlap detection.
+The workspace lets advisors drag-and-drop course sections onto weekly
+schedule boards (DeliveryBoards) grouped under a Scenario.  This module
+provides the analytical back-end:
+
+    1. **Bitmask time-overlap engine** -- Each weekly meeting slot is
+       mapped to a single bit in a 2016-bit integer (7 days x 288
+       five-minute slots per day).  Two placements overlap iff their
+       bitmask AND is non-zero, giving O(1) pairwise conflict checks.
+       The scheme is shared with ``planner_builder.py``.
+
+    2. **Board conflict detection** -- finds time overlaps, instructor
+       double-bookings, and room double-bookings within a single board.
+
+    3. **Placement validation** -- pre-flight check for a new or moved
+       placement against the existing board state.
+
+    4. **Student feasibility** -- for every detected overlap, counts
+       how many students need *both* clashing courses and whether an
+       alternative section exists that resolves the clash.
+
+    5. **Section budget tracking** -- compares the number of distinct
+       sections placed across boards against the planned section budget.
+
+    6. **Cross-board conflict detection** -- finds time overlaps
+       between *different* boards that affect shared students (students
+       whose recommended courses span both boards).
+
+    7. **Publish readiness** -- aggregates blockers (critical conflicts,
+       empty boards) and warnings before a scenario is finalised.
+
+Key models used:
+    - ``DeliveryBoard``        -- a named weekly schedule grid
+    - ``SectionPlacement``     -- a section pinned to a day/time/room on a board
+    - ``TermSection``          -- the catalogue section (course_code + section label)
+    - ``TermSectionMeeting``   -- one meeting row of a TermSection (day + times)
+    - ``ScenarioSectionBudget``-- per-course budget (planned sections / max per section)
+    - ``ScenarioStudentMap``   -- per-student list of recommended courses
+    - ``BoardStudentLink``     -- many-to-many link of students to boards
 """
 
 from __future__ import annotations
@@ -22,20 +60,46 @@ from core.models import (
 )
 
 # ── Bitmask constants (same as planner_builder) ─────────────────
+#
+# The week is divided into 5-minute slots.  Each slot maps to one bit
+# position in a Python arbitrary-precision integer:
+#
+#   bit index = day_index * 288  +  (minute_of_day // 5)
+#
+# With 7 days x 288 slots = 2016 bits total.  Two meetings overlap
+# when their bitmask AND produces a non-zero result.
 
 _DAY_INDEX = {"SUN": 0, "MON": 1, "TUE": 2, "WED": 3, "THU": 4, "FRI": 5, "SAT": 6}
 _SLOT_MINUTES = 5
-_SLOTS_PER_DAY = 24 * 60 // _SLOT_MINUTES  # 288
-_TOTAL_WEEK_SLOTS = 7 * _SLOTS_PER_DAY  # 2016
+_SLOTS_PER_DAY = 24 * 60 // _SLOT_MINUTES  # 288 slots per day
+_TOTAL_WEEK_SLOTS = 7 * _SLOTS_PER_DAY  # 2016 bits for the whole week
 
 
 def _to_minutes(t: str) -> int:
+    """Convert an ``"HH:MM"`` string to total minutes since midnight."""
     parts = t.split(":")
     return int(parts[0]) * 60 + int(parts[1])
 
 
 def _time_mask(day: str, start_time: str, end_time: str) -> int:
-    """Convert a day + start/end time to a 2016-bit bitmask."""
+    """Build a 2016-bit bitmask for a single day/start/end meeting slot.
+
+    Parameters:
+        day:        Three-letter day abbreviation (e.g. ``"SUN"``, ``"MON"``).
+        start_time: Meeting start in ``"HH:MM"`` (24-hour).
+        end_time:   Meeting end   in ``"HH:MM"`` (24-hour).
+
+    Returns:
+        An integer whose set bits represent the 5-minute slots occupied
+        by this meeting.  Returns ``0`` for invalid or zero-length input.
+
+    Algorithm:
+        1. Map the day string to an offset (0-6) within the 2016-bit week.
+        2. Convert start/end to slot indices.
+        3. Create a run of ``(end_idx - start_idx)`` contiguous 1-bits
+           shifted left by ``start_idx``.  Example for a 50-minute class
+           (10 slots): ``0b1111111111 << start_idx``.
+    """
     d = str(day or "").upper()[:3]
     day_idx = _DAY_INDEX.get(d)
     if day_idx is None:
@@ -46,27 +110,45 @@ def _time_mask(day: str, start_time: str, end_time: str) -> int:
         return 0
     start_idx = (day_idx * 24 * 60 + st) // _SLOT_MINUTES
     end_idx = (day_idx * 24 * 60 + en) // _SLOT_MINUTES
+    # Clamp to valid bit range [0, 2016]
     start_idx = max(0, min(_TOTAL_WEEK_SLOTS, start_idx))
     end_idx = max(0, min(_TOTAL_WEEK_SLOTS, end_idx))
     if end_idx <= start_idx:
         return 0
+    # Build a contiguous run of 1-bits: ((1 << width) - 1) << offset
     return ((1 << (end_idx - start_idx)) - 1) << start_idx
 
 
 def _placement_mask(p: SectionPlacement) -> int:
-    """Bitmask for a single placement row."""
+    """Return the bitmask for a single ``SectionPlacement`` row.
+
+    This covers only the placement's own day/time slot.  For a mask that
+    includes *all* meetings of the underlying TermSection (e.g. a
+    SUN+TUE lecture), use :func:`_placement_full_mask` instead.
+    """
     return _time_mask(p.day, p.start_time, p.end_time)
 
 
 def _placement_full_mask(p: SectionPlacement) -> int:
-    """Bitmask covering ALL meetings of the placed section's TermSection.
+    """Return a bitmask covering **all** meetings of the placed section.
 
-    A section may have multiple meeting rows (e.g., SUN+TUE).
-    The placement row stores the primary slot, but we also need to check
-    against all original meetings for accurate conflict detection.
+    A TermSection may have multiple ``TermSectionMeeting`` rows -- for
+    example a lecture on SUN and TUE.  The ``SectionPlacement`` row only
+    stores the *primary* day/time, so this helper ORs in every meeting's
+    mask for complete conflict coverage.
+
+    Parameters:
+        p: A ``SectionPlacement`` instance.
+
+    Returns:
+        Combined bitmask (placement's own slot | all TermSectionMeetings).
+
+    Note:
+        Issues one extra query per call.  Prefer the pre-loaded masks in
+        ``_load_board_placements`` when checking an entire board.
     """
     mask = _time_mask(p.day, p.start_time, p.end_time)
-    # Also include any other meetings from the TermSection
+    # OR-in every meeting row from the catalogue section
     meetings = TermSectionMeeting.objects.filter(term_section_id=p.term_section_id)
     for m in meetings:
         mask |= _time_mask(m.day, m.start_time, m.end_time)
@@ -78,7 +160,25 @@ def _placement_full_mask(p: SectionPlacement) -> int:
 
 @dataclass
 class PlacementInfo:
-    """Lightweight struct for conflict analysis."""
+    """Lightweight, in-memory representation of a placed section.
+
+    Built by :func:`_load_board_placements` so that conflict-detection
+    loops can compare placements without touching the database again.
+
+    Attributes:
+        id:               PK of the ``SectionPlacement`` row.
+        term_section_id:  FK to ``TermSection``.
+        course_code:      e.g. ``"CS101"``.
+        section:          Section label, e.g. ``"A"``, ``"B1"``.
+        day:              Three-letter day (``"SUN"`` etc.).
+        start_time:       ``"HH:MM"`` start.
+        end_time:         ``"HH:MM"`` end.
+        room:             Room code (may be empty).
+        instructor:       Instructor name from the first meeting row
+                          (empty string if none recorded).
+        mask:             Pre-computed 2016-bit bitmask for the
+                          placement's own day/time slot.
+    """
     id: int
     term_section_id: int
     course_code: str
@@ -92,7 +192,17 @@ class PlacementInfo:
 
 
 def _load_board_placements(board_id: int) -> list[PlacementInfo]:
-    """Load all placements for a board with computed bitmasks."""
+    """Batch-load every placement on a board into ``PlacementInfo`` structs.
+
+    Uses ``select_related`` + ``prefetch_related`` so the entire board
+    is fetched in two queries regardless of how many sections are placed.
+
+    Parameters:
+        board_id: PK of the ``DeliveryBoard``.
+
+    Returns:
+        List of :class:`PlacementInfo` objects with pre-computed masks.
+    """
     placements = (
         SectionPlacement.objects.filter(board_id=board_id)
         .select_related("term_section")
@@ -100,7 +210,7 @@ def _load_board_placements(board_id: int) -> list[PlacementInfo]:
     )
     result = []
     for p in placements:
-        # Get primary instructor from prefetched meetings (no extra query)
+        # Instructor comes from the first prefetched meeting (no extra query)
         meetings = list(p.term_section.meetings.all())
         instructor = meetings[0].instructor if meetings else ""
 
@@ -120,15 +230,32 @@ def _load_board_placements(board_id: int) -> list[PlacementInfo]:
 
 
 def detect_board_conflicts(board_id: int) -> dict:
-    """Detect all conflicts on a board.
+    """Find every scheduling conflict on a single board.
+
+    Performs an O(n^2) pairwise scan of all placements on the board and
+    classifies conflicts into three severity buckets:
+
+    * **overlaps** (critical) -- two sections occupy the same time slot.
+      Detected via ``mask_a & mask_b != 0``.
+    * **instructor_clashes** (critical) -- same instructor teaching two
+      sections at overlapping times.  Compared case-insensitively.
+    * **room_clashes** (warning) -- same room assigned to two sections
+      at overlapping times.  Compared case-insensitively.
+
+    Parameters:
+        board_id: PK of the ``DeliveryBoard`` to analyse.
 
     Returns:
-        {
-            "overlaps": [{"ids": [id1, id2], "sections": ["CS101-A", "CS201-B"], "detail": "..."}],
-            "instructor_clashes": [{"ids": [...], "instructor": "...", "detail": "..."}],
-            "room_clashes": [{"ids": [...], "room": "...", "detail": "..."}],
-            "summary": {"critical": N, "warning": N, "info": 0},
-        }
+        A dict with the shape::
+
+            {
+                "overlaps":            [{"ids": [...], "sections": [...], "detail": "..."}],
+                "instructor_clashes":  [{"ids": [...], "instructor": "...", ...}],
+                "room_clashes":        [{"ids": [...], "room": "...", ...}],
+                "summary":             {"critical": N, "warning": N, "info": 0},
+            }
+
+        ``critical = len(overlaps) + len(instructor_clashes)``; ``warning = len(room_clashes)``.
     """
     items = _load_board_placements(board_id)
     n = len(items)
@@ -137,6 +264,7 @@ def detect_board_conflicts(board_id: int) -> dict:
     instructor_clashes: list[dict] = []
     room_clashes: list[dict] = []
 
+    # De-duplication sets keyed by (placement_id_a, placement_id_b)
     seen_overlap_pairs: set[tuple[int, int]] = set()
     seen_instr_pairs: set[tuple[int, int]] = set()
     seen_room_pairs: set[tuple[int, int]] = set()
@@ -146,7 +274,7 @@ def detect_board_conflicts(board_id: int) -> dict:
             a, b = items[i], items[j]
             pair = (a.id, b.id)
 
-            # Time overlap check (bitmask AND)
+            # ---- Time overlap: bitwise AND of 2016-bit masks ----
             if a.mask & b.mask and pair not in seen_overlap_pairs:
                 seen_overlap_pairs.add(pair)
                 overlaps.append({
@@ -155,7 +283,7 @@ def detect_board_conflicts(board_id: int) -> dict:
                     "detail": f"{a.day} {a.start_time}-{a.end_time} vs {b.day} {b.start_time}-{b.end_time}",
                 })
 
-            # Instructor clash: same instructor + time overlap
+            # ---- Instructor clash: same name + time overlap ----
             if (
                 a.instructor
                 and b.instructor
@@ -171,7 +299,7 @@ def detect_board_conflicts(board_id: int) -> dict:
                     "detail": f"{a.instructor}: {a.day} {a.start_time} vs {b.day} {b.start_time}",
                 })
 
-            # Room clash: same non-empty room + time overlap
+            # ---- Room clash: same non-empty room + time overlap ----
             if (
                 a.room
                 and b.room
@@ -187,6 +315,8 @@ def detect_board_conflicts(board_id: int) -> dict:
                     "detail": f"Room {a.room}: {a.day} {a.start_time} vs {b.day} {b.start_time}",
                 })
 
+    # Overlaps and instructor clashes are "critical" (block publish);
+    # room clashes are "warning" (advisory only).
     critical = len(overlaps) + len(instructor_clashes)
     warning = len(room_clashes)
 
@@ -207,19 +337,34 @@ def validate_placement(
     term_section_id: int,
     exclude_placement_id: int | None = None,
 ) -> dict:
-    """Validate a single placement against all others on the board.
+    """Pre-flight validation for a new or moved placement.
 
-    Used for both new placements and moves (pass exclude_placement_id for moves).
+    Builds a bitmask for the *candidate* placement and checks it against
+    every existing placement on the board.  For a move operation, pass
+    ``exclude_placement_id`` so the section's current position is not
+    compared against itself.
+
+    Parameters:
+        board_id:             Target board PK.
+        day:                  Candidate day (``"SUN"`` etc.).
+        start_time:           Candidate start ``"HH:MM"``.
+        end_time:             Candidate end ``"HH:MM"``.
+        room:                 Candidate room code (may be empty).
+        term_section_id:      PK of the ``TermSection`` being placed.
+        exclude_placement_id: If moving an existing placement, pass its
+                              PK here to skip self-comparison.
 
     Returns:
-        {
-            "valid": bool,
-            "overlaps": [...],
-            "instructor_clashes": [...],
-            "room_clashes": [...],
-            "critical_count": int,
-            "warning_count": int,
-        }
+        A dict with the shape::
+
+            {
+                "valid":              bool,   # True when zero conflicts
+                "overlaps":           [...],
+                "instructor_clashes": [...],
+                "room_clashes":       [...],
+                "critical_count":     int,
+                "warning_count":      int,
+            }
     """
     items = _load_board_placements(board_id)
     new_mask = _time_mask(day, start_time, end_time)

@@ -1,18 +1,56 @@
 """
 core/services/timetable_autoplace.py
-Auto-placement algorithm for timetable workspace.
+Auto-placement algorithm for the Timetable Workspace feature.
 
-Places sections onto boards using student overlap data to minimize conflicts.
+This module implements a greedy constraint-satisfaction algorithm that assigns
+university course sections to weekly time slots on delivery boards.  Each
+board represents a single nominal term-level (e.g. "Level 3") and belongs to
+a TimetableScenario.
 
-Meeting patterns based on credit hours:
-  4 credits → 3 meetings/week (50min, 50min, 100min) on 3 different days
-  3 credits → 2 meetings/week (50min, 50min) on 2 different days
-  2 credits → 1 meeting/week (100min)
+The algorithm's primary goal is to **minimise student scheduling conflicts**:
+courses taken by the same cohort of students should not overlap in time.  It
+also respects a set of hard and soft constraints described below.
 
-Rules:
-  - No more than 1 meeting per day per section
-  - Prefer same time slot across days for the same course
-  - Minimize student conflicts (courses with shared students don't overlap)
+Key concepts
+------------
+* **Delivery board** -- a grid of days x slots for one term level.
+* **Section group** -- sections with the same ordinal index across courses
+  (e.g. all "S1" sections) share one student cohort, so they must NOT
+  overlap.  Sections in *different* groups (S1 vs S2) serve different
+  cohorts and CAN overlap.
+* **Meeting pattern** -- how many weekly meetings a course needs, and the
+  duration of each, determined by credit hours.
+* **Prayer-break window** -- a hard constraint blocking any meeting from
+  starting between 11:35 and 12:59.
+
+Meeting patterns based on credit hours
+---------------------------------------
+  4 credits --> 3 meetings/week (75 min, 75 min, 100 min) on 3 different days
+  3 credits --> 2 meetings/week (75 min, 75 min) on 2 different days
+  2 credits --> 1 meeting/week (100 min)
+  1 credit  --> 1 meeting/week (75 min)  [fallback]
+
+Hard constraints (violations are never accepted)
+-------------------------------------------------
+  - No more than 1 meeting per day per section.
+  - No two sections in the same student group may overlap in time.
+  - No meeting may start during the prayer-break window (11:35-12:59).
+
+Soft constraints (penalised but not forbidden)
+----------------------------------------------
+  - Prefer the same time-slot index across all meeting days for one course.
+  - Minimise idle gaps between on-campus classes for the same student group.
+  - Online courses should be placed in late slots so students can leave
+    campus first.
+  - Different sections of the same course (taught by one instructor) must
+    not overlap (same-course overlap penalty).
+
+Placement order
+---------------
+Sections are placed in *round-robin by group index*: all S1 sections first,
+then all S2 sections, etc.  Within a round, courses are processed in
+descending demand order (highest ``total_demand`` first).  This ensures the
+most constrained group (S1 -- the primary cohort) gets the best slots.
 """
 
 from __future__ import annotations
@@ -32,39 +70,69 @@ from core.models import (
 from core.services.timetable_workspace import _time_mask, _to_minutes
 
 # ── Meeting Patterns ─────────────────────────────────────────────
-
+# The Saudi academic week runs Sunday through Thursday.
 WEEKDAYS = ["SUN", "MON", "TUE", "WED", "THU"]
 
+# Maps credit hours to a list of meeting durations (minutes per meeting).
+# The length of the list determines how many meetings per week.
 MEETING_PATTERNS: dict[int, list[int]] = {
-    4: [75, 75, 100],   # 3 meetings: two 75min + one 100min
-    3: [75, 75],         # 2 meetings: two 75min
-    2: [100],            # 1 meeting: 100min
-    1: [75],             # fallback
+    4: [75, 75, 100],   # 3 meetings: two 75 min + one 100 min
+    3: [75, 75],         # 2 meetings: two 75 min
+    2: [100],            # 1 meeting: 100 min
+    1: [75],             # 1 meeting: 75 min (fallback for rare 1-credit courses)
 }
 
 
 def get_meeting_pattern(credit_hours: int) -> list[int]:
-    """Return list of meeting durations in minutes for given credit hours."""
+    """Return the list of per-meeting durations for a given credit-hour count.
+
+    Parameters
+    ----------
+    credit_hours : int
+        The number of credit hours for the course (1-4).
+
+    Returns
+    -------
+    list[int]
+        Durations in minutes for each weekly meeting.
+        Falls back to the 3-credit pattern if *credit_hours* is not in the map.
+    """
     return MEETING_PATTERNS.get(credit_hours, MEETING_PATTERNS[3])
 
 
 # ── Default Slots ────────────────────────────────────────────────
+# Five 75-minute teaching slots spanning the day, with a gap from 11:45 to
+# 13:00 for the midday prayer break.  A scenario may override these via its
+# ``slot_config`` JSON field.
 
 DEFAULT_SLOTS = [
     {"label": "09:00-10:15", "start": "09:00", "end": "10:15"},
     {"label": "10:30-11:45", "start": "10:30", "end": "11:45"},
-    # No slot starts between 11:35-12:59 (prayer break)
+    # -- prayer break gap: no slot starts between 11:35 and 12:59 --
     {"label": "13:00-14:15", "start": "13:00", "end": "14:15"},
     {"label": "14:30-15:45", "start": "14:30", "end": "15:45"},
     {"label": "16:00-17:15", "start": "16:00", "end": "17:15"},
 ]
 
-# Hard constraint: no course may START between these times (prayer break)
+# Hard constraint: no course meeting may START during the prayer break.
+# The window is inclusive on both ends.
 BLOCKED_START_WINDOW = ("11:35", "12:59")
 
 
 def _start_is_blocked(start_time: str) -> bool:
-    """Return True if a course starting at this time violates the prayer break."""
+    """Check whether *start_time* falls inside the prayer-break window.
+
+    Parameters
+    ----------
+    start_time : str
+        "HH:MM" string for the proposed meeting start.
+
+    Returns
+    -------
+    bool
+        ``True`` if a meeting starting at this time would violate the
+        prayer-break hard constraint.
+    """
     start_min = _to_minutes(start_time)
     block_from = _to_minutes(BLOCKED_START_WINDOW[0])
     block_to = _to_minutes(BLOCKED_START_WINDOW[1])
@@ -72,6 +140,7 @@ def _start_is_blocked(start_time: str) -> bool:
 
 
 def _get_slots(slot_config: list[dict]) -> list[dict]:
+    """Return *slot_config* if non-empty, otherwise fall back to DEFAULT_SLOTS."""
     return slot_config if slot_config else DEFAULT_SLOTS
 
 
@@ -82,33 +151,57 @@ def _generate_meeting_options(
     pattern: list[int],
     slot_config: list[dict],
 ) -> list[list[dict]]:
-    """Generate all valid meeting combinations for a course's pattern.
+    """Generate every valid way to schedule a course's weekly meetings.
 
-    Rules:
-      - One meeting per day only
-      - 50min meetings use a single slot
-      - 100min meetings use two consecutive slots
-      - Prefer same time slot index across days (scored later, not filtered here)
+    The function enumerates combinations of (day, slot) assignments that
+    satisfy the hard constraints (one meeting per day, prayer-break
+    avoidance) and produces a list of *candidate options* for the scorer
+    to rank.
 
-    Returns list of options, each option is a list of {day, start, end, slot_idx} dicts.
+    Parameters
+    ----------
+    pattern : list[int]
+        Per-meeting durations in minutes, e.g. ``[75, 75]`` for a 3-credit
+        course.  The list length equals the number of meetings per week.
+    slot_config : list[dict]
+        Slot definitions from the scenario, or ``DEFAULT_SLOTS``.
+
+    Returns
+    -------
+    list[list[dict]]
+        Each element is one complete option -- a list of meeting dicts, one
+        per meeting in *pattern*.  Each meeting dict has keys:
+        ``day`` (str), ``start`` (str "HH:MM"), ``end`` (str "HH:MM"),
+        ``slot_idx`` (int -- the 0-based position in *slots*).
+
+    Notes
+    -----
+    * 75 min meetings fit in a single slot.
+    * 100 min meetings span two consecutive slots (start of slot *i* to
+      end of slot *i+1*).
+    * The generator prefers giving every meeting the same ``slot_idx``
+      (time-consistency), but falls back to the first available slot when
+      the preferred index is unavailable for a particular duration.
     """
     slots = _get_slots(slot_config)
     num_meetings = len(pattern)
 
-    # Generate day combinations (pick N different days from WEEKDAYS)
+    # All ways to pick *num_meetings* distinct days from the 5-day week.
     day_combos = list(combinations(WEEKDAYS, num_meetings))
 
-    # For each duration, determine which slot positions work
+    # For each meeting duration, pre-compute which (slot_idx, start, end)
+    # positions are feasible (respecting prayer break and slot merging).
     slot_options_per_duration: list[list[tuple[int, str, str]]] = []
     for duration in pattern:
         positions = []
         if duration <= 75:
-            # 75min lecture → fits in a single slot
+            # Standard lecture -- fits within one slot boundary.
             for i, s in enumerate(slots):
                 if not _start_is_blocked(s["start"]):
                     positions.append((i, s["start"], s["end"]))
         else:
-            # 100min lecture → two consecutive slots merged
+            # Extended lecture (100 min) -- merge two consecutive slots.
+            # Uses the start of slot[i] and the end of slot[i+1].
             for i in range(len(slots) - 1):
                 if not _start_is_blocked(slots[i]["start"]):
                     positions.append((i, slots[i]["start"], slots[i + 1]["end"]))
@@ -117,20 +210,21 @@ def _generate_meeting_options(
     all_options: list[list[dict]] = []
 
     for days in day_combos:
-        # For same-time preference: try all slot positions for the first meeting,
-        # then prefer the same slot index for subsequent meetings
+        # Iterate over every feasible slot position for the *first* meeting;
+        # subsequent meetings try to reuse the same slot index (time
+        # consistency) and fall back to their first available position.
         for first_pos in slot_options_per_duration[0]:
             option: list[dict] = []
             valid = True
 
             for m_idx in range(num_meetings):
                 day = days[m_idx]
-                target_slot_idx = first_pos[0]  # prefer same slot index
+                # Target: same slot index as the first meeting (time consistency).
+                target_slot_idx = first_pos[0]
 
-                # Find the best position for this meeting
                 positions = slot_options_per_duration[m_idx]
 
-                # First try: exact same slot index
+                # First try: exact same slot index as the first meeting.
                 found = False
                 for pos in positions:
                     if pos[0] == target_slot_idx:
@@ -144,7 +238,8 @@ def _generate_meeting_options(
                         break
 
                 if not found:
-                    # Fallback: use the first available position
+                    # Fallback: use the earliest available position for this
+                    # duration.  The scorer will penalise the time variance.
                     if positions:
                         pos = positions[0]
                         option.append({
@@ -164,6 +259,12 @@ def _generate_meeting_options(
 
 
 def _to_min(t: str) -> int:
+    """Convert an "HH:MM" string to total minutes since midnight.
+
+    This is a local helper identical in behaviour to ``_to_minutes`` from
+    ``timetable_workspace``, duplicated here to avoid an extra import in
+    the hot scoring loop.
+    """
     h, m = t.split(":")
     return int(h) * 60 + int(m)
 

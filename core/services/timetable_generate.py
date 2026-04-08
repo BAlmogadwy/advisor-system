@@ -1,9 +1,34 @@
 """
 core/services/timetable_generate.py
-Cohort-based workspace generation.
+Cohort-based timetable workspace generation.
 
-Combines the recommender pipeline with student classification to auto-create
-a fully scaffolded scenario with boards per term level.
+This module is the main entry point for creating a fully scaffolded
+TimetableScenario from scratch.  The pipeline:
+
+  1. Run the batch recommender for every student in the target program(s)
+     to determine which courses each student should take next semester.
+  2. Filter out non-schedulable courses (capstone, training, free electives).
+  3. Classify each student by their "primary term" — the curriculum term
+     (e.g. Term 3, Term 5) where the majority of their recommended courses
+     fall.  Students whose courses span multiple terms are flagged as
+     "cross-term".
+  4. Compute a section plan (how many sections of each course are needed)
+     using demand counts and capacity rules from section_planning.
+  5. Create the TimetableScenario, one DeliveryBoard per active term level,
+     and persist:
+       - ScenarioStudentMap  (student classification records)
+       - ScenarioSectionBudget  (planned sections per course)
+       - BoardStudentLink  (primary + visitor links between students
+         and boards)
+  6. Run the auto-placement engine to produce an initial draft timetable.
+
+The single public function is ``generate_workspace_scenario()``.
+
+Dependencies:
+  - core.services.recommender_batch  (batch_recommend, batch_recommend_multi_program)
+  - core.services.section_planning   (capacity rules, section plan computation)
+  - core.services.timetable_autoplace (auto_place_scenario, get_meeting_pattern)
+  - core.services.timetable_workspace (compute_scenario_budget)
 """
 
 from __future__ import annotations
@@ -32,10 +57,22 @@ from core.services.section_planning import (
 )
 from core.services.student_helpers import normalize_code
 
-# Courses excluded from timetable scheduling
-# - Free elective placeholders (FE1, FE2)
-# - Course numbers ending with 490, 491, 492
-# - Courses whose name contains graduation/project/training/coop keywords
+# ---------------------------------------------------------------------------
+# Course exclusion rules
+# ---------------------------------------------------------------------------
+# Certain courses must never appear on a timetable board because they are
+# not delivered in a regular classroom setting.  Three exclusion layers:
+#
+# 1. EXCLUDED_COURSE_CODES — explicit course codes (currently empty; can be
+#    populated with codes like "FE1", "FE2" for free-elective placeholders).
+# 2. EXCLUDED_SUFFIXES — course numbers ending with these digits are
+#    capstone / graduation-project sequences (e.g. CS490, CS491, CS492).
+# 3. EXCLUDED_NAME_KEYWORDS / EXCLUDED_NAME_PATTERNS_PROJECT — fuzzy match
+#    against the course description (English and Arabic) to catch training,
+#    cooperative, internship, and graduation-project courses.
+#
+# The helper ``_is_excluded_course()`` applies all three layers.
+# ---------------------------------------------------------------------------
 EXCLUDED_COURSE_CODES: frozenset[str] = frozenset()  # None currently hardcoded
 EXCLUDED_SUFFIXES = ("490", "491", "492")
 EXCLUDED_NAME_KEYWORDS = frozenset({
@@ -43,14 +80,28 @@ EXCLUDED_NAME_KEYWORDS = frozenset({
     "cooperative", "co-operative", "coop", "internship",
     "تخرج", "مشروع تخرج", "تدريب",
 })
-# Patterns that indicate a capstone/project course (but not "project management")
+# Patterns that indicate a capstone/project course.
+# Note: plain "project" is intentionally omitted to avoid false-positives
+# like "Project Management" — only multi-word capstone patterns are listed.
 EXCLUDED_NAME_PATTERNS_PROJECT = ("project i", "project ii", "graduation project")
 
-# Cache: course_code → course_name (loaded lazily)
+# Lazy-loaded mapping of course_code (upper-case) to lower-cased course
+# description.  Populated once by ``_load_course_names()`` and reused for
+# the lifetime of the process to avoid repeated DB queries.
 _course_name_cache: dict[str, str] | None = None
 
 
 def _load_course_names() -> dict[str, str]:
+    """Return a mapping of normalised course codes to lower-cased descriptions.
+
+    The result is cached module-globally so the Course table is only queried
+    once per process.  Used by ``_is_excluded_course()`` to perform
+    keyword-based exclusion checks against course descriptions.
+
+    Returns:
+        dict mapping upper-cased course codes to lower-cased description
+        strings (empty string when no description is stored).
+    """
     global _course_name_cache
     if _course_name_cache is None:
         from core.models import Course
@@ -62,14 +113,34 @@ def _load_course_names() -> dict[str, str]:
 
 
 def _is_excluded_course(code: str) -> bool:
-    """Check if a course should be excluded from timetable scheduling."""
+    """Determine whether a course should be excluded from timetable scheduling.
+
+    A course is excluded if **any** of the following are true:
+
+    1. Its normalised code is in the ``EXCLUDED_COURSE_CODES`` set.
+    2. The numeric portion of the code ends with one of the
+       ``EXCLUDED_SUFFIXES`` (490, 491, 492 — capstone sequences).
+    3. The course description (from the Course model) contains any of the
+       ``EXCLUDED_NAME_KEYWORDS`` or ``EXCLUDED_NAME_PATTERNS_PROJECT``.
+
+    Args:
+        code: Raw course code string (e.g. "CS 490", "ARAB101").
+
+    Returns:
+        True if the course should be kept off the timetable, False otherwise.
+    """
     c = normalize_code(code)
+
+    # Layer 1: explicit code blacklist
     if c in EXCLUDED_COURSE_CODES:
         return True
+
+    # Layer 2: numeric suffix check (e.g. "490" in "CS490")
     digits = "".join(ch for ch in c if ch.isdigit())
     if digits.endswith(EXCLUDED_SUFFIXES):
         return True
-    # Check course name for keywords
+
+    # Layer 3: keyword / pattern match against course description
     names = _load_course_names()
     name = names.get(c, "")
     if name:
@@ -92,25 +163,62 @@ def generate_workspace_scenario(
     course_overrides: dict[str, int] | None = None,
     created_by: str = "",
 ) -> dict:
-    """Generate a fully scaffolded workspace scenario.
+    """Create a fully scaffolded timetable workspace scenario end-to-end.
+
+    This is the main orchestrator.  It runs the full pipeline described in
+    the module docstring: recommend -> classify -> plan sections -> create
+    scenario/boards -> persist records -> auto-place.
 
     Args:
-        program: single program code ("AI") or list (["AI", "DS"])
+        year: Academic year (e.g. 1446).
+        semester: Semester number (1, 2, or 3 for summer).
+        program: Single programme code (``"AI"``) **or** a list of codes
+            (``["AI", "DS", "CS"]``) for multi-program generation.
+        section: Optional section filter (e.g. ``"1"``).  When provided,
+            only students in that section are included.
+        scenario_name: Human-readable label for the scenario.  Auto-
+            generated from program/semester/timestamp when left blank.
+        max_local_4cr: Max students per section for local 4-credit courses.
+        max_local_other: Max students per section for local non-4-credit
+            courses.
+        max_external: Max students per section for external (service)
+            courses.
+        course_overrides: Optional dict mapping course codes to explicit
+            section counts, bypassing the demand-based computation.
+        created_by: Username or identifier stored on the scenario record.
 
-    1. Run recommender for all students in the program(s)
-    2. Classify each student by primary term
-    3. Compute section plan (budget)
-    4. Create scenario + one board per active term level
-    5. Persist classification, budget, and student-board links
+    Returns:
+        A dict containing:
+          - ``scenario``: metadata dict (id, year, term, name, status, ...).
+          - ``boards``: list of board summary dicts, one per term level,
+            each with student counts, courses, and auto-placement stats.
+          - ``section_budget``: enriched budget with meeting-pattern info.
+          - ``section_plan``: raw section plan from ``compute_section_plan``.
+          - ``plan_summary``: aggregate section-plan statistics.
+          - ``student_summary``: counts of total, classified, on-plan,
+            and cross-term students broken down by term level.
 
-    Returns dict with scenario, boards, budget, and student summary.
+    Business rules:
+      - Non-schedulable courses (capstone, training, co-op) are filtered out
+        before any section planning — see ``_is_excluded_course()``.
+      - A student's **primary term** is the curriculum term that appears most
+        often among their recommended courses.  They are linked to that
+        term's board as ``"primary"``.
+      - Cross-term students also receive ``"visitor"`` links to every other
+        board whose courses they need.
+      - The auto-placement engine runs at the end to produce a first-draft
+        timetable that can be manually adjusted afterward.
     """
 
     # ── Step 1: Collect recommendations (batch-optimized) ─────────
+    # Run the recommender for every student in the target program(s).
+    # The batch variants pre-load shared data (prerequisites, programme
+    # requirements) once, avoiding N+1 queries.
 
     from core.services.recommender_batch import batch_recommend, batch_recommend_multi_program
 
-    # Normalize to list for uniform handling
+    # Normalize ``program`` to a list so the rest of the function can
+    # treat single-program and multi-program cases uniformly.
     programs = [program] if isinstance(program, str) else list(program)
     program_label = ",".join(programs)
 
@@ -119,12 +227,19 @@ def generate_workspace_scenario(
         section=section,
     )
 
+    # Single-program uses a faster code path; multi-program must resolve
+    # each student's individual programme before recommending.
     if len(programs) == 1:
         all_recs = batch_recommend(student_ids, programs[0], year, semester)
     else:
         all_recs = batch_recommend_multi_program(student_ids, year, semester)
 
-    # Filter out non-schedulable courses
+    # Filter out non-schedulable courses (capstone, training, etc.) and
+    # build two structures:
+    #   - ``aggregate``: Counter of course_code -> total demand across all
+    #     students (used by the section planner).
+    #   - ``student_recs``: per-student filtered recommendation lists
+    #     (used for classification and board links).
     aggregate: Counter[str] = Counter()
     student_recs: dict[int, list[str]] = {}
 
@@ -135,8 +250,16 @@ def generate_workspace_scenario(
             student_recs[sid] = filtered
 
     # ── Step 2: Classify students by primary term ────────────────
+    # Each course in ProgrammeRequirement has a ``programme_term`` (the
+    # curriculum term it nominally belongs to, e.g. Term 3).  We use
+    # this to figure out which term level each student "belongs to" by
+    # counting how many of their recommended courses fall in each term
+    # and picking the mode (most common term).
 
-    # Load course → programme_term mapping for all involved programs
+    # Build course_code -> programme_term lookup from the DB.
+    # If the same course appears in multiple programs with different
+    # terms, the last-seen value wins (acceptable: the primary-term
+    # classification is a heuristic, not an exact science).
     pr_qs = ProgrammeRequirement.objects.filter(program__in=programs).values_list(
         "course_code", "programme_term"
     )
@@ -149,16 +272,23 @@ def generate_workspace_scenario(
     term_student_counts: Counter[int] = Counter()
 
     for sid, recs in student_recs.items():
+        # Count how many of this student's recommended courses fall in
+        # each curriculum term.
         term_counts: Counter[int] = Counter()
         for code in recs:
             pt = course_term_map.get(normalize_code(code))
             if pt is not None:
                 term_counts[pt] += 1
 
+        # Students with no classifiable courses are skipped (e.g. all
+        # their courses are electives without a programme_term).
         if not term_counts:
             continue
 
+        # Primary term = the term with the most recommended courses.
         primary_term = term_counts.most_common(1)[0][0]
+        # Cross-term = student needs courses from more than one term
+        # level.  These students will get "visitor" board links later.
         is_cross_term = len(term_counts) > 1
 
         classified.append({
@@ -170,17 +300,25 @@ def generate_workspace_scenario(
         })
         term_student_counts[primary_term] += 1
 
-    # ── Step 3: Compute section plan ─────────────────────────────
+    # ── Step 3: Compute section plan (section budget) ─────────────
+    # The section plan determines how many sections of each course are
+    # needed, based on aggregate student demand and per-section capacity
+    # limits.  Capacity limits differ by department locality and credit
+    # hours (see section_planning.py for the rules).
 
+    # Load programme-specific capacity overrides.  When a course appears
+    # in multiple programs with different capacities, take the minimum
+    # to respect the most restrictive constraint.
     programme_capacities: dict[str, int] = {}
     if aggregate:
-        # Merge capacities from all programs (use min if same course in multiple programs)
         for prog in programs:
             caps = load_programme_capacities(prog, list(aggregate.keys()))
             for code, cap in caps.items():
                 if code not in programme_capacities or cap < programme_capacities[code]:
                     programme_capacities[code] = cap
 
+    # Normalize any user-supplied course overrides so they match the
+    # canonical upper-case-no-spaces format used everywhere else.
     norm_overrides: dict[str, int] | None = None
     if course_overrides:
         norm_overrides = {normalize_code(k): v for k, v in course_overrides.items()}

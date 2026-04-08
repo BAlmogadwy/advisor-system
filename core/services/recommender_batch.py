@@ -1,11 +1,29 @@
 """
 core/services/recommender_batch.py
-Batch-optimized recommender for the timetable workspace.
+Batch-optimized course recommender for the timetable workspace.
 
-Pre-loads ALL student data, programme requirements, and prerequisites
-in a few queries, then processes all students in-memory.
+Pre-loads ALL student data, programme requirements, and prerequisites in a
+handful of queries, then processes every student entirely in-memory.
 
-Query count: O(1) instead of O(N*M) where N=students, M=courses.
+Performance
+-----------
+* **Query count**: ~5 total per programme (regardless of student count),
+  compared to O(N * M) in the per-student recommender.
+* Used by the timetable generation pipeline, aggregate demand reports,
+  conflict matrix, and debug panels.
+
+Algorithm (per student)
+-----------------------
+1. Compute the student's *real term* from their join year (first 2 digits
+   of student ID) and the current academic year / semester.
+2. Determine term *parity* (odd/even) for the *next* term to filter courses
+   offered only in odd or even semesters.
+3. Exclude courses already passed or currently being studied.
+4. Verify all prerequisites are satisfied (passed or currently studying).
+5. Rank remaining candidates by: unlock count (courses this course is a
+   prerequisite for), past-due priority, term order, and GS-prefix
+   deprioritisation.
+6. Greedily fill up to ``MAX_CREDITS`` (18) credit hours.
 """
 
 from __future__ import annotations
@@ -15,6 +33,7 @@ from collections import defaultdict
 from core.models import Prerequisite, ProgrammeRequirement, Student, StudentCourse
 from core.services.student_helpers import normalize_code
 
+# Maximum credit hours a student may register for in one semester.
 MAX_CREDITS = 18
 
 
@@ -23,6 +42,31 @@ def calculate_real_student_term(
     current_academic_year: int,
     current_semester: int,
 ) -> int:
+    """Derive a student's actual academic term number from their ID and calendar.
+
+    Saudi university student IDs embed the Hijri join year in the first two
+    digits (e.g. ``44`` -> 1444 H).  The real term is calculated as::
+
+        (current_year - join_year_hijri) * 2 + current_semester - 1
+
+    This accounts for students who are ahead or behind the standard plan.
+
+    Parameters
+    ----------
+    student_id : int | str
+        The student's university ID.  Only the first 2 digits are used.
+    current_academic_year : int
+        Current Hijri academic year (e.g. 1446).
+    current_semester : int
+        Current semester number (1 or 2; 3 for summer).
+
+    Returns
+    -------
+    int
+        The 1-based term number the student is effectively in (e.g. 5 means
+        they are in their 5th semester).
+    """
+    # First two digits of the student ID encode the short Hijri join year
     join_year_hijri = int(str(student_id)[:2]) + 1400
     years_difference = current_academic_year - join_year_hijri
     return years_difference * 2 + current_semester - 1
@@ -34,11 +78,39 @@ def batch_recommend(
     current_academic_year: int,
     current_semester: int,
 ) -> dict[int, list[str]]:
-    """Recommend courses for all students in a program in one batch.
+    """Recommend next-semester courses for all students in a programme.
 
-    Returns dict: student_id -> list of recommended course codes.
+    Loads programme requirements, prerequisites, and student academic records
+    in bulk (~5 queries total), then runs the recommendation algorithm
+    entirely in-memory for each student.
 
-    Total queries: ~5 (regardless of student count).
+    Parameters
+    ----------
+    student_ids : list[int]
+        University IDs of students to process.
+    program : str
+        Programme code (e.g. ``"AI"``, ``"CS"``).
+    current_academic_year : int
+        Current Hijri academic year.
+    current_semester : int
+        Current semester number (1, 2, or 3).
+
+    Returns
+    -------
+    dict[int, list[str]]
+        Mapping of ``student_id`` -> ordered list of recommended course codes.
+        Students with no recommendations are omitted from the dict.
+
+    Business Rules
+    ---------------
+    * Courses already passed or being studied are excluded.
+    * All prerequisites must be satisfied (passed **or** studying).
+    * Only courses whose term parity matches the *next* term are eligible.
+    * Courses from earlier terms (past-due) are prioritised over current-term.
+    * Within a priority tier, courses that unlock the most downstream courses
+      are ranked higher.
+    * General Studies (``GS`` prefix) courses are deprioritised.
+    * Total recommended credits never exceed ``MAX_CREDITS`` (18).
     """
     if not student_ids:
         return {}
