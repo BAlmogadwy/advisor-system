@@ -56,11 +56,28 @@ def _tail_log(max_lines: int = 120) -> str:
 
 
 def _is_pid_running(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-        return True
-    except Exception:
-        return False
+    if sys.platform == "win32":
+        # On Windows, os.kill(pid, 0) is unreliable — use ctypes or tasklist
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+            SYNCHRONIZE = 0x00100000
+            handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+            if handle:
+                # Process exists — check if it has actually exited
+                WAIT_TIMEOUT = 258
+                ret = kernel32.WaitForSingleObject(handle, 0)
+                kernel32.CloseHandle(handle)
+                return ret == WAIT_TIMEOUT  # Still running if WAIT_TIMEOUT
+            return False
+        except Exception:
+            return False
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except Exception:
+            return False
 
 
 def _now_local_str() -> str:
@@ -72,6 +89,21 @@ def get_scrape_status() -> dict[str, Any]:
     state = _read_state()
     pid = state.get("pid")
     running = isinstance(pid, int) and _is_pid_running(pid)
+
+    # Auto-clear stale state: if process is no longer running but state
+    # still says it was started (never got stopped_at), mark it as finished
+    if not running and pid and not state.get("stopped_at") and state.get("started_at"):
+        state["stopped_at"] = _now_local_str()
+        state["last_action"] = "finished"
+        _write_state(state)
+        _append_run_event(
+            {
+                "event": "finished",
+                "at": state["stopped_at"],
+                "pid": pid,
+                "note": "auto-detected: process exited",
+            }
+        )
 
     history_raw = state.get("history", [])
     history = history_raw if isinstance(history_raw, list) else []
