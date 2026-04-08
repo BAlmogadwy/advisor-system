@@ -385,10 +385,12 @@ def _write_mini_conflict_matrix(
     ws, start_row, start_col, scenario, term_num, term_courses,
     hdr_fill, hdr_font, hdr_align, thin_border, normal_font, center_align,
 ):
-    """Write a small conflict matrix for one term level on an existing sheet.
+    """Write a conflict matrix for one term level on an existing sheet.
 
-    Only includes students who are primary on this term OR visitors to this term,
-    and only their courses that belong to this term's course set.
+    Includes ALL courses that the board's students need (not just the term's
+    curriculum courses). Cross-term courses are marked with an asterisk.
+    This is critical because a Term 3 student repeating MATH105 (Term 1) must
+    not have it overlap with their Term 3 courses.
     """
     from openpyxl.styles import Font, PatternFill
 
@@ -405,29 +407,33 @@ def _write_mini_conflict_matrix(
         ).values_list("student_id", flat=True)
     )
 
-    # Get their recommended courses, filtered to this term's courses only
+    # Get ALL recommended courses for these students (not filtered by term)
     student_maps = ScenarioStudentMap.objects.filter(
         scenario=scenario, student_id__in=student_ids
     )
     course_students: dict[str, set[int]] = defaultdict(set)
     for sm in student_maps:
         for code in sm.recommended_courses:
-            if code in term_courses:
-                course_students[code].add(sm.student_id)
+            course_students[code].add(sm.student_id)
 
     courses = sorted(course_students.keys())
     n = len(courses)
     if n == 0:
         return
 
+    # Identify which courses are cross-term (not in this term's curriculum)
+    cross_term_courses = {c for c in courses if c not in term_courses}
+    native_count = n - len(cross_term_courses)
+
     # Title
     r = start_row
     ws.cell(row=r, column=start_col, value=f"Conflict Matrix — Term {term_num}").font = Font(
         bold=True, size=10
     )
-    ws.cell(row=r + 1, column=start_col, value=f"{len(student_ids)} students, {n} courses").font = Font(
-        size=8, color="666666"
-    )
+    subtitle = f"{len(student_ids)} students, {native_count} courses"
+    if cross_term_courses:
+        subtitle += f" + {len(cross_term_courses)} cross-term (*)"
+    ws.cell(row=r + 1, column=start_col, value=subtitle).font = Font(size=8, color="666666")
     r += 3
 
     # Build matrix
@@ -444,11 +450,13 @@ def _write_mini_conflict_matrix(
                 max_val = shared
 
     # Header row
+    cross_hdr_fill = PatternFill(start_color="4056E3", end_color="4056E3", fill_type="solid")
     ws.cell(row=r, column=start_col).border = thin_border
     for j, code in enumerate(courses):
         cell = ws.cell(row=r, column=start_col + 1 + j)
-        cell.value = code
-        cell.fill = hdr_fill
+        is_cross = code in cross_term_courses
+        cell.value = f"*{code}" if is_cross else code
+        cell.fill = cross_hdr_fill if is_cross else hdr_fill
         cell.font = Font(name="Consolas", size=8, bold=True, color="FFFFFF")
         cell.alignment = center_align
         cell.border = thin_border
@@ -458,9 +466,10 @@ def _write_mini_conflict_matrix(
     zero_font = Font(name="Consolas", size=8, color="CCCCCC")
 
     for i, code in enumerate(courses):
+        is_cross = code in cross_term_courses
         cell = ws.cell(row=r, column=start_col)
-        cell.value = code
-        cell.fill = hdr_fill
+        cell.value = f"*{code}" if is_cross else code
+        cell.fill = cross_hdr_fill if is_cross else hdr_fill
         cell.font = Font(name="Consolas", size=8, bold=True, color="FFFFFF")
         cell.border = thin_border
 
