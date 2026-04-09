@@ -1,5 +1,6 @@
 import json
 
+from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
@@ -615,7 +616,7 @@ def elective_catalogue_import_view(request: HttpRequest) -> JsonResponse:
     return JsonResponse(result)
 
 
-@role_required(ROLE_SUPER_ADMIN)
+@login_required(login_url="login")
 @require_GET
 def elective_catalogue_list_view(request: HttpRequest) -> JsonResponse:
     """List all elective courses for a programme."""
@@ -640,7 +641,7 @@ def elective_catalogue_list_view(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"ok": True, "items": data, "count": len(data)})
 
 
-@role_required(ROLE_SUPER_ADMIN)
+@login_required(login_url="login")
 @require_POST
 def elective_mapping_set_view(request: HttpRequest) -> JsonResponse:
     """Set elective-to-placeholder mappings for a term.
@@ -670,7 +671,7 @@ def elective_mapping_set_view(request: HttpRequest) -> JsonResponse:
     return JsonResponse(result)
 
 
-@role_required(ROLE_SUPER_ADMIN)
+@login_required(login_url="login")
 @require_GET
 def elective_mapping_list_view(request: HttpRequest) -> JsonResponse:
     """List current elective mappings for a term/programme."""
@@ -705,7 +706,7 @@ def elective_mapping_list_view(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"ok": True, "items": data, "count": len(data)})
 
 
-@role_required(ROLE_SUPER_ADMIN)
+@login_required(login_url="login")
 @require_GET
 def elective_placeholders_view(request: HttpRequest) -> JsonResponse:
     """List elective placeholder codes from ProgrammeRequirement for a programme.
