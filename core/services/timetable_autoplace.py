@@ -65,7 +65,6 @@ from core.models import (
     SectionPlacement,
     TermSection,
     TermSectionMeeting,
-    TimetableScenario,
 )
 from core.services.timetable_workspace import _time_mask, _to_minutes
 
@@ -76,10 +75,10 @@ WEEKDAYS = ["SUN", "MON", "TUE", "WED", "THU"]
 # Maps credit hours to a list of meeting durations (minutes per meeting).
 # The length of the list determines how many meetings per week.
 MEETING_PATTERNS: dict[int, list[int]] = {
-    4: [75, 75, 100],   # 3 meetings: two 75 min + one 100 min
-    3: [75, 75],         # 2 meetings: two 75 min
-    2: [100],            # 1 meeting: 100 min
-    1: [75],             # 1 meeting: 75 min (fallback for rare 1-credit courses)
+    4: [75, 75, 100],  # 3 meetings: two 75 min + one 100 min
+    3: [75, 75],  # 2 meetings: two 75 min
+    2: [100],  # 1 meeting: 100 min
+    1: [75],  # 1 meeting: 75 min (fallback for rare 1-credit courses)
 }
 
 
@@ -228,12 +227,14 @@ def _generate_meeting_options(
                 found = False
                 for pos in positions:
                     if pos[0] == target_slot_idx:
-                        option.append({
-                            "day": day,
-                            "start": pos[1],
-                            "end": pos[2],
-                            "slot_idx": pos[0],
-                        })
+                        option.append(
+                            {
+                                "day": day,
+                                "start": pos[1],
+                                "end": pos[2],
+                                "slot_idx": pos[0],
+                            }
+                        )
                         found = True
                         break
 
@@ -242,12 +243,14 @@ def _generate_meeting_options(
                     # duration.  The scorer will penalise the time variance.
                     if positions:
                         pos = positions[0]
-                        option.append({
-                            "day": day,
-                            "start": pos[1],
-                            "end": pos[2],
-                            "slot_idx": pos[0],
-                        })
+                        option.append(
+                            {
+                                "day": day,
+                                "start": pos[1],
+                                "end": pos[2],
+                                "slot_idx": pos[0],
+                            }
+                        )
                     else:
                         valid = False
                         break
@@ -267,19 +270,19 @@ STRATEGIES: dict[str, dict] = {
     "compact": {
         "label": "Compact",
         "description": "Pack courses back-to-back, minimize idle time between classes",
-        "gap_multiplier": 10,     # very strong gap penalty
-        "slot_preference": 0,     # no slot position preference
+        "gap_multiplier": 10,  # very strong gap penalty
+        "slot_preference": 0,  # no slot position preference
     },
     "morning": {
         "label": "Morning-first",
         "description": "Pack courses into early slots, free afternoons for study",
-        "gap_multiplier": 2,      # low gap penalty (gaps less important than being early)
-        "slot_preference": 50,    # very strong preference for early slots
+        "gap_multiplier": 2,  # low gap penalty (gaps less important than being early)
+        "slot_preference": 50,  # very strong preference for early slots
     },
     "balanced": {
         "label": "Balanced",
         "description": "Moderate gaps, try to use fewer days per course",
-        "gap_multiplier": 5,      # moderate gap penalty
+        "gap_multiplier": 5,  # moderate gap penalty
         "slot_preference": 0,
     },
     "optimal": {
@@ -298,6 +301,12 @@ STRATEGIES: dict[str, dict] = {
         "label": "Load-Balanced",
         "description": "Equalize daily course load — no heavy/light days",
         "gap_multiplier": 5,
+        "slot_preference": 0,
+    },
+    "adaptive": {
+        "label": "Adaptive (Best Overall)",
+        "description": "Greedy baseline → CP-SAT improvement → local search polish — best quality with guaranteed results",
+        "gap_multiplier": 10,
         "slot_preference": 0,
     },
 }
@@ -393,7 +402,7 @@ def _score_option(
 
     # ── (1) Hard conflict: bitmask overlap with same student group ────
     hard_conflict = 0
-    for placed_code, placed_mask in same_group_masks:
+    for _placed_code, placed_mask in same_group_masks:
         if total_mask & placed_mask:
             hard_conflict += 1
 
@@ -430,7 +439,7 @@ def _score_option(
     PRAYER_END = 13 * 60  # 13:00
 
     student_gap = 0
-    for day, intervals in day_intervals.items():
+    for _day, intervals in day_intervals.items():
         if len(intervals) >= 2:
             intervals.sort()
             has_morning = any(s < PRAYER_END for s, e in intervals)
@@ -453,7 +462,7 @@ def _score_option(
     instructor_spread = 0
     if is_online:
         for m in option:
-            instructor_spread += (10 - m["slot_idx"])
+            instructor_spread += 10 - m["slot_idx"]
 
     # ── (5) Time consistency across days ──────────────────────────────
     # Zero if all meetings share the same slot index; +1 for each
@@ -549,6 +558,7 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
     # Online courses receive a late-slot preference penalty so they are
     # scheduled after on-campus classes, letting students leave first.
     from core.models import ProgrammeRequirement as PR
+
     online_codes: set[str] = set()
     if board.program:
         programs = [p.strip() for p in board.program.split(",") if p.strip()]
@@ -575,17 +585,19 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
         if not all_options:
             total_skipped += to_place
             continue
-        course_data.append({
-            "code": code,
-            "budget": budget,
-            "credit_hours": credit_hours,
-            "pattern": pattern,
-            "already": already,
-            "to_place": to_place,
-            "all_options": all_options,
-            "students": course_students.get(code, set()),
-            "is_online": code.upper() in online_codes,
-        })
+        course_data.append(
+            {
+                "code": code,
+                "budget": budget,
+                "credit_hours": credit_hours,
+                "pattern": pattern,
+                "already": already,
+                "to_place": to_place,
+                "all_options": all_options,
+                "students": course_students.get(code, set()),
+                "is_online": code.upper() in online_codes,
+            }
+        )
 
     # ── 5. Round-robin placement: all S1s, then all S2s, ... ──────────
     # By placing all sections of the same group index together, we ensure
@@ -636,7 +648,10 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
             # ── Score every candidate option and keep the best ────────
             for option in all_options:
                 raw_score = _score_option(
-                    option, same_group, course_students, my_students,
+                    option,
+                    same_group,
+                    course_students,
+                    my_students,
                     my_code=code,
                     same_group_schedule=same_sched,
                     other_sections_masks=all_placed_masks,
@@ -654,7 +669,13 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                     for m in option:
                         if m["slot_idx"] >= 2:  # afternoon slots
                             slot_penalty += slot_pref * (m["slot_idx"] - 1)
-                score = (raw_score[0], raw_score[1], raw_score[2] * gap_weight + slot_penalty, raw_score[3], raw_score[4])
+                score = (
+                    raw_score[0],
+                    raw_score[1],
+                    raw_score[2] * gap_weight + slot_penalty,
+                    raw_score[3],
+                    raw_score[4],
+                )
                 if score < best_score:
                     best_score = score
                     best_option = option
@@ -703,18 +724,114 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                 meeting_results.append({"day": m["day"], "start": m["start"], "end": m["end"]})
 
             total_placed += 1
-            placement_results.append({
-                "course_code": code,
-                "section": sec_label,
-                "credit_hours": cd["credit_hours"],
-                "meetings": meeting_results,
-                "conflict_score": best_score[0],
-            })
+            placement_results.append(
+                {
+                    "course_code": code,
+                    "section": sec_label,
+                    "credit_hours": cd["credit_hours"],
+                    "meetings": meeting_results,
+                    "conflict_score": best_score[0],
+                }
+            )
 
     return {
         "placed": total_placed,
         "skipped": total_skipped,
         "placements": placement_results,
+    }
+
+
+def _adaptive_scenario(scenario_id: int) -> dict:
+    """Adaptive portfolio: greedy → CP-SAT → local search per board.
+
+    1. Greedy compact baseline (always produces a feasible solution).
+    2. CP-SAT warm-started from greedy (dynamic time budget by board size).
+       If CP-SAT finds an equal-or-better solution, persist it.
+    3. Simulated annealing polish on whatever is persisted (greedy or CP-SAT).
+
+    Never returns an empty board — greedy baseline is the floor.
+    """
+    import logging
+
+    from core.services.timetable_local_search import optimize_and_persist_board
+    from core.services.timetable_solver import solve_and_persist_board, solve_board_with_hints
+
+    logger = logging.getLogger(__name__)
+
+    boards = DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order")
+    board_results = {}
+    total_placed = 0
+    total_skipped = 0
+    phases_log = {}
+
+    for board in boards:
+        label = board.label
+        phase_info = {"greedy": None, "cpsat": None, "local_search": None}
+
+        # ── Phase 1: Greedy baseline ────────────────────────────
+        greedy = auto_place_board(board.id, strategy="compact")
+        phase_info["greedy"] = {"placed": greedy["placed"], "skipped": greedy["skipped"]}
+        best_placed = greedy["placed"]
+
+        # ── Phase 2: CP-SAT with warm-start hints ───────────────
+        n_sections = greedy["placed"] + greedy["skipped"]
+        if n_sections > 0:
+            # Dynamic time budget: small boards get full solver, large ones less
+            if n_sections < 15:
+                cpsat_budget = 3.0
+            elif n_sections < 30:
+                cpsat_budget = 5.0
+            else:
+                cpsat_budget = 8.0
+
+            try:
+                cpsat = solve_board_with_hints(
+                    board.id,
+                    greedy["placements"],
+                    time_limit_seconds=cpsat_budget,
+                )
+                phase_info["cpsat"] = {
+                    "status": cpsat["status"],
+                    "placed": cpsat["placed"],
+                    "objective": cpsat.get("objective", 0),
+                    "improved": cpsat.get("improved", False),
+                }
+                if cpsat["status"] in ("optimal", "feasible") and cpsat["placed"] >= best_placed:
+                    # CP-SAT found an equal-or-better solution — persist it
+                    solve_and_persist_board(board.id, time_limit_seconds=cpsat_budget)
+                    best_placed = cpsat["placed"]
+                    logger.info(
+                        "adaptive[%s]: CP-SAT improved (%s→%s placed)",
+                        label,
+                        greedy["placed"],
+                        cpsat["placed"],
+                    )
+            except Exception:
+                logger.exception("adaptive[%s]: CP-SAT failed, keeping greedy baseline", label)
+                phase_info["cpsat"] = {"status": "error", "placed": 0}
+
+        # ── Phase 3: Local search polish ────────────────────────
+        try:
+            sa = optimize_and_persist_board(board.id, max_seconds=5.0)
+            phase_info["local_search"] = {
+                "status": sa.get("status", "unknown"),
+                "cost_before": sa.get("cost_before", 0),
+                "cost_after": sa.get("cost_after", 0),
+            }
+        except Exception:
+            logger.exception("adaptive[%s]: local search failed", label)
+            phase_info["local_search"] = {"status": "error"}
+
+        board_results[label] = greedy
+        total_placed += best_placed
+        total_skipped += greedy["skipped"]
+        phases_log[label] = phase_info
+
+    return {
+        "boards": board_results,
+        "total_placed": total_placed,
+        "total_skipped": total_skipped,
+        "adaptive_phases": phases_log,
     }
 
 
@@ -736,9 +853,14 @@ def auto_place_scenario(scenario_id: int, strategy: str = DEFAULT_STRATEGY) -> d
         "total_skipped": int}`` where each *board_result* has the same
         shape as the return value of ``auto_place_board``.
     """
+    # Adaptive: greedy baseline → CP-SAT improvement → local search polish
+    if strategy == "adaptive":
+        return _adaptive_scenario(scenario_id)
+
     # Use CP-SAT solver for "optimal" strategy
     if strategy == "optimal":
         from core.services.timetable_solver import solve_scenario
+
         return solve_scenario(scenario_id, time_limit_seconds=5.0)
 
     # Load-balanced: greedy build + redistribution
@@ -751,6 +873,7 @@ def auto_place_scenario(scenario_id: int, strategy: str = DEFAULT_STRATEGY) -> d
             results[board.label] = r
             total_placed += r["placed"]
         from core.services.timetable_load_balanced import rebalance_scenario
+
         rebalance_scenario(scenario_id, max_seconds_per_board=5.0)
         return {"boards": results, "total_placed": total_placed, "total_skipped": 0}
 
@@ -769,6 +892,7 @@ def auto_place_scenario(scenario_id: int, strategy: str = DEFAULT_STRATEGY) -> d
 
         # Phase 2: simulated annealing improvement
         from core.services.timetable_local_search import optimize_scenario
+
         sa_result = optimize_scenario(scenario_id, max_seconds_per_board=5.0)
 
         return {

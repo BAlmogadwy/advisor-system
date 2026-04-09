@@ -316,6 +316,7 @@ html[data-theme="dark"] #twDrawer{background:var(--card); border-color:rgba(255,
       <option value="optimal">{% if LANGUAGE_CODE == 'ar' %}الأمثل{% else %}Optimal (CP-SAT){% endif %}</option>
       <option value="hybrid">{% if LANGUAGE_CODE == 'ar' %}هجين{% else %}Hybrid (Best){% endif %}</option>
       <option value="load_balanced">{% if LANGUAGE_CODE == 'ar' %}متوازن الأيام{% else %}Load-Balanced{% endif %}</option>
+      <option value="adaptive">{% if LANGUAGE_CODE == 'ar' %}تكيّفي (الأفضل){% else %}Adaptive (Best Overall){% endif %}</option>
     </select>
   </div>
   <button id="twGenerate" class="btn btn-primary" type="button" style="padding:6px 16px;">

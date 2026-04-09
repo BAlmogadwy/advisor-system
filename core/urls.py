@@ -63,6 +63,7 @@ from .report_views import (
     export_conflict_matrix_xlsx_view,
     export_course_eligibility_csv_view,
     export_missing_high_priority_xlsx_view,
+    export_prerequisites_xlsx_view,
     export_recommendation_debug_csv_view,
     export_recommendation_debug_xlsx_view,
     export_student_csv_view,
@@ -94,6 +95,31 @@ from .sections_import_views import (
     sections_import_preview_view,
 )
 from .settings_views import defaults_settings_view
+from .timetable_workspace_views import (
+    timetable_workspace_page,
+    tw_board_capacity_view,
+    tw_board_conflicts_view,
+    tw_board_create_view,
+    tw_board_detail_view,
+    tw_board_summary_view,
+    tw_board_unplaced_view,
+    tw_boards_list_view,
+    tw_generate_workspace_view,
+    tw_placement_create_planned_view,
+    tw_placement_create_view,
+    tw_placement_lock_view,
+    tw_placement_move_view,
+    tw_placement_remove_view,
+    tw_scenario_budget_view,
+    tw_scenario_create_view,
+    tw_scenario_detail_view,
+    tw_scenario_export_view,
+    tw_scenario_publish_view,
+    tw_scenario_slots_update_view,
+    tw_scenarios_list_view,
+    tw_slot_template_create_view,
+    tw_slot_templates_list_view,
+)
 from .user_admin_views import (
     user_management_page,
     users_create_view,
@@ -102,31 +128,6 @@ from .user_admin_views import (
     users_set_active_view,
     users_set_password_view,
     users_update_role_view,
-)
-from .timetable_workspace_views import (
-    timetable_workspace_page,
-    tw_generate_workspace_view,
-    tw_scenario_budget_view,
-    tw_scenario_export_view,
-    tw_placement_create_planned_view,
-    tw_board_capacity_view,
-    tw_board_conflicts_view,
-    tw_board_create_view,
-    tw_board_detail_view,
-    tw_board_summary_view,
-    tw_board_unplaced_view,
-    tw_boards_list_view,
-    tw_placement_create_view,
-    tw_placement_lock_view,
-    tw_placement_move_view,
-    tw_placement_remove_view,
-    tw_scenario_create_view,
-    tw_scenario_detail_view,
-    tw_scenario_publish_view,
-    tw_scenario_slots_update_view,
-    tw_scenarios_list_view,
-    tw_slot_template_create_view,
-    tw_slot_templates_list_view,
 )
 from .views import dashboard, dev_role_switch_view, health
 
@@ -142,6 +143,11 @@ urlpatterns = [
     path("report/student-plan/", student_plan_view, name="student_plan_view"),
     path("export/student-plan.csv", export_student_plan_csv_view, name="export_student_plan_csv"),
     path("report/prerequisites/", prerequisites_view, name="prerequisites_view"),
+    path(
+        "export/prerequisites.xlsx",
+        export_prerequisites_xlsx_view,
+        name="export_prerequisites_xlsx",
+    ),
     path("report/program-plan/", program_plan_view, name="program_plan_view"),
     path(
         "report/recommendation-debug/", recommendation_debug_view, name="recommendation_debug_view"

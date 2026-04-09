@@ -548,6 +548,7 @@
       tbody.innerHTML = `<tr><td colspan="3" class="empty-note">${T.noPrereqRows}</td></tr>`;
       q('preMetrics').classList.add('d-none');
       const lc = q('preLinkCount'); if (lc) lc.classList.add('d-none');
+      const px = q('preXlsx'); if (px) px.classList.add('d-none');
       preGraph.innerHTML = `<div class="empty-state"><span class="empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg></span></span><div class="empty-title">${T.noGraphData}</div><div class="empty-hint">${T.noPrereqMap}</div></div>`;
       setUpdated('preUpdated', true);
       btn.disabled = false; btn.textContent = T.load; return;
@@ -571,6 +572,13 @@
 
     /* SVG dependency graph */
     renderPrereqGraph(norm, preGraph);
+
+    /* XLSX export link */
+    const preXlsx = q('preXlsx');
+    if (preXlsx) {
+      preXlsx.href = `/export/prerequisites.xlsx?program=${encodeURIComponent(program)}&course_code=${encodeURIComponent(code)}`;
+      preXlsx.classList.remove('d-none');
+    }
 
     setUpdated('preUpdated');
     toast(T.prereqsLoaded, true);
