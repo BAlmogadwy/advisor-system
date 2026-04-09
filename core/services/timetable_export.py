@@ -45,7 +45,7 @@ from core.models import (
     TermSectionMeeting,
     TimetableScenario,
 )
-from core.services.timetable_autoplace import DEFAULT_SLOTS, WEEKDAYS, get_meeting_pattern
+from core.services.timetable_autoplace import DEFAULT_SLOTS, get_meeting_pattern
 from core.services.timetable_workspace import compute_scenario_budget, detect_board_conflicts
 
 
@@ -103,6 +103,7 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                 top = thick_side if r == min_row else existing.top
                 bottom = thick_side if r == max_row else existing.bottom
                 cell.border = Border(left=left, right=right, top=top, bottom=bottom)
+
     bold_font = Font(bold=True, size=9)
     normal_font = Font(name="Consolas", size=9)
     center_align = Alignment(horizontal="center", vertical="center")
@@ -167,6 +168,7 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
 
     # Pre-load course names from Course table
     from core.models import Course
+
     course_names: dict[str, str] = {}
     for c in Course.objects.all():
         course_names[c.course_code.upper()] = c.description or c.course_code
@@ -208,6 +210,9 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
             slot_config = scenario.slot_config or []
             if not slot_config:
                 slot_config = DEFAULT_SLOTS
+            from core.services.timetable_autoplace import DEFAULT_LAB_SLOTS
+
+            lab_slot_config = scenario.lab_slot_config or DEFAULT_LAB_SLOTS  # noqa: F841
 
             DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"]
 
@@ -224,7 +229,10 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
             # We group by unique (course_code, section) so each section
             # appears once in the timetable grid, not once per meeting.
             from collections import defaultdict as _dd
-            seen_sections: dict[str, dict[str, list]] = _dd(dict)  # code -> {sec_label -> [placements]}
+
+            seen_sections: dict[str, dict[str, list]] = _dd(
+                dict
+            )  # code -> {sec_label -> [placements]}
             for p in placements:
                 code = p.term_section.course_code
                 sec = p.term_section.section
@@ -242,7 +250,9 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
 
             max_groups = max((len(secs) for secs in course_sections.values()), default=1)
             # Also keep all placements per section for grid building
-            section_all_placements: dict[int, list] = _dd(list)  # term_section_id -> [all placements]
+            section_all_placements: dict[int, list] = _dd(
+                list
+            )  # term_section_id -> [all placements]
             for p in placements:
                 section_all_placements[p.term_section_id].append(p)
 
@@ -261,35 +271,30 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                 Two sections overlap iff their bitmasks have common set bits.
                 """
                 mask = 0
-                for pp in section_all_placements.get(ts_id, []):
+                for pp in section_all_placements.get(ts_id, []):  # noqa: B023
                     mask |= _time_mask(pp.day, pp.start_time, pp.end_time)
                 return mask
 
             # Build: code -> [(representative_placement, bitmask)] sorted by section label
             course_options: dict[str, list[tuple]] = {}
             for code, secs in course_sections.items():
-                course_options[code] = [
-                    (s, _section_bitmask(s.term_section_id)) for s in secs
-                ]
+                course_options[code] = [(s, _section_bitmask(s.term_section_id)) for s in secs]
 
             # Greedy assignment: for each group, pick the section per course
             # that has the least overlap with already-assigned sections in this group
             group_assignments: list[list] = []  # group_idx -> [placement representatives]
             used_sections: dict[str, set[int]] = _dd(set)  # code -> set of used indices
 
-            for g in range(max_groups):
+            for _g in range(max_groups):
                 group_mask = 0  # combined bitmask of all sections assigned to this group
                 group = []
                 # Sort courses by demand descending (most constrained first)
-                sorted_codes = sorted(
-                    course_options.keys(),
-                    key=lambda c: -len(course_options[c])
-                )
+                sorted_codes = sorted(course_options.keys(), key=lambda c: -len(course_options[c]))
                 for code in sorted_codes:
                     options = course_options[code]
                     best_idx = None
                     best_conflicts = float("inf")
-                    for idx, (sec_p, sec_mask) in enumerate(options):
+                    for idx, (_sec_p, sec_mask) in enumerate(options):
                         if idx in used_sections[code]:
                             continue  # already assigned to a previous group
                         # Count overlap bits with current group
@@ -318,7 +323,9 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
 
                 # Group header
                 if max_groups > 1:
-                    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=1 + num_slots)
+                    ws.merge_cells(
+                        start_row=row, start_column=1, end_row=row, end_column=1 + num_slots
+                    )
                     gcell = ws.cell(row=row, column=1)
                     gcell.value = f"Group {group_idx + 1} — {len(group_placements)} courses"
                     gcell.font = Font(bold=True, size=9, color="4056E3")
@@ -328,7 +335,7 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                 # ── Transposed layout: columns=slots, rows=days ──
                 grid_start_row = row
                 ws.cell(row=row, column=1).border = thin_border
-                for s_idx, slot in enumerate(slot_config):
+                for s_idx, _slot in enumerate(slot_config):
                     cell = ws.cell(row=row, column=2 + s_idx)
                     cell.value = s_idx + 1
                     cell.fill = hdr_fill
@@ -347,37 +354,65 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                     cell.border = thin_border
                 row += 1
 
-                # Build grid: day → slot → {text, courses}
+                # Helper: convert "HH:MM" to minutes
+                def _tm(t):
+                    return int(t.split(":")[0]) * 60 + int(t.split(":")[1])
+
+                # Helper: classify placement as lab (>80 min duration)
+                def _is_lab_p(pp):
+                    return (_tm(pp.end_time) - _tm(pp.start_time)) > 80
+
+                # Helper: find the best-overlapping lecture slot for a lab placement
+                def _best_lecture_slot(pp):
+                    """Return the slot_config index whose time range overlaps
+                    most with the lab placement, or the closest by start time."""
+                    lab_s, lab_e = _tm(pp.start_time), _tm(pp.end_time)
+                    best_idx, best_overlap = 0, -1
+                    for i, slot in enumerate(slot_config):  # noqa: B023
+                        s_s, s_e = _tm(slot["start"]), _tm(slot["end"])
+                        overlap = max(0, min(lab_e, s_e) - max(lab_s, s_s))
+                        if overlap > best_overlap:
+                            best_overlap = overlap
+                            best_idx = i
+                    return best_idx
+
+                # Build unified grid: day → slot_key → {text, courses, lab_times}
+                # Labs go into the same grid as lectures, matched to best-overlapping slot
                 grid: dict[str, dict[str, dict]] = {}
                 for day in DAY_LABELS:
                     grid[day] = {}
                     for slot in slot_config:
                         sk = f"{slot['start']}-{slot['end']}"
-                        grid[day][sk] = {"text": "", "courses": []}
+                        grid[day][sk] = {"text": "", "courses": [], "lab_time": ""}
 
-                # Also track merged slots (100min)
-                merged_slot_keys: set[str] = set()
                 for p in group_placements:
                     ts_placements = section_all_placements.get(p.term_section_id, [])
                     for pp in ts_placements:
-                        slot_key = f"{pp.start_time}-{pp.end_time}"
                         day = pp.day.upper()[:3]
-
                         if day not in grid:
                             continue
 
-                        if slot_key not in grid[day]:
-                            # Might be a merged slot
-                            for i, slot in enumerate(slot_config):
-                                if slot["start"] == pp.start_time and i + 1 < len(slot_config) and slot_config[i + 1]["end"] == pp.end_time:
-                                    slot_key = f"{slot['start']}-{slot_config[i + 1]['end']}"
-                                    merged_slot_keys.add(slot_key)
-                                    if slot_key not in grid[day]:
-                                        grid[day][slot_key] = {"text": "", "courses": []}
-                                    break
+                        is_lab = _is_lab_p(pp)
+
+                        if is_lab:
+                            # Find best-overlapping lecture slot column
+                            best_idx = _best_lecture_slot(pp)
+                            slot_key = (
+                                f"{slot_config[best_idx]['start']}-{slot_config[best_idx]['end']}"
+                            )
+                        else:
+                            slot_key = f"{pp.start_time}-{pp.end_time}"
+                            if slot_key not in grid.get(day, {}):
+                                # Match by start time
+                                for slot in slot_config:
+                                    if slot["start"] == pp.start_time:
+                                        slot_key = f"{slot['start']}-{slot['end']}"
+                                        break
 
                         ts = pp.term_section
-                        meeting = TermSectionMeeting.objects.filter(term_section=ts, day=day).first()
+                        meeting = TermSectionMeeting.objects.filter(
+                            term_section=ts, day=day
+                        ).first()
                         instructor = meeting.instructor if meeting else ""
                         room = meeting.room if meeting else pp.room
                         text = f"{ts.course_code} {ts.section}"
@@ -393,9 +428,16 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                             else:
                                 cd["text"] = text
                             cd["courses"].append(ts.course_code)
+                            if is_lab:
+                                cd["lab_time"] = f"{pp.start_time}-{pp.end_time}"
 
-                # Write day rows (each day = 1 row)
-                for day_idx, (day_code, day_name) in enumerate(zip(DAY_LABELS, DAY_NAMES)):
+                # ── Write day rows (unified: lectures + labs in same grid) ──
+                from openpyxl.cell.rich_text import CellRichText, TextBlock
+                from openpyxl.cell.text import InlineFont
+
+                for _day_idx, (day_code, day_name) in enumerate(
+                    zip(DAY_LABELS, DAY_NAMES, strict=False)
+                ):
                     cell = ws.cell(row=row, column=1)
                     cell.value = day_name
                     cell.font = bold_font
@@ -406,26 +448,40 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                     for s_idx, slot in enumerate(slot_config):
                         sk = f"{slot['start']}-{slot['end']}"
                         cell = ws.cell(row=row, column=2 + s_idx)
-                        cd = grid.get(day_code, {}).get(sk, {"text": "", "courses": []})
+                        cd = grid.get(day_code, {}).get(
+                            sk, {"text": "", "courses": [], "lab_time": ""}
+                        )
 
-                        # Check if a merged slot covers this position
-                        if not cd["text"]:
-                            for msk in merged_slot_keys:
-                                mcd = grid.get(day_code, {}).get(msk, {"text": "", "courses": []})
-                                if mcd["text"] and msk.startswith(slot["start"]):
-                                    cd = mcd
-                                    break
+                        if cd["lab_time"]:
+                            # Rich text: course name in normal + lab time in red bold
+                            # NOTE: do NOT set cell.font after CellRichText — it overrides rich text
+                            normal_if = InlineFont(sz=8.5, rFont="Consolas")
+                            red_if = InlineFont(sz=8, rFont="Consolas", b=True, color="C03030")
+                            cell.value = CellRichText(
+                                TextBlock(normal_if, cd["text"]),
+                                TextBlock(red_if, f"\n{cd['lab_time']}"),
+                            )
+                        else:
+                            cell.value = cd["text"]
+                            cell.font = normal_font
 
-                        cell.value = cd["text"]
-                        cell.font = normal_font
                         cell.border = thin_border
-                        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                        cell.alignment = Alignment(
+                            horizontal="center", vertical="center", wrap_text=True
+                        )
 
                         if len(cd["courses"]) > 1:
                             cell.fill = conflict_fill
                         elif len(cd["courses"]) == 1:
                             cell.fill = _course_fill(cd["courses"][0], course_color_map)
 
+                    # Increase row height if any cell has lab time (needs 2 lines)
+                    has_lab_in_row = any(
+                        grid.get(day_code, {}).get(f"{s['start']}-{s['end']}", {}).get("lab_time")
+                        for s in slot_config
+                    )
+                    if has_lab_in_row:
+                        ws.row_dimensions[row].height = 42
                     row += 1
 
                 # Outer border for this group's grid
@@ -441,15 +497,21 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                 )
                 row += 1
                 for o in conflicts.get("overlaps", []):
-                    ws.cell(row=row, column=1, value=f"OVERLAP: {' vs '.join(o.get('sections', []))}").font = Font(color="C03030", size=8)
+                    ws.cell(
+                        row=row, column=1, value=f"OVERLAP: {' vs '.join(o.get('sections', []))}"
+                    ).font = Font(color="C03030", size=8)
                     ws.cell(row=row, column=3, value=o.get("detail", ""))
                     row += 1
                 for c in conflicts.get("instructor_clashes", []):
-                    ws.cell(row=row, column=1, value=f"INSTRUCTOR: {c.get('instructor', '')}").font = Font(color="C03030", size=8)
+                    ws.cell(
+                        row=row, column=1, value=f"INSTRUCTOR: {c.get('instructor', '')}"
+                    ).font = Font(color="C03030", size=8)
                     ws.cell(row=row, column=3, value=" vs ".join(c.get("sections", [])))
                     row += 1
                 for c in conflicts.get("room_clashes", []):
-                    ws.cell(row=row, column=1, value=f"ROOM: {c.get('room', '')}").font = Font(color="D97706", size=8)
+                    ws.cell(row=row, column=1, value=f"ROOM: {c.get('room', '')}").font = Font(
+                        color="D97706", size=8
+                    )
                     ws.cell(row=row, column=3, value=" vs ".join(c.get("sections", [])))
                     row += 1
 
@@ -472,7 +534,6 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
             total_students = 0
             for b in sorted(term_budget, key=lambda x: x.course_code):
                 cr = b.credit_hours or 0
-                pattern = get_meeting_pattern(cr)
                 c_cell = ws.cell(row=info_row, column=INFO_START_COL, value=b.course_code)
                 c_cell.font = Font(bold=True, size=9)
                 c_cell.border = thin_border
@@ -484,10 +545,14 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                 ws.cell(row=info_row, column=INFO_START_COL + 2, value=cr).font = normal_font
                 ws.cell(row=info_row, column=INFO_START_COL + 2).border = thin_border
                 ws.cell(row=info_row, column=INFO_START_COL + 2).alignment = center_align
-                ws.cell(row=info_row, column=INFO_START_COL + 3, value=b.planned_sections).font = normal_font
+                ws.cell(
+                    row=info_row, column=INFO_START_COL + 3, value=b.planned_sections
+                ).font = normal_font
                 ws.cell(row=info_row, column=INFO_START_COL + 3).border = thin_border
                 ws.cell(row=info_row, column=INFO_START_COL + 3).alignment = center_align
-                ws.cell(row=info_row, column=INFO_START_COL + 4, value=b.total_demand).font = normal_font
+                ws.cell(
+                    row=info_row, column=INFO_START_COL + 4, value=b.total_demand
+                ).font = normal_font
                 ws.cell(row=info_row, column=INFO_START_COL + 4).border = thin_border
                 ws.cell(row=info_row, column=INFO_START_COL + 4).alignment = center_align
                 total_sections += b.planned_sections
@@ -495,14 +560,20 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                 info_row += 1
 
             # Totals row
-            ws.cell(row=info_row, column=INFO_START_COL, value="TOTAL").font = Font(bold=True, size=9)
+            ws.cell(row=info_row, column=INFO_START_COL, value="TOTAL").font = Font(
+                bold=True, size=9
+            )
             ws.cell(row=info_row, column=INFO_START_COL).border = thin_border
             ws.cell(row=info_row, column=INFO_START_COL + 1).border = thin_border
             ws.cell(row=info_row, column=INFO_START_COL + 2).border = thin_border
-            ws.cell(row=info_row, column=INFO_START_COL + 3, value=total_sections).font = Font(bold=True, size=9)
+            ws.cell(row=info_row, column=INFO_START_COL + 3, value=total_sections).font = Font(
+                bold=True, size=9
+            )
             ws.cell(row=info_row, column=INFO_START_COL + 3).border = thin_border
             ws.cell(row=info_row, column=INFO_START_COL + 3).alignment = center_align
-            ws.cell(row=info_row, column=INFO_START_COL + 4, value=total_students).font = Font(bold=True, size=9)
+            ws.cell(row=info_row, column=INFO_START_COL + 4, value=total_students).font = Font(
+                bold=True, size=9
+            )
             ws.cell(row=info_row, column=INFO_START_COL + 4).border = thin_border
             ws.cell(row=info_row, column=INFO_START_COL + 4).alignment = center_align
 
@@ -515,8 +586,18 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
             MATRIX_START_COL = INFO_START_COL + 6  # col 14 = N
             term_courses = {b.course_code for b in term_budget}
             _write_mini_conflict_matrix(
-                ws, 1, MATRIX_START_COL, scenario, term_num, term_courses,
-                hdr_fill, hdr_font, hdr_align, thin_border, normal_font, center_align,
+                ws,
+                1,
+                MATRIX_START_COL,
+                scenario,
+                term_num,
+                term_courses,
+                hdr_fill,
+                hdr_font,
+                hdr_align,
+                thin_border,
+                normal_font,
+                center_align,
             )
 
         # Column widths: A = day name, B..F+ = time slots
@@ -533,8 +614,17 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                 ws.column_dimensions[cl].width = w
 
     # ── Conflict Matrix Sheet ────────────────────────────────────
-    _build_conflict_matrix_sheet(wb, scenario, hdr_fill, hdr_font, hdr_align, thin_border,
-                                 normal_font, bold_font, center_align)
+    _build_conflict_matrix_sheet(
+        wb,
+        scenario,
+        hdr_fill,
+        hdr_font,
+        hdr_align,
+        thin_border,
+        normal_font,
+        bold_font,
+        center_align,
+    )
 
     # ── Summary Sheet ────────────────────────────────────────────
     ws_sum = wb.create_sheet(title="Summary")
@@ -634,8 +724,18 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
 
 
 def _write_mini_conflict_matrix(
-    ws, start_row, start_col, scenario, term_num, term_courses,
-    hdr_fill, hdr_font, hdr_align, thin_border, normal_font, center_align,
+    ws,
+    start_row,
+    start_col,
+    scenario,
+    term_num,
+    term_courses,
+    hdr_fill,
+    hdr_font,
+    hdr_align,
+    thin_border,
+    normal_font,
+    center_align,
 ):
     """Write a per-term conflict matrix on an existing worksheet.
 
@@ -666,21 +766,18 @@ def _write_mini_conflict_matrix(
 
     # Get students relevant to this term (primary + visitors)
     from core.models import BoardStudentLink
+
     board_ids = list(
-        DeliveryBoard.objects.filter(
-            scenario=scenario, nominal_term=term_num
-        ).values_list("id", flat=True)
+        DeliveryBoard.objects.filter(scenario=scenario, nominal_term=term_num).values_list(
+            "id", flat=True
+        )
     )
     student_ids = set(
-        BoardStudentLink.objects.filter(
-            board_id__in=board_ids
-        ).values_list("student_id", flat=True)
+        BoardStudentLink.objects.filter(board_id__in=board_ids).values_list("student_id", flat=True)
     )
 
     # Get ALL recommended courses for these students (not filtered by term)
-    student_maps = ScenarioStudentMap.objects.filter(
-        scenario=scenario, student_id__in=student_ids
-    )
+    student_maps = ScenarioStudentMap.objects.filter(scenario=scenario, student_id__in=student_ids)
     course_students: dict[str, set[int]] = defaultdict(set)
     for sm in student_maps:
         for code in sm.recommended_courses:
@@ -787,8 +884,9 @@ def _write_mini_conflict_matrix(
                 )
 
 
-def _build_conflict_matrix_sheet(wb, scenario, hdr_fill, hdr_font, hdr_align,
-                                  thin_border, normal_font, bold_font, center_align):
+def _build_conflict_matrix_sheet(
+    wb, scenario, hdr_fill, hdr_font, hdr_align, thin_border, normal_font, bold_font, center_align
+):
     """Build the global "Conflicts (All)" sheet -- an NxN student overlap heatmap.
 
     Unlike the per-term mini matrices, this sheet includes *every* course in

@@ -274,6 +274,21 @@ html[data-theme="dark"] #twDrawer{background:var(--card); border-color:rgba(255,
   50%{outline-color:transparent;}
 }
 
+/* ── Lab grid styling ── */
+.tw-lab-grid{background:color-mix(in srgb, var(--teal) 4%, var(--card))!important;}
+.tw-lab-grid .tw-grid-header{background:color-mix(in srgb, var(--teal) 10%, var(--card))!important;color:var(--teal)!important;}
+
+/* ── Fullscreen mode ── */
+body.tw-fullscreen .sidebar{display:none!important;}
+body.tw-fullscreen .page-header,
+body.tw-fullscreen .page-intro{display:none!important;}
+body.tw-fullscreen .content-wrap{max-width:100%;padding:0 8px;}
+body.tw-fullscreen .tw-workspace{max-height:calc(100vh - 100px);}
+body.tw-fullscreen .tw-centre,
+body.tw-fullscreen .tw-left,
+body.tw-fullscreen .tw-right{max-height:calc(100vh - 100px);}
+body.tw-fullscreen #twGenBar{border-radius:0;}
+
 /* ── Responsive ── */
 @media(max-width:1100px){
   .tw-workspace{grid-template-columns:1fr; }
@@ -324,6 +339,11 @@ html[data-theme="dark"] #twDrawer{background:var(--card); border-color:rgba(255,
     {% if LANGUAGE_CODE == 'ar' %}توليد{% else %}Generate{% endif %}
   </button>
   <span id="twGenStatus" style="font-size:.72rem;color:var(--t4);white-space:nowrap"></span>
+  <div class="fb-spacer"></div>
+  <button id="twFullscreen" class="btn" type="button" title="{% if LANGUAGE_CODE == 'ar' %}شاشة كاملة{% else %}Fullscreen{% endif %}" style="padding:5px 8px;background:var(--glass-bg);border:1px solid var(--line);border-radius:6px;cursor:pointer;display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--t3);">
+    <svg id="twFsIcon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+    <span id="twFsLabel" class="d-none d-md-inline">{% if LANGUAGE_CODE == 'ar' %}توسيع{% else %}Focus{% endif %}</span>
+  </button>
 </div>
 
 <!-- A2. Workspace Command Bar (hidden until scenario active) -->
@@ -968,6 +988,7 @@ function renderBoardStrip() {
 function renderGrid() {
   const gridEl = $('twGrid');
   const slots = (TW.scenario && TW.scenario.slot_config) || [];
+  const labSlots = (TW.scenario && TW.scenario.lab_slot_config) || [];
 
   if (slots.length === 0) {
     // Default slots (75min lectures, prayer break 11:35-12:59)
@@ -979,10 +1000,22 @@ function renderGrid() {
       {label:'16:00-17:15', start:'16:00', end:'17:15'},
     ];
     if (TW.scenario) TW.scenario.slot_config = defaults;
-    renderGridWithSlots(defaults);
-  } else {
-    renderGridWithSlots(slots);
   }
+  if (labSlots.length === 0) {
+    const defaultLabs = [
+      {label:'Lab 1', start:'09:00', end:'10:40'},
+      {label:'Lab 2', start:'10:45', end:'12:25'},
+      {label:'Lab 3', start:'13:00', end:'14:40'},
+      {label:'Lab 4', start:'14:45', end:'16:25'},
+      {label:'Lab 5', start:'16:30', end:'18:10'},
+      {label:'Lab 6', start:'18:10', end:'19:50'},
+    ];
+    if (TW.scenario) TW.scenario.lab_slot_config = defaultLabs;
+  }
+
+  const finalSlots = (TW.scenario && TW.scenario.slot_config) || slots;
+  const finalLabSlots = (TW.scenario && TW.scenario.lab_slot_config) || labSlots;
+  renderGridWithSlots(finalSlots, finalLabSlots);
 }
 
 // 20 distinct pastel colors matching XLSX export
@@ -1001,11 +1034,13 @@ function courseColor(code) {
   return _courseColorMap[code];
 }
 
-function renderGridWithSlots(slots) {
+function renderGridWithSlots(slots, labSlots) {
   const gridEl = $('twGrid');
   $('twEmptyState').style.display = 'none';
   gridEl.style.display = 'block';
   gridEl.innerHTML = '';
+
+  labSlots = labSlots || [];
 
   // ── Split placements into student groups by section label ──
   const bySec = {};
@@ -1017,17 +1052,33 @@ function renderGridWithSlots(slots) {
   const groupKeys = Object.keys(bySec).sort();
   const numGroups = groupKeys.length;
 
+  // Helper: classify a placement as lab (100-min) based on duration
+  function isLabPlacement(p) {
+    const toMin = t => { const [h,m] = t.split(':').map(Number); return h*60+m; };
+    return (toMin(p.end_time) - toMin(p.start_time)) > 80;
+  }
+
   // If no placements, show empty grid
   if (numGroups === 0) {
     _renderSingleGrid(gridEl, slots, [], 'tw-grid-inner', null);
+    if (labSlots.length) {
+      const labHdr = document.createElement('div');
+      labHdr.style.cssText = 'text-align:center;font-size:.75rem;font-weight:700;color:var(--teal);padding:10px 0 4px;border-top:2px dashed var(--line);margin-top:6px;';
+      labHdr.textContent = IS_AR ? '🔬 المعامل (100 دقيقة)' : '🔬 Labs (100 min)';
+      gridEl.appendChild(labHdr);
+      _renderSingleGrid(gridEl, labSlots, [], 'tw-grid-table tw-lab-grid', null);
+    }
     return;
   }
 
   groupKeys.forEach((secKey, gi) => {
     const groupPlacements = bySec[secKey];
-    // Collect all placements for each unique term_section in this group
     const tsIds = new Set(groupPlacements.map(p => p.term_section_id));
     const allForGroup = TW.placements.filter(p => tsIds.has(p.term_section_id));
+
+    // Separate lecture and lab placements
+    const lecturePlacements = allForGroup.filter(p => !isLabPlacement(p));
+    const labPlacements = allForGroup.filter(p => isLabPlacement(p));
 
     // Group header
     if (numGroups > 1) {
@@ -1038,10 +1089,23 @@ function renderGridWithSlots(slots) {
       gridEl.appendChild(hdr);
     }
 
+    // Lecture grid
     const gridInner = document.createElement('div');
     gridInner.className = 'tw-grid-inner';
-    _renderSingleGrid(gridInner, slots, allForGroup, 'tw-grid-table', secKey);
+    _renderSingleGrid(gridInner, slots, lecturePlacements, 'tw-grid-table', secKey);
     gridEl.appendChild(gridInner);
+
+    // Lab grid (if any lab slots exist)
+    if (labSlots.length) {
+      const labHdr = document.createElement('div');
+      labHdr.style.cssText = 'text-align:center;font-size:.75rem;font-weight:700;color:var(--teal);padding:6px 0 2px;border-top:2px dashed var(--line);margin-top:2px;';
+      labHdr.textContent = IS_AR ? '🔬 معامل' : '🔬 Labs';
+      gridEl.appendChild(labHdr);
+      const labInner = document.createElement('div');
+      labInner.className = 'tw-grid-inner';
+      _renderSingleGrid(labInner, labSlots, labPlacements, 'tw-grid-table tw-lab-grid', secKey);
+      gridEl.appendChild(labInner);
+    }
   });
 }
 
@@ -1713,13 +1777,19 @@ async function openSlotEditor() {
   if (TW.scenario.status === 'published') { notify.error(IS_AR ? 'السيناريو منشور' : 'Cannot edit published scenario'); return; }
 
   const slots = TW.scenario.slot_config || [];
+  const labSlots = TW.scenario.lab_slot_config || [];
   const slotsText = slots.map(s => `${s.label || ''}\t${s.start}\t${s.end}`).join('\n')
     || '09:00-10:15\t09:00\t10:15\n10:30-11:45\t10:30\t11:45\n13:00-14:15\t13:00\t14:15\n14:30-15:45\t14:30\t15:45\n16:00-17:15\t16:00\t17:15';
+  const labText = labSlots.map(s => `${s.label || ''}\t${s.start}\t${s.end}`).join('\n')
+    || 'Lab 1\t09:00\t10:40\nLab 2\t10:45\t12:25\nLab 3\t13:00\t14:40\nLab 4\t14:45\t16:25\nLab 5\t16:30\t18:10\nLab 6\t18:10\t19:50';
 
   const result = await dlg.confirm({
     title: IS_AR ? 'تعديل الفترات الزمنية' : 'Edit Time Slots',
-    body: `<div style="font-size:.78rem;color:var(--t3);margin-bottom:8px">${IS_AR ? 'أدخل فترة واحدة لكل سطر: الاسم [تبويب] البداية [تبويب] النهاية' : 'One slot per line: Label [tab] Start [tab] End'}</div>
-      <textarea id="twSlotInput" rows="8" style="width:100%;font-family:var(--font-mono);font-size:.78rem;padding:8px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--bg);color:var(--ink);resize:vertical">${esc(slotsText)}</textarea>`,
+    body: `<div style="font-size:.78rem;color:var(--t3);margin-bottom:6px;font-weight:600">${IS_AR ? '📚 المحاضرات (75 دقيقة)' : '📚 Lecture Slots (75 min)'}</div>
+      <div style="font-size:.72rem;color:var(--t4);margin-bottom:4px">${IS_AR ? 'الاسم [تبويب] البداية [تبويب] النهاية' : 'Label [tab] Start [tab] End'}</div>
+      <textarea id="twSlotInput" rows="6" style="width:100%;font-family:var(--font-mono);font-size:.78rem;padding:8px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--bg);color:var(--ink);resize:vertical">${esc(slotsText)}</textarea>
+      <div style="font-size:.78rem;color:var(--teal);margin:10px 0 6px;font-weight:600">${IS_AR ? '🔬 المعامل (100 دقيقة)' : '🔬 Lab Slots (100 min)'}</div>
+      <textarea id="twLabSlotInput" rows="6" style="width:100%;font-family:var(--font-mono);font-size:.78rem;padding:8px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--bg);color:var(--ink);resize:vertical">${esc(labText)}</textarea>`,
     confirmText: IS_AR ? 'حفظ' : 'Save Slots',
     kind: 'info',
   });
@@ -1746,16 +1816,58 @@ async function openSlotEditor() {
 
   if (newSlots.length === 0) { notify.error(IS_AR ? 'لم يتم قراءة فترات' : 'No valid slots parsed'); return; }
 
+  // Parse lab slots textarea
+  const labTextarea = document.getElementById('twLabSlotInput');
+  const newLabSlots = [];
+  if (labTextarea) {
+    const labLines = labTextarea.value.trim().split('\n').filter(l => l.trim());
+    for (const line of labLines) {
+      const parts = line.split('\t').map(s => s.trim());
+      if (parts.length >= 3) {
+        newLabSlots.push({ label: parts[0], start: parts[1], end: parts[2] });
+      } else if (parts.length === 2) {
+        newLabSlots.push({ label: `${parts[0]}-${parts[1]}`, start: parts[0], end: parts[1] });
+      } else {
+        const m = line.trim().match(/^(\S+)\s+(\d{1,2}:\d{2})\s+(\d{1,2}:\d{2})$/);
+        if (m) newLabSlots.push({ label: m[1], start: m[2], end: m[3] });
+      }
+    }
+  }
+
   const data = await twFetch(`/ops/tw/scenarios/${TW.scenarioId}/slots/update/`, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ slot_config: newSlots }),
+    body: JSON.stringify({ slot_config: newSlots, lab_slot_config: newLabSlots }),
   });
   if (!data) return;
 
   TW.scenario = data.scenario;
-  notify.success(IS_AR ? 'تم تحديث الفترات' : `${newSlots.length} slots saved`);
+  notify.success(IS_AR ? 'تم تحديث الفترات' : `${newSlots.length} lecture + ${newLabSlots.length} lab slots saved`);
   renderGrid();
 }
+
+/* ── Fullscreen toggle ── */
+(function(){
+  const btn = document.getElementById('twFullscreen');
+  const icon = document.getElementById('twFsIcon');
+  const label = document.getElementById('twFsLabel');
+  if(!btn) return;
+
+  const expandSvg = '<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>';
+  const shrinkSvg = '<polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/>';
+
+  function toggle(){
+    const on = document.body.classList.toggle('tw-fullscreen');
+    icon.innerHTML = on ? shrinkSvg : expandSvg;
+    if(label) label.textContent = on ? (IS_AR ? 'تصغير' : 'Exit') : (IS_AR ? 'توسيع' : 'Focus');
+  }
+
+  btn.addEventListener('click', toggle);
+  document.addEventListener('keydown', function(e){
+    if(e.key === 'Escape' && document.body.classList.contains('tw-fullscreen')){
+      toggle();
+    }
+  });
+})();
 </script>
 {% endblock %}

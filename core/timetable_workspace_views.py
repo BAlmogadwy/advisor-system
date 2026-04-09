@@ -65,7 +65,6 @@ from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
 from core.models import (
-    BoardSectionVisibility,
     DeliveryBoard,
     SectionPlacement,
     TermSection,
@@ -175,6 +174,7 @@ def _scenario_to_dict(s: TimetableScenario) -> dict[str, object]:
         "name": s.name,
         "status": s.status,
         "slot_config": s.slot_config,
+        "lab_slot_config": s.lab_slot_config,
         "created_by": s.created_by,
         "created_at": s.created_at.isoformat() if s.created_at else "",
         "updated_at": s.updated_at.isoformat() if s.updated_at else "",
@@ -478,8 +478,14 @@ def tw_scenario_slots_update_view(request: HttpRequest, scenario_id: int) -> Jso
     if not isinstance(slots, list):
         return _err("slot_config must be an array", code="VALIDATION_SLOTS", status=400)
 
+    lab_slots = payload.get("lab_slot_config")
+
     scenario.slot_config = slots
-    scenario.save(update_fields=["slot_config", "updated_at"])
+    update_fields = ["slot_config", "updated_at"]
+    if isinstance(lab_slots, list):
+        scenario.lab_slot_config = lab_slots
+        update_fields.append("lab_slot_config")
+    scenario.save(update_fields=update_fields)
 
     log_audit_event(
         request,
@@ -551,7 +557,10 @@ def tw_scenario_export_view(request: HttpRequest, scenario_id: int) -> HttpRespo
 
     path = export_scenario_xlsx(scenario_id)
     filename = f"timetable_{scenario.name.replace(' ', '_')}_{scenario.academic_year}_T{scenario.term}.xlsx"
-    response = FileResponse(open(path, "rb"), content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    response = FileResponse(
+        open(path, "rb"),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response
 
@@ -646,13 +655,16 @@ def tw_board_detail_view(request: HttpRequest, board_id: int) -> JsonResponse:
 
     primary_count = BoardStudentLink.objects.filter(board=board, link_type="primary").count()
     visitor_count = BoardStudentLink.objects.filter(board=board, link_type="visitor").count()
-    return _ok({
-        "board": _board_to_dict(board),
-        "slot_config": board.scenario.slot_config,
-        "placements": [_placement_to_dict(p) for p in placements],
-        "primary_student_count": primary_count,
-        "visitor_student_count": visitor_count,
-    })
+    return _ok(
+        {
+            "board": _board_to_dict(board),
+            "slot_config": board.scenario.slot_config,
+            "lab_slot_config": board.scenario.lab_slot_config,
+            "placements": [_placement_to_dict(p) for p in placements],
+            "primary_student_count": primary_count,
+            "visitor_student_count": visitor_count,
+        }
+    )
 
 
 @login_required(login_url="login")
@@ -696,18 +708,19 @@ def tw_board_conflicts_view(request: HttpRequest, board_id: int) -> JsonResponse
         cross_board = detect_cross_board_conflicts(board.scenario_id)
         # Filter to only cross-board conflicts involving this board
         cross_board = [
-            c for c in cross_board
-            if c["board_a_id"] == board_id or c["board_b_id"] == board_id
+            c for c in cross_board if c["board_a_id"] == board_id or c["board_b_id"] == board_id
         ]
     except DeliveryBoard.DoesNotExist:
         cross_board = []
 
-    return _ok({
-        "board_id": board_id,
-        **conflicts,
-        "student_impact": student_impact,
-        "cross_board_conflicts": cross_board,
-    })
+    return _ok(
+        {
+            "board_id": board_id,
+            **conflicts,
+            "student_impact": student_impact,
+            "cross_board_conflicts": cross_board,
+        }
+    )
 
 
 @login_required(login_url="login")
@@ -729,16 +742,18 @@ def tw_board_capacity_view(request: HttpRequest, board_id: int) -> JsonResponse:
     total_demand = sum(c["demand"] for c in courses)
     total_raw = sum(c["raw_capacity"] for c in courses)
     total_deficit = sum(c["deficit"] for c in courses)
-    return _ok({
-        "board_id": board_id,
-        "courses": courses,
-        "totals": {
-            "demand": total_demand,
-            "raw_capacity": total_raw,
-            "deficit": total_deficit,
-            "course_count": len(courses),
-        },
-    })
+    return _ok(
+        {
+            "board_id": board_id,
+            "courses": courses,
+            "totals": {
+                "demand": total_demand,
+                "raw_capacity": total_raw,
+                "deficit": total_deficit,
+                "course_count": len(courses),
+            },
+        }
+    )
 
 
 @login_required(login_url="login")
@@ -757,7 +772,6 @@ def tw_board_unplaced_view(request: HttpRequest, board_id: int) -> JsonResponse:
     except DeliveryBoard.DoesNotExist:
         return _err("Board not found", code="NOT_FOUND", status=404)
 
-    scenario = board.scenario
     # Get all term sections (all available sections for this semester)
     all_sections = TermSection.objects.all()
 
@@ -774,9 +788,12 @@ def tw_board_unplaced_view(request: HttpRequest, board_id: int) -> JsonResponse:
             continue
 
         # Apply search filter
-        if search and search not in (ts.course_code or "").upper() and search not in (
-            ts.course_name or ""
-        ).upper() and search not in (ts.section or "").upper():
+        if (
+            search
+            and search not in (ts.course_code or "").upper()
+            and search not in (ts.course_name or "").upper()
+            and search not in (ts.section or "").upper()
+        ):
             continue
 
         meetings = list(
@@ -784,16 +801,18 @@ def tw_board_unplaced_view(request: HttpRequest, board_id: int) -> JsonResponse:
                 "day", "start_time", "end_time", "room", "instructor"
             )
         )
-        unplaced.append({
-            "term_section_id": ts.id,
-            "course_code": ts.course_code,
-            "course_name": ts.course_name,
-            "course_key": ts.course_key,
-            "section": ts.section,
-            "available_capacity": ts.available_capacity,
-            "registered_count": ts.registered_count,
-            "meetings": meetings,
-        })
+        unplaced.append(
+            {
+                "term_section_id": ts.id,
+                "course_code": ts.course_code,
+                "course_name": ts.course_name,
+                "course_key": ts.course_key,
+                "section": ts.section,
+                "available_capacity": ts.available_capacity,
+                "registered_count": ts.registered_count,
+                "meetings": meetings,
+            }
+        )
 
     return _ok({"unplaced": unplaced, "count": len(unplaced)})
 
@@ -981,10 +1000,13 @@ def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
             "start_time": start_time,
         },
     )
-    return _ok({
-        "placement": _placement_to_dict(placement),
-        "validation": validation,
-    }, status=201)
+    return _ok(
+        {
+            "placement": _placement_to_dict(placement),
+            "validation": validation,
+        },
+        status=201,
+    )
 
 
 @login_required(login_url="login")
@@ -1003,9 +1025,9 @@ def tw_placement_move_view(request: HttpRequest, placement_id: int) -> JsonRespo
         return err
 
     try:
-        placement = SectionPlacement.objects.select_related(
-            "board__scenario", "term_section"
-        ).get(id=placement_id)
+        placement = SectionPlacement.objects.select_related("board__scenario", "term_section").get(
+            id=placement_id
+        )
     except SectionPlacement.DoesNotExist:
         return _err("Placement not found", code="NOT_FOUND", status=404)
 
@@ -1075,9 +1097,9 @@ def tw_placement_remove_view(request: HttpRequest, placement_id: int) -> JsonRes
         return err
 
     try:
-        placement = SectionPlacement.objects.select_related(
-            "board__scenario", "term_section"
-        ).get(id=placement_id)
+        placement = SectionPlacement.objects.select_related("board__scenario", "term_section").get(
+            id=placement_id
+        )
     except SectionPlacement.DoesNotExist:
         return _err("Placement not found", code="NOT_FOUND", status=404)
 
@@ -1137,18 +1159,20 @@ def tw_slot_templates_list_view(request: HttpRequest) -> JsonResponse:
     if deny:
         return deny
     templates = TimeSlotTemplate.objects.all().order_by("-created_at")
-    return _ok({
-        "templates": [
-            {
-                "id": t.id,
-                "name": t.name,
-                "slots": t.slots,
-                "is_default": t.is_default,
-                "created_at": t.created_at.isoformat() if t.created_at else "",
-            }
-            for t in templates
-        ]
-    })
+    return _ok(
+        {
+            "templates": [
+                {
+                    "id": t.id,
+                    "name": t.name,
+                    "slots": t.slots,
+                    "is_default": t.is_default,
+                    "created_at": t.created_at.isoformat() if t.created_at else "",
+                }
+                for t in templates
+            ]
+        }
+    )
 
 
 @login_required(login_url="login")

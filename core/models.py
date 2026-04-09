@@ -306,6 +306,7 @@ class TimetableScenario(models.Model):
     name = models.TextField()
     status = models.TextField(default="draft")
     slot_config = models.JSONField(default=list)
+    lab_slot_config = models.JSONField(default=list)
     created_by = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

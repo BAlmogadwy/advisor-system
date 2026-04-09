@@ -28,6 +28,7 @@ from core.models import (
     TermSectionMeeting,
 )
 from core.services.timetable_autoplace import (
+    DEFAULT_LAB_SLOTS,
     DEFAULT_SLOTS,
     WEEKDAYS,
     _start_is_blocked,
@@ -53,6 +54,7 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
 
     scenario = board.scenario
     slot_config = scenario.slot_config or DEFAULT_SLOTS
+    lab_slot_config = scenario.lab_slot_config or DEFAULT_LAB_SLOTS
 
     budgets = list(
         ScenarioSectionBudget.objects.filter(
@@ -75,7 +77,7 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
 
     # Build valid slot options per duration
     slots_75 = []  # (day_idx, slot_idx, day, start, end, mask, start_min)
-    slots_100 = []
+    slots_lab = []  # dedicated lab time grid for 100-min meetings
     for day_idx, day in enumerate(WEEKDAYS):
         for s_idx, s in enumerate(slot_config):
             if _start_is_blocked(s["start"]):
@@ -84,17 +86,15 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
             start_min = _to_min(s["start"])
             slots_75.append((day_idx, s_idx, day, s["start"], s["end"], mask, start_min))
 
-        for s_idx in range(len(slot_config) - 1):
-            if _start_is_blocked(slot_config[s_idx]["start"]):
+        for s_idx, s in enumerate(lab_slot_config):
+            if _start_is_blocked(s["start"]):
                 continue
-            start = slot_config[s_idx]["start"]
-            end = slot_config[s_idx + 1]["end"]
-            mask = _time_mask(day, start, end)
-            start_min = _to_min(start)
-            slots_100.append((day_idx, s_idx, day, start, end, mask, start_min))
+            mask = _time_mask(day, s["start"], s["end"])
+            start_min = _to_min(s["start"])
+            slots_lab.append((day_idx, s_idx, day, s["start"], s["end"], mask, start_min))
 
     def get_options(duration: int):
-        return slots_75 if duration <= 75 else slots_100
+        return slots_75 if duration <= 75 else slots_lab
 
     # Build sections to place
     sections = []
@@ -217,9 +217,9 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
     slot_end_min = {}
     for s_idx, s in enumerate(slot_config):
         slot_end_min[s_idx] = _to_min(s["end"])
-    # Also for merged slots (100min)
-    for s_idx in range(len(slot_config) - 1):
-        slot_end_min[(s_idx, s_idx + 1)] = _to_min(slot_config[s_idx + 1]["end"])
+    # Lab slot end times (keyed by ("lab", idx) to avoid collisions)
+    for s_idx, s in enumerate(lab_slot_config):
+        slot_end_min[("lab", s_idx)] = _to_min(s["end"])
 
     # (1) REAL GAP PENALTIES between sections in same group on same day
     for _group_num, indices in by_group.items():
@@ -455,6 +455,7 @@ def solve_board_with_hints(
 
     scenario = board.scenario
     slot_config = scenario.slot_config or DEFAULT_SLOTS
+    lab_slot_config = scenario.lab_slot_config or DEFAULT_LAB_SLOTS
 
     budgets = list(
         ScenarioSectionBudget.objects.filter(
@@ -481,7 +482,7 @@ def solve_board_with_hints(
         )
 
     slots_75 = []
-    slots_100 = []
+    slots_lab = []
     for day_idx, day in enumerate(WEEKDAYS):
         for s_idx, s in enumerate(slot_config):
             if _start_is_blocked(s["start"]):
@@ -489,17 +490,15 @@ def solve_board_with_hints(
             mask = _time_mask(day, s["start"], s["end"])
             start_min = _to_min(s["start"])
             slots_75.append((day_idx, s_idx, day, s["start"], s["end"], mask, start_min))
-        for s_idx in range(len(slot_config) - 1):
-            if _start_is_blocked(slot_config[s_idx]["start"]):
+        for s_idx, s in enumerate(lab_slot_config):
+            if _start_is_blocked(s["start"]):
                 continue
-            start = slot_config[s_idx]["start"]
-            end = slot_config[s_idx + 1]["end"]
-            mask = _time_mask(day, start, end)
-            start_min = _to_min(start)
-            slots_100.append((day_idx, s_idx, day, start, end, mask, start_min))
+            mask = _time_mask(day, s["start"], s["end"])
+            start_min = _to_min(s["start"])
+            slots_lab.append((day_idx, s_idx, day, s["start"], s["end"], mask, start_min))
 
     def get_options(duration: int):
-        return slots_75 if duration <= 75 else slots_100
+        return slots_75 if duration <= 75 else slots_lab
 
     sections = []
     for budget in budgets:

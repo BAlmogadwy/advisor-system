@@ -113,6 +113,16 @@ DEFAULT_SLOTS = [
     {"label": "16:00-17:15", "start": "16:00", "end": "17:15"},
 ]
 
+# Lab slots: 100-minute dedicated time grid (separate from lecture slots).
+DEFAULT_LAB_SLOTS = [
+    {"label": "Lab 1", "start": "09:00", "end": "10:40"},
+    {"label": "Lab 2", "start": "10:45", "end": "12:25"},
+    {"label": "Lab 3", "start": "13:00", "end": "14:40"},
+    {"label": "Lab 4", "start": "14:45", "end": "16:25"},
+    {"label": "Lab 5", "start": "16:30", "end": "18:10"},
+    {"label": "Lab 6", "start": "18:10", "end": "19:50"},
+]
+
 # Hard constraint: no course meeting may START during the prayer break.
 # The window is inclusive on both ends.
 BLOCKED_START_WINDOW = ("11:35", "12:59")
@@ -149,6 +159,7 @@ def _get_slots(slot_config: list[dict]) -> list[dict]:
 def _generate_meeting_options(
     pattern: list[int],
     slot_config: list[dict],
+    lab_slot_config: list[dict] | None = None,
 ) -> list[list[dict]]:
     """Generate every valid way to schedule a course's weekly meetings.
 
@@ -161,9 +172,11 @@ def _generate_meeting_options(
     ----------
     pattern : list[int]
         Per-meeting durations in minutes, e.g. ``[75, 75]`` for a 3-credit
-        course.  The list length equals the number of meetings per week.
+        course or ``[75, 75, 100]`` for a 4-credit course with lab.
     slot_config : list[dict]
-        Slot definitions from the scenario, or ``DEFAULT_SLOTS``.
+        Lecture slot definitions from the scenario, or ``DEFAULT_SLOTS``.
+    lab_slot_config : list[dict] | None
+        Lab (100-min) slot definitions. If ``None``, uses ``DEFAULT_LAB_SLOTS``.
 
     Returns
     -------
@@ -171,25 +184,24 @@ def _generate_meeting_options(
         Each element is one complete option -- a list of meeting dicts, one
         per meeting in *pattern*.  Each meeting dict has keys:
         ``day`` (str), ``start`` (str "HH:MM"), ``end`` (str "HH:MM"),
-        ``slot_idx`` (int -- the 0-based position in *slots*).
+        ``slot_idx`` (int -- the 0-based position in the relevant slot list),
+        ``is_lab`` (bool -- True for 100-min lab meetings).
 
     Notes
     -----
-    * 75 min meetings fit in a single slot.
-    * 100 min meetings span two consecutive slots (start of slot *i* to
-      end of slot *i+1*).
-    * The generator prefers giving every meeting the same ``slot_idx``
-      (time-consistency), but falls back to the first available slot when
-      the preferred index is unavailable for a particular duration.
+    * 75 min meetings use the lecture slot grid.
+    * 100 min meetings use the dedicated lab slot grid (separate time slots).
+    * Labs must be on a different day than lectures of the same course.
     """
     slots = _get_slots(slot_config)
+    lab_slots = _get_slots(lab_slot_config) if lab_slot_config else DEFAULT_LAB_SLOTS
     num_meetings = len(pattern)
 
     # All ways to pick *num_meetings* distinct days from the 5-day week.
     day_combos = list(combinations(WEEKDAYS, num_meetings))
 
     # For each meeting duration, pre-compute which (slot_idx, start, end)
-    # positions are feasible (respecting prayer break and slot merging).
+    # positions are feasible (respecting prayer break).
     slot_options_per_duration: list[list[tuple[int, str, str]]] = []
     for duration in pattern:
         positions = []
@@ -199,11 +211,10 @@ def _generate_meeting_options(
                 if not _start_is_blocked(s["start"]):
                     positions.append((i, s["start"], s["end"]))
         else:
-            # Extended lecture (100 min) -- merge two consecutive slots.
-            # Uses the start of slot[i] and the end of slot[i+1].
-            for i in range(len(slots) - 1):
-                if not _start_is_blocked(slots[i]["start"]):
-                    positions.append((i, slots[i]["start"], slots[i + 1]["end"]))
+            # Lab (100 min) -- uses dedicated lab slot grid.
+            for i, s in enumerate(lab_slots):
+                if not _start_is_blocked(s["start"]):
+                    positions.append((i, s["start"], s["end"]))
         slot_options_per_duration.append(positions)
 
     all_options: list[list[dict]] = []
@@ -516,6 +527,7 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
 
     scenario = board.scenario
     slot_config = scenario.slot_config if scenario.slot_config else DEFAULT_SLOTS
+    lab_slot_config = scenario.lab_slot_config if scenario.lab_slot_config else DEFAULT_LAB_SLOTS
 
     # ── 1. Load section budgets for this board's term level ───────────
     # Ordered by descending demand so the most popular courses are placed
@@ -581,7 +593,7 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
         to_place = max(0, budget.planned_sections - already)
         if to_place == 0:
             continue
-        all_options = _generate_meeting_options(pattern, slot_config)
+        all_options = _generate_meeting_options(pattern, slot_config, lab_slot_config)
         if not all_options:
             total_skipped += to_place
             continue

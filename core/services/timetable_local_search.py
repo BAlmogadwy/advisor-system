@@ -36,17 +36,16 @@ from collections import defaultdict
 from core.models import (
     DeliveryBoard,
     ProgrammeRequirement,
-    ScenarioSectionBudget,
     SectionPlacement,
     TermSection,
     TermSectionMeeting,
 )
 from core.services.timetable_autoplace import (
+    DEFAULT_LAB_SLOTS,
     DEFAULT_SLOTS,
     WEEKDAYS,
     _start_is_blocked,
     _time_mask,
-    get_meeting_pattern,
 )
 
 
@@ -82,7 +81,7 @@ def _compute_cost(
         lambda: defaultdict(list)
     )
 
-    for i, meetings in schedule.items():
+    for i, meetings in schedule.items():  # noqa: B007
         sec = sections[i]
         if sec["code"] in online_codes:
             continue  # online courses don't count
@@ -95,7 +94,7 @@ def _compute_cost(
     for sec_num, day_times in group_day_times.items():
         w = 10.0 if sec_num == 1 else 2.0  # S1 priority
 
-        for day, times in day_times.items():
+        for _day, times in day_times.items():
             if len(times) < 2:
                 continue
             times.sort()
@@ -118,12 +117,12 @@ def _check_hard_constraints(
     """Return True if all hard constraints are satisfied."""
     # 1. No overlap in same student group
     group_masks: dict[int, list[tuple[str, int]]] = defaultdict(list)
-    for i, meetings in schedule.items():
+    for i, meetings in schedule.items():  # noqa: B007
         sec = sections[i]
         for m in meetings:
             group_masks[sec["sec_num"]].append((sec["code"], m["mask"]))
 
-    for sec_num, masks in group_masks.items():
+    for _sec_num, masks in group_masks.items():
         for a in range(len(masks)):
             for b in range(a + 1, len(masks)):
                 if masks[a][0] != masks[b][0] and masks[a][1] & masks[b][1]:
@@ -131,19 +130,19 @@ def _check_hard_constraints(
 
     # 2. Same course different sections don't overlap
     course_masks: dict[str, list[int]] = defaultdict(list)
-    for i, meetings in schedule.items():
+    for i, meetings in schedule.items():  # noqa: B007
         sec = sections[i]
         for m in meetings:
             course_masks[sec["code"]].append(m["mask"])
 
-    for code, masks in course_masks.items():
+    for _code, masks in course_masks.items():
         for a in range(len(masks)):
             for b in range(a + 1, len(masks)):
                 if masks[a] & masks[b]:
                     return False
 
     # 3. All different days per section
-    for i, meetings in schedule.items():
+    for i, meetings in schedule.items():  # noqa: B007
         days = [m["day"] for m in meetings]
         if len(days) != len(set(days)):
             return False
@@ -179,7 +178,9 @@ def _generate_relocate_move(
     # Pick a random different option
     new_opt = rng.choice(options)
     attempts = 0
-    while new_opt["day"] == current["day"] and new_opt["start"] == current["start"] and attempts < 10:
+    while (
+        new_opt["day"] == current["day"] and new_opt["start"] == current["start"] and attempts < 10
+    ):
         new_opt = rng.choice(options)
         attempts += 1
 
@@ -234,15 +235,16 @@ def optimize_board(
 
     scenario = board.scenario
     slot_config = scenario.slot_config or DEFAULT_SLOTS
+    lab_slot_config = scenario.lab_slot_config or DEFAULT_LAB_SLOTS
 
     # Load online codes
     online_codes: set[str] = set()
     if board.program:
         programs = [p.strip() for p in board.program.split(",") if p.strip()]
         online_codes = set(
-            ProgrammeRequirement.objects.filter(
-                program__in=programs, is_online=True
-            ).values_list("course_code", flat=True)
+            ProgrammeRequirement.objects.filter(program__in=programs, is_online=True).values_list(
+                "course_code", flat=True
+            )
         )
 
     # Load current placements as the initial solution
@@ -267,36 +269,49 @@ def optimize_board(
             sec_map[key] = idx
             # Extract sec_num from section label "S1" -> 1
             sec_label = p.term_section.section
-            sec_num = int(sec_label[1:]) if sec_label.startswith("S") and sec_label[1:].isdigit() else 1
-            sections.append({
-                "code": p.term_section.course_code,
-                "sec_num": sec_num,
-                "label": sec_label,
-                "term_section_id": p.term_section_id,
-                "is_online": p.term_section.course_code in online_codes,
-            })
+            sec_num = (
+                int(sec_label[1:]) if sec_label.startswith("S") and sec_label[1:].isdigit() else 1
+            )
+            sections.append(
+                {
+                    "code": p.term_section.course_code,
+                    "sec_num": sec_num,
+                    "label": sec_label,
+                    "term_section_id": p.term_section_id,
+                    "is_online": p.term_section.course_code in online_codes,
+                }
+            )
             schedule[idx] = []
 
         idx = sec_map[key]
-        # Find slot_idx for this placement
+        # Find slot_idx for this placement (check lecture slots, then lab slots)
         slot_idx = 0
-        for si, s in enumerate(slot_config):
-            if s["start"] == p.start_time:
-                slot_idx = si
-                break
+        duration = _to_min(p.end_time) - _to_min(p.start_time)
+        if duration <= 75:
+            for si, s in enumerate(slot_config):
+                if s["start"] == p.start_time:
+                    slot_idx = si
+                    break
+        else:
+            for si, s in enumerate(lab_slot_config):
+                if s["start"] == p.start_time:
+                    slot_idx = si
+                    break
 
-        schedule[idx].append({
-            "day": p.day,
-            "slot_idx": slot_idx,
-            "start": p.start_time,
-            "end": p.end_time,
-            "mask": _time_mask(p.day, p.start_time, p.end_time),
-            "placement_id": p.id,
-        })
+        schedule[idx].append(
+            {
+                "day": p.day,
+                "slot_idx": slot_idx,
+                "start": p.start_time,
+                "end": p.end_time,
+                "mask": _time_mask(p.day, p.start_time, p.end_time),
+                "placement_id": p.id,
+            }
+        )
 
     # Build valid options per section per meeting
     valid_options: dict[int, list[list[dict]]] = {}
-    for i, sec in enumerate(sections):
+    for i, _sec in enumerate(sections):
         meetings = schedule[i]
         sec_opts = []
         for m in meetings:
@@ -309,23 +324,30 @@ def optimize_board(
                         if _start_is_blocked(s["start"]):
                             continue
                         mask = _time_mask(day, s["start"], s["end"])
-                        options.append({
-                            "day": day, "slot_idx": si,
-                            "start": s["start"], "end": s["end"],
-                            "mask": mask,
-                        })
+                        options.append(
+                            {
+                                "day": day,
+                                "slot_idx": si,
+                                "start": s["start"],
+                                "end": s["end"],
+                                "mask": mask,
+                            }
+                        )
                 else:
-                    for si in range(len(slot_config) - 1):
-                        if _start_is_blocked(slot_config[si]["start"]):
+                    # Lab (100-min): use dedicated lab slot grid
+                    for si, s in enumerate(lab_slot_config):
+                        if _start_is_blocked(s["start"]):
                             continue
-                        start = slot_config[si]["start"]
-                        end = slot_config[si + 1]["end"]
-                        mask = _time_mask(day, start, end)
-                        options.append({
-                            "day": day, "slot_idx": si,
-                            "start": start, "end": end,
-                            "mask": mask,
-                        })
+                        mask = _time_mask(day, s["start"], s["end"])
+                        options.append(
+                            {
+                                "day": day,
+                                "slot_idx": si,
+                                "start": s["start"],
+                                "end": s["end"],
+                                "mask": mask,
+                            }
+                        )
             sec_opts.append(options)
         valid_options[i] = sec_opts
 
@@ -423,7 +445,7 @@ def optimize_and_persist_board(board_id: int, max_seconds: float = 8.0) -> dict:
         TermSectionMeeting.objects.filter(term_section_id=ts_id).delete()
 
     # Recreate from optimized schedule
-    for i, meetings in schedule.items():
+    for i, meetings in schedule.items():  # noqa: B007
         sec = sections[i]
         ts_id = sec["term_section_id"]
         try:
@@ -433,13 +455,17 @@ def optimize_and_persist_board(board_id: int, max_seconds: float = 8.0) -> dict:
 
         for m in meetings:
             TermSectionMeeting.objects.get_or_create(
-                term_section=ts, day=m["day"],
-                start_time=m["start"], end_time=m["end"],
+                term_section=ts,
+                day=m["day"],
+                start_time=m["start"],
+                end_time=m["end"],
                 defaults={"room": "", "instructor": ""},
             )
             SectionPlacement.objects.get_or_create(
-                board=board, term_section=ts,
-                day=m["day"], start_time=m["start"],
+                board=board,
+                term_section=ts,
+                day=m["day"],
+                start_time=m["start"],
                 defaults={"end_time": m["end"]},
             )
 

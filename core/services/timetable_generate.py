@@ -33,7 +33,7 @@ Dependencies:
 
 from __future__ import annotations
 
-from collections import Counter, defaultdict
+from collections import Counter
 
 from core.models import (
     BoardStudentLink,
@@ -45,7 +45,6 @@ from core.models import (
     TimeSlotTemplate,
     TimetableScenario,
 )
-from core.services.recommender import recommend_next_courses
 from core.services.reporting import get_student_ids
 from core.services.section_planning import (
     DEFAULT_MAX_EXTERNAL,
@@ -75,11 +74,20 @@ from core.services.student_helpers import normalize_code
 # ---------------------------------------------------------------------------
 EXCLUDED_COURSE_CODES: frozenset[str] = frozenset()  # None currently hardcoded
 EXCLUDED_SUFFIXES = ("490", "491", "492")
-EXCLUDED_NAME_KEYWORDS = frozenset({
-    "graduation", "practical training", "training",
-    "cooperative", "co-operative", "coop", "internship",
-    "تخرج", "مشروع تخرج", "تدريب",
-})
+EXCLUDED_NAME_KEYWORDS = frozenset(
+    {
+        "graduation",
+        "practical training",
+        "training",
+        "cooperative",
+        "co-operative",
+        "coop",
+        "internship",
+        "تخرج",
+        "مشروع تخرج",
+        "تدريب",
+    }
+)
 # Patterns that indicate a capstone/project course.
 # Note: plain "project" is intentionally omitted to avoid false-positives
 # like "Project Management" — only multi-word capstone patterns are listed.
@@ -105,9 +113,9 @@ def _load_course_names() -> dict[str, str]:
     global _course_name_cache
     if _course_name_cache is None:
         from core.models import Course
+
         _course_name_cache = {
-            c.course_code.upper(): (c.description or "").lower()
-            for c in Course.objects.all()
+            c.course_code.upper(): (c.description or "").lower() for c in Course.objects.all()
         }
     return _course_name_cache
 
@@ -292,13 +300,15 @@ def generate_workspace_scenario(
         # level.  These students will get "visitor" board links later.
         is_cross_term = len(term_counts) > 1
 
-        classified.append({
-            "student_id": sid,
-            "primary_term": primary_term,
-            "is_cross_term": is_cross_term,
-            "recommended_courses": recs,
-            "term_counts": dict(term_counts),
-        })
+        classified.append(
+            {
+                "student_id": sid,
+                "primary_term": primary_term,
+                "is_cross_term": is_cross_term,
+                "recommended_courses": recs,
+                "term_counts": dict(term_counts),
+            }
+        )
         term_student_counts[primary_term] += 1
 
     # ── Step 3: Compute section plan (section budget) ─────────────
@@ -343,6 +353,7 @@ def generate_workspace_scenario(
     # Auto-generate a descriptive name when none is supplied.
     if not scenario_name:
         import datetime
+
         ts = datetime.datetime.now().strftime("%H%M%S")
         sec_label = f" {section}" if section else ""
         scenario_name = f"{program_label}{sec_label} T{semester} Draft {ts}"
@@ -356,13 +367,20 @@ def generate_workspace_scenario(
         slot_config = default_tpl.slots  # type: ignore[assignment]
     if not slot_config:
         from core.services.timetable_autoplace import DEFAULT_SLOTS
+
         slot_config = DEFAULT_SLOTS
+
+    # Lab slot grid: dedicated 100-min time slots (separate from lectures)
+    from core.services.timetable_autoplace import DEFAULT_LAB_SLOTS
+
+    lab_slot_config: list[object] = DEFAULT_LAB_SLOTS
 
     scenario = TimetableScenario.objects.create(
         academic_year=str(year),
         term=str(semester),
         name=scenario_name,
         slot_config=slot_config,
+        lab_slot_config=lab_slot_config,
         created_by=created_by,
     )
 
@@ -481,39 +499,33 @@ def generate_workspace_scenario(
         board = board_by_term[pt]
 
         # Count primary and visitor students linked to this board.
-        primary_count = BoardStudentLink.objects.filter(
-            board=board, link_type="primary"
-        ).count()
-        visitor_count = BoardStudentLink.objects.filter(
-            board=board, link_type="visitor"
-        ).count()
+        primary_count = BoardStudentLink.objects.filter(board=board, link_type="primary").count()
+        visitor_count = BoardStudentLink.objects.filter(board=board, link_type="visitor").count()
         # How many section placements the auto-placer created on this board.
         placement_count = SectionPlacement.objects.filter(board=board).count()
 
         # Courses that belong to this board's term level.
-        board_courses = [
-            b.course_code
-            for b in budget_objs
-            if b.programme_term == pt
-        ]
+        board_courses = [b.course_code for b in budget_objs if b.programme_term == pt]
 
         # Auto-placement statistics for this board (placed vs skipped).
         board_auto = auto_result["boards"].get(board.label, {})
 
-        boards_response.append({
-            "id": board.id,
-            "label": board.label,
-            "nominal_term": pt,
-            "program": board_program,
-            "primary_count": primary_count,
-            "visitor_count": visitor_count,
-            "courses": board_courses,
-            "placement_count": placement_count,
-            "auto_placed": board_auto.get("placed", 0),
-            "auto_skipped": board_auto.get("skipped", 0),
-            "critical": 0,
-            "warning": 0,
-        })
+        boards_response.append(
+            {
+                "id": board.id,
+                "label": board.label,
+                "nominal_term": pt,
+                "program": board_program,
+                "primary_count": primary_count,
+                "visitor_count": visitor_count,
+                "courses": board_courses,
+                "placement_count": placement_count,
+                "auto_placed": board_auto.get("placed", 0),
+                "auto_skipped": board_auto.get("skipped", 0),
+                "critical": 0,
+                "warning": 0,
+            }
+        )
 
     # Re-compute the budget from the DB (now includes actual placement
     # counts) and enrich each entry with meeting-pattern info so the UI
@@ -541,6 +553,7 @@ def generate_workspace_scenario(
             "name": scenario.name,
             "status": scenario.status,
             "slot_config": scenario.slot_config,
+            "lab_slot_config": scenario.lab_slot_config,
             "created_at": scenario.created_at.isoformat() if scenario.created_at else "",
         },
         "boards": boards_response,
