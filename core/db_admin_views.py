@@ -573,9 +573,9 @@ def elective_catalogue_import_view(request: HttpRequest) -> JsonResponse:
     Expects JSON body: ``{"programme": "AI", "content": "...tsv..."}``
     TSV columns: Code, Name, Req (prerequisites), Cat, T, L, C
     """
-    payload = _parse_json_body(request)
-    if isinstance(payload, JsonResponse):
-        return payload
+    payload, err = _parse_json_body(request)
+    if err:
+        return err
 
     programme = str(payload.get("programme", "")).strip().upper()
     content = str(payload.get("content", "")).strip()
@@ -649,9 +649,9 @@ def elective_mapping_set_view(request: HttpRequest) -> JsonResponse:
     Expects JSON: ``{"academic_year": "1448", "term": 1, "programme": "AI",
     "mappings": [{"placeholder_code": "AI1", "course_code": "AI461"}, ...]}``
     """
-    payload = _parse_json_body(request)
-    if isinstance(payload, JsonResponse):
-        return payload
+    payload, err = _parse_json_body(request)
+    if err:
+        return err
 
     year = str(payload.get("academic_year", "")).strip()
     term = payload.get("term")
