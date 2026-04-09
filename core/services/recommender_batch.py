@@ -225,10 +225,13 @@ def batch_recommend(
         if recs:
             results[sid] = recs
 
-    # ── Elective replacement: resolve placeholders to real courses ──
-    # If ElectiveTermMappings exist for this year/term/programme, replace
-    # placeholder codes (AI1, AI2) with real elective courses the student
-    # is eligible for (based on the elective's prerequisites).
+    # ── Elective resolution: smart mix of placeholder + real codes ──
+    # For each elective placeholder (AI1, AI2), check which mapped real
+    # courses the student is eligible for:
+    #   - Eligible for MULTIPLE → keep placeholder (AI1) — student picks one
+    #   - Eligible for exactly ONE → replace with that specific course
+    #   - Eligible for NONE → drop the placeholder entirely
+    # This gives accurate demand counts: AI1=flexible, AI411=locked-in.
     from core.models import ElectiveTermMapping
 
     etm_qs = ElectiveTermMapping.objects.filter(
@@ -245,19 +248,28 @@ def batch_recommend(
         for sid, recs in results.items():
             passed = student_passed.get(sid, set())
             studying = student_studying.get(sid, set())
-            expanded: list[str] = []
+            resolved: list[str] = []
             for code in recs:
                 norm = normalize_code(code)
                 if norm in elective_map:
+                    # Find which options this student qualifies for
+                    eligible: list[str] = []
                     for ec in elective_map[norm]:
                         prereqs = [
                             normalize_code(p) for p in ec.prerequisites_csv.split(",") if p.strip()
                         ]
                         if all(p in passed or p in studying for p in prereqs):
-                            expanded.append(normalize_code(ec.course_code))
+                            eligible.append(normalize_code(ec.course_code))
+                    if len(eligible) > 1:
+                        # Multiple options → keep placeholder (student picks)
+                        resolved.append(code)
+                    elif len(eligible) == 1:
+                        # Only one option → replace with specific course
+                        resolved.append(eligible[0])
+                    # else: eligible for none → drop placeholder
                 else:
-                    expanded.append(code)
-            results[sid] = expanded
+                    resolved.append(code)
+            results[sid] = resolved
 
     return results
 
