@@ -1,4 +1,4 @@
-from core.models import ProgrammeRequirement, Student
+from core.models import ElectiveCourse, ProgrammeRequirement, Student
 from core.services.student_helpers import (
     get_all_programs,
     get_prerequisites,
@@ -14,7 +14,17 @@ def _course_exists_in_program(course_code: str, program: str) -> bool:
     ):
         if normalize_code(row) == code_n:
             return True
-    return False
+    # Also check elective catalogue
+    return ElectiveCourse.objects.filter(programme=program, course_code__iexact=code_n).exists()
+
+
+def _get_elective_prerequisites(course_code: str, program: str) -> list[str]:
+    """Get prerequisites from ElectiveCourse catalogue if available."""
+    code_n = normalize_code(course_code)
+    ec = ElectiveCourse.objects.filter(programme=program, course_code__iexact=code_n).first()
+    if ec and ec.prerequisites_csv:
+        return [normalize_code(p) for p in ec.prerequisites_csv.split(",") if p.strip()]
+    return []
 
 
 def _get_filtered_students(
@@ -65,6 +75,8 @@ def build_course_eligibility_report(
         blocked_samples: list[dict] = []
         missing_counter: dict[str, int] = {}
         prereqs = get_prerequisites(code, prog)
+        if not prereqs:
+            prereqs = _get_elective_prerequisites(code, prog)
 
         for sid in students:
             passed, studying = get_student_passed_and_studying(sid)
