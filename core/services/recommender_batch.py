@@ -132,14 +132,24 @@ def batch_recommend(
         )
     )
     # Build course -> [prerequisite_codes] lookup
+    # Hour-based prerequisites like "110(HOURS)" are stored separately.
+    import re
+
     prereq_map: dict[str, list[str]] = defaultdict(list)
+    hour_prereq_map: dict[str, int] = {}  # course_code -> required hours
     all_prereq_codes: list[str] = []
+    _hour_pattern = re.compile(r"^(\d+)\s*\(?\s*HOURS?\s*\)?$", re.IGNORECASE)
     for course_code, prereq_code in prereq_rows:
         cc = normalize_code(course_code)
         for part in str(prereq_code).split(","):
-            p = normalize_code(part)
-            if p:
-                prereq_map[cc].append(p)
+            p = part.strip()
+            hour_match = _hour_pattern.match(p)
+            if hour_match:
+                hour_prereq_map[cc] = int(hour_match.group(1))
+            else:
+                pn = normalize_code(p)
+                if pn:
+                    prereq_map[cc].append(pn)
         all_prereq_codes.append(prereq_code or "")
 
     # ── Query 3: All student courses (passed + studying) ─────────────
@@ -156,6 +166,17 @@ def batch_recommend(
             student_passed[sid].add(c)
         elif status == "studying":
             student_studying[sid].add(c)
+
+    # ── Query 4: Student credit hours (for hour-based prerequisites) ──
+    student_credits: dict[int, tuple[int, int]] = {}  # sid -> (earned, current_registered)
+    if hour_prereq_map:
+        from core.models import Student
+
+        credit_rows = Student.objects.filter(student_id__in=student_ids).values_list(
+            "student_id", "total_earned_credits", "current_registered_credits"
+        )
+        for sid, earned, current in credit_rows:
+            student_credits[sid] = (earned or 0, current or 0)
 
     # ── Pre-compute unlock counts (in-memory) ────────────────────────
     # "Unlock count" = how many other courses list this course as a
@@ -177,8 +198,16 @@ def batch_recommend(
         next_term = student_real_term + 1
         next_term_parity = next_term % 2
 
-        def prereqs_ok(code: str) -> bool:
+        def prereqs_ok(code: str) -> bool:  # noqa: B023
             """True if every prerequisite for *code* has been passed or is being studied."""
+            # Check hour-based prerequisite (e.g. "110(HOURS)")
+            req_hours = hour_prereq_map.get(code, 0)
+            if req_hours > 0:
+                earned, current = student_credits.get(sid, (0, 0))  # noqa: B023
+                # Relaxed: earned + current_registered (studying counts)
+                if earned + current < req_hours:
+                    return False
+            # Check course-based prerequisites
             return all(pr in passed or pr in studying for pr in prereq_map.get(code, []))  # noqa: B023
 
         # Build candidate list: courses this student is eligible to take

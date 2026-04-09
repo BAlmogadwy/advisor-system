@@ -78,6 +78,19 @@ def build_course_eligibility_report(
         if not prereqs:
             prereqs = _get_elective_prerequisites(code, prog)
 
+        # Separate hour-based prerequisites from course prerequisites
+        import re
+
+        _hour_pat = re.compile(r"^(\d+)\s*\(?\s*HOURS?\s*\)?$", re.IGNORECASE)
+        course_prereqs: list[str] = []
+        required_hours = 0
+        for p in prereqs:
+            m = _hour_pat.match(p)
+            if m:
+                required_hours = int(m.group(1))
+            else:
+                course_prereqs.append(p)
+
         for sid in students:
             passed, studying = get_student_passed_and_studying(sid)
             if code in passed or code in studying:
@@ -90,10 +103,26 @@ def build_course_eligibility_report(
                         }
                     )
                 continue
+
+            # Check hour-based prerequisite
+            hour_ok = True
+            if required_hours > 0:
+                stu = (
+                    Student.objects.filter(student_id=sid)
+                    .values_list("total_earned_credits", "current_registered_credits")
+                    .first()
+                )
+                earned, current = (stu[0] or 0, stu[1] or 0) if stu else (0, 0)
+                effective = earned if strict_passed_only else earned + current
+                if effective < required_hours:
+                    hour_ok = False
+
             if strict_passed_only:
-                missing = [p for p in prereqs if p not in passed]
+                missing = [p for p in course_prereqs if p not in passed]
             else:
-                missing = [p for p in prereqs if p not in passed and p not in studying]
+                missing = [p for p in course_prereqs if p not in passed and p not in studying]
+            if not hour_ok:
+                missing.append(f"{required_hours}(HOURS)")
             ok = len(missing) == 0
             if ok:
                 eligible_ids.append(sid)
