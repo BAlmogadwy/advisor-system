@@ -719,7 +719,7 @@ def elective_placeholders_view(request: HttpRequest) -> JsonResponse:
 
     qs = ProgrammeRequirement.objects.filter(
         program=programme,
-        type__icontains="Elective",
+        type="Program Elective",
     ).order_by("programme_term", "course_code")
 
     items = [
