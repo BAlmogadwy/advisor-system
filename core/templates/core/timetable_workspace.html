@@ -1861,17 +1861,20 @@ $('twMapElectives').addEventListener('click', async () => {
     return;
   }
 
-  // Load catalogue + current mappings in parallel
-  let catalogue = [], currentMappings = [];
+  // Load catalogue + current mappings + actual placeholders in parallel
+  let catalogue = [], currentMappings = [], placeholderCodes = [];
   try {
-    const [catRes, mapRes] = await Promise.all([
+    const [catRes, mapRes, phRes] = await Promise.all([
       fetch(`/ops/electives/catalogue/?programme=${encodeURIComponent(programme)}`),
       fetch(`/ops/electives/mapping/?academic_year=${encodeURIComponent(year)}&term=${encodeURIComponent(term)}&programme=${encodeURIComponent(programme)}`),
+      fetch(`/ops/electives/placeholders/?programme=${encodeURIComponent(programme)}`),
     ]);
     const catData = await catRes.json();
     const mapData = await mapRes.json();
+    const phData = await phRes.json();
     catalogue = catData.items || [];
     currentMappings = mapData.items || [];
+    placeholderCodes = phData.items || [];
   } catch (e) {
     notify.error(e.message);
     return;
@@ -1882,11 +1885,12 @@ $('twMapElectives').addEventListener('click', async () => {
     return;
   }
 
-  // Find placeholder codes from ProgrammeRequirement (courses like AI1, AI2, AI3)
-  // We detect them as short codes (1-4 chars after programme prefix) that aren't in the catalogue
-  const placeholders = ['AI1','AI2','AI3','AI4','AI5','CS1','CS2','DS1','DS2','FE1','FE2','GSE1','GSE2','GS104'];
-  // Filter to ones likely relevant: match programme prefix
-  const relevantPlaceholders = placeholders.filter(p => p.startsWith(programme) || p.startsWith('FE') || p.startsWith('GSE') || p.startsWith('GS'));
+  if (!placeholderCodes.length) {
+    notify.error(IS_AR ? 'لا يوجد مقررات اختيارية في الخطة' : 'No elective placeholders found in programme plan');
+    return;
+  }
+
+  const relevantPlaceholders = placeholderCodes.map(p => p.course_code);
 
   // Build current mapping lookup: placeholder → [course_codes]
   const mapLookup = {};
@@ -1899,10 +1903,15 @@ $('twMapElectives').addEventListener('click', async () => {
   let body = `<div style="font-size:.78rem;color:var(--t3);margin-bottom:8px">${IS_AR ? 'اختر المقررات لكل فتحة اختيارية' : 'Select courses for each elective slot'}</div>`;
   body += `<div style="max-height:400px;overflow-y:auto">`;
 
+  // Build placeholder info lookup
+  const phInfo = {};
+  placeholderCodes.forEach(p => { phInfo[p.course_code] = p; });
+
   relevantPlaceholders.forEach(ph => {
+    const info = phInfo[ph] || {};
     const selected = mapLookup[ph] || [];
     body += `<div style="margin-bottom:12px;padding:8px;border:1px solid var(--line);border-radius:var(--radius-sm)">`;
-    body += `<div style="font-weight:700;color:var(--royal);margin-bottom:4px">${ph}</div>`;
+    body += `<div style="font-weight:700;color:var(--royal);margin-bottom:4px">${ph} <span style="font-weight:400;font-size:.72rem;color:var(--t4)">Term ${info.programme_term || '?'} · ${info.type || 'Elective'} · ${info.credit_hours || 3}cr</span></div>`;
     catalogue.forEach(c => {
       const checked = selected.includes(c.course_code) ? 'checked' : '';
       body += `<label style="display:flex;align-items:center;gap:6px;font-size:.78rem;padding:2px 0;cursor:pointer">`;

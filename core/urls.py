@@ -34,6 +34,7 @@ from .db_admin_views import (
     elective_catalogue_list_view,
     elective_mapping_list_view,
     elective_mapping_set_view,
+    elective_placeholders_view,
 )
 from .exam_views import (
     exam_timetable_build_view,
@@ -219,6 +220,7 @@ urlpatterns = [
     ),
     path("ops/electives/mapping/", elective_mapping_list_view, name="elective_mapping_list"),
     path("ops/electives/mapping/set/", elective_mapping_set_view, name="elective_mapping_set"),
+    path("ops/electives/placeholders/", elective_placeholders_view, name="elective_placeholders"),
     path("ops/scrape/start/", scrape_start_view, name="scrape_start"),
     path("ops/scrape/status/", scrape_status_view, name="scrape_status"),
     path("ops/scrape/stop/", scrape_stop_view, name="scrape_stop"),

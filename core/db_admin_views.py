@@ -703,3 +703,32 @@ def elective_mapping_list_view(request: HttpRequest) -> JsonResponse:
             }
         )
     return JsonResponse({"ok": True, "items": data, "count": len(data)})
+
+
+@role_required(ROLE_SUPER_ADMIN)
+@require_GET
+def elective_placeholders_view(request: HttpRequest) -> JsonResponse:
+    """List elective placeholder codes from ProgrammeRequirement for a programme.
+
+    Returns courses where type contains 'Elective' (Program Elective,
+    Free Elective, University Elective).
+    """
+    programme = (request.GET.get("programme") or "").strip().upper()
+    if not programme:
+        return JsonResponse({"error": "programme required"}, status=400)
+
+    qs = ProgrammeRequirement.objects.filter(
+        program=programme,
+        type__icontains="Elective",
+    ).order_by("programme_term", "course_code")
+
+    items = [
+        {
+            "course_code": pr.course_code,
+            "type": pr.type,
+            "programme_term": pr.programme_term,
+            "credit_hours": pr.credit_hours,
+        }
+        for pr in qs
+    ]
+    return JsonResponse({"ok": True, "items": items, "count": len(items)})
