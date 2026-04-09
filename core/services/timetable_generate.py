@@ -243,11 +243,12 @@ def generate_workspace_scenario(
     else:
         all_recs = batch_recommend_multi_program(student_ids, year, semester)
 
-    # ── Step 1b: Replace elective placeholders with real courses ──
-    # If ElectiveTermMappings exist for this year/term/programme, replace
-    # placeholder codes (AI1, AI2) with real elective courses the student
-    # is eligible for (based on prerequisites).
-    from core.models import ElectiveTermMapping, StudentCourse
+    # ── Step 1b: Build elective term-map for board assignment ──
+    # batch_recommend() already replaced placeholders (AI1→AI461) based on
+    # student eligibility.  We still need to know which programme_term
+    # the real elective codes belong to (inherited from their placeholder)
+    # so they get assigned to the correct board.
+    from core.models import ElectiveTermMapping
 
     etm_qs = ElectiveTermMapping.objects.filter(
         academic_year=str(year),
@@ -255,8 +256,8 @@ def generate_workspace_scenario(
         programme__in=programs,
     ).select_related("elective")
 
-    elective_map: dict[str, list] = defaultdict(list)  # norm_placeholder → [ElectiveCourse]
-    placeholder_terms: dict[str, int] = {}  # norm_placeholder → programme_term
+    elective_map: dict[str, list] = defaultdict(list)
+    placeholder_terms: dict[str, int] = {}
     for m in etm_qs:
         norm = normalize_code(m.placeholder_code)
         elective_map[norm].append(m.elective)
@@ -267,32 +268,6 @@ def generate_workspace_scenario(
             ).first()
             if pr and pr.programme_term:
                 placeholder_terms[norm] = pr.programme_term
-
-    if elective_map:
-        # Load passed courses for eligibility checking
-        sc_passed = StudentCourse.objects.filter(
-            student_id__in=list(all_recs.keys()),
-            status="passed",
-        ).select_related("course")
-        student_passed: dict[int, set[str]] = defaultdict(set)
-        for sc in sc_passed:
-            student_passed[sc.student_id].add(normalize_code(sc.course.course_code))
-
-        for sid, recs in all_recs.items():
-            expanded: list[str] = []
-            passed = student_passed.get(sid, set())
-            for code in recs:
-                norm = normalize_code(code)
-                if norm in elective_map:
-                    for ec in elective_map[norm]:
-                        prereqs = [
-                            normalize_code(p) for p in ec.prerequisites_csv.split(",") if p.strip()
-                        ]
-                        if all(p in passed for p in prereqs):
-                            expanded.append(normalize_code(ec.course_code))
-                else:
-                    expanded.append(code)
-            all_recs[sid] = expanded
 
     # Filter out non-schedulable courses (capstone, training, etc.) and
     # build two structures:

@@ -122,14 +122,14 @@ def batch_recommend(
         .values_list("course_code", "programme_term", "credit_hours")
     )
     dept_courses = [
-        {"code": normalize_code(r[0]), "term": r[1], "credits": r[2]}
-        for r in dept_courses_raw
+        {"code": normalize_code(r[0]), "term": r[1], "credits": r[2]} for r in dept_courses_raw
     ]
 
     # ── Query 2: All prerequisites for this program ──────────────────
     prereq_rows = list(
-        Prerequisite.objects.filter(program=program)
-        .values_list("course_code", "prerequisite_course_code")
+        Prerequisite.objects.filter(program=program).values_list(
+            "course_code", "prerequisite_course_code"
+        )
     )
     # Build course -> [prerequisite_codes] lookup
     prereq_map: dict[str, list[str]] = defaultdict(list)
@@ -179,7 +179,7 @@ def batch_recommend(
 
         def prereqs_ok(code: str) -> bool:
             """True if every prerequisite for *code* has been passed or is being studied."""
-            return all(pr in passed or pr in studying for pr in prereq_map.get(code, []))
+            return all(pr in passed or pr in studying for pr in prereq_map.get(code, []))  # noqa: B023
 
         # Build candidate list: courses this student is eligible to take
         candidates: list[dict] = []
@@ -199,7 +199,7 @@ def batch_recommend(
             unlock = count_unlocks(code)
             is_past = c["term"] < next_term  # past-due course from an earlier term
             cc = dict(c)
-            cc["_unlock"] = unlock          # higher = unblocks more courses
+            cc["_unlock"] = unlock  # higher = unblocks more courses
             cc["_past_rank"] = 0 if is_past else 1  # 0 = past-due (prioritised)
             cc["_gs_rank"] = 1 if normalize_code(code).startswith("GS") else 0  # deprioritise GS
             candidates.append(cc)
@@ -224,6 +224,39 @@ def batch_recommend(
 
         if recs:
             results[sid] = recs
+
+    # ── Elective replacement: resolve placeholders to real courses ──
+    # If ElectiveTermMappings exist for this year/term/programme, replace
+    # placeholder codes (AI1, AI2) with real elective courses the student
+    # is eligible for (based on the elective's prerequisites).
+    from core.models import ElectiveTermMapping
+
+    etm_qs = ElectiveTermMapping.objects.filter(
+        academic_year=str(current_academic_year),
+        term=current_semester,
+        programme=program,
+    ).select_related("elective")
+
+    if etm_qs.exists():
+        elective_map: dict[str, list] = defaultdict(list)
+        for m in etm_qs:
+            elective_map[normalize_code(m.placeholder_code)].append(m.elective)
+
+        for sid, recs in results.items():
+            passed = student_passed.get(sid, set())
+            expanded: list[str] = []
+            for code in recs:
+                norm = normalize_code(code)
+                if norm in elective_map:
+                    for ec in elective_map[norm]:
+                        prereqs = [
+                            normalize_code(p) for p in ec.prerequisites_csv.split(",") if p.strip()
+                        ]
+                        if all(p in passed for p in prereqs):
+                            expanded.append(normalize_code(ec.course_code))
+                else:
+                    expanded.append(code)
+            results[sid] = expanded
 
     return results
 
@@ -264,9 +297,9 @@ def batch_recommend_multi_program(
 
     # Group students by program (1 query)
     student_programs: dict[int, str] = {}
-    for sid, prog in Student.objects.filter(
-        student_id__in=student_ids
-    ).values_list("student_id", "program"):
+    for sid, prog in Student.objects.filter(student_id__in=student_ids).values_list(
+        "student_id", "program"
+    ):
         if prog:
             student_programs[sid] = prog
 
