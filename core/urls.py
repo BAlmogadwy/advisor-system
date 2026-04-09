@@ -30,6 +30,10 @@ from .db_admin_views import (
     db_preview_term_sections_view,
     db_programme_capacities_view,
     db_update_programme_capacities_view,
+    elective_catalogue_import_view,
+    elective_catalogue_list_view,
+    elective_mapping_list_view,
+    elective_mapping_set_view,
 )
 from .exam_views import (
     exam_timetable_build_view,
@@ -206,6 +210,15 @@ urlpatterns = [
         name="assign_students_advisors",
     ),
     path("ops/advisors/seed/", seed_advisors_view, name="seed_advisors"),
+    # Elective catalogue & mapping
+    path("ops/electives/catalogue/", elective_catalogue_list_view, name="elective_catalogue_list"),
+    path(
+        "ops/electives/catalogue/import/",
+        elective_catalogue_import_view,
+        name="elective_catalogue_import",
+    ),
+    path("ops/electives/mapping/", elective_mapping_list_view, name="elective_mapping_list"),
+    path("ops/electives/mapping/set/", elective_mapping_set_view, name="elective_mapping_set"),
     path("ops/scrape/start/", scrape_start_view, name="scrape_start"),
     path("ops/scrape/status/", scrape_status_view, name="scrape_status"),
     path("ops/scrape/stop/", scrape_stop_view, name="scrape_stop"),

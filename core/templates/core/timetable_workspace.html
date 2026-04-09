@@ -334,6 +334,10 @@ body.tw-fullscreen #twGenBar{border-radius:0;}
       <option value="adaptive">{% if LANGUAGE_CODE == 'ar' %}تكيّفي (الأفضل){% else %}Adaptive (Best Overall){% endif %}</option>
     </select>
   </div>
+  <button id="twMapElectives" class="btn" type="button" style="padding:5px 12px;background:var(--glass-bg);border:1px solid var(--teal);border-radius:6px;color:var(--teal);font-size:.76rem;cursor:pointer;" title="{% if LANGUAGE_CODE == 'ar' %}ربط المقررات الاختيارية{% else %}Map Electives{% endif %}">
+    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" style="margin-inline-end:3px;vertical-align:middle"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+    {% if LANGUAGE_CODE == 'ar' %}اختيارية{% else %}Electives{% endif %}
+  </button>
   <button id="twGenerate" class="btn btn-primary" type="button" style="padding:6px 16px;">
     <span class="i i-sm" aria-hidden="true" style="margin-inline-end:3px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>
     {% if LANGUAGE_CODE == 'ar' %}توليد{% else %}Generate{% endif %}
@@ -1845,6 +1849,107 @@ async function openSlotEditor() {
   notify.success(IS_AR ? 'تم تحديث الفترات' : `${newSlots.length} lecture + ${newLabSlots.length} lab slots saved`);
   renderGrid();
 }
+
+/* ── Elective Mapping Dialog ── */
+$('twMapElectives').addEventListener('click', async () => {
+  const year = $('twYear').value.trim();
+  const term = $('twTerm').value.trim();
+  const programme = $('twProgram').value.trim().toUpperCase().split(',')[0].trim();
+
+  if (!year || !term || !programme) {
+    notify.error(IS_AR ? 'أدخل السنة والفصل والبرنامج أولا' : 'Enter Year, Term, and Program first');
+    return;
+  }
+
+  // Load catalogue + current mappings in parallel
+  let catalogue = [], currentMappings = [];
+  try {
+    const [catRes, mapRes] = await Promise.all([
+      fetch(`/ops/electives/catalogue/?programme=${encodeURIComponent(programme)}`),
+      fetch(`/ops/electives/mapping/?academic_year=${encodeURIComponent(year)}&term=${encodeURIComponent(term)}&programme=${encodeURIComponent(programme)}`),
+    ]);
+    const catData = await catRes.json();
+    const mapData = await mapRes.json();
+    catalogue = catData.items || [];
+    currentMappings = mapData.items || [];
+  } catch (e) {
+    notify.error(e.message);
+    return;
+  }
+
+  if (!catalogue.length) {
+    notify.error(IS_AR ? 'لا يوجد مقررات اختيارية — استيردها من إدارة قواعد البيانات أولا' : 'No elective catalogue found — import from DB Admin first');
+    return;
+  }
+
+  // Find placeholder codes from ProgrammeRequirement (courses like AI1, AI2, AI3)
+  // We detect them as short codes (1-4 chars after programme prefix) that aren't in the catalogue
+  const placeholders = ['AI1','AI2','AI3','AI4','AI5','CS1','CS2','DS1','DS2','FE1','FE2','GSE1','GSE2','GS104'];
+  // Filter to ones likely relevant: match programme prefix
+  const relevantPlaceholders = placeholders.filter(p => p.startsWith(programme) || p.startsWith('FE') || p.startsWith('GSE') || p.startsWith('GS'));
+
+  // Build current mapping lookup: placeholder → [course_codes]
+  const mapLookup = {};
+  currentMappings.forEach(m => {
+    if (!mapLookup[m.placeholder_code]) mapLookup[m.placeholder_code] = [];
+    mapLookup[m.placeholder_code].push(m.course_code);
+  });
+
+  // Build dialog body
+  let body = `<div style="font-size:.78rem;color:var(--t3);margin-bottom:8px">${IS_AR ? 'اختر المقررات لكل فتحة اختيارية' : 'Select courses for each elective slot'}</div>`;
+  body += `<div style="max-height:400px;overflow-y:auto">`;
+
+  relevantPlaceholders.forEach(ph => {
+    const selected = mapLookup[ph] || [];
+    body += `<div style="margin-bottom:12px;padding:8px;border:1px solid var(--line);border-radius:var(--radius-sm)">`;
+    body += `<div style="font-weight:700;color:var(--royal);margin-bottom:4px">${ph}</div>`;
+    catalogue.forEach(c => {
+      const checked = selected.includes(c.course_code) ? 'checked' : '';
+      body += `<label style="display:flex;align-items:center;gap:6px;font-size:.78rem;padding:2px 0;cursor:pointer">`;
+      body += `<input type="checkbox" class="elec-chk" data-ph="${ph}" data-code="${c.course_code}" ${checked}>`;
+      body += `<span style="font-family:var(--font-mono);font-weight:600">${c.course_code}</span>`;
+      body += `<span style="color:var(--t3)">${c.course_name}</span>`;
+      body += `<span style="color:var(--t4);font-size:.7rem;margin-inline-start:auto">${c.prerequisites_csv || 'no prereq'}</span>`;
+      body += `</label>`;
+    });
+    body += `</div>`;
+  });
+  body += `</div>`;
+
+  const result = await dlg.confirm({
+    title: IS_AR ? `ربط الاختيارية — ${programme} ${year}/${term}` : `Map Electives — ${programme} ${year}/${term}`,
+    body,
+    confirmText: IS_AR ? 'حفظ' : 'Save Mapping',
+    kind: 'info',
+  });
+
+  if (!result) return;
+
+  // Collect checked items
+  const mappings = [];
+  document.querySelectorAll('.elec-chk:checked').forEach(chk => {
+    mappings.push({
+      placeholder_code: chk.dataset.ph,
+      course_code: chk.dataset.code,
+    });
+  });
+
+  try {
+    const res = await fetch('/ops/electives/mapping/set/', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json', 'X-CSRFToken': CSRF},
+      body: JSON.stringify({academic_year: year, term: parseInt(term), programme, mappings}),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      notify.success(IS_AR ? `تم حفظ ${data.created} ربط` : `${data.created} mappings saved`);
+    } else {
+      notify.error(data.error || 'Failed');
+    }
+  } catch (e) {
+    notify.error(e.message);
+  }
+});
 
 /* ── Fullscreen toggle ── */
 (function(){

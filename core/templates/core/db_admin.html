@@ -534,6 +534,15 @@
           <span class="dba-risk-badge risk-safe">{% if LANGUAGE_CODE == 'ar' %}آمن{% else %}Safe{% endif %}</span>
         </button>
 
+        <button class="dba-nav-item" data-panel="electives" type="button">
+          <span class="dba-nav-icon icon-safe"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span></span>
+          <span class="dba-nav-text">
+            <span class="dba-nav-name">{% if LANGUAGE_CODE == 'ar' %}المقررات الاختيارية{% else %}Elective Catalogue{% endif %}</span>
+            <span class="dba-nav-desc">{% if LANGUAGE_CODE == 'ar' %}استيراد وربط المقررات الاختيارية{% else %}Import & map elective courses{% endif %}</span>
+          </span>
+          <span class="dba-risk-badge risk-safe">{% if LANGUAGE_CODE == 'ar' %}آمن{% else %}Safe{% endif %}</span>
+        </button>
+
         <button class="dba-nav-item" data-panel="maintenance" type="button">
           <span class="dba-nav-icon icon-system"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span></span>
           <span class="dba-nav-text">
@@ -883,6 +892,35 @@
           </div>
 
           <pre id="dOut" class="dba-output" aria-live="polite">{% if LANGUAGE_CODE == 'ar' %}جارٍ تحميل الإعدادات الحالية...{% else %}Loading current defaults...{% endif %}</pre>
+        </div>
+
+        <!-- ══ PANEL: Elective Catalogue ════════════════════ -->
+        <div class="dba-panel" id="panel-electives">
+          <div class="dba-panel-header">
+            <div class="dba-panel-icon icon-safe"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span></div>
+            <div>
+              <div class="dba-panel-title">{% if LANGUAGE_CODE == 'ar' %}كتالوج المقررات الاختيارية{% else %}Elective Course Catalogue{% endif %}</div>
+              <div class="dba-panel-subtitle">{% if LANGUAGE_CODE == 'ar' %}استيراد قائمة المقررات الاختيارية من جدول{% else %}Import elective courses from a spreadsheet (tab-separated){% endif %}</div>
+            </div>
+          </div>
+
+          <!-- Import Section -->
+          <div class="dba-section">
+            <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}استيراد الكتالوج{% else %}Import Catalogue{% endif %}</div>
+            <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin-bottom:10px">
+              <div><label style="font-size:.75rem;color:var(--t3)">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Programme{% endif %}</label><input id="elecProgramme" class="form-control form-control-compact" style="width:80px" placeholder="AI" value="AI"></div>
+              <button class="btn btn-primary" id="elecImportBtn" type="button" style="padding:5px 14px;font-size:.8rem">{% if LANGUAGE_CODE == 'ar' %}استيراد{% else %}Import{% endif %}</button>
+            </div>
+            <div style="font-size:.72rem;color:var(--t4);margin-bottom:4px">{% if LANGUAGE_CODE == 'ar' %}الصق البيانات بفواصل تبويب: الكود، الاسم، المتطلبات، التصنيف، T، L، C{% else %}Paste tab-separated: Code, Name, Req (prerequisites), Cat, T, L, C{% endif %}</div>
+            <textarea id="elecContent" rows="10" style="width:100%;font-family:var(--font-mono);font-size:.78rem;padding:8px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--bg);color:var(--ink);resize:vertical" placeholder="AI411&#9;Expert Systems&#9;AI212&#9;AI&#9;3&#9;&#9;3"></textarea>
+            <div id="elecImportResult" style="margin-top:8px;font-size:.8rem"></div>
+          </div>
+
+          <!-- Current Catalogue -->
+          <div class="dba-section" style="margin-top:16px">
+            <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}الكتالوج الحالي{% else %}Current Catalogue{% endif %} <button class="btn btn-sm" id="elecRefreshBtn" type="button" style="padding:2px 8px;font-size:.72rem">{% if LANGUAGE_CODE == 'ar' %}تحديث{% else %}Refresh{% endif %}</button></div>
+            <div id="elecCatalogueTable" style="max-height:300px;overflow-y:auto;font-size:.78rem"></div>
+          </div>
         </div>
 
         <!-- ══ PANEL: Backup & Integrity ═════════════════════ -->
@@ -1622,5 +1660,62 @@ q('capSave').onclick = async () => {
     q('capLoad').click();
   }
 };
+
+/* ── Elective Catalogue ─────────────────────────────────────── */
+const elecImport = q('elecImportBtn');
+const elecRefresh = q('elecRefreshBtn');
+
+if (elecImport) {
+  elecImport.onclick = async () => {
+    const programme = q('elecProgramme').value.trim().toUpperCase();
+    const content = q('elecContent').value.trim();
+    const result = q('elecImportResult');
+    if (!programme || !content) { result.innerHTML = '<span style="color:var(--danger)">Programme and content required</span>'; return; }
+
+    elecImport.disabled = true;
+    try {
+      const res = await fetch('/ops/electives/catalogue/import/', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+        body: JSON.stringify({programme, content}),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        result.innerHTML = `<span style="color:var(--teal)">✓ ${data.created} created, ${data.updated} updated (${data.total} total)</span>`;
+        if (elecRefresh) elecRefresh.click();
+      } else {
+        result.innerHTML = `<span style="color:var(--danger)">✗ ${data.error || 'Import failed'}</span>`;
+      }
+    } catch (e) {
+      result.innerHTML = `<span style="color:var(--danger)">✗ ${e.message}</span>`;
+    }
+    elecImport.disabled = false;
+  };
+}
+
+async function loadElectiveCatalogue() {
+  const container = q('elecCatalogueTable');
+  if (!container) return;
+  const programme = q('elecProgramme').value.trim().toUpperCase();
+  const url = programme ? `/ops/electives/catalogue/?programme=${encodeURIComponent(programme)}` : '/ops/electives/catalogue/';
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    if (!data.ok || !data.items.length) {
+      container.innerHTML = '<div style="color:var(--t4);padding:8px">No elective courses found</div>';
+      return;
+    }
+    let html = '<table class="tbl-card" style="border-spacing:0 3px;width:100%"><thead><tr><th>Code</th><th>Name</th><th>Prereq</th><th>Cat</th><th>Cr</th></tr></thead><tbody>';
+    data.items.forEach(c => {
+      html += `<tr class="cr-row"><td><span class="cr-id">${c.course_code}</span></td><td>${c.course_name}</td><td style="font-family:var(--font-mono);font-size:.72rem">${c.prerequisites_csv || '—'}</td><td>${c.category}</td><td>${c.credit_hours}</td></tr>`;
+    });
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  } catch (e) {
+    container.innerHTML = `<div style="color:var(--danger)">${e.message}</div>`;
+  }
+}
+
+if (elecRefresh) elecRefresh.onclick = loadElectiveCatalogue;
 </script>
 {% endblock %}

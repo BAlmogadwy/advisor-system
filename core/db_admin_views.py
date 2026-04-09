@@ -12,6 +12,7 @@ from core.services.db_admin_ops import (
     delete_external_courses,
     delete_program_catalog,
     delete_students,
+    import_elective_catalogue,
     import_oracle_plan_from_rows,
     import_program_plan,
     legacy_load_department_files_exact,
@@ -20,6 +21,7 @@ from core.services.db_admin_ops import (
     preview_delete_students,
     preview_oracle_plan,
     run_integrity_checks,
+    set_elective_term_mapping,
 )
 from core.services.rbac import ROLE_SUPER_ADMIN
 from core.services.term_sections import (
@@ -557,3 +559,147 @@ def db_update_programme_capacities_view(request: HttpRequest) -> JsonResponse:
         },
     )
     return JsonResponse({"ok": True, "updated": updated})
+
+
+# ── Elective Catalogue & Mapping ────────────────────────────────────
+
+
+@role_required(ROLE_SUPER_ADMIN)
+@require_POST
+def elective_catalogue_import_view(request: HttpRequest) -> JsonResponse:
+    """Import elective course catalogue from tab-separated content.
+
+    Expects JSON body: ``{"programme": "AI", "content": "...tsv..."}``
+    TSV columns: Code, Name, Req (prerequisites), Cat, T, L, C
+    """
+    payload = _parse_json_body(request)
+    if isinstance(payload, JsonResponse):
+        return payload
+
+    programme = str(payload.get("programme", "")).strip().upper()
+    content = str(payload.get("content", "")).strip()
+    if not programme or not content:
+        return JsonResponse({"error": "programme and content required"}, status=400)
+
+    import csv as _csv
+
+    rows = []
+    reader = _csv.reader(content.splitlines(), delimiter="\t")
+    for line in reader:
+        if len(line) < 2:
+            continue
+        code = line[0].strip()
+        if not code or code.upper() == "CODE":
+            continue  # skip header
+        name = line[1].strip() if len(line) > 1 else ""
+        prereqs = line[2].strip() if len(line) > 2 else ""
+        category = line[3].strip() if len(line) > 3 else ""
+        credit_hours = int(line[6]) if len(line) > 6 and line[6].strip().isdigit() else 3
+        rows.append(
+            {
+                "course_code": code,
+                "course_name": name,
+                "prerequisites": prereqs,
+                "category": category,
+                "credit_hours": credit_hours,
+            }
+        )
+
+    result = import_elective_catalogue(programme, rows)
+    log_audit_event(
+        request,
+        action="elective.catalogue.import",
+        status="success",
+        details=result,
+    )
+    return JsonResponse(result)
+
+
+@role_required(ROLE_SUPER_ADMIN)
+@require_GET
+def elective_catalogue_list_view(request: HttpRequest) -> JsonResponse:
+    """List all elective courses for a programme."""
+    from core.models import ElectiveCourse
+
+    programme = (request.GET.get("programme") or "").strip().upper()
+    qs = ElectiveCourse.objects.all()
+    if programme:
+        qs = qs.filter(programme=programme)
+
+    data = list(
+        qs.order_by("programme", "course_code").values(
+            "id",
+            "course_code",
+            "course_name",
+            "programme",
+            "category",
+            "credit_hours",
+            "prerequisites_csv",
+        )
+    )
+    return JsonResponse({"ok": True, "items": data, "count": len(data)})
+
+
+@role_required(ROLE_SUPER_ADMIN)
+@require_POST
+def elective_mapping_set_view(request: HttpRequest) -> JsonResponse:
+    """Set elective-to-placeholder mappings for a term.
+
+    Expects JSON: ``{"academic_year": "1448", "term": 1, "programme": "AI",
+    "mappings": [{"placeholder_code": "AI1", "course_code": "AI461"}, ...]}``
+    """
+    payload = _parse_json_body(request)
+    if isinstance(payload, JsonResponse):
+        return payload
+
+    year = str(payload.get("academic_year", "")).strip()
+    term = payload.get("term")
+    programme = str(payload.get("programme", "")).strip().upper()
+    mappings = payload.get("mappings", [])
+
+    if not year or term is None or not programme:
+        return JsonResponse({"error": "academic_year, term, programme required"}, status=400)
+
+    result = set_elective_term_mapping(year, int(term), programme, mappings)
+    log_audit_event(
+        request,
+        action="elective.mapping.set",
+        status="success",
+        details=result,
+    )
+    return JsonResponse(result)
+
+
+@role_required(ROLE_SUPER_ADMIN)
+@require_GET
+def elective_mapping_list_view(request: HttpRequest) -> JsonResponse:
+    """List current elective mappings for a term/programme."""
+    from core.models import ElectiveTermMapping
+
+    year = (request.GET.get("academic_year") or "").strip()
+    term = request.GET.get("term")
+    programme = (request.GET.get("programme") or "").strip().upper()
+
+    qs = ElectiveTermMapping.objects.select_related("elective").all()
+    if year:
+        qs = qs.filter(academic_year=year)
+    if term:
+        qs = qs.filter(term=int(term))
+    if programme:
+        qs = qs.filter(programme=programme)
+
+    data = []
+    for m in qs.order_by("programme", "placeholder_code", "elective__course_code"):
+        data.append(
+            {
+                "id": m.id,
+                "academic_year": m.academic_year,
+                "term": m.term,
+                "programme": m.programme,
+                "placeholder_code": m.placeholder_code,
+                "course_code": m.elective.course_code,
+                "course_name": m.elective.course_name,
+                "prerequisites_csv": m.elective.prerequisites_csv,
+            }
+        )
+    return JsonResponse({"ok": True, "items": data, "count": len(data)})

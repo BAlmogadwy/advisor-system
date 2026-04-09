@@ -129,6 +129,72 @@ class Prerequisite(models.Model):
         return f"Prereq({self.course_code}->{self.prerequisite_course_code})"
 
 
+class ElectiveCourse(models.Model):
+    """Permanent catalogue of elective courses offered by a department.
+
+    Each row represents one real course (e.g. AI461 "Data Mining") that can
+    fill an elective placeholder slot (AI1, AI2) in the degree plan.
+    """
+
+    course_code = models.TextField()
+    course_name = models.TextField()
+    programme = models.TextField()
+    category = models.TextField(blank=True, default="")
+    credit_hours = models.IntegerField(default=3)
+    prerequisites_csv = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "elective_courses"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["programme", "course_code"],
+                name="uq_elective_programme_code",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["programme"], name="idx_elective_programme"),
+        ]
+
+    def __str__(self) -> str:
+        return f"Elective({self.programme}/{self.course_code})"
+
+
+class ElectiveTermMapping(models.Model):
+    """Per-term assignment of real elective courses to placeholder slots.
+
+    Each term, the department decides which catalogue courses fill each
+    elective slot.  E.g. for term 1448/1, AI1 → AI461 and AI1 → AI462
+    means students can choose either Data Mining or Big Data Analytics
+    to satisfy their "Department Elective 1" requirement.
+    """
+
+    academic_year = models.TextField()
+    term = models.IntegerField()
+    programme = models.TextField()
+    placeholder_code = models.TextField()
+    elective = models.ForeignKey(
+        ElectiveCourse, on_delete=models.CASCADE, related_name="term_mappings"
+    )
+
+    class Meta:
+        db_table = "elective_term_mappings"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["academic_year", "term", "programme", "placeholder_code", "elective"],
+                name="uq_elective_mapping",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["academic_year", "term", "programme"],
+                name="idx_etm_year_term_prog",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"Map({self.placeholder_code}->{self.elective.course_code} {self.academic_year}T{self.term})"
+
+
 class AcademicAdvisor(models.Model):
     advisor_id = models.TextField(primary_key=True)
     full_name = models.TextField()

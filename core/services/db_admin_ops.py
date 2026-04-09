@@ -11,6 +11,8 @@ from django.db.models import Q
 
 from core.models import (
     Course,
+    ElectiveCourse,
+    ElectiveTermMapping,
     Prerequisite,
     ProgrammeRequirement,
     Student,
@@ -522,4 +524,115 @@ def delete_external_courses(course_ids: list[int] | None = None) -> dict[str, An
         "term_sections_deleted": ts_deleted,
         "term_section_meetings_deleted": tsm_deleted,
         "student_term_sections_deleted": sts_deleted,
+    }
+
+
+# ── Elective Catalogue ─────────────────────────────────────────────
+
+
+def import_elective_catalogue(
+    programme: str,
+    rows: list[dict],
+) -> dict:
+    """Import or update the elective course catalogue for a programme.
+
+    Each row must have at minimum ``course_code`` and ``course_name``.
+    Optional keys: ``prerequisites`` (comma-separated), ``category``,
+    ``credit_hours``.
+
+    Returns a summary dict with counts of created and updated records.
+    """
+    programme = programme.strip().upper()
+    created = 0
+    updated = 0
+
+    for row in rows:
+        code = str(row.get("course_code", "")).strip().upper().replace(" ", "")
+        name = str(row.get("course_name", "")).strip()
+        if not code or not name:
+            continue
+
+        prereqs = str(row.get("prerequisites", "")).strip()
+        category = str(row.get("category", "")).strip().upper()
+        credit_hours = int(row.get("credit_hours", 3) or 3)
+
+        _obj, was_created = ElectiveCourse.objects.update_or_create(
+            programme=programme,
+            course_code=code,
+            defaults={
+                "course_name": name,
+                "category": category or programme,
+                "credit_hours": credit_hours,
+                "prerequisites_csv": prereqs,
+            },
+        )
+        if was_created:
+            created += 1
+        else:
+            updated += 1
+
+    return {
+        "ok": True,
+        "programme": programme,
+        "created": created,
+        "updated": updated,
+        "total": created + updated,
+    }
+
+
+def set_elective_term_mapping(
+    academic_year: str,
+    term: int,
+    programme: str,
+    mappings: list[dict],
+) -> dict:
+    """Set elective-to-placeholder mappings for a specific term.
+
+    Replaces all existing mappings for the given (year, term, programme).
+    Each mapping dict must have ``placeholder_code`` and ``course_code``.
+
+    Returns a summary dict.
+    """
+    programme = programme.strip().upper()
+    academic_year = str(academic_year).strip()
+
+    # Clear existing mappings for this term/programme
+    deleted, _ = ElectiveTermMapping.objects.filter(
+        academic_year=academic_year,
+        term=term,
+        programme=programme,
+    ).delete()
+
+    created = 0
+    errors: list[str] = []
+
+    for m in mappings:
+        placeholder = str(m.get("placeholder_code", "")).strip().upper().replace(" ", "")
+        course_code = str(m.get("course_code", "")).strip().upper().replace(" ", "")
+        if not placeholder or not course_code:
+            continue
+
+        try:
+            elective = ElectiveCourse.objects.get(programme=programme, course_code=course_code)
+        except ElectiveCourse.DoesNotExist:
+            errors.append(f"{course_code} not found in {programme} catalogue")
+            continue
+
+        ElectiveTermMapping.objects.create(
+            academic_year=academic_year,
+            term=term,
+            programme=programme,
+            placeholder_code=placeholder,
+            elective=elective,
+        )
+        created += 1
+
+    return {
+        "ok": True,
+        "programme": programme,
+        "academic_year": academic_year,
+        "term": term,
+        "cleared": deleted,
+        "created": created,
+        "errors": errors,
     }
