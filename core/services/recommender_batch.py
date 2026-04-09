@@ -244,6 +244,7 @@ def batch_recommend(
 
         for sid, recs in results.items():
             passed = student_passed.get(sid, set())
+            studying = student_studying.get(sid, set())
             expanded: list[str] = []
             for code in recs:
                 norm = normalize_code(code)
@@ -252,7 +253,7 @@ def batch_recommend(
                         prereqs = [
                             normalize_code(p) for p in ec.prerequisites_csv.split(",") if p.strip()
                         ]
-                        if all(p in passed for p in prereqs):
+                        if all(p in passed or p in studying for p in prereqs):
                             expanded.append(normalize_code(ec.course_code))
                 else:
                     expanded.append(code)
