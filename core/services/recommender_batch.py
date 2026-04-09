@@ -225,51 +225,9 @@ def batch_recommend(
         if recs:
             results[sid] = recs
 
-    # ── Elective resolution: smart mix of placeholder + real codes ──
-    # For each elective placeholder (AI1, AI2), check which mapped real
-    # courses the student is eligible for:
-    #   - Eligible for MULTIPLE → keep placeholder (AI1) — student picks one
-    #   - Eligible for exactly ONE → replace with that specific course
-    #   - Eligible for NONE → drop the placeholder entirely
-    # This gives accurate demand counts: AI1=flexible, AI411=locked-in.
-    from core.models import ElectiveTermMapping
-
-    etm_qs = ElectiveTermMapping.objects.filter(
-        academic_year=str(current_academic_year),
-        term=current_semester,
-        programme=program,
-    ).select_related("elective")
-
-    if etm_qs.exists():
-        elective_map: dict[str, list] = defaultdict(list)
-        for m in etm_qs:
-            elective_map[normalize_code(m.placeholder_code)].append(m.elective)
-
-        for sid, recs in results.items():
-            passed = student_passed.get(sid, set())
-            studying = student_studying.get(sid, set())
-            resolved: list[str] = []
-            for code in recs:
-                norm = normalize_code(code)
-                if norm in elective_map:
-                    # Find which options this student qualifies for
-                    eligible: list[str] = []
-                    for ec in elective_map[norm]:
-                        prereqs = [
-                            normalize_code(p) for p in ec.prerequisites_csv.split(",") if p.strip()
-                        ]
-                        if all(p in passed or p in studying for p in prereqs):
-                            eligible.append(normalize_code(ec.course_code))
-                    if len(eligible) > 1:
-                        # Multiple options → keep placeholder (student picks)
-                        resolved.append(code)
-                    elif len(eligible) == 1:
-                        # Only one option → replace with specific course
-                        resolved.append(eligible[0])
-                    # else: eligible for none → drop placeholder
-                else:
-                    resolved.append(code)
-            results[sid] = resolved
+    # NOTE: Elective placeholder resolution (AI1→AI461) happens only during
+    # timetable generation (timetable_generate.py), not here. The recommender
+    # returns plan codes as-is so Batch Recommender shows clean counts.
 
     return results
 
