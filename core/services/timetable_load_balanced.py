@@ -33,6 +33,7 @@ from core.models import (
     TermSectionMeeting,
 )
 from core.services.timetable_autoplace import (
+    DEFAULT_LAB_SLOTS,
     DEFAULT_SLOTS,
     WEEKDAYS,
     _start_is_blocked,
@@ -48,8 +49,11 @@ def _to_min(t: str) -> int:
 PRAYER_BOUNDARY = 13 * 60
 
 
-def _build_schedule_from_db(board_id: int, slot_config: list[dict]) -> tuple:
+def _build_schedule_from_db(
+    board_id: int, slot_config: list[dict], lab_slot_config: list[dict] | None = None
+) -> tuple:
     """Load current placements into an in-memory schedule structure."""
+    lab_slots = lab_slot_config or DEFAULT_LAB_SLOTS
     placements = list(
         SectionPlacement.objects.filter(board_id=board_id)
         .select_related("term_section")
@@ -61,10 +65,14 @@ def _build_schedule_from_db(board_id: int, slot_config: list[dict]) -> tuple:
     if board.program:
         programs = [p.strip() for p in board.program.split(",") if p.strip()]
         online_codes = set(
-            ProgrammeRequirement.objects.filter(
-                program__in=programs, is_online=True
-            ).values_list("course_code", flat=True)
+            ProgrammeRequirement.objects.filter(program__in=programs, is_online=True).values_list(
+                "course_code", flat=True
+            )
         )
+
+    def _to_min(t: str) -> int:
+        h, m = t.split(":")
+        return int(h) * 60 + int(m)
 
     sections = []
     schedule: dict[int, list[dict]] = {}
@@ -76,31 +84,45 @@ def _build_schedule_from_db(board_id: int, slot_config: list[dict]) -> tuple:
             idx = len(sections)
             sec_map[key] = idx
             sec_label = p.term_section.section
-            sec_num = int(sec_label[1:]) if sec_label.startswith("S") and sec_label[1:].isdigit() else 1
-            sections.append({
-                "code": p.term_section.course_code,
-                "sec_num": sec_num,
-                "label": sec_label,
-                "term_section_id": p.term_section_id,
-                "is_online": p.term_section.course_code in online_codes,
-            })
+            sec_num = (
+                int(sec_label[1:]) if sec_label.startswith("S") and sec_label[1:].isdigit() else 1
+            )
+            sections.append(
+                {
+                    "code": p.term_section.course_code,
+                    "sec_num": sec_num,
+                    "label": sec_label,
+                    "term_section_id": p.term_section_id,
+                    "is_online": p.term_section.course_code in online_codes,
+                }
+            )
             schedule[idx] = []
 
         idx = sec_map[key]
+        # Find slot_idx: check lecture slots, then lab slots
         slot_idx = 0
-        for si, s in enumerate(slot_config):
-            if s["start"] == p.start_time:
-                slot_idx = si
-                break
+        duration = _to_min(p.end_time) - _to_min(p.start_time)
+        if duration <= 75:
+            for si, s in enumerate(slot_config):
+                if s["start"] == p.start_time:
+                    slot_idx = si
+                    break
+        else:
+            for si, s in enumerate(lab_slots):
+                if s["start"] == p.start_time:
+                    slot_idx = si
+                    break
 
-        schedule[idx].append({
-            "day": p.day,
-            "slot_idx": slot_idx,
-            "start": p.start_time,
-            "end": p.end_time,
-            "mask": _time_mask(p.day, p.start_time, p.end_time),
-            "placement_id": p.id,
-        })
+        schedule[idx].append(
+            {
+                "day": p.day,
+                "slot_idx": slot_idx,
+                "start": p.start_time,
+                "end": p.end_time,
+                "mask": _time_mask(p.day, p.start_time, p.end_time),
+                "placement_id": p.id,
+            }
+        )
 
     return sections, schedule, online_codes
 
@@ -136,12 +158,14 @@ def _compute_balance_score(schedule: dict, sections: list, online_codes: set) ->
         if sec["code"] in online_codes:
             continue
         for m in meetings:
-            group_day_times[sec["sec_num"]][m["day"]].append((_to_min(m["start"]), _to_min(m["end"])))
+            group_day_times[sec["sec_num"]][m["day"]].append(
+                (_to_min(m["start"]), _to_min(m["end"]))
+            )
 
     gap_total = 0.0
     for sec_num, day_times in group_day_times.items():
         w = 10 if sec_num == 1 else 2
-        for day, times in day_times.items():
+        for _day, times in day_times.items():
             times.sort()
             for j in range(len(times) - 1):
                 gap = times[j + 1][0] - times[j][1]
@@ -159,7 +183,7 @@ def _check_constraints(schedule: dict, sections: list) -> bool:
         for m in meetings:
             group_masks[sec["sec_num"]].append((sec["code"], m["mask"]))
 
-    for sec_num, masks in group_masks.items():
+    for _sec_num, masks in group_masks.items():
         for a in range(len(masks)):
             for b in range(a + 1, len(masks)):
                 if masks[a][0] != masks[b][0] and masks[a][1] & masks[b][1]:
@@ -169,13 +193,13 @@ def _check_constraints(schedule: dict, sections: list) -> bool:
     for i, meetings in schedule.items():
         for m in meetings:
             course_masks[sections[i]["code"]].append(m["mask"])
-    for code, masks in course_masks.items():
+    for _code, masks in course_masks.items():
         for a in range(len(masks)):
             for b in range(a + 1, len(masks)):
                 if masks[a] & masks[b]:
                     return False
 
-    for i, meetings in schedule.items():
+    for i, meetings in schedule.items():  # noqa: B007
         days = [m["day"] for m in meetings]
         if len(days) != len(set(days)):
             return False
@@ -194,7 +218,10 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
         return {"status": "error"}
 
     slot_config = board.scenario.slot_config or DEFAULT_SLOTS
-    sections, schedule, online_codes = _build_schedule_from_db(board_id, slot_config)
+    lab_slot_config = board.scenario.lab_slot_config or DEFAULT_LAB_SLOTS
+    sections, schedule, online_codes = _build_schedule_from_db(
+        board_id, slot_config, lab_slot_config
+    )
 
     if not sections:
         return {"status": "empty"}
@@ -206,7 +233,7 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
 
     # Build valid options per meeting
     valid_opts: dict[tuple[int, int], list[dict]] = {}
-    for i, meetings in schedule.items():
+    for i, meetings in schedule.items():  # noqa: B007
         for m_idx, m in enumerate(meetings):
             duration = _to_min(m["end"]) - _to_min(m["start"])
             opts = []
@@ -215,21 +242,29 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
                     for si, s in enumerate(slot_config):
                         if _start_is_blocked(s["start"]):
                             continue
-                        opts.append({
-                            "day": day, "slot_idx": si,
-                            "start": s["start"], "end": s["end"],
-                            "mask": _time_mask(day, s["start"], s["end"]),
-                        })
+                        opts.append(
+                            {
+                                "day": day,
+                                "slot_idx": si,
+                                "start": s["start"],
+                                "end": s["end"],
+                                "mask": _time_mask(day, s["start"], s["end"]),
+                            }
+                        )
                 else:
-                    for si in range(len(slot_config) - 1):
-                        if _start_is_blocked(slot_config[si]["start"]):
+                    # Lab (100-min): use dedicated lab slot grid
+                    for si, s in enumerate(lab_slot_config):
+                        if _start_is_blocked(s["start"]):
                             continue
-                        opts.append({
-                            "day": day, "slot_idx": si,
-                            "start": slot_config[si]["start"],
-                            "end": slot_config[si + 1]["end"],
-                            "mask": _time_mask(day, slot_config[si]["start"], slot_config[si + 1]["end"]),
-                        })
+                        opts.append(
+                            {
+                                "day": day,
+                                "slot_idx": si,
+                                "start": s["start"],
+                                "end": s["end"],
+                                "mask": _time_mask(day, s["start"], s["end"]),
+                            }
+                        )
             valid_opts[(i, m_idx)] = opts
 
     # Iterative improvement
@@ -268,6 +303,7 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
         delta = new_score - current_score
 
         import math
+
         if delta < 0 or (temperature > 0.01 and rng.random() < math.exp(-delta / temperature)):
             current_score = new_score
             if delta < 0:
@@ -323,11 +359,17 @@ def rebalance_and_persist_board(board_id: int, max_seconds: float = 8.0) -> dict
             continue
         for m in meetings:
             TermSectionMeeting.objects.get_or_create(
-                term_section=ts, day=m["day"], start_time=m["start"], end_time=m["end"],
+                term_section=ts,
+                day=m["day"],
+                start_time=m["start"],
+                end_time=m["end"],
                 defaults={"room": "", "instructor": ""},
             )
             SectionPlacement.objects.get_or_create(
-                board=board, term_section=ts, day=m["day"], start_time=m["start"],
+                board=board,
+                term_section=ts,
+                day=m["day"],
+                start_time=m["start"],
                 defaults={"end_time": m["end"]},
             )
 
