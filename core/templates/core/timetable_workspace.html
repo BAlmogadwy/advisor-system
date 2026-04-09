@@ -1864,17 +1864,14 @@ $('twMapElectives').addEventListener('click', async () => {
   // Load catalogue + current mappings + actual placeholders in parallel
   let catalogue = [], currentMappings = [], placeholderCodes = [];
   try {
-    const [catRes, mapRes, phRes] = await Promise.all([
-      fetch(`/ops/electives/catalogue/?programme=${encodeURIComponent(programme)}`),
-      fetch(`/ops/electives/mapping/?academic_year=${encodeURIComponent(year)}&term=${encodeURIComponent(term)}&programme=${encodeURIComponent(programme)}`),
-      fetch(`/ops/electives/placeholders/?programme=${encodeURIComponent(programme)}`),
+    const [catData, mapData, phData] = await Promise.all([
+      twFetch(`/ops/electives/catalogue/?programme=${encodeURIComponent(programme)}`),
+      twFetch(`/ops/electives/mapping/?academic_year=${encodeURIComponent(year)}&term=${encodeURIComponent(term)}&programme=${encodeURIComponent(programme)}`),
+      twFetch(`/ops/electives/placeholders/?programme=${encodeURIComponent(programme)}`),
     ]);
-    const catData = await catRes.json();
-    const mapData = await mapRes.json();
-    const phData = await phRes.json();
-    catalogue = catData.items || [];
-    currentMappings = mapData.items || [];
-    placeholderCodes = phData.items || [];
+    catalogue = (catData && catData.items) || [];
+    currentMappings = (mapData && mapData.items) || [];
+    placeholderCodes = (phData && phData.items) || [];
   } catch (e) {
     notify.error(e.message);
     return;
@@ -1943,20 +1940,13 @@ $('twMapElectives').addEventListener('click', async () => {
     });
   });
 
-  try {
-    const res = await fetch('/ops/electives/mapping/set/', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json', 'X-CSRFToken': CSRF},
-      body: JSON.stringify({academic_year: year, term: parseInt(term), programme, mappings}),
-    });
-    const data = await res.json();
-    if (data.ok) {
-      notify.success(IS_AR ? `تم حفظ ${data.created} ربط` : `${data.created} mappings saved`);
-    } else {
-      notify.error(data.error || 'Failed');
-    }
-  } catch (e) {
-    notify.error(e.message);
+  const data = await twFetch('/ops/electives/mapping/set/', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({academic_year: year, term: parseInt(term), programme, mappings}),
+  });
+  if (data && data.ok) {
+    notify.success(IS_AR ? `تم حفظ ${data.created} ربط` : `${data.created} mappings saved`);
   }
 });
 
