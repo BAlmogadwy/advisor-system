@@ -844,6 +844,25 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
     warn_fill = PatternFill("solid", fgColor="FFF3CD")  # light yellow
     danger_fill = PatternFill("solid", fgColor="F8D7DA")  # light red
 
+    # ── Course colour by code hash (matches frontend colorForCourse) ──
+    _color_cache: dict[str, PatternFill] = {}
+
+    def _course_color_fill(code: str) -> PatternFill:
+        if code in _color_cache:
+            return _color_cache[code]
+        # Same hash as JS: h = (h * 31 + charCode) % 360
+        h = 0
+        for ch in str(code):
+            h = (h * 31 + ord(ch)) % 360
+        # HSL to RGB: s=70%, l=92% (light pastel, same as frontend light mode)
+        import colorsys
+
+        r, g, b = colorsys.hls_to_rgb(h / 360.0, 0.92, 0.70)
+        hex_color = f"{int(r * 255):02X}{int(g * 255):02X}{int(b * 255):02X}"
+        fill = PatternFill("solid", fgColor=hex_color)
+        _color_cache[code] = fill
+        return fill
+
     def style_header_row(ws: Any, col_count: int) -> None:
         """Apply teal background + white bold font to the first row."""
         for col in range(1, col_count + 1):
@@ -885,27 +904,58 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
     ws1.append(["Day \\ Period"] + period_order)
     style_header_row(ws1, 1 + len(period_order))
 
-    # One row per day
-    for day in day_order:
-        row: list[str] = [day]
-        for period in period_order:
-            courses = grid.get(day, {}).get(period, [])
-            row.append(", ".join(sorted(courses)) if courses else "—")
-        ws1.append(row)
+    # One row per day — with course colour fills
+    _credit_map_sched = data.get("credit_map", {})
+    course_font = Font(name="Consolas", bold=True, size=9)
 
-    # Style body cells
-    for r in range(2, ws1.max_row + 1):
-        for c in range(1, ws1.max_column + 1):
-            cell = ws1.cell(row=r, column=c)
+    for day in day_order:
+        row_idx = ws1.max_row + 1
+        # Day label
+        day_cell = ws1.cell(row=row_idx, column=1, value=day)
+        day_cell.font = header_font
+        day_cell.border = thin_border
+        day_cell.alignment = left_align
+
+        for pi, period in enumerate(period_order):
+            courses = sorted(grid.get(day, {}).get(period, []))
+            cell = ws1.cell(row=row_idx, column=2 + pi)
             cell.border = thin_border
-            cell.alignment = center if c > 1 else left_align
-            if c == 1:
-                cell.font = header_font  # bold day name
+            cell.alignment = center
+
+            if not courses:
+                cell.value = ""
+            elif len(courses) == 1:
+                c = courses[0]
+                cr = _credit_map_sched.get(c, "")
+                cell.value = f"{c} {cr}cr" if cr else c
+                cell.font = course_font
+                cell.fill = _course_color_fill(c)
+            else:
+                # Multiple courses — list them, use first course's colour
+                parts = []
+                for c in courses:
+                    cr = _credit_map_sched.get(c, "")
+                    parts.append(f"{c} {cr}cr" if cr else c)
+                cell.value = "\n".join(parts)
+                cell.font = course_font
+                cell.fill = _course_color_fill(courses[0])
 
     # Column widths
     ws1.column_dimensions["A"].width = 14
     for i, _p in enumerate(period_order, start=2):
         ws1.column_dimensions[get_column_letter(i)].width = 22
+
+    # Row height for multi-course cells
+    for r in range(2, ws1.max_row + 1):
+        max_lines = 1
+        for c in range(2, ws1.max_column + 1):
+            val = ws1.cell(row=r, column=c).value
+            if val:
+                lines = str(val).count("\n") + 1
+                if lines > max_lines:
+                    max_lines = lines
+        if max_lines > 1:
+            ws1.row_dimensions[r].height = max_lines * 16
 
     # ────────────────────────────────────────────────────────────
     # Sheet 2: Courses (flat list)
@@ -921,10 +971,13 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
         ws2.append([e["course_code"], cr, e["day"], e["period"], e.get("slot_index", "")])
 
     for r in range(2, ws2.max_row + 1):
+        code_val = ws2.cell(row=r, column=1).value
         for c in range(1, 6):
             cell = ws2.cell(row=r, column=c)
             cell.border = thin_border
             cell.alignment = center
+            if code_val:
+                cell.fill = _course_color_fill(code_val)
 
     ws2.column_dimensions["A"].width = 16
     ws2.column_dimensions["B"].width = 10
