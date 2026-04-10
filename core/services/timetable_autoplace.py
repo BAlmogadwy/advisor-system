@@ -599,6 +599,8 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
     group_masks: dict[int, list[tuple[str, int]]] = defaultdict(list)
     group_schedule: dict[int, list[tuple[str, str, str]]] = defaultdict(list)
     all_placed_masks: list[tuple[str, int]] = []
+    # Track S1 time pattern per course for back-to-back section alignment
+    course_s1_pattern: dict[str, set[tuple[str, int]]] = {}  # code → {(day, slot_idx)}
     placement_results: list[dict] = []
     total_placed = 0
     total_skipped = 0
@@ -742,10 +744,23 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                 # across meetings of the same course (should be same slot)
                 time_var_penalty = raw_score[4] * 50
 
+                # Back-to-back bonus: reward S2+ for matching S1's time pattern
+                backtoback_bonus = 0
+                s1_pat = course_s1_pattern.get(code)
+                if s1_pat and sec_round > 1:
+                    # Count how many meetings match S1's (day, slot_idx) pattern
+                    matches = sum(1 for m in option if (m["day"], m["slot_idx"]) in s1_pat)
+                    # Reward: -30 per matching meeting (negative = better score)
+                    backtoback_bonus = -30 * matches
+
                 score = (
                     raw_score[0],
                     raw_score[1],
-                    raw_score[2] * gap_weight + slot_penalty + time_var_penalty + room_penalty,
+                    raw_score[2] * gap_weight
+                    + slot_penalty
+                    + time_var_penalty
+                    + room_penalty
+                    + backtoback_bonus,
                     raw_score[3],
                     raw_score[4],
                 )
@@ -805,6 +820,10 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                 group_schedule[sec_idx].append((m["day"], m["start"], m["end"]))
                 all_placed_masks.append((code, mask))
                 meeting_results.append({"day": m["day"], "start": m["start"], "end": m["end"]})
+
+            # Record S1 pattern for back-to-back alignment of S2+
+            if sec_round == 1:
+                course_s1_pattern[code] = {(m["day"], m["slot_idx"]) for m in best_option}
 
             total_placed += 1
             placement_results.append(
