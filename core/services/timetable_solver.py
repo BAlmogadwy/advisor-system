@@ -443,8 +443,14 @@ def persist_solver_result(board_id: int, result: dict) -> dict:
     except DeliveryBoard.DoesNotExist:
         return result
 
-    # Clear existing auto-placed
-    SectionPlacement.objects.filter(board=board, term_section__source_tag="tw_auto").delete()
+    # Clear existing auto-placed sections AND their meetings
+    auto_placements = SectionPlacement.objects.filter(
+        board=board, term_section__source_tag="tw_auto"
+    )
+    ts_ids = set(auto_placements.values_list("term_section_id", flat=True))
+    auto_placements.delete()
+    for ts_id in ts_ids:
+        TermSectionMeeting.objects.filter(term_section_id=ts_id).delete()
 
     budget_map = {
         b.course_code: b

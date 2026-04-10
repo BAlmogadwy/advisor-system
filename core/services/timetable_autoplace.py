@@ -699,9 +699,10 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
 
             # ── Score every candidate option and keep the best ────────
             # Use actual students per section (not theoretical max) for room matching
+            # ceil division to ensure room can hold the largest possible section
             budget = cd["budget"]
             section_cap = (
-                (budget.total_demand // budget.planned_sections)
+                -(-budget.total_demand // budget.planned_sections)  # ceil division
                 if budget.planned_sections > 0
                 else budget.max_per_section
             )
