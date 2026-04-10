@@ -314,6 +314,7 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
                 penalties.append(assign[i][m_idx][o_idx] * early_penalty)
 
     # (3) Time consistency: prefer same slot_idx across meetings
+    # 3a: slight preference for earlier slots
     for i, sec in enumerate(sections):
         if len(sec["pattern"]) <= 1:
             continue
@@ -321,8 +322,30 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
         for m_idx in range(len(sec["pattern"])):
             options = sec_options[i][m_idx]
             for o_idx, opt in enumerate(options):
-                # Penalize high slot indices slightly (encourages consistent early placement)
                 penalties.append(assign[i][m_idx][o_idx] * opt[1] * w)
+
+    # 3b: heavy penalty for meetings at DIFFERENT slot indices
+    # (only compare lecture meetings — lab uses different slot grid)
+    for i, sec in enumerate(sections):
+        lecture_meetings = [m for m in range(len(sec["pattern"])) if sec["pattern"][m] <= 75]
+        if len(lecture_meetings) <= 1:
+            continue
+        w = 15 if sec["sec_num"] == 1 else 5
+        for a_pos in range(len(lecture_meetings)):
+            for b_pos in range(a_pos + 1, len(lecture_meetings)):
+                m_a = lecture_meetings[a_pos]
+                m_b = lecture_meetings[b_pos]
+                opts_a = sec_options[i][m_a]
+                opts_b = sec_options[i][m_b]
+                for oa, opt_a in enumerate(opts_a):
+                    for ob, opt_b in enumerate(opts_b):
+                        if opt_a[1] != opt_b[1]:  # different slot_idx
+                            diff = abs(opt_a[1] - opt_b[1])
+                            both = model.new_bool_var(f"tdiff_{i}_{m_a}_{oa}_{m_b}_{ob}")
+                            model.add(assign[i][m_a][oa] + assign[i][m_b][ob] - 1 <= both)
+                            model.add(both <= assign[i][m_a][oa])
+                            model.add(both <= assign[i][m_b][ob])
+                            penalties.append(both * diff * w)
 
     # (4) Day spacing: penalize consecutive-day meetings for the same section
     # Prefer at least 1 gap day between meetings (e.g. SUN+TUE over SUN+MON)
@@ -704,6 +727,28 @@ def solve_board_with_hints(
         for m_idx in range(len(sec["pattern"])):
             for o_idx, opt in enumerate(sec_options[i][m_idx]):
                 penalties.append(assign[i][m_idx][o_idx] * opt[1] * w)
+
+    # 3b: heavy penalty for meetings at DIFFERENT slot indices
+    for i, sec in enumerate(sections):
+        lecture_meetings = [m for m in range(len(sec["pattern"])) if sec["pattern"][m] <= 75]
+        if len(lecture_meetings) <= 1:
+            continue
+        w = 15 if sec["sec_num"] == 1 else 5
+        for a_pos in range(len(lecture_meetings)):
+            for b_pos in range(a_pos + 1, len(lecture_meetings)):
+                m_a = lecture_meetings[a_pos]
+                m_b = lecture_meetings[b_pos]
+                opts_a = sec_options[i][m_a]
+                opts_b = sec_options[i][m_b]
+                for oa, opt_a in enumerate(opts_a):
+                    for ob, opt_b in enumerate(opts_b):
+                        if opt_a[1] != opt_b[1]:
+                            diff = abs(opt_a[1] - opt_b[1])
+                            both = model.new_bool_var(f"tdiff_{i}_{m_a}_{oa}_{m_b}_{ob}")
+                            model.add(assign[i][m_a][oa] + assign[i][m_b][ob] - 1 <= both)
+                            model.add(both <= assign[i][m_a][oa])
+                            model.add(both <= assign[i][m_b][ob])
+                            penalties.append(both * diff * w)
 
     # (4) Day spacing: penalize consecutive-day meetings for the same section
     for i, sec in enumerate(sections):

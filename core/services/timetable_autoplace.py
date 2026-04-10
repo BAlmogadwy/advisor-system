@@ -699,10 +699,14 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                     for m in option:
                         if m["slot_idx"] >= 2:  # afternoon slots
                             slot_penalty += slot_pref * (m["slot_idx"] - 1)
+                # Time variance penalty: heavily penalize different start times
+                # across meetings of the same course (should be same slot)
+                time_var_penalty = raw_score[4] * 50
+
                 score = (
                     raw_score[0],
                     raw_score[1],
-                    raw_score[2] * gap_weight + slot_penalty,
+                    raw_score[2] * gap_weight + slot_penalty + time_var_penalty,
                     raw_score[3],
                     raw_score[4],
                 )
