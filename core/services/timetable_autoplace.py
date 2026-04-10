@@ -860,10 +860,25 @@ def _adaptive_scenario(scenario_id: int) -> dict:
             logger.exception("adaptive[%s]: local search failed", label)
             phase_info["local_search"] = {"status": "error"}
 
+        # Report actual placements from DB (may have been improved by CP-SAT or SA)
+        final_placements = list(
+            SectionPlacement.objects.filter(board=board)
+            .select_related("term_section")
+            .values_list(
+                "term_section__course_code",
+                "term_section__section",
+                "day",
+                "start_time",
+                "end_time",
+            )
+        )
         board_results[label] = {
             "placed": best_placed,
             "skipped": greedy["skipped"],
-            "placements": greedy["placements"],
+            "placements": [
+                {"course_code": cc, "section": sec, "meetings": [{"day": d, "start": s, "end": e}]}
+                for cc, sec, d, s, e in final_placements
+            ],
         }
         total_placed += best_placed
         total_skipped += greedy["skipped"]
@@ -904,12 +919,14 @@ def auto_place_scenario(scenario_id: int, strategy: str = DEFAULT_STRATEGY) -> d
         from core.services.timetable_solver import solve_scenario
 
         result = solve_scenario(scenario_id, time_limit_seconds=5.0)
-        # If any board got 0 placements (timeout/infeasible), fall back to compact
-        if result.get("total_placed", 0) == 0:
+        # If ANY board got 0 placements (timeout/infeasible), fall back to compact for that board
+        boards = result.get("boards", {})
+        any_empty = any(b.get("placed", 0) == 0 for b in boards.values())
+        if any_empty or result.get("total_placed", 0) == 0:
             import logging
 
             logging.getLogger(__name__).warning(
-                "optimal: CP-SAT returned 0 placements, falling back to compact"
+                "optimal: CP-SAT has empty board(s), falling back to compact"
             )
             return auto_place_scenario(scenario_id, strategy="compact")
         return result
