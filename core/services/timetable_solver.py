@@ -380,10 +380,16 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
     }
 
 
-def solve_and_persist_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
-    """Solve and persist placements."""
-    result = solve_board(board_id, time_limit_seconds)
-    if result["status"] in ("infeasible", "timeout"):
+def persist_solver_result(board_id: int, result: dict) -> dict:
+    """Persist a solver result (from solve_board or solve_board_with_hints).
+
+    Clears existing auto-placed sections on the board and recreates them
+    from the result's placements list.  Can be called with any result dict
+    that has ``placements`` in the standard solver format.
+
+    Returns the result dict unchanged (pass-through for chaining).
+    """
+    if result["status"] in ("infeasible", "timeout", "error"):
         return result
 
     try:
@@ -432,6 +438,14 @@ def solve_and_persist_board(board_id: int, time_limit_seconds: float = 10.0) -> 
                 start_time=m["start"],
                 defaults={"end_time": m["end"]},
             )
+
+    return result
+
+
+def solve_and_persist_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
+    """Solve and persist placements."""
+    result = solve_board(board_id, time_limit_seconds)
+    return persist_solver_result(board_id, result)
 
     return result
 

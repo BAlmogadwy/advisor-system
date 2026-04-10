@@ -70,6 +70,7 @@ class StudentCourse(models.Model):
         ]
         indexes = [
             models.Index(fields=["student", "status"], name="idx_sc_student_status"),
+            models.Index(fields=["course", "status"], name="idx_sc_course_status"),
         ]
 
     def __str__(self) -> str:
@@ -95,6 +96,7 @@ class ProgrammeRequirement(models.Model):
         ]
         indexes = [
             models.Index(fields=["program"], name="idx_pr_program"),
+            models.Index(fields=["program", "programme_term"], name="idx_pr_program_term"),
         ]
 
     def __str__(self) -> str:
@@ -451,6 +453,7 @@ class SectionPlacement(models.Model):
         indexes = [
             models.Index(fields=["board"], name="idx_sp_board"),
             models.Index(fields=["term_section"], name="idx_sp_term_section"),
+            models.Index(fields=["board", "day", "start_time"], name="idx_sp_board_day_start"),
         ]
 
     def __str__(self) -> str:

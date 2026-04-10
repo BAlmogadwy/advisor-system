@@ -766,7 +766,7 @@ def _adaptive_scenario(scenario_id: int) -> dict:
     import logging
 
     from core.services.timetable_local_search import optimize_and_persist_board
-    from core.services.timetable_solver import solve_and_persist_board, solve_board_with_hints
+    from core.services.timetable_solver import persist_solver_result, solve_board_with_hints
 
     logger = logging.getLogger(__name__)
 
@@ -809,8 +809,8 @@ def _adaptive_scenario(scenario_id: int) -> dict:
                     "improved": cpsat.get("improved", False),
                 }
                 if cpsat["status"] in ("optimal", "feasible") and cpsat["placed"] >= best_placed:
-                    # CP-SAT found an equal-or-better solution — persist it
-                    solve_and_persist_board(board.id, time_limit_seconds=cpsat_budget)
+                    # CP-SAT found an equal-or-better solution — persist the hinted result directly
+                    persist_solver_result(board.id, cpsat)
                     best_placed = cpsat["placed"]
                     logger.info(
                         "adaptive[%s]: CP-SAT improved (%s→%s placed)",
@@ -834,7 +834,11 @@ def _adaptive_scenario(scenario_id: int) -> dict:
             logger.exception("adaptive[%s]: local search failed", label)
             phase_info["local_search"] = {"status": "error"}
 
-        board_results[label] = greedy
+        board_results[label] = {
+            "placed": best_placed,
+            "skipped": greedy["skipped"],
+            "placements": greedy["placements"],
+        }
         total_placed += best_placed
         total_skipped += greedy["skipped"]
         phases_log[label] = phase_info
@@ -869,11 +873,20 @@ def auto_place_scenario(scenario_id: int, strategy: str = DEFAULT_STRATEGY) -> d
     if strategy == "adaptive":
         return _adaptive_scenario(scenario_id)
 
-    # Use CP-SAT solver for "optimal" strategy
+    # Use CP-SAT solver for "optimal" strategy — falls back to compact on failure
     if strategy == "optimal":
         from core.services.timetable_solver import solve_scenario
 
-        return solve_scenario(scenario_id, time_limit_seconds=5.0)
+        result = solve_scenario(scenario_id, time_limit_seconds=5.0)
+        # If any board got 0 placements (timeout/infeasible), fall back to compact
+        if result.get("total_placed", 0) == 0:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "optimal: CP-SAT returned 0 placements, falling back to compact"
+            )
+            return auto_place_scenario(scenario_id, strategy="compact")
+        return result
 
     # Load-balanced: greedy build + redistribution
     if strategy == "load_balanced":
