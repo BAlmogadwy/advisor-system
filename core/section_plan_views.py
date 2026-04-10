@@ -612,36 +612,92 @@ def _export_section_plan_xlsx(
         for col_idx in range(1, len(headers) + 1):
             ws.column_dimensions[chr(64 + col_idx) if col_idx <= 26 else "A"].width = 14
 
+    from openpyxl.styles import Border, Side  # type: ignore[import-untyped]
+
+    thin_border = Border(
+        left=Side(style="thin", color="D5D8DC"),
+        right=Side(style="thin", color="D5D8DC"),
+        top=Side(style="thin", color="D5D8DC"),
+        bottom=Side(style="thin", color="D5D8DC"),
+    )
+    title_fill = PatternFill(start_color="1B2631", end_color="1B2631", fill_type="solid")
+    title_font = Font(bold=True, color="FFFFFF", size=12)
+    alt_fill = PatternFill(start_color="F4F6F7", end_color="F4F6F7", fill_type="solid")
+
     def _write_summary_sheet(ws, summary_data: dict, p: dict) -> None:
         """Write summary metadata and department breakdown into a worksheet."""
-        ws.cell(row=1, column=1, value="Year").font = bold
-        ws.cell(row=1, column=2, value=p["year"])
-        ws.cell(row=1, column=3, value="Semester").font = bold
-        ws.cell(row=1, column=4, value=p["semester"])
+        # Title row
+        ws.merge_cells("A1:F1")
+        title_val = f"Section Plan Summary — {p.get('year', '')}/{p.get('semester', '')}"
+        dept_filter = p.get("dept_filter", [])
+        if dept_filter:
+            title_val += f" (filtered: {', '.join(dept_filter)})"
+        tc = ws.cell(row=1, column=1, value=title_val)
+        tc.font = title_font
+        tc.fill = title_fill
+        tc.alignment = Alignment(horizontal="center", vertical="center")
+        for c in range(2, 7):
+            ws.cell(row=1, column=c).fill = title_fill
 
-        ws.cell(row=3, column=1, value="Total Courses").font = bold
-        ws.cell(row=3, column=2, value=summary_data["total_courses"])
-        ws.cell(row=3, column=3, value="Total Sections").font = bold
-        ws.cell(row=3, column=4, value=summary_data["total_sections"])
-        ws.cell(row=3, column=5, value="Total Students").font = bold
-        ws.cell(row=3, column=6, value=summary_data["total_students"])
+        # KPI row
+        kpi_labels = ["Total Courses", "Total Sections", "Total Students", "Avg Fill %"]
+        kpi_values = [
+            summary_data.get("total_courses", 0),
+            summary_data.get("total_sections", 0),
+            summary_data.get("total_students", 0),
+            f"{summary_data.get('avg_fill_percent', 0)}%",
+        ]
+        for ci, label in enumerate(kpi_labels):
+            ws.cell(row=3, column=1 + ci * 2, value=label).font = bold
+            ws.cell(row=3, column=2 + ci * 2, value=kpi_values[ci])
 
+        # Department Summary table
+        ws.cell(row=5, column=1, value="Department Summary").font = Font(bold=True, size=11)
         dept_headers = ["Department", "Courses", "Sections", "Students", "Total Credits"]
         for col_idx, h in enumerate(dept_headers, 1):
-            cell = ws.cell(row=5, column=col_idx, value=h)
+            cell = ws.cell(row=6, column=col_idx, value=h)
             cell.font = header_font
             cell.fill = header_fill
             cell.alignment = center
+            cell.border = thin_border
 
-        for i, dept in enumerate(summary_data["departments"], 6):
-            ws.cell(row=i, column=1, value=dept["department"])
-            ws.cell(row=i, column=2, value=dept["courses"]).alignment = center
-            ws.cell(row=i, column=3, value=dept["sections"]).alignment = center
-            ws.cell(row=i, column=4, value=dept["students"]).alignment = center
-            ws.cell(row=i, column=5, value=dept["total_credits"]).alignment = center
+        depts = summary_data.get("departments", [])
+        for i, dept in enumerate(depts):
+            r = 7 + i
+            ws.cell(row=r, column=1, value=dept["department"]).font = bold
+            ws.cell(row=r, column=1).border = thin_border
+            ws.cell(row=r, column=2, value=dept["courses"]).alignment = center
+            ws.cell(row=r, column=2).border = thin_border
+            ws.cell(row=r, column=3, value=dept["sections"]).alignment = center
+            ws.cell(row=r, column=3).border = thin_border
+            ws.cell(row=r, column=4, value=dept["students"]).alignment = center
+            ws.cell(row=r, column=4).border = thin_border
+            ws.cell(row=r, column=5, value=dept["total_credits"]).alignment = center
+            ws.cell(row=r, column=5).border = thin_border
+            if i % 2 == 1:
+                for c in range(1, 6):
+                    ws.cell(row=r, column=c).fill = alt_fill
+
+        # Totals row
+        if depts:
+            tr = 7 + len(depts)
+            ws.cell(row=tr, column=1, value="TOTAL").font = Font(bold=True, size=10)
+            ws.cell(row=tr, column=1).border = thin_border
+            ws.cell(row=tr, column=2, value=sum(d["courses"] for d in depts)).font = bold
+            ws.cell(row=tr, column=2).alignment = center
+            ws.cell(row=tr, column=2).border = thin_border
+            ws.cell(row=tr, column=3, value=sum(d["sections"] for d in depts)).font = bold
+            ws.cell(row=tr, column=3).alignment = center
+            ws.cell(row=tr, column=3).border = thin_border
+            ws.cell(row=tr, column=4, value=sum(d["students"] for d in depts)).font = bold
+            ws.cell(row=tr, column=4).alignment = center
+            ws.cell(row=tr, column=4).border = thin_border
+            ws.cell(row=tr, column=5, value=sum(d["total_credits"] for d in depts)).font = bold
+            ws.cell(row=tr, column=5).alignment = center
+            ws.cell(row=tr, column=5).border = thin_border
 
         for col_idx in range(1, 7):
-            ws.column_dimensions[chr(64 + col_idx)].width = 16
+            ws.column_dimensions[chr(64 + col_idx)].width = 18
 
     if mode == "multi" and programs_data:
         # ── Combined sheet first (all programs merged) ──
