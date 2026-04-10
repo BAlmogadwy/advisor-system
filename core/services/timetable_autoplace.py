@@ -700,17 +700,14 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
             # ── Score every candidate option and keep the best ────────
             section_cap = cd["budget"].max_per_section
             for option in all_options:
-                # Room feasibility: hard reject if no room available
+                # Room feasibility: prefer options with rooms, penalize roomless
+                room_penalty = 0
                 if room_tracker:
-                    room_ok = True
                     for m in option:
                         duration = _to_min(m["end"]) - _to_min(m["start"])
                         rtype = "lab" if duration > 80 else "lecture"
                         if not room_tracker.is_feasible(m["day"], m["start"], section_cap, rtype):
-                            room_ok = False
-                            break
-                    if not room_ok:
-                        continue  # skip this option entirely
+                            room_penalty += 100  # heavy penalty but not a hard reject
 
                 raw_score = _score_option(
                     option,
@@ -741,7 +738,7 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                 score = (
                     raw_score[0],
                     raw_score[1],
-                    raw_score[2] * gap_weight + slot_penalty + time_var_penalty,
+                    raw_score[2] * gap_weight + slot_penalty + time_var_penalty + room_penalty,
                     raw_score[3],
                     raw_score[4],
                 )
@@ -778,7 +775,8 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                     duration = _to_min(m["end"]) - _to_min(m["start"])
                     rtype = "lab" if duration > 80 else "lecture"
                     assigned_room = (
-                        room_tracker.assign_best_fit(m["day"], m["start"], section_cap, rtype) or ""
+                        room_tracker.assign_best_fit(m["day"], m["start"], section_cap, rtype)
+                        or "UNASSIGNED"
                     )
 
                 TermSectionMeeting.objects.get_or_create(
