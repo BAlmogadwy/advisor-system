@@ -739,8 +739,6 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
         all_rooms = [r for r in all_rooms if r.room_code in prog_room_codes]
 
     if all_rooms:
-        DAY_LABELS_R = ["SUN", "MON", "TUE", "WED", "THU"]
-        DAY_NAMES_R = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"]
         lecture_slots = scenario.slot_config or DEFAULT_SLOTS
         lab_slots = scenario.lab_slot_config or []
 
@@ -754,124 +752,182 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
             right=Side(style="thin", color="D5D8DC"),
         )
 
-        for board in boards:
-            term_num = board.nominal_term or 0
-            ws_room = wb.create_sheet(title=f"Rooms T{term_num}")
-            ws_room.sheet_properties.tabColor = "2E86C1"
+        # Collect all placements across all boards for the room view
+        all_board_placements = list(
+            SectionPlacement.objects.filter(board__scenario=scenario)
+            .exclude(room="")
+            .exclude(room="UNASSIGNED")
+            .select_related("term_section")
+        )
 
-            # Load placements with rooms for this board
-            board_placements = list(
-                SectionPlacement.objects.filter(board=board)
-                .exclude(room="")
-                .exclude(room="UNASSIGNED")
-                .select_related("term_section")
-            )
-
-            if not board_placements:
-                ws_room.cell(row=1, column=1, value=f"No room assignments for {board.label}")
-                continue
-
-            # Get unique rooms used on this board
-            used_rooms = sorted({p.room for p in board_placements})
+        if all_board_placements:
             room_info = {r.room_code: r for r in all_rooms}
+            used_rooms = sorted({p.room for p in all_board_placements})
 
-            # Build room grid: room_code → {(day, start) → placement_text}
+            # Build room grid: room_code → {(day, start) → course_text}
             room_grid: dict[str, dict[tuple[str, str], str]] = defaultdict(dict)
-            for p in board_placements:
+            for p in all_board_placements:
                 text = f"{p.term_section.course_code} {p.term_section.section}"
                 room_grid[p.room][(p.day, p.start_time)] = text
 
-            # Determine all slots (lecture + lab combined, sorted by start)
-            all_slots = []
+            # Build slot list (lecture + lab, sorted, no duplicates)
+            lecture_slots = scenario.slot_config or DEFAULT_SLOTS
+            lab_slots = scenario.lab_slot_config or []
+            all_slot_list: list[dict] = []
             for s in lecture_slots:
-                all_slots.append({"start": s["start"], "end": s["end"], "type": "L"})
+                all_slot_list.append({"start": s["start"], "end": s["end"], "type": "L"})
             for s in lab_slots:
-                all_slots.append({"start": s["start"], "end": s["end"], "type": "Lab"})
-            # Sort by start time, remove duplicates
+                all_slot_list.append({"start": s["start"], "end": s["end"], "type": "Lab"})
             seen_starts: set[str] = set()
-            unique_slots = []
-            for s in sorted(all_slots, key=lambda x: x["start"]):
+            unique_slots: list[dict] = []
+            for s in sorted(all_slot_list, key=lambda x: x["start"]):
                 if s["start"] not in seen_starts:
                     seen_starts.add(s["start"])
                     unique_slots.append(s)
 
+            num_slot_cols = len(unique_slots)
+
+            # Separate lecture rooms and lab rooms
+            lecture_rooms = [
+                rc
+                for rc in used_rooms
+                if room_info.get(rc) and room_info[rc].room_type == "lecture"
+            ]
+            lab_room_codes = [
+                rc for rc in used_rooms if room_info.get(rc) and room_info[rc].room_type == "lab"
+            ]
+
+            # Create ONE room sheet with one table per room
+            ws_room = wb.create_sheet(title="Rooms")
+            ws_room.sheet_properties.tabColor = "2E86C1"
+
+            prayer_fill = PatternFill(start_color="D5D8DC", end_color="D5D8DC", fill_type="solid")
+            lab_room_fill = PatternFill(start_color="E8F8F5", end_color="E8F8F5", fill_type="solid")
+            room_name_fill = PatternFill(
+                start_color="0A8E6E", end_color="0A8E6E", fill_type="solid"
+            )
+            room_name_font = Font(name="Calibri", bold=True, color="FFFFFF", size=10)
+
+            current_row = 1
+
             # Title
             ws_room.merge_cells(
-                start_row=1, start_column=1, end_row=1, end_column=1 + len(unique_slots)
+                start_row=1, start_column=1, end_row=1, end_column=1 + num_slot_cols
             )
-            tc = ws_room.cell(row=1, column=1, value=f"Room Schedule — {board.label}")
-            tc.font = Font(bold=True, color="FFFFFF", size=11)
-            tc.fill = PatternFill(start_color="1B2631", end_color="1B2631", fill_type="solid")
-            tc.alignment = Alignment(horizontal="center")
-            for c in range(2, 2 + len(unique_slots)):
+            tc = ws_room.cell(row=1, column=1, value="Lectures")
+            tc.font = Font(bold=True, size=14)
+            tc.fill = PatternFill(start_color="D5F5E3", end_color="D5F5E3", fill_type="solid")
+            tc.alignment = Alignment(horizontal="center", vertical="center")
+            for c in range(2, 2 + num_slot_cols):
                 ws_room.cell(row=1, column=c).fill = PatternFill(
-                    start_color="1B2631", end_color="1B2631", fill_type="solid"
+                    start_color="D5F5E3", end_color="D5F5E3", fill_type="solid"
                 )
+            current_row = 3
 
-            # One sub-table per day
-            current_row = 2
-            for day_code, day_name in zip(DAY_LABELS_R, DAY_NAMES_R, strict=False):
-                # Day header
-                ws_room.merge_cells(
-                    start_row=current_row,
-                    start_column=1,
-                    end_row=current_row,
-                    end_column=1 + len(unique_slots),
+            def _write_room_table(ws, row_start, room_code, grid_data, slots, info):
+                """Write one room table block. Returns next row after the block."""
+                r_obj = info.get(room_code)
+                cap = r_obj.capacity if r_obj else "?"
+                rtype = r_obj.room_type if r_obj else "lecture"
+                is_lab = rtype == "lab"
+
+                row = row_start
+                # Room header row
+                ws.merge_cells(
+                    start_row=row, start_column=1, end_row=row, end_column=1 + len(slots)
                 )
-                dc = ws_room.cell(row=current_row, column=1, value=day_name)
-                dc.font = Font(bold=True, size=10, color="0A8E6E")
-                dc.alignment = Alignment(horizontal="left")
-                current_row += 1
+                rc = ws.cell(row=row, column=1, value=f"{room_code} ({cap})")
+                rc.font = room_name_font
+                rc.fill = lab_room_fill if is_lab else room_name_fill
+                rc.alignment = Alignment(horizontal="left", vertical="center")
+                for c in range(2, 2 + len(slots)):
+                    ws.cell(row=row, column=c).fill = lab_room_fill if is_lab else room_name_fill
+                row += 1
 
-                # Slot headers
-                ws_room.cell(row=current_row, column=1, value="Room").font = room_hdr_font
-                ws_room.cell(row=current_row, column=1).fill = room_hdr_fill
-                ws_room.cell(row=current_row, column=1).border = room_border
-                for si, slot in enumerate(unique_slots):
-                    c = ws_room.cell(
-                        row=current_row, column=2 + si, value=f"{slot['start']}-{slot['end']}"
-                    )
+                # Slot header row
+                ws.cell(row=row, column=1).border = room_border
+                for si, slot in enumerate(slots):
+                    c = ws.cell(row=row, column=2 + si, value=f"{slot['start']}-{slot['end']}")
                     c.font = room_hdr_font
                     c.fill = room_hdr_fill
                     c.alignment = Alignment(horizontal="center")
                     c.border = room_border
-                current_row += 1
+                row += 1
 
-                # Room rows
-                for room_code in used_rooms:
-                    r_obj = room_info.get(room_code)
-                    cap = r_obj.capacity if r_obj else "?"
-                    rtype = r_obj.room_type if r_obj else "?"
-                    label = f"{room_code} ({cap})"
+                # Day rows
+                _days = ["SUN", "MON", "TUE", "WED", "THU"]
+                _day_names = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"]
+                for day_code, day_name in zip(_days, _day_names, strict=False):
+                    dc = ws.cell(row=row, column=1, value=day_name)
+                    dc.font = Font(bold=True, size=9)
+                    dc.border = room_border
 
-                    rc = ws_room.cell(row=current_row, column=1, value=label)
-                    rc.font = Font(name="Consolas", size=8.5, bold=True)
-                    rc.border = room_border
-                    if rtype == "lab":
-                        rc.fill = PatternFill(
-                            start_color="E8F8F5", end_color="E8F8F5", fill_type="solid"
+                    for si, slot in enumerate(slots):
+                        cell = ws.cell(row=row, column=2 + si)
+                        cell.border = room_border
+                        cell.alignment = Alignment(
+                            horizontal="center", vertical="center", wrap_text=True
                         )
 
-                    for si, slot in enumerate(unique_slots):
-                        cell = ws_room.cell(row=current_row, column=2 + si)
-                        cell.border = room_border
-                        cell.alignment = Alignment(horizontal="center", vertical="center")
-                        text = room_grid.get(room_code, {}).get((day_code, slot["start"]), "")
+                        # Prayer break column (12:00-13:00 area)
+                        if slot["start"] >= "11:35" and slot["start"] <= "12:59":
+                            cell.fill = prayer_fill
+
+                        text = grid_data.get((day_code, slot["start"]), "")
                         if text:
                             cell.value = text
                             cell.font = room_cell_font
                             cell.fill = _course_fill(text.split()[0], course_color_map)
+                    row += 1
 
-                    current_row += 1
-                current_row += 1  # gap between days
+                return row + 1  # gap between room tables
+
+            # Write lecture room tables
+            for room_code in lecture_rooms:
+                current_row = _write_room_table(
+                    ws_room,
+                    current_row,
+                    room_code,
+                    room_grid.get(room_code, {}),
+                    unique_slots,
+                    room_info,
+                )
+
+            # Lab rooms section
+            if lab_room_codes:
+                current_row += 1
+                ws_room.merge_cells(
+                    start_row=current_row,
+                    start_column=1,
+                    end_row=current_row,
+                    end_column=1 + num_slot_cols,
+                )
+                tc = ws_room.cell(row=current_row, column=1, value="Labs")
+                tc.font = Font(bold=True, size=14)
+                tc.fill = PatternFill(start_color="D5F5E3", end_color="D5F5E3", fill_type="solid")
+                tc.alignment = Alignment(horizontal="center")
+                for c in range(2, 2 + num_slot_cols):
+                    ws_room.cell(row=current_row, column=c).fill = PatternFill(
+                        start_color="D5F5E3", end_color="D5F5E3", fill_type="solid"
+                    )
+                current_row += 2
+
+                for room_code in lab_room_codes:
+                    current_row = _write_room_table(
+                        ws_room,
+                        current_row,
+                        room_code,
+                        room_grid.get(room_code, {}),
+                        unique_slots,
+                        room_info,
+                    )
 
             # Column widths
-            ws_room.column_dimensions["A"].width = 18
+            ws_room.column_dimensions["A"].width = 14
             from openpyxl.utils import get_column_letter as _gcl
 
-            for si in range(len(unique_slots)):
-                ws_room.column_dimensions[_gcl(2 + si)].width = 16
-            ws_room.freeze_panes = "B3"
+            for si in range(num_slot_cols):
+                ws_room.column_dimensions[_gcl(2 + si)].width = 15
 
     # ── Save ─────────────────────────────────────────────────────
     tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
