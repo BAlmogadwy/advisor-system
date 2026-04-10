@@ -505,14 +505,18 @@ def _score_option(
                     else:
                         student_gap += idle
 
-    # ── (4) Online preference: push to late slots ─────────────────────
-    # For online courses, penalise early time-slot indices.  The formula
-    # ``10 - slot_idx`` means slot 0 (earliest) adds 10, while slot 4
-    # (latest) adds only 6, making later slots cheaper.
+    # ── (4) Slot position preference ───────────────────────────────────
+    # Online courses: penalise early slots (push to late).
+    # Non-online courses: penalise slot 5 (16:00-17:15) — students
+    # prefer earlier classes.
     instructor_spread = 0
     if is_online:
         for m in option:
             instructor_spread += 10 - m["slot_idx"]
+    else:
+        for m in option:
+            if m["slot_idx"] == 4:  # slot 5 (0-indexed as 4)
+                instructor_spread += 5
 
     # ── (5) Time consistency across days ──────────────────────────────
     # Zero if all meetings share the same slot index; +1 for each
