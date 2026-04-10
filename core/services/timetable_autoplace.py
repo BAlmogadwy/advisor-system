@@ -365,14 +365,15 @@ def _to_min(t: str) -> int:
 
 def _score_option(
     option: list[dict],
-    same_group_masks: list[tuple[str, int]],
+    placed_masks: list[tuple[str, int]],
     course_students: dict[str, set[int]],
     my_students: set[int],
     my_code: str = "",
-    same_group_schedule: list[tuple[str, str, str]] | None = None,
+    placed_schedule: list[tuple[str, str, str, str]] | None = None,
     other_sections_masks: list[tuple[str, int]] | None = None,
     is_online: bool = False,
     online_codes_in_group: set[str] | None = None,
+    overlap_matrix: dict | None = None,
 ) -> tuple[int, int, int, int, int]:
     """Score a candidate meeting option.  **Lower is better.**
 
@@ -438,11 +439,16 @@ def _score_option(
     for m in option:
         total_mask |= _time_mask(m["day"], m["start"], m["end"])
 
-    # ── (1) Hard conflict: bitmask overlap with same student group ────
+    # ── (1) Hard conflict: bitmask overlap with courses sharing students ──
+    from core.services.timetable_overlap import courses_share_students as _css
+
     hard_conflict = 0
-    for _placed_code, placed_mask in same_group_masks:
+    for placed_code, placed_mask in placed_masks:
         if total_mask & placed_mask:
-            hard_conflict += 1
+            if overlap_matrix and _css(overlap_matrix, my_code, placed_code):
+                hard_conflict += 1
+            elif not overlap_matrix:
+                hard_conflict += 1  # fallback: assume conflict if no matrix
 
     # ── (2) Same-course overlap across ALL groups ─────────────────────
     # Prevents the same instructor from being double-booked.
@@ -458,12 +464,13 @@ def _score_option(
     # it is not added to the day's interval list, so it does not inflate
     # the gap metric.
     day_intervals: dict[str, list[tuple[int, int]]] = defaultdict(list)
-    if same_group_schedule:
-        for d, s, e in same_group_schedule:
-            # NOTE: the schedule does not track per-entry online status, so
-            # all previously placed meetings are included.  The online
-            # course currently being scored is excluded below via the
-            # is_online guard.
+    if placed_schedule:
+        for entry in placed_schedule:
+            d, s, e = entry[0], entry[1], entry[2]
+            entry_code = entry[3] if len(entry) > 3 else ""
+            # Only include gaps with courses that share students
+            if overlap_matrix and entry_code and not _css(overlap_matrix, my_code, entry_code):
+                continue
             day_intervals[d].append((_to_min(s), _to_min(e)))
 
     if not is_online:
@@ -596,17 +603,29 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
         for code in sm.recommended_courses:
             course_students[code].add(sm.student_id)
 
+    # ── Build real student-overlap matrix ───────────────────────────────
+    from core.services.timetable_overlap import (
+        build_overlap_matrix as _build_om,
+    )
+    from core.services.timetable_overlap import (
+        course_overlap_load as _col,
+    )
+
+    board_courses = set(
+        ScenarioSectionBudget.objects.filter(
+            scenario=scenario, programme_term=board.nominal_term
+        ).values_list("course_code", flat=True)
+    )
+    overlap_matrix = _build_om(scenario.id, board_courses)
+
     # ── Placement tracking structures ─────────────────────────────────
-    # group_masks  : per-group bitmasks used for hard-conflict detection.
-    #                group_masks[1] holds masks for all S1 sections;
-    #                sections in the same group MUST NOT overlap (same
-    #                student cohort), while sections in different groups
-    #                CAN overlap (different cohorts).
-    # group_schedule: per-group (day, start, end) triples for gap calc.
-    # all_placed_masks: global list across all groups, used for
-    #                   same-course overlap detection.
-    group_masks: dict[int, list[tuple[str, int]]] = defaultdict(list)
-    group_schedule: dict[int, list[tuple[str, str, str]]] = defaultdict(list)
+    # placed_masks: flat list of (course_code, bitmask) for ALL placed sections
+    #               Used for hard conflict detection via real student overlap.
+    # placed_schedule: flat list of (day, start, end, course_code) for gap calc.
+    #                  Gap only computed between courses that share students.
+    # all_placed_masks: alias for same-course overlap detection (unchanged).
+    placed_masks: list[tuple[str, int]] = []
+    placed_schedule: list[tuple[str, str, str, str]] = []
     all_placed_masks: list[tuple[str, int]] = []
     # Track S1 time pattern per course for back-to-back section alignment
     course_s1_pattern: dict[str, set[tuple[str, int]]] = {}  # code → {(day, slot_idx)}
@@ -679,7 +698,7 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
         strat = STRATEGIES.get(strategy, STRATEGIES[DEFAULT_STRATEGY])
         gap_base = strat["gap_multiplier"]
         slot_pref = strat["slot_preference"]
-        gap_weight = max(1, gap_base + 1 - sec_round)  # S1 gets highest, diminishing
+        # gap_weight now set per-course based on real overlap load (not sec_round)
 
         # Sort courses by credit hours descending -- place 4-credit courses
         # (3 meetings/week) first so they claim the best adjacent slot
@@ -700,9 +719,13 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
             my_students = cd["students"]
             all_options = cd["all_options"]
 
-            # Retrieve the bitmasks and schedule for the SAME group only.
-            same_group = group_masks.get(sec_idx, [])
-            same_sched = group_schedule.get(sec_idx)
+            # Per-course gap weight based on real overlap load
+            overlap_load = _col(overlap_matrix, code)
+            gap_weight = max(1, min(gap_base, overlap_load // 5))
+
+            # Use all placed masks + schedule (overlap matrix filters by real students)
+            cur_placed = placed_masks.copy()
+            cur_sched = placed_schedule.copy()
 
             best_score = (float("inf"), float("inf"), float("inf"), float("inf"), float("inf"))
             best_option = None
@@ -732,13 +755,14 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
 
                 raw_score = _score_option(
                     option,
-                    same_group,
+                    cur_placed,
                     course_students,
                     my_students,
                     my_code=code,
-                    same_group_schedule=same_sched,
+                    placed_schedule=cur_sched,
                     other_sections_masks=all_placed_masks,
                     is_online=is_online,
+                    overlap_matrix=overlap_matrix,
                 )
                 # Apply the group-dependent gap weight (element [2] is
                 # student_gap).  This makes S1 gap-averse and S2+ tolerant.
@@ -849,8 +873,8 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                     defaults={"end_time": m["end"], "room": assigned_room},
                 )
                 mask = _time_mask(m["day"], m["start"], m["end"])
-                group_masks[sec_idx].append((code, mask))
-                group_schedule[sec_idx].append((m["day"], m["start"], m["end"]))
+                placed_masks.append((code, mask))
+                placed_schedule.append((m["day"], m["start"], m["end"], code))
                 all_placed_masks.append((code, mask))
                 meeting_results.append({"day": m["day"], "start": m["start"], "end": m["end"]})
 

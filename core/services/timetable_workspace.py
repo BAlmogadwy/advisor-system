@@ -265,15 +265,21 @@ def detect_board_conflicts(board_id: int) -> dict:
     instructor_clashes: list[dict] = []
     room_clashes: list[dict] = []
 
-    # ── Pre-group items for efficient comparison ──
-    # Group by section label (S1, S2) — only same-group pairs can have student conflicts
+    # ── Build real student-overlap matrix for this board ──
     from collections import defaultdict
 
-    by_group: dict[str, list] = defaultdict(list)
+    from core.services.timetable_overlap import build_overlap_matrix, courses_share_students
+
+    try:
+        board = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
+        board_courses = {item.course_code for item in items}
+        overlap_matrix = build_overlap_matrix(board.scenario_id, board_courses)
+    except DeliveryBoard.DoesNotExist:
+        overlap_matrix = {}
+
     by_instructor: dict[str, list] = defaultdict(list)
     by_room: dict[str, list] = defaultdict(list)
     for item in items:
-        by_group[item.section].append(item)
         if item.instructor:
             by_instructor[item.instructor.strip().upper()].append(item)
         if item.room:
@@ -284,25 +290,30 @@ def detect_board_conflicts(board_id: int) -> dict:
     def _pair_key(a_id: int, b_id: int) -> tuple[int, int]:
         return (min(a_id, b_id), max(a_id, b_id))
 
-    # ── Same-group overlap detection (student conflicts) ──
-    for _group, group_items in by_group.items():
-        n = len(group_items)
-        for i in range(n):
-            for j in range(i + 1, n):
-                a, b = group_items[i], group_items[j]
-                pk = _pair_key(a.id, b.id)
-                if a.mask & b.mask and pk not in seen_pairs:
-                    seen_pairs.add(pk)
-                    overlaps.append(
-                        {
-                            "ids": [a.id, b.id],
-                            "sections": [
-                                f"{a.course_code}-{a.section}",
-                                f"{b.course_code}-{b.section}",
-                            ],
-                            "detail": f"{a.day} {a.start_time}-{a.end_time} vs {b.day} {b.start_time}-{b.end_time}",
-                        }
-                    )
+    # ── Student conflict detection (real overlap, not fake cohort) ──
+    n = len(items)
+    for i in range(n):
+        for j in range(i + 1, n):
+            a, b = items[i], items[j]
+            if not (a.mask & b.mask):
+                continue
+            pk = _pair_key(a.id, b.id)
+            if pk in seen_pairs:
+                continue
+            same_course = a.course_code == b.course_code
+            shares = courses_share_students(overlap_matrix, a.course_code, b.course_code)
+            if same_course or shares:
+                seen_pairs.add(pk)
+                overlaps.append(
+                    {
+                        "ids": [a.id, b.id],
+                        "sections": [
+                            f"{a.course_code}-{a.section}",
+                            f"{b.course_code}-{b.section}",
+                        ],
+                        "detail": f"{a.day} {a.start_time}-{a.end_time} vs {b.day} {b.start_time}-{b.end_time}",
+                    }
+                )
 
     # ── Instructor clash detection (any group) ──
     seen_instr: set[tuple[int, int]] = set()
@@ -407,10 +418,20 @@ def validate_placement(
     new_instructor = meeting.instructor if meeting else ""
 
     ts = TermSection.objects.filter(id=term_section_id).first()
-    # Extract group number from section label (e.g. "S1" -> 1, "S2" -> 2)
-    new_sec_num = 1
-    if ts and ts.section and ts.section.startswith("S") and ts.section[1:].isdigit():
-        new_sec_num = int(ts.section[1:])
+
+    # Build real overlap matrix for this board
+    from core.services.timetable_overlap import courses_share_students as _shares
+
+    try:
+        board_obj = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
+        board_courses = {item.course_code for item in items}
+        if ts:
+            board_courses.add(ts.course_code)
+        from core.services.timetable_overlap import build_overlap_matrix as _bom
+
+        _overlap_mat = _bom(board_obj.scenario_id, board_courses)
+    except DeliveryBoard.DoesNotExist:
+        _overlap_mat = {}
 
     overlaps: list[dict] = []
     instructor_clashes: list[dict] = []
@@ -420,18 +441,12 @@ def validate_placement(
         if item.id == exclude_placement_id:
             continue
 
-        # Time overlap — only flag if same student group (same section number)
+        # Time overlap — flag if courses share students (real overlap)
         if new_mask & item.mask:
-            item_sec_num = 1
-            if item.section and item.section.startswith("S") and item.section[1:].isdigit():
-                item_sec_num = int(item.section[1:])
-
-            # Same-course overlap is always a conflict (instructor teaches both)
             same_course = ts and item.course_code == ts.course_code
-            # Same-group overlap is a student conflict
-            same_group = new_sec_num == item_sec_num
+            shares_students = ts and _shares(_overlap_mat, ts.course_code, item.course_code)
 
-            if same_course or same_group:
+            if same_course or shares_students:
                 overlaps.append(
                     {
                         "id": item.id,
