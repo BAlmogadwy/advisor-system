@@ -136,6 +136,9 @@ class Room(models.Model):
 
     room_code = models.TextField(unique=True)
     wing = models.TextField(blank=True, default="")
+    building = models.TextField(blank=True, default="")
+    floor = models.IntegerField(null=True, blank=True)
+    room_type = models.TextField(blank=True, default="lecture")
     capacity = models.IntegerField(default=0)
     department = models.TextField(blank=True, default="")
 
