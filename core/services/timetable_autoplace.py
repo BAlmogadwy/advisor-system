@@ -605,9 +605,12 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
         code = budget.course_code
         credit_hours = budget.credit_hours or 3
         pattern = get_meeting_pattern(credit_hours)
-        already = SectionPlacement.objects.filter(
-            board=board, term_section__course_code=code
-        ).count()
+        already = (
+            SectionPlacement.objects.filter(board=board, term_section__course_code=code)
+            .values("term_section_id")
+            .distinct()
+            .count()
+        )
         to_place = max(0, budget.planned_sections - already)
         if to_place == 0:
             continue

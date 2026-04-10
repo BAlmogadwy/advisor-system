@@ -102,9 +102,12 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
         code = budget.course_code
         cr = budget.credit_hours or 3
         pattern = get_meeting_pattern(cr)
-        already = SectionPlacement.objects.filter(
-            board=board, term_section__course_code=code
-        ).count()
+        already = (
+            SectionPlacement.objects.filter(board=board, term_section__course_code=code)
+            .values("term_section_id")
+            .distinct()
+            .count()
+        )
         to_place = max(0, budget.planned_sections - already)
         for sec_num in range(already + 1, already + to_place + 1):
             sections.append(
@@ -562,9 +565,12 @@ def solve_board_with_hints(
         code = budget.course_code
         cr = budget.credit_hours or 3
         pattern = get_meeting_pattern(cr)
-        already = SectionPlacement.objects.filter(
-            board=board, term_section__course_code=code
-        ).count()
+        already = (
+            SectionPlacement.objects.filter(board=board, term_section__course_code=code)
+            .values("term_section_id")
+            .distinct()
+            .count()
+        )
         to_place = max(0, budget.planned_sections - already)
         for sec_num in range(already + 1, already + to_place + 1):
             sections.append(
