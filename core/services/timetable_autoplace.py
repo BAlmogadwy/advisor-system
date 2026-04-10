@@ -554,6 +554,18 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
     room_list = get_programme_rooms(programmes) if programmes else []
     room_tracker = RoomTracker(room_list) if room_list else None
 
+    # Pre-populate tracker with rooms already used by OTHER boards in this scenario
+    if room_tracker:
+        other_placements = (
+            SectionPlacement.objects.filter(board__scenario=scenario)
+            .exclude(board=board)
+            .exclude(room="")
+            .exclude(room="UNASSIGNED")
+            .values_list("day", "start_time", "room")
+        )
+        for day, start, room_code in other_placements:
+            room_tracker.usage[(day, start)].add(room_code)
+
     # ── 1. Load section budgets for this board's term level ───────────
     # Ordered by descending demand so the most popular courses are placed
     # first and get the best (least-conflicting) slots.

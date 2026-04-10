@@ -757,11 +757,13 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
             room_info = {r.room_code: r for r in all_rooms}
             used_rooms = sorted({p.room for p in all_board_placements})
 
-            # Build room grid: room_code → {(day, start) → course_text}
-            room_grid: dict[str, dict[tuple[str, str], str]] = defaultdict(dict)
+            # Build room grid: room_code → {(day, start) → [course_texts]}
+            room_grid: dict[str, dict[tuple[str, str], list[str]]] = defaultdict(
+                lambda: defaultdict(list)
+            )
             for p in all_board_placements:
                 text = f"{p.term_section.course_code} {p.term_section.section}"
-                room_grid[p.room][(p.day, p.start_time)] = text
+                room_grid[p.room][(p.day, p.start_time)].append(text)
 
             # Build slot list (lecture + lab, sorted, no duplicates)
             lecture_slots = scenario.slot_config or DEFAULT_SLOTS
@@ -866,11 +868,16 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                         if slot["start"] >= "11:35" and slot["start"] <= "12:59":
                             cell.fill = prayer_fill
 
-                        text = grid_data.get((day_code, slot["start"]), "")
-                        if text:
-                            cell.value = text
+                        texts = grid_data.get((day_code, slot["start"]), [])
+                        if texts:
+                            cell.value = "\n".join(texts)
                             cell.font = room_cell_font
-                            cell.fill = _course_fill(text.split()[0], course_color_map)
+                            cell.fill = _course_fill(texts[0].split()[0], course_color_map)
+                            if len(texts) > 1:
+                                # Multiple courses = conflict, red tint
+                                cell.fill = PatternFill(
+                                    start_color="FADBD8", end_color="FADBD8", fill_type="solid"
+                                )
                     row += 1
 
                 return row + 1  # gap between room tables

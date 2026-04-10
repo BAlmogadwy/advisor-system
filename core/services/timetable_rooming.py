@@ -177,7 +177,18 @@ def assign_rooms_to_board(board_id: int) -> dict:
 
     tracker = RoomTracker(rooms)
 
-    # Load all placements, sorted by capacity DESC (largest sections first)
+    # Pre-populate tracker with rooms used by OTHER boards in the same scenario
+    other_placements = (
+        SectionPlacement.objects.filter(board__scenario=board.scenario)
+        .exclude(board=board)
+        .exclude(room="")
+        .exclude(room="UNASSIGNED")
+        .values_list("day", "start_time", "room")
+    )
+    for day, start, room_code in other_placements:
+        tracker.usage[(day, start)].add(room_code)
+
+    # Load all placements for THIS board
     placements = list(
         SectionPlacement.objects.filter(board=board)
         .select_related("term_section")
