@@ -23,6 +23,12 @@ from itertools import combinations
 
 from core.services.student_helpers import normalize_code
 
+# Threshold for treating a student overlap as a hard/critical constraint.
+# Pairs with >= HARD_OVERLAP_THRESHOLD shared students are hard-blocked in
+# local search / load-balanced and flagged critical in the workspace.
+# Pairs below this threshold are soft (penalised but not forbidden).
+HARD_OVERLAP_THRESHOLD = 20
+
 OverlapMatrix = dict[tuple[str, str], int]
 
 
@@ -110,14 +116,23 @@ def courses_share_students(
     return matrix.get(overlap_key(code_a, code_b), 0) > 0
 
 
+SAME_COURSE_SENTINEL = 999
+"""Sentinel return value from shared_student_count when code_a == code_b."""
+
+
 def shared_student_count(
     matrix: OverlapMatrix,
     code_a: str,
     code_b: str,
 ) -> int:
-    """Get the number of shared students between two courses."""
+    """Get the number of shared students between two courses.
+
+    Returns SAME_COURSE_SENTINEL (999) when code_a == code_b.  Callers
+    that care about same-course should check code equality first rather
+    than relying on this sentinel.
+    """
     if code_a == code_b:
-        return 999  # sentinel: same course
+        return SAME_COURSE_SENTINEL
     return matrix.get(overlap_key(code_a, code_b), 0)
 
 

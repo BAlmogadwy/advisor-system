@@ -7,17 +7,16 @@ university course sections to weekly time slots on delivery boards.  Each
 board represents a single nominal term-level (e.g. "Level 3") and belongs to
 a TimetableScenario.
 
-The algorithm's primary goal is to **minimise student scheduling conflicts**:
-courses taken by the same cohort of students should not overlap in time.  It
-also respects a set of hard and soft constraints described below.
+The algorithm's primary goal is to **minimise student scheduling conflicts**
+using a real student-overlap matrix (built from ``ScenarioStudentMap``) rather
+than fake cohort groupings.  Cross-course conflicts are soft penalties
+proportional to shared student count; same-course overlap is hard.
 
 Key concepts
 ------------
 * **Delivery board** -- a grid of days x slots for one term level.
-* **Section group** -- sections with the same ordinal index across courses
-  (e.g. all "S1" sections) share one student cohort, so they must NOT
-  overlap.  Sections in *different* groups (S1 vs S2) serve different
-  cohorts and CAN overlap.
+* **Overlap matrix** -- maps course pairs to their shared student count,
+  built from ScenarioStudentMap.  Drives all conflict scoring.
 * **Meeting pattern** -- how many weekly meetings a course needs, and the
   duration of each, determined by credit hours.
 * **Prayer-break window** -- a hard constraint blocking any meeting from
@@ -33,24 +32,22 @@ Meeting patterns based on credit hours
 Hard constraints (violations are never accepted)
 -------------------------------------------------
   - No more than 1 meeting per day per section.
-  - No two sections in the same student group may overlap in time.
+  - Same-course sections must not overlap (instructor double-booking).
   - No meeting may start during the prayer-break window (11:35-12:59).
 
 Soft constraints (penalised but not forbidden)
 ----------------------------------------------
+  - Cross-course student overlap: penalty proportional to shared student count.
   - Prefer the same time-slot index across all meeting days for one course.
-  - Minimise idle gaps between on-campus classes for the same student group.
-  - Online courses should be placed in late slots so students can leave
-    campus first.
-  - Different sections of the same course (taught by one instructor) must
-    not overlap (same-course overlap penalty).
+  - Minimise idle gaps between on-campus classes for courses sharing students.
+  - Online courses should be placed in late slots.
+  - Slot density: prefer less-populated time slots for better distribution.
 
 Placement order
 ---------------
-Sections are placed in *round-robin by group index*: all S1 sections first,
+Sections are placed in *round-robin by section index*: all S1 sections first,
 then all S2 sections, etc.  Within a round, courses are processed in
-descending demand order (highest ``total_demand`` first).  This ensures the
-most constrained group (S1 -- the primary cohort) gets the best slots.
+descending demand order (highest ``total_demand`` first).
 """
 
 from __future__ import annotations
@@ -1112,21 +1109,27 @@ def auto_place_scenario(scenario_id: int, strategy: str = DEFAULT_STRATEGY) -> d
     if strategy == "adaptive":
         return _adaptive_scenario(scenario_id)
 
-    # Use CP-SAT solver for "optimal" strategy — falls back to compact on failure
+    # Use CP-SAT solver for "optimal" strategy — per-board fallback to compact
     if strategy == "optimal":
+        import logging
+
         from core.services.timetable_solver import solve_scenario
 
+        logger = logging.getLogger(__name__)
         result = solve_scenario(scenario_id, time_limit_seconds=5.0)
-        # If ANY board got 0 placements (timeout/infeasible), fall back to compact for that board
-        boards = result.get("boards", {})
-        any_empty = any(b.get("placed", 0) == 0 for b in boards.values())
-        if any_empty or result.get("total_placed", 0) == 0:
-            import logging
+        boards_result = result.get("boards", {})
 
-            logging.getLogger(__name__).warning(
-                "optimal: CP-SAT has empty board(s), falling back to compact"
-            )
-            return auto_place_scenario(scenario_id, strategy="compact")
+        # Per-board fallback: only re-run compact on boards that got 0 placements
+        empty_boards = DeliveryBoard.objects.filter(
+            scenario_id=scenario_id,
+        ).exclude(label__in=[lbl for lbl, b in boards_result.items() if b.get("placed", 0) > 0])
+
+        for board in empty_boards:
+            logger.warning("optimal: CP-SAT empty on '%s', falling back to compact", board.label)
+            r = auto_place_board(board.id, strategy="compact")
+            boards_result[board.label] = r
+            result["total_placed"] = result.get("total_placed", 0) + r["placed"]
+
         return result
 
     # Load-balanced: greedy build + redistribution

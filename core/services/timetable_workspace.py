@@ -268,7 +268,7 @@ def detect_board_conflicts(board_id: int) -> dict:
     # ── Build real student-overlap matrix for this board ──
     from collections import defaultdict
 
-    from core.services.timetable_overlap import build_overlap_matrix, courses_share_students
+    from core.services.timetable_overlap import build_overlap_matrix
 
     try:
         board = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
@@ -291,6 +291,17 @@ def detect_board_conflicts(board_id: int) -> dict:
         return (min(a_id, b_id), max(a_id, b_id))
 
     # ── Student conflict detection (real overlap, not fake cohort) ──
+    # Severity levels match the engines:
+    #   critical: same-course OR shared >= HARD_OVERLAP_THRESHOLD (blocks publish)
+    #   warning:  shared 1..(HARD_OVERLAP_THRESHOLD-1) (flagged, doesn't block)
+    from core.services.timetable_overlap import (
+        HARD_OVERLAP_THRESHOLD,
+        SAME_COURSE_SENTINEL,
+    )
+    from core.services.timetable_overlap import (
+        shared_student_count as _ssc,
+    )
+
     n = len(items)
     for i in range(n):
         for j in range(i + 1, n):
@@ -301,8 +312,13 @@ def detect_board_conflicts(board_id: int) -> dict:
             if pk in seen_pairs:
                 continue
             same_course = a.course_code == b.course_code
-            shares = courses_share_students(overlap_matrix, a.course_code, b.course_code)
-            if same_course or shares:
+            shared = (
+                _ssc(overlap_matrix, a.course_code, b.course_code)
+                if not same_course
+                else SAME_COURSE_SENTINEL
+            )
+            if same_course or shared > 0:
+                is_critical = same_course or shared >= HARD_OVERLAP_THRESHOLD
                 seen_pairs.add(pk)
                 overlaps.append(
                     {
@@ -312,6 +328,8 @@ def detect_board_conflicts(board_id: int) -> dict:
                             f"{b.course_code}-{b.section}",
                         ],
                         "detail": f"{a.day} {a.start_time}-{a.end_time} vs {b.day} {b.start_time}-{b.end_time}",
+                        "severity": "critical" if is_critical else "warning",
+                        "shared_students": shared if not same_course else None,
                     }
                 )
 
@@ -359,10 +377,12 @@ def detect_board_conflicts(board_id: int) -> dict:
                         }
                     )
 
-    # Overlaps and instructor clashes are "critical" (block publish);
-    # room clashes are "warning" (advisory only).
-    critical = len(overlaps) + len(instructor_clashes)
-    warning = len(room_clashes)
+    # Critical overlaps (same-course or high shared) + instructor clashes block
+    # publish.  Low-shared overlaps and room clashes are warnings.
+    critical_overlaps = sum(1 for o in overlaps if o.get("severity") == "critical")
+    warning_overlaps = sum(1 for o in overlaps if o.get("severity") == "warning")
+    critical = critical_overlaps + len(instructor_clashes)
+    warning = warning_overlaps + len(room_clashes)
 
     return {
         "overlaps": overlaps,
@@ -420,7 +440,6 @@ def validate_placement(
     ts = TermSection.objects.filter(id=term_section_id).first()
 
     # Build real overlap matrix for this board
-    from core.services.timetable_overlap import courses_share_students as _shares
 
     try:
         board_obj = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
@@ -441,17 +460,32 @@ def validate_placement(
         if item.id == exclude_placement_id:
             continue
 
-        # Time overlap — flag if courses share students (real overlap)
+        # Time overlap — graduated severity matching the placement engines
         if new_mask & item.mask:
-            same_course = ts and item.course_code == ts.course_code
-            shares_students = ts and _shares(_overlap_mat, ts.course_code, item.course_code)
+            from core.services.timetable_overlap import (
+                HARD_OVERLAP_THRESHOLD,
+                SAME_COURSE_SENTINEL,
+            )
+            from core.services.timetable_overlap import (
+                shared_student_count as _ssc_val,
+            )
 
-            if same_course or shares_students:
+            same_course = ts and item.course_code == ts.course_code
+            shared = (
+                _ssc_val(_overlap_mat, ts.course_code, item.course_code)
+                if ts and not same_course
+                else (SAME_COURSE_SENTINEL if same_course else 0)
+            )
+
+            if same_course or shared > 0:
+                is_critical = same_course or shared >= HARD_OVERLAP_THRESHOLD
                 overlaps.append(
                     {
                         "id": item.id,
                         "section": f"{item.course_code}-{item.section}",
                         "detail": f"{item.day} {item.start_time}-{item.end_time}",
+                        "severity": "critical" if is_critical else "warning",
+                        "shared_students": shared if not same_course else None,
                     }
                 )
 
@@ -485,11 +519,13 @@ def validate_placement(
                     }
                 )
 
-    critical = len(overlaps) + len(instructor_clashes)
-    warning = len(room_clashes)
+    critical_overlaps = sum(1 for o in overlaps if o.get("severity") == "critical")
+    warning_overlaps = sum(1 for o in overlaps if o.get("severity") == "warning")
+    critical = critical_overlaps + len(instructor_clashes)
+    warning = warning_overlaps + len(room_clashes)
 
     return {
-        "valid": critical == 0 and warning == 0,
+        "valid": critical == 0,
         "overlaps": overlaps,
         "instructor_clashes": instructor_clashes,
         "room_clashes": room_clashes,
@@ -508,8 +544,8 @@ def compute_affected_students(board_id: int) -> dict:
     :func:`detect_board_conflicts`):
 
     1. Extract the two course codes from the ``"CS101-A"`` labels.
-    2. Query ``StudentCourse`` for students currently ``status='studying'``
-       *both* courses -- these are the "affected" students.
+    2. Use ``ScenarioStudentMap.recommended_courses`` to find students
+       who need *both* courses -- these are the "affected" students.
     3. Search for **alternative sections** of either course that do not
        overlap with the *other* placement's time slot.  If at least one
        alternative exists, the overlap is "resolvable"; otherwise
@@ -948,6 +984,18 @@ def check_publish_readiness(scenario_id: int) -> dict:
 
         if conflicts["summary"]["warning"] > 0 and not (room_clashes > 0 and has_rooms):
             warnings.append(f"Board '{board.label}': {conflicts['summary']['warning']} warnings")
+
+    # Cross-board conflicts: high-overlap pairs are warnings
+    from core.services.timetable_overlap import HARD_OVERLAP_THRESHOLD
+
+    cross_conflicts = detect_cross_board_conflicts(scenario_id)
+    high_overlap_cross = [
+        c for c in cross_conflicts if c["overlap_count"] >= HARD_OVERLAP_THRESHOLD
+    ]
+    if high_overlap_cross:
+        warnings.append(
+            f"{len(high_overlap_cross)} cross-board conflicts with {HARD_OVERLAP_THRESHOLD}+ shared students"
+        )
 
     return {
         "ready": len(blockers) == 0,

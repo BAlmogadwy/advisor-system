@@ -19,11 +19,12 @@ Acceptance criterion (simulated annealing):
   - This allows escaping local optima that greedy gets stuck in
 
 Cost function (what we minimize):
-  - Real idle gap minutes between on-campus classes per day per group
-  - 10x weight for S1 (primary students)
+  - Overlap-weighted idle gap minutes between courses sharing students
+  - Gap weight proportional to shared_student_count (capped at 30)
   - 1.5x penalty for prayer break crossings
   - Online courses not counted in gaps
-  - Hard constraint violations = infinite cost (rejected immediately)
+  - Hard constraints (same-course overlap, shared >= HARD_OVERLAP_THRESHOLD)
+    = infinite cost (rejected immediately)
 """
 
 from __future__ import annotations
@@ -138,7 +139,13 @@ def _check_hard_constraints(
     """Return True if all hard constraints are satisfied."""
 
     # 1. No HARD overlap only for same-course or very high-overlap pairs
-    from core.services.timetable_overlap import shared_student_count as _ssc_hc
+    from core.services.timetable_overlap import (
+        HARD_OVERLAP_THRESHOLD,
+        SAME_COURSE_SENTINEL,
+    )
+    from core.services.timetable_overlap import (
+        shared_student_count as _ssc_hc,
+    )
 
     all_masks: list[tuple[str, int]] = []
     for i, meetings in schedule.items():  # noqa: B007
@@ -151,13 +158,12 @@ def _check_hard_constraints(
             if all_masks[a][0] == all_masks[b][0]:
                 continue  # same course checked below
             if all_masks[a][1] & all_masks[b][1]:
-                # Only hard-block if shared count >= 20 (high overlap)
                 shared = (
                     _ssc_hc(overlap_matrix, all_masks[a][0], all_masks[b][0])
                     if overlap_matrix
-                    else 999
+                    else SAME_COURSE_SENTINEL
                 )
-                if shared >= 20:
+                if shared >= HARD_OVERLAP_THRESHOLD:
                     return False
 
     # 2. Same course different sections don't overlap

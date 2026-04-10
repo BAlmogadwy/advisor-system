@@ -3,20 +3,18 @@ core/services/timetable_load_balanced.py
 Load-balanced timetable placement using iterative redistribution.
 
 Unlike compact (minimize gaps) or optimal (minimize total idle), this
-algorithm minimizes the MAXIMUM daily course load for each student group.
-
-Goal: no day has more than ceil(total_meetings / 5) courses. Students
-get a consistent daily schedule instead of heavy/light days.
+algorithm minimizes the MAXIMUM daily course load weighted by real student
+overlap.
 
 Algorithm:
   Phase 1: Greedy build (same as compact — gets a feasible solution)
   Phase 2: Iterative rebalancing
-    - Find the day with the most meetings for S1
+    - Find the day with the highest overlap-weighted meeting load
     - Move one meeting from the heaviest day to the lightest day
-    - Only accept moves that don't create conflicts
+    - Only accept moves that don't violate hard constraints
+      (same-course overlap or shared >= HARD_OVERLAP_THRESHOLD)
     - Repeat until max_daily_load can't be reduced further
   Phase 3: Gap minimization within the balanced constraint
-    - For each day, sort meetings to minimize gaps (swap within same day)
 """
 
 from __future__ import annotations
@@ -194,7 +192,13 @@ def _compute_balance_score(
 
 def _check_constraints(schedule: dict, sections: list, overlap_matrix: dict | None = None) -> bool:
     """Check all hard constraints using real student overlap."""
-    from core.services.timetable_overlap import shared_student_count as _ssc_ck
+    from core.services.timetable_overlap import (
+        HARD_OVERLAP_THRESHOLD,
+        SAME_COURSE_SENTINEL,
+    )
+    from core.services.timetable_overlap import (
+        shared_student_count as _ssc_ck,
+    )
 
     all_masks: list[tuple[str, int]] = []
     for i, meetings in schedule.items():
@@ -207,13 +211,12 @@ def _check_constraints(schedule: dict, sections: list, overlap_matrix: dict | No
             if all_masks[a][0] == all_masks[b][0]:
                 continue
             if all_masks[a][1] & all_masks[b][1]:
-                # Only hard-block for high-overlap pairs (>= 20 shared students)
                 shared = (
                     _ssc_ck(overlap_matrix, all_masks[a][0], all_masks[b][0])
                     if overlap_matrix
-                    else 999
+                    else SAME_COURSE_SENTINEL
                 )
-                if shared >= 20:
+                if shared >= HARD_OVERLAP_THRESHOLD:
                     return False
 
     course_masks: dict[str, list[int]] = defaultdict(list)

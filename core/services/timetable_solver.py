@@ -9,7 +9,8 @@ at a time.
 Model:
   - Boolean variable per (section, meeting, day, slot): is this meeting here?
   - Hard: exactly 1 assignment per meeting, all-different days per section
-  - Hard: no overlap in same student group, no same-course overlap
+  - Hard: no same-course overlap (instructor double-booking)
+  - Soft: cross-course student overlap weighted by shared_student_count
   - Soft: minimize gaps, prefer early/consistent slots, online late
 """
 
