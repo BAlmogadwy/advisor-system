@@ -765,9 +765,13 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                 text = f"{p.term_section.course_code} {p.term_section.section}"
                 room_grid[p.room][(p.day, p.start_time)].append(text)
 
-            # Build slot list (lecture + lab, sorted, no duplicates)
+            # Build separate slot lists for lecture and lab rooms
             lecture_slots = scenario.slot_config or DEFAULT_SLOTS
             lab_slots = scenario.lab_slot_config or []
+            lec_slot_list = [{"start": s["start"], "end": s["end"]} for s in lecture_slots]
+            lab_slot_list = [{"start": s["start"], "end": s["end"]} for s in lab_slots]
+
+            # Combined for column count calculation
             all_slot_list: list[dict] = []
             for s in lecture_slots:
                 all_slot_list.append({"start": s["start"], "end": s["end"], "type": "L"})
@@ -882,31 +886,32 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
 
                 return row + 1  # gap between room tables
 
-            # Write lecture room tables
+            # Write lecture room tables (using lecture slots only)
             for room_code in lecture_rooms:
                 current_row = _write_room_table(
                     ws_room,
                     current_row,
                     room_code,
                     room_grid.get(room_code, {}),
-                    unique_slots,
+                    lec_slot_list,
                     room_info,
                 )
 
             # Lab rooms section
             if lab_room_codes:
                 current_row += 1
+                lab_cols = len(lab_slot_list)
                 ws_room.merge_cells(
                     start_row=current_row,
                     start_column=1,
                     end_row=current_row,
-                    end_column=1 + num_slot_cols,
+                    end_column=1 + lab_cols,
                 )
                 tc = ws_room.cell(row=current_row, column=1, value="Labs")
                 tc.font = Font(bold=True, size=14)
                 tc.fill = PatternFill(start_color="D5F5E3", end_color="D5F5E3", fill_type="solid")
                 tc.alignment = Alignment(horizontal="center")
-                for c in range(2, 2 + num_slot_cols):
+                for c in range(2, 2 + lab_cols):
                     ws_room.cell(row=current_row, column=c).fill = PatternFill(
                         start_color="D5F5E3", end_color="D5F5E3", fill_type="solid"
                     )
@@ -918,7 +923,7 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                         current_row,
                         room_code,
                         room_grid.get(room_code, {}),
-                        unique_slots,
+                        lab_slot_list,
                         room_info,
                     )
 
