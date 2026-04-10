@@ -64,6 +64,7 @@ def _compute_cost(
     schedule: dict[int, list[dict]],
     sections: list[dict],
     online_codes: set[str],
+    overlap_matrix: dict | None = None,
 ) -> float:
     """Compute total weighted idle gap cost for a schedule.
 
@@ -71,41 +72,60 @@ def _compute_cost(
         schedule: {section_index: [{day, slot_idx, start, end, mask}, ...]}
         sections: list of section metadata dicts
         online_codes: set of online course codes
+        overlap_matrix: real student-overlap matrix (optional)
 
     Returns:
         Total cost (lower is better). Float to allow fractional annealing.
     """
-    # Group meetings by (sec_num, day) to compute gaps
-    # group_day_times[sec_num][day] = [(start_min, end_min)]
-    group_day_times: dict[int, dict[str, list[tuple[int, int]]]] = defaultdict(
+    # Collect meetings by course for overlap-weighted gap computation
+    course_day_times: dict[str, dict[str, list[tuple[int, int]]]] = defaultdict(
         lambda: defaultdict(list)
     )
 
     for i, meetings in schedule.items():  # noqa: B007
         sec = sections[i]
         if sec["code"] in online_codes:
-            continue  # online courses don't count
+            continue
         for m in meetings:
             s_min = _to_min(m["start"])
             e_min = _to_min(m["end"])
-            group_day_times[sec["sec_num"]][m["day"]].append((s_min, e_min))
+            course_day_times[sec["code"]][m["day"]].append((s_min, e_min))
+
+    # Compute pairwise gap costs weighted by shared students
+    from core.services.timetable_overlap import shared_student_count as _ssc
 
     total_cost = 0.0
-    for sec_num, day_times in group_day_times.items():
-        w = 10.0 if sec_num == 1 else 2.0  # S1 priority
-
-        for _day, times in day_times.items():
-            if len(times) < 2:
+    codes = list(course_day_times.keys())
+    seen_pairs: set[tuple[str, str]] = set()
+    for a_idx in range(len(codes)):
+        for b_idx in range(a_idx, len(codes)):
+            code_a, code_b = codes[a_idx], codes[b_idx]
+            pk = (min(code_a, code_b), max(code_a, code_b))
+            if pk in seen_pairs:
                 continue
-            times.sort()
-            for j in range(len(times) - 1):
-                gap = times[j + 1][0] - times[j][1]
-                if gap <= 0:
+            seen_pairs.add(pk)
+
+            if code_a == code_b:
+                w = 5.0
+            elif overlap_matrix:
+                shared = _ssc(overlap_matrix, code_a, code_b)
+                if shared == 0:
                     continue
-                # Prayer break crossing penalty
-                if times[j][1] <= PRAYER_BOUNDARY < times[j + 1][0]:
-                    gap *= 1.5
-                total_cost += gap * w
+                w = min(shared, 30) * 0.5
+            else:
+                w = 10.0
+
+            for day in set(course_day_times[code_a].keys()) & set(course_day_times[code_b].keys()):
+                times = sorted(course_day_times[code_a][day] + course_day_times[code_b][day])
+                if len(times) < 2:
+                    continue
+                for j in range(len(times) - 1):
+                    gap = times[j + 1][0] - times[j][1]
+                    if gap <= 0:
+                        continue
+                    if times[j][1] <= PRAYER_BOUNDARY < times[j + 1][0]:
+                        gap *= 1.5
+                    total_cost += gap * w
 
     return total_cost
 
@@ -113,19 +133,24 @@ def _compute_cost(
 def _check_hard_constraints(
     schedule: dict[int, list[dict]],
     sections: list[dict],
+    overlap_matrix: dict | None = None,
 ) -> bool:
     """Return True if all hard constraints are satisfied."""
-    # 1. No overlap in same student group
-    group_masks: dict[int, list[tuple[str, int]]] = defaultdict(list)
+    from core.services.timetable_overlap import courses_share_students as _css
+
+    # 1. No overlap between courses sharing students
+    all_masks: list[tuple[str, int]] = []
     for i, meetings in schedule.items():  # noqa: B007
         sec = sections[i]
         for m in meetings:
-            group_masks[sec["sec_num"]].append((sec["code"], m["mask"]))
+            all_masks.append((sec["code"], m["mask"]))
 
-    for _sec_num, masks in group_masks.items():
-        for a in range(len(masks)):
-            for b in range(a + 1, len(masks)):
-                if masks[a][0] != masks[b][0] and masks[a][1] & masks[b][1]:
+    for a in range(len(all_masks)):
+        for b in range(a + 1, len(all_masks)):
+            if all_masks[a][0] == all_masks[b][0]:
+                continue  # same course checked below
+            if all_masks[a][1] & all_masks[b][1]:
+                if overlap_matrix is None or _css(overlap_matrix, all_masks[a][0], all_masks[b][0]):
                     return False
 
     # 2. Same course different sections don't overlap
@@ -236,6 +261,17 @@ def optimize_board(
     scenario = board.scenario
     slot_config = scenario.slot_config or DEFAULT_SLOTS
     lab_slot_config = scenario.lab_slot_config or DEFAULT_LAB_SLOTS
+
+    # Build real overlap matrix
+    from core.models import ScenarioSectionBudget
+    from core.services.timetable_overlap import build_overlap_matrix as _bom
+
+    board_courses = set(
+        ScenarioSectionBudget.objects.filter(
+            scenario=scenario, programme_term=board.nominal_term
+        ).values_list("course_code", flat=True)
+    )
+    overlap_matrix = _bom(scenario.id, board_courses) if board_courses else {}
 
     # Load online codes
     online_codes: set[str] = set()
@@ -354,7 +390,7 @@ def optimize_board(
     # ── Simulated Annealing ──────────────────────────────────────
 
     rng = random.Random(seed)
-    cost_before = _compute_cost(schedule, sections, online_codes)
+    cost_before = _compute_cost(schedule, sections, online_codes, overlap_matrix)
     best_cost = cost_before
     best_schedule = {k: [m.copy() for m in v] for k, v in schedule.items()}
     current_cost = cost_before
@@ -377,12 +413,12 @@ def optimize_board(
         old_opt = _apply_move(schedule, sec_idx, m_idx, new_opt)
 
         # Check hard constraints
-        if not _check_hard_constraints(schedule, sections):
+        if not _check_hard_constraints(schedule, sections, overlap_matrix):
             _undo_move(schedule, sec_idx, m_idx, old_opt)
             continue
 
         # Compute new cost
-        new_cost = _compute_cost(schedule, sections, online_codes)
+        new_cost = _compute_cost(schedule, sections, online_codes, overlap_matrix)
         delta = new_cost - current_cost
 
         # Accept or reject

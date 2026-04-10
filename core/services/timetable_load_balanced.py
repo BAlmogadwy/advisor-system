@@ -127,22 +127,28 @@ def _build_schedule_from_db(
     return sections, schedule, online_codes
 
 
-def _daily_load(schedule: dict, sections: list, online_codes: set, sec_num: int) -> dict[str, int]:
-    """Count campus courses per day for a given student group."""
+def _daily_load(
+    schedule: dict, sections: list, online_codes: set, overlap_matrix: dict | None = None
+) -> dict[str, int]:
+    """Count overlap-weighted campus courses per day."""
+    from core.services.timetable_overlap import course_overlap_load as _col
+
     day_count: dict[str, int] = {d: 0 for d in WEEKDAYS}
     for i, meetings in schedule.items():
         sec = sections[i]
-        if sec["sec_num"] != sec_num or sec["code"] in online_codes:
+        if sec["code"] in online_codes:
             continue
+        load_w = max(1, _col(overlap_matrix, sec["code"])) if overlap_matrix else 1
         for m in meetings:
-            day_count[m["day"]] += 1
+            day_count[m["day"]] += load_w
     return day_count
 
 
-def _compute_balance_score(schedule: dict, sections: list, online_codes: set) -> float:
+def _compute_balance_score(
+    schedule: dict, sections: list, online_codes: set, overlap_matrix: dict | None = None
+) -> float:
     """Lower is better. Penalizes uneven daily loads + gaps."""
-    # Primary metric: variance of daily load for S1
-    loads = _daily_load(schedule, sections, online_codes, sec_num=1)
+    loads = _daily_load(schedule, sections, online_codes, overlap_matrix)
     values = [v for v in loads.values() if v > 0]
     if not values:
         return 0.0
@@ -151,42 +157,57 @@ def _compute_balance_score(schedule: dict, sections: list, online_codes: set) ->
     min_load = min(values)
     imbalance = (max_load - min_load) * 100  # heavy penalty for imbalance
 
-    # Secondary: total gaps (same as other algorithms)
-    group_day_times: dict[int, dict[str, list[tuple]]] = defaultdict(lambda: defaultdict(list))
+    # Secondary: overlap-weighted gap cost (same pattern as local search)
+    from core.services.timetable_overlap import shared_student_count as _ssc
+
+    course_day_times: dict[str, dict[str, list[tuple]]] = defaultdict(lambda: defaultdict(list))
     for i, meetings in schedule.items():
         sec = sections[i]
         if sec["code"] in online_codes:
             continue
         for m in meetings:
-            group_day_times[sec["sec_num"]][m["day"]].append(
-                (_to_min(m["start"]), _to_min(m["end"]))
-            )
+            course_day_times[sec["code"]][m["day"]].append((_to_min(m["start"]), _to_min(m["end"])))
 
     gap_total = 0.0
-    for sec_num, day_times in group_day_times.items():
-        w = 10 if sec_num == 1 else 2
-        for _day, times in day_times.items():
-            times.sort()
-            for j in range(len(times) - 1):
-                gap = times[j + 1][0] - times[j][1]
-                if gap > 0:
-                    gap_total += gap * w
+    codes = list(course_day_times.keys())
+    for a_idx in range(len(codes)):
+        for b_idx in range(a_idx, len(codes)):
+            ca, cb = codes[a_idx], codes[b_idx]
+            if ca == cb:
+                w = 5
+            elif overlap_matrix:
+                shared = _ssc(overlap_matrix, ca, cb)
+                if shared == 0:
+                    continue
+                w = min(shared, 30)
+            else:
+                w = 10
+            for day in set(course_day_times[ca].keys()) & set(course_day_times[cb].keys()):
+                times = sorted(course_day_times[ca][day] + course_day_times[cb][day])
+                for j in range(len(times) - 1):
+                    gap = times[j + 1][0] - times[j][1]
+                    if gap > 0:
+                        gap_total += gap * w
 
     return imbalance + gap_total
 
 
-def _check_constraints(schedule: dict, sections: list) -> bool:
-    """Check all hard constraints."""
-    group_masks: dict[int, list[tuple[str, int]]] = defaultdict(list)
+def _check_constraints(schedule: dict, sections: list, overlap_matrix: dict | None = None) -> bool:
+    """Check all hard constraints using real student overlap."""
+    from core.services.timetable_overlap import courses_share_students as _css
+
+    all_masks: list[tuple[str, int]] = []
     for i, meetings in schedule.items():
         sec = sections[i]
         for m in meetings:
-            group_masks[sec["sec_num"]].append((sec["code"], m["mask"]))
+            all_masks.append((sec["code"], m["mask"]))
 
-    for _sec_num, masks in group_masks.items():
-        for a in range(len(masks)):
-            for b in range(a + 1, len(masks)):
-                if masks[a][0] != masks[b][0] and masks[a][1] & masks[b][1]:
+    for a in range(len(all_masks)):
+        for b in range(a + 1, len(all_masks)):
+            if all_masks[a][0] == all_masks[b][0]:
+                continue
+            if all_masks[a][1] & all_masks[b][1]:
+                if overlap_matrix is None or _css(overlap_matrix, all_masks[a][0], all_masks[b][0]):
                     return False
 
     course_masks: dict[str, list[int]] = defaultdict(list)
@@ -218,6 +239,17 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
         return {"status": "error"}
 
     slot_config = board.scenario.slot_config or DEFAULT_SLOTS
+
+    # Build real overlap matrix
+    from core.models import ScenarioSectionBudget as _SSB
+    from core.services.timetable_overlap import build_overlap_matrix as _bom
+
+    _board_courses = set(
+        _SSB.objects.filter(scenario=board.scenario, programme_term=board.nominal_term).values_list(
+            "course_code", flat=True
+        )
+    )
+    overlap_matrix = _bom(board.scenario_id, _board_courses) if _board_courses else {}
     lab_slot_config = board.scenario.lab_slot_config or DEFAULT_LAB_SLOTS
     sections, schedule, online_codes = _build_schedule_from_db(
         board_id, slot_config, lab_slot_config
@@ -227,7 +259,7 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
         return {"status": "empty"}
 
     rng = random.Random(seed)
-    score_before = _compute_balance_score(schedule, sections, online_codes)
+    score_before = _compute_balance_score(schedule, sections, online_codes, overlap_matrix)
     best_score = score_before
     best_schedule = {k: [m.copy() for m in v] for k, v in schedule.items()}
 
@@ -295,11 +327,11 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
         # Apply move
         meetings[m_idx] = {**new_opt, "placement_id": old.get("placement_id")}
 
-        if not _check_constraints(schedule, sections):
+        if not _check_constraints(schedule, sections, overlap_matrix):
             meetings[m_idx] = old
             continue
 
-        new_score = _compute_balance_score(schedule, sections, online_codes)
+        new_score = _compute_balance_score(schedule, sections, online_codes, overlap_matrix)
         delta = new_score - current_score
 
         import math
@@ -316,7 +348,7 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
 
     # Compute final daily loads
     schedule.update(best_schedule)
-    loads_after = _daily_load(schedule, sections, online_codes, sec_num=1)
+    loads_after = _daily_load(schedule, sections, online_codes, overlap_matrix)
 
     return {
         "status": "optimized",

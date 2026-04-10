@@ -166,23 +166,35 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
                         if opt_a[0] == opt_b[0]:  # same day_idx
                             model.add(assign[i][m_a][oa] + assign[i][m_b][ob] <= 1)
 
-    # ── Hard: no overlap in same student group ───────────────────
-    by_group: dict[int, list[int]] = defaultdict(list)
-    for i, sec in enumerate(sections):
-        by_group[sec["sec_num"]].append(i)
+    # ── Hard: no overlap between courses sharing students ─────────
+    from core.services.timetable_overlap import (
+        build_overlap_matrix as _bom,
+    )
+    from core.services.timetable_overlap import (
+        courses_share_students as _css,
+    )
+    from core.services.timetable_overlap import (
+        shared_student_count as _ssc,
+    )
 
-    for _group_num, indices in by_group.items():
-        for a_pos in range(len(indices)):
-            for b_pos in range(a_pos + 1, len(indices)):
-                i_a, i_b = indices[a_pos], indices[b_pos]
-                for m_a in range(len(sections[i_a]["pattern"])):
-                    for m_b in range(len(sections[i_b]["pattern"])):
-                        opts_a = sec_options[i_a][m_a]
-                        opts_b = sec_options[i_b][m_b]
-                        for oa, opt_a in enumerate(opts_a):
-                            for ob, opt_b in enumerate(opts_b):
-                                if opt_a[5] & opt_b[5]:  # bitmask overlap
-                                    model.add(assign[i_a][m_a][oa] + assign[i_b][m_b][ob] <= 1)
+    board_courses = {sec["code"] for sec in sections}
+    overlap_matrix = _bom(scenario.id, board_courses)
+
+    for a_pos in range(len(sections)):
+        for b_pos in range(a_pos + 1, len(sections)):
+            code_a, code_b = sections[a_pos]["code"], sections[b_pos]["code"]
+            if code_a == code_b:
+                continue  # same-course handled below
+            if not _css(overlap_matrix, code_a, code_b):
+                continue  # no shared students — can overlap freely
+            for m_a in range(len(sections[a_pos]["pattern"])):
+                for m_b in range(len(sections[b_pos]["pattern"])):
+                    opts_a = sec_options[a_pos][m_a]
+                    opts_b = sec_options[b_pos][m_b]
+                    for oa, opt_a in enumerate(opts_a):
+                        for ob, opt_b in enumerate(opts_b):
+                            if opt_a[5] & opt_b[5]:
+                                model.add(assign[a_pos][m_a][oa] + assign[b_pos][m_b][ob] <= 1)
 
     # ── Hard: same course different sections don't overlap ────────
     by_course: dict[str, list[int]] = defaultdict(list)
@@ -224,85 +236,59 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
     for s_idx, s in enumerate(lab_slot_config):
         slot_end_min[("lab", s_idx)] = _to_min(s["end"])
 
-    # (1) REAL GAP PENALTIES between sections in same group on same day
-    for _group_num, indices in by_group.items():
-        # Only model real gaps for S1 (primary group) — too many variables otherwise
-        # S2+ uses slot-index proxy below
-        if _group_num > 1:
-            continue
-
-        w = 10  # S1 highest priority
-
-        # For each pair of sections in the group
-        for a_pos in range(len(indices)):
-            for b_pos in range(a_pos + 1, len(indices)):
-                i_a, i_b = indices[a_pos], indices[b_pos]
-
-                # Skip if either is online (no campus presence)
-                if sections[i_a]["is_online"] or sections[i_b]["is_online"]:
-                    continue
-
-                # For each meeting of section A × each meeting of section B
-                for m_a in range(len(sections[i_a]["pattern"])):
-                    for m_b in range(len(sections[i_b]["pattern"])):
-                        opts_a = sec_options[i_a][m_a]
-                        opts_b = sec_options[i_b][m_b]
-
-                        # Group by day to reduce combinations
-                        day_pairs: dict[int, list[tuple]] = defaultdict(list)
-                        for oa, opt_a in enumerate(opts_a):
-                            day_pairs[opt_a[0]].append(("a", oa, opt_a))
-                        for ob, opt_b in enumerate(opts_b):
-                            day_pairs[opt_b[0]].append(("b", ob, opt_b))
-
-                        for _day_idx, entries in day_pairs.items():
-                            a_entries = [(oa, opt) for side, oa, opt in entries if side == "a"]
-                            b_entries = [(ob, opt) for side, ob, opt in entries if side == "b"]
-                            for oa, opt_a in a_entries:
-                                for ob, opt_b in b_entries:
-                                    start_a, end_a = opt_a[6], _to_min(opt_a[4])
-                                    start_b, end_b = opt_b[6], _to_min(opt_b[4])
-                                    gap = (
-                                        (start_b - end_a)
-                                        if start_a < start_b
-                                        else (start_a - end_b)
-                                    )
-
-                                    if gap <= 15:
-                                        continue
-
-                                    crosses = (end_a <= PRAYER_BOUNDARY < start_b) or (
-                                        end_b <= PRAYER_BOUNDARY < start_a
-                                    )
-                                    if crosses:
-                                        gap = int(gap * 1.5)
-
-                                    both = model.new_bool_var(
-                                        f"g_{i_a}_{m_a}_{oa}_{i_b}_{m_b}_{ob}"
-                                    )
-                                    # both = 1 iff assign_a AND assign_b are both 1
-                                    model.add(
-                                        assign[i_a][m_a][oa] + assign[i_b][m_b][ob] - 1 <= both
-                                    )
-                                    model.add(both <= assign[i_a][m_a][oa])
-                                    model.add(both <= assign[i_b][m_b][ob])
-
-                                    penalties.append(both * gap * w)
-
-    # (1b) SLOT-INDEX PROXY for S2+ groups (fast approximation)
-    for _group_num, indices in by_group.items():
-        if _group_num <= 1:
-            continue  # S1 handled with real gap model above
-        w = 2
-        for i_sec in indices:
-            if sections[i_sec]["is_online"]:
+    # (1) REAL GAP PENALTIES between section pairs sharing students
+    for a_pos in range(len(sections)):
+        for b_pos in range(a_pos + 1, len(sections)):
+            code_a, code_b = sections[a_pos]["code"], sections[b_pos]["code"]
+            if code_a == code_b:
+                continue  # same-course gaps handled by time consistency
+            shared = _ssc(overlap_matrix, code_a, code_b)
+            if shared == 0:
+                continue  # no shared students — no gap penalty
+            if sections[a_pos]["is_online"] or sections[b_pos]["is_online"]:
                 continue
-            for m_idx in range(len(sections[i_sec]["pattern"])):
-                options = sec_options[i_sec][m_idx]
-                for o_idx, opt in enumerate(options):
-                    slot_idx = opt[1]
-                    prayer_p = 3 if slot_idx >= 2 else 0
-                    penalties.append(assign[i_sec][m_idx][o_idx] * (slot_idx + prayer_p) * w)
+
+            w = min(shared, 30)  # weight by shared students, capped
+
+            for m_a in range(len(sections[a_pos]["pattern"])):
+                for m_b in range(len(sections[b_pos]["pattern"])):
+                    opts_a = sec_options[a_pos][m_a]
+                    opts_b = sec_options[b_pos][m_b]
+
+                    day_pairs: dict[int, list[tuple]] = defaultdict(list)
+                    for oa, opt_a in enumerate(opts_a):
+                        day_pairs[opt_a[0]].append(("a", oa, opt_a))
+                    for ob, opt_b in enumerate(opts_b):
+                        day_pairs[opt_b[0]].append(("b", ob, opt_b))
+
+                    for _day_idx, entries in day_pairs.items():
+                        a_entries = [(oa, opt) for side, oa, opt in entries if side == "a"]
+                        b_entries = [(ob, opt) for side, ob, opt in entries if side == "b"]
+                        for oa, opt_a in a_entries:
+                            for ob, opt_b in b_entries:
+                                start_a, end_a = opt_a[6], _to_min(opt_a[4])
+                                start_b, end_b = opt_b[6], _to_min(opt_b[4])
+                                gap = (start_b - end_a) if start_a < start_b else (start_a - end_b)
+
+                                if gap <= 15:
+                                    continue
+
+                                crosses = (end_a <= PRAYER_BOUNDARY < start_b) or (
+                                    end_b <= PRAYER_BOUNDARY < start_a
+                                )
+                                if crosses:
+                                    gap = int(gap * 1.5)
+
+                                both = model.new_bool_var(
+                                    f"g_{a_pos}_{m_a}_{oa}_{b_pos}_{m_b}_{ob}"
+                                )
+                                model.add(
+                                    assign[a_pos][m_a][oa] + assign[b_pos][m_b][ob] - 1 <= both
+                                )
+                                model.add(both <= assign[a_pos][m_a][oa])
+                                model.add(both <= assign[b_pos][m_b][ob])
+
+                                penalties.append(both * gap * w)
 
     # (2) Online courses: prefer late slots
     for i, sec in enumerate(sections):
@@ -321,7 +307,7 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
     for i, sec in enumerate(sections):
         if len(sec["pattern"]) <= 1:
             continue
-        w = 3 if sec["sec_num"] == 1 else 1
+        w = 2  # uniform (no S1 priority)
         for m_idx in range(len(sec["pattern"])):
             options = sec_options[i][m_idx]
             for o_idx, opt in enumerate(options):
@@ -333,7 +319,7 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
         lecture_meetings = [m for m in range(len(sec["pattern"])) if sec["pattern"][m] <= 75]
         if len(lecture_meetings) <= 1:
             continue
-        w = 15 if sec["sec_num"] == 1 else 5
+        w = 10  # uniform (no S1 priority)
         for a_pos in range(len(lecture_meetings)):
             for b_pos in range(a_pos + 1, len(lecture_meetings)):
                 m_a = lecture_meetings[a_pos]
@@ -355,7 +341,7 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
     for i, sec in enumerate(sections):
         if len(sec["pattern"]) <= 1:
             continue
-        w = 8 if sec["sec_num"] == 1 else 3
+        w = 5  # uniform (no S1 priority)
         for m_a in range(len(sec["pattern"])):
             for m_b in range(m_a + 1, len(sec["pattern"])):
                 opts_a = sec_options[i][m_a]
@@ -634,20 +620,33 @@ def solve_board_with_hints(
                         if opt_a[0] == opt_b[0]:
                             model.add(assign[i][m_a][oa] + assign[i][m_b][ob] <= 1)
 
-    # Hard: no overlap in same student group
-    by_group: dict[int, list[int]] = defaultdict(list)
-    for i, sec in enumerate(sections):
-        by_group[sec["sec_num"]].append(i)
-    for _group_num, indices in by_group.items():
-        for a_pos in range(len(indices)):
-            for b_pos in range(a_pos + 1, len(indices)):
-                i_a, i_b = indices[a_pos], indices[b_pos]
-                for m_a in range(len(sections[i_a]["pattern"])):
-                    for m_b in range(len(sections[i_b]["pattern"])):
-                        for oa, opt_a in enumerate(sec_options[i_a][m_a]):
-                            for ob, opt_b in enumerate(sec_options[i_b][m_b]):
-                                if opt_a[5] & opt_b[5]:
-                                    model.add(assign[i_a][m_a][oa] + assign[i_b][m_b][ob] <= 1)
+    # Hard: no overlap between courses sharing students (real overlap)
+    from core.services.timetable_overlap import (
+        build_overlap_matrix as _bom,
+    )
+    from core.services.timetable_overlap import (
+        courses_share_students as _css,
+    )
+    from core.services.timetable_overlap import (
+        shared_student_count as _ssc,
+    )
+
+    board_courses_h = {sec["code"] for sec in sections}
+    overlap_matrix_h = _bom(scenario.id, board_courses_h)
+
+    for a_pos in range(len(sections)):
+        for b_pos in range(a_pos + 1, len(sections)):
+            code_a, code_b = sections[a_pos]["code"], sections[b_pos]["code"]
+            if code_a == code_b:
+                continue
+            if not _css(overlap_matrix_h, code_a, code_b):
+                continue
+            for m_a in range(len(sections[a_pos]["pattern"])):
+                for m_b in range(len(sections[b_pos]["pattern"])):
+                    for oa, opt_a in enumerate(sec_options[a_pos][m_a]):
+                        for ob, opt_b in enumerate(sec_options[b_pos][m_b]):
+                            if opt_a[5] & opt_b[5]:
+                                model.add(assign[a_pos][m_a][oa] + assign[b_pos][m_b][ob] <= 1)
 
     # Hard: same course different sections don't overlap
     by_course: dict[str, list[int]] = defaultdict(list)
@@ -666,67 +665,52 @@ def solve_board_with_hints(
                                 if opt_a[5] & opt_b[5]:
                                     model.add(assign[i_a][m_a][oa] + assign[i_b][m_b][ob] <= 1)
 
-    # Soft: gap penalties (same as solve_board)
+    # Soft: gap penalties weighted by real student overlap
     penalties = []
-    for _group_num, indices in by_group.items():
-        if _group_num > 1:
-            continue
-        w = 10
-        for a_pos in range(len(indices)):
-            for b_pos in range(a_pos + 1, len(indices)):
-                i_a, i_b = indices[a_pos], indices[b_pos]
-                if sections[i_a]["is_online"] or sections[i_b]["is_online"]:
-                    continue
-                for m_a in range(len(sections[i_a]["pattern"])):
-                    for m_b in range(len(sections[i_b]["pattern"])):
-                        opts_a = sec_options[i_a][m_a]
-                        opts_b = sec_options[i_b][m_b]
-                        day_pairs: dict[int, list[tuple]] = defaultdict(list)
-                        for oa, opt_a in enumerate(opts_a):
-                            day_pairs[opt_a[0]].append(("a", oa, opt_a))
-                        for ob, opt_b in enumerate(opts_b):
-                            day_pairs[opt_b[0]].append(("b", ob, opt_b))
-                        for _day_idx, entries in day_pairs.items():
-                            a_entries = [(oa, opt) for side, oa, opt in entries if side == "a"]
-                            b_entries = [(ob, opt) for side, ob, opt in entries if side == "b"]
-                            for oa, opt_a in a_entries:
-                                for ob, opt_b in b_entries:
-                                    start_a, end_a = opt_a[6], _to_min(opt_a[4])
-                                    start_b, end_b = opt_b[6], _to_min(opt_b[4])
-                                    gap = (
-                                        (start_b - end_a)
-                                        if start_a < start_b
-                                        else (start_a - end_b)
-                                    )
-                                    if gap <= 15:
-                                        continue
-                                    crosses = (end_a <= PRAYER_BOUNDARY < start_b) or (
-                                        end_b <= PRAYER_BOUNDARY < start_a
-                                    )
-                                    if crosses:
-                                        gap = int(gap * 1.5)
-                                    both = model.new_bool_var(
-                                        f"g_{i_a}_{m_a}_{oa}_{i_b}_{m_b}_{ob}"
-                                    )
-                                    model.add(
-                                        assign[i_a][m_a][oa] + assign[i_b][m_b][ob] - 1 <= both
-                                    )
-                                    model.add(both <= assign[i_a][m_a][oa])
-                                    model.add(both <= assign[i_b][m_b][ob])
-                                    penalties.append(both * gap * w)
-
-    for _group_num, indices in by_group.items():
-        if _group_num <= 1:
-            continue
-        w = 2
-        for i_sec in indices:
-            if sections[i_sec]["is_online"]:
+    for a_pos in range(len(sections)):
+        for b_pos in range(a_pos + 1, len(sections)):
+            code_a, code_b = sections[a_pos]["code"], sections[b_pos]["code"]
+            if code_a == code_b:
                 continue
-            for m_idx in range(len(sections[i_sec]["pattern"])):
-                for o_idx, opt in enumerate(sec_options[i_sec][m_idx]):
-                    slot_idx = opt[1]
-                    prayer_p = 3 if slot_idx >= 2 else 0
-                    penalties.append(assign[i_sec][m_idx][o_idx] * (slot_idx + prayer_p) * w)
+            shared = _ssc(overlap_matrix_h, code_a, code_b)
+            if shared == 0:
+                continue
+            if sections[a_pos]["is_online"] or sections[b_pos]["is_online"]:
+                continue
+            w = min(shared, 30)
+            for m_a in range(len(sections[a_pos]["pattern"])):
+                for m_b in range(len(sections[b_pos]["pattern"])):
+                    opts_a = sec_options[a_pos][m_a]
+                    opts_b = sec_options[b_pos][m_b]
+                    day_pairs: dict[int, list[tuple]] = defaultdict(list)
+                    for oa, opt_a in enumerate(opts_a):
+                        day_pairs[opt_a[0]].append(("a", oa, opt_a))
+                    for ob, opt_b in enumerate(opts_b):
+                        day_pairs[opt_b[0]].append(("b", ob, opt_b))
+                    for _day_idx, entries in day_pairs.items():
+                        a_entries = [(oa, opt) for side, oa, opt in entries if side == "a"]
+                        b_entries = [(ob, opt) for side, ob, opt in entries if side == "b"]
+                        for oa, opt_a in a_entries:
+                            for ob, opt_b in b_entries:
+                                start_a, end_a = opt_a[6], _to_min(opt_a[4])
+                                start_b, end_b = opt_b[6], _to_min(opt_b[4])
+                                gap = (start_b - end_a) if start_a < start_b else (start_a - end_b)
+                                if gap <= 15:
+                                    continue
+                                crosses = (end_a <= PRAYER_BOUNDARY < start_b) or (
+                                    end_b <= PRAYER_BOUNDARY < start_a
+                                )
+                                if crosses:
+                                    gap = int(gap * 1.5)
+                                both = model.new_bool_var(
+                                    f"g_{a_pos}_{m_a}_{oa}_{b_pos}_{m_b}_{ob}"
+                                )
+                                model.add(
+                                    assign[a_pos][m_a][oa] + assign[b_pos][m_b][ob] - 1 <= both
+                                )
+                                model.add(both <= assign[a_pos][m_a][oa])
+                                model.add(both <= assign[b_pos][m_b][ob])
+                                penalties.append(both * gap * w)
 
     for i, sec in enumerate(sections):
         if not sec["is_online"]:
@@ -739,7 +723,7 @@ def solve_board_with_hints(
     for i, sec in enumerate(sections):
         if len(sec["pattern"]) <= 1:
             continue
-        w = 3 if sec["sec_num"] == 1 else 1
+        w = 2  # uniform (no S1 priority)
         for m_idx in range(len(sec["pattern"])):
             for o_idx, opt in enumerate(sec_options[i][m_idx]):
                 penalties.append(assign[i][m_idx][o_idx] * opt[1] * w)
@@ -749,7 +733,7 @@ def solve_board_with_hints(
         lecture_meetings = [m for m in range(len(sec["pattern"])) if sec["pattern"][m] <= 75]
         if len(lecture_meetings) <= 1:
             continue
-        w = 15 if sec["sec_num"] == 1 else 5
+        w = 10  # uniform (no S1 priority)
         for a_pos in range(len(lecture_meetings)):
             for b_pos in range(a_pos + 1, len(lecture_meetings)):
                 m_a = lecture_meetings[a_pos]
@@ -770,7 +754,7 @@ def solve_board_with_hints(
     for i, sec in enumerate(sections):
         if len(sec["pattern"]) <= 1:
             continue
-        w = 8 if sec["sec_num"] == 1 else 3
+        w = 5  # uniform (no S1 priority)
         for m_a in range(len(sec["pattern"])):
             for m_b in range(m_a + 1, len(sec["pattern"])):
                 opts_a = sec_options[i][m_a]
