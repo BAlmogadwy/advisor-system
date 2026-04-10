@@ -305,49 +305,55 @@ body.tw-fullscreen #twGenBar{border-radius:0;}
 {% csrf_token %}
 
 <!-- A1. Generate Filter Bar (matches section planning + conflict matrix pattern) -->
-<div class="filter-bar sticky-cta mb-0" id="twGenBar" style="background:var(--glass-bg-header);backdrop-filter:var(--glass-blur);border-bottom:1px solid var(--line);padding:8px 12px;gap:6px;">
-  <div class="fb-search" style="width:62px">
-    <label class="fb-lbl" for="twYear">{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}</label>
-    <input id="twYear" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="{{ default_year }}">
+<div id="twGenBar" style="background:var(--glass-bg-header);backdrop-filter:var(--glass-blur);border-bottom:1px solid var(--line);padding:10px 14px;">
+  <!-- Row 1: Inputs -->
+  <div style="display:flex;align-items:end;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+    <div class="fb-search" style="width:80px">
+      <label class="fb-lbl" for="twYear">{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}</label>
+      <input id="twYear" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="{{ default_year }}">
+    </div>
+    <div class="fb-search" style="width:50px">
+      <label class="fb-lbl" for="twTerm">{% if LANGUAGE_CODE == 'ar' %}فصل{% else %}Sem{% endif %}</label>
+      <input id="twTerm" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="{{ default_term }}">
+    </div>
+    <div class="fb-search" style="width:180px">
+      <label class="fb-lbl" for="twProgram">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}</label>
+      <input id="twProgram" class="form-control form-control-compact" placeholder="{% if LANGUAGE_CODE == 'ar' %}AI,DS,AI2,DS2{% else %}AI,DS,AI2,DS2{% endif %}" style="text-transform:uppercase">
+    </div>
+    <div class="fb-search" style="width:50px">
+      <label class="fb-lbl" for="twSection">{% if LANGUAGE_CODE == 'ar' %}شعبة{% else %}Sec{% endif %}</label>
+      <input id="twSection" class="form-control form-control-compact" placeholder="M" style="text-transform:uppercase">
+    </div>
+    <div class="fb-search" style="width:200px">
+      <label class="fb-lbl" for="twStrategy">{% if LANGUAGE_CODE == 'ar' %}الخوارزمية{% else %}Strategy{% endif %}</label>
+      <select id="twStrategy" class="form-control form-control-compact" style="font-size:.78rem;">
+        <option value="compact">{% if LANGUAGE_CODE == 'ar' %}مضغوط{% else %}Compact{% endif %}</option>
+        <option value="morning">{% if LANGUAGE_CODE == 'ar' %}صباحي{% else %}Morning-first{% endif %}</option>
+        <option value="balanced">{% if LANGUAGE_CODE == 'ar' %}متوازن{% else %}Balanced{% endif %}</option>
+        <option value="optimal">{% if LANGUAGE_CODE == 'ar' %}الأمثل{% else %}Optimal (CP-SAT){% endif %}</option>
+        <option value="hybrid">{% if LANGUAGE_CODE == 'ar' %}هجين{% else %}Hybrid (Best){% endif %}</option>
+        <option value="load_balanced">{% if LANGUAGE_CODE == 'ar' %}متوازن الأيام{% else %}Load-Balanced{% endif %}</option>
+        <option value="adaptive">{% if LANGUAGE_CODE == 'ar' %}تكيّفي (الأفضل){% else %}Adaptive (Best Overall){% endif %}</option>
+      </select>
+    </div>
   </div>
-  <div class="fb-search" style="width:36px">
-    <label class="fb-lbl" for="twTerm">{% if LANGUAGE_CODE == 'ar' %}فصل{% else %}Sem{% endif %}</label>
-    <input id="twTerm" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="{{ default_term }}">
-  </div>
-  <div class="fb-search" style="width:160px">
-    <label class="fb-lbl" for="twProgram">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}</label>
-    <input id="twProgram" class="form-control form-control-compact" placeholder="{% if LANGUAGE_CODE == 'ar' %}AI,DS,CS{% else %}AI,DS,CS{% endif %}" style="text-transform:uppercase">
-  </div>
-  <div class="fb-search" style="width:40px">
-    <label class="fb-lbl" for="twSection">{% if LANGUAGE_CODE == 'ar' %}شعبة{% else %}Sec{% endif %}</label>
-    <input id="twSection" class="form-control form-control-compact" placeholder="M" style="text-transform:uppercase">
-  </div>
-  <div class="fb-search" style="width:180px">
-    <label class="fb-lbl" for="twStrategy">{% if LANGUAGE_CODE == 'ar' %}الخوارزمية{% else %}Strategy{% endif %}</label>
-    <select id="twStrategy" class="form-control form-control-compact" style="font-size:.78rem;">
-      <option value="compact">{% if LANGUAGE_CODE == 'ar' %}مضغوط{% else %}Compact{% endif %}</option>
-      <option value="morning">{% if LANGUAGE_CODE == 'ar' %}صباحي{% else %}Morning-first{% endif %}</option>
-      <option value="balanced">{% if LANGUAGE_CODE == 'ar' %}متوازن{% else %}Balanced{% endif %}</option>
-      <option value="optimal">{% if LANGUAGE_CODE == 'ar' %}الأمثل{% else %}Optimal (CP-SAT){% endif %}</option>
-      <option value="hybrid">{% if LANGUAGE_CODE == 'ar' %}هجين{% else %}Hybrid (Best){% endif %}</option>
-      <option value="load_balanced">{% if LANGUAGE_CODE == 'ar' %}متوازن الأيام{% else %}Load-Balanced{% endif %}</option>
-      <option value="adaptive">{% if LANGUAGE_CODE == 'ar' %}تكيّفي (الأفضل){% else %}Adaptive (Best Overall){% endif %}</option>
-    </select>
-  </div>
-  <button id="twMapElectives" class="btn" type="button" style="padding:5px 12px;background:var(--glass-bg);border:1px solid var(--teal);border-radius:6px;color:var(--teal);font-size:.76rem;cursor:pointer;" title="{% if LANGUAGE_CODE == 'ar' %}ربط المقررات الاختيارية{% else %}Map Electives{% endif %}">
-    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" style="margin-inline-end:3px;vertical-align:middle"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-    {% if LANGUAGE_CODE == 'ar' %}اختيارية{% else %}Electives{% endif %}
-  </button>
-  <button id="twGenerate" class="btn btn-primary" type="button" style="padding:6px 16px;">
-    <span class="i i-sm" aria-hidden="true" style="margin-inline-end:3px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>
-    {% if LANGUAGE_CODE == 'ar' %}توليد{% else %}Generate{% endif %}
-  </button>
-  <span id="twGenStatus" style="font-size:.72rem;color:var(--t4);white-space:nowrap"></span>
-  <div class="fb-spacer"></div>
-  <button id="twFullscreen" class="btn" type="button" title="{% if LANGUAGE_CODE == 'ar' %}شاشة كاملة{% else %}Fullscreen{% endif %}" style="padding:5px 8px;background:var(--glass-bg);border:1px solid var(--line);border-radius:6px;cursor:pointer;display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--t3);">
+  <!-- Row 2: Actions -->
+  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+    <button id="twMapElectives" class="btn" type="button" style="padding:5px 12px;background:var(--glass-bg);border:1px solid var(--teal);border-radius:6px;color:var(--teal);font-size:.76rem;cursor:pointer;" title="{% if LANGUAGE_CODE == 'ar' %}ربط المقررات الاختيارية{% else %}Map Electives{% endif %}">
+      <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" style="margin-inline-end:3px;vertical-align:middle"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+      {% if LANGUAGE_CODE == 'ar' %}اختيارية{% else %}Electives{% endif %}
+    </button>
+    <button id="twGenerate" class="btn btn-primary" type="button" style="padding:6px 18px;">
+      <span class="i i-sm" aria-hidden="true" style="margin-inline-end:3px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>
+      {% if LANGUAGE_CODE == 'ar' %}توليد{% else %}Generate{% endif %}
+    </button>
+    <span id="twGenStatus" style="font-size:.72rem;color:var(--t4);white-space:nowrap"></span>
+    <div style="flex:1"></div>
+    <button id="twFullscreen" class="btn" type="button" title="{% if LANGUAGE_CODE == 'ar' %}شاشة كاملة{% else %}Fullscreen{% endif %}" style="padding:5px 8px;background:var(--glass-bg);border:1px solid var(--line);border-radius:6px;cursor:pointer;display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--t3);">
     <svg id="twFsIcon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
     <span id="twFsLabel" class="d-none d-md-inline">{% if LANGUAGE_CODE == 'ar' %}توسيع{% else %}Focus{% endif %}</span>
   </button>
+  </div>
 </div>
 
 <!-- A2. Workspace Command Bar (hidden until scenario active) -->
