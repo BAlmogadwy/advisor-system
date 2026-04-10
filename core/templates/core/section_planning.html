@@ -262,6 +262,7 @@
       <input id="spAdvSearch" type="text" class="form-control form-control-compact sp-adv-search"
              placeholder="{% if LANGUAGE_CODE == 'ar' %}بحث عن مقرر...{% else %}Search courses...{% endif %}">
       <button id="spAdvReset" class="sp-adv-reset">{% if LANGUAGE_CODE == 'ar' %}إعادة الكل{% else %}Reset all{% endif %}</button>
+      <button id="spAdvSaveDb" class="btn btn-sm" style="padding:2px 10px;font-size:.72rem;background:var(--teal);color:#fff;border:none;border-radius:4px;cursor:pointer">{% if LANGUAGE_CODE == 'ar' %}حفظ في قاعدة البيانات{% else %}Save to DB{% endif %}</button>
       <span id="spAdvCount" class="sp-adv-count"></span>
     </div>
     <div class="sp-adv-wrap">
@@ -536,6 +537,47 @@ $('spAdvSearch').addEventListener('input', function() {
 $('spAdvReset').onclick = () => {
   $('spAdvBody').querySelectorAll('.adv-input').forEach(inp => { inp.value = ''; });
   updateAdvBadge();
+};
+
+/* Save overrides to DB */
+$('spAdvSaveDb').onclick = async () => {
+  const inputs = $('spAdvBody').querySelectorAll('.adv-input');
+  const overrides = {};
+  inputs.forEach(inp => {
+    const val = inp.value.trim();
+    if (val && parseInt(val) > 0) {
+      overrides[inp.dataset.course] = parseInt(val);
+    }
+  });
+
+  const count = Object.keys(overrides).length;
+  if (count === 0) {
+    showStatus(IS_AR ? 'لا يوجد تخصيصات للحفظ' : 'No overrides to save', 'warn');
+    return;
+  }
+
+  const btn = $('spAdvSaveDb');
+  btn.disabled = true;
+  btn.textContent = IS_AR ? 'جارٍ الحفظ...' : 'Saving...';
+
+  try {
+    const res = await fetch('/ops/section-planning/save-overrides-bulk/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      body: JSON.stringify({ overrides }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      showStatus(IS_AR ? `تم حفظ ${data.courses} تخصيص في قاعدة البيانات` : `${data.courses} overrides saved to DB (${data.updated} rows updated)`, 'ok');
+    } else {
+      showStatus(data.error || 'Failed', 'err');
+    }
+  } catch (e) {
+    showStatus(e.message, 'err');
+  }
+
+  btn.disabled = false;
+  btn.textContent = IS_AR ? 'حفظ في قاعدة البيانات' : 'Save to DB';
 };
 
 /* Reload defaults when global capacity settings change */

@@ -432,6 +432,56 @@ def section_plan_save_capacity_view(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"ok": True, "updated": updated})
 
 
+@login_required(login_url="login")
+@require_POST
+def section_plan_save_overrides_bulk_view(request: HttpRequest) -> JsonResponse:
+    """Persist all per-course overrides from the advanced panel to the DB.
+
+    Accepts JSON: ``{"overrides": {"CS211": 30, "AI492": 5, ...}}``
+    Updates ProgrammeRequirement.max_capacity for ALL programmes that have
+    each course code.  Returns count of updated rows.
+    """
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+
+    try:
+        body = json.loads(request.body.decode("utf-8")) if request.body else {}
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse({"ok": False, "error": "Invalid JSON"}, status=400)
+
+    overrides = body.get("overrides", {})
+    if not isinstance(overrides, dict):
+        return JsonResponse({"ok": False, "error": "'overrides' must be a dict"}, status=400)
+
+    total_updated = 0
+    for code, cap in overrides.items():
+        code_n = normalize_code(str(code))
+        if not code_n:
+            continue
+        try:
+            cap_val = int(cap)
+            if cap_val < 1:
+                continue
+            cap_val = min(cap_val, 500)
+        except (ValueError, TypeError):
+            continue
+
+        updated = ProgrammeRequirement.objects.filter(
+            course_code=code_n,
+        ).update(max_capacity=cap_val)
+        total_updated += updated
+
+    logger.info(
+        "save_overrides_bulk: user=%s courses=%d updated=%d",
+        request.user.username,
+        len(overrides),
+        total_updated,
+    )
+
+    return JsonResponse({"ok": True, "updated": total_updated, "courses": len(overrides)})
+
+
 # ── Export XLSX API ────────────────────────────────────────────
 
 
