@@ -324,6 +324,26 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
                 # Penalize high slot indices slightly (encourages consistent early placement)
                 penalties.append(assign[i][m_idx][o_idx] * opt[1] * w)
 
+    # (4) Day spacing: penalize consecutive-day meetings for the same section
+    # Prefer at least 1 gap day between meetings (e.g. SUN+TUE over SUN+MON)
+    for i, sec in enumerate(sections):
+        if len(sec["pattern"]) <= 1:
+            continue
+        w = 8 if sec["sec_num"] == 1 else 3
+        for m_a in range(len(sec["pattern"])):
+            for m_b in range(m_a + 1, len(sec["pattern"])):
+                opts_a = sec_options[i][m_a]
+                opts_b = sec_options[i][m_b]
+                for oa, opt_a in enumerate(opts_a):
+                    for ob, opt_b in enumerate(opts_b):
+                        day_gap = abs(opt_a[0] - opt_b[0])
+                        if day_gap == 1:  # consecutive days
+                            both = model.new_bool_var(f"consec_{i}_{m_a}_{oa}_{m_b}_{ob}")
+                            model.add(assign[i][m_a][oa] + assign[i][m_b][ob] - 1 <= both)
+                            model.add(both <= assign[i][m_a][oa])
+                            model.add(both <= assign[i][m_b][ob])
+                            penalties.append(both * w)
+
     if penalties:
         model.minimize(sum(penalties))
 
@@ -684,6 +704,25 @@ def solve_board_with_hints(
         for m_idx in range(len(sec["pattern"])):
             for o_idx, opt in enumerate(sec_options[i][m_idx]):
                 penalties.append(assign[i][m_idx][o_idx] * opt[1] * w)
+
+    # (4) Day spacing: penalize consecutive-day meetings for the same section
+    for i, sec in enumerate(sections):
+        if len(sec["pattern"]) <= 1:
+            continue
+        w = 8 if sec["sec_num"] == 1 else 3
+        for m_a in range(len(sec["pattern"])):
+            for m_b in range(m_a + 1, len(sec["pattern"])):
+                opts_a = sec_options[i][m_a]
+                opts_b = sec_options[i][m_b]
+                for oa, opt_a in enumerate(opts_a):
+                    for ob, opt_b in enumerate(opts_b):
+                        day_gap = abs(opt_a[0] - opt_b[0])
+                        if day_gap == 1:
+                            both = model.new_bool_var(f"consec_{i}_{m_a}_{oa}_{m_b}_{ob}")
+                            model.add(assign[i][m_a][oa] + assign[i][m_b][ob] - 1 <= both)
+                            model.add(both <= assign[i][m_a][oa])
+                            model.add(both <= assign[i][m_b][ob])
+                            penalties.append(both * w)
 
     if penalties:
         model.minimize(sum(penalties))

@@ -198,7 +198,25 @@ def _generate_meeting_options(
     num_meetings = len(pattern)
 
     # All ways to pick *num_meetings* distinct days from the 5-day week.
-    day_combos = list(combinations(WEEKDAYS, num_meetings))
+    # Sort so combos with at least 1 gap day between meetings come first.
+    # E.g. (SUN,TUE) before (SUN,MON) — avoids consecutive-day meetings.
+    _DAY_IDX = {d: i for i, d in enumerate(WEEKDAYS)}
+
+    def _day_spacing_score(combo: tuple[str, ...]) -> int:
+        """Lower = better spacing. 0 = all gaps ≥ 2 days. Penalise consecutive."""
+        indices = [_DAY_IDX[d] for d in combo]
+        indices.sort()
+        penalty = 0
+        for j in range(len(indices) - 1):
+            gap = indices[j + 1] - indices[j]
+            if gap == 1:
+                penalty += 10  # consecutive days — heavy penalty
+            elif gap == 2:
+                penalty += 0  # 1 day gap — ideal
+            # gap >= 3 is also fine
+        return penalty
+
+    day_combos = sorted(combinations(WEEKDAYS, num_meetings), key=_day_spacing_score)
 
     # For each meeting duration, pre-compute which (slot_idx, start, end)
     # positions are feasible (respecting prayer break).
