@@ -638,7 +638,9 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
     placed_masks: list[tuple[str, int]] = []
     placed_schedule: list[tuple[str, str, str, str]] = []
     all_placed_masks: list[tuple[str, int]] = []
-    # (back-to-back section alignment removed — it over-concentrated sections)
+    # Slot density: count how many sections use each start_time.
+    # Used to break ties by pushing courses to less-populated slots.
+    slot_density: dict[str, int] = defaultdict(int)
     placement_results: list[dict] = []
     total_placed = 0
     total_skipped = 0
@@ -790,6 +792,15 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                 # Too high = all courses cluster in slots 1-2
                 time_var_penalty = raw_score[4] * 3
 
+                # Slot density: push courses toward less-populated slots.
+                # This breaks ties when the first few courses are being placed
+                # and all options score identically — without it, everything
+                # lands in slot 1.  Weight 3: enough to break ties but won't
+                # override student conflict avoidance (shared*2 per overlap).
+                density_penalty = 0
+                for m in option:
+                    density_penalty += slot_density[m["start"]] * 3
+
                 # Instructor gap: for S2+ of the same course, penalize large gaps
                 # with S1 and reward adjacency. Two objectives:
                 #   - NEVER stack (same slot = +50 penalty)
@@ -823,7 +834,8 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                     + slot_penalty
                     + time_var_penalty
                     + room_penalty
-                    + instructor_gap_penalty,
+                    + instructor_gap_penalty
+                    + density_penalty,
                     raw_score[3],
                     raw_score[4],
                 )
@@ -903,6 +915,7 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                 placed_masks.append((code, mask))
                 placed_schedule.append((m["day"], m["start"], m["end"], code))
                 all_placed_masks.append((code, mask))
+                slot_density[m["start"]] += 1
                 meeting_results.append({"day": m["day"], "start": m["start"], "end": m["end"]})
 
             total_placed += 1
