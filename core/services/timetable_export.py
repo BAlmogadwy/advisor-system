@@ -719,24 +719,17 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
     # ── Room Schedule Sheets ───────────────────────────────────────
     from core.models import Room
 
-    programmes = (
-        [
-            p.strip()
-            for p in (scenario.slot_config and boards[0].program or "").split(",")
-            if p.strip()
-        ]
-        if boards
-        else []
+    # Get all rooms actually used in this scenario's placements
+    used_room_codes = set(
+        SectionPlacement.objects.filter(board__scenario=scenario)
+        .exclude(room="")
+        .exclude(room="UNASSIGNED")
+        .values_list("room", flat=True)
+        .distinct()
     )
-    all_rooms = list(Room.objects.all().order_by("room_type", "room_code"))
-
-    # Filter rooms by programme if possible
-    if programmes:
-        from core.services.timetable_rooming import get_programme_rooms
-
-        prog_rooms = get_programme_rooms(programmes)
-        prog_room_codes = {r["room_code"] for r in prog_rooms}
-        all_rooms = [r for r in all_rooms if r.room_code in prog_room_codes]
+    all_rooms = list(
+        Room.objects.filter(room_code__in=used_room_codes).order_by("room_type", "room_code")
+    )
 
     if all_rooms:
         lecture_slots = scenario.slot_config or DEFAULT_SLOTS
