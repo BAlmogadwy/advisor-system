@@ -106,7 +106,7 @@ def _compute_cost(
             seen_pairs.add(pk)
 
             if code_a == code_b:
-                w = 5.0
+                continue  # same course: student takes ONE section, no inter-section gap
             elif overlap_matrix:
                 shared = _ssc(overlap_matrix, code_a, code_b)
                 if shared == 0:

@@ -535,8 +535,6 @@ def compute_affected_students(board_id: int) -> dict:
         Same-course overlaps (two sections of ``CS101``) are skipped
         because a student only registers for one section of a course.
     """
-    from core.models import StudentCourse
-
     conflicts = detect_board_conflicts(board_id)
     overlaps = conflicts.get("overlaps", [])
 
@@ -548,25 +546,23 @@ def compute_affected_students(board_id: int) -> dict:
             "overlap_details": [],
         }
 
-    # All placed sections on this board -- needed to look up masks and
-    # to exclude already-placed sections when searching for alternatives.
     all_placements = _load_board_placements(board_id)
     from core.models import TermSectionMeeting as TSM
 
-    # ── Precompute course→students map (one query) ──
+    # ── Precompute course→students map from ScenarioStudentMap (not StudentCourse) ──
+    from core.services.timetable_overlap import build_course_students_map
+
     overlap_courses: set[str] = set()
     for overlap in overlaps:
         for sec in overlap.get("sections", []):
             code = sec.rsplit("-", 1)[0] if "-" in sec else sec
             overlap_courses.add(code)
 
-    course_students_map: dict[str, set[int]] = defaultdict(set)
-    if overlap_courses:
-        sc_rows = StudentCourse.objects.filter(
-            course__course_code__in=list(overlap_courses), status="studying"
-        ).values_list("course__course_code", "student_id")
-        for cc, sid in sc_rows:
-            course_students_map[cc].add(sid)
+    try:
+        board = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
+        course_students_map = build_course_students_map(board.scenario_id, overlap_courses)
+    except DeliveryBoard.DoesNotExist:
+        course_students_map = {}
 
     total_affected = 0
     total_blocked = 0

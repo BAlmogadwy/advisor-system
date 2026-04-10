@@ -174,7 +174,7 @@ def _compute_balance_score(
         for b_idx in range(a_idx, len(codes)):
             ca, cb = codes[a_idx], codes[b_idx]
             if ca == cb:
-                w = 5
+                continue  # same course: student takes ONE section, no inter-section gap
             elif overlap_matrix:
                 shared = _ssc(overlap_matrix, ca, cb)
                 if shared == 0:
