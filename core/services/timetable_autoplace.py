@@ -998,6 +998,41 @@ def _adaptive_scenario(scenario_id: int) -> dict:
             logger.exception("adaptive[%s]: local search failed", label)
             phase_info["local_search"] = {"status": "error"}
 
+        # ── Phase 4: Hotspot feasibility check ──────────────────
+        from core.services.timetable_pair_feasibility import find_infeasible_hotspots
+
+        try:
+            from core.services.timetable_overlap import build_overlap_matrix as _bom_phase4
+
+            board_courses_p4 = set(
+                ScenarioSectionBudget.objects.filter(
+                    scenario=board.scenario, programme_term=board.nominal_term
+                ).values_list("course_code", flat=True)
+            )
+            om_p4 = _bom_phase4(board.scenario_id, board_courses_p4)
+            infeasible = find_infeasible_hotspots(board.id, om_p4)
+            phase_info["feasibility"] = {
+                "checked": True,
+                "infeasible_pairs": len(infeasible),
+                "details": [
+                    {
+                        "pair": f"{r['course_a']} vs {r['course_b']}",
+                        "shared": r["shared_students"],
+                        "max_flow": r["max_assignable"],
+                    }
+                    for r in infeasible
+                ],
+            }
+            if infeasible:
+                logger.warning(
+                    "adaptive[%s]: %d infeasible hotspot pairs detected",
+                    label,
+                    len(infeasible),
+                )
+        except Exception:
+            logger.exception("adaptive[%s]: feasibility check failed", label)
+            phase_info["feasibility"] = {"checked": False}
+
         # Report actual placements from DB (may have been improved by CP-SAT or SA)
         final_placements = list(
             SectionPlacement.objects.filter(board=board)
