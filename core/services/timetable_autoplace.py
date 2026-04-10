@@ -160,6 +160,7 @@ def _generate_meeting_options(
     pattern: list[int],
     slot_config: list[dict],
     lab_slot_config: list[dict] | None = None,
+    blocked_slots: list[dict] | None = None,
 ) -> list[list[dict]]:
     """Generate every valid way to schedule a course's weekly meetings.
 
@@ -218,8 +219,14 @@ def _generate_meeting_options(
 
     day_combos = sorted(combinations(WEEKDAYS, num_meetings), key=_day_spacing_score)
 
+    # Build set of blocked (day, start) pairs for fast lookup
+    _blocked_set: set[tuple[str, str]] = set()
+    if blocked_slots:
+        for bs in blocked_slots:
+            _blocked_set.add((bs.get("day", ""), bs.get("start", "")))
+
     # For each meeting duration, pre-compute which (slot_idx, start, end)
-    # positions are feasible (respecting prayer break).
+    # positions are feasible (respecting prayer break + institutional blocks).
     slot_options_per_duration: list[list[tuple[int, str, str]]] = []
     for duration in pattern:
         positions = []
@@ -255,7 +262,7 @@ def _generate_meeting_options(
                 # First try: exact same slot index as the first meeting.
                 found = False
                 for pos in positions:
-                    if pos[0] == target_slot_idx:
+                    if pos[0] == target_slot_idx and (day, pos[1]) not in _blocked_set:
                         option.append(
                             {
                                 "day": day,
@@ -268,19 +275,21 @@ def _generate_meeting_options(
                         break
 
                 if not found:
-                    # Fallback: use the earliest available position for this
-                    # duration.  The scorer will penalise the time variance.
-                    if positions:
-                        pos = positions[0]
-                        option.append(
-                            {
-                                "day": day,
-                                "start": pos[1],
-                                "end": pos[2],
-                                "slot_idx": pos[0],
-                            }
-                        )
-                    else:
+                    # Fallback: use the earliest available non-blocked position.
+                    fallback_found = False
+                    for pos in positions:
+                        if (day, pos[1]) not in _blocked_set:
+                            option.append(
+                                {
+                                    "day": day,
+                                    "start": pos[1],
+                                    "end": pos[2],
+                                    "slot_idx": pos[0],
+                                }
+                            )
+                            fallback_found = True
+                            break
+                    if not fallback_found:
                         valid = False
                         break
 
@@ -635,7 +644,8 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
         to_place = max(0, budget.planned_sections - already)
         if to_place == 0:
             continue
-        all_options = _generate_meeting_options(pattern, slot_config, lab_slot_config)
+        blocked = scenario.blocked_slots if scenario.blocked_slots else []
+        all_options = _generate_meeting_options(pattern, slot_config, lab_slot_config, blocked)
         if not all_options:
             total_skipped += to_place
             continue
@@ -703,11 +713,13 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
             # Use actual students per section (not theoretical max) for room matching
             # ceil division to ensure room can hold the largest possible section
             budget = cd["budget"]
-            section_cap = (
+            # Actual students per section + 10% safety margin for late adds
+            raw_cap = (
                 -(-budget.total_demand // budget.planned_sections)  # ceil division
                 if budget.planned_sections > 0
                 else budget.max_per_section
             )
+            section_cap = int(raw_cap * 1.1)  # 10% buffer
             for option in all_options:
                 # Room feasibility: prefer options with rooms, penalize roomless
                 room_penalty = 0
@@ -790,16 +802,37 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
             # day.  Also update the in-memory tracking structures so
             # subsequent placements see the new constraints.
             meeting_results = []
+            preferred_room = None  # room stability: try same room for all meetings
             for m in best_option:
                 # Assign room if tracker available
                 assigned_room = ""
                 if room_tracker:
                     duration = _to_min(m["end"]) - _to_min(m["start"])
                     rtype = "lab" if duration > 80 else "lecture"
-                    assigned_room = (
-                        room_tracker.assign_best_fit(m["day"], m["start"], section_cap, rtype)
-                        or "UNASSIGNED"
-                    )
+                    # Try preferred room first (same room as previous meetings)
+                    if preferred_room and room_tracker.is_feasible(
+                        m["day"], m["start"], section_cap, rtype
+                    ):
+                        used = room_tracker.usage.get((m["day"], m["start"]), set())
+                        if preferred_room not in used:
+                            from core.models import Room as _RoomModel
+
+                            pr_obj = _RoomModel.objects.filter(room_code=preferred_room).first()
+                            if (
+                                pr_obj
+                                and pr_obj.capacity >= section_cap
+                                and pr_obj.room_type == rtype
+                            ):
+                                room_tracker.usage[(m["day"], m["start"])].add(preferred_room)
+                                assigned_room = preferred_room
+
+                    if not assigned_room:
+                        assigned_room = (
+                            room_tracker.assign_best_fit(m["day"], m["start"], section_cap, rtype)
+                            or "UNASSIGNED"
+                        )
+                    if not preferred_room and assigned_room and assigned_room != "UNASSIGNED":
+                        preferred_room = assigned_room
 
                 TermSectionMeeting.objects.get_or_create(
                     term_section=ts,

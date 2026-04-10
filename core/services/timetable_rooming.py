@@ -204,10 +204,13 @@ def assign_rooms_to_board(board_id: int) -> dict:
     from core.models import ScenarioSectionBudget
 
     budget_map = {
-        b.course_code: (
-            -(-b.total_demand // b.planned_sections)  # ceil division
-            if b.planned_sections > 0
-            else b.max_per_section
+        b.course_code: int(
+            (
+                -(-b.total_demand // b.planned_sections)  # ceil division
+                if b.planned_sections > 0
+                else b.max_per_section
+            )
+            * 1.1  # 10% safety margin
         )
         for b in ScenarioSectionBudget.objects.filter(
             scenario=board.scenario, programme_term=board.nominal_term
