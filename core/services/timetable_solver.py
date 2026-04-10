@@ -166,12 +166,9 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
                         if opt_a[0] == opt_b[0]:  # same day_idx
                             model.add(assign[i][m_a][oa] + assign[i][m_b][ob] <= 1)
 
-    # ── Hard: no overlap between courses sharing students ─────────
+    # ── Build overlap matrix (used for soft penalties, NOT hard constraints) ──
     from core.services.timetable_overlap import (
         build_overlap_matrix as _bom,
-    )
-    from core.services.timetable_overlap import (
-        courses_share_students as _css,
     )
     from core.services.timetable_overlap import (
         shared_student_count as _ssc,
@@ -180,21 +177,9 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
     board_courses = {sec["code"] for sec in sections}
     overlap_matrix = _bom(scenario.id, board_courses)
 
-    for a_pos in range(len(sections)):
-        for b_pos in range(a_pos + 1, len(sections)):
-            code_a, code_b = sections[a_pos]["code"], sections[b_pos]["code"]
-            if code_a == code_b:
-                continue  # same-course handled below
-            if not _css(overlap_matrix, code_a, code_b):
-                continue  # no shared students — can overlap freely
-            for m_a in range(len(sections[a_pos]["pattern"])):
-                for m_b in range(len(sections[b_pos]["pattern"])):
-                    opts_a = sec_options[a_pos][m_a]
-                    opts_b = sec_options[b_pos][m_b]
-                    for oa, opt_a in enumerate(opts_a):
-                        for ob, opt_b in enumerate(opts_b):
-                            if opt_a[5] & opt_b[5]:
-                                model.add(assign[a_pos][m_a][oa] + assign[b_pos][m_b][ob] <= 1)
+    # NOTE: Student overlap between different courses is SOFT, not hard.
+    # Only same-course overlap (below) and instructor overlap are hard.
+    # The soft student-overlap penalty is added in the objective section.
 
     # ── Hard: same course different sections don't overlap ────────
     by_course: dict[str, list[int]] = defaultdict(list)
@@ -236,15 +221,46 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
     for s_idx, s in enumerate(lab_slot_config):
         slot_end_min[("lab", s_idx)] = _to_min(s["end"])
 
+    # (0b) SOFT student-overlap penalty: penalize time conflicts proportional to shared students
+    student_overlap_penalties = []
+    for a_pos in range(len(sections)):
+        for b_pos in range(a_pos + 1, len(sections)):
+            code_a, code_b = sections[a_pos]["code"], sections[b_pos]["code"]
+            if code_a == code_b:
+                continue
+            shared = _ssc(overlap_matrix, code_a, code_b)
+            if shared == 0:
+                continue
+            # Penalize time overlap proportional to shared students
+            w_overlap = shared * 5  # strong but not infinite
+            for m_a in range(len(sections[a_pos]["pattern"])):
+                for m_b in range(len(sections[b_pos]["pattern"])):
+                    opts_a = sec_options[a_pos][m_a]
+                    opts_b = sec_options[b_pos][m_b]
+                    for oa, opt_a in enumerate(opts_a):
+                        for ob, opt_b in enumerate(opts_b):
+                            if opt_a[5] & opt_b[5]:
+                                both = model.new_bool_var(
+                                    f"so_{a_pos}_{m_a}_{oa}_{b_pos}_{m_b}_{ob}"
+                                )
+                                model.add(
+                                    assign[a_pos][m_a][oa] + assign[b_pos][m_b][ob] - 1 <= both
+                                )
+                                model.add(both <= assign[a_pos][m_a][oa])
+                                model.add(both <= assign[b_pos][m_b][ob])
+                                student_overlap_penalties.append(both * w_overlap)
+
+    penalties.extend(student_overlap_penalties)
+
     # (1) REAL GAP PENALTIES between section pairs sharing students
     for a_pos in range(len(sections)):
         for b_pos in range(a_pos + 1, len(sections)):
             code_a, code_b = sections[a_pos]["code"], sections[b_pos]["code"]
             if code_a == code_b:
-                continue  # same-course gaps handled by time consistency
+                continue
             shared = _ssc(overlap_matrix, code_a, code_b)
             if shared == 0:
-                continue  # no shared students — no gap penalty
+                continue
             if sections[a_pos]["is_online"] or sections[b_pos]["is_online"]:
                 continue
 
@@ -620,12 +636,9 @@ def solve_board_with_hints(
                         if opt_a[0] == opt_b[0]:
                             model.add(assign[i][m_a][oa] + assign[i][m_b][ob] <= 1)
 
-    # Hard: no overlap between courses sharing students (real overlap)
+    # Build overlap matrix for soft penalties (NOT hard constraints)
     from core.services.timetable_overlap import (
         build_overlap_matrix as _bom,
-    )
-    from core.services.timetable_overlap import (
-        courses_share_students as _css,
     )
     from core.services.timetable_overlap import (
         shared_student_count as _ssc,
@@ -633,20 +646,7 @@ def solve_board_with_hints(
 
     board_courses_h = {sec["code"] for sec in sections}
     overlap_matrix_h = _bom(scenario.id, board_courses_h)
-
-    for a_pos in range(len(sections)):
-        for b_pos in range(a_pos + 1, len(sections)):
-            code_a, code_b = sections[a_pos]["code"], sections[b_pos]["code"]
-            if code_a == code_b:
-                continue
-            if not _css(overlap_matrix_h, code_a, code_b):
-                continue
-            for m_a in range(len(sections[a_pos]["pattern"])):
-                for m_b in range(len(sections[b_pos]["pattern"])):
-                    for oa, opt_a in enumerate(sec_options[a_pos][m_a]):
-                        for ob, opt_b in enumerate(sec_options[b_pos][m_b]):
-                            if opt_a[5] & opt_b[5]:
-                                model.add(assign[a_pos][m_a][oa] + assign[b_pos][m_b][ob] <= 1)
+    # Student overlap is SOFT — added in the objective section below
 
     # Hard: same course different sections don't overlap
     by_course: dict[str, list[int]] = defaultdict(list)
@@ -665,8 +665,35 @@ def solve_board_with_hints(
                                 if opt_a[5] & opt_b[5]:
                                     model.add(assign[i_a][m_a][oa] + assign[i_b][m_b][ob] <= 1)
 
-    # Soft: gap penalties weighted by real student overlap
+    # (0b) SOFT student-overlap time penalty (same as solve_board)
     penalties = []
+    for a_pos in range(len(sections)):
+        for b_pos in range(a_pos + 1, len(sections)):
+            code_a, code_b = sections[a_pos]["code"], sections[b_pos]["code"]
+            if code_a == code_b:
+                continue
+            shared = _ssc(overlap_matrix_h, code_a, code_b)
+            if shared == 0:
+                continue
+            w_overlap = shared * 5
+            for m_a in range(len(sections[a_pos]["pattern"])):
+                for m_b in range(len(sections[b_pos]["pattern"])):
+                    opts_a = sec_options[a_pos][m_a]
+                    opts_b = sec_options[b_pos][m_b]
+                    for oa, opt_a in enumerate(opts_a):
+                        for ob, opt_b in enumerate(opts_b):
+                            if opt_a[5] & opt_b[5]:
+                                both = model.new_bool_var(
+                                    f"so_{a_pos}_{m_a}_{oa}_{b_pos}_{m_b}_{ob}"
+                                )
+                                model.add(
+                                    assign[a_pos][m_a][oa] + assign[b_pos][m_b][ob] - 1 <= both
+                                )
+                                model.add(both <= assign[a_pos][m_a][oa])
+                                model.add(both <= assign[b_pos][m_b][ob])
+                                penalties.append(both * w_overlap)
+
+    # Soft: gap penalties weighted by real student overlap
     for a_pos in range(len(sections)):
         for b_pos in range(a_pos + 1, len(sections)):
             code_a, code_b = sections[a_pos]["code"], sections[b_pos]["code"]

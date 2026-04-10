@@ -194,7 +194,7 @@ def _compute_balance_score(
 
 def _check_constraints(schedule: dict, sections: list, overlap_matrix: dict | None = None) -> bool:
     """Check all hard constraints using real student overlap."""
-    from core.services.timetable_overlap import courses_share_students as _css
+    from core.services.timetable_overlap import shared_student_count as _ssc_ck
 
     all_masks: list[tuple[str, int]] = []
     for i, meetings in schedule.items():
@@ -207,7 +207,13 @@ def _check_constraints(schedule: dict, sections: list, overlap_matrix: dict | No
             if all_masks[a][0] == all_masks[b][0]:
                 continue
             if all_masks[a][1] & all_masks[b][1]:
-                if overlap_matrix is None or _css(overlap_matrix, all_masks[a][0], all_masks[b][0]):
+                # Only hard-block for high-overlap pairs (>= 20 shared students)
+                shared = (
+                    _ssc_ck(overlap_matrix, all_masks[a][0], all_masks[b][0])
+                    if overlap_matrix
+                    else 999
+                )
+                if shared >= 20:
                     return False
 
     course_masks: dict[str, list[int]] = defaultdict(list)

@@ -136,9 +136,10 @@ def _check_hard_constraints(
     overlap_matrix: dict | None = None,
 ) -> bool:
     """Return True if all hard constraints are satisfied."""
-    from core.services.timetable_overlap import courses_share_students as _css
 
-    # 1. No overlap between courses sharing students
+    # 1. No HARD overlap only for same-course or very high-overlap pairs
+    from core.services.timetable_overlap import shared_student_count as _ssc_hc
+
     all_masks: list[tuple[str, int]] = []
     for i, meetings in schedule.items():  # noqa: B007
         sec = sections[i]
@@ -150,7 +151,13 @@ def _check_hard_constraints(
             if all_masks[a][0] == all_masks[b][0]:
                 continue  # same course checked below
             if all_masks[a][1] & all_masks[b][1]:
-                if overlap_matrix is None or _css(overlap_matrix, all_masks[a][0], all_masks[b][0]):
+                # Only hard-block if shared count >= 20 (high overlap)
+                shared = (
+                    _ssc_hc(overlap_matrix, all_masks[a][0], all_masks[b][0])
+                    if overlap_matrix
+                    else 999
+                )
+                if shared >= 20:
                     return False
 
     # 2. Same course different sections don't overlap

@@ -439,16 +439,20 @@ def _score_option(
     for m in option:
         total_mask |= _time_mask(m["day"], m["start"], m["end"])
 
-    # ── (1) Hard conflict: bitmask overlap with courses sharing students ──
-    from core.services.timetable_overlap import courses_share_students as _css
+    # ── (1) Student overlap: weighted soft penalty, not hard block ──
+    # Only same-course overlap is hard. Cross-course student overlap is a
+    # soft penalty proportional to shared student count.
+    from core.services.timetable_overlap import shared_student_count as _ssc_score
 
     hard_conflict = 0
+    student_overlap_penalty = 0
     for placed_code, placed_mask in placed_masks:
         if total_mask & placed_mask:
-            if overlap_matrix and _css(overlap_matrix, my_code, placed_code):
-                hard_conflict += 1
-            elif not overlap_matrix:
-                hard_conflict += 1  # fallback: assume conflict if no matrix
+            if placed_code == my_code:
+                continue  # same course handled in (2) below
+            shared = _ssc_score(overlap_matrix, my_code, placed_code) if overlap_matrix else 0
+            if shared > 0:
+                student_overlap_penalty += shared  # proportional to affected students
 
     # ── (2) Same-course overlap across ALL groups ─────────────────────
     # Prevents the same instructor from being double-booked.
@@ -469,7 +473,11 @@ def _score_option(
             d, s, e = entry[0], entry[1], entry[2]
             entry_code = entry[3] if len(entry) > 3 else ""
             # Only include gaps with courses that share students
-            if overlap_matrix and entry_code and not _css(overlap_matrix, my_code, entry_code):
+            if (
+                overlap_matrix
+                and entry_code
+                and _ssc_score(overlap_matrix, my_code, entry_code) == 0
+            ):
                 continue
             day_intervals[d].append((_to_min(s), _to_min(e)))
 
@@ -514,6 +522,9 @@ def _score_option(
     # additional distinct index.
     slot_indices = [m["slot_idx"] for m in option]
     time_variance = len(set(slot_indices)) - 1
+
+    # Add student overlap penalty to gap (position 2) — competes with gap minimization
+    student_gap += student_overlap_penalty * 3  # 3 minutes penalty per shared student
 
     return hard_conflict, same_course_overlap, student_gap, instructor_spread, time_variance
 
