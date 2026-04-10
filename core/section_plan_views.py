@@ -553,7 +553,14 @@ def _export_section_plan_xlsx(
     For mode="multi": iterates programs_data, creating per-program sheet pairs.
     """
     from openpyxl import Workbook  # type: ignore[import-untyped]
-    from openpyxl.styles import Alignment, Font, PatternFill  # type: ignore[import-untyped]
+    from openpyxl.styles import (  # type: ignore[import-untyped]
+        Alignment,
+        Border,
+        Font,
+        PatternFill,
+        Side,
+    )
+    from openpyxl.utils import get_column_letter  # type: ignore[import-untyped]
 
     wb = Workbook()
 
@@ -570,47 +577,171 @@ def _export_section_plan_xlsx(
         "Fill %",
         "Status",
     ]
-    header_font = Font(bold=True, color="FFFFFF")
+
+    # ── Styles ──
+    thin = Side(style="thin", color="D5D8DC")
+    cell_border = Border(top=thin, bottom=thin, left=thin, right=thin)
+    header_font = Font(name="Calibri", bold=True, color="FFFFFF", size=10)
     header_fill = PatternFill(start_color="0A8E6E", end_color="0A8E6E", fill_type="solid")
-    center = Alignment(horizontal="center")
-    full_fill = PatternFill(start_color="D9EAD3", end_color="D9EAD3", fill_type="solid")
-    under_fill = PatternFill(start_color="F4CCCC", end_color="F4CCCC", fill_type="solid")
+    title_fill = PatternFill(start_color="1B2631", end_color="1B2631", fill_type="solid")
+    title_font = Font(name="Calibri", bold=True, color="FFFFFF", size=12)
+    center = Alignment(horizontal="center", vertical="center")
+    left_center = Alignment(horizontal="left", vertical="center")
+    alt_fill = PatternFill(start_color="F8F9FA", end_color="F8F9FA", fill_type="solid")
+    full_fill = PatternFill(start_color="D5F5E3", end_color="D5F5E3", fill_type="solid")
+    under_fill = PatternFill(start_color="FADBD8", end_color="FADBD8", fill_type="solid")
+    ext_fill = PatternFill(start_color="EBF5FB", end_color="EBF5FB", fill_type="solid")
     bold = Font(bold=True)
+    mono = Font(name="Consolas", bold=True, size=10)
+    dept_font = Font(name="Calibri", bold=True, size=10, color="2E4053")
+    num_font = Font(name="Consolas", size=10)
+    status_full_font = Font(bold=True, color="1E8449")
+    status_under_font = Font(bold=True, color="C0392B")
+
+    # Department colour map (hash-based pastel, same idea as exam export)
+    _dept_colors: dict[str, PatternFill] = {}
+
+    def _dept_fill(dept: str) -> PatternFill:
+        if dept in _dept_colors:
+            return _dept_colors[dept]
+        import colorsys
+
+        h = 0
+        for ch in str(dept):
+            h = (h * 31 + ord(ch)) % 360
+        r, g, b = colorsys.hls_to_rgb(h / 360.0, 0.94, 0.50)
+        hex_c = f"{int(r * 255):02X}{int(g * 255):02X}{int(b * 255):02X}"
+        fill = PatternFill("solid", fgColor=hex_c)
+        _dept_colors[dept] = fill
+        return fill
+
+    col_widths = [5, 12, 14, 8, 9, 10, 10, 12, 12, 9, 12]
 
     def _write_sections_sheet(ws, plan_data: list[dict]) -> None:
-        """Write the sections data rows into a worksheet."""
+        """Write the sections data rows with styled formatting."""
+        # Title row
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
+        tc = ws.cell(row=1, column=1, value="Section Planning")
+        tc.font = title_font
+        tc.fill = title_fill
+        tc.alignment = Alignment(horizontal="center", vertical="center")
+        for c in range(2, len(headers) + 1):
+            ws.cell(row=1, column=c).fill = title_fill
+
+        # Header row
         for col_idx, h in enumerate(headers, 1):
-            cell = ws.cell(row=1, column=col_idx, value=h)
+            cell = ws.cell(row=2, column=col_idx, value=h)
             cell.font = header_font
             cell.fill = header_fill
             cell.alignment = center
+            cell.border = cell_border
 
+        # Data rows
         for i, row in enumerate(plan_data, 1):
-            r = i + 1
-            ws.cell(row=r, column=1, value=i).alignment = center
-            ws.cell(row=r, column=2, value=row["department"])
-            ws.cell(row=r, column=3, value=row["course_code"])
-            ws.cell(row=r, column=4, value=row["credit_hours"]).alignment = center
-            ws.cell(row=r, column=5, value="Yes" if row["is_external"] else "No").alignment = center
-            ws.cell(row=r, column=6, value=row["total_students"]).alignment = center
-            ws.cell(row=r, column=7, value=row["num_sections"]).alignment = center
-            ws.cell(row=r, column=8, value=row["max_per_section"]).alignment = center
-            ws.cell(row=r, column=9, value=row["avg_per_section"]).alignment = center
-            ws.cell(row=r, column=10, value=f"{row['fill_percent']}%").alignment = center
+            r = i + 2
+            is_alt = i % 2 == 0
+            is_ext = row.get("is_external", False)
+            dept = row.get("department", "")
 
-            status_cell = ws.cell(
-                row=r, column=11, value=row["status"].title() if row["status"] else ""
-            )
-            status_cell.alignment = center
-            if row["status"] == "full":
-                status_cell.fill = full_fill
-                status_cell.font = bold
-            elif row["status"] == "underfilled":
-                status_cell.fill = under_fill
-                status_cell.font = bold
+            # Row number
+            c = ws.cell(row=r, column=1, value=i)
+            c.alignment = center
+            c.font = num_font
+            c.border = cell_border
 
-        for col_idx in range(1, len(headers) + 1):
-            ws.column_dimensions[chr(64 + col_idx) if col_idx <= 26 else "A"].width = 14
+            # Department — with colour band
+            c = ws.cell(row=r, column=2, value=dept)
+            c.font = dept_font
+            c.alignment = left_center
+            c.border = cell_border
+            c.fill = _dept_fill(dept)
+
+            # Course code
+            c = ws.cell(row=r, column=3, value=row["course_code"])
+            c.font = mono
+            c.alignment = left_center
+            c.border = cell_border
+
+            # Credits
+            c = ws.cell(row=r, column=4, value=row["credit_hours"])
+            c.alignment = center
+            c.font = num_font
+            c.border = cell_border
+
+            # External
+            c = ws.cell(row=r, column=5, value="Yes" if is_ext else "")
+            c.alignment = center
+            c.border = cell_border
+            if is_ext:
+                c.font = Font(color="2980B9", bold=True)
+
+            # Students
+            c = ws.cell(row=r, column=6, value=row["total_students"])
+            c.alignment = center
+            c.font = Font(bold=True, size=10)
+            c.border = cell_border
+
+            # Sections
+            c = ws.cell(row=r, column=7, value=row["num_sections"])
+            c.alignment = center
+            c.font = num_font
+            c.border = cell_border
+
+            # Max/Section
+            c = ws.cell(row=r, column=8, value=row["max_per_section"])
+            c.alignment = center
+            c.font = num_font
+            c.border = cell_border
+
+            # Avg/Section
+            c = ws.cell(row=r, column=9, value=row["avg_per_section"])
+            c.alignment = center
+            c.font = num_font
+            c.border = cell_border
+
+            # Fill %
+            fill_pct = row.get("fill_percent", 0)
+            c = ws.cell(row=r, column=10, value=f"{fill_pct}%")
+            c.alignment = center
+            c.border = cell_border
+            if fill_pct >= 90:
+                c.font = Font(bold=True, color="1E8449")
+            elif fill_pct < 50:
+                c.font = Font(bold=True, color="C0392B")
+            else:
+                c.font = num_font
+
+            # Status
+            status = row.get("status", "")
+            c = ws.cell(row=r, column=11, value=status.title() if status else "")
+            c.alignment = center
+            c.border = cell_border
+            if status == "full":
+                c.fill = full_fill
+                c.font = status_full_font
+            elif status == "underfilled":
+                c.fill = under_fill
+                c.font = status_under_font
+
+            # Row fill: external gets blue tint, alternating gets grey
+            row_fill = ext_fill if is_ext else (alt_fill if is_alt else None)
+            if row_fill:
+                for col in range(1, len(headers) + 1):
+                    cell = ws.cell(row=r, column=col)
+                    # Don't override dept colour (col 2) or status colour (col 11)
+                    if (
+                        col not in (2, 11)
+                        and not cell.fill.fgColor
+                        or cell.fill.fgColor.rgb == "00000000"
+                    ):
+                        cell.fill = row_fill
+
+        # Column widths
+        for ci, w in enumerate(col_widths, 1):
+            ws.column_dimensions[get_column_letter(ci)].width = w
+
+        # Freeze panes below headers
+        ws.freeze_panes = "A3"
 
     from openpyxl.styles import Border, Side  # type: ignore[import-untyped]
 
