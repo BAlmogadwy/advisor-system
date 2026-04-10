@@ -716,6 +716,163 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
         ws_sum.column_dimensions[col_letter].width = 14
     ws_sum.freeze_panes = "A2"
 
+    # ── Room Schedule Sheets ───────────────────────────────────────
+    from core.models import Room
+
+    programmes = (
+        [
+            p.strip()
+            for p in (scenario.slot_config and boards[0].program or "").split(",")
+            if p.strip()
+        ]
+        if boards
+        else []
+    )
+    all_rooms = list(Room.objects.all().order_by("room_type", "room_code"))
+
+    # Filter rooms by programme if possible
+    if programmes:
+        from core.services.timetable_rooming import get_programme_rooms
+
+        prog_rooms = get_programme_rooms(programmes)
+        prog_room_codes = {r["room_code"] for r in prog_rooms}
+        all_rooms = [r for r in all_rooms if r.room_code in prog_room_codes]
+
+    if all_rooms:
+        DAY_LABELS_R = ["SUN", "MON", "TUE", "WED", "THU"]
+        DAY_NAMES_R = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"]
+        lecture_slots = scenario.slot_config or DEFAULT_SLOTS
+        lab_slots = scenario.lab_slot_config or []
+
+        room_hdr_fill = PatternFill(start_color="2E4053", end_color="2E4053", fill_type="solid")
+        room_hdr_font = Font(name="Calibri", bold=True, color="FFFFFF", size=9)
+        room_cell_font = Font(name="Consolas", size=8.5, bold=True)
+        room_border = Border(
+            top=Side(style="thin", color="D5D8DC"),
+            bottom=Side(style="thin", color="D5D8DC"),
+            left=Side(style="thin", color="D5D8DC"),
+            right=Side(style="thin", color="D5D8DC"),
+        )
+
+        for board in boards:
+            term_num = board.nominal_term or 0
+            ws_room = wb.create_sheet(title=f"Rooms T{term_num}")
+            ws_room.sheet_properties.tabColor = "2E86C1"
+
+            # Load placements with rooms for this board
+            board_placements = list(
+                SectionPlacement.objects.filter(board=board)
+                .exclude(room="")
+                .exclude(room="UNASSIGNED")
+                .select_related("term_section")
+            )
+
+            if not board_placements:
+                ws_room.cell(row=1, column=1, value=f"No room assignments for {board.label}")
+                continue
+
+            # Get unique rooms used on this board
+            used_rooms = sorted({p.room for p in board_placements})
+            room_info = {r.room_code: r for r in all_rooms}
+
+            # Build room grid: room_code → {(day, start) → placement_text}
+            room_grid: dict[str, dict[tuple[str, str], str]] = defaultdict(dict)
+            for p in board_placements:
+                text = f"{p.term_section.course_code} {p.term_section.section}"
+                room_grid[p.room][(p.day, p.start_time)] = text
+
+            # Determine all slots (lecture + lab combined, sorted by start)
+            all_slots = []
+            for s in lecture_slots:
+                all_slots.append({"start": s["start"], "end": s["end"], "type": "L"})
+            for s in lab_slots:
+                all_slots.append({"start": s["start"], "end": s["end"], "type": "Lab"})
+            # Sort by start time, remove duplicates
+            seen_starts: set[str] = set()
+            unique_slots = []
+            for s in sorted(all_slots, key=lambda x: x["start"]):
+                if s["start"] not in seen_starts:
+                    seen_starts.add(s["start"])
+                    unique_slots.append(s)
+
+            # Title
+            ws_room.merge_cells(
+                start_row=1, start_column=1, end_row=1, end_column=1 + len(unique_slots)
+            )
+            tc = ws_room.cell(row=1, column=1, value=f"Room Schedule — {board.label}")
+            tc.font = Font(bold=True, color="FFFFFF", size=11)
+            tc.fill = PatternFill(start_color="1B2631", end_color="1B2631", fill_type="solid")
+            tc.alignment = Alignment(horizontal="center")
+            for c in range(2, 2 + len(unique_slots)):
+                ws_room.cell(row=1, column=c).fill = PatternFill(
+                    start_color="1B2631", end_color="1B2631", fill_type="solid"
+                )
+
+            # One sub-table per day
+            current_row = 2
+            for day_code, day_name in zip(DAY_LABELS_R, DAY_NAMES_R, strict=False):
+                # Day header
+                ws_room.merge_cells(
+                    start_row=current_row,
+                    start_column=1,
+                    end_row=current_row,
+                    end_column=1 + len(unique_slots),
+                )
+                dc = ws_room.cell(row=current_row, column=1, value=day_name)
+                dc.font = Font(bold=True, size=10, color="0A8E6E")
+                dc.alignment = Alignment(horizontal="left")
+                current_row += 1
+
+                # Slot headers
+                ws_room.cell(row=current_row, column=1, value="Room").font = room_hdr_font
+                ws_room.cell(row=current_row, column=1).fill = room_hdr_fill
+                ws_room.cell(row=current_row, column=1).border = room_border
+                for si, slot in enumerate(unique_slots):
+                    c = ws_room.cell(
+                        row=current_row, column=2 + si, value=f"{slot['start']}-{slot['end']}"
+                    )
+                    c.font = room_hdr_font
+                    c.fill = room_hdr_fill
+                    c.alignment = Alignment(horizontal="center")
+                    c.border = room_border
+                current_row += 1
+
+                # Room rows
+                for room_code in used_rooms:
+                    r_obj = room_info.get(room_code)
+                    cap = r_obj.capacity if r_obj else "?"
+                    rtype = r_obj.room_type if r_obj else "?"
+                    label = f"{room_code} ({cap})"
+
+                    rc = ws_room.cell(row=current_row, column=1, value=label)
+                    rc.font = Font(name="Consolas", size=8.5, bold=True)
+                    rc.border = room_border
+                    if rtype == "lab":
+                        rc.fill = PatternFill(
+                            start_color="E8F8F5", end_color="E8F8F5", fill_type="solid"
+                        )
+
+                    for si, slot in enumerate(unique_slots):
+                        cell = ws_room.cell(row=current_row, column=2 + si)
+                        cell.border = room_border
+                        cell.alignment = Alignment(horizontal="center", vertical="center")
+                        text = room_grid.get(room_code, {}).get((day_code, slot["start"]), "")
+                        if text:
+                            cell.value = text
+                            cell.font = room_cell_font
+                            cell.fill = _course_fill(text.split()[0], course_color_map)
+
+                    current_row += 1
+                current_row += 1  # gap between days
+
+            # Column widths
+            ws_room.column_dimensions["A"].width = 18
+            from openpyxl.utils import get_column_letter as _gcl
+
+            for si in range(len(unique_slots)):
+                ws_room.column_dimensions[_gcl(2 + si)].width = 16
+            ws_room.freeze_panes = "B3"
+
     # ── Save ─────────────────────────────────────────────────────
     tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
     wb.save(tmp.name)
