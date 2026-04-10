@@ -131,6 +131,24 @@ class Prerequisite(models.Model):
         return f"Prereq({self.course_code}->{self.prerequisite_course_code})"
 
 
+class Room(models.Model):
+    """Department room inventory."""
+
+    room_code = models.TextField(unique=True)
+    wing = models.TextField(blank=True, default="")
+    capacity = models.IntegerField(default=0)
+    department = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "rooms"
+        indexes = [
+            models.Index(fields=["department"], name="idx_room_department"),
+        ]
+
+    def __str__(self) -> str:
+        return f"Room({self.room_code}/{self.department}/{self.capacity})"
+
+
 class ElectiveCourse(models.Model):
     """Permanent catalogue of elective courses offered by a department.
 
