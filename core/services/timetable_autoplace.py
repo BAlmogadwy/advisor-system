@@ -227,74 +227,74 @@ def _generate_meeting_options(
 
     # For each meeting duration, pre-compute which (slot_idx, start, end)
     # positions are feasible (respecting prayer break + institutional blocks).
-    slot_options_per_duration: list[list[tuple[int, str, str]]] = []
-    for duration in pattern:
-        positions = []
-        if duration <= 75:
-            # Standard lecture -- fits within one slot boundary.
-            for i, s in enumerate(slots):
-                if not _start_is_blocked(s["start"]):
-                    positions.append((i, s["start"], s["end"]))
-        else:
-            # Lab (100 min) -- uses dedicated lab slot grid.
-            for i, s in enumerate(lab_slots):
-                if not _start_is_blocked(s["start"]):
-                    positions.append((i, s["start"], s["end"]))
-        slot_options_per_duration.append(positions)
+    # Build slot options for BOTH lecture and lab durations.
+    lecture_positions = []
+    for i, s in enumerate(slots):
+        if not _start_is_blocked(s["start"]):
+            lecture_positions.append((i, s["start"], s["end"]))
+    lab_positions = []
+    for i, s in enumerate(lab_slots):
+        if not _start_is_blocked(s["start"]):
+            lab_positions.append((i, s["start"], s["end"]))
+
+    # Generate all unique permutations of the pattern so the lab can be
+    # on any day (first, middle, or last meeting of the week).
+    from itertools import permutations as _perms
+
+    if len(set(pattern)) > 1:
+        seen_pats: set[tuple[int, ...]] = set()
+        pattern_variants = []
+        for perm in _perms(pattern):
+            if perm not in seen_pats:
+                seen_pats.add(perm)
+                pattern_variants.append(list(perm))
+    else:
+        pattern_variants = [pattern]
 
     all_options: list[list[dict]] = []
 
-    for days in day_combos:
-        # Iterate over every feasible slot position for the *first* meeting;
-        # subsequent meetings try to reuse the same slot index (time
-        # consistency) and fall back to their first available position.
-        for first_pos in slot_options_per_duration[0]:
-            option: list[dict] = []
-            valid = True
+    for current_pattern in pattern_variants:
+        slot_options_per_duration = [
+            lab_positions if d > 75 else lecture_positions for d in current_pattern
+        ]
 
-            for m_idx in range(num_meetings):
-                day = days[m_idx]
-                # Target: same slot index as the first meeting (time consistency).
-                target_slot_idx = first_pos[0]
+        for days in day_combos:
+            # Iterate over every feasible slot position for the *first* meeting;
+            # subsequent meetings try to reuse the same slot index (time
+            # consistency) and fall back to their first available position.
+            for first_pos in slot_options_per_duration[0]:
+                option: list[dict] = []
+                valid = True
 
-                positions = slot_options_per_duration[m_idx]
+                for m_idx in range(num_meetings):
+                    day = days[m_idx]
+                    target_slot_idx = first_pos[0]
+                    positions = slot_options_per_duration[m_idx]
 
-                # First try: exact same slot index as the first meeting.
-                found = False
-                for pos in positions:
-                    if pos[0] == target_slot_idx and (day, pos[1]) not in _blocked_set:
-                        option.append(
-                            {
-                                "day": day,
-                                "start": pos[1],
-                                "end": pos[2],
-                                "slot_idx": pos[0],
-                            }
-                        )
-                        found = True
-                        break
-
-                if not found:
-                    # Fallback: use the earliest available non-blocked position.
-                    fallback_found = False
+                    found = False
                     for pos in positions:
-                        if (day, pos[1]) not in _blocked_set:
+                        if pos[0] == target_slot_idx and (day, pos[1]) not in _blocked_set:
                             option.append(
-                                {
-                                    "day": day,
-                                    "start": pos[1],
-                                    "end": pos[2],
-                                    "slot_idx": pos[0],
-                                }
+                                {"day": day, "start": pos[1], "end": pos[2], "slot_idx": pos[0]}
                             )
-                            fallback_found = True
+                            found = True
                             break
-                    if not fallback_found:
-                        valid = False
-                        break
 
-            if valid and len(option) == num_meetings:
-                all_options.append(option)
+                    if not found:
+                        fallback_found = False
+                        for pos in positions:
+                            if (day, pos[1]) not in _blocked_set:
+                                option.append(
+                                    {"day": day, "start": pos[1], "end": pos[2], "slot_idx": pos[0]}
+                                )
+                                fallback_found = True
+                                break
+                        if not fallback_found:
+                            valid = False
+                            break
+
+                if valid and len(option) == num_meetings:
+                    all_options.append(option)
 
     return all_options
 
