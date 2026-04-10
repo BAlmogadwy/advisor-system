@@ -73,7 +73,7 @@ from core.services.student_helpers import normalize_code
 # The helper ``_is_excluded_course()`` applies all three layers.
 # ---------------------------------------------------------------------------
 EXCLUDED_COURSE_CODES: frozenset[str] = frozenset()  # None currently hardcoded
-EXCLUDED_SUFFIXES = ("490", "491", "492")
+EXCLUDED_SUFFIXES = ("101", "490", "491", "492")
 EXCLUDED_NAME_KEYWORDS = frozenset(
     {
         "graduation",
