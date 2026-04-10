@@ -786,11 +786,9 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                     for m in option:
                         if m["slot_idx"] >= 2:  # afternoon slots
                             slot_penalty += slot_pref * (m["slot_idx"] - 1)
-                # Time variance penalty: heavily penalize different start times
-                # across meetings of the same course (should be same slot)
-                time_var_penalty = (
-                    raw_score[4] * 15
-                )  # moderate: prefer same slot but don't dominate
+                # Time variance: light preference for same slot across meetings
+                # Too high = all courses cluster in slots 1-2
+                time_var_penalty = raw_score[4] * 3
 
                 # Instructor gap: for S2+ of the same course, penalize large gaps
                 # with S1 and reward adjacency. Two objectives:
