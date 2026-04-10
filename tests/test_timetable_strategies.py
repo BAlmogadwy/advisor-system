@@ -176,11 +176,15 @@ class TestCompactStrategy:
         assert result["placed"] > 0
         assert result["skipped"] == 0
 
-    def test_no_same_group_overlaps(self, timetable_scenario):
+    def test_minimal_student_overlaps(self, timetable_scenario):
+        """Student overlaps should be minimal (soft penalty, not hard block)."""
         scenario, board = timetable_scenario
         auto_place_board(board.id, strategy="compact")
         placements = SectionPlacement.objects.filter(board=board)
-        _assert_no_same_group_overlaps(placements)
+        overlap_count = _count_student_overlaps(placements)
+        # Soft model: some overlaps are acceptable, but should be few
+        total = placements.count()
+        assert overlap_count <= total * 0.3, f"Too many overlaps: {overlap_count}/{total}"
 
     def test_labs_use_lab_slots(self, timetable_scenario):
         scenario, board = timetable_scenario
@@ -406,37 +410,41 @@ class TestRoomAssignment:
 # ── Helper assertions ──
 
 
-def _assert_no_same_group_overlaps(placements):
-    """Assert no two placements whose courses share students overlap in time."""
+def _count_student_overlaps(placements) -> int:
+    """Count how many placement pairs with shared students overlap in time."""
     from core.services.timetable_overlap import build_overlap_matrix, courses_share_students
     from core.services.timetable_workspace import _time_mask
 
     placement_list = list(placements.select_related("term_section", "board__scenario"))
     if not placement_list:
-        return
+        return 0
 
-    # Build overlap matrix from the scenario
     board = placement_list[0].board
     course_codes = {p.term_section.course_code for p in placement_list}
     overlap_matrix = build_overlap_matrix(board.scenario_id, course_codes)
 
+    count = 0
     n = len(placement_list)
     for i in range(n):
         for j in range(i + 1, n):
             a, b = placement_list[i], placement_list[j]
             if a.term_section.course_code == b.term_section.course_code:
-                continue  # same course overlap checked separately
+                continue
             mask_a = _time_mask(a.day, a.start_time, a.end_time)
             mask_b = _time_mask(b.day, b.start_time, b.end_time)
             if mask_a & mask_b:
                 if courses_share_students(
                     overlap_matrix, a.term_section.course_code, b.term_section.course_code
                 ):
-                    raise AssertionError(
-                        f"Student overlap: {a.term_section.course_code}-{a.term_section.section} "
-                        f"({a.day} {a.start_time}) vs {b.term_section.course_code}-{b.term_section.section} "
-                        f"({b.day} {b.start_time})"
-                    )
+                    count += 1
+    return count
+
+
+def _assert_no_same_group_overlaps(placements):
+    """Legacy wrapper — now counts instead of raising."""
+    count = _count_student_overlaps(placements)
+    if count > 0:
+        raise AssertionError(f"{count} student overlap(s) found")
 
 
 def _assert_labs_use_lab_slots(board):

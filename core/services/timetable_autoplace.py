@@ -524,7 +524,7 @@ def _score_option(
     time_variance = len(set(slot_indices)) - 1
 
     # Add student overlap penalty to gap (position 2) — competes with gap minimization
-    student_gap += student_overlap_penalty * 3  # 3 minutes penalty per shared student
+    student_gap += student_overlap_penalty * 2  # moderate penalty per shared student overlap
 
     return hard_conflict, same_course_overlap, student_gap, instructor_spread, time_variance
 
@@ -788,33 +788,35 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                             slot_penalty += slot_pref * (m["slot_idx"] - 1)
                 # Time variance penalty: heavily penalize different start times
                 # across meetings of the same course (should be same slot)
-                time_var_penalty = raw_score[4] * 50
+                time_var_penalty = (
+                    raw_score[4] * 15
+                )  # moderate: prefer same slot but don't dominate
 
-                # Instructor adjacency: reward S2 for being in the NEXT slot
-                # after S1 on the same days (back-to-back, not stacked)
-                adjacency_bonus = 0
+                # Instructor gap: for S2+ of the same course, penalize large gaps
+                # with S1 and reward adjacency. Two objectives:
+                #   - NEVER stack (same slot = +50 penalty)
+                #   - Prefer adjacent slots (75-100min gap = -10 reward)
+                #   - Penalize large gaps proportionally (instructor idle time)
+                instructor_gap_penalty = 0
                 if sec_round > 1:
-                    # Find what slot_idx S1 of this course used
-                    s1_slots = set()
-                    for pc, _pm in placed_masks:
-                        if pc == code:
-                            # Get S1's placed schedule entries
-                            for ps_entry in placed_schedule:
-                                if len(ps_entry) > 3 and ps_entry[3] == code:
-                                    s1_slots.add(
-                                        (ps_entry[0], _to_min(ps_entry[1]))
-                                    )  # (day, start_min)
-                            break
-                    if s1_slots:
-                        for m in option:
-                            m_start = _to_min(m["start"])
-                            for s1_day, s1_start in s1_slots:
-                                if m["day"] == s1_day:
-                                    gap = abs(m_start - s1_start)
-                                    if 75 <= gap <= 100:
-                                        adjacency_bonus -= 10  # adjacent slot: small reward
-                                    elif gap == 0:
-                                        adjacency_bonus += 50  # SAME slot: penalize (stacking)
+                    s1_day_starts: dict[str, list[int]] = defaultdict(list)
+                    for ps_entry in placed_schedule:
+                        if len(ps_entry) > 3 and ps_entry[3] == code:
+                            s1_day_starts[ps_entry[0]].append(_to_min(ps_entry[1]))
+
+                    for m in option:
+                        m_start = _to_min(m["start"])
+                        if m["day"] in s1_day_starts:
+                            for s1_start in s1_day_starts[m["day"]]:
+                                gap = abs(m_start - s1_start)
+                                if gap == 0:
+                                    instructor_gap_penalty += 50  # stacking: heavy penalty
+                                elif 75 <= gap <= 100:
+                                    instructor_gap_penalty -= 10  # adjacent: reward
+                                elif gap > 100:
+                                    instructor_gap_penalty += (
+                                        gap // 30
+                                    )  # large gap: proportional penalty
 
                 score = (
                     raw_score[0],
@@ -823,7 +825,7 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                     + slot_penalty
                     + time_var_penalty
                     + room_penalty
-                    + adjacency_bonus,
+                    + instructor_gap_penalty,
                     raw_score[3],
                     raw_score[4],
                 )
