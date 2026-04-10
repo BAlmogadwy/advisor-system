@@ -753,29 +753,33 @@ def _export_section_plan_xlsx(
             c.font = Font(bold=True, size=10)
             c.border = cell_border
 
-            # Sections
-            c = ws.cell(row=r, column=8, value=row["num_sections"])
+            # Sections = CEILING(Students / Max, 1)
+            c = ws.cell(row=r, column=8)
+            c.value = f"=CEILING(G{r}/I{r},1)"
             c.alignment = center
             c.font = num_font
             c.border = cell_border
 
-            # Max/Section
+            # Max/Section (editable — user can change this)
             c = ws.cell(row=r, column=9, value=row["max_per_section"])
             c.alignment = center
             c.font = num_font
             c.border = cell_border
 
-            # Avg/Section
-            c = ws.cell(row=r, column=10, value=row["avg_per_section"])
+            # Avg/Section = ROUND(Students / Sections, 0)
+            c = ws.cell(row=r, column=10)
+            c.value = f"=IF(H{r}>0,ROUND(G{r}/H{r},0),0)"
             c.alignment = center
             c.font = num_font
             c.border = cell_border
 
-            # Fill %
-            fill_pct = row.get("fill_percent", 0)
-            c = ws.cell(row=r, column=11, value=f"{fill_pct}%")
+            # Fill % = Avg / Max * 100
+            c = ws.cell(row=r, column=11)
+            c.value = f'=IF(I{r}>0,ROUND(G{r}/(H{r}*I{r})*100,0)&"%","")'
             c.alignment = center
             c.border = cell_border
+            # Conditional formatting via static check (formulas recalculate in Excel)
+            fill_pct = row.get("fill_percent", 0)
             if fill_pct >= 90:
                 c.font = Font(bold=True, color="1E8449")
             elif fill_pct < 50:
