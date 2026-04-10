@@ -568,6 +568,7 @@ def _export_section_plan_xlsx(
         "#",
         "Department",
         "Course",
+        "Name",
         "Credits",
         "External",
         "Students",
@@ -577,6 +578,20 @@ def _export_section_plan_xlsx(
         "Fill %",
         "Status",
     ]
+
+    # Build course name lookup from Course + ProgrammeRequirement tables
+    from core.models import Course as CourseModel
+
+    _course_names: dict[str, str] = {}
+    for code, desc in CourseModel.objects.values_list("course_code", "description"):
+        _course_names[normalize_code(code)] = desc or ""
+    # Also check ElectiveCourse for elective names
+    from core.models import ElectiveCourse as EC
+
+    for code, name in EC.objects.values_list("course_code", "course_name"):
+        nc = normalize_code(code)
+        if nc not in _course_names or not _course_names[nc]:
+            _course_names[nc] = name or ""
 
     # ── Styles ──
     thin = Side(style="thin", color="D5D8DC")
@@ -615,7 +630,7 @@ def _export_section_plan_xlsx(
         _dept_colors[dept] = fill
         return fill
 
-    col_widths = [5, 12, 14, 8, 9, 10, 10, 12, 12, 9, 12]
+    col_widths = [5, 12, 14, 30, 8, 9, 10, 10, 12, 12, 9, 12]
 
     def _write_sections_sheet(ws, plan_data: list[dict]) -> None:
         """Write the sections data rows with styled formatting."""
@@ -662,46 +677,53 @@ def _export_section_plan_xlsx(
             c.alignment = left_center
             c.border = cell_border
 
+            # Course name
+            course_name = _course_names.get(normalize_code(row["course_code"]), "")
+            c = ws.cell(row=r, column=4, value=course_name)
+            c.font = Font(size=9, color="566573")
+            c.alignment = left_center
+            c.border = cell_border
+
             # Credits
-            c = ws.cell(row=r, column=4, value=row["credit_hours"])
+            c = ws.cell(row=r, column=5, value=row["credit_hours"])
             c.alignment = center
             c.font = num_font
             c.border = cell_border
 
             # External
-            c = ws.cell(row=r, column=5, value="Yes" if is_ext else "")
+            c = ws.cell(row=r, column=6, value="Yes" if is_ext else "")
             c.alignment = center
             c.border = cell_border
             if is_ext:
                 c.font = Font(color="2980B9", bold=True)
 
             # Students
-            c = ws.cell(row=r, column=6, value=row["total_students"])
+            c = ws.cell(row=r, column=7, value=row["total_students"])
             c.alignment = center
             c.font = Font(bold=True, size=10)
             c.border = cell_border
 
             # Sections
-            c = ws.cell(row=r, column=7, value=row["num_sections"])
+            c = ws.cell(row=r, column=8, value=row["num_sections"])
             c.alignment = center
             c.font = num_font
             c.border = cell_border
 
             # Max/Section
-            c = ws.cell(row=r, column=8, value=row["max_per_section"])
+            c = ws.cell(row=r, column=9, value=row["max_per_section"])
             c.alignment = center
             c.font = num_font
             c.border = cell_border
 
             # Avg/Section
-            c = ws.cell(row=r, column=9, value=row["avg_per_section"])
+            c = ws.cell(row=r, column=10, value=row["avg_per_section"])
             c.alignment = center
             c.font = num_font
             c.border = cell_border
 
             # Fill %
             fill_pct = row.get("fill_percent", 0)
-            c = ws.cell(row=r, column=10, value=f"{fill_pct}%")
+            c = ws.cell(row=r, column=11, value=f"{fill_pct}%")
             c.alignment = center
             c.border = cell_border
             if fill_pct >= 90:
@@ -713,7 +735,7 @@ def _export_section_plan_xlsx(
 
             # Status
             status = row.get("status", "")
-            c = ws.cell(row=r, column=11, value=status.title() if status else "")
+            c = ws.cell(row=r, column=12, value=status.title() if status else "")
             c.alignment = center
             c.border = cell_border
             if status == "full":
@@ -728,9 +750,9 @@ def _export_section_plan_xlsx(
             if row_fill:
                 for col in range(1, len(headers) + 1):
                     cell = ws.cell(row=r, column=col)
-                    # Don't override dept colour (col 2) or status colour (col 11)
+                    # Don't override dept colour (col 2) or status colour (col 12)
                     if (
-                        col not in (2, 11)
+                        col not in (2, 12)
                         and not cell.fill.fgColor
                         or cell.fill.fgColor.rgb == "00000000"
                     ):
