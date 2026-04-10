@@ -200,11 +200,13 @@ def assign_rooms_to_board(board_id: int) -> dict:
         if p.room:
             tracker.usage[(p.day, p.start_time)].add(p.room)
 
-    # Get section capacities from budget
+    # Get actual students per section from budget (not theoretical max)
     from core.models import ScenarioSectionBudget
 
     budget_map = {
-        b.course_code: b.max_per_section
+        b.course_code: (
+            b.total_demand // b.planned_sections if b.planned_sections > 0 else b.max_per_section
+        )
         for b in ScenarioSectionBudget.objects.filter(
             scenario=board.scenario, programme_term=board.nominal_term
         )

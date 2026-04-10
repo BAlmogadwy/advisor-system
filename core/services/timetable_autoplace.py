@@ -698,7 +698,13 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
             is_online = cd.get("is_online", False)
 
             # ── Score every candidate option and keep the best ────────
-            section_cap = cd["budget"].max_per_section
+            # Use actual students per section (not theoretical max) for room matching
+            budget = cd["budget"]
+            section_cap = (
+                (budget.total_demand // budget.planned_sections)
+                if budget.planned_sections > 0
+                else budget.max_per_section
+            )
             for option in all_options:
                 # Room feasibility: prefer options with rooms, penalize roomless
                 room_penalty = 0
