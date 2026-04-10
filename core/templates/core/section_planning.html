@@ -546,7 +546,7 @@ $('spAdvSaveDb').onclick = async () => {
   inputs.forEach(inp => {
     const val = inp.value.trim();
     if (val && parseInt(val) > 0) {
-      overrides[inp.dataset.course] = parseInt(val);
+      overrides[inp.dataset.code] = parseInt(val);
     }
   });
 
