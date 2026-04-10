@@ -638,8 +638,7 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
     placed_masks: list[tuple[str, int]] = []
     placed_schedule: list[tuple[str, str, str, str]] = []
     all_placed_masks: list[tuple[str, int]] = []
-    # Track S1 time pattern per course for back-to-back section alignment
-    course_s1_pattern: dict[str, set[tuple[str, int]]] = {}  # code → {(day, slot_idx)}
+    # (back-to-back section alignment removed — it over-concentrated sections)
     placement_results: list[dict] = []
     total_placed = 0
     total_skipped = 0
@@ -791,14 +790,31 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                 # across meetings of the same course (should be same slot)
                 time_var_penalty = raw_score[4] * 50
 
-                # Back-to-back bonus: reward S2+ for matching S1's time pattern
-                backtoback_bonus = 0
-                s1_pat = course_s1_pattern.get(code)
-                if s1_pat and sec_round > 1:
-                    # Count how many meetings match S1's (day, slot_idx) pattern
-                    matches = sum(1 for m in option if (m["day"], m["slot_idx"]) in s1_pat)
-                    # Reward: -30 per matching meeting (negative = better score)
-                    backtoback_bonus = -30 * matches
+                # Instructor adjacency: reward S2 for being in the NEXT slot
+                # after S1 on the same days (back-to-back, not stacked)
+                adjacency_bonus = 0
+                if sec_round > 1:
+                    # Find what slot_idx S1 of this course used
+                    s1_slots = set()
+                    for pc, _pm in placed_masks:
+                        if pc == code:
+                            # Get S1's placed schedule entries
+                            for ps_entry in placed_schedule:
+                                if len(ps_entry) > 3 and ps_entry[3] == code:
+                                    s1_slots.add(
+                                        (ps_entry[0], _to_min(ps_entry[1]))
+                                    )  # (day, start_min)
+                            break
+                    if s1_slots:
+                        for m in option:
+                            m_start = _to_min(m["start"])
+                            for s1_day, s1_start in s1_slots:
+                                if m["day"] == s1_day:
+                                    gap = abs(m_start - s1_start)
+                                    if 75 <= gap <= 100:
+                                        adjacency_bonus -= 10  # adjacent slot: small reward
+                                    elif gap == 0:
+                                        adjacency_bonus += 50  # SAME slot: penalize (stacking)
 
                 score = (
                     raw_score[0],
@@ -807,7 +823,7 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                     + slot_penalty
                     + time_var_penalty
                     + room_penalty
-                    + backtoback_bonus,
+                    + adjacency_bonus,
                     raw_score[3],
                     raw_score[4],
                 )
@@ -888,10 +904,6 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                 placed_schedule.append((m["day"], m["start"], m["end"], code))
                 all_placed_masks.append((code, mask))
                 meeting_results.append({"day": m["day"], "start": m["start"], "end": m["end"]})
-
-            # Record S1 pattern for back-to-back alignment of S2+
-            if sec_round == 1:
-                course_s1_pattern[code] = {(m["day"], m["slot_idx"]) for m in best_option}
 
             total_placed += 1
             placement_results.append(
