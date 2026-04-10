@@ -845,6 +845,7 @@ def solve_board_with_hints(
         "placements": placements,
         "objective": obj,
         "improved": len(placements) >= greedy_count,
+        "placed_vs_greedy": len(placements) - greedy_count,
     }
 
 

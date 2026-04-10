@@ -45,9 +45,8 @@ Key models used:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 
 from core.models import (
     BoardStudentLink,
@@ -179,6 +178,7 @@ class PlacementInfo:
         mask:             Pre-computed 2016-bit bitmask for the
                           placement's own day/time slot.
     """
+
     id: int
     term_section_id: int
     course_code: str
@@ -214,18 +214,20 @@ def _load_board_placements(board_id: int) -> list[PlacementInfo]:
         meetings = list(p.term_section.meetings.all())
         instructor = meetings[0].instructor if meetings else ""
 
-        result.append(PlacementInfo(
-            id=p.id,
-            term_section_id=p.term_section_id,
-            course_code=p.term_section.course_code,
-            section=p.term_section.section,
-            day=p.day,
-            start_time=p.start_time,
-            end_time=p.end_time,
-            room=p.room,
-            instructor=instructor,
-            mask=_time_mask(p.day, p.start_time, p.end_time),
-        ))
+        result.append(
+            PlacementInfo(
+                id=p.id,
+                term_section_id=p.term_section_id,
+                course_code=p.term_section.course_code,
+                section=p.term_section.section,
+                day=p.day,
+                start_time=p.start_time,
+                end_time=p.end_time,
+                room=p.room,
+                instructor=instructor,
+                mask=_time_mask(p.day, p.start_time, p.end_time),
+            )
+        )
     return result
 
 
@@ -258,68 +260,93 @@ def detect_board_conflicts(board_id: int) -> dict:
         ``critical = len(overlaps) + len(instructor_clashes)``; ``warning = len(room_clashes)``.
     """
     items = _load_board_placements(board_id)
-    n = len(items)
 
     overlaps: list[dict] = []
     instructor_clashes: list[dict] = []
     room_clashes: list[dict] = []
 
-    # De-duplication sets keyed by (placement_id_a, placement_id_b)
-    seen_overlap_pairs: set[tuple[int, int]] = set()
-    seen_instr_pairs: set[tuple[int, int]] = set()
-    seen_room_pairs: set[tuple[int, int]] = set()
+    # ── Pre-group items for efficient comparison ──
+    # Group by section label (S1, S2) — only same-group pairs can have student conflicts
+    from collections import defaultdict
 
-    for i in range(n):
-        for j in range(i + 1, n):
-            a, b = items[i], items[j]
-            pair = (a.id, b.id)
+    by_group: dict[str, list] = defaultdict(list)
+    by_instructor: dict[str, list] = defaultdict(list)
+    by_room: dict[str, list] = defaultdict(list)
+    for item in items:
+        by_group[item.section].append(item)
+        if item.instructor:
+            by_instructor[item.instructor.strip().upper()].append(item)
+        if item.room:
+            by_room[item.room.strip().upper()].append(item)
 
-            # Sections in DIFFERENT student groups (e.g. S1 vs S2) CAN overlap
-            # — they serve different cohorts. Only flag conflicts within
-            # the SAME group or between same-course sections (instructor).
-            same_group = a.section == b.section  # e.g. both "S1"
-            same_course = a.course_code == b.course_code
+    seen_pairs: set[tuple[int, int]] = set()
 
-            # ---- Time overlap: only within same student group ----
-            if same_group and a.mask & b.mask and pair not in seen_overlap_pairs:
-                seen_overlap_pairs.add(pair)
-                overlaps.append({
-                    "ids": [a.id, b.id],
-                    "sections": [f"{a.course_code}-{a.section}", f"{b.course_code}-{b.section}"],
-                    "detail": f"{a.day} {a.start_time}-{a.end_time} vs {b.day} {b.start_time}-{b.end_time}",
-                })
+    def _pair_key(a_id: int, b_id: int) -> tuple[int, int]:
+        return (min(a_id, b_id), max(a_id, b_id))
 
-            # ---- Instructor clash: same instructor at same time (any group) ----
-            if (
-                a.instructor
-                and b.instructor
-                and a.instructor.strip().upper() == b.instructor.strip().upper()
-                and a.mask & b.mask
-                and pair not in seen_instr_pairs
-            ):
-                seen_instr_pairs.add(pair)
-                instructor_clashes.append({
-                    "ids": [a.id, b.id],
-                    "instructor": a.instructor,
-                    "sections": [f"{a.course_code}-{a.section}", f"{b.course_code}-{b.section}"],
-                    "detail": f"{a.instructor}: {a.day} {a.start_time} vs {b.day} {b.start_time}",
-                })
+    # ── Same-group overlap detection (student conflicts) ──
+    for _group, group_items in by_group.items():
+        n = len(group_items)
+        for i in range(n):
+            for j in range(i + 1, n):
+                a, b = group_items[i], group_items[j]
+                pk = _pair_key(a.id, b.id)
+                if a.mask & b.mask and pk not in seen_pairs:
+                    seen_pairs.add(pk)
+                    overlaps.append(
+                        {
+                            "ids": [a.id, b.id],
+                            "sections": [
+                                f"{a.course_code}-{a.section}",
+                                f"{b.course_code}-{b.section}",
+                            ],
+                            "detail": f"{a.day} {a.start_time}-{a.end_time} vs {b.day} {b.start_time}-{b.end_time}",
+                        }
+                    )
 
-            # ---- Room clash: same non-empty room + time overlap ----
-            if (
-                a.room
-                and b.room
-                and a.room.strip().upper() == b.room.strip().upper()
-                and a.mask & b.mask
-                and pair not in seen_room_pairs
-            ):
-                seen_room_pairs.add(pair)
-                room_clashes.append({
-                    "ids": [a.id, b.id],
-                    "room": a.room,
-                    "sections": [f"{a.course_code}-{a.section}", f"{b.course_code}-{b.section}"],
-                    "detail": f"Room {a.room}: {a.day} {a.start_time} vs {b.day} {b.start_time}",
-                })
+    # ── Instructor clash detection (any group) ──
+    seen_instr: set[tuple[int, int]] = set()
+    for _instr, instr_items in by_instructor.items():
+        n = len(instr_items)
+        for i in range(n):
+            for j in range(i + 1, n):
+                a, b = instr_items[i], instr_items[j]
+                pk = _pair_key(a.id, b.id)
+                if a.mask & b.mask and pk not in seen_instr:
+                    seen_instr.add(pk)
+                    instructor_clashes.append(
+                        {
+                            "ids": [a.id, b.id],
+                            "instructor": a.instructor,
+                            "sections": [
+                                f"{a.course_code}-{a.section}",
+                                f"{b.course_code}-{b.section}",
+                            ],
+                            "detail": f"{a.instructor}: {a.day} {a.start_time} vs {b.day} {b.start_time}",
+                        }
+                    )
+
+    # ── Room clash detection (any group) ──
+    seen_room: set[tuple[int, int]] = set()
+    for _rm, room_items in by_room.items():
+        n = len(room_items)
+        for i in range(n):
+            for j in range(i + 1, n):
+                a, b = room_items[i], room_items[j]
+                pk = _pair_key(a.id, b.id)
+                if a.mask & b.mask and pk not in seen_room:
+                    seen_room.add(pk)
+                    room_clashes.append(
+                        {
+                            "ids": [a.id, b.id],
+                            "room": a.room,
+                            "sections": [
+                                f"{a.course_code}-{a.section}",
+                                f"{b.course_code}-{b.section}",
+                            ],
+                            "detail": f"Room {a.room}: {a.day} {a.start_time} vs {b.day} {b.start_time}",
+                        }
+                    )
 
     # Overlaps and instructor clashes are "critical" (block publish);
     # room clashes are "warning" (advisory only).
@@ -380,7 +407,10 @@ def validate_placement(
     new_instructor = meeting.instructor if meeting else ""
 
     ts = TermSection.objects.filter(id=term_section_id).first()
-    new_label = f"{ts.course_code}-{ts.section}" if ts else str(term_section_id)
+    # Extract group number from section label (e.g. "S1" -> 1, "S2" -> 2)
+    new_sec_num = 1
+    if ts and ts.section and ts.section.startswith("S") and ts.section[1:].isdigit():
+        new_sec_num = int(ts.section[1:])
 
     overlaps: list[dict] = []
     instructor_clashes: list[dict] = []
@@ -390,13 +420,25 @@ def validate_placement(
         if item.id == exclude_placement_id:
             continue
 
-        # Time overlap
+        # Time overlap — only flag if same student group (same section number)
         if new_mask & item.mask:
-            overlaps.append({
-                "id": item.id,
-                "section": f"{item.course_code}-{item.section}",
-                "detail": f"{item.day} {item.start_time}-{item.end_time}",
-            })
+            item_sec_num = 1
+            if item.section and item.section.startswith("S") and item.section[1:].isdigit():
+                item_sec_num = int(item.section[1:])
+
+            # Same-course overlap is always a conflict (instructor teaches both)
+            same_course = ts and item.course_code == ts.course_code
+            # Same-group overlap is a student conflict
+            same_group = new_sec_num == item_sec_num
+
+            if same_course or same_group:
+                overlaps.append(
+                    {
+                        "id": item.id,
+                        "section": f"{item.course_code}-{item.section}",
+                        "detail": f"{item.day} {item.start_time}-{item.end_time}",
+                    }
+                )
 
             # Instructor clash
             if (
@@ -404,19 +446,23 @@ def validate_placement(
                 and item.instructor
                 and new_instructor.strip().upper() == item.instructor.strip().upper()
             ):
-                instructor_clashes.append({
-                    "id": item.id,
-                    "instructor": new_instructor,
-                    "section": f"{item.course_code}-{item.section}",
-                })
+                instructor_clashes.append(
+                    {
+                        "id": item.id,
+                        "instructor": new_instructor,
+                        "section": f"{item.course_code}-{item.section}",
+                    }
+                )
 
             # Room clash
             if room and item.room and room.strip().upper() == item.room.strip().upper():
-                room_clashes.append({
-                    "id": item.id,
-                    "room": room,
-                    "section": f"{item.course_code}-{item.section}",
-                })
+                room_clashes.append(
+                    {
+                        "id": item.id,
+                        "room": room,
+                        "section": f"{item.course_code}-{item.section}",
+                    }
+                )
 
     critical = len(overlaps) + len(instructor_clashes)
     warning = len(room_clashes)
@@ -474,18 +520,38 @@ def compute_affected_students(board_id: int) -> dict:
         Same-course overlaps (two sections of ``CS101``) are skipped
         because a student only registers for one section of a course.
     """
-    from core.models import Course, StudentCourse
+    from core.models import StudentCourse
 
     conflicts = detect_board_conflicts(board_id)
     overlaps = conflicts.get("overlaps", [])
 
     if not overlaps:
-        return {"affected_count": 0, "blocked_count": 0, "resolvable_count": 0, "overlap_details": []}
+        return {
+            "affected_count": 0,
+            "blocked_count": 0,
+            "resolvable_count": 0,
+            "overlap_details": [],
+        }
 
     # All placed sections on this board -- needed to look up masks and
     # to exclude already-placed sections when searching for alternatives.
     all_placements = _load_board_placements(board_id)
     from core.models import TermSectionMeeting as TSM
+
+    # ── Precompute course→students map (one query) ──
+    overlap_courses: set[str] = set()
+    for overlap in overlaps:
+        for sec in overlap.get("sections", []):
+            code = sec.rsplit("-", 1)[0] if "-" in sec else sec
+            overlap_courses.add(code)
+
+    course_students_map: dict[str, set[int]] = defaultdict(set)
+    if overlap_courses:
+        sc_rows = StudentCourse.objects.filter(
+            course__course_code__in=list(overlap_courses), status="studying"
+        ).values_list("course__course_code", "student_id")
+        for cc, sid in sc_rows:
+            course_students_map[cc].add(sid)
 
     total_affected = 0
     total_blocked = 0
@@ -502,22 +568,12 @@ def compute_affected_students(board_id: int) -> dict:
         code_b = sections[1].rsplit("-", 1)[0] if "-" in sections[1] else sections[1]
 
         if code_a == code_b:
-            # Same course, different sections -- a student only takes one
-            # section of a course, so this is not a real student conflict.
             continue
 
-        # Find students studying BOTH courses
-        students_a = set(
-            StudentCourse.objects.filter(
-                course__course_code=code_a, status="studying"
-            ).values_list("student_id", flat=True)
+        # Find students studying BOTH courses (from precomputed map)
+        affected_students = course_students_map.get(code_a, set()) & course_students_map.get(
+            code_b, set()
         )
-        students_b = set(
-            StudentCourse.objects.filter(
-                course__course_code=code_b, status="studying"
-            ).values_list("student_id", flat=True)
-        )
-        affected_students = students_a & students_b
 
         if not affected_students:
             continue
@@ -573,13 +629,15 @@ def compute_affected_students(board_id: int) -> dict:
         total_affected += affected_count
         total_blocked += blocked_count
 
-        overlap_details.append({
-            "courses": [code_a, code_b],
-            "affected": affected_count,
-            "blocked": blocked_count,
-            "resolvable": resolvable,
-            "students": sorted(affected_students)[:20],
-        })
+        overlap_details.append(
+            {
+                "courses": [code_a, code_b],
+                "affected": affected_count,
+                "blocked": blocked_count,
+                "resolvable": resolvable,
+                "students": sorted(affected_students)[:20],
+            }
+        )
 
     return {
         "affected_count": total_affected,
@@ -644,18 +702,20 @@ def get_scenario_boards_summary(scenario_id: int) -> list[dict]:
         conflicts = detect_board_conflicts(b.id)
         primary_count = BoardStudentLink.objects.filter(board=b, link_type="primary").count()
         visitor_count = BoardStudentLink.objects.filter(board=b, link_type="visitor").count()
-        result.append({
-            "id": b.id,
-            "label": b.label,
-            "nominal_term": b.nominal_term,
-            "board_type": b.board_type,
-            "program": b.program,
-            "placement_count": placed,
-            "primary_count": primary_count,
-            "visitor_count": visitor_count,
-            "critical": conflicts["summary"]["critical"],
-            "warning": conflicts["summary"]["warning"],
-        })
+        result.append(
+            {
+                "id": b.id,
+                "label": b.label,
+                "nominal_term": b.nominal_term,
+                "board_type": b.board_type,
+                "program": b.program,
+                "placement_count": placed,
+                "primary_count": primary_count,
+                "visitor_count": visitor_count,
+                "critical": conflicts["summary"]["critical"],
+                "warning": conflicts["summary"]["warning"],
+            }
+        )
     return result
 
 
@@ -685,12 +745,11 @@ def compute_scenario_budget(scenario_id: int) -> list[dict]:
     # Count DISTINCT sections per course -- keyed by course_code, valued
     # by the *set* of section labels (e.g. {"A", "B"}).  This avoids
     # double-counting multi-placement sections (lecture + lab rows).
-    placements = (
-        SectionPlacement.objects.filter(board__scenario_id=scenario_id)
-        .select_related("term_section")
+    placements = SectionPlacement.objects.filter(board__scenario_id=scenario_id).select_related(
+        "term_section"
     )
     used_sections: dict[str, set[str]] = defaultdict(set)  # course_code -> {section labels}
-    board_usage: dict[str, set[int]] = defaultdict(set)    # course_code -> {board PKs}
+    board_usage: dict[str, set[int]] = defaultdict(set)  # course_code -> {board PKs}
     for p in placements:
         code = p.term_section.course_code
         sec = p.term_section.section
@@ -701,18 +760,20 @@ def compute_scenario_budget(scenario_id: int) -> list[dict]:
     result = []
     for b in budgets:
         used = used_counts.get(b.course_code, 0)
-        result.append({
-            "course_code": b.course_code,
-            "department": b.department,
-            "credit_hours": b.credit_hours,
-            "programme_term": b.programme_term,
-            "planned_sections": b.planned_sections,
-            "max_per_section": b.max_per_section,
-            "total_demand": b.total_demand,
-            "used_sections": used,
-            "remaining_sections": max(0, b.planned_sections - used),
-            "boards_using": sorted(board_usage.get(b.course_code, set())),
-        })
+        result.append(
+            {
+                "course_code": b.course_code,
+                "department": b.department,
+                "credit_hours": b.credit_hours,
+                "programme_term": b.programme_term,
+                "planned_sections": b.planned_sections,
+                "max_per_section": b.max_per_section,
+                "total_demand": b.total_demand,
+                "used_sections": used,
+                "remaining_sections": max(0, b.planned_sections - used),
+                "boards_using": sorted(board_usage.get(b.course_code, set())),
+            }
+        )
 
     result.sort(key=lambda x: (x.get("programme_term") or 0, x["course_code"]))
     return result
@@ -769,7 +830,7 @@ def detect_cross_board_conflicts(scenario_id: int) -> list[dict]:
     seen: set[tuple] = set()
 
     for i, board_a in enumerate(boards):
-        for board_b in boards[i + 1:]:
+        for board_b in boards[i + 1 :]:
             pa_list = board_placements.get(board_a.id, [])
             pb_list = board_placements.get(board_b.id, [])
 
@@ -790,19 +851,21 @@ def detect_cross_board_conflicts(scenario_id: int) -> list[dict]:
                                 continue
                             seen.add(pair_key)
 
-                            conflicts.append({
-                                "course_a": pa.course_code,
-                                "section_a": f"{pa.course_code}-{pa.section}",
-                                "board_a_id": board_a.id,
-                                "board_a_label": board_a.label,
-                                "course_b": pb.course_code,
-                                "section_b": f"{pb.course_code}-{pb.section}",
-                                "board_b_id": board_b.id,
-                                "board_b_label": board_b.label,
-                                "overlap_count": len(shared),
-                                "time": f"{pa.day} {pa.start_time}-{pa.end_time} vs "
-                                        f"{pb.day} {pb.start_time}-{pb.end_time}",
-                            })
+                            conflicts.append(
+                                {
+                                    "course_a": pa.course_code,
+                                    "section_a": f"{pa.course_code}-{pa.section}",
+                                    "board_a_id": board_a.id,
+                                    "board_a_label": board_a.label,
+                                    "course_b": pb.course_code,
+                                    "section_b": f"{pb.course_code}-{pb.section}",
+                                    "board_b_id": board_b.id,
+                                    "board_b_label": board_b.label,
+                                    "overlap_count": len(shared),
+                                    "time": f"{pa.day} {pa.start_time}-{pa.end_time} vs "
+                                    f"{pb.day} {pb.start_time}-{pb.end_time}",
+                                }
+                            )
 
     conflicts.sort(key=lambda x: -x["overlap_count"])
     return conflicts
@@ -849,9 +912,7 @@ def check_publish_readiness(scenario_id: int) -> dict:
                 f"Board '{board.label}': {conflicts['summary']['critical']} critical conflicts"
             )
         if conflicts["summary"]["warning"] > 0:
-            warnings.append(
-                f"Board '{board.label}': {conflicts['summary']['warning']} warnings"
-            )
+            warnings.append(f"Board '{board.label}': {conflicts['summary']['warning']} warnings")
 
     return {
         "ready": len(blockers) == 0,

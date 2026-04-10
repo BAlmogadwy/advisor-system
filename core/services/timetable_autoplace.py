@@ -834,7 +834,8 @@ def _adaptive_scenario(scenario_id: int) -> dict:
                     "improved": cpsat.get("improved", False),
                 }
                 if cpsat["status"] in ("optimal", "feasible") and cpsat["placed"] >= best_placed:
-                    # CP-SAT found an equal-or-better solution — persist the hinted result directly
+                    # CP-SAT found an equal-or-better solution (more placements, or
+                    # same count but solver-optimized objective) — persist it
                     persist_solver_result(board.id, cpsat)
                     best_placed = cpsat["placed"]
                     logger.info(
