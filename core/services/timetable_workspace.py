@@ -282,7 +282,7 @@ def detect_board_conflicts(board_id: int) -> dict:
     for item in items:
         if item.instructor:
             by_instructor[item.instructor.strip().upper()].append(item)
-        if item.room:
+        if item.room and item.room.strip().upper() != "UNASSIGNED":
             by_room[item.room.strip().upper()].append(item)
 
     seen_pairs: set[tuple[int, int]] = set()
@@ -469,8 +469,14 @@ def validate_placement(
                     }
                 )
 
-            # Room clash
-            if room and item.room and room.strip().upper() == item.room.strip().upper():
+            # Room clash (exclude UNASSIGNED)
+            if (
+                room
+                and item.room
+                and room.strip().upper() != "UNASSIGNED"
+                and item.room.strip().upper() != "UNASSIGNED"
+                and room.strip().upper() == item.room.strip().upper()
+            ):
                 room_clashes.append(
                     {
                         "id": item.id,
