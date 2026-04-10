@@ -831,8 +831,10 @@ def _export_section_plan_xlsx(
     title_font = Font(bold=True, color="FFFFFF", size=12)
     alt_fill = PatternFill(start_color="F4F6F7", end_color="F4F6F7", fill_type="solid")
 
-    def _write_summary_sheet(ws, summary_data: dict, p: dict) -> None:
-        """Write summary metadata and department breakdown into a worksheet."""
+    def _write_summary_sheet(
+        ws, summary_data: dict, p: dict, sec_sheet: str = "Sections", data_rows: int = 0
+    ) -> None:
+        """Write summary with formulas referencing the Sections sheet."""
         # Title row
         ws.merge_cells("A1:F1")
         title_val = f"Section Plan Summary — {p.get('year', '')}/{p.get('semester', '')}"
@@ -846,17 +848,23 @@ def _export_section_plan_xlsx(
         for c in range(2, 7):
             ws.cell(row=1, column=c).fill = title_fill
 
-        # KPI row
-        kpi_labels = ["Total Courses", "Total Sections", "Total Students", "Avg Fill %"]
-        kpi_values = [
-            summary_data.get("total_courses", 0),
-            summary_data.get("total_sections", 0),
-            summary_data.get("total_students", 0),
-            f"{summary_data.get('avg_fill_percent', 0)}%",
-        ]
-        for ci, label in enumerate(kpi_labels):
-            ws.cell(row=3, column=1 + ci * 2, value=label).font = bold
-            ws.cell(row=3, column=2 + ci * 2, value=kpi_values[ci])
+        # Sections sheet reference (quote if has spaces/hyphens)
+        sq = f"'{sec_sheet}'" if "-" in sec_sheet or " " in sec_sheet else sec_sheet
+        # Data range in sections sheet: row 3 to 2+data_rows
+        last_row = 2 + max(data_rows, 1)
+
+        # KPI row — formulas referencing Sections sheet
+        ws.cell(row=3, column=1, value="Total Courses").font = bold
+        ws.cell(row=3, column=2).value = f"=COUNTA({sq}!C3:C{last_row})"
+        ws.cell(row=3, column=2).font = Font(bold=True, size=11, color="0A8E6E")
+
+        ws.cell(row=3, column=3, value="Total Sections").font = bold
+        ws.cell(row=3, column=4).value = f"=SUM({sq}!H3:H{last_row})"
+        ws.cell(row=3, column=4).font = Font(bold=True, size=11, color="0A8E6E")
+
+        ws.cell(row=3, column=5, value="Total Students").font = bold
+        ws.cell(row=3, column=6).value = f"=SUM({sq}!G3:G{last_row})"
+        ws.cell(row=3, column=6).font = Font(bold=True, size=11, color="0A8E6E")
 
         # Department Summary table
         ws.cell(row=5, column=1, value="Department Summary").font = Font(bold=True, size=11)
@@ -871,37 +879,56 @@ def _export_section_plan_xlsx(
         depts = summary_data.get("departments", [])
         for i, dept in enumerate(depts):
             r = 7 + i
-            ws.cell(row=r, column=1, value=dept["department"]).font = bold
-            ws.cell(row=r, column=1).border = thin_border
-            ws.cell(row=r, column=2, value=dept["courses"]).alignment = center
-            ws.cell(row=r, column=2).border = thin_border
-            ws.cell(row=r, column=3, value=dept["sections"]).alignment = center
-            ws.cell(row=r, column=3).border = thin_border
-            ws.cell(row=r, column=4, value=dept["students"]).alignment = center
-            ws.cell(row=r, column=4).border = thin_border
-            ws.cell(row=r, column=5, value=dept["total_credits"]).alignment = center
-            ws.cell(row=r, column=5).border = thin_border
-            if i % 2 == 1:
-                for c in range(1, 6):
-                    ws.cell(row=r, column=c).fill = alt_fill
+            dept_name = dept["department"]
 
-        # Totals row
+            # Department name with colour
+            c = ws.cell(row=r, column=1, value=dept_name)
+            c.font = bold
+            c.border = thin_border
+            c.fill = _dept_fill(dept_name)
+
+            # Courses = COUNTIF(Sections!B:B, dept_name)
+            c = ws.cell(row=r, column=2)
+            c.value = f'=COUNTIF({sq}!B3:B{last_row},"{dept_name}")'
+            c.alignment = center
+            c.border = thin_border
+
+            # Sections = SUMPRODUCT for matching dept
+            c = ws.cell(row=r, column=3)
+            c.value = f'=SUMPRODUCT(({sq}!B3:B{last_row}="{dept_name}")*{sq}!H3:H{last_row})'
+            c.alignment = center
+            c.border = thin_border
+
+            # Students = SUMPRODUCT for matching dept
+            c = ws.cell(row=r, column=4)
+            c.value = f'=SUMPRODUCT(({sq}!B3:B{last_row}="{dept_name}")*{sq}!G3:G{last_row})'
+            c.alignment = center
+            c.border = thin_border
+
+            # Total Credits = SUMPRODUCT(sections * credits) for matching dept
+            c = ws.cell(row=r, column=5)
+            c.value = f'=SUMPRODUCT(({sq}!B3:B{last_row}="{dept_name}")*{sq}!H3:H{last_row}*{sq}!E3:E{last_row})'
+            c.alignment = center
+            c.border = thin_border
+
+            if i % 2 == 1:
+                for col in range(2, 6):
+                    ws.cell(row=r, column=col).fill = alt_fill
+
+        # Totals row — SUM of the formula rows above
         if depts:
             tr = 7 + len(depts)
             ws.cell(row=tr, column=1, value="TOTAL").font = Font(bold=True, size=10)
             ws.cell(row=tr, column=1).border = thin_border
-            ws.cell(row=tr, column=2, value=sum(d["courses"] for d in depts)).font = bold
-            ws.cell(row=tr, column=2).alignment = center
-            ws.cell(row=tr, column=2).border = thin_border
-            ws.cell(row=tr, column=3, value=sum(d["sections"] for d in depts)).font = bold
-            ws.cell(row=tr, column=3).alignment = center
-            ws.cell(row=tr, column=3).border = thin_border
-            ws.cell(row=tr, column=4, value=sum(d["students"] for d in depts)).font = bold
-            ws.cell(row=tr, column=4).alignment = center
-            ws.cell(row=tr, column=4).border = thin_border
-            ws.cell(row=tr, column=5, value=sum(d["total_credits"] for d in depts)).font = bold
-            ws.cell(row=tr, column=5).alignment = center
-            ws.cell(row=tr, column=5).border = thin_border
+            first_dept_row = 7
+            last_dept_row = 6 + len(depts)
+            for col in range(2, 6):
+                c = ws.cell(row=tr, column=col)
+                col_letter = chr(64 + col)
+                c.value = f"=SUM({col_letter}{first_dept_row}:{col_letter}{last_dept_row})"
+                c.font = Font(bold=True, size=10)
+                c.alignment = center
+                c.border = thin_border
 
         for col_idx in range(1, 7):
             ws.column_dimensions[chr(64 + col_idx)].width = 18
@@ -918,22 +945,41 @@ def _export_section_plan_xlsx(
         default_sheet.title = "Sections-All"
         _write_sections_sheet(default_sheet, combined_plan)
         sum_all_ws = wb.create_sheet("Summary-All")
-        _write_summary_sheet(sum_all_ws, combined_summary, params or {})
+        _write_summary_sheet(
+            sum_all_ws,
+            combined_summary,
+            params or {},
+            sec_sheet="Sections-All",
+            data_rows=len(combined_plan),
+        )
 
         # ── Per-program sheet pairs ──
         for prog_entry in programs_data:
             prog_name = prog_entry["program"]
-            sec_ws = wb.create_sheet(f"Sections-{prog_name}")
+            sec_name = f"Sections-{prog_name}"
+            sec_ws = wb.create_sheet(sec_name)
             _write_sections_sheet(sec_ws, prog_entry["plan"])
             sum_ws = wb.create_sheet(f"Summary-{prog_name}")
-            _write_summary_sheet(sum_ws, prog_entry["summary"], params or {})
+            _write_summary_sheet(
+                sum_ws,
+                prog_entry["summary"],
+                params or {},
+                sec_sheet=sec_name,
+                data_rows=len(prog_entry["plan"]),
+            )
     else:
         # Single or combined — keep existing behaviour exactly
         ws = wb.active
         ws.title = "Sections"
         _write_sections_sheet(ws, plan or [])
         ws2 = wb.create_sheet("Summary")
-        _write_summary_sheet(ws2, summary or {}, params or {})
+        _write_summary_sheet(
+            ws2,
+            summary or {},
+            params or {},
+            sec_sheet="Sections",
+            data_rows=len(plan or []),
+        )
 
     # Save to temp file
     tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
