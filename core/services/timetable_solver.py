@@ -489,9 +489,13 @@ def persist_solver_result(board_id: int, result: dict) -> dict:
 
 
 def solve_and_persist_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
-    """Solve and persist placements."""
+    """Solve and persist placements, then assign rooms."""
     result = solve_board(board_id, time_limit_seconds)
-    return persist_solver_result(board_id, result)
+    persist_solver_result(board_id, result)
+    from core.services.timetable_rooming import assign_rooms_to_board
+
+    assign_rooms_to_board(board_id)
+    return result
 
     return result
 

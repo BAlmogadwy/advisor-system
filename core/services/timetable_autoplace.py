@@ -547,6 +547,13 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
     slot_config = scenario.slot_config if scenario.slot_config else DEFAULT_SLOTS
     lab_slot_config = scenario.lab_slot_config if scenario.lab_slot_config else DEFAULT_LAB_SLOTS
 
+    # ── 0. Load rooms for this board's programme(s) ─────────────────
+    from core.services.timetable_rooming import RoomTracker, get_programme_rooms
+
+    programmes = [p.strip() for p in (board.program or "").split(",") if p.strip()]
+    room_list = get_programme_rooms(programmes) if programmes else []
+    room_tracker = RoomTracker(room_list) if room_list else None
+
     # ── 1. Load section budgets for this board's term level ───────────
     # Ordered by descending demand so the most popular courses are placed
     # first and get the best (least-conflicting) slots.
@@ -679,7 +686,20 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
             is_online = cd.get("is_online", False)
 
             # ── Score every candidate option and keep the best ────────
+            section_cap = cd["budget"].max_per_section
             for option in all_options:
+                # Room feasibility: hard reject if no room available
+                if room_tracker:
+                    room_ok = True
+                    for m in option:
+                        duration = _to_min(m["end"]) - _to_min(m["start"])
+                        rtype = "lab" if duration > 80 else "lecture"
+                        if not room_tracker.is_feasible(m["day"], m["start"], section_cap, rtype):
+                            room_ok = False
+                            break
+                    if not room_ok:
+                        continue  # skip this option entirely
+
                 raw_score = _score_option(
                     option,
                     same_group,
@@ -740,6 +760,15 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
             # subsequent placements see the new constraints.
             meeting_results = []
             for m in best_option:
+                # Assign room if tracker available
+                assigned_room = ""
+                if room_tracker:
+                    duration = _to_min(m["end"]) - _to_min(m["start"])
+                    rtype = "lab" if duration > 80 else "lecture"
+                    assigned_room = (
+                        room_tracker.assign_best_fit(m["day"], m["start"], section_cap, rtype) or ""
+                    )
+
                 TermSectionMeeting.objects.get_or_create(
                     term_section=ts,
                     day=m["day"],
@@ -752,7 +781,7 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                     term_section=ts,
                     day=m["day"],
                     start_time=m["start"],
-                    defaults={"end_time": m["end"]},
+                    defaults={"end_time": m["end"], "room": assigned_room},
                 )
                 mask = _time_mask(m["day"], m["start"], m["end"])
                 group_masks[sec_idx].append((code, mask))
@@ -837,6 +866,11 @@ def _adaptive_scenario(scenario_id: int) -> dict:
                     # CP-SAT found an equal-or-better solution (more placements, or
                     # same count but solver-optimized objective) — persist it
                     persist_solver_result(board.id, cpsat)
+                    from core.services.timetable_rooming import (
+                        assign_rooms_to_board as _assign_rooms,
+                    )
+
+                    _assign_rooms(board.id)
                     best_placed = cpsat["placed"]
                     logger.info(
                         "adaptive[%s]: CP-SAT improved (%s→%s placed)",

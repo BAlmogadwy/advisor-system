@@ -414,7 +414,7 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                             term_section=ts, day=day
                         ).first()
                         instructor = meeting.instructor if meeting else ""
-                        room = meeting.room if meeting else pp.room
+                        room = pp.room or (meeting.room if meeting else "")
                         text = f"{ts.course_code} {ts.section}"
                         if instructor:
                             text += f"\n{instructor}"

@@ -911,7 +911,25 @@ def check_publish_readiness(scenario_id: int) -> dict:
             blockers.append(
                 f"Board '{board.label}': {conflicts['summary']['critical']} critical conflicts"
             )
-        if conflicts["summary"]["warning"] > 0:
+
+        # Room clashes: block publish when rooms are actively assigned
+        room_clashes = len(conflicts.get("room_clashes", []))
+        has_rooms = (
+            SectionPlacement.objects.filter(board=board)
+            .exclude(room="")
+            .exclude(room="UNASSIGNED")
+            .exists()
+        )
+
+        if room_clashes > 0 and has_rooms:
+            blockers.append(f"Board '{board.label}': {room_clashes} room conflicts")
+
+        # Unassigned rooms when rooms are expected
+        unassigned_rooms = SectionPlacement.objects.filter(board=board, room="UNASSIGNED").count()
+        if unassigned_rooms > 0:
+            blockers.append(f"Board '{board.label}': {unassigned_rooms} sections without rooms")
+
+        if conflicts["summary"]["warning"] > 0 and not (room_clashes > 0 and has_rooms):
             warnings.append(f"Board '{board.label}': {conflicts['summary']['warning']} warnings")
 
     return {

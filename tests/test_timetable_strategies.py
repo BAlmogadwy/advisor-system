@@ -19,6 +19,7 @@ from core.models import (
     DeliveryBoard,
     Prerequisite,
     ProgrammeRequirement,
+    Room,
     ScenarioSectionBudget,
     ScenarioStudentMap,
     SectionPlacement,
@@ -128,6 +129,24 @@ def timetable_scenario():
             is_cross_term=False,
             recommended_courses=["TS402", "TS301", "TS302", "TS201"],
         )
+
+    # Create rooms for TS programme
+    Room.objects.get_or_create(
+        room_code="TSR01",
+        defaults={"capacity": 30, "department": "TS", "room_type": "lecture", "building": "T1"},
+    )
+    Room.objects.get_or_create(
+        room_code="TSR02",
+        defaults={"capacity": 30, "department": "TS", "room_type": "lecture", "building": "T1"},
+    )
+    Room.objects.get_or_create(
+        room_code="TSR03",
+        defaults={"capacity": 50, "department": "TS", "room_type": "lecture", "building": "T1"},
+    )
+    Room.objects.get_or_create(
+        room_code="TSLAB1",
+        defaults={"capacity": 30, "department": "TS", "room_type": "lab", "building": "T1"},
+    )
 
     return scenario, board
 
@@ -294,6 +313,93 @@ class TestTimeConsistency:
             assert inconsistent / total < 0.5, (
                 f"{inconsistent}/{total} sections have inconsistent start times"
             )
+
+
+class TestRoomAssignment:
+    """Verify rooms are assigned correctly during placement."""
+
+    def test_rooms_assigned_by_greedy(self, timetable_scenario):
+        scenario, board = timetable_scenario
+        auto_place_board(board.id, strategy="compact")
+        placements = SectionPlacement.objects.filter(board=board)
+        assigned = placements.exclude(room="").exclude(room="UNASSIGNED").count()
+        total = placements.count()
+        assert assigned > 0, "No rooms assigned by greedy placer"
+        assert assigned == total, f"Only {assigned}/{total} placements have rooms"
+
+    def test_no_room_double_booking(self, timetable_scenario):
+        scenario, board = timetable_scenario
+        auto_place_board(board.id, strategy="compact")
+        placements = list(SectionPlacement.objects.filter(board=board).exclude(room=""))
+
+        # Group by (day, start_time, room) — each combo should have at most 1 entry
+        from collections import defaultdict
+
+        slot_room: dict[tuple, list] = defaultdict(list)
+        for p in placements:
+            if p.room and p.room != "UNASSIGNED":
+                slot_room[(p.day, p.start_time, p.room)].append(p)
+
+        for key, entries in slot_room.items():
+            assert len(entries) <= 1, (
+                f"Room double-booking: {key[2]} on {key[0]} {key[1]} has {len(entries)} sections"
+            )
+
+    def test_room_capacity_respected(self, timetable_scenario):
+        scenario, board = timetable_scenario
+        auto_place_board(board.id, strategy="compact")
+        placements = list(
+            SectionPlacement.objects.filter(board=board)
+            .exclude(room="")
+            .exclude(room="UNASSIGNED")
+            .select_related("term_section")
+        )
+
+        from core.models import ScenarioSectionBudget
+
+        budget_map = {
+            b.course_code: b.max_per_section
+            for b in ScenarioSectionBudget.objects.filter(
+                scenario=board.scenario, programme_term=board.nominal_term
+            )
+        }
+
+        room_caps = {r.room_code: r.capacity for r in Room.objects.all()}
+
+        for p in placements:
+            cap = budget_map.get(p.term_section.course_code, 40)
+            room_cap = room_caps.get(p.room, 0)
+            assert room_cap >= cap, (
+                f"{p.term_section.course_code} section needs {cap} seats "
+                f"but room {p.room} has {room_cap}"
+            )
+
+    def test_labs_in_lab_rooms_only(self, timetable_scenario):
+        scenario, board = timetable_scenario
+        auto_place_board(board.id, strategy="compact")
+        placements = list(
+            SectionPlacement.objects.filter(board=board).exclude(room="").exclude(room="UNASSIGNED")
+        )
+
+        room_types = {r.room_code: r.room_type for r in Room.objects.all()}
+
+        def _to_min(t):
+            h, m = t.split(":")
+            return int(h) * 60 + int(m)
+
+        for p in placements:
+            duration = _to_min(p.end_time) - _to_min(p.start_time)
+            rtype = room_types.get(p.room, "lecture")
+            if duration > 80:
+                assert rtype == "lab", (
+                    f"Lab meeting {p.term_section.course_code} ({duration}min) "
+                    f"assigned to {rtype} room {p.room}"
+                )
+            else:
+                assert rtype == "lecture", (
+                    f"Lecture meeting {p.term_section.course_code} ({duration}min) "
+                    f"assigned to {rtype} room {p.room}"
+                )
 
 
 # ── Helper assertions ──

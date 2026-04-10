@@ -373,6 +373,11 @@ def rebalance_and_persist_board(board_id: int, max_seconds: float = 8.0) -> dict
                 defaults={"end_time": m["end"]},
             )
 
+    # Assign rooms after re-persisting
+    from core.services.timetable_rooming import assign_rooms_to_board
+
+    assign_rooms_to_board(board_id)
+
     return result
 
 
