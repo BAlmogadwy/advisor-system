@@ -870,10 +870,14 @@ $('spExport').onclick = async () => {
   btn.textContent = T.exporting;
 
   try {
+    const exportPayload = { ..._lastPayload };
+    const deptFilter = ($('spDeptFilter').value || '').trim().toUpperCase();
+    if (deptFilter) exportPayload.dept_filter = deptFilter;
+
     const res = await fetch('/ops/section-planning/export/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
-      body: JSON.stringify(_lastPayload),
+      body: JSON.stringify(exportPayload),
     });
 
     if (!res.ok) {

@@ -118,6 +118,12 @@ def _parse_payload(request: HttpRequest) -> tuple[dict | None, JsonResponse | No
             except (ValueError, TypeError):
                 pass
 
+    # Department prefix filter for export  e.g. "CS,AI"
+    dept_filter_raw = str(body.get("dept_filter", "")).strip().upper()
+    dept_prefixes = (
+        [p.strip() for p in dept_filter_raw.split(",") if p.strip()] if dept_filter_raw else []
+    )
+
     return {
         "year": year,
         "semester": semester,
@@ -127,6 +133,7 @@ def _parse_payload(request: HttpRequest) -> tuple[dict | None, JsonResponse | No
         "max_local_other": max_local_other,
         "max_external": max_external,
         "course_overrides": course_overrides,
+        "dept_filter": dept_prefixes,
     }, None
 
 
@@ -446,6 +453,17 @@ def section_plan_export_view(request: HttpRequest) -> HttpResponseBase:
         "course_overrides": params.get("course_overrides"),
     }
 
+    dept_prefixes = params.get("dept_filter", [])
+
+    def _filter_plan(plan: list[dict]) -> list[dict]:
+        if not dept_prefixes:
+            return plan
+        return [
+            entry
+            for entry in plan
+            if any(normalize_code(entry["course_code"]).startswith(p) for p in dept_prefixes)
+        ]
+
     try:
         if isinstance(program, list):
             # ── Multi-program export ──
@@ -467,8 +485,8 @@ def section_plan_export_view(request: HttpRequest) -> HttpResponseBase:
                 programs_data.append(
                     {
                         "program": prog,
-                        "plan": plan,
-                        "summary": summary,
+                        "plan": _filter_plan(plan),
+                        "summary": compute_plan_summary(_filter_plan(plan)),
                     }
                 )
             path = _export_section_plan_xlsx(
@@ -492,6 +510,7 @@ def section_plan_export_view(request: HttpRequest) -> HttpResponseBase:
                 **capacity_kwargs,
                 programme_capacities=pr_caps,
             )
+            plan = _filter_plan(plan)
             summary = compute_plan_summary(plan)
             path = _export_section_plan_xlsx(plan, summary, params, mode="single")
             filename = f"section_plan_{params['year']}_{params['semester']}_{program}.xlsx"
@@ -504,7 +523,7 @@ def section_plan_export_view(request: HttpRequest) -> HttpResponseBase:
                 program=None,
                 section=params["section"],
             )
-            plan = compute_section_plan(aggregate, **capacity_kwargs)
+            plan = _filter_plan(compute_section_plan(aggregate, **capacity_kwargs))
             summary = compute_plan_summary(plan)
             path = _export_section_plan_xlsx(plan, summary, params, mode="combined")
             filename = f"section_plan_{params['year']}_{params['semester']}.xlsx"
