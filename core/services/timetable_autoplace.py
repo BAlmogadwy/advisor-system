@@ -441,15 +441,17 @@ def _score_option(
     # soft penalty proportional to shared student count.
     from core.services.timetable_overlap import shared_student_count as _ssc_score
 
+    # Student overlap: penalised proportional to shared student count.
+    # This is in score position 0 (highest priority) so it always
+    # dominates gap/density/time-variance considerations.
     hard_conflict = 0
-    student_overlap_penalty = 0
     for placed_code, placed_mask in placed_masks:
         if total_mask & placed_mask:
             if placed_code == my_code:
                 continue  # same course handled in (2) below
             shared = _ssc_score(overlap_matrix, my_code, placed_code) if overlap_matrix else 0
             if shared > 0:
-                student_overlap_penalty += shared  # proportional to affected students
+                hard_conflict += shared  # dominates all other scoring
 
     # ── (2) Same-course overlap across ALL groups ─────────────────────
     # Prevents the same instructor from being double-booked.
@@ -523,9 +525,6 @@ def _score_option(
     # additional distinct index.
     slot_indices = [m["slot_idx"] for m in option]
     time_variance = len(set(slot_indices)) - 1
-
-    # Add student overlap penalty to gap (position 2) — competes with gap minimization
-    student_gap += student_overlap_penalty * 2  # moderate penalty per shared student overlap
 
     return hard_conflict, same_course_overlap, student_gap, instructor_spread, time_variance
 
