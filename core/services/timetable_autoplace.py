@@ -377,7 +377,7 @@ def _score_option(
     is_online: bool = False,
     online_codes_in_group: set[str] | None = None,
     overlap_matrix: dict | None = None,
-) -> tuple[int, int, int, int, int]:
+) -> tuple[int, int, int, int, int, int]:
     """Score a candidate meeting option.  **Lower is better.**
 
     The returned 5-tuple is compared lexicographically by the caller, so
@@ -430,7 +430,7 @@ def _score_option(
 
     Returns
     -------
-    tuple[int, int, int, int, int]
+    tuple[int, int, int, int, int, int]
         ``(hard_conflict, same_course_overlap, student_gap,
         instructor_spread, time_variance)``
     """
@@ -532,14 +532,14 @@ def _score_option(
     slot_indices = [m["slot_idx"] for m in option]
     time_variance = len(set(slot_indices)) - 1
 
-    # Add student overlap penalty to the gap bucket (position 2).
-    # Weight per shared student: high enough to discourage overlaps but
-    # not so high that it prevents the algorithm from exploring better
-    # gap/room/density trade-offs.  A pair sharing 10 students adds 100
-    # to the gap score — comparable to a 100-minute idle gap.
-    student_gap += student_overlap_penalty * 10
-
-    return hard_conflict, same_course_overlap, student_gap, instructor_spread, time_variance
+    return (
+        hard_conflict,
+        same_course_overlap,
+        student_gap,
+        instructor_spread,
+        time_variance,
+        student_overlap_penalty,
+    )
 
 
 def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
@@ -752,7 +752,7 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
             cur_placed = placed_masks.copy()
             cur_sched = placed_schedule.copy()
 
-            best_score = (float("inf"), float("inf"), float("inf"), float("inf"), float("inf"))
+            best_score = (float("inf"),) * 6
             best_option = None
 
             is_online = cd.get("is_online", False)
@@ -840,9 +840,18 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                                         gap // 30
                                     )  # large gap: proportional penalty
 
+                # raw_score[5] = student_overlap_penalty (sum of shared counts
+                # for overlapping course pairs).  Placed in its own score
+                # position between same_course_overlap and gap, so it
+                # dominates gap/density but NOT same-course constraints.
+                # This is intentionally "semi-hard": overlap is always worse
+                # than any gap arrangement, but a course pair with 2 shared
+                # students can be overlapped if the alternative requires
+                # overlapping a pair with 5 shared students.
                 score = (
                     raw_score[0],
                     raw_score[1],
+                    raw_score[5],  # student overlap: higher priority than gap
                     raw_score[2] * gap_weight
                     + slot_penalty
                     + time_var_penalty
