@@ -120,28 +120,34 @@ DEFAULT_LAB_SLOTS = [
     {"label": "Lab 6", "start": "18:10", "end": "19:50"},
 ]
 
-# Hard constraint: no course meeting may START during the prayer break.
+# Hard constraint: no course meeting may overlap with the prayer break.
 # The window is inclusive on both ends.
-BLOCKED_START_WINDOW = ("11:35", "12:59")
+PRAYER_BREAK_START = "11:35"
+PRAYER_BREAK_END = "12:59"
+
+
+def _meeting_overlaps_prayer(start_time: str, end_time: str) -> bool:
+    """Check whether a meeting interval overlaps the prayer-break window.
+
+    A meeting is blocked if any part of [start, end) intersects
+    [PRAYER_BREAK_START, PRAYER_BREAK_END].  This catches meetings that
+    start before the break but run into it.
+    """
+    s = _to_minutes(start_time)
+    e = _to_minutes(end_time)
+    pb_start = _to_minutes(PRAYER_BREAK_START)
+    pb_end = _to_minutes(PRAYER_BREAK_END)
+    return s <= pb_end and e > pb_start
 
 
 def _start_is_blocked(start_time: str) -> bool:
-    """Check whether *start_time* falls inside the prayer-break window.
+    """Legacy check — whether start_time falls inside prayer-break window.
 
-    Parameters
-    ----------
-    start_time : str
-        "HH:MM" string for the proposed meeting start.
-
-    Returns
-    -------
-    bool
-        ``True`` if a meeting starting at this time would violate the
-        prayer-break hard constraint.
+    Prefer _meeting_overlaps_prayer() for interval-based checks.
     """
     start_min = _to_minutes(start_time)
-    block_from = _to_minutes(BLOCKED_START_WINDOW[0])
-    block_to = _to_minutes(BLOCKED_START_WINDOW[1])
+    block_from = _to_minutes(PRAYER_BREAK_START)
+    block_to = _to_minutes(PRAYER_BREAK_END)
     return block_from <= start_min <= block_to
 
 
@@ -227,11 +233,11 @@ def _generate_meeting_options(
     # Build slot options for BOTH lecture and lab durations.
     lecture_positions = []
     for i, s in enumerate(slots):
-        if not _start_is_blocked(s["start"]):
+        if not _meeting_overlaps_prayer(s["start"], s["end"]):
             lecture_positions.append((i, s["start"], s["end"]))
     lab_positions = []
     for i, s in enumerate(lab_slots):
-        if not _start_is_blocked(s["start"]):
+        if not _meeting_overlaps_prayer(s["start"], s["end"]):
             lab_positions.append((i, s["start"], s["end"]))
 
     # Generate all unique permutations of the pattern so the lab can be
@@ -436,22 +442,22 @@ def _score_option(
     for m in option:
         total_mask |= _time_mask(m["day"], m["start"], m["end"])
 
-    # ── (1) Student overlap: weighted soft penalty, not hard block ──
-    # Only same-course overlap is hard. Cross-course student overlap is a
-    # soft penalty proportional to shared student count.
+    # ── (1) Cross-course student overlap: weighted soft penalty ────────
+    # Accumulated into student_overlap_penalty and added to the gap bucket
+    # (position 2) so it competes with gap/density/room on a level field.
+    # NOT lexicographically dominant — a slightly higher overlap count
+    # can be accepted if the gap/room/density picture is much better.
     from core.services.timetable_overlap import shared_student_count as _ssc_score
 
-    # Student overlap: penalised proportional to shared student count.
-    # This is in score position 0 (highest priority) so it always
-    # dominates gap/density/time-variance considerations.
-    hard_conflict = 0
+    hard_conflict = 0  # reserved for future use
+    student_overlap_penalty = 0
     for placed_code, placed_mask in placed_masks:
         if total_mask & placed_mask:
             if placed_code == my_code:
                 continue  # same course handled in (2) below
             shared = _ssc_score(overlap_matrix, my_code, placed_code) if overlap_matrix else 0
             if shared > 0:
-                hard_conflict += shared  # dominates all other scoring
+                student_overlap_penalty += shared
 
     # ── (2) Same-course overlap across ALL groups ─────────────────────
     # Prevents the same instructor from being double-booked.
@@ -525,6 +531,13 @@ def _score_option(
     # additional distinct index.
     slot_indices = [m["slot_idx"] for m in option]
     time_variance = len(set(slot_indices)) - 1
+
+    # Add student overlap penalty to the gap bucket (position 2).
+    # Weight per shared student: high enough to discourage overlaps but
+    # not so high that it prevents the algorithm from exploring better
+    # gap/room/density trade-offs.  A pair sharing 10 students adds 100
+    # to the gap score — comparable to a 100-minute idle gap.
+    student_gap += student_overlap_penalty * 10
 
     return hard_conflict, same_course_overlap, student_gap, instructor_spread, time_variance
 
