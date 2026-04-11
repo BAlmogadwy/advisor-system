@@ -1090,6 +1090,23 @@ def _adaptive_scenario(scenario_id: int) -> dict:
     }
 
 
+def _build_scenario_result(scenario_id: int) -> dict:
+    """Build a result dict from the current DB state of a scenario."""
+    boards = DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order")
+    results = {}
+    total_placed = 0
+    for board in boards:
+        placed = (
+            SectionPlacement.objects.filter(board=board)
+            .values("term_section_id")
+            .distinct()
+            .count()
+        )
+        results[board.label] = {"placed": placed, "skipped": 0}
+        total_placed += placed
+    return {"boards": results, "total_placed": total_placed, "total_skipped": 0}
+
+
 def auto_place_scenario(scenario_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
     """Auto-place sections on every board in a scenario.
 
@@ -1138,41 +1155,30 @@ def auto_place_scenario(scenario_id: int, strategy: str = DEFAULT_STRATEGY) -> d
     # Load-balanced: greedy build + redistribution
     if strategy == "load_balanced":
         boards = DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order")
-        results = {}
-        total_placed = 0
         for board in boards:
-            r = auto_place_board(board.id, strategy="compact")
-            results[board.label] = r
-            total_placed += r["placed"]
+            auto_place_board(board.id, strategy="compact")
         from core.services.timetable_load_balanced import rebalance_scenario
 
         rebalance_scenario(scenario_id, max_seconds_per_board=5.0)
-        return {"boards": results, "total_placed": total_placed, "total_skipped": 0}
+        # Re-query actual DB state after rebalancing
+        return _build_scenario_result(scenario_id)
 
     # Hybrid: greedy build + simulated annealing improvement
     if strategy == "hybrid":
         # Phase 1: greedy (compact) — build feasible solution
         boards = DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order")
-        results = {}
-        total_placed = 0
-        total_skipped = 0
         for board in boards:
-            r = auto_place_board(board.id, strategy="compact")
-            results[board.label] = r
-            total_placed += r["placed"]
-            total_skipped += r["skipped"]
+            auto_place_board(board.id, strategy="compact")
 
         # Phase 2: simulated annealing improvement
         from core.services.timetable_local_search import optimize_scenario
 
         sa_result = optimize_scenario(scenario_id, max_seconds_per_board=5.0)
 
-        return {
-            "boards": results,
-            "total_placed": total_placed,
-            "total_skipped": total_skipped,
-            "optimization": sa_result,
-        }
+        # Re-query actual DB state after SA optimization
+        result = _build_scenario_result(scenario_id)
+        result["optimization"] = sa_result
+        return result
 
     boards = DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order")
     results = {}

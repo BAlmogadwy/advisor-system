@@ -647,9 +647,16 @@ def compute_affected_students(board_id: int) -> dict:
                 mask_b = p.mask
 
         # Alternative sections for course_a that don't clash with placement_b
-        alt_a_sections = TermSection.objects.filter(course_code=code_a).exclude(
-            id__in=[p.term_section_id for p in all_placements if p.course_code == code_a]
+        # Scoped to this scenario's boards (not all TermSections globally)
+        scenario_boards = DeliveryBoard.objects.filter(scenario=board.scenario)
+        scenario_ts_ids = set(
+            SectionPlacement.objects.filter(board__in=scenario_boards).values_list(
+                "term_section_id", flat=True
+            )
         )
+        alt_a_sections = TermSection.objects.filter(
+            course_code=code_a, id__in=scenario_ts_ids
+        ).exclude(id__in=[p.term_section_id for p in all_placements if p.course_code == code_a])
         has_alt_a = False
         for alt_ts in alt_a_sections:
             alt_meetings = TSM.objects.filter(term_section=alt_ts)
@@ -661,9 +668,9 @@ def compute_affected_students(board_id: int) -> dict:
                 break
 
         # Alternative sections for course_b that don't clash with placement_a
-        alt_b_sections = TermSection.objects.filter(course_code=code_b).exclude(
-            id__in=[p.term_section_id for p in all_placements if p.course_code == code_b]
-        )
+        alt_b_sections = TermSection.objects.filter(
+            course_code=code_b, id__in=scenario_ts_ids
+        ).exclude(id__in=[p.term_section_id for p in all_placements if p.course_code == code_b])
         has_alt_b = False
         for alt_ts in alt_b_sections:
             alt_meetings = TSM.objects.filter(term_section=alt_ts)
