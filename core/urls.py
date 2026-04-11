@@ -111,6 +111,7 @@ from .timetable_workspace_views import (
     tw_board_unplaced_view,
     tw_boards_list_view,
     tw_generate_workspace_view,
+    tw_optimise_v2_view,
     tw_placement_create_planned_view,
     tw_placement_create_view,
     tw_placement_lock_view,
@@ -454,6 +455,11 @@ urlpatterns = [
         "ops/tw/slot-templates/create/",
         tw_slot_template_create_view,
         name="tw_slot_template_create",
+    ),
+    path(
+        "ops/tw/scenarios/<int:scenario_id>/optimise-v2/",
+        tw_optimise_v2_view,
+        name="tw_optimise_v2",
     ),
     # Dev role switch — guarded inside the view itself (requires DEBUG + env var)
     path("ops/dev/switch-role/", dev_role_switch_view, name="dev_role_switch"),

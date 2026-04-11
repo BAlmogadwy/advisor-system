@@ -1221,3 +1221,84 @@ def tw_slot_template_create_view(request: HttpRequest) -> JsonResponse:
         },
         status=201,
     )
+
+
+# ── V2 Optimiser ────────────────────────────────────────────────
+
+
+@login_required(login_url="login")
+@require_POST
+def tw_optimise_v2_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
+    """Run the v2 optimisation pipeline on an existing scenario.
+
+    POST body (all optional):
+        mode: str              — "current" (improve existing board) or
+                                 "full" (regenerate from scratch). Default "current".
+        strategies: list[str]  — strategies for "full" mode. Default all.
+        run_local_search: bool — run local search. Default true.
+        max_iterations: int    — local search iterations. Default 50.
+        run_chain_search: bool — run chain-2 search. Default true.
+        run_cpsat_polish: bool — run CP-SAT polisher. Default true.
+        cpsat_time_limit: int  — CP-SAT time budget (seconds). Default 60.
+    """
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+
+    try:
+        TimetableScenario.objects.get(pk=scenario_id)
+    except TimetableScenario.DoesNotExist:
+        return _err("Scenario not found", code="NOT_FOUND", status=404)
+
+    payload, err = _safe_json(request)
+    if err:
+        return err
+
+    mode = payload.get("mode", "current")
+    max_iterations = int(payload.get("max_iterations", 50))
+    run_chain = bool(payload.get("run_chain_search", True))
+    run_cpsat = bool(payload.get("run_cpsat_polish", True))
+    cpsat_limit = float(payload.get("cpsat_time_limit", 60))
+
+    try:
+        if mode == "full":
+            # Full mode: regenerate all candidates from scratch, rank, improve
+            from core.services.timetable_optimizer_v2 import optimise_scenario_timetable_v2
+
+            strategies = payload.get("strategies") or None
+            result = optimise_scenario_timetable_v2(
+                scenario_id=scenario_id,
+                strategies=strategies,
+                run_local_search=True,
+                max_search_iterations=max_iterations,
+                run_chain_search=run_chain,
+                run_cpsat_polish=run_cpsat,
+                cpsat_time_limit=cpsat_limit,
+            )
+        else:
+            # Current mode: improve the existing board without regenerating
+            from core.services.timetable_optimizer_v2 import optimise_current_timetable
+
+            result = optimise_current_timetable(
+                scenario_id=scenario_id,
+                max_search_iterations=max_iterations,
+                run_chain_search=run_chain,
+                max_chain_iterations=int(payload.get("max_chain_iterations", 10)),
+                run_cpsat_polish=run_cpsat,
+                cpsat_time_limit=cpsat_limit,
+            )
+    except Exception:
+        import logging
+        import traceback
+
+        logging.getLogger(__name__).exception("V2 optimiser failed")
+        return _err(
+            f"Optimiser error: {traceback.format_exc(limit=3)}",
+            code="OPTIMISER_ERROR",
+            status=500,
+        )
+
+    if "error" in result:
+        return _err(result["error"], code="OPTIMISER_NO_DATA", status=400)
+
+    return _ok({"optimisation": result})

@@ -382,11 +382,28 @@ body.tw-fullscreen #twGenBar{border-radius:0;}
 
   <span id="twValidationBadge" class="tw-badge tw-badge-draft">{% if LANGUAGE_CODE == 'ar' %}مسودة{% else %}Draft{% endif %}</span>
 
+  <span id="twOptimiseGroup" style="display:none;position:relative;">
+    <button class="tw-btn" id="twOptimise" type="button" title="{% if LANGUAGE_CODE == 'ar' %}تحسين الجدول الحالي{% else %}Improve current board{% endif %}">
+      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-inline-end:3px"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+      {% if LANGUAGE_CODE == 'ar' %}تحسين{% else %}Optimise{% endif %}
+    </button><button class="tw-btn" id="twOptimiseMenu" type="button" style="padding:5px 4px;border-inline-start:1px solid var(--line);margin-inline-start:-1px;" title="{% if LANGUAGE_CODE == 'ar' %}خيارات{% else %}Options{% endif %}">&#x25BE;</button>
+    <div id="twOptimiseDropdown" style="display:none;position:absolute;top:100%;right:0;z-index:100;min-width:220px;margin-top:4px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius-sm);box-shadow:var(--shadow-card);font-size:.78rem;">
+      <div class="tw-opt-item" data-mode="current" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--line);">
+        <div style="font-weight:600;color:var(--teal);">{% if LANGUAGE_CODE == 'ar' %}تحسين الحالي{% else %}Optimise Current{% endif %}</div>
+        <div style="font-size:.7rem;color:var(--t4);">{% if LANGUAGE_CODE == 'ar' %}تحسين بدون إعادة توليد{% else %}Improve without regenerating{% endif %}</div>
+      </div>
+      <div class="tw-opt-item" data-mode="full" style="padding:8px 12px;cursor:pointer;">
+        <div style="font-weight:600;color:var(--royal);">{% if LANGUAGE_CODE == 'ar' %}إعادة بناء كاملة{% else %}Full Rebuild{% endif %}</div>
+        <div style="font-size:.7rem;color:var(--t4);">{% if LANGUAGE_CODE == 'ar' %}7 استراتيجيات + بحث محلي{% else %}7 strategies + local search (~2min){% endif %}</div>
+      </div>
+    </div>
+  </span>
+
   <button class="tw-btn" id="twExport" type="button" style="display:none;" title="{% if LANGUAGE_CODE == 'ar' %}تصدير{% else %}Export XLSX{% endif %}">
     &#x1F4E5; {% if LANGUAGE_CODE == 'ar' %}تصدير{% else %}Export{% endif %}
   </button>
 
-  <button class="tw-btn tw-btn-primary" id="twPublish" type="button" disabled>
+  <button class="tw-btn tw-btn-primary" id="twPublish" type="button" disabled
     {% if LANGUAGE_CODE == 'ar' %}نشر{% else %}Publish{% endif %}
   </button>
 </div>
@@ -545,6 +562,27 @@ async function twFetch(url, opts = {}) {
   $('twNewBoard').addEventListener('click', createBoardPrompt);
   $('twSlotEdit').addEventListener('click', openSlotEditor);
   $('twExport').addEventListener('click', exportScenario);
+  // Optimise: main button = "current" mode, dropdown items = specific mode
+  $('twOptimise').addEventListener('click', () => runOptimiseV2('current'));
+  $('twOptimiseMenu').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const dd = $('twOptimiseDropdown');
+    dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+  });
+  document.querySelectorAll('.tw-opt-item').forEach(item => {
+    item.addEventListener('mouseenter', () => { item.style.background = 'var(--brand-soft)'; });
+    item.addEventListener('mouseleave', () => { item.style.background = ''; });
+    item.addEventListener('click', () => {
+      $('twOptimiseDropdown').style.display = 'none';
+      runOptimiseV2(item.dataset.mode);
+    });
+  });
+  // Close dropdown on outside click
+  document.addEventListener('click', (e) => {
+    if (!$('twOptimiseGroup').contains(e.target)) {
+      $('twOptimiseDropdown').style.display = 'none';
+    }
+  });
   $('twPublish').addEventListener('click', publishScenario);
   $('twSectionSearch').addEventListener('input', debounce(renderBudgetSidebar, 200));
 
@@ -617,6 +655,7 @@ async function runGenerate() {
   $('twNewBoard').style.display = '';
   $('twSlotEdit').style.display = '';
   $('twExport').style.display = '';
+  $('twOptimiseGroup').style.display = '';
 
   // Populate scenario dropdown with just this scenario
   const sel = $('twScenario');
@@ -676,6 +715,8 @@ async function onScenarioChange() {
   $('twPublish').disabled = data.scenario.status === 'published';
   $('twNewBoard').style.display = '';
   $('twSlotEdit').style.display = data.scenario.status === 'published' ? 'none' : '';
+  $('twExport').style.display = '';
+  $('twOptimiseGroup').style.display = '';
 
   await loadBoards();
 }
@@ -933,6 +974,7 @@ function resetWorkspace() {
   $('twNewBoard').style.display = 'none';
   $('twSlotEdit').style.display = 'none';
   $('twExport').style.display = 'none';
+  $('twOptimiseGroup').style.display = 'none';
   updateQuickStats();
 }
 
@@ -1955,6 +1997,189 @@ $('twMapElectives').addEventListener('click', async () => {
     notify.success(IS_AR ? `تم حفظ ${data.created} ربط` : `${data.created} mappings saved`);
   }
 });
+
+/* ── V2 Optimiser ── */
+async function runOptimiseV2(mode = 'current') {
+  if (!TW.scenarioId) { notify.error(IS_AR ? 'اختر سيناريو' : 'No scenario selected'); return; }
+
+  const btn = $('twOptimise');
+  const menuBtn = $('twOptimiseMenu');
+  btn.disabled = true;
+  menuBtn.disabled = true;
+  const origHtml = btn.innerHTML;
+  const modeLabel = mode === 'full' ? (IS_AR ? 'إعادة بناء...' : 'Rebuilding...') : (IS_AR ? 'جارٍ التحسين...' : 'Optimising...');
+  btn.innerHTML = `&#x23F3; ${modeLabel}`;
+
+  // Build request payload based on mode
+  const payload = { mode };
+  if (mode === 'full') {
+    payload.strategies = ['compact', 'morning', 'balanced', 'load_balanced', 'optimal', 'hybrid', 'adaptive'];
+  }
+  payload.run_local_search = true;
+  payload.max_iterations = 50;
+  payload.run_chain_search = true;
+  payload.run_cpsat_polish = true;
+  payload.cpsat_time_limit = 60;
+
+  try {
+    const data = await twFetch(`/ops/tw/scenarios/${TW.scenarioId}/optimise-v2/`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+
+    if (!data || !data.ok) {
+      notify.error(IS_AR ? 'فشل التحسين' : 'Optimisation failed');
+      return;
+    }
+
+    const o = data.optimisation;
+    const score = o.final_score;
+    const assigned = o.total_students - o.unresolved_students;
+
+    // Build results dialog
+    let body = `<div style="font-size:.82rem;line-height:1.6">`;
+
+    // Summary cards
+    body += `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px">`;
+    body += `<div style="padding:10px;border-radius:var(--radius-sm);background:rgba(10,142,110,.08);text-align:center">`;
+    body += `<div style="font-size:.68rem;color:var(--t4);text-transform:uppercase">${IS_AR ? 'تم تعيينهم' : 'Assigned'}</div>`;
+    body += `<div style="font-size:1.3rem;font-weight:700;color:var(--teal)">${assigned}<span style="font-size:.75rem;font-weight:400;color:var(--t3)">/${o.total_students}</span></div></div>`;
+    body += `<div style="padding:10px;border-radius:var(--radius-sm);background:rgba(217,119,6,.08);text-align:center">`;
+    body += `<div style="font-size:.68rem;color:var(--t4);text-transform:uppercase">${IS_AR ? 'غير محلول' : 'Unresolved'}</div>`;
+    body += `<div style="font-size:1.3rem;font-weight:700;color:var(--amber)">${o.unresolved_students}</div></div>`;
+    body += `<div style="padding:10px;border-radius:var(--radius-sm);background:rgba(99,102,241,.08);text-align:center">`;
+    body += `<div style="font-size:.68rem;color:var(--t4);text-transform:uppercase">${IS_AR ? 'الوقت' : 'Time'}</div>`;
+    body += `<div style="font-size:1.3rem;font-weight:700;color:var(--royal)">${o.elapsed_seconds || '?'}s</div></div>`;
+    body += `</div>`;
+
+    // Candidate comparison table
+    if (o.all_scores && o.all_scores.length > 1) {
+      body += `<div style="margin-bottom:10px"><span style="font-size:.72rem;font-weight:700;text-transform:uppercase;color:var(--royal)">${IS_AR ? 'مقارنة المرشحين' : 'Candidate Comparison'} (${o.candidates_evaluated} strategies)</span>`;
+      body += `<table style="width:100%;font-size:.72rem;border-collapse:collapse;margin-top:4px">`;
+      body += `<tr style="border-bottom:1px solid var(--line);color:var(--t4)"><th style="text-align:start;padding:3px 4px">Strategy</th><th style="text-align:end;padding:3px 4px">Tier-A</th><th style="text-align:end;padding:3px 4px">Unresolved</th><th style="text-align:end;padding:3px 4px">Clashes</th><th style="text-align:end;padding:3px 4px">Gaps</th></tr>`;
+      o.all_scores.forEach(s => {
+        const isBest = s.id === o.best_candidate_id;
+        const style = isBest ? 'background:rgba(10,142,110,.06);font-weight:600' : '';
+        body += `<tr style="border-bottom:1px solid var(--line);${style}">`;
+        body += `<td style="padding:3px 4px">${s.id.replace(/_\d+$/, '')}${isBest ? ' ★' : ''}</td>`;
+        body += `<td style="text-align:end;padding:3px 4px;font-family:var(--font-mono)">${s.score[0]}</td>`;
+        body += `<td style="text-align:end;padding:3px 4px;font-family:var(--font-mono)">${s.score[1]}</td>`;
+        body += `<td style="text-align:end;padding:3px 4px;font-family:var(--font-mono);color:${s.score[3]>0?'var(--danger)':'var(--teal)'}">${s.score[3]}</td>`;
+        body += `<td style="text-align:end;padding:3px 4px;font-family:var(--font-mono)">${s.score[4].toLocaleString()}</td>`;
+        body += `</tr>`;
+      });
+      body += `</table></div>`;
+    }
+
+    // Final score breakdown
+    const scoreLabel = o.mode === 'current'
+      ? (IS_AR ? 'النتيجة بعد التحسين' : 'Score After Optimisation')
+      : `${IS_AR ? 'النتيجة النهائية' : 'Final Score'} (${o.best_candidate_id.replace(/_\d+$/, '')}${o.local_search_applied ? ' + local search' : ''})`;
+    body += `<div style="margin-bottom:10px"><span style="font-size:.72rem;font-weight:700;text-transform:uppercase;color:var(--teal)">${scoreLabel}</span>`;
+    body += `<table style="width:100%;font-size:.78rem;border-collapse:collapse;margin-top:4px">`;
+    const labels = [
+      IS_AR ? 'طلاب الخطر A' : 'Tier-A unresolved',
+      IS_AR ? 'طلاب غير محلولين' : 'Unresolved students',
+      IS_AR ? 'مقررات غير معينة' : 'Unassigned courses',
+      IS_AR ? 'تعارضات زمنية' : 'Time clashes',
+      IS_AR ? 'دقائق فراغ' : 'Gap minutes',
+      IS_AR ? 'احتياط مستخدم' : 'Reserve used',
+    ];
+    for (let i = 0; i < 6; i++) {
+      const val = i === 4 ? score[i].toLocaleString() : score[i];
+      const clr = (i === 3 && score[i] > 0) ? 'color:var(--danger)' : (i === 3 ? 'color:var(--teal)' : '');
+      body += `<tr style="border-bottom:1px solid var(--line)"><td style="padding:3px 0;color:var(--t3)">${labels[i]}</td><td style="text-align:end;font-weight:600;font-family:var(--font-mono);${clr}">${val}</td></tr>`;
+    }
+    body += `</table></div>`;
+
+    // Before → After summary (current mode only)
+    if (o.mode === 'current' && o.baseline_score) {
+      const bs = o.baseline_score;
+      const fs = o.final_score;
+      const gotBetter = fs[1] < bs[1] || fs[3] < bs[3] || fs[4] < bs[4];
+      if (gotBetter) {
+        body += `<div style="padding:8px 10px;border-radius:var(--radius-sm);background:rgba(10,142,110,.1);font-size:.78rem;margin-bottom:8px;border:1px solid rgba(10,142,110,.2)">`;
+        body += `<div style="font-weight:700;color:var(--teal);margin-bottom:4px">&#x2714; ${IS_AR ? 'تم التحسين' : 'Board Improved'}</div>`;
+        body += `<div>Unresolved: <b>${bs[1]}</b> &rarr; <b style="color:var(--teal)">${fs[1]}</b></div>`;
+        if (bs[3] !== fs[3]) body += `<div>Clashes: <b>${bs[3]}</b> &rarr; <b style="color:var(--teal)">${fs[3]}</b></div>`;
+        body += `<div>Gap minutes: <b>${bs[4].toLocaleString()}</b> &rarr; <b>${fs[4].toLocaleString()}</b></div>`;
+        body += `</div>`;
+      } else {
+        body += `<div style="padding:8px 10px;border-radius:var(--radius-sm);background:rgba(99,102,241,.06);font-size:.78rem;margin-bottom:8px">`;
+        body += `<span style="color:var(--royal);font-weight:600">&#x2501; ${IS_AR ? 'الجدول الحالي بالفعل في أفضل حالة' : 'Current board is already optimal'}</span>`;
+        body += `</div>`;
+      }
+    }
+
+    // Local search improvement indicator
+    if (o.local_search_applied && o.score_before_local_search) {
+      const before = o.score_before_local_search;
+      const after = o.final_score;
+      const improved = before[1] !== after[1] || before[4] !== after[4];
+      if (improved) {
+        body += `<div style="padding:6px 10px;border-radius:var(--radius-sm);background:rgba(10,142,110,.08);font-size:.75rem;margin-bottom:8px">`;
+        body += `<span style="color:var(--teal);font-weight:600">&#x2714; ${IS_AR ? 'تحسين محلي' : 'Local search improved'}:</span> `;
+        body += `unresolved ${before[1]} → ${after[1]}, gaps ${before[4].toLocaleString()} → ${after[4].toLocaleString()}`;
+        body += `</div>`;
+      } else {
+        body += `<div style="padding:6px 10px;border-radius:var(--radius-sm);background:rgba(99,102,241,.06);font-size:.75rem;margin-bottom:8px">`;
+        body += `<span style="color:var(--royal)">&#x2501; ${IS_AR ? 'لم يتحسن' : 'Local search: already optimal'}</span>`;
+        body += `</div>`;
+      }
+    }
+
+    // Hotspot courses
+    if (o.hotspot_courses && o.hotspot_courses.length > 0) {
+      body += `<div style="margin-bottom:8px"><span style="font-size:.72rem;font-weight:700;text-transform:uppercase;color:var(--danger)">${IS_AR ? 'مقررات مزدحمة' : 'Hotspot Courses'}</span>`;
+      body += `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">`;
+      o.hotspot_courses.forEach(c => {
+        body += `<span style="padding:2px 8px;border-radius:999px;background:rgba(192,48,48,.1);color:var(--danger);font-size:.72rem;font-weight:600">${c}</span>`;
+      });
+      body += `</div></div>`;
+    }
+
+    // Reserve-heavy sections
+    if (o.reserve_heavy_sections && o.reserve_heavy_sections.length > 0) {
+      body += `<div><span style="font-size:.72rem;font-weight:700;text-transform:uppercase;color:var(--amber)">${IS_AR ? 'ضغط احتياطي' : 'Reserve Pressure'}</span>`;
+      body += `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">`;
+      o.reserve_heavy_sections.slice(0, 8).forEach(s => {
+        body += `<span style="padding:2px 8px;border-radius:999px;background:rgba(217,119,6,.1);color:var(--amber);font-size:.72rem;font-weight:600">${s.section} ${Math.round(s.ratio*100)}%</span>`;
+      });
+      body += `</div></div>`;
+    }
+
+    body += `</div>`;
+
+    const dlgTitle = mode === 'full'
+      ? (IS_AR ? 'نتائج إعادة البناء' : 'Full Rebuild Results')
+      : (IS_AR ? 'نتائج التحسين' : 'Optimise Current Results');
+
+    await dlg.confirm({
+      title: dlgTitle,
+      body,
+      confirmText: IS_AR ? 'تطبيق' : 'Apply & Refresh',
+      kind: 'info',
+    });
+
+    // Refresh the workspace grid to show the improved timetable
+    await onScenarioChange();
+    // Ensure command bar stays visible after refresh
+    $('twCmdBar').style.display = 'flex';
+
+    const modeMsg = mode === 'full'
+      ? `Rebuilt: ${o.best_candidate_id.replace(/_\d+$/, '')} won`
+      : 'Optimised current board';
+    notify.success(IS_AR ? 'تم التحسين والتطبيق' : `${modeMsg} (${o.elapsed_seconds}s)`);
+
+  } catch (e) {
+    notify.error(e.message || String(e));
+  } finally {
+    btn.disabled = false;
+    menuBtn.disabled = false;
+    btn.innerHTML = origHtml;
+  }
+}
 
 /* ── Fullscreen toggle ── */
 (function(){

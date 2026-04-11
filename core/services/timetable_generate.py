@@ -320,32 +320,63 @@ def generate_workspace_scenario(
     # counting how many of their recommended courses fall in each term
     # and picking the mode (most common term).
 
-    # Build course_code -> programme_term lookup from the DB.
-    # If the same course appears in multiple programs with different
-    # terms, the last-seen value wins (acceptable: the primary-term
-    # classification is a heuristic, not an exact science).
-    pr_qs = ProgrammeRequirement.objects.filter(program__in=programs).values_list(
-        "course_code", "programme_term"
-    )
-    course_term_map: dict[str, int] = {}
-    for code, pt in pr_qs:
-        if pt is not None:
-            course_term_map[normalize_code(code)] = pt
+    # Per-program term maps: essential for multi-program scenarios.
+    # Example: IS plan has FE1 at term 7, IS2 plan has FE1 at term 8.
+    # Without scoping, the merged map would assign FE1 to whichever
+    # program's row was loaded last, misclassifying students from the
+    # other program into the wrong term level (e.g. IS students landing
+    # on even-term boards 4/8 instead of their correct odd-term 3/5/7/9).
+    from core.models import Student
 
-    # Extend course_term_map: real electives inherit their placeholder's term
+    pr_qs = ProgrammeRequirement.objects.filter(program__in=programs).values_list(
+        "program", "course_code", "programme_term"
+    )
+    course_term_by_program: dict[str, dict[str, int]] = defaultdict(dict)
+    for prog, code, pt in pr_qs:
+        if pt is not None:
+            course_term_by_program[prog][normalize_code(code)] = pt
+
+    # Extend each program's map: real electives inherit their placeholder's term
     for norm_placeholder, pt in placeholder_terms.items():
         for ec in elective_map.get(norm_placeholder, []):
-            course_term_map[normalize_code(ec.course_code)] = pt
+            for prog in programs:
+                if norm_placeholder in course_term_by_program.get(prog, {}):
+                    course_term_by_program[prog][normalize_code(ec.course_code)] = pt
+
+    # Fallback: merged map for students whose program is unknown
+    course_term_map: dict[str, int] = {}
+    for prog_map in course_term_by_program.values():
+        course_term_map.update(prog_map)
+
+    # Look up each student's enrolled program so we can use the correct
+    # per-program term map during classification. Only needed for multi-
+    # program scenarios — single-program skips this query.
+    student_program_map: dict[int, str] = {}
+    if len(programs) > 1:
+        for sid, prog in Student.objects.filter(
+            student_id__in=list(student_recs.keys()),
+        ).values_list("student_id", "program"):
+            if prog:
+                student_program_map[sid] = prog
 
     classified: list[dict] = []
     term_student_counts: Counter[int] = Counter()
 
     for sid, recs in student_recs.items():
+        # Use the student's own program's term map when available;
+        # fall back to the merged map for unknown programs.
+        student_prog = student_program_map.get(sid)
+        term_map = (
+            course_term_by_program.get(student_prog, course_term_map)
+            if student_prog
+            else course_term_map
+        )
+
         # Count how many of this student's recommended courses fall in
         # each curriculum term.
         term_counts: Counter[int] = Counter()
         for code in recs:
-            pt = course_term_map.get(normalize_code(code))
+            pt = term_map.get(normalize_code(code))
             if pt is not None:
                 term_counts[pt] += 1
 
@@ -490,7 +521,15 @@ def generate_workspace_scenario(
         code = entry["course_code"]
         # Look up which curriculum term this course belongs to so it
         # can be associated with the correct board later.
-        pt = course_term_map.get(normalize_code(code))
+        # For multi-program scenarios, pick the term where the course
+        # has the most student demand (not just last-seen).
+        norm_code = normalize_code(code)
+        pt_candidates = [
+            prog_map[norm_code]
+            for prog_map in course_term_by_program.values()
+            if norm_code in prog_map
+        ]
+        pt = max(set(pt_candidates), key=pt_candidates.count) if pt_candidates else None
         budget_objs.append(
             ScenarioSectionBudget(
                 scenario=scenario,
@@ -527,8 +566,14 @@ def generate_workspace_scenario(
         # Cross-term students additionally get visitor links to every
         # other board whose courses they need.
         if s["is_cross_term"]:
+            stu_prog = student_program_map.get(s["student_id"])
+            stu_term_map = (
+                course_term_by_program.get(stu_prog, course_term_map)
+                if stu_prog
+                else course_term_map
+            )
             for code in s["recommended_courses"]:
-                ct = course_term_map.get(normalize_code(code))
+                ct = stu_term_map.get(normalize_code(code))
                 if ct and ct != s["primary_term"] and ct in board_by_term:
                     bsl_objs.append(
                         BoardStudentLink(

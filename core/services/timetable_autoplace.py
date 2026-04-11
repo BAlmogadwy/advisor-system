@@ -640,6 +640,73 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
         ).order_by("-total_demand")
     )
 
+    # ── 1b. Pick up cross-term courses ──────────────────────────────
+    # Problem: Some courses (e.g. FE2) have programme_term=10 in one
+    # plan but students needing them are on boards 3/5/7/9. The budget
+    # filter in Step 1 (programme_term == board.nominal_term) misses them.
+    #
+    # Solution: Check if students on THIS board need courses that aren't
+    # in the budget, and place them here — but ONLY if this board has
+    # the most students who need the course (to avoid duplicate placement
+    # on every board that has even one student needing it).
+    from core.models import BoardStudentLink
+
+    budget_codes = {b.course_code for b in budgets}
+    board_student_ids = set(
+        BoardStudentLink.objects.filter(board=board).values_list("student_id", flat=True)
+    )
+    if board_student_ids:
+        # Find courses needed by students on this board but not in budget
+        student_maps_for_board = ScenarioStudentMap.objects.filter(
+            scenario=scenario, student_id__in=board_student_ids
+        )
+        cross_term_demand: dict[str, int] = defaultdict(int)
+        for sm in student_maps_for_board:
+            for code in sm.recommended_courses:
+                if code not in budget_codes:
+                    cross_term_demand[code] += 1
+
+        if cross_term_demand:
+            # For each cross-term course, check if THIS board has the
+            # most students who need it (across all boards in the scenario)
+            all_boards = DeliveryBoard.objects.filter(scenario=scenario)
+            for course_code, this_board_count in cross_term_demand.items():
+                # Check if already placed on another board
+                already_placed = SectionPlacement.objects.filter(
+                    board__scenario=scenario,
+                    term_section__course_code=course_code,
+                ).exists()
+                if already_placed:
+                    continue
+
+                # Check if another board has MORE students needing this course
+                best_board = True
+                for other_board in all_boards:
+                    if other_board.id == board.id:
+                        continue
+                    other_sids = set(
+                        BoardStudentLink.objects.filter(board=other_board).values_list(
+                            "student_id", flat=True
+                        )
+                    )
+                    other_maps = ScenarioStudentMap.objects.filter(
+                        scenario=scenario, student_id__in=other_sids
+                    )
+                    other_count = sum(
+                        1 for sm in other_maps if course_code in (sm.recommended_courses or [])
+                    )
+                    if other_count > this_board_count:
+                        best_board = False
+                        break
+
+                if best_board:
+                    cb = ScenarioSectionBudget.objects.filter(
+                        scenario=scenario, course_code=course_code
+                    ).first()
+                    if cb:
+                        budgets.append(cb)
+                        budget_codes.add(course_code)
+
     if not budgets:
         return {"placed": 0, "skipped": 0, "placements": []}
 
@@ -659,11 +726,7 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
         course_overlap_load as _col,
     )
 
-    board_courses = set(
-        ScenarioSectionBudget.objects.filter(
-            scenario=scenario, programme_term=board.nominal_term
-        ).values_list("course_code", flat=True)
-    )
+    board_courses = set(budget_codes)
     overlap_matrix = _build_om(scenario.id, board_courses)
 
     # ── Placement tracking structures ─────────────────────────────────
