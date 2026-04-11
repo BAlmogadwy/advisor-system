@@ -470,7 +470,24 @@ def persist_section_states_to_scenario(
                 skipped += 1
 
     if to_update:
-        SectionPlacement.objects.bulk_update(to_update, ["day", "start_time", "end_time", "room"])
+        # Delete-and-recreate instead of bulk_update to avoid UNIQUE
+        # constraint violations when day/start_time changes (the constraint
+        # is on board_id + term_section_id + day + start_time).
+        pks_to_delete = [pl.pk for pl in to_update]
+        new_placements = [
+            SectionPlacement(
+                board_id=pl.board_id,
+                term_section_id=pl.term_section_id,
+                day=pl.day,
+                start_time=pl.start_time,
+                end_time=pl.end_time,
+                room=pl.room,
+                is_locked=pl.is_locked,
+            )
+            for pl in to_update
+        ]
+        SectionPlacement.objects.filter(pk__in=pks_to_delete).delete()
+        SectionPlacement.objects.bulk_create(new_placements)
 
     logger.info("Persisted section states: %d updated, %d skipped", updated, skipped)
     return {"updated": updated, "skipped": skipped}
