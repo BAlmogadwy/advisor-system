@@ -78,6 +78,30 @@ MEETING_PATTERNS: dict[int, list[int]] = {
     1: [75],  # 1 meeting: 75 min (fallback for rare 1-credit courses)
 }
 
+# Optional order variants for structurally identical families.
+# For 4-credit mixed lecture/lab courses, permitting the 100-minute block to
+# occur in any weekly position gives the planner and local-search layers more
+# flexibility for lab utilisation without changing total contact hours.
+MEETING_PATTERN_VARIANTS: dict[int, list[list[int]]] = {
+    4: [[100, 75, 75], [75, 100, 75], [75, 75, 100]],
+    3: [[75, 75]],
+    2: [[100]],
+    1: [[75]],
+}
+
+
+def get_meeting_pattern_variants(credit_hours: int) -> list[list[int]]:
+    """Return all valid duration-order variants for a course.
+
+    The primary use case is 4-credit mixed lecture/lab courses, where the
+    100-minute block may appear in any weekly position: ``[100,75,75]``,
+    ``[75,100,75]``, or ``[75,75,100]``.
+    """
+    return [
+        list(v)
+        for v in MEETING_PATTERN_VARIANTS.get(credit_hours, [get_meeting_pattern(credit_hours)])
+    ]
+
 
 def get_meeting_pattern(credit_hours: int) -> list[int]:
     """Return the list of per-meeting durations for a given credit-hour count.
