@@ -144,14 +144,43 @@ def diagnostic_driven_local_search(
       Pass 2: Pairwise swaps between hotspot and non-hotspot sections
       Pass 3: Repattern ALL sections (exhaustive)
 
-    Uses best-improvement: evaluates ALL moves in the neighborhood,
-    picks the single best improving move, then regenerates.
+    For small scenarios (<= 80 sections): best-improvement (try ALL moves,
+    pick the best). For large scenarios: first-improvement (accept the
+    first improving move immediately) — 5-10x faster.
     """
+    import time as _time
+
     current_best = best_candidate
     current_score = best_candidate.lexicographic_score
     total_improvements = 0
 
+    # Large scenarios: switch to first-improvement to avoid multi-minute
+    # iterations. 80 sections is the threshold (~45 courses × 2 sections).
+    use_first_improvement = len(sections_by_id) > 80
+
+    # Time budget: stop after 3 minutes regardless of iteration count.
+    # Prevents the server from freezing on large scenarios.
+    time_budget_seconds = 180.0
+    t_start = _time.time()
+
+    if use_first_improvement:
+        logger.info(
+            "Large scenario (%d sections) — using first-improvement strategy (%.0fs budget)",
+            len(sections_by_id),
+            time_budget_seconds,
+        )
+
     for iteration in range(max_iterations):
+        # Time budget check
+        elapsed = _time.time() - t_start
+        if elapsed > time_budget_seconds:
+            logger.info(
+                "Time budget exhausted (%.0fs) at iteration %d, stopping",
+                elapsed,
+                iteration,
+            )
+            break
+
         # Build priority set from current diagnostics
         hotspot_courses = current_best.hotspot_courses
         reserve_heavy = [sid for sid, _ratio in current_best.reserve_heavy_sections]
@@ -215,13 +244,14 @@ def diagnostic_driven_local_search(
             moves_tried += 1
 
             if test_result.lexicographic_score < best_move_score:
-                # This is the best so far — but rollback for now,
-                # we'll re-apply the winner after trying all moves
-                if best_move_snapshot is not None:
-                    pass  # previous best was already rolled back
                 best_move_result = test_result
                 best_move_score = test_result.lexicographic_score
                 best_move_snapshot = (move, snapshot)
+
+                # First-improvement: accept immediately, skip remaining moves
+                if use_first_improvement:
+                    _rollback(snapshot, sections_by_id, room_occupancies)
+                    break
 
             # Rollback this move to try the next
             _rollback(snapshot, sections_by_id, room_occupancies)
