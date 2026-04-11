@@ -254,14 +254,16 @@ def _generate_meeting_options(
 
     # For each meeting duration, pre-compute which (slot_idx, start, end)
     # positions are feasible (respecting prayer break + institutional blocks).
-    # Build slot options for BOTH lecture and lab durations.
+    # Only block slots whose START falls in the prayer window (11:35-12:59).
+    # A class ending during prayer (e.g. 10:30-11:45) is fine — students
+    # leave at 11:45 and prayer starts after that.
     lecture_positions = []
     for i, s in enumerate(slots):
-        if not _meeting_overlaps_prayer(s["start"], s["end"]):
+        if not _start_is_blocked(s["start"]):
             lecture_positions.append((i, s["start"], s["end"]))
     lab_positions = []
     for i, s in enumerate(lab_slots):
-        if not _meeting_overlaps_prayer(s["start"], s["end"]):
+        if not _start_is_blocked(s["start"]):
             lab_positions.append((i, s["start"], s["end"]))
 
     # Generate all unique permutations of the pattern so the lab can be
