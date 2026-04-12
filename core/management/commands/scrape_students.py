@@ -117,9 +117,7 @@ def _process_student(
             "name": profile.get("name", "Unknown"),
             "nationality": profile.get("nationality", "Unknown"),
             "status": profile.get("status", "Active"),
-            "gpa": profile.get("gpa", 0.0)
-            if isinstance(profile.get("gpa"), int | float)
-            else 0.0,
+            "gpa": profile.get("gpa", 0.0) if isinstance(profile.get("gpa"), int | float) else 0.0,
             "total_registered_credits": profile.get("total_registered_credits")
             if isinstance(profile.get("total_registered_credits"), int)
             else 0,
@@ -135,7 +133,9 @@ def _process_student(
 
         # Only set advisor_id if the student is new or has no advisor yet.
         # This preserves integer IDs assigned by seed_advisors on re-scrape.
-        existing = Student.objects.filter(student_id=sid).values_list("advisor_id", flat=True).first()
+        existing = (
+            Student.objects.filter(student_id=sid).values_list("advisor_id", flat=True).first()
+        )
         if not existing:
             defaults["advisor_id"] = tt_info.get("advisor_name", "")
 
@@ -288,6 +288,35 @@ class Command(BaseCommand):
             )
 
         await close_browser(playwright_obj, browser)
+
+        # Post-scrape: resolve elective placeholders by cross-referencing
+        # timetable courses against unfulfilled plan placeholders.
+        # This updates StudentCourse status from "not_taken" to "studying"
+        # for placeholder courses (IS1, FE2, GSE1, etc.) when the student's
+        # timetable shows they're studying a course that fulfills it.
+        self.stdout.write("Resolving elective placeholders...")
+        from core.services.elective_resolver import resolve_elective_placeholders
+
+        programs_in_batch = {s.get("program", "") for s in students if s.get("program")}
+        total_resolved = 0
+        total_updates = 0
+        for prog in sorted(programs_in_batch):
+            if not prog:
+                continue
+            result = resolve_elective_placeholders(prog)
+            total_resolved += result["resolved_count"]
+            total_updates += result["total_updates"]
+            if result["resolved_count"] > 0:
+                self.stdout.write(
+                    f"  {prog}: {result['resolved_count']}/{result['total_students']} "
+                    f"students, {result['total_updates']} placeholders resolved"
+                )
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"Elective resolver: {total_resolved} students, {total_updates} updates"
+            )
+        )
+
         self.stdout.write(
             self.style.SUCCESS(
                 f"Done. {len(students) - len(failed_ids)} succeeded, {len(failed_ids)} failed."
