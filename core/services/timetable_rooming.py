@@ -200,22 +200,20 @@ def assign_rooms_to_board(board_id: int) -> dict:
         if p.room:
             tracker.usage[(p.day, p.start_time)].add(p.room)
 
-    # Get actual students per section from budget (not theoretical max)
+    # Get actual students per section and credit hours from budget
     from core.models import ScenarioSectionBudget
 
-    budget_map = {
-        b.course_code: int(
-            (
-                -(-b.total_demand // b.planned_sections)  # ceil division
-                if b.planned_sections > 0
-                else b.max_per_section
-            )
-            * 1.1  # 10% safety margin
+    all_budgets = ScenarioSectionBudget.objects.filter(scenario=board.scenario)
+    budget_map = {}
+    credit_map = {}
+    for b in all_budgets:
+        raw = (
+            -(-b.total_demand // b.planned_sections)
+            if b.planned_sections > 0
+            else b.max_per_section
         )
-        for b in ScenarioSectionBudget.objects.filter(
-            scenario=board.scenario, programme_term=board.nominal_term
-        )
-    }
+        budget_map[b.course_code] = int(raw * 1.1)
+        credit_map[b.course_code] = b.credit_hours
 
     # Sort unassigned placements by capacity DESC (largest first = best-fit-decreasing)
     unassigned_placements = [p for p in placements if not p.room]
@@ -226,10 +224,16 @@ def assign_rooms_to_board(board_id: int) -> dict:
 
     for p in unassigned_placements:
         cap = budget_map.get(p.term_section.course_code, 40)
+        cr = credit_map.get(p.term_section.course_code, 3)
         duration = _to_min(p.end_time) - _to_min(p.start_time)
-        room_type = "lab" if duration > 80 else "lecture"
+        # Only 4-credit courses have lab meetings. 2-credit 100-min
+        # meetings are long lectures, not labs.
+        room_type = "lab" if (duration > 80 and cr == 4) else "lecture"
 
-        room_code = tracker.assign_best_fit(p.day, p.start_time, cap, room_type)
+        # For lab meetings, don't filter by capacity — lab rooms have a
+        # fixed physical size (computers/benches).
+        room_cap = 0 if room_type == "lab" else cap
+        room_code = tracker.assign_best_fit(p.day, p.start_time, room_cap, room_type)
         if room_code:
             p.room = room_code
             p.save(update_fields=["room", "updated_at"])

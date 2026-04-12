@@ -141,7 +141,6 @@ DEFAULT_LAB_SLOTS = [
     {"label": "Lab 3", "start": "13:00", "end": "14:40"},
     {"label": "Lab 4", "start": "14:45", "end": "16:25"},
     {"label": "Lab 5", "start": "16:30", "end": "18:10"},
-    {"label": "Lab 6", "start": "18:10", "end": "19:50"},
 ]
 
 # Hard constraint: no course meeting may overlap with the prayer break.
@@ -857,14 +856,18 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                 else budget.max_per_section
             )
             section_cap = int(raw_cap * 1.1)  # 10% buffer
+            # Only 4-credit courses have actual lab meetings. 2-credit
+            # courses have 100-min meetings that are long lectures, not labs.
+            is_lab_course = budget.credit_hours == 4
             for option in all_options:
                 # Room feasibility: prefer options with rooms, penalize roomless
                 room_penalty = 0
                 if room_tracker:
                     for m in option:
                         duration = _to_min(m["end"]) - _to_min(m["start"])
-                        rtype = "lab" if duration > 80 else "lecture"
-                        if not room_tracker.is_feasible(m["day"], m["start"], section_cap, rtype):
+                        rtype = "lab" if (duration > 80 and is_lab_course) else "lecture"
+                        room_cap = 0 if rtype == "lab" else section_cap
+                        if not room_tracker.is_feasible(m["day"], m["start"], room_cap, rtype):
                             room_penalty += 100  # heavy penalty but not a hard reject
 
                 raw_score = _score_option(
@@ -982,7 +985,7 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                 assigned_room = ""
                 if room_tracker:
                     duration = _to_min(m["end"]) - _to_min(m["start"])
-                    rtype = "lab" if duration > 80 else "lecture"
+                    rtype = "lab" if (duration > 80 and is_lab_course) else "lecture"
                     # Try preferred room first (same room as previous meetings)
                     if preferred_room and room_tracker.is_feasible(
                         m["day"], m["start"], section_cap, rtype
@@ -1001,8 +1004,12 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                                 assigned_room = preferred_room
 
                     if not assigned_room:
+                        # For lab meetings, don't filter by capacity — lab rooms
+                        # have fixed physical size. Section demand may exceed lab
+                        # capacity because students rotate through lab slots.
+                        room_cap = 0 if rtype == "lab" else section_cap
                         assigned_room = (
-                            room_tracker.assign_best_fit(m["day"], m["start"], section_cap, rtype)
+                            room_tracker.assign_best_fit(m["day"], m["start"], room_cap, rtype)
                             or "UNASSIGNED"
                         )
                     if not preferred_room and assigned_room and assigned_room != "UNASSIGNED":

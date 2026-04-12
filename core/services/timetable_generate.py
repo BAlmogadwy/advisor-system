@@ -159,6 +159,85 @@ def _is_excluded_course(code: str) -> bool:
     return False
 
 
+def _limit_electives_per_placeholder(
+    all_recs: dict[int, list[str]],
+    elective_map: dict[str, list],
+) -> dict[int, list[str]]:
+    """Limit elective expansion to 1 course per placeholder per student.
+
+    After the recommender expands elective placeholders (CS1 → CS403,
+    CS468, CS487), a student eligible for all 3 gets all 3 recommended.
+    But they only need to register for ONE course per placeholder slot.
+
+    This function keeps only the first elective per placeholder group,
+    spreading students across electives to balance demand. A student
+    who already got CS403 for CS1 won't get CS403 again for CS2 —
+    they'll get the next available (CS468).
+
+    Remove this function call in generate_workspace_scenario() to
+    restore the original behaviour (all eligible electives recommended).
+    """
+    if not elective_map:
+        return all_recs
+
+    # Build reverse map: elective_code → placeholder_code
+    # e.g. CS403 → CS1, CS468 → CS1, CS403 → CS2, ...
+    elective_to_placeholders: dict[str, set[str]] = defaultdict(set)
+    placeholder_electives: dict[str, list[str]] = {}
+    for placeholder_norm, elective_courses in elective_map.items():
+        codes = [normalize_code(ec.course_code) for ec in elective_courses]
+        placeholder_electives[placeholder_norm] = codes
+        for code in codes:
+            elective_to_placeholders[code].add(placeholder_norm)
+
+    # Track global assignment counts to spread students evenly
+    # across electives (first student gets CS403, second gets CS468, etc.)
+    elective_assignment_count: Counter[str] = Counter()
+
+    for sid, recs in all_recs.items():
+        # Separate regular courses from elective courses
+        regular: list[str] = []
+        elective_codes_in_recs: list[str] = []
+        for code in recs:
+            norm = normalize_code(code)
+            if norm in elective_to_placeholders:
+                if norm not in elective_codes_in_recs:
+                    elective_codes_in_recs.append(norm)
+            else:
+                regular.append(code)
+
+        if not elective_codes_in_recs:
+            continue
+
+        # For each placeholder this student has electives for,
+        # pick the one with the lowest global assignment count
+        # (spreads demand evenly across elective courses).
+        assigned_for_student: set[str] = set()
+        placeholders_seen: set[str] = set()
+
+        for placeholder_norm in sorted(placeholder_electives.keys()):
+            eligible_for_this = [
+                c
+                for c in elective_codes_in_recs
+                if placeholder_norm in elective_to_placeholders.get(c, set())
+                and c not in assigned_for_student
+            ]
+            if not eligible_for_this:
+                continue
+            if placeholder_norm in placeholders_seen:
+                continue
+
+            # Pick the elective with the fewest assignments so far
+            pick = min(eligible_for_this, key=lambda c: elective_assignment_count[c])
+            assigned_for_student.add(pick)
+            placeholders_seen.add(placeholder_norm)
+            elective_assignment_count[pick] += 1
+
+        all_recs[sid] = regular + list(assigned_for_student)
+
+    return all_recs
+
+
 def generate_workspace_scenario(
     year: int,
     semester: int,
@@ -297,6 +376,12 @@ def generate_workspace_scenario(
                 else:
                     expanded.append(code)
             all_recs[sid] = expanded
+
+    # Limit elective expansion: each placeholder slot gets at most 1 course
+    # per student. Without this, a student eligible for 13 electives gets
+    # all 13 recommended, creating an impossible scheduling load.
+    # This is a separate post-processing step so it can be removed easily.
+    all_recs = _limit_electives_per_placeholder(all_recs, elective_map)
 
     # Filter out non-schedulable courses (capstone, training, etc.) and
     # build two structures:

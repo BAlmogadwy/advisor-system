@@ -88,7 +88,16 @@ def try_repair_rooms_locally(
     affected_sections = [sections_by_id[s.section_id] for s in snapshot.snapshots]
     affected_sections.sort(key=lambda s: (s.room_demand(), s.section_id), reverse=True)
     for sec in affected_sections:
-        req_type = course_room_requirements.get(sec.course_code, sec.room_type_required)
+        # Determine room type from the MAJORITY of meeting durations.
+        # A 4-credit course has 2×75min lectures + 1×100min lab — the
+        # majority are lectures, so assign a lecture room. The auto-placer
+        # handles per-meeting room types, but the optimizer uses one room
+        # per section, so we pick the dominant type.
+        if sec.meetings:
+            lecture_count = sum(1 for m in sec.meetings if (m.end_min - m.start_min) <= 80)
+            req_type = "lecture" if lecture_count >= len(sec.meetings) / 2 else "lab"
+        else:
+            req_type = course_room_requirements.get(sec.course_code, sec.room_type_required)
         compatible_rooms = sorted(
             (
                 room

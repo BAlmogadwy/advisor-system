@@ -222,9 +222,13 @@ def build_section_states_for_scenario(
         # Reserve 10% for high-priority students (min 2, max 8)
         reserve = max(2, min(8, int(max_cap * 0.10)))
 
-        # Determine room type from credit hours (4-credit with lab → "lab")
+        # Determine room type from majority of meeting durations.
+        # 4-credit courses have mixed meetings (2×75min + 1×100min) —
+        # majority are lectures so they get a lecture room. Pure lab
+        # courses (all meetings >80min) get lab rooms.
         has_lab = budget and budget.credit_hours == 4
-        room_type = "lab" if has_lab else "lecture"
+        lecture_meetings = sum(1 for m in meetings if (m.end_min - m.start_min) <= 80)
+        room_type = "lecture" if lecture_meetings >= len(meetings) / 2 else "lab"
 
         # Compute pattern family and ID for local search
         pattern_family = _compute_pattern_family(meetings, bool(has_lab))
@@ -451,19 +455,15 @@ def persist_section_states_to_scenario(
             new_day = WEEKDAYS[meeting.day]
             new_start = f"{meeting.start_min // 60:02d}:{meeting.start_min % 60:02d}"
             new_end = f"{meeting.end_min // 60:02d}:{meeting.end_min % 60:02d}"
-            new_room = state.assigned_room_id or ""
 
-            changed = (
-                pl.day != new_day
-                or pl.start_time != new_start
-                or pl.end_time != new_end
-                or pl.room != new_room
-            )
+            changed = pl.day != new_day or pl.start_time != new_start or pl.end_time != new_end
             if changed and not pl.is_locked:
                 pl.day = new_day
                 pl.start_time = new_start
                 pl.end_time = new_end
-                pl.room = new_room
+                # Clear room so assign_rooms_to_board() can reassign
+                # per-meeting (75min→lecture, 100min of 4cr→lab).
+                pl.room = ""
                 to_update.append(pl)
                 updated += 1
             else:
@@ -693,10 +693,11 @@ def optimise_scenario_timetable_v2(
         if best_sections:
             sections_by_id = ssa.build_sections_by_id(best_sections)
             pattern_catalog = _build_pattern_catalog_for_scenario(scenario_id)
-            rooms_by_id, room_occupancies, course_room_reqs = build_room_state_for_scenario(
-                scenario_id
-            )
 
+            # Room repair is DISABLED in the optimizer. The auto-placer
+            # handles per-meeting room types correctly (75min→lecture,
+            # 100min→lab). The optimizer only moves time patterns;
+            # rooms are reassigned by assign_rooms_to_board() after persist.
             logger.info("Running local search (max %d iterations)...", max_search_iterations)
             improved = diagnostic_driven_local_search(
                 best_candidate=best,
@@ -704,9 +705,9 @@ def optimise_scenario_timetable_v2(
                 pattern_catalog=pattern_catalog,
                 student_profiles=student_profiles,
                 course_rigidity=course_rigidity,
-                rooms_by_id=rooms_by_id or None,
-                room_occupancies=room_occupancies or None,
-                course_room_requirements=course_room_reqs or None,
+                rooms_by_id=None,
+                room_occupancies=None,
+                course_room_requirements=None,
                 max_iterations=max_search_iterations,
             )
 
@@ -770,9 +771,9 @@ def optimise_scenario_timetable_v2(
                 pattern_catalog=pattern_catalog,
                 student_profiles=student_profiles,
                 course_rigidity=course_rigidity,
-                rooms_by_id=rooms_by_id if "rooms_by_id" in dir() else None,
-                room_occupancies=room_occupancies if "room_occupancies" in dir() else None,
-                course_room_requirements=course_room_reqs if "course_room_reqs" in dir() else None,
+                rooms_by_id=None,
+                room_occupancies=None,
+                course_room_requirements=None,
                 max_iterations=max_chain_iterations,
             )
 
@@ -877,6 +878,18 @@ def optimise_scenario_timetable_v2(
         "strategy": winning_strategy,
     }
 
+    # Reassign rooms per-meeting after persist. The optimizer only moves
+    # time patterns — room assignment is done here by the auto-placer's
+    # per-meeting logic (75min→lecture room, 100min→lab room).
+    if ls_persisted:
+        from core.services.timetable_rooming import assign_rooms_to_board
+
+        boards = DeliveryBoard.objects.filter(scenario_id=scenario_id)
+        for board in boards:
+            # Clear rooms on changed placements so assign_rooms_to_board can redo them
+            SectionPlacement.objects.filter(board=board, room="UNASSIGNED").update(room="")
+            assign_rooms_to_board(board.id)
+
     elapsed = time.time() - t0
     result["elapsed_seconds"] = round(elapsed, 1)
 
@@ -970,8 +983,10 @@ def optimise_current_timetable(
 
     # ── Step 3: Local search on current state ──
     pattern_catalog = _build_pattern_catalog_for_scenario(scenario_id)
-    rooms_by_id, room_occupancies, course_room_reqs = build_room_state_for_scenario(scenario_id)
 
+    # Room repair is DISABLED — the auto-placer handles per-meeting room
+    # types correctly (75min→lecture, 100min→lab). The optimizer only
+    # moves time patterns; rooms are reassigned after persist.
     from core.services.timetable_local_search_v2 import diagnostic_driven_local_search
 
     t2 = time.time()
@@ -984,9 +999,9 @@ def optimise_current_timetable(
         pattern_catalog=pattern_catalog,
         student_profiles=student_profiles,
         course_rigidity=course_rigidity,
-        rooms_by_id=rooms_by_id or None,
-        room_occupancies=room_occupancies or None,
-        course_room_requirements=course_room_reqs or None,
+        rooms_by_id=None,
+        room_occupancies=None,
+        course_room_requirements=None,
         max_iterations=max_search_iterations,
     )
 
@@ -1017,9 +1032,9 @@ def optimise_current_timetable(
             pattern_catalog=pattern_catalog,
             student_profiles=student_profiles,
             course_rigidity=course_rigidity,
-            rooms_by_id=rooms_by_id or None,
-            room_occupancies=room_occupancies or None,
-            course_room_requirements=course_room_reqs or None,
+            rooms_by_id=None,
+            room_occupancies=None,
+            course_room_requirements=None,
             max_iterations=max_chain_iterations,
         )
         if chain_result.lexicographic_score < current_eval.lexicographic_score:
@@ -1072,6 +1087,13 @@ def optimise_current_timetable(
             persist_result.get("updated", 0),
             persist_result.get("skipped", 0),
         )
+        # Reassign rooms per-meeting after persist
+        from core.services.timetable_rooming import assign_rooms_to_board
+
+        boards = DeliveryBoard.objects.filter(scenario_id=scenario_id)
+        for board in boards:
+            SectionPlacement.objects.filter(board=board, room="UNASSIGNED").update(room="")
+            assign_rooms_to_board(board.id)
     else:
         result["persist_result"] = {"action": "no_change"}
         logger.info("No improvement found — board unchanged")
