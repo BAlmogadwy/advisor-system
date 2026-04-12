@@ -498,7 +498,9 @@ def delete_external_courses(course_ids: list[int] | None = None) -> dict[str, An
         # Delete term_section_meetings and student_term_sections for external term_sections
         ext_ts_ids = list(
             TermSection.objects.filter(
-                course_key__in=course_codes, source_tag="external"
+                scenario__isnull=True,  # external sections are always global
+                course_key__in=course_codes,
+                source_tag="external",
             ).values_list("id", flat=True)
         )
         sts_deleted = (

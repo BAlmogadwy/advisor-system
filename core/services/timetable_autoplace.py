@@ -964,6 +964,7 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
             # ── Persist the chosen placement ──────────────────────────
             # TermSection: the logical section record (e.g. "MATH101 S1").
             ts, _ = TermSection.objects.get_or_create(
+                scenario=scenario,
                 course_key=code,
                 section=sec_label,
                 defaults={

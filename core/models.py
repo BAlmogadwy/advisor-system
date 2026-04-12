@@ -233,6 +233,16 @@ class AcademicAdvisor(models.Model):
 
 
 class TermSection(models.Model):
+    # Scenario FK: scopes auto-generated sections to a specific scenario
+    # so two scenarios can both have CS211/S1 independently.
+    # NULL for imported/scraped sections that are global (not scenario-specific).
+    scenario = models.ForeignKey(
+        "TimetableScenario",
+        on_delete=models.CASCADE,
+        related_name="term_sections",
+        null=True,
+        blank=True,
+    )
     source_tag = models.TextField(default="other")
     course_name = models.TextField(blank=True, default="")
     available_capacity = models.IntegerField(null=True, blank=True)
@@ -248,9 +258,17 @@ class TermSection(models.Model):
     class Meta:
         db_table = "term_sections"
         constraints = [
+            # Scenario-owned sections: unique per (scenario, course_key, section)
+            models.UniqueConstraint(
+                fields=["scenario", "course_key", "section"],
+                condition=models.Q(scenario__isnull=False),
+                name="ux_term_sections_scenario",
+            ),
+            # Global sections (imported/scraped): unique per (course_key, section)
             models.UniqueConstraint(
                 fields=["course_key", "section"],
-                name="ux_term_sections_unique",
+                condition=models.Q(scenario__isnull=True),
+                name="ux_term_sections_global",
             ),
         ]
         indexes = [

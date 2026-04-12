@@ -772,8 +772,10 @@ def tw_board_unplaced_view(request: HttpRequest, board_id: int) -> JsonResponse:
     except DeliveryBoard.DoesNotExist:
         return _err("Board not found", code="NOT_FOUND", status=404)
 
-    # Get all term sections (all available sections for this semester)
-    all_sections = TermSection.objects.all()
+    # Get term sections for this scenario (scenario-owned + global imported)
+    from django.db.models import Q
+
+    all_sections = TermSection.objects.filter(Q(scenario=board.scenario) | Q(scenario__isnull=True))
 
     # Get sections already placed on this board
     placed_ids = set(
@@ -861,6 +863,7 @@ def tw_placement_create_planned_view(request: HttpRequest) -> JsonResponse:
     # Find or create TermSection
     course_key = course_code
     ts, _created = TermSection.objects.get_or_create(
+        scenario=board.scenario,
         course_key=course_key,
         section=section_label,
         defaults={

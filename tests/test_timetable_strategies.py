@@ -380,12 +380,23 @@ class TestRoomAssignment:
             )
 
     def test_labs_in_lab_rooms_only(self, timetable_scenario):
+        """Only 4-credit 100-min meetings go to lab rooms.
+        2-credit 100-min meetings are long lectures in lecture rooms."""
         scenario, board = timetable_scenario
         auto_place_board(board.id, strategy="compact")
         placements = list(
-            SectionPlacement.objects.filter(board=board).exclude(room="").exclude(room="UNASSIGNED")
+            SectionPlacement.objects.filter(board=board)
+            .exclude(room="")
+            .exclude(room="UNASSIGNED")
+            .select_related("term_section")
         )
 
+        from core.models import ScenarioSectionBudget
+
+        credit_map = {
+            b.course_code: b.credit_hours
+            for b in ScenarioSectionBudget.objects.filter(scenario=scenario)
+        }
         room_types = {r.room_code: r.room_type for r in Room.objects.all()}
 
         def _to_min(t):
@@ -394,15 +405,17 @@ class TestRoomAssignment:
 
         for p in placements:
             duration = _to_min(p.end_time) - _to_min(p.start_time)
+            cr = credit_map.get(p.term_section.course_code, 3)
             rtype = room_types.get(p.room, "lecture")
-            if duration > 80:
+            is_lab_meeting = duration > 80 and cr == 4
+            if is_lab_meeting:
                 assert rtype == "lab", (
-                    f"Lab meeting {p.term_section.course_code} ({duration}min) "
+                    f"4cr lab meeting {p.term_section.course_code} ({duration}min) "
                     f"assigned to {rtype} room {p.room}"
                 )
             else:
                 assert rtype == "lecture", (
-                    f"Lecture meeting {p.term_section.course_code} ({duration}min) "
+                    f"Lecture meeting {p.term_section.course_code} ({duration}min, {cr}cr) "
                     f"assigned to {rtype} room {p.room}"
                 )
 

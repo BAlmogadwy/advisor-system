@@ -455,10 +455,12 @@ def persist_solver_result(board_id: int, result: dict) -> dict:
     for ts_id in ts_ids:
         TermSectionMeeting.objects.filter(term_section_id=ts_id).delete()
 
+    scenario = board.scenario
+
     budget_map = {
         b.course_code: b
         for b in ScenarioSectionBudget.objects.filter(
-            scenario=board.scenario, programme_term=board.nominal_term
+            scenario=scenario, programme_term=board.nominal_term
         )
     }
 
@@ -468,6 +470,7 @@ def persist_solver_result(board_id: int, result: dict) -> dict:
         cap = budget.max_per_section if budget else 40
 
         ts, _ = TermSection.objects.get_or_create(
+            scenario=scenario,
             course_key=code,
             section=p["section"],
             defaults={

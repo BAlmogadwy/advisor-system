@@ -166,7 +166,10 @@ def _ensure_term_section(
     source_tag: str = "scraper_timetable",
 ) -> int:
     """Get or create a TermSection (+ meetings) from timetable data."""
-    ts = TermSection.objects.filter(course_key=course_key, section=section).first()
+    # Look up global (non-scenario) sections for imported/scraped data
+    ts = TermSection.objects.filter(
+        scenario__isnull=True, course_key=course_key, section=section
+    ).first()
     if ts is not None:
         return ts.id
 
@@ -303,6 +306,7 @@ def ingest_student_timetable_html(
 
         ts_id = (
             TermSection.objects.filter(
+                scenario__isnull=True,
                 course_key=course_key,
                 section=r["section"],
             )

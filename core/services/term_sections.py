@@ -97,10 +97,15 @@ def import_term_sections_from_csv(
 
     with transaction.atomic():
         if truncate_existing_term:
-            deleted_meetings = TermSectionMeeting.objects.all().count()
-            TermSectionMeeting.objects.all().delete()
-            deleted_sections = TermSection.objects.all().count()
-            TermSection.objects.all().delete()
+            # Only truncate global (non-scenario) sections.
+            # Scenario-owned sections are managed by the timetable builder.
+            global_sections = TermSection.objects.filter(scenario__isnull=True)
+            deleted_meetings = TermSectionMeeting.objects.filter(
+                term_section__scenario__isnull=True
+            ).count()
+            TermSectionMeeting.objects.filter(term_section__scenario__isnull=True).delete()
+            deleted_sections = global_sections.count()
+            global_sections.delete()
 
         grouped: dict[tuple[str, str], list[dict[str, str]]] = {}
         for row in rows:
@@ -120,6 +125,7 @@ def import_term_sections_from_csv(
             reg_str = str(first.get("registered_count", ""))
 
             ts, _created = TermSection.objects.update_or_create(
+                scenario=None,  # imported sections are global, not scenario-owned
                 course_key=course_key,
                 section=section,
                 defaults={
