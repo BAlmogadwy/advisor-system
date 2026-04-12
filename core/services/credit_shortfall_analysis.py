@@ -103,6 +103,14 @@ def analyse_student_shortfall(
     for m in ElectiveTermMapping.objects.filter(programme=program).select_related("elective"):
         elective_mappings.setdefault(m.placeholder_code, []).append(m.elective.course_code)
 
+    # Student credit hours for hour-based prerequisites like "80(HOURS)"
+    import re
+
+    _hour_pattern = re.compile(r"^(\d+)\s*\(?\s*HOURS?\s*\)?$", re.IGNORECASE)
+    student = Student.objects.filter(student_id=student_id).first()
+    student_earned = (student.total_earned_credits or 0) if student else 0
+    student_current = (student.current_registered_credits or 0) if student else 0
+
     blocked: list[tuple[str, str]] = []
     recoverable: list[str] = []
 
@@ -130,7 +138,16 @@ def analyse_student_shortfall(
                 blocked.append((code, "no eligible elective courses"))
         else:
             prereqs = _get_prerequisites(code, program)
-            missing = [p for p in prereqs if p not in passed and p not in studying]
+            missing = []
+            for p in prereqs:
+                # Handle hour-based prerequisites like "80(HOURS)"
+                hour_match = _hour_pattern.match(p)
+                if hour_match:
+                    req_hours = int(hour_match.group(1))
+                    if student_earned + student_current < req_hours:
+                        missing.append(f"{p} (have {student_earned}+{student_current})")
+                elif p not in passed and p not in studying:
+                    missing.append(p)
             if missing:
                 blocked.append((code, ", ".join(missing)))
             else:

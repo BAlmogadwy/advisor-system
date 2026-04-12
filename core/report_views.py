@@ -1314,7 +1314,8 @@ def export_recommendation_debug_xlsx_view(request: HttpRequest) -> HttpResponse:
 
 @role_required(ROLE_ADVISOR)
 @require_GET
-def export_course_eligibility_csv_view(request: HttpRequest) -> HttpResponse:
+def export_course_eligibility_csv_view(request: HttpRequest) -> HttpResponseBase:
+    """Export course eligibility as a styled XLSX with multiple sheets."""
     course_code = (request.GET.get("course_code") or "").strip().upper()
     if not course_code:
         return JsonResponse({"error": "course_code is required"}, status=400)
@@ -1335,34 +1336,11 @@ def export_course_eligibility_csv_view(request: HttpRequest) -> HttpResponse:
         course_code, section, program, join_years, strict_mode
     )
 
-    out = StringIO()
-    writer = csv.writer(out)
-    writer.writerow(
-        [
-            "course_code",
-            "mode",
-            "program",
-            "students",
-            "eligible_count",
-            "eligible_student_ids",
-            "prerequisites",
-        ]
-    )
-    mode = "strict" if strict_mode else "relaxed"
-    for row in payload.get("per_program", []):
-        writer.writerow(
-            [
-                payload.get("course_code"),
-                mode,
-                row.get("program"),
-                row.get("students"),
-                row.get("eligible_count"),
-                ",".join(str(x) for x in row.get("eligible_student_ids", [])),
-                ",".join(row.get("prerequisites", [])),
-            ]
-        )
+    from core.services.eligibility_export import export_eligibility_xlsx
 
-    return _excel_csv_response("course_eligibility.csv", out.getvalue())
+    path = export_eligibility_xlsx(payload)
+    filename = f"eligibility_{course_code}.xlsx"
+    return FileResponse(path.open("rb"), as_attachment=True, filename=filename)
 
 
 @role_required(ROLE_ADVISOR)
