@@ -946,6 +946,50 @@ def check_room_feasibility(
     return violations
 
 
+def _split_oversized_sections(
+    sections: list[dict],
+    max_cap: int,
+) -> list[dict]:
+    """Split any section larger than ``max_cap`` into roughly-equal parts
+    so it can be distributed across multiple rooms.
+
+    Needed for giant lecture sections (e.g. 100-student GS courses)
+    where no single same-gender room is big enough — the registrar
+    would handle this by splitting the section into two half-sized
+    sitting groups during the exam.  We simulate that here.
+
+    A section with ``student_count > max_cap`` is replaced by
+    ``ceil(count / max_cap)`` parts labelled ``"<orig>/1"``, ``"<orig>/2"``,
+    etc.  Only the first part inherits the preferred_room so the packer
+    doesn't try to place every part in the same normal classroom.
+    """
+    if max_cap <= 0:
+        return list(sections)
+    import math
+
+    out: list[dict] = []
+    for s in sections:
+        cnt = int(s.get("student_count", 0) or 0)
+        if cnt <= max_cap:
+            out.append(s)
+            continue
+        n_parts = max(2, math.ceil(cnt / max_cap))
+        base = cnt // n_parts
+        remainder = cnt - base * n_parts
+        for i in range(n_parts):
+            part_size = base + (1 if i < remainder else 0)
+            out.append(
+                {
+                    "section": f"{s['section']}/{i + 1}",
+                    "student_count": part_size,
+                    "preferred_room": s.get("preferred_room", "") if i == 0 else "",
+                    "gender": s.get("gender", "M"),
+                    "_split_from": s["section"],
+                }
+            )
+    return out
+
+
 def _merge_same_course_sections(
     sections_data: list[dict],
     max_room_capacity: int,
@@ -1066,29 +1110,40 @@ def assign_rooms_to_schedule(
     ) -> None:
         """Room-aware packing for one (course, gender) block.
 
-        Instead of pre-merging sections with a fixed ceiling, we pick a
-        room first and then pack as many sections as will fit into that
-        specific room.  This lets us match section sizes to actual room
-        sizes — small rooms get used for small sections, big rooms for
-        the indivisible giants — rather than forming oversized merged
-        blocks that only fit in the handful of biggest rooms.
-
         Algorithm per (course, gender):
           1. Sort remaining sections DESC by student_count.
           2. Top section is the current "anchor".  Find all free same-
              gender rooms whose capacity ≥ anchor.student_count.
-          3. If none: stamp UNASSIGNED for the anchor, remove it, loop.
+          3. If none: split the anchor in half and retry.  Only when
+             the anchor is already smaller than every remaining room
+             is it stamped UNASSIGNED (true capacity exhaustion).
           4. Score candidates: preferred-room bonus, then tightest-fit.
-          5. Pack additional sections into the chosen room until no more
-             fit, largest-first.
+          5. Pack additional sections into the chosen room until no
+             more fit, largest-first.
           6. Stamp one ``rooms`` record describing the packed block.
           7. Remove packed sections from remaining; loop until empty.
+
+        Recursive splitting during step 3 handles the common case where
+        a big section would have fit earlier but all the biggest rooms
+        have been consumed by other courses in the same slot — halving
+        it puts it within reach of smaller rooms still available.
         """
         remaining = sorted(
             (dict(s) for s in sections),
             key=lambda s: int(s.get("student_count", 0) or 0),
             reverse=True,
         )
+
+        def _free_max_cap() -> int:
+            return max(
+                (
+                    int(r.get("capacity", 0) or 0)
+                    for r in rooms_by_gender.get(gender, [])
+                    if (str(r.get("room_code", "")), gender) not in taken
+                ),
+                default=0,
+            )
+
         while remaining:
             anchor = remaining[0]
             anchor_count = int(anchor.get("student_count", 0) or 0)
@@ -1102,6 +1157,44 @@ def assign_rooms_to_schedule(
             ]
 
             if not candidates:
+                # Before giving up, try to split the anchor in half —
+                # the other half could fit a smaller room.  We only
+                # truly give up when the anchor is already smaller than
+                # every free same-gender room (real capacity exhaustion)
+                # or when halving would drop the part below 1 student.
+                free_max = _free_max_cap()
+                if anchor_count >= 2 and free_max > 0 and anchor_count > free_max:
+                    # Split roughly in half and push both halves back.
+                    half_a = anchor_count // 2
+                    half_b = anchor_count - half_a
+                    base_label = anchor.get("_split_from") or anchor["section"]
+                    remaining.pop(0)
+                    remaining = (
+                        [
+                            {
+                                "section": f"{anchor['section']}a",
+                                "student_count": half_a,
+                                "preferred_room": preferred,
+                                "gender": gender,
+                                "_split_from": base_label,
+                            },
+                            {
+                                "section": f"{anchor['section']}b",
+                                "student_count": half_b,
+                                "preferred_room": "",
+                                "gender": gender,
+                                "_split_from": base_label,
+                            },
+                        ]
+                        + remaining
+                    )
+                    # Keep sorted so the loop's DESC invariant holds
+                    remaining.sort(
+                        key=lambda s: int(s.get("student_count", 0) or 0),
+                        reverse=True,
+                    )
+                    continue
+
                 entry["rooms"].append(
                     {
                         "section": anchor["section"],
@@ -1172,6 +1265,14 @@ def assign_rooms_to_schedule(
                 same_gender = [s for s in sections_data if s.get("gender") == gender]
                 if not same_gender:
                     continue
+                # Pre-split any section that exceeds the biggest same-
+                # gender room — the registrar normally splits such huge
+                # sections into two sitting groups for exams.
+                max_cap_gender = max(
+                    (int(r.get("capacity", 0) or 0) for r in rooms_by_gender[gender]),
+                    default=0,
+                )
+                same_gender = _split_oversized_sections(same_gender, max_cap_gender)
                 max_section = max(
                     int(s.get("student_count", 0) or 0) for s in same_gender
                 )

@@ -329,7 +329,18 @@ def test_assign_rooms_splits_merged_group_when_big_room_unavailable() -> None:
     assert unassigned_sections[0] in ("M1", "M2", "M3")
 
 
-def test_assign_rooms_unassignable_section_marked_unassigned() -> None:
+def test_assign_rooms_auto_splits_oversized_section() -> None:
+    """A section bigger than the largest same-gender room is split
+    recursively until every part fits some available room (or no
+    rooms remain at all).
+
+    In this fixture: M1 = 100 students, M rooms are 10/25/50.
+    The upfront split produces M1/1 (50) + M1/2 (50).  M1/1 fits
+    M-50.  M1/2 then has only M-25 and M-10 left, so it recursively
+    halves until its sub-parts find homes or exhaust rooms.  We
+    expect at least two assigned rooms and the entire 100 students
+    accounted for in the assignments.
+    """
     _make_rooms()
     rooms = list(Room.objects.values("room_code", "capacity", "section"))
 
@@ -340,7 +351,37 @@ def test_assign_rooms_unassignable_section_marked_unassigned() -> None:
         ]
     }
     assign_rooms_to_schedule(schedule, enrolment, rooms)
-    assert schedule[0]["rooms"][0]["room_code"] == "UNASSIGNED"
+    assigned = schedule[0]["rooms"]
+
+    # Total students accounted for equals the original 100
+    total = sum(int(a["student_count"]) for a in assigned)
+    assert total == 100
+
+    # At least the 3 M rooms should end up used (or marked unassigned
+    # for parts that couldn't fit anywhere)
+    assigned_rooms = {a["room_code"] for a in assigned if a["room_code"] != "UNASSIGNED"}
+    # M-50 always fits the first 50-student half
+    assert "M-50" in assigned_rooms
+    # All assignments carry the original section prefix M1
+    assert all(a["section"].startswith("M1") for a in assigned)
+
+
+def test_assign_rooms_no_split_when_section_fits() -> None:
+    """Sections at or under max_cap are placed without splitting."""
+    _make_rooms()
+    rooms = list(Room.objects.values("room_code", "capacity", "section"))
+
+    schedule = [{"course_code": "FIT1", "slot_index": 0, "day": "Sun", "period": "9"}]
+    enrolment = {
+        "FIT1": [
+            {"section": "M1", "student_count": 50, "preferred_room": "", "gender": "M"},
+        ]
+    }
+    assign_rooms_to_schedule(schedule, enrolment, rooms)
+    # No splitting: one assignment, label untouched
+    assert len(schedule[0]["rooms"]) == 1
+    assert schedule[0]["rooms"][0]["section"] == "M1"
+    assert schedule[0]["rooms"][0]["room_code"] == "M-50"
 
 
 def test_assign_rooms_skips_overflow_entries() -> None:
