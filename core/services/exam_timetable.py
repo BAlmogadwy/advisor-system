@@ -314,23 +314,33 @@ def schedule(
         bucket_deg = sum(len(_ptb.get(bk, set())) for bk in _cb.get(c, []))
         return adj_deg + bucket_deg
 
-    # Sort most-constrained first.  When seed is provided, shuffle courses
-    # within each constraint-degree tier so tie-breaking is randomised.
-    # This produces a different (but equally valid) timetable each run.
+    # Sort most-constrained first.  When seed is provided, we bucket
+    # courses into WIDE degree bands (each band is ~20% of the degree
+    # range) and shuffle inside every band.  Banding is wider than
+    # strict equal-degree tiers so courses with close-but-different
+    # degrees also mix together — this gives each run noticeably more
+    # variety without letting low-degree courses leapfrog high-degree
+    # ones entirely.
     if seed is not None:
         rng = random.Random(seed)
-        # Group courses by their constraint degree
-        degree_map: dict[int, list[str]] = defaultdict(list)
-        for c in courses:
-            degree_map[_constraint_degree(c)].append(c)
-        # Build the sorted list: tiers in descending degree order,
-        # courses within each tier shuffled randomly.
-        courses_sorted: list[str] = []
-        for _deg in sorted(degree_map.keys(), reverse=True):
-            tier = degree_map[_deg]
-            rng.shuffle(tier)
-            courses_sorted.extend(tier)
+        degrees = [(_constraint_degree(c), c) for c in courses]
+        if degrees:
+            max_deg = max(d for d, _ in degrees)
+            # Band width: ~10% of the max degree, floor of 1.
+            band_width = max(1, max_deg // 10)
+            # Bucket by band index (descending bands placed first)
+            band_map: dict[int, list[str]] = defaultdict(list)
+            for d, c in degrees:
+                band_map[d // band_width].append(c)
+            courses_sorted = []
+            for band in sorted(band_map.keys(), reverse=True):
+                members = band_map[band]
+                rng.shuffle(members)
+                courses_sorted.extend(members)
+        else:
+            courses_sorted = []
     else:
+        rng = None
         # Deterministic: alphabetical within each tier (Python sort is stable)
         courses_sorted = sorted(courses, key=_constraint_degree, reverse=True)
 
@@ -445,6 +455,8 @@ def schedule(
             course_students = enrolled_sets[course]
             best_slot = candidates[0]
             best_score = (float("inf"), float("inf"), float("inf"), float("inf"))
+            # Reservoir sampling counter for ties when seed is provided.
+            ties_seen = 0
 
             for si in candidates:
                 day = slot_by_index[si]["day"]
@@ -493,6 +505,13 @@ def schedule(
                 if score < best_score:
                     best_score = score
                     best_slot = si
+                    ties_seen = 1
+                elif score == best_score and rng is not None:
+                    # Reservoir-sample tied slots so the chosen one
+                    # varies across runs (1/ties_seen probability).
+                    ties_seen += 1
+                    if rng.random() < 1.0 / ties_seen:
+                        best_slot = si
 
             chosen = best_slot
         else:
@@ -1052,6 +1071,7 @@ def assign_rooms_to_schedule(
     schedule_entries: list[dict],
     section_enrollment: dict[str, list[dict]],
     rooms: list[dict],
+    seed: int | None = None,
 ) -> list[dict]:
     """Assign rooms to every scheduled course, mutating ``schedule_entries``
     in place and returning the list for chaining.
@@ -1084,6 +1104,12 @@ def assign_rooms_to_schedule(
 
     if not rooms:
         return schedule_entries
+
+    # Randomiser used for tie-breaking when a seed is provided.  Tied
+    # room candidates and tied demand groups are reservoir-sampled so
+    # the chosen one varies across runs — the overall quality stays
+    # identical because we only break ties, never override better picks.
+    rng = random.Random(seed) if seed is not None else None
 
     # Pre-split rooms by gender; sort ASC by capacity so best-fit picks
     # the tightest room first when iterating.
@@ -1213,7 +1239,25 @@ def assign_rooms_to_schedule(
                 cap = int(room.get("capacity", 0) or 0)
                 return (0 if code == pref else 1, cap - demand)
 
-            chosen = min(candidates, key=_score)
+            # Pick the tightest-fit room.  When multiple rooms tie on
+            # the score and a seed is provided, reservoir-sample among
+            # them so the chosen room varies run-to-run.
+            if rng is None:
+                chosen = min(candidates, key=_score)
+            else:
+                best_room_score: tuple | None = None
+                chosen = candidates[0]
+                ties = 0
+                for r in candidates:
+                    rs = _score(r)
+                    if best_room_score is None or rs < best_room_score:
+                        best_room_score = rs
+                        chosen = r
+                        ties = 1
+                    elif rs == best_room_score:
+                        ties += 1
+                        if rng.random() < 1.0 / ties:
+                            chosen = r
             chosen_code = str(chosen.get("room_code", ""))
             chosen_cap = int(chosen.get("capacity", 0) or 0)
             taken.add((chosen_code, gender))
@@ -1280,8 +1324,25 @@ def assign_rooms_to_schedule(
 
         # Sort by the biggest indivisible section DESC: a group whose
         # largest section is 90 students is placed before a group whose
-        # largest section is 7, regardless of total size.
-        groups.sort(key=lambda g: -g[3])
+        # largest section is 7, regardless of total size.  When a seed
+        # is provided, groups with the same max-section value are
+        # shuffled so tied groups get varied priority each run.
+        if rng is None:
+            groups.sort(key=lambda g: -g[3])
+        else:
+            # Banded shuffle: groups are bucketed by max-section tier
+            # (bands of 10 students) and shuffled within each band
+            # before processing.  Wider than strict ties so adjacent
+            # sizes also mix.
+            groups.sort(key=lambda g: -g[3])
+            banded: dict[int, list] = defaultdict(list)
+            for g in groups:
+                banded[g[3] // 10].append(g)
+            groups = []
+            for band in sorted(banded.keys(), reverse=True):
+                members = banded[band]
+                rng.shuffle(members)
+                groups.extend(members)
 
         for entry, gender, same_gender, _max_section in groups:
             _pack_course_gender_group(entry, same_gender, gender, taken)
@@ -1480,7 +1541,12 @@ def build_exam_timetable(
             )
         )
         room_feasibility = check_room_feasibility(section_enrollment, rooms_list)
-        assign_rooms_to_schedule(schedule_entries, section_enrollment, rooms_list)
+        assign_rooms_to_schedule(
+            schedule_entries,
+            section_enrollment,
+            rooms_list,
+            seed=seed,
+        )
         room_qa = _build_room_qa(schedule_entries, rooms_list)
         # Merge room QA into main QA dict for a single source of truth
         qa["rooms"] = room_qa
