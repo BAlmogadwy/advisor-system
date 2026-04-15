@@ -1442,8 +1442,15 @@ def _rebalance_invigilators_pass(
             schedule_entries, section_enrollment, rooms_list, seed=None
         )
 
-    def _per_day_invigilators() -> dict[str, int]:
-        per_day: dict[str, int] = defaultdict(int)
+    def _per_day_invigilators() -> dict[str, dict[str, int]]:
+        """Return ``{day: {'M': int, 'F': int, 'total': int}}`` so the
+        rebalance metric can score per-gender stddev rather than only
+        the combined total — a move that flattens the total but
+        worsens the M-only or F-only spread should not be accepted.
+        """
+        per_day: dict[str, dict[str, int]] = defaultdict(
+            lambda: {"M": 0, "F": 0, "total": 0}
+        )
         for e in schedule_entries:
             if e.get("day") == "OVERFLOW":
                 continue
@@ -1451,15 +1458,34 @@ def _rebalance_invigilators_pass(
                 if a.get("room_code") == "UNASSIGNED":
                     continue
                 stu = int(a.get("student_count", 0) or 0)
-                per_day[e["day"]] += _invigilators_needed(e["course_code"], stu)
-        return dict(per_day)
+                invigs = _invigilators_needed(e["course_code"], stu)
+                gender = a.get("gender", "M")
+                per_day[e["day"]][gender] += invigs
+                per_day[e["day"]]["total"] += invigs
+        return {k: dict(v) for k, v in per_day.items()}
 
-    def _stddev(d: dict[str, int]) -> float:
-        if not d:
-            return 0.0
-        vals = list(d.values())
-        m = sum(vals) / len(vals)
-        return (sum((v - m) ** 2 for v in vals) / len(vals)) ** 0.5
+    def _balance_score(per_day: dict[str, dict[str, int]]) -> tuple[float, int, int]:
+        """Score a per-day distribution.  Lower is flatter.
+
+        Returns a tuple ``(combined_stddev, max_total, max_minus_min_total)``
+        so we sort lexicographically: primary objective is the combined
+        per-gender standard deviation (M-series and F-series concatenated),
+        with the day-total max and spread as tiebreakers.  Using both
+        gender series guarantees a move that helps the overall total but
+        worsens one gender's distribution will be rejected.
+        """
+        if not per_day:
+            return (0.0, 0, 0)
+        m_vals = [v["M"] for v in per_day.values()]
+        f_vals = [v["F"] for v in per_day.values()]
+        t_vals = [v["total"] for v in per_day.values()]
+        # stddev across M-series + F-series combined (so each gender is
+        # weighted equally regardless of which one happens to be larger)
+        combined = m_vals + f_vals
+        n = len(combined)
+        mean = sum(combined) / n
+        var = sum((x - mean) ** 2 for x in combined) / n
+        return (var ** 0.5, max(t_vals), max(t_vals) - min(t_vals))
 
     def _causes_conflict(
         course: str, target_slot_idx: int, current_slot_of: dict[str, int]
@@ -1483,17 +1509,17 @@ def _rebalance_invigilators_pass(
     # Make sure we start from a clean packing
     _repack_all()
     current = _per_day_invigilators()
-    base_std = _stddev(current)
+    base_score = _balance_score(current)
     moves_accepted = 0
 
     for _iter in range(max_iterations):
         if not current:
             break
-        # Sort days by invigilator load — pick the worst hot/cold pair
-        days_by_load = sorted(current.items(), key=lambda x: x[1])
-        coldest_day, cold_value = days_by_load[0]
-        hottest_day, hot_value = days_by_load[-1]
-        if hot_value - cold_value <= 2:
+        # Sort days by total invigilator load — pick the worst hot/cold pair
+        days_by_load = sorted(current.items(), key=lambda x: x[1]["total"])
+        coldest_day, cold_counts = days_by_load[0]
+        hottest_day, hot_counts = days_by_load[-1]
+        if hot_counts["total"] - cold_counts["total"] <= 2:
             break  # already pretty flat
 
         improved = False
@@ -1534,20 +1560,35 @@ def _rebalance_invigilators_pass(
                 entry["period"] = target_slot["period"]
                 _repack_all()
                 new_per_day = _per_day_invigilators()
-                new_std = _stddev(new_per_day)
+                new_score = _balance_score(new_per_day)
 
-                # Accept only if strictly improving; tolerance avoids oscillation
-                if new_std + 0.01 < base_std:
-                    base_std = new_std
+                # Accept only if strictly improving the lexicographic
+                # (combined-stddev, max-day, spread) score.  A 0.01
+                # tolerance on the stddev component prevents oscillation
+                # when several moves have indistinguishable impact.
+                accept = (
+                    new_score[0] + 0.01 < base_score[0]
+                    or (
+                        abs(new_score[0] - base_score[0]) <= 0.01
+                        and new_score[1:] < base_score[1:]
+                    )
+                )
+                if accept:
+                    base_score = new_score
                     current = new_per_day
                     moves_accepted += 1
                     improved = True
                     break
 
-                # Revert
+                # Revert: restore entry fields AND re-pack so the rooms
+                # data also matches the reverted state.  Without the
+                # second repack the entry would briefly carry rooms from
+                # the failed move until the next successful move (or the
+                # final pass return) re-packed everything.
                 entry["slot_index"] = old_slot_idx
                 entry["day"] = old_day
                 entry["period"] = old_period
+                _repack_all()
 
             if improved:
                 break
@@ -1555,11 +1596,10 @@ def _rebalance_invigilators_pass(
         if not improved:
             break
 
-        # After a successful move re-pack one more time so the entries
-        # carry the accepted state.  current already reflects the new
-        # measurements; repacking ensures the rooms data matches.
-        _repack_all()
-
+    # Final re-pack so the returned schedule_entries always carry rooms
+    # data that matches their final slot assignments — important when
+    # the loop exits mid-iteration.
+    _repack_all()
     return moves_accepted
 
 

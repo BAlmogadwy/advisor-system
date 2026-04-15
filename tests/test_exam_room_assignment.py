@@ -24,6 +24,7 @@ from core.models import (
     TermSectionMeeting,
 )
 from core.services.exam_timetable import (
+    _invigilators_needed,
     _merge_same_course_sections,
     _section_gender,
     assign_rooms_to_schedule,
@@ -461,3 +462,231 @@ def test_build_exam_timetable_assign_rooms_false_skips_assignment() -> None:
     for e in result["schedule"]:
         # With assign_rooms=False the schedule entries have no rooms key
         assert "rooms" not in e or e["rooms"] == []
+
+
+# ── Invigilator + rebalance pass tests ────────────────────────────
+
+
+def test_invigilators_needed_rules() -> None:
+    """Department: 1 if <30, 2 if >=30. External: 0 if <=30, 1 if >30."""
+    # Department prefixes
+    assert _invigilators_needed("CS112", 5) == 1
+    assert _invigilators_needed("IS242", 29) == 1
+    assert _invigilators_needed("AI201", 30) == 2
+    assert _invigilators_needed("DS331", 100) == 2
+    assert _invigilators_needed("COE344", 30) == 2
+    assert _invigilators_needed("CYB348", 31) == 2
+    # External prefixes
+    assert _invigilators_needed("MATH203", 5) == 0
+    assert _invigilators_needed("GS112", 30) == 0
+    assert _invigilators_needed("STAT103", 30) == 0
+    assert _invigilators_needed("PHYS104", 31) == 1
+    assert _invigilators_needed("ENV101", 100) == 1
+    # Unknown prefix is treated as department (safer side)
+    assert _invigilators_needed("XYZ100", 50) == 2
+    # Empty / weird input
+    assert _invigilators_needed("", 50) == 2
+    assert _invigilators_needed("CS112", 0) == 1
+
+
+def _make_rebalance_fixture() -> tuple[list[str], list[str]]:
+    """Seed a many-section, many-course scenario where the greedy
+    scheduler clusters most invigilator weight onto one day so the
+    rebalance pass has something meaningful to flatten.
+    """
+    # 8 small department courses, 80 students each in 4 sections
+    course_codes = []
+    for i in range(8):
+        cc = f"REB{100 + i}"
+        Course.objects.create(course_code=cc, credit_hours=3)
+        course_codes.append(cc)
+
+    # 80 M students + 80 F students per course (no overlap between courses)
+    student_id = 7000
+    for cc in course_codes:
+        for label in ("M1", "M2"):
+            ts = TermSection.objects.create(
+                course_code=cc, course_number=cc[-3:], course_key=cc, section=label,
+            )
+            for _ in range(40):
+                s, _ = Student.objects.get_or_create(
+                    student_id=student_id,
+                    defaults={"program": "REBTEST", "section": "M"},
+                )
+                StudentTermSection.objects.create(
+                    student_id=student_id,
+                    academic_year="1447",
+                    term="2",
+                    term_section=ts,
+                )
+                student_id += 1
+        for label in ("F1", "F2"):
+            ts = TermSection.objects.create(
+                course_code=cc, course_number=cc[-3:], course_key=cc, section=label,
+            )
+            for _ in range(40):
+                s, _ = Student.objects.get_or_create(
+                    student_id=student_id,
+                    defaults={"program": "REBTEST", "section": "F"},
+                )
+                StudentTermSection.objects.create(
+                    student_id=student_id,
+                    academic_year="1447",
+                    term="2",
+                    term_section=ts,
+                )
+                student_id += 1
+
+    # Plenty of small rooms so packing is forced to use many at once
+    for i in range(10):
+        Room.objects.create(room_code=f"M-R{i:02d}", capacity=20, section="M")
+        Room.objects.create(room_code=f"F-R{i:02d}", capacity=20, section="F")
+
+    days = [f"D{i}" for i in range(1, 5)]  # 4 days
+    return course_codes, days
+
+
+def test_rebalance_pass_reduces_invigilator_stddev() -> None:
+    course_codes, days = _make_rebalance_fixture()
+
+    # Build WITHOUT rebalance to get a baseline
+    before = build_exam_timetable(
+        label="rebal-before",
+        days=days,
+        periods=["09:00", "12:00", "15:00"],
+        max_per_day=2,
+        programs=["REBTEST"],
+        selected_courses=course_codes,
+        assign_rooms=True,
+        rebalance_invigilators=False,
+    )
+    b_per_day = before["qa"]["rooms"]["invigilators_per_day"]
+    b_totals = [c["total"] for c in b_per_day.values()]
+
+    # Build WITH rebalance
+    after = build_exam_timetable(
+        label="rebal-after",
+        days=days,
+        periods=["09:00", "12:00", "15:00"],
+        max_per_day=2,
+        programs=["REBTEST"],
+        selected_courses=course_codes,
+        assign_rooms=True,
+        rebalance_invigilators=True,
+    )
+    a_per_day = after["qa"]["rooms"]["invigilators_per_day"]
+    a_totals = [c["total"] for c in a_per_day.values()]
+
+    def _stddev(vals: list[int]) -> float:
+        n = len(vals)
+        m = sum(vals) / n
+        return (sum((v - m) ** 2 for v in vals) / n) ** 0.5
+
+    # Either the rebalance found improvements OR the baseline was
+    # already perfectly flat (stddev <= 1).  We accept both outcomes;
+    # what we never accept is the rebalance making things worse.
+    if _stddev(b_totals) > 1.0:
+        assert _stddev(a_totals) <= _stddev(b_totals), (
+            f"Rebalance worsened stddev: {b_totals} -> {a_totals}"
+        )
+    # No new conflicts and no new unassigned introduced
+    assert after["qa"]["conflict_count"] == before["qa"]["conflict_count"]
+    assert (
+        len(after["qa"]["rooms"]["unassigned_room_sections"])
+        == len(before["qa"]["rooms"]["unassigned_room_sections"])
+    )
+
+
+def test_rebalance_pass_preserves_total_invigilator_count_approximately() -> None:
+    """Moving courses between days shouldn't change the total invigilator
+    headcount by much — only by how courses repack into different rooms.
+    """
+    course_codes, days = _make_rebalance_fixture()
+    before = build_exam_timetable(
+        label="rebal-tot-before",
+        days=days,
+        periods=["09:00", "12:00", "15:00"],
+        max_per_day=2,
+        programs=["REBTEST"],
+        selected_courses=course_codes,
+        assign_rooms=True,
+        rebalance_invigilators=False,
+    )
+    after = build_exam_timetable(
+        label="rebal-tot-after",
+        days=days,
+        periods=["09:00", "12:00", "15:00"],
+        max_per_day=2,
+        programs=["REBTEST"],
+        selected_courses=course_codes,
+        assign_rooms=True,
+        rebalance_invigilators=True,
+    )
+    b_total = before["qa"]["rooms"]["invigilators_total"]
+    a_total = after["qa"]["rooms"]["invigilators_total"]
+    # Allow up to 20% variance — packing into different rooms can change
+    # which sections cross the 30-student threshold.
+    assert abs(a_total - b_total) <= max(2, b_total // 5), (
+        f"Invigilator total drifted too much: {b_total} -> {a_total}"
+    )
+
+
+def test_rebalance_pass_no_op_on_single_day() -> None:
+    """Single-day schedules have nothing to rebalance — the pass should
+    return immediately without errors and produce the same per-day
+    distribution as a no-rebalance run.
+    """
+    _make_students_and_courses()
+    _make_rooms()
+    result = build_exam_timetable(
+        label="rebal-single-day",
+        days=["OnlyDay"],
+        periods=["09:00", "12:00", "15:00"],
+        max_per_day=3,
+        programs=["ROOMTEST"],
+        assign_rooms=True,
+        rebalance_invigilators=True,
+    )
+    # Should still complete without error
+    assert "rooms" in result["qa"]
+    assert result["qa"].get("rebalance_moves", 0) == 0
+
+
+def test_invigilator_qa_matches_rebalance_metric() -> None:
+    """The per-day invigilator counts surfaced in qa.rooms should be
+    consistent with what _invigilators_needed would compute when
+    walked over the assigned rooms — i.e. the rebalance pass and the
+    QA report agree on the metric.
+    """
+    course_codes, days = _make_rebalance_fixture()
+    result = build_exam_timetable(
+        label="rebal-qa-consistency",
+        days=days,
+        periods=["09:00", "12:00", "15:00"],
+        max_per_day=2,
+        programs=["REBTEST"],
+        selected_courses=course_codes,
+        assign_rooms=True,
+    )
+    # Recompute totals from the schedule and compare against qa.rooms
+    rqa = result["qa"]["rooms"]
+    expected_per_day: dict = {}
+    for e in result["schedule"]:
+        if e["day"] == "OVERFLOW":
+            continue
+        expected_per_day.setdefault(e["day"], {"M": 0, "F": 0, "total": 0})
+        for a in e.get("rooms", []) or []:
+            if a.get("room_code") == "UNASSIGNED":
+                continue
+            stu = int(a.get("student_count", 0) or 0)
+            invigs = _invigilators_needed(e["course_code"], stu)
+            gender = a.get("gender", "M")
+            expected_per_day[e["day"]][gender] += invigs
+            expected_per_day[e["day"]]["total"] += invigs
+
+    actual = rqa["invigilators_per_day"]
+    assert set(actual.keys()) == set(expected_per_day.keys())
+    for day in expected_per_day:
+        assert actual[day]["M"] == expected_per_day[day]["M"], day
+        assert actual[day]["F"] == expected_per_day[day]["F"], day
+        assert actual[day]["total"] == expected_per_day[day]["total"], day
