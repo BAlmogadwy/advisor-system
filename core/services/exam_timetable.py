@@ -1058,129 +1058,132 @@ def assign_rooms_to_schedule(
             continue
         entries_by_slot[e["slot_index"]].append(e)
 
-    def _assign_unit(
+    def _pack_course_gender_group(
         entry: dict,
-        unit: dict,
+        sections: list[dict],
+        gender: str,
         taken: set[tuple[str, str]],
-    ) -> bool:
-        """Try to place a single demand unit in the tightest-fit same-gender
-        room that is still free in this slot.  Returns True on success.
-        Stamps the result onto ``entry["rooms"]`` either way.
+    ) -> None:
+        """Room-aware packing for one (course, gender) block.
+
+        Instead of pre-merging sections with a fixed ceiling, we pick a
+        room first and then pack as many sections as will fit into that
+        specific room.  This lets us match section sizes to actual room
+        sizes — small rooms get used for small sections, big rooms for
+        the indivisible giants — rather than forming oversized merged
+        blocks that only fit in the handful of biggest rooms.
+
+        Algorithm per (course, gender):
+          1. Sort remaining sections DESC by student_count.
+          2. Top section is the current "anchor".  Find all free same-
+             gender rooms whose capacity ≥ anchor.student_count.
+          3. If none: stamp UNASSIGNED for the anchor, remove it, loop.
+          4. Score candidates: preferred-room bonus, then tightest-fit.
+          5. Pack additional sections into the chosen room until no more
+             fit, largest-first.
+          6. Stamp one ``rooms`` record describing the packed block.
+          7. Remove packed sections from remaining; loop until empty.
         """
-        gender = unit["gender"]
-        student_count = int(unit["student_count"])
-        preferred = unit.get("preferred_room", "")
+        remaining = sorted(
+            (dict(s) for s in sections),
+            key=lambda s: int(s.get("student_count", 0) or 0),
+            reverse=True,
+        )
+        while remaining:
+            anchor = remaining[0]
+            anchor_count = int(anchor.get("student_count", 0) or 0)
+            preferred = anchor.get("preferred_room", "")
 
-        candidates = [
-            r
-            for r in rooms_by_gender.get(gender, [])
-            if (str(r.get("room_code", "")), gender) not in taken
-            and int(r.get("capacity", 0) or 0) >= student_count
-        ]
+            candidates = [
+                r
+                for r in rooms_by_gender.get(gender, [])
+                if (str(r.get("room_code", "")), gender) not in taken
+                and int(r.get("capacity", 0) or 0) >= anchor_count
+            ]
 
-        if not candidates:
+            if not candidates:
+                entry["rooms"].append(
+                    {
+                        "section": anchor["section"],
+                        "room_code": "UNASSIGNED",
+                        "student_count": anchor_count,
+                        "room_capacity": 0,
+                        "gender": gender,
+                        "merged_from": [anchor["section"]],
+                    }
+                )
+                remaining.pop(0)
+                continue
+
+            def _score(room: dict, pref: str = preferred, demand: int = anchor_count) -> tuple:
+                code = str(room.get("room_code", ""))
+                cap = int(room.get("capacity", 0) or 0)
+                return (0 if code == pref else 1, cap - demand)
+
+            chosen = min(candidates, key=_score)
+            chosen_code = str(chosen.get("room_code", ""))
+            chosen_cap = int(chosen.get("capacity", 0) or 0)
+            taken.add((chosen_code, gender))
+
+            # Pack more sections into the chosen room, largest-first,
+            # while they still fit.  This forms the merged block as we
+            # go so its shape matches the actual room we're using.
+            packed = [anchor]
+            running = anchor_count
+            remaining = remaining[1:]
+            still_left: list[dict] = []
+            for s in remaining:
+                sc = int(s.get("student_count", 0) or 0)
+                if running + sc <= chosen_cap:
+                    packed.append(s)
+                    running += sc
+                else:
+                    still_left.append(s)
+            remaining = still_left
+
             entry["rooms"].append(
                 {
-                    "section": unit["section"],
-                    "room_code": "UNASSIGNED",
-                    "student_count": student_count,
-                    "room_capacity": 0,
+                    "section": "+".join(p["section"] for p in packed)
+                    if len(packed) > 1
+                    else packed[0]["section"],
+                    "room_code": chosen_code,
+                    "student_count": running,
+                    "room_capacity": chosen_cap,
                     "gender": gender,
-                    "merged_from": unit.get("merged_from", [unit["section"]]),
+                    "merged_from": [p["section"] for p in packed],
                 }
             )
-            return False
-
-        def _score(room: dict, pref: str = preferred, demand: int = student_count) -> tuple:
-            code = str(room.get("room_code", ""))
-            cap = int(room.get("capacity", 0) or 0)
-            return (0 if code == pref else 1, cap - demand)
-
-        chosen = min(candidates, key=_score)
-        chosen_code = str(chosen.get("room_code", ""))
-        taken.add((chosen_code, gender))
-        entry["rooms"].append(
-            {
-                "section": unit["section"],
-                "room_code": chosen_code,
-                "student_count": student_count,
-                "room_capacity": int(chosen.get("capacity", 0) or 0),
-                "gender": gender,
-                "merged_from": unit.get("merged_from", [unit["section"]]),
-            }
-        )
-        return True
 
     for _si, entries in entries_by_slot.items():
         # Rooms consumed in this slot (by room_code + gender)
         taken: set[tuple[str, str]] = set()
 
-        # Collect demand units across all courses in the slot, tagged
-        # back to the entry so we can stamp assignments on the right one.
-        demand_units: list[tuple[dict, dict]] = []  # (entry, unit)
+        # Build one "demand group" per (entry, gender) so we can sort
+        # ACROSS courses by the largest indivisible section each course
+        # needs.  This guarantees a 90-student single section beats a
+        # 40-section group of 6-student blocks for first pick.
+        groups: list[tuple[dict, str, list[dict], int]] = []
         for entry in entries:
             course_code = entry["course_code"]
             sections_data = section_enrollment.get(course_code, [])
             if not sections_data:
                 continue
-
-            # Split by gender and try merging within each gender group
             for gender in ("M", "F"):
                 same_gender = [s for s in sections_data if s.get("gender") == gender]
                 if not same_gender:
                     continue
-                max_cap_here = max(
-                    (int(r.get("capacity", 0) or 0) for r in rooms_by_gender[gender]),
-                    default=0,
+                max_section = max(
+                    int(s.get("student_count", 0) or 0) for s in same_gender
                 )
-                merged = _merge_same_course_sections(same_gender, max_cap_here)
-                for unit in merged:
-                    demand_units.append((entry, unit))
+                groups.append((entry, gender, same_gender, max_section))
 
-        # Sort demand units so that the LARGEST INDIVISIBLE section gets
-        # first pick.  A merged group can be split back into constituents
-        # (see the fallback further down), so its "hard requirement" is
-        # only the size of its biggest constituent — not the merged total.
-        # Primary key: max indivisible block; secondary: total size so
-        # merges still win ties against singletons of the same cap.
-        def _sort_key(pair: tuple[dict, dict]) -> tuple[int, int]:
-            unit = pair[1]
-            constituents = unit.get("_constituents") or []
-            if constituents:
-                max_block = max(
-                    int(c.get("student_count", 0) or 0) for c in constituents
-                )
-            else:
-                max_block = int(unit.get("student_count", 0) or 0)
-            return (-max_block, -int(unit.get("student_count", 0) or 0))
+        # Sort by the biggest indivisible section DESC: a group whose
+        # largest section is 90 students is placed before a group whose
+        # largest section is 7, regardless of total size.
+        groups.sort(key=lambda g: -g[3])
 
-        demand_units.sort(key=_sort_key)
-
-        for entry, unit in demand_units:
-            # First attempt: place the (possibly merged) unit as a single
-            # block so we minimise total rooms when the merge fits.
-            placed = _assign_unit(entry, unit, taken)
-            if placed:
-                continue
-
-            # Fallback: the merged block couldn't find a big enough room
-            # in this slot (another course may have taken the biggest room
-            # first).  Split the merge back into its original constituents
-            # and place each one individually — two small rooms are almost
-            # always better than one UNASSIGNED section.
-            constituents = unit.get("_constituents") or []
-            if len(constituents) <= 1:
-                continue  # nothing to split; UNASSIGNED record already stamped
-
-            # Roll back the UNASSIGNED record we just stamped, then retry
-            # with the individual sections sorted by size DESC.
-            entry["rooms"].pop()
-            for sub in sorted(
-                constituents,
-                key=lambda s: int(s.get("student_count", 0) or 0),
-                reverse=True,
-            ):
-                _assign_unit(entry, sub, taken)
+        for entry, gender, same_gender, _max_section in groups:
+            _pack_course_gender_group(entry, same_gender, gender, taken)
 
     return schedule_entries
 
