@@ -34,6 +34,48 @@ from core.models import (
     TermSectionMeeting,
 )
 
+# ── Invigilator calculation rules ──────────────────────────────
+#
+# Department courses (CS, IS, COE, CYB, AI, DS) need invigilators FROM
+# our department for every exam-room: 1 invigilator if the room holds
+# fewer than 30 students, 2 invigilators if 30 or more.
+#
+# External / general-requirements courses (GS, EDCT, GSE, ENV, MATH,
+# STAT, PHYS) only need an invigilator from our department when the
+# room holds MORE than 30 students (1 invigilator), otherwise 0
+# (the providing college supplies its own staff).
+
+import re as _re
+
+_DEPARTMENT_PREFIXES: set[str] = {"CS", "IS", "COE", "CYB", "AI", "DS"}
+_EXTERNAL_PREFIXES: set[str] = {"GS", "EDCT", "GSE", "ENV", "MATH", "STAT", "PHYS"}
+
+_DEPT_LARGE_THRESHOLD = 30  # >= triggers a second invigilator (department)
+_EXT_LARGE_THRESHOLD = 30   # > triggers one invigilator from us (external)
+
+
+def _course_prefix(course_code: str) -> str:
+    """Extract the alphabetic prefix from a course code (e.g. 'CS112' → 'CS')."""
+    if not course_code:
+        return ""
+    m = _re.match(r"^[A-Za-z]+", str(course_code))
+    return m.group(0).upper() if m else ""
+
+
+def _invigilators_needed(course_code: str, students_in_room: int) -> int:
+    """Return how many invigilators FROM OUR DEPARTMENT this room needs.
+
+    Department courses:  >=30 students → 2, otherwise 1
+    External courses:    > 30 students → 1, otherwise 0
+    Unknown prefix is treated as department (safer side).
+    """
+    prefix = _course_prefix(course_code)
+    if prefix in _EXTERNAL_PREFIXES:
+        return 1 if students_in_room > _EXT_LARGE_THRESHOLD else 0
+    # Department or unknown
+    return 2 if students_in_room >= _DEPT_LARGE_THRESHOLD else 1
+
+
 # ── 0. Credit helpers ───────────────────────────────────────────
 
 _CREDIT_DEFAULT = 3  # fallback for NULL / 0 / missing credit_hours
@@ -1378,6 +1420,12 @@ def _build_room_qa(
     slot_room_course: dict[tuple[int, str], str] = {}
     double_bookings: list[dict] = []
 
+    # Per-day invigilator totals, split by gender.
+    # invigilators_per_day[day]['M'/'F'/'total'] = int
+    invigilators_per_day: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"M": 0, "F": 0, "total": 0}
+    )
+
     for e in schedule_entries:
         if e.get("day") == "OVERFLOW":
             continue
@@ -1397,8 +1445,15 @@ def _build_room_qa(
                 )
                 continue
             rooms_used_keys.add((si, code))
-            total_demand += int(a.get("student_count", 0) or 0)
+            stu = int(a.get("student_count", 0) or 0)
+            total_demand += stu
             total_capacity_used += int(a.get("room_capacity", 0) or 0)
+            # Invigilator tally for this room
+            invigs = _invigilators_needed(e["course_code"], stu)
+            gender = a.get("gender", "M")
+            day_label = e["day"]
+            invigilators_per_day[day_label][gender] += invigs
+            invigilators_per_day[day_label]["total"] += invigs
             prev = slot_room_course.get((si, code))
             if prev is not None and prev != e["course_code"]:
                 double_bookings.append(
@@ -1412,6 +1467,13 @@ def _build_room_qa(
                 slot_room_course[(si, code)] = e["course_code"]
 
     avg_util = (total_demand / total_capacity_used) if total_capacity_used else 0.0
+    # Convert invigilator dict to a stable JSON-serialisable shape
+    invig_summary = {
+        day: dict(counts) for day, counts in invigilators_per_day.items()
+    }
+    invig_grand_total = sum(c["total"] for c in invig_summary.values())
+    invig_grand_M = sum(c["M"] for c in invig_summary.values())
+    invig_grand_F = sum(c["F"] for c in invig_summary.values())
     return {
         "rooms_available": len(rooms),
         "rooms_used": len(rooms_used_keys),
@@ -1420,6 +1482,10 @@ def _build_room_qa(
         "avg_utilization": round(avg_util, 4),
         "unassigned_room_sections": unassigned,
         "room_double_bookings": double_bookings,
+        "invigilators_per_day": invig_summary,
+        "invigilators_total": invig_grand_total,
+        "invigilators_total_M": invig_grand_M,
+        "invigilators_total_F": invig_grand_F,
     }
 
 
@@ -1996,6 +2062,137 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
                 ws4.cell(row=rr, column=1).font = header_font
                 for c in range(1, 3):
                     ws4.cell(row=rr, column=c).border = thin_border
+
+    # ────────────────────────────────────────────────────────────
+    # Sheet 5: Invigilators — per-day totals (M/F) + per-room detail
+    # ────────────────────────────────────────────────────────────
+    if has_room_data:
+        ws5 = wb.create_sheet("Invigilators")
+
+        # ── Section A: rules legend ──
+        ws5.append(["Invigilator Rules"])
+        ws5.cell(row=1, column=1).font = Font(bold=True, size=12)
+        ws5.append([
+            "Department courses (CS/IS/COE/CYB/AI/DS):  1 invigilator if room has <30 students, "
+            "2 if 30+"
+        ])
+        ws5.append([
+            "External courses (GS/EDCT/GSE/ENV/MATH/STAT/PHYS):  1 invigilator only if room "
+            "has more than 30 students, 0 otherwise"
+        ])
+        ws5.append([])
+
+        # ── Section B: daily summary ──
+        summary_header_row = ws5.max_row + 1
+        ws5.append(["Day", "M Invigilators", "F Invigilators", "Total"])
+        style_header_row_at = summary_header_row
+        for col in range(1, 5):
+            cell = ws5.cell(row=style_header_row_at, column=col)
+            cell.font = header_font_white
+            cell.fill = header_fill
+            cell.alignment = center
+            cell.border = thin_border
+
+        # Iterate days in slot order so the table matches the schedule grid
+        invig_per_day_data = (room_qa or {}).get("invigilators_per_day", {}) if isinstance(room_qa, dict) else {}
+        # Re-derive on the fly from the schedule too in case room_qa wasn't computed
+        if not invig_per_day_data:
+            tally: dict[str, dict[str, int]] = {}
+            for e in schedule:
+                if e.get("day") == "OVERFLOW":
+                    continue
+                day = e["day"]
+                day_t = tally.setdefault(day, {"M": 0, "F": 0, "total": 0})
+                for a in e.get("rooms", []) or []:
+                    if a.get("room_code") == "UNASSIGNED":
+                        continue
+                    invigs = _invigilators_needed(
+                        e["course_code"], int(a.get("student_count", 0) or 0)
+                    )
+                    g = a.get("gender", "M")
+                    day_t[g] = day_t.get(g, 0) + invigs
+                    day_t["total"] += invigs
+            invig_per_day_data = tally
+
+        running_M = 0
+        running_F = 0
+        for day in day_order:
+            counts = invig_per_day_data.get(day, {"M": 0, "F": 0, "total": 0})
+            ws5.append([day, counts["M"], counts["F"], counts["total"]])
+            running_M += counts["M"]
+            running_F += counts["F"]
+            r = ws5.max_row
+            for col in range(1, 5):
+                ws5.cell(row=r, column=col).border = thin_border
+                ws5.cell(row=r, column=col).alignment = center
+
+        # Grand total row
+        ws5.append(["TOTAL", running_M, running_F, running_M + running_F])
+        r = ws5.max_row
+        for col in range(1, 5):
+            cell = ws5.cell(row=r, column=col)
+            cell.font = Font(bold=True)
+            cell.border = thin_border
+            cell.alignment = center
+            cell.fill = PatternFill("solid", fgColor="E0E0E0")
+
+        ws5.column_dimensions["A"].width = 18
+        ws5.column_dimensions["B"].width = 18
+        ws5.column_dimensions["C"].width = 18
+        ws5.column_dimensions["D"].width = 14
+
+        # ── Section C: per-room detail ──
+        ws5.append([])
+        detail_header_row = ws5.max_row + 1
+        ws5.append([
+            "Day", "Period", "Course", "Type", "Section", "Gender",
+            "Students", "Room", "Invigilators",
+        ])
+        for col in range(1, 10):
+            cell = ws5.cell(row=detail_header_row, column=col)
+            cell.font = header_font_white
+            cell.fill = header_fill
+            cell.alignment = center
+            cell.border = thin_border
+
+        sorted_for_invig = sorted(
+            (e for e in schedule if e.get("day") != "OVERFLOW"),
+            key=lambda e: (e.get("slot_index", 999), e["course_code"]),
+        )
+        for e in sorted_for_invig:
+            cc = e["course_code"]
+            prefix = _course_prefix(cc)
+            ctype = "Department" if prefix in _DEPARTMENT_PREFIXES else "External"
+            for a in e.get("rooms", []) or []:
+                if a.get("room_code") == "UNASSIGNED":
+                    continue
+                stu = int(a.get("student_count", 0) or 0)
+                invigs = _invigilators_needed(cc, stu)
+                ws5.append([
+                    e["day"], e["period"], cc, ctype,
+                    a.get("section", ""), a.get("gender", ""),
+                    stu, a.get("room_code", ""), invigs,
+                ])
+                rr = ws5.max_row
+                for col in range(1, 10):
+                    ws5.cell(row=rr, column=col).border = thin_border
+                    ws5.cell(row=rr, column=col).alignment = center
+                # Highlight rows with 0 invigilators (no department staffing needed)
+                if invigs == 0:
+                    for col in range(1, 10):
+                        ws5.cell(row=rr, column=col).fill = PatternFill(
+                            "solid", fgColor="EDEDED"
+                        )
+                # Highlight rows with 2 invigilators (heavy room)
+                elif invigs >= 2:
+                    for col in range(1, 10):
+                        ws5.cell(row=rr, column=col).fill = warn_fill
+
+        ws5.column_dimensions["E"].width = 22
+        ws5.column_dimensions["F"].width = 10
+        ws5.column_dimensions["G"].width = 10
+        ws5.column_dimensions["H"].width = 14
+        ws5.column_dimensions["I"].width = 14
 
     # ── Write to disk ──
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
