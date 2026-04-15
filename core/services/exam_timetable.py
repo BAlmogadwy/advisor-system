@@ -996,6 +996,9 @@ def _merge_same_course_sections(
                     "preferred_room": preferred,
                     "gender": s_i["gender"],
                     "merged_from": [g["section"] for g in group],
+                    # Keep original constituents so the assigner can split
+                    # the group back if the merged room candidate fails.
+                    "_constituents": [dict(g) for g in group],
                 }
             )
     return units
@@ -1055,6 +1058,59 @@ def assign_rooms_to_schedule(
             continue
         entries_by_slot[e["slot_index"]].append(e)
 
+    def _assign_unit(
+        entry: dict,
+        unit: dict,
+        taken: set[tuple[str, str]],
+    ) -> bool:
+        """Try to place a single demand unit in the tightest-fit same-gender
+        room that is still free in this slot.  Returns True on success.
+        Stamps the result onto ``entry["rooms"]`` either way.
+        """
+        gender = unit["gender"]
+        student_count = int(unit["student_count"])
+        preferred = unit.get("preferred_room", "")
+
+        candidates = [
+            r
+            for r in rooms_by_gender.get(gender, [])
+            if (str(r.get("room_code", "")), gender) not in taken
+            and int(r.get("capacity", 0) or 0) >= student_count
+        ]
+
+        if not candidates:
+            entry["rooms"].append(
+                {
+                    "section": unit["section"],
+                    "room_code": "UNASSIGNED",
+                    "student_count": student_count,
+                    "room_capacity": 0,
+                    "gender": gender,
+                    "merged_from": unit.get("merged_from", [unit["section"]]),
+                }
+            )
+            return False
+
+        def _score(room: dict, pref: str = preferred, demand: int = student_count) -> tuple:
+            code = str(room.get("room_code", ""))
+            cap = int(room.get("capacity", 0) or 0)
+            return (0 if code == pref else 1, cap - demand)
+
+        chosen = min(candidates, key=_score)
+        chosen_code = str(chosen.get("room_code", ""))
+        taken.add((chosen_code, gender))
+        entry["rooms"].append(
+            {
+                "section": unit["section"],
+                "room_code": chosen_code,
+                "student_count": student_count,
+                "room_capacity": int(chosen.get("capacity", 0) or 0),
+                "gender": gender,
+                "merged_from": unit.get("merged_from", [unit["section"]]),
+            }
+        )
+        return True
+
     for _si, entries in entries_by_slot.items():
         # Rooms consumed in this slot (by room_code + gender)
         taken: set[tuple[str, str]] = set()
@@ -1085,50 +1141,30 @@ def assign_rooms_to_schedule(
         demand_units.sort(key=lambda pair: -int(pair[1]["student_count"]))
 
         for entry, unit in demand_units:
-            gender = unit["gender"]
-            student_count = int(unit["student_count"])
-            preferred = unit.get("preferred_room", "")
-
-            # Candidate rooms: matching gender, not yet taken in this slot,
-            # capacity >= student_count.
-            candidates = [
-                r
-                for r in rooms_by_gender.get(gender, [])
-                if (str(r.get("room_code", "")), gender) not in taken
-                and int(r.get("capacity", 0) or 0) >= student_count
-            ]
-
-            if not candidates:
-                entry["rooms"].append(
-                    {
-                        "section": unit["section"],
-                        "room_code": "UNASSIGNED",
-                        "student_count": student_count,
-                        "room_capacity": 0,
-                        "gender": gender,
-                        "merged_from": unit.get("merged_from", [unit["section"]]),
-                    }
-                )
+            # First attempt: place the (possibly merged) unit as a single
+            # block so we minimise total rooms when the merge fits.
+            placed = _assign_unit(entry, unit, taken)
+            if placed:
                 continue
 
-            def _score(room: dict, pref: str = preferred, demand: int = student_count) -> tuple:
-                code = str(room.get("room_code", ""))
-                cap = int(room.get("capacity", 0) or 0)
-                return (0 if code == pref else 1, cap - demand)
+            # Fallback: the merged block couldn't find a big enough room
+            # in this slot (another course may have taken the biggest room
+            # first).  Split the merge back into its original constituents
+            # and place each one individually — two small rooms are almost
+            # always better than one UNASSIGNED section.
+            constituents = unit.get("_constituents") or []
+            if len(constituents) <= 1:
+                continue  # nothing to split; UNASSIGNED record already stamped
 
-            chosen = min(candidates, key=_score)
-            chosen_code = str(chosen.get("room_code", ""))
-            taken.add((chosen_code, gender))
-            entry["rooms"].append(
-                {
-                    "section": unit["section"],
-                    "room_code": chosen_code,
-                    "student_count": student_count,
-                    "room_capacity": int(chosen.get("capacity", 0) or 0),
-                    "gender": gender,
-                    "merged_from": unit.get("merged_from", [unit["section"]]),
-                }
-            )
+            # Roll back the UNASSIGNED record we just stamped, then retry
+            # with the individual sections sorted by size DESC.
+            entry["rooms"].pop()
+            for sub in sorted(
+                constituents,
+                key=lambda s: int(s.get("student_count", 0) or 0),
+                reverse=True,
+            ):
+                _assign_unit(entry, sub, taken)
 
     return schedule_entries
 

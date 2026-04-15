@@ -280,6 +280,55 @@ def test_assign_rooms_falls_back_to_tightest_when_no_preference() -> None:
     assert schedule[0]["rooms"][0]["room_code"] == "M-25"
 
 
+def test_assign_rooms_splits_merged_group_when_big_room_unavailable() -> None:
+    """When a merged group can't fit (e.g. biggest same-gender room was
+    taken by another course), fall back to placing each constituent
+    section individually instead of marking the whole group UNASSIGNED.
+    """
+    # Rooms: one big M room (50) + two small M rooms (15 each).
+    Room.objects.create(room_code="M-BIG", capacity=50, section="M")
+    Room.objects.create(room_code="M-SM1", capacity=15, section="M")
+    Room.objects.create(room_code="M-SM2", capacity=15, section="M")
+    rooms = list(Room.objects.values("room_code", "capacity", "section"))
+
+    # Two courses in the same slot:
+    #   HOG1 takes the only big M room with a 40-student merged group.
+    #   SPL1 has 3 M sections of 10 each that would merge to 30 — but
+    #   the big room is gone, so it must split into individuals.
+    schedule = [
+        {"course_code": "HOG1", "slot_index": 0, "day": "Sun", "period": "9"},
+        {"course_code": "SPL1", "slot_index": 0, "day": "Sun", "period": "9"},
+    ]
+    enrolment = {
+        "HOG1": [
+            {"section": "M1", "student_count": 40, "preferred_room": "", "gender": "M"},
+        ],
+        "SPL1": [
+            {"section": "M1", "student_count": 10, "preferred_room": "", "gender": "M"},
+            {"section": "M2", "student_count": 10, "preferred_room": "", "gender": "M"},
+            {"section": "M3", "student_count": 10, "preferred_room": "", "gender": "M"},
+        ],
+    }
+
+    assign_rooms_to_schedule(schedule, enrolment, rooms)
+
+    # HOG1 took the big room
+    hog_rooms = {r["room_code"] for r in schedule[0]["rooms"]}
+    assert "M-BIG" in hog_rooms
+
+    # SPL1 couldn't merge into M-BIG, so it split and each section got
+    # its own small room.  One section still can't fit (only 2 small
+    # rooms available) so it lands UNASSIGNED — but 2/3 are placed.
+    spl_assignments = schedule[1]["rooms"]
+    assigned_codes = [a["room_code"] for a in spl_assignments if a["room_code"] != "UNASSIGNED"]
+    assert "M-SM1" in assigned_codes
+    assert "M-SM2" in assigned_codes
+    # The failed one is a single section (not the merged block)
+    unassigned_sections = [a["section"] for a in spl_assignments if a["room_code"] == "UNASSIGNED"]
+    assert len(unassigned_sections) == 1
+    assert unassigned_sections[0] in ("M1", "M2", "M3")
+
+
 def test_assign_rooms_unassignable_section_marked_unassigned() -> None:
     _make_rooms()
     rooms = list(Room.objects.values("room_code", "capacity", "section"))
