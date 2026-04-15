@@ -1392,6 +1392,177 @@ def assign_rooms_to_schedule(
     return schedule_entries
 
 
+def _rebalance_invigilators_pass(
+    schedule_entries: list[dict],
+    section_enrollment: dict[str, list[dict]],
+    rooms_list: list[dict],
+    slots: list[dict],
+    adj: dict[str, dict[str, int]],
+    plan_term_buckets: dict[tuple[str, int], set[str]] | None,
+    course_buckets: dict[str, list[tuple[str, int]]] | None,
+    max_iterations: int = 30,
+) -> int:
+    """Final post-pass that moves courses between days to flatten the
+    per-day invigilator demand.
+
+    Local search:
+      1. Recompute per-day invigilator totals using the current packing.
+      2. Identify the hottest day (highest demand) and the coldest day.
+      3. For each course on the hottest day, try moving it to a free slot
+         on the coldest day.  A move is valid only if it doesn't create
+         a same-slot student conflict and doesn't violate any
+         (programme, term) bucket day rule.
+      4. After each tentative move, re-pack rooms for the WHOLE schedule
+         (because room demand on both affected slots changes).  Compute
+         the new standard deviation of per-day invigilator totals.
+         Accept the move if it strictly improves stddev; otherwise revert.
+      5. Repeat until no improving move is found or max_iterations hit.
+
+    Returns the number of moves accepted.  Idempotent and reversible —
+    schedule_entries is mutated in place but never made worse than its
+    starting state (we always revert non-improving moves).
+    """
+    if not schedule_entries or not rooms_list or not slots:
+        return 0
+
+    course_buckets = course_buckets or {}
+    plan_term_buckets = plan_term_buckets or {}
+
+    # Slot lookup helpers
+    slot_by_index = {s["index"]: s for s in slots}
+    slots_by_day: dict[str, list[dict]] = defaultdict(list)
+    for s in slots:
+        slots_by_day[s["day"]].append(s)
+
+    def _repack_all() -> None:
+        """Clear current room assignments and re-run the full packer."""
+        for e in schedule_entries:
+            e["rooms"] = []
+        assign_rooms_to_schedule(
+            schedule_entries, section_enrollment, rooms_list, seed=None
+        )
+
+    def _per_day_invigilators() -> dict[str, int]:
+        per_day: dict[str, int] = defaultdict(int)
+        for e in schedule_entries:
+            if e.get("day") == "OVERFLOW":
+                continue
+            for a in e.get("rooms", []) or []:
+                if a.get("room_code") == "UNASSIGNED":
+                    continue
+                stu = int(a.get("student_count", 0) or 0)
+                per_day[e["day"]] += _invigilators_needed(e["course_code"], stu)
+        return dict(per_day)
+
+    def _stddev(d: dict[str, int]) -> float:
+        if not d:
+            return 0.0
+        vals = list(d.values())
+        m = sum(vals) / len(vals)
+        return (sum((v - m) ** 2 for v in vals) / len(vals)) ** 0.5
+
+    def _causes_conflict(
+        course: str, target_slot_idx: int, current_slot_of: dict[str, int]
+    ) -> bool:
+        for other, si in current_slot_of.items():
+            if other == course or si != target_slot_idx:
+                continue
+            if other in adj.get(course, {}) or course in adj.get(other, {}):
+                return True
+        return False
+
+    def _causes_bucket_violation(
+        course: str, target_day: str, current_day_of: dict[str, str]
+    ) -> bool:
+        for bk in course_buckets.get(course, []):
+            for mate in plan_term_buckets.get(bk, set()):
+                if mate != course and current_day_of.get(mate) == target_day:
+                    return True
+        return False
+
+    # Make sure we start from a clean packing
+    _repack_all()
+    current = _per_day_invigilators()
+    base_std = _stddev(current)
+    moves_accepted = 0
+
+    for _iter in range(max_iterations):
+        if not current:
+            break
+        # Sort days by invigilator load — pick the worst hot/cold pair
+        days_by_load = sorted(current.items(), key=lambda x: x[1])
+        coldest_day, cold_value = days_by_load[0]
+        hottest_day, hot_value = days_by_load[-1]
+        if hot_value - cold_value <= 2:
+            break  # already pretty flat
+
+        improved = False
+        # Snapshot current slot/day lookups
+        current_slot_of = {e["course_code"]: e["slot_index"] for e in schedule_entries}
+        current_day_of = {e["course_code"]: e["day"] for e in schedule_entries}
+
+        # Try every course on the hottest day
+        hot_entries = [
+            e for e in schedule_entries if e.get("day") == hottest_day
+        ]
+        # Process larger courses first — they shift more invigilator weight
+        hot_entries.sort(
+            key=lambda e: -sum(
+                int(s.get("student_count", 0) or 0)
+                for s in section_enrollment.get(e["course_code"], [])
+            )
+        )
+
+        for entry in hot_entries:
+            cc = entry["course_code"]
+            old_slot_idx = entry["slot_index"]
+            old_day = entry["day"]
+            old_period = entry["period"]
+
+            for target_slot in slots_by_day.get(coldest_day, []):
+                tsi = target_slot["index"]
+                if tsi == old_slot_idx:
+                    continue
+                if _causes_conflict(cc, tsi, current_slot_of):
+                    continue
+                if _causes_bucket_violation(cc, coldest_day, current_day_of):
+                    continue
+
+                # Tentative move
+                entry["slot_index"] = tsi
+                entry["day"] = target_slot["day"]
+                entry["period"] = target_slot["period"]
+                _repack_all()
+                new_per_day = _per_day_invigilators()
+                new_std = _stddev(new_per_day)
+
+                # Accept only if strictly improving; tolerance avoids oscillation
+                if new_std + 0.01 < base_std:
+                    base_std = new_std
+                    current = new_per_day
+                    moves_accepted += 1
+                    improved = True
+                    break
+
+                # Revert
+                entry["slot_index"] = old_slot_idx
+                entry["day"] = old_day
+                entry["period"] = old_period
+
+            if improved:
+                break
+
+        if not improved:
+            break
+
+        # After a successful move re-pack one more time so the entries
+        # carry the accepted state.  current already reflects the new
+        # measurements; repacking ensures the rooms data matches.
+        _repack_all()
+
+    return moves_accepted
+
+
 def _build_room_qa(
     schedule_entries: list[dict],
     rooms: list[dict],
@@ -1503,6 +1674,7 @@ def build_exam_timetable(
     pinned: list[dict] | None = None,
     seed: int | None = None,
     assign_rooms: bool = True,
+    rebalance_invigilators: bool = True,
 ) -> dict:
     """
     End-to-end pipeline: build enrolled sets → conflict graph →
@@ -1613,10 +1785,38 @@ def build_exam_timetable(
             rooms_list,
             seed=seed,
         )
+
+        # 7c. Final optimisation — flatten per-day invigilator load by
+        # moving courses between days whenever the move strictly
+        # improves the per-day invigilator-count standard deviation.
+        # Skipped when the caller opts out, when there are no rooms, or
+        # when there's nothing meaningful to balance (single day).
+        rebalance_moves = 0
+        if rebalance_invigilators and rooms_list and len(days) > 1:
+            rebalance_moves = _rebalance_invigilators_pass(
+                schedule_entries,
+                section_enrollment,
+                rooms_list,
+                slots,
+                adj,
+                ptb,
+                cb,
+            )
+
         room_qa = _build_room_qa(schedule_entries, rooms_list)
+        # Re-run main QA after rebalance so credit/conflict metrics
+        # reflect any moved courses (cheap — no DB hits).
+        qa = _build_qa(
+            enrolled_sets,
+            schedule_entries,
+            max_per_day=max_per_day,
+            plan_term_buckets=ptb,
+            credit_map=credit_map,
+        )
         # Merge room QA into main QA dict for a single source of truth
         qa["rooms"] = room_qa
         qa["room_feasibility_violations"] = room_feasibility
+        qa["rebalance_moves"] = rebalance_moves
 
     # Bucket summary for the result (frontend renders bucket info cards)
     buckets_summary: list[dict] = []
