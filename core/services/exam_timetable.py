@@ -27,9 +27,11 @@ from core.models import (
     Course,
     ExamTimetableRun,
     ProgrammeRequirement,
+    Room,
     Student,
     StudentCourse,
     StudentTermSection,
+    TermSectionMeeting,
 )
 
 # ── 0. Credit helpers ───────────────────────────────────────────
@@ -708,6 +710,502 @@ def _build_qa(
     }
 
 
+# ── 5b. Room assignment (exam rooms) ───────────────────────────
+#
+# Exam rooms are allocated AFTER the greedy slot scheduler has decided
+# which (day, period) every course goes into.  The workflow per slot:
+#
+#   1. Collect every demand unit scheduled in this slot, split by gender
+#      (M students use M rooms, F students use F rooms — separate
+#       buildings, same exam time, no cross-gender room sharing).
+#   2. Attempt same-course same-gender section merges (combined ≤ biggest
+#      available room) so small sections of one course collapse into one
+#      room rather than eating two rooms.
+#   3. Sort demand units by student_count DESC (largest first — classic
+#      best-fit-decreasing bin packing).
+#   4. For each unit, pick the tightest-fit available room; prefer the
+#      room the section normally uses during regular term meetings.
+#   5. Units that still don't fit get room_code="UNASSIGNED" and are
+#      reported by the QA layer.
+#
+# Constraints enforced:
+#   • Each room hosts at most one course per slot (no cross-course share)
+#   • Same-course same-gender sections MAY share a room (after merging)
+#   • M sections → M rooms only; F sections → F rooms only
+#   • Room.capacity is respected
+#   • Room.department is IGNORED during exams (all departments share)
+
+_SYNTHETIC_SECTION_LABEL = "ALL"
+
+
+def _section_gender(section_label: str) -> str:
+    """Derive gender ('M' or 'F') from a TermSection.section label.
+
+    Labels are like "M7", "M128", "F3" — the first character is the
+    gender tag.  Falls back to "M" for anything unexpected.
+    """
+    if not section_label:
+        return "M"
+    first = section_label[0].upper()
+    if first in ("M", "F"):
+        return first
+    return "M"
+
+
+def build_section_enrollment(
+    course_codes: set[str] | list[str],
+    programs: list[str] | None = None,
+    sections: list[str] | None = None,
+) -> dict[str, list[dict]]:
+    """Return per-section enrolment data for room assignment.
+
+    Result shape:
+        {
+          "CS101": [
+            {"section": "M7", "student_count": 32,
+             "preferred_room": "172FA003", "gender": "M"},
+            ...
+          ],
+          ...
+        }
+
+    Source of truth is StudentTermSection (latest academic_year / term),
+    grouped by the underlying TermSection.  Only course_codes passed in
+    are returned.  The ``programs`` / ``sections`` filters narrow the
+    student population the same way build_enrolled_sets does, so the
+    per-section counts stay consistent with the scheduled enrolled_sets.
+
+    Courses with no StudentTermSection data fall back to a synthetic
+    single "ALL" section sized from StudentCourse.status='studying' so
+    they still get a room assignment.
+    """
+    wanted: set[str] = {str(c) for c in course_codes}
+    if not wanted:
+        return {}
+
+    # Latest (academic_year, term) that has any data — same approach as
+    # build_enrolled_sets so we stay on the same dataset.
+    latest = (
+        StudentTermSection.objects.order_by("-academic_year", "-term")
+        .values_list("academic_year", "term")
+        .first()
+    )
+
+    result: dict[str, list[dict]] = {}
+    sts_course_keys: set[str] = set()
+
+    if latest is not None:
+        ay, tm = latest
+        qs = StudentTermSection.objects.filter(
+            academic_year=ay,
+            term=tm,
+            term_section__course_key__in=list(wanted),
+        ).select_related("term_section")
+
+        if programs:
+            student_ids = set(
+                Student.objects.filter(program__in=programs).values_list("student_id", flat=True)
+            )
+            qs = qs.filter(student_id__in=student_ids)
+        if sections:
+            student_ids_sec = set(
+                Student.objects.filter(section__in=sections).values_list(
+                    "student_id", flat=True
+                )
+            )
+            qs = qs.filter(student_id__in=student_ids_sec)
+
+        # Group by (course_key, term_section_id) and count distinct students.
+        # Also remember the section label so we can derive gender later.
+        per_section: dict[tuple[str, int], dict[str, Any]] = {}
+        for row in qs.values(
+            "term_section_id",
+            "term_section__course_key",
+            "term_section__section",
+            "student_id",
+        ):
+            ck = row["term_section__course_key"]
+            tsid = row["term_section_id"]
+            key = (ck, tsid)
+            entry = per_section.setdefault(
+                key,
+                {
+                    "section": row["term_section__section"] or "",
+                    "student_ids": set(),
+                    "term_section_id": tsid,
+                },
+            )
+            entry["student_ids"].add(row["student_id"])
+
+        # Preferred room: for each TermSection, find the most-used room code
+        # across its TermSectionMeeting rows (classroom where the section
+        # normally meets during the term).
+        involved_ts_ids = {k[1] for k in per_section}
+        preferred_room_by_ts: dict[int, str] = {}
+        if involved_ts_ids:
+            meetings = TermSectionMeeting.objects.filter(
+                term_section_id__in=involved_ts_ids,
+            ).values_list("term_section_id", "room")
+            room_counts: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+            for tsid, room_code in meetings:
+                if room_code:
+                    room_counts[tsid][room_code] += 1
+            for tsid, counts in room_counts.items():
+                # Most-frequent wins; alphabetical as stable tiebreaker
+                preferred_room_by_ts[tsid] = max(
+                    counts.items(), key=lambda it: (it[1], -ord(it[0][0]) if it[0] else 0)
+                )[0]
+
+        for (course_key, _tsid), entry in per_section.items():
+            sts_course_keys.add(course_key)
+            section_label = entry["section"] or _SYNTHETIC_SECTION_LABEL
+            result.setdefault(course_key, []).append(
+                {
+                    "section": section_label,
+                    "student_count": len(entry["student_ids"]),
+                    "preferred_room": preferred_room_by_ts.get(entry["term_section_id"], ""),
+                    "gender": _section_gender(section_label),
+                }
+            )
+
+    # Fallback for courses with zero STS data — build one synthetic section
+    # from StudentCourse.status='studying', taking gender from the first
+    # enrolled student.  This guarantees every scheduled course gets room
+    # assignment even when timetable data is missing.
+    missing = wanted - sts_course_keys
+    if missing:
+        sc_qs = StudentCourse.objects.filter(
+            course__course_code__in=list(missing),
+            status="studying",
+        ).select_related("course", "student")
+        if programs:
+            sc_qs = sc_qs.filter(student__program__in=programs)
+        if sections:
+            sc_qs = sc_qs.filter(student__section__in=sections)
+
+        fallback: dict[str, dict[str, set[int] | str]] = {}
+        for sc in sc_qs.values("course__course_code", "student_id", "student__section"):
+            cc = sc["course__course_code"]
+            entry_f = fallback.setdefault(
+                cc, {"student_ids": set(), "gender": sc["student__section"] or "M"}
+            )
+            # student_ids is typed as set[int] in this shape
+            entry_f["student_ids"].add(sc["student_id"])  # type: ignore[union-attr]
+
+        for cc, entry_f in fallback.items():
+            sids = entry_f["student_ids"]
+            gender = str(entry_f["gender"]).strip().upper()[:1] or "M"
+            if gender not in ("M", "F"):
+                gender = "M"
+            result.setdefault(cc, []).append(
+                {
+                    "section": _SYNTHETIC_SECTION_LABEL,
+                    "student_count": len(sids),  # type: ignore[arg-type]
+                    "preferred_room": "",
+                    "gender": gender,
+                }
+            )
+
+    return result
+
+
+def check_room_feasibility(
+    section_enrollment: dict[str, list[dict]],
+    rooms: list[dict],
+) -> list[dict]:
+    """Return sections that cannot fit in any single same-gender room.
+
+    A violation means even the largest room of the matching gender is
+    smaller than the section — the scheduler cannot place it without
+    splitting students, which we do not support.  Returns the list of
+    violations so the caller can surface them as warnings (does not
+    block the build — unassignable sections just get UNASSIGNED).
+    """
+    if not rooms:
+        return []
+    max_cap_by_gender: dict[str, int] = {"M": 0, "F": 0}
+    for r in rooms:
+        g = str(r.get("section", "M")).upper() or "M"
+        max_cap_by_gender[g] = max(max_cap_by_gender.get(g, 0), int(r.get("capacity", 0) or 0))
+
+    violations: list[dict] = []
+    for course_code, sections_data in section_enrollment.items():
+        for s in sections_data:
+            g = s.get("gender", "M")
+            max_cap = max_cap_by_gender.get(g, 0)
+            if s["student_count"] > max_cap:
+                violations.append(
+                    {
+                        "course_code": course_code,
+                        "section": s["section"],
+                        "gender": g,
+                        "student_count": s["student_count"],
+                        "max_room_capacity": max_cap,
+                    }
+                )
+    return violations
+
+
+def _merge_same_course_sections(
+    sections_data: list[dict],
+    max_room_capacity: int,
+) -> list[dict]:
+    """Merge same-course same-gender sections if their combined size
+    fits in the largest available room.
+
+    Returns a list of demand units where each unit is either:
+      - a single section (not merged), or
+      - a merged group with ``merged_from`` listing the source sections.
+
+    Merging reduces the number of rooms needed for popular courses
+    (e.g. two M sections of 15 students each fit in one 30-seat room).
+    Only attempts simple two-way and three-way merges — more aggressive
+    bin packing isn't worth the complexity for ≤4 sections per gender.
+    """
+    if len(sections_data) <= 1:
+        return list(sections_data)
+
+    # Sort DESC by student_count so we try to pair up largest first
+    by_size = sorted(sections_data, key=lambda s: s["student_count"], reverse=True)
+    units: list[dict] = []
+    used_indices: set[int] = set()
+
+    for i, s_i in enumerate(by_size):
+        if i in used_indices:
+            continue
+        group = [s_i]
+        running = int(s_i["student_count"])
+        used_indices.add(i)
+        # Try to add smaller sections while they fit
+        for j, s_j in enumerate(by_size):
+            if j <= i or j in used_indices:
+                continue
+            if running + int(s_j["student_count"]) <= max_room_capacity:
+                group.append(s_j)
+                running += int(s_j["student_count"])
+                used_indices.add(j)
+
+        if len(group) == 1:
+            units.append(s_i)
+        else:
+            preferred = next((g["preferred_room"] for g in group if g["preferred_room"]), "")
+            units.append(
+                {
+                    "section": "+".join(g["section"] for g in group),
+                    "student_count": running,
+                    "preferred_room": preferred,
+                    "gender": s_i["gender"],
+                    "merged_from": [g["section"] for g in group],
+                }
+            )
+    return units
+
+
+def assign_rooms_to_schedule(
+    schedule_entries: list[dict],
+    section_enrollment: dict[str, list[dict]],
+    rooms: list[dict],
+) -> list[dict]:
+    """Assign rooms to every scheduled course, mutating ``schedule_entries``
+    in place and returning the list for chaining.
+
+    For each slot:
+      1. Group courses scheduled in that slot by their per-gender sections.
+      2. Try to merge same-course same-gender sections.
+      3. Best-fit-decreasing assignment: tightest-fitting room wins, with
+         a preference bonus for the section's normal meeting room.
+      4. Rooms already taken in this slot are unavailable.
+      5. Unassignable demand units get room_code="UNASSIGNED".
+
+    Each entry in schedule_entries gains a ``rooms`` key:
+        [
+          {"section": "M7", "room_code": "172FA003",
+           "student_count": 32, "room_capacity": 35,
+           "gender": "M", "merged_from": ["M7"]},
+          ...
+        ]
+
+    OVERFLOW entries are skipped (they have no real slot).
+    When ``rooms`` is empty, every entry gets an empty ``rooms`` list.
+    """
+    if not schedule_entries:
+        return schedule_entries
+
+    # Ensure every entry has a rooms slot even if we bail early
+    for e in schedule_entries:
+        e.setdefault("rooms", [])
+
+    if not rooms:
+        return schedule_entries
+
+    # Pre-split rooms by gender; sort ASC by capacity so best-fit picks
+    # the tightest room first when iterating.
+    rooms_by_gender: dict[str, list[dict]] = {"M": [], "F": []}
+    for r in rooms:
+        g = str(r.get("section", "M")).upper() or "M"
+        if g in rooms_by_gender:
+            rooms_by_gender[g].append(r)
+    for g in rooms_by_gender:
+        rooms_by_gender[g].sort(key=lambda r: int(r.get("capacity", 0) or 0))
+
+    # Group schedule entries by slot_index so we can assign per-slot
+    entries_by_slot: dict[int, list[dict]] = defaultdict(list)
+    for e in schedule_entries:
+        if e.get("day") == "OVERFLOW":
+            continue
+        entries_by_slot[e["slot_index"]].append(e)
+
+    for _si, entries in entries_by_slot.items():
+        # Rooms consumed in this slot (by room_code + gender)
+        taken: set[tuple[str, str]] = set()
+
+        # Collect demand units across all courses in the slot, tagged
+        # back to the entry so we can stamp assignments on the right one.
+        demand_units: list[tuple[dict, dict]] = []  # (entry, unit)
+        for entry in entries:
+            course_code = entry["course_code"]
+            sections_data = section_enrollment.get(course_code, [])
+            if not sections_data:
+                continue
+
+            # Split by gender and try merging within each gender group
+            for gender in ("M", "F"):
+                same_gender = [s for s in sections_data if s.get("gender") == gender]
+                if not same_gender:
+                    continue
+                max_cap_here = max(
+                    (int(r.get("capacity", 0) or 0) for r in rooms_by_gender[gender]),
+                    default=0,
+                )
+                merged = _merge_same_course_sections(same_gender, max_cap_here)
+                for unit in merged:
+                    demand_units.append((entry, unit))
+
+        # Sort all demand in this slot by count DESC for best-fit-decreasing
+        demand_units.sort(key=lambda pair: -int(pair[1]["student_count"]))
+
+        for entry, unit in demand_units:
+            gender = unit["gender"]
+            student_count = int(unit["student_count"])
+            preferred = unit.get("preferred_room", "")
+
+            # Candidate rooms: matching gender, not yet taken in this slot,
+            # capacity >= student_count.
+            candidates = [
+                r
+                for r in rooms_by_gender.get(gender, [])
+                if (str(r.get("room_code", "")), gender) not in taken
+                and int(r.get("capacity", 0) or 0) >= student_count
+            ]
+
+            if not candidates:
+                entry["rooms"].append(
+                    {
+                        "section": unit["section"],
+                        "room_code": "UNASSIGNED",
+                        "student_count": student_count,
+                        "room_capacity": 0,
+                        "gender": gender,
+                        "merged_from": unit.get("merged_from", [unit["section"]]),
+                    }
+                )
+                continue
+
+            def _score(room: dict, pref: str = preferred, demand: int = student_count) -> tuple:
+                code = str(room.get("room_code", ""))
+                cap = int(room.get("capacity", 0) or 0)
+                return (0 if code == pref else 1, cap - demand)
+
+            chosen = min(candidates, key=_score)
+            chosen_code = str(chosen.get("room_code", ""))
+            taken.add((chosen_code, gender))
+            entry["rooms"].append(
+                {
+                    "section": unit["section"],
+                    "room_code": chosen_code,
+                    "student_count": student_count,
+                    "room_capacity": int(chosen.get("capacity", 0) or 0),
+                    "gender": gender,
+                    "merged_from": unit.get("merged_from", [unit["section"]]),
+                }
+            )
+
+    return schedule_entries
+
+
+def _build_room_qa(
+    schedule_entries: list[dict],
+    rooms: list[dict],
+) -> dict:
+    """QA metrics for room assignment — rooms used, utilisation, unassigned,
+    and double-booking defensive check (should never trigger).
+    """
+    if not rooms:
+        return {
+            "rooms_available": 0,
+            "rooms_used": 0,
+            "total_demand": 0,
+            "total_capacity_used": 0,
+            "avg_utilization": 0.0,
+            "unassigned_room_sections": [],
+            "room_double_bookings": [],
+        }
+
+    rooms_used_keys: set[tuple[int, str]] = set()
+    total_demand = 0
+    total_capacity_used = 0
+    unassigned: list[dict] = []
+
+    # Double-booking defensive check — (slot_index, room_code) should map
+    # to a single course.  Track (slot, room) → course mappings.
+    slot_room_course: dict[tuple[int, str], str] = {}
+    double_bookings: list[dict] = []
+
+    for e in schedule_entries:
+        if e.get("day") == "OVERFLOW":
+            continue
+        si = int(e.get("slot_index", -1))
+        for a in e.get("rooms", []):
+            code = a.get("room_code", "")
+            if code == "UNASSIGNED":
+                unassigned.append(
+                    {
+                        "course_code": e["course_code"],
+                        "day": e["day"],
+                        "period": e["period"],
+                        "section": a.get("section", ""),
+                        "student_count": int(a.get("student_count", 0) or 0),
+                        "gender": a.get("gender", ""),
+                    }
+                )
+                continue
+            rooms_used_keys.add((si, code))
+            total_demand += int(a.get("student_count", 0) or 0)
+            total_capacity_used += int(a.get("room_capacity", 0) or 0)
+            prev = slot_room_course.get((si, code))
+            if prev is not None and prev != e["course_code"]:
+                double_bookings.append(
+                    {
+                        "slot_index": si,
+                        "room_code": code,
+                        "courses": [prev, e["course_code"]],
+                    }
+                )
+            else:
+                slot_room_course[(si, code)] = e["course_code"]
+
+    avg_util = (total_demand / total_capacity_used) if total_capacity_used else 0.0
+    return {
+        "rooms_available": len(rooms),
+        "rooms_used": len(rooms_used_keys),
+        "total_demand": total_demand,
+        "total_capacity_used": total_capacity_used,
+        "avg_utilization": round(avg_util, 4),
+        "unassigned_room_sections": unassigned,
+        "room_double_bookings": double_bookings,
+    }
+
+
 # ── 6. Orchestrator ────────────────────────────────────────────
 
 
@@ -721,6 +1219,7 @@ def build_exam_timetable(
     selected_courses: list[str] | None = None,
     pinned: list[dict] | None = None,
     seed: int | None = None,
+    assign_rooms: bool = True,
 ) -> dict:
     """
     End-to-end pipeline: build enrolled sets → conflict graph →
@@ -805,6 +1304,32 @@ def build_exam_timetable(
         credit_map=credit_map,
     )
 
+    # 7b. Room assignment (Phase 2) — attach rooms to each schedule entry.
+    # Feasibility violations and double-bookings are surfaced in QA but
+    # never block the build: unfittable sections simply land in
+    # "UNASSIGNED" and the UI flags them.
+    section_enrollment: dict[str, list[dict]] = {}
+    rooms_list: list[dict] = []
+    room_feasibility: list[dict] = []
+    room_qa: dict = {}
+    if assign_rooms:
+        section_enrollment = build_section_enrollment(
+            set(course_list),
+            programs=programs,
+            sections=sections,
+        )
+        rooms_list = list(
+            Room.objects.all().values(
+                "room_code", "capacity", "section", "department", "building", "floor"
+            )
+        )
+        room_feasibility = check_room_feasibility(section_enrollment, rooms_list)
+        assign_rooms_to_schedule(schedule_entries, section_enrollment, rooms_list)
+        room_qa = _build_room_qa(schedule_entries, rooms_list)
+        # Merge room QA into main QA dict for a single source of truth
+        qa["rooms"] = room_qa
+        qa["room_feasibility_violations"] = room_feasibility
+
     # Bucket summary for the result (frontend renders bucket info cards)
     buckets_summary: list[dict] = []
     for (program, term), bucket_courses in sorted(ptb.items()):
@@ -833,6 +1358,9 @@ def build_exam_timetable(
         "bucket_count": len(ptb),
         "credit_map": credit_map,
         "seed": seed,
+        "section_enrollment": section_enrollment,
+        "rooms_count": len(rooms_list),
+        "assign_rooms": assign_rooms,
     }
 
     # Persist
@@ -957,6 +1485,20 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
     _credit_map_sched = data.get("credit_map", {})
     course_font = Font(name="Consolas", bold=True, size=9)
 
+    # Lookup: (day, period, course) → room codes for in-cell display
+    rooms_by_entry: dict[tuple[str, str, str], list[str]] = {}
+    for e in schedule:
+        if e.get("day") == "OVERFLOW":
+            continue
+        rkey = (e["day"], e["period"], e["course_code"])
+        room_codes = [
+            a.get("room_code", "")
+            for a in e.get("rooms", [])
+            if a.get("room_code") and a.get("room_code") != "UNASSIGNED"
+        ]
+        if room_codes:
+            rooms_by_entry[rkey] = room_codes
+
     for day in day_order:
         row_idx = ws1.max_row + 1
         # Day label
@@ -971,20 +1513,24 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
             cell.border = thin_border
             cell.alignment = center
 
+            def _label(code: str, p: str = period, d: str = day) -> str:
+                cr = _credit_map_sched.get(code, "")
+                head = f"{code} {cr}cr" if cr else code
+                rooms_line = rooms_by_entry.get((d, p, code), [])
+                if rooms_line:
+                    head += "\n" + ", ".join(rooms_line)
+                return head
+
             if not courses:
                 cell.value = ""
             elif len(courses) == 1:
                 c = courses[0]
-                cr = _credit_map_sched.get(c, "")
-                cell.value = f"{c} {cr}cr" if cr else c
+                cell.value = _label(c)
                 cell.font = course_font
                 cell.fill = _course_color_fill(c)
             else:
                 # Multiple courses — list them, use first course's colour
-                parts = []
-                for c in courses:
-                    cr = _credit_map_sched.get(c, "")
-                    parts.append(f"{c} {cr}cr" if cr else c)
+                parts = [_label(c) for c in courses]
                 cell.value = "\n".join(parts)
                 cell.font = course_font
                 cell.fill = _course_color_fill(courses[0])
@@ -1127,6 +1673,107 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
     ws3.column_dimensions["B"].width = 16
     ws3.column_dimensions["C"].width = 18
     ws3.column_dimensions["D"].width = 30
+
+    # ────────────────────────────────────────────────────────────
+    # Sheet 4: Room Assignments (one row per assigned section)
+    # ────────────────────────────────────────────────────────────
+    room_qa = qa.get("rooms") if isinstance(qa, dict) else None
+    has_room_data = any(
+        e.get("rooms") for e in schedule if e.get("day") != "OVERFLOW"
+    )
+    if has_room_data:
+        ws4 = wb.create_sheet("Room Assignments")
+        ws4.append(
+            [
+                "Day",
+                "Period",
+                "Course",
+                "Section",
+                "Gender",
+                "Students",
+                "Room",
+                "Capacity",
+                "Utilization",
+            ]
+        )
+        style_header_row(ws4, 9)
+
+        # Sort by slot then course for a stable, readable ordering
+        sorted_for_rooms = sorted(
+            (e for e in schedule if e.get("day") != "OVERFLOW"),
+            key=lambda e: (e.get("slot_index", 999), e["course_code"]),
+        )
+        for e in sorted_for_rooms:
+            for a in e.get("rooms", []) or []:
+                cap = int(a.get("room_capacity", 0) or 0)
+                cnt = int(a.get("student_count", 0) or 0)
+                util = f"{(cnt / cap * 100):.0f}%" if cap else "-"
+                ws4.append(
+                    [
+                        e["day"],
+                        e["period"],
+                        e["course_code"],
+                        a.get("section", ""),
+                        a.get("gender", ""),
+                        cnt,
+                        a.get("room_code", ""),
+                        cap if cap else "",
+                        util,
+                    ]
+                )
+
+        for r in range(2, ws4.max_row + 1):
+            code_val = ws4.cell(row=r, column=3).value
+            for c in range(1, 10):
+                cell = ws4.cell(row=r, column=c)
+                cell.border = thin_border
+                cell.alignment = center
+            if code_val:
+                ws4.cell(row=r, column=3).fill = _course_color_fill(str(code_val))
+            room_val = ws4.cell(row=r, column=7).value
+            if room_val == "UNASSIGNED":
+                for c in range(1, 10):
+                    ws4.cell(row=r, column=c).fill = danger_fill
+
+        ws4.column_dimensions["A"].width = 10
+        ws4.column_dimensions["B"].width = 16
+        ws4.column_dimensions["C"].width = 14
+        ws4.column_dimensions["D"].width = 22
+        ws4.column_dimensions["E"].width = 10
+        ws4.column_dimensions["F"].width = 12
+        ws4.column_dimensions["G"].width = 14
+        ws4.column_dimensions["H"].width = 12
+        ws4.column_dimensions["I"].width = 14
+
+        # Append the room QA summary on the same sheet below the table
+        if isinstance(room_qa, dict):
+            ws4.append([])
+            ws4.append(["Room QA Summary"])
+            ws4.cell(row=ws4.max_row, column=1).font = header_font
+            room_metrics: list[tuple[str, Any]] = [
+                ("Rooms Available", room_qa.get("rooms_available", 0)),
+                ("Rooms Used (slot × room)", room_qa.get("rooms_used", 0)),
+                ("Total Demand", room_qa.get("total_demand", 0)),
+                ("Capacity Used", room_qa.get("total_capacity_used", 0)),
+                (
+                    "Avg Utilization",
+                    f"{(float(room_qa.get('avg_utilization', 0) or 0) * 100):.1f}%",
+                ),
+                (
+                    "Unassigned Sections",
+                    len(room_qa.get("unassigned_room_sections", []) or []),
+                ),
+                (
+                    "Double Bookings",
+                    len(room_qa.get("room_double_bookings", []) or []),
+                ),
+            ]
+            for lbl, val in room_metrics:
+                ws4.append([lbl, val])
+                rr = ws4.max_row
+                ws4.cell(row=rr, column=1).font = header_font
+                for c in range(1, 3):
+                    ws4.cell(row=rr, column=c).border = thin_border
 
     # ── Write to disk ──
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)

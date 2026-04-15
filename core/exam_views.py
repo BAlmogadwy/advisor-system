@@ -150,6 +150,7 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
     selected_courses_raw = payload.get("selected_courses", None)
     pinned_raw = payload.get("pinned", None)
     randomize = payload.get("randomize", False)
+    assign_rooms = bool(payload.get("assign_rooms", True))
 
     if not label:
         return JsonResponse({"ok": False, "error": "label is required"}, status=400)
@@ -226,6 +227,7 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
             selected_courses=selected_courses,
             pinned=pinned,
             seed=seed,
+            assign_rooms=assign_rooms,
         )
         # Check for feasibility error (bucket too large for available days)
         if result.get("feasibility_error"):

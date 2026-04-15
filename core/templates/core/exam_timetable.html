@@ -149,6 +149,19 @@
     .et-add-period-btn { font-size: 0.72rem; }
     .et-drill-table { font-size: 0.82rem; }
     .et-credit-tag { opacity: 0.6; font-weight: 400; }
+    .et-room-tag {
+      display: block;
+      font-size: .65rem;
+      font-weight: 500;
+      font-family: var(--font-mono);
+      opacity: 0.75;
+      margin-top: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 180px;
+    }
+    .et-grid .et-course { vertical-align: top; }
     .et-qa-title { color: var(--danger); }
     .et-overflow-label { color: var(--danger); }
     .et-pagination-ellipsis { padding: 0 0.2rem; color: var(--t3); }
@@ -330,6 +343,12 @@
         <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}انتهاكات يوم المجموعة{% else %}Bucket day violations{% endif %}</div><div class="v" id="kBucketViol">0</div></div></div>
         <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}أقصى ساعات معتمدة/يوم{% else %}Max credit load/day{% endif %}</div><div class="v" id="kMaxCredit">0</div></div></div>
         <div class="col-md-3"><div class="kpi kpi-click" data-drill="heavy"><div class="k">{% if LANGUAGE_CODE == 'ar' %}طلاب بيوم ثقيل{% else %}Heavy day students{% endif %}</div><div class="v" id="kHeavyDay">0</div></div></div>
+      </div>
+      <div class="row g-2 mt-1">
+        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}القاعات المستخدمة{% else %}Rooms used{% endif %}</div><div class="v" id="kRoomsUsed">0</div></div></div>
+        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}متوسط الإشغال{% else %}Avg utilization{% endif %}</div><div class="v" id="kRoomUtil">0%</div></div></div>
+        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}أقسام بدون قاعة{% else %}Unassigned sections{% endif %}</div><div class="v" id="kRoomUnassigned">0</div></div></div>
+        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}حجوزات مزدوجة{% else %}Double bookings{% endif %}</div><div class="v" id="kRoomDouble">0</div></div></div>
       </div>
       <!-- Drilldown detail panel (hidden until a KPI is clicked) -->
       <div id="kpiDrill" class="mt-2 d-none">
@@ -841,6 +860,12 @@ $('buildBtn').addEventListener('click', async () => {
 // filter to accept a programme name (e.g. "AI") and highlight all its courses.
 let _programCourses = {};   // { programName: Set([course_code, ...]) }
 
+/* ── Room assignments per grid cell (for renderScheduleGrid) ── */
+// Indexed by "day||period||course" → array of room codes.  Populated in
+// renderResult() from data.schedule[].rooms so the grid can show the
+// rooms beneath each course chip without re-walking the schedule.
+let _roomsByEntry = {};
+
 /* ── Pinned courses (drag & drop) ── */
 let _pinnedCourses = {};    // { course_code: { course_code, day, period } }
 
@@ -1004,6 +1029,30 @@ function renderResults(data) {
   $('kHeavyDay').textContent = hd;
   $('kHeavyDay').className   = 'v' + (hd > 0 ? ' warn' : '');
 
+  // Room KPIs
+  const rqa = data.qa?.rooms ?? {};
+  $('kRoomsUsed').textContent = rqa.rooms_used ?? 0;
+  const util = Number(rqa.avg_utilization ?? 0);
+  $('kRoomUtil').textContent = `${(util * 100).toFixed(0)}%`;
+  const unassigned = (rqa.unassigned_room_sections ?? []).length;
+  $('kRoomUnassigned').textContent = unassigned;
+  $('kRoomUnassigned').className = 'v' + (unassigned > 0 ? ' warn' : '');
+  const doubleB = (rqa.room_double_bookings ?? []).length;
+  $('kRoomDouble').textContent = doubleB;
+  $('kRoomDouble').className = 'v' + (doubleB > 0 ? ' warn' : '');
+
+  // Index rooms-per-entry for the grid renderer: "day||period||course" → [codes]
+  _roomsByEntry = {};
+  for (const e of (data.schedule || [])) {
+    if (e.day === 'OVERFLOW') continue;
+    const codes = (e.rooms || [])
+      .map(a => a.room_code)
+      .filter(c => c && c !== 'UNASSIGNED');
+    if (codes.length) {
+      _roomsByEntry[`${e.day}||${e.period}||${e.course_code}`] = codes;
+    }
+  }
+
   // Store drilldown data + close any open panel
   _drillData = {
     overload: data.qa?.overload_details ?? [],
@@ -1138,7 +1187,11 @@ function renderScheduleGrid(schedule, slots) {
           const pinCls = _pinnedCourses[c] ? ' et-pinned' : '';
           const cr = _creditMap[c];
           const crTag = cr ? ` <small class="et-credit-tag">${cr}cr</small>` : '';
-          return `<span class="et-course${pinCls}" data-course="${c}" draggable="true" style="background:${colorForCourse(c)};border:1px solid ${colorForCourseBorder(c)}">${c}${crTag}</span>`;
+          const roomCodes = _roomsByEntry[`${day}||${period}||${c}`] || [];
+          const roomTag = roomCodes.length
+            ? `<div class="et-room-tag" title="${roomCodes.join(', ')}">${roomCodes.join(' · ')}</div>`
+            : '';
+          return `<span class="et-course${pinCls}" data-course="${c}" draggable="true" style="background:${colorForCourse(c)};border:1px solid ${colorForCourseBorder(c)}">${c}${crTag}${roomTag}</span>`;
         }).join(' ');
         html += `<td data-day="${day}" data-period="${period}">${chips}</td>`;
       }
