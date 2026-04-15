@@ -1137,8 +1137,24 @@ def assign_rooms_to_schedule(
                 for unit in merged:
                     demand_units.append((entry, unit))
 
-        # Sort all demand in this slot by count DESC for best-fit-decreasing
-        demand_units.sort(key=lambda pair: -int(pair[1]["student_count"]))
+        # Sort demand units so that the LARGEST INDIVISIBLE section gets
+        # first pick.  A merged group can be split back into constituents
+        # (see the fallback further down), so its "hard requirement" is
+        # only the size of its biggest constituent — not the merged total.
+        # Primary key: max indivisible block; secondary: total size so
+        # merges still win ties against singletons of the same cap.
+        def _sort_key(pair: tuple[dict, dict]) -> tuple[int, int]:
+            unit = pair[1]
+            constituents = unit.get("_constituents") or []
+            if constituents:
+                max_block = max(
+                    int(c.get("student_count", 0) or 0) for c in constituents
+                )
+            else:
+                max_block = int(unit.get("student_count", 0) or 0)
+            return (-max_block, -int(unit.get("student_count", 0) or 0))
+
+        demand_units.sort(key=_sort_key)
 
         for entry, unit in demand_units:
             # First attempt: place the (possibly merged) unit as a single
