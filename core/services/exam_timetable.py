@@ -23,7 +23,14 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from core.models import Course, ExamTimetableRun, ProgrammeRequirement, StudentCourse
+from core.models import (
+    Course,
+    ExamTimetableRun,
+    ProgrammeRequirement,
+    Student,
+    StudentCourse,
+    StudentTermSection,
+)
 
 # ── 0. Credit helpers ───────────────────────────────────────────
 
@@ -73,24 +80,66 @@ def build_enrolled_sets(
     programs: list[str] | None = None,
     sections: list[str] | None = None,
 ) -> dict[str, set[int]]:
-    """Return {course_code: {student_id, …}} for 'studying' enrolments.
+    """Return {course_code: {student_id, …}} for current-term enrolments.
+
+    Uses StudentTermSection (scraped timetable data) when available for
+    the current academic year/term, falling back to StudentCourse with
+    status='studying' when no timetable data exists.
 
     Optional filters narrow the student population:
         programs – only include students whose program is in this list
         sections – only include students whose section is in this list
     When a filter is None or empty, it is ignored (all values pass).
     """
-    qs = StudentCourse.objects.filter(status="studying").select_related("course", "student")
-    if programs:
-        qs = qs.filter(student__program__in=programs)
-    if sections:
-        qs = qs.filter(student__section__in=sections)
+    # Try StudentTermSection first (more accurate — actual section enrollments).
+    # Detect the latest academic year/term that has ANY data. The fallback
+    # only triggers when the source itself is empty — filters that match no
+    # students must not silently cross over to StudentCourse.
+    latest = (
+        StudentTermSection.objects.order_by("-academic_year", "-term")
+        .values_list("academic_year", "term")
+        .first()
+    )
 
-    rows = qs.values_list("course__course_code", "student_id")
-    enrolled: dict[str, set[int]] = defaultdict(set)
-    for course_code, student_id in rows:
-        enrolled[course_code].add(student_id)
-    return dict(enrolled)
+    if latest is not None:
+        ay, tm = latest
+        qs = StudentTermSection.objects.filter(academic_year=ay, term=tm).select_related(
+            "term_section"
+        )
+
+        if programs:
+            student_ids = set(
+                Student.objects.filter(program__in=programs).values_list("student_id", flat=True)
+            )
+            qs = qs.filter(student_id__in=student_ids)
+        if sections:
+            student_ids_sec = set(
+                Student.objects.filter(section__in=sections).values_list("student_id", flat=True)
+            )
+            qs = qs.filter(student_id__in=student_ids_sec)
+
+        # NOTE: TermSection.course_code is the department prefix (e.g. "CS");
+        # the full course identifier matching Course.course_code is course_key
+        # (e.g. "CS101"). Grouping by course_code would collapse every CS
+        # course into one bucket and destroy the exam schedule.
+        rows = qs.values_list("term_section__course_key", "student_id")
+        enrolled: dict[str, set[int]] = defaultdict(set)
+        for course_key, student_id in rows:
+            enrolled[course_key].add(student_id)
+        return dict(enrolled)
+
+    # Fallback: StudentCourse with status="studying" (no StudentTermSection data).
+    qs_sc = StudentCourse.objects.filter(status="studying").select_related("course", "student")
+    if programs:
+        qs_sc = qs_sc.filter(student__program__in=programs)
+    if sections:
+        qs_sc = qs_sc.filter(student__section__in=sections)
+
+    rows_sc = qs_sc.values_list("course__course_code", "student_id")
+    enrolled_sc: dict[str, set[int]] = defaultdict(set)
+    for course_code, student_id in rows_sc:
+        enrolled_sc[course_code].add(student_id)
+    return dict(enrolled_sc)
 
 
 # ── 2. Conflict graph ──────────────────────────────────────────
