@@ -134,18 +134,33 @@ class Prerequisite(models.Model):
 class Room(models.Model):
     """Department room inventory."""
 
-    room_code = models.TextField(unique=True)
+    SECTION_MALE = "M"
+    SECTION_FEMALE = "F"
+    SECTION_CHOICES = [
+        (SECTION_MALE, "Male"),
+        (SECTION_FEMALE, "Female"),
+    ]
+
+    room_code = models.TextField()
     wing = models.TextField(blank=True, default="")
     building = models.TextField(blank=True, default="")
     floor = models.IntegerField(null=True, blank=True)
     room_type = models.TextField(blank=True, default="lecture")
     capacity = models.IntegerField(default=0)
     department = models.TextField(blank=True, default="")
+    section = models.CharField(max_length=1, choices=SECTION_CHOICES, default=SECTION_MALE)
 
     class Meta:
         db_table = "rooms"
         indexes = [
             models.Index(fields=["department"], name="idx_room_department"),
+            models.Index(fields=["section"], name="idx_room_section"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["room_code", "section"],
+                name="uniq_room_code_section",
+            ),
         ]
 
     def __str__(self) -> str:
