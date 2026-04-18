@@ -402,6 +402,11 @@ def schedule(
 
     slot_load: dict[int, int] = defaultdict(int)
 
+    # Per-day course count — used as the primary load-balancing tiebreaker so
+    # courses without other constraints (degree-0 / no bucket) get spread
+    # across days instead of clustering on whichever slot index is lowest.
+    day_load: dict[str, int] = defaultdict(int)
+
     bucket_day_courses: dict[tuple[str, int], dict[str, set[str]]] = defaultdict(
         lambda: defaultdict(set)
     )
@@ -420,6 +425,7 @@ def schedule(
                 continue
             assignment[cc] = si
             slot_load[si] += 1
+            day_load[p_day] += 1
             course_assigned_day[cc] = p_day
             if enrolled_sets and cc in enrolled_sets:
                 for sid in enrolled_sets[cc]:
@@ -476,6 +482,7 @@ def schedule(
             }
             assignment[course] = chosen
             slot_load[chosen] += 1
+            day_load["OVERFLOW"] += 1
             course_assigned_day[course] = "OVERFLOW"
             # Maintain student tracking structures for consistency
             if enrolled_sets and course in enrolled_sets:
@@ -490,12 +497,20 @@ def schedule(
         if enrolled_sets and course in enrolled_sets:
             # ── Soft-constraint scoring ──
             # Evaluate ALL conflict-free candidates and pick the best by a
-            # four-level priority tuple (lower is better):
-            #   (overload, credit_pair, spacing, slot_load)
+            # five-level priority tuple (lower is better):
+            #   (overload, credit_pair, spacing, day_load, slot_load)
             # Python tuple comparison ensures level 1 always trumps level 2, etc.
+            # day_load comes before slot_load so courses with no other
+            # constraints spread across days first, then balance within day.
             course_students = enrolled_sets[course]
             best_slot = candidates[0]
-            best_score = (float("inf"), float("inf"), float("inf"), float("inf"))
+            best_score = (
+                float("inf"),
+                float("inf"),
+                float("inf"),
+                float("inf"),
+                float("inf"),
+            )
             # Reservoir sampling counter for ties when seed is provided.
             ties_seen = 0
 
@@ -541,8 +556,15 @@ def schedule(
                                     elif gap <= 3:
                                         spacing_penalty += 10
 
-                # Level 3 — Load balance: prefer slots with fewer courses
-                score = (penalty, credit_penalty, spacing_penalty, slot_load[si])
+                # Level 3 — Day load: spread across days first
+                # Level 4 — Slot load: balance within day
+                score = (
+                    penalty,
+                    credit_penalty,
+                    spacing_penalty,
+                    day_load[day],
+                    slot_load[si],
+                )
                 if score < best_score:
                     best_score = score
                     best_slot = si
@@ -562,6 +584,7 @@ def schedule(
         assignment[course] = chosen
         slot_load[chosen] += 1
         chosen_day = slot_by_index[chosen]["day"]
+        day_load[chosen_day] += 1
         course_assigned_day[course] = chosen_day
 
         # Update student day counts + courses-per-day tracking
