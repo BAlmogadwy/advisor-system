@@ -2024,6 +2024,8 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
     Returns the Path to the written file (in the runtime/ directory).
     """
     from openpyxl import Workbook  # type: ignore[import-untyped]
+    from openpyxl.cell.rich_text import CellRichText, TextBlock  # type: ignore[import-untyped]
+    from openpyxl.cell.text import InlineFont  # type: ignore[import-untyped]
     from openpyxl.styles import (  # type: ignore[import-untyped]
         Alignment,
         Border,
@@ -2102,7 +2104,11 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
     # Sheet 1 / 1b / 1c: Schedule grids — All / M only / F only
     # ────────────────────────────────────────────────────────────
     _credit_map_sched = data.get("credit_map", {})
-    course_font = Font(name="Consolas", bold=True, size=9)
+
+    # Rich-text inline fonts: course code stands out (bold, dark teal)
+    # against the lighter, smaller, gray room codes underneath.
+    _course_inline_font = InlineFont(rFont="Consolas", b=True, sz=10, color="064E3B")
+    _room_inline_font = InlineFont(rFont="Consolas", b=False, sz=8, color="6B7280")
 
     # Detect runs that pre-date the gender field on room dicts (Session 20+).
     # Old runs render M/F sheets as blank grids by default — emit a single
@@ -2169,37 +2175,49 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
                 cell.border = thin_border
                 cell.alignment = center
 
-                def _label(code: str, p: str = period, d: str = day) -> str:
+                def _label_blocks(code: str, p: str = period, d: str = day) -> list[TextBlock]:
+                    """Course header in dark bold teal, room list in light gray
+                    so the eye finds the course code at a glance."""
                     cr = _credit_map_sched.get(code, "")
                     head = f"{code} {cr}cr" if cr else code
+                    blocks: list[TextBlock] = [TextBlock(_course_inline_font, head)]
                     rooms_line = rooms_by_entry.get((d, p, code), [])
                     if rooms_line:
-                        head += "\n" + ", ".join(rooms_line)
-                    return head
+                        blocks.append(TextBlock(_room_inline_font, "\n" + ", ".join(rooms_line)))
+                    return blocks
 
                 if not courses:
                     cell.value = ""
                 elif len(courses) == 1:
                     c = courses[0]
-                    cell.value = _label(c)
-                    cell.font = course_font
+                    cell.value = CellRichText(_label_blocks(c))
                     cell.fill = _course_color_fill(c)
                 else:
-                    parts = [_label(c) for c in courses]
-                    cell.value = "\n".join(parts)
-                    cell.font = course_font
+                    blocks: list[TextBlock] = []
+                    for i, c in enumerate(courses):
+                        if i > 0:
+                            blocks.append(TextBlock(_course_inline_font, "\n"))
+                        blocks.extend(_label_blocks(c))
+                    cell.value = CellRichText(blocks)
                     cell.fill = _course_color_fill(courses[0])
 
         ws.column_dimensions["A"].width = 14
         for i, _p in enumerate(period_order, start=2):
             ws.column_dimensions[get_column_letter(i)].width = 22
 
+        def _newline_count(val: Any) -> int:
+            """Newline count for plain str OR CellRichText (whose blocks each
+            carry their own text). str(CellRichText) is not the plain text."""
+            if isinstance(val, CellRichText):
+                return sum(str(b.text if isinstance(b, TextBlock) else b).count("\n") for b in val)
+            return str(val).count("\n") if val else 0
+
         for r in range(2, ws.max_row + 1):
             max_lines = 1
             for c in range(2, ws.max_column + 1):
                 val = ws.cell(row=r, column=c).value
                 if val:
-                    lines = str(val).count("\n") + 1
+                    lines = _newline_count(val) + 1
                     if lines > max_lines:
                         max_lines = lines
             if max_lines > 1:
