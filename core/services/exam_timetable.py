@@ -616,6 +616,44 @@ def schedule(
 # ── 5. QA report ────────────────────────────────────────────────
 
 
+def _compute_thin_clash_risk(
+    enrolled_sets: dict[str, set[int]],
+    schedule_entries: list[dict],
+) -> list[dict]:
+    """Walk the schedule and report any student whose exams collide in
+    the same slot.
+
+    Used after thin-conflict relaxation to surface the realised cost
+    of dropping edges. Returns one entry per (student, slot) collision
+    with the colliding course list.
+    """
+    slot_to_courses: dict[int, list[str]] = defaultdict(list)
+    for e in schedule_entries:
+        if e.get("day") == "OVERFLOW":
+            continue
+        slot_to_courses[e["slot_index"]].append(e["course_code"])
+
+    clashes: list[dict] = []
+    for si, course_codes in slot_to_courses.items():
+        if len(course_codes) < 2:
+            continue
+        # Find students enrolled in 2+ of these courses
+        student_courses_in_slot: dict[int, list[str]] = defaultdict(list)
+        for cc in course_codes:
+            for sid in enrolled_sets.get(cc, ()):
+                student_courses_in_slot[sid].append(cc)
+        for sid, ccs in student_courses_in_slot.items():
+            if len(ccs) >= 2:
+                clashes.append(
+                    {
+                        "student_id": sid,
+                        "slot_index": si,
+                        "courses": sorted(ccs),
+                    }
+                )
+    return clashes
+
+
 def _build_qa(
     enrolled_sets: dict[str, set[int]],
     schedule_entries: list[dict],
@@ -1717,6 +1755,7 @@ def build_exam_timetable(
     seed: int | None = None,
     assign_rooms: bool = True,
     rebalance_invigilators: bool = True,
+    thin_conflict_threshold: int = 0,
 ) -> dict:
     """
     End-to-end pipeline: build enrolled sets → conflict graph →
@@ -1735,6 +1774,14 @@ def build_exam_timetable(
                            scheduler; None = deterministic (alphabetical).
                            Different seeds produce different timetable
                            variants from the same input data.
+        thin_conflict_threshold – if > 0, courses with total enrolled
+                           students <= threshold are dropped from the
+                           conflict graph (their tiny enrolment no
+                           longer blocks other courses from a slot).
+                           Default 0 = current behaviour (no relaxation).
+                           Realised same-slot clashes for thin students
+                           are reported in qa.thin_clash_risk so the
+                           registrar can pin them manually if needed.
     """
     # 1. Enrolled sets
     enrolled_sets = build_enrolled_sets(programs=programs, sections=sections)
@@ -1755,6 +1802,32 @@ def build_exam_timetable(
 
     # 2. Conflict graph
     conflicts, adj = build_conflict_graph(enrolled_sets)
+
+    # 2b. Thin-conflict relaxation — when threshold > 0, drop courses
+    # with total enrolment <= threshold from the conflict graph entirely.
+    # They become degree-0 (no neighbours, no back-edges from peers) so
+    # the scheduler treats their tiny student conflicts as soft instead
+    # of hard. The realised same-slot clash count is computed below for
+    # transparency.
+    thin_courses_report: list[dict] = []
+    if thin_conflict_threshold > 0:
+        thin_set = {
+            cc for cc, sids in enrolled_sets.items() if len(sids) <= thin_conflict_threshold
+        }
+        for cc in sorted(thin_set):
+            dropped = sorted(adj.get(cc, {}).keys())
+            thin_courses_report.append(
+                {
+                    "course_code": cc,
+                    "total_students": len(enrolled_sets[cc]),
+                    "dropped_edges": len(dropped),
+                    "neighbours": dropped,
+                }
+            )
+            adj[cc] = {}
+            for n in dropped:
+                if n in adj:
+                    adj[n].pop(cc, None)
 
     # 3. Programme-plan term buckets
     ptb, cb = build_plan_term_buckets(set(course_list))
@@ -1799,6 +1872,18 @@ def build_exam_timetable(
         max_per_day=max_per_day,
         plan_term_buckets=ptb,
         credit_map=credit_map,
+    )
+
+    # 7b. Thin-clash risk — when thin relaxation was active, surface any
+    # student who actually ended up with two same-slot exams as a result
+    # of the dropped conflict edges. Empty list when threshold == 0 or
+    # when no clashes materialised.
+    qa["thin_threshold"] = thin_conflict_threshold
+    qa["thin_courses"] = thin_courses_report
+    qa["thin_clash_risk"] = (
+        _compute_thin_clash_risk(enrolled_sets, schedule_entries)
+        if thin_conflict_threshold > 0
+        else []
     )
 
     # 7b. Room assignment (Phase 2) — attach rooms to each schedule entry.
@@ -1859,6 +1944,14 @@ def build_exam_timetable(
         qa["rooms"] = room_qa
         qa["room_feasibility_violations"] = room_feasibility
         qa["rebalance_moves"] = rebalance_moves
+        # Re-attach thin-relaxation report (lost in the QA rebuild above)
+        qa["thin_threshold"] = thin_conflict_threshold
+        qa["thin_courses"] = thin_courses_report
+        qa["thin_clash_risk"] = (
+            _compute_thin_clash_risk(enrolled_sets, schedule_entries)
+            if thin_conflict_threshold > 0
+            else []
+        )
 
     # Bucket summary for the result (frontend renders bucket info cards)
     buckets_summary: list[dict] = []
