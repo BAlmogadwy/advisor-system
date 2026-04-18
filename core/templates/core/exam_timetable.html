@@ -313,8 +313,12 @@
     </div>
     <!-- Course preview list (populated after Load Courses) -->
     <div id="coursePreview" class="mt-2 d-none">
-      <div class="d-flex align-items-center gap-2 mb-1">
+      <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
         <label class="form-label mb-0">{% if LANGUAGE_CODE == 'ar' %}المقررات{% else %}Courses{% endif %} <small class="text-secondary" id="courseCount"></small></label>
+        <a href="#" id="selectComputerCourses" class="small text-decoration-none"></a>
+        <span class="text-secondary small select-sep d-none">·</span>
+        <a href="#" id="selectGeneralCourses" class="small text-decoration-none"></a>
+        <span class="text-secondary small select-sep d-none">·</span>
         <a href="#" id="toggleAllCourses" class="small text-decoration-none"></a>
       </div>
       <div id="courseList" class="p-2 border rounded" style="min-height:36px;max-height:260px;overflow-y:auto;"></div>
@@ -478,6 +482,8 @@ const T = {
   noCourses:      IS_AR ? 'لا توجد مقررات مطابقة للفلاتر المحددة.' : 'No courses match the selected filters.',
   selectAll:      IS_AR ? 'تحديد الكل' : 'Select all',
   deselectAll:    IS_AR ? 'إلغاء تحديد الكل' : 'Deselect all',
+  selectComputer: IS_AR ? 'تحديد الحاسوبية' : 'Select computer',
+  selectGeneral:  IS_AR ? 'تحديد العامة' : 'Select general',
   loadFirst:      IS_AR ? 'يرجى تحميل المقررات أولاً.' : 'Please load courses first.',
   noSelected:     IS_AR ? 'يرجى اختيار مقرر واحد على الأقل.' : 'Please select at least one course.',
   show:           IS_AR ? 'عرض' : 'Show',
@@ -616,10 +622,16 @@ loadFilters();
 /* ── Step 1: Load Courses (preview) ── */
 let _coursesLoaded = false;
 
+const COMPUTER_PREFIXES = new Set(['AI', 'DS', 'CS', 'IS', 'COE', 'CYB']);
+
 function clearCoursePreview() {
   $('coursePreview').classList.add('d-none');
   $('courseList').innerHTML = '';
   $('courseCount').textContent = '';
+  $('toggleAllCourses').textContent = '';
+  $('selectComputerCourses').textContent = '';
+  $('selectGeneralCourses').textContent = '';
+  document.querySelectorAll('.select-sep').forEach(s => s.classList.add('d-none'));
   $('buildBtn').disabled = true;
   _coursesLoaded = false;
 }
@@ -701,6 +713,9 @@ function renderCourseChips(courses) {
 
   _coursesLoaded = true;
   $('buildBtn').disabled = false;
+  $('selectComputerCourses').textContent = T.selectComputer;
+  $('selectGeneralCourses').textContent = T.selectGeneral;
+  document.querySelectorAll('.select-sep').forEach(s => s.classList.remove('d-none'));
   updateCourseCount(courses.length);
   updateToggleLabel();
   // Init per-dept labels
@@ -741,6 +756,28 @@ $('toggleAllCourses').addEventListener('click', (e) => {
   });
   updateCourseCount(all.length);
   $('courseList').querySelectorAll('.et-dept-group').forEach(updateDeptToggleLabel);
+});
+
+function selectByPrefixGroup(matchComputer) {
+  const all = $('courseList').querySelectorAll('input[type=checkbox]');
+  all.forEach(cb => {
+    const prefix = (cb.value.match(/^[A-Za-z]+/) || [''])[0];
+    const isComputer = COMPUTER_PREFIXES.has(prefix);
+    cb.checked = matchComputer ? isComputer : !isComputer;
+    cb.closest('.et-chip').classList.toggle('active', cb.checked);
+  });
+  updateCourseCount(all.length);
+  $('courseList').querySelectorAll('.et-dept-group').forEach(updateDeptToggleLabel);
+}
+
+$('selectComputerCourses').addEventListener('click', (e) => {
+  e.preventDefault();
+  selectByPrefixGroup(true);
+});
+
+$('selectGeneralCourses').addEventListener('click', (e) => {
+  e.preventDefault();
+  selectByPrefixGroup(false);
 });
 
 // Clear course list when filters change

@@ -123,7 +123,7 @@ def exam_timetable_preview_courses_view(request: HttpRequest) -> JsonResponse:
 
 
 @require_POST
-@throttle(max_calls=3, window_seconds=120)
+@throttle(max_calls=20, window_seconds=120)
 def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
     """Build (or rebuild) the exam timetable.
 

@@ -19,6 +19,18 @@ from __future__ import annotations
 import itertools
 import json
 import random
+
+# ── Invigilator calculation rules ──────────────────────────────
+#
+# Department courses (CS, IS, COE, CYB, AI, DS) need invigilators FROM
+# our department for every exam-room: 1 invigilator if the room holds
+# fewer than 30 students, 2 invigilators if 30 or more.
+#
+# External / general-requirements courses (GS, EDCT, GSE, ENV, MATH,
+# STAT, PHYS) only need an invigilator from our department when the
+# room holds MORE than 30 students (1 invigilator), otherwise 0
+# (the providing college supplies its own staff).
+import re as _re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -34,24 +46,11 @@ from core.models import (
     TermSectionMeeting,
 )
 
-# ── Invigilator calculation rules ──────────────────────────────
-#
-# Department courses (CS, IS, COE, CYB, AI, DS) need invigilators FROM
-# our department for every exam-room: 1 invigilator if the room holds
-# fewer than 30 students, 2 invigilators if 30 or more.
-#
-# External / general-requirements courses (GS, EDCT, GSE, ENV, MATH,
-# STAT, PHYS) only need an invigilator from our department when the
-# room holds MORE than 30 students (1 invigilator), otherwise 0
-# (the providing college supplies its own staff).
-
-import re as _re
-
 _DEPARTMENT_PREFIXES: set[str] = {"CS", "IS", "COE", "CYB", "AI", "DS"}
 _EXTERNAL_PREFIXES: set[str] = {"GS", "EDCT", "GSE", "ENV", "MATH", "STAT", "PHYS"}
 
 _DEPT_LARGE_THRESHOLD = 30  # >= triggers a second invigilator (department)
-_EXT_LARGE_THRESHOLD = 30   # > triggers one invigilator from us (external)
+_EXT_LARGE_THRESHOLD = 30  # > triggers one invigilator from us (external)
 
 
 def _course_prefix(course_code: str) -> str:
@@ -870,9 +869,7 @@ def build_section_enrollment(
             qs = qs.filter(student_id__in=student_ids)
         if sections:
             student_ids_sec = set(
-                Student.objects.filter(section__in=sections).values_list(
-                    "student_id", flat=True
-                )
+                Student.objects.filter(section__in=sections).values_list("student_id", flat=True)
             )
             qs = qs.filter(student_id__in=student_ids_sec)
 
@@ -1237,25 +1234,22 @@ def assign_rooms_to_schedule(
                     half_b = anchor_count - half_a
                     base_label = anchor.get("_split_from") or anchor["section"]
                     remaining.pop(0)
-                    remaining = (
-                        [
-                            {
-                                "section": f"{anchor['section']}a",
-                                "student_count": half_a,
-                                "preferred_room": preferred,
-                                "gender": gender,
-                                "_split_from": base_label,
-                            },
-                            {
-                                "section": f"{anchor['section']}b",
-                                "student_count": half_b,
-                                "preferred_room": "",
-                                "gender": gender,
-                                "_split_from": base_label,
-                            },
-                        ]
-                        + remaining
-                    )
+                    remaining = [
+                        {
+                            "section": f"{anchor['section']}a",
+                            "student_count": half_a,
+                            "preferred_room": preferred,
+                            "gender": gender,
+                            "_split_from": base_label,
+                        },
+                        {
+                            "section": f"{anchor['section']}b",
+                            "student_count": half_b,
+                            "preferred_room": "",
+                            "gender": gender,
+                            "_split_from": base_label,
+                        },
+                    ] + remaining
                     # Keep sorted so the loop's DESC invariant holds
                     remaining.sort(
                         key=lambda s: int(s.get("student_count", 0) or 0),
@@ -1359,9 +1353,7 @@ def assign_rooms_to_schedule(
                     default=0,
                 )
                 same_gender = _split_oversized_sections(same_gender, max_cap_gender)
-                max_section = max(
-                    int(s.get("student_count", 0) or 0) for s in same_gender
-                )
+                max_section = max(int(s.get("student_count", 0) or 0) for s in same_gender)
                 groups.append((entry, gender, same_gender, max_section))
 
         # Sort by the biggest indivisible section DESC: a group whose
@@ -1429,7 +1421,6 @@ def _rebalance_invigilators_pass(
     plan_term_buckets = plan_term_buckets or {}
 
     # Slot lookup helpers
-    slot_by_index = {s["index"]: s for s in slots}
     slots_by_day: dict[str, list[dict]] = defaultdict(list)
     for s in slots:
         slots_by_day[s["day"]].append(s)
@@ -1438,9 +1429,7 @@ def _rebalance_invigilators_pass(
         """Clear current room assignments and re-run the full packer."""
         for e in schedule_entries:
             e["rooms"] = []
-        assign_rooms_to_schedule(
-            schedule_entries, section_enrollment, rooms_list, seed=None
-        )
+        assign_rooms_to_schedule(schedule_entries, section_enrollment, rooms_list, seed=None)
 
     def _per_day_invigilators() -> dict[str, dict[str, int]]:
         """Return ``{day: {'M': int, 'F': int, 'total': int}}`` so the
@@ -1448,9 +1437,7 @@ def _rebalance_invigilators_pass(
         the combined total — a move that flattens the total but
         worsens the M-only or F-only spread should not be accepted.
         """
-        per_day: dict[str, dict[str, int]] = defaultdict(
-            lambda: {"M": 0, "F": 0, "total": 0}
-        )
+        per_day: dict[str, dict[str, int]] = defaultdict(lambda: {"M": 0, "F": 0, "total": 0})
         for e in schedule_entries:
             if e.get("day") == "OVERFLOW":
                 continue
@@ -1485,7 +1472,7 @@ def _rebalance_invigilators_pass(
         n = len(combined)
         mean = sum(combined) / n
         var = sum((x - mean) ** 2 for x in combined) / n
-        return (var ** 0.5, max(t_vals), max(t_vals) - min(t_vals))
+        return (var**0.5, max(t_vals), max(t_vals) - min(t_vals))
 
     def _causes_conflict(
         course: str, target_slot_idx: int, current_slot_of: dict[str, int]
@@ -1528,9 +1515,7 @@ def _rebalance_invigilators_pass(
         current_day_of = {e["course_code"]: e["day"] for e in schedule_entries}
 
         # Try every course on the hottest day
-        hot_entries = [
-            e for e in schedule_entries if e.get("day") == hottest_day
-        ]
+        hot_entries = [e for e in schedule_entries if e.get("day") == hottest_day]
         # Process larger courses first — they shift more invigilator weight
         hot_entries.sort(
             key=lambda e: -sum(
@@ -1566,12 +1551,8 @@ def _rebalance_invigilators_pass(
                 # (combined-stddev, max-day, spread) score.  A 0.01
                 # tolerance on the stddev component prevents oscillation
                 # when several moves have indistinguishable impact.
-                accept = (
-                    new_score[0] + 0.01 < base_score[0]
-                    or (
-                        abs(new_score[0] - base_score[0]) <= 0.01
-                        and new_score[1:] < base_score[1:]
-                    )
+                accept = new_score[0] + 0.01 < base_score[0] or (
+                    abs(new_score[0] - base_score[0]) <= 0.01 and new_score[1:] < base_score[1:]
                 )
                 if accept:
                     base_score = new_score
@@ -1679,9 +1660,7 @@ def _build_room_qa(
 
     avg_util = (total_demand / total_capacity_used) if total_capacity_used else 0.0
     # Convert invigilator dict to a stable JSON-serialisable shape
-    invig_summary = {
-        day: dict(counts) for day, counts in invigilators_per_day.items()
-    }
+    invig_summary = {day: dict(counts) for day, counts in invigilators_per_day.items()}
     invig_grand_total = sum(c["total"] for c in invig_summary.values())
     invig_grand_M = sum(c["M"] for c in invig_summary.values())
     invig_grand_F = sum(c["F"] for c in invig_summary.values())
@@ -1911,9 +1890,13 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
     """Export a saved ExamTimetableRun to a styled multi-sheet .xlsx workbook.
 
     Sheets:
-        Schedule  – day × period grid (mirrors the on-screen table)
-        Courses   – flat list with course code, enrolled count, day, period
-        QA Summary – key metrics + any conflict / bucket-day warnings
+        Schedule        – day × period grid (mirrors the on-screen table)
+        Schedule (M)    – same grid filtered to male sections + rooms only
+        Schedule (F)    – same grid filtered to female sections + rooms only
+        Courses         – flat list with course code, enrolled count, day, period
+        Students (M)    – per-course male section counts + student totals
+        Students (F)    – per-course female section counts + student totals
+        QA Summary      – key metrics + any conflict / bucket-day warnings
 
     Returns the Path to the written file (in the runtime/ directory).
     """
@@ -1990,95 +1973,102 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
             period_set.add(s["period"])
             period_order.append(s["period"])
 
-    # Build grid lookup: grid[day][period] = [course_codes]
-    grid: dict[str, dict[str, list[str]]] = {}
-    for e in schedule:
-        if e["day"] == "OVERFLOW":
-            continue
-        grid.setdefault(e["day"], {}).setdefault(e["period"], []).append(e["course_code"])
-
     wb = Workbook()
 
     # ────────────────────────────────────────────────────────────
-    # Sheet 1: Schedule (day × period grid)
+    # Sheet 1 / 1b / 1c: Schedule grids — All / M only / F only
     # ────────────────────────────────────────────────────────────
-    ws1 = wb.active
-    ws1.title = "Schedule"
-
-    # Header row: "Day \ Period", then each period
-    ws1.append(["Day \\ Period"] + period_order)
-    style_header_row(ws1, 1 + len(period_order))
-
-    # One row per day — with course colour fills
     _credit_map_sched = data.get("credit_map", {})
     course_font = Font(name="Consolas", bold=True, size=9)
 
-    # Lookup: (day, period, course) → room codes for in-cell display
-    rooms_by_entry: dict[tuple[str, str, str], list[str]] = {}
-    for e in schedule:
-        if e.get("day") == "OVERFLOW":
-            continue
-        rkey = (e["day"], e["period"], e["course_code"])
-        room_codes = [
-            a.get("room_code", "")
-            for a in e.get("rooms", [])
-            if a.get("room_code") and a.get("room_code") != "UNASSIGNED"
-        ]
-        if room_codes:
-            rooms_by_entry[rkey] = room_codes
-
-    for day in day_order:
-        row_idx = ws1.max_row + 1
-        # Day label
-        day_cell = ws1.cell(row=row_idx, column=1, value=day)
-        day_cell.font = header_font
-        day_cell.border = thin_border
-        day_cell.alignment = left_align
-
-        for pi, period in enumerate(period_order):
-            courses = sorted(grid.get(day, {}).get(period, []))
-            cell = ws1.cell(row=row_idx, column=2 + pi)
-            cell.border = thin_border
-            cell.alignment = center
-
-            def _label(code: str, p: str = period, d: str = day) -> str:
-                cr = _credit_map_sched.get(code, "")
-                head = f"{code} {cr}cr" if cr else code
-                rooms_line = rooms_by_entry.get((d, p, code), [])
-                if rooms_line:
-                    head += "\n" + ", ".join(rooms_line)
-                return head
-
-            if not courses:
-                cell.value = ""
-            elif len(courses) == 1:
-                c = courses[0]
-                cell.value = _label(c)
-                cell.font = course_font
-                cell.fill = _course_color_fill(c)
+    def _render_schedule_sheet(ws: Any, gender_filter: str | None) -> None:
+        """Render a day×period grid. If gender_filter is 'M' or 'F', a course
+        only appears in a cell when it has at least one room of that gender,
+        and only rooms of that gender are listed under the course."""
+        grid_local: dict[str, dict[str, list[str]]] = {}
+        rooms_by_entry: dict[tuple[str, str, str], list[str]] = {}
+        for e in schedule:
+            if e.get("day") == "OVERFLOW":
+                continue
+            all_rooms = e.get("rooms", [])
+            if gender_filter:
+                matching = [
+                    a
+                    for a in all_rooms
+                    if a.get("gender") == gender_filter
+                    and a.get("room_code")
+                    and a.get("room_code") != "UNASSIGNED"
+                ]
+                if not matching:
+                    continue
+                room_codes = [a["room_code"] for a in matching]
             else:
-                # Multiple courses — list them, use first course's colour
-                parts = [_label(c) for c in courses]
-                cell.value = "\n".join(parts)
-                cell.font = course_font
-                cell.fill = _course_color_fill(courses[0])
+                room_codes = [
+                    a.get("room_code", "")
+                    for a in all_rooms
+                    if a.get("room_code") and a.get("room_code") != "UNASSIGNED"
+                ]
+            grid_local.setdefault(e["day"], {}).setdefault(e["period"], []).append(e["course_code"])
+            if room_codes:
+                rooms_by_entry[(e["day"], e["period"], e["course_code"])] = room_codes
 
-    # Column widths
-    ws1.column_dimensions["A"].width = 14
-    for i, _p in enumerate(period_order, start=2):
-        ws1.column_dimensions[get_column_letter(i)].width = 22
+        ws.append(["Day \\ Period"] + period_order)
+        style_header_row(ws, 1 + len(period_order))
 
-    # Row height for multi-course cells
-    for r in range(2, ws1.max_row + 1):
-        max_lines = 1
-        for c in range(2, ws1.max_column + 1):
-            val = ws1.cell(row=r, column=c).value
-            if val:
-                lines = str(val).count("\n") + 1
-                if lines > max_lines:
-                    max_lines = lines
-        if max_lines > 1:
-            ws1.row_dimensions[r].height = max_lines * 16
+        for day in day_order:
+            row_idx = ws.max_row + 1
+            day_cell = ws.cell(row=row_idx, column=1, value=day)
+            day_cell.font = header_font
+            day_cell.border = thin_border
+            day_cell.alignment = left_align
+
+            for pi, period in enumerate(period_order):
+                courses = sorted(grid_local.get(day, {}).get(period, []))
+                cell = ws.cell(row=row_idx, column=2 + pi)
+                cell.border = thin_border
+                cell.alignment = center
+
+                def _label(code: str, p: str = period, d: str = day) -> str:
+                    cr = _credit_map_sched.get(code, "")
+                    head = f"{code} {cr}cr" if cr else code
+                    rooms_line = rooms_by_entry.get((d, p, code), [])
+                    if rooms_line:
+                        head += "\n" + ", ".join(rooms_line)
+                    return head
+
+                if not courses:
+                    cell.value = ""
+                elif len(courses) == 1:
+                    c = courses[0]
+                    cell.value = _label(c)
+                    cell.font = course_font
+                    cell.fill = _course_color_fill(c)
+                else:
+                    parts = [_label(c) for c in courses]
+                    cell.value = "\n".join(parts)
+                    cell.font = course_font
+                    cell.fill = _course_color_fill(courses[0])
+
+        ws.column_dimensions["A"].width = 14
+        for i, _p in enumerate(period_order, start=2):
+            ws.column_dimensions[get_column_letter(i)].width = 22
+
+        for r in range(2, ws.max_row + 1):
+            max_lines = 1
+            for c in range(2, ws.max_column + 1):
+                val = ws.cell(row=r, column=c).value
+                if val:
+                    lines = str(val).count("\n") + 1
+                    if lines > max_lines:
+                        max_lines = lines
+            if max_lines > 1:
+                ws.row_dimensions[r].height = max_lines * 16
+
+    ws1 = wb.active
+    ws1.title = "Schedule"
+    _render_schedule_sheet(ws1, None)
+    _render_schedule_sheet(wb.create_sheet("Schedule (M)"), "M")
+    _render_schedule_sheet(wb.create_sheet("Schedule (F)"), "F")
 
     # ────────────────────────────────────────────────────────────
     # Sheet 2: Courses (flat list)
@@ -2107,6 +2097,58 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
     ws2.column_dimensions["C"].width = 14
     ws2.column_dimensions["D"].width = 18
     ws2.column_dimensions["E"].width = 12
+
+    # ────────────────────────────────────────────────────────────
+    # Sheet 2b / 2c: Students (M) / Students (F) — per-course gender totals
+    # ────────────────────────────────────────────────────────────
+    def _render_students_sheet(ws: Any, gender_filter: str) -> None:
+        ws.append(["Course Code", "Credits", "Day", "Period", "Sections", "Students"])
+        style_header_row(ws, 6)
+
+        rows: list[tuple[str, Any, str, str, int, int]] = []
+        for e in sorted_schedule:
+            matching = [a for a in e.get("rooms", []) if a.get("gender") == gender_filter]
+            if not matching:
+                continue
+            sections = len(matching)
+            students = sum(int(a.get("student_count", 0) or 0) for a in matching)
+            cr = _credit_map.get(e["course_code"], "")
+            rows.append((e["course_code"], cr, e["day"], e["period"], sections, students))
+
+        for row in rows:
+            ws.append(list(row))
+
+        for r in range(2, ws.max_row + 1):
+            code_val = ws.cell(row=r, column=1).value
+            for c in range(1, 7):
+                cell = ws.cell(row=r, column=c)
+                cell.border = thin_border
+                cell.alignment = center
+                if code_val:
+                    cell.fill = _course_color_fill(code_val)
+
+        if rows:
+            total_sections = sum(r[4] for r in rows)
+            total_students = sum(r[5] for r in rows)
+            total_row = ws.max_row + 1
+            ws.cell(row=total_row, column=1, value="TOTAL").font = header_font
+            ws.cell(row=total_row, column=5, value=total_sections).font = header_font
+            ws.cell(row=total_row, column=6, value=total_students).font = header_font
+            for c in range(1, 7):
+                cell = ws.cell(row=total_row, column=c)
+                cell.border = thin_border
+                cell.alignment = center
+                cell.fill = PatternFill("solid", fgColor="E8F5E9")
+
+        ws.column_dimensions["A"].width = 16
+        ws.column_dimensions["B"].width = 10
+        ws.column_dimensions["C"].width = 14
+        ws.column_dimensions["D"].width = 18
+        ws.column_dimensions["E"].width = 12
+        ws.column_dimensions["F"].width = 12
+
+    _render_students_sheet(wb.create_sheet("Students (M)"), "M")
+    _render_students_sheet(wb.create_sheet("Students (F)"), "F")
 
     # ────────────────────────────────────────────────────────────
     # Sheet 3: QA Summary
@@ -2206,9 +2248,7 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
     # Sheet 4: Room Assignments (one row per assigned section)
     # ────────────────────────────────────────────────────────────
     room_qa = qa.get("rooms") if isinstance(qa, dict) else None
-    has_room_data = any(
-        e.get("rooms") for e in schedule if e.get("day") != "OVERFLOW"
-    )
+    has_room_data = any(e.get("rooms") for e in schedule if e.get("day") != "OVERFLOW")
     if has_room_data:
         ws4 = wb.create_sheet("Room Assignments")
         ws4.append(
@@ -2312,14 +2352,18 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
         # ── Section A: rules legend ──
         ws5.append(["Invigilator Rules"])
         ws5.cell(row=1, column=1).font = Font(bold=True, size=12)
-        ws5.append([
-            "Department courses (CS/IS/COE/CYB/AI/DS):  1 invigilator if room has <30 students, "
-            "2 if 30+"
-        ])
-        ws5.append([
-            "External courses (GS/EDCT/GSE/ENV/MATH/STAT/PHYS):  1 invigilator only if room "
-            "has more than 30 students, 0 otherwise"
-        ])
+        ws5.append(
+            [
+                "Department courses (CS/IS/COE/CYB/AI/DS):  1 invigilator if room has <30 students, "
+                "2 if 30+"
+            ]
+        )
+        ws5.append(
+            [
+                "External courses (GS/EDCT/GSE/ENV/MATH/STAT/PHYS):  1 invigilator only if room "
+                "has more than 30 students, 0 otherwise"
+            ]
+        )
         ws5.append([])
 
         # ── Section B: daily summary ──
@@ -2334,7 +2378,9 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
             cell.border = thin_border
 
         # Iterate days in slot order so the table matches the schedule grid
-        invig_per_day_data = (room_qa or {}).get("invigilators_per_day", {}) if isinstance(room_qa, dict) else {}
+        invig_per_day_data = (
+            (room_qa or {}).get("invigilators_per_day", {}) if isinstance(room_qa, dict) else {}
+        )
         # Re-derive on the fly from the schedule too in case room_qa wasn't computed
         if not invig_per_day_data:
             tally: dict[str, dict[str, int]] = {}
@@ -2384,10 +2430,19 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
         # ── Section C: per-room detail ──
         ws5.append([])
         detail_header_row = ws5.max_row + 1
-        ws5.append([
-            "Day", "Period", "Course", "Type", "Section", "Gender",
-            "Students", "Room", "Invigilators",
-        ])
+        ws5.append(
+            [
+                "Day",
+                "Period",
+                "Course",
+                "Type",
+                "Section",
+                "Gender",
+                "Students",
+                "Room",
+                "Invigilators",
+            ]
+        )
         for col in range(1, 10):
             cell = ws5.cell(row=detail_header_row, column=col)
             cell.font = header_font_white
@@ -2408,11 +2463,19 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
                     continue
                 stu = int(a.get("student_count", 0) or 0)
                 invigs = _invigilators_needed(cc, stu)
-                ws5.append([
-                    e["day"], e["period"], cc, ctype,
-                    a.get("section", ""), a.get("gender", ""),
-                    stu, a.get("room_code", ""), invigs,
-                ])
+                ws5.append(
+                    [
+                        e["day"],
+                        e["period"],
+                        cc,
+                        ctype,
+                        a.get("section", ""),
+                        a.get("gender", ""),
+                        stu,
+                        a.get("room_code", ""),
+                        invigs,
+                    ]
+                )
                 rr = ws5.max_row
                 for col in range(1, 10):
                     ws5.cell(row=rr, column=col).border = thin_border
@@ -2420,9 +2483,7 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
                 # Highlight rows with 0 invigilators (no department staffing needed)
                 if invigs == 0:
                     for col in range(1, 10):
-                        ws5.cell(row=rr, column=col).fill = PatternFill(
-                            "solid", fgColor="EDEDED"
-                        )
+                        ws5.cell(row=rr, column=col).fill = PatternFill("solid", fgColor="EDEDED")
                 # Highlight rows with 2 invigilators (heavy room)
                 elif invigs >= 2:
                     for col in range(1, 10):

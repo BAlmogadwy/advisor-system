@@ -5,6 +5,7 @@ exclude_dirs:
   - migrations
   - .claude
   - import_old
+  - csv_export
 skips:
   - B101
   - B105
