@@ -359,6 +359,10 @@
         <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}أقسام بدون قاعة{% else %}Unassigned sections{% endif %}</div><div class="v" id="kRoomUnassigned">0</div></div></div>
         <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}حجوزات مزدوجة{% else %}Double bookings{% endif %}</div><div class="v" id="kRoomDouble">0</div></div></div>
       </div>
+      <div id="kThinRow" class="row g-2 mt-1 d-none">
+        <div class="col-md-6"><div class="kpi kpi-click" data-drill="thin-courses" title="{% if LANGUAGE_CODE == 'ar' %}مقررات صغيرة جدول دون مراعاة تعارضاتها{% else %}Thin courses scheduled without honouring their conflicts{% endif %}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}مقررات صغيرة (مخففة){% else %}Thin courses relaxed{% endif %}</div><div class="v" id="kThinCount">0</div></div></div>
+        <div class="col-md-6"><div class="kpi kpi-click" data-drill="thin-clash" title="{% if LANGUAGE_CODE == 'ar' %}طلاب لديهم اختباران في نفس الفترة بسبب التخفيف{% else %}Students with two exams in the same slot from relaxation — pin one course to fix{% endif %}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}تعارضات فعلية بسبب التخفيف{% else %}Realised relaxation clashes{% endif %}</div><div class="v" id="kThinClash">0</div></div></div>
+      </div>
       <!-- Drilldown detail panel (hidden until a KPI is clicked) -->
       <div id="kpiDrill" class="mt-2 d-none">
         <div class="d-flex align-items-center justify-content-between mb-1">
@@ -1092,6 +1096,19 @@ function renderResults(data) {
   const doubleB = (rqa.room_double_bookings ?? []).length;
   $('kRoomDouble').textContent = doubleB;
   $('kRoomDouble').className = 'v' + (doubleB > 0 ? ' warn' : '');
+
+  // Thin-relaxation KPIs — only shown when threshold > 0
+  const thinThreshold = data.qa?.thin_threshold ?? 0;
+  const thinCourses = data.qa?.thin_courses ?? [];
+  const thinClash = data.qa?.thin_clash_risk ?? [];
+  if (thinThreshold > 0) {
+    $('kThinRow').classList.remove('d-none');
+    $('kThinCount').textContent = thinCourses.length;
+    $('kThinClash').textContent = thinClash.length;
+    $('kThinClash').className = 'v' + (thinClash.length > 0 ? ' warn' : '');
+  } else {
+    $('kThinRow').classList.add('d-none');
+  }
 
   // Index rooms-per-entry for the grid renderer: "day||period||course" → [codes]
   _roomsByEntry = {};
