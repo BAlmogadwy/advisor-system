@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 
+from django.conf import settings
 from django.http import FileResponse, HttpRequest, HttpResponse, HttpResponseBase, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
@@ -122,8 +123,13 @@ def exam_timetable_preview_courses_view(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"ok": True, "courses": courses})
 
 
+# Throttle: looser in development for fast tuning, tighter in production
+# to keep this expensive endpoint from being hammered.
+_BUILD_MAX_CALLS = 20 if settings.DEBUG else 3
+
+
 @require_POST
-@throttle(max_calls=20, window_seconds=120)
+@throttle(max_calls=_BUILD_MAX_CALLS, window_seconds=120)
 def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
     """Build (or rebuild) the exam timetable.
 
@@ -177,11 +183,16 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
     # Thin-conflict threshold: courses with total enrolment <= this value
     # are dropped from the conflict graph. 0 = current behaviour.
     # Clamped to [0, 10] to prevent the registrar from inadvertently
-    # ignoring real-sized courses' conflicts.
-    try:
-        thin_conflict_threshold = max(0, min(10, int(thin_threshold_raw)))
-    except (ValueError, TypeError):
+    # ignoring real-sized courses' conflicts. Booleans rejected (Python
+    # treats True as int 1, but a JSON `true` here is almost certainly
+    # a client bug, not "use threshold 1").
+    if isinstance(thin_threshold_raw, bool):
         thin_conflict_threshold = 0
+    else:
+        try:
+            thin_conflict_threshold = max(0, min(10, int(thin_threshold_raw)))
+        except (ValueError, TypeError):
+            thin_conflict_threshold = 0
 
     # `or None` → treat empty list as "no filter" (all students)
     programs = (
