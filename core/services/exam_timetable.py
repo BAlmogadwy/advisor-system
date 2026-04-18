@@ -1814,8 +1814,15 @@ def build_exam_timetable(
         thin_set = {
             cc for cc, sids in enrolled_sets.items() if len(sids) <= thin_conflict_threshold
         }
+        # Snapshot full neighbour list for every thin course BEFORE any
+        # mutation. Otherwise, when courses A and B are mutual thin
+        # neighbours, processing A first pops B's back-edge to A, so
+        # B's "dropped edges" report would be short by 1 and missing A
+        # from its neighbours list. The report must be independent of
+        # iteration order.
+        thin_neighbours = {cc: sorted(adj.get(cc, {}).keys()) for cc in thin_set}
         for cc in sorted(thin_set):
-            dropped = sorted(adj.get(cc, {}).keys())
+            dropped = thin_neighbours[cc]
             thin_courses_report.append(
                 {
                     "course_code": cc,
@@ -2097,10 +2104,28 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
     _credit_map_sched = data.get("credit_map", {})
     course_font = Font(name="Consolas", bold=True, size=9)
 
+    # Detect runs that pre-date the gender field on room dicts (Session 20+).
+    # Old runs render M/F sheets as blank grids by default — emit a single
+    # placeholder row instead so the registrar isn't confused by an empty sheet.
+    _has_gender_data = any("gender" in a for e in schedule for a in e.get("rooms", []) or ())
+
     def _render_schedule_sheet(ws: Any, gender_filter: str | None) -> None:
         """Render a day×period grid. If gender_filter is 'M' or 'F', a course
         only appears in a cell when it has at least one room of that gender,
-        and only rooms of that gender are listed under the course."""
+        and only rooms of that gender are listed under the course.
+
+        For runs predating the gender field, a single placeholder row is
+        emitted instead of a blank grid.
+        """
+        if gender_filter and not _has_gender_data:
+            ws.append(
+                [
+                    f"This run pre-dates gender-aware room assignment. "
+                    f"Re-build the schedule to populate the {gender_filter} view."
+                ]
+            )
+            ws.column_dimensions["A"].width = 90
+            return
         grid_local: dict[str, dict[str, list[str]]] = {}
         rooms_by_entry: dict[tuple[str, str, str], list[str]] = {}
         for e in schedule:
@@ -2218,6 +2243,16 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
     # Sheet 2b / 2c: Students (M) / Students (F) — per-course gender totals
     # ────────────────────────────────────────────────────────────
     def _render_students_sheet(ws: Any, gender_filter: str) -> None:
+        if not _has_gender_data:
+            ws.append(
+                [
+                    f"This run pre-dates gender-aware room assignment. "
+                    f"Re-build the schedule to populate the {gender_filter} view."
+                ]
+            )
+            ws.column_dimensions["A"].width = 90
+            return
+
         ws.append(["Course Code", "Credits", "Day", "Period", "Sections", "Students"])
         style_header_row(ws, 6)
 
