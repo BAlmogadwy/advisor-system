@@ -1,3 +1,5 @@
+import logging
+
 from django.contrib.auth import authenticate, login, logout
 from django.core.cache import cache
 from django.http import HttpRequest, HttpResponse
@@ -6,14 +8,25 @@ from django.views.decorators.http import require_http_methods, require_POST
 
 from core.services.rbac import ensure_role_groups, ensure_scope_schema
 
+logger = logging.getLogger(__name__)
+
 _LOGIN_MAX_FAILS = 5
 _LOGIN_LOCKOUT_SECONDS = 300
 
 
 @require_http_methods(["GET", "POST"])
 def login_view(request: HttpRequest) -> HttpResponse:
-    ensure_role_groups()
-    ensure_scope_schema()
+    # RBAC bootstrap — log failures but never block login. authenticate()
+    # works even if the role groups don't exist, and subsequent requests
+    # will retry the bootstrap.
+    try:
+        ensure_role_groups()
+    except Exception:
+        logger.exception("ensure_role_groups failed; continuing without RBAC bootstrap")
+    try:
+        ensure_scope_schema()
+    except Exception:
+        logger.exception("ensure_scope_schema failed; continuing")
 
     if request.user.is_authenticated:
         return redirect("dashboard")
