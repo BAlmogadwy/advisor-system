@@ -866,10 +866,20 @@ $('buildBtn').addEventListener('click', async () => {
   const periods = perStr.split(',').map(s => s.trim()).filter(Boolean);
   const randomize = $('etRandomize').checked;
   const relaxThin = $('etRelaxThin').checked;
-  const thinThresholdRaw = parseInt($('etThinThreshold').value, 10);
-  const thinThreshold = relaxThin
-    ? Math.max(0, Math.min(10, isNaN(thinThresholdRaw) ? 0 : thinThresholdRaw))
-    : 0;
+  let thinThreshold = 0;
+  if (relaxThin) {
+    const raw = parseInt($('etThinThreshold').value, 10);
+    let n = isNaN(raw) ? 0 : raw;
+    n = Math.max(0, Math.min(10, n));
+    if (n < 1) {
+      // Toggle is ON but input is 0/empty/invalid — auto-correct to the
+      // default rather than silently posting 0 (which would build with
+      // no relaxation despite the toggle saying otherwise).
+      n = 4;
+      $('etThinThreshold').value = '4';
+    }
+    thinThreshold = n;
+  }
 
   $('buildBtn').disabled = true;
   $('etStatus').textContent = T.building;
@@ -932,73 +942,132 @@ let _currentRunId = null;
 let _creditMap = {};        // { course_code: credit_hours }
 
 /* ── KPI drilldown data ── */
-let _drillData = { overload: [], heavy: [] };
+let _drillData = { overload: [], heavy: [], 'thin-courses': [], 'thin-clash': [] };
+let _slotsByIndex = {};
 
 function closeDrill() {
   $('kpiDrill').classList.add('d-none');
   document.querySelectorAll('.kpi-click.active').forEach(el => el.classList.remove('active'));
 }
 
+// Render helpers — each returns {title, head, body, colspan} for openDrill
+const _drillRenderers = {
+  overload(rows) {
+    return {
+      title: IS_AR ? 'تفاصيل الطلاب المتجاوزين' : 'Overloaded Students Detail',
+      head: `<tr>
+        <th>${IS_AR ? 'الطالب' : 'Student ID'}</th>
+        <th>${IS_AR ? 'اليوم' : 'Day'}</th>
+        <th>${IS_AR ? 'العدد' : 'Count'}</th>
+        <th>${IS_AR ? 'المقررات' : 'Courses'}</th>
+      </tr>`,
+      body: rows.map(r => `<tr>
+        <td><strong>${r.student_id}</strong></td>
+        <td>${r.day}</td>
+        <td><span class="badge bg-danger">${r.count}</span></td>
+        <td>${r.courses.map(c =>
+          `<span class="drill-course-chip" style="background:${colorForCourse(c.code)};border:1px solid ${colorForCourseBorder(c.code)}">${c.code}${c.credits != null ? ` <small class="et-credit-tag">${c.credits}cr</small>` : ''}</span>`
+        ).join('')}</td>
+      </tr>`).join(''),
+      colspan: 4,
+    };
+  },
+  heavy(rows) {
+    return {
+      title: IS_AR ? 'تفاصيل الأيام الثقيلة' : 'Heavy Day Students Detail',
+      head: `<tr>
+        <th>${IS_AR ? 'الطالب' : 'Student ID'}</th>
+        <th>${IS_AR ? 'اليوم' : 'Day'}</th>
+        <th>${IS_AR ? 'مجموع الساعات' : 'Total Cr.'}</th>
+        <th>${IS_AR ? 'شدة' : 'Severity'}</th>
+        <th>${IS_AR ? 'المقررات' : 'Courses'}</th>
+      </tr>`,
+      body: rows.map(r => {
+        const sev = r.penalty >= 100
+          ? `<span class="badge bg-danger">${IS_AR ? 'حرج' : 'Critical'}</span>`
+          : `<span class="badge bg-warning text-dark">${IS_AR ? 'مرتفع' : 'High'}</span>`;
+        return `<tr>
+          <td><strong>${r.student_id}</strong></td>
+          <td>${r.day}</td>
+          <td>${r.total_credits}</td>
+          <td>${sev}</td>
+          <td>${r.courses.map(c =>
+            `<span class="drill-course-chip" style="background:${colorForCourse(c.code)};border:1px solid ${colorForCourseBorder(c.code)}">${c.code} <small class="et-credit-tag">${c.credits}cr</small></span>`
+          ).join('')}</td>
+        </tr>`;
+      }).join(''),
+      colspan: 5,
+    };
+  },
+  'thin-courses'(rows) {
+    return {
+      title: IS_AR ? 'مقررات صغيرة (مخففة)' : 'Thin Courses Relaxed',
+      head: `<tr>
+        <th>${IS_AR ? 'المقرر' : 'Course'}</th>
+        <th>${IS_AR ? 'الطلاب' : 'Students'}</th>
+        <th>${IS_AR ? 'تعارضات أُسقطت' : 'Edges dropped'}</th>
+        <th>${IS_AR ? 'المقررات المتعارضة' : 'Neighbours dropped'}</th>
+      </tr>`,
+      body: rows.map(r => `<tr>
+        <td><span class="drill-course-chip" style="background:${colorForCourse(r.course_code)};border:1px solid ${colorForCourseBorder(r.course_code)}"><strong>${r.course_code}</strong></span></td>
+        <td>${r.total_students}</td>
+        <td>${r.dropped_edges}</td>
+        <td>${(r.neighbours || []).map(c =>
+          `<span class="drill-course-chip" style="background:${colorForCourse(c)};border:1px solid ${colorForCourseBorder(c)}">${c}</span>`
+        ).join('')}</td>
+      </tr>`).join(''),
+      colspan: 4,
+    };
+  },
+  'thin-clash'(rows) {
+    const slotLabel = (si) => {
+      const s = _slotsByIndex[si];
+      return s ? `${s.day} ${s.period}` : `#${si}`;
+    };
+    return {
+      title: IS_AR ? 'تعارضات فعلية بسبب التخفيف' : 'Realised Relaxation Clashes',
+      head: `<tr>
+        <th>${IS_AR ? 'الطالب' : 'Student'}</th>
+        <th>${IS_AR ? 'الفترة' : 'Slot'}</th>
+        <th>${IS_AR ? 'المقررات المتعارضة' : 'Courses in collision'}</th>
+      </tr>`,
+      body: rows.map(r => `<tr>
+        <td><strong>${r.student_id}</strong></td>
+        <td><span class="badge bg-secondary">${slotLabel(r.slot_index)}</span></td>
+        <td>${(r.courses || []).map(c =>
+          `<span class="drill-course-chip" style="background:${colorForCourse(c)};border:1px solid ${colorForCourseBorder(c)}">${c}</span>`
+        ).join('')}</td>
+      </tr>`).join(''),
+      colspan: 3,
+    };
+  },
+};
+
 function openDrill(type) {
   const panel = $('kpiDrill');
   const rows = _drillData[type] || [];
+  const renderer = _drillRenderers[type];
+  if (!renderer) {
+    console.warn('Unknown drill type:', type);
+    return;
+  }
 
   // Toggle off if already open on same type
-  const already = panel.style.display !== 'none' && panel.dataset.type === type;
-  if (already) { closeDrill(); return; }
+  const isOpen = !panel.classList.contains('d-none');
+  if (isOpen && panel.dataset.type === type) { closeDrill(); return; }
 
   // Mark active card
   document.querySelectorAll('.kpi-click.active').forEach(el => el.classList.remove('active'));
   const card = document.querySelector(`.kpi-click[data-drill="${type}"]`);
   if (card) card.classList.add('active');
-
   panel.dataset.type = type;
 
-  if (type === 'overload') {
-    $('kpiDrillTitle').textContent = IS_AR ? 'تفاصيل الطلاب المتجاوزين' : 'Overloaded Students Detail';
-    $('kpiDrillHead').innerHTML = `<tr>
-      <th>${IS_AR ? 'الطالب' : 'Student ID'}</th>
-      <th>${IS_AR ? 'اليوم' : 'Day'}</th>
-      <th>${IS_AR ? 'العدد' : 'Count'}</th>
-      <th>${IS_AR ? 'المقررات' : 'Courses'}</th>
-    </tr>`;
-    $('kpiDrillBody').innerHTML = rows.map(r => `<tr>
-      <td><strong>${r.student_id}</strong></td>
-      <td>${r.day}</td>
-      <td><span class="badge bg-danger">${r.count}</span></td>
-      <td>${r.courses.map(c =>
-        `<span class="drill-course-chip" style="background:${colorForCourse(c.code)};border:1px solid ${colorForCourseBorder(c.code)}">${c.code}${c.credits != null ? ` <small class="et-credit-tag">${c.credits}cr</small>` : ''}</span>`
-      ).join('')}</td>
-    </tr>`).join('');
-  } else {
-    $('kpiDrillTitle').textContent = IS_AR ? 'تفاصيل الأيام الثقيلة' : 'Heavy Day Students Detail';
-    $('kpiDrillHead').innerHTML = `<tr>
-      <th>${IS_AR ? 'الطالب' : 'Student ID'}</th>
-      <th>${IS_AR ? 'اليوم' : 'Day'}</th>
-      <th>${IS_AR ? 'مجموع الساعات' : 'Total Cr.'}</th>
-      <th>${IS_AR ? 'شدة' : 'Severity'}</th>
-      <th>${IS_AR ? 'المقررات' : 'Courses'}</th>
-    </tr>`;
-    $('kpiDrillBody').innerHTML = rows.map(r => {
-      const sev = r.penalty >= 100
-        ? `<span class="badge bg-danger">${IS_AR ? 'حرج' : 'Critical'}</span>`
-        : `<span class="badge bg-warning text-dark">${IS_AR ? 'مرتفع' : 'High'}</span>`;
-      return `<tr>
-        <td><strong>${r.student_id}</strong></td>
-        <td>${r.day}</td>
-        <td>${r.total_credits}</td>
-        <td>${sev}</td>
-        <td>${r.courses.map(c =>
-          `<span class="drill-course-chip" style="background:${colorForCourse(c.code)};border:1px solid ${colorForCourseBorder(c.code)}">${c.code} <small class="et-credit-tag">${c.credits}cr</small></span>`
-        ).join('')}</td>
-      </tr>`;
-    }).join('');
-  }
-
-  if (!rows.length) {
-    $('kpiDrillBody').innerHTML = `<tr><td colspan="5" class="text-center text-secondary py-3">${IS_AR ? 'لا توجد بيانات' : 'No records'}</td></tr>`;
-  }
-
+  const r = renderer(rows);
+  $('kpiDrillTitle').textContent = r.title;
+  $('kpiDrillHead').innerHTML = r.head;
+  $('kpiDrillBody').innerHTML = rows.length
+    ? r.body
+    : `<tr><td colspan="${r.colspan}" class="text-center text-secondary py-3">${IS_AR ? 'لا توجد بيانات' : 'No records'}</td></tr>`;
   panel.classList.remove('d-none');
 }
 
@@ -1122,10 +1191,19 @@ function renderResults(data) {
     }
   }
 
+  // Build slot lookup so the thin-clash drill can show day/period for
+  // each slot_index instead of a bare integer.
+  _slotsByIndex = {};
+  for (const s of (data.slots || [])) {
+    _slotsByIndex[s.index] = s;
+  }
+
   // Store drilldown data + close any open panel
   _drillData = {
-    overload: data.qa?.overload_details ?? [],
-    heavy:    data.qa?.heavy_day_details ?? [],
+    overload:       data.qa?.overload_details ?? [],
+    heavy:          data.qa?.heavy_day_details ?? [],
+    'thin-courses': data.qa?.thin_courses ?? [],
+    'thin-clash':   data.qa?.thin_clash_risk ?? [],
   };
   closeDrill();
 
