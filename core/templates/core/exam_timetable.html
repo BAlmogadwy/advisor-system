@@ -309,6 +309,11 @@
         <input id="etRandomize" class="form-check-input" type="checkbox" checked>
         <span class="form-check-label small">{% if LANGUAGE_CODE == 'ar' %}عشوائي{% else %}Shuffle{% endif %}</span>
       </label>
+      <label class="form-check form-switch mb-0 ms-2 d-flex align-items-center gap-1" style="cursor:pointer;" title="{% if LANGUAGE_CODE == 'ar' %}المقررات التي لديها ≤N طالب تُجدول دون مراعاة تعارضات الطلاب; التعارضات الفعلية تظهر في تقرير الجودة{% else %}Courses with ≤N enrolled students are scheduled without honouring their student conflicts. Realised same-slot clashes are reported in QA so the registrar can pin them manually.{% endif %}">
+        <input id="etRelaxThin" class="form-check-input" type="checkbox">
+        <span class="form-check-label small">{% if LANGUAGE_CODE == 'ar' %}تخفيف الصغيرة{% else %}Relax thin{% endif %}</span>
+      </label>
+      <input id="etThinThreshold" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="4" min="0" max="10" style="width:56px;" disabled aria-label="{% if LANGUAGE_CODE == 'ar' %}عتبة الصغيرة{% else %}Thin threshold{% endif %}">
       <small id="etSeedInfo" class="text-secondary ms-1 d-none"></small>
     </div>
     <!-- Course preview list (populated after Load Courses) -->
@@ -780,6 +785,11 @@ $('selectGeneralCourses').addEventListener('click', (e) => {
   selectByPrefixGroup(false);
 });
 
+// Enable / disable the thin-threshold input alongside its toggle
+$('etRelaxThin').addEventListener('change', () => {
+  $('etThinThreshold').disabled = !$('etRelaxThin').checked;
+});
+
 // Clear course list when filters change
 ['progList', 'secList'].forEach(id => {
   $(id).addEventListener('click', () => { if (_coursesLoaded) clearCoursePreview(); });
@@ -851,6 +861,11 @@ $('buildBtn').addEventListener('click', async () => {
 
   const periods = perStr.split(',').map(s => s.trim()).filter(Boolean);
   const randomize = $('etRandomize').checked;
+  const relaxThin = $('etRelaxThin').checked;
+  const thinThresholdRaw = parseInt($('etThinThreshold').value, 10);
+  const thinThreshold = relaxThin
+    ? Math.max(0, Math.min(10, isNaN(thinThresholdRaw) ? 0 : thinThresholdRaw))
+    : 0;
 
   $('buildBtn').disabled = true;
   $('etStatus').textContent = T.building;
@@ -860,7 +875,7 @@ $('buildBtn').addEventListener('click', async () => {
     const res = await fetch('/ops/exam-timetable/build/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
-      body: JSON.stringify({ label, days, periods, max_per_day: maxPerDay, programs, sections, selected_courses: selectedCourses, pinned: Object.keys(_pinnedCourses).length ? Object.values(_pinnedCourses) : undefined, randomize }),
+      body: JSON.stringify({ label, days, periods, max_per_day: maxPerDay, programs, sections, selected_courses: selectedCourses, pinned: Object.keys(_pinnedCourses).length ? Object.values(_pinnedCourses) : undefined, randomize, thin_conflict_threshold: thinThreshold }),
     });
     const data = await res.json();
     if (!data.ok) {
