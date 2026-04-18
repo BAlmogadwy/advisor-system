@@ -151,6 +151,7 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
     pinned_raw = payload.get("pinned", None)
     randomize = payload.get("randomize", False)
     assign_rooms = bool(payload.get("assign_rooms", True))
+    thin_threshold_raw = payload.get("thin_conflict_threshold", 0)
 
     if not label:
         return JsonResponse({"ok": False, "error": "label is required"}, status=400)
@@ -172,6 +173,15 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
             max_per_day = 1
     except (ValueError, TypeError):
         max_per_day = 2
+
+    # Thin-conflict threshold: courses with total enrolment <= this value
+    # are dropped from the conflict graph. 0 = current behaviour.
+    # Clamped to [0, 10] to prevent the registrar from inadvertently
+    # ignoring real-sized courses' conflicts.
+    try:
+        thin_conflict_threshold = max(0, min(10, int(thin_threshold_raw)))
+    except (ValueError, TypeError):
+        thin_conflict_threshold = 0
 
     # `or None` → treat empty list as "no filter" (all students)
     programs = (
@@ -228,6 +238,7 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
             pinned=pinned,
             seed=seed,
             assign_rooms=assign_rooms,
+            thin_conflict_threshold=thin_conflict_threshold,
         )
         # Check for feasibility error (bucket too large for available days)
         if result.get("feasibility_error"):
