@@ -2175,11 +2175,24 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
                 cell.border = thin_border
                 cell.alignment = center
 
-                def _label_blocks(code: str, p: str = period, d: str = day) -> list[TextBlock]:
+                def _label_blocks(
+                    code: str,
+                    p: str = period,
+                    d: str = day,
+                    leading_newline: bool = False,
+                ) -> list[TextBlock]:
                     """Course header in dark bold teal, room list in light gray
-                    so the eye finds the course code at a glance."""
+                    so the eye finds the course code at a glance.
+
+                    Any leading newline (used to separate stacked courses in a
+                    cell) is folded into the course-header text rather than a
+                    standalone "\\n" block — Excel rejects whitespace-only runs
+                    that lack xml:space="preserve" and shows a corruption dialog.
+                    """
                     cr = _credit_map_sched.get(code, "")
                     head = f"{code} {cr}cr" if cr else code
+                    if leading_newline:
+                        head = "\n" + head
                     blocks: list[TextBlock] = [TextBlock(_course_inline_font, head)]
                     rooms_line = rooms_by_entry.get((d, p, code), [])
                     if rooms_line:
@@ -2195,9 +2208,7 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
                 else:
                     blocks: list[TextBlock] = []
                     for i, c in enumerate(courses):
-                        if i > 0:
-                            blocks.append(TextBlock(_course_inline_font, "\n"))
-                        blocks.extend(_label_blocks(c))
+                        blocks.extend(_label_blocks(c, leading_newline=(i > 0)))
                     cell.value = CellRichText(blocks)
                     cell.fill = _course_color_fill(courses[0])
 
