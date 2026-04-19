@@ -128,8 +128,15 @@ function courseColorBorder(code) {
   return `rgb(${r},${g},${b})`;
 }
 function isLabPlacement(p) {
-  const toMin = t => { const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
-  return (toMin(p.end_time) - toMin(p.start_time)) > 80;
+  if (!p || !p.start_time || !p.end_time) return false;
+  const toMin = t => {
+    const parts = String(t).split(':');
+    const h = Number(parts[0]), m = Number(parts[1]);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return NaN;
+    return h * 60 + m;
+  };
+  const diff = toMin(p.end_time) - toMin(p.start_time);
+  return Number.isFinite(diff) && diff > 80;
 }
 function groupPlacements(placements) {
   const bySec = {};
@@ -166,6 +173,14 @@ async function loadScenarios() {
 }
 
 async function onScenarioChange() {
+  // Undo/redo stacks are scoped to a scenario's placements; carrying them
+  // across scenarios would let an undo mutate a different scenario's data.
+  S.undoStack = [];
+  S.redoStack = [];
+  updateUndoRedoButtons();
+  S.selectedPlacementId = null;
+  S.selectedPaneIdx = null;
+
   const sid = $('twsScenario').value;
   if (!sid) {
     S.scenarioId = null;
@@ -494,11 +509,14 @@ async function onCellDrop(paneIdx, cell, e) {
   if (payload.type !== 'move' || !payload.placement_id) return;
 
   // Capture old position BEFORE the mutation so undo can revert cleanly,
-  // matching the main page's onDrop behaviour.
+  // matching the main page's onDrop behaviour. If the placement isn't in
+  // our cached boardData (stale cache, mid-optimise, etc.) we abort — the
+  // main page relies on the same pre-check.
   const located = findPlacement(payload.placement_id);
-  const oldDay = located ? located.placement.day : '';
-  const oldStart = located ? located.placement.start_time : '';
-  const oldEnd = located ? located.placement.end_time : '';
+  if (!located) { notify.error(IS_AR ? 'تعذّر تحديد الموقع' : 'Source placement not found'); return; }
+  const oldDay = located.placement.day;
+  const oldStart = located.placement.start_time;
+  const oldEnd = located.placement.end_time;
 
   const day = cell.dataset.day;
   const start = cell.dataset.start;
@@ -583,6 +601,19 @@ function setLayout(mode) {
 function maximisePane(idx) {
   setLayout('single');
   if (idx !== 0) {
+    // Swap the whole DOM slots (node + data-idx) so paneEl(i) keeps
+    // returning the element that holds pane state i. Previously only the
+    // S.panes array was swapped, which left data-idx stale and broke
+    // every subsequent paneEl() lookup.
+    const a = paneEl(0), b = paneEl(idx);
+    if (a && b) {
+      const aSibling = a.nextSibling;
+      b.parentNode.insertBefore(a, b);
+      if (aSibling === b) b.parentNode.appendChild(b);
+      else b.parentNode.insertBefore(b, aSibling);
+      a.dataset.idx = String(idx);
+      b.dataset.idx = '0';
+    }
     const tmp = S.panes[0]; S.panes[0] = S.panes[idx]; S.panes[idx] = tmp;
     renderSlotBar();
     for (let i = 0; i < 4; i++) renderPane(i);
@@ -629,14 +660,8 @@ async function doUndo() {
     notify.success(IS_AR ? 'تم التراجع' : 'Undone');
   }
   updateUndoRedoButtons();
-  // Reload any pane whose board shows this placement
-  const located = findPlacement(action.placement_id);
-  for (let i = 0; i < 4; i++) {
-    if (located && S.panes[i].boardId === located.placement.board_id) {
-      await loadAndRenderPane(i);
-    }
-  }
-  // Simpler: reload all panes to guarantee consistency
+  // Reload every pane to guarantee consistency — the placement may have
+  // been visible in multiple panes or moved across boards.
   for (let i = 0; i < 4; i++) await loadAndRenderPane(i);
   await refreshBoardsSummary();
 }

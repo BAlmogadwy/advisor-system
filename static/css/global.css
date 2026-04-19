@@ -5138,48 +5138,6 @@ html[data-theme="dark"] .tw-issue-row:hover            { background: rgba(10,142
   .tw-right     { display: none; }
 }
 
-/* ──────────────────────────────────────────────────────────────
-   Embed mode: chromeless timetable workspace for split-pane host
-   ────────────────────────────────────────────────────────────── */
-body.embed-mode .sidebar,
-body.embed-mode .page-header,
-body.embed-mode .page-intro,
-body.embed-mode .back-to-top,
-body.embed-mode .ambience,
-body.embed-mode .side-decor,
-body.embed-mode .color-mesh,
-body.embed-mode .skip-link,
-body.embed-mode .tw-bottom,
-body.embed-mode #twGenBar { display: none !important; }
-
-body.embed-mode .shell { display: block !important; }
-body.embed-mode main#main-content { padding: 0 !important; }
-body.embed-mode .content-wrap { max-width: 100%; padding: 0; }
-body.embed-mode .tw-workspace { grid-template-columns: 1fr; height: calc(100vh - 40px); }
-body.embed-mode .tw-left { display: none; }
-body.embed-mode .tw-right { display: none; }
-body.embed-mode .tw-cmd-bar { padding: 4px 8px; font-size: 12px; }
-body.embed-mode .tw-cmd-bar .tw-cmd-sep { display: none; }
-body.embed-mode .tw-cmd-bar #twSearch,
-body.embed-mode .tw-cmd-bar #twScenario,
-body.embed-mode .tw-cmd-bar #twNewScenario,
-body.embed-mode .tw-cmd-bar #twNewBoard,
-body.embed-mode .tw-cmd-bar #twSlotEdit,
-body.embed-mode .tw-cmd-bar #twExport,
-body.embed-mode .tw-cmd-bar #twPublish,
-body.embed-mode .tw-cmd-bar #twOptimiseGroup,
-body.embed-mode .tw-cmd-bar #twValidationBadge { display: none !important; }
-body.embed-mode .tw-left { padding: 6px; }
-body.embed-mode .tw-left .tw-left-section { margin-bottom: 8px; }
-body.embed-mode .tw-left h3 { font-size: 10px; padding: 4px 6px; }
-body.embed-mode .tw-centre { padding: 4px; overflow-y: auto; }
-
-/* Cross-pane sync-hover highlight (driven via postMessage from host) */
-.tw-cell.sync-hover {
-  outline: 2px dashed var(--teal);
-  outline-offset: -2px;
-  background: color-mix(in srgb, var(--teal) 8%, transparent);
-}
 
 /* ============================================================
    STUDENT TIMETABLE PLANNER — feature-specific styles

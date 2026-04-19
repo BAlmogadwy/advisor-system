@@ -62,7 +62,6 @@ from django.contrib.auth.decorators import login_required
 from django.db import IntegrityError
 from django.http import FileResponse, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
-from django.views.decorators.clickjacking import xframe_options_sameorigin
 from django.views.decorators.http import require_GET, require_POST
 
 from core.models import (
@@ -234,13 +233,11 @@ def _placement_to_dict(p: SectionPlacement) -> dict[str, object]:
 
 @login_required(login_url="login")
 @require_GET
-@xframe_options_sameorigin
 def timetable_workspace_page(request: HttpRequest) -> HttpResponse:
     """Render the Timetable Workspace SPA shell page.
 
     Injects default academic year and term from the system settings so the
-    frontend can pre-populate filter controls. When ``?embed=1`` is present
-    the page renders in chromeless embed mode used by the split-pane view.
+    frontend can pre-populate filter controls.
     """
     deny = _require_general_advisor(request)
     if deny:
@@ -250,19 +247,18 @@ def timetable_workspace_page(request: HttpRequest) -> HttpResponse:
         **get_sidebar_context(request),
         "default_year": defaults.get("academic_year", ""),
         "default_term": defaults.get("term", ""),
-        "embed_mode": request.GET.get("embed") == "1",
-        "embed_scenario": request.GET.get("scenario") or "",
-        "embed_board": request.GET.get("board") or "",
     }
     return render(request, "core/timetable_workspace.html", context)
 
 
+@login_required(login_url="login")
 def timetable_workspace_split_page(request: HttpRequest) -> HttpResponse:
     """Render the split-pane timetable workspace shell.
 
-    Hosts four embedded main-workspace iframes and delegates editing,
-    drag-and-drop, optimisation, publish and export to the main page. The
-    shell orchestrates cross-pane coordination only.
+    Hosts four side-by-side compact boards (lecture + lab grids each),
+    each rendering real placements directly from the existing ``/ops/tw/``
+    API. Coordinates scenario selection, cross-pane drag-drop, undo/redo,
+    optimisation, publish, and export at the shell level.
     """
     deny = _require_general_advisor(request)
     if deny:

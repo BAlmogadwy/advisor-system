@@ -119,36 +119,6 @@ async function twFetch(url, opts = {}) {
       renderRightPanel(tab.dataset.tab);
     });
   });
-
-  /* Embed-mode auto-load: when the page is opened inside a host via
-     ?embed=1&scenario=<id>&board=<id>, skip generate and jump straight
-     to the requested scenario + board. Used by /timetable-workspace/split/. */
-  const params = new URLSearchParams(window.location.search);
-  if (params.get('embed') === '1') {
-    document.body.classList.add('tw-embed');
-    const scenarioId = params.get('scenario');
-    const boardId = params.get('board');
-    if (scenarioId) {
-      (async () => {
-        const data = await twFetch(`/ops/tw/scenarios/${scenarioId}/`);
-        if (!data) return;
-        TW.scenarioId = data.scenario.id;
-        TW.scenario = data.scenario;
-        $('twCmdBar').classList.remove('d-none');
-        $('twCmdBar').style.display = 'flex';
-        const sel = $('twScenario');
-        sel.innerHTML = `<option value="${data.scenario.id}">${esc(data.scenario.name)}</option>`;
-        sel.value = data.scenario.id;
-        updateValidationBadge();
-        await loadBoards();
-        if (boardId && TW.boards.find(b => String(b.id) === String(boardId))) {
-          await selectBoard(parseInt(boardId));
-        } else if (TW.boards.length > 0) {
-          await selectBoard(TW.boards[0].id);
-        }
-      })();
-    }
-  }
 })();
 
 /* ── Generate Workspace ── */
@@ -326,40 +296,7 @@ async function selectBoard(boardId) {
   await loadCapacity();
   await loadBudget();
 
-  // Embed-mode: notify host shell so it can refresh aggregate stats and
-  // sibling panes' conflict highlighting after any mutation in this pane.
-  _postToHost('tw:board-refreshed', {
-    board_id: boardId,
-    placement_count: TW.placements.length,
-    critical: ((TW.conflicts.overlaps || []).length + (TW.conflicts.instructor_clashes || []).length),
-  });
 }
-
-/* ── Embed-mode host bridge ── */
-function _postToHost(type, payload) {
-  if (window.parent === window) return;
-  try {
-    window.parent.postMessage({ __tw: true, type, payload, pane: _paneIdx() }, window.location.origin);
-  } catch (e) { /* ignore */ }
-}
-function _paneIdx() {
-  const m = window.location.search.match(/[?&]_pane=(\d+)/);
-  return m ? parseInt(m[1]) : null;
-}
-
-// Embed-mode receiver: let the host shell drive cross-pane highlights.
-window.addEventListener('message', (e) => {
-  if (e.origin !== window.location.origin) return;
-  const msg = e.data;
-  if (!msg || !msg.__tw) return;
-  if (msg.type === 'tw:sync-hover') {
-    document.querySelectorAll('.tw-cell.sync-hover').forEach(c => c.classList.remove('sync-hover'));
-    if (msg.payload) {
-      const sel = `.tw-cell[data-day="${msg.payload.day}"][data-start="${msg.payload.start}"]`;
-      document.querySelectorAll(sel).forEach(c => c.classList.add('sync-hover'));
-    }
-  }
-});
 
 async function createBoardPrompt() {
   const label = await dlg.confirm({
@@ -795,10 +732,6 @@ function _renderSingleGrid(container, slots, placements, className, secKey) {
       cell.addEventListener('dragover', onDragOver);
       cell.addEventListener('dragleave', onDragLeave);
       cell.addEventListener('drop', onDrop);
-      // Cross-pane sync-hover: announce (day, start) so host can highlight
-      // the same cell in every sibling pane.
-      cell.addEventListener('mouseenter', () => _postToHost('tw:cell-hover', { day, start: slot.start }));
-      cell.addEventListener('mouseleave', () => _postToHost('tw:cell-hover', null));
 
       // Find placements in this cell
       const cellPlacements = placements.filter(
