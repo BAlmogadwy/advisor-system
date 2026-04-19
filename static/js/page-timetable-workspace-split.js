@@ -235,7 +235,10 @@ async function onScenarioChange() {
   $('twsPublish').disabled = data.scenario.status === 'published';
   $('twsOptimise').disabled = false;
   $('twsExport').disabled = false;
-  $('twsNewBoard') && ($('twsNewBoard').disabled = data.scenario.status === 'published');
+  const published = data.scenario.status === 'published';
+  $('twsNewBoard') && ($('twsNewBoard').disabled = published);
+  $('twsSlots') && ($('twsSlots').disabled = published);
+  $('twsElectives') && ($('twsElectives').disabled = false);
 
   updateAggregateMetrics();
   renderSlotBar();
@@ -1218,6 +1221,168 @@ async function openNewBoardModal() {
   });
 }
 
+/* ── Slot editor ─────────────────────────────────────────────────── */
+function _parseSlotLines(text) {
+  const out = [];
+  text.trim().split('\n').filter(l => l.trim()).forEach(line => {
+    const parts = line.split(/\t|\s{2,}/).map(s => s.trim()).filter(Boolean);
+    if (parts.length >= 3) out.push({ label: parts[0], start: parts[1], end: parts[2] });
+    else if (parts.length === 2) out.push({ label: `${parts[0]}-${parts[1]}`, start: parts[0], end: parts[1] });
+    else {
+      const m = line.trim().match(/^(\S+)\s+(\d{1,2}:\d{2})\s+(\d{1,2}:\d{2})$/);
+      if (m) out.push({ label: m[1], start: m[2], end: m[3] });
+    }
+  });
+  return out;
+}
+function openSlotEditorModal() {
+  if (!S.scenarioId || !S.scenarioMeta) { notify.error(IS_AR ? 'اختر سيناريو أولاً' : 'Select a scenario first'); return; }
+  if (S.scenarioMeta.status === 'published') { notify.error(IS_AR ? 'السيناريو منشور' : 'Published scenarios are read-only'); return; }
+  const slots = S.scenarioMeta.slot_config || [];
+  const labSlots = S.scenarioMeta.lab_slot_config || [];
+  const slotsText = slots.length ? slots.map(s => `${s.label || ''}\t${s.start}\t${s.end}`).join('\n')
+    : '09:00-10:15\t09:00\t10:15\n10:30-11:45\t10:30\t11:45\n13:00-14:15\t13:00\t14:15\n14:30-15:45\t14:30\t15:45\n16:00-17:15\t16:00\t17:15';
+  const labText = labSlots.length ? labSlots.map(s => `${s.label || ''}\t${s.start}\t${s.end}`).join('\n')
+    : 'Lab 1\t09:00\t10:40\nLab 2\t10:45\t12:25\nLab 3\t13:00\t14:40\nLab 4\t14:45\t16:25\nLab 5\t16:30\t18:10\nLab 6\t18:10\t19:50';
+
+  const body = `
+    <div class="tws-form-grid">
+      <div class="full">
+        <label for="twsSlotLect">${IS_AR ? '📚 فترات المحاضرات (75 دقيقة)' : '📚 Lecture slots (75 min)'}</label>
+        <textarea id="twsSlotLect" rows="6">${esc(slotsText)}</textarea>
+      </div>
+      <div class="full">
+        <label for="twsSlotLab">${IS_AR ? '🔬 فترات المعامل (100 دقيقة)' : '🔬 Lab slots (100 min)'}</label>
+        <textarea id="twsSlotLab" rows="6">${esc(labText)}</textarea>
+      </div>
+      <div class="hint">${IS_AR ? 'كل سطر: الاسم [Tab] البداية [Tab] النهاية — مثال: 09:00-10:15[Tab]09:00[Tab]10:15' : 'One per line: label [Tab] start [Tab] end — e.g. 09:00-10:15[Tab]09:00[Tab]10:15'}</div>
+    </div>
+  `;
+  openModal({
+    title: IS_AR ? 'تعديل الفترات الزمنية' : 'Edit time slots',
+    sub: S.scenarioMeta.name,
+    body, width: 'wide',
+    buttons: [
+      { label: IS_AR ? 'إلغاء' : 'Cancel' },
+      { label: IS_AR ? 'حفظ' : 'Save', variant: 'primary', onClick: async () => {
+        const newLect = _parseSlotLines(document.getElementById('twsSlotLect').value);
+        const newLab = _parseSlotLines(document.getElementById('twsSlotLab').value);
+        if (!newLect.length) { notify.error(IS_AR ? 'لم يتم تحليل أي فترة' : 'No valid lecture slots parsed'); return false; }
+        const data = await api(`/ops/tw/scenarios/${S.scenarioId}/slots/update/`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ slot_config: newLect, lab_slot_config: newLab }),
+        });
+        if (!data) return false;
+        S.scenarioMeta = data.scenario;
+        notify.success(IS_AR
+          ? `تم الحفظ — ${newLect.length} محاضرة · ${newLab.length} معمل`
+          : `Saved — ${newLect.length} lecture + ${newLab.length} lab slots`);
+        // Board data has its own slot_config copy; reload each pane
+        for (let i = 0; i < 4; i++) await loadAndRenderPane(i);
+      } },
+    ],
+  });
+}
+
+/* ── Elective mapping ───────────────────────────────────────────── */
+function openElectivesModal() {
+  if (!S.scenarioMeta) { notify.error(IS_AR ? 'اختر سيناريو أولاً' : 'Select a scenario first'); return; }
+  const year = S.scenarioMeta.academic_year;
+  const term = S.scenarioMeta.term;
+  const body = `
+    <div class="tws-form-grid">
+      <div><label for="twsElecYear">${IS_AR ? 'السنة' : 'Year'}</label>
+        <input id="twsElecYear" type="text" inputmode="numeric" value="${year || ''}"></div>
+      <div><label for="twsElecTerm">${IS_AR ? 'فصل' : 'Sem'}</label>
+        <input id="twsElecTerm" type="text" inputmode="numeric" value="${term || ''}"></div>
+      <div style="grid-column:span 3"><label for="twsElecProg">${IS_AR ? 'البرنامج' : 'Programme'}</label>
+        <input id="twsElecProg" type="text" placeholder="AI" autocapitalize="characters"></div>
+      <div class="hint">${IS_AR ? 'أدخل برنامج واحد (AI / DS / COE…). سيتم تحميل فتحات الاختيارية من خطة البرنامج.' : 'Enter a single programme (AI / DS / COE…). Elective placeholders are pulled from that programme plan.'}</div>
+      <div class="full" id="twsElecList" style="margin-top:4px;max-height:50vh;overflow:auto"></div>
+    </div>
+  `;
+  openModal({
+    title: IS_AR ? 'ربط المقررات الاختيارية' : 'Map electives',
+    sub: S.scenarioMeta.name,
+    body, width: 'xwide',
+    buttons: [
+      { label: IS_AR ? 'تحميل' : 'Load', onClick: async () => {
+        await loadElectivesInto(document.getElementById('twsElecList'));
+        return false; // keep modal open
+      } },
+      { label: IS_AR ? 'إغلاق' : 'Close' },
+      { label: IS_AR ? 'حفظ الربط' : 'Save mappings', variant: 'primary', onClick: async () => {
+        const y = parseInt(document.getElementById('twsElecYear').value.trim());
+        const t = parseInt(document.getElementById('twsElecTerm').value.trim());
+        const prog = (document.getElementById('twsElecProg').value || '').trim().toUpperCase();
+        if (!y || !t || !prog) { notify.error(IS_AR ? 'أدخل السنة والفصل والبرنامج' : 'Enter year, term, programme'); return false; }
+        const mappings = [];
+        document.querySelectorAll('#twsElecList .elec-chk:checked').forEach(chk => {
+          mappings.push({ placeholder_code: chk.dataset.ph, course_code: chk.dataset.code });
+        });
+        const data = await api('/ops/electives/mapping/set/', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ academic_year: y, term: t, programme: prog, mappings }),
+        });
+        if (!data) return false;
+        notify.success(IS_AR ? `تم حفظ ${data.created} ربط` : `${data.created} mappings saved`);
+      } },
+    ],
+  });
+  // Auto-load if programme defaults exist (first board's programme)
+  const firstBoard = S.boards[0];
+  if (firstBoard && firstBoard.program) {
+    document.getElementById('twsElecProg').value = String(firstBoard.program).toUpperCase();
+    loadElectivesInto(document.getElementById('twsElecList'));
+  }
+}
+async function loadElectivesInto(listEl) {
+  const y = parseInt(document.getElementById('twsElecYear').value.trim());
+  const t = parseInt(document.getElementById('twsElecTerm').value.trim());
+  const prog = (document.getElementById('twsElecProg').value || '').trim().toUpperCase();
+  if (!y || !t || !prog) { notify.error(IS_AR ? 'أدخل السنة والفصل والبرنامج' : 'Enter year, term, programme'); return; }
+  listEl.innerHTML = `<div class="tws-empty-state"><span class="ic">◌</span>${IS_AR ? 'جاري التحميل…' : 'Loading…'}</div>`;
+  const [catData, mapData, phData] = await Promise.all([
+    api(`/ops/electives/catalogue/?programme=${encodeURIComponent(prog)}`),
+    api(`/ops/electives/mapping/?academic_year=${encodeURIComponent(y)}&term=${encodeURIComponent(t)}&programme=${encodeURIComponent(prog)}`),
+    api(`/ops/electives/placeholders/?programme=${encodeURIComponent(prog)}`),
+  ]);
+  const catalogue = (catData && catData.items) || [];
+  const currentMappings = (mapData && mapData.items) || [];
+  const placeholders = (phData && phData.items) || [];
+  if (!catalogue.length) {
+    listEl.innerHTML = `<div class="tws-empty-state"><span class="ic">—</span>${IS_AR ? 'لا يوجد كتالوج اختيارية' : 'No elective catalogue'}</div>`;
+    return;
+  }
+  if (!placeholders.length) {
+    listEl.innerHTML = `<div class="tws-empty-state"><span class="ic">—</span>${IS_AR ? 'لا يوجد فتحات اختيارية في الخطة' : 'No elective placeholders'}</div>`;
+    return;
+  }
+  const mapLookup = {};
+  currentMappings.forEach(m => {
+    if (!mapLookup[m.placeholder_code]) mapLookup[m.placeholder_code] = new Set();
+    mapLookup[m.placeholder_code].add(m.course_code);
+  });
+  listEl.innerHTML = placeholders.map(ph => {
+    const selected = mapLookup[ph.course_code] || new Set();
+    return `<div style="padding:10px;margin-bottom:10px;border:1px solid var(--line);border-radius:8px;background:rgba(255,255,255,0.02)">
+      <div style="font-weight:700;color:var(--teal);font-family:'JetBrains Mono',monospace;font-size:12px;margin-bottom:6px">
+        ${esc(ph.course_code)}
+        <span style="font-weight:400;color:var(--t4);font-size:10px">· T${ph.programme_term || '?'} · ${ph.type || 'Elective'} · ${ph.credit_hours || 3}cr</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:4px 12px">
+        ${catalogue.map(c => `
+          <label style="display:flex;gap:6px;align-items:center;font-size:11px;cursor:pointer;padding:2px 0">
+            <input type="checkbox" class="elec-chk" data-ph="${esc(ph.course_code)}" data-code="${esc(c.course_code)}"${selected.has(c.course_code) ? ' checked' : ''}>
+            <span style="font-family:'JetBrains Mono',monospace;font-weight:700">${esc(c.course_code)}</span>
+            <span style="color:var(--t3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.course_name || '')}</span>
+          </label>
+        `).join('')}
+      </div>
+    </div>`;
+  }).join('');
+}
+
 /* ── Bottom panel (Demand · Resources) ── */
 function toggleBpanel(force) {
   BP.open = (typeof force === 'boolean') ? force : !BP.open;
@@ -1653,6 +1818,8 @@ function doExport() {
   $('twsGenerate')?.addEventListener('click', openGenerateModal);
   $('twsNewScenario')?.addEventListener('click', openNewScenarioModal);
   $('twsNewBoard')?.addEventListener('click', openNewBoardModal);
+  $('twsSlots')?.addEventListener('click', openSlotEditorModal);
+  $('twsElectives')?.addEventListener('click', openElectivesModal);
 
   // Sidebar toggle + search
   $('twsSidebarToggle')?.addEventListener('click', () => toggleSidebar());

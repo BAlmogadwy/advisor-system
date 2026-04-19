@@ -707,6 +707,8 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
         <button class="tws-btn" id="twsRedo" type="button" disabled title="Redo (Ctrl+Shift+Z)">↷</button>
         <button class="tws-btn" id="twsSidebarToggle" type="button" title="{% if LANGUAGE_CODE == 'ar' %}الشعب المطلوبة{% else %}Required sections{% endif %}">☰ {% if LANGUAGE_CODE == 'ar' %}الشعب{% else %}Sections{% endif %}</button>
         <button class="tws-btn" id="twsRpanelToggle" type="button" title="{% if LANGUAGE_CODE == 'ar' %}المشاكل · السعة · التحديد{% else %}Issues · Capacity · Selection{% endif %}">⚐ {% if LANGUAGE_CODE == 'ar' %}المفتش{% else %}Inspector{% endif %}</button>
+        <button class="tws-btn" id="twsSlots" type="button" disabled title="{% if LANGUAGE_CODE == 'ar' %}تعديل الفترات{% else %}Edit time slots{% endif %}">⏰</button>
+        <button class="tws-btn" id="twsElectives" type="button" disabled title="{% if LANGUAGE_CODE == 'ar' %}ربط الاختيارية{% else %}Map electives{% endif %}">📚</button>
         <button class="tws-btn" id="twsOptimise" type="button" disabled>
           {% if LANGUAGE_CODE == 'ar' %}تحسين{% else %}Optimise{% endif %}
         </button>
@@ -893,5 +895,5 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
   const DEFAULT_YEAR = {{ default_year|default:'null' }};
   const DEFAULT_TERM = {{ default_term|default:'null' }};
 </script>
-<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=13"></script>
+<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=14"></script>
 {% endblock %}
