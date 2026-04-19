@@ -4127,24 +4127,6 @@ textarea:focus-visible {
 }
 
 /* ============================================================
-   STANDARDISED DATA TABLE (#13)
-   ============================================================ */
-.data-table { width:100%; border-collapse:separate; border-spacing:0; }
-.data-table thead th {
-  font-size: 0.75rem; font-weight:700; text-transform:uppercase; letter-spacing:0.04em;
-  color: var(--t4, #6c6c8a); padding: 10px 12px;
-  border-bottom: var(--border-mid, 1px solid rgba(17,17,68,0.08));
-  background: var(--glass-bg);
-}
-.data-table tbody td {
-  padding: 9px 12px; font-size: 0.875rem; color: var(--t2, #2d2d5e);
-  border-bottom: var(--border-subtle, 1px solid rgba(17,17,68,0.05));
-  vertical-align: middle;
-}
-.data-table tbody tr:hover td { background: rgba(10,142,110,0.04); }
-.data-table tbody tr:last-child td { border-bottom: none; }
-
-/* ============================================================
    SKELETON LOADING STATES (#17)
    ============================================================ */
 .skeleton { position: relative; overflow: hidden; background: var(--line); border-radius: 6px; color: transparent !important; }
