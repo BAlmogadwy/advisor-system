@@ -273,15 +273,23 @@ function renderSlotBar() {
       .join('');
     const off = !p.boardId;
     return `
-      <div class="tws-bslot t${i}${off ? ' off' : ''}">
+      <div class="tws-bslot t${i}${off ? ' off' : ''}" data-pane="${i}">
         <div class="pos">${POS_LABELS[i]}</div>
         <div class="seg">
-          <select onchange="setPaneBoard(${i}, this.value)">${opts}</select>
+          <select data-role="board-select">${opts}</select>
         </div>
-        <button class="off-toggle" onclick="togglePaneOff(${i})"
+        <button class="off-toggle" data-role="off-toggle"
                 title="${off ? (IS_AR ? 'عرض' : 'Show pane') : (IS_AR ? 'إخفاء' : 'Hide pane')}">${off ? '+' : '×'}</button>
       </div>`;
   }).join('');
+  // Event delegation — no window globals
+  wrap.querySelectorAll('.tws-bslot').forEach(slot => {
+    const paneIdx = parseInt(slot.dataset.pane);
+    slot.querySelector('select[data-role="board-select"]')
+        ?.addEventListener('change', (e) => setPaneBoard(paneIdx, e.target.value));
+    slot.querySelector('button[data-role="off-toggle"]')
+        ?.addEventListener('click', () => togglePaneOff(paneIdx));
+  });
 }
 
 async function setPaneBoard(idx, boardId) {
@@ -948,9 +956,12 @@ function renderRpanelSelection(body) {
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'السعة' : 'Capacity'}</span><span class="value">${p.available_capacity || '—'}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'مقفل' : 'Locked'}</span><span class="value">${p.is_locked ? (IS_AR ? 'نعم' : 'Yes') : (IS_AR ? 'لا' : 'No')}</span></div>
     <div style="display:flex;gap:6px;margin-top:12px">
-      <button class="tws-btn" style="flex:1" onclick="openDrawer(${located.paneIdx}, ${p.id})">${IS_AR ? 'عرض التفاصيل' : 'Open drawer'}</button>
+      <button class="tws-btn" id="twsSelOpen" style="flex:1">${IS_AR ? 'عرض التفاصيل' : 'Open drawer'}</button>
     </div>
   `;
+  // Wire the button — no inline onclick
+  const openBtn = body.querySelector('#twsSelOpen');
+  if (openBtn) openBtn.addEventListener('click', () => openDrawer(located.paneIdx, p.id));
 }
 
 /* ── Left sidebar (required sections, drag-create) ───────────────── */
@@ -2066,6 +2077,4 @@ function doExport() {
   loadScenarios();
 })();
 
-// Expose handlers used by inline onclick in the slot bar
-window.setPaneBoard = setPaneBoard;
-window.togglePaneOff = togglePaneOff;
+// Fully self-contained — no globals leak onto window.
