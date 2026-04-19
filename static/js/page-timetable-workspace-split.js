@@ -234,6 +234,7 @@ async function onScenarioChange() {
   $('twsStBoards').textContent = S.boards.length;
   $('twsPublish').disabled = data.scenario.status === 'published';
   $('twsOptimise').disabled = false;
+  $('twsOptimiseMenu') && ($('twsOptimiseMenu').disabled = false);
   $('twsExport').disabled = false;
   const published = data.scenario.status === 'published';
   $('twsNewBoard') && ($('twsNewBoard').disabled = published);
@@ -1761,22 +1762,142 @@ async function doRedo() {
 }
 
 /* ── Top-bar actions ── */
-async function doOptimise() {
+async function doOptimise(mode = 'current') {
   if (!S.scenarioId) return;
-  if (!confirm(T.optimiseConfirm)) return;
+  const isFull = mode === 'full';
+  const confirmMsg = isFull
+    ? (IS_AR ? 'إعادة بناء كاملة بـ 7 استراتيجيات؟ قد يستغرق دقيقتين.' : 'Full rebuild with 7 strategies? This can take ~2 minutes.')
+    : T.optimiseConfirm;
+  if (!confirm(confirmMsg)) return;
   const btn = $('twsOptimise');
+  const menuBtn = $('twsOptimiseMenu');
   const origText = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = IS_AR ? 'جاري التحسين…' : 'Optimising…';
+  btn.disabled = true; menuBtn && (menuBtn.disabled = true);
+  btn.textContent = isFull
+    ? (IS_AR ? 'جاري إعادة البناء…' : 'Rebuilding…')
+    : (IS_AR ? 'جاري التحسين…' : 'Optimising…');
+
+  const payload = { mode };
+  if (isFull) {
+    payload.strategies = ['compact', 'morning', 'balanced', 'load_balanced', 'optimal', 'hybrid', 'adaptive'];
+  }
+  payload.run_local_search = true;
+  payload.max_iterations = 50;
+  payload.run_chain_search = true;
+  payload.run_cpsat_polish = true;
+  payload.cpsat_time_limit = 60;
+
   const data = await api(`/ops/tw/scenarios/${S.scenarioId}/optimise-v2/`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mode: 'current' }),
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   });
-  btn.disabled = false;
+  btn.disabled = false; menuBtn && (menuBtn.disabled = false);
   btn.textContent = origText;
-  if (!data) return;
+  if (!data || !data.optimisation) { notify.error(IS_AR ? 'فشل التحسين' : 'Optimisation failed'); return; }
+  showOptimiseResults(data.optimisation, mode);
   await onScenarioChange();
+}
+
+function showOptimiseResults(o, mode) {
+  const isFull = mode === 'full';
+  const score = o.final_score || [];
+  const assigned = (o.total_students || 0) - (o.unresolved_students || 0);
+  const candList = (o.all_scores && o.all_scores.length > 1) ? `
+    <div class="section-title">${IS_AR ? 'مقارنة المرشحين' : 'Candidate comparison'} (${o.candidates_evaluated || o.all_scores.length})</div>
+    <table style="width:100%;border-collapse:collapse;font-family:'JetBrains Mono',monospace;font-size:11px">
+      <thead><tr style="color:var(--t4);border-bottom:1px solid var(--line)">
+        <th style="text-align:left;padding:4px 6px;font-size:9.5px;text-transform:uppercase">Strategy</th>
+        <th style="text-align:right;padding:4px 6px;font-size:9.5px;text-transform:uppercase">Tier-A</th>
+        <th style="text-align:right;padding:4px 6px;font-size:9.5px;text-transform:uppercase">Unres.</th>
+        <th style="text-align:right;padding:4px 6px;font-size:9.5px;text-transform:uppercase">Clash</th>
+        <th style="text-align:right;padding:4px 6px;font-size:9.5px;text-transform:uppercase">Gaps</th>
+      </tr></thead>
+      <tbody>
+        ${o.all_scores.map(s => {
+          const isBest = s.id === o.best_candidate_id;
+          const row = isBest ? 'background:rgba(10,142,110,0.08);font-weight:700' : '';
+          const clashClr = s.score[3] > 0 ? '#F06060' : 'var(--teal)';
+          return `<tr style="border-bottom:1px solid var(--line);${row}">
+            <td style="padding:4px 6px">${esc(String(s.id).replace(/_\d+$/, ''))}${isBest ? ' ★' : ''}</td>
+            <td style="text-align:right;padding:4px 6px">${s.score[0]}</td>
+            <td style="text-align:right;padding:4px 6px">${s.score[1]}</td>
+            <td style="text-align:right;padding:4px 6px;color:${clashClr}">${s.score[3]}</td>
+            <td style="text-align:right;padding:4px 6px">${(s.score[4] || 0).toLocaleString()}</td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+  ` : '';
+  const finalLabel = mode === 'current'
+    ? (IS_AR ? 'النتيجة بعد التحسين' : 'Score after optimisation')
+    : `${IS_AR ? 'النتيجة النهائية' : 'Final score'} (${String(o.best_candidate_id || '').replace(/_\d+$/, '')}${o.local_search_applied ? ' + local search' : ''})`;
+  const scoreLabels = [
+    IS_AR ? 'طلاب الخطر A' : 'Tier-A unresolved',
+    IS_AR ? 'طلاب غير محلولين' : 'Unresolved students',
+    IS_AR ? 'مقررات غير معينة' : 'Unassigned courses',
+    IS_AR ? 'تعارضات زمنية' : 'Time clashes',
+    IS_AR ? 'دقائق فراغ' : 'Gap minutes',
+    IS_AR ? 'احتياط مستخدم' : 'Reserve used',
+  ];
+  const scoreRows = score.slice(0, 6).map((v, i) => {
+    const display = i === 4 ? Number(v).toLocaleString() : v;
+    const clr = (i === 3 && v > 0) ? '#F06060' : (i === 3 ? 'var(--teal)' : 'var(--ink)');
+    return `<tr style="border-bottom:1px solid var(--line)"><td style="padding:4px 0;color:var(--t3)">${scoreLabels[i]}</td><td style="text-align:right;font-family:'JetBrains Mono',monospace;color:${clr};font-weight:700">${display}</td></tr>`;
+  }).join('');
+  let diffBlock = '';
+  if (mode === 'current' && o.baseline_score && o.final_score) {
+    const bs = o.baseline_score, fs = o.final_score;
+    const improved = fs[1] < bs[1] || fs[3] < bs[3] || fs[4] < bs[4];
+    diffBlock = improved
+      ? `<div style="padding:8px 12px;border-radius:6px;background:rgba(10,142,110,0.1);border:1px solid rgba(10,142,110,0.25);margin-top:10px">
+          <div style="font-weight:700;color:var(--teal);margin-bottom:4px">✓ ${IS_AR ? 'تم التحسين' : 'Board improved'}</div>
+          <div style="font-size:11px">Unresolved: <b>${bs[1]}</b> → <b style="color:var(--teal)">${fs[1]}</b></div>
+          ${bs[3] !== fs[3] ? `<div style="font-size:11px">Clashes: <b>${bs[3]}</b> → <b style="color:var(--teal)">${fs[3]}</b></div>` : ''}
+          <div style="font-size:11px">Gaps: <b>${bs[4].toLocaleString()}</b> → <b>${fs[4].toLocaleString()}</b></div>
+        </div>`
+      : `<div style="padding:8px 12px;border-radius:6px;background:rgba(80,104,240,0.08);margin-top:10px;color:#5068F0;font-weight:600">━ ${IS_AR ? 'الجدول الحالي في أفضل حالة' : 'Current board is already optimal'}</div>`;
+  }
+  const hotspots = (o.hotspot_courses || []).length ? `
+    <div class="section-title" style="color:#F06060;margin-top:12px">${IS_AR ? 'مقررات مزدحمة' : 'Hotspot courses'}</div>
+    <div style="display:flex;flex-wrap:wrap;gap:4px">${o.hotspot_courses.map(c =>
+      `<span style="padding:3px 9px;border-radius:999px;background:rgba(240,96,96,0.12);color:#F06060;font-weight:700;font-family:'JetBrains Mono',monospace;font-size:11px">${esc(c)}</span>`
+    ).join('')}</div>
+  ` : '';
+  const reservePressure = (o.reserve_heavy_sections || []).length ? `
+    <div class="section-title" style="color:#F5B731;margin-top:12px">${IS_AR ? 'ضغط احتياطي' : 'Reserve pressure'}</div>
+    <div style="display:flex;flex-wrap:wrap;gap:4px">${o.reserve_heavy_sections.slice(0, 8).map(s =>
+      `<span style="padding:3px 9px;border-radius:999px;background:rgba(245,183,49,0.12);color:#F5B731;font-weight:700;font-family:'JetBrains Mono',monospace;font-size:11px">${esc(s.section)} ${Math.round(s.ratio * 100)}%</span>`
+    ).join('')}</div>
+  ` : '';
+  const body = `
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px">
+      <div style="padding:12px;border-radius:8px;background:rgba(10,142,110,0.08);text-align:center">
+        <div style="font-size:9.5px;color:var(--t4);text-transform:uppercase;letter-spacing:0.08em">${IS_AR ? 'تم تعيينهم' : 'Assigned'}</div>
+        <div style="font-weight:700;color:var(--teal);font-size:20px">${assigned}<span style="color:var(--t4);font-size:12px;font-weight:400">/${o.total_students || 0}</span></div>
+      </div>
+      <div style="padding:12px;border-radius:8px;background:rgba(245,183,49,0.08);text-align:center">
+        <div style="font-size:9.5px;color:var(--t4);text-transform:uppercase;letter-spacing:0.08em">${IS_AR ? 'غير محلول' : 'Unresolved'}</div>
+        <div style="font-weight:700;color:#F5B731;font-size:20px">${o.unresolved_students || 0}</div>
+      </div>
+      <div style="padding:12px;border-radius:8px;background:rgba(80,104,240,0.08);text-align:center">
+        <div style="font-size:9.5px;color:var(--t4);text-transform:uppercase;letter-spacing:0.08em">${IS_AR ? 'الوقت' : 'Time'}</div>
+        <div style="font-weight:700;color:#5068F0;font-size:20px">${o.elapsed_seconds || '?'}s</div>
+      </div>
+    </div>
+    ${candList}
+    <div class="section-title" style="color:var(--teal);margin-top:12px">${finalLabel}</div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px">${scoreRows}</table>
+    ${diffBlock}
+    ${hotspots}
+    ${reservePressure}
+  `;
+  openModal({
+    title: isFull ? (IS_AR ? 'نتائج إعادة البناء' : 'Full rebuild results') : (IS_AR ? 'نتائج التحسين' : 'Optimise current · results'),
+    sub: S.scenarioMeta ? S.scenarioMeta.name : '',
+    body, width: 'xwide',
+    buttons: [
+      { label: IS_AR ? 'تطبيق' : 'Apply & refresh', variant: 'primary' },
+    ],
+  });
 }
 async function doPublish() {
   if (!S.scenarioId) return;
@@ -1797,7 +1918,26 @@ function doExport() {
 /* ── Init ── */
 (function init() {
   $('twsScenario').addEventListener('change', onScenarioChange);
-  $('twsOptimise').addEventListener('click', doOptimise);
+  $('twsOptimise').addEventListener('click', () => doOptimise('current'));
+  $('twsOptimiseMenu')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const dd = document.getElementById('twsOptimiseDropdown');
+    if (dd) dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+  });
+  document.querySelectorAll('.tws-opt-item').forEach(item => {
+    item.addEventListener('mouseenter', () => { item.style.background = 'rgba(10,142,110,0.08)'; });
+    item.addEventListener('mouseleave', () => { item.style.background = ''; });
+    item.addEventListener('click', () => {
+      document.getElementById('twsOptimiseDropdown').style.display = 'none';
+      doOptimise(item.dataset.mode);
+    });
+  });
+  document.addEventListener('click', (e) => {
+    const group = document.getElementById('twsOptimiseDropdown');
+    if (group && !e.target.closest('#twsOptimiseMenu, #twsOptimiseDropdown')) {
+      group.style.display = 'none';
+    }
+  });
   $('twsPublish').addEventListener('click', doPublish);
   $('twsExport').addEventListener('click', doExport);
   $('twsUndo')?.addEventListener('click', doUndo);

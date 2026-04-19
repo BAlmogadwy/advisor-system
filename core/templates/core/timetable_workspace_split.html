@@ -709,9 +709,21 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
         <button class="tws-btn" id="twsRpanelToggle" type="button" title="{% if LANGUAGE_CODE == 'ar' %}المشاكل · السعة · التحديد{% else %}Issues · Capacity · Selection{% endif %}">⚐ {% if LANGUAGE_CODE == 'ar' %}المفتش{% else %}Inspector{% endif %}</button>
         <button class="tws-btn" id="twsSlots" type="button" disabled title="{% if LANGUAGE_CODE == 'ar' %}تعديل الفترات{% else %}Edit time slots{% endif %}">⏰</button>
         <button class="tws-btn" id="twsElectives" type="button" disabled title="{% if LANGUAGE_CODE == 'ar' %}ربط الاختيارية{% else %}Map electives{% endif %}">📚</button>
-        <button class="tws-btn" id="twsOptimise" type="button" disabled>
-          {% if LANGUAGE_CODE == 'ar' %}تحسين{% else %}Optimise{% endif %}
-        </button>
+        <span style="position:relative;display:inline-flex">
+          <button class="tws-btn" id="twsOptimise" type="button" disabled style="border-top-right-radius:0;border-bottom-right-radius:0;border-right:0">
+            {% if LANGUAGE_CODE == 'ar' %}تحسين{% else %}Optimise{% endif %}
+          </button><button class="tws-btn" id="twsOptimiseMenu" type="button" disabled style="border-top-left-radius:0;border-bottom-left-radius:0;padding:6px 6px" title="{% if LANGUAGE_CODE == 'ar' %}خيارات التحسين{% else %}Optimise options{% endif %}">▾</button>
+          <div id="twsOptimiseDropdown" style="display:none;position:absolute;top:100%;right:0;z-index:200;min-width:260px;margin-top:4px;background:var(--card);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.4);overflow:hidden">
+            <div class="tws-opt-item" data-mode="current" style="padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--line)">
+              <div style="font-weight:700;color:var(--teal);font-size:12px">{% if LANGUAGE_CODE == 'ar' %}تحسين الحالي{% else %}Optimise current{% endif %}</div>
+              <div style="font-size:10px;color:var(--t4);margin-top:2px">{% if LANGUAGE_CODE == 'ar' %}تحسين بدون إعادة توليد{% else %}Improve without regenerating{% endif %}</div>
+            </div>
+            <div class="tws-opt-item" data-mode="full" style="padding:9px 12px;cursor:pointer">
+              <div style="font-weight:700;color:#5068F0;font-size:12px">{% if LANGUAGE_CODE == 'ar' %}إعادة بناء كاملة{% else %}Full rebuild{% endif %}</div>
+              <div style="font-size:10px;color:var(--t4);margin-top:2px">{% if LANGUAGE_CODE == 'ar' %}7 استراتيجيات + بحث محلي (~2 دقيقة){% else %}7 strategies + local search (~2 min){% endif %}</div>
+            </div>
+          </div>
+        </span>
         <button class="tws-btn" id="twsExport" type="button" disabled>
           {% if LANGUAGE_CODE == 'ar' %}تصدير{% else %}Export{% endif %}
         </button>
@@ -895,5 +907,5 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
   const DEFAULT_YEAR = {{ default_year|default:'null' }};
   const DEFAULT_TERM = {{ default_term|default:'null' }};
 </script>
-<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=14"></script>
+<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=15"></script>
 {% endblock %}
