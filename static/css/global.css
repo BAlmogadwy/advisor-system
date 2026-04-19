@@ -4989,8 +4989,10 @@ html[data-theme="dark"] #scheduleGrid th            { color: var(--t3); }
 .tw-card.critical           { background: rgba(192,48,48,0.15) !important; border-color: var(--danger); }
 .tw-card.locked             { opacity: 0.7; }
 .tw-card.highlight          { outline: 2px solid var(--royal); outline-offset: 1px; animation: tw-pulse 0.6s ease 2; }
-.tw-card .cc                { color: var(--ink); font-weight: 700; }
-.tw-card .ci                { color: var(--t4); font-size: 0.65rem; }
+/* .tw-card has a pastel background painted inline via JS — always light.
+   Lock text to dark ink regardless of theme so it stays readable. */
+.tw-card .cc                { color: #111827; font-weight: 700; }
+.tw-card .ci                { color: #4b5563; font-size: 0.65rem; }
 .tw-card-badges { display: flex; gap: 3px; margin-top: 2px; }
 .tw-card-badges .badge-icon {
   display:         inline-flex;
