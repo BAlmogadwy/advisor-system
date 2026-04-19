@@ -73,6 +73,13 @@ const S = {
 
 const POS_LABELS = ['Pane A', 'Pane B', 'Pane C', 'Pane D'];
 
+// Right inspector panel state
+const RP = {
+  open: false,
+  tab: 'issues',
+  capacity: {}, // boardId -> capacity response
+};
+
 /* ── API helpers ── */
 async function api(url, opts = {}) {
   const o = Object.assign({ credentials: 'same-origin', headers: {} }, opts);
@@ -219,6 +226,7 @@ async function onScenarioChange() {
   updateAggregateMetrics();
   renderSlotBar();
   for (let i = 0; i < 4; i++) await loadAndRenderPane(i);
+  if (RP.open) renderRpanel();
 }
 
 function updateAggregateMetrics() {
@@ -488,6 +496,8 @@ function bindPaneControls(idx) {
         S.selectedPaneIdx = idx;
         S.selectedPlacementId = parseInt(cell.dataset.placementId);
         $('twsStatusHover').textContent = `Selected ${cell.querySelector('.cid')?.textContent}`;
+        // Refresh selection tab if the inspector is showing it
+        if (RP.open && RP.tab === 'selection') renderRpanel();
       });
       cell.addEventListener('dblclick', (e) => {
         e.stopPropagation();
@@ -576,6 +586,10 @@ async function refreshBoardsSummary() {
     updateAggregateMetrics();
     renderSlotBar();
   }
+  // Invalidate capacity cache and refresh the inspector if open — mutations
+  // may have changed conflict counts and capacity deltas.
+  RP.capacity = {};
+  if (RP.open) renderRpanel();
 }
 
 /* ── Cross-pane sync-hover (direct DOM) ── */
@@ -638,6 +652,247 @@ function applyPreset(name) {
   for (const p of S.panes) { p.group = 0; p.boardData = null; }
   renderSlotBar();
   for (let i = 0; i < 4; i++) loadAndRenderPane(i);
+}
+
+/* ── Right inspector panel ── */
+function toggleRpanel(force) {
+  RP.open = (typeof force === 'boolean') ? force : !RP.open;
+  const body = $('twsBody');
+  const btn = $('twsRpanelToggle');
+  body.classList.toggle('rp-open', RP.open);
+  if (btn) btn.classList.toggle('primary', RP.open);
+  if (RP.open) renderRpanel();
+}
+function setRpanelTab(tab) {
+  RP.tab = tab;
+  document.querySelectorAll('.tws-rpanel-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.tab === tab);
+  });
+  renderRpanel();
+}
+function aggregateVisibleBoardsData() {
+  // Collect conflicts + placements across every pane whose board is loaded.
+  // Dedupe by board so the same board shown in two panes only counts once.
+  const seen = new Set();
+  const items = [];
+  S.panes.forEach((p, i) => {
+    if (!p.boardData || !p.boardId || seen.has(p.boardId)) return;
+    seen.add(p.boardId);
+    items.push({
+      paneIdx: i,
+      boardId: p.boardId,
+      boardLabel: (S.boards.find(b => b.id === p.boardId) || {}).label || '—',
+      data: p.boardData,
+      conflicts: p.boardData.conflicts || {},
+    });
+  });
+  return items;
+}
+function renderRpanel() {
+  if (!RP.open) return;
+  const body = $('twsRpanelBody');
+  if (!body) return;
+  if (RP.tab === 'issues') renderRpanelIssues(body);
+  else if (RP.tab === 'capacity') renderRpanelCapacity(body);
+  else if (RP.tab === 'selection') renderRpanelSelection(body);
+}
+function renderRpanelIssues(body) {
+  const boards = aggregateVisibleBoardsData();
+  if (!boards.length) {
+    body.innerHTML = `<div class="tws-empty-state"><span class="ic">ⓘ</span>${IS_AR ? 'لم يتم تحميل أي لوحة' : 'No boards loaded yet'}</div>`;
+    $('twsRpCountIssues').textContent = '0';
+    return;
+  }
+  const overlaps = [];
+  const iClashes = [];
+  const rClashes = [];
+  const crossBoard = [];
+  boards.forEach(b => {
+    (b.conflicts.overlaps || []).forEach(o => overlaps.push({ ...o, _paneIdx: b.paneIdx, _boardLabel: b.boardLabel }));
+    (b.conflicts.instructor_clashes || []).forEach(o => iClashes.push({ ...o, _paneIdx: b.paneIdx, _boardLabel: b.boardLabel }));
+    (b.conflicts.room_clashes || []).forEach(o => rClashes.push({ ...o, _paneIdx: b.paneIdx, _boardLabel: b.boardLabel }));
+    (b.conflicts.cross_board || []).forEach(o => {
+      // Dedupe cross-board by the pair of ids (a,b) so it's not listed twice
+      const key = [o.board_a_id, o.board_b_id].sort().join('-') + ':' + (o.section_a || '') + (o.section_b || '');
+      if (!crossBoard.some(x => x._key === key)) crossBoard.push({ ...o, _key: key });
+    });
+  });
+  const total = overlaps.length + iClashes.length + rClashes.length + crossBoard.length;
+  $('twsRpCountIssues').textContent = String(total);
+  if (total === 0) {
+    body.innerHTML = `<div class="tws-empty-state"><span class="ic">✓</span>${IS_AR ? 'لا توجد مشاكل' : 'No issues'}</div>`;
+    return;
+  }
+  const issueRow = (kind, title, meta, ids, paneIdx) => {
+    const pane = Number.isFinite(paneIdx) ? `<span class="pane-badge">P${paneIdx + 1}</span>` : '';
+    return `<div class="tws-issue" data-ids='${JSON.stringify(ids || [])}' data-pane="${paneIdx ?? ''}">
+      <span class="dot ${kind}"></span>
+      <div class="body">
+        <div class="title">${esc(title)}${pane}</div>
+        <div class="meta">${esc(meta || '')}</div>
+      </div>
+    </div>`;
+  };
+  const crossRow = (c) => {
+    const panesInvolved = S.panes.reduce((acc, p, i) => {
+      if (p.boardId === c.board_a_id || p.boardId === c.board_b_id) acc.push(i + 1);
+      return acc;
+    }, []);
+    const paneBadges = panesInvolved.map(n => `<span class="pane-badge">P${n}</span>`).join(' ');
+    return `<div class="tws-issue" data-cross='${JSON.stringify({ a: c.board_a_id, b: c.board_b_id, sa: c.section_a, sb: c.section_b })}'>
+      <span class="dot cross"></span>
+      <div class="body">
+        <div class="title">${esc(c.section_a)} ↔ ${esc(c.section_b)} ${paneBadges}</div>
+        <div class="meta">${c.overlap_count || 0} ${IS_AR ? 'طالب مشترك' : 'shared students'} · ${esc(c.board_a_label || '')} ↔ ${esc(c.board_b_label || '')}</div>
+      </div>
+    </div>`;
+  };
+
+  let html = '';
+  if (overlaps.length) {
+    html += `<div class="section-head danger">${IS_AR ? 'تداخل زمني' : 'Time overlap'}<span class="n">${overlaps.length}</span></div>`;
+    html += overlaps.map(o => issueRow('critical', (o.sections || []).join(' / '), `${o._boardLabel}${o.detail ? ' · ' + o.detail : ''}`, o.ids, o._paneIdx)).join('');
+  }
+  if (iClashes.length) {
+    html += `<div class="section-head danger">${IS_AR ? 'تعارض مدرس' : 'Instructor clash'}<span class="n">${iClashes.length}</span></div>`;
+    html += iClashes.map(o => issueRow('critical', `${o.instructor || '—'} · ${(o.sections || []).join(' / ')}`, `${o._boardLabel}${o.detail ? ' · ' + o.detail : ''}`, o.ids, o._paneIdx)).join('');
+  }
+  if (rClashes.length) {
+    html += `<div class="section-head warn">${IS_AR ? 'تعارض قاعة' : 'Room clash'}<span class="n">${rClashes.length}</span></div>`;
+    html += rClashes.map(o => issueRow('warn', `${o.room || '—'} · ${(o.sections || []).join(' / ')}`, `${o._boardLabel}${o.detail ? ' · ' + o.detail : ''}`, o.ids, o._paneIdx)).join('');
+  }
+  if (crossBoard.length) {
+    html += `<div class="section-head cross">${IS_AR ? 'عبر اللوحات' : 'Cross-board'}<span class="n">${crossBoard.length}</span></div>`;
+    html += crossBoard.map(crossRow).join('');
+  }
+  body.innerHTML = html;
+
+  // Wire issue row clicks
+  body.querySelectorAll('.tws-issue[data-ids]').forEach(row => {
+    row.addEventListener('click', () => highlightPlacements(JSON.parse(row.dataset.ids)));
+  });
+  body.querySelectorAll('.tws-issue[data-cross]').forEach(row => {
+    row.addEventListener('click', () => {
+      const c = JSON.parse(row.dataset.cross);
+      handleCrossBoardClick(c);
+    });
+  });
+}
+function highlightPlacements(ids) {
+  document.querySelectorAll('.tws-pane .cell.highlight').forEach(c => c.classList.remove('highlight'));
+  let firstCell = null;
+  ids.forEach(id => {
+    document.querySelectorAll(`.tws-pane .cell[data-placement-id="${id}"]`).forEach(c => {
+      c.classList.add('highlight');
+      if (!firstCell) firstCell = c;
+    });
+  });
+  if (firstCell) firstCell.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  // Auto-clear after 3s
+  setTimeout(() => document.querySelectorAll('.tws-pane .cell.highlight').forEach(c => c.classList.remove('highlight')), 3000);
+}
+function handleCrossBoardClick(c) {
+  // Identify panes showing these boards. If neither is on canvas, load
+  // board B into the first empty (or last) pane so user sees both sides.
+  const inA = S.panes.findIndex(p => p.boardId === c.a);
+  const inB = S.panes.findIndex(p => p.boardId === c.b);
+  if (inA < 0 && inB < 0) {
+    // Load both into the first two panes
+    setPaneBoard(0, c.a);
+    setPaneBoard(1, c.b);
+    notify.info && notify.info(IS_AR ? 'تم تحميل اللوحتين' : 'Loaded both boards');
+  } else if (inA < 0) {
+    const empty = S.panes.findIndex(p => !p.boardId) >= 0 ? S.panes.findIndex(p => !p.boardId) : 3;
+    setPaneBoard(empty, c.a);
+  } else if (inB < 0) {
+    const empty = S.panes.findIndex(p => !p.boardId) >= 0 ? S.panes.findIndex(p => !p.boardId) : 3;
+    setPaneBoard(empty, c.b);
+  }
+  // Scroll into pane A view
+  const pi = S.panes.findIndex(p => p.boardId === c.a);
+  if (pi >= 0) paneEl(pi)?.scrollIntoView({ block: 'center' });
+}
+function renderRpanelCapacity(body) {
+  const boards = aggregateVisibleBoardsData();
+  if (!boards.length) {
+    body.innerHTML = `<div class="tws-empty-state"><span class="ic">ⓘ</span>${IS_AR ? 'لم يتم تحميل أي لوحة' : 'No boards loaded yet'}</div>`;
+    return;
+  }
+  // Fetch capacity for each visible board (cached).
+  const fetches = boards
+    .filter(b => !RP.capacity[b.boardId])
+    .map(b => api(`/ops/tw/boards/${b.boardId}/capacity/`).then(d => { if (d) RP.capacity[b.boardId] = d; }));
+  Promise.all(fetches).then(() => _renderCapacityNow(body, boards));
+  if (!fetches.length) _renderCapacityNow(body, boards);
+}
+function _renderCapacityNow(body, boards) {
+  const byCourse = new Map();
+  let totalDemand = 0, totalCap = 0, totalDeficit = 0;
+  boards.forEach(b => {
+    const cap = RP.capacity[b.boardId];
+    if (!cap) return;
+    const t = cap.totals || {};
+    totalDemand += t.demand || 0;
+    totalCap += t.raw_capacity || 0;
+    totalDeficit += t.deficit || 0;
+    (cap.courses || []).forEach(c => {
+      const prev = byCourse.get(c.course_code) || { course_code: c.course_code, demand: 0, raw_capacity: 0, deficit: 0 };
+      prev.demand += c.demand || 0;
+      prev.raw_capacity += c.raw_capacity || 0;
+      prev.deficit += c.deficit || 0;
+      byCourse.set(c.course_code, prev);
+    });
+  });
+  const courses = [...byCourse.values()].sort((a, b) => (b.deficit || 0) - (a.deficit || 0));
+  if (!courses.length) {
+    body.innerHTML = `<div class="tws-empty-state"><span class="ic">ⓘ</span>${IS_AR ? 'لا توجد بيانات' : 'No capacity data'}</div>`;
+    return;
+  }
+  let html = `<div class="tws-cap-totals">
+    <div class="m"><span class="v">${totalDemand}</span><span class="l">${IS_AR ? 'الطلب' : 'Demand'}</span></div>
+    <div class="m"><span class="v">${totalCap}</span><span class="l">${IS_AR ? 'السعة' : 'Capacity'}</span></div>
+    <div class="m"><span class="v${totalDeficit > 0 ? ' deficit' : ''}">${totalDeficit}</span><span class="l">${IS_AR ? 'العجز' : 'Deficit'}</span></div>
+  </div>`;
+  courses.slice(0, 30).forEach(c => {
+    const pct = c.demand > 0 ? Math.min(100, Math.round((c.raw_capacity / c.demand) * 100)) : 100;
+    html += `<div class="tws-cap-row">
+      <div class="hd">
+        <span class="code">${esc(c.course_code)}</span>
+        <span class="nums">${c.demand} / ${c.raw_capacity}${c.deficit > 0 ? ` · <b class="deficit">-${c.deficit}</b>` : ''}</span>
+      </div>
+      <div class="bar${c.deficit > 0 ? ' deficit' : ''}"><span style="width:${pct}%"></span></div>
+    </div>`;
+  });
+  if (courses.length > 30) {
+    html += `<div class="tws-empty-state" style="padding:8px 0">${IS_AR ? '' : '+'} ${courses.length - 30} ${IS_AR ? 'أكثر' : 'more'}</div>`;
+  }
+  body.innerHTML = html;
+}
+function renderRpanelSelection(body) {
+  if (!S.selectedPlacementId) {
+    body.innerHTML = `<div class="tws-empty-state"><span class="ic">◉</span>${IS_AR ? 'اختر شعبة للاطلاع' : 'Click a placement to inspect'}</div>`;
+    return;
+  }
+  const located = findPlacement(S.selectedPlacementId);
+  if (!located) { body.innerHTML = `<div class="tws-empty-state"><span class="ic">◉</span>${IS_AR ? 'غير موجود' : 'Not found'}</div>`; return; }
+  const p = located.placement;
+  const instructor = (p.meetings && p.meetings[0]) ? p.meetings[0].instructor : '—';
+  const board = S.boards.find(b => b.id === S.panes[located.paneIdx].boardId) || { label: '—' };
+  body.innerHTML = `
+    <div class="tws-sel-field"><span class="label">${IS_AR ? 'المقرر' : 'Course'}</span><span class="value">${esc(p.course_code)}</span></div>
+    <div class="tws-sel-field"><span class="label">${IS_AR ? 'الاسم' : 'Name'}</span><span class="value">${esc(p.course_name || '—')}</span></div>
+    <div class="tws-sel-field"><span class="label">${IS_AR ? 'الشعبة' : 'Section'}</span><span class="value">${esc(p.section || '—')}</span></div>
+    <div class="tws-sel-field"><span class="label">${IS_AR ? 'اللوحة' : 'Board'}</span><span class="value">${esc(board.label)}</span></div>
+    <div class="tws-sel-field"><span class="label">${IS_AR ? 'اليوم' : 'Day'}</span><span class="value">${esc(p.day)}</span></div>
+    <div class="tws-sel-field"><span class="label">${IS_AR ? 'الوقت' : 'Time'}</span><span class="value">${esc(p.start_time)} – ${esc(p.end_time)}</span></div>
+    <div class="tws-sel-field"><span class="label">${IS_AR ? 'القاعة' : 'Room'}</span><span class="value">${esc(p.room || '—')}</span></div>
+    <div class="tws-sel-field"><span class="label">${IS_AR ? 'المدرس' : 'Instructor'}</span><span class="value">${esc(instructor)}</span></div>
+    <div class="tws-sel-field"><span class="label">${IS_AR ? 'السعة' : 'Capacity'}</span><span class="value">${p.available_capacity || '—'}</span></div>
+    <div class="tws-sel-field"><span class="label">${IS_AR ? 'مقفل' : 'Locked'}</span><span class="value">${p.is_locked ? (IS_AR ? 'نعم' : 'Yes') : (IS_AR ? 'لا' : 'No')}</span></div>
+    <div style="display:flex;gap:6px;margin-top:12px">
+      <button class="tws-btn" style="flex:1" onclick="openDrawer(${located.paneIdx}, ${p.id})">${IS_AR ? 'عرض التفاصيل' : 'Open drawer'}</button>
+    </div>
+  `;
 }
 
 /* ── Section drawer ── */
@@ -897,6 +1152,15 @@ function doExport() {
   $('twsDrawerRemove').addEventListener('click', () => {
     if (DRAWER.placementId != null) doRemove(DRAWER.placementId, DRAWER.paneIdx);
   });
+
+  // Right panel toggle + tabs
+  $('twsRpanelToggle')?.addEventListener('click', () => toggleRpanel());
+  document.querySelectorAll('.tws-rpanel-tab').forEach(t => {
+    t.addEventListener('click', () => setRpanelTab(t.dataset.tab));
+    t.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setRpanelTab(t.dataset.tab); }
+    });
+  });
   $('twsClose').addEventListener('click', () => {
     if (window.history.length > 1) window.history.back();
     else window.location.href = '/timetable-workspace/';
@@ -954,6 +1218,9 @@ function doExport() {
       // Uppercase L (Shift+L) cycles layout — keeps lowercase L for per-cell lock
       const modes = ['quad', 'vert', 'horz', 'single'];
       setLayout(modes[(modes.indexOf(S.layout) + 1) % modes.length]);
+    } else if (e.key === 'i' || e.key === 'I') {
+      // Toggle right inspector panel
+      toggleRpanel();
     }
   });
   for (let i = 0; i < 4; i++) renderPaneEmpty(i);
