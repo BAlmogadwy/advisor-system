@@ -486,7 +486,8 @@ function resetWorkspace() {
   $('twBoardTabs').innerHTML = '';
   $('twBoardsNav').innerHTML = '';
   $('twSectionList').innerHTML = '';
-  $('twGrid').style.display = 'none';
+  $('twGrid').classList.add('d-none');
+  $('twGrid').style.display = '';
   $('twEmptyState').style.display = '';
   $('twBoardStrip').style.display = 'none';
   $('twNewBoard').style.display = 'none';
@@ -607,7 +608,8 @@ function courseColor(code) {
 function renderGridWithSlots(slots, labSlots) {
   const gridEl = $('twGrid');
   $('twEmptyState').style.display = 'none';
-  gridEl.style.display = 'block';
+  gridEl.classList.remove('d-none');
+  gridEl.style.display = '';
   gridEl.innerHTML = '';
 
   labSlots = labSlots || [];
