@@ -430,6 +430,87 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
 .tws-bpanel table tfoot td { padding: 6px 8px; background: rgba(255,255,255,0.02); }
 .tws-bpanel table tfoot td.deficit { color: #F06060; }
 
+/* ── Shared modal (used by Generate, Slot editor, Electives, Results) ── */
+.tws-modal-backdrop {
+  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(3px); z-index: 250; opacity: 0; pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+.tws-modal-backdrop.open { opacity: 1; pointer-events: auto; }
+.tws-modal {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0.95);
+  background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+  z-index: 251; min-width: 380px; max-width: 90vw; max-height: 85vh;
+  display: flex; flex-direction: column; overflow: hidden; opacity: 0;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+  pointer-events: none; transition: opacity 0.18s ease, transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.tws-modal.open { opacity: 1; transform: translate(-50%, -50%) scale(1); pointer-events: auto; }
+.tws-modal.wide { width: 720px; }
+.tws-modal.xwide { width: 960px; }
+.tws-modal .hd {
+  display: flex; align-items: center; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.02);
+}
+.tws-modal .hd h2 {
+  font-family: var(--font-serif, 'DM Serif Display'), serif;
+  font-size: 18px; font-weight: 400; letter-spacing: -0.01em; margin: 0; color: var(--ink);
+}
+.tws-modal .hd .sub {
+  font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 10px;
+  color: var(--t4); text-transform: uppercase; letter-spacing: 0.08em;
+}
+.tws-modal .hd .close {
+  margin-left: auto; border: 0; background: transparent; color: var(--t3);
+  cursor: pointer; font-size: 18px; padding: 4px 10px; border-radius: 4px;
+}
+.tws-modal .hd .close:hover { background: rgba(255, 255, 255, 0.06); color: var(--ink); }
+.tws-modal .body {
+  flex: 1; overflow-y: auto; padding: 16px 18px;
+  font-size: 12.5px; color: var(--ink);
+}
+.tws-modal .footer {
+  padding: 12px 18px; border-top: 1px solid var(--line);
+  display: flex; gap: 8px; justify-content: flex-end; flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.02);
+}
+.tws-modal .footer button {
+  padding: 7px 14px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--glass-bg); color: var(--ink); cursor: pointer;
+  font-family: inherit; font-size: 12px; font-weight: 600;
+}
+.tws-modal .footer button:hover { border-color: var(--teal); color: var(--teal); }
+.tws-modal .footer button.primary { background: var(--teal); border-color: var(--teal); color: #fff; }
+.tws-modal .footer button.primary:hover { background: var(--teal-dark, #087050); }
+.tws-modal .footer button[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+/* Form grid helpers for modals */
+.tws-form-grid {
+  display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px;
+  align-items: end;
+}
+.tws-form-grid .full { grid-column: 1 / -1; }
+.tws-form-grid label {
+  font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 10px;
+  color: var(--t4); text-transform: uppercase; letter-spacing: 0.08em;
+  margin-bottom: 4px; display: block;
+}
+.tws-form-grid input, .tws-form-grid select, .tws-form-grid textarea {
+  width: 100%; padding: 7px 9px; background: var(--glass-bg); border: 1px solid var(--line);
+  border-radius: 6px; color: var(--ink); font-family: inherit; font-size: 12px;
+}
+.tws-form-grid input:focus, .tws-form-grid select:focus, .tws-form-grid textarea:focus {
+  outline: 2px solid var(--teal); outline-offset: -1px; border-color: var(--teal);
+}
+.tws-form-grid textarea {
+  font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 11px;
+  min-height: 120px; resize: vertical;
+}
+.tws-form-grid .hint {
+  grid-column: 1 / -1; font-family: var(--font-mono, 'JetBrains Mono'), monospace;
+  font-size: 10px; color: var(--t4); letter-spacing: 0.04em;
+}
+
 /* ── Section drawer (double-click a cell, or Enter on selected) ── */
 .tws-drawer-backdrop {
   position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35);
@@ -567,6 +648,9 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
         <select id="twsScenario" class="tws-select" title="{% if LANGUAGE_CODE == 'ar' %}السيناريو{% else %}Scenario{% endif %}">
           <option value="">{% if LANGUAGE_CODE == 'ar' %}اختر سيناريو{% else %}Select scenario{% endif %}</option>
         </select>
+        <button class="tws-btn" id="twsGenerate" type="button" title="{% if LANGUAGE_CODE == 'ar' %}توليد سيناريو جديد{% else %}Generate new scenario{% endif %}">▶ {% if LANGUAGE_CODE == 'ar' %}توليد{% else %}Generate{% endif %}</button>
+        <button class="tws-btn" id="twsNewScenario" type="button" title="{% if LANGUAGE_CODE == 'ar' %}سيناريو فارغ{% else %}Empty scenario{% endif %}">+</button>
+        <button class="tws-btn" id="twsNewBoard" type="button" disabled title="{% if LANGUAGE_CODE == 'ar' %}لوحة جديدة{% else %}New board{% endif %}">+ {% if LANGUAGE_CODE == 'ar' %}لوحة{% else %}Board{% endif %}</button>
         <button class="tws-btn" id="twsUndo" type="button" disabled title="Undo (Ctrl+Z)">↶</button>
         <button class="tws-btn" id="twsRedo" type="button" disabled title="Redo (Ctrl+Shift+Z)">↷</button>
         <button class="tws-btn" id="twsRpanelToggle" type="button" title="{% if LANGUAGE_CODE == 'ar' %}المشاكل · السعة · التحديد{% else %}Issues · Capacity · Selection{% endif %}">⚐ {% if LANGUAGE_CODE == 'ar' %}المفتش{% else %}Inspector{% endif %}</button>
@@ -724,6 +808,16 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
     <p>{% if LANGUAGE_CODE == 'ar' %}يحتاج العرض المقسّم إلى شاشة بعرض{% else %}Split compare needs at least{% endif %} <code>1100 px</code> {% if LANGUAGE_CODE == 'ar' %}على الأقل لعرض 4 لوحات جنبًا إلى جنب.{% else %}of horizontal canvas to lay out 2×2 term panes side by side.{% endif %}</p>
   </div>
 </div>
+
+<div class="tws-modal-backdrop" id="twsModalBackdrop"></div>
+<div class="tws-modal" id="twsModal" role="dialog" aria-modal="true" aria-labelledby="twsModalTitle">
+  <div class="hd">
+    <div><h2 id="twsModalTitle">—</h2><div class="sub" id="twsModalSub"></div></div>
+    <button class="close" id="twsModalClose" type="button" aria-label="{% if LANGUAGE_CODE == 'ar' %}إغلاق{% else %}Close{% endif %}">✕</button>
+  </div>
+  <div class="body" id="twsModalBody"></div>
+  <div class="footer" id="twsModalFooter"></div>
+</div>
 {% endblock %}
 
 {% block extra_js %}
@@ -736,5 +830,5 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
   const DEFAULT_YEAR = {{ default_year|default:'null' }};
   const DEFAULT_TERM = {{ default_term|default:'null' }};
 </script>
-<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=10"></script>
+<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=11"></script>
 {% endblock %}

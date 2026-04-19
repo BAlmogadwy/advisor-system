@@ -228,6 +228,7 @@ async function onScenarioChange() {
   $('twsPublish').disabled = data.scenario.status === 'published';
   $('twsOptimise').disabled = false;
   $('twsExport').disabled = false;
+  $('twsNewBoard') && ($('twsNewBoard').disabled = data.scenario.status === 'published');
 
   updateAggregateMetrics();
   renderSlotBar();
@@ -902,6 +903,204 @@ function renderRpanelSelection(body) {
   `;
 }
 
+/* ── Shared modal primitive ──────────────────────────────────────── */
+// openModal({ title, sub, body, width, buttons: [{label, variant, onClick}], onClose })
+// buttons: variant in { 'primary', '' (default) }. onClick can return false to keep modal open.
+let _modalOpen = false;
+function openModal(opts) {
+  const modal = $('twsModal');
+  const backdrop = $('twsModalBackdrop');
+  $('twsModalTitle').textContent = opts.title || '';
+  $('twsModalSub').textContent = opts.sub || '';
+  const bodyEl = $('twsModalBody');
+  if (typeof opts.body === 'string') bodyEl.innerHTML = opts.body;
+  else { bodyEl.innerHTML = ''; if (opts.body) bodyEl.appendChild(opts.body); }
+  // Width class
+  modal.classList.remove('wide', 'xwide');
+  if (opts.width === 'wide') modal.classList.add('wide');
+  else if (opts.width === 'xwide') modal.classList.add('xwide');
+  // Buttons
+  const footer = $('twsModalFooter');
+  footer.innerHTML = '';
+  (opts.buttons || []).forEach(b => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = b.label;
+    if (b.variant === 'primary') btn.classList.add('primary');
+    if (b.id) btn.id = b.id;
+    btn.addEventListener('click', async () => {
+      const res = b.onClick ? await b.onClick(modal) : undefined;
+      if (res !== false) closeModal();
+    });
+    footer.appendChild(btn);
+  });
+  modal.classList.add('open');
+  backdrop.classList.add('open');
+  _modalOpen = true;
+  _modalOnClose = opts.onClose || null;
+  // Focus first input
+  setTimeout(() => bodyEl.querySelector('input, select, textarea, button')?.focus(), 40);
+}
+let _modalOnClose = null;
+function closeModal() {
+  $('twsModal').classList.remove('open');
+  $('twsModalBackdrop').classList.remove('open');
+  _modalOpen = false;
+  if (_modalOnClose) { try { _modalOnClose(); } catch {} _modalOnClose = null; }
+}
+
+/* ── Generate Scenario (inline) ──────────────────────────────────── */
+async function openGenerateModal() {
+  const strategies = [
+    { v: 'compact', l: IS_AR ? 'مضغوط' : 'Compact' },
+    { v: 'morning', l: IS_AR ? 'صباحي' : 'Morning-first' },
+    { v: 'balanced', l: IS_AR ? 'متوازن' : 'Balanced' },
+    { v: 'optimal', l: IS_AR ? 'الأمثل' : 'Optimal (CP-SAT)' },
+    { v: 'hybrid', l: IS_AR ? 'هجين' : 'Hybrid (best)' },
+    { v: 'load_balanced', l: IS_AR ? 'متوازن الأيام' : 'Load-balanced' },
+    { v: 'adaptive', l: IS_AR ? 'تكيّفي' : 'Adaptive (best overall)' },
+  ];
+  const body = `
+    <div class="tws-form-grid">
+      <div><label for="twsGenYear">${IS_AR ? 'السنة' : 'Year'}</label>
+        <input id="twsGenYear" type="text" inputmode="numeric" value="${DEFAULT_YEAR || '1448'}"></div>
+      <div><label for="twsGenSem">${IS_AR ? 'فصل' : 'Sem'}</label>
+        <input id="twsGenSem" type="text" inputmode="numeric" value="${DEFAULT_TERM || '1'}"></div>
+      <div style="grid-column:span 2"><label for="twsGenProgram">${IS_AR ? 'البرنامج' : 'Program'} (AI, DS, COE…)</label>
+        <input id="twsGenProgram" type="text" placeholder="AI,DS" autocapitalize="characters"></div>
+      <div><label for="twsGenSection">${IS_AR ? 'شعبة' : 'Section'}</label>
+        <input id="twsGenSection" type="text" placeholder="M" autocapitalize="characters"></div>
+      <div class="full"><label for="twsGenStrategy">${IS_AR ? 'الاستراتيجية' : 'Strategy'}</label>
+        <select id="twsGenStrategy">
+          ${strategies.map(s => `<option value="${s.v}"${s.v === 'compact' ? ' selected' : ''}>${s.l}</option>`).join('')}
+        </select></div>
+      <div class="hint">${IS_AR ? 'يمكن تحديد عدة برامج بفصلها بفاصلة (مثال: AI,DS)' : 'Multiple programs may be comma-separated (e.g. AI,DS). Leave section blank for all sections.'}</div>
+      <div id="twsGenStatus" class="full" style="color:var(--t4);font-size:11px;min-height:16px"></div>
+    </div>
+  `;
+  openModal({
+    title: IS_AR ? 'توليد سيناريو جديد' : 'Generate new scenario',
+    sub: IS_AR ? 'سيُنشئ السيناريو مع اللوحات وتصنيف الطلاب' : 'Creates scenario, boards and student classification',
+    body,
+    width: 'wide',
+    buttons: [
+      { label: IS_AR ? 'إلغاء' : 'Cancel' },
+      { label: IS_AR ? 'توليد' : 'Generate', variant: 'primary', id: 'twsGenSubmit', onClick: async (modal) => {
+        const year = parseInt(document.getElementById('twsGenYear').value.trim());
+        const semester = parseInt(document.getElementById('twsGenSem').value.trim());
+        const program = document.getElementById('twsGenProgram').value.trim().toUpperCase();
+        const section = (document.getElementById('twsGenSection').value.trim().toUpperCase() || null);
+        const strategy = document.getElementById('twsGenStrategy').value;
+        if (!year || !semester || !program) {
+          notify.error(IS_AR ? 'أدخل السنة، الفصل، والبرنامج' : 'Enter year, semester, and program');
+          return false;
+        }
+        const statusEl = document.getElementById('twsGenStatus');
+        const submitBtn = document.getElementById('twsGenSubmit');
+        submitBtn.disabled = true;
+        statusEl.textContent = IS_AR ? 'جاري التوليد…' : 'Generating…';
+        const data = await api('/ops/tw/generate-workspace/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ year, semester, program, section, strategy }),
+        });
+        submitBtn.disabled = false;
+        if (!data) { statusEl.textContent = IS_AR ? 'فشل' : 'Failed'; return false; }
+        const ss = data.student_summary || {};
+        notify.success(IS_AR
+          ? `تم التوليد — ${data.boards.length} لوحة · ${ss.classified || 0} طالب`
+          : `Generated — ${data.boards.length} boards · ${ss.classified || 0} students`);
+        // Refresh scenarios list and jump to the new scenario
+        await loadScenarios();
+        const sel = $('twsScenario');
+        sel.value = String(data.scenario.id);
+        await onScenarioChange();
+      } },
+    ],
+  });
+}
+
+/* ── New empty scenario + New board ──────────────────────────────── */
+async function openNewScenarioModal() {
+  const body = `
+    <div class="tws-form-grid">
+      <div><label for="twsSNYear">${IS_AR ? 'السنة' : 'Year'}</label>
+        <input id="twsSNYear" type="text" inputmode="numeric" value="${DEFAULT_YEAR || '1448'}"></div>
+      <div><label for="twsSNSem">${IS_AR ? 'فصل' : 'Sem'}</label>
+        <input id="twsSNSem" type="text" inputmode="numeric" value="${DEFAULT_TERM || '1'}"></div>
+      <div class="full"><label for="twsSNName">${IS_AR ? 'الاسم' : 'Name'}</label>
+        <input id="twsSNName" type="text" placeholder="${IS_AR ? 'مثال: سيناريو أ' : 'e.g. Scenario A'}"></div>
+      <div class="hint">${IS_AR ? 'يُنشئ سيناريو فارغ بدون أي لوحات. أضف لوحات بعد الإنشاء.' : 'Creates an empty scenario with no boards. Add boards after creation.'}</div>
+    </div>
+  `;
+  openModal({
+    title: IS_AR ? 'سيناريو فارغ' : 'Empty scenario',
+    body, width: 'wide',
+    buttons: [
+      { label: IS_AR ? 'إلغاء' : 'Cancel' },
+      { label: IS_AR ? 'إنشاء' : 'Create', variant: 'primary', onClick: async () => {
+        const year = parseInt(document.getElementById('twsSNYear').value.trim());
+        const term = parseInt(document.getElementById('twsSNSem').value.trim());
+        const name = (document.getElementById('twsSNName').value || '').trim() || `Scenario ${new Date().toISOString().slice(0, 10)}`;
+        if (!year || !term) { notify.error(IS_AR ? 'أدخل السنة والفصل' : 'Enter year and semester'); return false; }
+        const data = await api('/ops/tw/scenarios/create/', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ academic_year: year, term, name }),
+        });
+        if (!data) return false;
+        notify.success(IS_AR ? 'تم الإنشاء' : 'Scenario created');
+        await loadScenarios();
+        $('twsScenario').value = String(data.scenario.id);
+        await onScenarioChange();
+      } },
+    ],
+  });
+}
+
+async function openNewBoardModal() {
+  if (!S.scenarioId) { notify.error(IS_AR ? 'اختر سيناريو أولاً' : 'Select a scenario first'); return; }
+  const body = `
+    <div class="tws-form-grid">
+      <div class="full"><label for="twsBLabel">${IS_AR ? 'اسم اللوحة' : 'Board label'}</label>
+        <input id="twsBLabel" type="text" placeholder="Term 5 Group B"></div>
+      <div><label for="twsBTerm">${IS_AR ? 'المستوى' : 'Nominal term'}</label>
+        <input id="twsBTerm" type="text" inputmode="numeric" placeholder="5"></div>
+      <div style="grid-column:span 4"><label for="twsBNotes">${IS_AR ? 'ملاحظات' : 'Notes'}</label>
+        <input id="twsBNotes" type="text" placeholder=""></div>
+      <div class="hint">${IS_AR ? 'تُنشأ اللوحة فارغة. اسحب أو استخدم التوليد لملئها.' : 'Board starts empty — drag placements or re-run Generate to populate.'}</div>
+    </div>
+  `;
+  openModal({
+    title: IS_AR ? 'لوحة جديدة' : 'New board',
+    sub: S.scenarioMeta ? S.scenarioMeta.name : '',
+    body, width: 'wide',
+    buttons: [
+      { label: IS_AR ? 'إلغاء' : 'Cancel' },
+      { label: IS_AR ? 'إنشاء' : 'Create', variant: 'primary', onClick: async () => {
+        const label = (document.getElementById('twsBLabel').value || '').trim();
+        if (!label) { notify.error(IS_AR ? 'أدخل اسم اللوحة' : 'Enter a board label'); return false; }
+        const nominal = parseInt(document.getElementById('twsBTerm').value.trim()) || null;
+        const notes = (document.getElementById('twsBNotes').value || '').trim();
+        const payload = { scenario_id: S.scenarioId, label };
+        if (nominal) payload.nominal_term = nominal;
+        if (notes) payload.notes = notes;
+        const data = await api('/ops/tw/boards/create/', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+        });
+        if (!data) return false;
+        notify.success(IS_AR ? 'تمت إضافة اللوحة' : 'Board added');
+        // Refresh boards + slot bar; don't reload panes unless this is the first board.
+        const bdata = await api(`/ops/tw/boards/?scenario_id=${S.scenarioId}`);
+        if (bdata && bdata.boards) {
+          S.boards = bdata.boards;
+          renderSlotBar();
+          updateAggregateMetrics();
+        }
+      } },
+    ],
+  });
+}
+
 /* ── Bottom panel (Demand · Resources) ── */
 function toggleBpanel(force) {
   BP.open = (typeof force === 'boolean') ? force : !BP.open;
@@ -1319,6 +1518,15 @@ function doExport() {
     if (DRAWER.placementId != null) doRemove(DRAWER.placementId, DRAWER.paneIdx);
   });
 
+  // Generate / New scenario / New board
+  $('twsGenerate')?.addEventListener('click', openGenerateModal);
+  $('twsNewScenario')?.addEventListener('click', openNewScenarioModal);
+  $('twsNewBoard')?.addEventListener('click', openNewBoardModal);
+
+  // Generic modal close
+  $('twsModalClose')?.addEventListener('click', closeModal);
+  $('twsModalBackdrop')?.addEventListener('click', closeModal);
+
   // Right panel toggle + tabs
   $('twsRpanelToggle')?.addEventListener('click', () => toggleRpanel());
   document.querySelectorAll('.tws-rpanel-tab').forEach(t => {
@@ -1356,6 +1564,7 @@ function doExport() {
     const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target?.isContentEditable;
 
     if (e.key === 'Escape') {
+      if (_modalOpen) { closeModal(); return; }
       if ($('twsDrawer').classList.contains('open')) { closeDrawer(); return; }
       $('twsClose').click();
       return;
