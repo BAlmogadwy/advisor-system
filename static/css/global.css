@@ -4275,7 +4275,13 @@ html[data-theme="dark"] .et-panel,
 html[data-theme="dark"] .planner-panel,
 html[data-theme="dark"] .sp-panel,
 html[data-theme="dark"] .pl-panel,
-html[data-theme="dark"] .kpi {
+html[data-theme="dark"] .si-panel,
+html[data-theme="dark"] .kpi,
+html[data-theme="dark"] .sp-mc,
+html[data-theme="dark"] .ov-kpi,
+html[data-theme="dark"] .ov-action,
+html[data-theme="dark"] .ov-activity,
+html[data-theme="dark"] .student-ctx-card {
   background:   rgba(255,255,255,0.04);
   border-color: rgba(10,142,110,0.2);
   box-shadow:   0 2px 8px rgba(0,0,0,0.25);
@@ -6363,15 +6369,7 @@ html[data-theme="dark"] .sh-page-num { color: var(--t1) !important; }
 /* ── Trace btn copy hardcoded color ─── */
 html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
 
-/* ── Dashboard cards — flat dark style matching .advisor-block ─── */
-html[data-theme="dark"] .ov-kpi,
-html[data-theme="dark"] .ov-action,
-html[data-theme="dark"] .ov-activity,
-html[data-theme="dark"] .student-ctx-card {
-  background: rgba(255,255,255,0.04) !important;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.25) !important;
-  border: 1px solid rgba(10,142,110,0.2) !important;
-}
+/* Dashboard-card dark surface moved to V2 UNIFIED rule above */
 html[data-theme="dark"] .student-ctx-row { border-bottom-color: rgba(255,255,255,0.04); }
 html[data-theme="dark"] .ov-activity-item { border-bottom-color: rgba(255,255,255,0.04); }
 
@@ -7189,12 +7187,7 @@ html[data-theme="dark"] .ov-activity-item { border-bottom-color: rgba(255,255,25
        DARK MODE — Deep Navy overrides
        html[data-theme="dark"]
        ═══════════════════════════════════════════════════════════ */
-    html[data-theme="dark"] .sp-panel,
-    html[data-theme="dark"] .sp-mc {
-      background: rgba(255,255,255,0.04) !important;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.25) !important;
-      border-color: rgba(10,142,110,0.2) !important;
-    }
+    /* .sp-panel / .sp-mc dark surface moved to V2 UNIFIED rule */
     html[data-theme="dark"] .sp-caps {
       background: rgba(10,142,110,0.06);
       border-color: rgba(10,142,110,0.15);
@@ -8524,12 +8517,7 @@ html[data-theme="dark"] .pf-card.pf-saved {
     }
 
     /* ── Dark mode overrides (Deep Navy) ───────────────────── */
-    html[data-theme="dark"] .si-panel,
-    html[data-theme="dark"] .kpi {
-      background: rgba(255,255,255,0.04) !important;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.25) !important;
-      border-color: rgba(10,142,110,0.2) !important;
-    }
+    /* .si-panel / .kpi dark surface moved to V2 UNIFIED rule */
     html[data-theme="dark"] .si-filter-pop {
       background: #151826;
       border-color: rgba(255,255,255,0.08);
