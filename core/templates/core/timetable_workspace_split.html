@@ -180,7 +180,9 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
   min-height: 0; min-width: 0; overflow: hidden; cursor: pointer;
 }
 .tws-pane .block-grid .cell:hover { background: rgba(255,255,255,0.05); }
-.tws-pane .block-grid .cell.drop-valid { outline: 2px solid var(--teal); outline-offset: -2px; }
+.tws-pane .block-grid .cell.drop-valid { outline: 2px solid var(--teal); outline-offset: -2px; background: color-mix(in srgb, var(--teal) 14%, transparent); }
+.tws-pane .block-grid .cell.drop-warning { outline: 2px solid #F5B731; outline-offset: -2px; background: rgba(245,183,49,0.18); }
+.tws-pane .block-grid .cell.drop-critical { outline: 2px solid #F06060; outline-offset: -2px; background: rgba(240,96,96,0.18); }
 .tws-pane .block-grid .cell.sync-hover { outline: 2px dashed var(--teal); outline-offset: -2px; background: color-mix(in srgb, var(--teal) 10%, transparent); }
 .tws-pane .block-grid .cell.selected { outline: 2px solid var(--teal); outline-offset: -2px; box-shadow: 0 0 8px color-mix(in srgb, var(--teal) 40%, transparent); }
 .tws-pane .block-grid .cell.filled {
@@ -277,6 +279,8 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
         <select id="twsScenario" class="tws-select" title="{% if LANGUAGE_CODE == 'ar' %}السيناريو{% else %}Scenario{% endif %}">
           <option value="">{% if LANGUAGE_CODE == 'ar' %}اختر سيناريو{% else %}Select scenario{% endif %}</option>
         </select>
+        <button class="tws-btn" id="twsUndo" type="button" disabled title="Undo (Ctrl+Z)">↶</button>
+        <button class="tws-btn" id="twsRedo" type="button" disabled title="Redo (Ctrl+Shift+Z)">↷</button>
         <button class="tws-btn" id="twsOptimise" type="button" disabled>
           {% if LANGUAGE_CODE == 'ar' %}تحسين{% else %}Optimise{% endif %}
         </button>
@@ -393,5 +397,5 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
   const DEFAULT_YEAR = {{ default_year|default:'null' }};
   const DEFAULT_TERM = {{ default_term|default:'null' }};
 </script>
-<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=3"></script>
+<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=5"></script>
 {% endblock %}

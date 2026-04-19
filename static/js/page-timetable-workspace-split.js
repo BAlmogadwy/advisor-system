@@ -56,11 +56,15 @@ const S = {
   scenarioMeta: null,
   boards: [],
   panes: [
-    { boardId: null, group: 0, boardData: null, undoStack: [], redoStack: [] },
-    { boardId: null, group: 0, boardData: null, undoStack: [], redoStack: [] },
-    { boardId: null, group: 0, boardData: null, undoStack: [], redoStack: [] },
-    { boardId: null, group: 0, boardData: null, undoStack: [], redoStack: [] },
+    { boardId: null, group: 0, boardData: null },
+    { boardId: null, group: 0, boardData: null },
+    { boardId: null, group: 0, boardData: null },
+    { boardId: null, group: 0, boardData: null },
   ],
+  // Global undo/redo stacks shared across panes, matching the main page's
+  // single-stack model. Each action has enough state to fully revert.
+  undoStack: [],
+  redoStack: [],
   selectedPaneIdx: null,
   selectedPlacementId: null,
   layout: 'quad',
@@ -93,6 +97,35 @@ async function api(url, opts = {}) {
 /* ── Utilities ── */
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// 20 distinct pastel colours — same palette the main page uses so the
+// split view matches the XLSX export and the main grid exactly.
+const COURSE_COLORS = [
+  '#D4E6F1','#D5F5E3','#FADBD8','#FCF3CF','#D7BDE2',
+  '#A9DFBF','#F9E79F','#AED6F1','#F5CBA7','#A3E4D7',
+  '#E8DAEF','#FDEBD0','#ABB2B9','#A2D9CE','#F5B7B1',
+  '#D6DBDF','#ABEBC6','#FAD7A0','#D2B4DE','#AEB6BF',
+];
+const _courseColorMap = {};
+function courseColor(code) {
+  if (!code) return COURSE_COLORS[0];
+  if (!_courseColorMap[code]) {
+    const idx = Object.keys(_courseColorMap).length % COURSE_COLORS.length;
+    _courseColorMap[code] = COURSE_COLORS[idx];
+  }
+  return _courseColorMap[code];
+}
+// Side-band accent stripe matching the course card border on the main page.
+function courseColorBorder(code) {
+  const bg = courseColor(code);
+  // Derive a darker accent by reducing lightness — simple approximation by
+  // shifting the hex toward black.
+  const hex = bg.replace('#', '');
+  const r = Math.max(0, parseInt(hex.slice(0, 2), 16) - 60);
+  const g = Math.max(0, parseInt(hex.slice(2, 4), 16) - 60);
+  const b = Math.max(0, parseInt(hex.slice(4, 6), 16) - 60);
+  return `rgb(${r},${g},${b})`;
 }
 function isLabPlacement(p) {
   const toMin = t => { const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
@@ -367,9 +400,14 @@ function renderGridHTML(slots, placements, clashIds, kind) {
       if (placement) {
         const room = placement.room ? esc(placement.room) : '';
         const stu = placement.available_capacity || '';
-        h += `<div class="cell filled${hasClash ? ' clash' : ''}" ${cellAttrs} data-placement-id="${placement.id}" draggable="true">`;
-        h += `<span class="cid">${esc(placement.course_code)} ${esc(placement.section || '')}</span>`;
-        h += `<span class="cmeta">${room}${stu ? '·' + stu : ''}</span>`;
+        const bg = courseColor(placement.course_code);
+        const accent = courseColorBorder(placement.course_code);
+        // Colour the card with the same palette used on the main page
+        // (per-course pastel bg + darker accent stripe on the leading edge).
+        const style = `background:${bg};border-left-color:${accent};color:#111827`;
+        h += `<div class="cell filled${hasClash ? ' clash' : ''}" ${cellAttrs} data-placement-id="${placement.id}" draggable="true" style="${style}">`;
+        h += `<span class="cid" style="color:#111827">${esc(placement.course_code)} ${esc(placement.section || '')}</span>`;
+        h += `<span class="cmeta" style="color:#4b5563">${room}${stu ? '·' + stu : ''}</span>`;
         h += `</div>`;
       } else {
         h += `<div class="cell" ${cellAttrs}></div>`;
@@ -410,8 +448,15 @@ function bindPaneControls(idx) {
   el.querySelectorAll('.cell').forEach(cell => {
     cell.addEventListener('mouseenter', () => broadcastHover(idx, cell.dataset.day, cell.dataset.start));
     cell.addEventListener('mouseleave', () => broadcastHover(idx, null, null));
-    cell.addEventListener('dragover', (e) => { e.preventDefault(); cell.classList.add('drop-valid'); });
-    cell.addEventListener('dragleave', () => cell.classList.remove('drop-valid'));
+    cell.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      // Mirror main-page feedback: highlight occupied cells in amber (will
+      // collide) and empty cells in teal (clean drop).
+      if (cell.classList.contains('filled')) cell.classList.add('drop-warning');
+      else cell.classList.add('drop-valid');
+    });
+    cell.addEventListener('dragleave', () =>
+      cell.classList.remove('drop-valid', 'drop-warning', 'drop-critical'));
     cell.addEventListener('drop', (e) => onCellDrop(idx, cell, e));
     if (cell.classList.contains('filled')) {
       cell.addEventListener('dragstart', (e) => {
@@ -431,38 +476,82 @@ function bindPaneControls(idx) {
   });
 }
 
-/* ── Drag & drop handler ── */
+/* ── Drag & drop handler — mirrors main-page onDrop semantics ── */
+function findPlacement(placementId) {
+  for (let i = 0; i < 4; i++) {
+    const data = S.panes[i].boardData;
+    if (!data) continue;
+    const found = (data.placements || []).find(p => p.id === placementId);
+    if (found) return { placement: found, paneIdx: i };
+  }
+  return null;
+}
 async function onCellDrop(paneIdx, cell, e) {
   e.preventDefault();
-  cell.classList.remove('drop-valid');
+  cell.classList.remove('drop-valid', 'drop-warning', 'drop-critical');
   let payload;
   try { payload = JSON.parse(e.dataTransfer.getData('text/plain')); } catch { return; }
   if (payload.type !== 'move' || !payload.placement_id) return;
 
+  // Capture old position BEFORE the mutation so undo can revert cleanly,
+  // matching the main page's onDrop behaviour.
+  const located = findPlacement(payload.placement_id);
+  const oldDay = located ? located.placement.day : '';
+  const oldStart = located ? located.placement.start_time : '';
+  const oldEnd = located ? located.placement.end_time : '';
+
   const day = cell.dataset.day;
   const start = cell.dataset.start;
   const end = cell.dataset.end;
+  // Skip no-op drops
+  if (day === oldDay && start === oldStart) return;
+
   const data = await api(`/ops/tw/placements/${payload.placement_id}/move/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ day, start_time: start, end_time: end }),
   });
-  if (!data) return;
+  if (!data) { notify.error(IS_AR ? 'تعذّر النقل' : 'Move failed'); return; }
 
-  // Track undo on source pane (where the card was dragged FROM)
-  const sourceIdx = Number.isFinite(payload.source_pane) ? payload.source_pane : paneIdx;
-  S.panes[sourceIdx].undoStack.push({
-    type: 'move', placement_id: payload.placement_id,
-    // old day/time unknown here; re-fetch after move
+  // Push full-fidelity undo entry — identical shape to main-page undo stack.
+  S.undoStack.push({
+    type: 'move',
+    placement_id: payload.placement_id,
+    old_day: oldDay, old_start: oldStart, old_end: oldEnd,
+    new_day: day, new_start: start, new_end: end,
   });
-  S.panes[sourceIdx].redoStack = [];
+  S.redoStack = [];
+  updateUndoRedoButtons();
 
-  // Reload both source and target panes
-  const toReload = new Set([paneIdx, sourceIdx]);
-  for (const i of toReload) await loadAndRenderPane(i);
-  // Refresh aggregates
+  // Match main-page UX: show a warning toast when placement lands on conflicts
+  // and a success toast otherwise.
+  const v = data.validation || {};
+  if ((v.critical_count || 0) > 0) {
+    notify.warning(IS_AR
+      ? `تم النقل مع ${v.critical_count} تعارض`
+      : `Moved with ${v.critical_count} conflict(s)`);
+  } else {
+    notify.success(IS_AR ? 'تم النقل' : 'Moved');
+  }
+
+  // Refresh every pane that could be affected (target, source, and any pane
+  // showing the same board), plus aggregate metrics.
+  const sourceIdx = Number.isFinite(payload.source_pane) ? payload.source_pane : paneIdx;
+  const boardIds = new Set([S.panes[paneIdx].boardId, S.panes[sourceIdx].boardId]);
+  for (let i = 0; i < 4; i++) {
+    if (boardIds.has(S.panes[i].boardId)) await loadAndRenderPane(i);
+  }
+  await refreshBoardsSummary();
+}
+
+async function refreshBoardsSummary() {
+  if (!S.scenarioId) return;
   const bdata = await api(`/ops/tw/boards/?scenario_id=${S.scenarioId}`);
-  if (bdata && bdata.boards) { S.boards = bdata.boards; updateAggregateMetrics(); renderSlotBar(); }
+  if (bdata && bdata.boards) {
+    S.boards = bdata.boards;
+    updateAggregateMetrics();
+    renderSlotBar();
+  }
 }
 
 /* ── Cross-pane sync-hover (direct DOM) ── */
@@ -514,6 +603,58 @@ function applyPreset(name) {
   for (let i = 0; i < 4; i++) loadAndRenderPane(i);
 }
 
+/* ── Undo / Redo (global, matching main-page semantics) ── */
+function updateUndoRedoButtons() {
+  const u = $('twsUndo'), r = $('twsRedo');
+  if (u) u.disabled = S.undoStack.length === 0;
+  if (r) r.disabled = S.redoStack.length === 0;
+}
+
+async function doMove(placementId, day, start, end) {
+  const data = await api(`/ops/tw/placements/${placementId}/move/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ day, start_time: start, end_time: end }),
+  });
+  return data;
+}
+
+async function doUndo() {
+  const action = S.undoStack.pop();
+  if (!action) return;
+  if (action.type === 'move') {
+    const data = await doMove(action.placement_id, action.old_day, action.old_start, action.old_end);
+    if (!data) { S.undoStack.push(action); return; }
+    S.redoStack.push(action);
+    notify.success(IS_AR ? 'تم التراجع' : 'Undone');
+  }
+  updateUndoRedoButtons();
+  // Reload any pane whose board shows this placement
+  const located = findPlacement(action.placement_id);
+  for (let i = 0; i < 4; i++) {
+    if (located && S.panes[i].boardId === located.placement.board_id) {
+      await loadAndRenderPane(i);
+    }
+  }
+  // Simpler: reload all panes to guarantee consistency
+  for (let i = 0; i < 4; i++) await loadAndRenderPane(i);
+  await refreshBoardsSummary();
+}
+
+async function doRedo() {
+  const action = S.redoStack.pop();
+  if (!action) return;
+  if (action.type === 'move') {
+    const data = await doMove(action.placement_id, action.new_day, action.new_start, action.new_end);
+    if (!data) { S.redoStack.push(action); return; }
+    S.undoStack.push(action);
+    notify.success(IS_AR ? 'تم الإعادة' : 'Redone');
+  }
+  updateUndoRedoButtons();
+  for (let i = 0; i < 4; i++) await loadAndRenderPane(i);
+  await refreshBoardsSummary();
+}
+
 /* ── Top-bar actions ── */
 async function doOptimise() {
   if (!S.scenarioId) return;
@@ -554,6 +695,9 @@ function doExport() {
   $('twsOptimise').addEventListener('click', doOptimise);
   $('twsPublish').addEventListener('click', doPublish);
   $('twsExport').addEventListener('click', doExport);
+  $('twsUndo')?.addEventListener('click', doUndo);
+  $('twsRedo')?.addEventListener('click', doRedo);
+  updateUndoRedoButtons();
   $('twsClose').addEventListener('click', () => {
     if (window.history.length > 1) window.history.back();
     else window.location.href = '/timetable-workspace/';
@@ -566,6 +710,17 @@ function doExport() {
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { $('twsClose').click(); return; }
+    // Undo / redo — Ctrl+Z, Ctrl+Shift+Z / Ctrl+Y
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+      e.preventDefault();
+      if (e.shiftKey) doRedo(); else doUndo();
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+      e.preventDefault();
+      doRedo();
+      return;
+    }
     if (e.key >= '1' && e.key <= '4') {
       const idx = parseInt(e.key) - 1;
       paneEl(idx)?.scrollIntoView({ block: 'center' });
