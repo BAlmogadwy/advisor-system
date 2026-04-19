@@ -1,5 +1,5 @@
 {% extends "core/base.html" %}
-{% load i18n %}{% get_current_language as LANGUAGE_CODE %}
+{% load i18n static %}{% get_current_language as LANGUAGE_CODE %}
 
 {% block title %}{% if LANGUAGE_CODE == 'ar' %}لوحة تحكم المرشد{% else %}Advisor Dashboard{% endif %}{% endblock %}
 
