@@ -378,6 +378,58 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
   z-index: 2;
 }
 
+/* Bottom panel -------------------------------------------------------- */
+.tws-bpanel {
+  background: var(--card); border-top: 1px solid var(--line);
+  flex-shrink: 0; display: flex; flex-direction: column;
+  max-height: 200px; transition: max-height 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+  overflow: hidden;
+}
+.tws-bpanel.collapsed { max-height: 28px; }
+.tws-bpanel-handle {
+  display: flex; align-items: center; gap: 10px; padding: 6px 14px; cursor: pointer;
+  background: rgba(255,255,255,0.02); border-bottom: 1px solid var(--line); user-select: none;
+  flex-shrink: 0;
+}
+.tws-bpanel-handle .caret { font-size: 10px; color: var(--t4); transition: transform 0.15s; }
+.tws-bpanel.collapsed .tws-bpanel-handle .caret { transform: rotate(-90deg); }
+.tws-bpanel-tabs { display: inline-flex; gap: 0; }
+.tws-bpanel-tab {
+  padding: 3px 12px; font-family: var(--font-mono, 'JetBrains Mono'), monospace;
+  font-size: 10.5px; color: var(--t3); text-transform: uppercase; letter-spacing: 0.06em;
+  font-weight: 700; cursor: pointer; border-bottom: 2px solid transparent;
+}
+.tws-bpanel-tab:hover { color: var(--ink); }
+.tws-bpanel-tab.active { color: var(--teal); border-bottom-color: var(--teal); }
+.tws-bpanel-body {
+  flex: 1; overflow-y: auto; padding: 6px 14px 10px; font-size: 11.5px;
+}
+.tws-bpanel .meta {
+  font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 10px;
+  color: var(--t4); margin-left: auto; text-transform: uppercase; letter-spacing: 0.05em;
+}
+
+/* Tables inside bottom panel */
+.tws-bpanel table {
+  width: 100%; border-collapse: collapse;
+  font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 11px;
+}
+.tws-bpanel table thead th {
+  text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line);
+  font-size: 9.5px; font-weight: 700; color: var(--t4);
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+.tws-bpanel table tbody td {
+  padding: 4px 8px; border-bottom: 1px dashed var(--line-soft, rgba(255,255,255,0.04));
+  color: var(--t3);
+}
+.tws-bpanel table tbody tr:hover td { background: rgba(255,255,255,0.02); }
+.tws-bpanel table td.code { color: var(--ink); font-weight: 700; }
+.tws-bpanel table td.deficit { color: #F06060; font-weight: 700; }
+.tws-bpanel table tfoot tr { border-top: 1px solid var(--line); font-weight: 700; color: var(--ink); }
+.tws-bpanel table tfoot td { padding: 6px 8px; background: rgba(255,255,255,0.02); }
+.tws-bpanel table tfoot td.deficit { color: #F06060; }
+
 /* ── Section drawer (double-click a cell, or Enter on selected) ── */
 .tws-drawer-backdrop {
   position: fixed; inset: 0; background: rgba(0, 0, 0, 0.35);
@@ -620,6 +672,18 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
       </aside>
       </div><!-- /.tws-body -->
 
+      <div class="tws-bpanel collapsed" id="twsBpanel">
+        <div class="tws-bpanel-handle" id="twsBpanelHandle">
+          <span class="caret">▾</span>
+          <div class="tws-bpanel-tabs" id="twsBpanelTabs">
+            <div class="tws-bpanel-tab active" data-tab="demand">{% if LANGUAGE_CODE == 'ar' %}طلب المقررات{% else %}Course demand{% endif %}</div>
+            <div class="tws-bpanel-tab" data-tab="resources">{% if LANGUAGE_CODE == 'ar' %}الموارد{% else %}Resources{% endif %}</div>
+          </div>
+          <span class="meta" id="twsBpanelMeta"></span>
+        </div>
+        <div class="tws-bpanel-body" id="twsBpanelBody"></div>
+      </div>
+
       <div class="tws-status">
         <span id="twsStatusLayout">Layout 2×2</span>
         <span id="twsStatusSync">Sync on</span>
@@ -631,6 +695,7 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
         <span class="hint">dbl-click · details</span>
         <span class="hint">DEL · remove</span>
         <span class="hint">I · inspector</span>
+        <span class="hint">D · demand</span>
       </div>
     </div>
   </main>
@@ -671,5 +736,5 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
   const DEFAULT_YEAR = {{ default_year|default:'null' }};
   const DEFAULT_TERM = {{ default_term|default:'null' }};
 </script>
-<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=9"></script>
+<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=10"></script>
 {% endblock %}

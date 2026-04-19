@@ -80,6 +80,12 @@ const RP = {
   capacity: {}, // boardId -> capacity response
 };
 
+// Bottom panel state
+const BP = {
+  open: false,
+  tab: 'demand',
+};
+
 /* ── API helpers ── */
 async function api(url, opts = {}) {
   const o = Object.assign({ credentials: 'same-origin', headers: {} }, opts);
@@ -586,10 +592,11 @@ async function refreshBoardsSummary() {
     updateAggregateMetrics();
     renderSlotBar();
   }
-  // Invalidate capacity cache and refresh the inspector if open — mutations
+  // Invalidate capacity cache and refresh the panels if open — mutations
   // may have changed conflict counts and capacity deltas.
   RP.capacity = {};
   if (RP.open) renderRpanel();
+  if (BP.open) renderBpanel();
 }
 
 /* ── Cross-pane sync-hover (direct DOM) ── */
@@ -895,6 +902,165 @@ function renderRpanelSelection(body) {
   `;
 }
 
+/* ── Bottom panel (Demand · Resources) ── */
+function toggleBpanel(force) {
+  BP.open = (typeof force === 'boolean') ? force : !BP.open;
+  const bp = $('twsBpanel');
+  if (!bp) return;
+  bp.classList.toggle('collapsed', !BP.open);
+  if (BP.open) renderBpanel();
+}
+function setBpanelTab(tab) {
+  BP.tab = tab;
+  document.querySelectorAll('.tws-bpanel-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.tab === tab);
+  });
+  // Opening a tab also opens the panel if closed
+  if (!BP.open) toggleBpanel(true);
+  else renderBpanel();
+}
+function renderBpanel() {
+  const body = $('twsBpanelBody');
+  const meta = $('twsBpanelMeta');
+  if (!body) return;
+  if (BP.tab === 'demand') renderBpanelDemand(body, meta);
+  else if (BP.tab === 'resources') renderBpanelResources(body, meta);
+}
+function renderBpanelDemand(body, meta) {
+  const boards = aggregateVisibleBoardsData();
+  if (!boards.length) {
+    body.innerHTML = `<div class="tws-empty-state"><span class="ic">ⓘ</span>${IS_AR ? 'لم يتم تحميل أي لوحة' : 'No boards loaded yet'}</div>`;
+    if (meta) meta.textContent = '';
+    return;
+  }
+  // Fetch per-board capacity (reuse RP cache so we don't refetch).
+  const fetches = boards
+    .filter(b => !RP.capacity[b.boardId])
+    .map(b => api(`/ops/tw/boards/${b.boardId}/capacity/`).then(d => { if (d) RP.capacity[b.boardId] = d; }));
+  Promise.all(fetches).then(() => _renderDemandNow(body, meta, boards));
+  if (!fetches.length) _renderDemandNow(body, meta, boards);
+}
+function _renderDemandNow(body, meta, boards) {
+  const byCourse = new Map();
+  let totDemand = 0, totCap = 0, totDeficit = 0;
+  boards.forEach(b => {
+    const cap = RP.capacity[b.boardId];
+    if (!cap) return;
+    const t = cap.totals || {};
+    totDemand += t.demand || 0;
+    totCap += t.raw_capacity || 0;
+    totDeficit += t.deficit || 0;
+    (cap.courses || []).forEach(c => {
+      const prev = byCourse.get(c.course_code) || {
+        course_code: c.course_code, demand: 0, raw_capacity: 0,
+        placed_sections: 0, deficit: 0,
+      };
+      prev.demand += c.demand || 0;
+      prev.raw_capacity += c.raw_capacity || 0;
+      prev.placed_sections += c.placed_sections || 0;
+      prev.deficit += c.deficit || 0;
+      byCourse.set(c.course_code, prev);
+    });
+  });
+  const courses = [...byCourse.values()].sort((a, b) => (b.deficit || 0) - (a.deficit || 0) || a.course_code.localeCompare(b.course_code));
+  if (!courses.length) {
+    body.innerHTML = `<div class="tws-empty-state"><span class="ic">ⓘ</span>${IS_AR ? 'لا توجد بيانات' : 'No demand data'}</div>`;
+    if (meta) meta.textContent = '';
+    return;
+  }
+  let html = `<table>
+    <thead><tr>
+      <th>${IS_AR ? 'المقرر' : 'Course'}</th>
+      <th>${IS_AR ? 'الطلب' : 'Demand'}</th>
+      <th>${IS_AR ? 'السعة' : 'Raw cap'}</th>
+      <th>${IS_AR ? 'الشعب' : 'Sections'}</th>
+      <th>${IS_AR ? 'العجز' : 'Deficit'}</th>
+    </tr></thead><tbody>`;
+  courses.forEach(c => {
+    html += `<tr>
+      <td class="code">${esc(c.course_code)}</td>
+      <td>${c.demand}</td>
+      <td>${c.raw_capacity}</td>
+      <td>${c.placed_sections}</td>
+      <td${c.deficit > 0 ? ' class="deficit"' : ''}>${c.deficit > 0 ? '-' + c.deficit : '0'}</td>
+    </tr>`;
+  });
+  html += `</tbody><tfoot><tr>
+    <td>${IS_AR ? 'الإجمالي' : 'Total'}</td>
+    <td>${totDemand}</td>
+    <td>${totCap}</td>
+    <td>${courses.length}</td>
+    <td${totDeficit > 0 ? ' class="deficit"' : ''}>${totDeficit > 0 ? '-' + totDeficit : '0'}</td>
+  </tr></tfoot></table>`;
+  body.innerHTML = html;
+  if (meta) meta.textContent = `${courses.length} ${IS_AR ? 'مقرر' : 'courses'} · ${boards.length} ${IS_AR ? 'لوحات' : 'boards'}`;
+}
+function renderBpanelResources(body, meta) {
+  const boards = aggregateVisibleBoardsData();
+  if (!boards.length) {
+    body.innerHTML = `<div class="tws-empty-state"><span class="ic">ⓘ</span>${IS_AR ? 'لم يتم تحميل أي لوحة' : 'No boards loaded yet'}</div>`;
+    if (meta) meta.textContent = '';
+    return;
+  }
+  const iClashes = [];
+  const rClashes = [];
+  boards.forEach(b => {
+    (b.conflicts.instructor_clashes || []).forEach(o => iClashes.push({ ...o, _boardLabel: b.boardLabel, _paneIdx: b.paneIdx }));
+    (b.conflicts.room_clashes || []).forEach(o => rClashes.push({ ...o, _boardLabel: b.boardLabel, _paneIdx: b.paneIdx }));
+  });
+  if (!iClashes.length && !rClashes.length) {
+    body.innerHTML = `<div class="tws-empty-state"><span class="ic">✓</span>${IS_AR ? 'لا توجد تعارضات موارد' : 'No resource conflicts'}</div>`;
+    if (meta) meta.textContent = '';
+    return;
+  }
+  let html = '';
+  if (iClashes.length) {
+    html += `<div class="section-head danger" style="margin-top:4px">${IS_AR ? 'تعارض مدرس' : 'Instructor clashes'}<span class="n">${iClashes.length}</span></div>`;
+    html += `<table><thead><tr>
+      <th>${IS_AR ? 'المدرس' : 'Instructor'}</th>
+      <th>${IS_AR ? 'الشعب' : 'Sections'}</th>
+      <th>${IS_AR ? 'اللوحة' : 'Board'}</th>
+      <th>${IS_AR ? 'التفاصيل' : 'Detail'}</th>
+    </tr></thead><tbody>`;
+    iClashes.forEach(c => {
+      html += `<tr data-ids='${JSON.stringify(c.ids || [])}'>
+        <td class="code">${esc(c.instructor || '—')}</td>
+        <td>${esc((c.sections || []).join(', '))}</td>
+        <td>${esc(c._boardLabel)} <span class="pane-badge">P${c._paneIdx + 1}</span></td>
+        <td>${esc(c.detail || '')}</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+  }
+  if (rClashes.length) {
+    html += `<div class="section-head warn" style="margin-top:10px">${IS_AR ? 'تعارض قاعة' : 'Room clashes'}<span class="n">${rClashes.length}</span></div>`;
+    html += `<table><thead><tr>
+      <th>${IS_AR ? 'القاعة' : 'Room'}</th>
+      <th>${IS_AR ? 'الشعب' : 'Sections'}</th>
+      <th>${IS_AR ? 'اللوحة' : 'Board'}</th>
+      <th>${IS_AR ? 'التفاصيل' : 'Detail'}</th>
+    </tr></thead><tbody>`;
+    rClashes.forEach(c => {
+      html += `<tr data-ids='${JSON.stringify(c.ids || [])}'>
+        <td class="code">${esc(c.room || '—')}</td>
+        <td>${esc((c.sections || []).join(', '))}</td>
+        <td>${esc(c._boardLabel)} <span class="pane-badge">P${c._paneIdx + 1}</span></td>
+        <td>${esc(c.detail || '')}</td>
+      </tr>`;
+    });
+    html += '</tbody></table>';
+  }
+  body.innerHTML = html;
+  if (meta) meta.textContent = `${iClashes.length + rClashes.length} ${IS_AR ? 'تعارض' : 'clashes'}`;
+  // Wire row clicks to highlight placements
+  body.querySelectorAll('tr[data-ids]').forEach(row => {
+    row.addEventListener('click', () => {
+      try { highlightPlacements(JSON.parse(row.dataset.ids)); } catch {}
+    });
+    row.style.cursor = 'pointer';
+  });
+}
+
 /* ── Section drawer ── */
 const DRAWER = {
   placementId: null,
@@ -1161,6 +1327,19 @@ function doExport() {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setRpanelTab(t.dataset.tab); }
     });
   });
+
+  // Bottom panel — handle toggles open/collapsed, tabs switch
+  $('twsBpanelHandle')?.addEventListener('click', (e) => {
+    // Clicking a tab shouldn't toggle the collapsed state, only switch tab
+    if (e.target.closest('.tws-bpanel-tab')) return;
+    toggleBpanel();
+  });
+  document.querySelectorAll('.tws-bpanel-tab').forEach(t => {
+    t.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setBpanelTab(t.dataset.tab);
+    });
+  });
   $('twsClose').addEventListener('click', () => {
     if (window.history.length > 1) window.history.back();
     else window.location.href = '/timetable-workspace/';
@@ -1221,6 +1400,9 @@ function doExport() {
     } else if (e.key === 'i' || e.key === 'I') {
       // Toggle right inspector panel
       toggleRpanel();
+    } else if (e.key === 'd' || e.key === 'D') {
+      // Toggle bottom demand panel
+      toggleBpanel();
     }
   });
   for (let i = 0; i < 4; i++) renderPaneEmpty(i);
