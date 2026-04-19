@@ -2212,27 +2212,44 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
                     cell.value = CellRichText(blocks)
                     cell.fill = _course_color_fill(courses[0])
 
+        _period_col_width = 24
         ws.column_dimensions["A"].width = 14
         for i, _p in enumerate(period_order, start=2):
-            ws.column_dimensions[get_column_letter(i)].width = 22
+            ws.column_dimensions[get_column_letter(i)].width = _period_col_width
 
-        def _newline_count(val: Any) -> int:
-            """Newline count for plain str OR CellRichText (whose blocks each
-            carry their own text). str(CellRichText) is not the plain text."""
+        def _visual_lines(val: Any, col_width_chars: int) -> int:
+            """How many wrapped lines a cell renders at in Excel.
+
+            Flattens rich text to a single string and counts each segment
+            (between \\n) plus its wrap overflow. Uses a size-10 chars-per-
+            line — the size-8 room line actually fits more, so this
+            slightly over-estimates wraps for rooms, which is the safe
+            direction (row ends up a touch taller, never clipped).
+            """
             if isinstance(val, CellRichText):
-                return sum(str(b.text if isinstance(b, TextBlock) else b).count("\n") for b in val)
-            return str(val).count("\n") if val else 0
+                text = "".join(str(b.text if isinstance(b, TextBlock) else b) for b in val)
+            elif isinstance(val, str):
+                text = val
+            else:
+                return 1
+            if not text:
+                return 1
+            cpl = max(8, int(col_width_chars * 11 / 10))
+            total = 0
+            for seg in text.split("\n"):
+                total += 1 + (max(0, len(seg) - 1) // cpl)
+            return total
 
         for r in range(2, ws.max_row + 1):
             max_lines = 1
             for c in range(2, ws.max_column + 1):
-                val = ws.cell(row=r, column=c).value
-                if val:
-                    lines = _newline_count(val) + 1
-                    if lines > max_lines:
-                        max_lines = lines
+                lines = _visual_lines(ws.cell(row=r, column=c).value, _period_col_width)
+                if lines > max_lines:
+                    max_lines = lines
+            # ~15 pt per wrapped line at size-10 is safe; add a small pad so
+            # descenders of the last line don't touch the border.
             if max_lines > 1:
-                ws.row_dimensions[r].height = max_lines * 16
+                ws.row_dimensions[r].height = max_lines * 15 + 3
 
     ws1 = wb.active
     ws1.title = "Schedule"
