@@ -302,8 +302,12 @@ html[data-theme="dark"] table th {
 }
 html[data-theme="dark"] table td {
   border-color: rgba(255,255,255,0.04);
-}
-html[data-theme="dark"] table thead th {
+}html[data-theme="dark"] table thead th,
+html[data-theme="dark"] .cmd-search-row,
+html[data-theme="dark"] .dba-panel-header,
+html[data-theme="dark"] .audit-table th,
+html[data-theme="dark"] .audit-table td,
+html[data-theme="dark"] .ap-drawer-section .table-wrap td {
   border-bottom-color: rgba(255,255,255,0.06);
 }
 
@@ -324,8 +328,10 @@ html[data-theme="dark"] .pill-teal {
 }
 html[data-theme="dark"] .pill-royal {
   background: rgba(64,86,227,0.15);
-}
-html[data-theme="dark"] .pill-muted {
+}html[data-theme="dark"] .pill-muted,
+html[data-theme="dark"] .sp-fill-wrap,
+html[data-theme="dark"] .sp-progress,
+html[data-theme="dark"] .pf-pw-bar-track {
   background: rgba(255,255,255,0.06);
 }
 
@@ -547,11 +553,6 @@ html[data-theme="dark"] .dlg-box {
 }
 html[data-theme="dark"] .dlg-overlay {
   background: rgba(0,0,0,0.6) !important;
-}
-
-/* ── Dark: mc hover bg ─── */
-html[data-theme="dark"] .mc:hover {
-  background: rgba(255,255,255,0.06) !important;
 }
 
 /* ── Dark: .fb-dd & other button-like elements bg ─── */
@@ -5041,20 +5042,27 @@ html[data-theme="dark"] .tw-cmd-bar select,
 html[data-theme="dark"] .tw-cmd-bar input[type="search"],
 html[data-theme="dark"] .tw-cmd-bar .tw-btn            { background: var(--bg); border-color: rgba(255,255,255,0.08); }
 html[data-theme="dark"] .tw-cmd-bar .tw-btn:hover      { background: rgba(10,142,110,0.12); }
-html[data-theme="dark"] .tw-cmd-bar .tw-btn-primary    { background: var(--teal); border-color: var(--teal); }
-html[data-theme="dark"] .tw-left,
-html[data-theme="dark"] .tw-right                      { background: var(--card); border-color: rgba(255,255,255,0.06); }
-html[data-theme="dark"] .tw-left-section               { border-color: rgba(255,255,255,0.06); }
+html[data-theme="dark"] .tw-cmd-bar .tw-btn-primary    { background: var(--teal); border-color: var(--teal); }html[data-theme="dark"] .tw-left,
+html[data-theme="dark"] .tw-right,
+html[data-theme="dark"] .tw-grid,
+html[data-theme="dark"] .tw-bottom,
+html[data-theme="dark"] #twDrawer {
+  background: var(--card); border-color: rgba(255,255,255,0.06);
+}html[data-theme="dark"] .tw-left-section,
+html[data-theme="dark"] .tw-grid-slot-label,
+html[data-theme="dark"] .tw-cell,
+html[data-theme="dark"] .tw-bottom-handle,
+html[data-theme="dark"] .tw-sel-field,
+html[data-theme="dark"] .dba-section,
+html[data-theme="dark"] .dba-nav-item,
+html[data-theme="dark"] .sp-adv-wrap {
+  border-color: rgba(255,255,255,0.06);
+}
 html[data-theme="dark"] .tw-search                     { background: var(--bg); border-color: rgba(255,255,255,0.08); }
 html[data-theme="dark"] .tw-section-item               { background: var(--bg); border-color: rgba(255,255,255,0.06); }
 html[data-theme="dark"] .tw-board-item:hover           { background: rgba(10,142,110,0.10); }
 html[data-theme="dark"] .tw-board-item.active          { background: rgba(10,142,110,0.15); }
-html[data-theme="dark"] .tw-board-strip                { background: linear-gradient(160deg, rgba(10,142,110,0.08) 0%, var(--card) 100%); border-color: rgba(10,142,110,0.12); }
-html[data-theme="dark"] .tw-grid                       { background: var(--card); border-color: rgba(255,255,255,0.06); }
-html[data-theme="dark"] .tw-grid-header                { background: rgba(255,255,255,0.03); border-color: rgba(255,255,255,0.06); }
-html[data-theme="dark"] .tw-grid-slot-label            { border-color: rgba(255,255,255,0.06); }
-html[data-theme="dark"] .tw-cell                       { border-color: rgba(255,255,255,0.06); }
-html[data-theme="dark"] .tw-cell.drop-valid            { background: rgba(10,142,110,0.10); }
+html[data-theme="dark"] .tw-board-strip                { background: linear-gradient(160deg, rgba(10,142,110,0.08) 0%, var(--card) 100%); border-color: rgba(10,142,110,0.12); }html[data-theme="dark"] .tw-grid-header                { background: rgba(255,255,255,0.03); border-color: rgba(255,255,255,0.06); }html[data-theme="dark"] .tw-cell.drop-valid            { background: rgba(10,142,110,0.10); }
 html[data-theme="dark"] .tw-cell.drop-warning          { background: rgba(217,119,6,0.10); }
 html[data-theme="dark"] .tw-cell.drop-critical         { background: rgba(192,48,48,0.10); }
 html[data-theme="dark"] .tw-card                       { border-color: rgba(255,255,255,0.10); }
@@ -5063,14 +5071,7 @@ html[data-theme="dark"] .tw-card.warning               { background: rgba(217,11
 html[data-theme="dark"] .tw-card.critical              { background: rgba(192,48,48,0.20) !important; }
 html[data-theme="dark"] .tw-panel-tabs                 { background: rgba(255,255,255,0.02); border-color: rgba(255,255,255,0.06); }
 html[data-theme="dark"] .tw-issue-row                  { background: rgba(255,255,255,0.03); }
-html[data-theme="dark"] .tw-issue-row:hover            { background: rgba(10,142,110,0.08); }
-html[data-theme="dark"] .tw-bottom                     { background: var(--card); border-color: rgba(255,255,255,0.06); }
-html[data-theme="dark"] .tw-bottom-handle              { border-color: rgba(255,255,255,0.06); }
-html[data-theme="dark"] .tw-bottom-handle:hover        { background: rgba(10,142,110,0.08); }
-html[data-theme="dark"] .tw-sel-field                  { border-color: rgba(255,255,255,0.06); }
-html[data-theme="dark"] .tw-quick-stat                 { color: var(--t3); }
-html[data-theme="dark"] #twDrawer                      { background: var(--card); border-color: rgba(255,255,255,0.06); }
-
+html[data-theme="dark"] .tw-issue-row:hover            { background: rgba(10,142,110,0.08); }html[data-theme="dark"] .tw-bottom-handle:hover        { background: rgba(10,142,110,0.08); }html[data-theme="dark"] .tw-quick-stat                 { color: var(--t3); }
 @keyframes tw-pulse {
   0%, 100% { outline-color: var(--royal); }
   50%      { outline-color: transparent; }
@@ -6250,8 +6251,13 @@ html[data-theme="dark"] .scrape-term-body {
   box-shadow: inset 3px 3px 8px rgba(0,0,0,0.3), inset -3px -3px 8px rgba(255,255,255,0.02);
 }
 html[data-theme="dark"] .scrape-term-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); }
-html[data-theme="dark"] .scrape-term-body::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }
-html[data-theme="dark"] .scrape-term-body div { border-bottom-color: rgba(255,255,255,0.04); }
+html[data-theme="dark"] .scrape-term-body::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }html[data-theme="dark"] .scrape-term-body div,
+html[data-theme="dark"] .student-ctx-row,
+html[data-theme="dark"] .ov-activity-item,
+html[data-theme="dark"] .sp-adv-table td,
+html[data-theme="dark"] #umTable tbody td {
+  border-bottom-color: rgba(255,255,255,0.04);
+}
 
 /* ── Terminal token colours ───────────────────────────── */
 html[data-theme="dark"] .t-ts  { color: var(--t4); }
@@ -6271,9 +6277,7 @@ html[data-theme="dark"] .cmd-modal {
   background: var(--card);
   border-color: rgba(255,255,255,0.08);
   box-shadow: 0 24px 64px rgba(0,0,0,0.5);
-}
-html[data-theme="dark"] .cmd-search-row { border-bottom-color: rgba(255,255,255,0.06); }
-html[data-theme="dark"] .cmd-esc {
+}html[data-theme="dark"] .cmd-esc {
   background: rgba(255,255,255,0.04);
   border-color: rgba(255,255,255,0.1);
 }
@@ -6362,11 +6366,7 @@ html[data-theme="dark"] .sh-page-num { color: var(--t1) !important; }
 /* ── Trace btn copy hardcoded color ─── */
 html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
 
-/* Dashboard-card dark surface moved to V2 UNIFIED rule above */
-html[data-theme="dark"] .student-ctx-row { border-bottom-color: rgba(255,255,255,0.04); }
-html[data-theme="dark"] .ov-activity-item { border-bottom-color: rgba(255,255,255,0.04); }
-
-/* ============================================================
+/* Dashboard-card dark surface moved to V2 UNIFIED rule above *//* ============================================================
    DB ADMIN — feature-specific styles
    ------------------------------------------------------------
    Moved out of core/templates/core/db_admin.html.
@@ -6761,25 +6761,13 @@ html[data-theme="dark"] .ov-activity-item { border-bottom-color: rgba(255,255,25
     }
 
     /* Panel header border */
-    html[data-theme="dark"] .dba-panel-header {
-      border-bottom-color: rgba(255,255,255,0.06);
-    }
-
     /* Sections */
-    html[data-theme="dark"] .dba-section {
-      border-color: rgba(255,255,255,0.06);
-    }
-
     /* Nav bar border */
     html[data-theme="dark"] .dba-nav {
       border-bottom-color: rgba(255,255,255,0.08);
     }
 
     /* Nav item borders */
-    html[data-theme="dark"] .dba-nav-item {
-      border-color: rgba(255,255,255,0.06);
-    }
-
     /* Flat inputs inside oracle preview table */
     #oTableBody .form-control,
     #oTableBody .form-select,
@@ -7022,37 +7010,21 @@ html[data-theme="dark"] .ov-activity-item { border-bottom-color: rgba(255,255,25
     html[data-theme="dark"] .audit-table th {
       background: rgba(255,255,255,0.04);
       color: #a0a4b8;
-    }
-    html[data-theme="dark"] .audit-table th,
-    html[data-theme="dark"] .audit-table td {
-      border-bottom-color: rgba(255,255,255,0.06);
-    }
-    html[data-theme="dark"] .audit-table tbody tr:hover td { background: rgba(10,142,110,0.10); }
+    }    html[data-theme="dark"] .audit-table tbody tr:hover td { background: rgba(10,142,110,0.10); }
     html[data-theme="dark"] .audit-table tbody tr:focus-within td { background: rgba(10,142,110,0.06); }
 
     html[data-theme="dark"] .audit-status-success { color: #2ec9a0; }
     html[data-theme="dark"] .audit-status-error   { color: #f06060; }
     html[data-theme="dark"] .audit-status-allow   { color: #2ec9a0; }
     html[data-theme="dark"] .audit-status-deny    { color: #f5a060; }
-    html[data-theme="dark"] .audit-status-critical { color: #f06060; }
-
-    html[data-theme="dark"] .audit-filter-row {
-      background: rgba(255,255,255,0.04);
+    html[data-theme="dark"] .audit-status-critical { color: #f06060; }html[data-theme="dark"] .audit-filter-row,
+html[data-theme="dark"] .audit-table-wrap,
+html[data-theme="dark"] .audit-pagination,
+html[data-theme="dark"] .btn-export {
+  background: rgba(255,255,255,0.04);
       box-shadow: none;
       border: 1px solid rgba(255,255,255,0.06);
-    }
-    html[data-theme="dark"] .audit-table-wrap {
-      background: rgba(255,255,255,0.04);
-      box-shadow: none;
-      border: 1px solid rgba(255,255,255,0.06);
-    }
-    html[data-theme="dark"] .audit-pagination {
-      background: rgba(255,255,255,0.04);
-      box-shadow: none;
-      border: 1px solid rgba(255,255,255,0.06);
-    }
-
-    html[data-theme="dark"] .audit-page-btn {
+}    html[data-theme="dark"] .audit-page-btn {
       background: rgba(255,255,255,0.04);
       color: #a0a4b8;
       box-shadow: none;
@@ -7064,14 +7036,7 @@ html[data-theme="dark"] .ov-activity-item { border-bottom-color: rgba(255,255,25
       box-shadow: inset 2px 2px 5px rgba(0,0,0,0.3), inset -2px -2px 5px rgba(255,255,255,0.03);
     }
     html[data-theme="dark"] .audit-view-btn { color: #a0a4b8; }
-    html[data-theme="dark"] .audit-view-btn.active { background: #0CA87E; color: #fff; }
-
-    html[data-theme="dark"] .btn-export {
-      background: rgba(255,255,255,0.04);
-      box-shadow: none;
-      border: 1px solid rgba(255,255,255,0.06);
-    }
-    html[data-theme="dark"] .btn-export:hover { box-shadow: none; background: rgba(255,255,255,0.08); }
+    html[data-theme="dark"] .audit-view-btn.active { background: #0CA87E; color: #fff; }    html[data-theme="dark"] .btn-export:hover { box-shadow: none; background: rgba(255,255,255,0.08); }
 
     /* Timeline view dark overrides */
     html[data-theme="dark"] .atl-day { color: #e2e4ec; }
@@ -7211,15 +7176,7 @@ html[data-theme="dark"] .ov-activity-item { border-bottom-color: rgba(255,255,25
     html[data-theme="dark"] .sp-fill-lo {
       background: rgba(220,53,69,0.15);
     }
-    html[data-theme="dark"] .sp-fill-wrap {
-      background: rgba(255,255,255,0.06);
-    }
-
     /* Progress bar track */
-    html[data-theme="dark"] .sp-progress {
-      background: rgba(255,255,255,0.06);
-    }
-
     /* Alerts */
     html[data-theme="dark"] .sp-alert-ok {
       background: rgba(12,168,126,0.10);
@@ -7235,21 +7192,13 @@ html[data-theme="dark"] .ov-activity-item { border-bottom-color: rgba(255,255,25
     /* Advanced table */
     html[data-theme="dark"] .sp-adv-table th {
       border-bottom-color: rgba(255,255,255,0.08);
-    }
-    html[data-theme="dark"] .sp-adv-table td {
-      border-bottom-color: rgba(255,255,255,0.04);
-    }
-    html[data-theme="dark"] .sp-adv-table tr:hover {
+    }    html[data-theme="dark"] .sp-adv-table tr:hover {
       background: rgba(12,168,126,0.06);
     }
     html[data-theme="dark"] .sp-adv-table .adv-input:not(:placeholder-shown) {
       border-color: rgba(12,168,126,0.4);
       background: rgba(12,168,126,0.08);
     }
-    html[data-theme="dark"] .sp-adv-wrap {
-      border-color: rgba(255,255,255,0.06);
-    }
-
     /* Multi-program headings */
     html[data-theme="dark"] .sp-prog-heading {
       color: #e2e4ec;
@@ -7609,10 +7558,6 @@ html[data-theme="dark"] .ap-drawer-section .table-wrap th {
   background: rgba(255,255,255,0.04);
   border-bottom-color: rgba(255,255,255,0.06);
 }
-html[data-theme="dark"] .ap-drawer-section .table-wrap td {
-  border-bottom-color: rgba(255,255,255,0.06);
-}
-
 /* Drawer action buttons — neumorphic flip */
 html[data-theme="dark"] .ap-drawer-actions .btn-outline-primary,
 html[data-theme="dark"] .ap-drawer-actions a.btn-outline-primary {
@@ -8426,10 +8371,6 @@ html[data-theme="dark"] .pf-submit-primary:disabled {
 }
 
 /* Password strength bar track */
-html[data-theme="dark"] .pf-pw-bar-track {
-  background: rgba(255,255,255,0.06);
-}
-
 /* Saved flash animation — dark neumorphic variant */
 html[data-theme="dark"] .pf-card.pf-saved {
   animation: pf-flash-dark 0.6s ease;
@@ -8863,11 +8804,7 @@ html[data-theme="dark"] #umTable thead th {
   background: rgba(255,255,255,0.04);
   color: #a0a4b8;
   border-bottom-color: rgba(255,255,255,0.06);
-}
-html[data-theme="dark"] #umTable tbody td {
-  border-bottom-color: rgba(255,255,255,0.04);
-}
-html[data-theme="dark"] #umTable tbody tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
+}html[data-theme="dark"] #umTable tbody tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
 html[data-theme="dark"] #umTable tbody tr:hover td { background: rgba(255,255,255,0.04) !important; }
 html[data-theme="dark"] #umTable tbody tr.um-selected td { background: rgba(10,142,110,0.08) !important; }
 
