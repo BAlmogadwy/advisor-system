@@ -86,6 +86,13 @@ const BP = {
   tab: 'demand',
 };
 
+// Left sidebar state
+const SB = {
+  open: false,
+  budget: [],
+  search: '',
+};
+
 /* ── API helpers ── */
 async function api(url, opts = {}) {
   const o = Object.assign({ credentials: 'same-origin', headers: {} }, opts);
@@ -234,6 +241,7 @@ async function onScenarioChange() {
   renderSlotBar();
   for (let i = 0; i < 4; i++) await loadAndRenderPane(i);
   if (RP.open) renderRpanel();
+  if (SB.open) loadSidebarBudget();
 }
 
 function updateAggregateMetrics() {
@@ -529,6 +537,46 @@ async function onCellDrop(paneIdx, cell, e) {
   cell.classList.remove('drop-valid', 'drop-warning', 'drop-critical');
   let payload;
   try { payload = JSON.parse(e.dataTransfer.getData('text/plain')); } catch { return; }
+
+  const day = cell.dataset.day;
+  const start = cell.dataset.start;
+  const end = cell.dataset.end;
+
+  // Drag from sidebar: create a planned placement on the target pane's board.
+  if (payload.type === 'create_planned') {
+    const boardId = S.panes[paneIdx].boardId;
+    if (!boardId) { notify.error(IS_AR ? 'اختر لوحة أولاً' : 'Select a board in this pane first'); return; }
+    const data = await api('/ops/tw/placements/create-planned/', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        board_id: boardId,
+        course_code: payload.course_code,
+        section_label: payload.section_label,
+        day, start_time: start, end_time: end,
+        capacity: payload.max_per_section || 40,
+      }),
+    });
+    if (!data) return;
+    const v = data.validation || {};
+    if ((v.critical_count || 0) > 0) {
+      notify.warning(IS_AR ? `تم الوضع مع ${v.critical_count} تعارض` : `Placed with ${v.critical_count} conflict(s)`);
+    } else {
+      notify.success(IS_AR ? 'تم الوضع' : 'Placed');
+    }
+    // Track as a 'create' action — undo will delete, redo will re-create.
+    S.undoStack.push({
+      type: 'create', placement_id: data.placement.id, board_id: boardId,
+      term_section_id: data.placement.term_section_id,
+      day, start_time: start, end_time: end, room: '',
+    });
+    S.redoStack = [];
+    updateUndoRedoButtons();
+    // Reload the target pane and refresh sidebar + aggregates
+    await loadAndRenderPane(paneIdx);
+    await refreshBoardsSummary();
+    await loadSidebarBudget();
+    return;
+  }
   if (payload.type !== 'move' || !payload.placement_id) return;
 
   // Capture old position BEFORE the mutation so undo can revert cleanly,
@@ -541,9 +589,7 @@ async function onCellDrop(paneIdx, cell, e) {
   const oldStart = located.placement.start_time;
   const oldEnd = located.placement.end_time;
 
-  const day = cell.dataset.day;
-  const start = cell.dataset.start;
-  const end = cell.dataset.end;
+  // day, start, end already captured at the top of onCellDrop
   // Skip no-op drops
   if (day === oldDay && start === oldStart) return;
 
@@ -901,6 +947,77 @@ function renderRpanelSelection(body) {
       <button class="tws-btn" style="flex:1" onclick="openDrawer(${located.paneIdx}, ${p.id})">${IS_AR ? 'عرض التفاصيل' : 'Open drawer'}</button>
     </div>
   `;
+}
+
+/* ── Left sidebar (required sections, drag-create) ───────────────── */
+function toggleSidebar(force) {
+  SB.open = (typeof force === 'boolean') ? force : !SB.open;
+  const body = $('twsBody');
+  body.classList.toggle('sb-open', SB.open);
+  const btn = $('twsSidebarToggle');
+  if (btn) btn.classList.toggle('primary', SB.open);
+  if (SB.open) loadSidebarBudget();
+}
+async function loadSidebarBudget() {
+  if (!S.scenarioId) { renderSidebar(); return; }
+  const data = await api(`/ops/tw/scenarios/${S.scenarioId}/budget/`);
+  SB.budget = (data && data.budget) || [];
+  renderSidebar();
+}
+function renderSidebar() {
+  const body = $('twsSidebarBody');
+  if (!body) return;
+  if (!S.scenarioId) {
+    body.innerHTML = `<div class="tws-empty-state"><span class="ic">ⓘ</span>${IS_AR ? 'اختر سيناريو أولاً' : 'Select a scenario first'}</div>`;
+    return;
+  }
+  const q = (SB.search || '').trim().toUpperCase();
+  const filtered = SB.budget
+    .filter(b => !q || (b.course_code || '').toUpperCase().includes(q) || (b.department || '').toUpperCase().includes(q))
+    .sort((a, b) => (b.remaining_sections || 0) - (a.remaining_sections || 0) || a.course_code.localeCompare(b.course_code));
+  if (!filtered.length) {
+    body.innerHTML = `<div class="tws-empty-state"><span class="ic">—</span>${IS_AR ? 'لا توجد نتائج' : 'No matches'}</div>`;
+    return;
+  }
+  body.innerHTML = filtered.map(b => {
+    const used = b.used_sections || 0;
+    const planned = b.planned_sections || 0;
+    const remaining = b.remaining_sections != null ? b.remaining_sections : Math.max(0, planned - used);
+    const exhausted = remaining <= 0;
+    const payload = JSON.stringify({
+      type: 'create_planned',
+      course_code: b.course_code,
+      section_label: `S${used + 1}`,
+      department: b.department || '',
+      credit_hours: b.credit_hours || 0,
+      max_per_section: b.max_per_section || 40,
+      total_students: b.total_demand || 0,
+    });
+    return `<div class="tws-sec-item${exhausted ? ' exhausted' : ''}" draggable="${exhausted ? 'false' : 'true'}" data-payload='${esc(payload)}' title="${esc(b.department || b.course_code)} · ${b.credit_hours || 0}h">
+      <div class="code">
+        <span>${esc(b.course_code)}</span>
+        <span class="count${exhausted ? ' exhausted' : ''}"><span class="used">${used}</span>/${planned}</span>
+      </div>
+      <div class="meta">
+        <span>${esc(b.department || '')} · T${b.programme_term || '?'}</span>
+      </div>
+      <div class="meta">
+        ${b.total_demand ? `<span class="dem">${b.total_demand} ${IS_AR ? 'طالب' : 'stu'}</span>` : ''}
+        ${b.credit_hours ? `<span class="dem">${b.credit_hours}h</span>` : ''}
+        ${b.max_per_section ? `<span class="dem">${IS_AR ? 'حد' : 'cap'} ${b.max_per_section}</span>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+  // Wire drag sources
+  body.querySelectorAll('.tws-sec-item[draggable="true"]').forEach(el => {
+    el.addEventListener('dragstart', (e) => {
+      try {
+        const payload = el.getAttribute('data-payload');
+        e.dataTransfer.setData('text/plain', payload);
+        e.dataTransfer.effectAllowed = 'copy';
+      } catch {}
+    });
+  });
 }
 
 /* ── Shared modal primitive ──────────────────────────────────────── */
@@ -1433,14 +1550,20 @@ async function doUndo() {
     // Undo remove = re-create the placement at its original position.
     const data = await doCreate(action);
     if (!data) { S.undoStack.push(action); return; }
-    // Track new placement id so redo can re-delete it.
     const newId = data.placement && data.placement.id;
     S.redoStack.push({ ...action, restored_placement_id: newId });
     notify.success(IS_AR ? 'تم استرجاع الشعبة' : 'Placement restored');
+  } else if (action.type === 'create') {
+    // Undo create = delete the placement we just created.
+    const data = await doRemoveApi(action.placement_id);
+    if (!data) { S.undoStack.push(action); return; }
+    S.redoStack.push(action);
+    notify.success(IS_AR ? 'تم التراجع' : 'Undone');
   }
   updateUndoRedoButtons();
   for (let i = 0; i < 4; i++) await loadAndRenderPane(i);
   await refreshBoardsSummary();
+  await loadSidebarBudget();
 }
 
 async function doRedo() {
@@ -1458,10 +1581,18 @@ async function doRedo() {
     if (!data) { S.redoStack.push(action); return; }
     S.undoStack.push({ ...action, placement_id: targetId });
     notify.success(IS_AR ? 'تمت الإزالة مرة أخرى' : 'Removed again');
+  } else if (action.type === 'create') {
+    // Redo create = re-create at the original position.
+    const data = await doCreate(action);
+    if (!data) { S.redoStack.push(action); return; }
+    const newId = data.placement && data.placement.id;
+    S.undoStack.push({ ...action, placement_id: newId });
+    notify.success(IS_AR ? 'تم الإعادة' : 'Redone');
   }
   updateUndoRedoButtons();
   for (let i = 0; i < 4; i++) await loadAndRenderPane(i);
   await refreshBoardsSummary();
+  await loadSidebarBudget();
 }
 
 /* ── Top-bar actions ── */
@@ -1522,6 +1653,13 @@ function doExport() {
   $('twsGenerate')?.addEventListener('click', openGenerateModal);
   $('twsNewScenario')?.addEventListener('click', openNewScenarioModal);
   $('twsNewBoard')?.addEventListener('click', openNewBoardModal);
+
+  // Sidebar toggle + search
+  $('twsSidebarToggle')?.addEventListener('click', () => toggleSidebar());
+  $('twsSectionSearch')?.addEventListener('input', (e) => {
+    SB.search = e.target.value;
+    renderSidebar();
+  });
 
   // Generic modal close
   $('twsModalClose')?.addEventListener('click', closeModal);
@@ -1612,6 +1750,9 @@ function doExport() {
     } else if (e.key === 'd' || e.key === 'D') {
       // Toggle bottom demand panel
       toggleBpanel();
+    } else if (e.key === 's' || e.key === 'S') {
+      // Toggle left sections sidebar
+      toggleSidebar();
     }
   });
   for (let i = 0; i < 4; i++) renderPaneEmpty(i);
