@@ -1,10 +1,11 @@
 /* ══════════════════════════════════════════════════════════════════
-   Timetable Workspace — Split-Pane Host
+   Timetable Workspace — Split-Pane Host (direct render)
    ────────────────────────────────────────────────────────────────
-   Shell page that embeds four iframes of the main workspace in
-   ?embed=1 mode. Delegates editing, drag, optimise, publish, export
-   to the main page; coordinates scenario picking, per-pane board/
-   group selection, layout and cross-pane sync at this level.
+   Renders four independent compact workspace panes into one screen.
+   Each pane shows a lecture grid + lab grid for the currently
+   selected term + group, sized to fit without scroll. Talks to the
+   same /ops/tw/ API surface the main page uses for placement
+   mutation, board fetch, scenario publish/export/optimise.
    ══════════════════════════════════════════════════════════════════ */
 
 const IS_AR = LANGUAGE_CODE === 'ar';
@@ -17,8 +18,36 @@ const T = {
   publishConfirm: IS_AR ? 'نشر هذا السيناريو؟' : 'Publish this scenario?',
   optimiseConfirm: IS_AR ? 'تشغيل التحسين (بدون إعادة توليد)؟' : 'Run Optimise Current (no regenerate)?',
   noScenario: IS_AR ? 'لا يوجد سيناريو' : 'No scenario selected',
-  reloaded: IS_AR ? 'تم التحديث' : 'Reloaded',
+  group: IS_AR ? 'مج' : 'G',
+  courses: IS_AR ? 'مقررات' : 'courses',
+  placed: IS_AR ? 'موضوعة' : 'Placed',
+  clashShort: IS_AR ? 'تعارضات' : 'clash',
+  noClash: IS_AR ? 'نظيفة' : 'Clean',
+  labs: IS_AR ? 'المعامل' : 'Labs',
+  noLab: IS_AR ? 'لا معامل لهذه المجموعة' : 'No labs for this group',
+  moveFail: IS_AR ? 'تعذّر النقل' : 'Move failed',
+  moveOk: IS_AR ? 'تم النقل' : 'Moved',
 };
+
+const DAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU'];
+const DAY_LABELS = IS_AR
+  ? ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس']
+  : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu'];
+
+const DEFAULT_LECTURE_SLOTS = [
+  { label: '1', start: '09:00', end: '10:15' },
+  { label: '2', start: '10:30', end: '11:45' },
+  { label: '3', start: '13:00', end: '14:15' },
+  { label: '4', start: '14:30', end: '15:45' },
+  { label: '5', start: '16:00', end: '17:15' },
+];
+const DEFAULT_LAB_SLOTS = [
+  { label: 'L1', start: '09:00', end: '10:40' },
+  { label: 'L2', start: '10:45', end: '12:25' },
+  { label: 'L3', start: '13:00', end: '14:40' },
+  { label: 'L4', start: '14:45', end: '16:25' },
+  { label: 'L5', start: '16:30', end: '18:10' },
+];
 
 /* ── State ── */
 const S = {
@@ -27,17 +56,20 @@ const S = {
   scenarioMeta: null,
   boards: [],
   panes: [
-    { boardId: null, group: 0 },
-    { boardId: null, group: 0 },
-    { boardId: null, group: 0 },
-    { boardId: null, group: 0 },
+    { boardId: null, group: 0, boardData: null, undoStack: [], redoStack: [] },
+    { boardId: null, group: 0, boardData: null, undoStack: [], redoStack: [] },
+    { boardId: null, group: 0, boardData: null, undoStack: [], redoStack: [] },
+    { boardId: null, group: 0, boardData: null, undoStack: [], redoStack: [] },
   ],
+  selectedPaneIdx: null,
+  selectedPlacementId: null,
   layout: 'quad',
+  dragSource: null,
 };
 
 const POS_LABELS = ['Pane A', 'Pane B', 'Pane C', 'Pane D'];
 
-/* ── API ── */
+/* ── API helpers ── */
 async function api(url, opts = {}) {
   const o = Object.assign({ credentials: 'same-origin', headers: {} }, opts);
   if (opts.method && opts.method !== 'GET') {
@@ -49,21 +81,35 @@ async function api(url, opts = {}) {
       let msg = `${r.status}`;
       try { const d = await r.json(); msg = d.error?.message || d.error || d.message || msg; } catch {}
       console.error('api error', url, msg);
-      alert(msg);
       return null;
     }
     return await r.json();
   } catch (e) {
     console.error(e);
-    alert(e.message || String(e));
     return null;
   }
 }
 
+/* ── Utilities ── */
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function isLabPlacement(p) {
+  const toMin = t => { const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
+  return (toMin(p.end_time) - toMin(p.start_time)) > 80;
+}
+function groupPlacements(placements) {
+  const bySec = {};
+  placements.forEach(p => {
+    const sec = p.section || 'S1';
+    if (!bySec[sec]) bySec[sec] = [];
+    bySec[sec].push(p);
+  });
+  return Object.keys(bySec).sort().map(sec => ({ id: sec, placements: bySec[sec] }));
+}
+
 /* ── Scenario loading ── */
 async function loadScenarios() {
-  // Year/term are optional on the list endpoint; fetch everything when
-  // defaults are unset (the server already orders by -created_at).
   const qs = (DEFAULT_YEAR && DEFAULT_TERM)
     ? `?year=${DEFAULT_YEAR}&term=${DEFAULT_TERM}`
     : '';
@@ -77,7 +123,6 @@ async function loadScenarios() {
     opt.value = s.id; opt.textContent = `${s.name} (${s.status})`;
     sel.appendChild(opt);
   });
-  // Auto-pick: prefer ?scenario= param, else first available
   const want = INITIAL_SCENARIO && S.scenarios.find(s => String(s.id) === String(INITIAL_SCENARIO))
     ? INITIAL_SCENARIO
     : (S.scenarios.length > 0 ? String(S.scenarios[0].id) : '');
@@ -96,28 +141,24 @@ async function onScenarioChange() {
     $('twsOptimise').disabled = true;
     $('twsExport').disabled = true;
     renderSlotBar();
-    clearAllPanes();
+    for (let i = 0; i < 4; i++) renderPaneEmpty(i);
     return;
   }
   const data = await api(`/ops/tw/scenarios/${sid}/`);
   if (!data) return;
   S.scenarioId = data.scenario.id;
   S.scenarioMeta = data.scenario;
-  // Scenario detail returns scenario only; boards with summary come from a
-  // separate endpoint that includes placement counts, critical counts, etc.
   const bdata = await api(`/ops/tw/boards/?scenario_id=${sid}`);
   S.boards = (bdata && bdata.boards) || [];
 
-  // Seed panes with first 4 boards (or initial board if passed)
   for (let i = 0; i < 4; i++) {
     S.panes[i].boardId = S.boards[i] ? S.boards[i].id : null;
     S.panes[i].group = 0;
+    S.panes[i].boardData = null;
   }
   if (INITIAL_BOARD) {
     const idx = S.boards.findIndex(b => String(b.id) === String(INITIAL_BOARD));
-    if (idx >= 0) {
-      S.panes[0].boardId = S.boards[idx].id;
-    }
+    if (idx >= 0) S.panes[0].boardId = S.boards[idx].id;
   }
 
   $('twsSub').textContent =
@@ -129,7 +170,7 @@ async function onScenarioChange() {
 
   updateAggregateMetrics();
   renderSlotBar();
-  renderAllPanes();
+  for (let i = 0; i < 4; i++) await loadAndRenderPane(i);
 }
 
 function updateAggregateMetrics() {
@@ -147,11 +188,13 @@ function updateAggregateMetrics() {
 /* ── Slot bar (boards-on-canvas) ── */
 function renderSlotBar() {
   const wrap = $('twsSlots');
-  if (!S.boards.length) { wrap.innerHTML = `<span class="lbl" style="color:var(--t4)">${T.noScenario}</span>`; return; }
+  if (!S.boards.length) {
+    wrap.innerHTML = `<span class="lbl" style="color:var(--t4)">${T.noScenario}</span>`;
+    return;
+  }
   wrap.innerHTML = S.panes.map((p, i) => {
-    const board = S.boards.find(b => b.id === p.boardId);
     const opts = ['<option value="">—</option>']
-      .concat(S.boards.map(b => `<option value="${b.id}"${b.id === p.boardId ? ' selected' : ''}>${_esc(b.label)}</option>`))
+      .concat(S.boards.map(b => `<option value="${b.id}"${b.id === p.boardId ? ' selected' : ''}>${esc(b.label)}</option>`))
       .join('');
     const off = !p.boardId;
     return `
@@ -166,93 +209,275 @@ function renderSlotBar() {
   }).join('');
 }
 
-function setPaneBoard(idx, boardId) {
+async function setPaneBoard(idx, boardId) {
   S.panes[idx].boardId = boardId ? parseInt(boardId) : null;
-  renderPane(idx);
+  S.panes[idx].group = 0;
+  S.panes[idx].boardData = null;
   renderSlotBar();
+  await loadAndRenderPane(idx);
 }
-function togglePaneOff(idx) {
+async function togglePaneOff(idx) {
   if (S.panes[idx].boardId) {
     S.panes[idx].boardId = null;
   } else {
-    // re-pick a sensible default
     const used = new Set(S.panes.filter(p => p.boardId).map(p => p.boardId));
     const nextBoard = S.boards.find(b => !used.has(b.id)) || S.boards[0];
     if (nextBoard) S.panes[idx].boardId = nextBoard.id;
   }
-  renderPane(idx);
+  S.panes[idx].boardData = null;
   renderSlotBar();
+  await loadAndRenderPane(idx);
 }
 
-/* ── Pane iframe rendering ── */
+/* ── Pane loading + rendering ── */
 function paneEl(idx) { return document.querySelector(`.tws-pane[data-idx="${idx}"]`); }
 
-function renderPane(idx) {
+async function loadAndRenderPane(idx) {
+  const p = S.panes[idx];
   const el = paneEl(idx);
   if (!el) return;
-  const p = S.panes[idx];
-  const label = el.querySelector('[data-role="label"]');
-  if (!p.boardId || !S.scenarioId) {
-    // empty state
-    const existingFrame = el.querySelector('iframe');
-    if (existingFrame) existingFrame.remove();
-    if (!el.querySelector('.empty-pane')) {
-      const ph = document.createElement('div');
-      ph.className = 'empty-pane';
-      ph.textContent = T.selectBoard;
-      el.appendChild(ph);
-    }
-    label.textContent = '—';
-    return;
-  }
-  const board = S.boards.find(b => b.id === p.boardId);
-  label.textContent = board ? board.label : '—';
-  const url = `/timetable-workspace/?embed=1&scenario=${S.scenarioId}&board=${p.boardId}&_pane=${idx}`;
-  const existingEmpty = el.querySelector('.empty-pane');
-  if (existingEmpty) existingEmpty.remove();
-  let frame = el.querySelector('iframe');
-  if (!frame) {
-    frame = document.createElement('iframe');
-    frame.setAttribute('data-pane-idx', String(idx));
-    el.appendChild(frame);
-  }
-  if (frame.src !== url && !frame.src.endsWith(url)) {
-    frame.src = url;
-  }
+  if (!p.boardId || !S.scenarioId) { renderPaneEmpty(idx); return; }
+  // Board detail carries slot config + placements; the conflicts list is a
+  // separate endpoint so we fetch both in parallel.
+  const [bdata, cdata] = await Promise.all([
+    api(`/ops/tw/boards/${p.boardId}/`),
+    api(`/ops/tw/boards/${p.boardId}/conflicts/`),
+  ]);
+  if (!bdata) return;
+  p.boardData = bdata;
+  // conflicts endpoint spreads its fields at the response root.
+  p.boardData.conflicts = cdata
+    ? { overlaps: cdata.overlaps || [], instructor_clashes: cdata.instructor_clashes || [],
+        room_clashes: cdata.room_clashes || [], cross_board: cdata.cross_board_conflicts || [],
+        student_impact: cdata.student_impact || {} }
+    : {};
+  renderPane(idx);
 }
 
-function renderAllPanes() {
-  for (let i = 0; i < 4; i++) renderPane(i);
-}
-function clearAllPanes() {
-  for (let i = 0; i < 4; i++) {
-    const el = paneEl(i);
-    const frame = el.querySelector('iframe');
-    if (frame) frame.remove();
-    el.querySelector('[data-role="label"]').textContent = '—';
-    if (!el.querySelector('.empty-pane')) {
-      const ph = document.createElement('div');
-      ph.className = 'empty-pane';
-      ph.textContent = T.selectBoard;
-      el.appendChild(ph);
-    }
-  }
-}
-
-function reloadPane(idx) {
+function renderPaneEmpty(idx) {
   const el = paneEl(idx);
-  const frame = el && el.querySelector('iframe');
-  if (frame) frame.src = frame.src;
+  if (!el) return;
+  el.innerHTML = `
+    <div class="pane-hd">
+      <span class="dot"></span>
+      <span class="term-name">—</span>
+      <span class="ri">
+        <button data-action="reload" title="Reload">↻</button>
+        <button data-action="maximise" title="Maximise">⤢</button>
+      </span>
+    </div>
+    <div class="empty-pane">${T.selectBoard}</div>
+  `;
+  bindPaneControls(idx);
 }
-function maximisePane(idx) {
-  setLayout('single');
-  // reorder so clicked pane is first (primary)
-  // simplest: move its frame to primary by swapping panes[0] and panes[idx]
-  if (idx !== 0) {
-    const tmp = S.panes[0]; S.panes[0] = S.panes[idx]; S.panes[idx] = tmp;
-    renderAllPanes();
-    renderSlotBar();
+
+function renderPane(idx) {
+  const p = S.panes[idx];
+  const el = paneEl(idx);
+  if (!el || !p.boardData) return;
+  const data = p.boardData;
+  const board = S.boards.find(b => b.id === p.boardId) || { label: '—' };
+
+  const slots = (data.slot_config && data.slot_config.length) ? data.slot_config : DEFAULT_LECTURE_SLOTS;
+  const labSlots = (data.lab_slot_config && data.lab_slot_config.length) ? data.lab_slot_config : DEFAULT_LAB_SLOTS;
+  const placements = data.placements || [];
+
+  // Split into lecture vs lab by duration
+  const lectP = placements.filter(pl => !isLabPlacement(pl));
+  const labP = placements.filter(pl => isLabPlacement(pl));
+  const groups = groupPlacements(placements);
+  if (p.group >= groups.length) p.group = 0;
+  const activeGroup = groups[p.group];
+
+  const groupLect = activeGroup ? lectP.filter(pl => (pl.section || 'S1') === activeGroup.id) : [];
+  const groupLab = activeGroup ? labP.filter(pl => (pl.section || 'S1') === activeGroup.id) : [];
+
+  const conflicts = data.conflicts || {};
+  const overlaps = conflicts.overlaps || [];
+  const instrClashes = conflicts.instructor_clashes || [];
+  const roomClashes = conflicts.room_clashes || [];
+  const clashIds = new Set();
+  overlaps.forEach(o => (o.ids || []).forEach(id => clashIds.add(id)));
+  instrClashes.forEach(c => (c.ids || []).forEach(id => clashIds.add(id)));
+  roomClashes.forEach(c => (c.ids || []).forEach(id => clashIds.add(id)));
+
+  // Group-level clash detection: does any placement in each group collide?
+  const groupHasClash = groups.map(g =>
+    g.placements.some(pl => clashIds.has(pl.id))
+  );
+
+  const gtabsHtml = groups.map((g, gi) => `
+    <span class="gtab${gi === p.group ? ' on' : ''}" data-group="${gi}">
+      G${gi + 1}<span class="cx">${g.placements.length}c</span>${groupHasClash[gi] ? '<span class="clash-dot"></span>' : ''}
+    </span>
+  `).join('');
+
+  const placedCount = activeGroup ? activeGroup.placements.length : 0;
+  const hasGroupClash = groupHasClash[p.group];
+
+  el.innerHTML = `
+    <div class="pane-hd">
+      <span class="dot"></span>
+      <span class="term-name">${esc(board.label)}</span>
+      <div class="gtabs">${gtabsHtml || '<span class="gtab on">—</span>'}</div>
+      <span class="kpi">${T.placed} <b>${placedCount}</b></span>
+      <span class="kpi">${hasGroupClash ? `<b class="warn">${T.clashShort}</b>` : `<b style="color:var(--teal)">${T.noClash}</b>`}</span>
+      <span class="ri">
+        <button data-action="reload" title="Reload">↻</button>
+        <button data-action="maximise" title="Maximise">⤢</button>
+      </span>
+    </div>
+    <div class="pane-body">
+      <div class="lect-block">
+        ${renderGridHTML(slots, groupLect, clashIds, 'lect')}
+      </div>
+      <div class="lab-block${groupLab.length ? '' : ' collapsed'}">
+        <div class="block-head" data-action="toggle-lab">
+          <span class="caret">▾</span>
+          <span class="lab-tag">▣ ${T.labs}</span>
+          <span class="spacer"></span>
+          <span class="note">${groupLab.length ? `${groupLab.length} ${T.placed.toLowerCase()}` : T.noLab}</span>
+        </div>
+        ${renderGridHTML(labSlots, groupLab, clashIds, 'lab')}
+      </div>
+    </div>
+    <div class="pane-status">
+      <span>${esc(board.label)}</span>
+      <span>${(board.primary_count || 0)}${(board.visitor_count || 0) ? '+' + board.visitor_count : ''} st</span>
+      <span>${groups.length} groups</span>
+      <span class="sp"></span>
+      <span>${(board.placement_count || placements.length)} placed</span>
+    </div>
+  `;
+  bindPaneControls(idx);
+}
+
+function renderGridHTML(slots, placements, clashIds, kind) {
+  const numSlots = slots.length;
+  const cols = `26px repeat(${numSlots}, 1fr)`;
+  let h = `<div class="block-grid" style="grid-template-columns:${cols};grid-template-rows:16px repeat(5,minmax(0,1fr))">`;
+  h += `<div class="cor">${kind === 'lab' ? 'LAB' : 'SLOT'}</div>`;
+  slots.forEach((s, i) => h += `<div class="dh" title="${esc(s.start)}–${esc(s.end)}">${esc(s.label || String(i + 1))}</div>`);
+  DAYS.forEach((day, di) => {
+    h += `<div class="slbl">${esc(DAY_LABELS[di])}</div>`;
+    slots.forEach((slot) => {
+      const placement = placements.find(pl => pl.day === day && pl.start_time === slot.start);
+      const hasClash = placement && clashIds.has(placement.id);
+      const cellAttrs = `data-day="${day}" data-start="${slot.start}" data-end="${slot.end}"`;
+      if (placement) {
+        const room = placement.room ? esc(placement.room) : '';
+        const stu = placement.available_capacity || '';
+        h += `<div class="cell filled${hasClash ? ' clash' : ''}" ${cellAttrs} data-placement-id="${placement.id}" draggable="true">`;
+        h += `<span class="cid">${esc(placement.course_code)} ${esc(placement.section || '')}</span>`;
+        h += `<span class="cmeta">${room}${stu ? '·' + stu : ''}</span>`;
+        h += `</div>`;
+      } else {
+        h += `<div class="cell" ${cellAttrs}></div>`;
+      }
+    });
+  });
+  h += '</div>';
+  return h;
+}
+
+function bindPaneControls(idx) {
+  const el = paneEl(idx);
+  if (!el) return;
+  // Group tabs
+  el.querySelectorAll('.gtab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const gi = parseInt(tab.dataset.group);
+      if (!Number.isFinite(gi)) return;
+      S.panes[idx].group = gi;
+      renderPane(idx);
+    });
+  });
+  // Header actions
+  el.querySelectorAll('.pane-hd .ri button').forEach(btn => {
+    const action = btn.dataset.action;
+    btn.addEventListener('click', () => {
+      if (action === 'reload') loadAndRenderPane(idx);
+      else if (action === 'maximise') maximisePane(idx);
+    });
+  });
+  // Lab toggle
+  const labHead = el.querySelector('[data-action="toggle-lab"]');
+  if (labHead) labHead.addEventListener('click', () => {
+    const block = labHead.closest('.lab-block');
+    if (block) block.classList.toggle('collapsed');
+  });
+  // Cell interactions — click to select, drag/drop, sync-hover
+  el.querySelectorAll('.cell').forEach(cell => {
+    cell.addEventListener('mouseenter', () => broadcastHover(idx, cell.dataset.day, cell.dataset.start));
+    cell.addEventListener('mouseleave', () => broadcastHover(idx, null, null));
+    cell.addEventListener('dragover', (e) => { e.preventDefault(); cell.classList.add('drop-valid'); });
+    cell.addEventListener('dragleave', () => cell.classList.remove('drop-valid'));
+    cell.addEventListener('drop', (e) => onCellDrop(idx, cell, e));
+    if (cell.classList.contains('filled')) {
+      cell.addEventListener('dragstart', (e) => {
+        const pid = cell.dataset.placementId;
+        S.dragSource = { paneIdx: idx, placementId: pid ? parseInt(pid) : null };
+        e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'move', placement_id: S.dragSource.placementId, source_pane: idx }));
+        e.dataTransfer.effectAllowed = 'move';
+      });
+      cell.addEventListener('click', () => {
+        document.querySelectorAll('.tws-pane .cell.selected').forEach(c => c.classList.remove('selected'));
+        cell.classList.add('selected');
+        S.selectedPaneIdx = idx;
+        S.selectedPlacementId = parseInt(cell.dataset.placementId);
+        $('twsStatusHover').textContent = `Selected ${cell.querySelector('.cid')?.textContent}`;
+      });
+    }
+  });
+}
+
+/* ── Drag & drop handler ── */
+async function onCellDrop(paneIdx, cell, e) {
+  e.preventDefault();
+  cell.classList.remove('drop-valid');
+  let payload;
+  try { payload = JSON.parse(e.dataTransfer.getData('text/plain')); } catch { return; }
+  if (payload.type !== 'move' || !payload.placement_id) return;
+
+  const day = cell.dataset.day;
+  const start = cell.dataset.start;
+  const end = cell.dataset.end;
+  const data = await api(`/ops/tw/placements/${payload.placement_id}/move/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ day, start_time: start, end_time: end }),
+  });
+  if (!data) return;
+
+  // Track undo on source pane (where the card was dragged FROM)
+  const sourceIdx = Number.isFinite(payload.source_pane) ? payload.source_pane : paneIdx;
+  S.panes[sourceIdx].undoStack.push({
+    type: 'move', placement_id: payload.placement_id,
+    // old day/time unknown here; re-fetch after move
+  });
+  S.panes[sourceIdx].redoStack = [];
+
+  // Reload both source and target panes
+  const toReload = new Set([paneIdx, sourceIdx]);
+  for (const i of toReload) await loadAndRenderPane(i);
+  // Refresh aggregates
+  const bdata = await api(`/ops/tw/boards/?scenario_id=${S.scenarioId}`);
+  if (bdata && bdata.boards) { S.boards = bdata.boards; updateAggregateMetrics(); renderSlotBar(); }
+}
+
+/* ── Cross-pane sync-hover (direct DOM) ── */
+function broadcastHover(sourcePaneIdx, day, start) {
+  for (let i = 0; i < 4; i++) {
+    if (i === sourcePaneIdx) continue;
+    const el = paneEl(i);
+    if (!el) continue;
+    el.querySelectorAll('.cell.sync-hover').forEach(c => c.classList.remove('sync-hover'));
+    if (day && start) {
+      const sel = `.cell[data-day="${day}"][data-start="${start}"]`;
+      el.querySelectorAll(sel).forEach(c => c.classList.add('sync-hover'));
+    }
   }
+  $('twsStatusHover').textContent = (day && start) ? `Hovered ${day}/${start}` : 'Hovered —';
 }
 
 /* ── Layout ── */
@@ -263,7 +488,16 @@ function setLayout(mode) {
   document.querySelectorAll('#twsLayoutSwitch button').forEach(b => {
     b.classList.toggle('on', b.dataset.layout === mode);
   });
-  $('twsStatusLayout').textContent = ({ single: 'Layout 1', vert: 'Layout 2×1', horz: 'Layout 1×2', quad: 'Layout 2×2' })[mode];
+  $('twsStatusLayout').textContent =
+    ({ single: 'Layout 1', vert: 'Layout 2×1', horz: 'Layout 1×2', quad: 'Layout 2×2' })[mode];
+}
+function maximisePane(idx) {
+  setLayout('single');
+  if (idx !== 0) {
+    const tmp = S.panes[0]; S.panes[0] = S.panes[idx]; S.panes[idx] = tmp;
+    renderSlotBar();
+    for (let i = 0; i < 4; i++) renderPane(i);
+  }
 }
 
 /* ── Presets ── */
@@ -275,8 +509,9 @@ function applyPreset(name) {
     const sorted = [...S.boards].sort((a, b) => (b.critical || 0) - (a.critical || 0));
     for (let i = 0; i < 4; i++) S.panes[i].boardId = sorted[i] ? sorted[i].id : null;
   }
+  for (const p of S.panes) { p.group = 0; p.boardData = null; }
   renderSlotBar();
-  renderAllPanes();
+  for (let i = 0; i < 4; i++) loadAndRenderPane(i);
 }
 
 /* ── Top-bar actions ── */
@@ -295,11 +530,8 @@ async function doOptimise() {
   btn.disabled = false;
   btn.textContent = origText;
   if (!data) return;
-  // Refresh scenario meta (boards list, metrics) and reload every pane's iframe.
   await onScenarioChange();
-  for (let i = 0; i < 4; i++) reloadPane(i);
 }
-
 async function doPublish() {
   if (!S.scenarioId) return;
   if (!confirm(T.publishConfirm)) return;
@@ -310,60 +542,10 @@ async function doPublish() {
   });
   if (!data) return;
   await onScenarioChange();
-  for (let i = 0; i < 4; i++) reloadPane(i);
 }
-
 function doExport() {
   if (!S.scenarioId) return;
   window.open(`/ops/tw/scenarios/${S.scenarioId}/export.xlsx`, '_blank');
-}
-
-/* ── postMessage bridge ── */
-window.addEventListener('message', (e) => {
-  if (e.origin !== window.location.origin) return;
-  const msg = e.data;
-  if (!msg || typeof msg !== 'object' || !msg.__tw) return;
-  if (msg.type === 'tw:board-refreshed') {
-    // Refresh aggregate metrics from the boards endpoint. Debounce so a
-    // burst of mutations doesn't hammer the API.
-    _scheduleStatsRefresh();
-  } else if (msg.type === 'tw:cell-hover') {
-    _broadcastSyncHover(msg.payload, msg.pane);
-    $('twsStatusHover').textContent = msg.payload
-      ? `Hovered ${msg.payload.day}/${msg.payload.start}`
-      : 'Hovered —';
-  }
-});
-
-let _statsRefreshT = null;
-function _scheduleStatsRefresh() {
-  if (_statsRefreshT) clearTimeout(_statsRefreshT);
-  _statsRefreshT = setTimeout(async () => {
-    if (!S.scenarioId) return;
-    const bdata = await api(`/ops/tw/boards/?scenario_id=${S.scenarioId}`);
-    if (bdata && bdata.boards) {
-      S.boards = bdata.boards;
-      updateAggregateMetrics();
-    }
-  }, 400);
-}
-
-function _broadcastSyncHover(payload, sourcePane) {
-  document.querySelectorAll('.tws-pane iframe').forEach(f => {
-    const idx = parseInt(f.getAttribute('data-pane-idx') || '-1');
-    if (idx === sourcePane) return; // skip origin
-    try {
-      f.contentWindow.postMessage(
-        { __tw: true, type: 'tw:sync-hover', payload },
-        window.location.origin,
-      );
-    } catch (e) { /* ignore */ }
-  });
-}
-
-/* ── Utils ── */
-function _esc(s) {
-  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 /* ── Init ── */
@@ -373,44 +555,26 @@ function _esc(s) {
   $('twsPublish').addEventListener('click', doPublish);
   $('twsExport').addEventListener('click', doExport);
   $('twsClose').addEventListener('click', () => {
-    if (window.history.length > 1) {
-      window.history.back();
-    } else {
-      window.location.href = '/timetable-workspace/';
-    }
+    if (window.history.length > 1) window.history.back();
+    else window.location.href = '/timetable-workspace/';
   });
-
   document.querySelectorAll('#twsLayoutSwitch button').forEach(b => {
     b.addEventListener('click', () => setLayout(b.dataset.layout));
   });
-
   document.querySelectorAll('.tws-preset').forEach(b => {
     b.addEventListener('click', () => applyPreset(b.dataset.preset));
   });
-
-  document.querySelectorAll('.tws-pane .pane-hd button').forEach(btn => {
-    const action = btn.dataset.action;
-    btn.addEventListener('click', () => {
-      const pane = btn.closest('.tws-pane');
-      const idx = parseInt(pane.dataset.idx);
-      if (action === 'reload') reloadPane(idx);
-      else if (action === 'maximise') maximisePane(idx);
-    });
-  });
-
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      $('twsClose').click();
-    } else if (e.key >= '1' && e.key <= '4') {
+    if (e.key === 'Escape') { $('twsClose').click(); return; }
+    if (e.key >= '1' && e.key <= '4') {
       const idx = parseInt(e.key) - 1;
-      const pane = paneEl(idx);
-      if (pane) pane.querySelector('iframe')?.focus();
+      paneEl(idx)?.scrollIntoView({ block: 'center' });
     } else if (e.key === 'l' || e.key === 'L') {
       const modes = ['quad', 'vert', 'horz', 'single'];
       setLayout(modes[(modes.indexOf(S.layout) + 1) % modes.length]);
     }
   });
-
+  for (let i = 0; i < 4; i++) renderPaneEmpty(i);
   loadScenarios();
 })();
 
