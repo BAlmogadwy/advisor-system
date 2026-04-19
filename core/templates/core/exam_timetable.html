@@ -1086,21 +1086,7 @@ function renderResults(data) {
   renderConflictMatrix(data.conflicts ?? [], data.courses ?? []);
 }
 
-/* ── Color helper (reused from planner) ── */
-const _isDark = () => document.documentElement.getAttribute('data-theme') === 'dark';
-function colorForCourse(code) {
-  let h = 0;
-  const s = String(code || '');
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
-  return _isDark() ? `hsl(${h} 45% 22%)` : `hsl(${h} 70% 92%)`;
-}
-
-function colorForCourseBorder(code) {
-  let h = 0;
-  const s = String(code || '');
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 360;
-  return _isDark() ? `hsl(${h} 40% 40%)` : `hsl(${h} 50% 72%)`;
-}
+/* Color helpers (_isDark, colorForCourse, colorForCourseBorder) now in shared-utils.js */
 
 /* ── Render schedule as day×period grid ── */
 // Builds an HTML table: rows = days, columns = periods, cells = course chips.

@@ -339,11 +339,7 @@
   /* ================================================================
      Build timeline HTML from table rows
      ================================================================ */
-  function esc(s) {
-    var d = document.createElement('div');
-    d.appendChild(document.createTextNode(s || ''));
-    return d.innerHTML;
-  }
+  /* esc() now in shared-utils.js */
 
   function buildTimeline() {
     if (allRows.length === 0) {

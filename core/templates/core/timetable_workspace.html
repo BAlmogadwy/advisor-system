@@ -385,9 +385,7 @@ async function runGenerate() {
   notify.success(IS_AR ? 'تم التوليد' : `Generated: ${TW.boards.length} boards`);
 }
 
-function debounce(fn, ms) {
-  let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
-}
+/* debounce() now in shared-utils.js */
 
 /* ── Scenarios ── */
 async function loadScenarios() {
@@ -1383,12 +1381,7 @@ function updateQuickStats() {
   $('qsConflicts').textContent = critical;
 }
 
-function esc(s) {
-  if (!s) return '';
-  const d = document.createElement('div');
-  d.textContent = String(s);
-  return d.innerHTML;
-}
+/* esc() now in shared-utils.js */
 
 /* ── Capacity ── */
 async function loadCapacity() {

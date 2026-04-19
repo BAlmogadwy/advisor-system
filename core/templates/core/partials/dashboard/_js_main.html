@@ -1232,7 +1232,7 @@
     if (!rawLog) {
       logEl.innerHTML = `<span style="color:#a0aec0">${T.noLogsYet}</span>`;
     } else {
-      const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      /* esc() from shared-utils.js handles HTML entities */
       logEl.innerHTML = rawLog.split('\n').map(line => {
         const l = esc(line);
         /* colorize timestamps like [HH:MM:SS] or [YYYY-MM-DD HH:MM:SS] */

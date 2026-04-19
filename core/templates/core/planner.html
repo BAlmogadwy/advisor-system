@@ -395,12 +395,7 @@ function toMins(t){
   return h*60+m;
 }
 
-const _isDark = () => document.documentElement.getAttribute('data-theme') === 'dark';
-function colorForCourse(code){
-  let h=0; const s=String(code||'');
-  for(let i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))%360;
-  return _isDark() ? `hsl(${h} 45% 22%)` : `hsl(${h} 70% 92%)`;
-}
+/* _isDark and colorForCourse now in shared-utils.js */
 
 function renderBaselineWeeklyCompact(baseline){
   const host=q('baselineWeekly');
