@@ -594,10 +594,6 @@ html[data-theme="dark"] .table-wrap thead th:hover {
   background: rgba(255,255,255,0.10) !important;
 }
 
-/* ── Dark: .ov- overview components (uses CSS vars, ensure borders) ─── */
-html[data-theme="dark"] .ov-activity-item {
-  border-bottom-color: rgba(255,255,255,0.04);
-}
 
 /* ── Dark: mc spark bars ─── */
 html[data-theme="dark"] .mc .spark .b {
@@ -2685,9 +2681,6 @@ pre, .pre-output {
     padding: 5px 4px;
     font-size: 0.75rem;
   }
-  .et-grid td {
-    min-width: 70px;
-  }
 
   /* ET conflict matrix: smaller cells on tablet */
   .et-matrix td {
@@ -2939,12 +2932,8 @@ pre, .pre-output {
   /* ET matrix: horizontal scroll container */
   .et-matrix { font-size: 0.55rem; }
   .et-matrix td { width: 20px; height: 20px; min-width: 20px; font-size: 0.5rem; }
-  .et-matrix thead th { height: 60px; }
   .et-matrix thead th > span { font-size: 0.75rem; } /* a11y: min 12px for headers */
 
-  /* KPI cards: 2-col on mobile */
-  .kpi { padding: 0.4rem; }
-  .kpi .v { font-size: 1.1rem; }
 
   /* Hide non-essential table columns on mobile */
   .tbl-card thead th:nth-child(n+5),
@@ -3958,7 +3947,6 @@ html body .btn-export:hover {
   .pf-info-card { flex-direction: column; text-align: center; }
 
   /* Audit table: reduce font, enable scroll */
-  .audit-table { font-size: 11px; }
   .audit-table th { padding: 5px; white-space: nowrap; font-size: 12px; } /* a11y: min 12px for headers */
   .audit-table td { padding: 5px; white-space: nowrap; }
 }
@@ -8536,10 +8524,6 @@ html[data-theme="dark"] .pf-card.pf-saved {
    Moved out of core/templates/core/sections_import.html.
    ============================================================ */
 
-/* Page-specific: KPI summary tiles */
-    .kpi { border: 1px solid var(--teal-border); border-radius: var(--radius); padding: .6rem; background: linear-gradient(160deg, var(--teal-dim) 0%, var(--card) 100%); box-shadow: var(--shadow-card); }
-    .kpi .k { font-size: .7rem; color: var(--t3); text-transform: uppercase; font-family: var(--font-mono); letter-spacing: 0.06em; font-weight: 700; }
-    .kpi .v { font-weight: 700; font-family: var(--font-serif); font-size: 1.4rem; color: var(--teal); }
     .si-panel { padding: 16px 20px; margin-bottom: 12px; border-radius: var(--radius); background: linear-gradient(160deg, var(--teal-dim) 0%, var(--card) 100%); border: 1px solid var(--teal-border); box-shadow: var(--shadow-card); }
     /* Softer form label — the global .form-label is uppercase-bold which
        is too heavy for a simple file-upload label on this page. */
@@ -8603,8 +8587,6 @@ html[data-theme="dark"] .pf-card.pf-saved {
       .si-panel { padding: 10px 14px; }
       .si-dropzone { padding: 1.25rem; }
       .si-dropzone-icon { margin-bottom: 0.35rem; }
-      .kpi { padding: 0.4rem; }
-      .kpi .v { font-size: 1.1rem; }
     }
 
     /* ── Dark mode overrides (Deep Navy) ───────────────────── */
