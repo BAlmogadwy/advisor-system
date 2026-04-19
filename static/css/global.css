@@ -391,6 +391,8 @@ html[data-theme="dark"] .um-panel-title,
 html[data-theme="dark"] .cp-t,
 html[data-theme="dark"] .dba-section-title,
 html[data-theme="dark"] .pf-card-title,
+html[data-theme="dark"] .pane-title,
+html[data-theme="dark"] .ap-drawer-section-title,
 html[data-theme="dark"] .et-panel > h6,
 html[data-theme="dark"] .si-panel > h6,
 html[data-theme="dark"] .cpanel > h6 {
@@ -2406,6 +2408,8 @@ tr.attention-row td { background: #fff7ed !important; }
 .cp-t,
 .dba-section-title,
 .pf-card-title,
+.pane-title,
+.ap-drawer-section-title,
 .et-panel > h6,
 .si-panel > h6,
 .cpanel > h6 {
@@ -2424,7 +2428,8 @@ tr.attention-row td { background: #fff7ed !important; }
 /* Hide the old teal-pipe prefix now that the heading text itself is teal. */
 .zone-title::before,
 .um-panel-title::before,
-.dba-section-title::before {
+.dba-section-title::before,
+.ap-drawer-section-title::before {
   display: none;
 }
 /* Keep the colored prefix for state variants (edit / danger zone). */
@@ -5398,13 +5403,8 @@ body.tw-fullscreen #twGenBar   { border-radius: 0; }
 .pane-icon-purple { background: var(--royal-dim); color: var(--royal); }
 .pane-icon-sky { background: var(--sky-dim);   color: var(--sky); }
 .pane-icon-amber { background: var(--amber-dim); color: var(--amber); }
-.pane-title {
-  margin:      0;
-  font-family: var(--font-serif);
-  font-size:   15px;
-  font-weight: 700;
-  color:       var(--navy);
-}
+/* .pane-title base styling now comes from the canonical card-heading rule.
+   (Previously 15px serif navy; unified to 14px teal body-font.) */
 .pane-sub { margin-top: 1px; color: var(--t4); font-size: 11.5px; }
 
 /* Plan color chips */
@@ -7422,11 +7422,9 @@ html[data-theme="dark"] .btn-export {
   background: var(--glass-bg); border-radius: 12px; padding: 12px 14px;
   box-shadow: inset 2px 2px 5px rgba(163,177,198,0.2), inset -2px -2px 5px rgba(255,255,255,0.7);
 }
-.ap-drawer-section-title {
-  font-size: 0.68rem; font-weight: 700; text-transform: uppercase;
-  letter-spacing: 0.07em; color: var(--muted); margin-bottom: 0.35rem;
-  display: flex; align-items: center; gap: 0.3rem;
-}
+/* .ap-drawer-section-title base styling handled by canonical heading rule.
+   Keep ::before shape definition — hidden by default, could be re-enabled
+   for variants in future. */
 .ap-drawer-section-title::before {
   content: ""; width: 3px; height: 0.7rem; border-radius: 2px;
   background: var(--teal); opacity: 1;
