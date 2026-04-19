@@ -1,0 +1,1719 @@
+/* ══════════════════════════════════════════════════════════════════
+   Timetable Workspace — Client-Side Logic
+   ══════════════════════════════════════════════════════════════════ */
+
+const IS_AR = 'LANGUAGE_CODE' === 'ar';
+const T = {
+  draft: IS_AR ? 'مسودة' : 'Draft',
+  published: IS_AR ? 'منشور' : 'Published',
+  noIssues: IS_AR ? 'لا توجد مشاكل' : 'No issues',
+  selectScenario: IS_AR ? 'اختر سيناريو' : 'Select Scenario',
+  createScenario: IS_AR ? 'إنشاء سيناريو' : 'Create Scenario',
+  scenarioName: IS_AR ? 'اسم السيناريو' : 'Scenario name',
+  createBoard: IS_AR ? 'إنشاء لوحة' : 'Create Board',
+  boardLabel: IS_AR ? 'اسم اللوحة' : 'Board label',
+  placed: IS_AR ? 'موضوعة' : 'Placed',
+  conflicts: IS_AR ? 'تعارضات' : 'Conflicts',
+  publishConfirm: IS_AR ? 'هل تريد نشر هذا السيناريو؟' : 'Publish this scenario?',
+  published_ok: IS_AR ? 'تم النشر' : 'Published successfully',
+  overlap: IS_AR ? 'تداخل زمني' : 'Time overlap',
+  instrClash: IS_AR ? 'تعارض مدرس' : 'Instructor clash',
+  roomClash: IS_AR ? 'تعارض قاعة' : 'Room clash',
+};
+
+const CSRF = document.querySelector('[name=csrfmiddlewaretoken]')?.value || 'djCsrfToken';
+const $ = id => document.getElementById(id);
+const DEFAULT_YEAR = 'defaultYear';
+const DEFAULT_TERM = 'defaultTerm';
+
+const DAYS = ['SUN', 'MON', 'TUE', 'WED', 'THU'];
+const DAY_LABELS = IS_AR
+  ? ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس']
+  : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu'];
+
+/* ── State ── */
+const TW = {
+  scenarioId: null,
+  scenario: null,
+  boardId: null,
+  boards: [],
+  placements: [],
+  conflicts: {},
+  unplacedSections: [],
+  undoStack: [],
+  redoStack: [],
+  selectedPlacementId: null,
+  capacityData: null,
+  generatedPlan: null,       // section plan from generate
+  sectionBudget: null,       // budget per course
+  studentSummary: null,      // student classification summary
+};
+
+/* ── API ── */
+async function twFetch(url, opts = {}) {
+  // Wrap safeFetch with better error extraction for our {ok, error: {code, message}} format
+  try {
+    const response = await fetch(url, _injectCsrf(opts));
+    if (!response.ok) {
+      let msg = `${response.status}`;
+      try {
+        const d = await response.json();
+        const e = d.error;
+        msg = (e && typeof e === 'object') ? (e.message || e.code || JSON.stringify(e)) : (e || d.message || msg);
+      } catch {}
+      notify.error(msg);
+      return null;
+    }
+    return await response.json();
+  } catch (err) {
+    notify.error(err.message || String(err));
+    return null;
+  }
+}
+
+/* ── Init ── */
+(function init() {
+  // Events — Generate bar
+  $('twGenerate').addEventListener('click', runGenerate);
+
+  // Events — Workspace command bar
+  $('twScenario').addEventListener('change', onScenarioChange);
+  $('twNewScenario').addEventListener('click', createScenarioPrompt);
+  $('twNewBoard').addEventListener('click', createBoardPrompt);
+  $('twSlotEdit').addEventListener('click', openSlotEditor);
+  $('twExport').addEventListener('click', exportScenario);
+  // Optimise: main button = "current" mode, dropdown items = specific mode
+  $('twOptimise').addEventListener('click', () => runOptimiseV2('current'));
+  $('twOptimiseMenu').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const dd = $('twOptimiseDropdown');
+    dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+  });
+  document.querySelectorAll('.tw-opt-item').forEach(item => {
+    item.addEventListener('mouseenter', () => { item.style.background = 'var(--brand-soft)'; });
+    item.addEventListener('mouseleave', () => { item.style.background = ''; });
+    item.addEventListener('click', () => {
+      $('twOptimiseDropdown').style.display = 'none';
+      runOptimiseV2(item.dataset.mode);
+    });
+  });
+  // Close dropdown on outside click
+  document.addEventListener('click', (e) => {
+    if (!$('twOptimiseGroup').contains(e.target)) {
+      $('twOptimiseDropdown').style.display = 'none';
+    }
+  });
+  $('twPublish').addEventListener('click', publishScenario);
+  $('twSectionSearch').addEventListener('input', debounce(renderBudgetSidebar, 200));
+
+  // Bottom panel toggle
+  $('twBottomHandle').addEventListener('click', () => {
+    $('twBottom').classList.toggle('open');
+  });
+
+  // Right panel tabs
+  document.querySelectorAll('.tw-right .tw-panel-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.tw-right .tw-panel-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      renderRightPanel(tab.dataset.tab);
+    });
+  });
+})();
+
+/* ── Generate Workspace ── */
+async function runGenerate() {
+  const year = $('twYear').value.trim();
+  const term = $('twTerm').value.trim();
+  const program = $('twProgram').value.trim().toUpperCase();
+  const section = $('twSection').value.trim().toUpperCase() || null;
+  const strategy = $('twStrategy').value || 'compact';
+
+  if (!year || !term || !program) {
+    notify.error(IS_AR ? 'أدخل السنة والفصل والبرنامج' : 'Enter year, term, and program');
+    return;
+  }
+
+  $('twGenerate').disabled = true;
+  $('twGenStatus').textContent = IS_AR ? 'جاري التوليد...' : 'Generating...';
+
+  const data = await twFetch('/ops/tw/generate-workspace/', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      year: parseInt(year),
+      semester: parseInt(term),
+      program: program,
+      section: section,
+      strategy: strategy,
+    }),
+  });
+
+  $('twGenerate').disabled = false;
+
+  if (!data) { $('twGenStatus').textContent = ''; return; }
+
+  // Store generated data
+  TW.generatedPlan = data.section_plan || [];
+  TW.sectionBudget = data.section_budget || [];
+  TW.studentSummary = data.student_summary || {};
+
+  // Auto-set scenario
+  TW.scenarioId = data.scenario.id;
+  TW.scenario = data.scenario;
+  TW.boards = data.boards || [];
+
+  const ss = TW.studentSummary;
+  $('twGenStatus').textContent = IS_AR
+    ? `${ss.classified || 0} طالب | خطة: ${ss.on_plan || 0} | متقاطع: ${ss.cross_term || 0} | ${TW.boards.length} لوحات`
+    : `${ss.classified || 0} students | On-plan: ${ss.on_plan || 0} | Cross-term: ${ss.cross_term || 0} | ${TW.boards.length} boards`;
+
+  // Show workspace command bar
+  $('twCmdBar').style.display = 'flex';
+  updateValidationBadge();
+  $('twPublish').disabled = false;
+  $('twNewBoard').style.display = '';
+  $('twSlotEdit').style.display = '';
+  $('twExport').style.display = '';
+  $('twOptimiseGroup').style.display = '';
+
+  // Populate scenario dropdown with just this scenario
+  const sel = $('twScenario');
+  sel.innerHTML = `<option value="${data.scenario.id}">${esc(data.scenario.name)}</option>`;
+
+  // Render boards and sidebar
+  renderBoardsNav();
+  renderBoardTabs();
+  renderBudgetSidebar();
+
+  // Auto-select first board
+  if (TW.boards.length > 0) {
+    await selectBoard(TW.boards[0].id);
+  }
+
+  notify.success(IS_AR ? 'تم التوليد' : `Generated: ${TW.boards.length} boards`);
+}
+
+/* debounce() now in shared-utils.js */
+
+/* ── Scenarios ── */
+async function loadScenarios() {
+  const year = $('twYear').value.trim();
+  const term = $('twTerm').value;
+  if (!year || !term) return;
+
+  const data = await twFetch(`/ops/tw/scenarios/?year=${year}&term=${term}`);
+  if (!data) return;
+
+  const sel = $('twScenario');
+  sel.innerHTML = `<option value="">${T.selectScenario}</option>`;
+  (data.scenarios || []).forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.id; opt.textContent = `${s.name} (${s.status})`;
+    sel.appendChild(opt);
+  });
+
+  TW.scenarioId = null;
+  TW.scenario = null;
+  TW.boardId = null;
+  resetWorkspace();
+}
+
+async function onScenarioChange() {
+  const sid = $('twScenario').value;
+  if (!sid) { TW.scenarioId = null; resetWorkspace(); return; }
+
+  const data = await twFetch(`/ops/tw/scenarios/${sid}/`);
+  if (!data) return;
+
+  TW.scenarioId = data.scenario.id;
+  TW.scenario = data.scenario;
+
+  updateValidationBadge();
+  $('twPublish').disabled = data.scenario.status === 'published';
+  $('twNewBoard').style.display = '';
+  $('twSlotEdit').style.display = data.scenario.status === 'published' ? 'none' : '';
+  $('twExport').style.display = '';
+  $('twOptimiseGroup').style.display = '';
+
+  await loadBoards();
+}
+
+async function createScenarioPrompt() {
+  const name = await dlg.confirm({
+    title: T.createScenario,
+    inputLabel: T.scenarioName,
+    inputPlaceholder: 'Draft A',
+    confirmText: IS_AR ? 'إنشاء' : 'Create',
+  });
+  if (!name || name === true) return;
+
+  const year = $('twYear').value;
+  const term = $('twTerm').value;
+  if (!year || !term) { notify.error('Select year and term first'); return; }
+
+  const data = await twFetch('/ops/tw/scenarios/create/', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ academic_year: year, term: term, name: name }),
+  });
+  if (!data) return;
+
+  notify.success(IS_AR ? 'تم إنشاء السيناريو' : 'Scenario created');
+  await loadScenarios();
+  $('twScenario').value = data.scenario.id;
+  await onScenarioChange();
+}
+
+/* ── Boards ── */
+async function loadBoards() {
+  if (!TW.scenarioId) return;
+  const data = await twFetch(`/ops/tw/boards/?scenario_id=${TW.scenarioId}`);
+  if (!data) return;
+
+  TW.boards = data.boards || [];
+  renderBoardsNav();
+  renderBoardTabs();
+
+  if (TW.boards.length > 0 && !TW.boardId) {
+    await selectBoard(TW.boards[0].id);
+  }
+}
+
+async function selectBoard(boardId) {
+  TW.boardId = boardId;
+  const data = await twFetch(`/ops/tw/boards/${boardId}/`);
+  if (!data) return;
+
+  TW.placements = data.placements || [];
+  TW.scenario = { ...TW.scenario, slot_config: data.slot_config };
+
+  renderBoardsNav();
+  renderBoardTabs();
+  await loadConflicts();   // load conflicts BEFORE rendering grid so colors are correct
+  renderGrid();
+  renderBoardStrip();
+  await loadCapacity();
+  await loadBudget();
+}
+
+async function createBoardPrompt() {
+  const label = await dlg.confirm({
+    title: T.createBoard,
+    inputLabel: T.boardLabel,
+    inputPlaceholder: 'Term 3 Group A',
+    confirmText: IS_AR ? 'إنشاء' : 'Create',
+  });
+  if (!label || label === true) return;
+
+  const data = await twFetch('/ops/tw/boards/create/', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ scenario_id: TW.scenarioId, label: label }),
+  });
+  if (!data) return;
+
+  notify.success(IS_AR ? 'تم إنشاء اللوحة' : 'Board created');
+  await loadBoards();
+  await selectBoard(data.board.id);
+}
+
+/* ── Budget Sidebar ── */
+async function loadBudget() {
+  if (!TW.scenarioId) return;
+  const data = await twFetch(`/ops/tw/scenarios/${TW.scenarioId}/budget/`);
+  if (data) {
+    TW.sectionBudget = data.budget || [];
+    renderBudgetSidebar();
+  }
+}
+
+function renderBudgetSidebar() {
+  const list = $('twSectionList');
+  const budget = TW.sectionBudget || [];
+  const search = ($('twSectionSearch').value || '').trim().toUpperCase();
+
+  if (budget.length === 0) {
+    list.innerHTML = `<div class="text-t4 fs-md" style="padding:12px">${IS_AR ? 'اضغط "توليد" أولاً' : 'Click "Generate" first'}</div>`;
+    return;
+  }
+
+  // Filter by active board's nominal_term or search
+  let items = budget;
+  const activeBoard = TW.boards.find(b => b.id === TW.boardId);
+  const activeTerm = activeBoard ? activeBoard.nominal_term : null;
+
+  if (search) {
+    items = items.filter(c =>
+      (c.course_code || '').toUpperCase().includes(search) ||
+      (c.department || '').toUpperCase().includes(search)
+    );
+  }
+
+  list.innerHTML = '';
+
+  // Group by programme_term
+  const byTerm = {};
+  items.forEach(c => {
+    const t = c.programme_term || 0;
+    if (!byTerm[t]) byTerm[t] = [];
+    byTerm[t].push(c);
+  });
+
+  const sortedTerms = Object.keys(byTerm).map(Number).sort((a, b) => a - b);
+
+  sortedTerms.forEach(t => {
+    // Term header
+    const hdr = document.createElement('div');
+    hdr.style.cssText = 'font-size:.68rem;font-weight:700;color:var(--t4);text-transform:uppercase;letter-spacing:.04em;padding:6px 4px 2px;margin-top:4px;';
+    if (t === activeTerm) hdr.style.color = 'var(--teal)';
+    hdr.textContent = `${IS_AR ? 'المستوى' : 'Term'} ${t}`;
+    list.appendChild(hdr);
+
+    byTerm[t].forEach(c => {
+      const remaining = c.remaining_sections || 0;
+      const used = c.used_sections || 0;
+      const planned = c.planned_sections || 0;
+      const isFullyUsed = remaining <= 0;
+
+      // One card per remaining section
+      const count = Math.max(remaining, 0);
+      if (count === 0 && used > 0) {
+        // Show a grayed-out summary for fully used courses
+        const div = document.createElement('div');
+        div.className = 'tw-section-item';
+        div.style.opacity = '0.4';
+        div.style.cursor = 'default';
+        div.innerHTML = `
+          <span class="code">${esc(c.course_code)}</span>
+          <span class="meta">${used}/${planned} ${IS_AR ? 'مستخدمة' : 'used'} | ${IS_AR ? 'طلاب' : 'demand'}: ${c.total_demand}</span>
+        `;
+        list.appendChild(div);
+        return;
+      }
+
+      for (let s = used + 1; s <= planned; s++) {
+        const secLabel = `S${s}`;
+        const div = document.createElement('div');
+        div.className = 'tw-section-item';
+        div.draggable = true;
+        div.innerHTML = `
+          <span class="code">${esc(c.course_code)} ${secLabel}</span>
+          <span class="meta">${esc(c.department || '')} | ${c.credit_hours || '?'}cr | ${IS_AR ? 'سعة' : 'cap'}: ${c.max_per_section || '?'}</span>
+          <span class="meta">${IS_AR ? 'الميزانية' : 'budget'}: ${used}/${planned} | ${IS_AR ? 'طلاب' : 'demand'}: ${c.total_demand}</span>
+        `;
+        div.addEventListener('dragstart', (e) => {
+          e.dataTransfer.setData('text/plain', JSON.stringify({
+            type: 'create_planned',
+            course_code: c.course_code,
+            section_label: secLabel,
+            department: c.department || '',
+            credit_hours: c.credit_hours || 0,
+            max_per_section: c.max_per_section || 40,
+            total_students: c.total_demand || 0,
+          }));
+          e.dataTransfer.effectAllowed = 'copy';
+        });
+        list.appendChild(div);
+      }
+    });
+  });
+}
+
+/* ── Conflicts ── */
+async function loadConflicts() {
+  if (!TW.boardId) return;
+  const data = await twFetch(`/ops/tw/boards/${TW.boardId}/conflicts/`);
+  if (data) {
+    TW.conflicts = data;
+    renderRightPanel('issues');
+    updateQuickStats();
+  }
+}
+
+/* ── Publish ── */
+async function publishScenario() {
+  if (!TW.scenarioId) return;
+
+  // Gather readiness summary across all boards
+  let totalCritical = 0, totalWarning = 0, totalAffected = 0, totalBlocked = 0, boardCount = TW.boards.length;
+  TW.boards.forEach(b => { totalCritical += (b.critical || 0); totalWarning += (b.warning || 0); });
+  const si = TW.conflicts.student_impact || {};
+  totalAffected = si.affected_count || 0;
+  totalBlocked = si.blocked_count || 0;
+
+  let summaryHtml = `<div style="font-size:.82rem;margin-bottom:12px">`;
+  summaryHtml += `<div class="d-flex mb-2" style="gap:16px">`;
+  summaryHtml += `<div><strong>${boardCount}</strong> ${IS_AR ? 'لوحات' : 'boards'}</div>`;
+  summaryHtml += `<div style="color:${totalCritical > 0 ? 'var(--danger)' : 'var(--teal)'}"><strong>${totalCritical}</strong> ${IS_AR ? 'حرجة' : 'critical'}</div>`;
+  summaryHtml += `<div style="color:${totalWarning > 0 ? 'var(--amber)' : 'var(--teal)'}"><strong>${totalWarning}</strong> ${IS_AR ? 'تحذيرات' : 'warnings'}</div>`;
+  summaryHtml += `</div>`;
+  if (totalAffected > 0) {
+    summaryHtml += `<div class="text-danger">${IS_AR ? 'طلاب متأثرون' : 'Affected students'}: <strong>${totalAffected}</strong> (${IS_AR ? 'محجوبون' : 'blocked'}: <strong>${totalBlocked}</strong>)</div>`;
+  }
+  if (totalCritical > 0) {
+    summaryHtml += `<div class="mt-2 text-danger fw-semibold" style="padding:8px; background:rgba(192,48,48,.08); border-radius:var(--radius-sm)">${IS_AR ? 'لا يمكن النشر: توجد مشاكل حرجة' : 'Cannot publish: critical issues exist'}</div>`;
+  }
+  summaryHtml += `</div>`;
+
+  if (totalCritical > 0) {
+    await dlg.confirm({ title: IS_AR ? 'النشر محجوب' : 'Publish Blocked', body: summaryHtml, kind: 'danger', confirmText: IS_AR ? 'حسنا' : 'OK' });
+    return;
+  }
+
+  const ok = await dlg.confirm({ title: T.publishConfirm, body: summaryHtml, kind: 'warning', confirmText: IS_AR ? 'نشر' : 'Publish' });
+  if (!ok) return;
+
+  const data = await twFetch(`/ops/tw/scenarios/${TW.scenarioId}/publish/`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}',
+  });
+  if (!data) return;
+  notify.success(T.published_ok);
+  TW.scenario = data.scenario;
+  updateValidationBadge();
+  $('twPublish').disabled = true;
+  $('twSlotEdit').style.display = 'none';
+}
+
+function exportScenario() {
+  if (!TW.scenarioId) { notify.error(IS_AR ? 'اختر سيناريو' : 'No scenario selected'); return; }
+  window.open(`/ops/tw/scenarios/${TW.scenarioId}/export.xlsx`, '_blank');
+}
+
+/* ── Rendering ── */
+function resetWorkspace() {
+  TW.boards = []; TW.placements = []; TW.conflicts = {}; TW.capacityData = null;
+  $('twBoardTabs').innerHTML = '';
+  $('twBoardsNav').innerHTML = '';
+  $('twSectionList').innerHTML = '';
+  $('twGrid').style.display = 'none';
+  $('twEmptyState').style.display = '';
+  $('twBoardStrip').style.display = 'none';
+  $('twNewBoard').style.display = 'none';
+  $('twSlotEdit').style.display = 'none';
+  $('twExport').style.display = 'none';
+  $('twOptimiseGroup').style.display = 'none';
+  updateQuickStats();
+}
+
+function renderBoardsNav() {
+  const nav = $('twBoardsNav');
+  nav.innerHTML = '';
+  TW.boards.forEach(b => {
+    const div = document.createElement('div');
+    div.className = 'tw-board-item' + (b.id === TW.boardId ? ' active' : '');
+    const critical = b.critical || 0;
+    const primary = b.primary_count || 0;
+    const visitor = b.visitor_count || 0;
+    div.innerHTML = `
+      <div class="flex-fill">
+        <div>${esc(b.label)}</div>
+        <div class="text-t4" style="font-size:.65rem">${primary}${visitor > 0 ? '+' + visitor : ''} ${IS_AR ? 'طالب' : 'students'}</div>
+      </div>
+      <span class="tw-board-chip">${b.placement_count || 0}</span>
+      ${critical > 0 ? `<span class="tw-board-chip danger">${critical}</span>` : ''}`;
+    div.addEventListener('click', () => selectBoard(b.id));
+    nav.appendChild(div);
+  });
+}
+
+function renderBoardTabs() {
+  const wrap = $('twBoardTabs');
+  wrap.innerHTML = '';
+  TW.boards.forEach(b => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'tw-btn' + (b.id === TW.boardId ? ' tw-btn-primary' : '');
+    btn.textContent = b.label;
+    btn.addEventListener('click', () => selectBoard(b.id));
+    wrap.appendChild(btn);
+  });
+}
+
+function renderBoardStrip() {
+  const strip = $('twBoardStrip');
+  strip.style.display = 'flex';
+  const placed = TW.placements.length;
+  const s = TW.conflicts.summary || {};
+  const overlaps = (TW.conflicts.overlaps || []).length;
+  const instrC = (TW.conflicts.instructor_clashes || []).length;
+  const roomC = (TW.conflicts.room_clashes || []).length;
+  const si = TW.conflicts.student_impact || {};
+  const affected = si.affected_count || 0;
+  const crossBoard = (TW.conflicts.cross_board_conflicts || []).length;
+  // Get student counts from board detail
+  const activeBoard = TW.boards.find(b => b.id === TW.boardId);
+  const primary = activeBoard ? (activeBoard.primary_count || 0) : 0;
+  const visitor = activeBoard ? (activeBoard.visitor_count || 0) : 0;
+  strip.innerHTML = `
+    <div class="tw-metric"><div class="num">${primary}${visitor > 0 ? '<span class="fs-xs text-t4">+' + visitor + '</span>' : ''}</div><div class="lbl">${IS_AR ? 'طلاب' : 'Students'}</div></div>
+    <div class="tw-metric"><div class="num">${placed}</div><div class="lbl">${T.placed}</div></div>
+    <div class="tw-metric"><div class="num${overlaps > 0 ? ' danger' : ''}">${overlaps}</div><div class="lbl">${T.overlap}</div></div>
+    <div class="tw-metric"><div class="num${instrC > 0 ? ' danger' : ''}">${instrC}</div><div class="lbl">${T.instrClash}</div></div>
+    <div class="tw-metric"><div class="num${roomC > 0 ? ' danger' : ''}">${roomC}</div><div class="lbl">${T.roomClash}</div></div>
+    <div class="tw-metric"><div class="num${crossBoard > 0 ? ' danger' : ''}">${crossBoard}</div><div class="lbl">${IS_AR ? 'عبر اللوحات' : 'Cross-Board'}</div></div>
+  `;
+}
+
+function renderGrid() {
+  const gridEl = $('twGrid');
+  const slots = (TW.scenario && TW.scenario.slot_config) || [];
+  const labSlots = (TW.scenario && TW.scenario.lab_slot_config) || [];
+
+  if (slots.length === 0) {
+    // Default slots (75min lectures, prayer break 11:35-12:59)
+    const defaults = [
+      {label:'09:00-10:15', start:'09:00', end:'10:15'},
+      {label:'10:30-11:45', start:'10:30', end:'11:45'},
+      {label:'13:00-14:15', start:'13:00', end:'14:15'},
+      {label:'14:30-15:45', start:'14:30', end:'15:45'},
+      {label:'16:00-17:15', start:'16:00', end:'17:15'},
+    ];
+    if (TW.scenario) TW.scenario.slot_config = defaults;
+  }
+  if (labSlots.length === 0) {
+    const defaultLabs = [
+      {label:'Lab 1', start:'09:00', end:'10:40'},
+      {label:'Lab 2', start:'10:45', end:'12:25'},
+      {label:'Lab 3', start:'13:00', end:'14:40'},
+      {label:'Lab 4', start:'14:45', end:'16:25'},
+      {label:'Lab 5', start:'16:30', end:'18:10'},
+      {label:'Lab 6', start:'18:10', end:'19:50'},
+    ];
+    if (TW.scenario) TW.scenario.lab_slot_config = defaultLabs;
+  }
+
+  const finalSlots = (TW.scenario && TW.scenario.slot_config) || slots;
+  const finalLabSlots = (TW.scenario && TW.scenario.lab_slot_config) || labSlots;
+  renderGridWithSlots(finalSlots, finalLabSlots);
+}
+
+// 20 distinct pastel colors matching XLSX export
+const COURSE_COLORS = [
+  '#D4E6F1','#D5F5E3','#FADBD8','#FCF3CF','#D7BDE2',
+  '#A9DFBF','#F9E79F','#AED6F1','#F5CBA7','#A3E4D7',
+  '#E8DAEF','#FDEBD0','#ABB2B9','#A2D9CE','#F5B7B1',
+  '#D6DBDF','#ABEBC6','#FAD7A0','#D2B4DE','#AEB6BF',
+];
+const _courseColorMap = {};
+function courseColor(code) {
+  if (!_courseColorMap[code]) {
+    const idx = Object.keys(_courseColorMap).length % COURSE_COLORS.length;
+    _courseColorMap[code] = COURSE_COLORS[idx];
+  }
+  return _courseColorMap[code];
+}
+
+function renderGridWithSlots(slots, labSlots) {
+  const gridEl = $('twGrid');
+  $('twEmptyState').style.display = 'none';
+  gridEl.style.display = 'block';
+  gridEl.innerHTML = '';
+
+  labSlots = labSlots || [];
+
+  // ── Split placements into student groups by section label ──
+  const bySec = {};
+  TW.placements.forEach(p => {
+    const sec = p.section || 'S1';
+    if (!bySec[sec]) bySec[sec] = [];
+    bySec[sec].push(p);
+  });
+  const groupKeys = Object.keys(bySec).sort();
+  const numGroups = groupKeys.length;
+
+  // Helper: classify a placement as lab (100-min) based on duration
+  function isLabPlacement(p) {
+    const toMin = t => { const [h,m] = t.split(':').map(Number); return h*60+m; };
+    return (toMin(p.end_time) - toMin(p.start_time)) > 80;
+  }
+
+  // If no placements, show empty grid
+  if (numGroups === 0) {
+    _renderSingleGrid(gridEl, slots, [], 'tw-grid-inner', null);
+    if (labSlots.length) {
+      const labHdr = document.createElement('div');
+      labHdr.style.cssText = 'text-align:center;font-size:.75rem;font-weight:700;color:var(--teal);padding:10px 0 4px;border-top:2px dashed var(--line);margin-top:6px;';
+      labHdr.textContent = IS_AR ? '🔬 المعامل (100 دقيقة)' : '🔬 Labs (100 min)';
+      gridEl.appendChild(labHdr);
+      _renderSingleGrid(gridEl, labSlots, [], 'tw-grid-table tw-lab-grid', null);
+    }
+    return;
+  }
+
+  groupKeys.forEach((secKey, gi) => {
+    const groupPlacements = bySec[secKey];
+    const tsIds = new Set(groupPlacements.map(p => p.term_section_id));
+    const allForGroup = TW.placements.filter(p => tsIds.has(p.term_section_id));
+
+    // Separate lecture and lab placements
+    const lecturePlacements = allForGroup.filter(p => !isLabPlacement(p));
+    const labPlacements = allForGroup.filter(p => isLabPlacement(p));
+
+    // Group header
+    if (numGroups > 1) {
+      const courses = new Set(groupPlacements.map(p => p.course_code));
+      const hdr = document.createElement('div');
+      hdr.style.cssText = 'text-align:center;font-size:.82rem;font-weight:700;color:var(--royal);padding:8px 0 4px;';
+      hdr.textContent = `Group ${gi+1} — ${courses.size} courses`;
+      gridEl.appendChild(hdr);
+    }
+
+    // Lecture grid
+    const gridInner = document.createElement('div');
+    gridInner.className = 'tw-grid-inner';
+    _renderSingleGrid(gridInner, slots, lecturePlacements, 'tw-grid-table', secKey);
+    gridEl.appendChild(gridInner);
+
+    // Lab grid (if any lab slots exist)
+    if (labSlots.length) {
+      const labHdr = document.createElement('div');
+      labHdr.style.cssText = 'text-align:center;font-size:.75rem;font-weight:700;color:var(--teal);padding:6px 0 2px;border-top:2px dashed var(--line);margin-top:2px;';
+      labHdr.textContent = IS_AR ? '🔬 معامل' : '🔬 Labs';
+      gridEl.appendChild(labHdr);
+      const labInner = document.createElement('div');
+      labInner.className = 'tw-grid-inner';
+      _renderSingleGrid(labInner, labSlots, labPlacements, 'tw-grid-table tw-lab-grid', secKey);
+      gridEl.appendChild(labInner);
+    }
+  });
+}
+
+function _renderSingleGrid(container, slots, placements, className, secKey) {
+  // Transposed: columns = time slots, rows = days
+  const numSlots = slots.length;
+  const table = document.createElement('div');
+  table.className = className;
+  table.style.cssText = `display:grid;grid-template-columns:90px repeat(${numSlots},1fr);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:var(--card);margin-bottom:8px;`;
+
+  // Row 1: Slot numbers
+  const corner = document.createElement('div');
+  corner.className = 'tw-grid-header';
+  table.appendChild(corner);
+  slots.forEach((s, i) => {
+    const hdr = document.createElement('div');
+    hdr.className = 'tw-grid-header';
+    hdr.textContent = i + 1;
+    table.appendChild(hdr);
+  });
+
+  // Row 2: Time ranges
+  const corner2 = document.createElement('div');
+  corner2.className = 'tw-grid-header';
+  corner2.style.fontSize = '.65rem';
+  table.appendChild(corner2);
+  slots.forEach(s => {
+    const hdr = document.createElement('div');
+    hdr.className = 'tw-grid-header';
+    hdr.style.fontSize = '.65rem';
+    hdr.textContent = `${s.start}-${s.end}`;
+    table.appendChild(hdr);
+  });
+
+  // Day rows
+  DAYS.forEach((day, di) => {
+    // Day label
+    const lbl = document.createElement('div');
+    lbl.className = 'tw-grid-slot-label';
+    lbl.textContent = DAY_LABELS[di];
+    table.appendChild(lbl);
+
+    // Slot cells
+    slots.forEach(slot => {
+      const cell = document.createElement('div');
+      cell.className = 'tw-cell';
+      cell.dataset.day = day;
+      cell.dataset.start = slot.start;
+      cell.dataset.end = slot.end;
+
+      cell.addEventListener('dragover', onDragOver);
+      cell.addEventListener('dragleave', onDragLeave);
+      cell.addEventListener('drop', onDrop);
+
+      // Find placements in this cell
+      const cellPlacements = placements.filter(
+        p => p.day === day && p.start_time === slot.start
+      );
+
+      if (cellPlacements.length === 1) {
+        const p = cellPlacements[0];
+        const card = createPlacementCard(p);
+        card.style.background = courseColor(p.course_code);
+        cell.appendChild(card);
+      } else if (cellPlacements.length > 1) {
+        // Conflict: multiple in same cell
+        cellPlacements.forEach(p => {
+          const card = createPlacementCard(p);
+          card.classList.add('critical');
+          cell.appendChild(card);
+        });
+      }
+
+      table.appendChild(cell);
+    });
+  });
+
+  container.appendChild(table);
+}
+
+function createPlacementCard(p) {
+  const card = document.createElement('div');
+  card.className = 'tw-card';
+  card.draggable = true;
+  card.dataset.placementId = p.id;
+  if (p.is_locked) card.classList.add('locked');
+
+  // Check if this placement has conflicts
+  const overlaps = (TW.conflicts.overlaps || []);
+  const instrClashes = (TW.conflicts.instructor_clashes || []);
+  const roomClashes = (TW.conflicts.room_clashes || []);
+  const hasCritical = overlaps.some(o => (o.ids || []).includes(p.id))
+    || instrClashes.some(c => (c.ids || []).includes(p.id));
+  const hasWarning = roomClashes.some(c => (c.ids || []).includes(p.id));
+  if (hasCritical) card.classList.add('critical');
+  else if (hasWarning) card.classList.add('warning');
+
+  const instructor = (p.meetings && p.meetings[0]) ? p.meetings[0].instructor : '';
+  card.innerHTML = `
+    <div class="cc">${esc(p.course_code)} ${esc(p.section)}</div>
+    <div class="ci">${esc(instructor)}${p.room ? ' | ' + esc(p.room) : ''}${p.available_capacity ? ' | ' + p.available_capacity : ''}</div>
+  `;
+
+  card.addEventListener('dragstart', (e) => {
+    e.dataTransfer.setData('text/plain', JSON.stringify({type:'move', placement_id: p.id}));
+    e.dataTransfer.effectAllowed = 'move';
+  });
+
+  card.addEventListener('click', () => {
+    TW.selectedPlacementId = p.id;
+    renderRightPanel('selection');
+    document.querySelectorAll('.tw-right .tw-panel-tab').forEach(t => {
+      t.classList.toggle('active', t.dataset.tab === 'selection');
+    });
+  });
+
+  card.addEventListener('dblclick', (e) => {
+    e.stopPropagation();
+    openSectionDrawer(p.id);
+  });
+
+  return card;
+}
+
+function renderUnplacedList() {
+  const list = $('twSectionList');
+  const search = ($('twSectionSearch').value || '').trim().toUpperCase();
+  list.innerHTML = '';
+
+  let items = TW.unplacedSections;
+  if (search) {
+    items = items.filter(s =>
+      (s.course_code || '').toUpperCase().includes(search) ||
+      (s.course_name || '').toUpperCase().includes(search) ||
+      (s.section || '').toUpperCase().includes(search)
+    );
+  }
+
+  items.slice(0, 100).forEach(s => {
+    const div = document.createElement('div');
+    div.className = 'tw-section-item';
+    div.draggable = true;
+    const instructor = (s.meetings && s.meetings[0]) ? s.meetings[0].instructor : '';
+    const meetingInfo = (s.meetings || []).map(m => `${m.day} ${m.start_time}-${m.end_time}`).join(', ');
+    div.innerHTML = `
+      <span class="code">${esc(s.course_code)} ${esc(s.section)}</span>
+      <span class="meta">${esc(instructor)}${s.available_capacity ? ' | Cap: ' + s.available_capacity : ''}</span>
+      <span class="meta">${esc(meetingInfo)}</span>
+    `;
+    div.addEventListener('dragstart', (e) => {
+      const firstMeeting = (s.meetings && s.meetings[0]) || {};
+      e.dataTransfer.setData('text/plain', JSON.stringify({
+        type: 'create',
+        term_section_id: s.term_section_id,
+        default_day: firstMeeting.day || '',
+        default_start: firstMeeting.start_time || '',
+        default_end: firstMeeting.end_time || '',
+        default_room: firstMeeting.room || '',
+      }));
+      e.dataTransfer.effectAllowed = 'copy';
+    });
+    list.appendChild(div);
+  });
+}
+
+/* ── Drag & Drop ── */
+function onDragOver(e) {
+  e.preventDefault();
+  e.currentTarget.classList.add('drop-valid');
+}
+
+function onDragLeave(e) {
+  e.currentTarget.classList.remove('drop-valid', 'drop-warning', 'drop-critical');
+}
+
+async function onDrop(e) {
+  e.preventDefault();
+  const cell = e.currentTarget;
+  cell.classList.remove('drop-valid', 'drop-warning', 'drop-critical');
+
+  let payload;
+  try { payload = JSON.parse(e.dataTransfer.getData('text/plain')); } catch { return; }
+
+  const day = cell.dataset.day;
+  const startTime = cell.dataset.start;
+  const endTime = cell.dataset.end;
+
+  if (payload.type === 'create_planned') {
+    // From generated plan — need to find or create a TermSection first
+    // Use the board's create-planned endpoint
+    const data = await twFetch('/ops/tw/placements/create-planned/', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        board_id: TW.boardId,
+        course_code: payload.course_code,
+        section_label: payload.section_label,
+        day: day,
+        start_time: startTime,
+        end_time: endTime,
+        capacity: payload.max_per_section || 40,
+      }),
+    });
+    if (!data) return;
+    TW.undoStack.push({ type: 'create', placement_id: data.placement.id,
+      board_id: TW.boardId, term_section_id: data.placement.term_section_id,
+      day: day, start_time: startTime, end_time: endTime, room: '' });
+    TW.redoStack = [];
+    const v = data.validation || {};
+    if (v.critical_count > 0) {
+      notify.warning(IS_AR ? 'تم الوضع مع تعارضات' : `Placed with ${v.critical_count} conflict(s)`);
+    } else {
+      notify.success(IS_AR ? 'تم الوضع' : 'Placed');
+    }
+  } else if (payload.type === 'create') {
+    const data = await twFetch('/ops/tw/placements/create/', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        board_id: TW.boardId,
+        term_section_id: payload.term_section_id,
+        day: day,
+        start_time: startTime,
+        end_time: endTime,
+        room: payload.default_room || '',
+      }),
+    });
+    if (!data) return;
+    TW.undoStack.push({ type: 'create', placement_id: data.placement.id,
+      board_id: TW.boardId, term_section_id: payload.term_section_id,
+      day: day, start_time: startTime, end_time: endTime, room: payload.default_room || '' });
+    TW.redoStack = [];
+    const v = data.validation || {};
+    if (v.critical_count > 0) {
+      notify.warning(IS_AR ? 'تم الوضع مع تعارضات' : `Placed with ${v.critical_count} conflict(s)`);
+    } else {
+      notify.success(IS_AR ? 'تم الوضع' : 'Placed');
+    }
+  } else if (payload.type === 'move') {
+    // Find old position before move
+    const oldP = TW.placements.find(x => x.id === payload.placement_id);
+    const oldDay = oldP ? oldP.day : '';
+    const oldStart = oldP ? oldP.start_time : '';
+    const oldEnd = oldP ? oldP.end_time : '';
+
+    const data = await twFetch(`/ops/tw/placements/${payload.placement_id}/move/`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ day, start_time: startTime, end_time: endTime }),
+    });
+    if (!data) return;
+    TW.undoStack.push({ type: 'move', placement_id: payload.placement_id,
+      old_day: oldDay, old_start: oldStart, old_end: oldEnd,
+      new_day: day, new_start: startTime, new_end: endTime });
+    TW.redoStack = [];
+    const v = data.validation || {};
+    if (v.critical_count > 0) {
+      notify.warning(IS_AR ? 'تم النقل مع تعارضات' : `Moved with ${v.critical_count} conflict(s)`);
+    } else {
+      notify.success(IS_AR ? 'تم النقل' : 'Moved');
+    }
+  }
+
+  // Refresh board
+  await selectBoard(TW.boardId);
+  updateUndoRedoButtons();
+}
+
+/* ── Undo / Redo ── */
+function updateUndoRedoButtons() {
+  $('twUndo').disabled = TW.undoStack.length === 0;
+  $('twRedo').disabled = TW.redoStack.length === 0;
+}
+
+$('twUndo').addEventListener('click', async () => {
+  const action = TW.undoStack.pop();
+  if (!action) return;
+
+  if (action.type === 'create') {
+    // Undo create = remove the placement
+    await twFetch(`/ops/tw/placements/${action.placement_id}/remove/`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}',
+    });
+    TW.redoStack.push({ type: 'remove_undo', ...action });
+  } else if (action.type === 'move') {
+    // Undo move = move back to original position
+    await twFetch(`/ops/tw/placements/${action.placement_id}/move/`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ day: action.old_day, start_time: action.old_start, end_time: action.old_end }),
+    });
+    TW.redoStack.push({ type: 'move_undo', placement_id: action.placement_id,
+      old_day: action.new_day, old_start: action.new_start, old_end: action.new_end,
+      new_day: action.old_day, new_start: action.old_start, new_end: action.old_end });
+  } else if (action.type === 'remove') {
+    // Undo remove = re-create placement
+    const data = await twFetch('/ops/tw/placements/create/', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ board_id: action.board_id, term_section_id: action.term_section_id,
+        day: action.day, start_time: action.start_time, end_time: action.end_time, room: action.room || '' }),
+    });
+    if (data) TW.redoStack.push({ type: 'create_undo', placement_id: data.placement.id });
+  }
+
+  await selectBoard(TW.boardId);
+  updateUndoRedoButtons();
+});
+
+$('twRedo').addEventListener('click', async () => {
+  const action = TW.redoStack.pop();
+  if (!action) return;
+
+  if (action.type === 'remove_undo') {
+    // Redo the create = re-create
+    const data = await twFetch('/ops/tw/placements/create/', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ board_id: action.board_id, term_section_id: action.term_section_id,
+        day: action.day, start_time: action.start_time, end_time: action.end_time, room: action.room || '' }),
+    });
+    if (data) TW.undoStack.push({ type: 'create', placement_id: data.placement.id,
+      board_id: action.board_id, term_section_id: action.term_section_id,
+      day: action.day, start_time: action.start_time, end_time: action.end_time, room: action.room });
+  } else if (action.type === 'move_undo') {
+    await twFetch(`/ops/tw/placements/${action.placement_id}/move/`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ day: action.new_day, start_time: action.new_start, end_time: action.new_end }),
+    });
+    TW.undoStack.push({ type: 'move', placement_id: action.placement_id,
+      old_day: action.old_day, old_start: action.old_start, old_end: action.old_end,
+      new_day: action.new_day, new_start: action.new_start, new_end: action.new_end });
+  } else if (action.type === 'create_undo') {
+    await twFetch(`/ops/tw/placements/${action.placement_id}/remove/`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}',
+    });
+    TW.undoStack.push({ type: 'remove', placement_id: action.placement_id });
+  }
+
+  await selectBoard(TW.boardId);
+  updateUndoRedoButtons();
+});
+
+/* ── Right Panel ── */
+function renderRightPanel(tab) {
+  const body = $('twRightBody');
+
+  if (tab === 'issues') {
+    const overlaps = TW.conflicts.overlaps || [];
+    const iClashes = TW.conflicts.instructor_clashes || [];
+    const rClashes = TW.conflicts.room_clashes || [];
+    const xConflictsEarly = TW.conflicts.cross_board_conflicts || [];
+    const total = overlaps.length + iClashes.length + rClashes.length + xConflictsEarly.length;
+
+    if (total === 0) {
+      body.innerHTML = `<div class="tw-empty" style="padding:24px"><p>${T.noIssues}</p></div>`;
+      return;
+    }
+
+    let html = '';
+    if (overlaps.length) {
+      html += `<div class="fs-xs fw-bold text-danger text-caps" style="margin:8px 0 4px; letter-spacing:.04em">${T.overlap} (${overlaps.length})</div>`;
+      overlaps.forEach(o => {
+        const secs = (o.sections || []).join(' / ');
+        html += `<div class="tw-issue-row" data-ids='${JSON.stringify(o.ids || [])}'>
+          <span class="tw-issue-dot critical"></span>
+          <div><div class="fw-semibold">${esc(secs)}</div><div class="fs-xs text-t4">${esc(o.detail || '')}</div></div>
+        </div>`;
+      });
+    }
+    if (iClashes.length) {
+      html += `<div class="fs-xs fw-bold text-danger text-caps" style="margin:8px 0 4px; letter-spacing:.04em">${T.instrClash} (${iClashes.length})</div>`;
+      iClashes.forEach(c => {
+        const secs = (c.sections || []).join(' / ');
+        html += `<div class="tw-issue-row" data-ids='${JSON.stringify(c.ids || [])}'>
+          <span class="tw-issue-dot critical"></span>
+          <div><div class="fw-semibold">${esc(c.instructor || '')} &mdash; ${esc(secs)}</div><div class="fs-xs text-t4">${esc(c.detail || '')}</div></div>
+        </div>`;
+      });
+    }
+    if (rClashes.length) {
+      html += `<div class="fs-xs fw-bold text-caps" style="color:var(--amber); margin:8px 0 4px; letter-spacing:.04em">${T.roomClash} (${rClashes.length})</div>`;
+      rClashes.forEach(c => {
+        const secs = (c.sections || []).join(' / ');
+        html += `<div class="tw-issue-row" data-ids='${JSON.stringify(c.ids || [])}'>
+          <span class="tw-issue-dot warning"></span>
+          <div><div class="fw-semibold">${esc(c.room || '')} &mdash; ${esc(secs)}</div><div class="fs-xs text-t4">${esc(c.detail || '')}</div></div>
+        </div>`;
+      });
+    }
+    // Cross-board conflicts
+    const xConflicts = TW.conflicts.cross_board_conflicts || [];
+    if (xConflicts.length) {
+      html += `<div class="fs-xs fw-bold text-caps" style="color:var(--royal); margin:8px 0 4px; letter-spacing:.04em">${IS_AR ? 'تعارضات عبر اللوحات' : 'Cross-Board'} (${xConflicts.length})</div>`;
+      xConflicts.forEach(c => {
+        html += `<div class="tw-issue-row u-cursor-pointer" onclick="selectBoard(${c.board_a_id === TW.boardId ? c.board_b_id : c.board_a_id})">
+          <span class="tw-issue-dot" style="background:var(--royal)"></span>
+          <div>
+            <div class="fw-semibold">${esc(c.section_a)} &harr; ${esc(c.section_b)}</div>
+            <div class="fs-xs text-t4">${c.overlap_count} ${IS_AR ? 'طلاب مشتركين' : 'shared students'} | ${esc(c.board_a_label)} &harr; ${esc(c.board_b_label)}</div>
+          </div>
+        </div>`;
+      });
+    }
+
+    body.innerHTML = html;
+
+    // Wire issue rows to highlight cards on grid
+    body.querySelectorAll('.tw-issue-row[data-ids]').forEach(row => {
+      row.addEventListener('click', () => {
+        document.querySelectorAll('.tw-card.highlight').forEach(c => c.classList.remove('highlight'));
+        try {
+          const ids = JSON.parse(row.dataset.ids);
+          ids.forEach(id => {
+            const card = document.querySelector(`.tw-card[data-placement-id="${id}"]`);
+            if (card) { card.classList.add('highlight'); card.scrollIntoView({behavior:'smooth', block:'nearest'}); }
+          });
+        } catch {}
+      });
+    });
+  } else if (tab === 'selection') {
+    if (!TW.selectedPlacementId) {
+      body.innerHTML = `<div class="tw-empty" style="padding:24px"><p>${IS_AR ? 'اختر شعبة' : 'Click a section to inspect'}</p></div>`;
+      return;
+    }
+    const p = TW.placements.find(x => x.id === TW.selectedPlacementId);
+    if (!p) { body.innerHTML = ''; return; }
+    const instructor = (p.meetings && p.meetings[0]) ? p.meetings[0].instructor : '-';
+    body.innerHTML = `
+      <div class="tw-sel-field"><span class="label">Course</span><span class="value">${esc(p.course_code)}</span></div>
+      <div class="tw-sel-field"><span class="label">Section</span><span class="value">${esc(p.section)}</span></div>
+      <div class="tw-sel-field"><span class="label">Day</span><span class="value">${esc(p.day)}</span></div>
+      <div class="tw-sel-field"><span class="label">Time</span><span class="value">${esc(p.start_time)} - ${esc(p.end_time)}</span></div>
+      <div class="tw-sel-field"><span class="label">Room</span><span class="value">${esc(p.room || '-')}</span></div>
+      <div class="tw-sel-field"><span class="label">Instructor</span><span class="value">${esc(instructor)}</span></div>
+      <div class="tw-sel-field"><span class="label">Capacity</span><span class="value">${p.available_capacity || '-'}</span></div>
+      <div class="tw-sel-field"><span class="label">Locked</span><span class="value">${p.is_locked ? 'Yes' : 'No'}</span></div>
+      <div class="d-flex" style="margin-top:12px; gap:6px">
+        <button class="tw-btn" onclick="toggleLock(${p.id})">${p.is_locked ? (IS_AR ? 'فتح' : 'Unlock') : (IS_AR ? 'قفل' : 'Lock')}</button>
+        <button class="tw-btn text-danger" onclick="removePlacement(${p.id})">${IS_AR ? 'إزالة' : 'Remove'}</button>
+      </div>
+    `;
+  } else if (tab === 'capacity') {
+    const courses = (TW.capacityData && TW.capacityData.courses) || [];
+    if (courses.length === 0) {
+      body.innerHTML = `<div class="tw-empty" style="padding:24px"><p>${IS_AR ? 'لا توجد بيانات سعة' : 'No capacity data'}</p></div>`;
+      return;
+    }
+    const t = (TW.capacityData && TW.capacityData.totals) || {};
+    let html = `<div class="d-flex flex-wrap" style="gap:12px; margin-bottom:10px">
+      <div class="tw-metric" style="text-align:left"><div class="num" style="font-size:1rem">${t.demand || 0}</div><div class="lbl">${IS_AR ? 'الطلب' : 'Demand'}</div></div>
+      <div class="tw-metric" style="text-align:left"><div class="num" style="font-size:1rem">${t.raw_capacity || 0}</div><div class="lbl">${IS_AR ? 'السعة' : 'Raw Cap.'}</div></div>
+      <div class="tw-metric" style="text-align:left"><div class="num${(t.deficit||0) > 0 ? ' danger' : ''}" style="font-size:1rem">${t.deficit || 0}</div><div class="lbl">${IS_AR ? 'العجز' : 'Deficit'}</div></div>
+    </div>`;
+    courses.slice(0, 30).forEach(c => {
+      const pct = c.demand > 0 ? Math.min(100, Math.round((c.raw_capacity / c.demand) * 100)) : 100;
+      const barColor = c.deficit > 0 ? 'var(--danger)' : 'var(--teal)';
+      html += `<div style="margin-bottom:6px">
+        <div class="d-flex justify-content-between fs-12">
+          <span class="fw-semibold">${esc(c.course_code)}</span>
+          <span class="text-t4">${c.demand} / ${c.raw_capacity}${c.deficit > 0 ? ' <span class="text-danger fw-bold">-' + c.deficit + '</span>' : ''}</span>
+        </div>
+        <div style="height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin-top:2px">
+          <div style="height:100%;width:${pct}%;background:${barColor};border-radius:2px"></div>
+        </div>
+      </div>`;
+    });
+    if (courses.length > 30) html += `<p class="fs-xs text-t4">${IS_AR ? 'وأكثر...' : `+${courses.length - 30} more...`}</p>`;
+    body.innerHTML = html;
+  }
+}
+
+async function toggleLock(pid) {
+  await twFetch(`/ops/tw/placements/${pid}/lock/`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}',
+  });
+  await selectBoard(TW.boardId);
+}
+
+async function removePlacement(pid) {
+  const ok = await dlg.confirm({ title: IS_AR ? 'إزالة الشعبة؟' : 'Remove placement?', kind: 'danger' });
+  if (!ok) return;
+  // Capture placement data before removing for undo
+  const p = TW.placements.find(x => x.id === pid);
+  await twFetch(`/ops/tw/placements/${pid}/remove/`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}',
+  });
+  if (p) {
+    TW.undoStack.push({ type: 'remove', placement_id: pid,
+      board_id: TW.boardId, term_section_id: p.term_section_id,
+      day: p.day, start_time: p.start_time, end_time: p.end_time, room: p.room || '' });
+    TW.redoStack = [];
+  }
+  TW.selectedPlacementId = null;
+  await selectBoard(TW.boardId);
+  updateUndoRedoButtons();
+}
+
+/* ── Helpers ── */
+function updateValidationBadge() {
+  const badge = $('twValidationBadge');
+  if (!TW.scenario) return;
+  if (TW.scenario.status === 'published') {
+    badge.className = 'tw-badge tw-badge-ok';
+    badge.textContent = T.published;
+  } else {
+    badge.className = 'tw-badge tw-badge-draft';
+    badge.textContent = T.draft;
+  }
+}
+
+function updateQuickStats() {
+  $('qsPlaced').textContent = TW.placements.length;
+  const critical = (TW.conflicts.summary || {}).critical || 0;
+  $('qsConflicts').textContent = critical;
+}
+
+/* esc() now in shared-utils.js */
+
+/* ── Capacity ── */
+async function loadCapacity() {
+  if (!TW.boardId) return;
+  const data = await twFetch(`/ops/tw/boards/${TW.boardId}/capacity/`);
+  if (data) {
+    TW.capacityData = data;
+    // If capacity tab is active, re-render
+    const activeTab = document.querySelector('.tw-right .tw-panel-tab.active');
+    if (activeTab && activeTab.dataset.tab === 'capacity') renderRightPanel('capacity');
+    // Also update bottom demand tab if open
+    const activeBottom = document.querySelector('.tw-bottom .tw-panel-tab.active');
+    if (activeBottom && activeBottom.dataset.tab === 'demand') renderBottomPanel('demand');
+  }
+}
+
+/* ── Bottom Panel ── */
+function renderBottomPanel(tab) {
+  const body = $('twBottomBody');
+
+  if (tab === 'demand') {
+    const courses = (TW.capacityData && TW.capacityData.courses) || [];
+    if (courses.length === 0) {
+      body.innerHTML = `<p class="text-t4" style="font-size:.8rem; padding:12px">${IS_AR ? 'لا توجد بيانات' : 'No capacity data yet'}</p>`;
+      return;
+    }
+    let html = `<table class="w-100 fs-12" style="border-collapse:collapse">
+      <thead><tr style="border-bottom:2px solid var(--line);text-align:left">
+        <th style="padding:6px 8px">${IS_AR ? 'المقرر' : 'Course'}</th>
+        <th style="padding:6px 8px">${IS_AR ? 'الطلب' : 'Demand'}</th>
+        <th style="padding:6px 8px">${IS_AR ? 'السعة' : 'Raw Cap.'}</th>
+        <th style="padding:6px 8px">${IS_AR ? 'الشعب' : 'Sections'}</th>
+        <th style="padding:6px 8px">${IS_AR ? 'العجز' : 'Deficit'}</th>
+      </tr></thead><tbody>`;
+    courses.forEach(c => {
+      const defStyle = c.deficit > 0 ? 'color:var(--danger);font-weight:700' : '';
+      html += `<tr style="border-bottom:1px solid var(--line)">
+        <td class="fw-semibold" style="padding:4px 8px">${esc(c.course_code)}</td>
+        <td style="padding:4px 8px">${c.demand}</td>
+        <td style="padding:4px 8px">${c.raw_capacity}</td>
+        <td style="padding:4px 8px">${c.placed_sections}</td>
+        <td style="padding:4px 8px;${defStyle}">${c.deficit > 0 ? '-' + c.deficit : '0'}</td>
+      </tr>`;
+    });
+    const t = (TW.capacityData && TW.capacityData.totals) || {};
+    html += `</tbody><tfoot><tr class="fw-bold" style="border-top:2px solid var(--line)">
+      <td style="padding:6px 8px">${IS_AR ? 'الإجمالي' : 'Total'}</td>
+      <td style="padding:6px 8px">${t.demand || 0}</td>
+      <td style="padding:6px 8px">${t.raw_capacity || 0}</td>
+      <td style="padding:6px 8px">${t.course_count || 0}</td>
+      <td style="padding:6px 8px;${(t.deficit||0) > 0 ? 'color:var(--danger)' : ''}">${(t.deficit||0) > 0 ? '-' + t.deficit : '0'}</td>
+    </tr></tfoot></table>`;
+    body.innerHTML = html;
+
+  } else if (tab === 'resources') {
+    const iClashes = TW.conflicts.instructor_clashes || [];
+    const rClashes = TW.conflicts.room_clashes || [];
+    if (iClashes.length === 0 && rClashes.length === 0) {
+      body.innerHTML = `<p class="text-t4" style="font-size:.8rem; padding:12px">${IS_AR ? 'لا توجد تعارضات موارد' : 'No resource conflicts'}</p>`;
+      return;
+    }
+    let html = '';
+    if (iClashes.length) {
+      html += `<div class="fs-sm fw-bold text-danger text-caps" style="margin:8px 8px 4px">${T.instrClash} (${iClashes.length})</div>`;
+      html += `<table class="w-100 fs-12" style="border-collapse:collapse"><tbody>`;
+      iClashes.forEach(c => {
+        html += `<tr style="border-bottom:1px solid var(--line)">
+          <td class="fw-semibold" style="padding:4px 8px">${esc(c.instructor)}</td>
+          <td style="padding:4px 8px">${(c.sections||[]).join(', ')}</td>
+          <td class="text-t4" style="padding:4px 8px">${esc(c.detail)}</td>
+        </tr>`;
+      });
+      html += `</tbody></table>`;
+    }
+    if (rClashes.length) {
+      html += `<div class="fs-sm fw-bold text-caps" style="color:var(--amber); margin:8px 8px 4px">${T.roomClash} (${rClashes.length})</div>`;
+      html += `<table class="w-100 fs-12" style="border-collapse:collapse"><tbody>`;
+      rClashes.forEach(c => {
+        html += `<tr style="border-bottom:1px solid var(--line)">
+          <td class="fw-semibold" style="padding:4px 8px">${esc(c.room)}</td>
+          <td style="padding:4px 8px">${(c.sections||[]).join(', ')}</td>
+          <td class="text-t4" style="padding:4px 8px">${esc(c.detail)}</td>
+        </tr>`;
+      });
+      html += `</tbody></table>`;
+    }
+    body.innerHTML = html;
+  }
+}
+
+// Wire bottom panel tabs
+document.querySelectorAll('.tw-bottom .tw-panel-tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tw-bottom .tw-panel-tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    $('twBottom').classList.add('open');
+    renderBottomPanel(tab.dataset.tab);
+  });
+});
+
+/* ── Section Detail Drawer ── */
+function openSectionDrawer(placementId) {
+  const p = TW.placements.find(x => x.id === placementId);
+  if (!p) return;
+
+  // Remove existing drawer
+  const old = document.getElementById('twDrawer');
+  if (old) old.remove();
+
+  const instructor = (p.meetings && p.meetings[0]) ? p.meetings[0].instructor : '-';
+  const meetingsHtml = (p.meetings || []).map(m =>
+    `<div class="fs-12" style="padding:2px 0">${esc(m.day)} ${esc(m.start_time)}-${esc(m.end_time)} | ${esc(m.room || '-')} | ${esc(m.instructor || '-')}</div>`
+  ).join('');
+
+  const drawer = document.createElement('div');
+  drawer.id = 'twDrawer';
+  drawer.style.cssText = 'position:fixed;top:0;right:0;width:380px;height:100vh;background:var(--card);border-left:1px solid var(--line);box-shadow:var(--shadow-lift);z-index:200;overflow-y:auto;padding:20px;transition:transform .2s var(--ease);';
+  drawer.innerHTML = `
+    <div class="d-flex justify-content-between align-items-center" style="margin-bottom:16px">
+      <h3 style="margin:0;font-size:.95rem;color:var(--ink)">${IS_AR ? 'تفاصيل الشعبة' : 'Section Detail'}</h3>
+      <button class="u-cursor-pointer text-t4" onclick="document.getElementById('twDrawer').remove()" style="background:none; border:none; font-size:1.2rem">&times;</button>
+    </div>
+    <div class="tw-sel-field"><span class="label">${IS_AR ? 'المقرر' : 'Course'}</span><span class="value">${esc(p.course_code)}</span></div>
+    <div class="tw-sel-field"><span class="label">${IS_AR ? 'الاسم' : 'Name'}</span><span class="value">${esc(p.course_name)}</span></div>
+    <div class="tw-sel-field"><span class="label">${IS_AR ? 'الشعبة' : 'Section'}</span><span class="value">${esc(p.section)}</span></div>
+    <div class="tw-sel-field"><span class="label">${IS_AR ? 'اليوم' : 'Day'}</span><span class="value">${esc(p.day)}</span></div>
+    <div class="tw-sel-field"><span class="label">${IS_AR ? 'الوقت' : 'Time'}</span><span class="value">${esc(p.start_time)} - ${esc(p.end_time)}</span></div>
+    <div class="tw-sel-field"><span class="label">${IS_AR ? 'القاعة' : 'Room'}</span><span class="value">${esc(p.room || '-')}</span></div>
+    <div class="tw-sel-field"><span class="label">${IS_AR ? 'المدرس' : 'Instructor'}</span><span class="value">${esc(instructor)}</span></div>
+    <div class="tw-sel-field"><span class="label">${IS_AR ? 'السعة' : 'Capacity'}</span><span class="value">${p.available_capacity || '-'}</span></div>
+    <div class="tw-sel-field"><span class="label">${IS_AR ? 'المسجلون' : 'Registered'}</span><span class="value">${p.registered_count || '-'}</span></div>
+    <div class="tw-sel-field"><span class="label">${IS_AR ? 'مقفل' : 'Locked'}</span><span class="value">${p.is_locked ? (IS_AR ? 'نعم' : 'Yes') : (IS_AR ? 'لا' : 'No')}</span></div>
+    <div style="margin-top:12px"><strong class="fs-md text-t3">${IS_AR ? 'جميع اللقاءات' : 'All Meetings'}</strong>${meetingsHtml || '<div class="fs-12 text-t4">-</div>'}</div>
+    <div class="d-flex" style="margin-top:16px; gap:8px">
+      <button class="tw-btn" onclick="toggleLock(${p.id});document.getElementById('twDrawer').remove()">${p.is_locked ? (IS_AR ? 'فتح القفل' : 'Unlock') : (IS_AR ? 'قفل' : 'Lock')}</button>
+      <button class="tw-btn text-danger" onclick="removePlacement(${p.id});document.getElementById('twDrawer').remove()">${IS_AR ? 'إزالة' : 'Remove'}</button>
+    </div>
+  `;
+  document.body.appendChild(drawer);
+
+  // Close on Escape
+  const closeOnEsc = (e) => { if (e.key === 'Escape') { drawer.remove(); document.removeEventListener('keydown', closeOnEsc); } };
+  document.addEventListener('keydown', closeOnEsc);
+}
+
+/* ── Slot Edit Modal ── */
+async function openSlotEditor() {
+  if (!TW.scenarioId || !TW.scenario) { notify.error(IS_AR ? 'اختر سيناريو أولا' : 'Select a scenario first'); return; }
+  if (TW.scenario.status === 'published') { notify.error(IS_AR ? 'السيناريو منشور' : 'Cannot edit published scenario'); return; }
+
+  const slots = TW.scenario.slot_config || [];
+  const labSlots = TW.scenario.lab_slot_config || [];
+  const slotsText = slots.map(s => `${s.label || ''}\t${s.start}\t${s.end}`).join('\n')
+    || '09:00-10:15\t09:00\t10:15\n10:30-11:45\t10:30\t11:45\n13:00-14:15\t13:00\t14:15\n14:30-15:45\t14:30\t15:45\n16:00-17:15\t16:00\t17:15';
+  const labText = labSlots.map(s => `${s.label || ''}\t${s.start}\t${s.end}`).join('\n')
+    || 'Lab 1\t09:00\t10:40\nLab 2\t10:45\t12:25\nLab 3\t13:00\t14:40\nLab 4\t14:45\t16:25\nLab 5\t16:30\t18:10\nLab 6\t18:10\t19:50';
+
+  const result = await dlg.confirm({
+    title: IS_AR ? 'تعديل الفترات الزمنية' : 'Edit Time Slots',
+    body: `<div class="fs-md text-t3 fw-semibold" style="margin-bottom:6px">${IS_AR ? '📚 المحاضرات (75 دقيقة)' : '📚 Lecture Slots (75 min)'}</div>
+      <div class="fs-sm text-t4" style="margin-bottom:4px">${IS_AR ? 'الاسم [تبويب] البداية [تبويب] النهاية' : 'Label [tab] Start [tab] End'}</div>
+      <textarea class="w-100 font-mono fs-md" id="twSlotInput" rows="6" style="padding:8px; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--bg); color:var(--ink); resize:vertical">${esc(slotsText)}</textarea>
+      <div class="fs-md text-teal fw-semibold" style="margin:10px 0 6px">${IS_AR ? '🔬 المعامل (100 دقيقة)' : '🔬 Lab Slots (100 min)'}</div>
+      <textarea class="w-100 font-mono fs-md" id="twLabSlotInput" rows="6" style="padding:8px; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--bg); color:var(--ink); resize:vertical">${esc(labText)}</textarea>`,
+    confirmText: IS_AR ? 'حفظ' : 'Save Slots',
+    kind: 'info',
+  });
+
+  if (!result) return;
+
+  // Parse the textarea
+  const textarea = document.getElementById('twSlotInput');
+  if (!textarea) return;
+  const lines = textarea.value.trim().split('\n').filter(l => l.trim());
+  const newSlots = [];
+  for (const line of lines) {
+    const parts = line.split('\t').map(s => s.trim());
+    if (parts.length >= 3) {
+      newSlots.push({ label: parts[0], start: parts[1], end: parts[2] });
+    } else if (parts.length === 2) {
+      newSlots.push({ label: `${parts[0]}-${parts[1]}`, start: parts[0], end: parts[1] });
+    } else {
+      // Try splitting by space or dash
+      const m = line.trim().match(/^(\S+)\s+(\d{1,2}:\d{2})\s+(\d{1,2}:\d{2})$/);
+      if (m) newSlots.push({ label: m[1], start: m[2], end: m[3] });
+    }
+  }
+
+  if (newSlots.length === 0) { notify.error(IS_AR ? 'لم يتم قراءة فترات' : 'No valid slots parsed'); return; }
+
+  // Parse lab slots textarea
+  const labTextarea = document.getElementById('twLabSlotInput');
+  const newLabSlots = [];
+  if (labTextarea) {
+    const labLines = labTextarea.value.trim().split('\n').filter(l => l.trim());
+    for (const line of labLines) {
+      const parts = line.split('\t').map(s => s.trim());
+      if (parts.length >= 3) {
+        newLabSlots.push({ label: parts[0], start: parts[1], end: parts[2] });
+      } else if (parts.length === 2) {
+        newLabSlots.push({ label: `${parts[0]}-${parts[1]}`, start: parts[0], end: parts[1] });
+      } else {
+        const m = line.trim().match(/^(\S+)\s+(\d{1,2}:\d{2})\s+(\d{1,2}:\d{2})$/);
+        if (m) newLabSlots.push({ label: m[1], start: m[2], end: m[3] });
+      }
+    }
+  }
+
+  const data = await twFetch(`/ops/tw/scenarios/${TW.scenarioId}/slots/update/`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ slot_config: newSlots, lab_slot_config: newLabSlots }),
+  });
+  if (!data) return;
+
+  TW.scenario = data.scenario;
+  notify.success(IS_AR ? 'تم تحديث الفترات' : `${newSlots.length} lecture + ${newLabSlots.length} lab slots saved`);
+  renderGrid();
+}
+
+/* ── Elective Mapping Dialog ── */
+$('twMapElectives').addEventListener('click', async () => {
+  const year = $('twYear').value.trim();
+  const term = $('twTerm').value.trim();
+  const programme = $('twProgram').value.trim().toUpperCase().split(',')[0].trim();
+
+  if (!year || !term || !programme) {
+    notify.error(IS_AR ? 'أدخل السنة والفصل والبرنامج أولا' : 'Enter Year, Term, and Program first');
+    return;
+  }
+
+  // Load catalogue + current mappings + actual placeholders in parallel
+  let catalogue = [], currentMappings = [], placeholderCodes = [];
+  try {
+    const [catData, mapData, phData] = await Promise.all([
+      twFetch(`/ops/electives/catalogue/?programme=${encodeURIComponent(programme)}`),
+      twFetch(`/ops/electives/mapping/?academic_year=${encodeURIComponent(year)}&term=${encodeURIComponent(term)}&programme=${encodeURIComponent(programme)}`),
+      twFetch(`/ops/electives/placeholders/?programme=${encodeURIComponent(programme)}`),
+    ]);
+    catalogue = (catData && catData.items) || [];
+    currentMappings = (mapData && mapData.items) || [];
+    placeholderCodes = (phData && phData.items) || [];
+  } catch (e) {
+    notify.error(e.message);
+    return;
+  }
+
+  if (!catalogue.length) {
+    notify.error(IS_AR ? 'لا يوجد مقررات اختيارية — استيردها من إدارة قواعد البيانات أولا' : 'No elective catalogue found — import from DB Admin first');
+    return;
+  }
+
+  if (!placeholderCodes.length) {
+    notify.error(IS_AR ? 'لا يوجد مقررات اختيارية في الخطة' : 'No elective placeholders found in programme plan');
+    return;
+  }
+
+  const relevantPlaceholders = placeholderCodes.map(p => p.course_code);
+
+  // Build current mapping lookup: placeholder → [course_codes]
+  const mapLookup = {};
+  currentMappings.forEach(m => {
+    if (!mapLookup[m.placeholder_code]) mapLookup[m.placeholder_code] = [];
+    mapLookup[m.placeholder_code].push(m.course_code);
+  });
+
+  // Build dialog body
+  let body = `<div class="fs-md text-t3 mb-2">${IS_AR ? 'اختر المقررات لكل فتحة اختيارية' : 'Select courses for each elective slot'}</div>`;
+  body += `<div style="max-height:400px;overflow-y:auto">`;
+
+  // Build placeholder info lookup
+  const phInfo = {};
+  placeholderCodes.forEach(p => { phInfo[p.course_code] = p; });
+
+  relevantPlaceholders.forEach(ph => {
+    const info = phInfo[ph] || {};
+    const selected = mapLookup[ph] || [];
+    body += `<div class="u-border" style="margin-bottom:12px; padding:8px; border-radius:var(--radius-sm)">`;
+    body += `<div class="fw-bold" style="color:var(--royal); margin-bottom:4px">${ph} <span class="fs-sm text-t4" style="font-weight:400">Term ${info.programme_term || '?'} · ${info.type || 'Elective'} · ${info.credit_hours || 3}cr</span></div>`;
+    catalogue.forEach(c => {
+      const checked = selected.includes(c.course_code) ? 'checked' : '';
+      body += `<label class="d-flex align-items-center fs-md u-cursor-pointer" style="gap:6px; padding:2px 0">`;
+      body += `<input type="checkbox" class="elec-chk" data-ph="${ph}" data-code="${c.course_code}" ${checked}>`;
+      body += `<span class="font-mono fw-semibold">${c.course_code}</span>`;
+      body += `<span class="text-t3">${c.course_name}</span>`;
+      body += `<span class="text-t4 fs-xs" style="margin-inline-start:auto">${c.prerequisites_csv || 'no prereq'}</span>`;
+      body += `</label>`;
+    });
+    body += `</div>`;
+  });
+  body += `</div>`;
+
+  const result = await dlg.confirm({
+    title: IS_AR ? `ربط الاختيارية — ${programme} ${year}/${term}` : `Map Electives — ${programme} ${year}/${term}`,
+    body,
+    confirmText: IS_AR ? 'حفظ' : 'Save Mapping',
+    kind: 'info',
+  });
+
+  if (!result) return;
+
+  // Collect checked items
+  const mappings = [];
+  document.querySelectorAll('.elec-chk:checked').forEach(chk => {
+    mappings.push({
+      placeholder_code: chk.dataset.ph,
+      course_code: chk.dataset.code,
+    });
+  });
+
+  const data = await twFetch('/ops/electives/mapping/set/', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({academic_year: year, term: parseInt(term), programme, mappings}),
+  });
+  if (data && data.ok) {
+    notify.success(IS_AR ? `تم حفظ ${data.created} ربط` : `${data.created} mappings saved`);
+  }
+});
+
+/* ── V2 Optimiser ── */
+async function runOptimiseV2(mode = 'current') {
+  if (!TW.scenarioId) { notify.error(IS_AR ? 'اختر سيناريو' : 'No scenario selected'); return; }
+
+  const btn = $('twOptimise');
+  const menuBtn = $('twOptimiseMenu');
+  btn.disabled = true;
+  menuBtn.disabled = true;
+  const origHtml = btn.innerHTML;
+  const modeLabel = mode === 'full' ? (IS_AR ? 'إعادة بناء...' : 'Rebuilding...') : (IS_AR ? 'جارٍ التحسين...' : 'Optimising...');
+  btn.innerHTML = `&#x23F3; ${modeLabel}`;
+
+  // Build request payload based on mode
+  const payload = { mode };
+  if (mode === 'full') {
+    payload.strategies = ['compact', 'morning', 'balanced', 'load_balanced', 'optimal', 'hybrid', 'adaptive'];
+  }
+  payload.run_local_search = true;
+  payload.max_iterations = 50;
+  payload.run_chain_search = true;
+  payload.run_cpsat_polish = true;
+  payload.cpsat_time_limit = 60;
+
+  try {
+    const data = await twFetch(`/ops/tw/scenarios/${TW.scenarioId}/optimise-v2/`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+
+    if (!data || !data.ok) {
+      notify.error(IS_AR ? 'فشل التحسين' : 'Optimisation failed');
+      return;
+    }
+
+    const o = data.optimisation;
+    const score = o.final_score;
+    const assigned = o.total_students - o.unresolved_students;
+
+    // Build results dialog
+    let body = `<div style="font-size:.82rem;line-height:1.6">`;
+
+    // Summary cards
+    body += `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px">`;
+    body += `<div class="text-center" style="padding:10px; border-radius:var(--radius-sm); background:rgba(10,142,110,.08)">`;
+    body += `<div class="text-t4 text-caps" style="font-size:.68rem">${IS_AR ? 'تم تعيينهم' : 'Assigned'}</div>`;
+    body += `<div class="fw-bold text-teal" style="font-size:1.3rem">${assigned}<span class="fs-12 text-t3" style="font-weight:400">/${o.total_students}</span></div></div>`;
+    body += `<div class="text-center" style="padding:10px; border-radius:var(--radius-sm); background:rgba(217,119,6,.08)">`;
+    body += `<div class="text-t4 text-caps" style="font-size:.68rem">${IS_AR ? 'غير محلول' : 'Unresolved'}</div>`;
+    body += `<div class="fw-bold" style="font-size:1.3rem; color:var(--amber)">${o.unresolved_students}</div></div>`;
+    body += `<div class="text-center" style="padding:10px; border-radius:var(--radius-sm); background:rgba(99,102,241,.08)">`;
+    body += `<div class="text-t4 text-caps" style="font-size:.68rem">${IS_AR ? 'الوقت' : 'Time'}</div>`;
+    body += `<div class="fw-bold" style="font-size:1.3rem; color:var(--royal)">${o.elapsed_seconds || '?'}s</div></div>`;
+    body += `</div>`;
+
+    // Candidate comparison table
+    if (o.all_scores && o.all_scores.length > 1) {
+      body += `<div style="margin-bottom:10px"><span class="fs-sm fw-bold text-caps" style="color:var(--royal)">${IS_AR ? 'مقارنة المرشحين' : 'Candidate Comparison'} (${o.candidates_evaluated} strategies)</span>`;
+      body += `<table class="w-100 fs-sm" style="border-collapse:collapse; margin-top:4px">`;
+      body += `<tr class="text-t4" style="border-bottom:1px solid var(--line)"><th style="text-align:start;padding:3px 4px">Strategy</th><th class="text-end" style="padding:3px 4px">Tier-A</th><th class="text-end" style="padding:3px 4px">Unresolved</th><th class="text-end" style="padding:3px 4px">Clashes</th><th class="text-end" style="padding:3px 4px">Gaps</th></tr>`;
+      o.all_scores.forEach(s => {
+        const isBest = s.id === o.best_candidate_id;
+        const style = isBest ? 'background:rgba(10,142,110,.06);font-weight:600' : '';
+        body += `<tr style="border-bottom:1px solid var(--line);${style}">`;
+        body += `<td style="padding:3px 4px">${s.id.replace(/_\d+$/, '')}${isBest ? ' ★' : ''}</td>`;
+        body += `<td class="font-mono" style="text-align:end; padding:3px 4px">${s.score[0]}</td>`;
+        body += `<td class="font-mono" style="text-align:end; padding:3px 4px">${s.score[1]}</td>`;
+        body += `<td class="font-mono" style="text-align:end; padding:3px 4px; color:${s.score[3]>0?'var(--danger)':'var(--teal)'}">${s.score[3]}</td>`;
+        body += `<td class="font-mono" style="text-align:end; padding:3px 4px">${s.score[4].toLocaleString()}</td>`;
+        body += `</tr>`;
+      });
+      body += `</table></div>`;
+    }
+
+    // Final score breakdown
+    const scoreLabel = o.mode === 'current'
+      ? (IS_AR ? 'النتيجة بعد التحسين' : 'Score After Optimisation')
+      : `${IS_AR ? 'النتيجة النهائية' : 'Final Score'} (${o.best_candidate_id.replace(/_\d+$/, '')}${o.local_search_applied ? ' + local search' : ''})`;
+    body += `<div style="margin-bottom:10px"><span class="fs-sm fw-bold text-caps text-teal">${scoreLabel}</span>`;
+    body += `<table class="w-100 fs-md" style="border-collapse:collapse; margin-top:4px">`;
+    const labels = [
+      IS_AR ? 'طلاب الخطر A' : 'Tier-A unresolved',
+      IS_AR ? 'طلاب غير محلولين' : 'Unresolved students',
+      IS_AR ? 'مقررات غير معينة' : 'Unassigned courses',
+      IS_AR ? 'تعارضات زمنية' : 'Time clashes',
+      IS_AR ? 'دقائق فراغ' : 'Gap minutes',
+      IS_AR ? 'احتياط مستخدم' : 'Reserve used',
+    ];
+    for (let i = 0; i < 6; i++) {
+      const val = i === 4 ? score[i].toLocaleString() : score[i];
+      const clr = (i === 3 && score[i] > 0) ? 'color:var(--danger)' : (i === 3 ? 'color:var(--teal)' : '');
+      body += `<tr style="border-bottom:1px solid var(--line)"><td class="text-t3" style="padding:3px 0">${labels[i]}</td><td class="fw-semibold font-mono" style="text-align:end; ${clr}">${val}</td></tr>`;
+    }
+    body += `</table></div>`;
+
+    // Before → After summary (current mode only)
+    if (o.mode === 'current' && o.baseline_score) {
+      const bs = o.baseline_score;
+      const fs = o.final_score;
+      const gotBetter = fs[1] < bs[1] || fs[3] < bs[3] || fs[4] < bs[4];
+      if (gotBetter) {
+        body += `<div class="fs-md mb-2" style="padding:8px 10px; border-radius:var(--radius-sm); background:rgba(10,142,110,.1); border:1px solid rgba(10,142,110,.2)">`;
+        body += `<div class="fw-bold text-teal" style="margin-bottom:4px">&#x2714; ${IS_AR ? 'تم التحسين' : 'Board Improved'}</div>`;
+        body += `<div>Unresolved: <b>${bs[1]}</b> &rarr; <b class="text-teal">${fs[1]}</b></div>`;
+        if (bs[3] !== fs[3]) body += `<div>Clashes: <b>${bs[3]}</b> &rarr; <b class="text-teal">${fs[3]}</b></div>`;
+        body += `<div>Gap minutes: <b>${bs[4].toLocaleString()}</b> &rarr; <b>${fs[4].toLocaleString()}</b></div>`;
+        body += `</div>`;
+      } else {
+        body += `<div class="fs-md mb-2" style="padding:8px 10px; border-radius:var(--radius-sm); background:rgba(99,102,241,.06)">`;
+        body += `<span class="fw-semibold" style="color:var(--royal)">&#x2501; ${IS_AR ? 'الجدول الحالي بالفعل في أفضل حالة' : 'Current board is already optimal'}</span>`;
+        body += `</div>`;
+      }
+    }
+
+    // Local search improvement indicator
+    if (o.local_search_applied && o.score_before_local_search) {
+      const before = o.score_before_local_search;
+      const after = o.final_score;
+      const improved = before[1] !== after[1] || before[4] !== after[4];
+      if (improved) {
+        body += `<div class="fs-12 mb-2" style="padding:6px 10px; border-radius:var(--radius-sm); background:rgba(10,142,110,.08)">`;
+        body += `<span class="text-teal fw-semibold">&#x2714; ${IS_AR ? 'تحسين محلي' : 'Local search improved'}:</span> `;
+        body += `unresolved ${before[1]} → ${after[1]}, gaps ${before[4].toLocaleString()} → ${after[4].toLocaleString()}`;
+        body += `</div>`;
+      } else {
+        body += `<div class="fs-12 mb-2" style="padding:6px 10px; border-radius:var(--radius-sm); background:rgba(99,102,241,.06)">`;
+        body += `<span class="text-royal">&#x2501; ${IS_AR ? 'لم يتحسن' : 'Local search: already optimal'}</span>`;
+        body += `</div>`;
+      }
+    }
+
+    // Hotspot courses
+    if (o.hotspot_courses && o.hotspot_courses.length > 0) {
+      body += `<div class="mb-2"><span class="fs-sm fw-bold text-caps text-danger">${IS_AR ? 'مقررات مزدحمة' : 'Hotspot Courses'}</span>`;
+      body += `<div class="d-flex flex-wrap" style="gap:4px; margin-top:4px">`;
+      o.hotspot_courses.forEach(c => {
+        body += `<span class="text-danger fs-sm fw-semibold" style="padding:2px 8px; border-radius:999px; background:rgba(192,48,48,.1)">${c}</span>`;
+      });
+      body += `</div></div>`;
+    }
+
+    // Reserve-heavy sections
+    if (o.reserve_heavy_sections && o.reserve_heavy_sections.length > 0) {
+      body += `<div><span class="fs-sm fw-bold text-caps" style="color:var(--amber)">${IS_AR ? 'ضغط احتياطي' : 'Reserve Pressure'}</span>`;
+      body += `<div class="d-flex flex-wrap" style="gap:4px; margin-top:4px">`;
+      o.reserve_heavy_sections.slice(0, 8).forEach(s => {
+        body += `<span class="fs-sm fw-semibold" style="padding:2px 8px; border-radius:999px; background:rgba(217,119,6,.1); color:var(--amber)">${s.section} ${Math.round(s.ratio*100)}%</span>`;
+      });
+      body += `</div></div>`;
+    }
+
+    body += `</div>`;
+
+    const dlgTitle = mode === 'full'
+      ? (IS_AR ? 'نتائج إعادة البناء' : 'Full Rebuild Results')
+      : (IS_AR ? 'نتائج التحسين' : 'Optimise Current Results');
+
+    await dlg.confirm({
+      title: dlgTitle,
+      body,
+      confirmText: IS_AR ? 'تطبيق' : 'Apply & Refresh',
+      kind: 'info',
+    });
+
+    // Refresh the workspace grid to show the improved timetable
+    await onScenarioChange();
+    // Ensure command bar stays visible after refresh
+    $('twCmdBar').style.display = 'flex';
+
+    const modeMsg = mode === 'full'
+      ? `Rebuilt: ${o.best_candidate_id.replace(/_\d+$/, '')} won`
+      : 'Optimised current board';
+    notify.success(IS_AR ? 'تم التحسين والتطبيق' : `${modeMsg} (${o.elapsed_seconds}s)`);
+
+  } catch (e) {
+    notify.error(e.message || String(e));
+  } finally {
+    btn.disabled = false;
+    menuBtn.disabled = false;
+    btn.innerHTML = origHtml;
+  }
+}
+
+/* ── Fullscreen toggle ── */
+(function(){
+  const btn = document.getElementById('twFullscreen');
+  const icon = document.getElementById('twFsIcon');
+  const label = document.getElementById('twFsLabel');
+  if(!btn) return;
+
+  const expandSvg = '<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>';
+  const shrinkSvg = '<polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/>';
+
+  function toggle(){
+    const on = document.body.classList.toggle('tw-fullscreen');
+    icon.innerHTML = on ? shrinkSvg : expandSvg;
+    if(label) label.textContent = on ? (IS_AR ? 'تصغير' : 'Exit') : (IS_AR ? 'توسيع' : 'Focus');
+  }
+
+  btn.addEventListener('click', toggle);
+  document.addEventListener('keydown', function(e){
+    if(e.key === 'Escape' && document.body.classList.contains('tw-fullscreen')){
+      toggle();
+    }
+  });
+})();
