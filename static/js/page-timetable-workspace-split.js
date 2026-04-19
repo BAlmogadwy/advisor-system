@@ -200,6 +200,14 @@ async function onScenarioChange() {
   updateUndoRedoButtons();
   S.selectedPlacementId = null;
   S.selectedPaneIdx = null;
+  // Every cached structure belongs to the previous scenario and would
+  // paint stale data if left in place — invalidate before loading new.
+  RP.capacity = {};
+  SB.budget = [];
+  SB.search = '';
+  const search = $('twsSectionSearch'); if (search) search.value = '';
+  // If a drawer is open it's pointing at a now-invalid placement id.
+  if (typeof DRAWER !== 'undefined' && DRAWER.placementId != null) closeDrawer();
 
   const sid = $('twsScenario').value;
   if (!sid) {
@@ -884,11 +892,17 @@ function renderRpanelCapacity(body) {
     body.innerHTML = `<div class="tws-empty-state"><span class="ic">ⓘ</span>${IS_AR ? 'لم يتم تحميل أي لوحة' : 'No boards loaded yet'}</div>`;
     return;
   }
-  // Fetch capacity for each visible board (cached).
+  // Token each parallel fetch against the current scenario id so a scenario
+  // switch mid-flight doesn't overwrite fresh cache with stale results.
+  const token = S.scenarioId;
   const fetches = boards
     .filter(b => !RP.capacity[b.boardId])
-    .map(b => api(`/ops/tw/boards/${b.boardId}/capacity/`).then(d => { if (d) RP.capacity[b.boardId] = d; }));
-  Promise.all(fetches).then(() => _renderCapacityNow(body, boards));
+    .map(b => api(`/ops/tw/boards/${b.boardId}/capacity/`).then(d => {
+      if (d && S.scenarioId === token) RP.capacity[b.boardId] = d;
+    }));
+  Promise.all(fetches).then(() => {
+    if (S.scenarioId === token) _renderCapacityNow(body, boards);
+  });
   if (!fetches.length) _renderCapacityNow(body, boards);
 }
 function _renderCapacityNow(body, boards) {
@@ -999,16 +1013,10 @@ function renderSidebar() {
     const planned = b.planned_sections || 0;
     const remaining = b.remaining_sections != null ? b.remaining_sections : Math.max(0, planned - used);
     const exhausted = remaining <= 0;
-    const payload = JSON.stringify({
-      type: 'create_planned',
-      course_code: b.course_code,
-      section_label: `S${used + 1}`,
-      department: b.department || '',
-      credit_hours: b.credit_hours || 0,
-      max_per_section: b.max_per_section || 40,
-      total_students: b.total_demand || 0,
-    });
-    return `<div class="tws-sec-item${exhausted ? ' exhausted' : ''}" draggable="${exhausted ? 'false' : 'true'}" data-payload='${esc(payload)}' title="${esc(b.department || b.course_code)} · ${b.credit_hours || 0}h">
+    // Store payload as an id; the real object lives in a side map so we
+    // don't have to round-trip JSON through a double-quoted attribute,
+    // which would mis-escape any single-quote character in the string.
+    return `<div class="tws-sec-item${exhausted ? ' exhausted' : ''}" draggable="${exhausted ? 'false' : 'true'}" data-code="${esc(b.course_code)}" data-used="${used}" title="${esc(b.department || b.course_code)} · ${b.credit_hours || 0}h">
       <div class="code">
         <span>${esc(b.course_code)}</span>
         <span class="count${exhausted ? ' exhausted' : ''}"><span class="used">${used}</span>/${planned}</span>
@@ -1023,12 +1031,24 @@ function renderSidebar() {
       </div>
     </div>`;
   }).join('');
-  // Wire drag sources
+  // Wire drag sources — look up the budget row by code + used count at
+  // dragstart time so we always send fresh data even after budget updates.
   body.querySelectorAll('.tws-sec-item[draggable="true"]').forEach(el => {
     el.addEventListener('dragstart', (e) => {
+      const code = el.dataset.code;
+      const used = parseInt(el.dataset.used || '0');
+      const b = SB.budget.find(x => x.course_code === code) || {};
+      const payload = {
+        type: 'create_planned',
+        course_code: code,
+        section_label: `S${used + 1}`,
+        department: b.department || '',
+        credit_hours: b.credit_hours || 0,
+        max_per_section: b.max_per_section || 40,
+        total_students: b.total_demand || 0,
+      };
       try {
-        const payload = el.getAttribute('data-payload');
-        e.dataTransfer.setData('text/plain', payload);
+        e.dataTransfer.setData('text/plain', JSON.stringify(payload));
         e.dataTransfer.effectAllowed = 'copy';
       } catch {}
     });
@@ -1173,7 +1193,8 @@ async function openNewScenarioModal() {
       { label: IS_AR ? 'إنشاء' : 'Create', variant: 'primary', onClick: async () => {
         const year = parseInt(document.getElementById('twsSNYear').value.trim());
         const term = parseInt(document.getElementById('twsSNSem').value.trim());
-        const name = (document.getElementById('twsSNName').value || '').trim() || `Scenario ${new Date().toISOString().slice(0, 10)}`;
+        const raw = (document.getElementById('twsSNName').value || '').trim();
+        const name = raw || `Scenario ${new Date().toISOString().slice(0, 10)}`;
         if (!year || !term) { notify.error(IS_AR ? 'أدخل السنة والفصل' : 'Enter year and semester'); return false; }
         const data = await api('/ops/tw/scenarios/create/', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1236,7 +1257,9 @@ async function openNewBoardModal() {
 /* ── Slot editor ─────────────────────────────────────────────────── */
 function _parseSlotLines(text) {
   const out = [];
-  text.trim().split('\n').filter(l => l.trim()).forEach(line => {
+  // Normalise line endings — Windows CRLF would otherwise leave a trailing
+  // \r on each line and the regex-driven branch would silently fail.
+  String(text || '').replace(/\r\n/g, '\n').trim().split('\n').filter(l => l.trim()).forEach(line => {
     const parts = line.split(/\t|\s{2,}/).map(s => s.trim()).filter(Boolean);
     if (parts.length >= 3) out.push({ label: parts[0], start: parts[1], end: parts[2] });
     else if (parts.length === 2) out.push({ label: `${parts[0]}-${parts[1]}`, start: parts[0], end: parts[1] });
@@ -1426,11 +1449,16 @@ function renderBpanelDemand(body, meta) {
     if (meta) meta.textContent = '';
     return;
   }
-  // Fetch per-board capacity (reuse RP cache so we don't refetch).
+  // Same scenario-token guard as the capacity tab to prevent stale writes.
+  const token = S.scenarioId;
   const fetches = boards
     .filter(b => !RP.capacity[b.boardId])
-    .map(b => api(`/ops/tw/boards/${b.boardId}/capacity/`).then(d => { if (d) RP.capacity[b.boardId] = d; }));
-  Promise.all(fetches).then(() => _renderDemandNow(body, meta, boards));
+    .map(b => api(`/ops/tw/boards/${b.boardId}/capacity/`).then(d => {
+      if (d && S.scenarioId === token) RP.capacity[b.boardId] = d;
+    }));
+  Promise.all(fetches).then(() => {
+    if (S.scenarioId === token) _renderDemandNow(body, meta, boards);
+  });
   if (!fetches.length) _renderDemandNow(body, meta, boards);
 }
 function _renderDemandNow(body, meta, boards) {
@@ -1855,15 +1883,17 @@ function showOptimiseResults(o, mode) {
     return `<tr style="border-bottom:1px solid var(--line)"><td style="padding:4px 0;color:var(--t3)">${scoreLabels[i]}</td><td style="text-align:right;font-family:'JetBrains Mono',monospace;color:${clr};font-weight:700">${display}</td></tr>`;
   }).join('');
   let diffBlock = '';
-  if (mode === 'current' && o.baseline_score && o.final_score) {
+  if (mode === 'current' && Array.isArray(o.baseline_score) && Array.isArray(o.final_score)
+      && o.baseline_score.length >= 5 && o.final_score.length >= 5) {
     const bs = o.baseline_score, fs = o.final_score;
     const improved = fs[1] < bs[1] || fs[3] < bs[3] || fs[4] < bs[4];
+    const safeToLocale = v => (typeof v === 'number' ? v.toLocaleString() : String(v ?? '—'));
     diffBlock = improved
       ? `<div style="padding:8px 12px;border-radius:6px;background:rgba(10,142,110,0.1);border:1px solid rgba(10,142,110,0.25);margin-top:10px">
           <div style="font-weight:700;color:var(--teal);margin-bottom:4px">✓ ${IS_AR ? 'تم التحسين' : 'Board improved'}</div>
           <div style="font-size:11px">Unresolved: <b>${bs[1]}</b> → <b style="color:var(--teal)">${fs[1]}</b></div>
           ${bs[3] !== fs[3] ? `<div style="font-size:11px">Clashes: <b>${bs[3]}</b> → <b style="color:var(--teal)">${fs[3]}</b></div>` : ''}
-          <div style="font-size:11px">Gaps: <b>${bs[4].toLocaleString()}</b> → <b>${fs[4].toLocaleString()}</b></div>
+          <div style="font-size:11px">Gaps: <b>${safeToLocale(bs[4])}</b> → <b>${safeToLocale(fs[4])}</b></div>
         </div>`
       : `<div style="padding:8px 12px;border-radius:6px;background:rgba(80,104,240,0.08);margin-top:10px;color:#5068F0;font-weight:600">━ ${IS_AR ? 'الجدول الحالي في أفضل حالة' : 'Current board is already optimal'}</div>`;
   }
