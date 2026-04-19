@@ -33,6 +33,8 @@
     .et-chip:hover { border-color: var(--teal); }
     .et-chip.active { background: var(--teal); color: #fff; border-color: var(--teal); }
     .et-chip input { display: none; }
+    .et-online-dot { color: #f59e0b; font-size: 0.6em; line-height: 1; vertical-align: middle; margin-left: 2px; }
+    .et-chip.active .et-online-dot { color: #fef3c7; }
     .et-dept-group { margin-bottom: 4px; }
     .et-dept-header { display: flex; align-items: center; gap: 6px; padding: 3px 4px; font-size: .75rem; cursor: pointer; border-radius: 4px; transition: background 0.15s; }
     .et-dept-header:hover { background: var(--teal-dim); }
@@ -324,6 +326,8 @@
         <span class="text-secondary small select-sep d-none">·</span>
         <a href="#" id="selectGeneralCourses" class="small text-decoration-none"></a>
         <span class="text-secondary small select-sep d-none">·</span>
+        <a href="#" id="toggleOnlineCourses" class="small text-decoration-none"></a>
+        <span class="text-secondary small select-sep d-none">·</span>
         <a href="#" id="toggleAllCourses" class="small text-decoration-none"></a>
       </div>
       <div id="courseList" class="p-2 border rounded" style="min-height:36px;max-height:260px;overflow-y:auto;"></div>
@@ -493,6 +497,8 @@ const T = {
   deselectAll:    IS_AR ? 'إلغاء تحديد الكل' : 'Deselect all',
   selectComputer: IS_AR ? 'تحديد الحاسوبية' : 'Select computer',
   selectGeneral:  IS_AR ? 'تحديد العامة' : 'Select general',
+  selectOnline:   IS_AR ? 'تحديد الإلكترونية' : 'Select online',
+  deselectOnline: IS_AR ? 'إلغاء تحديد الإلكترونية' : 'Deselect online',
   loadFirst:      IS_AR ? 'يرجى تحميل المقررات أولاً.' : 'Please load courses first.',
   noSelected:     IS_AR ? 'يرجى اختيار مقرر واحد على الأقل.' : 'Please select at least one course.',
   show:           IS_AR ? 'عرض' : 'Show',
@@ -640,6 +646,7 @@ function clearCoursePreview() {
   $('toggleAllCourses').textContent = '';
   $('selectComputerCourses').textContent = '';
   $('selectGeneralCourses').textContent = '';
+  $('toggleOnlineCourses').textContent = '';
   document.querySelectorAll('.select-sep').forEach(s => s.classList.add('d-none'));
   $('buildBtn').disabled = true;
   _coursesLoaded = false;
@@ -682,7 +689,8 @@ function renderCourseChips(courses) {
       html += `<span class="et-level-badge">L${level}</span>`;
       for (const c of deptMap[dept][level]) {
         const crLabel = c.credit_hours ? ` | ${c.credit_hours}cr` : '';
-        html += `<label class="et-chip active"><input type="checkbox" value="${c.course_code}" checked>${c.course_code} <small class="opacity-75">(${c.enrolled_count}${crLabel})</small></label>`;
+        const onlineMark = c.is_online ? ' <span class="et-online-dot" title="online" aria-label="online">●</span>' : '';
+        html += `<label class="et-chip active"><input type="checkbox" value="${c.course_code}" checked data-online="${c.is_online ? '1' : '0'}">${c.course_code}${onlineMark} <small class="opacity-75">(${c.enrolled_count}${crLabel})</small></label>`;
       }
       html += `</div>`;
     }
@@ -724,6 +732,15 @@ function renderCourseChips(courses) {
   $('buildBtn').disabled = false;
   $('selectComputerCourses').textContent = T.selectComputer;
   $('selectGeneralCourses').textContent = T.selectGeneral;
+  // Online toggle only appears when at least one course is flagged online,
+  // otherwise it'd be no-op confusion. Label flips between Select/Deselect
+  // based on the current online-checked state.
+  const hasOnline = courses.some(c => c.is_online);
+  if (hasOnline) {
+    updateOnlineToggleLabel();
+  } else {
+    $('toggleOnlineCourses').textContent = '';
+  }
   document.querySelectorAll('.select-sep').forEach(s => s.classList.remove('d-none'));
   updateCourseCount(courses.length);
   updateToggleLabel();
@@ -746,6 +763,7 @@ function updateCourseCount(total) {
     ? (IS_AR ? `(الكل ${total})` : `(all ${total})`)
     : `(${checked}/${total})`;
   updateToggleLabel();
+  updateOnlineToggleLabel();
 }
 
 function updateToggleLabel() {
@@ -787,6 +805,41 @@ $('selectComputerCourses').addEventListener('click', (e) => {
 $('selectGeneralCourses').addEventListener('click', (e) => {
   e.preventDefault();
   selectByPrefixGroup(false);
+});
+
+// Single toggle: if any online courses are currently UNchecked, click ticks
+// them all on (additive — leaves other selections untouched). If all online
+// courses are already checked, click unticks them all. Label adapts to the
+// next action.
+function updateOnlineToggleLabel() {
+  const link = $('toggleOnlineCourses');
+  if (!_coursesLoaded) {
+    link.textContent = '';
+    return;
+  }
+  const online = $('courseList').querySelectorAll('input[type=checkbox][data-online="1"]');
+  if (!online.length) {
+    link.textContent = '';
+    return;
+  }
+  const allChecked = Array.from(online).every(cb => cb.checked);
+  link.textContent = allChecked ? T.deselectOnline : T.selectOnline;
+}
+
+$('toggleOnlineCourses').addEventListener('click', (e) => {
+  e.preventDefault();
+  const online = $('courseList').querySelectorAll('input[type=checkbox][data-online="1"]');
+  if (!online.length) return;
+  const allChecked = Array.from(online).every(cb => cb.checked);
+  const newState = !allChecked;
+  online.forEach(cb => {
+    cb.checked = newState;
+    cb.closest('.et-chip').classList.toggle('active', newState);
+  });
+  const total = $('courseList').querySelectorAll('input[type=checkbox]').length;
+  updateCourseCount(total);
+  $('courseList').querySelectorAll('.et-dept-group').forEach(updateDeptToggleLabel);
+  updateOnlineToggleLabel();
 });
 
 // Enable / disable the thin-threshold input alongside its toggle

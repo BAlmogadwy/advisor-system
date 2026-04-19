@@ -106,7 +106,19 @@ def exam_timetable_preview_courses_view(request: HttpRequest) -> JsonResponse:
     enrolled_sets = build_enrolled_sets(programs=programs, sections=sections)
 
     # Fetch credit hours for all preview courses
-    credit_map = build_credit_map(list(enrolled_sets.keys()))
+    course_codes = list(enrolled_sets.keys())
+    credit_map = build_credit_map(course_codes)
+
+    # Online flag per course: True iff at least one matching ProgrammeRequirement
+    # row marks it as is_online, OR the course code is in the GS / GSE general
+    # studies family (institutional convention — those are delivered online).
+    from core.models import ProgrammeRequirement
+
+    pr_qs = ProgrammeRequirement.objects.filter(course_code__in=course_codes, is_online=True)
+    if programs:
+        pr_qs = pr_qs.filter(program__in=programs)
+    online_set = set(pr_qs.values_list("course_code", flat=True))
+    online_set.update(cc for cc in course_codes if cc.startswith(("GS", "GSE")))
 
     courses = sorted(
         [
@@ -114,6 +126,7 @@ def exam_timetable_preview_courses_view(request: HttpRequest) -> JsonResponse:
                 "course_code": cc,
                 "enrolled_count": len(sids),
                 "credit_hours": credit_map.get(cc, 3),
+                "is_online": cc in online_set,
             }
             for cc, sids in enrolled_sets.items()
         ],
