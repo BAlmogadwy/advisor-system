@@ -385,7 +385,15 @@ html[data-theme="dark"] .glass-card {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
-html[data-theme="dark"] .advisor-block h3 {
+html[data-theme="dark"] .advisor-block h3,
+html[data-theme="dark"] .zone-title,
+html[data-theme="dark"] .um-panel-title,
+html[data-theme="dark"] .cp-t,
+html[data-theme="dark"] .dba-section-title,
+html[data-theme="dark"] .pf-card-title,
+html[data-theme="dark"] .et-panel > h6,
+html[data-theme="dark"] .si-panel > h6,
+html[data-theme="dark"] .cpanel > h6 {
   color: #2ec9a0;
 }
 html[data-theme="dark"] .drawer h3 {
@@ -2388,9 +2396,42 @@ tr.attention-row td { background: #fff7ed !important; }
 .drawer .kv { font-size: 0.85rem; color: var(--ink-2); margin-bottom: 0.28rem; }
 
 .advisor-block { padding: 1rem; margin-top: 0.875rem; }
-.advisor-block h3 {
-  margin-bottom: 0.55rem; font-weight: 700; color: var(--teal-deep); font-size: 0.875rem;
-  display: flex; align-items: center; gap: 0.45rem;
+/* Canonical card-heading style — teal, bold, 14px.
+   Applied to advisor-block h3 (the original source) plus the
+   other card-title patterns across the app (zone-title,
+   um-panel-title, .et-panel/.si-panel/.cpanel direct h6). */
+.advisor-block h3,
+.zone-title,
+.um-panel-title,
+.cp-t,
+.dba-section-title,
+.pf-card-title,
+.et-panel > h6,
+.si-panel > h6,
+.cpanel > h6 {
+  margin:          0 0 0.55rem;
+  font-family:     var(--font-body);
+  font-size:       0.875rem;
+  font-weight:     700;
+  color:           var(--teal-deep);
+  letter-spacing:  0;
+  text-transform:  none;
+  display:         flex;
+  align-items:     center;
+  gap:             0.45rem;
+}
+
+/* Hide the old teal-pipe prefix now that the heading text itself is teal. */
+.zone-title::before,
+.um-panel-title::before,
+.dba-section-title::before {
+  display: none;
+}
+/* Keep the colored prefix for state variants (edit / danger zone). */
+.um-panel-title.edit::before,
+.um-panel-title.danger::before,
+.danger-panel .dba-section-title::before {
+  display: inline-block;
 }
 
 /* ============================================================
@@ -6574,25 +6615,17 @@ html[data-theme="dark"] .trace-btn-copy { color: var(--t3) !important; }
       margin-bottom: 0.875rem;
     }
 
-    .dba-section-title {
-      font-size:      0.72rem;
-      font-weight:    700;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color:          var(--muted);
-      margin-bottom:  0.875rem;
-      display:        flex;
-      align-items:    center;
-      gap:            0.4rem;
-    }
-
+    /* .dba-section-title base (font/color/margin/layout) handled by
+       the canonical card-heading rule. Only the state ::before
+       definition lives here — the default is hidden via that rule,
+       but .danger-panel variant re-enables it. */
     .dba-section-title::before {
-      content: '';
-      display: inline-block;
-      width:   3px; height: 0.8rem;
+      content:       '';
+      width:         3px;
+      height:        0.8rem;
       border-radius: 2px;
-      background: var(--brand);
-      opacity: 0.55;
+      background:    var(--brand);
+      opacity:       0.55;
     }
 
     .danger-panel .dba-section-title::before { background: var(--danger); }
@@ -8136,11 +8169,8 @@ body:has(.login-wrap) {
   box-shadow: 7px 7px 18px rgba(163,177,198,0.35),
               -7px -7px 18px rgba(255,255,255,0.9);
 }
-.pf-card-title {
-  display: flex; align-items: center; gap: 0.5rem;
-  font-size: 0.88rem; font-weight: 700; color: var(--ink);
-  margin-bottom: 1rem;
-}
+/* .pf-card-title base styling handled by canonical card-heading rule.
+   Only the inline icon size lives here. */
 .pf-card-title .i { width: 18px; height: 18px; color: var(--muted); }
 
 .pf-field { margin-bottom: 0.85rem; }
@@ -8602,13 +8632,11 @@ html[data-theme="dark"] .pf-card.pf-saved {
   display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 0.75rem;
 }
-.um-panel-title {
-  font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
-  letter-spacing: 0.07em; color: var(--muted);
-  display: flex; align-items: center; gap: 0.4rem;
-}
+/* .um-panel-title visual now handled by the canonical card-heading rule.
+   Keep the ::before shape definition here so state variants (.edit / .danger)
+   render the colored prefix. The default base is hidden via the canonical rule. */
 .um-panel-title::before {
-  content: ""; display: inline-block; width: 3px; height: 0.8rem;
+  content: ""; width: 3px; height: 0.8rem;
   border-radius: 2px; background: var(--brand); opacity: 0.6;
 }
 .um-panel-title.edit::before { background: #f59e0b; }
