@@ -420,7 +420,8 @@ function renderGridHTML(slots, placements, clashIds, kind) {
         // Colour the card with the same palette used on the main page
         // (per-course pastel bg + darker accent stripe on the leading edge).
         const style = `background:${bg};border-left-color:${accent};color:#111827`;
-        h += `<div class="cell filled${hasClash ? ' clash' : ''}" ${cellAttrs} data-placement-id="${placement.id}" draggable="true" style="${style}">`;
+        const cls = `cell filled${hasClash ? ' clash' : ''}${placement.is_locked ? ' locked' : ''}`;
+        h += `<div class="${cls}" ${cellAttrs} data-placement-id="${placement.id}" draggable="${placement.is_locked ? 'false' : 'true'}" style="${style}">`;
         h += `<span class="cid" style="color:#111827">${esc(placement.course_code)} ${esc(placement.section || '')}</span>`;
         h += `<span class="cmeta" style="color:#4b5563">${room}${stu ? '·' + stu : ''}</span>`;
         h += `</div>`;
@@ -475,6 +476,7 @@ function bindPaneControls(idx) {
     cell.addEventListener('drop', (e) => onCellDrop(idx, cell, e));
     if (cell.classList.contains('filled')) {
       cell.addEventListener('dragstart', (e) => {
+        if (cell.classList.contains('locked')) { e.preventDefault(); return; }
         const pid = cell.dataset.placementId;
         S.dragSource = { paneIdx: idx, placementId: pid ? parseInt(pid) : null };
         e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'move', placement_id: S.dragSource.placementId, source_pane: idx }));
@@ -486,6 +488,10 @@ function bindPaneControls(idx) {
         S.selectedPaneIdx = idx;
         S.selectedPlacementId = parseInt(cell.dataset.placementId);
         $('twsStatusHover').textContent = `Selected ${cell.querySelector('.cid')?.textContent}`;
+      });
+      cell.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        openDrawer(idx, parseInt(cell.dataset.placementId));
       });
     }
   });
@@ -634,6 +640,132 @@ function applyPreset(name) {
   for (let i = 0; i < 4; i++) loadAndRenderPane(i);
 }
 
+/* ── Section drawer ── */
+const DRAWER = {
+  placementId: null,
+  paneIdx: null,
+};
+
+function openDrawer(paneIdx, placementId) {
+  const located = findPlacement(placementId);
+  if (!located) return;
+  const p = located.placement;
+  DRAWER.placementId = placementId;
+  DRAWER.paneIdx = paneIdx;
+
+  const accent = $('twsDrawerAccent');
+  const bg = courseColor(p.course_code);
+  accent.style.background = bg;
+
+  $('twsDrawerTitle').textContent = `${p.course_code} ${p.section || ''}`.trim();
+  const board = S.boards.find(b => b.id === S.panes[paneIdx].boardId);
+  $('twsDrawerSub').textContent = `${board ? board.label : '—'} · ${p.day} · ${p.start_time}–${p.end_time}`;
+
+  const conflicts = S.panes[paneIdx].boardData?.conflicts || {};
+  const clashIds = new Set();
+  (conflicts.overlaps || []).forEach(o => (o.ids || []).forEach(id => clashIds.add(id)));
+  (conflicts.instructor_clashes || []).forEach(o => (o.ids || []).forEach(id => clashIds.add(id)));
+  (conflicts.room_clashes || []).forEach(o => (o.ids || []).forEach(id => clashIds.add(id)));
+
+  const statusPill = p.is_locked
+    ? '<span class="pill locked">🔒 Locked</span>'
+    : clashIds.has(p.id)
+      ? '<span class="pill clash">⚠ Conflict</span>'
+      : '<span class="pill ok">● Clean</span>';
+
+  const instructor = (p.meetings && p.meetings[0]) ? p.meetings[0].instructor : null;
+  const meetings = (p.meetings || []).map(m =>
+    `<div class="meeting-row"><span class="d">${esc(m.day)}</span><span class="t">${esc(m.start_time)}–${esc(m.end_time)}</span><span class="r">${esc(m.room || '—')} · ${esc(m.instructor || '—')}</span></div>`
+  ).join('') || '<div class="meeting-row"><span class="r">—</span></div>';
+
+  $('twsDrawerBody').innerHTML = `
+    <div class="field"><span class="label">${IS_AR ? 'المقرر' : 'Course'}</span><span class="value mono">${esc(p.course_code)}</span></div>
+    <div class="field"><span class="label">${IS_AR ? 'الاسم' : 'Name'}</span><span class="value">${esc(p.course_name || '—')}</span></div>
+    <div class="field"><span class="label">${IS_AR ? 'الشعبة' : 'Section'}</span><span class="value mono">${esc(p.section || '—')}</span></div>
+    <div class="field"><span class="label">${IS_AR ? 'اليوم' : 'Day'}</span><span class="value mono">${esc(p.day)}</span></div>
+    <div class="field"><span class="label">${IS_AR ? 'الوقت' : 'Time'}</span><span class="value mono">${esc(p.start_time)}–${esc(p.end_time)}</span></div>
+    <div class="field"><span class="label">${IS_AR ? 'القاعة' : 'Room'}</span><span class="value mono">${esc(p.room || '—')}</span></div>
+    <div class="field"><span class="label">${IS_AR ? 'المدرس' : 'Instructor'}</span><span class="value">${esc(instructor || '—')}</span></div>
+    <div class="field"><span class="label">${IS_AR ? 'السعة' : 'Capacity'}</span><span class="value mono">${p.available_capacity || '—'}</span></div>
+    <div class="field"><span class="label">${IS_AR ? 'المسجلون' : 'Registered'}</span><span class="value mono">${p.registered_count || '—'}</span></div>
+    <div class="field"><span class="label">${IS_AR ? 'الحالة' : 'Status'}</span><span class="value">${statusPill}</span></div>
+    <div class="section-title">${IS_AR ? 'جميع اللقاءات' : 'All meetings'}</div>
+    ${meetings}
+  `;
+
+  // Lock-button label mirrors current state (only update the label span)
+  const lockBtn = $('twsDrawerLock');
+  const lockLbl = lockBtn.querySelector('.lbl');
+  if (lockLbl) {
+    lockLbl.textContent = p.is_locked
+      ? (IS_AR ? 'فتح القفل' : 'Unlock')
+      : (IS_AR ? 'قفل' : 'Lock');
+  }
+
+  $('twsDrawer').classList.add('open');
+  $('twsDrawer').setAttribute('aria-hidden', 'false');
+  $('twsDrawerBackdrop').classList.add('open');
+}
+
+function closeDrawer() {
+  DRAWER.placementId = null;
+  DRAWER.paneIdx = null;
+  $('twsDrawer').classList.remove('open');
+  $('twsDrawer').setAttribute('aria-hidden', 'true');
+  $('twsDrawerBackdrop').classList.remove('open');
+}
+
+/* ── Lock / unlock ── */
+async function doToggleLock(placementId, paneIdx) {
+  const located = findPlacement(placementId);
+  if (!located) { notify.error(IS_AR ? 'غير موجود' : 'Placement not found'); return; }
+  const wasLocked = !!located.placement.is_locked;
+  const data = await api(`/ops/tw/placements/${placementId}/lock/`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+  });
+  if (!data) return;
+  notify.success(wasLocked
+    ? (IS_AR ? 'تم فتح القفل' : 'Unlocked')
+    : (IS_AR ? 'تم القفل' : 'Locked'));
+  // Reload every pane — placement could be visible in more than one
+  for (let i = 0; i < 4; i++) await loadAndRenderPane(i);
+  await refreshBoardsSummary();
+  // If drawer open on this placement, reopen to refresh the body
+  if (DRAWER.placementId === placementId) openDrawer(paneIdx, placementId);
+}
+
+/* ── Remove + undo ── */
+async function doRemove(placementId, paneIdx) {
+  const located = findPlacement(placementId);
+  if (!located) { notify.error(IS_AR ? 'غير موجود' : 'Placement not found'); return; }
+  const p = located.placement;
+  const confirmed = window.confirm(IS_AR
+    ? `إزالة ${p.course_code} ${p.section || ''}؟`
+    : `Remove ${p.course_code} ${p.section || ''}?`);
+  if (!confirmed) return;
+
+  // Snapshot before delete for undo (need term_section_id + original position).
+  const snapshot = {
+    placement_id: placementId,
+    board_id: S.panes[paneIdx].boardId,
+    term_section_id: p.term_section_id,
+    day: p.day, start_time: p.start_time, end_time: p.end_time,
+    room: p.room || '',
+  };
+
+  const data = await api(`/ops/tw/placements/${placementId}/remove/`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: p.is_locked ? JSON.stringify({ override: true }) : '{}',
+  });
+  if (!data) return;
+  notify.success(IS_AR ? 'تم الحذف' : 'Removed');
+  S.undoStack.push({ type: 'remove', ...snapshot });
+  S.redoStack = [];
+  updateUndoRedoButtons();
+  closeDrawer();
+  for (let i = 0; i < 4; i++) await loadAndRenderPane(i);
+  await refreshBoardsSummary();
+}
+
 /* ── Undo / Redo (global, matching main-page semantics) ── */
 function updateUndoRedoButtons() {
   const u = $('twsUndo'), r = $('twsRedo');
@@ -650,6 +782,25 @@ async function doMove(placementId, day, start, end) {
   return data;
 }
 
+async function doCreate(action) {
+  return api('/ops/tw/placements/create/', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      board_id: action.board_id,
+      term_section_id: action.term_section_id,
+      day: action.day,
+      start_time: action.start_time,
+      end_time: action.end_time,
+      room: action.room || '',
+    }),
+  });
+}
+async function doRemoveApi(placementId) {
+  return api(`/ops/tw/placements/${placementId}/remove/`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ override: true }),
+  });
+}
+
 async function doUndo() {
   const action = S.undoStack.pop();
   if (!action) return;
@@ -658,10 +809,16 @@ async function doUndo() {
     if (!data) { S.undoStack.push(action); return; }
     S.redoStack.push(action);
     notify.success(IS_AR ? 'تم التراجع' : 'Undone');
+  } else if (action.type === 'remove') {
+    // Undo remove = re-create the placement at its original position.
+    const data = await doCreate(action);
+    if (!data) { S.undoStack.push(action); return; }
+    // Track new placement id so redo can re-delete it.
+    const newId = data.placement && data.placement.id;
+    S.redoStack.push({ ...action, restored_placement_id: newId });
+    notify.success(IS_AR ? 'تم استرجاع الشعبة' : 'Placement restored');
   }
   updateUndoRedoButtons();
-  // Reload every pane to guarantee consistency — the placement may have
-  // been visible in multiple panes or moved across boards.
   for (let i = 0; i < 4; i++) await loadAndRenderPane(i);
   await refreshBoardsSummary();
 }
@@ -674,6 +831,13 @@ async function doRedo() {
     if (!data) { S.redoStack.push(action); return; }
     S.undoStack.push(action);
     notify.success(IS_AR ? 'تم الإعادة' : 'Redone');
+  } else if (action.type === 'remove') {
+    // Redo remove = delete again (using the newly-restored placement id).
+    const targetId = action.restored_placement_id || action.placement_id;
+    const data = await doRemoveApi(targetId);
+    if (!data) { S.redoStack.push(action); return; }
+    S.undoStack.push({ ...action, placement_id: targetId });
+    notify.success(IS_AR ? 'تمت الإزالة مرة أخرى' : 'Removed again');
   }
   updateUndoRedoButtons();
   for (let i = 0; i < 4; i++) await loadAndRenderPane(i);
@@ -723,6 +887,16 @@ function doExport() {
   $('twsUndo')?.addEventListener('click', doUndo);
   $('twsRedo')?.addEventListener('click', doRedo);
   updateUndoRedoButtons();
+
+  // Drawer events
+  $('twsDrawerClose').addEventListener('click', closeDrawer);
+  $('twsDrawerBackdrop').addEventListener('click', closeDrawer);
+  $('twsDrawerLock').addEventListener('click', () => {
+    if (DRAWER.placementId != null) doToggleLock(DRAWER.placementId, DRAWER.paneIdx);
+  });
+  $('twsDrawerRemove').addEventListener('click', () => {
+    if (DRAWER.placementId != null) doRemove(DRAWER.placementId, DRAWER.paneIdx);
+  });
   $('twsClose').addEventListener('click', () => {
     if (window.history.length > 1) window.history.back();
     else window.location.href = '/timetable-workspace/';
@@ -734,7 +908,15 @@ function doExport() {
     b.addEventListener('click', () => applyPreset(b.dataset.preset));
   });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { $('twsClose').click(); return; }
+    // Skip when typing in an input/select/textarea
+    const tag = (e.target && e.target.tagName) || '';
+    const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target?.isContentEditable;
+
+    if (e.key === 'Escape') {
+      if ($('twsDrawer').classList.contains('open')) { closeDrawer(); return; }
+      $('twsClose').click();
+      return;
+    }
     // Undo / redo — Ctrl+Z, Ctrl+Shift+Z / Ctrl+Y
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
       e.preventDefault();
@@ -746,10 +928,30 @@ function doExport() {
       doRedo();
       return;
     }
+
+    if (typing) return;
+
+    // Placement-level shortcuts — target is the drawer's placement if open,
+    // else the currently selected cell's placement.
+    const pid = DRAWER.placementId != null ? DRAWER.placementId : S.selectedPlacementId;
+    const pidx = DRAWER.placementId != null ? DRAWER.paneIdx : S.selectedPaneIdx;
+    if ((e.key === 'Delete' || e.key === 'Backspace') && pid != null) {
+      e.preventDefault();
+      doRemove(pid, pidx);
+      return;
+    }
+    if (e.key === 'l' && pid != null) {
+      // Lowercase L toggles lock on the targeted placement
+      e.preventDefault();
+      doToggleLock(pid, pidx);
+      return;
+    }
+
     if (e.key >= '1' && e.key <= '4') {
       const idx = parseInt(e.key) - 1;
       paneEl(idx)?.scrollIntoView({ block: 'center' });
-    } else if (e.key === 'l' || e.key === 'L') {
+    } else if (e.key === 'L') {
+      // Uppercase L (Shift+L) cycles layout — keeps lowercase L for per-cell lock
       const modes = ['quad', 'vert', 'horz', 'single'];
       setLayout(modes[(modes.indexOf(S.layout) + 1) % modes.length]);
     }
