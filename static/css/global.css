@@ -341,14 +341,22 @@ html[data-theme="dark"] .btt {
    neumorphic shadows (rgba(163,177,198,...) + rgba(255,255,255,0.7+))
    ─────────────────────────────────────────────────────────── */
 
-/* Cards & panels — dark background + subtle shadow */
+/* Cards & panels — dark surface (bg + border + shadow) for the classes
+   that share the teal-card treatment. .advisor-block, .cpanel, .zone-card,
+   .drawer moved to V2 UNIFIED dark rule. */
 html[data-theme="dark"] .soft-card,
-html[data-theme="dark"] .zone-card,
 html[data-theme="dark"] .term-card,
 html[data-theme="dark"] .term-details,
 html[data-theme="dark"] .metric,
 html[data-theme="dark"] .mc,
-html[data-theme="dark"] .cpanel,
+html[data-theme="dark"] .glass-card,
+html[data-theme="dark"] .task-card {
+  background: rgba(255,255,255,0.04) !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.25) !important;
+  border:     1px solid rgba(10,142,110,0.2) !important;
+}
+
+/* Cards & panels — bg + shadow only (no teal border) */
 html[data-theme="dark"] .filter-bar,
 html[data-theme="dark"] .actions-row,
 html[data-theme="dark"] .table-wrap,
@@ -357,28 +365,9 @@ html[data-theme="dark"] .skel-card,
 html[data-theme="dark"] .glass-filter-row,
 html[data-theme="dark"] .audit-table-wrap,
 html[data-theme="dark"] .tbl-card tbody tr.cr-row,
-html[data-theme="dark"] .mobile-cards tbody tr,
-html[data-theme="dark"] .advisor-block,
-html[data-theme="dark"] .glass-card,
-html[data-theme="dark"] .drawer,
-html[data-theme="dark"] .task-card {
+html[data-theme="dark"] .mobile-cards tbody tr {
   background: rgba(255,255,255,0.04) !important;
   box-shadow: 0 2px 8px rgba(0,0,0,0.25) !important;
-}
-
-/* Cards & panels — dark border */
-html[data-theme="dark"] .soft-card,
-html[data-theme="dark"] .zone-card,
-html[data-theme="dark"] .term-card,
-html[data-theme="dark"] .term-details,
-html[data-theme="dark"] .metric,
-html[data-theme="dark"] .mc,
-html[data-theme="dark"] .cpanel,
-html[data-theme="dark"] .advisor-block,
-html[data-theme="dark"] .glass-card,
-html[data-theme="dark"] .drawer,
-html[data-theme="dark"] .task-card {
-  border: 1px solid rgba(10,142,110,0.2) !important;
 }
 /* Kill backdrop-filter in dark mode — flat look matching advisor-block */
 html[data-theme="dark"] .mc,
@@ -2498,7 +2487,7 @@ tr.attention-row td { background: #fff7ed !important; }
 #advisorportfolio .panel-sub       { font-size: 0.875rem; }
 #advisoradmin .actions-row .btn,
 #advisorportfolio .actions-row .btn { border-radius: var(--radius-sm); }
-#advisoradmin .advisor-block       { border-color: var(--teal-border); }
+/* #advisoradmin .advisor-block border-color now handled by TEAL CARD SURFACE + V2 dark rule */
 
 #usermgmt .actions-row .btn        { flex: 1 1 180px; }
 #umMeta.meta-banner                { font-size: 0.85rem; }
@@ -4281,7 +4270,11 @@ html[data-theme="dark"] .sp-mc,
 html[data-theme="dark"] .ov-kpi,
 html[data-theme="dark"] .ov-action,
 html[data-theme="dark"] .ov-activity,
-html[data-theme="dark"] .student-ctx-card {
+html[data-theme="dark"] .student-ctx-card,
+html[data-theme="dark"] .advisor-block,
+html[data-theme="dark"] .cpanel,
+html[data-theme="dark"] .zone-card,
+html[data-theme="dark"] .drawer {
   background:   rgba(255,255,255,0.04);
   border-color: rgba(10,142,110,0.2);
   box-shadow:   0 2px 8px rgba(0,0,0,0.25);
