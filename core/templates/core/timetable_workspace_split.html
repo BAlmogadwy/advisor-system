@@ -1,0 +1,294 @@
+{% extends "core/base.html" %}
+{% load i18n static %}
+{% get_current_language as LANGUAGE_CODE %}
+
+{% block title %}{% if LANGUAGE_CODE == 'ar' %}مقارنة مقسّمة{% else %}Split Compare{% endif %} · Timetable Workspace{% endblock %}
+
+{% block main_padding %}p-0{% endblock %}
+
+{% block extra_css %}
+<style>
+body.tws-root .sidebar,
+body.tws-root .page-header,
+body.tws-root .page-intro,
+body.tws-root .back-to-top,
+body.tws-root .ambience,
+body.tws-root .side-decor,
+body.tws-root .color-mesh { display: none !important; }
+body.tws-root .shell { display: block !important; }
+body.tws-root main#main-content { padding: 0 !important; height: 100vh; overflow: hidden; }
+body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display: flex; flex-direction: column; }
+
+.tws-topbar,
+.tws-boards-bar,
+.tws-ctrls { background: var(--glass-bg-header); backdrop-filter: var(--glass-blur); border-bottom: 1px solid var(--line); }
+.tws-topbar { display: flex; align-items: center; gap: 12px; padding: 10px 18px; }
+.tws-topbar h1 { font-family: var(--font-serif, 'DM Serif Display'), serif; font-size: 18px; font-weight: 400; margin: 0; letter-spacing: -0.01em; }
+.tws-topbar .sub { color: var(--t3); font-size: 10.5px; font-family: var(--font-mono, 'JetBrains Mono'), monospace; letter-spacing: 0.06em; text-transform: uppercase; }
+.tws-topbar .sp { flex: 1; }
+.tws-topbar .metric { display: inline-flex; gap: 5px; font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 10.5px; color: var(--t4); text-transform: uppercase; letter-spacing: 0.06em; }
+.tws-topbar .metric b { color: var(--ink); font-weight: 700; font-size: 12px; }
+.tws-topbar .metric b.warn { color: var(--rose, #F06060); }
+
+.tws-select, .tws-btn {
+  border: 1px solid var(--line); background: var(--glass-bg); color: var(--ink);
+  padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 500;
+  font-family: inherit; cursor: pointer; line-height: 1.3;
+}
+.tws-select { padding-right: 26px; min-width: 180px; }
+.tws-btn:hover { border-color: var(--teal); color: var(--teal); }
+.tws-btn.primary { background: var(--teal); border-color: var(--teal); color: #fff; font-weight: 700; }
+.tws-btn.primary:hover { background: var(--teal-dark, #087050); }
+.tws-btn[disabled] { opacity: 0.4; cursor: not-allowed; }
+
+.tws-boards-bar { display: flex; align-items: center; gap: 10px; padding: 8px 18px; flex-wrap: wrap; }
+.tws-boards-bar .lbl { font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 10px; color: var(--t4); text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700; }
+.tws-slot-grid { display: flex; gap: 8px; flex-wrap: wrap; flex: 1; }
+.tws-bslot { display: inline-flex; align-items: stretch; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--glass-bg); }
+.tws-bslot .pos {
+  padding: 5px 9px; background: rgba(255,255,255,0.04); color: var(--t3);
+  font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 10px; font-weight: 700;
+  letter-spacing: 0.06em; display: flex; align-items: center; border-right: 1px solid var(--line);
+}
+.tws-bslot .pos::before {
+  content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--dot, var(--teal)); margin-right: 5px;
+}
+.tws-bslot.t0 .pos::before { background: #2EC9A0; }
+.tws-bslot.t1 .pos::before { background: #5068F0; }
+.tws-bslot.t2 .pos::before { background: #F5B731; }
+.tws-bslot.t3 .pos::before { background: #F06060; }
+.tws-bslot.off { opacity: 0.4; }
+.tws-bslot select {
+  appearance: none; -webkit-appearance: none; border: 0; background: transparent; color: var(--ink);
+  padding: 5px 22px 5px 10px; font-family: var(--font-mono, 'JetBrains Mono'), monospace;
+  font-size: 11px; font-weight: 600; cursor: pointer; outline: 0;
+}
+.tws-bslot .seg { position: relative; display: flex; align-items: center; }
+.tws-bslot .seg::after { content: '▾'; position: absolute; right: 6px; top: 50%; transform: translateY(-50%); font-size: 9px; color: var(--t4); pointer-events: none; }
+.tws-bslot .off-toggle {
+  padding: 0 8px; background: rgba(255,255,255,0.03); border: 0; border-left: 1px solid var(--line);
+  color: var(--t4); cursor: pointer; font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 12px;
+}
+.tws-bslot .off-toggle:hover { color: var(--rose, #F06060); }
+.tws-bslot.off .off-toggle { color: var(--teal); }
+.tws-presets { display: flex; align-items: center; gap: 6px; }
+.tws-presets .plbl { font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 10px; color: var(--t4); text-transform: uppercase; letter-spacing: 0.08em; }
+.tws-preset { padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--glass-bg); color: var(--t3); font-family: inherit; font-size: 11px; cursor: pointer; }
+.tws-preset:hover { border-color: var(--teal); color: var(--teal); }
+
+.tws-ctrls { display: flex; align-items: center; gap: 10px; padding: 6px 18px; }
+.tws-layout-switch { display: flex; background: var(--glass-bg); border: 1px solid var(--line); border-radius: 8px; padding: 2px; }
+.tws-layout-switch button { border: 0; background: transparent; color: var(--t3); padding: 5px 9px; border-radius: 6px; cursor: pointer; font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 11px; }
+.tws-layout-switch button.on { background: var(--teal); color: #fff; font-weight: 700; }
+.tws-sync-toggle { display: inline-flex; gap: 4px; background: var(--glass-bg); padding: 2px; border-radius: 8px; border: 1px solid var(--line); }
+.tws-sync-toggle .tg { padding: 4px 10px; font-size: 11px; color: var(--t3); border-radius: 6px; cursor: pointer; font-family: var(--font-mono, 'JetBrains Mono'), monospace; }
+.tws-sync-toggle .tg.on { background: var(--teal); color: #fff; font-weight: 700; }
+
+.tws-quad {
+  flex: 1; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;
+  gap: 6px; padding: 6px; min-height: 0; background: var(--bg, #0a0c14);
+}
+.tws-quad.layout-single { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+.tws-quad.layout-single > .tws-pane:not(.primary) { display: none; }
+.tws-quad.layout-vert { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
+.tws-quad.layout-vert > .tws-pane:nth-child(n+3) { display: none; }
+.tws-quad.layout-horz { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
+.tws-quad.layout-horz > .tws-pane:nth-child(n+3) { display: none; }
+
+.tws-pane {
+  position: relative; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--card); overflow: hidden; min-height: 0; min-width: 0;
+  display: flex; flex-direction: column;
+}
+.tws-pane.t0 { border-top: 2px solid #2EC9A0; }
+.tws-pane.t1 { border-top: 2px solid #5068F0; }
+.tws-pane.t2 { border-top: 2px solid #F5B731; }
+.tws-pane.t3 { border-top: 2px solid #F06060; }
+.tws-pane .pane-hd {
+  display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-bottom: 1px solid var(--line);
+  background: rgba(255,255,255,0.02); font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 10.5px; color: var(--t3);
+}
+.tws-pane .pane-hd .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--teal); }
+.tws-pane.t0 .pane-hd .dot { background: #2EC9A0; }
+.tws-pane.t1 .pane-hd .dot { background: #5068F0; }
+.tws-pane.t2 .pane-hd .dot { background: #F5B731; }
+.tws-pane.t3 .pane-hd .dot { background: #F06060; }
+.tws-pane .pane-hd b { color: var(--ink); font-weight: 700; letter-spacing: 0.04em; }
+.tws-pane .pane-hd .ri { margin-left: auto; display: inline-flex; gap: 6px; }
+.tws-pane .pane-hd .ri button {
+  border: 1px solid var(--line); background: transparent; color: var(--t3); padding: 2px 7px;
+  border-radius: 4px; cursor: pointer; font-size: 11px; font-family: inherit;
+}
+.tws-pane .pane-hd .ri button:hover { color: var(--ink); border-color: var(--teal); }
+.tws-pane iframe { flex: 1; width: 100%; border: 0; background: transparent; }
+.tws-pane .empty-pane {
+  flex: 1; display: flex; align-items: center; justify-content: center; color: var(--t4);
+  font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 11px; letter-spacing: 0.04em;
+  text-align: center; padding: 20px;
+}
+
+.tws-status {
+  background: var(--teal); color: #fff; display: flex; align-items: center; gap: 14px;
+  padding: 5px 18px; font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 10.5px;
+  letter-spacing: 0.04em; font-weight: 500;
+}
+.tws-status .sp { flex: 1; }
+.tws-status .hint { opacity: 0.72; font-weight: 400; }
+
+/* Desktop-only guard */
+.tws-desktop-only { display: none; }
+@media (max-width: 1100px) {
+  body.tws-root > :not(.tws-desktop-only) { display: none !important; }
+  body.tws-root main#main-content { display: none !important; }
+  .tws-desktop-only {
+    display: flex !important; position: fixed; inset: 0; background: var(--bg, #0a0c14); z-index: 9999;
+    align-items: center; justify-content: center; padding: 40px; text-align: center;
+  }
+  .tws-desktop-only .card {
+    max-width: 480px; padding: 32px; border: 1px solid var(--line); border-radius: 16px; background: var(--card);
+  }
+  .tws-desktop-only h2 { font-family: var(--font-serif, 'DM Serif Display'), serif; font-size: 24px; font-weight: 400; margin: 0 0 10px; color: var(--ink); }
+  .tws-desktop-only p { color: var(--t3); font-size: 13.5px; line-height: 1.6; margin: 0 0 12px; }
+  .tws-desktop-only code { font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 11.5px; background: rgba(255,255,255,0.05); padding: 2px 7px; border-radius: 4px; color: var(--ink); }
+}
+</style>
+{% endblock %}
+
+{% block page_heading %}{% endblock %}
+{% block page_header_right %}{% endblock %}
+
+{% block body %}
+<script>document.body.classList.add('tws-root');</script>
+<div class="d-flex shell">
+  <main id="main-content" class="flex-grow-1 p-0" role="main">
+    <div class="content-wrap">
+
+      <div class="tws-topbar">
+        <h1>{% if LANGUAGE_CODE == 'ar' %}مقارنة مقسّمة{% else %}Split compare{% endif %}</h1>
+        <span class="sub" id="twsSub"></span>
+        <span class="sp"></span>
+        <span class="metric">{% if LANGUAGE_CODE == 'ar' %}طلاب{% else %}Students{% endif %} <b id="twsStStudents">—</b></span>
+        <span class="metric">{% if LANGUAGE_CODE == 'ar' %}موضوع{% else %}Placed{% endif %} <b id="twsStPlaced">—</b></span>
+        <span class="metric">{% if LANGUAGE_CODE == 'ar' %}عبر اللوحات{% else %}Cross-board{% endif %} <b id="twsStCross" class="warn">—</b></span>
+        <span class="metric">{% if LANGUAGE_CODE == 'ar' %}لوحات{% else %}Boards{% endif %} <b id="twsStBoards">—</b></span>
+        <select id="twsScenario" class="tws-select" title="{% if LANGUAGE_CODE == 'ar' %}السيناريو{% else %}Scenario{% endif %}">
+          <option value="">{% if LANGUAGE_CODE == 'ar' %}اختر سيناريو{% else %}Select scenario{% endif %}</option>
+        </select>
+        <button class="tws-btn" id="twsOptimise" type="button" disabled>
+          {% if LANGUAGE_CODE == 'ar' %}تحسين{% else %}Optimise{% endif %}
+        </button>
+        <button class="tws-btn" id="twsExport" type="button" disabled>
+          {% if LANGUAGE_CODE == 'ar' %}تصدير{% else %}Export{% endif %}
+        </button>
+        <button class="tws-btn primary" id="twsPublish" type="button" disabled>
+          {% if LANGUAGE_CODE == 'ar' %}نشر{% else %}Publish{% endif %}
+        </button>
+        <button class="tws-btn" id="twsClose" type="button" title="{% if LANGUAGE_CODE == 'ar' %}إغلاق{% else %}Close{% endif %}">
+          ✕
+        </button>
+      </div>
+
+      <div class="tws-boards-bar">
+        <span class="lbl">{% if LANGUAGE_CODE == 'ar' %}لوحات العرض{% else %}Boards on canvas{% endif %}</span>
+        <div class="tws-slot-grid" id="twsSlots"></div>
+        <div class="tws-presets">
+          <span class="plbl">{% if LANGUAGE_CODE == 'ar' %}المجموعات{% else %}Presets{% endif %}</span>
+          <button class="tws-preset" data-preset="first4">{% if LANGUAGE_CODE == 'ar' %}أول 4 لوحات{% else %}First 4 boards{% endif %}</button>
+          <button class="tws-preset" data-preset="cross">{% if LANGUAGE_CODE == 'ar' %}التعارضات الحرجة{% else %}Busiest boards{% endif %}</button>
+        </div>
+      </div>
+
+      <div class="tws-ctrls">
+        <span class="lbl" style="font-family:var(--font-mono,'JetBrains Mono'),monospace;font-size:10px;color:var(--t4);text-transform:uppercase;letter-spacing:0.1em">{% if LANGUAGE_CODE == 'ar' %}التخطيط{% else %}Layout{% endif %}</span>
+        <div class="tws-layout-switch" id="twsLayoutSwitch">
+          <button data-layout="single" title="{% if LANGUAGE_CODE == 'ar' %}واحد{% else %}Single{% endif %}">■</button>
+          <button data-layout="vert" title="{% if LANGUAGE_CODE == 'ar' %}عمودي{% else %}2 vertical{% endif %}">▌▌</button>
+          <button data-layout="horz" title="{% if LANGUAGE_CODE == 'ar' %}أفقي{% else %}2 horizontal{% endif %}">▀▄</button>
+          <button class="on" data-layout="quad" title="{% if LANGUAGE_CODE == 'ar' %}رباعي{% else %}Quad 2×2{% endif %}">▙▟</button>
+        </div>
+        <span class="sp" style="flex:1"></span>
+        <span class="hint" style="font-family:var(--font-mono,'JetBrains Mono'),monospace;font-size:10px;color:var(--t4);letter-spacing:0.05em">
+          {% if LANGUAGE_CODE == 'ar' %}اسحب بين الخلايا · انقر مزدوج للتفاصيل{% else %}Drag between cells · double-click for details{% endif %}
+        </span>
+      </div>
+
+      <div class="tws-quad layout-quad" id="twsQuad">
+        <div class="tws-pane t0 primary" data-idx="0">
+          <div class="pane-hd">
+            <span class="dot"></span><b data-role="label">—</b>
+            <span class="sp" style="flex:1"></span>
+            <span class="ri">
+              <button data-action="reload">↻</button>
+              <button data-action="maximise">⤢</button>
+            </span>
+          </div>
+          <div class="empty-pane">{% if LANGUAGE_CODE == 'ar' %}اختر لوحة{% else %}Select a board{% endif %}</div>
+        </div>
+        <div class="tws-pane t1" data-idx="1">
+          <div class="pane-hd">
+            <span class="dot"></span><b data-role="label">—</b>
+            <span class="sp" style="flex:1"></span>
+            <span class="ri">
+              <button data-action="reload">↻</button>
+              <button data-action="maximise">⤢</button>
+            </span>
+          </div>
+          <div class="empty-pane">{% if LANGUAGE_CODE == 'ar' %}اختر لوحة{% else %}Select a board{% endif %}</div>
+        </div>
+        <div class="tws-pane t2" data-idx="2">
+          <div class="pane-hd">
+            <span class="dot"></span><b data-role="label">—</b>
+            <span class="sp" style="flex:1"></span>
+            <span class="ri">
+              <button data-action="reload">↻</button>
+              <button data-action="maximise">⤢</button>
+            </span>
+          </div>
+          <div class="empty-pane">{% if LANGUAGE_CODE == 'ar' %}اختر لوحة{% else %}Select a board{% endif %}</div>
+        </div>
+        <div class="tws-pane t3" data-idx="3">
+          <div class="pane-hd">
+            <span class="dot"></span><b data-role="label">—</b>
+            <span class="sp" style="flex:1"></span>
+            <span class="ri">
+              <button data-action="reload">↻</button>
+              <button data-action="maximise">⤢</button>
+            </span>
+          </div>
+          <div class="empty-pane">{% if LANGUAGE_CODE == 'ar' %}اختر لوحة{% else %}Select a board{% endif %}</div>
+        </div>
+      </div>
+
+      <div class="tws-status">
+        <span id="twsStatusLayout">Layout 2×2</span>
+        <span id="twsStatusSync">Sync on</span>
+        <span id="twsStatusHover">Hovered —</span>
+        <span class="sp"></span>
+        <span class="hint">ESC · close</span>
+        <span class="hint">1–4 · focus pane</span>
+        <span class="hint">L · cycle layout</span>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="tws-desktop-only">
+  <div class="card">
+    <h2>{% if LANGUAGE_CODE == 'ar' %}عرض الحاسوب فقط{% else %}Desktop view only{% endif %}</h2>
+    <p>{% if LANGUAGE_CODE == 'ar' %}يحتاج العرض المقسّم إلى شاشة بعرض{% else %}Split compare needs at least{% endif %} <code>1100 px</code> {% if LANGUAGE_CODE == 'ar' %}على الأقل لعرض 4 لوحات جنبًا إلى جنب.{% else %}of horizontal canvas to lay out 2×2 term panes side by side.{% endif %}</p>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+{% csrf_token %}
+<script>
+  const LANGUAGE_CODE = "{{ LANGUAGE_CODE|default:'en' }}";
+  const djCsrfToken = "{{ csrf_token }}";
+  const INITIAL_SCENARIO = "{{ initial_scenario }}";
+  const INITIAL_BOARD = "{{ initial_board }}";
+  const DEFAULT_YEAR = {{ default_year|default:'null' }};
+  const DEFAULT_TERM = {{ default_term|default:'null' }};
+</script>
+<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=2"></script>
+{% endblock %}

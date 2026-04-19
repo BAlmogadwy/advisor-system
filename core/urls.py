@@ -103,6 +103,7 @@ from .sections_import_views import (
 from .settings_views import defaults_settings_view
 from .timetable_workspace_views import (
     timetable_workspace_page,
+    timetable_workspace_split_page,
     tw_board_capacity_view,
     tw_board_conflicts_view,
     tw_board_create_view,
@@ -386,6 +387,11 @@ urlpatterns = [
     ),
     # ── Timetable Workspace ──
     path("timetable-workspace/", timetable_workspace_page, name="timetable_workspace_page"),
+    path(
+        "timetable-workspace/split/",
+        timetable_workspace_split_page,
+        name="timetable_workspace_split_page",
+    ),
     path("ops/tw/generate-workspace/", tw_generate_workspace_view, name="tw_generate_workspace"),
     path(
         "ops/tw/scenarios/<int:scenario_id>/budget/",

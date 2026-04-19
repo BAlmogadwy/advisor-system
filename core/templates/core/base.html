@@ -18,11 +18,11 @@
   {# Preconnect for faster Google Fonts loading #}
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="{% static 'css/global.css' %}?v=17" rel="stylesheet">
+  <link href="{% static 'css/global.css' %}?v=19" rel="stylesheet">
   <link href="{% static 'css/bootstrap-compat.css' %}" rel="stylesheet">
   {% block extra_css %}{% endblock %}
 </head>
-<body>
+<body{% if embed_mode %} class="embed-mode"{% endif %}>
 <a href="#main-content" class="skip-link">{% if LANGUAGE_CODE == 'ar' %}تخطي إلى المحتوى{% else %}Skip to content{% endif %}</a>
 <div class="color-mesh"></div>
 <div class="ambience">
