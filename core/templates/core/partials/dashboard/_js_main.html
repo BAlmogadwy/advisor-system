@@ -391,7 +391,7 @@
             const count = Number(row.count) || 0;
             const pct = Math.max(3, Math.round((count / maxCount) * 100));
             const fillCls = idx < 3 ? 'cr-fill-hi' : idx < 8 ? 'cr-fill-md' : 'cr-fill-lo';
-            return `<tr class="cr-row"><td style="font-family:var(--font-mono);font-weight:700;color:${idx < 3 ? 'var(--teal)' : 'var(--t3)'};font-size:12px;">${idx + 1}</td><td><span class="cr-id">${row.course_code}</span></td><td><span style="font-family:var(--font-mono);font-weight:600;font-size:13px;">${count}</span></td><td><div class="cr-bar"><div class="cr-track" style="width:100px;"><div class="cr-fill ${fillCls}" style="width:${pct}%"></div></div><span class="cr-txt">${pct}%</span></div></td></tr>`;
+            return `<tr class="cr-row"><td class="font-mono fw-bold" style="color:${idx < 3 ? 'var(--teal)' : 'var(--t3)'}; font-size:12px">${idx + 1}</td><td><span class="cr-id">${row.course_code}</span></td><td><span class="font-mono fw-semibold" style="font-size:13px">${count}</span></td><td><div class="cr-bar"><div class="cr-track" style="width:100px;"><div class="cr-fill ${fillCls}" style="width:${pct}%"></div></div><span class="cr-txt">${pct}%</span></div></td></tr>`;
           })
           .join('');
 
@@ -478,7 +478,7 @@
     }
 
     /* build SVG */
-    let s = `<svg class="prereq-svg" viewBox="0 0 ${svgW} ${svgH}" style="width:100%;height:auto">`;
+    let s = `<svg class="prereq-svg w-100" viewBox="0 0 ${svgW} ${svgH}" style="height:auto">`;
     s += `<defs><marker id="pgA" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="var(--teal)" opacity="0.5"/></marker>`;
     s += `<filter id="nSh"><feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="rgba(17,17,68,0.07)"/></filter></defs>`;
 
@@ -504,7 +504,7 @@
     s += '</svg>';
 
     /* legend */
-    s += `<div class="pg-legend"><span><span class="pg-legend-dot" style="color:var(--teal);background:var(--teal)"></span>Foundation</span><span><span class="pg-legend-dot" style="color:var(--royal);background:var(--royal)"></span>Terminal</span><span><span class="pg-legend-dot" style="color:var(--navy);background:var(--navy)"></span>Intermediate</span><span style="margin-inline-start:auto;opacity:0.4;font-weight:400">Hover to trace chains</span></div>`;
+    s += `<div class="pg-legend"><span><span class="pg-legend-dot text-teal" style="background:var(--teal)"></span>Foundation</span><span><span class="pg-legend-dot text-royal" style="background:var(--royal)"></span>Terminal</span><span><span class="pg-legend-dot" style="color:var(--navy);background:var(--navy)"></span>Intermediate</span><span style="margin-inline-start:auto;opacity:0.4;font-weight:400">Hover to trace chains</span></div>`;
     container.innerHTML = s;
 
     /* interactivity — hover highlights full chain */
@@ -567,7 +567,7 @@
 
     /* table — card-rows: one row per individual prerequisite edge */
     tbody.innerHTML = norm
-      .map(row => `<tr class="cr-row"><td><span class="cr-id">${row.course_code}</span></td><td style="text-align:center;padding:6px 0"><svg width="20" height="12" viewBox="0 0 20 12" style="vertical-align:middle"><path d="M2 6h16M14 2l4 4-4 4" fill="none" stroke="var(--teal)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.5"/></svg></td><td><span style="font-family:var(--font-mono);font-size:12px;font-weight:600;color:var(--royal)">${row.prerequisite_course_code}</span></td></tr>`)
+      .map(row => `<tr class="cr-row"><td><span class="cr-id">${row.course_code}</span></td><td class="text-center" style="padding:6px 0"><svg width="20" height="12" viewBox="0 0 20 12" style="vertical-align:middle"><path d="M2 6h16M14 2l4 4-4 4" fill="none" stroke="var(--teal)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.5"/></svg></td><td><span class="font-mono fw-semibold" style="font-size:12px; color:var(--royal)">${row.prerequisite_course_code}</span></td></tr>`)
       .join('');
 
     /* SVG dependency graph */
@@ -822,10 +822,10 @@
             <div class="rec-pre">Credits: ${c.credit_hours ?? '-'} &middot; Term ${c.programme_term ?? '-'} &middot; Importance ${Number(c.importance_score || 0).toFixed(2)}</div>
           </div>
         </div>
-        <div class="kv" style="margin-bottom:6px"><strong style="color:var(--t3);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">${T.prerequisites}</strong><div style="margin-top:2px;font-size:13px">${prereqs}</div></div>
-        <div class="kv" style="margin-bottom:6px;color:var(--danger)"><strong style="color:var(--danger);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">${T.missing}</strong><div style="margin-top:2px;font-size:13px">${missing}</div></div>
+        <div class="kv" style="margin-bottom:6px"><strong class="text-t3 fs-11 text-caps" style="letter-spacing:0.05em">${T.prerequisites}</strong><div style="margin-top:2px;font-size:13px">${prereqs}</div></div>
+        <div class="kv text-danger" style="margin-bottom:6px"><strong class="text-danger fs-11 text-caps" style="letter-spacing:0.05em">${T.missing}</strong><div style="margin-top:2px;font-size:13px">${missing}</div></div>
         <div style="border-top:var(--border-subtle);margin:10px 0;"></div>
-        <div class="kv"><strong style="color:var(--t3);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">${T.unlocks}</strong><div style="margin-top:4px">${downstream.length ? downstream.map(d => `<span class="pill">${d}</span>`).join(' ') : `<span class="empty-note">${T.noDownstream}</span>`}</div></div>
+        <div class="kv"><strong class="text-t3 fs-11 text-caps" style="letter-spacing:0.05em">${T.unlocks}</strong><div style="margin-top:4px">${downstream.length ? downstream.map(d => `<span class="pill">${d}</span>`).join(' ') : `<span class="empty-note">${T.noDownstream}</span>`}</div></div>
       </div>`;
   }
 
@@ -874,7 +874,7 @@
       .sort((a, b) => Number(b.importance_score || 0) - Number(a.importance_score || 0))
       .slice(0, 5);
     topImportant.innerHTML = topImportantCourses.length
-      ? `<div style="font-size:11px;font-weight:600;color:var(--t3);font-family:var(--font-mono);margin-bottom:6px;letter-spacing:0.04em">${T.topImportance}</div><div style="display:flex;flex-wrap:wrap;gap:6px">${topImportantCourses.map((c, i) => `<span class="pill-status ${i === 0 ? 'pill-g' : 'pill-b'}" style="font-family:var(--font-mono);font-size:11px"><span class="pill-dot"></span>${c.course_code} <span style="opacity:0.6">${Number(c.importance_score || 0).toFixed(1)}</span></span>`).join('')}</div>`
+      ? `<div class="fs-11 fw-semibold text-t3 font-mono" style="margin-bottom:6px; letter-spacing:0.04em">${T.topImportance}</div><div class="d-flex flex-wrap" style="gap:6px">${topImportantCourses.map((c, i) => `<span class="pill-status ${i === 0 ? 'pill-g' : 'pill-b'} font-mono fs-11"><span class="pill-dot"></span>${c.course_code} <span style="opacity:0.6">${Number(c.importance_score || 0).toFixed(1)}</span></span>`).join('')}</div>`
       : '';
 
     const targetCredits = Number(q('spTargetCredits')?.value || 18);
@@ -888,7 +888,7 @@
     const usedCredits = planResult.usedCredits || 0;
 
     actionPlan.innerHTML = selected.length
-      ? `<div class="cpanel mb-0"><div class="cp-h"><span class="cp-t">${T.actionPlan}</span><span class="pill-status pill-g" style="font-size:10px"><span class="pill-dot"></span>${strategy === 'balanced' ? T.balanced : T.maxImp} • ${usedCredits}/${targetCredits} CH</span></div><div class="cp-b" style="padding:8px 12px">${selected.map((c, i) => `<div class="plan-item"><div><div class="title">${c.course_code}</div><div class="sub">Imp ${Number(c.importance_score || 0).toFixed(1)} • T${c.programme_term ?? '-'} • ${c.credit_hours ?? '-'} CH</div></div><span class="pill-status pill-g" style="font-size:10px"><span class="pill-dot"></span>#${i + 1}</span></div>`).join('')}</div></div>`
+      ? `<div class="cpanel mb-0"><div class="cp-h"><span class="cp-t">${T.actionPlan}</span><span class="pill-status pill-g fs-10"><span class="pill-dot"></span>${strategy === 'balanced' ? T.balanced : T.maxImp} • ${usedCredits}/${targetCredits} CH</span></div><div class="cp-b" style="padding:8px 12px">${selected.map((c, i) => `<div class="plan-item"><div><div class="title">${c.course_code}</div><div class="sub">Imp ${Number(c.importance_score || 0).toFixed(1)} • T${c.programme_term ?? '-'} • ${c.credit_hours ?? '-'} CH</div></div><span class="pill-status pill-g fs-10"><span class="pill-dot"></span>#${i + 1}</span></div>`).join('')}</div></div>`
       : '';
 
     container.innerHTML = terms.map((termObj) => {
@@ -945,12 +945,12 @@
               missing_prereqs: c.missing_prereqs || [],
               importance_score: c.importance_score || 0,
             }));
-            return `<tr class="cr-row ${cls} course-row" data-course-json="${rowPayload}"><td><span class="cr-id">${c.course_code}</span></td><td style="font-family:var(--font-mono);font-size:12px">${c.credit_hours ?? '-'}</td><td>${statusBadge}</td><td style="font-size:11px">${prereqCell}</td><td class="${impClass}">${importance}</td></tr>`;
+            return `<tr class="cr-row ${cls} course-row" data-course-json="${rowPayload}"><td><span class="cr-id">${c.course_code}</span></td><td class="font-mono" style="font-size:12px">${c.credit_hours ?? '-'}</td><td>${statusBadge}</td><td class="fs-11">${prereqCell}</td><td class="${impClass}">${importance}</td></tr>`;
           }).join('')
         : `<tr><td colspan="5" class="empty-note">${T.noCoursesThisTerm}</td></tr>`;
 
       const compactClass = studentPlanCompact ? 'table-compact' : '';
-      return `<details class="term-details" ${studentPlanExpandAll ? 'open' : ''}><summary class="term-summary"><div class="term-header-sticky"><h4>${T.termSection(termObj.term)}</h4><div style="display:flex;gap:5px;margin-inline-start:auto">${passedN ? `<span class="pill-status pill-g" style="font-size:10px"><span class="pill-dot"></span>${passedN}</span>` : ''}${studyingN ? `<span class="pill-status pill-b" style="font-size:10px"><span class="pill-dot"></span>${studyingN}</span>` : ''}${canN ? `<span class="pill-status pill-g" style="font-size:10px;background:rgba(0,174,218,0.08);color:var(--sky);border-color:rgba(0,174,218,0.16)"><span class="pill-dot"></span>${canN}</span>` : ''}${lockedN ? `<span class="pill-status pill-r" style="font-size:10px"><span class="pill-dot"></span>${lockedN}</span>` : ''}</div></div></summary><div style="padding:0 12px 12px"><table class="tbl-card mb-0 ${compactClass}" style="border-spacing:0 4px"><thead><tr><th scope="col">${T.course}</th><th scope="col">${T.ch}</th><th scope="col">${T.status}</th><th scope="col">${T.prerequisites}</th><th scope="col">${T.imp}</th></tr></thead><tbody>${tbody}</tbody></table></div></details>`;
+      return `<details class="term-details" ${studentPlanExpandAll ? 'open' : ''}><summary class="term-summary"><div class="term-header-sticky"><h4>${T.termSection(termObj.term)}</h4><div class="d-flex" style="gap:5px; margin-inline-start:auto">${passedN ? `<span class="pill-status pill-g fs-10"><span class="pill-dot"></span>${passedN}</span>` : ''}${studyingN ? `<span class="pill-status pill-b fs-10"><span class="pill-dot"></span>${studyingN}</span>` : ''}${canN ? `<span class="pill-status pill-g fs-10" style="background:rgba(0,174,218,0.08); color:var(--sky); border-color:rgba(0,174,218,0.16)"><span class="pill-dot"></span>${canN}</span>` : ''}${lockedN ? `<span class="pill-status pill-r fs-10"><span class="pill-dot"></span>${lockedN}</span>` : ''}</div></div></summary><div style="padding:0 12px 12px"><table class="tbl-card mb-0 ${compactClass}" style="border-spacing:0 4px"><thead><tr><th scope="col">${T.course}</th><th scope="col">${T.ch}</th><th scope="col">${T.status}</th><th scope="col">${T.prerequisites}</th><th scope="col">${T.imp}</th></tr></thead><tbody>${tbody}</tbody></table></div></details>`;
     }).join('');
 
     bindCourseRowClicks();
@@ -1152,12 +1152,12 @@
       riskChips.push(`<span class="alert-chip danger">${T.criticalBlocker(h.course_code, h.blocks)}</span>`);
     });
     q('studentPlanRiskAlerts').innerHTML = riskChips.length
-      ? `<div style="font-size:11px;font-weight:600;color:var(--t3);font-family:var(--font-mono);margin-bottom:6px;letter-spacing:0.04em">${T.riskAlerts}</div><div style="display:flex;flex-wrap:wrap;gap:6px">${riskChips.join('')}</div>`
+      ? `<div class="fs-11 fw-semibold text-t3 font-mono" style="margin-bottom:6px; letter-spacing:0.04em">${T.riskAlerts}</div><div class="d-flex flex-wrap" style="gap:6px">${riskChips.join('')}</div>`
       : '';
 
 
     q('studentPlanHints').innerHTML = hints.length
-      ? `<div style="font-size:11px;font-weight:600;color:var(--t3);font-family:var(--font-mono);margin-bottom:6px;letter-spacing:0.04em">${T.passFirst} <span style="opacity:0.5">${T.clickToFilter}</span></div><div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">${hints.map((h) => `<button type="button" class="hint-chip hint-filter" data-blocker="${h.course_code}"><svg width="10" height="10" viewBox="0 0 24 24" style="fill:none;stroke:currentColor;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>${h.course_code} → ${h.blocks}</button>`).join('')}<button type="button" id="clearBlockerFilter" class="fb-dd" style="font-size:11px;padding:4px 12px">Clear</button></div>`
+      ? `<div class="fs-11 fw-semibold text-t3 font-mono" style="margin-bottom:6px; letter-spacing:0.04em">${T.passFirst} <span style="opacity:0.5">${T.clickToFilter}</span></div><div class="d-flex flex-wrap align-items-center" style="gap:6px">${hints.map((h) => `<button type="button" class="hint-chip hint-filter" data-blocker="${h.course_code}"><svg width="10" height="10" viewBox="0 0 24 24" style="fill:none;stroke:currentColor;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>${h.course_code} → ${h.blocks}</button>`).join('')}<button type="button" id="clearBlockerFilter" class="fb-dd fs-11" style="padding:4px 12px">Clear</button></div>`
       : '';
 
     document.querySelectorAll('.hint-filter').forEach((el) => {
@@ -1269,7 +1269,7 @@
           const evt = h.event ?? '-';
           const evtPill = evt === 'started' ? 'pill-g' : evt === 'stopped' ? 'pill-a' : evt === 'failed' ? 'pill-r' : 'pill-b';
           const evtLabel = evt === 'started' ? T.started : evt === 'stopped' ? T.stopped : evt === 'failed' ? T.failed : evt;
-          return `<tr class="cr-row"><td style="font-family:var(--font-mono);font-size:11px;color:var(--t3)">${h.at ?? '-'}</td><td><span class="pill ${evtPill}" style="font-size:11px;padding:3px 10px"><span class="pill-dot" style="width:6px;height:6px;border-radius:50%;display:inline-block;margin-inline-end:5px;background:currentColor;opacity:0.5"></span>${evtLabel}</span></td><td style="font-family:var(--font-mono)">${h.pid ?? '-'}</td><td>${h.concurrency ?? '-'}</td><td style="font-family:var(--font-mono);font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${h.students_csv ?? '-'}</td></tr>`;
+          return `<tr class="cr-row"><td class="font-mono fs-11 text-t3">${h.at ?? '-'}</td><td><span class="pill ${evtPill} fs-11" style="padding:3px 10px"><span class="pill-dot" style="width:6px;height:6px;border-radius:50%;display:inline-block;margin-inline-end:5px;background:currentColor;opacity:0.5"></span>${evtLabel}</span></td><td class="font-mono">${h.pid ?? '-'}</td><td>${h.concurrency ?? '-'}</td><td class="font-mono fs-11" style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">${h.students_csv ?? '-'}</td></tr>`;
         });
         if (cntEl) cntEl.textContent = history.length;
         /* ── Paginate scrape history (5 rows per page) ── */
@@ -1577,13 +1577,13 @@
       const tracePayload = encodeURIComponent(JSON.stringify(x.recommendation_details || []));
       const summary = `Student ${x.student_id} (${x.program})\nReal→Next: ${x.real_term}→${x.next_term}\nRecommended: ${(x.recommended_courses || []).join(', ') || '-'}`;
       const recList = (x.recommended_courses || []);
-      const recHtml = recList.length ? recList.map(r => `<span class="pill-status pill-g" style="font-size:10px;margin:1px"><span class="pill-dot"></span>${r}</span>`).join('') : '<span style="color:var(--t3);font-size:11px">—</span>';
+      const recHtml = recList.length ? recList.map(r => `<span class="pill-status pill-g fs-10" style="margin:1px"><span class="pill-dot"></span>${r}</span>`).join('') : '<span class="text-t3 fs-11">—</span>';
       return `<tr class="cr-row">
         <td><span class="cr-id">${x.student_id}</span></td>
-        <td style="font-family:var(--font-mono);font-size:12px">${x.program}</td>
-        <td style="font-family:var(--font-mono);font-size:11px">${x.real_term} → ${x.next_term}</td>
-        <td style="font-size:11px">${(x.passed || []).slice(0,4).join(', ')}${(x.passed || []).length > 4 ? ' ...' : ''}</td>
-        <td style="font-size:11px">${(x.studying || []).join(', ') || '-'}</td>
+        <td class="font-mono" style="font-size:12px">${x.program}</td>
+        <td class="font-mono fs-11">${x.real_term} → ${x.next_term}</td>
+        <td class="fs-11">${(x.passed || []).slice(0,4).join(', ')}${(x.passed || []).length > 4 ? ' ...' : ''}</td>
+        <td class="fs-11">${(x.studying || []).join(', ') || '-'}</td>
         <td>${recHtml}</td>
         <td style="white-space:nowrap"><div class="trace-actions"><button type="button" class="trace-btn trace-btn-view dbg-trace" data-trace="${tracePayload}" title="View trace"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span>View</button><button type="button" class="trace-btn trace-btn-copy dbg-copy" data-summary="${encodeURIComponent(summary)}" title="Copy summary"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>Copy</button></div></td>
       </tr>`;
@@ -1597,7 +1597,7 @@
         let items = [];
         try { items = JSON.parse(decodeURIComponent(raw)); } catch {}
         body.innerHTML = Array.isArray(items) && items.length
-          ? items.map((it) => `<div class="plan-item"><div class="title">${it.course_code}</div><div class="sub">Prereqs: ${(it.prerequisites || []).join(', ') || 'None'}</div><div class="sub">${(it.prerequisite_status || []).map((s) => `<span class="pill-status ${s.status === 'passed' ? 'pill-g' : s.status === 'studying' ? 'pill-b' : 'pill-r'}" style="font-size:10px;margin:1px"><span class="pill-dot"></span>${s.prerequisite}: ${s.status}</span>`).join(' ') || 'No prerequisite status'}</div></div>`).join('')
+          ? items.map((it) => `<div class="plan-item"><div class="title">${it.course_code}</div><div class="sub">Prereqs: ${(it.prerequisites || []).join(', ') || 'None'}</div><div class="sub">${(it.prerequisite_status || []).map((s) => `<span class="pill-status ${s.status === 'passed' ? 'pill-g' : s.status === 'studying' ? 'pill-b' : 'pill-r'} fs-10" style="margin:1px"><span class="pill-dot"></span>${s.prerequisite}: ${s.status}</span>`).join(' ') || 'No prerequisite status'}</div></div>`).join('')
           : '<div class="empty-note">No trace details for this student.</div>';
         const modalEl = q('debugTraceModal');
         if (modalEl) openDlgModal(modalEl);
@@ -1609,7 +1609,7 @@
         await navigator.clipboard.writeText(s);
         b.classList.add('copied');
         const orig = b.innerHTML;
-        b.innerHTML = '<span class="i" style="width:12px;height:12px"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Copied!';
+        b.innerHTML = '<span class="i i-xxs"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>Copied!';
         setTimeout(() => { b.innerHTML = orig; b.classList.remove('copied'); }, 1500);
         toast(T.debugCopied, true);
       });
@@ -2292,12 +2292,12 @@
 
       pager.innerHTML =
         '<span class="tbl-pager-info">' + showingLabel + ' ' + showStart + '\u2013' + showEnd + ' ' + ofLabel + ' ' + total + '</span>' +
-        '<span class="tbl-pager-nav" style="display:flex;align-items:center;gap:8px;">' +
+        '<span class="tbl-pager-nav d-flex align-items-center" style="gap:8px">' +
           '<button type="button" class="tbl-pg-prev" ' + (currentPage <= 1 ? 'disabled' : '') + ' aria-label="' + prevLabel + '">\u2039 ' + prevLabel + '</button>' +
           '<span class="tbl-pg-num">' + pageLabel + ' ' + currentPage + ' ' + ofLabel + ' ' + totalPages + '</span>' +
           '<button type="button" class="tbl-pg-next" ' + (currentPage >= totalPages ? 'disabled' : '') + ' aria-label="' + nextLabel + '">' + nextLabel + ' \u203A</button>' +
         '</span>' +
-        '<span class="tbl-pager-size" style="display:flex;align-items:center;gap:4px;">' +
+        '<span class="tbl-pager-size d-flex align-items-center" style="gap:4px">' +
           '<label for="' + pagerId + 'Sel" style="margin:0;font-weight:400">' + (isAr ? '\u0635\u0641\u0648\u0641' : 'Rows') + ':</label>' +
           '<select id="' + pagerId + 'Sel" aria-label="Rows per page">' +
             '<option value="10"' + (rowsPerPage === 10 ? ' selected' : '') + '>10</option>' +

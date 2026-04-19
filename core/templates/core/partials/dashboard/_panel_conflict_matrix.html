@@ -37,7 +37,7 @@
       <!-- Matrix -->
       <div class="cpanel">
         <div class="cp-h"><span class="cp-t">{% if LANGUAGE_CODE == 'ar' %}مصفوفة التعارض{% else %}Conflict Matrix{% endif %}</span><span class="cp-live">HEATMAP</span></div>
-        <div class="cp-b" id="cmMatrixWrap" style="padding:16px 0;max-height:70vh;overflow:auto;position:relative;display:flex;justify-content:center">
+        <div class="cp-b d-flex justify-content-center" id="cmMatrixWrap" style="padding:16px 0; max-height:70vh; overflow:auto; position:relative">
           <div class="empty-state"><span class="empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></span></span><div class="empty-title">{% if LANGUAGE_CODE == 'ar' %}لا توجد بيانات{% else %}No matrix data{% endif %}</div><div class="empty-hint">{% if LANGUAGE_CODE == 'ar' %}حدد الفلاتر واضغط تشغيل{% else %}Set filters and click Run to generate the conflict matrix{% endif %}</div></div>
         </div>
       </div>

@@ -13,8 +13,8 @@
           <span class="ph-chip ph-chip-status" role="status">{% if LANGUAGE_CODE == 'ar' %}سلسلة التحقق: سليمة{% else %}Hash chain: OK{% endif %} · {{ chain.checked }} {% if LANGUAGE_CODE == 'ar' %}سجل{% else %}records{% endif %}<abbr class="hash-chain-info" tabindex="0" role="img" aria-label="{% if LANGUAGE_CODE == 'ar' %}يتم ربط سجلات التدقيق بسلسلة تحقق للكشف عن التلاعب. سليمة يعني أن السلسلة سليمة ولم يتم تعديل أي سجلات أو حذفها.{% else %}Audit log entries are hash-chained to detect tampering. OK means the chain is intact — no entries have been modified or deleted.{% endif %}" title="{% if LANGUAGE_CODE == 'ar' %}يتم ربط سجلات التدقيق بسلسلة تحقق للكشف عن التلاعب. سليمة يعني أن السلسلة سليمة ولم يتم تعديل أي سجلات أو حذفها.{% else %}Audit log entries are hash-chained to detect tampering. OK means the chain is intact — no entries have been modified or deleted.{% endif %}"><svg class="hash-chain-info-icon" aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></abbr></span>
           {% else %}
           <span class="ph-chip ph-chip-danger" role="alert">{% if LANGUAGE_CODE == 'ar' %}سلسلة التحقق: فشلت{% else %}Hash chain: FAILED{% endif %} · {{ chain.checked }} {% if LANGUAGE_CODE == 'ar' %}سجل{% else %}records{% endif %}<abbr class="hash-chain-info" tabindex="0" role="img" aria-label="{% if LANGUAGE_CODE == 'ar' %}يتم ربط سجلات التدقيق بسلسلة تحقق للكشف عن التلاعب. فشلت يعني أن السلسلة مكسورة — ربما تم تعديل بعض السجلات أو حذفها.{% else %}Audit log entries are hash-chained to detect tampering. FAILED means the chain is broken — some entries may have been modified or deleted.{% endif %}" title="{% if LANGUAGE_CODE == 'ar' %}يتم ربط سجلات التدقيق بسلسلة تحقق للكشف عن التلاعب. فشلت يعني أن السلسلة مكسورة — ربما تم تعديل بعض السجلات أو حذفها.{% else %}Audit log entries are hash-chained to detect tampering. FAILED means the chain is broken — some entries may have been modified or deleted.{% endif %}"><svg class="hash-chain-info-icon" aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg></abbr></span>
-          <a href="?status=error" class="ph-chip ph-chip-status" style="font-size:0.72rem;text-decoration:none;margin-inline-start:0.5rem;background:rgba(192,48,48,0.08);color:var(--danger);border-radius:8px;padding:3px 10px">{% if LANGUAGE_CODE == 'ar' %}تحقيق{% else %}Investigate{% endif %} →</a>
-          <div style="font-size:0.72rem;color:var(--t3);margin-top:0.25rem">{% if LANGUAGE_CODE == 'ar' %}قد يكون تم التلاعب بواحد أو أكثر من سجلات التدقيق{% else %}One or more audit records may have been tampered with{% endif %}</div>
+          <a href="?status=error" class="ph-chip ph-chip-status text-danger" style="font-size:0.72rem; text-decoration:none; margin-inline-start:0.5rem; background:rgba(192,48,48,0.08); border-radius:8px; padding:3px 10px">{% if LANGUAGE_CODE == 'ar' %}تحقيق{% else %}Investigate{% endif %} →</a>
+          <div class="text-t3" style="font-size:0.72rem; margin-top:0.25rem">{% if LANGUAGE_CODE == 'ar' %}قد يكون تم التلاعب بواحد أو أكثر من سجلات التدقيق{% else %}One or more audit records may have been tampered with{% endif %}</div>
           {% endif %}
 {% endblock %}
 
@@ -124,11 +124,11 @@
       {% empty %}
       <tr><td colspan="10">
         <div class="empty-state" style="padding:2rem;">
-          <span class="empty-icon"><span class="i" aria-hidden="true" style="width:32px;height:32px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span></span>
+          <span class="empty-icon"><span class="i i-xl" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span></span>
           <div class="empty-title">{% if LANGUAGE_CODE == 'ar' %}لا توجد سجلات تدقيق{% else %}No audit records found{% endif %}</div>
           <div class="empty-hint">{% if LANGUAGE_CODE == 'ar' %}حاول تعديل الفلاتر أعلاه{% else %}Try adjusting your filters above{% endif %}</div>
           <button type="button" class="empty-state-action" onclick="window.location.href=window.location.pathname">
-            <span class="i" aria-hidden="true" style="width:14px;height:14px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></span>
+            <span class="i i-xs" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg></span>
             {% if LANGUAGE_CODE == 'ar' %}إعادة تعيين الفلاتر{% else %}Reset filters{% endif %}
           </button>
         </div>
@@ -347,7 +347,7 @@
 
   function buildTimeline() {
     if (allRows.length === 0) {
-      timelineEl.innerHTML = '<div class="empty-state" style="padding:2rem;text-align:center;">' +
+      timelineEl.innerHTML = '<div class="empty-state text-center" style="padding:2rem">' +
         '<div class="empty-title">' + esc(L.noRecords) + '</div></div>';
       return;
     }

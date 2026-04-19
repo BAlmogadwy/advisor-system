@@ -18,7 +18,7 @@
 <!-- A1. Generate Filter Bar (matches section planning + conflict matrix pattern) -->
 <div id="twGenBar" style="background:var(--glass-bg-header);backdrop-filter:var(--glass-blur);border-bottom:1px solid var(--line);padding:10px 14px;">
   <!-- Row 1: Inputs -->
-  <div style="display:flex;align-items:end;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+  <div class="d-flex flex-wrap mb-2" style="align-items:end; gap:10px">
     <div class="fb-search" style="width:80px">
       <label class="fb-lbl" for="twYear">{% if LANGUAGE_CODE == 'ar' %}السنة{% else %}Year{% endif %}</label>
       <input id="twYear" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="{{ default_year }}">
@@ -29,15 +29,15 @@
     </div>
     <div class="fb-search" style="width:180px">
       <label class="fb-lbl" for="twProgram">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}</label>
-      <input id="twProgram" class="form-control form-control-compact" placeholder="{% if LANGUAGE_CODE == 'ar' %}AI,DS,AI2,DS2{% else %}AI,DS,AI2,DS2{% endif %}" style="text-transform:uppercase">
+      <input id="twProgram" class="form-control form-control-compact text-caps" placeholder="{% if LANGUAGE_CODE == 'ar' %}AI,DS,AI2,DS2{% else %}AI,DS,AI2,DS2{% endif %}">
     </div>
     <div class="fb-search" style="width:50px">
       <label class="fb-lbl" for="twSection">{% if LANGUAGE_CODE == 'ar' %}شعبة{% else %}Sec{% endif %}</label>
-      <input id="twSection" class="form-control form-control-compact" placeholder="M" style="text-transform:uppercase">
+      <input id="twSection" class="form-control form-control-compact text-caps" placeholder="M">
     </div>
     <div class="fb-search" style="width:200px">
       <label class="fb-lbl" for="twStrategy">{% if LANGUAGE_CODE == 'ar' %}الخوارزمية{% else %}Strategy{% endif %}</label>
-      <select id="twStrategy" class="form-control form-control-compact" style="font-size:.78rem;">
+      <select id="twStrategy" class="form-control form-control-compact fs-md">
         <option value="compact">{% if LANGUAGE_CODE == 'ar' %}مضغوط{% else %}Compact{% endif %}</option>
         <option value="morning">{% if LANGUAGE_CODE == 'ar' %}صباحي{% else %}Morning-first{% endif %}</option>
         <option value="balanced">{% if LANGUAGE_CODE == 'ar' %}متوازن{% else %}Balanced{% endif %}</option>
@@ -49,8 +49,8 @@
     </div>
   </div>
   <!-- Row 2: Actions -->
-  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-    <button id="twMapElectives" class="btn" type="button" style="padding:5px 12px;background:var(--glass-bg);border:1px solid var(--teal);border-radius:6px;color:var(--teal);font-size:.76rem;cursor:pointer;" title="{% if LANGUAGE_CODE == 'ar' %}ربط المقررات الاختيارية{% else %}Map Electives{% endif %}">
+  <div class="d-flex align-items-center flex-wrap" style="gap:8px">
+    <button id="twMapElectives" class="btn text-teal u-cursor-pointer" type="button" title="{% if LANGUAGE_CODE == 'ar' %}ربط المقررات الاختيارية{% else %}Map Electives{% endif %}" style="padding:5px 12px; background:var(--glass-bg); border:1px solid var(--teal); border-radius:6px; font-size:.76rem">
       <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" style="margin-inline-end:3px;vertical-align:middle"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
       {% if LANGUAGE_CODE == 'ar' %}اختيارية{% else %}Electives{% endif %}
     </button>
@@ -58,9 +58,9 @@
       <span class="i i-sm" aria-hidden="true" style="margin-inline-end:3px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>
       {% if LANGUAGE_CODE == 'ar' %}توليد{% else %}Generate{% endif %}
     </button>
-    <span id="twGenStatus" style="font-size:.72rem;color:var(--t4);white-space:nowrap"></span>
-    <div style="flex:1"></div>
-    <button id="twFullscreen" class="btn" type="button" title="{% if LANGUAGE_CODE == 'ar' %}شاشة كاملة{% else %}Fullscreen{% endif %}" style="padding:5px 8px;background:var(--glass-bg);border:1px solid var(--line);border-radius:6px;cursor:pointer;display:flex;align-items:center;gap:4px;font-size:.72rem;color:var(--t3);">
+    <span class="fs-sm text-t4" id="twGenStatus" style="white-space:nowrap"></span>
+    <div class="flex-fill"></div>
+    <button id="twFullscreen" class="btn u-cursor-pointer d-flex align-items-center fs-sm text-t3" type="button" title="{% if LANGUAGE_CODE == 'ar' %}شاشة كاملة{% else %}Fullscreen{% endif %}" style="padding:5px 8px; background:var(--glass-bg); border:1px solid var(--line); border-radius:6px; gap:4px">
     <svg id="twFsIcon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
     <span id="twFsLabel" class="d-none d-md-inline">{% if LANGUAGE_CODE == 'ar' %}توسيع{% else %}Focus{% endif %}</span>
   </button>
@@ -68,7 +68,7 @@
 </div>
 
 <!-- A2. Workspace Command Bar (hidden until scenario active) -->
-<div class="tw-cmd-bar" id="twCmdBar" style="display:none;">
+<div class="tw-cmd-bar d-none" id="twCmdBar">
   <label class="visually-hidden" for="twScenario">Scenario</label>
   <select id="twScenario" title="{% if LANGUAGE_CODE == 'ar' %}السيناريو{% else %}Scenario{% endif %}">
     <option value="">{% if LANGUAGE_CODE == 'ar' %}اختر سيناريو{% else %}Select Scenario{% endif %}</option>
@@ -77,14 +77,14 @@
 
   <div class="tw-cmd-sep"></div>
 
-  <div id="twBoardTabs" style="display:flex;gap:4px;flex-wrap:wrap;"></div>
-  <button class="tw-btn" id="twNewBoard" type="button" style="display:none;">+ {% if LANGUAGE_CODE == 'ar' %}لوحة{% else %}Board{% endif %}</button>
+  <div class="d-flex flex-wrap" id="twBoardTabs" style="gap:4px"></div>
+  <button class="tw-btn d-none" id="twNewBoard" type="button">+ {% if LANGUAGE_CODE == 'ar' %}لوحة{% else %}Board{% endif %}</button>
 
-  <div style="flex:1;"></div>
+  <div class="flex-fill"></div>
 
   <input type="search" id="twSearch" placeholder="{% if LANGUAGE_CODE == 'ar' %}بحث...{% else %}Search...{% endif %}" style="min-width:140px;">
 
-  <button class="tw-btn" id="twSlotEdit" type="button" title="{% if LANGUAGE_CODE == 'ar' %}تعديل الفترات{% else %}Edit Slots{% endif %}" style="display:none;">
+  <button class="tw-btn d-none" id="twSlotEdit" type="button" title="{% if LANGUAGE_CODE == 'ar' %}تعديل الفترات{% else %}Edit Slots{% endif %}">
     &#x23F0; {% if LANGUAGE_CODE == 'ar' %}الفترات{% else %}Slots{% endif %}
   </button>
 
@@ -93,24 +93,24 @@
 
   <span id="twValidationBadge" class="tw-badge tw-badge-draft">{% if LANGUAGE_CODE == 'ar' %}مسودة{% else %}Draft{% endif %}</span>
 
-  <span id="twOptimiseGroup" style="display:none;position:relative;">
+  <span class="d-none" id="twOptimiseGroup" style="position:relative">
     <button class="tw-btn" id="twOptimise" type="button" title="{% if LANGUAGE_CODE == 'ar' %}تحسين الجدول الحالي{% else %}Improve current board{% endif %}">
       <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-inline-end:3px"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
       {% if LANGUAGE_CODE == 'ar' %}تحسين{% else %}Optimise{% endif %}
     </button><button class="tw-btn" id="twOptimiseMenu" type="button" style="padding:5px 4px;border-inline-start:1px solid var(--line);margin-inline-start:-1px;" title="{% if LANGUAGE_CODE == 'ar' %}خيارات{% else %}Options{% endif %}">&#x25BE;</button>
-    <div id="twOptimiseDropdown" style="display:none;position:absolute;top:100%;right:0;z-index:100;min-width:220px;margin-top:4px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius-sm);box-shadow:var(--shadow-card);font-size:.78rem;">
-      <div class="tw-opt-item" data-mode="current" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--line);">
-        <div style="font-weight:600;color:var(--teal);">{% if LANGUAGE_CODE == 'ar' %}تحسين الحالي{% else %}Optimise Current{% endif %}</div>
-        <div style="font-size:.7rem;color:var(--t4);">{% if LANGUAGE_CODE == 'ar' %}تحسين بدون إعادة توليد{% else %}Improve without regenerating{% endif %}</div>
+    <div class="fs-md" id="twOptimiseDropdown" style="display:none; position:absolute; top:100%; right:0; z-index:100; min-width:220px; margin-top:4px; background:var(--card); border:1px solid var(--line); border-radius:var(--radius-sm); box-shadow:var(--shadow-card)">
+      <div class="tw-opt-item u-cursor-pointer" data-mode="current" style="padding:8px 12px; border-bottom:1px solid var(--line)">
+        <div class="fw-semibold text-teal">{% if LANGUAGE_CODE == 'ar' %}تحسين الحالي{% else %}Optimise Current{% endif %}</div>
+        <div class="fs-xs text-t4">{% if LANGUAGE_CODE == 'ar' %}تحسين بدون إعادة توليد{% else %}Improve without regenerating{% endif %}</div>
       </div>
-      <div class="tw-opt-item" data-mode="full" style="padding:8px 12px;cursor:pointer;">
-        <div style="font-weight:600;color:var(--royal);">{% if LANGUAGE_CODE == 'ar' %}إعادة بناء كاملة{% else %}Full Rebuild{% endif %}</div>
-        <div style="font-size:.7rem;color:var(--t4);">{% if LANGUAGE_CODE == 'ar' %}7 استراتيجيات + بحث محلي{% else %}7 strategies + local search (~2min){% endif %}</div>
+      <div class="tw-opt-item u-cursor-pointer" data-mode="full" style="padding:8px 12px">
+        <div class="fw-semibold" style="color:var(--royal)">{% if LANGUAGE_CODE == 'ar' %}إعادة بناء كاملة{% else %}Full Rebuild{% endif %}</div>
+        <div class="fs-xs text-t4">{% if LANGUAGE_CODE == 'ar' %}7 استراتيجيات + بحث محلي{% else %}7 strategies + local search (~2min){% endif %}</div>
       </div>
     </div>
   </span>
 
-  <button class="tw-btn" id="twExport" type="button" style="display:none;" title="{% if LANGUAGE_CODE == 'ar' %}تصدير{% else %}Export XLSX{% endif %}">
+  <button class="tw-btn d-none" id="twExport" type="button" title="{% if LANGUAGE_CODE == 'ar' %}تصدير{% else %}Export XLSX{% endif %}">
     &#x1F4E5; {% if LANGUAGE_CODE == 'ar' %}تصدير{% else %}Export{% endif %}
   </button>
 
@@ -132,7 +132,7 @@
       <h3>{% if LANGUAGE_CODE == 'ar' %}الشعب المطلوبة{% else %}Required Sections{% endif %}</h3>
       <input type="search" class="tw-search" id="twSectionSearch" placeholder="{% if LANGUAGE_CODE == 'ar' %}تصفية المقررات...{% else %}Filter courses...{% endif %}">
       <div class="tw-section-list" id="twSectionList">
-        <div style="padding:12px;color:var(--t4);font-size:.78rem">{% if LANGUAGE_CODE == 'ar' %}اضغط "توليد" أولاً{% else %}Click "Generate" first{% endif %}</div>
+        <div class="text-t4 fs-md" style="padding:12px">{% if LANGUAGE_CODE == 'ar' %}اضغط "توليد" أولاً{% else %}Click "Generate" first{% endif %}</div>
       </div>
     </div>
     <div class="tw-left-section">
@@ -146,13 +146,13 @@
 
   <!-- C. Centre -->
   <div class="tw-centre" id="twCentre">
-    <div class="tw-board-strip" id="twBoardStrip" style="display:none;"></div>
+    <div class="tw-board-strip d-none" id="twBoardStrip"></div>
     <div id="twGridWrap">
       <div class="tw-empty" id="twEmptyState">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
         <p>{% if LANGUAGE_CODE == 'ar' %}اختر سنة وفصل وسيناريو للبدء{% else %}Select a year, term, and scenario to begin{% endif %}</p>
       </div>
-      <div class="tw-grid" id="twGrid" style="display:none;"></div>
+      <div class="tw-grid d-none" id="twGrid"></div>
     </div>
   </div>
 
@@ -181,7 +181,7 @@
     <div class="tw-panel-tab" data-tab="resources">{% if LANGUAGE_CODE == 'ar' %}الموارد{% else %}Resources{% endif %}</div>
   </div>
   <div class="tw-panel-body" id="twBottomBody">
-    <p style="color:var(--t4);font-size:.8rem;">{% if LANGUAGE_CODE == 'ar' %}لا توجد بيانات{% else %}No data yet{% endif %}</p>
+    <p class="text-t4" style="font-size:.8rem">{% if LANGUAGE_CODE == 'ar' %}لا توجد بيانات{% else %}No data yet{% endif %}</p>
   </div>
 </div>
 
@@ -527,7 +527,7 @@ function renderBudgetSidebar() {
   const search = ($('twSectionSearch').value || '').trim().toUpperCase();
 
   if (budget.length === 0) {
-    list.innerHTML = `<div style="padding:12px;color:var(--t4);font-size:.78rem">${IS_AR ? 'اضغط "توليد" أولاً' : 'Click "Generate" first'}</div>`;
+    list.innerHTML = `<div class="text-t4 fs-md" style="padding:12px">${IS_AR ? 'اضغط "توليد" أولاً' : 'Click "Generate" first'}</div>`;
     return;
   }
 
@@ -636,16 +636,16 @@ async function publishScenario() {
   totalBlocked = si.blocked_count || 0;
 
   let summaryHtml = `<div style="font-size:.82rem;margin-bottom:12px">`;
-  summaryHtml += `<div style="display:flex;gap:16px;margin-bottom:8px">`;
+  summaryHtml += `<div class="d-flex mb-2" style="gap:16px">`;
   summaryHtml += `<div><strong>${boardCount}</strong> ${IS_AR ? 'لوحات' : 'boards'}</div>`;
   summaryHtml += `<div style="color:${totalCritical > 0 ? 'var(--danger)' : 'var(--teal)'}"><strong>${totalCritical}</strong> ${IS_AR ? 'حرجة' : 'critical'}</div>`;
   summaryHtml += `<div style="color:${totalWarning > 0 ? 'var(--amber)' : 'var(--teal)'}"><strong>${totalWarning}</strong> ${IS_AR ? 'تحذيرات' : 'warnings'}</div>`;
   summaryHtml += `</div>`;
   if (totalAffected > 0) {
-    summaryHtml += `<div style="color:var(--danger)">${IS_AR ? 'طلاب متأثرون' : 'Affected students'}: <strong>${totalAffected}</strong> (${IS_AR ? 'محجوبون' : 'blocked'}: <strong>${totalBlocked}</strong>)</div>`;
+    summaryHtml += `<div class="text-danger">${IS_AR ? 'طلاب متأثرون' : 'Affected students'}: <strong>${totalAffected}</strong> (${IS_AR ? 'محجوبون' : 'blocked'}: <strong>${totalBlocked}</strong>)</div>`;
   }
   if (totalCritical > 0) {
-    summaryHtml += `<div style="margin-top:8px;padding:8px;background:rgba(192,48,48,.08);border-radius:var(--radius-sm);color:var(--danger);font-weight:600">${IS_AR ? 'لا يمكن النشر: توجد مشاكل حرجة' : 'Cannot publish: critical issues exist'}</div>`;
+    summaryHtml += `<div class="mt-2 text-danger fw-semibold" style="padding:8px; background:rgba(192,48,48,.08); border-radius:var(--radius-sm)">${IS_AR ? 'لا يمكن النشر: توجد مشاكل حرجة' : 'Cannot publish: critical issues exist'}</div>`;
   }
   summaryHtml += `</div>`;
 
@@ -699,9 +699,9 @@ function renderBoardsNav() {
     const primary = b.primary_count || 0;
     const visitor = b.visitor_count || 0;
     div.innerHTML = `
-      <div style="flex:1">
+      <div class="flex-fill">
         <div>${esc(b.label)}</div>
-        <div style="font-size:.65rem;color:var(--t4)">${primary}${visitor > 0 ? '+' + visitor : ''} ${IS_AR ? 'طالب' : 'students'}</div>
+        <div class="text-t4" style="font-size:.65rem">${primary}${visitor > 0 ? '+' + visitor : ''} ${IS_AR ? 'طالب' : 'students'}</div>
       </div>
       <span class="tw-board-chip">${b.placement_count || 0}</span>
       ${critical > 0 ? `<span class="tw-board-chip danger">${critical}</span>` : ''}`;
@@ -739,7 +739,7 @@ function renderBoardStrip() {
   const primary = activeBoard ? (activeBoard.primary_count || 0) : 0;
   const visitor = activeBoard ? (activeBoard.visitor_count || 0) : 0;
   strip.innerHTML = `
-    <div class="tw-metric"><div class="num">${primary}${visitor > 0 ? '<span style="font-size:.7rem;color:var(--t4)">+' + visitor + '</span>' : ''}</div><div class="lbl">${IS_AR ? 'طلاب' : 'Students'}</div></div>
+    <div class="tw-metric"><div class="num">${primary}${visitor > 0 ? '<span class="fs-xs text-t4">+' + visitor + '</span>' : ''}</div><div class="lbl">${IS_AR ? 'طلاب' : 'Students'}</div></div>
     <div class="tw-metric"><div class="num">${placed}</div><div class="lbl">${T.placed}</div></div>
     <div class="tw-metric"><div class="num${overlaps > 0 ? ' danger' : ''}">${overlaps}</div><div class="lbl">${T.overlap}</div></div>
     <div class="tw-metric"><div class="num${instrC > 0 ? ' danger' : ''}">${instrC}</div><div class="lbl">${T.instrClash}</div></div>
@@ -1227,45 +1227,45 @@ function renderRightPanel(tab) {
 
     let html = '';
     if (overlaps.length) {
-      html += `<div style="font-size:.7rem;font-weight:700;color:var(--danger);text-transform:uppercase;margin:8px 0 4px;letter-spacing:.04em">${T.overlap} (${overlaps.length})</div>`;
+      html += `<div class="fs-xs fw-bold text-danger text-caps" style="margin:8px 0 4px; letter-spacing:.04em">${T.overlap} (${overlaps.length})</div>`;
       overlaps.forEach(o => {
         const secs = (o.sections || []).join(' / ');
         html += `<div class="tw-issue-row" data-ids='${JSON.stringify(o.ids || [])}'>
           <span class="tw-issue-dot critical"></span>
-          <div><div style="font-weight:600">${esc(secs)}</div><div style="font-size:.7rem;color:var(--t4)">${esc(o.detail || '')}</div></div>
+          <div><div class="fw-semibold">${esc(secs)}</div><div class="fs-xs text-t4">${esc(o.detail || '')}</div></div>
         </div>`;
       });
     }
     if (iClashes.length) {
-      html += `<div style="font-size:.7rem;font-weight:700;color:var(--danger);text-transform:uppercase;margin:8px 0 4px;letter-spacing:.04em">${T.instrClash} (${iClashes.length})</div>`;
+      html += `<div class="fs-xs fw-bold text-danger text-caps" style="margin:8px 0 4px; letter-spacing:.04em">${T.instrClash} (${iClashes.length})</div>`;
       iClashes.forEach(c => {
         const secs = (c.sections || []).join(' / ');
         html += `<div class="tw-issue-row" data-ids='${JSON.stringify(c.ids || [])}'>
           <span class="tw-issue-dot critical"></span>
-          <div><div style="font-weight:600">${esc(c.instructor || '')} &mdash; ${esc(secs)}</div><div style="font-size:.7rem;color:var(--t4)">${esc(c.detail || '')}</div></div>
+          <div><div class="fw-semibold">${esc(c.instructor || '')} &mdash; ${esc(secs)}</div><div class="fs-xs text-t4">${esc(c.detail || '')}</div></div>
         </div>`;
       });
     }
     if (rClashes.length) {
-      html += `<div style="font-size:.7rem;font-weight:700;color:var(--amber);text-transform:uppercase;margin:8px 0 4px;letter-spacing:.04em">${T.roomClash} (${rClashes.length})</div>`;
+      html += `<div class="fs-xs fw-bold text-caps" style="color:var(--amber); margin:8px 0 4px; letter-spacing:.04em">${T.roomClash} (${rClashes.length})</div>`;
       rClashes.forEach(c => {
         const secs = (c.sections || []).join(' / ');
         html += `<div class="tw-issue-row" data-ids='${JSON.stringify(c.ids || [])}'>
           <span class="tw-issue-dot warning"></span>
-          <div><div style="font-weight:600">${esc(c.room || '')} &mdash; ${esc(secs)}</div><div style="font-size:.7rem;color:var(--t4)">${esc(c.detail || '')}</div></div>
+          <div><div class="fw-semibold">${esc(c.room || '')} &mdash; ${esc(secs)}</div><div class="fs-xs text-t4">${esc(c.detail || '')}</div></div>
         </div>`;
       });
     }
     // Cross-board conflicts
     const xConflicts = TW.conflicts.cross_board_conflicts || [];
     if (xConflicts.length) {
-      html += `<div style="font-size:.7rem;font-weight:700;color:var(--royal);text-transform:uppercase;margin:8px 0 4px;letter-spacing:.04em">${IS_AR ? 'تعارضات عبر اللوحات' : 'Cross-Board'} (${xConflicts.length})</div>`;
+      html += `<div class="fs-xs fw-bold text-caps" style="color:var(--royal); margin:8px 0 4px; letter-spacing:.04em">${IS_AR ? 'تعارضات عبر اللوحات' : 'Cross-Board'} (${xConflicts.length})</div>`;
       xConflicts.forEach(c => {
-        html += `<div class="tw-issue-row" style="cursor:pointer" onclick="selectBoard(${c.board_a_id === TW.boardId ? c.board_b_id : c.board_a_id})">
+        html += `<div class="tw-issue-row u-cursor-pointer" onclick="selectBoard(${c.board_a_id === TW.boardId ? c.board_b_id : c.board_a_id})">
           <span class="tw-issue-dot" style="background:var(--royal)"></span>
           <div>
-            <div style="font-weight:600">${esc(c.section_a)} &harr; ${esc(c.section_b)}</div>
-            <div style="font-size:.7rem;color:var(--t4)">${c.overlap_count} ${IS_AR ? 'طلاب مشتركين' : 'shared students'} | ${esc(c.board_a_label)} &harr; ${esc(c.board_b_label)}</div>
+            <div class="fw-semibold">${esc(c.section_a)} &harr; ${esc(c.section_b)}</div>
+            <div class="fs-xs text-t4">${c.overlap_count} ${IS_AR ? 'طلاب مشتركين' : 'shared students'} | ${esc(c.board_a_label)} &harr; ${esc(c.board_b_label)}</div>
           </div>
         </div>`;
       });
@@ -1303,9 +1303,9 @@ function renderRightPanel(tab) {
       <div class="tw-sel-field"><span class="label">Instructor</span><span class="value">${esc(instructor)}</span></div>
       <div class="tw-sel-field"><span class="label">Capacity</span><span class="value">${p.available_capacity || '-'}</span></div>
       <div class="tw-sel-field"><span class="label">Locked</span><span class="value">${p.is_locked ? 'Yes' : 'No'}</span></div>
-      <div style="margin-top:12px;display:flex;gap:6px;">
+      <div class="d-flex" style="margin-top:12px; gap:6px">
         <button class="tw-btn" onclick="toggleLock(${p.id})">${p.is_locked ? (IS_AR ? 'فتح' : 'Unlock') : (IS_AR ? 'قفل' : 'Lock')}</button>
-        <button class="tw-btn" style="color:var(--danger)" onclick="removePlacement(${p.id})">${IS_AR ? 'إزالة' : 'Remove'}</button>
+        <button class="tw-btn text-danger" onclick="removePlacement(${p.id})">${IS_AR ? 'إزالة' : 'Remove'}</button>
       </div>
     `;
   } else if (tab === 'capacity') {
@@ -1315,7 +1315,7 @@ function renderRightPanel(tab) {
       return;
     }
     const t = (TW.capacityData && TW.capacityData.totals) || {};
-    let html = `<div style="display:flex;gap:12px;margin-bottom:10px;flex-wrap:wrap">
+    let html = `<div class="d-flex flex-wrap" style="gap:12px; margin-bottom:10px">
       <div class="tw-metric" style="text-align:left"><div class="num" style="font-size:1rem">${t.demand || 0}</div><div class="lbl">${IS_AR ? 'الطلب' : 'Demand'}</div></div>
       <div class="tw-metric" style="text-align:left"><div class="num" style="font-size:1rem">${t.raw_capacity || 0}</div><div class="lbl">${IS_AR ? 'السعة' : 'Raw Cap.'}</div></div>
       <div class="tw-metric" style="text-align:left"><div class="num${(t.deficit||0) > 0 ? ' danger' : ''}" style="font-size:1rem">${t.deficit || 0}</div><div class="lbl">${IS_AR ? 'العجز' : 'Deficit'}</div></div>
@@ -1324,16 +1324,16 @@ function renderRightPanel(tab) {
       const pct = c.demand > 0 ? Math.min(100, Math.round((c.raw_capacity / c.demand) * 100)) : 100;
       const barColor = c.deficit > 0 ? 'var(--danger)' : 'var(--teal)';
       html += `<div style="margin-bottom:6px">
-        <div style="display:flex;justify-content:space-between;font-size:.75rem">
-          <span style="font-weight:600">${esc(c.course_code)}</span>
-          <span style="color:var(--t4)">${c.demand} / ${c.raw_capacity}${c.deficit > 0 ? ' <span style="color:var(--danger);font-weight:700">-' + c.deficit + '</span>' : ''}</span>
+        <div class="d-flex justify-content-between fs-12">
+          <span class="fw-semibold">${esc(c.course_code)}</span>
+          <span class="text-t4">${c.demand} / ${c.raw_capacity}${c.deficit > 0 ? ' <span class="text-danger fw-bold">-' + c.deficit + '</span>' : ''}</span>
         </div>
         <div style="height:4px;background:var(--line);border-radius:2px;overflow:hidden;margin-top:2px">
           <div style="height:100%;width:${pct}%;background:${barColor};border-radius:2px"></div>
         </div>
       </div>`;
     });
-    if (courses.length > 30) html += `<p style="font-size:.7rem;color:var(--t4)">${IS_AR ? 'وأكثر...' : `+${courses.length - 30} more...`}</p>`;
+    if (courses.length > 30) html += `<p class="fs-xs text-t4">${IS_AR ? 'وأكثر...' : `+${courses.length - 30} more...`}</p>`;
     body.innerHTML = html;
   }
 }
@@ -1412,10 +1412,10 @@ function renderBottomPanel(tab) {
   if (tab === 'demand') {
     const courses = (TW.capacityData && TW.capacityData.courses) || [];
     if (courses.length === 0) {
-      body.innerHTML = `<p style="color:var(--t4);font-size:.8rem;padding:12px">${IS_AR ? 'لا توجد بيانات' : 'No capacity data yet'}</p>`;
+      body.innerHTML = `<p class="text-t4" style="font-size:.8rem; padding:12px">${IS_AR ? 'لا توجد بيانات' : 'No capacity data yet'}</p>`;
       return;
     }
-    let html = `<table style="width:100%;font-size:.75rem;border-collapse:collapse">
+    let html = `<table class="w-100 fs-12" style="border-collapse:collapse">
       <thead><tr style="border-bottom:2px solid var(--line);text-align:left">
         <th style="padding:6px 8px">${IS_AR ? 'المقرر' : 'Course'}</th>
         <th style="padding:6px 8px">${IS_AR ? 'الطلب' : 'Demand'}</th>
@@ -1426,7 +1426,7 @@ function renderBottomPanel(tab) {
     courses.forEach(c => {
       const defStyle = c.deficit > 0 ? 'color:var(--danger);font-weight:700' : '';
       html += `<tr style="border-bottom:1px solid var(--line)">
-        <td style="padding:4px 8px;font-weight:600">${esc(c.course_code)}</td>
+        <td class="fw-semibold" style="padding:4px 8px">${esc(c.course_code)}</td>
         <td style="padding:4px 8px">${c.demand}</td>
         <td style="padding:4px 8px">${c.raw_capacity}</td>
         <td style="padding:4px 8px">${c.placed_sections}</td>
@@ -1434,7 +1434,7 @@ function renderBottomPanel(tab) {
       </tr>`;
     });
     const t = (TW.capacityData && TW.capacityData.totals) || {};
-    html += `</tbody><tfoot><tr style="border-top:2px solid var(--line);font-weight:700">
+    html += `</tbody><tfoot><tr class="fw-bold" style="border-top:2px solid var(--line)">
       <td style="padding:6px 8px">${IS_AR ? 'الإجمالي' : 'Total'}</td>
       <td style="padding:6px 8px">${t.demand || 0}</td>
       <td style="padding:6px 8px">${t.raw_capacity || 0}</td>
@@ -1447,30 +1447,30 @@ function renderBottomPanel(tab) {
     const iClashes = TW.conflicts.instructor_clashes || [];
     const rClashes = TW.conflicts.room_clashes || [];
     if (iClashes.length === 0 && rClashes.length === 0) {
-      body.innerHTML = `<p style="color:var(--t4);font-size:.8rem;padding:12px">${IS_AR ? 'لا توجد تعارضات موارد' : 'No resource conflicts'}</p>`;
+      body.innerHTML = `<p class="text-t4" style="font-size:.8rem; padding:12px">${IS_AR ? 'لا توجد تعارضات موارد' : 'No resource conflicts'}</p>`;
       return;
     }
     let html = '';
     if (iClashes.length) {
-      html += `<div style="font-size:.72rem;font-weight:700;color:var(--danger);margin:8px 8px 4px;text-transform:uppercase">${T.instrClash} (${iClashes.length})</div>`;
-      html += `<table style="width:100%;font-size:.75rem;border-collapse:collapse"><tbody>`;
+      html += `<div class="fs-sm fw-bold text-danger text-caps" style="margin:8px 8px 4px">${T.instrClash} (${iClashes.length})</div>`;
+      html += `<table class="w-100 fs-12" style="border-collapse:collapse"><tbody>`;
       iClashes.forEach(c => {
         html += `<tr style="border-bottom:1px solid var(--line)">
-          <td style="padding:4px 8px;font-weight:600">${esc(c.instructor)}</td>
+          <td class="fw-semibold" style="padding:4px 8px">${esc(c.instructor)}</td>
           <td style="padding:4px 8px">${(c.sections||[]).join(', ')}</td>
-          <td style="padding:4px 8px;color:var(--t4)">${esc(c.detail)}</td>
+          <td class="text-t4" style="padding:4px 8px">${esc(c.detail)}</td>
         </tr>`;
       });
       html += `</tbody></table>`;
     }
     if (rClashes.length) {
-      html += `<div style="font-size:.72rem;font-weight:700;color:var(--amber);margin:8px 8px 4px;text-transform:uppercase">${T.roomClash} (${rClashes.length})</div>`;
-      html += `<table style="width:100%;font-size:.75rem;border-collapse:collapse"><tbody>`;
+      html += `<div class="fs-sm fw-bold text-caps" style="color:var(--amber); margin:8px 8px 4px">${T.roomClash} (${rClashes.length})</div>`;
+      html += `<table class="w-100 fs-12" style="border-collapse:collapse"><tbody>`;
       rClashes.forEach(c => {
         html += `<tr style="border-bottom:1px solid var(--line)">
-          <td style="padding:4px 8px;font-weight:600">${esc(c.room)}</td>
+          <td class="fw-semibold" style="padding:4px 8px">${esc(c.room)}</td>
           <td style="padding:4px 8px">${(c.sections||[]).join(', ')}</td>
-          <td style="padding:4px 8px;color:var(--t4)">${esc(c.detail)}</td>
+          <td class="text-t4" style="padding:4px 8px">${esc(c.detail)}</td>
         </tr>`;
       });
       html += `</tbody></table>`;
@@ -1500,16 +1500,16 @@ function openSectionDrawer(placementId) {
 
   const instructor = (p.meetings && p.meetings[0]) ? p.meetings[0].instructor : '-';
   const meetingsHtml = (p.meetings || []).map(m =>
-    `<div style="font-size:.75rem;padding:2px 0">${esc(m.day)} ${esc(m.start_time)}-${esc(m.end_time)} | ${esc(m.room || '-')} | ${esc(m.instructor || '-')}</div>`
+    `<div class="fs-12" style="padding:2px 0">${esc(m.day)} ${esc(m.start_time)}-${esc(m.end_time)} | ${esc(m.room || '-')} | ${esc(m.instructor || '-')}</div>`
   ).join('');
 
   const drawer = document.createElement('div');
   drawer.id = 'twDrawer';
   drawer.style.cssText = 'position:fixed;top:0;right:0;width:380px;height:100vh;background:var(--card);border-left:1px solid var(--line);box-shadow:var(--shadow-lift);z-index:200;overflow-y:auto;padding:20px;transition:transform .2s var(--ease);';
   drawer.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+    <div class="d-flex justify-content-between align-items-center" style="margin-bottom:16px">
       <h3 style="margin:0;font-size:.95rem;color:var(--ink)">${IS_AR ? 'تفاصيل الشعبة' : 'Section Detail'}</h3>
-      <button onclick="document.getElementById('twDrawer').remove()" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--t4)">&times;</button>
+      <button class="u-cursor-pointer text-t4" onclick="document.getElementById('twDrawer').remove()" style="background:none; border:none; font-size:1.2rem">&times;</button>
     </div>
     <div class="tw-sel-field"><span class="label">${IS_AR ? 'المقرر' : 'Course'}</span><span class="value">${esc(p.course_code)}</span></div>
     <div class="tw-sel-field"><span class="label">${IS_AR ? 'الاسم' : 'Name'}</span><span class="value">${esc(p.course_name)}</span></div>
@@ -1521,10 +1521,10 @@ function openSectionDrawer(placementId) {
     <div class="tw-sel-field"><span class="label">${IS_AR ? 'السعة' : 'Capacity'}</span><span class="value">${p.available_capacity || '-'}</span></div>
     <div class="tw-sel-field"><span class="label">${IS_AR ? 'المسجلون' : 'Registered'}</span><span class="value">${p.registered_count || '-'}</span></div>
     <div class="tw-sel-field"><span class="label">${IS_AR ? 'مقفل' : 'Locked'}</span><span class="value">${p.is_locked ? (IS_AR ? 'نعم' : 'Yes') : (IS_AR ? 'لا' : 'No')}</span></div>
-    <div style="margin-top:12px"><strong style="font-size:.78rem;color:var(--t3)">${IS_AR ? 'جميع اللقاءات' : 'All Meetings'}</strong>${meetingsHtml || '<div style="font-size:.75rem;color:var(--t4)">-</div>'}</div>
-    <div style="margin-top:16px;display:flex;gap:8px">
+    <div style="margin-top:12px"><strong class="fs-md text-t3">${IS_AR ? 'جميع اللقاءات' : 'All Meetings'}</strong>${meetingsHtml || '<div class="fs-12 text-t4">-</div>'}</div>
+    <div class="d-flex" style="margin-top:16px; gap:8px">
       <button class="tw-btn" onclick="toggleLock(${p.id});document.getElementById('twDrawer').remove()">${p.is_locked ? (IS_AR ? 'فتح القفل' : 'Unlock') : (IS_AR ? 'قفل' : 'Lock')}</button>
-      <button class="tw-btn" style="color:var(--danger)" onclick="removePlacement(${p.id});document.getElementById('twDrawer').remove()">${IS_AR ? 'إزالة' : 'Remove'}</button>
+      <button class="tw-btn text-danger" onclick="removePlacement(${p.id});document.getElementById('twDrawer').remove()">${IS_AR ? 'إزالة' : 'Remove'}</button>
     </div>
   `;
   document.body.appendChild(drawer);
@@ -1548,11 +1548,11 @@ async function openSlotEditor() {
 
   const result = await dlg.confirm({
     title: IS_AR ? 'تعديل الفترات الزمنية' : 'Edit Time Slots',
-    body: `<div style="font-size:.78rem;color:var(--t3);margin-bottom:6px;font-weight:600">${IS_AR ? '📚 المحاضرات (75 دقيقة)' : '📚 Lecture Slots (75 min)'}</div>
-      <div style="font-size:.72rem;color:var(--t4);margin-bottom:4px">${IS_AR ? 'الاسم [تبويب] البداية [تبويب] النهاية' : 'Label [tab] Start [tab] End'}</div>
-      <textarea id="twSlotInput" rows="6" style="width:100%;font-family:var(--font-mono);font-size:.78rem;padding:8px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--bg);color:var(--ink);resize:vertical">${esc(slotsText)}</textarea>
-      <div style="font-size:.78rem;color:var(--teal);margin:10px 0 6px;font-weight:600">${IS_AR ? '🔬 المعامل (100 دقيقة)' : '🔬 Lab Slots (100 min)'}</div>
-      <textarea id="twLabSlotInput" rows="6" style="width:100%;font-family:var(--font-mono);font-size:.78rem;padding:8px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--bg);color:var(--ink);resize:vertical">${esc(labText)}</textarea>`,
+    body: `<div class="fs-md text-t3 fw-semibold" style="margin-bottom:6px">${IS_AR ? '📚 المحاضرات (75 دقيقة)' : '📚 Lecture Slots (75 min)'}</div>
+      <div class="fs-sm text-t4" style="margin-bottom:4px">${IS_AR ? 'الاسم [تبويب] البداية [تبويب] النهاية' : 'Label [tab] Start [tab] End'}</div>
+      <textarea class="w-100 font-mono fs-md" id="twSlotInput" rows="6" style="padding:8px; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--bg); color:var(--ink); resize:vertical">${esc(slotsText)}</textarea>
+      <div class="fs-md text-teal fw-semibold" style="margin:10px 0 6px">${IS_AR ? '🔬 المعامل (100 دقيقة)' : '🔬 Lab Slots (100 min)'}</div>
+      <textarea class="w-100 font-mono fs-md" id="twLabSlotInput" rows="6" style="padding:8px; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--bg); color:var(--ink); resize:vertical">${esc(labText)}</textarea>`,
     confirmText: IS_AR ? 'حفظ' : 'Save Slots',
     kind: 'info',
   });
@@ -1656,7 +1656,7 @@ $('twMapElectives').addEventListener('click', async () => {
   });
 
   // Build dialog body
-  let body = `<div style="font-size:.78rem;color:var(--t3);margin-bottom:8px">${IS_AR ? 'اختر المقررات لكل فتحة اختيارية' : 'Select courses for each elective slot'}</div>`;
+  let body = `<div class="fs-md text-t3 mb-2">${IS_AR ? 'اختر المقررات لكل فتحة اختيارية' : 'Select courses for each elective slot'}</div>`;
   body += `<div style="max-height:400px;overflow-y:auto">`;
 
   // Build placeholder info lookup
@@ -1666,15 +1666,15 @@ $('twMapElectives').addEventListener('click', async () => {
   relevantPlaceholders.forEach(ph => {
     const info = phInfo[ph] || {};
     const selected = mapLookup[ph] || [];
-    body += `<div style="margin-bottom:12px;padding:8px;border:1px solid var(--line);border-radius:var(--radius-sm)">`;
-    body += `<div style="font-weight:700;color:var(--royal);margin-bottom:4px">${ph} <span style="font-weight:400;font-size:.72rem;color:var(--t4)">Term ${info.programme_term || '?'} · ${info.type || 'Elective'} · ${info.credit_hours || 3}cr</span></div>`;
+    body += `<div class="u-border" style="margin-bottom:12px; padding:8px; border-radius:var(--radius-sm)">`;
+    body += `<div class="fw-bold" style="color:var(--royal); margin-bottom:4px">${ph} <span class="fs-sm text-t4" style="font-weight:400">Term ${info.programme_term || '?'} · ${info.type || 'Elective'} · ${info.credit_hours || 3}cr</span></div>`;
     catalogue.forEach(c => {
       const checked = selected.includes(c.course_code) ? 'checked' : '';
-      body += `<label style="display:flex;align-items:center;gap:6px;font-size:.78rem;padding:2px 0;cursor:pointer">`;
+      body += `<label class="d-flex align-items-center fs-md u-cursor-pointer" style="gap:6px; padding:2px 0">`;
       body += `<input type="checkbox" class="elec-chk" data-ph="${ph}" data-code="${c.course_code}" ${checked}>`;
-      body += `<span style="font-family:var(--font-mono);font-weight:600">${c.course_code}</span>`;
-      body += `<span style="color:var(--t3)">${c.course_name}</span>`;
-      body += `<span style="color:var(--t4);font-size:.7rem;margin-inline-start:auto">${c.prerequisites_csv || 'no prereq'}</span>`;
+      body += `<span class="font-mono fw-semibold">${c.course_code}</span>`;
+      body += `<span class="text-t3">${c.course_name}</span>`;
+      body += `<span class="text-t4 fs-xs" style="margin-inline-start:auto">${c.prerequisites_csv || 'no prereq'}</span>`;
       body += `</label>`;
     });
     body += `</div>`;
@@ -1753,31 +1753,31 @@ async function runOptimiseV2(mode = 'current') {
 
     // Summary cards
     body += `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px">`;
-    body += `<div style="padding:10px;border-radius:var(--radius-sm);background:rgba(10,142,110,.08);text-align:center">`;
-    body += `<div style="font-size:.68rem;color:var(--t4);text-transform:uppercase">${IS_AR ? 'تم تعيينهم' : 'Assigned'}</div>`;
-    body += `<div style="font-size:1.3rem;font-weight:700;color:var(--teal)">${assigned}<span style="font-size:.75rem;font-weight:400;color:var(--t3)">/${o.total_students}</span></div></div>`;
-    body += `<div style="padding:10px;border-radius:var(--radius-sm);background:rgba(217,119,6,.08);text-align:center">`;
-    body += `<div style="font-size:.68rem;color:var(--t4);text-transform:uppercase">${IS_AR ? 'غير محلول' : 'Unresolved'}</div>`;
-    body += `<div style="font-size:1.3rem;font-weight:700;color:var(--amber)">${o.unresolved_students}</div></div>`;
-    body += `<div style="padding:10px;border-radius:var(--radius-sm);background:rgba(99,102,241,.08);text-align:center">`;
-    body += `<div style="font-size:.68rem;color:var(--t4);text-transform:uppercase">${IS_AR ? 'الوقت' : 'Time'}</div>`;
-    body += `<div style="font-size:1.3rem;font-weight:700;color:var(--royal)">${o.elapsed_seconds || '?'}s</div></div>`;
+    body += `<div class="text-center" style="padding:10px; border-radius:var(--radius-sm); background:rgba(10,142,110,.08)">`;
+    body += `<div class="text-t4 text-caps" style="font-size:.68rem">${IS_AR ? 'تم تعيينهم' : 'Assigned'}</div>`;
+    body += `<div class="fw-bold text-teal" style="font-size:1.3rem">${assigned}<span class="fs-12 text-t3" style="font-weight:400">/${o.total_students}</span></div></div>`;
+    body += `<div class="text-center" style="padding:10px; border-radius:var(--radius-sm); background:rgba(217,119,6,.08)">`;
+    body += `<div class="text-t4 text-caps" style="font-size:.68rem">${IS_AR ? 'غير محلول' : 'Unresolved'}</div>`;
+    body += `<div class="fw-bold" style="font-size:1.3rem; color:var(--amber)">${o.unresolved_students}</div></div>`;
+    body += `<div class="text-center" style="padding:10px; border-radius:var(--radius-sm); background:rgba(99,102,241,.08)">`;
+    body += `<div class="text-t4 text-caps" style="font-size:.68rem">${IS_AR ? 'الوقت' : 'Time'}</div>`;
+    body += `<div class="fw-bold" style="font-size:1.3rem; color:var(--royal)">${o.elapsed_seconds || '?'}s</div></div>`;
     body += `</div>`;
 
     // Candidate comparison table
     if (o.all_scores && o.all_scores.length > 1) {
-      body += `<div style="margin-bottom:10px"><span style="font-size:.72rem;font-weight:700;text-transform:uppercase;color:var(--royal)">${IS_AR ? 'مقارنة المرشحين' : 'Candidate Comparison'} (${o.candidates_evaluated} strategies)</span>`;
-      body += `<table style="width:100%;font-size:.72rem;border-collapse:collapse;margin-top:4px">`;
-      body += `<tr style="border-bottom:1px solid var(--line);color:var(--t4)"><th style="text-align:start;padding:3px 4px">Strategy</th><th style="text-align:end;padding:3px 4px">Tier-A</th><th style="text-align:end;padding:3px 4px">Unresolved</th><th style="text-align:end;padding:3px 4px">Clashes</th><th style="text-align:end;padding:3px 4px">Gaps</th></tr>`;
+      body += `<div style="margin-bottom:10px"><span class="fs-sm fw-bold text-caps" style="color:var(--royal)">${IS_AR ? 'مقارنة المرشحين' : 'Candidate Comparison'} (${o.candidates_evaluated} strategies)</span>`;
+      body += `<table class="w-100 fs-sm" style="border-collapse:collapse; margin-top:4px">`;
+      body += `<tr class="text-t4" style="border-bottom:1px solid var(--line)"><th style="text-align:start;padding:3px 4px">Strategy</th><th class="text-end" style="padding:3px 4px">Tier-A</th><th class="text-end" style="padding:3px 4px">Unresolved</th><th class="text-end" style="padding:3px 4px">Clashes</th><th class="text-end" style="padding:3px 4px">Gaps</th></tr>`;
       o.all_scores.forEach(s => {
         const isBest = s.id === o.best_candidate_id;
         const style = isBest ? 'background:rgba(10,142,110,.06);font-weight:600' : '';
         body += `<tr style="border-bottom:1px solid var(--line);${style}">`;
         body += `<td style="padding:3px 4px">${s.id.replace(/_\d+$/, '')}${isBest ? ' ★' : ''}</td>`;
-        body += `<td style="text-align:end;padding:3px 4px;font-family:var(--font-mono)">${s.score[0]}</td>`;
-        body += `<td style="text-align:end;padding:3px 4px;font-family:var(--font-mono)">${s.score[1]}</td>`;
-        body += `<td style="text-align:end;padding:3px 4px;font-family:var(--font-mono);color:${s.score[3]>0?'var(--danger)':'var(--teal)'}">${s.score[3]}</td>`;
-        body += `<td style="text-align:end;padding:3px 4px;font-family:var(--font-mono)">${s.score[4].toLocaleString()}</td>`;
+        body += `<td class="font-mono" style="text-align:end; padding:3px 4px">${s.score[0]}</td>`;
+        body += `<td class="font-mono" style="text-align:end; padding:3px 4px">${s.score[1]}</td>`;
+        body += `<td class="font-mono" style="text-align:end; padding:3px 4px; color:${s.score[3]>0?'var(--danger)':'var(--teal)'}">${s.score[3]}</td>`;
+        body += `<td class="font-mono" style="text-align:end; padding:3px 4px">${s.score[4].toLocaleString()}</td>`;
         body += `</tr>`;
       });
       body += `</table></div>`;
@@ -1787,8 +1787,8 @@ async function runOptimiseV2(mode = 'current') {
     const scoreLabel = o.mode === 'current'
       ? (IS_AR ? 'النتيجة بعد التحسين' : 'Score After Optimisation')
       : `${IS_AR ? 'النتيجة النهائية' : 'Final Score'} (${o.best_candidate_id.replace(/_\d+$/, '')}${o.local_search_applied ? ' + local search' : ''})`;
-    body += `<div style="margin-bottom:10px"><span style="font-size:.72rem;font-weight:700;text-transform:uppercase;color:var(--teal)">${scoreLabel}</span>`;
-    body += `<table style="width:100%;font-size:.78rem;border-collapse:collapse;margin-top:4px">`;
+    body += `<div style="margin-bottom:10px"><span class="fs-sm fw-bold text-caps text-teal">${scoreLabel}</span>`;
+    body += `<table class="w-100 fs-md" style="border-collapse:collapse; margin-top:4px">`;
     const labels = [
       IS_AR ? 'طلاب الخطر A' : 'Tier-A unresolved',
       IS_AR ? 'طلاب غير محلولين' : 'Unresolved students',
@@ -1800,7 +1800,7 @@ async function runOptimiseV2(mode = 'current') {
     for (let i = 0; i < 6; i++) {
       const val = i === 4 ? score[i].toLocaleString() : score[i];
       const clr = (i === 3 && score[i] > 0) ? 'color:var(--danger)' : (i === 3 ? 'color:var(--teal)' : '');
-      body += `<tr style="border-bottom:1px solid var(--line)"><td style="padding:3px 0;color:var(--t3)">${labels[i]}</td><td style="text-align:end;font-weight:600;font-family:var(--font-mono);${clr}">${val}</td></tr>`;
+      body += `<tr style="border-bottom:1px solid var(--line)"><td class="text-t3" style="padding:3px 0">${labels[i]}</td><td class="fw-semibold font-mono" style="text-align:end; ${clr}">${val}</td></tr>`;
     }
     body += `</table></div>`;
 
@@ -1810,15 +1810,15 @@ async function runOptimiseV2(mode = 'current') {
       const fs = o.final_score;
       const gotBetter = fs[1] < bs[1] || fs[3] < bs[3] || fs[4] < bs[4];
       if (gotBetter) {
-        body += `<div style="padding:8px 10px;border-radius:var(--radius-sm);background:rgba(10,142,110,.1);font-size:.78rem;margin-bottom:8px;border:1px solid rgba(10,142,110,.2)">`;
-        body += `<div style="font-weight:700;color:var(--teal);margin-bottom:4px">&#x2714; ${IS_AR ? 'تم التحسين' : 'Board Improved'}</div>`;
-        body += `<div>Unresolved: <b>${bs[1]}</b> &rarr; <b style="color:var(--teal)">${fs[1]}</b></div>`;
-        if (bs[3] !== fs[3]) body += `<div>Clashes: <b>${bs[3]}</b> &rarr; <b style="color:var(--teal)">${fs[3]}</b></div>`;
+        body += `<div class="fs-md mb-2" style="padding:8px 10px; border-radius:var(--radius-sm); background:rgba(10,142,110,.1); border:1px solid rgba(10,142,110,.2)">`;
+        body += `<div class="fw-bold text-teal" style="margin-bottom:4px">&#x2714; ${IS_AR ? 'تم التحسين' : 'Board Improved'}</div>`;
+        body += `<div>Unresolved: <b>${bs[1]}</b> &rarr; <b class="text-teal">${fs[1]}</b></div>`;
+        if (bs[3] !== fs[3]) body += `<div>Clashes: <b>${bs[3]}</b> &rarr; <b class="text-teal">${fs[3]}</b></div>`;
         body += `<div>Gap minutes: <b>${bs[4].toLocaleString()}</b> &rarr; <b>${fs[4].toLocaleString()}</b></div>`;
         body += `</div>`;
       } else {
-        body += `<div style="padding:8px 10px;border-radius:var(--radius-sm);background:rgba(99,102,241,.06);font-size:.78rem;margin-bottom:8px">`;
-        body += `<span style="color:var(--royal);font-weight:600">&#x2501; ${IS_AR ? 'الجدول الحالي بالفعل في أفضل حالة' : 'Current board is already optimal'}</span>`;
+        body += `<div class="fs-md mb-2" style="padding:8px 10px; border-radius:var(--radius-sm); background:rgba(99,102,241,.06)">`;
+        body += `<span class="fw-semibold" style="color:var(--royal)">&#x2501; ${IS_AR ? 'الجدول الحالي بالفعل في أفضل حالة' : 'Current board is already optimal'}</span>`;
         body += `</div>`;
       }
     }
@@ -1829,33 +1829,33 @@ async function runOptimiseV2(mode = 'current') {
       const after = o.final_score;
       const improved = before[1] !== after[1] || before[4] !== after[4];
       if (improved) {
-        body += `<div style="padding:6px 10px;border-radius:var(--radius-sm);background:rgba(10,142,110,.08);font-size:.75rem;margin-bottom:8px">`;
-        body += `<span style="color:var(--teal);font-weight:600">&#x2714; ${IS_AR ? 'تحسين محلي' : 'Local search improved'}:</span> `;
+        body += `<div class="fs-12 mb-2" style="padding:6px 10px; border-radius:var(--radius-sm); background:rgba(10,142,110,.08)">`;
+        body += `<span class="text-teal fw-semibold">&#x2714; ${IS_AR ? 'تحسين محلي' : 'Local search improved'}:</span> `;
         body += `unresolved ${before[1]} → ${after[1]}, gaps ${before[4].toLocaleString()} → ${after[4].toLocaleString()}`;
         body += `</div>`;
       } else {
-        body += `<div style="padding:6px 10px;border-radius:var(--radius-sm);background:rgba(99,102,241,.06);font-size:.75rem;margin-bottom:8px">`;
-        body += `<span style="color:var(--royal)">&#x2501; ${IS_AR ? 'لم يتحسن' : 'Local search: already optimal'}</span>`;
+        body += `<div class="fs-12 mb-2" style="padding:6px 10px; border-radius:var(--radius-sm); background:rgba(99,102,241,.06)">`;
+        body += `<span class="text-royal">&#x2501; ${IS_AR ? 'لم يتحسن' : 'Local search: already optimal'}</span>`;
         body += `</div>`;
       }
     }
 
     // Hotspot courses
     if (o.hotspot_courses && o.hotspot_courses.length > 0) {
-      body += `<div style="margin-bottom:8px"><span style="font-size:.72rem;font-weight:700;text-transform:uppercase;color:var(--danger)">${IS_AR ? 'مقررات مزدحمة' : 'Hotspot Courses'}</span>`;
-      body += `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">`;
+      body += `<div class="mb-2"><span class="fs-sm fw-bold text-caps text-danger">${IS_AR ? 'مقررات مزدحمة' : 'Hotspot Courses'}</span>`;
+      body += `<div class="d-flex flex-wrap" style="gap:4px; margin-top:4px">`;
       o.hotspot_courses.forEach(c => {
-        body += `<span style="padding:2px 8px;border-radius:999px;background:rgba(192,48,48,.1);color:var(--danger);font-size:.72rem;font-weight:600">${c}</span>`;
+        body += `<span class="text-danger fs-sm fw-semibold" style="padding:2px 8px; border-radius:999px; background:rgba(192,48,48,.1)">${c}</span>`;
       });
       body += `</div></div>`;
     }
 
     // Reserve-heavy sections
     if (o.reserve_heavy_sections && o.reserve_heavy_sections.length > 0) {
-      body += `<div><span style="font-size:.72rem;font-weight:700;text-transform:uppercase;color:var(--amber)">${IS_AR ? 'ضغط احتياطي' : 'Reserve Pressure'}</span>`;
-      body += `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px">`;
+      body += `<div><span class="fs-sm fw-bold text-caps" style="color:var(--amber)">${IS_AR ? 'ضغط احتياطي' : 'Reserve Pressure'}</span>`;
+      body += `<div class="d-flex flex-wrap" style="gap:4px; margin-top:4px">`;
       o.reserve_heavy_sections.slice(0, 8).forEach(s => {
-        body += `<span style="padding:2px 8px;border-radius:999px;background:rgba(217,119,6,.1);color:var(--amber);font-size:.72rem;font-weight:600">${s.section} ${Math.round(s.ratio*100)}%</span>`;
+        body += `<span class="fs-sm fw-semibold" style="padding:2px 8px; border-radius:999px; background:rgba(217,119,6,.1); color:var(--amber)">${s.section} ${Math.round(s.ratio*100)}%</span>`;
       });
       body += `</div></div>`;
     }

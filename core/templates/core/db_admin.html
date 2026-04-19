@@ -487,19 +487,19 @@
           <!-- Import Section -->
           <div class="dba-section">
             <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}استيراد الكتالوج{% else %}Import Catalogue{% endif %}</div>
-            <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin-bottom:10px">
-              <div><label style="font-size:.75rem;color:var(--t3)">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Programme{% endif %}</label><input id="elecProgramme" class="form-control form-control-compact" style="width:80px" placeholder="AI" value="AI"></div>
+            <div class="d-flex flex-wrap" style="gap:8px; align-items:end; margin-bottom:10px">
+              <div><label class="fs-12 text-t3">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Programme{% endif %}</label><input id="elecProgramme" class="form-control form-control-compact" style="width:80px" placeholder="AI" value="AI"></div>
               <button class="btn btn-primary" id="elecImportBtn" type="button" style="padding:5px 14px;font-size:.8rem">{% if LANGUAGE_CODE == 'ar' %}استيراد{% else %}Import{% endif %}</button>
             </div>
-            <div style="font-size:.72rem;color:var(--t4);margin-bottom:4px">{% if LANGUAGE_CODE == 'ar' %}الصق البيانات بفواصل تبويب: الكود، الاسم، المتطلبات، التصنيف، T، L، C{% else %}Paste tab-separated: Code, Name, Req (prerequisites), Cat, T, L, C{% endif %}</div>
-            <textarea id="elecContent" rows="10" style="width:100%;font-family:var(--font-mono);font-size:.78rem;padding:8px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--bg);color:var(--ink);resize:vertical" placeholder="AI411&#9;Expert Systems&#9;AI212&#9;AI&#9;3&#9;&#9;3"></textarea>
-            <div id="elecImportResult" style="margin-top:8px;font-size:.8rem"></div>
+            <div class="fs-sm text-t4" style="margin-bottom:4px">{% if LANGUAGE_CODE == 'ar' %}الصق البيانات بفواصل تبويب: الكود، الاسم، المتطلبات، التصنيف، T، L، C{% else %}Paste tab-separated: Code, Name, Req (prerequisites), Cat, T, L, C{% endif %}</div>
+            <textarea class="w-100 font-mono fs-md" id="elecContent" rows="10" placeholder="AI411&#9;Expert Systems&#9;AI212&#9;AI&#9;3&#9;&#9;3" style="padding:8px; border:1px solid var(--line); border-radius:var(--radius-sm); background:var(--bg); color:var(--ink); resize:vertical"></textarea>
+            <div class="mt-2" id="elecImportResult" style="font-size:.8rem"></div>
           </div>
 
           <!-- Current Catalogue -->
           <div class="dba-section" style="margin-top:16px">
-            <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}الكتالوج الحالي{% else %}Current Catalogue{% endif %} <button class="btn btn-sm" id="elecRefreshBtn" type="button" style="padding:2px 8px;font-size:.72rem">{% if LANGUAGE_CODE == 'ar' %}تحديث{% else %}Refresh{% endif %}</button></div>
-            <div id="elecCatalogueTable" style="max-height:300px;overflow-y:auto;font-size:.78rem"></div>
+            <div class="dba-section-title">{% if LANGUAGE_CODE == 'ar' %}الكتالوج الحالي{% else %}Current Catalogue{% endif %} <button class="btn btn-sm fs-sm" id="elecRefreshBtn" type="button" style="padding:2px 8px">{% if LANGUAGE_CODE == 'ar' %}تحديث{% else %}Refresh{% endif %}</button></div>
+            <div class="fs-md" id="elecCatalogueTable" style="max-height:300px; overflow-y:auto"></div>
           </div>
         </div>
 
@@ -923,10 +923,10 @@ function renderOracleSummary(data) {
   ];
   let html = '';
   for (const k of kpis) {
-    html += `<div class="col-md-2 col-4"><div class="border rounded p-2"><div style="font-size:1.3rem;font-weight:700;color:${k.color}">${esc(String(k.value))}</div><div class="text-muted" style="font-size:.72rem">${esc(k.label)}</div></div></div>`;
+    html += `<div class="col-md-2 col-4"><div class="border rounded p-2"><div class="fw-bold" style="font-size:1.3rem; color:${k.color}">${esc(String(k.value))}</div><div class="text-muted fs-sm">${esc(k.label)}</div></div></div>`;
   }
   if (w.length > 0) {
-    html += `<div class="col-12"><div class="alert alert-warning py-1 px-2 mb-0" style="font-size:.78rem"><strong>${IS_AR ? 'تحذيرات:' : 'Warnings:'}</strong> ${esc(w.join(' | '))}</div></div>`;
+    html += `<div class="col-12"><div class="alert alert-warning py-1 px-2 mb-0 fs-md"><strong>${IS_AR ? 'تحذيرات:' : 'Warnings:'}</strong> ${esc(w.join(' | '))}</div></div>`;
   }
   q('oSummary').innerHTML = html;
   q('oSummaryWrap').classList.remove('d-none');
@@ -1250,7 +1250,7 @@ if (elecImport) {
     const programme = q('elecProgramme').value.trim().toUpperCase();
     const content = q('elecContent').value.trim();
     const result = q('elecImportResult');
-    if (!programme || !content) { result.innerHTML = '<span style="color:var(--danger)">Programme and content required</span>'; return; }
+    if (!programme || !content) { result.innerHTML = '<span class="text-danger">Programme and content required</span>'; return; }
 
     elecImport.disabled = true;
     try {
@@ -1261,13 +1261,13 @@ if (elecImport) {
       });
       const data = await res.json();
       if (data.ok) {
-        result.innerHTML = `<span style="color:var(--teal)">✓ ${data.created} created, ${data.updated} updated (${data.total} total)</span>`;
+        result.innerHTML = `<span class="text-teal">✓ ${data.created} created, ${data.updated} updated (${data.total} total)</span>`;
         if (elecRefresh) elecRefresh.click();
       } else {
-        result.innerHTML = `<span style="color:var(--danger)">✗ ${data.error || 'Import failed'}</span>`;
+        result.innerHTML = `<span class="text-danger">✗ ${data.error || 'Import failed'}</span>`;
       }
     } catch (e) {
-      result.innerHTML = `<span style="color:var(--danger)">✗ ${e.message}</span>`;
+      result.innerHTML = `<span class="text-danger">✗ ${e.message}</span>`;
     }
     elecImport.disabled = false;
   };
@@ -1282,17 +1282,17 @@ async function loadElectiveCatalogue() {
     const res = await fetch(url);
     const data = await res.json();
     if (!data.ok || !data.items.length) {
-      container.innerHTML = '<div style="color:var(--t4);padding:8px">No elective courses found</div>';
+      container.innerHTML = '<div class="text-t4" style="padding:8px">No elective courses found</div>';
       return;
     }
-    let html = '<table class="tbl-card" style="border-spacing:0 3px;width:100%"><thead><tr><th>Code</th><th>Name</th><th>Prereq</th><th>Cat</th><th>Cr</th></tr></thead><tbody>';
+    let html = '<table class="tbl-card w-100" style="border-spacing:0 3px"><thead><tr><th>Code</th><th>Name</th><th>Prereq</th><th>Cat</th><th>Cr</th></tr></thead><tbody>';
     data.items.forEach(c => {
-      html += `<tr class="cr-row"><td><span class="cr-id">${c.course_code}</span></td><td>${c.course_name}</td><td style="font-family:var(--font-mono);font-size:.72rem">${c.prerequisites_csv || '—'}</td><td>${c.category}</td><td>${c.credit_hours}</td></tr>`;
+      html += `<tr class="cr-row"><td><span class="cr-id">${c.course_code}</span></td><td>${c.course_name}</td><td class="font-mono fs-sm">${c.prerequisites_csv || '—'}</td><td>${c.category}</td><td>${c.credit_hours}</td></tr>`;
     });
     html += '</tbody></table>';
     container.innerHTML = html;
   } catch (e) {
-    container.innerHTML = `<div style="color:var(--danger)">${e.message}</div>`;
+    container.innerHTML = `<div class="text-danger">${e.message}</div>`;
   }
 }
 

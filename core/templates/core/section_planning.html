@@ -33,7 +33,7 @@
     </div>
     <div class="fb-search" style="min-width:160px;max-width:280px">
       <label class="fb-lbl" for="spProgram">{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program{% endif %}</label>
-      <input id="spProgram" class="form-control form-control-compact" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثلاً AI,DS{% else %}e.g. AI,DS{% endif %}" style="text-transform:uppercase">
+      <input id="spProgram" class="form-control form-control-compact text-caps" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثلاً AI,DS{% else %}e.g. AI,DS{% endif %}">
     </div>
     <div class="fb-search" style="min-width:120px;max-width:200px">
       <label class="fb-lbl" for="spSection">{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}</label>
@@ -45,12 +45,12 @@
   </div>
 
   <!-- Capacity toggle -->
-  <div style="margin-top:8px">
+  <div class="mt-2">
     <button id="spToggleCaps" class="sp-toggle-caps">{% if LANGUAGE_CODE == 'ar' %}⚙ إعدادات الطاقة{% else %}⚙ Capacity settings{% endif %}</button>
   </div>
 
   <!-- Collapsible capacity settings -->
-  <div id="spCapsWrap" class="sp-caps d-none" style="margin-top:8px">
+  <div id="spCapsWrap" class="sp-caps d-none mt-2">
     <div class="sp-cap-grp">
       <div class="sp-caps-lbl">{% if LANGUAGE_CODE == 'ar' %}محلي 4+ ساعات{% else %}Local 4+ cr{% endif %}</div>
       <input id="spCapLocal4" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="25">
@@ -67,7 +67,7 @@
   </div>
 
   <!-- Advanced per-course button -->
-  <div style="margin-top:8px">
+  <div class="mt-2">
     <button id="spToggleAdv" class="sp-toggle-caps">
       {% if LANGUAGE_CODE == 'ar' %}📋 إعدادات متقدمة لكل مقرر{% else %}📋 Advanced: Per-course limits{% endif %}
       <span id="spAdvBadge" class="sp-adv-badge d-none">0</span>
@@ -75,12 +75,12 @@
   </div>
 
   <!-- Advanced per-course panel -->
-  <div id="spAdvPanel" class="d-none" style="margin-top:8px">
+  <div id="spAdvPanel" class="d-none mt-2">
     <div class="sp-adv-header">
       <input id="spAdvSearch" type="text" class="form-control form-control-compact sp-adv-search"
              placeholder="{% if LANGUAGE_CODE == 'ar' %}بحث عن مقرر...{% else %}Search courses...{% endif %}">
       <button id="spAdvReset" class="sp-adv-reset">{% if LANGUAGE_CODE == 'ar' %}إعادة الكل{% else %}Reset all{% endif %}</button>
-      <button id="spAdvSaveDb" class="btn btn-sm" style="padding:2px 10px;font-size:.72rem;background:var(--teal);color:#fff;border:none;border-radius:4px;cursor:pointer">{% if LANGUAGE_CODE == 'ar' %}حفظ في قاعدة البيانات{% else %}Save to DB{% endif %}</button>
+      <button id="spAdvSaveDb" class="btn btn-sm fs-sm u-cursor-pointer" style="padding:2px 10px; background:var(--teal); color:#fff; border:none; border-radius:4px">{% if LANGUAGE_CODE == 'ar' %}حفظ في قاعدة البيانات{% else %}Save to DB{% endif %}</button>
       <span id="spAdvCount" class="sp-adv-count"></span>
     </div>
     <div class="sp-adv-wrap">
@@ -96,7 +96,7 @@
           </tr>
         </thead>
         <tbody id="spAdvBody">
-          <tr><td colspan="6" class="empty-note" style="text-align:center;padding:20px">
+          <tr><td colspan="6" class="empty-note text-center" style="padding:20px">
             {% if LANGUAGE_CODE == 'ar' %}جارٍ التحميل...{% else %}Loading courses...{% endif %}
           </td></tr>
         </tbody>
@@ -143,10 +143,10 @@
   </div>
 
   <!-- Department filter -->
-  <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-    <label style="font-size:.75rem;font-weight:600;color:var(--t3)">{% if LANGUAGE_CODE == 'ar' %}تصفية القسم{% else %}Filter Dept{% endif %}</label>
-    <input id="spDeptFilter" class="form-control form-control-compact" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثلاً CS,AI{% else %}e.g. CS, AI, CYB{% endif %}" style="width:180px;text-transform:uppercase;font-size:.78rem">
-    <button id="spDeptFilterClear" class="btn btn-sm" type="button" style="font-size:.7rem;padding:2px 8px">{% if LANGUAGE_CODE == 'ar' %}مسح{% else %}Clear{% endif %}</button>
+  <div class="d-flex align-items-center mb-2" style="gap:8px">
+    <label class="fs-12 fw-semibold text-t3">{% if LANGUAGE_CODE == 'ar' %}تصفية القسم{% else %}Filter Dept{% endif %}</label>
+    <input id="spDeptFilter" class="form-control form-control-compact text-caps fs-md" placeholder="{% if LANGUAGE_CODE == 'ar' %}مثلاً CS,AI{% else %}e.g. CS, AI, CYB{% endif %}" style="width:180px">
+    <button id="spDeptFilterClear" class="btn btn-sm fs-xs" type="button" style="padding:2px 8px">{% if LANGUAGE_CODE == 'ar' %}مسح{% else %}Clear{% endif %}</button>
   </div>
 
   <!-- Results table -->
@@ -176,7 +176,7 @@
 
   <!-- Department Summary -->
   <div class="sp-panel" style="margin-top:14px">
-    <h6 style="margin-bottom:8px; font-size:.82rem">{% if LANGUAGE_CODE == 'ar' %}ملخص الأقسام{% else %}Department Summary{% endif %}</h6>
+    <h6 class="mb-2" style="font-size:.82rem">{% if LANGUAGE_CODE == 'ar' %}ملخص الأقسام{% else %}Department Summary{% endif %}</h6>
     <div class="sp-dept-grid" id="spDeptGrid"></div>
   </div>
 
@@ -257,7 +257,7 @@ async function loadAdvancedCourses() {
 function renderAdvancedTable(courses) {
   const tbody = $('spAdvBody');
   if (!courses.length) {
-    tbody.innerHTML = `<tr><td colspan="6" class="empty-note" style="text-align:center;padding:20px">${
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-note text-center" style="padding:20px">${
       IS_AR ? 'لا توجد مقررات — أدخل البرنامج أولاً.' : 'No courses found — enter a Program first.'}</td></tr>`;
     return;
   }
@@ -267,10 +267,10 @@ function renderAdvancedTable(courses) {
     return `<tr data-code="${c.course_code}">
     <td><span class="cr-id">${c.course_code}</span></td>
     <td>${c.department}</td>
-    <td style="text-align:center">${c.credit_hours}</td>
-    <td style="text-align:center">${c.is_external ? '✓' : ''}</td>
-    <td style="text-align:center" class="adv-default">${c.default_max}</td>
-    <td style="text-align:center"><input type="text" inputmode="numeric" pattern="[0-9]*"
+    <td class="text-center">${c.credit_hours}</td>
+    <td class="text-center">${c.is_external ? '✓' : ''}</td>
+    <td class="adv-default text-center">${c.default_max}</td>
+    <td class="text-center"><input type="text" inputmode="numeric" pattern="[0-9]*"
         class="form-control form-control-compact adv-input"
         value="${dispVal}"
         placeholder="${c.default_max}"
@@ -494,15 +494,15 @@ function buildPlanRows(plan) {
       <td>${idx + 1}</td>
       <td><strong>${row.department}</strong></td>
       <td><span class="cr-id">${row.course_code}</span>${extBadge}</td>
-      <td style="text-align:center">${row.credit_hours}</td>
-      <td style="text-align:center"><strong>${row.total_students}</strong></td>
-      <td style="text-align:center"><strong>${row.num_sections}</strong></td>
-      <td style="text-align:center">${row.max_per_section}</td>
-      <td style="text-align:center">${row.avg_per_section}</td>
+      <td class="text-center">${row.credit_hours}</td>
+      <td class="text-center"><strong>${row.total_students}</strong></td>
+      <td class="text-center"><strong>${row.num_sections}</strong></td>
+      <td class="text-center">${row.max_per_section}</td>
+      <td class="text-center">${row.avg_per_section}</td>
       <td style="min-width:80px">
         <div class="d-flex align-items-center gap-1">
           <div class="sp-fill-wrap"><div class="sp-fill ${fillCls}" style="width:${row.fill_percent}%"></div></div>
-          <span style="font-size:.72rem;color:var(--t3);min-width:30px">${row.fill_percent}%</span>
+          <span class="fs-sm text-t3" style="min-width:30px">${row.fill_percent}%</span>
         </div>
       </td>
       <td>${statusHtml}</td>
@@ -660,7 +660,7 @@ function renderMultiProgramResults(data) {
       const deptPanel = document.createElement('div');
       deptPanel.className = 'sp-panel';
       deptPanel.style.marginTop = '8px';
-      deptPanel.innerHTML = `<h6 style="margin-bottom:8px; font-size:.82rem">${T.deptSummary}</h6>
+      deptPanel.innerHTML = `<h6 class="mb-2" style="font-size:.82rem">${T.deptSummary}</h6>
         <div class="sp-dept-grid">${deptHtml}</div>`;
       body.appendChild(deptPanel);
     }

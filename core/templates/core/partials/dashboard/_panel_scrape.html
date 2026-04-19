@@ -1,7 +1,7 @@
     <div id="scrape" class="panel" role="region">
       <div class="filter-bar sticky-cta mb-14">
         <div class="fb-search fb-w-120"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></span><input id="scrapeConcurrency" type="text" inputmode="numeric" pattern="[0-9]*" min="1" max="8" value="2" placeholder="{% if LANGUAGE_CODE == 'ar' %}المسارات{% else %}Threads{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}المسارات{% else %}Concurrency threads{% endif %}"></div>
-        <div class="fb-search" style="flex:1;min-width:180px"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><input id="scrapeCsv" placeholder="{% if LANGUAGE_CODE == 'ar' %}مسار CSV{% else %}CSV path (default: data/students_list.csv){% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}مسار CSV{% else %}CSV file path{% endif %}"></div>
+        <div class="fb-search flex-fill" style="min-width:180px"><span class="i i-sm flex-shrink-0"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span><input id="scrapeCsv" placeholder="{% if LANGUAGE_CODE == 'ar' %}مسار CSV{% else %}CSV path (default: data/students_list.csv){% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}مسار CSV{% else %}CSV file path{% endif %}"></div>
         <div class="fb-spacer"></div>
         <button id="scrapeStart" class="btn btn-danger"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}بدء{% else %}Start{% endif %}</button>
         <button id="scrapeStop" class="btn btn-warning" disabled><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}إيقاف{% else %}Stop{% endif %}</button>
@@ -32,8 +32,8 @@
           <div class="cp-t">{% if LANGUAGE_CODE == 'ar' %}استيراد قائمة الطلاب من Oracle{% else %}Generate Student List from Oracle{% endif %}</div>
         </div>
         <div class="cp-b">
-          <div class="filter-bar" style="flex-wrap:wrap;gap:8px">
-            <div class="fb-search" style="flex:1;min-width:200px">
+          <div class="filter-bar flex-wrap" style="gap:8px">
+            <div class="fb-search flex-fill" style="min-width:200px">
               <input type="file" id="oracleStudentsFile" accept=".csv,.tsv,.txt,.dat" style="font-size:0.85rem">
             </div>
             <div class="fb-search fb-w-110">

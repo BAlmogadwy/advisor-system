@@ -662,11 +662,37 @@ html[data-theme="dark"] .theme-toggle:hover {
 .neu-inset { box-shadow: var(--shadow-neu-inset); }
 
 /* Common icon sizing — used 20+ times inline */
-.i-xs { width: 14px; height: 14px; }
-.i-sm { width: 16px; height: 16px; }
-.i-md { width: 20px; height: 20px; }
-.i-lg { width: 24px; height: 24px; }
-.i-xl { width: 32px; height: 32px; }
+.i-xxs { width: 12px; height: 12px; }
+.i-13  { width: 13px; height: 13px; }
+.i-xs  { width: 14px; height: 14px; }
+.i-sm  { width: 16px; height: 16px; }
+.i-md  { width: 20px; height: 20px; }
+.i-lg  { width: 24px; height: 24px; }
+.i-xl  { width: 32px; height: 32px; }
+
+/* ── Utility classes ─ colour ──────────────────────────── */
+.text-teal     { color: var(--teal)    !important; }
+.text-warning  { color: var(--warning) !important; }
+.text-t3       { color: var(--t3)      !important; }
+.text-t4       { color: var(--t4)      !important; }
+.text-royal    { color: var(--royal)   !important; }
+
+/* ── Utility classes ─ layout ──────────────────────────── */
+.text-end      { text-align: end       !important; }
+.u-border      { border: 1px solid var(--line); }
+
+/* ── Utility classes ─ typography ──────────────────────── */
+.text-caps     { text-transform: uppercase; letter-spacing: 0.04em; }
+.font-mono     { font-family: var(--font-mono); }
+.fs-10         { font-size: 10px; }
+.fs-11         { font-size: 11px; }
+.fs-12         { font-size: 0.75rem; }
+.fs-xs         { font-size: 0.7rem; }
+.fs-sm         { font-size: 0.72rem; }
+.fs-md         { font-size: 0.78rem; }
+
+/* ── Utility classes ─ misc ────────────────────────────── */
+.u-cursor-pointer { cursor: pointer; }
 
 /* Pill / chip — used in planner, dashboard, portfolio */
 .pill {

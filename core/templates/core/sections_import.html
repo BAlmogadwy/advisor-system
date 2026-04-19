@@ -80,7 +80,7 @@
           <th scope="col">{% if LANGUAGE_CODE == 'ar' %}التصنيف{% else %}Tag{% endif %}</th>
         </tr></thead>
         <tbody id="tbody">
-          <tr><td colspan="12"><div class="empty-state"><span class="empty-icon"><span class="i" aria-hidden="true" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span></span><div class="empty-title">{% if LANGUAGE_CODE == 'ar' %}لا توجد بيانات بعد{% else %}No data yet{% endif %}</div><div class="empty-hint">{% if LANGUAGE_CODE == 'ar' %}اختر ملف Oracle HTML وانقر <strong>تحليل + معاينة</strong>{% else %}Select an Oracle HTML file and click <strong>Parse + Preview</strong>{% endif %}</div></div></td></tr>
+          <tr><td colspan="12"><div class="empty-state"><span class="empty-icon"><span class="i i-xl" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span></span><div class="empty-title">{% if LANGUAGE_CODE == 'ar' %}لا توجد بيانات بعد{% else %}No data yet{% endif %}</div><div class="empty-hint">{% if LANGUAGE_CODE == 'ar' %}اختر ملف Oracle HTML وانقر <strong>تحليل + معاينة</strong>{% else %}Select an Oracle HTML file and click <strong>Parse + Preview</strong>{% endif %}</div></div></td></tr>
         </tbody>
       </table>
     </div>
@@ -154,7 +154,7 @@ function filteredRows(rows){
 function renderTable(rows){
   const tb = q('tbody'); tb.innerHTML = '';
   if (!rows.length && rowsAll.length) {
-    tb.innerHTML = `<tr><td colspan="12"><div class="empty-state"><span class="empty-icon"><span class="i" aria-hidden="true" style="width:32px;height:32px"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span></span><div class="empty-title">${T.noFilterResults}</div></div></td></tr>`;
+    tb.innerHTML = `<tr><td colspan="12"><div class="empty-state"><span class="empty-icon"><span class="i i-xl" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span></span><div class="empty-title">${T.noFilterResults}</div></div></td></tr>`;
     return;
   }
   for (const row of rows) {

@@ -149,7 +149,7 @@
           </div></div>
         </div>
         <div id="studentPlanLegend" class="small mb-2 d-none">
-          <span style="color:var(--t3);margin-inline-end:6px">Legend:</span>
+          <span class="text-t3" style="margin-inline-end:6px">Legend:</span>
           <span class="pill-status pill-g"><span class="pill-dot"></span>Passed</span>
           <span class="pill-status pill-b"><span class="pill-dot"></span>Studying</span>
           <span class="pill-status pill-g can-register-pill"><span class="pill-dot"></span>Can register</span>
@@ -165,8 +165,8 @@
             <summary class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/></svg></span> Filters</summary>
             <div class="d-flex flex-wrap gap-2 mt-2 filter-pad">
               <button id="spShowAll" type="button" class="fb-dd active" aria-pressed="true">Show all</button>
-              <button id="spShowCanOnly" type="button" class="fb-dd" style="color:var(--teal)" aria-pressed="false">Can register</button>
-              <button id="spShowLockedOnly" type="button" class="fb-dd" style="color:var(--danger)" aria-pressed="false">Locked</button>
+              <button id="spShowCanOnly" type="button" class="fb-dd text-teal" aria-pressed="false">Can register</button>
+              <button id="spShowLockedOnly" type="button" class="fb-dd text-danger" aria-pressed="false">Locked</button>
               <button id="spCompact" type="button" class="fb-dd">Compact</button>
               <button id="spExpandAll" type="button" class="fb-dd">Expand all</button>
               <button id="spCollapseAll" type="button" class="fb-dd">Collapse all</button>
@@ -176,7 +176,7 @@
           <details class="d-inline-block">
             <summary class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg></span> Sort</summary>
             <div class="d-flex flex-wrap gap-2 mt-2 filter-pad">
-              <button id="spSortImportance" type="button" class="fb-dd" style="color:var(--warning)">Importance</button>
+              <button id="spSortImportance" type="button" class="fb-dd text-warning">Importance</button>
               <button id="spSortStatus" type="button" class="fb-dd" style="color:var(--sky)">Status</button>
               <button id="spSortCode" type="button" class="fb-dd" style="color:var(--sky)">Code</button>
             </div>
@@ -248,11 +248,11 @@
           </div>
           <div class="student-ctx-row">
             <span class="student-ctx-label">{% if LANGUAGE_CODE == 'ar' %}متطلبات مكتملة{% else %}Prereqs Met{% endif %}</span>
-            <span class="student-ctx-value" id="studentCtxPrereqMet" style="color:var(--teal)">--</span>
+            <span class="student-ctx-value text-teal" id="studentCtxPrereqMet">--</span>
           </div>
           <div class="student-ctx-row">
             <span class="student-ctx-label">{% if LANGUAGE_CODE == 'ar' %}متطلبات معلقة{% else %}Prereqs Pending{% endif %}</span>
-            <span class="student-ctx-value" id="studentCtxPrereqPending" style="color:var(--warning)">--</span>
+            <span class="student-ctx-value text-warning" id="studentCtxPrereqPending">--</span>
           </div>
           <a id="studentCtxFullProfile" class="student-ctx-link d-none" href="#">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>

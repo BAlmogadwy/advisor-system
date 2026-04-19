@@ -26,8 +26,8 @@
         <div class="command-bar">
           <!-- Header row -->
           <div class="cb-header">
-            <div style="display:flex;align-items:center;gap:10px">
-              <span class="i" aria-hidden="true" style="width:20px;height:20px;color:var(--teal)"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>
+            <div class="d-flex align-items-center" style="gap:10px">
+              <span class="i text-teal i-md" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>
               <div>
                 <div class="cb-title">{% if LANGUAGE_CODE == 'ar' %}منشئ الجدول{% else %}Timetable Builder{% endif %}</div>
               </div>
@@ -52,25 +52,25 @@
 
           <!-- Input bar -->
           <div class="filter-bar" style="margin-top:10px;margin-bottom:0;padding:10px 14px;flex-wrap:nowrap">
-            <div class="fb-search" style="min-width:0;flex:1;max-width:140px"><span class="i i-sm" aria-hidden="true" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span><input id="studentId" autofocus placeholder="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}"></div>
-            <div class="fb-search" style="min-width:0;flex:0 0 80px"><span class="i i-sm" aria-hidden="true" style="flex-shrink:0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input id="year" value="{{ default_year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنة{% else %}Year{% endif %}" style="width:100%"></div>
-            <div class="fb-search" style="min-width:0;flex:0 0 55px"><input id="term" value="{{ default_term }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}فصل{% else %}Sem{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}فصل{% else %}Semester{% endif %}" style="width:100%"></div>
-            <div class="fb-search" style="min-width:0;flex:1;max-width:200px"><select id="mode" aria-label="{% if LANGUAGE_CODE == 'ar' %}وضع التسجيل{% else %}Registration mode{% endif %}">
+            <div class="fb-search flex-fill" style="min-width:0; max-width:140px"><span class="i i-sm" aria-hidden="true" style="flex-shrink:0"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span><input id="studentId" autofocus placeholder="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}رقم الطالب{% else %}Student ID{% endif %}"></div>
+            <div class="fb-search" style="min-width:0;flex:0 0 80px"><span class="i i-sm" aria-hidden="true" style="flex-shrink:0"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span><input class="w-100" id="year" value="{{ default_year }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}سنة{% else %}Year{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}سنة{% else %}Year{% endif %}"></div>
+            <div class="fb-search" style="min-width:0;flex:0 0 55px"><input class="w-100" id="term" value="{{ default_term }}" placeholder="{% if LANGUAGE_CODE == 'ar' %}فصل{% else %}Sem{% endif %}" aria-label="{% if LANGUAGE_CODE == 'ar' %}فصل{% else %}Semester{% endif %}"></div>
+            <div class="fb-search flex-fill" style="min-width:0; max-width:200px"><select id="mode" aria-label="{% if LANGUAGE_CODE == 'ar' %}وضع التسجيل{% else %}Registration mode{% endif %}">
               <option value="keep">{% if LANGUAGE_CODE == 'ar' %}الإبقاء على المسجّل{% else %}Keep Registered{% endif %}</option>
               <option value="ignore">{% if LANGUAGE_CODE == 'ar' %}تجاهل المسجّل (تخطيط فقط){% else %}Ignore Registered (planning only){% endif %}</option>
             </select></div>
-            <label style="display:flex;align-items:center;gap:5px;font-size:11.5px;font-weight:500;color:var(--t3);cursor:pointer;white-space:nowrap;flex-shrink:0"><input id="swap" type="checkbox" style="accent-color:var(--teal)"> {% if LANGUAGE_CODE == 'ar' %}تبديلات{% else %}Swaps{% endif %}</label>
-            <button id="fetchBtn" class="pl-btn pl-btn-primary" style="flex-shrink:0"><span class="i" aria-hidden="true" style="width:14px;height:14px"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}جلب{% else %}Fetch{% endif %}</button>
+            <label class="d-flex align-items-center text-t3 u-cursor-pointer" style="gap:5px; font-size:11.5px; font-weight:500; white-space:nowrap; flex-shrink:0"><input id="swap" type="checkbox" style="accent-color:var(--teal)"> {% if LANGUAGE_CODE == 'ar' %}تبديلات{% else %}Swaps{% endif %}</label>
+            <button id="fetchBtn" class="pl-btn pl-btn-primary" style="flex-shrink:0"><span class="i i-xs" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}جلب{% else %}Fetch{% endif %}</button>
           </div>
 
           <!-- Planning mode banner -->
-          <div id="planningBanner" class="planner-banner planner-banner-warn d-none" style="margin-top:8px">
+          <div id="planningBanner" class="planner-banner planner-banner-warn d-none mt-2">
             <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
             {% if LANGUAGE_CODE == 'ar' %}وضع التخطيط فقط: يتم تجاهل التسجيل الحالي في قيود التشغيل.{% else %}Planning only mode: baseline registration is ignored in run constraints.{% endif %}
           </div>
 
           <!-- Trust strip -->
-          <div id="trustStrip" class="trust-strip" style="margin-top:8px">
+          <div id="trustStrip" class="trust-strip mt-2">
             <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>
             {% if LANGUAGE_CODE == 'ar' %}جودة الربط: غير معروفة | غير محلول: - | آخر بناء: -{% else %}Mapping quality: unknown | Unresolved: - | Last build: -{% endif %}
           </div>
@@ -83,13 +83,13 @@
             <div class="wf-sep"></div>
             <button id="step3" class="wf-step" type="button"><span class="wf-num">3</span>{% if LANGUAGE_CODE == 'ar' %}بناء الخيارات{% else %}Build{% endif %}</button>
             <div class="wf-nav">
-              <button id="prevStep" class="wf-back" type="button"><span class="i" aria-hidden="true" style="width:12px;height:12px"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}رجوع{% else %}Back{% endif %}</button>
-              <button id="nextStep" class="wf-next" type="button">{% if LANGUAGE_CODE == 'ar' %}التالي{% else %}Next{% endif %}<span class="i" aria-hidden="true" style="width:12px;height:12px"><svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></span></button>
+              <button id="prevStep" class="wf-back" type="button"><span class="i i-xxs" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}رجوع{% else %}Back{% endif %}</button>
+              <button id="nextStep" class="wf-next" type="button">{% if LANGUAGE_CODE == 'ar' %}التالي{% else %}Next{% endif %}<span class="i i-xxs" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></span></button>
             </div>
           </div>
 
           <!-- Simplified mode toggle -->
-          <label class="mode-toggle" style="margin-top:8px">
+          <label class="mode-toggle mt-2">
             <input id="simpleMode" type="checkbox">
             <span>{% if LANGUAGE_CODE == 'ar' %}الوضع المبسّط{% else %}Simplified mode{% endif %}</span>
           </label>
@@ -132,7 +132,7 @@
                     <th></th>
                   </tr>
                 </thead>
-                <tbody id="recTable"><tr class="pl-empty-row" id="recEmpty"><td colspan="99" style="text-align:center;padding:20px;color:var(--t3)">{% if LANGUAGE_CODE == 'ar' %}لا توجد توصيات بعد{% else %}No recommendations yet{% endif %}</td></tr></tbody>
+                <tbody id="recTable"><tr class="pl-empty-row" id="recEmpty"><td class="text-center text-t3" colspan="99" style="padding:20px">{% if LANGUAGE_CODE == 'ar' %}لا توجد توصيات بعد{% else %}No recommendations yet{% endif %}</td></tr></tbody>
               </table>
             </div>
           </div>
@@ -143,7 +143,7 @@
               <div class="pane-icon pane-icon-sky"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span></div>
               <div><h6 class="pane-title">{% if LANGUAGE_CODE == 'ar' %}الجدول المسجّل{% else %}Registered timetable{% endif %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}الجدول المسجل حالياً{% else %}Currently registered schedule{% endif %}</div></div>
             </div>
-            <div id="baselineTotals" class="small text-secondary" style="margin-bottom:8px"></div>
+            <div id="baselineTotals" class="small text-secondary mb-2"></div>
             <div id="baselineWeekly" class="small"></div>
           </div>
 
@@ -152,15 +152,15 @@
             <div class="pane-head">
               <div class="pane-icon pane-icon-royal"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></span></div>
               <div><h6 class="pane-title">{% if LANGUAGE_CODE == 'ar' %}قائمة المقررات المختارة{% else %}Selected add list{% endif %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}المقررات المختارة للإضافة{% else %}Courses selected for scheduling{% endif %}</div></div>
-              <div style="margin-inline-start:auto;display:flex;gap:6px">
+              <div class="d-flex" style="margin-inline-start:auto; gap:6px">
                 <button id="resetShortlist" class="pl-btn pl-btn-outline"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}إعادة تعيين{% else %}Reset{% endif %}</button>
                 <button id="clearShortlist" class="pl-btn pl-btn-red"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}مسح{% else %}Clear{% endif %}</button>
               </div>
             </div>
-            <div id="shortlist" class="small"><div class="pl-empty-state" id="shortlistEmpty" style="text-align:center;padding:20px;color:var(--t3)">{% if LANGUAGE_CODE == 'ar' %}لا توجد مقررات مختارة{% else %}No courses shortlisted{% endif %}</div></div>
-            <div style="display:flex;align-items:center;gap:8px;margin-top:10px;padding-top:10px;border-top:var(--border-subtle)">
-              <span class="i" aria-hidden="true" style="width:14px;height:14px;color:var(--t4)"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></span>
-              <span style="font-size:13px;font-weight:600;color:var(--t2)">{% if LANGUAGE_CODE == 'ar' %}إجمالي الساعات{% else %}Total credits{% endif %}: <span id="shortCredits" style="color:var(--teal)">0</span></span>
+            <div id="shortlist" class="small"><div class="pl-empty-state text-center text-t3" id="shortlistEmpty" style="padding:20px">{% if LANGUAGE_CODE == 'ar' %}لا توجد مقررات مختارة{% else %}No courses shortlisted{% endif %}</div></div>
+            <div class="d-flex align-items-center" style="gap:8px; margin-top:10px; padding-top:10px; border-top:var(--border-subtle)">
+              <span class="i text-t4 i-xs" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg></span>
+              <span class="fw-semibold" style="font-size:13px; color:var(--t2)">{% if LANGUAGE_CODE == 'ar' %}إجمالي الساعات{% else %}Total credits{% endif %}: <span class="text-teal" id="shortCredits">0</span></span>
             </div>
           </div>
 
@@ -171,7 +171,7 @@
               <div><h6 class="pane-title">{% if LANGUAGE_CODE == 'ar' %}المقررات والشعب المتاحة{% else %}Available Courses & Sections{% endif %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}الشعب مصنفة حسب التعارض والسعة{% else %}Sections color-coded by conflict & capacity{% endif %}</div></div>
             </div>
 
-            <div class="chip-legend" style="margin-bottom:8px">
+            <div class="chip-legend mb-2">
               <div class="chip-legend-item"><span class="chip-legend-dot" style="background:var(--teal)"></span>{% if LANGUAGE_CODE == 'ar' %}متاح بدون تعارض{% else %}No conflict + seats{% endif %}</div>
               <div class="chip-legend-item"><span class="chip-legend-dot" style="background:var(--rose)"></span>{% if LANGUAGE_CODE == 'ar' %}تعارض مع مقاعد{% else %}Conflict + seats{% endif %}</div>
               <div class="chip-legend-item"><span class="chip-legend-dot" style="background:var(--danger)"></span>{% if LANGUAGE_CODE == 'ar' %}تعارض بدون مقاعد{% else %}Conflict + no seats{% endif %}</div>
@@ -199,16 +199,16 @@
               <div><h6 class="pane-title">{% if LANGUAGE_CODE == 'ar' %}تشغيل البناء{% else %}Builder run{% endif %}</h6><div class="pane-sub">{% if LANGUAGE_CODE == 'ar' %}إنشاء وتقييم خيارات الجدول{% else %}Generate & evaluate schedule options{% endif %}</div></div>
             </div>
 
-            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+            <div class="d-flex flex-wrap align-items-center" style="gap:8px; margin-bottom:12px">
               <button id="runBuilder" class="pl-btn pl-btn-primary"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}بناء{% else %}Build{% endif %}</button>
               <button id="applyOption" class="pl-btn pl-btn-success"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}تطبيق{% else %}Apply{% endif %}</button>
             </div>
-            <div class="pl-checks" style="margin-bottom:10px;align-items:center">
+            <div class="pl-checks align-items-center" style="margin-bottom:10px">
               <label><input id="strictSections" type="checkbox"> {% if LANGUAGE_CODE == 'ar' %}صارم{% else %}Strict{% endif %}</label>
               <label><input id="ignoreCapacity" type="checkbox"> {% if LANGUAGE_CODE == 'ar' %}تجاهل السعة{% else %}Ignore capacity{% endif %}</label>
-              <label style="display:inline-flex;align-items:center;gap:4px">
+              <label class="align-items-center" style="display:inline-flex; gap:4px">
                 {% if LANGUAGE_CODE == 'ar' %}الحد الأقصى ساعات{% else %}Max credits{% endif %}
-                <input id="maxCredits" type="text" inputmode="numeric" pattern="[0-9]*" value="17" dir="ltr" style="width:52px;padding:2px 4px;border:1px solid var(--border);border-radius:6px;font-size:12px;text-align:center;font-family:'Courier New',monospace">
+                <input class="text-center" id="maxCredits" type="text" inputmode="numeric" pattern="[0-9]*" value="17" dir="ltr" style="width:52px; padding:2px 4px; border:1px solid var(--border); border-radius:6px; font-size:12px; font-family:'Courier New',monospace">
               </label>
             </div>
 
@@ -228,8 +228,8 @@
           <div id="visualCard" class="planner-panel step-panel" data-step="3">
             <div class="pane-head">
               <div class="pane-icon pane-icon-sky"><span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span></div>
-              <div style="flex:1"><h6 class="pane-title" style="margin:0">{% if LANGUAGE_CODE == 'ar' %}الجدول المرئي{% else %}Visual Timetable{% endif %}</h6></div>
-              <select id="visualSource" class="form-select form-select-sm" style="width:180px;font-size:12px">
+              <div class="flex-fill"><h6 class="pane-title" style="margin:0">{% if LANGUAGE_CODE == 'ar' %}الجدول المرئي{% else %}Visual Timetable{% endif %}</h6></div>
+              <select id="visualSource" class="form-select form-select-sm fs-12" style="width:180px">
                 <option value="baseline">{% if LANGUAGE_CODE == 'ar' %}الأساسي{% else %}Baseline{% endif %}</option>
                 <option value="A">{% if LANGUAGE_CODE == 'ar' %}الخيار أ{% else %}Option A{% endif %}</option>
                 <option value="B">{% if LANGUAGE_CODE == 'ar' %}الخيار ب{% else %}Option B{% endif %}</option>
@@ -238,7 +238,7 @@
               </select>
             </div>
 
-            <div id="visualLegend" class="chip-legend" style="margin-bottom:8px">
+            <div id="visualLegend" class="chip-legend mb-2">
               <div class="chip-legend-item"><span class="chip-legend-dot" style="background:var(--royal)"></span>{% if LANGUAGE_CODE == 'ar' %}أساسي{% else %}Baseline{% endif %}</div>
               <div class="chip-legend-item"><span class="chip-legend-dot" style="background:var(--teal)"></span>{% if LANGUAGE_CODE == 'ar' %}مخطط{% else %}Planned{% endif %}</div>
               <div class="chip-legend-item"><span class="chip-legend-dot" style="background:var(--danger)"></span>{% if LANGUAGE_CODE == 'ar' %}تعارض{% else %}Conflict{% endif %}</div>
@@ -249,8 +249,8 @@
 
           <!-- ─── Step 3: Advanced diagnostics (full width) ───── -->
           <details id="advancedDiag" class="planner-panel step-panel pg-full" data-step="3">
-            <summary class="pl-summary-label" style="padding:4px 0;list-style:none;display:flex;align-items:center;gap:8px">
-              <span class="i" aria-hidden="true" style="width:14px;height:14px;transition:transform 0.2s"><svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></span>
+            <summary class="pl-summary-label d-flex align-items-center" style="padding:4px 0; list-style:none; gap:8px">
+              <span class="i i-xs" aria-hidden="true" style="transition:transform 0.2s"><svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg></span>
               {% if LANGUAGE_CODE == 'ar' %}تشخيصات متقدمة{% else %}Advanced diagnostics{% endif %}
             </summary>
             <div id="builderOptions" class="small" style="margin-top:10px"></div>
@@ -590,15 +590,15 @@ function renderShortlist(){
 
     const hasPinned=(c.pinned_sections&&c.pinned_sections.length>0);
     const pinnedHtml=hasPinned
-      ? `<div style="margin-top:3px;display:flex;align-items:center;gap:4px;flex-wrap:wrap">
-           <span style="font-size:11px;font-weight:600;color:var(--teal)">${IS_AR?'شعب محددة:':'Pinned:'}</span>
-           ${c.pinned_sections.map((p,pi)=>`<span class="sl-pin-badge" data-pi="${pi}" style="display:inline-flex;align-items:center;gap:3px;padding:1px 7px;border-radius:5px;font-size:11px;font-weight:600;background:var(--teal-dim);color:var(--teal);cursor:pointer" title="${IS_AR?'انقر للإزالة':'Click to remove'}">§${p.section} <span style="font-size:9px;opacity:0.6">✕</span></span>`).join('')}
+      ? `<div class="d-flex align-items-center flex-wrap" style="margin-top:3px; gap:4px">
+           <span class="fs-11 fw-semibold text-teal">${IS_AR?'شعب محددة:':'Pinned:'}</span>
+           ${c.pinned_sections.map((p,pi)=>`<span class="sl-pin-badge align-items-center fs-11 fw-semibold text-teal u-cursor-pointer" data-pi="${pi}" title="${IS_AR?'انقر للإزالة':'Click to remove'}" style="display:inline-flex; gap:3px; padding:1px 7px; border-radius:5px; background:var(--teal-dim)">§${p.section} <span style="font-size:9px;opacity:0.6">✕</span></span>`).join('')}
          </div>`
-      : `<div style="margin-top:2px;font-size:11px;color:var(--t4)">${IS_AR?'أي شعبة (البناء يختار الأنسب)':'Any section (builder picks best)'}</div>`;
+      : `<div class="fs-11 text-t4" style="margin-top:2px">${IS_AR?'أي شعبة (البناء يختار الأنسب)':'Any section (builder picks best)'}</div>`;
 
     row.innerHTML=`
       <div class="d-flex justify-content-between">
-        <div style="flex:1">
+        <div class="flex-fill">
           <strong>${c.course_code}</strong> ${c.course_name||''}
           <span class="text-secondary">(${c.credits||0} ${IS_AR?'ساعة':'cr'})</span>
           ${pinnedHtml}
@@ -882,7 +882,7 @@ async function renderAvailableSections(){
       });
 
       card.innerHTML=`
-        <div class="avail-course-head" style="cursor:pointer" title="${IS_AR?'انقر لإضافة المقرر (أي شعبة)':'Click to add course (any section)'}">
+        <div class="avail-course-head u-cursor-pointer" title="${IS_AR?'انقر لإضافة المقرر (أي شعبة)':'Click to add course (any section)'}">
           <div>
             <div class="avail-course-code">${course.code}</div>
             <div class="avail-course-name">${course.name}</div>
@@ -954,7 +954,7 @@ async function renderAvailableSections(){
         <span class="avail-summary-item"><span class="sec-dot sec-dot-rose"></span> ${counts.pink} ${IS_AR?'تعارض':'conflict'}</span>
         <span class="avail-summary-item"><span class="sec-dot sec-dot-red"></span> ${counts.red} ${IS_AR?'ممتلئ+تعارض':'full+conflict'}</span>
         <span class="avail-summary-item"><span class="sec-dot sec-dot-gray"></span> ${counts.gray} ${IS_AR?'ممتلئ':'full'}</span>
-        <span style="margin-inline-start:auto;font-weight:600">${total} ${IS_AR?'شعبة':'sections'}</span>`;
+        <span class="fw-semibold" style="margin-inline-start:auto">${total} ${IS_AR?'شعبة':'sections'}</span>`;
     }
   }catch(e){
     grid.innerHTML=`<span class="text-danger">${IS_AR?'فشل تحميل الشعب المتاحة':'Failed to load available sections'}</span>`;
@@ -1126,11 +1126,11 @@ q('runBuilder').onclick=async()=>{
     const col=document.createElement('div');
     col.className='col-md-4';
     col.innerHTML=`
-      <div class="planner-panel" style="margin-bottom:0;padding:12px 14px;cursor:pointer" data-opt="${opt.name}">
-        <div style="font-weight:600;font-size:13px;color:var(--navy)">${IS_AR?'الخيار':'Option'} ${opt.name}</div>
-        <div style="font-size:12px;margin-top:4px">${IS_AR?'تمت الجدولة':'Scheduled'} <strong style="color:var(--teal)">${opt.scheduled||0}</strong>/${opt.target||0}</div>
-        <div style="font-size:11px;color:var(--t4)">${IS_AR?'غير مجدول':'Unscheduled'} ${(opt.unscheduled||[]).length||0}</div>
-        <button class="pl-btn pl-btn-teal" style="width:100%;justify-content:center;margin-top:8px">${IS_AR?'اختيار':'Select'}</button>
+      <div class="planner-panel u-cursor-pointer" data-opt="${opt.name}" style="margin-bottom:0; padding:12px 14px">
+        <div class="fw-semibold" style="font-size:13px; color:var(--navy)">${IS_AR?'الخيار':'Option'} ${opt.name}</div>
+        <div class="fs-12" style="margin-top:4px">${IS_AR?'تمت الجدولة':'Scheduled'} <strong class="text-teal">${opt.scheduled||0}</strong>/${opt.target||0}</div>
+        <div class="fs-11 text-t4">${IS_AR?'غير مجدول':'Unscheduled'} ${(opt.unscheduled||[]).length||0}</div>
+        <button class="pl-btn pl-btn-teal w-100 justify-content-center mt-2">${IS_AR?'اختيار':'Select'}</button>
       </div>`;
     col.querySelector('button').onclick=()=>chooseOption(opt.name);
     cards.appendChild(col);
