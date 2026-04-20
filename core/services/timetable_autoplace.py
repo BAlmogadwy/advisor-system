@@ -63,6 +63,11 @@ from core.models import (
     TermSection,
     TermSectionMeeting,
 )
+from core.services.timetable_validation import (
+    get_prayer_windows,
+    is_prayer_overlap_rule_enabled,
+    prayer_overlap_rejection,
+)
 from core.services.timetable_workspace import _time_mask, _to_minutes
 
 # ── Meeting Patterns ─────────────────────────────────────────────
@@ -606,11 +611,27 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
     try:
         board = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
     except DeliveryBoard.DoesNotExist:
-        return {"placed": 0, "skipped": 0, "placements": [], "capacity_buffer": None}
+        return {
+            "placed": 0,
+            "skipped": 0,
+            "placements": [],
+            "capacity_buffer": None,
+            "pr1_prayer_rejections": [],
+            "pr1_lock_rejections": [],
+        }
 
     scenario = board.scenario
     slot_config = scenario.slot_config if scenario.slot_config else DEFAULT_SLOTS
     lab_slot_config = scenario.lab_slot_config if scenario.lab_slot_config else DEFAULT_LAB_SLOTS
+
+    # ── PR1 prayer-overlap enforcement (flag-gated; default OFF) ────
+    # The rule check short-circuits inside ``prayer_overlap_rejection``
+    # when the flag is OFF, so ``prayer_rule_on`` only controls whether
+    # we bother reading windows and filtering options at all. Windows are
+    # empty when the setting is absent, which is also a safe no-op.
+    prayer_rule_on = is_prayer_overlap_rule_enabled()
+    prayer_windows = get_prayer_windows() if prayer_rule_on else []
+    pr1_prayer_rejections: list[dict] = []
 
     # ── 0. Load rooms for this board's programme(s) ─────────────────
     from core.services.timetable_rooming import (
@@ -724,6 +745,8 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
             "skipped": 0,
             "placements": [],
             "capacity_buffer": capacity_buffer,
+            "pr1_prayer_rejections": pr1_prayer_rejections,
+            "pr1_lock_rejections": [],
         }
 
     # ── 2. Build student-to-course mapping ────────────────────────────
@@ -876,6 +899,32 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
             # courses have 100-min meetings that are long lectures, not labs.
             is_lab_course = budget.credit_hours == 4
             for option in all_options:
+                # PR1 prayer-overlap filter (flag-gated). When enabled, any
+                # option that places a meeting overlapping a configured
+                # prayer window is rejected outright (not soft-scored). The
+                # first rejection per option is recorded; a second meeting
+                # in the same option hitting another window is not emitted
+                # separately (the option is already out of the candidate
+                # set, so the extra payload would be noise).
+                if prayer_rule_on and prayer_windows:
+                    prayer_skip = False
+                    for m in option:
+                        rej = prayer_overlap_rejection(
+                            {
+                                "day": m["day"],
+                                "start_time": m["start"],
+                                "end_time": m["end"],
+                                "course_code": code,
+                            },
+                            prayer_windows,
+                        )
+                        if rej is not None:
+                            pr1_prayer_rejections.append(rej.to_dict())
+                            prayer_skip = True
+                            break
+                    if prayer_skip:
+                        continue
+
                 # Room feasibility: prefer options with rooms, penalize roomless
                 room_penalty = 0
                 if room_tracker:
@@ -1077,6 +1126,8 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
         "skipped": total_skipped,
         "placements": placement_results,
         "capacity_buffer": capacity_buffer,
+        "pr1_prayer_rejections": pr1_prayer_rejections,
+        "pr1_lock_rejections": [],
     }
 
 

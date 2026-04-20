@@ -82,14 +82,41 @@ def is_lock_enforcement_enabled() -> bool:
     return bool(getattr(settings, "TIMETABLE_ENFORCE_LOCKS", False))
 
 
+def get_prayer_windows() -> list[dict]:
+    """Return configured prayer windows, or ``[]`` if none are set.
+
+    Centralised accessor so callers do not spread ``getattr(settings, ...)``
+    reads across planner paths. If the source of truth migrates to a model
+    or config table, only this helper changes.
+    """
+    return list(getattr(settings, "TIMETABLE_PRAYER_WINDOWS", []) or [])
+
+
 # ---------------------------------------------------------------------------
 # Time helpers
 # ---------------------------------------------------------------------------
 
 
 def _to_min(t: str) -> int:
-    h, m = t.split(":")
-    return int(h) * 60 + int(m)
+    """Parse a ``HH:MM`` time string to minutes-since-midnight.
+
+    Raises ``ValueError`` with a useful message on malformed input. This
+    helper is used from planner paths, so failure-mode clarity matters —
+    a clean exception beats a generic ``int()`` parse failure.
+    """
+    if not isinstance(t, str) or ":" not in t:
+        raise ValueError(f"_to_min expected 'HH:MM' string, got {t!r}")
+    parts = t.split(":")
+    if len(parts) != 2:
+        raise ValueError(f"_to_min expected 'HH:MM' string, got {t!r}")
+    try:
+        h = int(parts[0])
+        m = int(parts[1])
+    except ValueError as exc:
+        raise ValueError(f"_to_min could not parse time components in {t!r}") from exc
+    if not (0 <= h < 24 and 0 <= m < 60):
+        raise ValueError(f"_to_min got out-of-range hour/minute in {t!r}")
+    return h * 60 + m
 
 
 def _overlaps(a_start: str, a_end: str, b_start: str, b_end: str) -> bool:
@@ -98,6 +125,17 @@ def _overlaps(a_start: str, a_end: str, b_start: str, b_end: str) -> bool:
     Exact boundary touch returns False (legal).
     """
     return _to_min(a_start) < _to_min(b_end) and _to_min(a_end) > _to_min(b_start)
+
+
+def _same_day(a: str, b: str) -> bool:
+    """Day codes compared case-insensitively.
+
+    The autoplacer emits uppercase codes (``SUN``, ``MON``, ...) while
+    configured prayer windows and locked cells may come from human input
+    (``Sun``, ``Mon``). Normalise both sides so the rule does not silently
+    miss a match.
+    """
+    return (a or "").strip().upper() == (b or "").strip().upper()
 
 
 # ---------------------------------------------------------------------------
@@ -123,7 +161,7 @@ def prayer_overlap_rejection(
     m_start = meeting["start_time"]
     m_end = meeting["end_time"]
     for prayer in prayer_windows:
-        if prayer.get("day") != day:
+        if not _same_day(prayer.get("day", ""), day):
             continue
         if _overlaps(m_start, m_end, prayer["start_time"], prayer["end_time"]):
             return RejectionReason(
@@ -141,9 +179,9 @@ def prayer_overlap_rejection(
 
 
 # ---------------------------------------------------------------------------
-# Lock rule — full implementation lands in commit 4. Stub for now so
-# imports in the lock + e2e tests work and the flag-off / empty-lock
-# paths pass.
+# Lock rule — direct-collision detection only in PR1 commit 2. Planner
+# enforcement (preload + skip) lands in commit 4/8. Until then this is
+# telemetry / candidate-collision detection, NOT the enforcement mechanism.
 # ---------------------------------------------------------------------------
 
 
@@ -151,11 +189,11 @@ def lock_rejection(candidate: dict, locked_cells: Iterable[dict]) -> RejectionRe
     """Return a ``LOCK_RESPECT`` rejection if the candidate collides with
     a locked cell (same day + start_time + room), else ``None``.
 
-    This is a skeleton with the final semantics to be completed in
-    commit 4/8 alongside the preload + skip wiring. The current
-    implementation already emits rejections correctly for direct
-    collisions; commit 4 adds the preload path and the auto_place_board
-    wiring so the rule is structurally enforced (not just telemetry).
+    In PR1 commit 2 this detects direct collisions only; planner enforcement
+    comes from preloading locked placements into occupancy and skipping them
+    in automatic placement (commit 4/8). This helper's output is telemetry
+    and candidate-gen filtering — it does not by itself prevent the planner
+    from emitting a colliding placement.
     """
     if not is_lock_enforcement_enabled():
         return None
@@ -166,7 +204,7 @@ def lock_rejection(candidate: dict, locked_cells: Iterable[dict]) -> RejectionRe
         return None
     for cell in locked_cells:
         if (
-            cell.get("day") == day
+            _same_day(cell.get("day", ""), day)
             and cell.get("start_time") == c_start
             and cell.get("room") == c_room
         ):

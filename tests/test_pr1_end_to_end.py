@@ -38,7 +38,11 @@ def pr1_fixture():
     - 1 programme (PR1), 1 DeliveryBoard.
     - 3 courses (PR1_A, PR1_B, PR1_C), 3 students.
     - Rooms: one general-purpose A101 cap 30.
-    - Slot schedule: Sun 08:00–09:15, 10:00–11:15, 12:00–13:15 (last straddles prayer).
+    - Slot schedule: Sun 08:00–09:15, 10:00–11:15, 11:15–12:30 (last straddles
+      the midday prayer window). The straddling slot deliberately starts
+      before the legacy hardcoded prayer-break (11:35–12:59) so the legacy
+      filter lets it through — the new PR1 rule then catches it on overlap
+      with the configured window.
     - Prayer schedule on Sun: 12:00–12:15 (provided via ``TIMETABLE_PRAYER_WINDOWS``
       setting in the flag-on tests; ``slot_config`` itself stays the bare slot list
       to match ``TimetableScenario.slot_config`` (a JSON list field)).
@@ -51,7 +55,7 @@ def pr1_fixture():
         slot_config=[
             {"day": "Sun", "start": "08:00", "end": "09:15"},
             {"day": "Sun", "start": "10:00", "end": "11:15"},
-            {"day": "Sun", "start": "12:00", "end": "13:15"},
+            {"day": "Sun", "start": "11:15", "end": "12:30"},
         ],
     )
     board = DeliveryBoard.objects.create(
@@ -152,6 +156,9 @@ def test_parity_flags_off_matches_baseline(pr1_fixture) -> None:
 @override_settings(
     TIMETABLE_ENFORCE_PRAYER_OVERLAP_RULE=True,
     TIMETABLE_ENFORCE_LOCKS=True,
+    TIMETABLE_PRAYER_WINDOWS=[
+        {"day": "Sun", "start_time": "12:00", "end_time": "12:15"},
+    ],
 )
 def test_behaviour_flags_on_emits_rejections(pr1_fixture) -> None:
     _, board = pr1_fixture
@@ -165,7 +172,7 @@ def test_behaviour_flags_on_emits_rejections(pr1_fixture) -> None:
     assert locked.start_time == "08:00"
     assert locked.is_locked is True
 
-    # PRAYER_OVERLAP must appear: the fixture includes a 12:00–13:15 slot
+    # PRAYER_OVERLAP must appear: the fixture includes an 11:15–12:30 slot
     # that straddles the 12:00–12:15 prayer, so at least one candidate
     # rejection with that code is emitted. Exact course/slot order is
     # not pinned — only the reason code must appear.
@@ -185,6 +192,9 @@ def test_behaviour_flags_on_emits_rejections(pr1_fixture) -> None:
 @override_settings(
     TIMETABLE_ENFORCE_PRAYER_OVERLAP_RULE=True,
     TIMETABLE_ENFORCE_LOCKS=False,
+    TIMETABLE_PRAYER_WINDOWS=[
+        {"day": "Sun", "start_time": "12:00", "end_time": "12:15"},
+    ],
 )
 def test_behaviour_prayer_only_does_not_preload_locks(pr1_fixture) -> None:
     """With only the prayer flag on, the lock preload is a no-op."""
