@@ -162,6 +162,21 @@ html body.tws-root .tws-topbar .metric:hover { background: transparent !importan
 .tws-quad.layout-vert > .tws-pane:nth-child(n+3) { display: none; }
 .tws-quad.layout-horz { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
 .tws-quad.layout-horz > .tws-pane:nth-child(n+3) { display: none; }
+/* Tri (1+2): first pane spans both rows on the left, 2 stacked on right. */
+.tws-quad.layout-tri { grid-template-columns: 2fr 1fr; grid-template-rows: 1fr 1fr; }
+.tws-quad.layout-tri > .tws-pane:nth-child(1) { grid-row: 1 / span 2; }
+.tws-quad.layout-tri > .tws-pane:nth-child(n+4) { display: none; }
+/* Quad (default 2×2) hides the two extra panes. */
+.tws-quad.layout-quad > .tws-pane:nth-child(n+5) { display: none; }
+/* Hexa (3×2 = 6 panes) — needs ≥1600 px viewport, see media query below. */
+.tws-quad.layout-hexa { grid-template-columns: repeat(3, 1fr); grid-template-rows: 1fr 1fr; }
+/* Hide the hexa button below the min viewport; CSS also force-reverts
+   the layout class if it's applied too narrow. */
+@media (max-width: 1599px) {
+  .tws-layout-switch button[data-layout="hexa"] { display: none; }
+  .tws-quad.layout-hexa { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+  .tws-quad.layout-hexa > .tws-pane:nth-child(n+5) { display: none; }
+}
 
 .tws-pane {
   position: relative; border: 1px solid var(--line); border-radius: 10px;
@@ -175,6 +190,10 @@ html body.tws-root .tws-topbar .metric:hover { background: transparent !importan
 .tws-pane.t1 { border-top: 2px solid var(--tws-c-t1); }
 .tws-pane.t2 { border-top: 2px solid var(--tws-c-t2); }
 .tws-pane.t3 { border-top: 2px solid var(--tws-c-t3); }
+.tws-pane.t4 { border-top: 2px solid var(--tws-c-t4, #A278E6); }
+.tws-pane.t5 { border-top: 2px solid var(--tws-c-t5, #5EC8D9); }
+.tws-pane.t4 .pane-hd .term-pick::before { background: var(--tws-c-t4, #A278E6); }
+.tws-pane.t5 .pane-hd .term-pick::before { background: var(--tws-c-t5, #5EC8D9); }
 .tws-pane .pane-hd {
   display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line);
   background: rgba(255,255,255,0.02); font-family: var(--font-mono, 'JetBrains Mono'), monospace;
@@ -853,6 +872,7 @@ html body.tws-root { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothin
           <button data-layout="horz" title="{% if LANGUAGE_CODE == 'ar' %}أفقي{% else %}2 horizontal{% endif %}">▀▄</button>
           <button class="on" data-layout="quad" title="{% if LANGUAGE_CODE == 'ar' %}رباعي{% else %}Quad 2×2{% endif %}">▙▟</button>
           <button data-layout="tri" title="{% if LANGUAGE_CODE == 'ar' %}1+2{% else %}1+2{% endif %}">▌▞</button>
+          <button data-layout="hexa" title="{% if LANGUAGE_CODE == 'ar' %}سداسي 3×2 (يتطلب شاشة واسعة){% else %}Hexa 3×2 (needs ≥1600 px){% endif %}">▙▟▌</button>
         </div>
         <div class="tws-sync-toggle" id="twsSyncToggle">
           <div class="tg on" data-sync="scroll">⇄ {% if LANGUAGE_CODE == 'ar' %}مزامنة التمرير{% else %}Sync scroll{% endif %}</div>
@@ -920,6 +940,28 @@ html body.tws-root { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothin
           <div class="empty-pane">{% if LANGUAGE_CODE == 'ar' %}اختر لوحة{% else %}Select a board{% endif %}</div>
         </div>
         <div class="tws-pane t3" data-idx="3">
+          <div class="pane-hd">
+            <span class="dot"></span><b data-role="label">—</b>
+            <span class="sp" style="flex:1"></span>
+            <span class="ri">
+              <button data-action="reload">↻</button>
+              <button data-action="maximise">⤢</button>
+            </span>
+          </div>
+          <div class="empty-pane">{% if LANGUAGE_CODE == 'ar' %}اختر لوحة{% else %}Select a board{% endif %}</div>
+        </div>
+        <div class="tws-pane t4" data-idx="4">
+          <div class="pane-hd">
+            <span class="dot"></span><b data-role="label">—</b>
+            <span class="sp" style="flex:1"></span>
+            <span class="ri">
+              <button data-action="reload">↻</button>
+              <button data-action="maximise">⤢</button>
+            </span>
+          </div>
+          <div class="empty-pane">{% if LANGUAGE_CODE == 'ar' %}اختر لوحة{% else %}Select a board{% endif %}</div>
+        </div>
+        <div class="tws-pane t5" data-idx="5">
           <div class="pane-hd">
             <span class="dot"></span><b data-role="label">—</b>
             <span class="sp" style="flex:1"></span>
@@ -1023,5 +1065,5 @@ html body.tws-root { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothin
   const DEFAULT_YEAR = {{ default_year|default:'null' }};
   const DEFAULT_TERM = {{ default_term|default:'null' }};
 </script>
-<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=30"></script>
+<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=31"></script>
 {% endblock %}

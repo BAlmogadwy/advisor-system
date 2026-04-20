@@ -60,6 +60,8 @@ const S = {
     { boardId: null, group: 0, boardData: null },
     { boardId: null, group: 0, boardData: null },
     { boardId: null, group: 0, boardData: null },
+    { boardId: null, group: 0, boardData: null },
+    { boardId: null, group: 0, boardData: null },
   ],
   // Global undo/redo stacks shared across panes, matching the main page's
   // single-stack model. Each action has enough state to fully revert.
@@ -71,7 +73,13 @@ const S = {
   dragSource: null,
 };
 
-const POS_LABELS = ['Pane A', 'Pane B', 'Pane C', 'Pane D'];
+const POS_LABELS = ['Pane A', 'Pane B', 'Pane C', 'Pane D', 'Pane E', 'Pane F'];
+
+/* Number of panes currently visible given the layout mode.
+   Hexa (3x2) shows 6; quad shows 4; tri shows 3; vert/horz show 2; single shows 1. */
+function paneCount() {
+  return ({ single: 1, vert: 2, horz: 2, tri: 3, quad: 4, hexa: 6 }[S.layout] || 4);
+}
 
 // Right inspector panel state
 const RP = {
@@ -229,7 +237,7 @@ async function onScenarioChange() {
     $('twsOptimise').disabled = true;
     $('twsExport').disabled = true;
     renderSlotBar();
-    for (let i = 0; i < 4; i++) renderPaneEmpty(i);
+    for (let i = 0; i < paneCount(); i++) renderPaneEmpty(i);
     return;
   }
   const data = await api(`/ops/tw/scenarios/${sid}/`);
@@ -239,7 +247,7 @@ async function onScenarioChange() {
   const bdata = await api(`/ops/tw/boards/?scenario_id=${sid}`);
   S.boards = (bdata && bdata.boards) || [];
 
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < paneCount(); i++) {
     S.panes[i].boardId = S.boards[i] ? S.boards[i].id : null;
     S.panes[i].group = 0;
     S.panes[i].boardData = null;
@@ -263,7 +271,7 @@ async function onScenarioChange() {
 
   updateAggregateMetrics();
   renderSlotBar();
-  for (let i = 0; i < 4; i++) await loadAndRenderPane(i);
+  for (let i = 0; i < paneCount(); i++) await loadAndRenderPane(i);
   if (RP.open) renderRpanel();
   if (SB.open) loadSidebarBudget();
 }
@@ -585,7 +593,7 @@ function bindPaneControls(idx) {
 
 /* ── Drag & drop handler — mirrors main-page onDrop semantics ── */
 function findPlacement(placementId) {
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < paneCount(); i++) {
     const data = S.panes[i].boardData;
     if (!data) continue;
     const found = (data.placements || []).find(p => p.id === placementId);
@@ -686,7 +694,7 @@ async function onCellDrop(paneIdx, cell, e) {
   // showing the same board), plus aggregate metrics.
   const sourceIdx = Number.isFinite(payload.source_pane) ? payload.source_pane : paneIdx;
   const boardIds = new Set([S.panes[paneIdx].boardId, S.panes[sourceIdx].boardId]);
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < paneCount(); i++) {
     if (boardIds.has(S.panes[i].boardId)) await loadAndRenderPane(i);
   }
   await refreshBoardsSummary();
@@ -709,7 +717,7 @@ async function refreshBoardsSummary() {
 
 /* ── Cross-pane sync-hover (direct DOM) ── */
 function broadcastHover(sourcePaneIdx, day, start) {
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < paneCount(); i++) {
     if (i === sourcePaneIdx) continue;
     const el = paneEl(i);
     if (!el) continue;
@@ -724,6 +732,7 @@ function broadcastHover(sourcePaneIdx, day, start) {
 
 /* ── Layout ── */
 function setLayout(mode) {
+  const prev = S.layout;
   S.layout = mode;
   const q = $('twsQuad');
   q.className = 'tws-quad layout-' + mode;
@@ -731,7 +740,21 @@ function setLayout(mode) {
     b.classList.toggle('on', b.dataset.layout === mode);
   });
   $('twsStatusLayout').textContent =
-    ({ single: 'Layout 1', vert: 'Layout 2×1', horz: 'Layout 1×2', quad: 'Layout 2×2' })[mode];
+    ({ single: 'Layout 1', vert: 'Layout 2×1', horz: 'Layout 1×2',
+       quad: 'Layout 2×2', tri: 'Layout 1+2', hexa: 'Layout 3×2' })[mode] || '';
+  // Growing the pane count? Seed the newly visible slots with unused
+  // boards and render them — they may still be placeholders from init.
+  if (prev && paneCount() > ({ single: 1, vert: 2, horz: 2, tri: 3, quad: 4, hexa: 6 }[prev] || 4)) {
+    const used = new Set(S.panes.filter(p => p.boardId).map(p => p.boardId));
+    for (let i = 0; i < paneCount(); i++) {
+      if (!S.panes[i].boardId) {
+        const next = S.boards.find(b => !used.has(b.id));
+        if (next) { S.panes[i].boardId = next.id; used.add(next.id); }
+      }
+    }
+    renderSlotBar();
+    for (let i = 0; i < paneCount(); i++) loadAndRenderPane(i);
+  }
 }
 function maximisePane(idx) {
   setLayout('single');
@@ -751,7 +774,7 @@ function maximisePane(idx) {
     }
     const tmp = S.panes[0]; S.panes[0] = S.panes[idx]; S.panes[idx] = tmp;
     renderSlotBar();
-    for (let i = 0; i < 4; i++) renderPane(i);
+    for (let i = 0; i < paneCount(); i++) renderPane(i);
   }
 }
 
@@ -759,14 +782,14 @@ function maximisePane(idx) {
 function applyPreset(name) {
   if (!S.boards.length) return;
   if (name === 'first4') {
-    for (let i = 0; i < 4; i++) S.panes[i].boardId = S.boards[i] ? S.boards[i].id : null;
+    for (let i = 0; i < paneCount(); i++) S.panes[i].boardId = S.boards[i] ? S.boards[i].id : null;
   } else if (name === 'cross') {
     const sorted = [...S.boards].sort((a, b) => (b.critical || 0) - (a.critical || 0));
-    for (let i = 0; i < 4; i++) S.panes[i].boardId = sorted[i] ? sorted[i].id : null;
+    for (let i = 0; i < paneCount(); i++) S.panes[i].boardId = sorted[i] ? sorted[i].id : null;
   }
   for (const p of S.panes) { p.group = 0; p.boardData = null; }
   renderSlotBar();
-  for (let i = 0; i < 4; i++) loadAndRenderPane(i);
+  for (let i = 0; i < paneCount(); i++) loadAndRenderPane(i);
 }
 
 /* ── Right inspector panel ── */
@@ -1354,7 +1377,7 @@ function openSlotEditorModal() {
           ? `تم الحفظ — ${newLect.length} محاضرة · ${newLab.length} معمل`
           : `Saved — ${newLect.length} lecture + ${newLab.length} lab slots`);
         // Board data has its own slot_config copy; reload each pane
-        for (let i = 0; i < 4; i++) await loadAndRenderPane(i);
+        for (let i = 0; i < paneCount(); i++) await loadAndRenderPane(i);
       } },
     ],
   });
@@ -1713,7 +1736,7 @@ async function doToggleLock(placementId, paneIdx) {
     ? (IS_AR ? 'تم فتح القفل' : 'Unlocked')
     : (IS_AR ? 'تم القفل' : 'Locked'));
   // Reload every pane — placement could be visible in more than one
-  for (let i = 0; i < 4; i++) await loadAndRenderPane(i);
+  for (let i = 0; i < paneCount(); i++) await loadAndRenderPane(i);
   await refreshBoardsSummary();
   // If drawer open on this placement, reopen to refresh the body
   if (DRAWER.placementId === placementId) openDrawer(paneIdx, placementId);
@@ -1747,7 +1770,7 @@ async function doRemove(placementId, paneIdx) {
   S.redoStack = [];
   updateUndoRedoButtons();
   closeDrawer();
-  for (let i = 0; i < 4; i++) await loadAndRenderPane(i);
+  for (let i = 0; i < paneCount(); i++) await loadAndRenderPane(i);
   await refreshBoardsSummary();
 }
 
@@ -1809,7 +1832,7 @@ async function doUndo() {
     notify.success(IS_AR ? 'تم التراجع' : 'Undone');
   }
   updateUndoRedoButtons();
-  for (let i = 0; i < 4; i++) await loadAndRenderPane(i);
+  for (let i = 0; i < paneCount(); i++) await loadAndRenderPane(i);
   await refreshBoardsSummary();
   await loadSidebarBudget();
 }
@@ -1838,7 +1861,7 @@ async function doRedo() {
     notify.success(IS_AR ? 'تم الإعادة' : 'Redone');
   }
   updateUndoRedoButtons();
-  for (let i = 0; i < 4; i++) await loadAndRenderPane(i);
+  for (let i = 0; i < paneCount(); i++) await loadAndRenderPane(i);
   await refreshBoardsSummary();
   await loadSidebarBudget();
 }
@@ -2162,7 +2185,7 @@ function doExport() {
       toggleSidebar();
     }
   });
-  for (let i = 0; i < 4; i++) renderPaneEmpty(i);
+  for (let i = 0; i < paneCount(); i++) renderPaneEmpty(i);
   loadScenarios();
 })();
 
