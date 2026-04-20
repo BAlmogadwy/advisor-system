@@ -9,6 +9,7 @@ from core.services.timetable_assignment_models import (
     SectionState,
     TimetableMove,
 )
+from core.services.timetable_room_oracle import NO_ROOM_CAPACITY, RoomFailureReason
 
 
 def _find_pattern_in_catalog(
@@ -73,6 +74,7 @@ def try_repair_rooms_locally(
     rooms_by_id: dict[str, RoomProfile],
     room_occupancies: dict[str, RoomOccupancy],
     course_room_requirements: dict[str, str],
+    failures_out: list[dict] | None = None,
 ) -> bool:
     impacted_room_ids: set[str] = set()
     for snap in snapshot.snapshots:
@@ -116,6 +118,35 @@ def try_repair_rooms_locally(
                 placed = True
                 break
         if not placed:
+            # PR2 commit 3 — Site 4: section could not be placed during local
+            # room repair. Back-compat: the boolean return is preserved; when
+            # callers pass ``failures_out``, a typed RoomFailureReason is
+            # appended so they can learn *why* this specific section failed,
+            # not just that the overall repair returned False. Default reason
+            # is NO_ROOM_CAPACITY per the PR2 DoR — the repair loop above
+            # filters on room type + capacity + can_accommodate, so a None
+            # outcome looks indistinguishable from capacity exhaustion to this
+            # site today. Commit 4's staged oracle will sharpen the code.
+            if failures_out is not None:
+                # Use the first meeting's day/times as a stable handle; the
+                # oracle in commit 4 may emit one failure per meeting.
+                first_meeting = sec.meetings[0] if sec.meetings else None
+                failures_out.append(
+                    RoomFailureReason(
+                        code=NO_ROOM_CAPACITY,
+                        day=str(getattr(first_meeting, "day", "") or ""),
+                        start_time=str(
+                            getattr(first_meeting, "start_time", "")
+                            or getattr(first_meeting, "start_min", "")
+                        ),
+                        end_time=str(
+                            getattr(first_meeting, "end_time", "")
+                            or getattr(first_meeting, "end_min", "")
+                        ),
+                        course_code=sec.course_code,
+                        section_code=sec.section_id,
+                    ).to_dict()
+                )
             return False
     return True
 

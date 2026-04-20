@@ -16,6 +16,7 @@ from collections import defaultdict
 from django.conf import settings
 
 from core.models import DeliveryBoard, Room, SectionPlacement
+from core.services.timetable_room_oracle import NO_ROOM_CAPACITY, RoomFailureReason
 
 
 def get_capacity_buffer() -> float:
@@ -231,15 +232,15 @@ def assign_rooms_to_board(board_id: int) -> dict:
     try:
         board = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
     except DeliveryBoard.DoesNotExist:
-        return {"assigned": 0, "unassigned": 0}
+        return {"assigned": 0, "unassigned": 0, "room_failures": [], "unplaced_count": 0}
 
     programmes = [p.strip() for p in (board.program or "").split(",") if p.strip()]
     if not programmes:
-        return {"assigned": 0, "unassigned": 0}
+        return {"assigned": 0, "unassigned": 0, "room_failures": [], "unplaced_count": 0}
 
     rooms = get_programme_rooms(programmes)
     if not rooms:
-        return {"assigned": 0, "unassigned": 0}
+        return {"assigned": 0, "unassigned": 0, "room_failures": [], "unplaced_count": 0}
 
     board_gender = get_board_gender(board_id)
     tracker = RoomTracker(rooms)
@@ -294,6 +295,7 @@ def assign_rooms_to_board(board_id: int) -> dict:
     # Labs currently ignore capacity in rooming (room_cap=0 below); buffer
     # diagnostics therefore apply to lecture room assignment only.
     lecture_room_reject_due_to_buffer_count = 0
+    room_failures: list[dict] = []
 
     for p in unassigned_placements:
         cap = budget_map.get(p.term_section.course_code, 40)
@@ -324,12 +326,31 @@ def assign_rooms_to_board(board_id: int) -> dict:
             p.room = "UNASSIGNED"
             p.save(update_fields=["room", "updated_at"])
             unassigned += 1
+            # PR2 commit 3 — typed failure record for the silent-UNASSIGNED path.
+            # Site 3: tracker.assign_best_fit returned None. Default reason is
+            # NO_ROOM_CAPACITY per PR2 DoR: the tracker None answer means no
+            # eligible room could seat the section after capacity/buffer + type
+            # + gender filtering. Commit 4's staged oracle will replace this
+            # default with a more specific reason (ROOM_BUFFER_REJECT /
+            # NO_ROOM_GENDER / ROOM_OCCUPIED) when it can tell them apart.
+            room_failures.append(
+                RoomFailureReason(
+                    code=NO_ROOM_CAPACITY,
+                    day=p.day,
+                    start_time=p.start_time,
+                    end_time=p.end_time,
+                    course_code=p.term_section.course_code,
+                    section_code=p.term_section.section,
+                ).to_dict()
+            )
 
     return {
         "assigned": assigned,
         "unassigned": unassigned,
         "capacity_buffer": buffer_multiplier,
         "lecture_room_reject_due_to_buffer_count": lecture_room_reject_due_to_buffer_count,
+        "room_failures": room_failures,
+        "unplaced_count": unassigned,
     }
 
 

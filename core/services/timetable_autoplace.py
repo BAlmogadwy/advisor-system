@@ -64,6 +64,7 @@ from core.models import (
     TermSection,
     TermSectionMeeting,
 )
+from core.services.timetable_room_oracle import NO_ROOM_CAPACITY, RoomFailureReason
 from core.services.timetable_validation import (
     LOCK_RESPECT,
     RejectionReason,
@@ -624,6 +625,8 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
             "capacity_buffer": None,
             "pr1_prayer_rejections": [],
             "pr1_lock_rejections": [],
+            "room_failures": [],
+            "unplaced_count": 0,
         }
 
     scenario = board.scenario
@@ -779,6 +782,8 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
             "capacity_buffer": capacity_buffer,
             "pr1_prayer_rejections": pr1_prayer_rejections,
             "pr1_lock_rejections": pr1_lock_rejections,
+            "room_failures": [],
+            "unplaced_count": 0,
         }
 
     # ── 2. Build student-to-course mapping ────────────────────────────
@@ -815,6 +820,10 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
     placement_results: list[dict] = []
     total_placed = 0
     total_skipped = 0
+    # PR2 commit 3 — typed failure records for the two silent-UNASSIGNED sites
+    # inside auto_place_board (scoring best_option=None, and tracker None
+    # fallback). Surfaced on the return dict as ``room_failures``.
+    room_failures: list[dict] = []
 
     # ── 2b. PR1 lock preload ─────────────────────────────────────────
     # When TIMETABLE_ENFORCE_LOCKS is on, locked SectionPlacement rows
@@ -1101,6 +1110,24 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
 
             if best_option is None:
                 total_skipped += 1
+                # PR2 commit 3 — Site 1: scoring loop found no feasible option.
+                # We cannot identify a specific (day, start, end) — no option
+                # survived scoring — so the slot fields are emitted as empty
+                # strings. Default reason is NO_ROOM_CAPACITY per the PR2 DoR
+                # ("If a site truly cannot distinguish anything better, default
+                # to NO_ROOM_CAPACITY, not a new generic code"). Commit 4's
+                # staged oracle will replace this with a stage-appropriate code
+                # when the oracle can diagnose the underlying cause.
+                room_failures.append(
+                    RoomFailureReason(
+                        code=NO_ROOM_CAPACITY,
+                        day="",
+                        start_time="",
+                        end_time="",
+                        course_code=code,
+                        section_code=sec_label,
+                    ).to_dict()
+                )
                 continue
 
             # ── Persist the chosen placement ──────────────────────────
@@ -1155,12 +1182,27 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                         # have fixed physical size. Section demand may exceed lab
                         # capacity because students rotate through lab slots.
                         room_cap = 0 if rtype == "lab" else section_cap
-                        assigned_room = (
-                            room_tracker.assign_best_fit(
-                                m["day"], m["start"], room_cap, rtype, board_gender
-                            )
-                            or "UNASSIGNED"
+                        best_fit = room_tracker.assign_best_fit(
+                            m["day"], m["start"], room_cap, rtype, board_gender
                         )
+                        if best_fit:
+                            assigned_room = best_fit
+                        else:
+                            assigned_room = "UNASSIGNED"
+                            # PR2 commit 3 — Site 2: tracker.assign_best_fit
+                            # returned None for this meeting. Matches the
+                            # Site 3 rooming pattern, so the default reason
+                            # is NO_ROOM_CAPACITY per the PR2 DoR.
+                            room_failures.append(
+                                RoomFailureReason(
+                                    code=NO_ROOM_CAPACITY,
+                                    day=m["day"],
+                                    start_time=m["start"],
+                                    end_time=m["end"],
+                                    course_code=code,
+                                    section_code=sec_label,
+                                ).to_dict()
+                            )
                     if not preferred_room and assigned_room and assigned_room != "UNASSIGNED":
                         preferred_room = assigned_room
 
@@ -1215,6 +1257,8 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
         "capacity_buffer": capacity_buffer,
         "pr1_prayer_rejections": pr1_prayer_rejections,
         "pr1_lock_rejections": pr1_lock_rejections,
+        "room_failures": room_failures,
+        "unplaced_count": total_skipped,
     }
 
 
