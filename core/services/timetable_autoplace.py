@@ -606,7 +606,7 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
     try:
         board = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
     except DeliveryBoard.DoesNotExist:
-        return {"placed": 0, "skipped": 0, "placements": []}
+        return {"placed": 0, "skipped": 0, "placements": [], "capacity_buffer": None}
 
     scenario = board.scenario
     slot_config = scenario.slot_config if scenario.slot_config else DEFAULT_SLOTS
@@ -616,8 +616,11 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
     from core.services.timetable_rooming import (
         RoomTracker,
         get_board_gender,
+        get_capacity_buffer,
         get_programme_rooms,
     )
+
+    capacity_buffer = get_capacity_buffer()
 
     programmes = [p.strip() for p in (board.program or "").split(",") if p.strip()]
     room_list = get_programme_rooms(programmes) if programmes else []
@@ -716,7 +719,12 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                         budget_codes.add(course_code)
 
     if not budgets:
-        return {"placed": 0, "skipped": 0, "placements": []}
+        return {
+            "placed": 0,
+            "skipped": 0,
+            "placements": [],
+            "capacity_buffer": capacity_buffer,
+        }
 
     # ── 2. Build student-to-course mapping ────────────────────────────
     # For each course code, collect the set of student IDs that need it.
@@ -856,13 +864,14 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
             # Use actual students per section (not theoretical max) for room matching
             # ceil division to ensure room can hold the largest possible section
             budget = cd["budget"]
-            # Actual students per section + 10% safety margin for late adds
+            # Actual students per section scaled by TIMETABLE_CAPACITY_BUFFER
+            # (default 1.1, i.e. +10% for late adds).
             raw_cap = (
                 -(-budget.total_demand // budget.planned_sections)  # ceil division
                 if budget.planned_sections > 0
                 else budget.max_per_section
             )
-            section_cap = int(raw_cap * 1.1)  # 10% buffer
+            section_cap = int(raw_cap * capacity_buffer)
             # Only 4-credit courses have actual lab meetings. 2-credit
             # courses have 100-min meetings that are long lectures, not labs.
             is_lab_course = budget.credit_hours == 4
@@ -1067,6 +1076,7 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
         "placed": total_placed,
         "skipped": total_skipped,
         "placements": placement_results,
+        "capacity_buffer": capacity_buffer,
     }
 
 

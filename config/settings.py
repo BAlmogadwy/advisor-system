@@ -284,3 +284,12 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = 10_485_760  # 10 MB
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# ---------------------------------------------------------------------------
+# Timetable planner
+# ---------------------------------------------------------------------------
+# Multiplier applied to per-section demand when sizing rooms. 1.1 leaves a
+# 10% buffer for late enrolments. Lowering toward 1.0 packs students tighter
+# but risks overfilling when late adds arrive; raising above 1.1 wastes
+# capacity. Override via env var TIMETABLE_CAPACITY_BUFFER.
+TIMETABLE_CAPACITY_BUFFER = float(os.getenv("TIMETABLE_CAPACITY_BUFFER", "1.1"))

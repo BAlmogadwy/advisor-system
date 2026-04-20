@@ -13,7 +13,25 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+from django.conf import settings
+
 from core.models import DeliveryBoard, Room, SectionPlacement
+
+
+def get_capacity_buffer() -> float:
+    """Return the active room-sizing multiplier (e.g. 1.1 = +10% for late adds).
+
+    Reads ``settings.TIMETABLE_CAPACITY_BUFFER`` and falls back to 1.1 if the
+    setting is missing or invalid. Kept as a helper so every site that sizes
+    rooms stays in sync with config.
+    """
+    try:
+        value = float(getattr(settings, "TIMETABLE_CAPACITY_BUFFER", 1.1))
+    except (TypeError, ValueError):
+        return 1.1
+    if value <= 0:
+        return 1.1
+    return value
 
 
 def get_programme_rooms(programmes: list[str]) -> list[dict]:
@@ -254,14 +272,17 @@ def assign_rooms_to_board(board_id: int) -> dict:
 
     all_budgets = ScenarioSectionBudget.objects.filter(scenario=board.scenario)
     budget_map = {}
+    raw_budget_map = {}
     credit_map = {}
+    buffer_multiplier = get_capacity_buffer()
     for b in all_budgets:
         raw = (
             -(-b.total_demand // b.planned_sections)
             if b.planned_sections > 0
             else b.max_per_section
         )
-        budget_map[b.course_code] = int(raw * 1.1)
+        raw_budget_map[b.course_code] = int(raw)
+        budget_map[b.course_code] = int(raw * buffer_multiplier)
         credit_map[b.course_code] = b.credit_hours
 
     # Sort unassigned placements by capacity DESC (largest first = best-fit-decreasing)
@@ -270,9 +291,11 @@ def assign_rooms_to_board(board_id: int) -> dict:
 
     assigned = 0
     unassigned = 0
+    room_reject_due_to_buffer_count = 0
 
     for p in unassigned_placements:
         cap = budget_map.get(p.term_section.course_code, 40)
+        raw_cap = raw_budget_map.get(p.term_section.course_code, 40)
         cr = credit_map.get(p.term_section.course_code, 3)
         duration = _to_min(p.end_time) - _to_min(p.start_time)
         # Only 4-credit courses have lab meetings. 2-credit 100-min
@@ -291,8 +314,123 @@ def assign_rooms_to_board(board_id: int) -> dict:
             p.save(update_fields=["room", "updated_at"])
             assigned += 1
         else:
+            # Count rooms the buffer rejected: would a raw-cap room have fit?
+            if room_type != "lab" and tracker.is_feasible(
+                p.day, p.start_time, raw_cap, room_type, gender
+            ):
+                room_reject_due_to_buffer_count += 1
             p.room = "UNASSIGNED"
             p.save(update_fields=["room", "updated_at"])
             unassigned += 1
 
-    return {"assigned": assigned, "unassigned": unassigned}
+    return {
+        "assigned": assigned,
+        "unassigned": unassigned,
+        "capacity_buffer": buffer_multiplier,
+        "room_reject_due_to_buffer_count": room_reject_due_to_buffer_count,
+    }
+
+
+def simulate_buffer_impact(board_id: int, buffers: list[float]) -> dict:
+    """Dry-run rooming across several buffer values.
+
+    For each ``buffer`` in ``buffers`` (e.g. ``[1.0, 1.1]``), simulates
+    ``assign_rooms_to_board`` on a fresh in-memory room tracker and counts
+    how many placements would be assigned vs left unassigned at that
+    buffer. Never touches the database.
+
+    Returns::
+
+        {
+            "board_id": int,
+            "programmes": [str, ...],
+            "results": [
+                {"buffer": float, "assigned": int, "unassigned": int,
+                 "rejected_by_buffer_vs_1_0": int},
+                ...
+            ],
+        }
+    """
+    from core.models import ScenarioSectionBudget
+
+    try:
+        board = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
+    except DeliveryBoard.DoesNotExist:
+        return {"board_id": board_id, "programmes": [], "results": []}
+
+    programmes = [p.strip() for p in (board.program or "").split(",") if p.strip()]
+    rooms = get_programme_rooms(programmes) if programmes else []
+
+    board_gender = get_board_gender(board_id)
+
+    # Stable pre-population: rooms consumed by OTHER boards in this scenario.
+    other_usage = list(
+        SectionPlacement.objects.filter(board__scenario=board.scenario)
+        .exclude(board=board)
+        .exclude(room="")
+        .exclude(room="UNASSIGNED")
+        .values_list("day", "start_time", "room")
+    )
+
+    all_budgets = list(ScenarioSectionBudget.objects.filter(scenario=board.scenario))
+    raw_map = {}
+    credit_map = {}
+    for b in all_budgets:
+        raw_map[b.course_code] = int(
+            -(-b.total_demand // b.planned_sections)
+            if b.planned_sections > 0
+            else b.max_per_section
+        )
+        credit_map[b.course_code] = b.credit_hours
+
+    placements = list(
+        SectionPlacement.objects.filter(board=board)
+        .select_related("term_section")
+        .order_by("day", "start_time")
+    )
+
+    results: list[dict] = []
+    for buf in buffers:
+        tracker = RoomTracker(rooms)
+        for day, start, room_code in other_usage:
+            tracker.usage[(day, start)].add(room_code)
+        # Seed with rooms already permanently assigned on THIS board.
+        for p in placements:
+            if p.room and p.room != "UNASSIGNED":
+                tracker.usage[(p.day, p.start_time)].add(p.room)
+
+        assigned = 0
+        unassigned = 0
+        rejected_by_buffer = 0
+
+        targets = [p for p in placements if not p.room or p.room == "UNASSIGNED"]
+        targets.sort(key=lambda p: -raw_map.get(p.term_section.course_code, 40))
+
+        for p in targets:
+            raw_cap = raw_map.get(p.term_section.course_code, 40)
+            buffered_cap = int(raw_cap * buf)
+            cr = credit_map.get(p.term_section.course_code, 3)
+            duration = _to_min(p.end_time) - _to_min(p.start_time)
+            room_type = "lab" if (duration > 80 and cr == 4) else "lecture"
+            room_cap = 0 if room_type == "lab" else buffered_cap
+            gender = _section_gender(p.term_section.section) or board_gender
+            room_code = tracker.assign_best_fit(p.day, p.start_time, room_cap, room_type, gender)
+            if room_code:
+                assigned += 1
+            else:
+                if room_type != "lab" and tracker.is_feasible(
+                    p.day, p.start_time, raw_cap, room_type, gender
+                ):
+                    rejected_by_buffer += 1
+                unassigned += 1
+
+        results.append(
+            {
+                "buffer": buf,
+                "assigned": assigned,
+                "unassigned": unassigned,
+                "rejected_by_buffer_vs_1_0": rejected_by_buffer,
+            }
+        )
+
+    return {"board_id": board_id, "programmes": programmes, "results": results}

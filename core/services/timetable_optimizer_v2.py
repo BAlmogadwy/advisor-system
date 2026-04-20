@@ -209,13 +209,15 @@ def build_section_states_for_scenario(
 
         max_cap = budget.max_per_section if budget else 40
 
-        # Per-section demand: actual students / planned sections (+ 10% buffer).
+        # Per-section demand: actual students / planned sections × TIMETABLE_CAPACITY_BUFFER.
         # This drives room sizing — use real demand, not max_per_section,
         # so a course with 25 recommended students gets a 25-cap room,
         # not a 50-cap room based on the budget ceiling.
         if budget and budget.planned_sections > 0 and budget.total_demand > 0:
+            from core.services.timetable_rooming import get_capacity_buffer
+
             per_section_demand = -(-budget.total_demand // budget.planned_sections)  # ceil
-            per_section_demand = int(per_section_demand * 1.1)  # 10% buffer
+            per_section_demand = int(per_section_demand * get_capacity_buffer())
         else:
             per_section_demand = max_cap
 
