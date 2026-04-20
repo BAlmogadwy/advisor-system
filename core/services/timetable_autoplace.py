@@ -1681,7 +1681,8 @@ def auto_place_board(
 
     logger.info(
         "auto_place_board(board=%s): placed=%d skipped=%d "
-        "prayer_rule_on=%s (rejections=%d) lock_rule_on=%s (rejections=%d)",
+        "prayer_rule_on=%s (rejections=%d) lock_rule_on=%s (rejections=%d) "
+        "warm_start_on=%s (baseline_provided=%s)",
         board_id,
         total_placed,
         total_skipped,
@@ -1689,6 +1690,8 @@ def auto_place_board(
         len(pr1_prayer_rejections),
         lock_rule_on,
         len(pr1_lock_rejections),
+        warm_start_on,
+        normalised_baseline is not None,
     )
 
     return {

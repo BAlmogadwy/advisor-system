@@ -12,7 +12,7 @@ DoR: [`docs/PR3-DOR.md`](../../docs/PR3-DOR.md) (signed off 2026-04-20 with seve
 ## Flags
 
 - `TIMETABLE_PR3_DECISION_TRACE_ENABLED` — default **True** from commit 2. Pure observation — zero planning-decision change. Disabling it produces `decision_trace={}` in the payload (schema stability).
-- `TIMETABLE_PR3_WARM_START_ENABLED` — default **False** until commit 8's promotion; flips to **True** there. Behavioural change — biases which slot gets chosen when a feasible baseline exists.
+- `TIMETABLE_PR3_WARM_START_ENABLED` — default **True** as of commit 8's promotion (10-fixture acceptance pack cleared all bars). Behavioural change — biases which slot gets chosen when a feasible baseline exists. Env kill-switch preserved: `TIMETABLE_PR3_WARM_START_ENABLED=false` reverts to cold-start without a redeploy. See `docs/PR3-PROMOTION-NOTE.md`.
 
 The split exists because trace capture is safe to default-on immediately (observational), but warm-start is a placement-decision change and rolls out separately so a warm-start regression can't force the trace off.
 

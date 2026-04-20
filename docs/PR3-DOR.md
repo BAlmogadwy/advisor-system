@@ -199,7 +199,7 @@ Commits 1–2 are green-behind-a-flag (new structures unused). Commit 3 wires co
 | Flag | Default | Controls |
 |---|---|---|
 | `TIMETABLE_PR3_DECISION_TRACE_ENABLED` | `True` | Gates trace capture. Off = return empty `decision_trace={}`; warm-start metrics still work. Env var override preserved for emergency disable. |
-| `TIMETABLE_PR3_WARM_START_ENABLED` | `False` → flip to `True` in commit 8 | Gates the warm-start preference layer. Off = ignore `baseline_placements` even when provided (cold-start parity). |
+| `TIMETABLE_PR3_WARM_START_ENABLED` | `True` (commit 8 promotion) | Gates the warm-start preference layer. Off = ignore `baseline_placements` even when provided (cold-start parity). Env kill-switch preserved: `TIMETABLE_PR3_WARM_START_ENABLED=false` reverts without a redeploy. See `docs/PR3-PROMOTION-NOTE.md`. |
 
 Rationale for split flags: trace capture is pure observation (zero planning-decision change); warm-start is a behavioural change (it biases which slot gets chosen). They roll out independently so a warm-start regression doesn't force the trace capture off.
 

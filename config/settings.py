@@ -317,11 +317,14 @@ TIMETABLE_PR3_DECISION_TRACE_ENABLED = os.getenv(
 
 # PR3 commit 5 — warm-start retention (minimal-perturbation layer).
 # When True, ``auto_place_board`` accepts a ``baseline_placements`` map
-# and retains legal baseline slots instead of re-scoring cold. When
-# False (the default until commit 8's promotion), warm-start is a
-# no-op: callers may still pass ``baseline_placements`` but no retention
-# kicks in. Keeping the default off lets the broader scenario pack run
-# through the perturbation audit before the flag flips in production.
+# and retains legal baseline slots instead of re-scoring cold.
+#
+# Commit 8 (promotion): default flipped from ``False`` to ``True`` after
+# the 10-fixture acceptance pack cleared the schema / coverage /
+# zero-change / cold-start-parity / known-alphabet bars. The env var
+# override is preserved as the kill-switch: set
+# ``TIMETABLE_PR3_WARM_START_ENABLED=false`` to revert to cold-start
+# behaviour without a redeploy. See ``docs/PR3-PROMOTION-NOTE.md``.
 TIMETABLE_PR3_WARM_START_ENABLED = os.getenv(
-    "TIMETABLE_PR3_WARM_START_ENABLED", "false"
+    "TIMETABLE_PR3_WARM_START_ENABLED", "true"
 ).lower() in ("1", "true", "yes", "on")

@@ -12,8 +12,9 @@ Per the PR3 DoR:
 - Baseline source: in-memory / caller-supplied only. NO DB persistence.
 - Metric keys: ``changes_from_baseline_count``, ``unchanged_count``,
   ``newly_placed_count``, ``removed_count``.
-- Flag: ``TIMETABLE_PR3_WARM_START_ENABLED``. Default False until
-  commit 8's promotion.
+- Flag: ``TIMETABLE_PR3_WARM_START_ENABLED``. Default True as of
+  commit 8's promotion. Env kill-switch preserved: setting the env
+  var to ``false`` reverts to cold-start without a redeploy.
 """
 
 from __future__ import annotations
@@ -50,19 +51,24 @@ from pr3_fixture_loader import load_pr3_fixture  # noqa: E402
 
 
 class TestWarmStartFlag(SimpleTestCase):
-    """Flag default False until commit 8's promotion. Env-var override is
-    preserved so production can flip it live without a code change."""
+    """Flag defaults True as of commit 8's promotion. Env-var override is
+    preserved so production can revert to cold-start without a code
+    change (``TIMETABLE_PR3_WARM_START_ENABLED=false``)."""
 
-    def test_flag_defaults_off_pre_promotion(self) -> None:
-        """Before commit 8, warm-start is opt-in: callers must pass
-        ``baseline_placements`` explicitly AND the flag must be True.
-        With the flag default False, cold-start is the default path and
-        baseline inputs are ignored for placement decisions."""
-        assert is_warm_start_enabled() is False
-
-    @override_settings(TIMETABLE_PR3_WARM_START_ENABLED=True)
-    def test_flag_can_be_enabled(self) -> None:
+    def test_flag_defaults_on_post_promotion(self) -> None:
+        """Commit 8 flipped the default: with no env var set, warm-start
+        is active. Callers still need to pass ``baseline_placements`` for
+        retention to do anything — the flag just stops ignoring the
+        baseline when it is supplied."""
         assert is_warm_start_enabled() is True
+
+    @override_settings(TIMETABLE_PR3_WARM_START_ENABLED=False)
+    def test_flag_kill_switch_reverts_to_cold_start(self) -> None:
+        """Env kill-switch path. Setting the flag to False at runtime
+        (via Django settings override, mirroring the env-var flow) must
+        revert warm-start to a no-op so operators can roll back without
+        a redeploy."""
+        assert is_warm_start_enabled() is False
 
 
 # ===========================================================================
