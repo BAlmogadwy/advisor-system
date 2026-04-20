@@ -353,3 +353,19 @@ TIMETABLE_LAB_HEURISTIC_UNIFIED = os.getenv("TIMETABLE_LAB_HEURISTIC_UNIFIED", "
     "yes",
     "on",
 )
+
+# ---------------------------------------------------------------------------
+# PR5 — solver-pipeline decision-trace parity (refactor/pr5-*)
+# ---------------------------------------------------------------------------
+#
+# TIMETABLE_PR5_STAGE_TRACE_ENABLED: single flag gating all PR5 trace
+# surface additions — ``stage_origin`` population on ``DecisionTrace``,
+# emission of SA_RELOCATE_ACCEPTED / CPSAT_IMPROVED / CHAIN_ROTATED /
+# ROOMING_REPAIR_REASSIGNED codes, and ``perturbation_metric.changes_by_stage``.
+# Default ``false`` in commits 2-7 (new surface stays off during
+# development); commit 8 flips the env default to ``true`` (the
+# promotion commit). See docs/PR5-DOR.md flag plan and
+# docs/PR5-PROMOTION-NOTE.md (lands at commit 8) for rollback.
+TIMETABLE_PR5_STAGE_TRACE_ENABLED = os.getenv(
+    "TIMETABLE_PR5_STAGE_TRACE_ENABLED", "false"
+).lower() in ("1", "true", "yes", "on")

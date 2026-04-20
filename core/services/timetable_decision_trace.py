@@ -122,6 +122,24 @@ class DecisionTrace:
     - ``alternatives`` — tuple (not list) so the dataclass stays
       hashable / frozen-safe. Up to 3 entries, ordered by score rank
       (best rejected first).
+    - ``stage_origin`` (PR5 commit 2) — which pipeline stage last
+      changed this chosen placement. One of ``"greedy"``, ``"sa"``,
+      ``"cpsat"``, ``"chain"``, ``"rooming_repair"``. Default
+      ``"greedy"`` preserves PR3 behaviour at the per-entry level:
+      consumers that don't read the field still see the old shape.
+      Semantic rule (PR5 DoR amendment 3): "the stage that **last**
+      changed the chosen placement currently recorded in this trace" —
+      each of PR5 commits 3/4/5/6 updates this field when it moves a
+      section. Deliberately NOT on ``Alternative``: alternatives remain
+      greedy-era artefacts.
+    - ``stage_context`` (PR5 commit 2) — code-specific detail bag keyed
+      by the acceptance code that caused the last move. Canonical keys
+      per PR5 code live in ``timetable_solver_codes``:
+      ``previous_slot`` (CPSAT_IMPROVED), ``chain_length`` / ``chain_id``
+      (CHAIN_ROTATED), ``previous_room`` / ``new_room``
+      (ROOMING_REPAIR_REASSIGNED), ``from_slot`` / ``to_slot`` /
+      ``cost_delta`` (SA_RELOCATE_ACCEPTED). Empty when
+      ``stage_origin == "greedy"``.
     """
 
     section_code: str
@@ -131,6 +149,8 @@ class DecisionTrace:
     chosen_end_time: str
     chosen_room: str
     alternatives: tuple[Alternative, ...] = ()
+    stage_origin: str = "greedy"
+    stage_context: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -141,6 +161,8 @@ class DecisionTrace:
             "chosen_end_time": self.chosen_end_time,
             "chosen_room": self.chosen_room,
             "alternatives": [alt.to_dict() for alt in self.alternatives],
+            "stage_origin": self.stage_origin,
+            "stage_context": dict(self.stage_context),
         }
 
 

@@ -39,7 +39,6 @@ from __future__ import annotations
 import json
 from io import StringIO
 
-import pytest
 from django.core.management import call_command
 from django.test import SimpleTestCase, TransactionTestCase
 from django.test.utils import override_settings
@@ -57,7 +56,9 @@ from core.services.timetable_solver_codes import (  # noqa: E402 — tripwire
     is_stage_trace_enabled,
 )
 
-pytestmark = pytest.mark.django_db
+# NOTE: module-level ``pytest.mark.django_db`` is intentionally NOT applied:
+# Section A uses ``SimpleTestCase`` (no DB); Sections B/C use
+# ``TransactionTestCase`` which manages its own DB access.
 
 
 # ===========================================================================
