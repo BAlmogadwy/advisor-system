@@ -28,6 +28,8 @@ from core.models import (
     Room,
     ScenarioSectionBudget,
     ScenarioStudentMap,
+    SectionPlacement,
+    TermSection,
     TimetableScenario,
 )
 
@@ -85,11 +87,19 @@ def load_pr3_fixture(
         by_course.setdefault(sec["course_code"], []).append(sec)
 
     for course_code, secs in by_course.items():
+        # Default credit_hours=1 (75-min single meeting) so
+        # _generate_meeting_options walks the scenario's ``slot_config``
+        # (i.e. the fixture's ``slot_pool``) instead of falling through
+        # to DEFAULT_LAB_SLOTS. PR3 scenario-pack fixtures are designed
+        # around 75-min slots at 08:00/09:30/etc, and the warm-start
+        # baselines are tagged with those exact times — the old default
+        # of 2 (pattern=[100]) routed every option through the hardcoded
+        # lab grid and no baseline ever matched.
         ScenarioSectionBudget.objects.create(
             scenario=scenario,
             course_code=course_code,
             department=program,
-            credit_hours=secs[0].get("credit_hours", 2),
+            credit_hours=secs[0].get("credit_hours", 1),
             planned_sections=len(secs),
             max_per_section=max((s.get("enrolment", 20) for s in secs), default=20),
             total_demand=sum(s.get("enrolment", 20) for s in secs),
@@ -138,6 +148,43 @@ def load_pr3_fixture(
             room_type=room.get("room_type", "lecture"),
             department=program,
             section=room.get("gender", "") or "",
+        )
+
+    # PR3 commit 5 — seed locked placements for warm-start fixtures that
+    # specify a ``locks`` array. Each lock entry is translated into a
+    # ``TermSection`` + ``SectionPlacement(is_locked=True)`` pair so the
+    # PR1 lock preload inside ``auto_place_board`` picks them up when
+    # ``TIMETABLE_ENFORCE_LOCKS`` is on. The end_time is derived from the
+    # scenario's slot_pool so the lock matches a real candidate slot.
+    slot_end_by_start = {s["start_time"]: s["end_time"] for s in scenario_data.get("slot_pool", [])}
+    for lock in scenario_data.get("locks", []):
+        section_full = lock["section_code"]
+        course_code, section = section_full.split("|", 1)
+        ts, _ = TermSection.objects.get_or_create(
+            scenario=scenario,
+            course_key=course_code,
+            section=section,
+            defaults={
+                "course_code": course_code,
+                "course_number": course_code,
+                "course_name": course_code,
+                "available_capacity": 40,
+                "source_tag": "pr3_lock",
+            },
+        )
+        start_time = lock["start_time"]
+        end_time = lock.get("end_time", slot_end_by_start.get(start_time, start_time))
+        SectionPlacement.objects.create(
+            board=board,
+            term_section=ts,
+            # Upper-case the day to match ``WEEKDAYS`` / the planner's
+            # option-dict day codes. Keeping case consistent means
+            # baseline ↔ placement comparisons don't silently miss.
+            day=str(lock["day"]).upper(),
+            start_time=start_time,
+            end_time=end_time,
+            room=lock.get("room", ""),
+            is_locked=True,
         )
 
     return scenario, board, data

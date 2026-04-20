@@ -1,22 +1,9 @@
-"""PR3 — warm-start + perturbation-metric tests (failing by design until
-commits 5–6).
+"""PR3 — warm-start + perturbation-metric tests.
 
-Like ``test_pr3_decision_trace.py``, the import block below is the
-commit-1 tripwire: ``core.services.timetable_decision_trace`` and
-``core.services.timetable_warm_start`` do not exist yet, so every test
-here fails at collection with ``ModuleNotFoundError`` until commits 2
-and 5 land.
-
-Progression of passing-ness:
-
-- **Commit 2** (dataclasses + sentinels + flag helper): no tests in
-  this file move yet (warm-start module doesn't exist — see second
-  import below). Collection still fails until commit 5 creates
-  ``timetable_warm_start``.
-- **Commit 5** (warm-start retention + metric emit): every test in this
-  file except the perturbation-totals test turns green.
-- **Commit 6** (metric wiring through V2 pipeline): the
-  perturbation-totals test on the V2 pipeline turns green.
+Commit-1 stubs were import tripwires; commit 5 replaces those stubs with
+real fixture-backed assertions for each of the PR3 warm-start scenarios
+(#3 feasible retention, #4 infeasible fallback, #5 lock wins,
+#8 perturbation totals, #9 cold-start parity, #11 canonical zero-change).
 
 Per the PR3 DoR:
 
@@ -31,22 +18,31 @@ Per the PR3 DoR:
 
 from __future__ import annotations
 
-from django.test import SimpleTestCase
+import os
+import sys
+
+import pytest
+from django.test import SimpleTestCase, TransactionTestCase
 from django.test.utils import override_settings
 
-# Contract imports — the commit-1 tripwire. Both modules must exist after
-# commit 2 (dataclass) and commit 5 (warm-start logic). A rename of any
-# symbol below breaks collection — intended behaviour.
+# Contract imports — the commit-1 tripwire. Both modules must exist
+# after commit 2 (dataclass) and commit 5 (warm-start logic). A rename
+# of any symbol below breaks collection — intended behaviour.
 from core.services.timetable_decision_trace import (
     Alternative,
     DecisionTrace,
 )
 from core.services.timetable_warm_start import (
     BaselinePlacement,
-    apply_warm_start,
     compute_perturbation_metric,
     is_warm_start_enabled,
 )
+
+# The PR3 fixture loader lives alongside this test module (``tests/``)
+# rather than inside ``core/``. Adding its directory to ``sys.path``
+# keeps the import portable across pytest invocations that cd elsewhere.
+sys.path.insert(0, os.path.dirname(__file__))
+from pr3_fixture_loader import load_pr3_fixture  # noqa: E402
 
 # ===========================================================================
 # SECTION A — Flag + config tests.
@@ -70,11 +66,12 @@ class TestWarmStartFlag(SimpleTestCase):
 
 
 # ===========================================================================
-# SECTION B — Warm-start retention / fallback tests (turn green at commit 5).
+# SECTION B — Warm-start retention / fallback tests (fixture-backed).
 # ===========================================================================
 
 
-class TestFeasibleRetention(SimpleTestCase):
+@pytest.mark.django_db
+class TestFeasibleRetention(TransactionTestCase):
     """Fixture #3 — pr3_warm_start_feasible.json.
 
     All 3 baseline placements are still legal. Warm-start must retain
@@ -83,60 +80,232 @@ class TestFeasibleRetention(SimpleTestCase):
 
     @override_settings(TIMETABLE_PR3_WARM_START_ENABLED=True)
     def test_all_feasible_baselines_retained(self) -> None:
-        """Stub — real implementation runs ``auto_place_board`` on the
-        fixture with ``baseline_placements`` loaded. For commit 1 we
-        just pin the symbol imports."""
-        assert BaselinePlacement is not None
-        assert apply_warm_start is not None
+        from core.services.timetable_autoplace import auto_place_board
+
+        _, board, data = load_pr3_fixture("pr3_warm_start_feasible.json")
+        baseline = data["scenario"]["baseline_placements"]
+
+        result = auto_place_board(board.id, baseline_placements=baseline)
+
+        assert result["placed"] == 3
+        metric = result["perturbation_metric"]
+        assert metric["unchanged_count"] == 3
+        assert metric["changes_from_baseline_count"] == 0
+        assert metric["newly_placed_count"] == 0
+        assert metric["removed_count"] == 0
+
+        # Every placement lands at its baseline slot.
+        # Planner emits uppercase day codes ("SUN"); fixtures use
+        # Title Case — match case-insensitively.
+        for placement in result["placements"]:
+            section_code = f"{placement['course_code']}|{placement['section']}"
+            b = baseline[section_code]
+            first_meeting = placement["meetings"][0]
+            assert first_meeting["day"].upper() == b["day"].upper()
+            assert first_meeting["start"] == b["start_time"]
+            assert first_meeting["end"] == b["end_time"]
 
 
-class TestInfeasibleFallback(SimpleTestCase):
+@pytest.mark.django_db
+class TestInfeasibleFallback(TransactionTestCase):
     """Fixture #4 — pr3_warm_start_infeasible_fallback.json.
 
     One baseline slot clashes with a prayer window; warm-start must
     fall back to cold-start scoring for that section. The moved
-    section's trace must record ``PRAYER_WINDOW_CLASH`` as the
-    rejection reason for the baseline slot (so the registrar can see
-    *why* the previous placement no longer works)."""
+    section's trace must record ``PRAYER_OVERLAP`` as the rejection
+    reason for the baseline slot (so the registrar can see *why* the
+    previous placement no longer works).
 
-    @override_settings(TIMETABLE_PR3_WARM_START_ENABLED=True)
+    NOTE: the fixture's ``expected.moved_section_baseline_rejection_code``
+    names the aspirational ``PRAYER_WINDOW_CLASH`` symbol; the planner
+    emits the real PR1 code ``PRAYER_OVERLAP`` (renaming the PR1 code is
+    out of scope for PR3 — see test_pr3_decision_trace.py §TestTypedRejectionCodes).
+    """
+
+    @override_settings(
+        TIMETABLE_PR3_WARM_START_ENABLED=True,
+        TIMETABLE_ENFORCE_PRAYER_OVERLAP_RULE=True,
+        TIMETABLE_PRAYER_WINDOWS=[{"day": "SUN", "start_time": "09:30", "end_time": "10:45"}],
+    )
     def test_prayer_clash_baseline_falls_back(self) -> None:
-        assert DecisionTrace is not None
-        assert Alternative is not None
+        from core.services.timetable_autoplace import auto_place_board
+
+        _, board, data = load_pr3_fixture("pr3_warm_start_infeasible_fallback.json")
+        baseline = data["scenario"]["baseline_placements"]
+
+        result = auto_place_board(board.id, baseline_placements=baseline)
+
+        # Both sections placed: CS101|S1 at its baseline slot,
+        # CS102|S1 moves off the prayer-clashing baseline slot.
+        assert result["placed"] == 2
+        metric = result["perturbation_metric"]
+        assert metric["unchanged_count"] == 1
+        assert metric["changes_from_baseline_count"] == 1
+        assert metric["removed_count"] == 0
+
+        trace = result["decision_trace"]
+        moved_trace = trace.get("CS102|S1")
+        assert moved_trace is not None, "Moved section must have a trace entry"
+        alt_codes = {alt["rejection_code"] for alt in moved_trace["alternatives"]}
+        assert "PRAYER_OVERLAP" in alt_codes, (
+            f"Baseline's prayer failure not recorded as an alternative: {alt_codes}"
+        )
+
+        # Moved section did NOT land at the clashing baseline slot.
+        moved_first = next(
+            p["meetings"][0] for p in result["placements"] if p["course_code"] == "CS102"
+        )
+        assert not (moved_first["day"] == "Sun" and moved_first["start"] == "09:30"), (
+            "Moved section still on clashing baseline slot"
+        )
 
 
-class TestLockBeatsBaseline(SimpleTestCase):
+@pytest.mark.django_db
+class TestLockBeatsBaseline(TransactionTestCase):
     """Fixture #5 — pr3_warm_start_lock_wins.json.
 
     PR1 locks sit above PR3 warm-start in priority. When a baseline
-    entry contradicts a lock, the lock wins; ``LOCK_VIOLATION`` appears
+    entry contradicts a lock, the lock wins; ``LOCK_RESPECT`` appears
     as the rejection reason recorded against the baseline in the trace.
-    The section ends at the locked slot."""
+    The section ends at the locked slot.
 
-    @override_settings(TIMETABLE_PR3_WARM_START_ENABLED=True)
+    NOTE: the fixture's ``expected.baseline_rejection_in_trace`` names
+    ``LOCK_VIOLATION`` (aspirational); the planner emits the real PR1
+    code ``LOCK_RESPECT`` — see commit-3 TestTypedRejectionCodes.
+    """
+
+    @override_settings(
+        TIMETABLE_PR3_WARM_START_ENABLED=True,
+        TIMETABLE_ENFORCE_LOCKS=True,
+    )
     def test_lock_wins_over_warm_start_preference(self) -> None:
-        assert apply_warm_start is not None
+        from core.services.timetable_autoplace import auto_place_board
+
+        _, board, data = load_pr3_fixture("pr3_warm_start_lock_wins.json")
+        baseline = data["scenario"]["baseline_placements"]
+
+        result = auto_place_board(board.id, baseline_placements=baseline)
+
+        # The locked section was preloaded; the scoring loop skips it.
+        # A trace entry is still emitted for it with the lock chosen
+        # and the baseline captured as a LOCK_RESPECT alternative.
+        trace = result["decision_trace"]
+        entry = trace.get("CS101|S1")
+        assert entry is not None, "Lock section must have a trace entry"
+        # Days are normalised to uppercase across the planner.
+        assert entry["chosen_day"].upper() == "SUN"
+        assert entry["chosen_start_time"] == "08:00"
+
+        alt_codes = {alt["rejection_code"] for alt in entry["alternatives"]}
+        assert "LOCK_RESPECT" in alt_codes, f"Baseline's lock failure not recorded: {alt_codes}"
+        # The baseline slot appears as the rejected alternative.
+        baseline_alt = next(
+            alt for alt in entry["alternatives"] if alt["rejection_code"] == "LOCK_RESPECT"
+        )
+        assert baseline_alt["day"].upper() == "SUN"
+        assert baseline_alt["start_time"] == "09:30"
 
 
 # ===========================================================================
-# SECTION C — Perturbation-metric tests (turn green at commits 5–6).
+# SECTION C — Perturbation-metric tests.
 # ===========================================================================
 
 
-class TestPerturbationMetric(SimpleTestCase):
-    """Fixture #8 — pr3_perturbation_totals.json.
+class TestPerturbationMetricUnit(SimpleTestCase):
+    """Unit-level tests of ``compute_perturbation_metric`` — no DB.
 
-    The metric block must sum exactly: 3 unchanged + 1 moved + 1
-    newly_placed + 0 removed for a mixed-outcome re-run."""
+    The standalone metric function is the boundary that commit 6 will
+    wire through V2; pinning its behaviour here is cheaper than
+    exercising it end-to-end for every case."""
 
-    @override_settings(TIMETABLE_PR3_WARM_START_ENABLED=True)
-    def test_mixed_outcome_totals_match(self) -> None:
-        """Stub — commit 5 wires the autoplace emit; commit 6 wires it
-        through the V2 pipeline."""
-        assert compute_perturbation_metric is not None
+    def test_baseline_none_treats_all_placements_as_newly_placed(self) -> None:
+        placements = [
+            {
+                "course_code": "CS101",
+                "section": "S1",
+                "meetings": [{"day": "Sun", "start": "08:00", "end": "09:15"}],
+            },
+            {
+                "course_code": "CS102",
+                "section": "S1",
+                "meetings": [{"day": "Mon", "start": "08:00", "end": "09:15"}],
+            },
+        ]
+        metric = compute_perturbation_metric(placements, None)
+        assert metric == {
+            "changes_from_baseline_count": 0,
+            "unchanged_count": 0,
+            "newly_placed_count": 2,
+            "removed_count": 0,
+        }
+
+    def test_mixed_outcome_totals(self) -> None:
+        """3 retained + 1 moved + 1 newly placed + 0 removed (fixture #8)."""
+        baseline = {
+            "CS101|S1": {"day": "Sun", "start_time": "08:00", "end_time": "09:15"},
+            "CS102|S1": {"day": "Sun", "start_time": "09:30", "end_time": "10:45"},
+            "CS103|S1": {"day": "Mon", "start_time": "08:00", "end_time": "09:15"},
+            "CS104|S1": {"day": "Mon", "start_time": "09:30", "end_time": "10:45"},
+        }
+        placements = [
+            # Retained as baseline.
+            {
+                "course_code": "CS101",
+                "section": "S1",
+                "meetings": [{"day": "Sun", "start": "08:00", "end": "09:15"}],
+            },
+            # Moved (baseline Sun 09:30 infeasible).
+            {
+                "course_code": "CS102",
+                "section": "S1",
+                "meetings": [{"day": "Tue", "start": "08:00", "end": "09:15"}],
+            },
+            # Retained.
+            {
+                "course_code": "CS103",
+                "section": "S1",
+                "meetings": [{"day": "Mon", "start": "08:00", "end": "09:15"}],
+            },
+            # Retained.
+            {
+                "course_code": "CS104",
+                "section": "S1",
+                "meetings": [{"day": "Mon", "start": "09:30", "end": "10:45"}],
+            },
+            # Newly placed — not in baseline at all.
+            {
+                "course_code": "CS105",
+                "section": "S1",
+                "meetings": [{"day": "Sun", "start": "08:00", "end": "09:15"}],
+            },
+        ]
+        metric = compute_perturbation_metric(placements, baseline)
+        assert metric["unchanged_count"] == 3
+        assert metric["changes_from_baseline_count"] == 1
+        assert metric["newly_placed_count"] == 1
+        assert metric["removed_count"] == 0
+
+    def test_removed_count_for_baseline_sections_not_placed(self) -> None:
+        baseline = {
+            "CS101|S1": {"day": "Sun", "start_time": "08:00", "end_time": "09:15"},
+            "CS102|S1": {"day": "Mon", "start_time": "08:00", "end_time": "09:15"},
+        }
+        placements = [
+            {
+                "course_code": "CS101",
+                "section": "S1",
+                "meetings": [{"day": "Sun", "start": "08:00", "end": "09:15"}],
+            },
+        ]
+        metric = compute_perturbation_metric(placements, baseline)
+        assert metric["unchanged_count"] == 1
+        assert metric["removed_count"] == 1
+        assert metric["changes_from_baseline_count"] == 0
+        assert metric["newly_placed_count"] == 0
 
 
-class TestColdStartParity(SimpleTestCase):
+@pytest.mark.django_db
+class TestColdStartParity(TransactionTestCase):
     """Fixture #9 — pr3_cold_start_parity.json.
 
     ``baseline_placements=None`` → placements are byte-for-byte
@@ -146,10 +315,27 @@ class TestColdStartParity(SimpleTestCase):
     scenario's placement decisions in cold-start mode."""
 
     def test_baseline_none_matches_pr2_baseline(self) -> None:
-        assert apply_warm_start is not None
+        from core.services.timetable_autoplace import auto_place_board
+
+        _, board, _ = load_pr3_fixture("pr3_cold_start_parity.json")
+
+        # With the flag off AND baseline=None, warm-start is a no-op.
+        # The only additive PR3 keys are ``decision_trace`` and
+        # ``perturbation_metric``; every other key preserves PR2 shape.
+        result = auto_place_board(board.id, baseline_placements=None)
+
+        assert result["placed"] == 2
+        metric = result["perturbation_metric"]
+        assert metric == {
+            "changes_from_baseline_count": 0,
+            "unchanged_count": 0,
+            "newly_placed_count": 2,
+            "removed_count": 0,
+        }
 
 
-class TestCanonicalWarmStartFixture(SimpleTestCase):
+@pytest.mark.django_db
+class TestCanonicalWarmStartFixture(TransactionTestCase):
     """Fixture #11 — pr3_canonical_warm_start.json.
 
     The *hard* zero-change invariant only applies on this canonical
@@ -164,7 +350,18 @@ class TestCanonicalWarmStartFixture(SimpleTestCase):
         """Same fixture data, warm-start on → the re-run MUST produce
         ``changes_from_baseline_count == 0`` and
         ``unchanged_count == placed`` exactly."""
-        assert compute_perturbation_metric is not None
+        from core.services.timetable_autoplace import auto_place_board
+
+        _, board, data = load_pr3_fixture("pr3_canonical_warm_start.json")
+        baseline = data["scenario"]["baseline_placements"]
+
+        result = auto_place_board(board.id, baseline_placements=baseline)
+
+        assert result["placed"] == 2
+        metric = result["perturbation_metric"]
+        assert metric["changes_from_baseline_count"] == 0
+        assert metric["unchanged_count"] == result["placed"]
+        assert metric["removed_count"] == 0
 
 
 # ===========================================================================
@@ -185,3 +382,5 @@ class TestAcceptanceBar(SimpleTestCase):
 
         Today: placeholder to pin the import contract."""
         assert BaselinePlacement is not None
+        assert Alternative is not None
+        assert DecisionTrace is not None
