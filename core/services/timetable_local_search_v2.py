@@ -62,8 +62,8 @@ def _filter_moves_by_pr1_prayer(
 
     flat: dict[str, CanonicalPattern] = {}
     for family_pats in pattern_catalog.values():
-        for p in family_pats:
-            flat[p.pattern_id] = p
+        for pat in family_pats:
+            flat[pat.pattern_id] = pat
 
     kept: list[TimetableMove] = []
     dropped = 0
@@ -74,10 +74,10 @@ def _filter_moves_by_pr1_prayer(
 
         has_overlap = False
         for pid in target_pattern_ids:
-            p = flat.get(pid)
-            if p is None:
+            target_pat = flat.get(pid)
+            if target_pat is None:
                 continue
-            for m in p.meetings:
+            for m in target_pat.meetings:
                 if m.day < 0 or m.day >= len(WEEKDAYS):
                     continue
                 meeting_dict = {

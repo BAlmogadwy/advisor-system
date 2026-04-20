@@ -57,7 +57,7 @@ class RejectionReason:
     context: dict | None = None
 
     def to_dict(self) -> dict:
-        payload = {
+        payload: dict[str, object] = {
             "reason": self.code,
             "day": self.day,
             "start_time": self.start_time,
