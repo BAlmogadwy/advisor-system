@@ -1,0 +1,35 @@
+{
+  "description": "PR1 prayer-basic fixture — 1 board, 3 courses, 1 prayer, 2 placements (one clean + one straddling). Used as the semantic reference for tests/test_pr1_prayer_enforcement.py and tests/test_pr1_end_to_end.py. Tests build the data programmatically; this file is the documentation of what shape the fixture encodes.",
+  "scenario": {
+    "academic_year": "1448",
+    "term": "1",
+    "name": "PR1 Prayer Basic",
+    "slot_config": {
+      "slots": [
+        {"day": "Sun", "start": "08:00", "end": "09:15"},
+        {"day": "Sun", "start": "10:00", "end": "11:15"},
+        {"day": "Sun", "start": "12:00", "end": "13:15"}
+      ],
+      "prayers": [
+        {"day": "Sun", "start": "12:00", "end": "12:15"}
+      ]
+    }
+  },
+  "board": {"label": "PR1_PRAYER", "program": "PR1", "display_order": 1},
+  "rooms": [
+    {"room_code": "A101", "capacity": 30, "room_type": "lecture", "department": "PR1", "section": "M"}
+  ],
+  "courses": [
+    {"course_code": "PR1_A", "credit_hours": 3, "department": "PR1", "programme_term": 1},
+    {"course_code": "PR1_B", "credit_hours": 3, "department": "PR1", "programme_term": 1},
+    {"course_code": "PR1_C", "credit_hours": 3, "department": "PR1", "programme_term": 1}
+  ],
+  "placements": [
+    {"course_code": "PR1_A", "section": "S1", "day": "Sun", "start_time": "08:00", "end_time": "09:15", "room": "A101", "is_locked": false, "note": "clean — before any prayer"},
+    {"course_code": "PR1_B", "section": "S1", "day": "Sun", "start_time": "12:00", "end_time": "13:15", "room": "", "is_locked": false, "note": "straddles 12:00-12:15 prayer — must be rejected when prayer flag is ON"}
+  ],
+  "expected": {
+    "prayer_flag_on": {"pr1_prayer_rejections_nonempty": true},
+    "prayer_flag_off": {"pr1_prayer_rejections_nonempty": false}
+  }
+}

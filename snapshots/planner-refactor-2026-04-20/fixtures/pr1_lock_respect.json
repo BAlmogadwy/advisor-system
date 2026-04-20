@@ -1,0 +1,40 @@
+{
+  "description": "PR1 lock-respect fixture — 1 board, 2 placements (one locked at Sun 08:00 room A101), third section auto-placement attempts to take the same cell. Locked placement must be preloaded into occupancy and skipped by the planner; a candidate that collides with the locked cell must emit LOCK_RESPECT rejection in pr1_lock_rejections.",
+  "scenario": {
+    "academic_year": "1448",
+    "term": "1",
+    "name": "PR1 Lock Respect",
+    "slot_config": {
+      "slots": [
+        {"day": "Sun", "start": "08:00", "end": "09:15"},
+        {"day": "Sun", "start": "10:00", "end": "11:15"}
+      ]
+    }
+  },
+  "board": {"label": "PR1_LOCK", "program": "PR1", "display_order": 1},
+  "rooms": [
+    {"room_code": "A101", "capacity": 30, "room_type": "lecture", "department": "PR1", "section": "M"}
+  ],
+  "courses": [
+    {"course_code": "PR1_A", "credit_hours": 3, "department": "PR1", "programme_term": 1},
+    {"course_code": "PR1_B", "credit_hours": 3, "department": "PR1", "programme_term": 1},
+    {"course_code": "PR1_C", "credit_hours": 3, "department": "PR1", "programme_term": 1}
+  ],
+  "placements": [
+    {"course_code": "PR1_A", "section": "S1", "day": "Sun", "start_time": "08:00", "end_time": "09:15", "room": "A101", "is_locked": true, "note": "locked — planner must preload + skip"},
+    {"course_code": "PR1_B", "section": "S1", "day": "Sun", "start_time": "10:00", "end_time": "11:15", "room": "A101", "is_locked": false, "note": "free — already placed, no conflict"}
+  ],
+  "auto_placement_attempts": [
+    {"course_code": "PR1_C", "note": "planner will try to place PR1_C; attempting Sun 08:00 A101 must emit LOCK_RESPECT rejection, attempting Sun 10:00 A101 clashes with PR1_B and is a regular conflict"}
+  ],
+  "expected": {
+    "lock_flag_on": {
+      "locked_placement_untouched": true,
+      "pr1_lock_rejections_nonempty_if_candidate_collides_with_locked_cell": true
+    },
+    "lock_flag_off": {
+      "locked_placement_may_be_overwritten": true,
+      "pr1_lock_rejections_nonempty": false
+    }
+  }
+}

@@ -52,6 +52,7 @@ descending demand order (highest ``total_demand`` first).
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from itertools import combinations
 
@@ -63,7 +64,17 @@ from core.models import (
     TermSection,
     TermSectionMeeting,
 )
+from core.services.timetable_validation import (
+    LOCK_RESPECT,
+    RejectionReason,
+    get_prayer_windows,
+    is_lock_enforcement_enabled,
+    is_prayer_overlap_rule_enabled,
+    prayer_overlap_rejection,
+)
 from core.services.timetable_workspace import _time_mask, _to_minutes
+
+logger = logging.getLogger(__name__)
 
 # ── Meeting Patterns ─────────────────────────────────────────────
 # The Saudi academic week runs Sunday through Thursday.
@@ -606,11 +617,53 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
     try:
         board = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
     except DeliveryBoard.DoesNotExist:
-        return {"placed": 0, "skipped": 0, "placements": [], "capacity_buffer": None}
+        return {
+            "placed": 0,
+            "skipped": 0,
+            "placements": [],
+            "capacity_buffer": None,
+            "pr1_prayer_rejections": [],
+            "pr1_lock_rejections": [],
+        }
 
     scenario = board.scenario
     slot_config = scenario.slot_config if scenario.slot_config else DEFAULT_SLOTS
     lab_slot_config = scenario.lab_slot_config if scenario.lab_slot_config else DEFAULT_LAB_SLOTS
+
+    # ── PR1 prayer-overlap enforcement (flag-gated; default OFF) ────
+    # The rule check short-circuits inside ``prayer_overlap_rejection``
+    # when the flag is OFF, so ``prayer_rule_on`` only controls whether
+    # we bother reading windows and filtering options at all. Windows are
+    # empty when the setting is absent, which is also a safe no-op.
+    #
+    # Telemetry caveat: ``pr1_prayer_rejections`` is populated AFTER the
+    # legacy hardcoded prayer-break filter (``_start_is_blocked``, window
+    # 11:35–12:59) has already suppressed many candidates. So this list
+    # under-observes the configured rule — it only records overlaps the
+    # legacy filter let through. This under-observation remains until
+    # the legacy start-window filter is retired in a later PR, where the
+    # behavioural diff (old-vs-new prayer semantics) can be evaluated
+    # explicitly on its own.
+    prayer_rule_on = is_prayer_overlap_rule_enabled()
+    prayer_windows = get_prayer_windows() if prayer_rule_on else []
+    pr1_prayer_rejections: list[dict] = []
+
+    # ── PR1 lock-respect enforcement (flag-gated; default OFF) ──────
+    # Enforcement is structural, not advisory: when the flag is on, the
+    # preload loop (below, after occupancy structures are initialised)
+    # (1) collects locked SectionPlacement rows up front, (2) seeds the
+    # same occupancy state the planner consults for conflict scoring and
+    # room assignment, and (3) lets the existing `already = count()`
+    # logic skip those sections in the round-robin iteration — so no
+    # parallel "locked cells" path is checked in isolation.
+    #
+    # Telemetry honesty: in PR1 ``pr1_lock_rejections`` records
+    # lock-respect events from preloaded locked placements (one entry
+    # per locked row). It does NOT record per-candidate lock collisions
+    # during round-robin placement — the structural skip makes those
+    # collisions unreachable, so there is nothing to count there.
+    lock_rule_on = is_lock_enforcement_enabled()
+    pr1_lock_rejections: list[dict] = []
 
     # ── 0. Load rooms for this board's programme(s) ─────────────────
     from core.services.timetable_rooming import (
@@ -724,6 +777,8 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
             "skipped": 0,
             "placements": [],
             "capacity_buffer": capacity_buffer,
+            "pr1_prayer_rejections": pr1_prayer_rejections,
+            "pr1_lock_rejections": pr1_lock_rejections,
         }
 
     # ── 2. Build student-to-course mapping ────────────────────────────
@@ -760,6 +815,49 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
     placement_results: list[dict] = []
     total_placed = 0
     total_skipped = 0
+
+    # ── 2b. PR1 lock preload ─────────────────────────────────────────
+    # When TIMETABLE_ENFORCE_LOCKS is on, locked SectionPlacement rows
+    # for this board are seeded into the same occupancy structures the
+    # planner consults below:
+    #   - placed_masks + all_placed_masks → same-course / cross-course
+    #     student-overlap conflict detection
+    #   - placed_schedule → idle-gap scoring and S2+ instructor-adjacency
+    #     scoring for the same course
+    #   - room_tracker.usage → room assignment avoids locked rooms at
+    #     the locked (day, start) without any special-case branch
+    #   - slot_density → tie-breaking pushes later placements toward
+    #     less-populated slots, acknowledging the locked cell's pressure
+    # The round-robin skip is automatic: ``already = count()`` on line
+    # ~820 already counts locked rows, so ``to_place = planned_sections
+    # - already`` excludes them and the sec_round loop never retries
+    # that section index. One LOCK_RESPECT telemetry row is emitted per
+    # locked cell so the payload records which locks were respected.
+    if lock_rule_on:
+        locked_placements = (
+            SectionPlacement.objects.filter(board=board, is_locked=True)
+            .select_related("term_section")
+            .order_by("day", "start_time")
+        )
+        for lp in locked_placements:
+            cc = lp.term_section.course_code
+            mask = _time_mask(lp.day, lp.start_time, lp.end_time)
+            placed_masks.append((cc, mask))
+            placed_schedule.append((lp.day, lp.start_time, lp.end_time, cc))
+            all_placed_masks.append((cc, mask))
+            slot_density[lp.start_time] += 1
+            if room_tracker and lp.room and lp.room != "UNASSIGNED":
+                room_tracker.usage[(lp.day, lp.start_time)].add(lp.room)
+            pr1_lock_rejections.append(
+                RejectionReason(
+                    code=LOCK_RESPECT,
+                    day=lp.day,
+                    start_time=lp.start_time,
+                    end_time=lp.end_time,
+                    course_code=cc,
+                    context={"locked_room": lp.room},
+                ).to_dict()
+            )
 
     # ── 3. Identify online courses (from ProgrammeRequirement) ────────
     # Online courses receive a late-slot preference penalty so they are
@@ -876,6 +974,32 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
             # courses have 100-min meetings that are long lectures, not labs.
             is_lab_course = budget.credit_hours == 4
             for option in all_options:
+                # PR1 prayer-overlap filter (flag-gated). When enabled, any
+                # option that places a meeting overlapping a configured
+                # prayer window is rejected outright (not soft-scored). The
+                # first rejection per option is recorded; a second meeting
+                # in the same option hitting another window is not emitted
+                # separately (the option is already out of the candidate
+                # set, so the extra payload would be noise).
+                if prayer_rule_on and prayer_windows:
+                    prayer_skip = False
+                    for m in option:
+                        rej = prayer_overlap_rejection(
+                            {
+                                "day": m["day"],
+                                "start_time": m["start"],
+                                "end_time": m["end"],
+                                "course_code": code,
+                            },
+                            prayer_windows,
+                        )
+                        if rej is not None:
+                            pr1_prayer_rejections.append(rej.to_dict())
+                            prayer_skip = True
+                            break
+                    if prayer_skip:
+                        continue
+
                 # Room feasibility: prefer options with rooms, penalize roomless
                 room_penalty = 0
                 if room_tracker:
@@ -1072,11 +1196,25 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                 }
             )
 
+    logger.info(
+        "auto_place_board(board=%s): placed=%d skipped=%d "
+        "prayer_rule_on=%s (rejections=%d) lock_rule_on=%s (rejections=%d)",
+        board_id,
+        total_placed,
+        total_skipped,
+        prayer_rule_on,
+        len(pr1_prayer_rejections),
+        lock_rule_on,
+        len(pr1_lock_rejections),
+    )
+
     return {
         "placed": total_placed,
         "skipped": total_skipped,
         "placements": placement_results,
         "capacity_buffer": capacity_buffer,
+        "pr1_prayer_rejections": pr1_prayer_rejections,
+        "pr1_lock_rejections": pr1_lock_rejections,
     }
 
 

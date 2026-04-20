@@ -1,0 +1,18 @@
+{
+  "description": "PR1 parity baseline — captured placement set shape from the default planner at commit d0c6739 (PR0 merged, no PR1 code). With both TIMETABLE_ENFORCE_PRAYER_OVERLAP_RULE=False and TIMETABLE_ENFORCE_LOCKS=False, running auto_place_board() on any scenario must produce the same placement outcomes as this baseline encodes. The JSON captures structure, not specific student IDs, to keep it stable against re-seeding.",
+  "baseline_commit": "d0c6739",
+  "baseline_description": "PR0 externalised TIMETABLE_CAPACITY_BUFFER with no algorithmic change. Planner behaviour at default settings is identical to 47549c8 (pre-PR0). PR1 parity is measured against d0c6739 as the current live baseline.",
+  "parity_assertions": {
+    "pr1_prayer_rejections_must_equal": [],
+    "pr1_lock_rejections_must_equal": [],
+    "placed_count_identical_to_baseline": true,
+    "skipped_count_identical_to_baseline": true,
+    "placement_room_assignments_identical_to_baseline": true,
+    "capacity_buffer_field_present": 1.1
+  },
+  "notes": [
+    "The parity test in tests/test_pr1_end_to_end.py::test_parity_flags_off_matches_baseline asserts the empty-rejection claim directly.",
+    "Deeper placement-identity parity (placed_count, room_assignments) is validated by re-running the full existing test suite with both flags off — any baseline test that fails under PR1+flags-off is a parity regression.",
+    "For scenario-pack-level reproducibility, capture per-board result JSONs from auto_place_board() at d0c6739 before starting a validation run."
+  ]
+}
