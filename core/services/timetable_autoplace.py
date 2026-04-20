@@ -64,7 +64,15 @@ from core.models import (
     TermSection,
     TermSectionMeeting,
 )
-from core.services.timetable_room_oracle import NO_ROOM_CAPACITY, RoomFailureReason
+from core.services.timetable_room_oracle import (
+    NO_ROOM_CAPACITY,
+    RoomFailureReason,
+    check_capacity_feasibility,
+    check_gender_feasibility,
+    check_occupancy,
+    check_type_feasibility,
+    is_room_oracle_enabled,
+)
 from core.services.timetable_validation import (
     LOCK_RESPECT,
     RejectionReason,
@@ -1110,24 +1118,45 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
 
             if best_option is None:
                 total_skipped += 1
-                # PR2 commit 3 — Site 1: scoring loop found no feasible option.
-                # We cannot identify a specific (day, start, end) — no option
-                # survived scoring — so the slot fields are emitted as empty
-                # strings. Default reason is NO_ROOM_CAPACITY per the PR2 DoR
-                # ("If a site truly cannot distinguish anything better, default
-                # to NO_ROOM_CAPACITY, not a new generic code"). Commit 4's
-                # staged oracle will replace this with a stage-appropriate code
-                # when the oracle can diagnose the underlying cause.
-                room_failures.append(
-                    RoomFailureReason(
+                # PR2 commit 4 — Site 1: scoring loop found no feasible option.
+                # No option survived scoring, so there's no specific (day,
+                # start_time, end_time) to report — slot fields stay empty
+                # strings. When the oracle is off, default to NO_ROOM_CAPACITY
+                # (commit 3 parity). When it's on, run the Stage 1 refinement
+                # chain against the overall room pool: type → gender → capacity.
+                # We deliberately pick the required type from the course's
+                # ``is_lab_course`` flag rather than any specific meeting —
+                # the scoring loop ran against every option and none
+                # survived, so the coarse pool check is what we can prove.
+                refined: RoomFailureReason | None = None
+                if is_room_oracle_enabled() and room_tracker:
+                    section_dict = {
+                        "course_code": code,
+                        "section_code": sec_label,
+                        "day": "",
+                        "start_time": "",
+                        "end_time": "",
+                        "demand": raw_cap,
+                        "room_type_required": "lab" if is_lab_course else "lecture",
+                        "gender_required": board_gender,
+                    }
+                    refined = (
+                        check_type_feasibility(section_dict, room_tracker.rooms)
+                        or check_gender_feasibility(section_dict, room_tracker.rooms)
+                        or check_capacity_feasibility(
+                            section_dict, room_tracker.rooms, capacity_buffer
+                        )
+                    )
+                if refined is None:
+                    refined = RoomFailureReason(
                         code=NO_ROOM_CAPACITY,
                         day="",
                         start_time="",
                         end_time="",
                         course_code=code,
                         section_code=sec_label,
-                    ).to_dict()
-                )
+                    )
+                room_failures.append(refined.to_dict())
                 continue
 
             # ── Persist the chosen placement ──────────────────────────
@@ -1189,20 +1218,52 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                             assigned_room = best_fit
                         else:
                             assigned_room = "UNASSIGNED"
-                            # PR2 commit 3 — Site 2: tracker.assign_best_fit
-                            # returned None for this meeting. Matches the
-                            # Site 3 rooming pattern, so the default reason
-                            # is NO_ROOM_CAPACITY per the PR2 DoR.
-                            room_failures.append(
-                                RoomFailureReason(
+                            # PR2 commit 4 — Site 2: tracker.assign_best_fit
+                            # returned None for this meeting. Run the
+                            # refinement chain: type → gender → capacity →
+                            # occupancy. Labs pass demand=0 to the helpers
+                            # because the existing control flow skips
+                            # capacity filtering for lab rooms (rotation
+                            # model); this keeps the oracle symmetric with
+                            # the tracker behaviour so we don't spuriously
+                            # report NO_ROOM_CAPACITY for a lab pool that
+                            # the tracker would have treated as adequate.
+                            m_section_dict = {
+                                "course_code": code,
+                                "section_code": sec_label,
+                                "day": m["day"],
+                                "start_time": m["start"],
+                                "end_time": m["end"],
+                                "demand": 0 if rtype == "lab" else raw_cap,
+                                "room_type_required": rtype,
+                                "gender_required": board_gender,
+                            }
+                            m_refined: RoomFailureReason | None = None
+                            if is_room_oracle_enabled():
+                                m_refined = (
+                                    check_type_feasibility(m_section_dict, room_tracker.rooms)
+                                    or check_gender_feasibility(m_section_dict, room_tracker.rooms)
+                                    or check_capacity_feasibility(
+                                        m_section_dict,
+                                        room_tracker.rooms,
+                                        capacity_buffer,
+                                    )
+                                    or check_occupancy(
+                                        m_section_dict,
+                                        room_tracker.rooms,
+                                        room_tracker.usage.get((m["day"], m["start"]), set()),
+                                    )
+                                )
+                            if m_refined is None:
+                                m_refined = RoomFailureReason(
                                     code=NO_ROOM_CAPACITY,
                                     day=m["day"],
                                     start_time=m["start"],
                                     end_time=m["end"],
                                     course_code=code,
                                     section_code=sec_label,
-                                ).to_dict()
-                            )
+                                )
+                            room_failures.append(m_refined.to_dict())
                     if not preferred_room and assigned_room and assigned_room != "UNASSIGNED":
                         preferred_room = assigned_room
 

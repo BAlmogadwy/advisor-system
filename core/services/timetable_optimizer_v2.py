@@ -333,6 +333,7 @@ def build_room_state_for_scenario(
                 room_id=r.room_code,
                 capacity=r.capacity,
                 room_type=r.room_type or "lecture",
+                gender=(r.section or "").upper(),
             )
 
     # Build occupancy from current placements

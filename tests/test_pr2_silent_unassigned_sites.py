@@ -39,6 +39,7 @@ so the assertion is behavioural — not a grep on source code.
 from __future__ import annotations
 
 import pytest
+from django.test import override_settings
 
 from core.models import (
     DeliveryBoard,
@@ -58,7 +59,18 @@ from core.services.timetable_assignment_models import (
 )
 from core.services.timetable_room_oracle import (
     NO_ROOM_CAPACITY,
+    NO_ROOM_GENDER,
+    NO_ROOM_TYPE,
+    ROOM_BUFFER_REJECT,
+    ROOM_HEURISTIC_MISMATCH,
+    ROOM_OCCUPIED,
     RoomFailureReason,
+    check_buffer_fit,
+    check_capacity_feasibility,
+    check_gender_feasibility,
+    check_heuristic_match,
+    check_occupancy,
+    check_type_feasibility,
 )
 from core.services.timetable_room_repair import try_repair_rooms_locally
 from core.services.timetable_rooming import assign_rooms_to_board
@@ -351,7 +363,7 @@ class TestSiteRoomRepairFalseReturn:
         meetings_a = [_meeting(0, 8 * 60, 9 * 60 + 15)]
         sec = _section("secA", "COURSE_A", meetings_a)
 
-        room = RoomProfile(room_id="R1", capacity=40, room_type="lecture")
+        room = RoomProfile(room_id="R1", capacity=40, room_type="lecture", gender="")
         rooms_by_id = {"R1": room}
         room_occupancies = {"R1": RoomOccupancy(room_id="R1")}
 
@@ -403,3 +415,324 @@ class TestSiteRoomRepairFalseReturn:
             section_code="secA",
         ).to_dict()
         assert set(record.keys()) == set(reference.keys())
+
+
+# ===========================================================================
+# COMMIT 4 — oracle helper unit tests.
+#
+# Each helper has two shapes: flag-off (returns None, preserves commit 3
+# parity) and flag-on (runs its stage check and returns a typed reason
+# when the check fails). These tests pin both.
+#
+# Class-level ``@override_settings`` can't decorate plain pytest classes
+# (Django refuses with "Only subclasses of SimpleTestCase..."), so the
+# flag-on classes request a module-level fixture via
+# ``@pytest.mark.usefixtures("oracle_on")``. The fixture uses
+# pytest-django's ``settings`` fixture which auto-restores on teardown.
+# ===========================================================================
+
+
+@pytest.fixture
+def oracle_on(settings):  # type: ignore[no-untyped-def]
+    settings.TIMETABLE_PR2_ROOM_ORACLE_ENABLED = True
+
+
+def _oracle_section(**overrides: object) -> dict:
+    base = {
+        "course_code": "CMP101",
+        "section_code": "S1",
+        "day": "Sun",
+        "start_time": "08:00",
+        "end_time": "09:15",
+        "demand": 40,
+        "room_type_required": "lecture",
+        "gender_required": "",
+    }
+    base.update(overrides)
+    return base
+
+
+def _oracle_room(**overrides: object) -> dict:
+    base = {
+        "room_code": "R1",
+        "capacity": 60,
+        "room_type": "lecture",
+        "gender": "",
+    }
+    base.update(overrides)
+    return base
+
+
+class TestOracleFlagOffReturnsNone:
+    """Flag-off parity: every helper must return None regardless of its
+    specific input when ``TIMETABLE_PR2_ROOM_ORACLE_ENABLED`` is False.
+
+    This is the contract that keeps commit 3's default-``NO_ROOM_CAPACITY``
+    payload bit-for-bit unchanged while commit 4 is rolling out.
+    """
+
+    @override_settings(TIMETABLE_PR2_ROOM_ORACLE_ENABLED=False)
+    def test_all_helpers_return_none_when_flag_off(self) -> None:
+        sec = _oracle_section(room_type_required="lab")
+        empty_rooms: list[dict] = []
+        assert check_type_feasibility(sec, empty_rooms) is None
+        assert check_gender_feasibility(sec, empty_rooms) is None
+        assert check_capacity_feasibility(sec, empty_rooms, 1.1) is None
+        assert check_occupancy(sec, empty_rooms, set()) is None
+        assert check_buffer_fit(sec, _oracle_room(capacity=40), 1.5) is None
+        assert check_heuristic_match(sec, empty_rooms) is None
+
+
+@pytest.mark.usefixtures("oracle_on")
+class TestOracleTypeFeasibility:
+    def test_no_matching_type_returns_no_room_type(self) -> None:
+        sec = _oracle_section(room_type_required="lab")
+        rooms = [_oracle_room(room_type="lecture")]
+        failure = check_type_feasibility(sec, rooms)
+        assert failure is not None
+        assert failure.code == NO_ROOM_TYPE
+
+    def test_matching_type_returns_none(self) -> None:
+        sec = _oracle_section(room_type_required="lecture")
+        rooms = [_oracle_room(room_type="lecture")]
+        assert check_type_feasibility(sec, rooms) is None
+
+    def test_blank_type_requirement_returns_none(self) -> None:
+        sec = _oracle_section(room_type_required="")
+        assert check_type_feasibility(sec, []) is None
+
+
+@pytest.mark.usefixtures("oracle_on")
+class TestOracleGenderFeasibility:
+    def test_no_matching_gender_returns_no_room_gender(self) -> None:
+        sec = _oracle_section(gender_required="F")
+        rooms = [_oracle_room(gender="M")]
+        failure = check_gender_feasibility(sec, rooms)
+        assert failure is not None
+        assert failure.code == NO_ROOM_GENDER
+
+    def test_section_variant_key_also_matches(self) -> None:
+        """Legacy rooming dicts store gender under ``section``, not
+        ``gender``. The helper must accept both shapes."""
+        sec = _oracle_section(gender_required="F")
+        rooms = [_oracle_room(gender="", section="F")]
+        assert check_gender_feasibility(sec, rooms) is None
+
+    def test_gender_check_respects_type_filter(self) -> None:
+        """An F-only lab exists but the section needs a *lecture* —
+        gender helper must return None because the pool intersection
+        is empty and the underlying failure is NO_ROOM_TYPE, not gender."""
+        sec = _oracle_section(room_type_required="lecture", gender_required="F")
+        rooms = [_oracle_room(room_type="lab", gender="F")]
+        assert check_gender_feasibility(sec, rooms) is None
+
+    def test_no_gender_requirement_returns_none(self) -> None:
+        sec = _oracle_section(gender_required="")
+        assert check_gender_feasibility(sec, [_oracle_room(gender="M")]) is None
+
+
+@pytest.mark.usefixtures("oracle_on")
+class TestOracleCapacityFeasibility:
+    def test_capacity_short_returns_no_room_capacity(self) -> None:
+        sec = _oracle_section(demand=40)
+        rooms = [_oracle_room(capacity=30)]
+        failure = check_capacity_feasibility(sec, rooms, 1.1)
+        assert failure is not None
+        assert failure.code == NO_ROOM_CAPACITY
+
+    def test_buffered_demand_is_enforced(self) -> None:
+        """A room with capacity 42 fits the raw demand of 40 but fails
+        the buffered demand of 44 at buffer 1.1 — Stage 1 reports
+        NO_ROOM_CAPACITY; Stage 2's ``check_buffer_fit`` carves out
+        the sub-case separately."""
+        sec = _oracle_section(demand=40)
+        rooms = [_oracle_room(capacity=42)]
+        failure = check_capacity_feasibility(sec, rooms, 1.1)
+        assert failure is not None
+        assert failure.code == NO_ROOM_CAPACITY
+
+    def test_ample_capacity_returns_none(self) -> None:
+        sec = _oracle_section(demand=40)
+        rooms = [_oracle_room(capacity=60)]
+        assert check_capacity_feasibility(sec, rooms, 1.1) is None
+
+
+@pytest.mark.usefixtures("oracle_on")
+class TestOracleOccupancy:
+    def test_all_eligible_rooms_busy_returns_room_occupied(self) -> None:
+        sec = _oracle_section(demand=30)
+        rooms = [_oracle_room(room_code="R1", capacity=60)]
+        failure = check_occupancy(sec, rooms, {"R1"})
+        assert failure is not None
+        assert failure.code == ROOM_OCCUPIED
+
+    def test_free_room_exists_returns_none(self) -> None:
+        sec = _oracle_section(demand=30)
+        rooms = [_oracle_room(room_code="R1", capacity=60)]
+        assert check_occupancy(sec, rooms, set()) is None
+
+    def test_no_eligible_room_returns_none(self) -> None:
+        """When the eligible pool is empty (e.g. no room of the right
+        type), occupancy helper returns None — that's a Stage 1 miss,
+        not an occupancy miss. Keeps the two distinguishable."""
+        sec = _oracle_section(room_type_required="lab")
+        rooms = [_oracle_room(room_type="lecture")]
+        assert check_occupancy(sec, rooms, set()) is None
+
+
+@pytest.mark.usefixtures("oracle_on")
+class TestOracleBufferFit:
+    def test_fits_raw_fails_buffer_returns_buffer_reject(self) -> None:
+        sec = _oracle_section(demand=40)
+        room = _oracle_room(capacity=42)  # fits 40, fails 40*1.1=44
+        failure = check_buffer_fit(sec, room, 1.1)
+        assert failure is not None
+        assert failure.code == ROOM_BUFFER_REJECT
+
+    def test_fits_buffered_returns_none(self) -> None:
+        sec = _oracle_section(demand=40)
+        room = _oracle_room(capacity=60)
+        assert check_buffer_fit(sec, room, 1.1) is None
+
+    def test_fails_raw_returns_none(self) -> None:
+        """Below raw demand isn't a buffer problem — it's NO_ROOM_CAPACITY."""
+        sec = _oracle_section(demand=40)
+        room = _oracle_room(capacity=30)
+        assert check_buffer_fit(sec, room, 1.1) is None
+
+
+@pytest.mark.usefixtures("oracle_on")
+class TestOracleHeuristicMatch:
+    def test_2cr_100min_mismatch_emits_observation_with_context(self) -> None:
+        """A 100-minute 2-credit meeting. Rooming's
+        ``duration > 80 AND cr == 4`` says NOT-lab; autoplace's
+        duration-only cut says LAB. PR2 surfaces the divergence."""
+        sec = _oracle_section(duration_minutes=100, credit_rating=2)
+        failure = check_heuristic_match(sec, [])
+        assert failure is not None
+        assert failure.code == ROOM_HEURISTIC_MISMATCH
+        assert failure.context is not None
+        assert failure.context["is_lab_by_rooming_heuristic"] is False
+        assert failure.context["is_lab_by_autoplace_heuristic"] is True
+
+    def test_4cr_100min_agreement_returns_none(self) -> None:
+        """4-credit 100-min meeting: both heuristics say LAB, no mismatch."""
+        sec = _oracle_section(duration_minutes=100, credit_rating=4)
+        assert check_heuristic_match(sec, []) is None
+
+
+# ===========================================================================
+# COMMIT 4 — Site 3 wiring: refinement chain + buffer_only_rejects counter.
+# ===========================================================================
+
+
+@pytest.mark.usefixtures("oracle_on")
+@pytest.mark.django_db
+class TestSite3RefinementUnderFlagOn:
+    """End-to-end: with the oracle flag on, ``assign_rooms_to_board``
+    emits refined reason codes from the new Stage 1/2 helpers."""
+
+    def test_wrong_gender_surfaces_no_room_gender(self) -> None:
+        """One course needing gender M, one F-only room → NO_ROOM_GENDER."""
+        _, board = TestSiteRoomingUnassigned()._build_one_course_one_room_scenario(
+            room_capacity=60,
+            section_demand=40,
+            section_code="M1",
+            room_gender="F",
+        )
+        result = assign_rooms_to_board(board.id)
+        assert result["unplaced_count"] == 1
+        assert result["room_failures"][0]["reason"] == NO_ROOM_GENDER
+
+    def test_buffer_only_rejection_surfaces_room_buffer_reject(self) -> None:
+        """Room capacity 42, section demand 40, buffer 1.1 (→ needs 44).
+        Tracker None because buffered 44 > 42, but raw 40 ≤ 42 ⇒
+        ROOM_BUFFER_REJECT plus the authoritative counter bumps."""
+        _, board = TestSiteRoomingUnassigned()._build_one_course_one_room_scenario(
+            room_capacity=42,
+            section_demand=40,
+        )
+        result = assign_rooms_to_board(board.id)
+        assert result["unplaced_count"] == 1
+        assert result["room_failures"][0]["reason"] == ROOM_BUFFER_REJECT
+        assert result["buffer_only_rejects"] == 1
+        # Legacy counter must still fire too — ChatGPT's instruction
+        # is to keep both for one cycle.
+        assert result["lecture_room_reject_due_to_buffer_count"] == 1
+
+    def test_capacity_short_still_surfaces_no_room_capacity(self) -> None:
+        """Raw demand > room capacity → neither buffer nor gender nor
+        type explains it; Stage 1 defaults to NO_ROOM_CAPACITY.
+        Commit-3 parity test is re-run under flag-on to prove the
+        default path still wins when no refinement applies."""
+        _, board = TestSiteRoomingUnassigned()._build_one_course_one_room_scenario(
+            room_capacity=10,
+            section_demand=40,
+        )
+        result = assign_rooms_to_board(board.id)
+        assert result["unplaced_count"] == 1
+        assert result["room_failures"][0]["reason"] == NO_ROOM_CAPACITY
+        assert result["buffer_only_rejects"] == 0
+
+
+# ===========================================================================
+# COMMIT 4 — Site 4 wiring: type mismatch + occupancy detection.
+# ===========================================================================
+
+
+@pytest.mark.usefixtures("oracle_on")
+class TestSite4RefinementUnderFlagOn:
+    """End-to-end: with the oracle flag on, ``try_repair_rooms_locally``
+    emits refined reason codes into ``failures_out``."""
+
+    def _snap(self, section_id: str, meetings: list[SectionMeeting]) -> MoveSnapshot:
+        return MoveSnapshot(
+            snapshots=[
+                SectionGridSnapshot(
+                    section_id=section_id,
+                    old_pattern_id="",
+                    old_meetings=list(meetings),
+                    old_room_id=None,
+                )
+            ]
+        )
+
+    def test_wrong_type_room_pool_surfaces_no_room_type(self) -> None:
+        """Section needs a lecture; the only room is a lab → NO_ROOM_TYPE."""
+        meetings_a = [_meeting(0, 8 * 60, 9 * 60 + 15)]
+        sec = _section("secA", "COURSE_A", meetings_a)
+        room = RoomProfile(room_id="R1", capacity=60, room_type="lab", gender="")
+        rooms_by_id = {"R1": room}
+        room_occupancies = {"R1": RoomOccupancy(room_id="R1")}
+        snap = self._snap("secA", meetings_a)
+
+        failures_out: list[dict] = []
+        result = try_repair_rooms_locally(
+            snap,
+            {"secA": sec},
+            rooms_by_id,
+            room_occupancies,
+            {},
+            failures_out=failures_out,
+        )
+
+        assert result is False
+        assert len(failures_out) == 1
+        assert failures_out[0]["reason"] == NO_ROOM_TYPE
+
+    def test_empty_room_pool_surfaces_no_room_type(self) -> None:
+        """Zero rooms in the pool ⇒ the Stage 1 type helper wins
+        (nothing in ``rooms`` matches the required type, by vacuity).
+        This is the flag-on replacement of commit 3's silent
+        NO_ROOM_CAPACITY default for the empty-rooms input."""
+        meetings_a = [_meeting(0, 8 * 60, 9 * 60 + 15)]
+        sec = _section("secA", "COURSE_A", meetings_a)
+        snap = self._snap("secA", meetings_a)
+
+        failures_out: list[dict] = []
+        result = try_repair_rooms_locally(
+            snap, {"secA": sec}, {}, {}, {}, failures_out=failures_out
+        )
+
+        assert result is False
+        assert failures_out[0]["reason"] == NO_ROOM_TYPE
