@@ -205,18 +205,30 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
 .tws-pane .pane-hd .gtab.on { background: var(--teal); color: #fff; }
 .tws-pane .pane-hd .gtab .cx { font-size: 9px; opacity: 0.8; font-weight: 500; }
 .tws-pane .pane-hd .gtab .clash-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--tws-c-critical); box-shadow: 0 0 5px var(--tws-c-critical); }
+/* IMPORTANT: global.css defines a .kpi class for dashboard tiles with
+   border + padding + gradient bg. Null it out here with !important so
+   our inline chips render as plain text like the mockup. */
 .tws-pane .pane-hd .kpi {
   font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 10px; color: var(--t4);
   text-transform: uppercase; letter-spacing: 0.04em;
+  border: 0 !important; background: transparent !important;
+  padding: 0 !important; border-radius: 0 !important;
+  display: inline-flex; gap: 4px; align-items: center;
 }
 .tws-pane .pane-hd .kpi b { color: var(--ink); font-weight: 700; }
-.tws-pane .pane-hd .kpi b.warn { color: #F06060; }
-.tws-pane .pane-hd .ri { margin-inline-start: auto; display: inline-flex; gap: 4px; }
-.tws-pane .pane-hd .ri button {
-  border: 1px solid var(--line); background: transparent; color: var(--t3); padding: 2px 7px;
-  border-radius: 4px; cursor: pointer; font-size: 11px; font-family: inherit;
+.tws-pane .pane-hd .kpi b.warn { color: var(--tws-c-critical); }
+.tws-pane .pane-hd .kpi.clean b { color: var(--teal-bright, #2EC9A0); }
+/* Group KPIs together, pushed to the end, then the icons block */
+.tws-pane .pane-hd .kpis { display: inline-flex; gap: 6px; align-items: center; margin-inline-start: auto; }
+/* Mockup icons: borderless, hover-lift — no default browser button border */
+.tws-pane .pane-hd .icons { display: inline-flex; gap: 4px; }
+.tws-pane .pane-hd .icons button {
+  border: 0 !important; background: transparent !important; color: var(--t4);
+  cursor: pointer; padding: 2px 5px; border-radius: 4px;
+  font-size: 13px; font-family: inherit; line-height: 1;
+  box-shadow: none !important;
 }
-.tws-pane .pane-hd .ri button:hover { color: var(--ink); border-color: var(--teal); }
+.tws-pane .pane-hd .icons button:hover { background: rgba(255,255,255,0.06) !important; color: var(--ink); }
 
 .tws-pane .pane-body {
   flex: 1; display: flex; flex-direction: column; gap: 4px; padding: 6px 8px 4px;
@@ -997,5 +1009,5 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
   const DEFAULT_YEAR = {{ default_year|default:'null' }};
   const DEFAULT_TERM = {{ default_term|default:'null' }};
 </script>
-<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=26"></script>
+<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=28"></script>
 {% endblock %}

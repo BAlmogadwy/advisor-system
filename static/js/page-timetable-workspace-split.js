@@ -362,9 +362,9 @@ function renderPaneEmpty(idx) {
   if (!el) return;
   el.innerHTML = `
     <div class="pane-hd">
-      <span class="dot"></span>
-      <span class="term-name">—</span>
-      <span class="ri">
+      <span class="term-pick"><span class="caret">▾</span></span>
+      <span class="kpis"></span>
+      <span class="icons">
         <button data-action="reload" title="Reload">↻</button>
         <button data-action="maximise" title="Maximise">⤢</button>
       </span>
@@ -422,7 +422,7 @@ function renderPane(idx) {
     );
     return `
       <span class="gtab${gi === p.group ? ' on' : ''}" data-group="${gi}">
-        G${gi + 1} <span class="cx">${courses}c${stu ? ' · ' + stu + 'st' : ''}</span>${groupHasClash[gi] ? '<span class="clash-dot"></span>' : ''}
+        G${gi + 1} <span class="cx">${courses}c${stu ? ' · ' + stu + ' st' : ''}</span>${groupHasClash[gi] ? '<span class="clash-dot"></span>' : ''}
       </span>
     `;
   }).join('');
