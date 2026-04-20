@@ -360,3 +360,138 @@ class TestTypedRejectionCodes(TransactionTestCase):
         }
         assert INSTRUCTOR_CLASH in known
         assert STUDENT_CONFLICT in known
+
+
+# ===========================================================================
+# SECTION C — V2 optimiser preservation tripwires (turn green at commit 4).
+#
+# Per ChatGPT commit-4 rulings J3/K3/L2/M-upstream/N:
+#
+# - J3: V2 does not mutate or invent trace entries; it only preserves
+#   the cold-start (greedy) trace through the optimiser pipeline.
+# - K3: accepted local-search moves DO NOT update chosen_* fields or
+#   synthesise alternatives — the trace remains a faithful picture of
+#   the greedy placement that V2 started from, not its output.
+# - L2: no new rejection codes for tried-and-rejected local-search
+#   moves (those are soft-score internals, not planner-facing).
+# - M: wiring lives at the upstream boundary (``auto_place_scenario``
+#   return → ``optimise_scenario_timetable_v2`` result), not deep
+#   inside ``diagnostic_driven_local_search``.
+# - N: this commit ships preservation + tripwires only; no fixture-
+#   based V2 end-to-end trace semantics yet.
+#
+# The tests below enforce the one invariant commit 4 promises: the V2
+# path never wipes or drops ``decision_trace``. Error paths still emit
+# the key with value ``{}`` for schema stability; the happy path
+# preserves the scenario-level merge from ``auto_place_scenario``.
+# ===========================================================================
+
+
+class TestV2DecisionTracePreservation(SimpleTestCase):
+    """Commit-4 tripwires for the V2 optimiser path.
+
+    These are dependency-free: they use ``unittest.mock.patch`` to stub
+    the expensive V2 stages (candidate generation, student profiles,
+    CP-SAT) and assert only the preservation contract. A full end-to-end
+    V2 trace test belongs in commit 5/6 when warm-start fixtures land.
+    """
+
+    def test_v2_no_student_profiles_still_emits_empty_trace(self) -> None:
+        """Error path: missing student profiles → ``decision_trace={}``
+        must still be present. Guards against a regression where an
+        early-return branch drops the schema-stability key."""
+        from unittest.mock import patch
+
+        from core.services.timetable_optimizer_v2 import optimise_scenario_timetable_v2
+
+        with (
+            patch(
+                "core.services.timetable_optimizer_v2.build_student_profiles_for_scenario",
+                return_value={},
+            ),
+            patch(
+                "core.services.timetable_optimizer_v2.build_course_rigidity_for_scenario",
+                return_value={},
+            ),
+        ):
+            result = optimise_scenario_timetable_v2(scenario_id=999_999)
+
+        assert "decision_trace" in result
+        assert result["decision_trace"] == {}
+        assert "error" in result
+
+    def test_v2_no_candidates_still_emits_empty_trace(self) -> None:
+        """Error path: no candidates generated → ``decision_trace={}``
+        remains in the payload."""
+        from unittest.mock import patch
+
+        from core.services.timetable_optimizer_v2 import optimise_scenario_timetable_v2
+
+        stub_profiles = {"STU1": object()}
+        with (
+            patch(
+                "core.services.timetable_optimizer_v2.build_student_profiles_for_scenario",
+                return_value=stub_profiles,
+            ),
+            patch(
+                "core.services.timetable_optimizer_v2.build_course_rigidity_for_scenario",
+                return_value={},
+            ),
+            patch(
+                "core.services.timetable_optimizer_v2._generate_candidates_for_scenario",
+                return_value=[],
+            ),
+        ):
+            result = optimise_scenario_timetable_v2(scenario_id=999_999)
+
+        assert "decision_trace" in result
+        assert result["decision_trace"] == {}
+        assert "error" in result
+
+    def test_optimise_current_missing_profiles_emits_empty_trace(self) -> None:
+        """The sibling entry point ``optimise_current_timetable`` doesn't
+        call ``auto_place_scenario`` — its trace is always empty — but it
+        must still ship the key for payload shape stability."""
+        from unittest.mock import patch
+
+        from core.services.timetable_optimizer_v2 import optimise_current_timetable
+
+        with (
+            patch(
+                "core.services.timetable_optimizer_v2.build_student_profiles_for_scenario",
+                return_value={},
+            ),
+            patch(
+                "core.services.timetable_optimizer_v2.build_course_rigidity_for_scenario",
+                return_value={},
+            ),
+        ):
+            result = optimise_current_timetable(scenario_id=999_999)
+
+        assert "decision_trace" in result
+        assert result["decision_trace"] == {}
+
+
+class TestAutoPlaceScenarioMergesPerBoardTraces(TransactionTestCase):
+    """``auto_place_scenario`` must surface a scenario-level merged trace
+    so V2 (and any downstream consumer) can see all per-section traces
+    at the top level without walking per-board buckets."""
+
+    def test_default_strategy_merges_per_board_traces(self) -> None:
+        """Load a PR3 fixture, call ``auto_place_scenario`` with the
+        default strategy, assert top-level ``decision_trace`` equals the
+        merge of every board's trace."""
+        from core.services.timetable_autoplace import auto_place_scenario
+
+        scenario, _, _ = load_pr3_fixture("pr3_cold_start_trace.json")
+        result = auto_place_scenario(scenario.id)
+
+        assert "decision_trace" in result
+        assert isinstance(result["decision_trace"], dict)
+
+        expected: dict[str, dict] = {}
+        for board_result in result["boards"].values():
+            expected.update(board_result.get("decision_trace", {}))
+
+        assert result["decision_trace"] == expected
+        assert len(result["decision_trace"]) >= 1

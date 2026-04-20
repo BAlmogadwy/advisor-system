@@ -635,7 +635,11 @@ def optimise_scenario_timetable_v2(
     course_rigidity = build_course_rigidity_for_scenario(scenario_id)
 
     if not student_profiles:
-        return {"error": "No student profiles found for scenario", "candidates_evaluated": 0}
+        return {
+            "error": "No student profiles found for scenario",
+            "candidates_evaluated": 0,
+            "decision_trace": {},
+        }
 
     t1 = time.time()
     logger.info("Profiles built in %.1fs (%d students)", t1 - t0, len(student_profiles))
@@ -643,7 +647,11 @@ def optimise_scenario_timetable_v2(
     # ── Step 2: Generate candidates with multiple strategies ──
     candidates = _generate_candidates_for_scenario(scenario_id, strategies)
     if not candidates:
-        return {"error": "No candidates generated", "candidates_evaluated": 0}
+        return {
+            "error": "No candidates generated",
+            "candidates_evaluated": 0,
+            "decision_trace": {},
+        }
 
     t2 = time.time()
     logger.info("Generated %d candidates in %.1fs", len(candidates), t2 - t1)
@@ -682,6 +690,13 @@ def optimise_scenario_timetable_v2(
         "all_scores": [
             {"id": r.candidate_id, "score": list(r.lexicographic_score)} for r in ranked
         ],
+        # PR3 commit 4 — decision_trace preservation across V2 pipeline.
+        # Populated from the greedy re-placement at step 5; carried through
+        # the optimiser unchanged. Per commit-4 rulings J3/K3/L2, V2 local
+        # search / chain search / CP-SAT polish do NOT update the trace
+        # (chosen_* fields reflect the cold-start placement, not post-LS
+        # moves). Schema-stability: the key is always present.
+        "decision_trace": {},
     }
 
     # ── Step 4: Local search on the best candidate ──
@@ -863,7 +878,11 @@ def optimise_scenario_timetable_v2(
     SectionPlacement.objects.filter(board__scenario_id=scenario_id).delete()
     from core.services.timetable_autoplace import auto_place_scenario
 
-    auto_place_scenario(scenario_id, strategy=winning_strategy)
+    scenario_place_result = auto_place_scenario(scenario_id, strategy=winning_strategy)
+    # PR3 commit 4: capture the scenario-level greedy trace. Per commit-4
+    # ruling J3 we preserve this cold-start trace through the remaining V2
+    # pipeline unchanged; LS / chain / CP-SAT do not mutate it.
+    result["decision_trace"] = scenario_place_result.get("decision_trace", {})
 
     # Then: if local search improved the timetable, apply those
     # improvements on top of the baseline placements
@@ -942,12 +961,20 @@ def optimise_current_timetable(
     course_rigidity = build_course_rigidity_for_scenario(scenario_id)
 
     if not student_profiles:
-        return {"error": "No student profiles found for scenario", "candidates_evaluated": 0}
+        return {
+            "error": "No student profiles found for scenario",
+            "candidates_evaluated": 0,
+            "decision_trace": {},
+        }
 
     # ── Step 2: Read current placements as-is ──
     sections = build_section_states_for_scenario(scenario_id)
     if not sections:
-        return {"error": "No placements found — nothing to optimise", "candidates_evaluated": 0}
+        return {
+            "error": "No placements found — nothing to optimise",
+            "candidates_evaluated": 0,
+            "decision_trace": {},
+        }
 
     from core.services import timetable_student_assignment as ssa
 
@@ -985,6 +1012,10 @@ def optimise_current_timetable(
         "total_students": len(student_profiles),
         "local_search_applied": False,
         "persist_result": None,
+        # PR3 commit 4: "Optimise Current" works off existing DB placements
+        # and never calls auto_place_scenario, so no greedy trace is
+        # captured in this path. Key included for schema stability.
+        "decision_trace": {},
     }
 
     # ── Step 3: Local search on current state ──

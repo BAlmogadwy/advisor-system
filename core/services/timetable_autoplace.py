@@ -1695,7 +1695,13 @@ def _adaptive_scenario(scenario_id: int) -> dict:
 
 
 def _build_scenario_result(scenario_id: int) -> dict:
-    """Build a result dict from the current DB state of a scenario."""
+    """Build a result dict from the current DB state of a scenario.
+
+    ``decision_trace`` is always emitted as an empty dict on this path
+    because this builder reconstructs the result from DB state alone,
+    after in-memory traces from the original placement calls have been
+    discarded. PR3 schema-stability clause: the key is always present.
+    """
     boards = DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order")
     results = {}
     total_placed = 0
@@ -1706,9 +1712,32 @@ def _build_scenario_result(scenario_id: int) -> dict:
             .distinct()
             .count()
         )
-        results[board.label] = {"placed": placed, "skipped": 0}
+        results[board.label] = {"placed": placed, "skipped": 0, "decision_trace": {}}
         total_placed += placed
-    return {"boards": results, "total_placed": total_placed, "total_skipped": 0}
+    return {
+        "boards": results,
+        "total_placed": total_placed,
+        "total_skipped": 0,
+        "decision_trace": {},
+    }
+
+
+def _merge_board_decision_traces(boards_result: dict) -> dict:
+    """Merge per-board ``decision_trace`` dicts into a scenario-level dict.
+
+    Used by every path through ``auto_place_scenario`` so the top-level
+    return payload always carries a merged trace (PR3 schema stability).
+    Section codes are scoped ``<course>|<section>`` and are unique across
+    boards within a scenario, so flat-merging via ``dict.update`` is
+    loss-free — if a duplicate ever appeared it would indicate a
+    scenario-level invariant violation elsewhere.
+    """
+    merged: dict[str, dict] = {}
+    for board_result in boards_result.values():
+        trace = board_result.get("decision_trace", {})
+        if trace:
+            merged.update(trace)
+    return merged
 
 
 def auto_place_scenario(scenario_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
@@ -1726,12 +1755,16 @@ def auto_place_scenario(scenario_id: int, strategy: str = DEFAULT_STRATEGY) -> d
     -------
     dict
         ``{"boards": {label: board_result, ...}, "total_placed": int,
-        "total_skipped": int}`` where each *board_result* has the same
-        shape as the return value of ``auto_place_board``.
+        "total_skipped": int, "decision_trace": {...}}`` where each
+        *board_result* has the same shape as the return value of
+        ``auto_place_board``. ``decision_trace`` is the scenario-level
+        merge of every board's per-section traces (PR3 commit 4).
     """
     # Adaptive: greedy baseline → CP-SAT improvement → local search polish
     if strategy == "adaptive":
-        return _adaptive_scenario(scenario_id)
+        result = _adaptive_scenario(scenario_id)
+        result.setdefault("decision_trace", _merge_board_decision_traces(result.get("boards", {})))
+        return result
 
     # Use CP-SAT solver for "optimal" strategy — per-board fallback to compact
     if strategy == "optimal":
@@ -1754,6 +1787,11 @@ def auto_place_scenario(scenario_id: int, strategy: str = DEFAULT_STRATEGY) -> d
             boards_result[board.label] = r
             result["total_placed"] = result.get("total_placed", 0) + r["placed"]
 
+        # PR3 commit 4: surface per-board traces at the scenario level. For
+        # CP-SAT-placed boards there is no trace (solver is silent on
+        # rejected alternatives); for compact-fallback boards we keep the
+        # greedy trace.
+        result["decision_trace"] = _merge_board_decision_traces(boards_result)
         return result
 
     # Load-balanced: greedy build + redistribution
@@ -1797,4 +1835,5 @@ def auto_place_scenario(scenario_id: int, strategy: str = DEFAULT_STRATEGY) -> d
         "boards": results,
         "total_placed": total_placed,
         "total_skipped": total_skipped,
+        "decision_trace": _merge_board_decision_traces(results),
     }
