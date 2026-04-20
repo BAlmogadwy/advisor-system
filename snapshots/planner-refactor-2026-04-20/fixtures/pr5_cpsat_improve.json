@@ -1,0 +1,28 @@
+{
+  "description": "PR5 — CP-SAT polisher improves the objective. Small scenario (3 sections, 2 slots, 2 rooms) engineered so greedy leaves a suboptimal spacing and CP-SAT's joint optimisation strictly improves by re-placing at least one section.",
+  "scenario": {
+    "sections": [
+      {"course_code": "CS101", "section_code": "S1", "enrolment": 20, "instructor_id": "I1"},
+      {"course_code": "CS102", "section_code": "S1", "enrolment": 20, "instructor_id": "I2"},
+      {"course_code": "CS103", "section_code": "S1", "enrolment": 20, "instructor_id": "I3"}
+    ],
+    "slot_pool": [
+      {"day": "Sun", "start_time": "08:00", "end_time": "09:15"},
+      {"day": "Sun", "start_time": "09:30", "end_time": "10:45"},
+      {"day": "Mon", "start_time": "08:00", "end_time": "09:15"}
+    ],
+    "rooms": [
+      {"room_code": "A101", "capacity": 40, "room_type": "lecture", "gender": ""},
+      {"room_code": "A102", "capacity": 40, "room_type": "lecture", "gender": ""}
+    ]
+  },
+  "expected": {
+    "cpsat_improved_entries_gte": 1,
+    "stage_origin_cpsat_present": true,
+    "previous_slot_populated": true
+  },
+  "notes": [
+    "Tests: tests/test_pr5_decision_trace.py::TestCPSATImprovementEmission",
+    "Commit 4 lands CP-SAT trace emission."
+  ]
+}

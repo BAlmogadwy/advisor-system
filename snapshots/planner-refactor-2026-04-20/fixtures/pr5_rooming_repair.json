@@ -1,0 +1,29 @@
+{
+  "description": "PR5 — rooming 2nd-pass reassigns an UNASSIGNED. First pass cannot fit section in available rooms at the capacity buffer; a larger room exists but the pass missed it; 2nd pass repairs. Asserts ROOMING_REPAIR_REASSIGNED emission.",
+  "scenario": {
+    "sections": [
+      {"course_code": "CS101", "section_code": "S1", "enrolment": 35, "instructor_id": "I1"}
+    ],
+    "slot_pool": [
+      {"day": "Sun", "start_time": "08:00", "end_time": "09:15"}
+    ],
+    "rooms": [
+      {"room_code": "TIGHT", "capacity": 35, "room_type": "lecture", "gender": ""},
+      {"room_code": "ROOMY", "capacity": 60, "room_type": "lecture", "gender": ""}
+    ],
+    "baseline_placements": {
+      "CS101|S1": {"day": "Sun", "start_time": "08:00", "end_time": "09:15", "room": "UNASSIGNED"}
+    }
+  },
+  "expected": {
+    "rooming_repair_entries_gte": 1,
+    "stage_origin_rooming_repair_present": true,
+    "previous_room_is_unassigned": true
+  },
+  "notes": [
+    "Tests: tests/test_pr5_decision_trace.py::TestRoomingRepairEmission",
+    "Demand 35, TIGHT room at raw cap 35 is rejected by the 1.1 buffer (needs 39).",
+    "ROOMY cap 60 fits. 2nd pass picks up ROOMY and repairs UNASSIGNED.",
+    "Commit 6 lands rooming-repair trace emission."
+  ]
+}

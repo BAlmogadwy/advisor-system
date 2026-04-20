@@ -1,0 +1,27 @@
+{
+  "description": "PR5 — chain-search rotates 3 sections. Engineered 3-cycle where no single swap improves but a 3-rotation does. Greedy leaves every section in a locally optimal spot; chain-search rotates them.",
+  "scenario": {
+    "sections": [
+      {"course_code": "CS101", "section_code": "S1", "enrolment": 20, "instructor_id": "I1"},
+      {"course_code": "CS102", "section_code": "S1", "enrolment": 20, "instructor_id": "I2"},
+      {"course_code": "CS103", "section_code": "S1", "enrolment": 20, "instructor_id": "I3"}
+    ],
+    "slot_pool": [
+      {"day": "Sun", "start_time": "08:00", "end_time": "09:15"},
+      {"day": "Mon", "start_time": "08:00", "end_time": "09:15"},
+      {"day": "Tue", "start_time": "08:00", "end_time": "09:15"}
+    ],
+    "rooms": [
+      {"room_code": "A101", "capacity": 40, "room_type": "lecture", "gender": ""}
+    ]
+  },
+  "expected": {
+    "chain_rotated_entries_gte": 1,
+    "stage_origin_chain_present": true,
+    "min_chain_length": 2
+  },
+  "notes": [
+    "Tests: tests/test_pr5_decision_trace.py::TestChainRotationEmission",
+    "Commit 5 lands chain-search trace emission."
+  ]
+}
