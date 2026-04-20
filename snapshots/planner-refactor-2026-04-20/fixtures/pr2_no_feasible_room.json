@@ -1,0 +1,36 @@
+{
+  "description": "PR2 scenario #5 — no feasible room anywhere. A 200-student section is required but no room in the entire pool has enough capacity even before buffer is applied. Expected reason: NO_ROOM_CAPACITY.",
+  "reason_code": "NO_ROOM_CAPACITY",
+  "scenario": {
+    "section": {
+      "course_code": "BIG101",
+      "section_code": "S1",
+      "enrolment": 200,
+      "day": "Sun",
+      "start_time": "08:00",
+      "end_time": "09:15",
+      "gender": "M",
+      "required_type": "lecture",
+      "credit_rating": 3
+    },
+    "rooms": [
+      {"room_code": "A101", "capacity": 30, "room_type": "lecture", "gender": "M"},
+      {"room_code": "A102", "capacity": 40, "room_type": "lecture", "gender": "M"}
+    ],
+    "occupancy_at_slot": [],
+    "capacity_buffer": 1.1
+  },
+  "expected": {
+    "reason_code": "NO_ROOM_CAPACITY",
+    "context": {
+      "needed": 220,
+      "best_capacity": 40
+    },
+    "unplaced_count": 1
+  },
+  "notes": [
+    "Tests: tests/test_pr2_room_oracle.py::TestOracleScenarios::test_05_no_feasible_room_at_all_emits_no_room_capacity",
+    "This is the 'real' capacity shortage — no amount of slot reshuffling helps because no room is big enough. Distinct from ROOM_OCCUPIED (slot-level) and ROOM_BUFFER_REJECT (just the buffer margin).",
+    "Today the autoplace scorer returns best_option=None (site 1) or falls through to site 2; no room-size reason is captured. PR2 surfaces it as NO_ROOM_CAPACITY with the needed/best_capacity context so registrars can see 'biggest room is 40 but you need 220 with buffer'."
+  ]
+}

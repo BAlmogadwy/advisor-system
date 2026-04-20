@@ -1,0 +1,36 @@
+{
+  "description": "PR2 scenario #1 — buffer-only reject. A section of 30 students has exactly one candidate room of capacity 32; with the default capacity_buffer=1.1 the planner needs 33 seats (ceil(30 * 1.1)). The single room fails ONLY the buffer gate — raw capacity (32) is enough. Expected reason: ROOM_BUFFER_REJECT.",
+  "reason_code": "ROOM_BUFFER_REJECT",
+  "scenario": {
+    "section": {
+      "course_code": "CS101",
+      "section_code": "S1",
+      "enrolment": 30,
+      "day": "Sun",
+      "start_time": "08:00",
+      "end_time": "09:15",
+      "gender": "M",
+      "required_type": "lecture",
+      "credit_rating": 3
+    },
+    "rooms": [
+      {"room_code": "A101", "capacity": 32, "room_type": "lecture", "gender": "M"}
+    ],
+    "occupancy_at_slot": [],
+    "capacity_buffer": 1.1
+  },
+  "expected": {
+    "reason_code": "ROOM_BUFFER_REJECT",
+    "context": {
+      "needed": 33,
+      "best_capacity": 32,
+      "buffer": 1.1
+    },
+    "unplaced_count": 1,
+    "buffer_only_rejects": 1
+  },
+  "notes": [
+    "Tests: tests/test_pr2_room_oracle.py::TestOracleScenarios::test_01_fits_raw_but_fails_buffer_emits_buffer_reject",
+    "Site coverage: commit 3 swap at rooming.py:324 emits ROOM_BUFFER_REJECT through this path (the existing lecture_room_reject_due_to_buffer_count counter becomes the new buffer_only_rejects field)."
+  ]
+}

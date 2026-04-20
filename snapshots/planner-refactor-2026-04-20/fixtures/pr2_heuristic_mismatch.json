@@ -1,0 +1,41 @@
+{
+  "description": "PR2 scenario #7 — heuristic mismatch (observational). A 2-credit meeting that runs 100 minutes (08:00 → 09:40). timetable_rooming.py:305 classifies rooms as lab when 'duration > 80 and cr == 4'; this section has cr == 2 (not 4) so the guard lets it proceed — but timetable_autoplace.py:1008/1131 use is_lab_course + duration > 80 which would classify it differently. The oracle observes the divergence and emits ROOM_HEURISTIC_MISMATCH with context identifying which dimensions diverged. PR2 does NOT change the placement — it only surfaces the mismatch count so a future PR can retire the heuristic with measured impact data.",
+  "reason_code": "ROOM_HEURISTIC_MISMATCH",
+  "scenario": {
+    "section": {
+      "course_code": "CS105",
+      "section_code": "S1",
+      "enrolment": 20,
+      "day": "Sun",
+      "start_time": "08:00",
+      "end_time": "09:40",
+      "duration_minutes": 100,
+      "gender": "M",
+      "required_type": "lecture",
+      "credit_rating": 2
+    },
+    "rooms": [
+      {"room_code": "A101", "capacity": 40, "room_type": "lecture", "gender": "M"}
+    ],
+    "occupancy_at_slot": [],
+    "capacity_buffer": 1.1
+  },
+  "expected": {
+    "reason_code": "ROOM_HEURISTIC_MISMATCH",
+    "context": {
+      "duration_minutes": 100,
+      "credit_rating": 2,
+      "heuristic_cr_threshold": 4,
+      "heuristic_duration_threshold": 80,
+      "is_lab_by_rooming_heuristic": false,
+      "is_lab_by_autoplace_heuristic": true
+    },
+    "placement_changes": "none — observation only",
+    "heuristic_mismatch_count": 1
+  },
+  "notes": [
+    "Tests: tests/test_pr2_room_oracle.py::TestOracleScenarios::test_07_heuristic_mismatch_emits_room_heuristic_mismatch",
+    "This reason code is the keystone of the PR2 'surface not replace' philosophy: the heuristic stays in place (rooming and autoplace keep their own divergent flavours) and PR2 just *measures* how often the two disagree. Once the measured rate is available in production, a later PR can replace the heuristic with a proper room-type resolver informed by real data.",
+    "Observation only — unlike the other six reasons, this fires even on a successfully-placed section."
+  ]
+}
