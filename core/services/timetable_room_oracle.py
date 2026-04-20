@@ -489,3 +489,40 @@ def check_heuristic_match(
         "is_lab_by_autoplace_heuristic": is_lab_by_autoplace,
     }
     return _failure(ROOM_HEURISTIC_MISMATCH, section, context=context)
+
+
+# ---------------------------------------------------------------------------
+# Payload aggregation.
+#
+# Commit 5 — per ChatGPT's ruling on the payload surface: the existing
+# ``room_failures`` list (established in commit 3) stays stable; a
+# companion ``room_failure_breakdown`` dict is emitted for counter-style
+# consumers (KPI tiles, the report_room_failures management command).
+# The breakdown carries only *observed* codes — an empty dict when
+# nothing failed — rather than six zeros for the full sentinel set.
+# ---------------------------------------------------------------------------
+
+
+def room_failure_breakdown(room_failures: Iterable[dict]) -> dict[str, int]:
+    """Bucket a ``room_failures`` list by reason code.
+
+    Input: the same list emitted as ``result["room_failures"]`` — a
+    sequence of ``RoomFailureReason.to_dict()`` dicts. Each dict must
+    carry a ``reason`` key (the typed reason-code sentinel).
+
+    Output: ``{code: count}`` — keys are the sentinel strings from this
+    module (``NO_ROOM_CAPACITY``, ``NO_ROOM_GENDER``, ``NO_ROOM_TYPE``,
+    ``ROOM_OCCUPIED``, ``ROOM_BUFFER_REJECT``, ``ROOM_HEURISTIC_MISMATCH``).
+    Only codes that appear at least once are present; an empty input
+    list yields an empty dict. Entries without a ``reason`` key are
+    skipped — they should not occur in a well-formed payload but the
+    helper stays tolerant so downstream consumers never crash on a
+    malformed record.
+    """
+    counts: dict[str, int] = {}
+    for record in room_failures:
+        code = record.get("reason") if isinstance(record, dict) else None
+        if not code:
+            continue
+        counts[code] = counts.get(code, 0) + 1
+    return counts

@@ -72,6 +72,7 @@ from core.services.timetable_room_oracle import (
     check_occupancy,
     check_type_feasibility,
     is_room_oracle_enabled,
+    room_failure_breakdown,
 )
 from core.services.timetable_validation import (
     LOCK_RESPECT,
@@ -634,6 +635,7 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
             "pr1_prayer_rejections": [],
             "pr1_lock_rejections": [],
             "room_failures": [],
+            "room_failure_breakdown": {},
             "unplaced_count": 0,
         }
 
@@ -791,6 +793,7 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
             "pr1_prayer_rejections": pr1_prayer_rejections,
             "pr1_lock_rejections": pr1_lock_rejections,
             "room_failures": [],
+            "room_failure_breakdown": {},
             "unplaced_count": 0,
         }
 
@@ -1319,6 +1322,7 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
         "pr1_prayer_rejections": pr1_prayer_rejections,
         "pr1_lock_rejections": pr1_lock_rejections,
         "room_failures": room_failures,
+        "room_failure_breakdown": room_failure_breakdown(room_failures),
         "unplaced_count": total_skipped,
     }
 

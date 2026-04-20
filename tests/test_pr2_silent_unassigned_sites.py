@@ -115,41 +115,217 @@ def _assert_every_unplaced_has_reason(result: dict) -> None:
 # ===========================================================================
 
 
+def _build_autoplace_fixture(
+    *,
+    program: str,
+    course_code: str,
+    room_type: str = "lecture",
+    room_count: int = 1,
+    room_capacity: int = 60,
+    room_gender: str = "M",
+    slot_config: list[dict] | None = None,
+    blocked_slots: list[dict] | None = None,
+    total_demand: int = 30,
+    planned_sections: int = 1,
+    credit_hours: int = 3,
+) -> tuple[TimetableScenario, DeliveryBoard]:
+    """Build a minimal but realistic autoplace fixture.
+
+    Commits 3 & 4 enumerated Site 1/2 but parked their acceptance tests
+    because the fixture needed scenario + budget + student map + rooms
+    wired together. Commit 5 is where that harness lands — see the
+    ``TestSiteAutoplaceBestOptionNone`` and
+    ``TestSiteAutoplaceUnassignedFallback`` tests below. This helper
+    keeps the two tests DRY without pulling in the exam-timetable or
+    PR1 fixtures (which carry unrelated state).
+    """
+    from core.models import Course, ProgrammeRequirement
+
+    scenario = TimetableScenario.objects.create(
+        academic_year="1448",
+        term="1",
+        name=f"PR2 autoplace fixture — {course_code}",
+        slot_config=slot_config or [],
+        blocked_slots=blocked_slots or [],
+    )
+    board = DeliveryBoard.objects.create(
+        scenario=scenario,
+        label=f"{program}_BD",
+        program=program,
+        display_order=1,
+    )
+    Course.objects.get_or_create(
+        course_code=course_code,
+        defaults={"credit_hours": credit_hours, "department": program},
+    )
+    ProgrammeRequirement.objects.get_or_create(
+        program=program,
+        course_code=course_code,
+        defaults={"programme_term": 1, "credit_hours": credit_hours},
+    )
+    ScenarioSectionBudget.objects.create(
+        scenario=scenario,
+        course_code=course_code,
+        department=program,
+        credit_hours=credit_hours,
+        planned_sections=planned_sections,
+        max_per_section=max(total_demand, 1),
+        total_demand=total_demand,
+    )
+    for i in range(room_count):
+        Room.objects.create(
+            room_code=f"{program}-R{i}",
+            capacity=room_capacity,
+            room_type=room_type,
+            department=program,
+            section=room_gender,
+        )
+    return scenario, board
+
+
+# ===========================================================================
+# SITE 1 — core/services/timetable_autoplace.py (best_option is None)
+#
+# Reachable path: every candidate option is filtered out before scoring.
+# The only live filter that produces this in auto_place_board is the
+# prayer-overlap rule — when its windows cover every configured slot,
+# the option loop ``continue``s every iteration, best_option stays None,
+# and the Site 1 emission path runs. Commit 4 wires the refinement chain
+# (type → gender → capacity) against the overall room pool; slot fields
+# stay empty strings because no option survived.
+# ===========================================================================
+
+
 @pytest.mark.django_db
 class TestSiteAutoplaceBestOptionNone:
-    """Site 1 — autoplace scoring returns None.
-
-    Commit 3 wires Site 1 to emit ``NO_ROOM_CAPACITY`` (default per PR2
-    DoR when the site can't distinguish a specific cause). Behavioural
-    assertion is parked until commit 5 when the full autoplace harness
-    (scenario + student map + budgets + overlap matrix) lands alongside
-    the management command.
-    """
+    """Site 1 — every option prayer-rejected → best_option None."""
 
     def test_skipped_sections_carry_reason_in_payload(self) -> None:
-        pytest.skip(
-            "Site 1 (autoplace.py best_option None) is wired in commit 3, "
-            "but the end-to-end acceptance harness (scenario + student map + "
-            "budgets + overlap matrix) lands alongside the management "
-            "command in commit 5. Parked until then."
+        """Prayer windows cover every weekday; scoring loop yields
+        nothing; Site 1 emits a typed reason into ``room_failures``."""
+        from core.services.timetable_autoplace import auto_place_board
+
+        # slot_config is day-independent (a list of start/end windows); the
+        # generator pairs each slot with every WEEKDAY. To starve the
+        # scoring loop of every option we need the prayer window to cover
+        # the single slot on every weekday (SUN/MON/TUE/WED/THU).
+        _, board = _build_autoplace_fixture(
+            program="PR2S1",
+            course_code="PR2S1_A",
+            slot_config=[{"start": "08:00", "end": "09:15"}],
+            credit_hours=1,
+            total_demand=30,
         )
+
+        whole_day_window = [
+            {"day": d, "start_time": "00:00", "end_time": "23:59"}
+            for d in ("SUN", "MON", "TUE", "WED", "THU")
+        ]
+        with override_settings(
+            TIMETABLE_ENFORCE_PRAYER_OVERLAP_RULE=True,
+            TIMETABLE_PRAYER_WINDOWS=whole_day_window,
+        ):
+            result = auto_place_board(board.id)
+
+        _assert_pr2_payload_shape(result)
+        assert "room_failure_breakdown" in result
+        assert result["unplaced_count"] >= 1
+        for f in result["room_failures"]:
+            assert f["reason"]
+            assert f["course_code"] == "PR2S1_A"
+
+    @pytest.mark.usefixtures("oracle_on")
+    def test_no_matching_room_type_surfaces_no_room_type(self) -> None:
+        """Flag-on: the overall room pool is lab-only but the 1-credit
+        section needs a lecture room — Site 1's type-feasibility helper
+        fires first and surfaces NO_ROOM_TYPE."""
+        from core.services.timetable_autoplace import auto_place_board
+
+        _, board = _build_autoplace_fixture(
+            program="PR2S1T",
+            course_code="PR2S1T_A",
+            room_type="lab",
+            slot_config=[{"start": "08:00", "end": "09:15"}],
+            credit_hours=1,
+            total_demand=30,
+        )
+
+        whole_day_window = [
+            {"day": d, "start_time": "00:00", "end_time": "23:59"}
+            for d in ("SUN", "MON", "TUE", "WED", "THU")
+        ]
+        with override_settings(
+            TIMETABLE_ENFORCE_PRAYER_OVERLAP_RULE=True,
+            TIMETABLE_PRAYER_WINDOWS=whole_day_window,
+        ):
+            result = auto_place_board(board.id)
+
+        assert result["unplaced_count"] >= 1
+        assert result["room_failures"][0]["reason"] == NO_ROOM_TYPE
+        assert result["room_failure_breakdown"].get(NO_ROOM_TYPE, 0) >= 1
 
 
 # ===========================================================================
 # SITE 2 — core/services/timetable_autoplace.py (UNASSIGNED fallback)
+#
+# Reachable path: scoring finds a best_option, but when the per-meeting
+# room assignment runs, tracker.assign_best_fit returns None because
+# the room pool doesn't match the required type. Commit 4 wires the
+# Stage 1/2 chain (type → gender → capacity → occupancy) per-meeting.
 # ===========================================================================
 
 
 @pytest.mark.django_db
 class TestSiteAutoplaceUnassignedFallback:
-    """Site 2 — autoplace sets assigned_room='UNASSIGNED' in fallback."""
+    """Site 2 — scoring succeeds but per-meeting tracker returns None."""
 
     def test_fallback_unassigned_emits_structured_reason(self) -> None:
-        pytest.skip(
-            "Site 2 (autoplace.py tracker None fallback) is wired in "
-            "commit 3; the end-to-end acceptance fixture lands in commit 5 "
-            "with the management command."
+        """Pool is all labs; scoring picks a slot (labs get room_penalty
+        but it's soft); per-meeting assignment fails → Site 2 emits a
+        typed reason per meeting."""
+        from core.services.timetable_autoplace import auto_place_board
+
+        _, board = _build_autoplace_fixture(
+            program="PR2S2",
+            course_code="PR2S2_A",
+            room_type="lab",
+            slot_config=[{"start": "08:00", "end": "09:15"}],
+            credit_hours=1,
+            total_demand=30,
         )
+
+        result = auto_place_board(board.id)
+
+        _assert_pr2_payload_shape(result)
+        assert "room_failure_breakdown" in result
+        assert result["unplaced_count"] == 0
+        assert result["placed"] >= 1
+        assert len(result["room_failures"]) >= 1
+        for f in result["room_failures"]:
+            assert f["reason"]
+            assert f["course_code"] == "PR2S2_A"
+            assert f["start_time"] == "08:00"
+
+    @pytest.mark.usefixtures("oracle_on")
+    def test_lab_only_pool_surfaces_no_room_type_under_flag_on(self) -> None:
+        """Flag-on: the refinement chain picks NO_ROOM_TYPE (not the
+        default NO_ROOM_CAPACITY) because the type helper fires first."""
+        from core.services.timetable_autoplace import auto_place_board
+
+        _, board = _build_autoplace_fixture(
+            program="PR2S2T",
+            course_code="PR2S2T_A",
+            room_type="lab",
+            slot_config=[{"start": "08:00", "end": "09:15"}],
+            credit_hours=1,
+            total_demand=30,
+        )
+
+        result = auto_place_board(board.id)
+
+        assert len(result["room_failures"]) >= 1
+        assert result["room_failures"][0]["reason"] == NO_ROOM_TYPE
+        assert result["room_failure_breakdown"].get(NO_ROOM_TYPE, 0) >= 1
 
 
 # ===========================================================================

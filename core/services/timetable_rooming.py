@@ -25,6 +25,7 @@ from core.services.timetable_room_oracle import (
     check_occupancy,
     check_type_feasibility,
     is_room_oracle_enabled,
+    room_failure_breakdown,
 )
 
 
@@ -245,6 +246,7 @@ def assign_rooms_to_board(board_id: int) -> dict:
             "assigned": 0,
             "unassigned": 0,
             "room_failures": [],
+            "room_failure_breakdown": {},
             "unplaced_count": 0,
             "buffer_only_rejects": 0,
         }
@@ -255,6 +257,7 @@ def assign_rooms_to_board(board_id: int) -> dict:
             "assigned": 0,
             "unassigned": 0,
             "room_failures": [],
+            "room_failure_breakdown": {},
             "unplaced_count": 0,
             "buffer_only_rejects": 0,
         }
@@ -265,6 +268,7 @@ def assign_rooms_to_board(board_id: int) -> dict:
             "assigned": 0,
             "unassigned": 0,
             "room_failures": [],
+            "room_failure_breakdown": {},
             "unplaced_count": 0,
             "buffer_only_rejects": 0,
         }
@@ -424,6 +428,7 @@ def assign_rooms_to_board(board_id: int) -> dict:
         "lecture_room_reject_due_to_buffer_count": lecture_room_reject_due_to_buffer_count,
         "buffer_only_rejects": buffer_only_rejects,
         "room_failures": room_failures,
+        "room_failure_breakdown": room_failure_breakdown(room_failures),
         "unplaced_count": unassigned,
     }
 
