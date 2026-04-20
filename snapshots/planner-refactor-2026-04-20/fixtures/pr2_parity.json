@@ -1,0 +1,34 @@
+{
+  "description": "PR2 scenario #6 — parity / obviously feasible rooming. A small section with a generous lecture room in the right gender at an uncontested slot. Every oracle helper must return None. After PR2 code lands, unplaced_count == 0 and room_failures == []. Parity against PR1's feasible-rooming baseline (no decision drift when the oracle does its job).",
+  "reason_code": null,
+  "scenario": {
+    "section": {
+      "course_code": "CS101",
+      "section_code": "S1",
+      "enrolment": 20,
+      "day": "Sun",
+      "start_time": "08:00",
+      "end_time": "09:15",
+      "gender": "M",
+      "required_type": "lecture",
+      "credit_rating": 3
+    },
+    "rooms": [
+      {"room_code": "A101", "capacity": 40, "room_type": "lecture", "gender": "M"}
+    ],
+    "occupancy_at_slot": [],
+    "capacity_buffer": 1.1
+  },
+  "expected": {
+    "reason_code": null,
+    "unplaced_count": 0,
+    "room_failures": [],
+    "buffer_only_rejects": 0,
+    "heuristic_mismatch_count": 0
+  },
+  "notes": [
+    "Tests: tests/test_pr2_room_oracle.py::TestOracleScenarios::test_06_parity_feasible_rooming_returns_none",
+    "Per DoR sign-off answer A: parity is test #6 and a first-class member of the scenario pack, NOT an afterthought. If the oracle ever fires on an obviously feasible case, it's an oracle bug.",
+    "Pairs with the PR1 parity contract (pr1_parity_baseline.json): PR1 asserted prayer/lock flags-off reproduces the baseline; PR2 asserts oracle flag-on still reproduces it when the scenario is feasible."
+  ]
+}

@@ -155,6 +155,7 @@ class RoomProfile:
     room_id: str
     capacity: int
     room_type: str
+    gender: str
 
 
 @dataclass

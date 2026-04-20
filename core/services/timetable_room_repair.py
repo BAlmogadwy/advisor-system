@@ -9,6 +9,14 @@ from core.services.timetable_assignment_models import (
     SectionState,
     TimetableMove,
 )
+from core.services.timetable_room_oracle import (
+    NO_ROOM_CAPACITY,
+    RoomFailureReason,
+    check_capacity_feasibility,
+    check_occupancy,
+    check_type_feasibility,
+    is_room_oracle_enabled,
+)
 
 
 def _find_pattern_in_catalog(
@@ -73,6 +81,7 @@ def try_repair_rooms_locally(
     rooms_by_id: dict[str, RoomProfile],
     room_occupancies: dict[str, RoomOccupancy],
     course_room_requirements: dict[str, str],
+    failures_out: list[dict] | None = None,
 ) -> bool:
     impacted_room_ids: set[str] = set()
     for snap in snapshot.snapshots:
@@ -116,6 +125,71 @@ def try_repair_rooms_locally(
                 placed = True
                 break
         if not placed:
+            # PR2 commit 4 — Site 4: section could not be placed during
+            # local room repair. Back-compat: the boolean return is
+            # preserved; when callers pass ``failures_out``, a typed
+            # RoomFailureReason is appended so they can learn *why* this
+            # specific section failed. Commit 4 wires the Stage 1 chain
+            # (type → capacity) plus an occupancy check: if eligible
+            # rooms existed but were all booked across the section's
+            # meetings, report ROOM_OCCUPIED. Gender is not checked
+            # here because ``SectionState`` has no gender-requirement
+            # field today — upstream filtering has already happened.
+            if failures_out is not None:
+                first_meeting = sec.meetings[0] if sec.meetings else None
+                day_val = str(getattr(first_meeting, "day", "") or "")
+                start_val = str(
+                    getattr(first_meeting, "start_time", "")
+                    or getattr(first_meeting, "start_min", "")
+                )
+                end_val = str(
+                    getattr(first_meeting, "end_time", "") or getattr(first_meeting, "end_min", "")
+                )
+                section_dict = {
+                    "course_code": sec.course_code,
+                    "section_code": sec.section_id,
+                    "day": day_val,
+                    "start_time": start_val,
+                    "end_time": end_val,
+                    "demand": sec.room_demand(),
+                    "room_type_required": req_type,
+                    "gender_required": "",
+                }
+                rooms_dicts = [
+                    {
+                        "room_code": r.room_id,
+                        "capacity": r.capacity,
+                        "room_type": r.room_type,
+                        "gender": r.gender,
+                    }
+                    for r in rooms_by_id.values()
+                ]
+                refined: RoomFailureReason | None = None
+                if is_room_oracle_enabled():
+                    # Occupancy set = rooms whose current state cannot
+                    # host the section's full meeting list — mirrors the
+                    # ``occ.can_accommodate`` filter used above, so a
+                    # ROOM_OCCUPIED result is provably the reason.
+                    busy_rooms: set[str] = {
+                        rid
+                        for rid, occ in room_occupancies.items()
+                        if not occ.can_accommodate(sec.meetings)
+                    }
+                    refined = (
+                        check_type_feasibility(section_dict, rooms_dicts)
+                        or check_capacity_feasibility(section_dict, rooms_dicts, 1.0)
+                        or check_occupancy(section_dict, rooms_dicts, busy_rooms)
+                    )
+                if refined is None:
+                    refined = RoomFailureReason(
+                        code=NO_ROOM_CAPACITY,
+                        day=day_val,
+                        start_time=start_val,
+                        end_time=end_val,
+                        course_code=sec.course_code,
+                        section_code=sec.section_id,
+                    )
+                failures_out.append(refined.to_dict())
             return False
     return True
 

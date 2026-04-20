@@ -16,6 +16,17 @@ from collections import defaultdict
 from django.conf import settings
 
 from core.models import DeliveryBoard, Room, SectionPlacement
+from core.services.timetable_room_oracle import (
+    NO_ROOM_CAPACITY,
+    ROOM_BUFFER_REJECT,
+    RoomFailureReason,
+    check_capacity_feasibility,
+    check_gender_feasibility,
+    check_occupancy,
+    check_type_feasibility,
+    is_room_oracle_enabled,
+    room_failure_breakdown,
+)
 
 
 def get_capacity_buffer() -> float:
@@ -231,15 +242,36 @@ def assign_rooms_to_board(board_id: int) -> dict:
     try:
         board = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
     except DeliveryBoard.DoesNotExist:
-        return {"assigned": 0, "unassigned": 0}
+        return {
+            "assigned": 0,
+            "unassigned": 0,
+            "room_failures": [],
+            "room_failure_breakdown": {},
+            "unplaced_count": 0,
+            "buffer_only_rejects": 0,
+        }
 
     programmes = [p.strip() for p in (board.program or "").split(",") if p.strip()]
     if not programmes:
-        return {"assigned": 0, "unassigned": 0}
+        return {
+            "assigned": 0,
+            "unassigned": 0,
+            "room_failures": [],
+            "room_failure_breakdown": {},
+            "unplaced_count": 0,
+            "buffer_only_rejects": 0,
+        }
 
     rooms = get_programme_rooms(programmes)
     if not rooms:
-        return {"assigned": 0, "unassigned": 0}
+        return {
+            "assigned": 0,
+            "unassigned": 0,
+            "room_failures": [],
+            "room_failure_breakdown": {},
+            "unplaced_count": 0,
+            "buffer_only_rejects": 0,
+        }
 
     board_gender = get_board_gender(board_id)
     tracker = RoomTracker(rooms)
@@ -293,7 +325,17 @@ def assign_rooms_to_board(board_id: int) -> dict:
     unassigned = 0
     # Labs currently ignore capacity in rooming (room_cap=0 below); buffer
     # diagnostics therefore apply to lecture room assignment only.
+    #
+    # DEPRECATED (PR2 commit 6): ``lecture_room_reject_due_to_buffer_count``
+    # is the legacy (flag-agnostic) buffer-reject metric. Kept for one more
+    # cycle so downstream dashboards retain continuity while they migrate to
+    # ``buffer_only_rejects`` below. Scheduled for removal in a later PR.
     lecture_room_reject_due_to_buffer_count = 0
+    # PR2 commit 4 — authoritative per-placement buffer-reject counter,
+    # populated only when the oracle flag is on and Stage 2 confirms the
+    # rejection was buffer-only.
+    buffer_only_rejects = 0
+    room_failures: list[dict] = []
 
     for p in unassigned_placements:
         cap = budget_map.get(p.term_section.course_code, 40)
@@ -317,19 +359,80 @@ def assign_rooms_to_board(board_id: int) -> dict:
             assigned += 1
         else:
             # Count rooms the buffer rejected: would a raw-cap room have fit?
-            if room_type != "lab" and tracker.is_feasible(
+            is_buffer_only = room_type != "lab" and tracker.is_feasible(
                 p.day, p.start_time, raw_cap, room_type, gender
-            ):
+            )
+            if is_buffer_only:
                 lecture_room_reject_due_to_buffer_count += 1
             p.room = "UNASSIGNED"
             p.save(update_fields=["room", "updated_at"])
             unassigned += 1
+            # PR2 commit 4 — oracle refinement chain. When the flag is off
+            # the helpers all return None and the default NO_ROOM_CAPACITY
+            # path below runs — commit 3's payload is preserved bit-for-bit.
+            # When the flag is on:
+            #   * Stage 2: a buffer-only rejection wins over Stage 1 codes
+            #     (the section *could* have been placed at raw capacity,
+            #     the buffer is what rejected it), bumps the authoritative
+            #     ``buffer_only_rejects`` counter.
+            #   * Stage 1: type → gender → capacity, first matching wins.
+            #   * Occupancy: if Stage 1 finds an eligible pool but every
+            #     room is already busy at this slot, emit ROOM_OCCUPIED.
+            section_dict = {
+                "course_code": p.term_section.course_code,
+                "section_code": p.term_section.section,
+                "day": p.day,
+                "start_time": p.start_time,
+                "end_time": p.end_time,
+                "demand": raw_cap,
+                "room_type_required": room_type,
+                "gender_required": gender,
+            }
+            refined: RoomFailureReason | None = None
+            if is_room_oracle_enabled():
+                if is_buffer_only:
+                    refined = RoomFailureReason(
+                        code=ROOM_BUFFER_REJECT,
+                        day=p.day,
+                        start_time=p.start_time,
+                        end_time=p.end_time,
+                        course_code=p.term_section.course_code,
+                        section_code=p.term_section.section,
+                    )
+                    buffer_only_rejects += 1
+                else:
+                    refined = (
+                        check_type_feasibility(section_dict, tracker.rooms)
+                        or check_gender_feasibility(section_dict, tracker.rooms)
+                        or check_capacity_feasibility(
+                            section_dict, tracker.rooms, buffer_multiplier
+                        )
+                        or check_occupancy(
+                            section_dict,
+                            tracker.rooms,
+                            tracker.usage.get((p.day, p.start_time), set()),
+                        )
+                    )
+            if refined is None:
+                refined = RoomFailureReason(
+                    code=NO_ROOM_CAPACITY,
+                    day=p.day,
+                    start_time=p.start_time,
+                    end_time=p.end_time,
+                    course_code=p.term_section.course_code,
+                    section_code=p.term_section.section,
+                )
+            room_failures.append(refined.to_dict())
 
     return {
         "assigned": assigned,
         "unassigned": unassigned,
         "capacity_buffer": buffer_multiplier,
         "lecture_room_reject_due_to_buffer_count": lecture_room_reject_due_to_buffer_count,
+        "buffer_only_rejects": buffer_only_rejects,
+        "room_failures": room_failures,
+        "room_failure_breakdown": room_failure_breakdown(room_failures),
+        "unplaced_count": unassigned,
     }
 
 
