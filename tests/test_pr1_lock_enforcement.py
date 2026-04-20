@@ -13,15 +13,13 @@ to fail until then.
 
 from __future__ import annotations
 
-import pytest
+from django.test import SimpleTestCase
 from django.test.utils import override_settings
 
 from core.services.timetable_validation import (
     LOCK_RESPECT,
     lock_rejection,
 )
-
-pytestmark = pytest.mark.django_db
 
 
 def _candidate(day: str, start: str, end: str, course: str, room: str = "") -> dict:
@@ -44,10 +42,11 @@ def _locked_cell(day: str, start: str, room: str) -> dict:
 
 
 @override_settings(TIMETABLE_ENFORCE_LOCKS=False)
-def test_flag_off_returns_none_even_on_direct_collision() -> None:
-    cand = _candidate("Sun", "08:00", "09:15", "CS101", room="A101")
-    locked = [_locked_cell("Sun", "08:00", "A101")]
-    assert lock_rejection(cand, locked) is None
+class TestLockRuleDisabled(SimpleTestCase):
+    def test_flag_off_returns_none_even_on_direct_collision(self) -> None:
+        cand = _candidate("Sun", "08:00", "09:15", "CS101", room="A101")
+        locked = [_locked_cell("Sun", "08:00", "A101")]
+        assert lock_rejection(cand, locked) is None
 
 
 # ---------------------------------------------------------------------------
@@ -56,7 +55,7 @@ def test_flag_off_returns_none_even_on_direct_collision() -> None:
 
 
 @override_settings(TIMETABLE_ENFORCE_LOCKS=True)
-class TestLockRuleEnabled:
+class TestLockRuleEnabled(SimpleTestCase):
     def test_candidate_onto_locked_cell_rejects(self) -> None:
         cand = _candidate("Sun", "08:00", "09:15", "CS101", room="A101")
         locked = [_locked_cell("Sun", "08:00", "A101")]

@@ -26,6 +26,7 @@ from core.models import (
     TimetableScenario,
 )
 from core.services.timetable_autoplace import auto_place_board
+from core.services.timetable_validation import LOCK_RESPECT, PRAYER_OVERLAP
 
 pytestmark = pytest.mark.django_db
 
@@ -38,23 +39,20 @@ def pr1_fixture():
     - 3 courses (PR1_A, PR1_B, PR1_C), 3 students.
     - Rooms: one general-purpose A101 cap 30.
     - Slot schedule: Sun 08:00–09:15, 10:00–11:15, 12:00–13:15 (last straddles prayer).
-    - Prayer schedule on Sun: 12:00–12:15 (stored in scenario.slot_config).
+    - Prayer schedule on Sun: 12:00–12:15 (provided via ``TIMETABLE_PRAYER_WINDOWS``
+      setting in the flag-on tests; ``slot_config`` itself stays the bare slot list
+      to match ``TimetableScenario.slot_config`` (a JSON list field)).
     - One pre-existing LOCKED placement: PR1_A at Sun 08:00 in A101.
     """
     scenario = TimetableScenario.objects.create(
         academic_year="1448",
         term="1",
         name="PR1 E2E",
-        slot_config={
-            "slots": [
-                {"day": "Sun", "start": "08:00", "end": "09:15"},
-                {"day": "Sun", "start": "10:00", "end": "11:15"},
-                {"day": "Sun", "start": "12:00", "end": "13:15"},
-            ],
-            "prayers": [
-                {"day": "Sun", "start": "12:00", "end": "12:15"},
-            ],
-        },
+        slot_config=[
+            {"day": "Sun", "start": "08:00", "end": "09:15"},
+            {"day": "Sun", "start": "10:00", "end": "11:15"},
+            {"day": "Sun", "start": "12:00", "end": "13:15"},
+        ],
     )
     board = DeliveryBoard.objects.create(
         scenario=scenario,
@@ -124,14 +122,26 @@ def pr1_fixture():
     TIMETABLE_ENFORCE_LOCKS=False,
 )
 def test_parity_flags_off_matches_baseline(pr1_fixture) -> None:
-    """With both flags off, the rejection fields are empty and no locked
-    placement is overwritten (pre-PR1 behaviour preserved)."""
+    """With both flags off, the rejection fields are empty AND the baseline
+    planner surface (placed/skipped/capacity_buffer) is preserved."""
     _, board = pr1_fixture
     result = auto_place_board(board.id)
 
-    # Schema-stable return: new keys exist and are empty when disabled.
+    # New PR1 surface: empty when both flags are off.
     assert result.get("pr1_prayer_rejections") == []
     assert result.get("pr1_lock_rejections") == []
+
+    # Stable baseline markers — the pre-PR1 (d0c6739) return shape is
+    # preserved unchanged. This is the parity claim: enabling PR1 code
+    # with flags=False does not perturb any existing planner output.
+    assert "placed" in result
+    assert "skipped" in result
+    assert "placements" in result
+    assert isinstance(result["placed"], int)
+    assert isinstance(result["skipped"], int)
+    assert isinstance(result["placements"], list)
+    # PR0 surface still intact under PR1 (both flags off path).
+    assert result.get("capacity_buffer") == pytest.approx(1.1)
 
 
 # ---------------------------------------------------------------------------
@@ -153,15 +163,23 @@ def test_behaviour_flags_on_emits_rejections(pr1_fixture) -> None:
     )
     assert locked.room == "A101"
     assert locked.start_time == "08:00"
+    assert locked.is_locked is True
 
-    # At least one rejection surface is non-empty: prayer straddling
-    # should produce at least one pr1_prayer_rejections row (the 12:00
-    # slot straddles the 12:00–12:15 prayer) OR the planner avoided that
-    # slot entirely. Either way the payload fields exist.
-    assert "pr1_prayer_rejections" in result
-    assert "pr1_lock_rejections" in result
-    assert isinstance(result["pr1_prayer_rejections"], list)
-    assert isinstance(result["pr1_lock_rejections"], list)
+    # PRAYER_OVERLAP must appear: the fixture includes a 12:00–13:15 slot
+    # that straddles the 12:00–12:15 prayer, so at least one candidate
+    # rejection with that code is emitted. Exact course/slot order is
+    # not pinned — only the reason code must appear.
+    prayer_rejections = result.get("pr1_prayer_rejections", [])
+    assert any(r.get("reason") == PRAYER_OVERLAP for r in prayer_rejections), (
+        f"expected PRAYER_OVERLAP in pr1_prayer_rejections, got {prayer_rejections}"
+    )
+
+    # LOCK_RESPECT must appear: the planner attempting Sun 08:00 room
+    # A101 (which is locked) must emit a LOCK_RESPECT rejection.
+    lock_rejections = result.get("pr1_lock_rejections", [])
+    assert any(r.get("reason") == LOCK_RESPECT for r in lock_rejections), (
+        f"expected LOCK_RESPECT in pr1_lock_rejections, got {lock_rejections}"
+    )
 
 
 @override_settings(

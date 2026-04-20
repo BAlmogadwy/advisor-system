@@ -14,15 +14,13 @@ to fail until then.
 
 from __future__ import annotations
 
-import pytest
+from django.test import SimpleTestCase
 from django.test.utils import override_settings
 
 from core.services.timetable_validation import (
     PRAYER_OVERLAP,
     prayer_overlap_rejection,
 )
-
-pytestmark = pytest.mark.django_db
 
 
 def _meeting(day: str, start: str, end: str) -> dict:
@@ -39,11 +37,12 @@ def _prayer(day: str, start: str, end: str) -> dict:
 
 
 @override_settings(TIMETABLE_ENFORCE_PRAYER_OVERLAP_RULE=False)
-def test_flag_off_returns_none_even_on_direct_overlap() -> None:
-    """With the flag disabled, even a strictly-overlapping meeting is not rejected."""
-    meeting = _meeting("Sun", "11:55", "12:10")
-    prayers = [_prayer("Sun", "12:00", "12:15")]
-    assert prayer_overlap_rejection(meeting, prayers) is None
+class TestPrayerOverlapRuleDisabled(SimpleTestCase):
+    def test_flag_off_returns_none_even_on_direct_overlap(self) -> None:
+        """With the flag disabled, even a strictly-overlapping meeting is not rejected."""
+        meeting = _meeting("Sun", "11:55", "12:10")
+        prayers = [_prayer("Sun", "12:00", "12:15")]
+        assert prayer_overlap_rejection(meeting, prayers) is None
 
 
 # ---------------------------------------------------------------------------
@@ -52,7 +51,7 @@ def test_flag_off_returns_none_even_on_direct_overlap() -> None:
 
 
 @override_settings(TIMETABLE_ENFORCE_PRAYER_OVERLAP_RULE=True)
-class TestPrayerOverlapRuleEnabled:
+class TestPrayerOverlapRuleEnabled(SimpleTestCase):
     def test_strictly_before_passes(self) -> None:
         meeting = _meeting("Sun", "08:00", "09:15")
         prayers = [_prayer("Sun", "12:00", "12:15")]
