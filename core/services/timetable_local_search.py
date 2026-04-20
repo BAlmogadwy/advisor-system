@@ -47,6 +47,11 @@ from core.services.timetable_autoplace import (
     WEEKDAYS,
     _time_mask,
 )
+from core.services.timetable_decision_trace import DecisionTrace
+from core.services.timetable_solver_codes import (
+    SA_RELOCATE_ACCEPTED,
+    is_stage_trace_enabled,
+)
 
 
 def _to_min(t: str) -> int:
@@ -357,6 +362,18 @@ def optimize_board(
             }
         )
 
+    # PR5 commit 3 — snapshot the initial (greedy) schedule before any
+    # SA mutation so we can emit an SA_RELOCATE_ACCEPTED trace entry for
+    # every section whose chosen meeting set differs after the polish
+    # pass. Captured here under flag gate so flag-off builds have
+    # zero overhead. Keyed on section-index into ``sections``; each
+    # entry stores a frozen tuple of (day, start, end) per meeting for
+    # deterministic post-run diffing.
+    initial_schedule_snapshot: dict[int, tuple[tuple[str, str, str], ...]] = {}
+    if is_stage_trace_enabled():
+        for i, meetings in schedule.items():
+            initial_schedule_snapshot[i] = tuple((m["day"], m["start"], m["end"]) for m in meetings)
+
     # Build valid options per section per meeting
     valid_options: dict[int, list[list[dict]]] = {}
     for i, _sec in enumerate(sections):
@@ -447,6 +464,48 @@ def optimize_board(
     # Restore best found
     schedule = best_schedule
 
+    # PR5 commit 3 — emit SA_RELOCATE_ACCEPTED trace entries for every
+    # section whose chosen meeting set shifted between the initial
+    # (greedy) snapshot and the best-found post-SA schedule. Flag-gated;
+    # when off, ``decision_trace`` is simply absent from the result
+    # dict so the return shape remains backward-compatible.
+    decision_trace: dict[str, dict] = {}
+    if is_stage_trace_enabled() and initial_schedule_snapshot:
+        for i, meetings in schedule.items():
+            final_sig = tuple((m["day"], m["start"], m["end"]) for m in meetings)
+            initial_sig = initial_schedule_snapshot.get(i, ())
+            if final_sig == initial_sig:
+                continue
+            sec = sections[i]
+            section_code = f"{sec['code']}|{sec['label']}"
+            # Prefer the first differing meeting to anchor the chosen
+            # slot in the trace entry. Subsequent meetings of the same
+            # section share the same section_code key; the chosen_*
+            # fields therefore represent the first-meeting anchor, and
+            # stage_context records the full before/after signatures so
+            # downstream consumers can reconstruct any missed meeting.
+            anchor_initial = initial_sig[0] if initial_sig else ("", "", "")
+            anchor_final = final_sig[0] if final_sig else ("", "", "")
+            entry = DecisionTrace(
+                section_code=section_code,
+                course_code=sec["code"],
+                chosen_day=anchor_final[0],
+                chosen_start_time=anchor_final[1],
+                chosen_end_time=anchor_final[2],
+                chosen_room="",  # room reassignment happens in a later pass
+                alternatives=(),
+                stage_origin="sa",
+                stage_context={
+                    "code": SA_RELOCATE_ACCEPTED,
+                    "from_slot": f"{anchor_initial[0]} {anchor_initial[1]}-{anchor_initial[2]}",
+                    "to_slot": f"{anchor_final[0]} {anchor_final[1]}-{anchor_final[2]}",
+                    "cost_delta": int(best_cost) - int(cost_before),
+                    "initial_signature": list(initial_sig),
+                    "final_signature": list(final_sig),
+                },
+            )
+            decision_trace[section_code] = entry.to_dict()
+
     return {
         "status": "optimized",
         "cost_before": cost_before,
@@ -455,6 +514,7 @@ def optimize_board(
         "improvements": improvements,
         "schedule": schedule,
         "sections": sections,
+        "decision_trace": decision_trace,
     }
 
 

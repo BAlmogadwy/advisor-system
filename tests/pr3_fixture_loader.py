@@ -71,6 +71,14 @@ def load_pr3_fixture(
             {"start": s["start_time"], "end": s["end_time"]}
             for s in scenario_data.get("slot_pool", [])
         ],
+        # PR5 amendment — fixtures may now carry ``blocked_slots`` to
+        # funnel greedy into a specific day topology (e.g. force same-day
+        # clumping so SA has a real gap to close). Each entry is
+        # ``{"day": <WEEKDAY>, "start": "HH:MM"}``; autoplace filters
+        # option generation on the (day, start) pair. SA's option walker
+        # currently ignores this list, which is intentional for the
+        # SA-relocate greedy→SA test.
+        blocked_slots=list(scenario_data.get("blocked_slots", [])),
     )
     board = DeliveryBoard.objects.create(
         scenario=scenario,

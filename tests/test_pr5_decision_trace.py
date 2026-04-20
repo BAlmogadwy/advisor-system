@@ -187,10 +187,136 @@ class TestGreedyStageOrigin(TransactionTestCase):
 
 class TestSARelocateEmission(TransactionTestCase):
     """SA polish emits ``SA_RELOCATE_ACCEPTED`` and flips ``stage_origin = "sa"``
-    on every section it moved."""
+    on every section it moved.
+
+    Primary test: a real greedy→SA integration run. The fixture uses
+    ``blocked_slots`` to funnel greedy onto SUN only, producing a natural
+    same-day clump with a gap SA can close. ChatGPT commit-3 amendment
+    ruling (2026-04-21): the greedy→SA handoff must be exercised end-to-
+    end, not asserted against hand-seeded ORM state, so the optimiser
+    updating an upstream trace is the seam under test.
+
+    Secondary test: a narrow hand-seeded plumbing smoke that asserts SA
+    trace emission in isolation, for when someone needs to poke just the
+    emit-site without running the greedy placer.
+    """
 
     @override_settings(TIMETABLE_PR5_STAGE_TRACE_ENABLED=True)
-    def test_accepted_move_appears_in_trace(self) -> None:
+    def test_greedy_to_sa_relocates_same_day_gap(self) -> None:
+        """End-to-end greedy→SA handoff. Asserts greedy clumps on SUN
+        (per fixture ``blocked_slots``), then SA relocates at least one
+        section off SUN and emits an ``SA_RELOCATE_ACCEPTED`` trace with
+        populated ``from_slot``/``to_slot``.
+
+        Scaffolding note (not a product guarantee): this test exploits
+        a known asymmetry — ``timetable_autoplace`` applies the scenario's
+        ``blocked_slots`` when generating candidate options, while
+        ``timetable_local_search._generate_relocate_move`` currently
+        walks all ``WEEKDAYS × slot_config`` unconditionally and does
+        not consult ``blocked_slots``. That lets greedy be day-constrained
+        onto SUN while SA still has MON/TUE/WED/THU to relocate into.
+        The quirk is test scaffolding only; PR5 makes no product
+        commitment that SA will respect ``blocked_slots``, and this test
+        should not be cited as evidence of such a guarantee.
+        """
+        from pr5_fixture_loader import load_pr5_fixture
+
+        from core.services.timetable_local_search import optimize_and_persist_board
+
+        _, board, _ = load_pr5_fixture("pr5_sa_relocate.json")
+
+        greedy_result = _run_greedy(board.id)
+        greedy_trace = greedy_result.get("decision_trace", {}) or {}
+        assert greedy_trace, (
+            "greedy must produce a non-empty decision_trace before SA runs "
+            f"(got: {greedy_result!r})"
+        )
+        for entry in greedy_trace.values():
+            assert entry.get("stage_origin") == "greedy", (
+                f"pre-SA trace entries must all be stage_origin='greedy' (got: {entry!r})"
+            )
+        # blocked_slots funnels greedy onto SUN only; any other day
+        # means the fixture or the loader regressed.
+        for entry in greedy_trace.values():
+            assert entry.get("chosen_day") == "SUN", (
+                f"blocked_slots fixture should clump greedy on SUN "
+                f"(got chosen_day={entry.get('chosen_day')!r})"
+            )
+
+        sa_result = optimize_and_persist_board(board.id, max_seconds=5.0)
+        sa_trace = sa_result.get("decision_trace", {}) or {}
+        sa_entries = [entry for entry in sa_trace.values() if entry.get("stage_origin") == "sa"]
+        assert sa_entries, (
+            "SA polish had a ≥525-cost same-day gap to close; trace must record "
+            f"at least one move with stage_origin='sa' "
+            f"(got: {sa_trace!r}, cost_before={sa_result.get('cost_before')}, "
+            f"cost_after={sa_result.get('cost_after')})"
+        )
+        for entry in sa_entries:
+            ctx = entry.get("stage_context", {}) or {}
+            assert ctx.get("code") == SA_RELOCATE_ACCEPTED, (
+                f"SA-origin trace entries must carry code=SA_RELOCATE_ACCEPTED (got ctx={ctx!r})"
+            )
+            from_slot = ctx.get("from_slot") or ""
+            to_slot = ctx.get("to_slot") or ""
+            assert from_slot.strip(), f"from_slot must be populated (got: {from_slot!r})"
+            assert to_slot.strip(), f"to_slot must be populated (got: {to_slot!r})"
+            assert from_slot != to_slot, (
+                f"from_slot and to_slot must differ for a real move (both: {from_slot!r})"
+            )
+
+    @override_settings(TIMETABLE_PR5_STAGE_TRACE_ENABLED=True)
+    def test_hand_seeded_sa_plumbing_smoke(self) -> None:
+        """Narrow plumbing smoke: seed a deliberately-suboptimal placement
+        set directly via ORM (bypassing greedy) and assert SA's trace
+        emission surface works. Retained per ChatGPT amendment ruling #3
+        as a secondary, not the main proof of stage handoff."""
+        from pr5_fixture_loader import load_pr5_fixture
+
+        from core.models import SectionPlacement, TermSection
+        from core.services.timetable_local_search import optimize_and_persist_board
+
+        _, board, _ = load_pr5_fixture("pr5_sa_relocate.json")
+
+        bad_layout = [
+            ("CS101", "S1", "SUN", "08:00", "09:15"),
+            ("CS102", "S1", "SUN", "09:30", "10:45"),
+            ("CS103", "S1", "SUN", "11:00", "12:15"),
+        ]
+        for course_code, section, day, start, end in bad_layout:
+            ts = TermSection.objects.create(
+                scenario=board.scenario,
+                course_key=course_code,
+                course_code=course_code,
+                course_number=course_code,
+                course_name=course_code,
+                section=section,
+                available_capacity=40,
+                source_tag="tw_auto",
+            )
+            SectionPlacement.objects.create(
+                board=board,
+                term_section=ts,
+                day=day,
+                start_time=start,
+                end_time=end,
+                room="A101",
+                is_locked=False,
+            )
+
+        result = optimize_and_persist_board(board.id, max_seconds=2.0)
+        trace = result.get("decision_trace", {}) or {}
+        sa_entries = [entry for entry in trace.values() if entry.get("stage_origin") == "sa"]
+        assert sa_entries, (
+            "hand-seeded 105-min SUN gap: SA must emit at least one SA_RELOCATE_ACCEPTED entry "
+            f"(got: {trace!r})"
+        )
+
+    @override_settings(TIMETABLE_PR5_STAGE_TRACE_ENABLED=False)
+    def test_flag_off_emits_no_sa_stage_trace(self) -> None:
+        """Flag-off parity: with ``TIMETABLE_PR5_STAGE_TRACE_ENABLED=False``,
+        optimize_board must not populate any SA trace entries — even if
+        SA moves sections. Required by ChatGPT amendment #4."""
         from pr5_fixture_loader import load_pr5_fixture
 
         from core.services.timetable_local_search import optimize_and_persist_board
@@ -200,9 +326,9 @@ class TestSARelocateEmission(TransactionTestCase):
         result = optimize_and_persist_board(board.id, max_seconds=2.0)
         trace = result.get("decision_trace", {}) or {}
         sa_entries = [entry for entry in trace.values() if entry.get("stage_origin") == "sa"]
-        assert sa_entries, (
-            "SA polish moved at least one section; trace must record the move "
-            f"with stage_origin='sa' (got: {trace!r})"
+        assert not sa_entries, (
+            "flag-off must not emit SA trace entries; this is the PR5 kill-switch contract "
+            f"(got: {sa_entries!r})"
         )
 
 
