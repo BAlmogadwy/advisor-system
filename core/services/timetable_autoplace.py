@@ -64,8 +64,15 @@ from core.models import (
     TermSection,
     TermSectionMeeting,
 )
+from core.services.timetable_decision_trace import (
+    STUDENT_CONFLICT,
+    Alternative,
+    DecisionTrace,
+    is_decision_trace_enabled,
+)
 from core.services.timetable_room_oracle import (
     NO_ROOM_CAPACITY,
+    ROOM_OCCUPIED,
     RoomFailureReason,
     check_capacity_feasibility,
     check_gender_feasibility,
@@ -76,6 +83,7 @@ from core.services.timetable_room_oracle import (
 )
 from core.services.timetable_validation import (
     LOCK_RESPECT,
+    PRAYER_OVERLAP,
     RejectionReason,
     get_prayer_windows,
     is_lock_enforcement_enabled,
@@ -588,6 +596,129 @@ def _score_option(
     )
 
 
+def _classify_pr3_alternative(
+    option: tuple[dict, ...],
+    placed_schedule: list[tuple[str, str, str, str]],
+    course_students: dict[str, set],
+    my_students: set,
+) -> tuple[str, dict] | None:
+    """Return ``(rejection_code, context)`` for a candidate option or ``None``.
+
+    Commit-3 classifier: inspects each meeting of the option against
+    already-placed meetings and returns the first hard reason that
+    explains why this option would be a worse placement than the winner.
+    Only known-sentinel codes are emitted — acceptance bar #2.
+
+    Covered today:
+    - ``STUDENT_CONFLICT`` — at least one shared student between this
+      option and a placed section at the same day+time.
+    - ``ROOM_OCCUPIED`` — same day+time as a placed section (no shared
+      students). Falls out of the assumption that rooming contention
+      dominates when multiple sections want the same slot; the PR2 room
+      oracle would refine this with ``ROOM_BUFFER_REJECT`` etc. but
+      post-placement re-check would duplicate feasibility work.
+
+    Not covered yet:
+    - ``INSTRUCTOR_CLASH`` — defined sentinel but never emitted until
+      per-section instructor plumbing lands (ChatGPT ruling I2).
+
+    Returns ``None`` if no hard reason applies — the option was
+    feasibility-clean and just lost on score. Those options are
+    excluded from the trace to keep rejection codes meaningful.
+    """
+    from core.services.timetable_validation import _overlaps
+
+    for m in option:
+        for ps in placed_schedule:
+            p_day, p_start, p_end, p_code = ps[:4]
+            if p_day != m["day"]:
+                continue
+            if not _overlaps(m["start"], m["end"], p_start, p_end):
+                continue
+            # Same day + overlapping interval → hard clash.
+            p_students = course_students.get(p_code, set())
+            shared = my_students & p_students
+            if shared:
+                return STUDENT_CONFLICT, {
+                    "clashing_section": p_code,
+                    "shared_student_count": len(shared),
+                }
+            return ROOM_OCCUPIED, {"occupying_section": p_code}
+    return None
+
+
+def _build_pr3_alternatives(
+    *,
+    scored_options: list[tuple[tuple, tuple[dict, ...]]],
+    prayer_rejected: list[tuple[tuple[dict, ...], str, dict]],
+    winning_option: tuple[dict, ...],
+    placed_schedule: list[tuple[str, str, str, str]],
+    course_students: dict[str, set],
+    my_students: set,
+    my_code: str,
+    meeting_results: list[dict],
+) -> list[Alternative]:
+    """Build up to 3 ``Alternative`` entries for a placed section.
+
+    Ordering rules (ChatGPT commit-3 ruling F1):
+    - Prayer-rejected options come first (their score was never computed
+      because they were filtered pre-score; surfacing them first
+      matches the greedy's own preference for showing the hardest
+      reasons).
+    - Scored losers follow, ordered by ascending score (best-rejected
+      first) — the option that would have scored next-best after the
+      winner appears first.
+
+    Capped at 3 total. The trace stops producing alternatives beyond
+    that; this is a fixed cap per the DoR (not configurable).
+    """
+    alternatives: list[Alternative] = []
+    for opt, code, context in prayer_rejected[:3]:
+        first_m = opt[0]
+        alternatives.append(
+            Alternative(
+                day=first_m["day"],
+                start_time=first_m["start"],
+                end_time=first_m["end"],
+                room="",
+                rejection_code=code,
+                rejection_context=context,
+            )
+        )
+        if len(alternatives) >= 3:
+            return alternatives
+
+    losers = sorted(
+        (entry for entry in scored_options if entry[1] is not winning_option),
+        key=lambda entry: entry[0],
+    )
+    for _score, opt in losers:
+        if len(alternatives) >= 3:
+            break
+        classified = _classify_pr3_alternative(opt, placed_schedule, course_students, my_students)
+        if classified is None:
+            continue
+        code, context = classified
+        first_m = opt[0]
+        alternatives.append(
+            Alternative(
+                day=first_m["day"],
+                start_time=first_m["start"],
+                end_time=first_m["end"],
+                room="",
+                rejection_code=code,
+                rejection_context=context,
+            )
+        )
+
+    # Avoid unused-parameter warnings — ``my_code`` and ``meeting_results``
+    # are reserved for future classifier extensions (same-course overlap,
+    # room-specific rejection refinement). Kept as keyword args so commit
+    # 4/5 can extend without changing the signature.
+    del my_code, meeting_results
+    return alternatives
+
+
 def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
     """Auto-place all unplaced sections on a single delivery board.
 
@@ -637,6 +768,10 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
             "room_failures": [],
             "room_failure_breakdown": {},
             "unplaced_count": 0,
+            # PR3 commit 3 — schema-stable empty dict even on the board-
+            # not-found fast path (DoR sign-off amendment on schema
+            # stability across all payload exits).
+            "decision_trace": {},
         }
 
     scenario = board.scenario
@@ -795,6 +930,9 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
             "room_failures": [],
             "room_failure_breakdown": {},
             "unplaced_count": 0,
+            # PR3 commit 3 — schema stability: the decision_trace key is
+            # always present, even when there is nothing to place.
+            "decision_trace": {},
         }
 
     # ── 2. Build student-to-course mapping ────────────────────────────
@@ -835,6 +973,18 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
     # inside auto_place_board (scoring best_option=None, and tracker None
     # fallback). Surfaced on the return dict as ``room_failures``.
     room_failures: list[dict] = []
+    # PR3 commit 3 — decision-trace capture (observational, flag-gated).
+    # When ``trace_enabled`` is True we record one ``DecisionTrace`` per
+    # placed section: the chosen slot plus up to 3 alternatives ordered
+    # by score rank (best-rejected first). When False, ``decision_trace``
+    # stays empty but the key is still present in the return payload for
+    # schema stability (DoR sign-off amendment). The captured codes today
+    # are a subset of the DoR alphabet: STUDENT_CONFLICT is live;
+    # INSTRUCTOR_CLASH is a defined sentinel but not emitted until
+    # instructor-per-section data plumbing lands (ChatGPT commit-3 ruling
+    # I2 — see docs/PR3-DOR.md and the scenario-pack README).
+    trace_enabled = is_decision_trace_enabled()
+    decision_trace: dict[str, dict] = {}
 
     # ── 2b. PR1 lock preload ─────────────────────────────────────────
     # When TIMETABLE_ENFORCE_LOCKS is on, locked SectionPlacement rows
@@ -976,6 +1126,12 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
             best_score = (float("inf"),) * 6
             best_option = None
 
+            # PR3 commit 3 — per-section trace accumulators. Only populated
+            # when the flag is on (cheap early-out keeps the hot scoring
+            # loop free of extra work when trace capture is disabled).
+            pr3_scored_options: list[tuple[tuple, tuple[dict, ...]]] = []
+            pr3_prayer_rejected: list[tuple[tuple[dict, ...], str, dict]] = []
+
             is_online = cd.get("is_online", False)
 
             # ── Score every candidate option and keep the best ────────
@@ -1003,6 +1159,7 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                 # set, so the extra payload would be noise).
                 if prayer_rule_on and prayer_windows:
                     prayer_skip = False
+                    prayer_skip_rej: RejectionReason | None = None
                     for m in option:
                         rej = prayer_overlap_rejection(
                             {
@@ -1016,8 +1173,21 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                         if rej is not None:
                             pr1_prayer_rejections.append(rej.to_dict())
                             prayer_skip = True
+                            prayer_skip_rej = rej
                             break
                     if prayer_skip:
+                        # PR3 commit 3 — record this option as a prayer-clash
+                        # alternative so it can appear in the decision trace.
+                        # ``prayer_skip_rej.context`` carries the window label
+                        # populated by ``prayer_overlap_rejection``.
+                        if trace_enabled and prayer_skip_rej is not None:
+                            pr3_prayer_rejected.append(
+                                (
+                                    option,
+                                    PRAYER_OVERLAP,
+                                    dict(prayer_skip_rej.context or {}),
+                                )
+                            )
                         continue
 
                 # Room feasibility: prefer options with rooms, penalize roomless
@@ -1115,6 +1285,8 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                     raw_score[3],
                     raw_score[4],
                 )
+                if trace_enabled:
+                    pr3_scored_options.append((score, option))
                 if score < best_score:
                     best_score = score
                     best_option = option
@@ -1289,7 +1461,14 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                 placed_schedule.append((m["day"], m["start"], m["end"], code))
                 all_placed_masks.append((code, mask))
                 slot_density[m["start"]] += 1
-                meeting_results.append({"day": m["day"], "start": m["start"], "end": m["end"]})
+                meeting_results.append(
+                    {
+                        "day": m["day"],
+                        "start": m["start"],
+                        "end": m["end"],
+                        "room": assigned_room,
+                    }
+                )
 
             total_placed += 1
             placement_results.append(
@@ -1301,6 +1480,37 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                     "conflict_score": best_score[0],
                 }
             )
+
+            # PR3 commit 3 — build the DecisionTrace for this placement.
+            # First-successful-placement only (ChatGPT commit-3 ruling E);
+            # no re-capture on polish paths. Alternatives = top-3 by score
+            # rank, best-rejected first (ruling F1), classified by the
+            # first hard reason they fail. Options with no hard reason
+            # (feasibility-clean but lost on score) are skipped — rejection
+            # codes must be known sentinels (acceptance bar #2) and "lost
+            # on score" has no honest name.
+            if trace_enabled and best_option is not None:
+                chosen_first = best_option[0]
+                section_code_full = f"{code}|{sec_label}"
+                alternatives = _build_pr3_alternatives(
+                    scored_options=pr3_scored_options,
+                    prayer_rejected=pr3_prayer_rejected,
+                    winning_option=best_option,
+                    placed_schedule=placed_schedule,
+                    course_students=course_students,
+                    my_students=my_students,
+                    my_code=code,
+                    meeting_results=meeting_results,
+                )
+                decision_trace[section_code_full] = DecisionTrace(
+                    section_code=section_code_full,
+                    course_code=code,
+                    chosen_day=chosen_first["day"],
+                    chosen_start_time=chosen_first["start"],
+                    chosen_end_time=chosen_first["end"],
+                    chosen_room=meeting_results[0].get("room", "") if meeting_results else "",
+                    alternatives=tuple(alternatives),
+                ).to_dict()
 
     logger.info(
         "auto_place_board(board=%s): placed=%d skipped=%d "
@@ -1324,6 +1534,9 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
         "room_failures": room_failures,
         "room_failure_breakdown": room_failure_breakdown(room_failures),
         "unplaced_count": total_skipped,
+        # PR3 commit 3 — key is always present for schema stability.
+        # Empty dict when the flag is off or no sections were placed.
+        "decision_trace": decision_trace,
     }
 
 
