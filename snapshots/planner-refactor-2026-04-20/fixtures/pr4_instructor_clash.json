@@ -1,0 +1,27 @@
+{
+  "description": "PR4 scenario #1 — INSTRUCTOR_CLASH emission. Two sections share an instructor string ('Dr. Smith'). Both could take Sun 08:00, but only one will; the loser's decision_trace must record INSTRUCTOR_CLASH for the Sun 08:00 alternative once PR4 commit 3 wires emission. Instructor identity comes from TermSectionMeeting.instructor (opaque string, per A6 — strip+casefold normalisation only, no delimiter splitting).",
+  "scenario": {
+    "sections": [
+      {"course_code": "CS101", "section_code": "S1", "enrolment": 20, "instructor": "Dr. Smith"},
+      {"course_code": "CS102", "section_code": "S1", "enrolment": 22, "instructor": "Dr. Smith"}
+    ],
+    "slot_pool": [
+      {"day": "Sun", "start_time": "08:00", "end_time": "09:15"},
+      {"day": "Sun", "start_time": "09:30", "end_time": "10:45"}
+    ],
+    "rooms": [
+      {"room_code": "A101", "capacity": 40, "room_type": "lecture", "gender": ""},
+      {"room_code": "A102", "capacity": 40, "room_type": "lecture", "gender": ""}
+    ]
+  },
+  "expected": {
+    "placed": 2,
+    "sections_in_different_slots": true,
+    "loser_trace_contains_instructor_clash": true
+  },
+  "notes": [
+    "Tests: tests/test_pr4_instructor_realism.py::TestInstructorClashEmission::test_overlapping_instructor_produces_clash_code",
+    "Commit 1 creates this fixture and the failing test; commit 3 turns it green by wiring INSTRUCTOR_CLASH emission in the candidate-scoring loop.",
+    "Instructor strings are treated as opaque (A6). 'Dr. Smith / Dr. Jones' is one id, not two — we do not parse multi-instructor strings in PR4."
+  ]
+}

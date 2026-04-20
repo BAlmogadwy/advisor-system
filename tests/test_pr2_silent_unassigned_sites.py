@@ -785,22 +785,32 @@ class TestOracleBufferFit:
 
 @pytest.mark.usefixtures("oracle_on")
 class TestOracleHeuristicMatch:
+    """PR4 commit 8 flipped ``TIMETABLE_LAB_HEURISTIC_UNIFIED`` to ``True``
+    by default, which makes ``check_heuristic_match`` return ``None``
+    early (the unified predicate guarantees no mismatch). These tests
+    pin the flag to ``False`` so they continue to regression-guard the
+    legacy PR2 observation semantics — i.e. the behaviour operators
+    fall back to if the flag is turned off at runtime.
+    """
+
     def test_2cr_100min_mismatch_emits_observation_with_context(self) -> None:
         """A 100-minute 2-credit meeting. Rooming's
         ``duration > 80 AND cr == 4`` says NOT-lab; autoplace's
         duration-only cut says LAB. PR2 surfaces the divergence."""
-        sec = _oracle_section(duration_minutes=100, credit_rating=2)
-        failure = check_heuristic_match(sec, [])
-        assert failure is not None
-        assert failure.code == ROOM_HEURISTIC_MISMATCH
-        assert failure.context is not None
-        assert failure.context["is_lab_by_rooming_heuristic"] is False
-        assert failure.context["is_lab_by_autoplace_heuristic"] is True
+        with override_settings(TIMETABLE_LAB_HEURISTIC_UNIFIED=False):
+            sec = _oracle_section(duration_minutes=100, credit_rating=2)
+            failure = check_heuristic_match(sec, [])
+            assert failure is not None
+            assert failure.code == ROOM_HEURISTIC_MISMATCH
+            assert failure.context is not None
+            assert failure.context["is_lab_by_rooming_heuristic"] is False
+            assert failure.context["is_lab_by_autoplace_heuristic"] is True
 
     def test_4cr_100min_agreement_returns_none(self) -> None:
         """4-credit 100-min meeting: both heuristics say LAB, no mismatch."""
-        sec = _oracle_section(duration_minutes=100, credit_rating=4)
-        assert check_heuristic_match(sec, []) is None
+        with override_settings(TIMETABLE_LAB_HEURISTIC_UNIFIED=False):
+            sec = _oracle_section(duration_minutes=100, credit_rating=4)
+            assert check_heuristic_match(sec, []) is None
 
 
 # ===========================================================================
@@ -838,9 +848,10 @@ class TestSite3RefinementUnderFlagOn:
         assert result["unplaced_count"] == 1
         assert result["room_failures"][0]["reason"] == ROOM_BUFFER_REJECT
         assert result["buffer_only_rejects"] == 1
-        # Legacy counter must still fire too — ChatGPT's instruction
-        # is to keep both for one cycle.
-        assert result["lecture_room_reject_due_to_buffer_count"] == 1
+        # PR4 commit 7 — the legacy ``lecture_room_reject_due_to_buffer_count``
+        # key is retired; ``buffer_only_rejects`` above is the sole
+        # buffer-only counter going forward.
+        assert "lecture_room_reject_due_to_buffer_count" not in result
 
     def test_capacity_short_still_surfaces_no_room_capacity(self) -> None:
         """Raw demand > room capacity → neither buffer nor gender nor

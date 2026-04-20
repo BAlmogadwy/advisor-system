@@ -34,7 +34,6 @@ from core.services.timetable_autoplace import (
     DEFAULT_LAB_SLOTS,
     DEFAULT_SLOTS,
     WEEKDAYS,
-    _start_is_blocked,
 )
 from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
 from core.services.timetable_workspace import _time_mask, _to_minutes
@@ -155,16 +154,12 @@ def polish_scenario_with_cpsat(
     slots_lab: list[tuple] = []
     for day_idx, day in enumerate(WEEKDAYS):
         for s_idx, s in enumerate(slot_config):
-            if _start_is_blocked(s["start"]):
-                continue
             mask = _time_mask(day, s["start"], s["end"])
             start_min = _to_minutes(s["start"])
             end_min = _to_minutes(s["end"])
             slots_75.append((day_idx, s_idx, day, s["start"], s["end"], mask, start_min, end_min))
 
         for s_idx, s in enumerate(lab_slot_config):
-            if _start_is_blocked(s["start"]):
-                continue
             mask = _time_mask(day, s["start"], s["end"])
             start_min = _to_minutes(s["start"])
             end_min = _to_minutes(s["end"])

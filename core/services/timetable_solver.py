@@ -32,7 +32,6 @@ from core.services.timetable_autoplace import (
     DEFAULT_LAB_SLOTS,
     DEFAULT_SLOTS,
     WEEKDAYS,
-    _start_is_blocked,
     _time_mask,
     get_meeting_pattern,
 )
@@ -81,15 +80,11 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
     slots_lab = []  # dedicated lab time grid for 100-min meetings
     for day_idx, day in enumerate(WEEKDAYS):
         for s_idx, s in enumerate(slot_config):
-            if _start_is_blocked(s["start"]):
-                continue
             mask = _time_mask(day, s["start"], s["end"])
             start_min = _to_min(s["start"])
             slots_75.append((day_idx, s_idx, day, s["start"], s["end"], mask, start_min))
 
         for s_idx, s in enumerate(lab_slot_config):
-            if _start_is_blocked(s["start"]):
-                continue
             mask = _time_mask(day, s["start"], s["end"])
             start_min = _to_min(s["start"])
             slots_lab.append((day_idx, s_idx, day, s["start"], s["end"], mask, start_min))
@@ -561,14 +556,10 @@ def solve_board_with_hints(
     slots_lab = []
     for day_idx, day in enumerate(WEEKDAYS):
         for s_idx, s in enumerate(slot_config):
-            if _start_is_blocked(s["start"]):
-                continue
             mask = _time_mask(day, s["start"], s["end"])
             start_min = _to_min(s["start"])
             slots_75.append((day_idx, s_idx, day, s["start"], s["end"], mask, start_min))
         for s_idx, s in enumerate(lab_slot_config):
-            if _start_is_blocked(s["start"]):
-                continue
             mask = _time_mask(day, s["start"], s["end"])
             start_min = _to_min(s["start"])
             slots_lab.append((day_idx, s_idx, day, s["start"], s["end"], mask, start_min))

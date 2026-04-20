@@ -48,6 +48,8 @@ from dataclasses import dataclass
 
 from django.conf import settings
 
+from core.services.timetable_lab_predicate import is_lab_heuristic_unified
+
 # ---------------------------------------------------------------------------
 # Reason-code sentinels.
 #
@@ -467,6 +469,13 @@ def check_heuristic_match(
     contextualise the mismatch.
     """
     if not is_room_oracle_enabled():
+        return None
+    # PR4 commit 6: when the unified lab predicate is active, rooming +
+    # autoplace agree by construction — no mismatch is possible, so this
+    # observational check is definitionally a no-op. Return early to keep
+    # the heuristic-mismatch counter quiet once A4 collapses the three
+    # literals.
+    if is_lab_heuristic_unified():
         return None
     duration = _section_duration(section)
     cr = _section_credit_rating(section)

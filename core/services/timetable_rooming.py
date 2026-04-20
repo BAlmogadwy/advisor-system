@@ -16,6 +16,10 @@ from collections import defaultdict
 from django.conf import settings
 
 from core.models import DeliveryBoard, Room, SectionPlacement
+from core.services.timetable_lab_predicate import (
+    is_lab_heuristic_unified,
+    meeting_requires_lab_room,
+)
 from core.services.timetable_room_oracle import (
     NO_ROOM_CAPACITY,
     ROOM_BUFFER_REJECT,
@@ -326,14 +330,10 @@ def assign_rooms_to_board(board_id: int) -> dict:
     # Labs currently ignore capacity in rooming (room_cap=0 below); buffer
     # diagnostics therefore apply to lecture room assignment only.
     #
-    # DEPRECATED (PR2 commit 6): ``lecture_room_reject_due_to_buffer_count``
-    # is the legacy (flag-agnostic) buffer-reject metric. Kept for one more
-    # cycle so downstream dashboards retain continuity while they migrate to
-    # ``buffer_only_rejects`` below. Scheduled for removal in a later PR.
-    lecture_room_reject_due_to_buffer_count = 0
-    # PR2 commit 4 — authoritative per-placement buffer-reject counter,
-    # populated only when the oracle flag is on and Stage 2 confirms the
-    # rejection was buffer-only.
+    # Authoritative per-placement buffer-reject counter — populated only
+    # when the oracle flag is on and Stage 2 confirms the rejection was
+    # buffer-only. (The legacy flag-agnostic ``lecture_room_reject_due_to_buffer_count``
+    # was retired in PR4 commit 7; dashboards migrated to this key.)
     buffer_only_rejects = 0
     room_failures: list[dict] = []
 
@@ -344,7 +344,10 @@ def assign_rooms_to_board(board_id: int) -> dict:
         duration = _to_min(p.end_time) - _to_min(p.start_time)
         # Only 4-credit courses have lab meetings. 2-credit 100-min
         # meetings are long lectures, not labs.
-        room_type = "lab" if (duration > 80 and cr == 4) else "lecture"
+        if is_lab_heuristic_unified():
+            room_type = "lab" if meeting_requires_lab_room(duration) else "lecture"
+        else:
+            room_type = "lab" if (duration > 80 and cr == 4) else "lecture"
 
         # For lab meetings, don't filter by capacity — lab rooms have a
         # fixed physical size (computers/benches).
@@ -358,12 +361,12 @@ def assign_rooms_to_board(board_id: int) -> dict:
             p.save(update_fields=["room", "updated_at"])
             assigned += 1
         else:
-            # Count rooms the buffer rejected: would a raw-cap room have fit?
+            # Would a raw-cap room have fit? Used below to refine the oracle
+            # rejection code into ROOM_BUFFER_REJECT when the section could
+            # have been placed without the capacity buffer.
             is_buffer_only = room_type != "lab" and tracker.is_feasible(
                 p.day, p.start_time, raw_cap, room_type, gender
             )
-            if is_buffer_only:
-                lecture_room_reject_due_to_buffer_count += 1
             p.room = "UNASSIGNED"
             p.save(update_fields=["room", "updated_at"])
             unassigned += 1
@@ -428,7 +431,6 @@ def assign_rooms_to_board(board_id: int) -> dict:
         "assigned": assigned,
         "unassigned": unassigned,
         "capacity_buffer": buffer_multiplier,
-        "lecture_room_reject_due_to_buffer_count": lecture_room_reject_due_to_buffer_count,
         "buffer_only_rejects": buffer_only_rejects,
         "room_failures": room_failures,
         "room_failure_breakdown": room_failure_breakdown(room_failures),
@@ -516,7 +518,10 @@ def simulate_buffer_impact(board_id: int, buffers: list[float]) -> dict:
             buffered_cap = int(raw_cap * buf)
             cr = credit_map.get(p.term_section.course_code, 3)
             duration = _to_min(p.end_time) - _to_min(p.start_time)
-            room_type = "lab" if (duration > 80 and cr == 4) else "lecture"
+            if is_lab_heuristic_unified():
+                room_type = "lab" if meeting_requires_lab_room(duration) else "lecture"
+            else:
+                room_type = "lab" if (duration > 80 and cr == 4) else "lecture"
             room_cap = 0 if room_type == "lab" else buffered_cap
             gender = _section_gender(p.term_section.section) or board_gender
             room_code = tracker.assign_best_fit(p.day, p.start_time, room_cap, room_type, gender)
