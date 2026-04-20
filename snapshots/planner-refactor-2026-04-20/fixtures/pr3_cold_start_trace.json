@@ -1,0 +1,29 @@
+{
+  "description": "PR3 scenario #2 — cold-start trace capture. A small 3-section board with enough candidate slots that every placed section has at least two rejected alternatives. After commit 3, decision_trace[section_code] must contain chosen + at least 1 alternative per section; trace coverage on this fixture must be 100%.",
+  "scenario": {
+    "sections": [
+      {"course_code": "CS101", "section_code": "S1", "enrolment": 20, "instructor_id": "I1"},
+      {"course_code": "CS102", "section_code": "S1", "enrolment": 22, "instructor_id": "I2"},
+      {"course_code": "CS103", "section_code": "S1", "enrolment": 18, "instructor_id": "I3"}
+    ],
+    "slot_pool": [
+      {"day": "Sun", "start_time": "08:00", "end_time": "09:15"},
+      {"day": "Sun", "start_time": "09:30", "end_time": "10:45"},
+      {"day": "Mon", "start_time": "08:00", "end_time": "09:15"}
+    ],
+    "rooms": [
+      {"room_code": "A101", "capacity": 40, "room_type": "lecture", "gender": ""}
+    ],
+    "baseline_placements": null
+  },
+  "expected": {
+    "placed": 3,
+    "decision_trace_coverage": 1.0,
+    "min_alternatives_per_section": 1,
+    "rejection_codes_are_known_sentinels_only": true
+  },
+  "notes": [
+    "Tests: tests/test_pr3_decision_trace.py::TestColdStartCapture::test_every_placed_section_has_alternatives",
+    "Acceptance-bar #1: ≥90% trace coverage. This fixture asserts 100% on a small obviously-traceable scenario; broader-pack fixtures allow the 90% floor."
+  ]
+}

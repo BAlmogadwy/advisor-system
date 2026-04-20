@@ -1,0 +1,34 @@
+{
+  "description": "PR3 scenario #3 — warm-start retention when the baseline is still feasible. All 3 baseline placements are legal (no prayer clash, no lock conflict, instructor free, students free, room fits). After commit 5, every section is retained from baseline; changes_from_baseline_count == 0, unchanged_count == 3, decision_trace shows chosen == baseline with alternatives recorded for transparency.",
+  "scenario": {
+    "sections": [
+      {"course_code": "CS101", "section_code": "S1", "enrolment": 20, "instructor_id": "I1"},
+      {"course_code": "CS102", "section_code": "S1", "enrolment": 22, "instructor_id": "I2"},
+      {"course_code": "CS103", "section_code": "S1", "enrolment": 18, "instructor_id": "I3"}
+    ],
+    "slot_pool": [
+      {"day": "Sun", "start_time": "08:00", "end_time": "09:15"},
+      {"day": "Sun", "start_time": "09:30", "end_time": "10:45"},
+      {"day": "Mon", "start_time": "08:00", "end_time": "09:15"}
+    ],
+    "rooms": [
+      {"room_code": "A101", "capacity": 40, "room_type": "lecture", "gender": ""}
+    ],
+    "baseline_placements": {
+      "CS101|S1": {"day": "Sun", "start_time": "08:00", "end_time": "09:15", "room": "A101"},
+      "CS102|S1": {"day": "Sun", "start_time": "09:30", "end_time": "10:45", "room": "A101"},
+      "CS103|S1": {"day": "Mon", "start_time": "08:00", "end_time": "09:15", "room": "A101"}
+    }
+  },
+  "expected": {
+    "placed": 3,
+    "unchanged_count": 3,
+    "changes_from_baseline_count": 0,
+    "newly_placed_count": 0,
+    "removed_count": 0
+  },
+  "notes": [
+    "Tests: tests/test_pr3_warm_start.py::TestFeasibleRetention::test_all_feasible_baselines_retained",
+    "Decision-trace framing: 'chosen' is the baseline slot; alternatives show other candidates that would have been chosen on a cold start — each with rejection_context noting the baseline was retained to minimise perturbation."
+  ]
+}

@@ -64,8 +64,15 @@ from core.models import (
     TermSection,
     TermSectionMeeting,
 )
+from core.services.timetable_decision_trace import (
+    STUDENT_CONFLICT,
+    Alternative,
+    DecisionTrace,
+    is_decision_trace_enabled,
+)
 from core.services.timetable_room_oracle import (
     NO_ROOM_CAPACITY,
+    ROOM_OCCUPIED,
     RoomFailureReason,
     check_capacity_feasibility,
     check_gender_feasibility,
@@ -76,11 +83,18 @@ from core.services.timetable_room_oracle import (
 )
 from core.services.timetable_validation import (
     LOCK_RESPECT,
+    PRAYER_OVERLAP,
     RejectionReason,
     get_prayer_windows,
     is_lock_enforcement_enabled,
     is_prayer_overlap_rule_enabled,
     prayer_overlap_rejection,
+)
+from core.services.timetable_warm_start import (
+    BaselinePlacement,
+    apply_warm_start,
+    compute_perturbation_metric,
+    is_warm_start_enabled,
 )
 from core.services.timetable_workspace import _time_mask, _to_minutes
 
@@ -588,7 +602,172 @@ def _score_option(
     )
 
 
-def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
+def _classify_pr3_alternative(
+    option: tuple[dict, ...],
+    placed_schedule: list[tuple[str, str, str, str]],
+    course_students: dict[str, set],
+    my_students: set,
+) -> tuple[str, dict] | None:
+    """Return ``(rejection_code, context)`` for a candidate option or ``None``.
+
+    Commit-3 classifier: inspects each meeting of the option against
+    already-placed meetings and returns the first hard reason that
+    explains why this option would be a worse placement than the winner.
+    Only known-sentinel codes are emitted — acceptance bar #2.
+
+    Covered today:
+    - ``STUDENT_CONFLICT`` — at least one shared student between this
+      option and a placed section at the same day+time.
+    - ``ROOM_OCCUPIED`` — same day+time as a placed section (no shared
+      students). Falls out of the assumption that rooming contention
+      dominates when multiple sections want the same slot; the PR2 room
+      oracle would refine this with ``ROOM_BUFFER_REJECT`` etc. but
+      post-placement re-check would duplicate feasibility work.
+
+    Not covered yet:
+    - ``INSTRUCTOR_CLASH`` — defined sentinel but never emitted until
+      per-section instructor plumbing lands (ChatGPT ruling I2).
+
+    Returns ``None`` if no hard reason applies — the option was
+    feasibility-clean and just lost on score. Those options are
+    excluded from the trace to keep rejection codes meaningful.
+    """
+    from core.services.timetable_validation import _overlaps
+
+    for m in option:
+        for ps in placed_schedule:
+            p_day, p_start, p_end, p_code = ps[:4]
+            if p_day != m["day"]:
+                continue
+            if not _overlaps(m["start"], m["end"], p_start, p_end):
+                continue
+            # Same day + overlapping interval → hard clash.
+            p_students = course_students.get(p_code, set())
+            shared = my_students & p_students
+            if shared:
+                return STUDENT_CONFLICT, {
+                    "clashing_section": p_code,
+                    "shared_student_count": len(shared),
+                }
+            return ROOM_OCCUPIED, {"occupying_section": p_code}
+    return None
+
+
+def _normalise_baseline_map(
+    baseline_placements: dict,
+) -> dict[str, BaselinePlacement]:
+    """Convert a caller-supplied baseline map into
+    ``dict[str, BaselinePlacement]``.
+
+    Accepts either dataclass instances or plain dicts
+    (``{"day", "start_time", "end_time", ...}``) — fixture loaders and
+    ad-hoc callers tend to pass dicts; production callers may pass the
+    dataclass directly. Both shapes land in the same normalised form so
+    the retention path below has one type to worry about.
+    """
+    out: dict[str, BaselinePlacement] = {}
+    for section_code, entry in baseline_placements.items():
+        if isinstance(entry, BaselinePlacement):
+            out[section_code] = entry
+            continue
+        if not isinstance(entry, dict):
+            continue
+        if "|" in section_code:
+            course_code, section = section_code.split("|", 1)
+        else:
+            course_code = section_code
+            section = entry.get("section", "S1")
+        # Day is uppercased to match ``WEEKDAYS`` ("SUN", "MON", …) that
+        # ``_generate_meeting_options`` stamps into every candidate
+        # option. Without this, fixture-style ``"Sun"`` / ``"Mon"`` never
+        # pair with the option dicts and warm-start silently no-ops.
+        out[section_code] = BaselinePlacement(
+            course_code=course_code,
+            section=section,
+            day=str(entry.get("day", "")).upper(),
+            start_time=str(entry.get("start_time", "")),
+            end_time=str(entry.get("end_time", "")),
+        )
+    return out
+
+
+def _build_pr3_alternatives(
+    *,
+    scored_options: list[tuple[tuple, tuple[dict, ...]]],
+    prayer_rejected: list[tuple[tuple[dict, ...], str, dict]],
+    winning_option: tuple[dict, ...],
+    placed_schedule: list[tuple[str, str, str, str]],
+    course_students: dict[str, set],
+    my_students: set,
+    my_code: str,
+    meeting_results: list[dict],
+) -> list[Alternative]:
+    """Build up to 3 ``Alternative`` entries for a placed section.
+
+    Ordering rules (ChatGPT commit-3 ruling F1):
+    - Prayer-rejected options come first (their score was never computed
+      because they were filtered pre-score; surfacing them first
+      matches the greedy's own preference for showing the hardest
+      reasons).
+    - Scored losers follow, ordered by ascending score (best-rejected
+      first) — the option that would have scored next-best after the
+      winner appears first.
+
+    Capped at 3 total. The trace stops producing alternatives beyond
+    that; this is a fixed cap per the DoR (not configurable).
+    """
+    alternatives: list[Alternative] = []
+    for opt, code, context in prayer_rejected[:3]:
+        first_m = opt[0]
+        alternatives.append(
+            Alternative(
+                day=first_m["day"],
+                start_time=first_m["start"],
+                end_time=first_m["end"],
+                room="",
+                rejection_code=code,
+                rejection_context=context,
+            )
+        )
+        if len(alternatives) >= 3:
+            return alternatives
+
+    losers = sorted(
+        (entry for entry in scored_options if entry[1] is not winning_option),
+        key=lambda entry: entry[0],
+    )
+    for _score, opt in losers:
+        if len(alternatives) >= 3:
+            break
+        classified = _classify_pr3_alternative(opt, placed_schedule, course_students, my_students)
+        if classified is None:
+            continue
+        code, context = classified
+        first_m = opt[0]
+        alternatives.append(
+            Alternative(
+                day=first_m["day"],
+                start_time=first_m["start"],
+                end_time=first_m["end"],
+                room="",
+                rejection_code=code,
+                rejection_context=context,
+            )
+        )
+
+    # Avoid unused-parameter warnings — ``my_code`` and ``meeting_results``
+    # are reserved for future classifier extensions (same-course overlap,
+    # room-specific rejection refinement). Kept as keyword args so commit
+    # 4/5 can extend without changing the signature.
+    del my_code, meeting_results
+    return alternatives
+
+
+def auto_place_board(
+    board_id: int,
+    strategy: str = DEFAULT_STRATEGY,
+    baseline_placements: dict | None = None,
+) -> dict:
     """Auto-place all unplaced sections on a single delivery board.
 
     This is the main entry point for the greedy placement algorithm.  It
@@ -624,6 +803,15 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
         ``credit_hours``, ``meetings`` (list of day/start/end dicts),
         and ``conflict_score``.
     """
+    # PR3 commit 5 — normalise the caller-supplied baseline map into a
+    # uniform ``dict[str, BaselinePlacement]`` keyed by ``"course|section"``.
+    # Fixture loaders and test helpers tend to pass plain dicts; production
+    # callers may pass dataclass instances. Both shapes land here.
+    normalised_baseline: dict[str, BaselinePlacement] | None = (
+        _normalise_baseline_map(baseline_placements) if baseline_placements else None
+    )
+    warm_start_on = is_warm_start_enabled()
+
     try:
         board = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
     except DeliveryBoard.DoesNotExist:
@@ -637,6 +825,18 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
             "room_failures": [],
             "room_failure_breakdown": {},
             "unplaced_count": 0,
+            # PR3 commit 3 — schema-stable empty dict even on the board-
+            # not-found fast path (DoR sign-off amendment on schema
+            # stability across all payload exits).
+            "decision_trace": {},
+            # PR3 commit 5 — perturbation metric is always present.
+            # With no placements and no baseline, all four counters are 0.
+            # Board-not-found pre-dates budget discovery, so we cannot scope
+            # the caller's baseline to this board's courses — pass ``None``
+            # to avoid mis-attributing scenario-wide baseline entries as
+            # ``removed`` here. Scenario-level aggregation (commit 6) sees
+            # the true set via the boards that DO run through the pipeline.
+            "perturbation_metric": compute_perturbation_metric([], None),
         }
 
     scenario = board.scenario
@@ -795,6 +995,15 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
             "room_failures": [],
             "room_failure_breakdown": {},
             "unplaced_count": 0,
+            # PR3 commit 3 — schema stability: the decision_trace key is
+            # always present, even when there is nothing to place.
+            "decision_trace": {},
+            # PR3 commit 5 — perturbation metric present even on the
+            # no-budget fast path. Same reasoning as the board-not-found
+            # branch: without budgets we cannot scope baseline to this
+            # board's courses, so pass ``None`` rather than falsely
+            # attributing scenario-wide entries as ``removed``.
+            "perturbation_metric": compute_perturbation_metric([], None),
         }
 
     # ── 2. Build student-to-course mapping ────────────────────────────
@@ -835,6 +1044,18 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
     # inside auto_place_board (scoring best_option=None, and tracker None
     # fallback). Surfaced on the return dict as ``room_failures``.
     room_failures: list[dict] = []
+    # PR3 commit 3 — decision-trace capture (observational, flag-gated).
+    # When ``trace_enabled`` is True we record one ``DecisionTrace`` per
+    # placed section: the chosen slot plus up to 3 alternatives ordered
+    # by score rank (best-rejected first). When False, ``decision_trace``
+    # stays empty but the key is still present in the return payload for
+    # schema stability (DoR sign-off amendment). The captured codes today
+    # are a subset of the DoR alphabet: STUDENT_CONFLICT is live;
+    # INSTRUCTOR_CLASH is a defined sentinel but not emitted until
+    # instructor-per-section data plumbing lands (ChatGPT commit-3 ruling
+    # I2 — see docs/PR3-DOR.md and the scenario-pack README).
+    trace_enabled = is_decision_trace_enabled()
+    decision_trace: dict[str, dict] = {}
 
     # ── 2b. PR1 lock preload ─────────────────────────────────────────
     # When TIMETABLE_ENFORCE_LOCKS is on, locked SectionPlacement rows
@@ -878,6 +1099,39 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                     context={"locked_room": lp.room},
                 ).to_dict()
             )
+            # PR3 commit 5 — when warm-start is on and the caller
+            # provided a baseline for a locked section at a DIFFERENT
+            # slot, emit a DecisionTrace row showing the lock as chosen
+            # and the baseline as the rejected alternative (with
+            # rejection_code=LOCK_RESPECT). This is the only way the
+            # registrar learns "your previous slot was overridden by a
+            # lock" — the round-robin loop skips locked sections so
+            # they never reach the per-section trace path below.
+            # Priority order locked in: PR1 locks → PR3 warm-start →
+            # cold-start (see fixture #5 notes).
+            if trace_enabled and warm_start_on and normalised_baseline is not None:
+                section_code_full = f"{cc}|{lp.term_section.section}"
+                baseline_entry = normalised_baseline.get(section_code_full)
+                if baseline_entry is not None and (
+                    baseline_entry.day != lp.day or baseline_entry.start_time != lp.start_time
+                ):
+                    decision_trace_lock_alt = Alternative(
+                        day=baseline_entry.day,
+                        start_time=baseline_entry.start_time,
+                        end_time=baseline_entry.end_time,
+                        room="",
+                        rejection_code=LOCK_RESPECT,
+                        rejection_context={"locked_section": section_code_full},
+                    )
+                    decision_trace[section_code_full] = DecisionTrace(
+                        section_code=section_code_full,
+                        course_code=cc,
+                        chosen_day=lp.day,
+                        chosen_start_time=lp.start_time,
+                        chosen_end_time=lp.end_time,
+                        chosen_room=lp.room or "",
+                        alternatives=(decision_trace_lock_alt,),
+                    ).to_dict()
 
     # ── 3. Identify online courses (from ProgrammeRequirement) ────────
     # Online courses receive a late-slot preference penalty so they are
@@ -976,6 +1230,12 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
             best_score = (float("inf"),) * 6
             best_option = None
 
+            # PR3 commit 3 — per-section trace accumulators. Only populated
+            # when the flag is on (cheap early-out keeps the hot scoring
+            # loop free of extra work when trace capture is disabled).
+            pr3_scored_options: list[tuple[tuple, tuple[dict, ...]]] = []
+            pr3_prayer_rejected: list[tuple[tuple[dict, ...], str, dict]] = []
+
             is_online = cd.get("is_online", False)
 
             # ── Score every candidate option and keep the best ────────
@@ -1003,6 +1263,7 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                 # set, so the extra payload would be noise).
                 if prayer_rule_on and prayer_windows:
                     prayer_skip = False
+                    prayer_skip_rej: RejectionReason | None = None
                     for m in option:
                         rej = prayer_overlap_rejection(
                             {
@@ -1016,8 +1277,21 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                         if rej is not None:
                             pr1_prayer_rejections.append(rej.to_dict())
                             prayer_skip = True
+                            prayer_skip_rej = rej
                             break
                     if prayer_skip:
+                        # PR3 commit 3 — record this option as a prayer-clash
+                        # alternative so it can appear in the decision trace.
+                        # ``prayer_skip_rej.context`` carries the window label
+                        # populated by ``prayer_overlap_rejection``.
+                        if trace_enabled and prayer_skip_rej is not None:
+                            pr3_prayer_rejected.append(
+                                (
+                                    option,
+                                    PRAYER_OVERLAP,
+                                    dict(prayer_skip_rej.context or {}),
+                                )
+                            )
                         continue
 
                 # Room feasibility: prefer options with rooms, penalize roomless
@@ -1115,9 +1389,43 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                     raw_score[3],
                     raw_score[4],
                 )
+                if trace_enabled:
+                    pr3_scored_options.append((score, option))
                 if score < best_score:
                     best_score = score
                     best_option = option
+
+            # PR3 commit 5 — warm-start retention (flag-gated).
+            # Priority: PR1 locks (handled by the preload skip above) →
+            # PR3 warm-start retention → cold-start scoring. When a
+            # baseline slot is still feasible (it survived prayer/room
+            # filtering into ``pr3_scored_options``), swap it in as the
+            # chosen option. When it was filtered out, record the
+            # baseline's failure reason so the trace explains why the
+            # previous placement no longer works.
+            section_code_full = f"{code}|{sec_label}"
+            baseline_failure_code: str | None = None
+            baseline_failure_context: dict = {}
+            baseline_option_matched: tuple[dict, ...] | None = None
+            warm_start_retained = False
+            if warm_start_on and normalised_baseline is not None:
+                baseline_option_matched = apply_warm_start(
+                    section_code_full, normalised_baseline, all_options
+                )
+                if baseline_option_matched is not None:
+                    # Was it feasibility-clean (scored, not prayer-rejected)?
+                    feasible = any(opt is baseline_option_matched for _s, opt in pr3_scored_options)
+                    if feasible:
+                        best_option = baseline_option_matched
+                        warm_start_retained = True
+                    else:
+                        # Filtered out — look it up in the prayer-reject
+                        # list to surface the real failure code/context.
+                        for opt, rcode, rctx in pr3_prayer_rejected:
+                            if opt is baseline_option_matched:
+                                baseline_failure_code = rcode
+                                baseline_failure_context = rctx
+                                break
 
             if best_option is None:
                 total_skipped += 1
@@ -1289,7 +1597,14 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                 placed_schedule.append((m["day"], m["start"], m["end"], code))
                 all_placed_masks.append((code, mask))
                 slot_density[m["start"]] += 1
-                meeting_results.append({"day": m["day"], "start": m["start"], "end": m["end"]})
+                meeting_results.append(
+                    {
+                        "day": m["day"],
+                        "start": m["start"],
+                        "end": m["end"],
+                        "room": assigned_room,
+                    }
+                )
 
             total_placed += 1
             placement_results.append(
@@ -1302,9 +1617,72 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                 }
             )
 
+            # PR3 commit 3 — build the DecisionTrace for this placement.
+            # First-successful-placement only (ChatGPT commit-3 ruling E);
+            # no re-capture on polish paths. Alternatives = top-3 by score
+            # rank, best-rejected first (ruling F1), classified by the
+            # first hard reason they fail. Options with no hard reason
+            # (feasibility-clean but lost on score) are skipped — rejection
+            # codes must be known sentinels (acceptance bar #2) and "lost
+            # on score" has no honest name.
+            if trace_enabled and best_option is not None:
+                chosen_first = best_option[0]
+                alternatives = _build_pr3_alternatives(
+                    scored_options=pr3_scored_options,
+                    prayer_rejected=pr3_prayer_rejected,
+                    winning_option=best_option,
+                    placed_schedule=placed_schedule,
+                    course_students=course_students,
+                    my_students=my_students,
+                    my_code=code,
+                    meeting_results=meeting_results,
+                )
+                # PR3 commit 5 — warm-start fallback: prepend the
+                # baseline's real failure reason so the registrar can
+                # see *why* the previous placement no longer works.
+                # Only applies when warm-start was requested, baseline
+                # matched a real option, but the option was filtered
+                # before scoring (prayer clash today; room filters in a
+                # later commit).
+                if (
+                    warm_start_on
+                    and not warm_start_retained
+                    and baseline_option_matched is not None
+                    and baseline_failure_code is not None
+                ):
+                    baseline_first_meeting = baseline_option_matched[0]
+                    baseline_alt = Alternative(
+                        day=baseline_first_meeting["day"],
+                        start_time=baseline_first_meeting["start"],
+                        end_time=baseline_first_meeting["end"],
+                        room="",
+                        rejection_code=baseline_failure_code,
+                        rejection_context=baseline_failure_context,
+                    )
+                    alternatives = [baseline_alt] + [
+                        alt
+                        for alt in alternatives
+                        if not (
+                            alt.day == baseline_alt.day
+                            and alt.start_time == baseline_alt.start_time
+                            and alt.end_time == baseline_alt.end_time
+                        )
+                    ]
+                    alternatives = alternatives[:3]
+                decision_trace[section_code_full] = DecisionTrace(
+                    section_code=section_code_full,
+                    course_code=code,
+                    chosen_day=chosen_first["day"],
+                    chosen_start_time=chosen_first["start"],
+                    chosen_end_time=chosen_first["end"],
+                    chosen_room=meeting_results[0].get("room", "") if meeting_results else "",
+                    alternatives=tuple(alternatives),
+                ).to_dict()
+
     logger.info(
         "auto_place_board(board=%s): placed=%d skipped=%d "
-        "prayer_rule_on=%s (rejections=%d) lock_rule_on=%s (rejections=%d)",
+        "prayer_rule_on=%s (rejections=%d) lock_rule_on=%s (rejections=%d) "
+        "warm_start_on=%s (baseline_provided=%s)",
         board_id,
         total_placed,
         total_skipped,
@@ -1312,6 +1690,8 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
         len(pr1_prayer_rejections),
         lock_rule_on,
         len(pr1_lock_rejections),
+        warm_start_on,
+        normalised_baseline is not None,
     )
 
     return {
@@ -1324,6 +1704,37 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
         "room_failures": room_failures,
         "room_failure_breakdown": room_failure_breakdown(room_failures),
         "unplaced_count": total_skipped,
+        # PR3 commit 3 — key is always present for schema stability.
+        # Empty dict when the flag is off or no sections were placed.
+        "decision_trace": decision_trace,
+        # PR3 commit 5 — perturbation counters against the baseline.
+        # With ``baseline_placements=None`` every placement is reported
+        # as ``newly_placed``; with a baseline, the four counters split
+        # placements into unchanged / changed / newly_placed / removed.
+        #
+        # PR3 commit 6 — scope the baseline to THIS board's course set
+        # before counting. The caller (``auto_place_scenario`` /
+        # ``optimise_scenario_timetable_v2``) fans a scenario-wide
+        # baseline out to every board; without scoping, each board
+        # would report every other board's baseline entries as
+        # ``removed``, and summing the four counters at the scenario
+        # level would over-count removals by (num_boards-1)×.
+        # Scoping by course_code is sufficient because section codes
+        # (``<course>|<section>``) are globally unique across boards
+        # within a scenario — the same invariant that
+        # ``_merge_board_decision_traces`` relies on.
+        "perturbation_metric": compute_perturbation_metric(
+            placement_results,
+            (
+                {
+                    k: v
+                    for k, v in normalised_baseline.items()
+                    if k.split("|", 1)[0] in board_courses
+                }
+                if normalised_baseline is not None
+                else None
+            ),
+        ),
     }
 
 
@@ -1482,7 +1893,14 @@ def _adaptive_scenario(scenario_id: int) -> dict:
 
 
 def _build_scenario_result(scenario_id: int) -> dict:
-    """Build a result dict from the current DB state of a scenario."""
+    """Build a result dict from the current DB state of a scenario.
+
+    ``decision_trace`` is always emitted as an empty dict on this path
+    because this builder reconstructs the result from DB state alone,
+    after in-memory traces from the original placement calls have been
+    discarded. PR3 schema-stability clause: the key is always present
+    (and commit 6 adds ``perturbation_metric`` with the same invariant).
+    """
     boards = DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order")
     results = {}
     total_placed = 0
@@ -1493,12 +1911,74 @@ def _build_scenario_result(scenario_id: int) -> dict:
             .distinct()
             .count()
         )
-        results[board.label] = {"placed": placed, "skipped": 0}
+        results[board.label] = {
+            "placed": placed,
+            "skipped": 0,
+            "decision_trace": {},
+            "perturbation_metric": dict(_EMPTY_PERTURBATION_METRIC),
+        }
         total_placed += placed
-    return {"boards": results, "total_placed": total_placed, "total_skipped": 0}
+    return {
+        "boards": results,
+        "total_placed": total_placed,
+        "total_skipped": 0,
+        "decision_trace": {},
+        "perturbation_metric": dict(_EMPTY_PERTURBATION_METRIC),
+    }
 
 
-def auto_place_scenario(scenario_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
+def _merge_board_decision_traces(boards_result: dict) -> dict:
+    """Merge per-board ``decision_trace`` dicts into a scenario-level dict.
+
+    Used by every path through ``auto_place_scenario`` so the top-level
+    return payload always carries a merged trace (PR3 schema stability).
+    Section codes are scoped ``<course>|<section>`` and are unique across
+    boards within a scenario, so flat-merging via ``dict.update`` is
+    loss-free — if a duplicate ever appeared it would indicate a
+    scenario-level invariant violation elsewhere.
+    """
+    merged: dict[str, dict] = {}
+    for board_result in boards_result.values():
+        trace = board_result.get("decision_trace", {})
+        if trace:
+            merged.update(trace)
+    return merged
+
+
+_EMPTY_PERTURBATION_METRIC: dict[str, int] = {
+    "changes_from_baseline_count": 0,
+    "unchanged_count": 0,
+    "newly_placed_count": 0,
+    "removed_count": 0,
+}
+
+
+def _sum_board_perturbation_metrics(boards_result: dict) -> dict:
+    """Sum per-board ``perturbation_metric`` dicts at the scenario level.
+
+    PR3 commit 6. Each of the four counters is additive across boards
+    *provided* each board already scoped the caller-supplied baseline to
+    its own course set before counting — otherwise ``removed_count``
+    double-counts. ``auto_place_board`` handles the scoping; this helper
+    is a pure sum.
+
+    Boards that did not emit the key (e.g. a future non-greedy path) are
+    treated as all-zero rather than raising, so adding new strategies
+    does not break the schema-stability invariant.
+    """
+    totals = dict(_EMPTY_PERTURBATION_METRIC)
+    for board_result in boards_result.values():
+        metric = board_result.get("perturbation_metric") or {}
+        for key in totals:
+            totals[key] += int(metric.get(key, 0))
+    return totals
+
+
+def auto_place_scenario(
+    scenario_id: int,
+    strategy: str = DEFAULT_STRATEGY,
+    baseline_placements: dict | None = None,
+) -> dict:
     """Auto-place sections on every board in a scenario.
 
     Iterates over all ``DeliveryBoard`` rows belonging to the scenario
@@ -1508,17 +1988,41 @@ def auto_place_scenario(scenario_id: int, strategy: str = DEFAULT_STRATEGY) -> d
     ----------
     scenario_id : int
         Primary key of the ``TimetableScenario``.
+    strategy : str
+        Placement strategy to apply.
+    baseline_placements : dict | None
+        PR3 commit 6 — optional scenario-wide warm-start baseline. Keys
+        are ``"<course>|<section>"`` strings; values are either
+        ``BaselinePlacement`` dataclasses or plain dicts with ``day``
+        / ``start_time`` / ``end_time`` fields. Fanned out to every
+        ``auto_place_board`` call unmodified; each board scopes the map
+        down to its own courses internally (see the ``auto_place_board``
+        return-site comment on why scoping lives there, not here).
 
     Returns
     -------
     dict
         ``{"boards": {label: board_result, ...}, "total_placed": int,
-        "total_skipped": int}`` where each *board_result* has the same
-        shape as the return value of ``auto_place_board``.
+        "total_skipped": int, "decision_trace": {...},
+        "perturbation_metric": {...}}`` where each *board_result* has
+        the same shape as the return value of ``auto_place_board``.
+        ``decision_trace`` is the scenario-level flat-merge of every
+        board's per-section traces (PR3 commit 4). ``perturbation_metric``
+        is the four-counter sum across boards (PR3 commit 6). Non-greedy
+        strategies that cannot observe baseline (CP-SAT solver, SA, load
+        balancer) emit an all-zero metric for schema stability.
     """
     # Adaptive: greedy baseline → CP-SAT improvement → local search polish
     if strategy == "adaptive":
-        return _adaptive_scenario(scenario_id)
+        result = _adaptive_scenario(scenario_id)
+        result.setdefault("decision_trace", _merge_board_decision_traces(result.get("boards", {})))
+        # PR3 commit 6 — schema stability. Adaptive does not observe the
+        # caller's baseline (no warm-start wire-through), so report the
+        # all-zero metric rather than a silent omission.
+        result.setdefault(
+            "perturbation_metric", _sum_board_perturbation_metrics(result.get("boards", {}))
+        )
+        return result
 
     # Use CP-SAT solver for "optimal" strategy — per-board fallback to compact
     if strategy == "optimal":
@@ -1541,6 +2045,15 @@ def auto_place_scenario(scenario_id: int, strategy: str = DEFAULT_STRATEGY) -> d
             boards_result[board.label] = r
             result["total_placed"] = result.get("total_placed", 0) + r["placed"]
 
+        # PR3 commit 4: surface per-board traces at the scenario level. For
+        # CP-SAT-placed boards there is no trace (solver is silent on
+        # rejected alternatives); for compact-fallback boards we keep the
+        # greedy trace.
+        result["decision_trace"] = _merge_board_decision_traces(boards_result)
+        # PR3 commit 6 — same schema-stability reasoning as the adaptive
+        # branch above. The CP-SAT solver is baseline-agnostic today, so
+        # this path emits an all-zero metric.
+        result["perturbation_metric"] = _sum_board_perturbation_metrics(boards_result)
         return result
 
     # Load-balanced: greedy build + redistribution
@@ -1576,7 +2089,11 @@ def auto_place_scenario(scenario_id: int, strategy: str = DEFAULT_STRATEGY) -> d
     total_placed = 0
     total_skipped = 0
     for board in boards:
-        r = auto_place_board(board.id, strategy=strategy)
+        r = auto_place_board(
+            board.id,
+            strategy=strategy,
+            baseline_placements=baseline_placements,
+        )
         results[board.label] = r
         total_placed += r["placed"]
         total_skipped += r["skipped"]
@@ -1584,4 +2101,10 @@ def auto_place_scenario(scenario_id: int, strategy: str = DEFAULT_STRATEGY) -> d
         "boards": results,
         "total_placed": total_placed,
         "total_skipped": total_skipped,
+        "decision_trace": _merge_board_decision_traces(results),
+        # PR3 commit 6 — scenario-level perturbation metric. Each board's
+        # ``auto_place_board`` scopes its baseline to its own course set
+        # before counting, so summing the four counters across boards is
+        # loss-free (no double-counting of ``removed``).
+        "perturbation_metric": _sum_board_perturbation_metrics(results),
     }

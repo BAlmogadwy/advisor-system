@@ -1,0 +1,32 @@
+{
+  "description": "PR3 scenario #11 — canonical warm-start fixture. The exact-zero invariant from acceptance bar #4 holds on THIS fixture: identical-scenario re-run with warm-start enabled produces changes_from_baseline_count == 0. The broader scenario pack may drift by small explainable amounts, but this one is the hard contract.",
+  "scenario": {
+    "sections": [
+      {"course_code": "CS101", "section_code": "S1", "enrolment": 20, "instructor_id": "I1"},
+      {"course_code": "CS102", "section_code": "S1", "enrolment": 22, "instructor_id": "I2"}
+    ],
+    "slot_pool": [
+      {"day": "Sun", "start_time": "08:00", "end_time": "09:15"},
+      {"day": "Mon", "start_time": "08:00", "end_time": "09:15"}
+    ],
+    "rooms": [
+      {"room_code": "A101", "capacity": 40, "room_type": "lecture", "gender": ""}
+    ],
+    "baseline_placements": {
+      "CS101|S1": {"day": "Sun", "start_time": "08:00", "end_time": "09:15", "room": "A101"},
+      "CS102|S1": {"day": "Mon", "start_time": "08:00", "end_time": "09:15", "room": "A101"}
+    }
+  },
+  "expected": {
+    "placed": 2,
+    "unchanged_count": 2,
+    "changes_from_baseline_count": 0,
+    "newly_placed_count": 0,
+    "removed_count": 0,
+    "hard_zero_invariant": true
+  },
+  "notes": [
+    "Tests: tests/test_pr3_warm_start.py::TestCanonicalWarmStartFixture::test_exact_zero_invariant",
+    "Acceptance-bar #4: the hard zero-change invariant only applies on this canonical fixture. Broader-pack fixtures may drift slightly provided every drift maps to an explainable cause (baseline infeasibility, rare tie-break drift). This split — hard test on one fixture, 'low and explainable' on the rest — was the ChatGPT amendment to the first DoR draft."
+  ]
+}

@@ -302,3 +302,29 @@ TIMETABLE_CAPACITY_BUFFER = float(os.getenv("TIMETABLE_CAPACITY_BUFFER", "1.1"))
 TIMETABLE_PR2_ROOM_ORACLE_ENABLED = os.getenv(
     "TIMETABLE_PR2_ROOM_ORACLE_ENABLED", "true"
 ).lower() in ("1", "true", "yes", "on")
+
+# PR3 commit 2 — decision-trace capture (explainability layer).
+# When True (default from commit 2 onwards), ``auto_place_board`` will
+# emit a ``DecisionTrace`` per placed section from commit 3, so
+# downstream consumers can see the chosen slot + up to 3 rejected
+# alternatives per placement. When False, the planner still emits
+# ``decision_trace={}`` for schema stability so payload shape stays
+# constant regardless of flag state. Observational only — no
+# planning-decision change either way.
+TIMETABLE_PR3_DECISION_TRACE_ENABLED = os.getenv(
+    "TIMETABLE_PR3_DECISION_TRACE_ENABLED", "true"
+).lower() in ("1", "true", "yes", "on")
+
+# PR3 commit 5 — warm-start retention (minimal-perturbation layer).
+# When True, ``auto_place_board`` accepts a ``baseline_placements`` map
+# and retains legal baseline slots instead of re-scoring cold.
+#
+# Commit 8 (promotion): default flipped from ``False`` to ``True`` after
+# the 10-fixture acceptance pack cleared the schema / coverage /
+# zero-change / cold-start-parity / known-alphabet bars. The env var
+# override is preserved as the kill-switch: set
+# ``TIMETABLE_PR3_WARM_START_ENABLED=false`` to revert to cold-start
+# behaviour without a redeploy. See ``docs/PR3-PROMOTION-NOTE.md``.
+TIMETABLE_PR3_WARM_START_ENABLED = os.getenv(
+    "TIMETABLE_PR3_WARM_START_ENABLED", "true"
+).lower() in ("1", "true", "yes", "on")
