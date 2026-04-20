@@ -374,7 +374,7 @@ class TestAcceptanceBar(SimpleTestCase):
     floor from acceptance bar #1."""
 
     def test_trace_coverage_on_pack(self) -> None:
-        """Stub — commit 6 extends the perf harness to load every
+        """Stub — a later commit extends the perf harness to load every
         ``snapshots/.../fixtures/pr3_*.json`` fixture and assert:
 
             coverage = traced_sections / placed_sections
@@ -384,3 +384,122 @@ class TestAcceptanceBar(SimpleTestCase):
         assert BaselinePlacement is not None
         assert Alternative is not None
         assert DecisionTrace is not None
+
+
+# ===========================================================================
+# SECTION E — Scenario-level warm-start + metric aggregation (commit 6).
+# ===========================================================================
+
+
+@pytest.mark.django_db
+class TestScenarioLevelWarmStart(TransactionTestCase):
+    """Commit 6: baseline_placements propagates from the scenario entry
+    point down to per-board auto_place_board calls, and the four
+    perturbation counters are summed losslessly at the scenario level.
+
+    Single-board smoke: the scenario-level metric should match the
+    per-board metric exactly (sum over one board = that board's counts).
+    """
+
+    @override_settings(TIMETABLE_PR3_WARM_START_ENABLED=True)
+    def test_auto_place_scenario_propagates_baseline_and_sums_metric(self) -> None:
+        from core.services.timetable_autoplace import auto_place_scenario
+
+        scenario, _board, data = load_pr3_fixture("pr3_warm_start_feasible.json")
+        baseline = data["scenario"]["baseline_placements"]
+
+        result = auto_place_scenario(
+            scenario.id,
+            strategy="compact",
+            baseline_placements=baseline,
+        )
+
+        assert "perturbation_metric" in result, (
+            "Scenario result must surface perturbation_metric (schema stability)"
+        )
+        scenario_metric = result["perturbation_metric"]
+        # Fixture has 3 baseline entries, all feasible → all 3 unchanged.
+        assert scenario_metric["unchanged_count"] == 3
+        assert scenario_metric["changes_from_baseline_count"] == 0
+        assert scenario_metric["newly_placed_count"] == 0
+        assert scenario_metric["removed_count"] == 0
+
+        # The sum helper is lossless over one board — per-board and
+        # scenario-level counters must agree exactly.
+        per_board_metrics = [b["perturbation_metric"] for b in result["boards"].values()]
+        summed = {key: sum(m[key] for m in per_board_metrics) for key in scenario_metric}
+        assert summed == scenario_metric
+
+
+@pytest.mark.django_db
+class TestBaselineScopedPerBoard(TransactionTestCase):
+    """Commit 6 regression: when the caller passes a scenario-wide
+    baseline that includes entries for courses NOT on this board,
+    ``removed_count`` must NOT over-count those as removed. The per-board
+    scoping inside ``auto_place_board`` strips entries whose course_code
+    is not in this board's budget set, so the scenario-level sum stays
+    loss-free across multi-board scenarios.
+    """
+
+    @override_settings(TIMETABLE_PR3_WARM_START_ENABLED=True)
+    def test_unrelated_baseline_entry_does_not_inflate_removed(self) -> None:
+        from core.services.timetable_autoplace import auto_place_board
+
+        _, board, data = load_pr3_fixture("pr3_warm_start_feasible.json")
+        baseline = dict(data["scenario"]["baseline_placements"])
+        # Inject an entry for a course this board does not own. Without
+        # scoping, this would count as ``removed`` in the metric; with
+        # scoping, it's filtered out before the count.
+        baseline["OTHER999|S1"] = {
+            "day": "Mon",
+            "start_time": "08:00",
+            "end_time": "09:15",
+        }
+
+        result = auto_place_board(board.id, baseline_placements=baseline)
+        metric = result["perturbation_metric"]
+
+        # The 3 on-board baseline entries still retain; the foreign
+        # entry was scoped out, so removed_count is 0, not 1.
+        assert metric["unchanged_count"] == 3
+        assert metric["removed_count"] == 0, (
+            "Foreign baseline entry must be scoped out, not counted as removed"
+        )
+
+
+class TestV2OptimiserAcceptsBaseline(SimpleTestCase):
+    """Commit 6: optimise_scenario_timetable_v2 exposes baseline_placements
+    as a kwarg. A DB-backed early-return test lives in the transactional
+    class below so this case can stay DB-free."""
+
+    def test_signature_exposes_baseline_placements_kwarg(self) -> None:
+        import inspect
+
+        from core.services.timetable_optimizer_v2 import optimise_scenario_timetable_v2
+
+        sig = inspect.signature(optimise_scenario_timetable_v2)
+        assert "baseline_placements" in sig.parameters
+        assert sig.parameters["baseline_placements"].default is None
+
+
+@pytest.mark.django_db
+class TestV2OptimiserEarlyReturnMetric(TransactionTestCase):
+    """Schema-stability guard: every V2 exit path must carry the
+    ``perturbation_metric`` key. The earliest short-circuit (no student
+    profiles for this scenario_id) proves the key is seeded, not relying
+    on the success-path overwrite to inject it."""
+
+    def test_no_profiles_early_return_carries_metric(self) -> None:
+        from core.services.timetable_optimizer_v2 import optimise_scenario_timetable_v2
+
+        # scenario_id that does not exist → build_student_profiles
+        # returns empty → early-return branch fires.
+        result = optimise_scenario_timetable_v2(scenario_id=-1)
+
+        assert "perturbation_metric" in result
+        assert result["perturbation_metric"] == {
+            "changes_from_baseline_count": 0,
+            "unchanged_count": 0,
+            "newly_placed_count": 0,
+            "removed_count": 0,
+        }

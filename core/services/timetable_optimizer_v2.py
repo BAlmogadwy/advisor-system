@@ -592,6 +592,7 @@ def optimise_scenario_timetable_v2(
     run_cpsat_polish: bool = True,
     cpsat_time_limit: float = 60.0,
     cpsat_hotspot_only: bool = False,
+    baseline_placements: dict | None = None,
 ) -> dict:
     """Full optimisation pipeline: generate → rank → improve → persist.
 
@@ -624,6 +625,12 @@ def optimise_scenario_timetable_v2(
         Time budget for CP-SAT solver in seconds.
     cpsat_hotspot_only : bool
         If True, only polish hotspot courses + partners (faster).
+    baseline_placements : dict | None
+        PR3 commit 6 — optional scenario-wide warm-start baseline. Passed
+        straight through to ``auto_place_scenario`` at step 5 so the
+        greedy re-placement can retain any baseline slot that survives
+        feasibility. No DB persistence: the baseline is caller-supplied
+        and in-memory only (DoR §warm-start-scope).
     """
     import time
 
@@ -639,6 +646,13 @@ def optimise_scenario_timetable_v2(
             "error": "No student profiles found for scenario",
             "candidates_evaluated": 0,
             "decision_trace": {},
+            # PR3 commit 6 — schema-stable empty metric on early-return.
+            "perturbation_metric": {
+                "changes_from_baseline_count": 0,
+                "unchanged_count": 0,
+                "newly_placed_count": 0,
+                "removed_count": 0,
+            },
         }
 
     t1 = time.time()
@@ -651,6 +665,13 @@ def optimise_scenario_timetable_v2(
             "error": "No candidates generated",
             "candidates_evaluated": 0,
             "decision_trace": {},
+            # PR3 commit 6 — schema-stable empty metric on early-return.
+            "perturbation_metric": {
+                "changes_from_baseline_count": 0,
+                "unchanged_count": 0,
+                "newly_placed_count": 0,
+                "removed_count": 0,
+            },
         }
 
     t2 = time.time()
@@ -697,6 +718,16 @@ def optimise_scenario_timetable_v2(
         # (chosen_* fields reflect the cold-start placement, not post-LS
         # moves). Schema-stability: the key is always present.
         "decision_trace": {},
+        # PR3 commit 6 — scenario-level perturbation metric. Seeded
+        # empty here so schema stability holds across every V2 exit path
+        # (no-profile, no-candidates, success). Overwritten at step 5 by
+        # the auto_place_scenario return value when baseline was supplied.
+        "perturbation_metric": {
+            "changes_from_baseline_count": 0,
+            "unchanged_count": 0,
+            "newly_placed_count": 0,
+            "removed_count": 0,
+        },
     }
 
     # ── Step 4: Local search on the best candidate ──
@@ -878,11 +909,24 @@ def optimise_scenario_timetable_v2(
     SectionPlacement.objects.filter(board__scenario_id=scenario_id).delete()
     from core.services.timetable_autoplace import auto_place_scenario
 
-    scenario_place_result = auto_place_scenario(scenario_id, strategy=winning_strategy)
+    scenario_place_result = auto_place_scenario(
+        scenario_id,
+        strategy=winning_strategy,
+        baseline_placements=baseline_placements,
+    )
     # PR3 commit 4: capture the scenario-level greedy trace. Per commit-4
     # ruling J3 we preserve this cold-start trace through the remaining V2
     # pipeline unchanged; LS / chain / CP-SAT do not mutate it.
     result["decision_trace"] = scenario_place_result.get("decision_trace", {})
+    # PR3 commit 6: capture the scenario-level perturbation metric from the
+    # greedy re-placement. Like decision_trace, this reflects cold-start
+    # placement (pre-LS); we intentionally do NOT recompute after local
+    # search / chain / CP-SAT because those paths don't observe baseline
+    # either. Schema-stable: the key is always present (seeded at result
+    # init; overwritten here with real values when auto_place_scenario
+    # returned them).
+    if "perturbation_metric" in scenario_place_result:
+        result["perturbation_metric"] = scenario_place_result["perturbation_metric"]
 
     # Then: if local search improved the timetable, apply those
     # improvements on top of the baseline placements
@@ -965,6 +1009,13 @@ def optimise_current_timetable(
             "error": "No student profiles found for scenario",
             "candidates_evaluated": 0,
             "decision_trace": {},
+            # PR3 commit 6 — schema-stable empty metric on early-return.
+            "perturbation_metric": {
+                "changes_from_baseline_count": 0,
+                "unchanged_count": 0,
+                "newly_placed_count": 0,
+                "removed_count": 0,
+            },
         }
 
     # ── Step 2: Read current placements as-is ──
@@ -974,6 +1025,13 @@ def optimise_current_timetable(
             "error": "No placements found — nothing to optimise",
             "candidates_evaluated": 0,
             "decision_trace": {},
+            # PR3 commit 6 — schema-stable empty metric on early-return.
+            "perturbation_metric": {
+                "changes_from_baseline_count": 0,
+                "unchanged_count": 0,
+                "newly_placed_count": 0,
+                "removed_count": 0,
+            },
         }
 
     from core.services import timetable_student_assignment as ssa
@@ -1016,6 +1074,15 @@ def optimise_current_timetable(
         # and never calls auto_place_scenario, so no greedy trace is
         # captured in this path. Key included for schema stability.
         "decision_trace": {},
+        # PR3 commit 6 — "Optimise Current" never observes a baseline
+        # (it starts from existing DB state, not a caller-supplied
+        # baseline), so the perturbation metric is all-zero by design.
+        "perturbation_metric": {
+            "changes_from_baseline_count": 0,
+            "unchanged_count": 0,
+            "newly_placed_count": 0,
+            "removed_count": 0,
+        },
     }
 
     # ── Step 3: Local search on current state ──

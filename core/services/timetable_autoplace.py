@@ -831,7 +831,12 @@ def auto_place_board(
             "decision_trace": {},
             # PR3 commit 5 — perturbation metric is always present.
             # With no placements and no baseline, all four counters are 0.
-            "perturbation_metric": compute_perturbation_metric([], normalised_baseline),
+            # Board-not-found pre-dates budget discovery, so we cannot scope
+            # the caller's baseline to this board's courses — pass ``None``
+            # to avoid mis-attributing scenario-wide baseline entries as
+            # ``removed`` here. Scenario-level aggregation (commit 6) sees
+            # the true set via the boards that DO run through the pipeline.
+            "perturbation_metric": compute_perturbation_metric([], None),
         }
 
     scenario = board.scenario
@@ -994,8 +999,11 @@ def auto_place_board(
             # always present, even when there is nothing to place.
             "decision_trace": {},
             # PR3 commit 5 — perturbation metric present even on the
-            # no-budget fast path.
-            "perturbation_metric": compute_perturbation_metric([], normalised_baseline),
+            # no-budget fast path. Same reasoning as the board-not-found
+            # branch: without budgets we cannot scope baseline to this
+            # board's courses, so pass ``None`` rather than falsely
+            # attributing scenario-wide entries as ``removed``.
+            "perturbation_metric": compute_perturbation_metric([], None),
         }
 
     # ── 2. Build student-to-course mapping ────────────────────────────
@@ -1700,7 +1708,30 @@ def auto_place_board(
         # With ``baseline_placements=None`` every placement is reported
         # as ``newly_placed``; with a baseline, the four counters split
         # placements into unchanged / changed / newly_placed / removed.
-        "perturbation_metric": compute_perturbation_metric(placement_results, normalised_baseline),
+        #
+        # PR3 commit 6 — scope the baseline to THIS board's course set
+        # before counting. The caller (``auto_place_scenario`` /
+        # ``optimise_scenario_timetable_v2``) fans a scenario-wide
+        # baseline out to every board; without scoping, each board
+        # would report every other board's baseline entries as
+        # ``removed``, and summing the four counters at the scenario
+        # level would over-count removals by (num_boards-1)×.
+        # Scoping by course_code is sufficient because section codes
+        # (``<course>|<section>``) are globally unique across boards
+        # within a scenario — the same invariant that
+        # ``_merge_board_decision_traces`` relies on.
+        "perturbation_metric": compute_perturbation_metric(
+            placement_results,
+            (
+                {
+                    k: v
+                    for k, v in normalised_baseline.items()
+                    if k.split("|", 1)[0] in board_courses
+                }
+                if normalised_baseline is not None
+                else None
+            ),
+        ),
     }
 
 
@@ -1864,7 +1895,8 @@ def _build_scenario_result(scenario_id: int) -> dict:
     ``decision_trace`` is always emitted as an empty dict on this path
     because this builder reconstructs the result from DB state alone,
     after in-memory traces from the original placement calls have been
-    discarded. PR3 schema-stability clause: the key is always present.
+    discarded. PR3 schema-stability clause: the key is always present
+    (and commit 6 adds ``perturbation_metric`` with the same invariant).
     """
     boards = DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order")
     results = {}
@@ -1876,13 +1908,19 @@ def _build_scenario_result(scenario_id: int) -> dict:
             .distinct()
             .count()
         )
-        results[board.label] = {"placed": placed, "skipped": 0, "decision_trace": {}}
+        results[board.label] = {
+            "placed": placed,
+            "skipped": 0,
+            "decision_trace": {},
+            "perturbation_metric": dict(_EMPTY_PERTURBATION_METRIC),
+        }
         total_placed += placed
     return {
         "boards": results,
         "total_placed": total_placed,
         "total_skipped": 0,
         "decision_trace": {},
+        "perturbation_metric": dict(_EMPTY_PERTURBATION_METRIC),
     }
 
 
@@ -1904,7 +1942,40 @@ def _merge_board_decision_traces(boards_result: dict) -> dict:
     return merged
 
 
-def auto_place_scenario(scenario_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
+_EMPTY_PERTURBATION_METRIC: dict[str, int] = {
+    "changes_from_baseline_count": 0,
+    "unchanged_count": 0,
+    "newly_placed_count": 0,
+    "removed_count": 0,
+}
+
+
+def _sum_board_perturbation_metrics(boards_result: dict) -> dict:
+    """Sum per-board ``perturbation_metric`` dicts at the scenario level.
+
+    PR3 commit 6. Each of the four counters is additive across boards
+    *provided* each board already scoped the caller-supplied baseline to
+    its own course set before counting — otherwise ``removed_count``
+    double-counts. ``auto_place_board`` handles the scoping; this helper
+    is a pure sum.
+
+    Boards that did not emit the key (e.g. a future non-greedy path) are
+    treated as all-zero rather than raising, so adding new strategies
+    does not break the schema-stability invariant.
+    """
+    totals = dict(_EMPTY_PERTURBATION_METRIC)
+    for board_result in boards_result.values():
+        metric = board_result.get("perturbation_metric") or {}
+        for key in totals:
+            totals[key] += int(metric.get(key, 0))
+    return totals
+
+
+def auto_place_scenario(
+    scenario_id: int,
+    strategy: str = DEFAULT_STRATEGY,
+    baseline_placements: dict | None = None,
+) -> dict:
     """Auto-place sections on every board in a scenario.
 
     Iterates over all ``DeliveryBoard`` rows belonging to the scenario
@@ -1914,20 +1985,40 @@ def auto_place_scenario(scenario_id: int, strategy: str = DEFAULT_STRATEGY) -> d
     ----------
     scenario_id : int
         Primary key of the ``TimetableScenario``.
+    strategy : str
+        Placement strategy to apply.
+    baseline_placements : dict | None
+        PR3 commit 6 — optional scenario-wide warm-start baseline. Keys
+        are ``"<course>|<section>"`` strings; values are either
+        ``BaselinePlacement`` dataclasses or plain dicts with ``day``
+        / ``start_time`` / ``end_time`` fields. Fanned out to every
+        ``auto_place_board`` call unmodified; each board scopes the map
+        down to its own courses internally (see the ``auto_place_board``
+        return-site comment on why scoping lives there, not here).
 
     Returns
     -------
     dict
         ``{"boards": {label: board_result, ...}, "total_placed": int,
-        "total_skipped": int, "decision_trace": {...}}`` where each
-        *board_result* has the same shape as the return value of
-        ``auto_place_board``. ``decision_trace`` is the scenario-level
-        merge of every board's per-section traces (PR3 commit 4).
+        "total_skipped": int, "decision_trace": {...},
+        "perturbation_metric": {...}}`` where each *board_result* has
+        the same shape as the return value of ``auto_place_board``.
+        ``decision_trace`` is the scenario-level flat-merge of every
+        board's per-section traces (PR3 commit 4). ``perturbation_metric``
+        is the four-counter sum across boards (PR3 commit 6). Non-greedy
+        strategies that cannot observe baseline (CP-SAT solver, SA, load
+        balancer) emit an all-zero metric for schema stability.
     """
     # Adaptive: greedy baseline → CP-SAT improvement → local search polish
     if strategy == "adaptive":
         result = _adaptive_scenario(scenario_id)
         result.setdefault("decision_trace", _merge_board_decision_traces(result.get("boards", {})))
+        # PR3 commit 6 — schema stability. Adaptive does not observe the
+        # caller's baseline (no warm-start wire-through), so report the
+        # all-zero metric rather than a silent omission.
+        result.setdefault(
+            "perturbation_metric", _sum_board_perturbation_metrics(result.get("boards", {}))
+        )
         return result
 
     # Use CP-SAT solver for "optimal" strategy — per-board fallback to compact
@@ -1956,6 +2047,10 @@ def auto_place_scenario(scenario_id: int, strategy: str = DEFAULT_STRATEGY) -> d
         # rejected alternatives); for compact-fallback boards we keep the
         # greedy trace.
         result["decision_trace"] = _merge_board_decision_traces(boards_result)
+        # PR3 commit 6 — same schema-stability reasoning as the adaptive
+        # branch above. The CP-SAT solver is baseline-agnostic today, so
+        # this path emits an all-zero metric.
+        result["perturbation_metric"] = _sum_board_perturbation_metrics(boards_result)
         return result
 
     # Load-balanced: greedy build + redistribution
@@ -1991,7 +2086,11 @@ def auto_place_scenario(scenario_id: int, strategy: str = DEFAULT_STRATEGY) -> d
     total_placed = 0
     total_skipped = 0
     for board in boards:
-        r = auto_place_board(board.id, strategy=strategy)
+        r = auto_place_board(
+            board.id,
+            strategy=strategy,
+            baseline_placements=baseline_placements,
+        )
         results[board.label] = r
         total_placed += r["placed"]
         total_skipped += r["skipped"]
@@ -2000,4 +2099,9 @@ def auto_place_scenario(scenario_id: int, strategy: str = DEFAULT_STRATEGY) -> d
         "total_placed": total_placed,
         "total_skipped": total_skipped,
         "decision_trace": _merge_board_decision_traces(results),
+        # PR3 commit 6 — scenario-level perturbation metric. Each board's
+        # ``auto_place_board`` scopes its baseline to its own course set
+        # before counting, so summing the four counters across boards is
+        # loss-free (no double-counting of ``removed``).
+        "perturbation_metric": _sum_board_perturbation_metrics(results),
     }
