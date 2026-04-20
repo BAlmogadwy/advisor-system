@@ -65,10 +65,15 @@ from core.models import (
     TermSectionMeeting,
 )
 from core.services.timetable_decision_trace import (
+    INSTRUCTOR_CLASH,
     STUDENT_CONFLICT,
     Alternative,
     DecisionTrace,
     is_decision_trace_enabled,
+)
+from core.services.timetable_pr4_instructor import (
+    is_instructor_clash_enabled,
+    normalise_instructor,
 )
 from core.services.timetable_room_oracle import (
     NO_ROOM_CAPACITY,
@@ -624,9 +629,12 @@ def _classify_pr3_alternative(
       oracle would refine this with ``ROOM_BUFFER_REJECT`` etc. but
       post-placement re-check would duplicate feasibility work.
 
-    Not covered yet:
-    - ``INSTRUCTOR_CLASH`` — defined sentinel but never emitted until
-      per-section instructor plumbing lands (ChatGPT ruling I2).
+    Not covered here (emitted elsewhere):
+    - ``INSTRUCTOR_CLASH`` — PR4 commit 3 lands real emission in the
+      candidate-scoring loop (flag-gated on
+      ``TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED``). The loop accumulates
+      clashes in ``pr4_instructor_rejected`` and surfaces them via
+      ``_build_pr3_alternatives`` without going through this classifier.
 
     Returns ``None`` if no hard reason applies — the option was
     feasibility-clean and just lost on score. Those options are
@@ -701,14 +709,18 @@ def _build_pr3_alternatives(
     my_students: set,
     my_code: str,
     meeting_results: list[dict],
+    instructor_rejected: list[tuple[tuple[dict, ...], str, dict]] | None = None,
 ) -> list[Alternative]:
     """Build up to 3 ``Alternative`` entries for a placed section.
 
-    Ordering rules (ChatGPT commit-3 ruling F1):
+    Ordering rules (ChatGPT commit-3 ruling F1, extended in PR4 commit 3):
     - Prayer-rejected options come first (their score was never computed
       because they were filtered pre-score; surfacing them first
       matches the greedy's own preference for showing the hardest
       reasons).
+    - Instructor-clash rejected options come next — same "hard-filter,
+      never scored" bucket as prayer. Kept stable-ordered after prayer
+      so PR3 traces don't shift position when PR4 flag is off.
     - Scored losers follow, ordered by ascending score (best-rejected
       first) — the option that would have scored next-best after the
       winner appears first.
@@ -731,6 +743,21 @@ def _build_pr3_alternatives(
         )
         if len(alternatives) >= 3:
             return alternatives
+
+    for opt, code, context in (instructor_rejected or [])[:3]:
+        if len(alternatives) >= 3:
+            return alternatives
+        first_m = opt[0]
+        alternatives.append(
+            Alternative(
+                day=first_m["day"],
+                start_time=first_m["start"],
+                end_time=first_m["end"],
+                room="",
+                rejection_code=code,
+                rejection_context=context,
+            )
+        )
 
     losers = sorted(
         (entry for entry in scored_options if entry[1] is not winning_option),
@@ -1057,6 +1084,56 @@ def auto_place_board(
     trace_enabled = is_decision_trace_enabled()
     decision_trace: dict[str, dict] = {}
 
+    # ── PR4 commit 3 — instructor-clash plumbing (flag-gated) ────────
+    # When ``TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED`` is on we build two
+    # per-run lookup tables from the scenario's ``TermSectionMeeting``
+    # rows (opaque-string discipline per A6 — no delimiter parsing):
+    #
+    #   ``instructor_schedule_full`` — ``{normalised_instructor:
+    #       {(section_code_full, day_upper, start_minute), ...}}``.
+    #       Richer than the public ``build_instructor_schedule`` helper
+    #       (commit 2) because the emission loop must distinguish
+    #       "another section already booked this instructor here" from
+    #       "this is the current section's own pre-existing booking".
+    #
+    #   ``section_instructor`` — ``{section_code_full: normalised_id}``
+    #       so the candidate loop can look up the current section's
+    #       instructor without a second DB round-trip.
+    #
+    # Both maps stay empty when the flag is off, which keeps the
+    # candidate loop's fast-path free of any extra work. Commit 8 flips
+    # the flag default; env override remains the kill-switch.
+    instructor_clash_on = is_instructor_clash_enabled()
+    instructor_schedule_full: dict[str, set[tuple[str, str, int]]] = {}
+    section_instructor: dict[str, str | None] = {}
+    if instructor_clash_on:
+        meeting_rows = (
+            TermSectionMeeting.objects.filter(term_section__scenario_id=scenario.id)
+            .exclude(instructor="")
+            .values_list(
+                "term_section__course_code",
+                "term_section__section",
+                "day",
+                "start_time",
+                "instructor",
+            )
+        )
+        for cc, sec, day, start_time, instructor in meeting_rows:
+            normalised = normalise_instructor(instructor)
+            if normalised is None:
+                continue
+            section_full = f"{cc}|{sec}"
+            try:
+                hh_str, mm_str = start_time.split(":", 1)
+                start_minute = int(hh_str) * 60 + int(mm_str)
+            except (ValueError, AttributeError):
+                continue
+            day_upper = (day or "").upper()
+            instructor_schedule_full.setdefault(normalised, set()).add(
+                (section_full, day_upper, start_minute)
+            )
+            section_instructor[section_full] = normalised
+
     # ── 2b. PR1 lock preload ─────────────────────────────────────────
     # When TIMETABLE_ENFORCE_LOCKS is on, locked SectionPlacement rows
     # for this board are seeded into the same occupancy structures the
@@ -1235,6 +1312,12 @@ def auto_place_board(
             # loop free of extra work when trace capture is disabled).
             pr3_scored_options: list[tuple[tuple, tuple[dict, ...]]] = []
             pr3_prayer_rejected: list[tuple[tuple[dict, ...], str, dict]] = []
+            # PR4 commit 3 — parallel accumulator for INSTRUCTOR_CLASH
+            # rejections. Populated only when the PR4 flag is on (the
+            # outer ``instructor_clash_on`` gate elides the filter entirely
+            # when dormant). Consumed by ``_build_pr3_alternatives`` so
+            # the decision-trace alphabet can now include INSTRUCTOR_CLASH.
+            pr4_instructor_rejected: list[tuple[tuple[dict, ...], str, dict]] = []
 
             is_online = cd.get("is_online", False)
 
@@ -1293,6 +1376,42 @@ def auto_place_board(
                                 )
                             )
                         continue
+
+                # PR4 commit 3 — INSTRUCTOR_CLASH filter (flag-gated).
+                # Reject any option that would double-book the current
+                # section's instructor at a (day, start_time) already
+                # held by a different section with the same normalised
+                # instructor id. Same pre-score position as the prayer
+                # filter: options that fail this check never reach the
+                # scoring step. The first clashing meeting per option is
+                # recorded; subsequent clashes in the same option are
+                # noise (the option is already out of the candidate set).
+                if instructor_clash_on:
+                    section_full_cur = f"{code}|{sec_label}"
+                    my_instr = section_instructor.get(section_full_cur)
+                    if my_instr is not None:
+                        bookings = instructor_schedule_full.get(my_instr, set())
+                        clash_ctx: dict | None = None
+                        for m in option:
+                            m_day_up = m["day"].upper()
+                            m_start_min = _to_min(m["start"])
+                            for other_section, bd, bs in bookings:
+                                if other_section == section_full_cur:
+                                    continue
+                                if bd == m_day_up and bs == m_start_min:
+                                    clash_ctx = {
+                                        "clashing_section": other_section,
+                                        "clashing_instructor_id": my_instr,
+                                    }
+                                    break
+                            if clash_ctx is not None:
+                                break
+                        if clash_ctx is not None:
+                            if trace_enabled:
+                                pr4_instructor_rejected.append(
+                                    (option, INSTRUCTOR_CLASH, clash_ctx)
+                                )
+                            continue
 
                 # Room feasibility: prefer options with rooms, penalize roomless
                 room_penalty = 0
@@ -1636,6 +1755,7 @@ def auto_place_board(
                     my_students=my_students,
                     my_code=code,
                     meeting_results=meeting_results,
+                    instructor_rejected=pr4_instructor_rejected,
                 )
                 # PR3 commit 5 — warm-start fallback: prepend the
                 # baseline's real failure reason so the registrar can
