@@ -55,30 +55,58 @@ const S = {
   scenarioId: null,
   scenarioMeta: null,
   boards: [],
-  panes: [
-    { boardId: null, group: 0, boardData: null },
-    { boardId: null, group: 0, boardData: null },
-    { boardId: null, group: 0, boardData: null },
-    { boardId: null, group: 0, boardData: null },
-    { boardId: null, group: 0, boardData: null },
-    { boardId: null, group: 0, boardData: null },
-  ],
+  // Up to 16 pane slots (a 4×4 matrix is the max the picker exposes).
+  // The current layout (cols × rows) decides how many are visible; the
+  // rest carry `hidden` on their DOM node and no boardId.
+  panes: Array.from({ length: 16 }, () => ({ boardId: null, group: 0, boardData: null })),
   // Global undo/redo stacks shared across panes, matching the main page's
   // single-stack model. Each action has enough state to fully revert.
   undoStack: [],
   redoStack: [],
   selectedPaneIdx: null,
   selectedPlacementId: null,
-  layout: 'quad',
+  // Data-driven grid shape. Anything from 1×1 up to 4×4 is allowed;
+  // the actual upper bound at runtime is also gated by viewport fit.
+  cols: 2,
+  rows: 2,
   dragSource: null,
 };
 
-const POS_LABELS = ['Pane A', 'Pane B', 'Pane C', 'Pane D', 'Pane E', 'Pane F'];
+// 16 pane labels (A..P) so every visible pane has a stable, readable name
+// in the board-bar and status ribbon.
+const POS_LABELS = [
+  'Pane A', 'Pane B', 'Pane C', 'Pane D',
+  'Pane E', 'Pane F', 'Pane G', 'Pane H',
+  'Pane I', 'Pane J', 'Pane K', 'Pane L',
+  'Pane M', 'Pane N', 'Pane O', 'Pane P',
+];
 
-/* Number of panes currently visible given the layout mode.
-   Hexa (3x2) shows 6; quad shows 4; tri shows 3; vert/horz show 2; single shows 1. */
+/* Number of panes currently visible = cols × rows. */
 function paneCount() {
-  return ({ single: 1, vert: 2, horz: 2, tri: 3, quad: 4, hexa: 6 }[S.layout] || 4);
+  return S.cols * S.rows;
+}
+
+// Minimum pane footprint for readable cell content. Matches the CSS
+// grid measurements (5-day ruler + min 80px cell + padding).
+const MIN_PANE_W = 440;
+const MIN_PANE_H = 240;
+// Chrome reserved for .tws-body side panels + .tws-quad gaps/padding.
+const QUAD_CHROME_X = 16; // 6px padding × 2 + a few px gap buffer
+const QUAD_CHROME_Y = 16;
+// Vertical space consumed by topbar + boards-bar + ctrls + status below .tws-quad.
+const TWS_CHROME_Y = 150;
+
+/* Maximum cols/rows that fit the current viewport without squishing cells. */
+function viewportMaxCols() {
+  const body = document.getElementById('twsBody');
+  const sb = body && body.classList.contains('sb-open') ? 240 : 0;
+  const rp = body && body.classList.contains('rp-open') ? 300 : 0;
+  const avail = window.innerWidth - sb - rp - QUAD_CHROME_X;
+  return Math.max(1, Math.min(4, Math.floor(avail / MIN_PANE_W)));
+}
+function viewportMaxRows() {
+  const avail = window.innerHeight - TWS_CHROME_Y - QUAD_CHROME_Y;
+  return Math.max(1, Math.min(4, Math.floor(avail / MIN_PANE_H)));
 }
 
 // Right inspector panel state
@@ -295,7 +323,10 @@ function renderSlotBar() {
     wrap.innerHTML = `<span class="lbl" style="color:var(--t4)">${T.noScenario}</span>`;
     return;
   }
-  wrap.innerHTML = S.panes.map((p, i) => {
+  // Only render slots for currently visible panes — the 16-slot array is
+  // pre-allocated, but panes beyond cols×rows are hidden and shouldn't
+  // appear in the board-bar.
+  wrap.innerHTML = S.panes.slice(0, paneCount()).map((p, i) => {
     const opts = ['<option value="">—</option>']
       .concat(S.boards.map(b => `<option value="${b.id}"${b.id === p.boardId ? ' selected' : ''}>${esc(b.label)}</option>`))
       .join('');
@@ -731,33 +762,50 @@ function broadcastHover(sourcePaneIdx, day, start) {
 }
 
 /* ── Layout ── */
-function setLayout(mode) {
-  const prev = S.layout;
-  S.layout = mode;
+// Apply an arbitrary C×R layout (clamped to [1..4] on each axis). Viewport
+// fit is enforced by the picker before this is called, but we clamp again
+// defensively so programmatic callers (shortcuts, maximise) never wedge a
+// shape that can't render.
+function applyLayout(cols, rows) {
+  const prev = paneCount();
+  const c = Math.max(1, Math.min(4, cols | 0));
+  const r = Math.max(1, Math.min(4, rows | 0));
+  S.cols = c; S.rows = r;
   const q = $('twsQuad');
-  q.className = 'tws-quad layout-' + mode;
-  document.querySelectorAll('#twsLayoutSwitch button').forEach(b => {
-    b.classList.toggle('on', b.dataset.layout === mode);
+  q.style.setProperty('--tws-cols', String(c));
+  q.style.setProperty('--tws-rows', String(r));
+  // Toggle pane visibility via `hidden` so CSS grid packs only the visible
+  // ones. data-idx stays stable so paneEl(i) / S.panes[i] stay in sync.
+  const count = c * r;
+  document.querySelectorAll('#twsQuad .tws-pane').forEach(el => {
+    const i = Number(el.dataset.idx);
+    el.hidden = i >= count;
   });
-  $('twsStatusLayout').textContent =
-    ({ single: 'Layout 1', vert: 'Layout 2×1', horz: 'Layout 1×2',
-       quad: 'Layout 2×2', tri: 'Layout 1+2', hexa: 'Layout 3×2' })[mode] || '';
-  // Growing the pane count? Seed the newly visible slots with unused
-  // boards and render them — they may still be placeholders from init.
-  if (prev && paneCount() > ({ single: 1, vert: 2, horz: 2, tri: 3, quad: 4, hexa: 6 }[prev] || 4)) {
+  // Update trigger label + status ribbon.
+  const lbl = $('twsLayoutTriggerLbl');
+  if (lbl) lbl.textContent = `${c}×${r}`;
+  const sl = $('twsStatusLayout');
+  if (sl) sl.textContent = `Layout ${c}×${r}`;
+  // Growing the pane count? Seed the newly-visible slots with unused
+  // boards and render them.
+  if (prev && count > prev) {
     const used = new Set(S.panes.filter(p => p.boardId).map(p => p.boardId));
-    for (let i = 0; i < paneCount(); i++) {
+    for (let i = 0; i < count; i++) {
       if (!S.panes[i].boardId) {
         const next = S.boards.find(b => !used.has(b.id));
         if (next) { S.panes[i].boardId = next.id; used.add(next.id); }
       }
     }
     renderSlotBar();
-    for (let i = 0; i < paneCount(); i++) loadAndRenderPane(i);
+    for (let i = 0; i < count; i++) loadAndRenderPane(i);
+  } else {
+    // Shrinking or same shape — still redraw the boards bar since the
+    // slot count it shows is derived from paneCount().
+    renderSlotBar();
   }
 }
 function maximisePane(idx) {
-  setLayout('single');
+  applyLayout(1, 1);
   if (idx !== 0) {
     // Swap the whole DOM slots (node + data-idx) so paneEl(i) keeps
     // returning the element that holds pane state i. Previously only the
@@ -776,6 +824,116 @@ function maximisePane(idx) {
     renderSlotBar();
     for (let i = 0; i < paneCount(); i++) renderPane(i);
   }
+}
+
+/* ── Matrix layout picker ──
+   Builds a 4×4 grid of cells inside #twsLayoutMatrix. Hovering a cell at
+   (c,r) highlights the (1..c × 1..r) region so the user sees exactly what
+   layout they're about to pick. Clicking commits with applyLayout(c,r).
+   Viewport fit is re-evaluated every time the dropdown opens — cells that
+   won't fit get `.disabled` + are not clickable. */
+function initLayoutMatrix() {
+  const matrix = $('twsLayoutMatrix');
+  const dropdown = $('twsLayoutDropdown');
+  const trigger = $('twsLayoutTrigger');
+  const caption = $('twsLayoutCaption');
+  if (!matrix || !dropdown || !trigger) return;
+
+  // Build 4×4 = 16 cells, tagged with their 1-based (c,r) coord.
+  matrix.innerHTML = '';
+  for (let r = 1; r <= 4; r++) {
+    for (let c = 1; c <= 4; c++) {
+      const cell = document.createElement('div');
+      cell.className = 'tws-layout-cell';
+      cell.dataset.c = String(c);
+      cell.dataset.r = String(r);
+      cell.setAttribute('role', 'gridcell');
+      cell.setAttribute('aria-label', `${c}×${r}`);
+      matrix.appendChild(cell);
+    }
+  }
+  const cells = Array.from(matrix.children);
+
+  function setCaption(c, r, disabled) {
+    if (!caption) return;
+    if (disabled) {
+      caption.innerHTML = `<span class="warn">${c}×${r} — ${LANGUAGE_CODE === 'ar' ? 'لا يتسع للشاشة' : 'too big for screen'}</span>`;
+    } else {
+      caption.textContent = `${c}×${r} (${c * r} ${LANGUAGE_CODE === 'ar' ? 'لوحات' : 'panes'})`;
+    }
+  }
+
+  function refreshDisabled() {
+    const maxC = viewportMaxCols(), maxR = viewportMaxRows();
+    cells.forEach(cell => {
+      const c = Number(cell.dataset.c), r = Number(cell.dataset.r);
+      cell.classList.toggle('disabled', c > maxC || r > maxR);
+    });
+  }
+
+  function highlight(c, r) {
+    cells.forEach(cell => {
+      const cc = Number(cell.dataset.c), cr = Number(cell.dataset.r);
+      cell.classList.toggle('hover', cc <= c && cr <= r);
+    });
+  }
+
+  function openDropdown() {
+    refreshDisabled();
+    dropdown.hidden = false;
+    trigger.setAttribute('aria-expanded', 'true');
+    highlight(S.cols, S.rows);
+    setCaption(S.cols, S.rows, false);
+  }
+  function closeDropdown() {
+    dropdown.hidden = true;
+    trigger.setAttribute('aria-expanded', 'false');
+    highlight(0, 0);
+  }
+
+  trigger.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (dropdown.hidden) openDropdown(); else closeDropdown();
+  });
+  // Close on outside click.
+  document.addEventListener('click', (e) => {
+    if (dropdown.hidden) return;
+    if (!e.target.closest('#twsLayoutPicker')) closeDropdown();
+  });
+  // Close on Escape.
+  dropdown.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { closeDropdown(); trigger.focus(); }
+  });
+
+  matrix.addEventListener('mousemove', (e) => {
+    const cell = e.target.closest('.tws-layout-cell');
+    if (!cell) return;
+    const c = Number(cell.dataset.c), r = Number(cell.dataset.r);
+    const disabled = cell.classList.contains('disabled');
+    highlight(disabled ? 0 : c, disabled ? 0 : r);
+    setCaption(c, r, disabled);
+  });
+  matrix.addEventListener('mouseleave', () => {
+    highlight(S.cols, S.rows);
+    setCaption(S.cols, S.rows, false);
+  });
+  matrix.addEventListener('click', (e) => {
+    const cell = e.target.closest('.tws-layout-cell');
+    if (!cell || cell.classList.contains('disabled')) return;
+    const c = Number(cell.dataset.c), r = Number(cell.dataset.r);
+    applyLayout(c, r);
+    closeDropdown();
+  });
+
+  // Re-evaluate viewport fit on resize — if the current layout no longer
+  // fits, shrink to the largest that does.
+  window.addEventListener('resize', () => {
+    const maxC = viewportMaxCols(), maxR = viewportMaxRows();
+    if (S.cols > maxC || S.rows > maxR) {
+      applyLayout(Math.min(S.cols, maxC), Math.min(S.rows, maxR));
+    }
+    if (!dropdown.hidden) refreshDisabled();
+  });
 }
 
 /* ── Presets ── */
@@ -934,17 +1092,20 @@ function handleCrossBoardClick(c) {
   // board B into the first empty (or last) pane so user sees both sides.
   const inA = S.panes.findIndex(p => p.boardId === c.a);
   const inB = S.panes.findIndex(p => p.boardId === c.b);
+  // Only consider visible panes when looking for an empty slot.
+  const visible = S.panes.slice(0, paneCount());
+  const lastVisible = paneCount() - 1;
   if (inA < 0 && inB < 0) {
     // Load both into the first two panes
     setPaneBoard(0, c.a);
-    setPaneBoard(1, c.b);
+    if (paneCount() > 1) setPaneBoard(1, c.b);
     notify.info && notify.info(IS_AR ? 'تم تحميل اللوحتين' : 'Loaded both boards');
   } else if (inA < 0) {
-    const empty = S.panes.findIndex(p => !p.boardId) >= 0 ? S.panes.findIndex(p => !p.boardId) : 3;
-    setPaneBoard(empty, c.a);
+    const empty = visible.findIndex(p => !p.boardId);
+    setPaneBoard(empty >= 0 ? empty : lastVisible, c.a);
   } else if (inB < 0) {
-    const empty = S.panes.findIndex(p => !p.boardId) >= 0 ? S.panes.findIndex(p => !p.boardId) : 3;
-    setPaneBoard(empty, c.b);
+    const empty = visible.findIndex(p => !p.boardId);
+    setPaneBoard(empty >= 0 ? empty : lastVisible, c.b);
   }
   // Scroll into pane A view
   const pi = S.panes.findIndex(p => p.boardId === c.a);
@@ -2104,9 +2265,9 @@ function doExport() {
     if (window.history.length > 1) window.history.back();
     else window.location.href = '/timetable-workspace/';
   });
-  document.querySelectorAll('#twsLayoutSwitch button').forEach(b => {
-    b.addEventListener('click', () => setLayout(b.dataset.layout));
-  });
+  // Matrix layout picker — trigger toggles dropdown, matrix shows
+  // hover-preview, click commits.
+  initLayoutMatrix();
   // Sync-scroll / hover / slot — pure UI toggles; functional wiring
   // for sync-scroll / sync-slot is a follow-up. Click just flips .on.
   document.querySelectorAll('#twsSyncToggle .tg').forEach(tg => {
@@ -2171,9 +2332,15 @@ function doExport() {
       const idx = parseInt(e.key) - 1;
       paneEl(idx)?.scrollIntoView({ block: 'center' });
     } else if (e.key === 'L') {
-      // Uppercase L (Shift+L) cycles layout — keeps lowercase L for per-cell lock
-      const modes = ['quad', 'vert', 'horz', 'single'];
-      setLayout(modes[(modes.indexOf(S.layout) + 1) % modes.length]);
+      // Uppercase L (Shift+L) cycles common layouts. Keeps lowercase
+      // 'l' free for per-cell lock. Respects viewport caps.
+      const cycle = [[1,1],[2,1],[2,2],[3,2],[3,3]];
+      const cur = cycle.findIndex(([c,r]) => c === S.cols && r === S.rows);
+      const maxC = viewportMaxCols(), maxR = viewportMaxRows();
+      for (let step = 1; step <= cycle.length; step++) {
+        const [c,r] = cycle[(cur + step) % cycle.length];
+        if (c <= maxC && r <= maxR) { applyLayout(c, r); break; }
+      }
     } else if (e.key === 'i' || e.key === 'I') {
       // Toggle right inspector panel
       toggleRpanel();
@@ -2185,6 +2352,10 @@ function doExport() {
       toggleSidebar();
     }
   });
+  // Seed initial 2×2 layout so the hidden-attr is applied consistently on
+  // panes 4..15 (HTML defaults only hide 6..15, and --tws-cols/--tws-rows
+  // defaults need the class on .tws-quad to match).
+  applyLayout(S.cols, S.rows);
   for (let i = 0; i < paneCount(); i++) renderPaneEmpty(i);
   loadScenarios();
 })();

@@ -109,6 +109,18 @@ html body.tws-root .tws-topbar .metric:hover { background: transparent !importan
 .tws-bslot.t1 .pos::before { background: var(--tws-c-t1); }
 .tws-bslot.t2 .pos::before { background: var(--tws-c-t2); }
 .tws-bslot.t3 .pos::before { background: var(--tws-c-t3); }
+.tws-bslot.t4 .pos::before { background: var(--tws-c-t4, #A278E6); }
+.tws-bslot.t5 .pos::before { background: var(--tws-c-t5, #5EC8D9); }
+.tws-bslot.t6 .pos::before { background: var(--tws-c-t6, #E67E4A); }
+.tws-bslot.t7 .pos::before { background: var(--tws-c-t7, #83D66F); }
+.tws-bslot.t8 .pos::before { background: var(--tws-c-t8, #D96FB5); }
+.tws-bslot.t9 .pos::before { background: var(--tws-c-t9, #7AC6D9); }
+.tws-bslot.t10 .pos::before { background: var(--tws-c-t10, #D9B86F); }
+.tws-bslot.t11 .pos::before { background: var(--tws-c-t11, #9B7AD9); }
+.tws-bslot.t12 .pos::before { background: var(--tws-c-t12, #6FD98E); }
+.tws-bslot.t13 .pos::before { background: var(--tws-c-t13, #D96F6F); }
+.tws-bslot.t14 .pos::before { background: var(--tws-c-t14, #6F9BD9); }
+.tws-bslot.t15 .pos::before { background: var(--tws-c-t15, #D9CE6F); }
 .tws-bslot.off { opacity: 0.4; }
 .tws-bslot select {
   appearance: none; -webkit-appearance: none; border: 0; background: transparent; color: var(--ink);
@@ -130,9 +142,44 @@ html body.tws-root .tws-topbar .metric:hover { background: transparent !importan
 
 .tws-ctrls { display: flex; align-items: center; gap: 10px; padding: 8px 20px; border-bottom: 1px solid var(--line-soft); }
 .tws-ctrls .lbl { font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 10px; color: var(--t4); text-transform: uppercase; letter-spacing: 0.08em; }
-.tws-layout-switch { display: flex; background: rgba(255,255,255,0.04); border: 1px solid var(--line); border-radius: 8px; padding: 2px; }
-.tws-layout-switch button { border: 0; background: transparent; color: var(--t3); padding: 5px 8px; border-radius: 6px; cursor: pointer; font-family: inherit; font-size: 11px; }
-.tws-layout-switch button.on { background: var(--teal); color: #0a0c14; font-weight: 700; }
+/* 2D matrix layout picker — trigger chip + hover-preview matrix popover.
+   Replaces the old enum-style layout-switch. Any grid from 1×1 up to
+   the viewport-fit max is selectable. */
+.tws-layout-picker { position: relative; display: inline-flex; }
+.tws-layout-trigger {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(255,255,255,0.04); border: 1px solid var(--line);
+  color: var(--ink); padding: 5px 10px; border-radius: 8px;
+  font-family: var(--font-mono, 'JetBrains Mono'), monospace;
+  font-size: 11px; font-weight: 700; cursor: pointer; letter-spacing: 0.03em;
+}
+.tws-layout-trigger:hover { border-color: var(--teal); }
+.tws-layout-trigger .glyph { font-size: 13px; line-height: 1; }
+.tws-layout-trigger .caret { font-size: 9px; color: var(--t4); }
+.tws-layout-dropdown {
+  position: absolute; top: calc(100% + 4px); inset-inline-start: 0;
+  background: var(--card, #141827); border: 1px solid var(--line);
+  border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+  padding: 10px; z-index: 100; min-width: 180px;
+}
+.tws-layout-dropdown[hidden] { display: none; }
+.tws-layout-matrix {
+  display: grid; grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(4, 1fr);
+  gap: 3px; width: 140px; height: 140px;
+}
+.tws-layout-cell {
+  background: rgba(255,255,255,0.04); border: 1px solid var(--line);
+  border-radius: 3px; cursor: pointer; transition: background 0.1s, border-color 0.1s;
+}
+.tws-layout-cell.hover { background: var(--teal); border-color: var(--teal); }
+.tws-layout-cell.disabled { opacity: 0.25; cursor: not-allowed; background: rgba(255,255,255,0.02); }
+.tws-layout-cell.disabled.hover { background: rgba(255,255,255,0.02); border-color: var(--line); }
+.tws-layout-caption {
+  margin-top: 8px; font-family: var(--font-mono, 'JetBrains Mono'), monospace;
+  font-size: 11px; color: var(--t3); text-align: center; font-weight: 700;
+  min-height: 15px; letter-spacing: 0.04em;
+}
+.tws-layout-caption .warn { color: var(--tws-c-critical, #F06060); }
 .tws-sync-toggle { display: inline-flex; gap: 4px; background: rgba(255,255,255,0.04); padding: 2px; border-radius: 8px; border: 1px solid var(--line); }
 .tws-sync-toggle .tg { padding: 4px 8px; font-size: 11px; color: var(--t3); border-radius: 6px; cursor: pointer; font-family: var(--font-mono, 'JetBrains Mono'), monospace; letter-spacing: 0.03em; user-select: none; }
 .tws-sync-toggle .tg.on { background: var(--teal); color: #0a0c14; font-weight: 700; }
@@ -148,7 +195,12 @@ html body.tws-root .tws-topbar .metric:hover { background: transparent !importan
 .tws-body.sb-open.rp-open { grid-template-columns: 240px 1fr 300px; }
 
 .tws-quad {
-  display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;
+  display: grid;
+  /* Data-driven C×R grid — JS sets --tws-cols / --tws-rows on this element
+     via the matrix picker. Any shape from 1×1 up to the viewport-fit max
+     works; JS also toggles [hidden] on the extra panes beyond cols×rows. */
+  grid-template-columns: repeat(var(--tws-cols, 2), 1fr);
+  grid-template-rows: repeat(var(--tws-rows, 2), 1fr);
   gap: 6px; padding: 6px; min-height: 0; min-width: 0;
   /* Transparent so the body's radial gradient shows through */
   background: transparent;
@@ -156,27 +208,7 @@ html body.tws-root .tws-topbar .metric:hover { background: transparent !importan
 }
 .tws-sidebar { grid-column: 1; }
 .tws-rpanel { grid-column: 3; }
-.tws-quad.layout-single { grid-template-columns: 1fr; grid-template-rows: 1fr; }
-.tws-quad.layout-single > .tws-pane:not(.primary) { display: none; }
-.tws-quad.layout-vert { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
-.tws-quad.layout-vert > .tws-pane:nth-child(n+3) { display: none; }
-.tws-quad.layout-horz { grid-template-columns: 1fr; grid-template-rows: 1fr 1fr; }
-.tws-quad.layout-horz > .tws-pane:nth-child(n+3) { display: none; }
-/* Tri (1+2): first pane spans both rows on the left, 2 stacked on right. */
-.tws-quad.layout-tri { grid-template-columns: 2fr 1fr; grid-template-rows: 1fr 1fr; }
-.tws-quad.layout-tri > .tws-pane:nth-child(1) { grid-row: 1 / span 2; }
-.tws-quad.layout-tri > .tws-pane:nth-child(n+4) { display: none; }
-/* Quad (default 2×2) hides the two extra panes. */
-.tws-quad.layout-quad > .tws-pane:nth-child(n+5) { display: none; }
-/* Hexa (3×2 = 6 panes) — needs ≥1600 px viewport, see media query below. */
-.tws-quad.layout-hexa { grid-template-columns: repeat(3, 1fr); grid-template-rows: 1fr 1fr; }
-/* Hide the hexa button below the min viewport; CSS also force-reverts
-   the layout class if it's applied too narrow. */
-@media (max-width: 1599px) {
-  .tws-layout-switch button[data-layout="hexa"] { display: none; }
-  .tws-quad.layout-hexa { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
-  .tws-quad.layout-hexa > .tws-pane:nth-child(n+5) { display: none; }
-}
+.tws-pane[hidden] { display: none !important; }
 
 .tws-pane {
   position: relative; border: 1px solid var(--line); border-radius: 10px;
@@ -192,8 +224,28 @@ html body.tws-root .tws-topbar .metric:hover { background: transparent !importan
 .tws-pane.t3 { border-top: 2px solid var(--tws-c-t3); }
 .tws-pane.t4 { border-top: 2px solid var(--tws-c-t4, #A278E6); }
 .tws-pane.t5 { border-top: 2px solid var(--tws-c-t5, #5EC8D9); }
+.tws-pane.t6 { border-top: 2px solid var(--tws-c-t6, #E67E4A); }
+.tws-pane.t7 { border-top: 2px solid var(--tws-c-t7, #83D66F); }
+.tws-pane.t8 { border-top: 2px solid var(--tws-c-t8, #D96FB5); }
+.tws-pane.t9 { border-top: 2px solid var(--tws-c-t9, #7AC6D9); }
+.tws-pane.t10 { border-top: 2px solid var(--tws-c-t10, #D9B86F); }
+.tws-pane.t11 { border-top: 2px solid var(--tws-c-t11, #9B7AD9); }
+.tws-pane.t12 { border-top: 2px solid var(--tws-c-t12, #6FD98E); }
+.tws-pane.t13 { border-top: 2px solid var(--tws-c-t13, #D96F6F); }
+.tws-pane.t14 { border-top: 2px solid var(--tws-c-t14, #6F9BD9); }
+.tws-pane.t15 { border-top: 2px solid var(--tws-c-t15, #D9CE6F); }
 .tws-pane.t4 .pane-hd .term-pick::before { background: var(--tws-c-t4, #A278E6); }
 .tws-pane.t5 .pane-hd .term-pick::before { background: var(--tws-c-t5, #5EC8D9); }
+.tws-pane.t6 .pane-hd .term-pick::before { background: var(--tws-c-t6, #E67E4A); }
+.tws-pane.t7 .pane-hd .term-pick::before { background: var(--tws-c-t7, #83D66F); }
+.tws-pane.t8 .pane-hd .term-pick::before { background: var(--tws-c-t8, #D96FB5); }
+.tws-pane.t9 .pane-hd .term-pick::before { background: var(--tws-c-t9, #7AC6D9); }
+.tws-pane.t10 .pane-hd .term-pick::before { background: var(--tws-c-t10, #D9B86F); }
+.tws-pane.t11 .pane-hd .term-pick::before { background: var(--tws-c-t11, #9B7AD9); }
+.tws-pane.t12 .pane-hd .term-pick::before { background: var(--tws-c-t12, #6FD98E); }
+.tws-pane.t13 .pane-hd .term-pick::before { background: var(--tws-c-t13, #D96F6F); }
+.tws-pane.t14 .pane-hd .term-pick::before { background: var(--tws-c-t14, #6F9BD9); }
+.tws-pane.t15 .pane-hd .term-pick::before { background: var(--tws-c-t15, #D9CE6F); }
 .tws-pane .pane-hd {
   display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line);
   background: rgba(255,255,255,0.02); font-family: var(--font-mono, 'JetBrains Mono'), monospace;
@@ -866,13 +918,19 @@ html body.tws-root { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothin
 
       <div class="tws-ctrls">
         <span class="lbl">{% if LANGUAGE_CODE == 'ar' %}التخطيط{% else %}Layout{% endif %}</span>
-        <div class="tws-layout-switch" id="twsLayoutSwitch">
-          <button data-layout="single" title="{% if LANGUAGE_CODE == 'ar' %}واحد{% else %}Single{% endif %}">■</button>
-          <button data-layout="vert" title="{% if LANGUAGE_CODE == 'ar' %}عمودي{% else %}2 vertical{% endif %}">▌▌</button>
-          <button data-layout="horz" title="{% if LANGUAGE_CODE == 'ar' %}أفقي{% else %}2 horizontal{% endif %}">▀▄</button>
-          <button class="on" data-layout="quad" title="{% if LANGUAGE_CODE == 'ar' %}رباعي{% else %}Quad 2×2{% endif %}">▙▟</button>
-          <button data-layout="tri" title="{% if LANGUAGE_CODE == 'ar' %}1+2{% else %}1+2{% endif %}">▌▞</button>
-          <button data-layout="hexa" title="{% if LANGUAGE_CODE == 'ar' %}سداسي 3×2 (يتطلب شاشة واسعة){% else %}Hexa 3×2 (needs ≥1600 px){% endif %}">▙▟▌</button>
+        <div class="tws-layout-picker" id="twsLayoutPicker">
+          <button class="tws-layout-trigger" id="twsLayoutTrigger" type="button"
+                  title="{% if LANGUAGE_CODE == 'ar' %}شبكة التخطيط{% else %}Layout grid (up to 4×4){% endif %}"
+                  aria-haspopup="true" aria-expanded="false">
+            <span class="glyph">▦</span>
+            <span class="lbl" id="twsLayoutTriggerLbl">2×2</span>
+            <span class="caret">▾</span>
+          </button>
+          <div class="tws-layout-dropdown" id="twsLayoutDropdown" hidden>
+            <div class="tws-layout-matrix" id="twsLayoutMatrix" role="grid"
+                 aria-label="{% if LANGUAGE_CODE == 'ar' %}اختيار شبكة التخطيط{% else %}Pick layout grid{% endif %}"></div>
+            <div class="tws-layout-caption" id="twsLayoutCaption">2×2 (4 {% if LANGUAGE_CODE == 'ar' %}لوحات{% else %}panes{% endif %})</div>
+          </div>
         </div>
         <div class="tws-sync-toggle" id="twsSyncToggle">
           <div class="tg on" data-sync="scroll">⇄ {% if LANGUAGE_CODE == 'ar' %}مزامنة التمرير{% else %}Sync scroll{% endif %}</div>
@@ -905,7 +963,7 @@ html body.tws-root { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothin
           <div class="tws-empty-state"><span class="ic">ⓘ</span>{% if LANGUAGE_CODE == 'ar' %}اختر سيناريو أولاً{% else %}Select a scenario first{% endif %}</div>
         </div>
       </aside>
-      <div class="tws-quad layout-quad" id="twsQuad">
+      <div class="tws-quad" id="twsQuad" style="--tws-cols:2;--tws-rows:2">
         <div class="tws-pane t0 primary" data-idx="0">
           <div class="pane-hd">
             <span class="dot"></span><b data-role="label">—</b>
@@ -950,7 +1008,7 @@ html body.tws-root { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothin
           </div>
           <div class="empty-pane">{% if LANGUAGE_CODE == 'ar' %}اختر لوحة{% else %}Select a board{% endif %}</div>
         </div>
-        <div class="tws-pane t4" data-idx="4">
+        <div class="tws-pane t4" data-idx="4" hidden>
           <div class="pane-hd">
             <span class="dot"></span><b data-role="label">—</b>
             <span class="sp" style="flex:1"></span>
@@ -961,7 +1019,7 @@ html body.tws-root { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothin
           </div>
           <div class="empty-pane">{% if LANGUAGE_CODE == 'ar' %}اختر لوحة{% else %}Select a board{% endif %}</div>
         </div>
-        <div class="tws-pane t5" data-idx="5">
+        <div class="tws-pane t5" data-idx="5" hidden>
           <div class="pane-hd">
             <span class="dot"></span><b data-role="label">—</b>
             <span class="sp" style="flex:1"></span>
@@ -970,6 +1028,46 @@ html body.tws-root { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothin
               <button data-action="maximise">⤢</button>
             </span>
           </div>
+          <div class="empty-pane">{% if LANGUAGE_CODE == 'ar' %}اختر لوحة{% else %}Select a board{% endif %}</div>
+        </div>
+        <div class="tws-pane t6" data-idx="6" hidden>
+          <div class="pane-hd"><span class="dot"></span><b data-role="label">—</b><span class="sp" style="flex:1"></span><span class="ri"><button data-action="reload">↻</button><button data-action="maximise">⤢</button></span></div>
+          <div class="empty-pane">{% if LANGUAGE_CODE == 'ar' %}اختر لوحة{% else %}Select a board{% endif %}</div>
+        </div>
+        <div class="tws-pane t7" data-idx="7" hidden>
+          <div class="pane-hd"><span class="dot"></span><b data-role="label">—</b><span class="sp" style="flex:1"></span><span class="ri"><button data-action="reload">↻</button><button data-action="maximise">⤢</button></span></div>
+          <div class="empty-pane">{% if LANGUAGE_CODE == 'ar' %}اختر لوحة{% else %}Select a board{% endif %}</div>
+        </div>
+        <div class="tws-pane t8" data-idx="8" hidden>
+          <div class="pane-hd"><span class="dot"></span><b data-role="label">—</b><span class="sp" style="flex:1"></span><span class="ri"><button data-action="reload">↻</button><button data-action="maximise">⤢</button></span></div>
+          <div class="empty-pane">{% if LANGUAGE_CODE == 'ar' %}اختر لوحة{% else %}Select a board{% endif %}</div>
+        </div>
+        <div class="tws-pane t9" data-idx="9" hidden>
+          <div class="pane-hd"><span class="dot"></span><b data-role="label">—</b><span class="sp" style="flex:1"></span><span class="ri"><button data-action="reload">↻</button><button data-action="maximise">⤢</button></span></div>
+          <div class="empty-pane">{% if LANGUAGE_CODE == 'ar' %}اختر لوحة{% else %}Select a board{% endif %}</div>
+        </div>
+        <div class="tws-pane t10" data-idx="10" hidden>
+          <div class="pane-hd"><span class="dot"></span><b data-role="label">—</b><span class="sp" style="flex:1"></span><span class="ri"><button data-action="reload">↻</button><button data-action="maximise">⤢</button></span></div>
+          <div class="empty-pane">{% if LANGUAGE_CODE == 'ar' %}اختر لوحة{% else %}Select a board{% endif %}</div>
+        </div>
+        <div class="tws-pane t11" data-idx="11" hidden>
+          <div class="pane-hd"><span class="dot"></span><b data-role="label">—</b><span class="sp" style="flex:1"></span><span class="ri"><button data-action="reload">↻</button><button data-action="maximise">⤢</button></span></div>
+          <div class="empty-pane">{% if LANGUAGE_CODE == 'ar' %}اختر لوحة{% else %}Select a board{% endif %}</div>
+        </div>
+        <div class="tws-pane t12" data-idx="12" hidden>
+          <div class="pane-hd"><span class="dot"></span><b data-role="label">—</b><span class="sp" style="flex:1"></span><span class="ri"><button data-action="reload">↻</button><button data-action="maximise">⤢</button></span></div>
+          <div class="empty-pane">{% if LANGUAGE_CODE == 'ar' %}اختر لوحة{% else %}Select a board{% endif %}</div>
+        </div>
+        <div class="tws-pane t13" data-idx="13" hidden>
+          <div class="pane-hd"><span class="dot"></span><b data-role="label">—</b><span class="sp" style="flex:1"></span><span class="ri"><button data-action="reload">↻</button><button data-action="maximise">⤢</button></span></div>
+          <div class="empty-pane">{% if LANGUAGE_CODE == 'ar' %}اختر لوحة{% else %}Select a board{% endif %}</div>
+        </div>
+        <div class="tws-pane t14" data-idx="14" hidden>
+          <div class="pane-hd"><span class="dot"></span><b data-role="label">—</b><span class="sp" style="flex:1"></span><span class="ri"><button data-action="reload">↻</button><button data-action="maximise">⤢</button></span></div>
+          <div class="empty-pane">{% if LANGUAGE_CODE == 'ar' %}اختر لوحة{% else %}Select a board{% endif %}</div>
+        </div>
+        <div class="tws-pane t15" data-idx="15" hidden>
+          <div class="pane-hd"><span class="dot"></span><b data-role="label">—</b><span class="sp" style="flex:1"></span><span class="ri"><button data-action="reload">↻</button><button data-action="maximise">⤢</button></span></div>
           <div class="empty-pane">{% if LANGUAGE_CODE == 'ar' %}اختر لوحة{% else %}Select a board{% endif %}</div>
         </div>
       </div>
@@ -1065,5 +1163,5 @@ html body.tws-root { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothin
   const DEFAULT_YEAR = {{ default_year|default:'null' }};
   const DEFAULT_TERM = {{ default_term|default:'null' }};
 </script>
-<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=31"></script>
+<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=32"></script>
 {% endblock %}
