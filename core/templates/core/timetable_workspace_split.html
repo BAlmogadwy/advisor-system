@@ -126,13 +126,15 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
 .tws-preset { padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--glass-bg); color: var(--t3); font-family: inherit; font-size: 11px; cursor: pointer; }
 .tws-preset:hover { border-color: var(--teal); color: var(--teal); }
 
-.tws-ctrls { display: flex; align-items: center; gap: 10px; padding: 6px 18px; }
-.tws-layout-switch { display: flex; background: var(--glass-bg); border: 1px solid var(--line); border-radius: 8px; padding: 2px; }
-.tws-layout-switch button { border: 0; background: transparent; color: var(--t3); padding: 5px 9px; border-radius: 6px; cursor: pointer; font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 11px; }
-.tws-layout-switch button.on { background: var(--teal); color: #fff; font-weight: 700; }
-.tws-sync-toggle { display: inline-flex; gap: 4px; background: var(--glass-bg); padding: 2px; border-radius: 8px; border: 1px solid var(--line); }
-.tws-sync-toggle .tg { padding: 4px 10px; font-size: 11px; color: var(--t3); border-radius: 6px; cursor: pointer; font-family: var(--font-mono, 'JetBrains Mono'), monospace; }
-.tws-sync-toggle .tg.on { background: var(--teal); color: #fff; font-weight: 700; }
+.tws-ctrls { display: flex; align-items: center; gap: 10px; padding: 8px 20px; border-bottom: 1px solid var(--line-soft); }
+.tws-ctrls .lbl { font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 10px; color: var(--t4); text-transform: uppercase; letter-spacing: 0.08em; }
+.tws-layout-switch { display: flex; background: rgba(255,255,255,0.04); border: 1px solid var(--line); border-radius: 8px; padding: 2px; }
+.tws-layout-switch button { border: 0; background: transparent; color: var(--t3); padding: 5px 8px; border-radius: 6px; cursor: pointer; font-family: inherit; font-size: 11px; }
+.tws-layout-switch button.on { background: var(--teal); color: #0a0c14; font-weight: 700; }
+.tws-sync-toggle { display: inline-flex; gap: 4px; background: rgba(255,255,255,0.04); padding: 2px; border-radius: 8px; border: 1px solid var(--line); }
+.tws-sync-toggle .tg { padding: 4px 8px; font-size: 11px; color: var(--t3); border-radius: 6px; cursor: pointer; font-family: var(--font-mono, 'JetBrains Mono'), monospace; letter-spacing: 0.03em; user-select: none; }
+.tws-sync-toggle .tg.on { background: var(--teal); color: #0a0c14; font-weight: 700; }
+.tws-sync-toggle .tg:hover { color: var(--ink); }
 
 /* Layout: left sidebar, centre quad, right inspector */
 .tws-body {
@@ -837,6 +839,25 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
         </button>
       </div>
 
+      <div class="tws-ctrls">
+        <span class="lbl">{% if LANGUAGE_CODE == 'ar' %}التخطيط{% else %}Layout{% endif %}</span>
+        <div class="tws-layout-switch" id="twsLayoutSwitch">
+          <button data-layout="single" title="{% if LANGUAGE_CODE == 'ar' %}واحد{% else %}Single{% endif %}">■</button>
+          <button data-layout="vert" title="{% if LANGUAGE_CODE == 'ar' %}عمودي{% else %}2 vertical{% endif %}">▌▌</button>
+          <button data-layout="horz" title="{% if LANGUAGE_CODE == 'ar' %}أفقي{% else %}2 horizontal{% endif %}">▀▄</button>
+          <button class="on" data-layout="quad" title="{% if LANGUAGE_CODE == 'ar' %}رباعي{% else %}Quad 2×2{% endif %}">▙▟</button>
+        </div>
+        <div class="tws-sync-toggle" id="twsSyncToggle">
+          <div class="tg on" data-sync="scroll">⇄ {% if LANGUAGE_CODE == 'ar' %}مزامنة التمرير{% else %}Sync scroll{% endif %}</div>
+          <div class="tg on" data-sync="hover">◉ {% if LANGUAGE_CODE == 'ar' %}مزامنة التحريك{% else %}Sync hover{% endif %}</div>
+          <div class="tg" data-sync="slot">⊞ {% if LANGUAGE_CODE == 'ar' %}مزامنة الخلية{% else %}Sync slot{% endif %}</div>
+        </div>
+        <div class="tws-sync-toggle" style="margin-inline-start:auto" id="twsLabToggle">
+          <div class="tg on" data-lab="show">▣ {% if LANGUAGE_CODE == 'ar' %}عرض المعامل{% else %}Show labs{% endif %}</div>
+          <div class="tg" data-lab="hide">✕ {% if LANGUAGE_CODE == 'ar' %}محاضرات فقط{% else %}Lecture only{% endif %}</div>
+        </div>
+      </div>
+
       <div class="tws-boards-bar">
         <span class="lbl">{% if LANGUAGE_CODE == 'ar' %}لوحات العرض{% else %}Boards on canvas{% endif %}</span>
         <div class="tws-slot-grid" id="twsSlots"></div>
@@ -845,20 +866,6 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
           <button class="tws-preset" data-preset="first4">{% if LANGUAGE_CODE == 'ar' %}أول 4 لوحات{% else %}First 4 boards{% endif %}</button>
           <button class="tws-preset" data-preset="cross">{% if LANGUAGE_CODE == 'ar' %}التعارضات الحرجة{% else %}Busiest boards{% endif %}</button>
         </div>
-      </div>
-
-      <div class="tws-ctrls">
-        <span class="lbl" style="font-family:var(--font-mono,'JetBrains Mono'),monospace;font-size:10px;color:var(--t4);text-transform:uppercase;letter-spacing:0.1em">{% if LANGUAGE_CODE == 'ar' %}التخطيط{% else %}Layout{% endif %}</span>
-        <div class="tws-layout-switch" id="twsLayoutSwitch">
-          <button data-layout="single" title="{% if LANGUAGE_CODE == 'ar' %}واحد{% else %}Single{% endif %}">■</button>
-          <button data-layout="vert" title="{% if LANGUAGE_CODE == 'ar' %}عمودي{% else %}2 vertical{% endif %}">▌▌</button>
-          <button data-layout="horz" title="{% if LANGUAGE_CODE == 'ar' %}أفقي{% else %}2 horizontal{% endif %}">▀▄</button>
-          <button class="on" data-layout="quad" title="{% if LANGUAGE_CODE == 'ar' %}رباعي{% else %}Quad 2×2{% endif %}">▙▟</button>
-        </div>
-        <span class="sp" style="flex:1"></span>
-        <span class="hint" style="font-family:var(--font-mono,'JetBrains Mono'),monospace;font-size:10px;color:var(--t4);letter-spacing:0.05em">
-          {% if LANGUAGE_CODE == 'ar' %}اسحب بين الخلايا · انقر مزدوج للتفاصيل{% else %}Drag between cells · double-click for details{% endif %}
-        </span>
       </div>
 
       <div class="tws-body" id="twsBody">
@@ -1009,5 +1016,5 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
   const DEFAULT_YEAR = {{ default_year|default:'null' }};
   const DEFAULT_TERM = {{ default_term|default:'null' }};
 </script>
-<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=28"></script>
+<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=29"></script>
 {% endblock %}

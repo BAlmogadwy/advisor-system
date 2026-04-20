@@ -2084,6 +2084,22 @@ function doExport() {
   document.querySelectorAll('#twsLayoutSwitch button').forEach(b => {
     b.addEventListener('click', () => setLayout(b.dataset.layout));
   });
+  // Sync-scroll / hover / slot — pure UI toggles; functional wiring
+  // for sync-scroll / sync-slot is a follow-up. Click just flips .on.
+  document.querySelectorAll('#twsSyncToggle .tg').forEach(tg => {
+    tg.addEventListener('click', () => tg.classList.toggle('on'));
+  });
+  // Show labs / Lecture-only — hides lab-block in each pane when
+  // "Lecture only" is selected.
+  document.querySelectorAll('#twsLabToggle .tg').forEach(tg => {
+    tg.addEventListener('click', () => {
+      document.querySelectorAll('#twsLabToggle .tg').forEach(t => t.classList.toggle('on', t === tg));
+      const hideLabs = tg.dataset.lab === 'hide';
+      document.querySelectorAll('.tws-pane .lab-block').forEach(lb => {
+        lb.style.display = hideLabs ? 'none' : '';
+      });
+    });
+  });
   document.querySelectorAll('.tws-preset').forEach(b => {
     b.addEventListener('click', () => applyPreset(b.dataset.preset));
   });
