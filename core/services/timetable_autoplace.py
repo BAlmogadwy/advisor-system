@@ -81,6 +81,7 @@ from core.services.timetable_pr4_instructor import (
 )
 from core.services.timetable_room_oracle import (
     NO_ROOM_CAPACITY,
+    ROOM_BUFFER_REJECT,
     ROOM_OCCUPIED,
     RoomFailureReason,
     check_capacity_feasibility,
@@ -838,6 +839,7 @@ def auto_place_board(
             "pr1_lock_rejections": [],
             "room_failures": [],
             "room_failure_breakdown": {},
+            "buffer_only_rejects": 0,
             "unplaced_count": 0,
             # PR3 commit 3 — schema-stable empty dict even on the board-
             # not-found fast path (DoR sign-off amendment on schema
@@ -1002,6 +1004,7 @@ def auto_place_board(
             "pr1_lock_rejections": pr1_lock_rejections,
             "room_failures": [],
             "room_failure_breakdown": {},
+            "buffer_only_rejects": 0,
             "unplaced_count": 0,
             # PR3 commit 3 — schema stability: the decision_trace key is
             # always present, even when there is nothing to place.
@@ -1801,6 +1804,7 @@ def auto_place_board(
         normalised_baseline is not None,
     )
 
+    _rfb = room_failure_breakdown(room_failures)
     return {
         "placed": total_placed,
         "skipped": total_skipped,
@@ -1809,7 +1813,11 @@ def auto_place_board(
         "pr1_prayer_rejections": pr1_prayer_rejections,
         "pr1_lock_rejections": pr1_lock_rejections,
         "room_failures": room_failures,
-        "room_failure_breakdown": room_failure_breakdown(room_failures),
+        "room_failure_breakdown": _rfb,
+        # PR4 commit 7 — authoritative buffer-only counter, derived from
+        # the breakdown so it cannot drift from the underlying failure
+        # records.
+        "buffer_only_rejects": _rfb.get(ROOM_BUFFER_REJECT, 0),
         "unplaced_count": total_skipped,
         # PR3 commit 3 — key is always present for schema stability.
         # Empty dict when the flag is off or no sections were placed.

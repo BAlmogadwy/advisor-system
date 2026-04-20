@@ -838,9 +838,10 @@ class TestSite3RefinementUnderFlagOn:
         assert result["unplaced_count"] == 1
         assert result["room_failures"][0]["reason"] == ROOM_BUFFER_REJECT
         assert result["buffer_only_rejects"] == 1
-        # Legacy counter must still fire too — ChatGPT's instruction
-        # is to keep both for one cycle.
-        assert result["lecture_room_reject_due_to_buffer_count"] == 1
+        # PR4 commit 7 — the legacy ``lecture_room_reject_due_to_buffer_count``
+        # key is retired; ``buffer_only_rejects`` above is the sole
+        # buffer-only counter going forward.
+        assert "lecture_room_reject_due_to_buffer_count" not in result
 
     def test_capacity_short_still_surfaces_no_room_capacity(self) -> None:
         """Raw demand > room capacity → neither buffer nor gender nor

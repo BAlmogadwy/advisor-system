@@ -180,7 +180,7 @@ def test_default_buffer_preserves_planner_parity_at_1_1(buffer_parity_fixture) -
     assert result["assigned"] == 1
     assert result["unassigned"] == 0
     assert result["capacity_buffer"] == pytest.approx(1.1)
-    assert result["lecture_room_reject_due_to_buffer_count"] == 0
+    assert result["buffer_only_rejects"] == 0
 
 
 def test_default_buffer_rejects_room_that_fits_raw_but_not_buffered(
@@ -198,7 +198,7 @@ def test_default_buffer_rejects_room_that_fits_raw_but_not_buffered(
 
     assert result["assigned"] == 0
     assert result["unassigned"] == 1
-    assert result["lecture_room_reject_due_to_buffer_count"] == 1
+    assert result["buffer_only_rejects"] == 1
 
 
 @override_settings(TIMETABLE_CAPACITY_BUFFER=1.0)
@@ -212,4 +212,4 @@ def test_buffer_of_1_0_accepts_room_rejected_at_default(buffer_parity_fixture) -
     assert result["assigned"] == 1
     assert result["unassigned"] == 0
     assert result["capacity_buffer"] == pytest.approx(1.0)
-    assert result["lecture_room_reject_due_to_buffer_count"] == 0
+    assert result["buffer_only_rejects"] == 0
