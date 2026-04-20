@@ -36,6 +36,8 @@ from core.services.timetable_autoplace import (
     WEEKDAYS,
 )
 from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
+from core.services.timetable_decision_trace import DecisionTrace
+from core.services.timetable_solver_codes import CPSAT_IMPROVED, is_stage_trace_enabled
 from core.services.timetable_workspace import _time_mask, _to_minutes
 
 logger = logging.getLogger(__name__)
@@ -84,7 +86,7 @@ def polish_scenario_with_cpsat(
     current_eval: TimetableEvaluationResult,
     time_limit_seconds: float = 60.0,
     hotspot_only: bool = False,
-) -> TimetableEvaluationResult | None:
+) -> dict | None:
     """Run a global CP-SAT pass as a polisher on the current best timetable.
 
     Parameters
@@ -362,6 +364,72 @@ def polish_scenario_with_cpsat(
     # Add fixed sections back
     all_sections = improved_sections + fixed_sections
 
+    # ── Build decision trace for changed sections ────────────────────
+    decision_trace = {}
+    if is_stage_trace_enabled():
+
+        def minutes_to_hhmm(minutes: int) -> str:
+            """Convert minutes to HH:MM format."""
+            hours = minutes // 60
+            mins = minutes % 60
+            return f"{hours:02d}:{mins:02d}"
+
+        # Compare original vs improved sections to find changes
+        for i, original_sec in enumerate(sections_to_polish):
+            improved_sec = improved_sections[i]
+
+            # Compare signatures: (day, start_min, end_min) per meeting
+            original_signature = tuple(
+                (meeting.day, meeting.start_min, meeting.end_min)
+                for meeting in original_sec.meetings
+            )
+            improved_signature = tuple(
+                (meeting.day, meeting.start_min, meeting.end_min)
+                for meeting in improved_sec.meetings
+            )
+
+            if original_signature != improved_signature:
+                # Find first changed meeting
+                first_changed_idx = next(
+                    idx
+                    for idx, (orig, new) in enumerate(
+                        zip(original_signature, improved_signature, strict=False)
+                    )
+                    if orig != new
+                )
+
+                orig_meeting = original_sec.meetings[first_changed_idx]
+                new_meeting = improved_sec.meetings[first_changed_idx]
+
+                # Strip the course_code prefix from section_id ("CS101_S1" → "S1")
+                # so section_code matches the "{course}|{label}" convention used
+                # by the greedy / SA / chain / rooming traces.
+                section_label = original_sec.section_id
+                prefix = f"{original_sec.course_code}_"
+                if section_label.startswith(prefix):
+                    section_label = section_label[len(prefix) :]
+                section_code = f"{original_sec.course_code}|{section_label}"
+
+                orig_day_name = WEEKDAYS[orig_meeting.day]
+                new_day_name = WEEKDAYS[new_meeting.day]
+
+                trace_entry = DecisionTrace(
+                    section_code=section_code,
+                    course_code=original_sec.course_code,
+                    chosen_day=new_day_name,
+                    chosen_start_time=minutes_to_hhmm(new_meeting.start_min),
+                    chosen_end_time=minutes_to_hhmm(new_meeting.end_min),
+                    chosen_room="",
+                    alternatives=(),
+                    stage_origin="cpsat",
+                    stage_context={
+                        "code": CPSAT_IMPROVED,
+                        "previous_slot": f"{orig_day_name} {minutes_to_hhmm(orig_meeting.start_min)}-{minutes_to_hhmm(orig_meeting.end_min)}",
+                        "new_slot": f"{new_day_name} {minutes_to_hhmm(new_meeting.start_min)}-{minutes_to_hhmm(new_meeting.end_min)}",
+                    },
+                )
+                decision_trace[section_code] = trace_entry.to_dict()
+
     # ── Verify with full evaluator ───────────────────────────────
     # CRITICAL: The CP-SAT objective is a PROXY (weighted overlap
     # penalties). It doesn't model the full student assignment with
@@ -380,7 +448,11 @@ def polish_scenario_with_cpsat(
             current_eval.lexicographic_score,
             polished_eval.lexicographic_score,
         )
-        return polished_eval
+        return {
+            "eval": polished_eval,
+            "improved_sections": improved_sections,
+            "decision_trace": decision_trace,
+        }
     else:
         logger.info(
             "CP-SAT polisher: no improvement (current %s, polished %s)",

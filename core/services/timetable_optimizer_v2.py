@@ -884,20 +884,30 @@ def optimise_scenario_timetable_v2(
             )
 
             if cpsat_result is not None:
+                cpsat_eval = cpsat_result["eval"]
                 result["cpsat_polish_applied"] = True
                 result["score_before_cpsat"] = list(current_eval_for_chain.lexicographic_score)
-                result["final_score"] = list(cpsat_result.lexicographic_score)
-                result["hotspot_courses"] = cpsat_result.hotspot_courses[:10]
-                result["unresolved_students"] = len(cpsat_result.unresolved_student_ids)
+                result["final_score"] = list(cpsat_eval.lexicographic_score)
+                result["hotspot_courses"] = cpsat_eval.hotspot_courses[:10]
+                result["unresolved_students"] = len(cpsat_eval.unresolved_student_ids)
+                # LEAK FIX: overlay improved sections into sections_by_id
+                for improved in cpsat_result["improved_sections"]:
+                    sections_by_id[improved.section_id] = improved
+                cpsat_decision_trace = cpsat_result["decision_trace"]
                 # Update sections_by_id with polished sections
                 # (cpsat_result evaluated with the improved sections)
                 logger.info("CP-SAT polisher accepted improvement")
             else:
                 result["cpsat_polish_applied"] = False
+                cpsat_decision_trace = {}
                 logger.info("CP-SAT polisher: no improvement")
 
             t_cpsat_end = time.time()
             logger.info("CP-SAT polisher completed in %.1fs", t_cpsat_end - t_cpsat_start)
+        else:
+            cpsat_decision_trace = {}
+    else:
+        cpsat_decision_trace = {}
 
     # ── Step 5: Persist to DB ──
     # Re-place using the winning strategy first (because candidate
@@ -918,6 +928,9 @@ def optimise_scenario_timetable_v2(
     # ruling J3 we preserve this cold-start trace through the remaining V2
     # pipeline unchanged; LS / chain / CP-SAT do not mutate it.
     result["decision_trace"] = scenario_place_result.get("decision_trace", {})
+    # Overlay CP-SAT decision trace (last-changer-wins)
+    for k, v in cpsat_decision_trace.items():
+        result["decision_trace"][k] = v
     # PR3 commit 6: capture the scenario-level perturbation metric from the
     # greedy re-placement. Like decision_trace, this reflects cold-start
     # placement (pre-LS); we intentionally do NOT recompute after local
@@ -931,14 +944,18 @@ def optimise_scenario_timetable_v2(
     # Then: if local search improved the timetable, apply those
     # improvements on top of the baseline placements
     ls_persisted = False
-    if run_local_search and "sections_by_id" in dir() and sections_by_id:
-        score_before = result.get("score_before_local_search")
+    cpsat_applied = result.get("cpsat_polish_applied", False)
+    if (run_local_search and "sections_by_id" in dir() and sections_by_id) or (
+        cpsat_applied and "sections_by_id" in dir() and sections_by_id
+    ):
+        score_before = result.get("score_before_local_search") or result.get("score_before_cpsat")
         score_after = result.get("final_score")
         if score_before and score_after and tuple(score_after) < tuple(score_before):
             persist_result = persist_section_states_to_scenario(scenario_id, sections_by_id)
             ls_persisted = True
             logger.info(
-                "Persisted local search improvements: %d placements updated",
+                "Persisted %s improvements: %d placements updated",
+                "local search" if not cpsat_applied else "CP-SAT",
                 persist_result.get("updated", 0),
             )
 
@@ -977,6 +994,7 @@ def optimise_scenario_timetable_v2(
 def optimise_current_timetable(
     scenario_id: int,
     max_search_iterations: int = 50,
+    run_local_search: bool = True,
     run_chain_search: bool = True,
     max_chain_iterations: int = 10,
     run_cpsat_polish: bool = True,
@@ -1088,40 +1106,46 @@ def optimise_current_timetable(
     # ── Step 3: Local search on current state ──
     pattern_catalog = _build_pattern_catalog_for_scenario(scenario_id)
 
-    # Room repair is DISABLED — the auto-placer handles per-meeting room
-    # types correctly (75min→lecture, 100min→lab). The optimizer only
-    # moves time patterns; rooms are reassigned after persist.
-    from core.services.timetable_local_search_v2 import diagnostic_driven_local_search
+    if run_local_search:
+        # Room repair is DISABLED — the auto-placer handles per-meeting room
+        # types correctly (75min→lecture, 100min→lab). The optimizer only
+        # moves time patterns; rooms are reassigned after persist.
+        from core.services.timetable_local_search_v2 import diagnostic_driven_local_search
 
-    t2 = time.time()
-    logger.info(
-        "Running local search on current timetable (max %d iterations)...", max_search_iterations
-    )
-    improved = diagnostic_driven_local_search(
-        best_candidate=baseline,
-        sections_by_id=sections_by_id,
-        pattern_catalog=pattern_catalog,
-        student_profiles=student_profiles,
-        course_rigidity=course_rigidity,
-        rooms_by_id=None,
-        room_occupancies=None,
-        course_room_requirements=None,
-        max_iterations=max_search_iterations,
-    )
+        t2 = time.time()
+        logger.info(
+            "Running local search on current timetable (max %d iterations)...",
+            max_search_iterations,
+        )
+        improved = diagnostic_driven_local_search(
+            best_candidate=baseline,
+            sections_by_id=sections_by_id,
+            pattern_catalog=pattern_catalog,
+            student_profiles=student_profiles,
+            course_rigidity=course_rigidity,
+            rooms_by_id=None,
+            room_occupancies=None,
+            course_room_requirements=None,
+            max_iterations=max_search_iterations,
+        )
 
-    score_before = baseline.lexicographic_score
-    score_after = improved.lexicographic_score
-    result["local_search_applied"] = True
-    result["score_before_local_search"] = list(score_before)
-    result["final_score"] = list(score_after)
-    result["hotspot_courses"] = improved.hotspot_courses[:10]
-    result["unresolved_students"] = len(improved.unresolved_student_ids)
+        score_before = baseline.lexicographic_score
+        score_after = improved.lexicographic_score
+        result["local_search_applied"] = True
+        result["score_before_local_search"] = list(score_before)
+        result["final_score"] = list(score_after)
+        result["hotspot_courses"] = improved.hotspot_courses[:10]
+        result["unresolved_students"] = len(improved.unresolved_student_ids)
 
-    t3 = time.time()
-    if score_after < score_before:
-        logger.info("Local search improved: %s -> %s (%.1fs)", score_before, score_after, t3 - t2)
+        t3 = time.time()
+        if score_after < score_before:
+            logger.info(
+                "Local search improved: %s -> %s (%.1fs)", score_before, score_after, t3 - t2
+            )
+        else:
+            logger.info("Local search: no improvement (%.1fs)", t3 - t2)
     else:
-        logger.info("Local search: no improvement (%.1fs)", t3 - t2)
+        improved = baseline
 
     # ── Step 4: Chain-2 search ──
     current_eval = improved
@@ -1167,10 +1191,17 @@ def optimise_current_timetable(
             hotspot_only=cpsat_hotspot_only,
         )
         if cpsat_result is not None:
+            cpsat_eval = cpsat_result["eval"]
             result["cpsat_polish_applied"] = True
-            result["final_score"] = list(cpsat_result.lexicographic_score)
-            result["hotspot_courses"] = cpsat_result.hotspot_courses[:10]
-            result["unresolved_students"] = len(cpsat_result.unresolved_student_ids)
+            result["final_score"] = list(cpsat_eval.lexicographic_score)
+            result["hotspot_courses"] = cpsat_eval.hotspot_courses[:10]
+            result["unresolved_students"] = len(cpsat_eval.unresolved_student_ids)
+            # LEAK FIX: overlay improved sections into sections_by_id
+            for improved_sec in cpsat_result["improved_sections"]:
+                sections_by_id[improved_sec.section_id] = improved_sec
+            # PR5 commit 4: overlay CPSAT decision trace (last-changer-wins).
+            for k, v in (cpsat_result.get("decision_trace") or {}).items():
+                result["decision_trace"][k] = v
         else:
             result["cpsat_polish_applied"] = False
         logger.info("CP-SAT polisher completed in %.1fs", time.time() - t_cpsat)
