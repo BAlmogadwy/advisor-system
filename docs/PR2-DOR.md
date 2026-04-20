@@ -64,13 +64,15 @@ Every section that ends unplaced carries a `reason_code` in its placement dict (
 
 ### 4. Management / reporting surface
 
-Extend an existing diagnostics surface — no new UI, no new admin views. Acceptable shapes:
+**A Django management command** — `python manage.py report_room_failures` (or similar). No admin panel, no dashboard, no CSV export, no exam-panel coupling. Reads the latest persisted planner result and summarises:
 
-- A management command or diagnostics endpoint that answers:
-  - "how many placements failed by each room reason"
-  - "how many were buffer-only rejects"
-  - "how many were gender/type shortages vs true capacity shortages"
-- Minimum bar: the payload fields above are read by existing diagnostics so a future UI PR can render them without back-fitting.
+- total failures
+- counts by `reason_code`
+- `buffer_only_rejects` count
+- `heuristic_mismatch_count`
+- sample affected placements (first N rows, e.g. course_code / section_code / reason)
+
+That is the PR2 reporting surface in full. Future UI work is a separate PR built on top of this command's payload shape.
 
 ### 5. Tests
 
@@ -105,11 +107,11 @@ Existing rooming tests (`test_timetable_capacity_buffer.py`, `test_exam_room_ass
 
 Before merge:
 
-1. **Zero silent UNASSIGNED paths.** Every `"UNASSIGNED"` emission site today has a typed `reason_code` by the end of this PR. Enforced by a dedicated test that greps the codebase.
+1. **Zero silent UNASSIGNED paths at the 4 enumerated call-sites.** Each of the four sites listed under *Code anchors* has a targeted test proving it now emits a typed `reason_code` instead of a bare `"UNASSIGNED"` string. Plus a code-review checklist item in the PR body that those four sites no longer silently fall through. No codebase grep test — brittle, easy to defeat with string interpolation, rejected.
 2. **Every unassigned placement carries a `reason_code`** in `room_failures`. Test asserts this on a synthetic-infeasible scenario.
 3. **Buffer-only rejects separately counted.** `buffer_only_rejects` == expected count on the buffer-only fixture.
 4. **Parity preserved for obviously feasible rooming.** PR1's parity scenario pack still places exactly as before; `unplaced_count == 0`, `room_failures == []`.
-5. **Performance bar.** Planner wallclock p95 on the PR2 scenario pack ≤ 1.3× current master baseline. Measured via an existing perf harness or a new lightweight one if none fits.
+5. **Performance bar.** Planner wallclock p95 on the PR2 scenario pack ≤ 1.3× current master baseline. Measured using the PR2 scenario-pack runner / lightweight benchmark harness added before promotion — **not** in commit 1. The harness lands around commit 5, or alongside the promotion-note measurement step; commit 1 stays correctness-only.
 6. **Feasible-rate floor.** Overall feasible-rate ≥ 99% of current baseline on the scenario pack, UNLESS every new failure is explained by a newly surfaced typed room reason (i.e. the oracle is correctly catching infeasibilities that today go silent).
 
 ---
@@ -123,7 +125,7 @@ ChatGPT's recommended sequence, adopted verbatim:
 | 1 | Failing tests + scenario pack | The 7 test cases above as `test_pr2_*.py`, fixture JSONs under `snapshots/planner-refactor-2026-04-20/fixtures/pr2_*.json`, skeleton `RoomFailureReason` import that doesn't exist yet (tests fail by design with ImportError — documents the contract) |
 | 2 | Typed `RoomFailureReason` structure | `core/services/timetable_room_oracle.py` with dataclass, code sentinels, `.to_dict()`, unit tests for each code, flag read helper (`is_room_oracle_enabled()`), no wiring yet |
 | 3 | Replace silent UNASSIGNED with structured emission | Edit the 4 silent sites (autoplace.py:1102–1104, autoplace.py:1162, rooming.py:324, room_repair.py:118–119) to emit `RoomFailureReason`; accumulate into `room_failures` in the return payload |
-| 4 | Cheap staged room oracle | Add Stage 1 existence check + Stage 2 buffer-aware split; wire into `assign_rooms_to_board` and `auto_place_board` before their main loops |
+| 4 | Cheap staged room oracle + `RoomProfile.gender` | Extend `RoomProfile` dataclass with a `gender` field (M / F / mixed) so Stage 1 can filter on it directly — keeping the gender check inside the oracle rather than in a side-lookup. Add Stage 1 existence check + Stage 2 buffer-aware split; wire into `assign_rooms_to_board` and `auto_place_board` before their main loops |
 | 5 | Payload / reporting surface | Extend return dicts with `unplaced_count`, `room_failures`, `buffer_only_rejects`, `heuristic_mismatch_count`, `suggested_relaxation`; wire into existing diagnostics |
 | 6 | Promotion note | `docs/PR2-PROMOTION-NOTE.md` — scope recap, flag state, acceptance-bar numbers measured on the scenario pack, pre-condition checklist for rollout, deferred follow-ups |
 
@@ -158,7 +160,7 @@ Grounded findings from the pre-DoR survey, for the implementer:
 ### Room metadata available to the oracle (commit 4)
 
 Room dict (from `get_programme_rooms()`): `room_code, capacity, room_type, section (M/F), wing, building`.
-`RoomProfile` dataclass: `room_id, capacity, room_type` only — PR2 may need to extend if gender is consulted directly. Deferred design question for commit 4.
+`RoomProfile` dataclass: `room_id, capacity, room_type` only — **commit 4 extends it with a `gender` field** so Stage 1 filters on room gender directly inside the oracle rather than through a side-lookup. Decision locked at DoR time (option (i) from the clarifying questions).
 
 ---
 
@@ -169,7 +171,7 @@ Room dict (from `get_programme_rooms()`): `room_code, capacity, room_type, secti
 | `TIMETABLE_PR2_ROOM_ORACLE_ENABLED` | `False` | Gates the staged oracle's pre-placement checks. When off, only the silent-UNASSIGNED-to-typed-reason replacement (commit 3) runs — observation only. |
 | `TIMETABLE_PR2_CAPACITY_SIM` | `False` | Gates Stage 3 (sorted-capacity simulation). Off for the PR; rolled on separately once Stage 1+2 run clean on real data. |
 
-When **both** flags are off, the only observable change is that `room_failures` is populated and `"UNASSIGNED"` string literals are replaced by structured reasons. No placement decision changes.
+When **both** flags are off, no room-selection decisions change; the observable change is failure reporting only (`room_failures` is populated and the four silent-UNASSIGNED sites emit structured reasons instead of a bare string). The swap itself is a behavioural change — just not a planning-decision change.
 
 ---
 
@@ -185,11 +187,11 @@ When **both** flags are off, the only observable change is that `room_failures` 
 - Replace the `duration > 80 and cr == 4` heuristic with a proper room-type resolver, informed by the measured `ROOM_HEURISTIC_MISMATCH` rate PR2 surfaces.
 - Bipartite-matching or CP-SAT room assigner (the "global oracle" ChatGPT explicitly ruled out of PR2 scope).
 - UI surface for `room_failures` (admin panel, operator view). Once the payload is stable, a UI PR can render it.
-- `RoomProfile` schema extension (gender field) if commit 4 finds the current shape insufficient — handled as an intra-PR design call when it comes up.
+- Further `RoomProfile` schema growth beyond the gender field (wing, building, etc.) — PR2 keeps the extension minimal.
 
 ---
 
 ## Sign-off
 
-- [ ] ChatGPT reviews this DoR and approves scope / non-scope / acceptance bar.
-- [ ] Commit 1 (failing tests + scenario pack) lands only after sign-off.
+- [x] ChatGPT reviews this DoR and approves scope / non-scope / acceptance bar. **Greenlit 2026-04-20** with two amendments, both applied in this revision: (i) drop grep-based acceptance test in favour of targeted per-site tests + PR-body checklist, (ii) rephrase "flags off" so it no longer implies zero behavioural change. Plus the four clarifying-question answers baked in: A — parity is test #6, heuristic-mismatch is #7. B — extend `RoomProfile.gender` in commit 4, not commit 2. C — first reporting surface is a management command, no UI / no CSV / no exam-panel. D — perf harness lands around commit 5, not in commit 1.
+- [ ] Commit 1 (failing tests + scenario pack) lands next.
