@@ -1,0 +1,27 @@
+{
+  "description": "PR4 scenario #2B — prayer-rule divergence: legacy _start_is_blocked filter rejects a slot the configured-windows rule permits. A candidate at 12:00 on an exception day with NO configured prayer window should be permitted by the configured rule but blocked by the hardcoded 11:35–12:59 legacy filter. The commit-4 divergence report records this as a 'legacy \\ configured' case.",
+  "scenario": {
+    "sections": [
+      {"course_code": "CS202", "section_code": "S1", "enrolment": 18, "instructor": "Dr. Jones"}
+    ],
+    "slot_pool": [
+      {"day": "Fri", "start_time": "12:00", "end_time": "13:15"},
+      {"day": "Fri", "start_time": "13:30", "end_time": "14:45"}
+    ],
+    "rooms": [
+      {"room_code": "B102", "capacity": 30, "room_type": "lecture", "gender": ""}
+    ],
+    "prayer_windows": []
+  },
+  "expected": {
+    "placed": 1,
+    "configured_rule_rejections_exclude_fri_12_00": true,
+    "legacy_filter_rejections_include_fri_12_00": true
+  },
+  "notes": [
+    "Tests: tests/test_pr4_prayer_unification.py::TestPrayerDivergenceReport::test_delta_matches_fixture_counts",
+    "Commit 4 turns this fixture into numeric rows in the divergence report.",
+    "This is a 'legacy kills, configured permits' case — proves the configured rule is not a superset of the legacy filter.",
+    "Together with divergence_a.json, these two fixtures force the bidirectional set-difference view, rebutting any 'one is a subset' assumption."
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "description": "PR4 scenario #2A — prayer-rule divergence: configured-windows rule rejects a slot the legacy _start_is_blocked filter permits. A candidate on the exception day at 13:00–14:15 should be rejected by the configured Thursday prayer window (12:30–13:45) but would pass the hardcoded 11:35–12:59 legacy filter. The commit-4 divergence report records this as a 'configured \\ legacy' case.",
+  "scenario": {
+    "sections": [
+      {"course_code": "CS201", "section_code": "S1", "enrolment": 20, "instructor": "Dr. Jones"}
+    ],
+    "slot_pool": [
+      {"day": "Thu", "start_time": "13:00", "end_time": "14:15"},
+      {"day": "Thu", "start_time": "14:30", "end_time": "15:45"}
+    ],
+    "rooms": [
+      {"room_code": "B101", "capacity": 30, "room_type": "lecture", "gender": ""}
+    ],
+    "prayer_windows": [
+      {"day": "Thu", "start_time": "12:30", "end_time": "13:45"}
+    ]
+  },
+  "expected": {
+    "placed": 1,
+    "configured_rule_rejections_include_thu_13_00": true,
+    "legacy_filter_rejections_exclude_thu_13_00": true
+  },
+  "notes": [
+    "Tests: tests/test_pr4_prayer_unification.py::TestPrayerDivergenceReport::test_delta_matches_fixture_counts",
+    "Commit 4 turns this fixture into numeric rows in the divergence report (a)/(b)/(c). No removal yet.",
+    "This is a 'configured kills, legacy permits' case — proves the legacy filter is not a superset of the configured rule."
+  ]
+}

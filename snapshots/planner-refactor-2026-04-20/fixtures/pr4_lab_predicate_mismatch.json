@@ -1,0 +1,25 @@
+{
+  "description": "PR4 scenario #3 — lab-predicate boundary fixture. A meeting with duration == 80 (inclusive) exposes off-by-one between planner (>80 strict), oracle (>80 strict), and export (>80 strict). The unified helper meeting_requires_lab_room() must classify this meeting identically across all three call-sites. Fixture constructs a single-meeting section with a 08:00–09:20 slot (80 min exactly) and one lab room + one lecture room — if the three sites disagree, placement lands in different rooms across re-runs.",
+  "scenario": {
+    "sections": [
+      {"course_code": "CS301", "section_code": "S1", "enrolment": 15, "instructor": "Dr. Smith"}
+    ],
+    "slot_pool": [
+      {"day": "Sun", "start_time": "08:00", "end_time": "09:20"}
+    ],
+    "rooms": [
+      {"room_code": "LAB1", "capacity": 20, "room_type": "lab", "gender": ""},
+      {"room_code": "LECT1", "capacity": 20, "room_type": "lecture", "gender": ""}
+    ]
+  },
+  "expected": {
+    "placed": 1,
+    "all_three_sites_agree_on_boundary_meeting": true,
+    "room_heuristic_mismatch_count": 0
+  },
+  "notes": [
+    "Tests: tests/test_pr4_lab_predicate.py::TestLabPredicateUnified::test_all_three_sites_agree_on_boundary_meeting",
+    "Commit 6 turns this green by routing planner/oracle/export through meeting_requires_lab_room().",
+    "Duration 80 is the boundary: >80 excludes it, >=80 includes it. Helper uses >= 80 per the oracle's original intent."
+  ]
+}
