@@ -194,4 +194,30 @@ When **both** flags are off, no room-selection decisions change; the observable 
 ## Sign-off
 
 - [x] ChatGPT reviews this DoR and approves scope / non-scope / acceptance bar. **Greenlit 2026-04-20** with two amendments, both applied in this revision: (i) drop grep-based acceptance test in favour of targeted per-site tests + PR-body checklist, (ii) rephrase "flags off" so it no longer implies zero behavioural change. Plus the four clarifying-question answers baked in: A — parity is test #6, heuristic-mismatch is #7. B — extend `RoomProfile.gender` in commit 4, not commit 2. C — first reporting surface is a management command, no UI / no CSV / no exam-panel. D — perf harness lands around commit 5, not in commit 1.
-- [ ] Commit 1 (failing tests + scenario pack) lands next.
+- [x] Commit 1 (failing tests + scenario pack) landed.
+- [x] Commit 2 (typed `RoomFailureReason` + flag-read helper) landed.
+- [x] Commit 3 (replace silent UNASSIGNED with structured emission at the 4 sites) landed.
+- [x] Commit 4 (staged oracle + `RoomProfile.gender` + `buffer_only_rejects`) landed.
+- [x] Commit 5 (payload surface + `report_room_failures` management command) landed.
+- [x] Commit 6 (promotion note + default flip) landed.
+
+---
+
+## Promotion — 2026-04-20
+
+PR2 commit 6 promotes `TIMETABLE_PR2_ROOM_ORACLE_ENABLED` from `False` to `True` in `config/settings.py`. The env var override is preserved so production can disable via `TIMETABLE_PR2_ROOM_ORACLE_ENABLED=false` if a regression appears.
+
+### Acceptance bar status
+
+1. **Zero silent UNASSIGNED paths at the 4 enumerated call-sites** — DONE (commit 3, all 4 sites now emit `RoomFailureReason`).
+2. **Every unassigned placement carries a `reason_code`** — DONE (commit 3, asserted by `tests/test_pr2_silent_unassigned_sites.py`).
+3. **Buffer-only rejects separately counted** — DONE (commit 4, `buffer_only_rejects` populated independently of the legacy `lecture_room_reject_due_to_buffer_count` counter).
+4. **Parity preserved for obviously feasible rooming** — DONE (existing rooming tests pass unmodified).
+5. **Performance bar** — no-op: oracle adds an O(rooms) existence check per placement before the main loop; wallclock within noise on the scenario pack.
+6. **Feasible-rate floor** — held at ≥99% on the scenario pack. Any new failures are explained by typed reason codes that today would have gone silent (i.e. the oracle is doing its job).
+
+### Follow-ups (deferred to later PRs, per ChatGPT ruling)
+
+- Remove `lecture_room_reject_due_to_buffer_count` once downstream dashboards have migrated to `buffer_only_rejects`. Marked DEPRECATED in `timetable_rooming.py` this cycle; remove in the next PR after a release.
+- Replace the `duration > 80 and cr == 4` heuristic with a proper room-type resolver, informed by the measured `ROOM_HEURISTIC_MISMATCH` rate.
+- UI surface for `room_failures` (admin panel / operator view). Management command is the only reporting surface shipped with PR2.

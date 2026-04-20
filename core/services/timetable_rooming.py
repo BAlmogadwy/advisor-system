@@ -325,12 +325,15 @@ def assign_rooms_to_board(board_id: int) -> dict:
     unassigned = 0
     # Labs currently ignore capacity in rooming (room_cap=0 below); buffer
     # diagnostics therefore apply to lecture room assignment only.
+    #
+    # DEPRECATED (PR2 commit 6): ``lecture_room_reject_due_to_buffer_count``
+    # is the legacy (flag-agnostic) buffer-reject metric. Kept for one more
+    # cycle so downstream dashboards retain continuity while they migrate to
+    # ``buffer_only_rejects`` below. Scheduled for removal in a later PR.
     lecture_room_reject_due_to_buffer_count = 0
-    # PR2 commit 4 — new authoritative per-placement buffer-reject counter,
+    # PR2 commit 4 — authoritative per-placement buffer-reject counter,
     # populated only when the oracle flag is on and Stage 2 confirms the
-    # rejection was buffer-only. ``lecture_room_reject_due_to_buffer_count``
-    # above stays as the legacy (flag-agnostic) metric for one cycle per the
-    # PR2 plan — do not remove or repurpose it here.
+    # rejection was buffer-only.
     buffer_only_rejects = 0
     room_failures: list[dict] = []
 

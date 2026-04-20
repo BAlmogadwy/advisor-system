@@ -293,3 +293,12 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # but risks overfilling when late adds arrive; raising above 1.1 wastes
 # capacity. Override via env var TIMETABLE_CAPACITY_BUFFER.
 TIMETABLE_CAPACITY_BUFFER = float(os.getenv("TIMETABLE_CAPACITY_BUFFER", "1.1"))
+
+# PR2 commit 6 — typed room-failure reporting promoted to default.
+# The room oracle returns refined ``RoomFailureReason`` records (NO_ROOM_TYPE,
+# NO_ROOM_GENDER, NO_ROOM_CAPACITY, ROOM_OCCUPIED, ROOM_BUFFER_REJECT,
+# ROOM_HEURISTIC_MISMATCH) instead of opaque UNASSIGNED strings. Flag is
+# kept live so production can disable via env var if a regression appears.
+TIMETABLE_PR2_ROOM_ORACLE_ENABLED = os.getenv(
+    "TIMETABLE_PR2_ROOM_ORACLE_ENABLED", "true"
+).lower() in ("1", "true", "yes", "on")

@@ -188,10 +188,11 @@ class TestOracleModuleShape(SimpleTestCase):
         d = r.to_dict()
         assert "context" not in d
 
-    def test_flag_defaults_off(self) -> None:
-        """``TIMETABLE_PR2_ROOM_ORACLE_ENABLED`` defaults False. Matches
-        the PR1 flag pattern — off until explicitly opted in."""
-        assert is_room_oracle_enabled() is False
+    def test_flag_defaults_on_after_promotion(self) -> None:
+        """``TIMETABLE_PR2_ROOM_ORACLE_ENABLED`` defaults True post-commit-6
+        promotion. Env var override preserved so production can disable via
+        ``TIMETABLE_PR2_ROOM_ORACLE_ENABLED=false`` if a regression appears."""
+        assert is_room_oracle_enabled() is True
 
 
 # ===========================================================================

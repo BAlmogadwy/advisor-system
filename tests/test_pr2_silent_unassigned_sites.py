@@ -513,10 +513,12 @@ class TestSiteRoomRepairFalseReturn:
 
         assert result is False
 
+    @override_settings(TIMETABLE_PR2_ROOM_ORACLE_ENABLED=False)
     def test_failures_out_accumulator_receives_typed_reason_on_failure(self) -> None:
         """Opt-in: passing ``failures_out`` yields a RoomFailureReason
         dict with reason ``NO_ROOM_CAPACITY`` when the section can't
-        place."""
+        place. Flag pinned OFF so the default-fallback reason is asserted;
+        a separate test covers the oracle-on refinement path."""
         meetings_a = [_meeting(0, 8 * 60, 9 * 60 + 15)]
         sec = _section("secA", "COURSE_A", meetings_a)
         snap = self._snapshot_for("secA", meetings_a)
@@ -558,11 +560,15 @@ class TestSiteRoomRepairFalseReturn:
         assert result is True
         assert failures_out == []
 
+    @override_settings(TIMETABLE_PR2_ROOM_ORACLE_ENABLED=False)
     def test_typed_record_is_serialisable_roomfailurereason_shape(self) -> None:
         """The dict appended to failures_out must match
         ``RoomFailureReason.to_dict()`` — the PR1-aligned shape with
         ``reason``, ``day``, ``start_time``, ``end_time``, ``course_code``,
-        ``section_code`` (and optional ``context``)."""
+        ``section_code`` (and optional ``context``). Flag pinned OFF so the
+        baseline six-key shape is asserted; the oracle-on path emits the
+        same shape plus ``context`` and is covered by the refined-reason
+        tests above."""
         meetings_a = [_meeting(0, 8 * 60, 9 * 60 + 15)]
         sec = _section("secA", "COURSE_A", meetings_a)
         snap = self._snapshot_for("secA", meetings_a)
