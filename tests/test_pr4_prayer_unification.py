@@ -76,10 +76,10 @@ class TestStartIsBlockedRemovalCpsatCandidateGen(TransactionTestCase):
     """Call-site 3: ``cpsat_polisher.py:158`` candidate generation."""
 
     def test_cpsat_candidate_gen_no_longer_filtered_by_legacy(self) -> None:
-        from core.services import cpsat_polisher
+        from core.services import timetable_cpsat_polisher as cpsat_polisher
 
         assert not hasattr(cpsat_polisher, "_start_is_blocked"), (
-            "_start_is_blocked must be removed from cpsat_polisher "
+            "_start_is_blocked must be removed from timetable_cpsat_polisher "
             "(call-site 3: candidate generation). Commit 5 deletes it."
         )
 
@@ -91,13 +91,13 @@ class TestStartIsBlockedRemovalCpsatRescore(TransactionTestCase):
     def test_cpsat_rescore_no_longer_filtered_by_legacy(self) -> None:
         import importlib
 
-        from core.services import cpsat_polisher
+        from core.services import timetable_cpsat_polisher as cpsat_polisher
 
         src = Path(importlib.util.find_spec(cpsat_polisher.__name__).origin).read_text(
             encoding="utf-8"
         )
         assert "_start_is_blocked" not in src, (
-            "No reference to _start_is_blocked may remain in cpsat_polisher "
+            "No reference to _start_is_blocked may remain in timetable_cpsat_polisher "
             "(call-site 4: re-score). Commit 5 deletes both call-sites."
         )
 
@@ -110,13 +110,13 @@ class TestStartIsBlockedRemovalLoadBalanced(TransactionTestCase):
     def test_load_balanced_no_longer_imports_legacy(self) -> None:
         import importlib
 
-        from core.services import load_balanced
+        from core.services import timetable_load_balanced as load_balanced
 
         src = Path(importlib.util.find_spec(load_balanced.__name__).origin).read_text(
             encoding="utf-8"
         )
         assert "_start_is_blocked" not in src, (
-            "No reference to _start_is_blocked may remain in load_balanced "
+            "No reference to _start_is_blocked may remain in timetable_load_balanced "
             "(call-site 5: dead import). Commit 5 deletes it."
         )
 

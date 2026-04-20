@@ -203,17 +203,6 @@ def _meeting_overlaps_prayer(start_time: str, end_time: str) -> bool:
     return s <= pb_end and e > pb_start
 
 
-def _start_is_blocked(start_time: str) -> bool:
-    """Legacy check — whether start_time falls inside prayer-break window.
-
-    Prefer _meeting_overlaps_prayer() for interval-based checks.
-    """
-    start_min = _to_minutes(start_time)
-    block_from = _to_minutes(PRAYER_BREAK_START)
-    block_to = _to_minutes(PRAYER_BREAK_END)
-    return block_from <= start_min <= block_to
-
-
 def _get_slots(slot_config: list[dict]) -> list[dict]:
     """Return *slot_config* if non-empty, otherwise fall back to DEFAULT_SLOTS."""
     return slot_config if slot_config else DEFAULT_SLOTS
@@ -292,18 +281,12 @@ def _generate_meeting_options(
             _blocked_set.add((bs.get("day", ""), bs.get("start", "")))
 
     # For each meeting duration, pre-compute which (slot_idx, start, end)
-    # positions are feasible (respecting prayer break + institutional blocks).
-    # Only block slots whose START falls in the prayer window (11:35-12:59).
-    # A class ending during prayer (e.g. 10:30-11:45) is fine — students
-    # leave at 11:45 and prayer starts after that.
-    lecture_positions = []
-    for i, s in enumerate(slots):
-        if not _start_is_blocked(s["start"]):
-            lecture_positions.append((i, s["start"], s["end"]))
-    lab_positions = []
-    for i, s in enumerate(lab_slots):
-        if not _start_is_blocked(s["start"]):
-            lab_positions.append((i, s["start"], s["end"]))
+    # positions are feasible. Slot-level prayer filtering is now handled
+    # by the configured prayer-windows rule (``prayer_overlap_rejection``)
+    # applied per-candidate in ``auto_place_board``'s scoring loop;
+    # PR4 commit 5 deleted the legacy hardcoded 11:35–12:59 filter.
+    lecture_positions = [(i, s["start"], s["end"]) for i, s in enumerate(slots)]
+    lab_positions = [(i, s["start"], s["end"]) for i, s in enumerate(lab_slots)]
 
     # Generate all unique permutations of the pattern so the lab can be
     # on any day (first, middle, or last meeting of the week).
@@ -874,16 +857,10 @@ def auto_place_board(
     # The rule check short-circuits inside ``prayer_overlap_rejection``
     # when the flag is OFF, so ``prayer_rule_on`` only controls whether
     # we bother reading windows and filtering options at all. Windows are
-    # empty when the setting is absent, which is also a safe no-op.
-    #
-    # Telemetry caveat: ``pr1_prayer_rejections`` is populated AFTER the
-    # legacy hardcoded prayer-break filter (``_start_is_blocked``, window
-    # 11:35–12:59) has already suppressed many candidates. So this list
-    # under-observes the configured rule — it only records overlaps the
-    # legacy filter let through. This under-observation remains until
-    # the legacy start-window filter is retired in a later PR, where the
-    # behavioural diff (old-vs-new prayer semantics) can be evaluated
-    # explicitly on its own.
+    # empty when the setting is absent, which is also a safe no-op. PR4
+    # commit 5 retired the legacy hardcoded 11:35–12:59 filter, so
+    # ``pr1_prayer_rejections`` now fully observes the configured rule
+    # — the prior under-observation caveat no longer applies.
     prayer_rule_on = is_prayer_overlap_rule_enabled()
     prayer_windows = get_prayer_windows() if prayer_rule_on else []
     pr1_prayer_rejections: list[dict] = []

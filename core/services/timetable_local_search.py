@@ -45,7 +45,6 @@ from core.services.timetable_autoplace import (
     DEFAULT_LAB_SLOTS,
     DEFAULT_SLOTS,
     WEEKDAYS,
-    _start_is_blocked,
     _time_mask,
 )
 
@@ -370,8 +369,6 @@ def optimize_board(
             for day in WEEKDAYS:
                 if duration <= 75:
                     for si, s in enumerate(slot_config):
-                        if _start_is_blocked(s["start"]):
-                            continue
                         mask = _time_mask(day, s["start"], s["end"])
                         options.append(
                             {
@@ -385,8 +382,6 @@ def optimize_board(
                 else:
                     # Lab (100-min): use dedicated lab slot grid
                     for si, s in enumerate(lab_slot_config):
-                        if _start_is_blocked(s["start"]):
-                            continue
                         mask = _time_mask(day, s["start"], s["end"])
                         options.append(
                             {

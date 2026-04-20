@@ -34,7 +34,6 @@ from core.services.timetable_autoplace import (
     DEFAULT_LAB_SLOTS,
     DEFAULT_SLOTS,
     WEEKDAYS,
-    _start_is_blocked,
     _time_mask,
 )
 
@@ -281,8 +280,6 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
             for day in WEEKDAYS:
                 if duration <= 75:
                     for si, s in enumerate(slot_config):
-                        if _start_is_blocked(s["start"]):
-                            continue
                         opts.append(
                             {
                                 "day": day,
@@ -295,8 +292,6 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
                 else:
                     # Lab (100-min): use dedicated lab slot grid
                     for si, s in enumerate(lab_slot_config):
-                        if _start_is_blocked(s["start"]):
-                            continue
                         opts.append(
                             {
                                 "day": day,
