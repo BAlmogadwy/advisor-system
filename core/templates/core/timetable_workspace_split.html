@@ -150,12 +150,24 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
   background: rgba(255,255,255,0.02); font-family: var(--font-mono, 'JetBrains Mono'), monospace;
   font-size: 10.5px; color: var(--t3); flex-shrink: 0; min-height: 32px;
 }
-.tws-pane .pane-hd .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--teal); flex-shrink: 0; }
-.tws-pane.t0 .pane-hd .dot { background: var(--tws-c-t0); }
-.tws-pane.t1 .pane-hd .dot { background: var(--tws-c-t1); }
-.tws-pane.t2 .pane-hd .dot { background: var(--tws-c-t2); }
-.tws-pane.t3 .pane-hd .dot { background: var(--tws-c-t3); }
-.tws-pane .pane-hd .term-name { color: var(--ink); font-weight: 700; letter-spacing: 0.04em; }
+/* Mockup term-pick pill — rounded chip with colored dot + text + caret */
+.tws-pane .pane-hd .term-pick {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 9px; background: rgba(255,255,255,0.05);
+  border-radius: 999px; border: 1px solid var(--line);
+  font-family: var(--font-mono, 'JetBrains Mono'), monospace;
+  font-size: 11px; font-weight: 700; color: var(--ink);
+  cursor: pointer; flex-shrink: 0;
+}
+.tws-pane .pane-hd .term-pick::before {
+  content: ''; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--dot, var(--teal)); flex-shrink: 0;
+}
+.tws-pane.t0 .pane-hd .term-pick::before { background: var(--tws-c-t0); }
+.tws-pane.t1 .pane-hd .term-pick::before { background: var(--tws-c-t1); }
+.tws-pane.t2 .pane-hd .term-pick::before { background: var(--tws-c-t2); }
+.tws-pane.t3 .pane-hd .term-pick::before { background: var(--tws-c-t3); }
+.tws-pane .pane-hd .term-pick .caret { font-size: 9px; color: var(--t4); margin-inline-start: 2px; }
 .tws-pane .pane-hd .gtabs { display: inline-flex; gap: 2px; background: rgba(255,255,255,0.04);
   border: 1px solid var(--line); border-radius: 6px; padding: 2px; }
 .tws-pane .pane-hd .gtab {
@@ -199,22 +211,37 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
 .tws-pane .block-head .spacer { flex: 1; }
 .tws-pane .block-head .note { font-size: 8.5px; color: var(--t5, #5a5e70); font-weight: 400; letter-spacing: 0; text-transform: none; }
 
+/* Mockup orientation: slots as rows (Y), days as columns (X).
+   Container is a vertical flex; inside it one ruler row (corner +
+   5 day headers) + N slot rows (slot label + 5 day cells). */
 .tws-pane .block-grid {
-  flex: 1 1 auto; display: grid; grid-template-columns: 26px repeat(5, 1fr);
-  grid-template-rows: 18px repeat(5, minmax(0, 1fr));
+  flex: 1 1 auto; display: flex; flex-direction: column;
   gap: 2px; min-height: 0; min-width: 0;
 }
-.tws-pane .block-grid .cor,
-.tws-pane .block-grid .dh {
-  font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 9px; color: var(--t5, #5a5e70);
-  text-transform: uppercase; letter-spacing: 0.06em; text-align: center;
+.tws-pane .block-grid .pane-ruler {
+  display: grid; grid-template-columns: 28px repeat(5, 1fr); gap: 2px;
+  flex-shrink: 0; padding: 2px 0;
+}
+.tws-pane .block-grid .pane-ruler .cor {
+  font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 8.5px; color: var(--t5, #5a5e70);
+  text-transform: uppercase; letter-spacing: 0.06em;
   display: flex; align-items: center; justify-content: center;
 }
-.tws-pane .block-grid .slbl {
-  font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 9px; color: var(--t5, #5a5e70);
+.tws-pane .block-grid .pane-ruler .dh {
+  font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 10px; color: var(--t3);
+  text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700;
   display: flex; align-items: center; justify-content: center;
-  background: rgba(255,255,255,0.02); border-radius: 3px;
 }
+.tws-pane .block-grid .slot-row {
+  display: grid; grid-template-columns: 28px repeat(5, 1fr); gap: 2px;
+  flex: 1 1 0; min-height: 0;
+}
+.tws-pane .block-grid .slot-row .slbl {
+  font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 10px; color: var(--t5, #5a5e70);
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,0.025); border-radius: 3px; font-weight: 600;
+}
+.tws-pane .block-grid.lab-grid .slot-row { flex: 0 0 26px; }
 .tws-pane .block-grid .cell {
   background: rgba(255,255,255,0.025); border-radius: 3px; position: relative;
   display: flex; align-items: center; justify-content: center; padding: 2px 4px;
@@ -244,14 +271,10 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
   font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 8px;
   color: var(--t4); margin-top: 1px; letter-spacing: 0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
 }
-.tws-pane.t0 .cell.filled { background: rgba(46,201,160,0.16); border-left-color: var(--tws-c-t0); }
-.tws-pane.t0 .cell.filled .cid { color: #8ff1c7; }
-.tws-pane.t1 .cell.filled { background: rgba(80,104,240,0.18); border-left-color: var(--tws-c-t1); }
-.tws-pane.t1 .cell.filled .cid { color: #b4c0f7; }
-.tws-pane.t2 .cell.filled { background: rgba(245,183,49,0.18); border-left-color: var(--tws-c-t2); }
-.tws-pane.t2 .cell.filled .cid { color: #f5e3b0; }
-.tws-pane.t3 .cell.filled { background: rgba(240,96,96,0.18); border-left-color: var(--tws-c-t3); }
-.tws-pane.t3 .cell.filled .cid { color: #f5c7c7; }
+/* Per-course mid-dark backgrounds are set inline from JS. Text on these
+   rich backgrounds is light — matches the dark workspace theme. */
+.tws-pane .cell.filled .cid { color: #f1f3f7; }
+.tws-pane .cell.filled .cmeta { color: rgba(241, 243, 247, 0.62); }
 .tws-pane .lab-block .block-grid .cell {
   background: rgba(77,217,212,0.04);
   background-image: repeating-linear-gradient(45deg, rgba(77,217,212,0.05) 0 3px, transparent 3px 6px);
@@ -939,5 +962,5 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
   const DEFAULT_YEAR = {{ default_year|default:'null' }};
   const DEFAULT_TERM = {{ default_term|default:'null' }};
 </script>
-<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=18"></script>
+<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=22"></script>
 {% endblock %}

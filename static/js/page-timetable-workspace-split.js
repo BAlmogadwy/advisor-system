@@ -119,33 +119,45 @@ function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-// 20 distinct pastel colours — same palette the main page uses so the
-// split view matches the XLSX export and the main grid exactly.
+// 20 distinct mid-dark course colours — tuned for a dark workspace so
+// they distinguish courses at a glance without looking washed-out like
+// the main page's light pastels. Each is ~35 % saturation / 40 % lightness
+// with a complementary brighter accent for the left border stripe.
 const COURSE_COLORS = [
-  '#D4E6F1','#D5F5E3','#FADBD8','#FCF3CF','#D7BDE2',
-  '#A9DFBF','#F9E79F','#AED6F1','#F5CBA7','#A3E4D7',
-  '#E8DAEF','#FDEBD0','#ABB2B9','#A2D9CE','#F5B7B1',
-  '#D6DBDF','#ABEBC6','#FAD7A0','#D2B4DE','#AEB6BF',
+  ['#3D5A80', '#6D94C4'],  // slate blue
+  ['#456B52', '#72A687'],  // forest
+  ['#8C4A4A', '#C47A7A'],  // dusty red
+  ['#8C7A3D', '#C4A86D'],  // mustard
+  ['#5C3D73', '#8C6DA6'],  // plum
+  ['#3D6B52', '#6DA687'],  // emerald
+  ['#8C6B3D', '#C4A06D'],  // bronze
+  ['#3D7385', '#6DA8C0'],  // teal blue
+  ['#8A5F3F', '#C49070'],  // terracotta
+  ['#3D7368', '#6DA89C'],  // dark teal
+  ['#6B3D73', '#A86DB3'],  // violet
+  ['#8A4A66', '#C47A96'],  // rose pink
+  ['#3D734A', '#6DA87A'],  // pine
+  ['#73583D', '#A88A70'],  // olive brown
+  ['#3D4F73', '#6D85A8'],  // dark navy
+  ['#734A3D', '#A87A70'],  // brown
+  ['#3D7352', '#6DA887'],  // emerald alt
+  ['#73513D', '#A88570'],  // sienna
+  ['#553D73', '#8A6DA8'],  // deep purple
+  ['#4C5F73', '#7E93A8'],  // slate
 ];
 const _courseColorMap = {};
 function courseColor(code) {
-  if (!code) return COURSE_COLORS[0];
+  if (!code) return COURSE_COLORS[0][0];
   if (!_courseColorMap[code]) {
     const idx = Object.keys(_courseColorMap).length % COURSE_COLORS.length;
     _courseColorMap[code] = COURSE_COLORS[idx];
   }
-  return _courseColorMap[code];
+  return _courseColorMap[code][0];
 }
-// Side-band accent stripe matching the course card border on the main page.
 function courseColorBorder(code) {
-  const bg = courseColor(code);
-  // Derive a darker accent by reducing lightness — simple approximation by
-  // shifting the hex toward black.
-  const hex = bg.replace('#', '');
-  const r = Math.max(0, parseInt(hex.slice(0, 2), 16) - 60);
-  const g = Math.max(0, parseInt(hex.slice(2, 4), 16) - 60);
-  const b = Math.max(0, parseInt(hex.slice(4, 6), 16) - 60);
-  return `rgb(${r},${g},${b})`;
+  if (!code) return COURSE_COLORS[0][1];
+  if (!_courseColorMap[code]) courseColor(code);
+  return _courseColorMap[code][1];
 }
 function isLabPlacement(p) {
   if (!p || !p.start_time || !p.end_time) return false;
@@ -397,23 +409,35 @@ function renderPane(idx) {
     g.placements.some(pl => clashIds.has(pl.id))
   );
 
-  const gtabsHtml = groups.map((g, gi) => `
-    <span class="gtab${gi === p.group ? ' on' : ''}" data-group="${gi}">
-      G${gi + 1}<span class="cx">${g.placements.length}c</span>${groupHasClash[gi] ? '<span class="clash-dot"></span>' : ''}
-    </span>
-  `).join('');
+  // Group tab label = "Gn  Xc · Yst" — mockup format with student counts.
+  // Student count per group = count of distinct course sections' total_students
+  // (falls back to placement count if not available).
+  const gtabsHtml = groups.map((g, gi) => {
+    const courses = new Set(g.placements.map(pl => pl.course_code)).size;
+    const stuSet = new Set();
+    g.placements.forEach(pl => (pl.meetings || []).forEach(() => {}));
+    const stu = g.placements.reduce((a, pl) => a + (pl.registered_count || pl.available_capacity || 0), 0);
+    return `
+      <span class="gtab${gi === p.group ? ' on' : ''}" data-group="${gi}">
+        G${gi + 1} <span class="cx">${courses}c${stu ? ' · ' + stu + 'st' : ''}</span>${groupHasClash[gi] ? '<span class="clash-dot"></span>' : ''}
+      </span>
+    `;
+  }).join('');
 
   const placedCount = activeGroup ? activeGroup.placements.length : 0;
   const hasGroupClash = groupHasClash[p.group];
 
   el.innerHTML = `
     <div class="pane-hd">
-      <span class="dot"></span>
-      <span class="term-name">${esc(board.label)}</span>
+      <span class="term-pick" title="${esc(board.label)}">
+        ${esc(board.label)}<span class="caret">▾</span>
+      </span>
       <div class="gtabs">${gtabsHtml || '<span class="gtab on">—</span>'}</div>
-      <span class="kpi">${T.placed} <b>${placedCount}</b></span>
-      <span class="kpi">${hasGroupClash ? `<b class="warn">${T.clashShort}</b>` : `<b style="color:var(--teal)">${T.noClash}</b>`}</span>
-      <span class="ri">
+      <span class="kpis">
+        <span class="kpi">${T.placed} <b>${placedCount}</b></span>
+        <span class="kpi ${hasGroupClash ? '' : 'clean'}">${hasGroupClash ? `<b class="warn">${T.clashShort}</b>` : `<b>${T.noClash}</b>`}</span>
+      </span>
+      <span class="icons">
         <button data-action="reload" title="Reload">↻</button>
         <button data-action="maximise" title="Maximise">⤢</button>
       </span>
@@ -444,34 +468,37 @@ function renderPane(idx) {
 }
 
 function renderGridHTML(slots, placements, clashIds, kind) {
-  const numSlots = slots.length;
-  const cols = `26px repeat(${numSlots}, 1fr)`;
-  let h = `<div class="block-grid" style="grid-template-columns:${cols};grid-template-rows:16px repeat(5,minmax(0,1fr))">`;
-  h += `<div class="cor">${kind === 'lab' ? 'LAB' : 'SLOT'}</div>`;
-  slots.forEach((s, i) => h += `<div class="dh" title="${esc(s.start)}–${esc(s.end)}">${esc(s.label || String(i + 1))}</div>`);
-  DAYS.forEach((day, di) => {
-    h += `<div class="slbl">${esc(DAY_LABELS[di])}</div>`;
-    slots.forEach((slot) => {
+  // Mockup layout: slots on Y-axis (rows), days on X-axis (columns).
+  // pane-ruler: one header row — "SLOT"/"LAB" corner + day labels.
+  // slot-row × N: one per slot — slot number + cells for each day.
+  let h = `<div class="block-grid ${kind === 'lab' ? 'lab-grid' : 'lect-grid'}">`;
+  h += `<div class="pane-ruler"><div class="cor">${kind === 'lab' ? 'LAB' : 'SLOT'}</div>`;
+  DAYS.forEach((day, di) => h += `<div class="dh">${esc(DAY_LABELS[di])}</div>`);
+  h += `</div>`;
+  slots.forEach((slot, si) => {
+    h += `<div class="slot-row" title="${esc(slot.start)}–${esc(slot.end)}">`;
+    h += `<div class="slbl">${esc(slot.label || String(si + 1))}</div>`;
+    DAYS.forEach((day) => {
       const placement = placements.find(pl => pl.day === day && pl.start_time === slot.start);
       const hasClash = placement && clashIds.has(placement.id);
       const cellAttrs = `data-day="${day}" data-start="${slot.start}" data-end="${slot.end}"`;
       if (placement) {
         const room = placement.room ? esc(placement.room) : '';
         const stu = placement.available_capacity || '';
+        // Per-course pastel palette (user request) — matches XLSX export.
         const bg = courseColor(placement.course_code);
         const accent = courseColorBorder(placement.course_code);
-        // Colour the card with the same palette used on the main page
-        // (per-course pastel bg + darker accent stripe on the leading edge).
-        const style = `background:${bg};border-left-color:${accent};color:#111827`;
+        const style = `background:${bg};border-left-color:${accent}`;
         const cls = `cell filled${hasClash ? ' clash' : ''}${placement.is_locked ? ' locked' : ''}`;
         h += `<div class="${cls}" ${cellAttrs} data-placement-id="${placement.id}" draggable="${placement.is_locked ? 'false' : 'true'}" style="${style}">`;
-        h += `<span class="cid" style="color:#111827">${esc(placement.course_code)} ${esc(placement.section || '')}</span>`;
-        h += `<span class="cmeta" style="color:#4b5563">${room}${stu ? '·' + stu : ''}</span>`;
+        h += `<span class="cid">${esc(placement.course_code)} ${esc(placement.section || '')}</span>`;
+        h += `<span class="cmeta">${room}${stu ? '·' + stu : ''}</span>`;
         h += `</div>`;
       } else {
         h += `<div class="cell" ${cellAttrs}></div>`;
       }
     });
+    h += `</div>`;
   });
   h += '</div>';
   return h;
@@ -1595,9 +1622,11 @@ function openDrawer(paneIdx, placementId) {
   DRAWER.placementId = placementId;
   DRAWER.paneIdx = paneIdx;
 
+  // Accent strip takes the pane's term colour (t0..t3) so the drawer
+  // visually belongs to the same pane the placement sits in.
   const accent = $('twsDrawerAccent');
-  const bg = courseColor(p.course_code);
-  accent.style.background = bg;
+  const termVar = `--tws-c-t${paneIdx}`;
+  accent.style.background = getComputedStyle(document.documentElement).getPropertyValue(termVar).trim() || 'var(--teal)';
 
   $('twsDrawerTitle').textContent = `${p.course_code} ${p.section || ''}`.trim();
   const board = S.boards.find(b => b.id === S.panes[paneIdx].boardId);
