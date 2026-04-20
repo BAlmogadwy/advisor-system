@@ -29,8 +29,6 @@ def export_batch_recommender_xlsx(
     except ImportError as exc:
         raise RuntimeError("openpyxl is required") from exc
 
-    from django.db.models import Count as DjCount
-
     from core.models import Course, Prerequisite, StudentCourse
     from core.services.student_helpers import normalize_code
 
@@ -53,7 +51,6 @@ def export_batch_recommender_xlsx(
     passed_fill = PatternFill(start_color="E8F5F0", end_color="E8F5F0", fill_type="solid")
     no_prereq_font = Font(size=8, italic=True, color="AAAAAA")
     center = Alignment(horizontal="center", vertical="center")
-    left_indent = Alignment(horizontal="left", vertical="center", indent=2)
 
     # ── Pre-load data ────────────────────────────────────────────
     sorted_courses = sorted(aggregate.items(), key=lambda x: -x[1])
@@ -151,9 +148,16 @@ def export_batch_recommender_xlsx(
 
     # Headers
     row = 2
-    for col, (hdr, w) in enumerate([
-        ("#", 5), ("Course", 14), ("Name", 32), ("Students", 12), ("Prerequisite Status", 40),
-    ], start=1):
+    for col, (hdr, _w) in enumerate(
+        [
+            ("#", 5),
+            ("Course", 14),
+            ("Name", 32),
+            ("Students", 12),
+            ("Prerequisite Status", 40),
+        ],
+        start=1,
+    ):
         cell = ws.cell(row=row, column=col)
         cell.value = hdr
         cell.fill = hdr_fill
@@ -208,11 +212,17 @@ def export_batch_recommender_xlsx(
         else:
             studying_total = sum(prereq_studying_per_course[code_n].get(p, 0) for p in prereqs)
             if studying_total > 0:
-                cell = ws.cell(row=row, column=5, value=f"{len(prereqs)} prerequisites ({studying_total} of {count} still studying)")
+                cell = ws.cell(
+                    row=row,
+                    column=5,
+                    value=f"{len(prereqs)} prerequisites ({studying_total} of {count} still studying)",
+                )
                 cell.font = Font(size=8, bold=True, color="C03030")
                 cell.fill = studying_fill
             else:
-                cell = ws.cell(row=row, column=5, value=f"{len(prereqs)} prerequisites (all passed)")
+                cell = ws.cell(
+                    row=row, column=5, value=f"{len(prereqs)} prerequisites (all passed)"
+                )
                 cell.font = Font(size=8, color="0A8E6E")
                 cell.fill = passed_fill
             cell.border = thin_border
@@ -239,7 +249,9 @@ def export_batch_recommender_xlsx(
 
             # Studying count — among students who need THIS course
             if studying_cnt > 0:
-                cell = ws.cell(row=row, column=5, value=f"{studying_cnt} of {count} students still studying")
+                cell = ws.cell(
+                    row=row, column=5, value=f"{studying_cnt} of {count} students still studying"
+                )
                 cell.font = studying_font
                 cell.fill = studying_fill
             else:
@@ -254,10 +266,15 @@ def export_batch_recommender_xlsx(
     total_demand = sum(aggregate.values())
     for c in range(1, 6):
         ws.cell(row=row, column=c).border = Border(
-            left=thin_side, right=thin_side, top=thick_side, bottom=thick_side,
+            left=thin_side,
+            right=thin_side,
+            top=thick_side,
+            bottom=thick_side,
         )
     ws.cell(row=row, column=2, value="TOTAL").font = Font(bold=True, size=10)
-    ws.cell(row=row, column=3, value=f"{len(sorted_courses)} courses").font = Font(size=9, color="666666")
+    ws.cell(row=row, column=3, value=f"{len(sorted_courses)} courses").font = Font(
+        size=9, color="666666"
+    )
     ws.cell(row=row, column=4, value=total_demand).font = Font(bold=True, size=10, color="0A8E6E")
     ws.cell(row=row, column=4).alignment = center
 
@@ -283,7 +300,9 @@ def export_batch_recommender_xlsx(
     ws_sum.cell(row=4, column=4, value=section or "All")
 
     ws_sum.cell(row=6, column=1, value="Students Scanned").font = Font(bold=True, size=9)
-    ws_sum.cell(row=6, column=2, value=student_count).font = Font(bold=True, size=14, color="0A8E6E")
+    ws_sum.cell(row=6, column=2, value=student_count).font = Font(
+        bold=True, size=14, color="0A8E6E"
+    )
     ws_sum.cell(row=7, column=1, value="Courses Found").font = Font(bold=True, size=9)
     ws_sum.cell(row=7, column=2, value=len(sorted_courses))
     ws_sum.cell(row=8, column=1, value="Total Demand").font = Font(bold=True, size=9)

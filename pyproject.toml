@@ -7,6 +7,7 @@ exclude = [
   "venv",
   "migrations",
   "import_old",
+  "snapshots",
 ]
 
 [tool.ruff.lint]

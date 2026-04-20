@@ -27,7 +27,6 @@ from core.models import (
     DeliveryBoard,
     ProgrammeRequirement,
     SectionPlacement,
-    TermSection,
 )
 
 
@@ -112,10 +111,7 @@ def compute_board_capacity(board_id: int) -> list[dict]:
     demand = compute_board_demand(board)
 
     # ── Step 1: Get placed sections on this board ────────────────
-    placements = (
-        SectionPlacement.objects.filter(board_id=board_id)
-        .select_related("term_section")
-    )
+    placements = SectionPlacement.objects.filter(board_id=board_id).select_related("term_section")
 
     # ── Step 2: Aggregate raw capacity per course from placed sections ──
     course_capacity: dict[str, dict] = {}
@@ -154,14 +150,16 @@ def compute_board_capacity(board_id: int) -> list[dict]:
 
         deficit = max(0, d - raw) if d > 0 else 0
 
-        result.append({
-            "course_code": code,
-            "course_name": name,
-            "demand": d,
-            "raw_capacity": raw,
-            "placed_sections": placed,
-            "deficit": deficit,
-        })
+        result.append(
+            {
+                "course_code": code,
+                "course_name": name,
+                "demand": d,
+                "raw_capacity": raw,
+                "placed_sections": placed,
+                "deficit": deficit,
+            }
+        )
 
     # Sort by deficit descending so biggest gaps show first
     result.sort(key=lambda x: (-x["deficit"], -x["demand"], x["course_code"]))

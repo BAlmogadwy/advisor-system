@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from core.models import Student
 from core.services.debug_reporting import _build_students_query
-from core.services.recommender import recommend_next_courses
 from core.services.recommender_batch import batch_recommend, batch_recommend_multi_program
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -36,7 +34,9 @@ def build_conflict_matrix_report(
     if program and "," not in program:
         all_recs = batch_recommend(student_ids, program, current_academic_year, current_semester)
     else:
-        all_recs = batch_recommend_multi_program(student_ids, current_academic_year, current_semester)
+        all_recs = batch_recommend_multi_program(
+            student_ids, current_academic_year, current_semester
+        )
 
     for sid, recs in all_recs.items():
         student_rows.append({"student_id": sid, "recommended_courses": recs})

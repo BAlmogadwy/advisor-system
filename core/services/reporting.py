@@ -2,7 +2,6 @@ import time
 from collections import Counter
 
 from core.models import Student
-from core.services.recommender import recommend_next_courses
 from core.services.recommender_batch import batch_recommend, batch_recommend_multi_program
 
 _aggregate_cache: dict[tuple, tuple[float, tuple[int, "Counter[str]"]]] = {}
