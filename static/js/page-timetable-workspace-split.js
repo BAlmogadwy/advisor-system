@@ -464,11 +464,14 @@ function renderPane(idx) {
       </div>
     </div>
     <div class="pane-status">
-      <span>${esc(board.label)}</span>
+      <span class="dot${hasGroupClash ? ' warn' : ''}"></span>
+      <span>${esc(board.label)} · G${p.group + 1}</span>
       <span>${(board.primary_count || 0)}${(board.visitor_count || 0) ? '+' + board.visitor_count : ''} st</span>
-      <span>${groups.length} groups</span>
       <span class="sp"></span>
-      <span>${(board.placement_count || placements.length)} placed</span>
+      ${groups.length > 1
+        ? `<span>${groups.length - 1} ${IS_AR ? 'مجموعات أخرى' : 'more groups'} ↓</span>`
+        : `<span>${(board.placement_count || placements.length)} ${T.placed.toLowerCase()}</span>`
+      }
     </div>
   `;
   bindPaneControls(idx);

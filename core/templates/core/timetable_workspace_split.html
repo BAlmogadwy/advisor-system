@@ -321,11 +321,20 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
   text-align: center; padding: 20px;
 }
 .tws-pane .pane-status {
-  padding: 3px 10px; border-top: 1px solid var(--line); background: rgba(255,255,255,0.02);
-  display: flex; align-items: center; gap: 10px; font-family: var(--font-mono, 'JetBrains Mono'), monospace;
-  font-size: 9px; color: var(--t4); text-transform: uppercase; letter-spacing: 0.05em; flex-shrink: 0;
+  padding: 4px 10px; border-top: 1px solid var(--line); background: rgba(255,255,255,0.02);
+  display: flex; align-items: center; gap: 8px; font-family: var(--font-mono, 'JetBrains Mono'), monospace;
+  font-size: 9.5px; color: var(--t4); text-transform: uppercase; letter-spacing: 0.05em; flex-shrink: 0;
 }
-.tws-pane .pane-status .sp { margin-left: auto; }
+.tws-pane .pane-status .sp { margin-inline-start: auto; }
+.tws-pane .pane-status .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--tws-c-t0); flex-shrink: 0;
+}
+.tws-pane.t0 .pane-status .dot { background: var(--tws-c-t0); }
+.tws-pane.t1 .pane-status .dot { background: var(--tws-c-t1); }
+.tws-pane.t2 .pane-status .dot { background: var(--tws-c-t2); }
+.tws-pane.t3 .pane-status .dot { background: var(--tws-c-t3); }
+.tws-pane .pane-status .dot.warn { background: var(--tws-c-critical); box-shadow: 0 0 4px var(--tws-c-critical); }
 
 .tws-status {
   background: var(--teal); color: #fff; display: flex; align-items: center; gap: 14px;
@@ -988,5 +997,5 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
   const DEFAULT_YEAR = {{ default_year|default:'null' }};
   const DEFAULT_TERM = {{ default_term|default:'null' }};
 </script>
-<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=24"></script>
+<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=26"></script>
 {% endblock %}
