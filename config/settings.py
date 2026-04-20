@@ -328,3 +328,27 @@ TIMETABLE_PR3_DECISION_TRACE_ENABLED = os.getenv(
 TIMETABLE_PR3_WARM_START_ENABLED = os.getenv(
     "TIMETABLE_PR3_WARM_START_ENABLED", "true"
 ).lower() in ("1", "true", "yes", "on")
+
+# ---------------------------------------------------------------------------
+# PR4 — instructor realism + semantic cleanup (refactor/pr4-*)
+# ---------------------------------------------------------------------------
+#
+# TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED: gates real-time emission of the
+# ``INSTRUCTOR_CLASH`` rejection code during candidate scoring. Default is
+# ``False`` through commits 2–7, flipped to ``True`` at commit 8
+# (promotion). Env-overridable for the kill-switch path. See docs/PR4-DOR.md.
+#
+# TIMETABLE_LAB_HEURISTIC_UNIFIED: gates routing of planner / rooming /
+# export through ``meeting_requires_lab_room()`` (commit 6's centralised
+# predicate). Default ``False`` → each call-site uses its old
+# ``duration > 80`` literal. ``True`` → all three route through the helper.
+TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED = os.getenv(
+    "TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED", "false"
+).lower() in ("1", "true", "yes", "on")
+
+TIMETABLE_LAB_HEURISTIC_UNIFIED = os.getenv("TIMETABLE_LAB_HEURISTIC_UNIFIED", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
