@@ -52,6 +52,7 @@ descending demand order (highest ``total_demand`` first).
 
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from itertools import combinations
 
@@ -72,6 +73,8 @@ from core.services.timetable_validation import (
     prayer_overlap_rejection,
 )
 from core.services.timetable_workspace import _time_mask, _to_minutes
+
+logger = logging.getLogger(__name__)
 
 # ── Meeting Patterns ─────────────────────────────────────────────
 # The Saudi academic week runs Sunday through Thursday.
@@ -632,6 +635,13 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
     # when the flag is OFF, so ``prayer_rule_on`` only controls whether
     # we bother reading windows and filtering options at all. Windows are
     # empty when the setting is absent, which is also a safe no-op.
+    #
+    # Telemetry caveat: ``pr1_prayer_rejections`` is populated AFTER the
+    # legacy hardcoded prayer-break filter (``_start_is_blocked``, window
+    # 11:35–12:59) has already suppressed many candidates. So this list
+    # under-observes the configured rule — it only records overlaps the
+    # legacy filter let through. Commit 7 retires the legacy filter and
+    # this surface becomes the complete record.
     prayer_rule_on = is_prayer_overlap_rule_enabled()
     prayer_windows = get_prayer_windows() if prayer_rule_on else []
     pr1_prayer_rejections: list[dict] = []
@@ -644,6 +654,12 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
     # room assignment, and (3) lets the existing `already = count()`
     # logic skip those sections in the round-robin iteration — so no
     # parallel "locked cells" path is checked in isolation.
+    #
+    # Telemetry honesty: in PR1 ``pr1_lock_rejections`` records
+    # lock-respect events from preloaded locked placements (one entry
+    # per locked row). It does NOT record per-candidate lock collisions
+    # during round-robin placement — the structural skip makes those
+    # collisions unreachable, so there is nothing to count there.
     lock_rule_on = is_lock_enforcement_enabled()
     pr1_lock_rejections: list[dict] = []
 
@@ -1177,6 +1193,18 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                     "conflict_score": best_score[0],
                 }
             )
+
+    logger.info(
+        "auto_place_board(board=%s): placed=%d skipped=%d "
+        "prayer_rule_on=%s (rejections=%d) lock_rule_on=%s (rejections=%d)",
+        board_id,
+        total_placed,
+        total_skipped,
+        prayer_rule_on,
+        len(pr1_prayer_rejections),
+        lock_rule_on,
+        len(pr1_lock_rejections),
+    )
 
     return {
         "placed": total_placed,

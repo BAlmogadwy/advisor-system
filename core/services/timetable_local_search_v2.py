@@ -98,7 +98,7 @@ def _filter_moves_by_pr1_prayer(
 
     if dropped:
         logger.info(
-            "PR1 prayer-overlap filter: dropped %d of %d candidate moves",
+            "PR1 prayer-overlap filter dropped %d/%d candidate moves",
             dropped,
             len(moves),
         )
