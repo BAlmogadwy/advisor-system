@@ -88,4 +88,9 @@ jobs:
           PYTHONUTF8: '1'
         run: bandit -r core -s B101,B311,B404,B603,B607
       - name: Dependency audit
-        run: pip-audit
+        # Temporary ignore for pytest GHSA-6w46-j5rx-g56g. Test-only
+        # dependency; the fix requires pytest 9.x (major bump).
+        # Upgrading to pytest 9.x is deferred to a dedicated
+        # compatibility PR that will re-run the full 183-test suite
+        # against the new major-release behaviour.
+        run: pip-audit --ignore-vuln GHSA-6w46-j5rx-g56g
