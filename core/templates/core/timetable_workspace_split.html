@@ -24,6 +24,27 @@
   --tws-tint-teal-40: rgba(10, 142, 110, 0.4);
 }
 
+/* Split view uses the mockup's deeper navy + teal radial glow, not the
+   main app's slightly lighter --bg. Tokens are scoped so the rest of
+   the app stays untouched. */
+/* global.css has `html[data-theme="dark"] body { background: ... !important }`
+   which beats plain `body.tws-root` on specificity. `html body.tws-root`
+   ties specificity and wins on source order, with !important to also beat
+   the light-mode `body { background: ... !important }` rule. */
+html body.tws-root {
+  --bg: #0a0c14;
+  --card: #141827;
+  --line: rgba(255, 255, 255, 0.08);
+  --line-soft: rgba(255, 255, 255, 0.04);
+  --ink: #e2e4ec;
+  background:
+    radial-gradient(ellipse 80% 60% at 20% -10%, rgba(10, 142, 110, 0.08), transparent 60%),
+    radial-gradient(ellipse 60% 50% at 90% 100%, rgba(80, 104, 240, 0.06), transparent 60%),
+    #0a0c14 !important;
+  color: var(--ink) !important;
+  min-height: 100vh;
+}
+
 /* Keyboard focus indicator — visible only when user is tabbing. */
 body.tws-root button:focus-visible,
 body.tws-root select:focus-visible,
@@ -124,7 +145,9 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
 
 .tws-quad {
   display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;
-  gap: 6px; padding: 6px; min-height: 0; min-width: 0; background: var(--bg, #0a0c14);
+  gap: 6px; padding: 6px; min-height: 0; min-width: 0;
+  /* Transparent so the body's radial gradient shows through */
+  background: transparent;
   grid-column: 2;  /* always the middle of .tws-body's 3-col track */
 }
 .tws-sidebar { grid-column: 1; }
@@ -138,7 +161,10 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
 
 .tws-pane {
   position: relative; border: 1px solid var(--line); border-radius: 10px;
-  background: var(--card); overflow: hidden; min-height: 0; min-width: 0;
+  /* Mockup's semi-transparent pane surface lets the body radial glow
+     bleed through slightly instead of flattening every pane. */
+  background: rgba(10, 12, 20, 0.5);
+  overflow: hidden; min-height: 0; min-width: 0;
   display: flex; flex-direction: column;
 }
 .tws-pane.t0 { border-top: 2px solid var(--tws-c-t0); }
@@ -962,5 +988,5 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
   const DEFAULT_YEAR = {{ default_year|default:'null' }};
   const DEFAULT_TERM = {{ default_term|default:'null' }};
 </script>
-<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=23"></script>
+<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=24"></script>
 {% endblock %}
