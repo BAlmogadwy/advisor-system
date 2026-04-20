@@ -214,4 +214,29 @@ Commits 1–2 are green-behind-flag (new structures unused at runtime). Commits 
 
 - [ ] ChatGPT reviews this DoR and approves scope / non-scope / acceptance bar. **Amendment round 1 (2026-04-20):** six amendments applied — (A1) grep replaced with targeted tests + review checklist for `_start_is_blocked` removal, (A2) commit-4 reworded to "measure overlap/divergence" with explained-delta report (not subset claim), (A3) acceptance bar #3 is 3-part (no-legacy-exclusion + single-source semantics + explained-delta artefact), (A4) helper named `meeting_requires_lab_room()` not `is_lab_section()`, (A5) commit 7 = counter removal + commit 8 = docs-only closeout, (A6) instructor string treated as opaque + strip+casefold only + stop-and-report on non-trivial multi-instructor data.
 - [x] ChatGPT signed off on the amended DoR. Reply on 2026-04-20: *"Approved. Commit the DoR and start PR4 commit 1."*
-- [ ] Commit 1 (failing tests + scenario pack) lands next.
+- [x] Commit 1 (failing tests + scenario pack) landed.
+
+---
+
+## Closeout (2026-04-20)
+
+**All eight commits shipped** on branch `refactor/pr4-instructor-realism-semantic-cleanup`. Final state:
+
+| # | Commit | Purpose | Status |
+|---|---|---|---|
+| 1 | failing tests + scenario pack | green-behind-flag tripwires | ✅ landed |
+| 2 | instructor identity plumbing | `_normalise_instructor` + `instructor_schedule` dict | ✅ landed |
+| 3 | `INSTRUCTOR_CLASH` emission | flag-gated candidate rejection | ✅ landed |
+| 4 | prayer divergence report | `PR4-PRAYER-DELTA.md` | ✅ landed |
+| 5 | `_start_is_blocked` removal | 5 call-sites cleaned | ✅ landed |
+| 6 | `meeting_requires_lab_room()` | 5 call-sites wired flag-gated | ✅ landed |
+| 7 | retire `lecture_room_reject_due_to_buffer_count` | 4 test assertions migrated | ✅ landed |
+| 8 | promotion + docs | both flags flipped `True` | ✅ landed |
+
+**Test state at closeout.** 336 passing, 1 skipped. PR3 acceptance pack 21/21 stable. All PR4 acceptance-bar tests green.
+
+**A6 outcome.** Commit 2's data scan found 245 meetings, 46 unique instructors, zero Latin-character delimiters (`/`, `&`, `;`, `+`). Opaque-string discipline held; the stop-and-report clause did not trigger. Multi-instructor parsing remains a PR5+ follow-up if real data ever grows delimiter rules.
+
+**Flag kill-switches verified.** Both `TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED=false` and `TIMETABLE_LAB_HEURISTIC_UNIFIED=false` restore pre-PR4 behaviour at runtime — confirmed by the flag-off regression tests in `test_pr2_room_oracle.py::test_07_*` and `test_pr2_silent_unassigned_sites.py::TestOracleHeuristicMatch`.
+
+**Promotion note.** `docs/PR4-PROMOTION-NOTE.md` — contains the tiered rollback path (env switch → revert-commit-8 → revert-merge-commit), behavioural changes under flag-on, and the known non-goals carried into PR5+.

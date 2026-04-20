@@ -325,13 +325,23 @@ class TestOracleScenarios(SimpleTestCase):
 
     # --- #7 heuristic mismatch: 2-credit long lecture ---------------------
 
+    @override_settings(TIMETABLE_LAB_HEURISTIC_UNIFIED=False)
     def test_07_heuristic_mismatch_emits_room_heuristic_mismatch(self) -> None:
-        """2-credit meeting that runs 100 minutes — the current
+        """2-credit meeting that runs 100 minutes — the legacy
         ``duration > 80 and cr == 4`` guard in timetable_rooming.py:305
         would classify this as a lab because duration>80, but the section
         is 2-credit (cr==2, not 4). The oracle observes the mismatch but
         does NOT reassign — PR2 is observation-only on the heuristic.
-        Fixture: pr2_heuristic_mismatch.json."""
+        Fixture: pr2_heuristic_mismatch.json.
+
+        PR4 commit 8 promoted ``TIMETABLE_LAB_HEURISTIC_UNIFIED`` to
+        ``True`` by default; under that promoted default the planner,
+        rooming, and oracle all route through ``meeting_requires_lab_room``
+        and no mismatch is possible. This test is overridden to the
+        kill-switch path (flag=False) so it continues to regression-guard
+        the legacy observation behaviour operators fall back to when the
+        flag is flipped off.
+        """
         section = _section(
             "CS105",
             "S1",
