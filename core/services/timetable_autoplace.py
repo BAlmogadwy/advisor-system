@@ -64,7 +64,10 @@ from core.models import (
     TermSectionMeeting,
 )
 from core.services.timetable_validation import (
+    LOCK_RESPECT,
+    RejectionReason,
     get_prayer_windows,
+    is_lock_enforcement_enabled,
     is_prayer_overlap_rule_enabled,
     prayer_overlap_rejection,
 )
@@ -633,6 +636,17 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
     prayer_windows = get_prayer_windows() if prayer_rule_on else []
     pr1_prayer_rejections: list[dict] = []
 
+    # ── PR1 lock-respect enforcement (flag-gated; default OFF) ──────
+    # Enforcement is structural, not advisory: when the flag is on, the
+    # preload loop (below, after occupancy structures are initialised)
+    # (1) collects locked SectionPlacement rows up front, (2) seeds the
+    # same occupancy state the planner consults for conflict scoring and
+    # room assignment, and (3) lets the existing `already = count()`
+    # logic skip those sections in the round-robin iteration — so no
+    # parallel "locked cells" path is checked in isolation.
+    lock_rule_on = is_lock_enforcement_enabled()
+    pr1_lock_rejections: list[dict] = []
+
     # ── 0. Load rooms for this board's programme(s) ─────────────────
     from core.services.timetable_rooming import (
         RoomTracker,
@@ -746,7 +760,7 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
             "placements": [],
             "capacity_buffer": capacity_buffer,
             "pr1_prayer_rejections": pr1_prayer_rejections,
-            "pr1_lock_rejections": [],
+            "pr1_lock_rejections": pr1_lock_rejections,
         }
 
     # ── 2. Build student-to-course mapping ────────────────────────────
@@ -783,6 +797,49 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
     placement_results: list[dict] = []
     total_placed = 0
     total_skipped = 0
+
+    # ── 2b. PR1 lock preload ─────────────────────────────────────────
+    # When TIMETABLE_ENFORCE_LOCKS is on, locked SectionPlacement rows
+    # for this board are seeded into the same occupancy structures the
+    # planner consults below:
+    #   - placed_masks + all_placed_masks → same-course / cross-course
+    #     student-overlap conflict detection
+    #   - placed_schedule → idle-gap scoring and S2+ instructor-adjacency
+    #     scoring for the same course
+    #   - room_tracker.usage → room assignment avoids locked rooms at
+    #     the locked (day, start) without any special-case branch
+    #   - slot_density → tie-breaking pushes later placements toward
+    #     less-populated slots, acknowledging the locked cell's pressure
+    # The round-robin skip is automatic: ``already = count()`` on line
+    # ~820 already counts locked rows, so ``to_place = planned_sections
+    # - already`` excludes them and the sec_round loop never retries
+    # that section index. One LOCK_RESPECT telemetry row is emitted per
+    # locked cell so the payload records which locks were respected.
+    if lock_rule_on:
+        locked_placements = (
+            SectionPlacement.objects.filter(board=board, is_locked=True)
+            .select_related("term_section")
+            .order_by("day", "start_time")
+        )
+        for lp in locked_placements:
+            cc = lp.term_section.course_code
+            mask = _time_mask(lp.day, lp.start_time, lp.end_time)
+            placed_masks.append((cc, mask))
+            placed_schedule.append((lp.day, lp.start_time, lp.end_time, cc))
+            all_placed_masks.append((cc, mask))
+            slot_density[lp.start_time] += 1
+            if room_tracker and lp.room and lp.room != "UNASSIGNED":
+                room_tracker.usage[(lp.day, lp.start_time)].add(lp.room)
+            pr1_lock_rejections.append(
+                RejectionReason(
+                    code=LOCK_RESPECT,
+                    day=lp.day,
+                    start_time=lp.start_time,
+                    end_time=lp.end_time,
+                    course_code=cc,
+                    context={"locked_room": lp.room},
+                ).to_dict()
+            )
 
     # ── 3. Identify online courses (from ProgrammeRequirement) ────────
     # Online courses receive a late-slot preference penalty so they are
@@ -1127,7 +1184,7 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
         "placements": placement_results,
         "capacity_buffer": capacity_buffer,
         "pr1_prayer_rejections": pr1_prayer_rejections,
-        "pr1_lock_rejections": [],
+        "pr1_lock_rejections": pr1_lock_rejections,
     }
 
 
