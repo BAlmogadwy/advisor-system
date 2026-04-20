@@ -613,11 +613,18 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
     lab_slot_config = scenario.lab_slot_config if scenario.lab_slot_config else DEFAULT_LAB_SLOTS
 
     # ── 0. Load rooms for this board's programme(s) ─────────────────
-    from core.services.timetable_rooming import RoomTracker, get_programme_rooms
+    from core.services.timetable_rooming import (
+        RoomTracker,
+        get_board_gender,
+        get_programme_rooms,
+    )
 
     programmes = [p.strip() for p in (board.program or "").split(",") if p.strip()]
     room_list = get_programme_rooms(programmes) if programmes else []
     room_tracker = RoomTracker(room_list) if room_list else None
+    # Board-wide gender derived from linked students (homogeneous in
+    # practice). Restricts the room pool to matching-section rooms.
+    board_gender = get_board_gender(board_id)
 
     # Pre-populate tracker with rooms already used by OTHER boards in this scenario
     if room_tracker:
@@ -867,7 +874,9 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                         duration = _to_min(m["end"]) - _to_min(m["start"])
                         rtype = "lab" if (duration > 80 and is_lab_course) else "lecture"
                         room_cap = 0 if rtype == "lab" else section_cap
-                        if not room_tracker.is_feasible(m["day"], m["start"], room_cap, rtype):
+                        if not room_tracker.is_feasible(
+                            m["day"], m["start"], room_cap, rtype, board_gender
+                        ):
                             room_penalty += 100  # heavy penalty but not a hard reject
 
                 raw_score = _score_option(
@@ -989,7 +998,7 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                     rtype = "lab" if (duration > 80 and is_lab_course) else "lecture"
                     # Try preferred room first (same room as previous meetings)
                     if preferred_room and room_tracker.is_feasible(
-                        m["day"], m["start"], section_cap, rtype
+                        m["day"], m["start"], section_cap, rtype, board_gender
                     ):
                         used = room_tracker.usage.get((m["day"], m["start"]), set())
                         if preferred_room not in used:
@@ -1000,6 +1009,10 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                                 pr_obj
                                 and pr_obj.capacity >= section_cap
                                 and pr_obj.room_type == rtype
+                                and (
+                                    not board_gender
+                                    or (pr_obj.section or "").upper() == board_gender
+                                )
                             ):
                                 room_tracker.usage[(m["day"], m["start"])].add(preferred_room)
                                 assigned_room = preferred_room
@@ -1010,7 +1023,9 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
                         # capacity because students rotate through lab slots.
                         room_cap = 0 if rtype == "lab" else section_cap
                         assigned_room = (
-                            room_tracker.assign_best_fit(m["day"], m["start"], room_cap, rtype)
+                            room_tracker.assign_best_fit(
+                                m["day"], m["start"], room_cap, rtype, board_gender
+                            )
                             or "UNASSIGNED"
                         )
                     if not preferred_room and assigned_room and assigned_room != "UNASSIGNED":

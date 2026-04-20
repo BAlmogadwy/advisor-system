@@ -38,9 +38,44 @@ def get_programme_rooms(programmes: list[str]) -> list[dict]:
                     "room_type": r.room_type or "lecture",
                     "wing": r.wing,
                     "building": r.building,
+                    "section": (r.section or "").upper(),
                 }
             )
     return result
+
+
+def _section_gender(label: str | None) -> str:
+    """Extract M/F gender from a TermSection.section label (e.g. 'M1' → 'M').
+
+    Returns '' if the label doesn't start with M or F.
+    """
+    if not label:
+        return ""
+    first = str(label).strip()[:1].upper()
+    return first if first in ("M", "F") else ""
+
+
+def get_board_gender(board_id: int) -> str:
+    """Derive M/F gender for a board from the students linked to it.
+
+    Returns 'M' or 'F' if all linked students share the same section;
+    '' if the board is empty or mixed (falls back to no gender filter).
+    """
+    from core.models import BoardStudentLink, Student
+
+    student_ids = BoardStudentLink.objects.filter(board_id=board_id).values_list(
+        "student_id", flat=True
+    )
+    if not student_ids:
+        return ""
+    genders = (
+        Student.objects.filter(student_id__in=list(student_ids))
+        .values_list("section", flat=True)
+        .distinct()
+    )
+    unique = {str(g or "").strip().upper() for g in genders}
+    unique.discard("")
+    return next(iter(unique)) if len(unique) == 1 else ""
 
 
 def _to_min(t: str) -> int:
@@ -68,26 +103,39 @@ class RoomTracker:
         )
         self.usage: dict[tuple[str, str], set[str]] = defaultdict(set)
 
-    def _pool(self, room_type: str) -> list[dict]:
-        return self.lab_rooms if room_type == "lab" else self.lecture_rooms
+    def _pool(self, room_type: str, gender: str = "") -> list[dict]:
+        base = self.lab_rooms if room_type == "lab" else self.lecture_rooms
+        if gender in ("M", "F"):
+            return [r for r in base if r.get("section", "") == gender]
+        return base
 
     def is_feasible(
-        self, day: str, start: str, min_capacity: int, room_type: str = "lecture"
+        self,
+        day: str,
+        start: str,
+        min_capacity: int,
+        room_type: str = "lecture",
+        gender: str = "",
     ) -> bool:
         """Can we fit a section of *min_capacity* in this (day, start) slot?"""
         used = self.usage.get((day, start), set())
-        pool = self._pool(room_type)
+        pool = self._pool(room_type, gender)
         return any(r["room_code"] not in used and r["capacity"] >= min_capacity for r in pool)
 
     def assign_best_fit(
-        self, day: str, start: str, min_capacity: int, room_type: str = "lecture"
+        self,
+        day: str,
+        start: str,
+        min_capacity: int,
+        room_type: str = "lecture",
+        gender: str = "",
     ) -> str | None:
-        """Assign the smallest sufficient room of matching type.
+        """Assign the smallest sufficient room of matching type and gender.
 
         Returns the ``room_code`` on success, or ``None`` if no room fits.
         """
         used = self.usage.get((day, start), set())
-        pool = self._pool(room_type)
+        pool = self._pool(room_type, gender)
         for r in pool:  # already sorted by capacity ASC
             if r["room_code"] not in used and r["capacity"] >= min_capacity:
                 self.usage[(day, start)].add(r["room_code"])
@@ -175,6 +223,7 @@ def assign_rooms_to_board(board_id: int) -> dict:
     if not rooms:
         return {"assigned": 0, "unassigned": 0}
 
+    board_gender = get_board_gender(board_id)
     tracker = RoomTracker(rooms)
 
     # Pre-populate tracker with rooms used by OTHER boards in the same scenario
@@ -233,7 +282,10 @@ def assign_rooms_to_board(board_id: int) -> dict:
         # For lab meetings, don't filter by capacity — lab rooms have a
         # fixed physical size (computers/benches).
         room_cap = 0 if room_type == "lab" else cap
-        room_code = tracker.assign_best_fit(p.day, p.start_time, room_cap, room_type)
+        # Prefer per-section gender (exam-style sections like 'M1'/'F1');
+        # fall back to the board-level gender (timetable-style 'S1'/'S2').
+        gender = _section_gender(p.term_section.section) or board_gender
+        room_code = tracker.assign_best_fit(p.day, p.start_time, room_cap, room_type, gender)
         if room_code:
             p.room = room_code
             p.save(update_fields=["room", "updated_at"])
