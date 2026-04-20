@@ -49,13 +49,15 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
 .tws-topbar,
 .tws-boards-bar,
 .tws-ctrls { background: var(--glass-bg-header); backdrop-filter: var(--glass-blur); border-bottom: 1px solid var(--line); }
-.tws-topbar { display: flex; align-items: center; gap: 12px; padding: 10px 18px; }
-.tws-topbar h1 { font-family: var(--font-serif, 'DM Serif Display'), serif; font-size: 18px; font-weight: 400; margin: 0; letter-spacing: -0.01em; }
-.tws-topbar .sub { color: var(--t3); font-size: 10.5px; font-family: var(--font-mono, 'JetBrains Mono'), monospace; letter-spacing: 0.06em; text-transform: uppercase; }
-.tws-topbar .sp { flex: 1; }
-.tws-topbar .metric { display: inline-flex; gap: 5px; font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 10.5px; color: var(--t4); text-transform: uppercase; letter-spacing: 0.06em; }
+.tws-topbar { display: flex; align-items: center; gap: 8px; padding: 8px 14px; flex-wrap: nowrap; overflow-x: auto; min-height: 52px; }
+.tws-topbar h1 { font-family: var(--font-serif, 'DM Serif Display'), serif; font-size: 18px; font-weight: 400; margin: 0; letter-spacing: -0.01em; white-space: nowrap; flex-shrink: 0; }
+.tws-topbar .sub { color: var(--t3); font-size: 10px; font-family: var(--font-mono, 'JetBrains Mono'), monospace; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; max-width: 200px; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1; }
+.tws-topbar .sp { flex: 1; min-width: 8px; }
+.tws-topbar .metric { display: inline-flex; gap: 5px; font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 10px; color: var(--t4); text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; flex-shrink: 0; }
 .tws-topbar .metric b { color: var(--ink); font-weight: 700; font-size: 12px; }
 .tws-topbar .metric b.warn { color: var(--rose, #F06060); }
+.tws-topbar .tws-btn { flex-shrink: 0; white-space: nowrap; }
+.tws-topbar .tws-select { flex-shrink: 0; max-width: 220px; }
 
 .tws-select, .tws-btn {
   border: 1px solid var(--line); background: var(--glass-bg); color: var(--ink);
@@ -123,7 +125,10 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
 .tws-quad {
   display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr;
   gap: 6px; padding: 6px; min-height: 0; min-width: 0; background: var(--bg, #0a0c14);
+  grid-column: 2;  /* always the middle of .tws-body's 3-col track */
 }
+.tws-sidebar { grid-column: 1; }
+.tws-rpanel { grid-column: 3; }
 .tws-quad.layout-single { grid-template-columns: 1fr; grid-template-rows: 1fr; }
 .tws-quad.layout-single > .tws-pane:not(.primary) { display: none; }
 .tws-quad.layout-vert { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
@@ -934,5 +939,5 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
   const DEFAULT_YEAR = {{ default_year|default:'null' }};
   const DEFAULT_TERM = {{ default_term|default:'null' }};
 </script>
-<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=17"></script>
+<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=18"></script>
 {% endblock %}
