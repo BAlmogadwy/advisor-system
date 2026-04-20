@@ -410,13 +410,16 @@ function renderPane(idx) {
   );
 
   // Group tab label = "Gn  Xc · Yst" — mockup format with student counts.
-  // Student count per group = count of distinct course sections' total_students
-  // (falls back to placement count if not available).
+  // Students per group = peak (max) registered/available_capacity across
+  // the group's placements, not a sum — because one student takes every
+  // course in their group, the group's size equals the biggest single
+  // placement, not the total seats.
   const gtabsHtml = groups.map((g, gi) => {
     const courses = new Set(g.placements.map(pl => pl.course_code)).size;
-    const stuSet = new Set();
-    g.placements.forEach(pl => (pl.meetings || []).forEach(() => {}));
-    const stu = g.placements.reduce((a, pl) => a + (pl.registered_count || pl.available_capacity || 0), 0);
+    const stu = g.placements.reduce(
+      (m, pl) => Math.max(m, pl.registered_count || pl.available_capacity || 0),
+      0,
+    );
     return `
       <span class="gtab${gi === p.group ? ' on' : ''}" data-group="${gi}">
         G${gi + 1} <span class="cx">${courses}c${stu ? ' · ' + stu + 'st' : ''}</span>${groupHasClash[gi] ? '<span class="clash-dot"></span>' : ''}
@@ -451,7 +454,11 @@ function renderPane(idx) {
           <span class="caret">▾</span>
           <span class="lab-tag">▣ ${T.labs}</span>
           <span class="spacer"></span>
-          <span class="note">${groupLab.length ? `${groupLab.length} ${T.placed.toLowerCase()}` : T.noLab}</span>
+          <span class="note">${
+            groupLab.length
+              ? `${groupLab.length} ${T.placed.toLowerCase()} · ` + labSlots.map(s => `${s.start}–${s.end}`).join(' · ')
+              : T.noLab
+          }</span>
         </div>
         ${renderGridHTML(labSlots, groupLab, clashIds, 'lab')}
       </div>
@@ -471,13 +478,17 @@ function renderGridHTML(slots, placements, clashIds, kind) {
   // Mockup layout: slots on Y-axis (rows), days on X-axis (columns).
   // pane-ruler: one header row — "SLOT"/"LAB" corner + day labels.
   // slot-row × N: one per slot — slot number + cells for each day.
-  let h = `<div class="block-grid ${kind === 'lab' ? 'lab-grid' : 'lect-grid'}">`;
-  h += `<div class="pane-ruler"><div class="cor">${kind === 'lab' ? 'LAB' : 'SLOT'}</div>`;
+  const isLab = kind === 'lab';
+  let h = `<div class="block-grid ${isLab ? 'lab-grid' : 'lect-grid'}">`;
+  h += `<div class="pane-ruler"><div class="cor">${isLab ? 'LAB' : 'SLOT'}</div>`;
   DAYS.forEach((day, di) => h += `<div class="dh">${esc(DAY_LABELS[di])}</div>`);
   h += `</div>`;
   slots.forEach((slot, si) => {
+    // Always label with a compact number/prefix — full time lives in the
+    // title tooltip and (for labs) in the lab-head ruler meta line.
+    const label = isLab ? `L${si + 1}` : String(si + 1);
     h += `<div class="slot-row" title="${esc(slot.start)}–${esc(slot.end)}">`;
-    h += `<div class="slbl">${esc(slot.label || String(si + 1))}</div>`;
+    h += `<div class="slbl">${label}</div>`;
     DAYS.forEach((day) => {
       const placement = placements.find(pl => pl.day === day && pl.start_time === slot.start);
       const hasClash = placement && clashIds.has(placement.id);
