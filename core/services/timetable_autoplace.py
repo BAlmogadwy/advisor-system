@@ -71,6 +71,10 @@ from core.services.timetable_decision_trace import (
     DecisionTrace,
     is_decision_trace_enabled,
 )
+from core.services.timetable_lab_predicate import (
+    is_lab_heuristic_unified,
+    meeting_requires_lab_room,
+)
 from core.services.timetable_pr4_instructor import (
     is_instructor_clash_enabled,
     normalise_instructor,
@@ -1395,7 +1399,10 @@ def auto_place_board(
                 if room_tracker:
                     for m in option:
                         duration = _to_min(m["end"]) - _to_min(m["start"])
-                        rtype = "lab" if (duration > 80 and is_lab_course) else "lecture"
+                        if is_lab_heuristic_unified():
+                            rtype = "lab" if meeting_requires_lab_room(duration) else "lecture"
+                        else:
+                            rtype = "lab" if (duration > 80 and is_lab_course) else "lecture"
                         room_cap = 0 if rtype == "lab" else section_cap
                         if not room_tracker.is_feasible(
                             m["day"], m["start"], room_cap, rtype, board_gender
@@ -1591,7 +1598,10 @@ def auto_place_board(
                 assigned_room = ""
                 if room_tracker:
                     duration = _to_min(m["end"]) - _to_min(m["start"])
-                    rtype = "lab" if (duration > 80 and is_lab_course) else "lecture"
+                    if is_lab_heuristic_unified():
+                        rtype = "lab" if meeting_requires_lab_room(duration) else "lecture"
+                    else:
+                        rtype = "lab" if (duration > 80 and is_lab_course) else "lecture"
                     # Try preferred room first (same room as previous meetings)
                     if preferred_room and room_tracker.is_feasible(
                         m["day"], m["start"], section_cap, rtype, board_gender
