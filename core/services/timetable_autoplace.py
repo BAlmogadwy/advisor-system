@@ -640,8 +640,10 @@ def auto_place_board(board_id: int, strategy: str = DEFAULT_STRATEGY) -> dict:
     # legacy hardcoded prayer-break filter (``_start_is_blocked``, window
     # 11:35–12:59) has already suppressed many candidates. So this list
     # under-observes the configured rule — it only records overlaps the
-    # legacy filter let through. Commit 7 retires the legacy filter and
-    # this surface becomes the complete record.
+    # legacy filter let through. This under-observation remains until
+    # the legacy start-window filter is retired in a later PR, where the
+    # behavioural diff (old-vs-new prayer semantics) can be evaluated
+    # explicitly on its own.
     prayer_rule_on = is_prayer_overlap_rule_enabled()
     prayer_windows = get_prayer_windows() if prayer_rule_on else []
     pr1_prayer_rejections: list[dict] = []
