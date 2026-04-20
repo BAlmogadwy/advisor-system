@@ -1,0 +1,29 @@
+{
+  "description": "PR3 scenario #9 — cold-start parity. baseline_placements=None reproduces PR2 baseline behaviour byte-for-byte (minus the new additive PR3 payload keys which default to 0 or {}). This is the parity contract that guarantees no existing scenario changes placement decisions when PR3 is merged in cold-start mode.",
+  "scenario": {
+    "sections": [
+      {"course_code": "CS101", "section_code": "S1", "enrolment": 20, "instructor_id": "I1"},
+      {"course_code": "CS102", "section_code": "S1", "enrolment": 22, "instructor_id": "I2"}
+    ],
+    "slot_pool": [
+      {"day": "Sun", "start_time": "08:00", "end_time": "09:15"},
+      {"day": "Sun", "start_time": "09:30", "end_time": "10:45"}
+    ],
+    "rooms": [
+      {"room_code": "A101", "capacity": 40, "room_type": "lecture", "gender": ""}
+    ],
+    "baseline_placements": null
+  },
+  "expected": {
+    "placed": 2,
+    "unchanged_count": 0,
+    "changes_from_baseline_count": 0,
+    "newly_placed_count": 2,
+    "removed_count": 0,
+    "placements_identical_to_pr2_baseline": true
+  },
+  "notes": [
+    "Tests: tests/test_pr3_warm_start.py::TestColdStartParity::test_baseline_none_matches_pr2_baseline",
+    "Acceptance-bar #3: byte-for-byte parity with PR2 minus the new additive payload keys."
+  ]
+}

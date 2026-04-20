@@ -1,0 +1,26 @@
+{
+  "description": "PR3 scenario #6 — INSTRUCTOR_CLASH surfaces explicitly. Two sections taught by the same instructor would overlap at Sun 08:00 if both took it; the weaker-scored section gets a different slot, and its trace must record INSTRUCTOR_CLASH as the rejection reason for the Sun 08:00 alternative. Today this rejection is implicit inside scoring (the overlapping candidate gets a penalty and loses); PR3 makes it an explicit trace entry.",
+  "scenario": {
+    "sections": [
+      {"course_code": "CS101", "section_code": "S1", "enrolment": 20, "instructor_id": "I1"},
+      {"course_code": "CS102", "section_code": "S1", "enrolment": 22, "instructor_id": "I1"}
+    ],
+    "slot_pool": [
+      {"day": "Sun", "start_time": "08:00", "end_time": "09:15"},
+      {"day": "Sun", "start_time": "09:30", "end_time": "10:45"}
+    ],
+    "rooms": [
+      {"room_code": "A101", "capacity": 40, "room_type": "lecture", "gender": ""},
+      {"room_code": "A102", "capacity": 40, "room_type": "lecture", "gender": ""}
+    ]
+  },
+  "expected": {
+    "placed": 2,
+    "both_sections_in_different_slots": true,
+    "loser_trace_shows_instructor_clash": true
+  },
+  "notes": [
+    "Tests: tests/test_pr3_decision_trace.py::TestTypedRejectionCodes::test_instructor_clash_surfaces_in_trace",
+    "INSTRUCTOR_CLASH is one of the two new PR3 rejection codes (the other is STUDENT_CONFLICT). Both document decisions that today are implicit in scoring penalties."
+  ]
+}

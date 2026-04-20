@@ -1,0 +1,42 @@
+{
+  "description": "PR3 scenario #8 — perturbation metric totals add up correctly. A re-run with baseline covering 4 sections produces: 3 retained unchanged, 1 moved (baseline became infeasible), 1 newly placed (not in baseline), 0 removed. The metric block must match these exact numbers.",
+  "scenario": {
+    "sections": [
+      {"course_code": "CS101", "section_code": "S1", "enrolment": 20, "instructor_id": "I1"},
+      {"course_code": "CS102", "section_code": "S1", "enrolment": 22, "instructor_id": "I2"},
+      {"course_code": "CS103", "section_code": "S1", "enrolment": 18, "instructor_id": "I3"},
+      {"course_code": "CS104", "section_code": "S1", "enrolment": 16, "instructor_id": "I4"},
+      {"course_code": "CS105", "section_code": "S1", "enrolment": 15, "instructor_id": "I5"}
+    ],
+    "slot_pool": [
+      {"day": "Sun", "start_time": "08:00", "end_time": "09:15"},
+      {"day": "Sun", "start_time": "09:30", "end_time": "10:45"},
+      {"day": "Mon", "start_time": "08:00", "end_time": "09:15"},
+      {"day": "Mon", "start_time": "09:30", "end_time": "10:45"},
+      {"day": "Tue", "start_time": "08:00", "end_time": "09:15"}
+    ],
+    "rooms": [
+      {"room_code": "A101", "capacity": 40, "room_type": "lecture", "gender": ""}
+    ],
+    "prayer_windows": [
+      {"day": "Sun", "start_time": "09:30", "end_time": "10:45"}
+    ],
+    "baseline_placements": {
+      "CS101|S1": {"day": "Sun", "start_time": "08:00", "end_time": "09:15", "room": "A101"},
+      "CS102|S1": {"day": "Sun", "start_time": "09:30", "end_time": "10:45", "room": "A101"},
+      "CS103|S1": {"day": "Mon", "start_time": "08:00", "end_time": "09:15", "room": "A101"},
+      "CS104|S1": {"day": "Mon", "start_time": "09:30", "end_time": "10:45", "room": "A101"}
+    }
+  },
+  "expected": {
+    "placed": 5,
+    "unchanged_count": 3,
+    "changes_from_baseline_count": 1,
+    "newly_placed_count": 1,
+    "removed_count": 0
+  },
+  "notes": [
+    "Tests: tests/test_pr3_warm_start.py::TestPerturbationMetric::test_mixed_outcome_totals_match",
+    "CS102 moves (prayer clash on baseline slot); CS105 is newly placed (not in baseline); CS101/103/104 retain."
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "description": "PR3 scenario #7 — STUDENT_CONFLICT surfaces explicitly. Two sections share at least one enrolled student; placing both at Sun 08:00 would conflict that student's schedule. The planner picks non-overlapping slots, and the loser's trace must record STUDENT_CONFLICT for the Sun 08:00 alternative. The code is deliberately named *conflict* rather than *overlap* because this is a cohort-membership issue (who is in the section), not a geometric time-overlap.",
+  "scenario": {
+    "sections": [
+      {"course_code": "CS101", "section_code": "S1", "enrolment": 20, "instructor_id": "I1", "student_ids": ["ST001", "ST002", "ST003"]},
+      {"course_code": "CS102", "section_code": "S1", "enrolment": 22, "instructor_id": "I2", "student_ids": ["ST003", "ST004", "ST005"]}
+    ],
+    "slot_pool": [
+      {"day": "Sun", "start_time": "08:00", "end_time": "09:15"},
+      {"day": "Sun", "start_time": "09:30", "end_time": "10:45"}
+    ],
+    "rooms": [
+      {"room_code": "A101", "capacity": 40, "room_type": "lecture", "gender": ""},
+      {"room_code": "A102", "capacity": 40, "room_type": "lecture", "gender": ""}
+    ]
+  },
+  "expected": {
+    "placed": 2,
+    "both_sections_in_different_slots": true,
+    "shared_student_id": "ST003",
+    "loser_trace_shows_student_conflict": true
+  },
+  "notes": [
+    "Tests: tests/test_pr3_decision_trace.py::TestTypedRejectionCodes::test_student_conflict_surfaces_in_trace",
+    "STUDENT_CONFLICT framing (per ChatGPT DoR sign-off): cohort conflict in planner semantics, not geometric time-overlap. Sits next to INSTRUCTOR_CLASH in the rejection-codes table."
+  ]
+}

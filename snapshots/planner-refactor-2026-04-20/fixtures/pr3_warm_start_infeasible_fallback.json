@@ -1,0 +1,35 @@
+{
+  "description": "PR3 scenario #4 — warm-start falls back when a baseline entry becomes infeasible. One baseline slot clashes with a prayer window; the planner must skip retention for that section, score candidates normally, pick a legal slot, and record the baseline's rejection (PRAYER_WINDOW_CLASH) as one of the alternatives in its trace. The other sections retain baseline.",
+  "scenario": {
+    "sections": [
+      {"course_code": "CS101", "section_code": "S1", "enrolment": 20, "instructor_id": "I1"},
+      {"course_code": "CS102", "section_code": "S1", "enrolment": 22, "instructor_id": "I2"}
+    ],
+    "slot_pool": [
+      {"day": "Sun", "start_time": "08:00", "end_time": "09:15"},
+      {"day": "Sun", "start_time": "09:30", "end_time": "10:45"},
+      {"day": "Mon", "start_time": "08:00", "end_time": "09:15"}
+    ],
+    "rooms": [
+      {"room_code": "A101", "capacity": 40, "room_type": "lecture", "gender": ""}
+    ],
+    "prayer_windows": [
+      {"day": "Sun", "start_time": "09:30", "end_time": "10:45"}
+    ],
+    "baseline_placements": {
+      "CS101|S1": {"day": "Sun", "start_time": "08:00", "end_time": "09:15", "room": "A101"},
+      "CS102|S1": {"day": "Sun", "start_time": "09:30", "end_time": "10:45", "room": "A101"}
+    }
+  },
+  "expected": {
+    "placed": 2,
+    "unchanged_count": 1,
+    "changes_from_baseline_count": 1,
+    "moved_section": "CS102|S1",
+    "moved_section_baseline_rejection_code": "PRAYER_WINDOW_CLASH"
+  },
+  "notes": [
+    "Tests: tests/test_pr3_warm_start.py::TestInfeasibleFallback::test_prayer_clash_baseline_falls_back",
+    "The baseline's infeasibility reason (PRAYER_WINDOW_CLASH) is itself a recorded alternative in the moved section's trace — so the registrar can see why the previous placement no longer works."
+  ]
+}
