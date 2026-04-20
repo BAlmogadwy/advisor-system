@@ -282,7 +282,7 @@ function updateAggregateMetrics() {
 
 /* ── Slot bar (boards-on-canvas) ── */
 function renderSlotBar() {
-  const wrap = $('twsSlots');
+  const wrap = $('twsBoardsGrid');
   if (!S.boards.length) {
     wrap.innerHTML = `<span class="lbl" style="color:var(--t4)">${T.noScenario}</span>`;
     return;

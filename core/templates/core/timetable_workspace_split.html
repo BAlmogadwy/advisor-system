@@ -67,15 +67,17 @@ body.tws-root .shell { display: block !important; }
 body.tws-root main#main-content { padding: 0 !important; height: 100vh; overflow: hidden; }
 body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display: flex; flex-direction: column; }
 
-.tws-topbar,
-.tws-boards-bar,
-.tws-ctrls { background: var(--glass-bg-header); backdrop-filter: var(--glass-blur); border-bottom: 1px solid var(--line); }
-.tws-topbar { display: flex; align-items: center; gap: 8px; padding: 8px 14px; flex-wrap: nowrap; overflow-x: auto; min-height: 52px; }
+.tws-topbar { background: rgba(10,12,20,0.82); backdrop-filter: blur(12px); border-bottom: 1px solid var(--line); }
+.tws-boards-bar { background: rgba(255,255,255,0.015); border-bottom: 1px solid var(--line); }
+.tws-ctrls { background: var(--glass-bg-header); backdrop-filter: var(--glass-blur); }
+.tws-topbar { display: flex; align-items: center; gap: 14px; padding: 10px 20px; flex-wrap: nowrap; overflow-x: auto; min-height: 52px; }
 .tws-topbar h1 { font-family: var(--font-serif, 'DM Serif Display'), serif; font-size: 18px; font-weight: 400; margin: 0; letter-spacing: -0.01em; white-space: nowrap; flex-shrink: 0; }
 .tws-topbar .sub { color: var(--t3); font-size: 10px; font-family: var(--font-mono, 'JetBrains Mono'), monospace; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; max-width: 200px; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1; }
 .tws-topbar .sp { flex: 1; min-width: 8px; }
-.tws-topbar .metric { display: inline-flex; gap: 5px; font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 10px; color: var(--t4); text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; flex-shrink: 0; }
-.tws-topbar .metric b { color: var(--ink); font-weight: 700; font-size: 12px; }
+html body.tws-root .tws-topbar .metric { display: inline-flex !important; gap: 5px !important; font-family: var(--font-mono, 'JetBrains Mono'), monospace !important; font-size: 10px !important; color: var(--t4) !important; text-transform: uppercase !important; letter-spacing: 0.04em !important; white-space: nowrap !important; flex-shrink: 0 !important; border: 0 !important; background: transparent !important; padding: 0 !important; border-radius: 0 !important; box-shadow: none !important; height: auto !important; backdrop-filter: none !important; }
+html body.tws-root .tws-topbar .metric::before { display: none !important; }
+html body.tws-root .tws-topbar .metric:hover { background: transparent !important; box-shadow: none !important; transform: none !important; }
+.tws-topbar .metric b { color: var(--ink); font-weight: 700; font-size: 11px; }
 .tws-topbar .metric b.warn { color: var(--rose, #F06060); }
 .tws-topbar .tws-btn { flex-shrink: 0; white-space: nowrap; }
 .tws-topbar .tws-select { flex-shrink: 0; max-width: 220px; }
@@ -91,7 +93,7 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
 .tws-btn.primary:hover { background: var(--teal-dark, #087050); }
 .tws-btn[disabled] { opacity: 0.4; cursor: not-allowed; }
 
-.tws-boards-bar { display: flex; align-items: center; gap: 10px; padding: 8px 18px; flex-wrap: wrap; }
+.tws-boards-bar { display: flex; align-items: center; gap: 10px; padding: 8px 20px; flex-wrap: wrap; }
 .tws-boards-bar .lbl { font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 10px; color: var(--t4); text-transform: uppercase; letter-spacing: 0.1em; font-weight: 700; }
 .tws-slot-grid { display: flex; gap: 8px; flex-wrap: wrap; flex: 1; }
 .tws-bslot { display: inline-flex; align-items: stretch; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--glass-bg); }
@@ -174,9 +176,9 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
 .tws-pane.t2 { border-top: 2px solid var(--tws-c-t2); }
 .tws-pane.t3 { border-top: 2px solid var(--tws-c-t3); }
 .tws-pane .pane-hd {
-  display: flex; align-items: center; gap: 8px; padding: 5px 10px; border-bottom: 1px solid var(--line);
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line);
   background: rgba(255,255,255,0.02); font-family: var(--font-mono, 'JetBrains Mono'), monospace;
-  font-size: 10.5px; color: var(--t3); flex-shrink: 0; min-height: 32px;
+  font-size: 10.5px; color: var(--t3); flex-shrink: 0; min-height: 32px; flex-wrap: wrap;
 }
 /* Mockup term-pick pill — rounded chip with colored dot + text + caret */
 .tws-pane .pane-hd .term-pick {
@@ -197,7 +199,7 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
 .tws-pane.t3 .pane-hd .term-pick::before { background: var(--tws-c-t3); }
 .tws-pane .pane-hd .term-pick .caret { font-size: 9px; color: var(--t4); margin-inline-start: 2px; }
 .tws-pane .pane-hd .gtabs { display: inline-flex; gap: 2px; background: rgba(255,255,255,0.04);
-  border: 1px solid var(--line); border-radius: 6px; padding: 2px; }
+  border: 1px solid var(--line); border-radius: 8px; padding: 2px; }
 .tws-pane .pane-hd .gtab {
   padding: 2px 8px; font-family: var(--font-mono, 'JetBrains Mono'), monospace;
   font-size: 10px; font-weight: 700; color: var(--t3); cursor: pointer; border-radius: 4px;
@@ -206,7 +208,7 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
 .tws-pane .pane-hd .gtab:hover { color: var(--ink); }
 .tws-pane .pane-hd .gtab.on { background: var(--teal); color: #fff; }
 .tws-pane .pane-hd .gtab .cx { font-size: 9px; opacity: 0.8; font-weight: 500; }
-.tws-pane .pane-hd .gtab .clash-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--tws-c-critical); box-shadow: 0 0 5px var(--tws-c-critical); }
+.tws-pane .pane-hd .gtab .clash-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--tws-c-critical); box-shadow: 0 0 6px var(--tws-c-critical); }
 /* IMPORTANT: global.css defines a .kpi class for dashboard tiles with
    border + padding + gradient bg. Null it out here with !important so
    our inline chips render as plain text like the mockup. */
@@ -234,10 +236,10 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
 
 .tws-pane .pane-body {
   flex: 1; display: flex; flex-direction: column; gap: 4px; padding: 6px 8px 4px;
-  min-height: 0; overflow: hidden;
+  min-height: 0; overflow: auto;
 }
 .tws-pane .lect-block { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
-.tws-pane .lab-block { flex: 0 1 45%; display: flex; flex-direction: column; min-height: 0; border-top: 1px dashed var(--line); padding-top: 4px; }
+.tws-pane .lab-block { flex: 0 1 45%; display: flex; flex-direction: column; min-height: 0; border-top: 1px solid var(--line); padding-top: 6px; margin-top: 6px; }
 .tws-pane .lab-block.collapsed { flex: 0 0 auto; }
 .tws-pane .lab-block.collapsed .block-grid { display: none; }
 .tws-pane .block-head {
@@ -256,14 +258,17 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
    5 day headers) + N slot rows (slot label + 5 day cells). */
 .tws-pane .block-grid {
   flex: 1 1 auto; display: flex; flex-direction: column;
-  gap: 2px; min-height: 0; min-width: 0;
+  gap: 2px; min-height: 0; min-width: 0; width: 100%;
 }
+.tws-pane .block-grid .pane-ruler,
+.tws-pane .block-grid .slot-row { width: 100%; }
 .tws-pane .block-grid .pane-ruler {
   display: grid; grid-template-columns: 28px repeat(5, 1fr); gap: 2px;
   flex-shrink: 0; padding: 2px 0;
+  position: sticky; top: 0; z-index: 2; background: rgba(10,12,20,0.95);
 }
 .tws-pane .block-grid .pane-ruler .cor {
-  font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 8.5px; color: var(--t5, #5a5e70);
+  font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 8px; color: var(--t5, #5a5e70);
   text-transform: uppercase; letter-spacing: 0.06em;
   display: flex; align-items: center; justify-content: center;
 }
@@ -277,11 +282,11 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
   flex: 1 1 0; min-height: 0;
 }
 .tws-pane .block-grid .slot-row .slbl {
-  font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 10px; color: var(--t5, #5a5e70);
+  font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 9px; color: var(--t5, #5a5e70);
   display: flex; align-items: center; justify-content: center;
   background: rgba(255,255,255,0.025); border-radius: 3px; font-weight: 600;
 }
-.tws-pane .block-grid.lab-grid .slot-row { flex: 0 0 26px; }
+.tws-pane .block-grid.lab-grid .slot-row { flex: 0 0 30px; }
 .tws-pane .block-grid .cell {
   background: rgba(255,255,255,0.025); border-radius: 3px; position: relative;
   display: flex; align-items: center; justify-content: center; padding: 2px 4px;
@@ -305,16 +310,17 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
 .tws-pane .block-grid .cell.locked { cursor: not-allowed !important; }
 .tws-pane .block-grid .cell .cid {
   font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-weight: 700;
-  font-size: 9.5px; line-height: 1.15; letter-spacing: 0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+  font-size: 10.5px; line-height: 1.15; letter-spacing: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
 }
 .tws-pane .block-grid .cell .cmeta {
-  font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 8px;
-  color: var(--t4); margin-top: 1px; letter-spacing: 0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+  font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-size: 8.5px;
+  color: var(--t4); margin-top: 1px; letter-spacing: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
 }
 /* Per-course mid-dark backgrounds are set inline from JS. Text on these
    rich backgrounds is light — matches the dark workspace theme. */
-.tws-pane .cell.filled .cid { color: #f1f3f7; }
-.tws-pane .cell.filled .cmeta { color: rgba(241, 243, 247, 0.62); }
+html body.tws-root { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; text-rendering: optimizeLegibility; }
+.tws-pane .cell.filled .cid { color: #ffffff; text-shadow: 0 1px 0 rgba(0,0,0,0.35); }
+.tws-pane .cell.filled .cmeta { color: rgba(255, 255, 255, 0.78); }
 .tws-pane .lab-block .block-grid .cell {
   background: rgba(77,217,212,0.04);
   background-image: repeating-linear-gradient(45deg, rgba(77,217,212,0.05) 0 3px, transparent 3px 6px);
@@ -846,6 +852,7 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
           <button data-layout="vert" title="{% if LANGUAGE_CODE == 'ar' %}عمودي{% else %}2 vertical{% endif %}">▌▌</button>
           <button data-layout="horz" title="{% if LANGUAGE_CODE == 'ar' %}أفقي{% else %}2 horizontal{% endif %}">▀▄</button>
           <button class="on" data-layout="quad" title="{% if LANGUAGE_CODE == 'ar' %}رباعي{% else %}Quad 2×2{% endif %}">▙▟</button>
+          <button data-layout="tri" title="{% if LANGUAGE_CODE == 'ar' %}1+2{% else %}1+2{% endif %}">▌▞</button>
         </div>
         <div class="tws-sync-toggle" id="twsSyncToggle">
           <div class="tg on" data-sync="scroll">⇄ {% if LANGUAGE_CODE == 'ar' %}مزامنة التمرير{% else %}Sync scroll{% endif %}</div>
@@ -860,7 +867,7 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
 
       <div class="tws-boards-bar">
         <span class="lbl">{% if LANGUAGE_CODE == 'ar' %}لوحات العرض{% else %}Boards on canvas{% endif %}</span>
-        <div class="tws-slot-grid" id="twsSlots"></div>
+        <div class="tws-slot-grid" id="twsBoardsGrid"></div>
         <div class="tws-presets">
           <span class="plbl">{% if LANGUAGE_CODE == 'ar' %}المجموعات{% else %}Presets{% endif %}</span>
           <button class="tws-preset" data-preset="first4">{% if LANGUAGE_CODE == 'ar' %}أول 4 لوحات{% else %}First 4 boards{% endif %}</button>
@@ -1016,5 +1023,5 @@ body.tws-root .content-wrap { max-width: 100%; padding: 0; height: 100%; display
   const DEFAULT_YEAR = {{ default_year|default:'null' }};
   const DEFAULT_TERM = {{ default_term|default:'null' }};
 </script>
-<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=29"></script>
+<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=30"></script>
 {% endblock %}
