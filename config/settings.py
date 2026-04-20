@@ -302,3 +302,15 @@ TIMETABLE_CAPACITY_BUFFER = float(os.getenv("TIMETABLE_CAPACITY_BUFFER", "1.1"))
 TIMETABLE_PR2_ROOM_ORACLE_ENABLED = os.getenv(
     "TIMETABLE_PR2_ROOM_ORACLE_ENABLED", "true"
 ).lower() in ("1", "true", "yes", "on")
+
+# PR3 commit 2 — decision-trace capture (explainability layer).
+# When True (default from commit 2 onwards), ``auto_place_board`` will
+# emit a ``DecisionTrace`` per placed section from commit 3, so
+# downstream consumers can see the chosen slot + up to 3 rejected
+# alternatives per placement. When False, the planner still emits
+# ``decision_trace={}`` for schema stability so payload shape stays
+# constant regardless of flag state. Observational only — no
+# planning-decision change either way.
+TIMETABLE_PR3_DECISION_TRACE_ENABLED = os.getenv(
+    "TIMETABLE_PR3_DECISION_TRACE_ENABLED", "true"
+).lower() in ("1", "true", "yes", "on")
