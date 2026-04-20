@@ -291,7 +291,9 @@ def assign_rooms_to_board(board_id: int) -> dict:
 
     assigned = 0
     unassigned = 0
-    room_reject_due_to_buffer_count = 0
+    # Labs currently ignore capacity in rooming (room_cap=0 below); buffer
+    # diagnostics therefore apply to lecture room assignment only.
+    lecture_room_reject_due_to_buffer_count = 0
 
     for p in unassigned_placements:
         cap = budget_map.get(p.term_section.course_code, 40)
@@ -318,7 +320,7 @@ def assign_rooms_to_board(board_id: int) -> dict:
             if room_type != "lab" and tracker.is_feasible(
                 p.day, p.start_time, raw_cap, room_type, gender
             ):
-                room_reject_due_to_buffer_count += 1
+                lecture_room_reject_due_to_buffer_count += 1
             p.room = "UNASSIGNED"
             p.save(update_fields=["room", "updated_at"])
             unassigned += 1
@@ -327,7 +329,7 @@ def assign_rooms_to_board(board_id: int) -> dict:
         "assigned": assigned,
         "unassigned": unassigned,
         "capacity_buffer": buffer_multiplier,
-        "room_reject_due_to_buffer_count": room_reject_due_to_buffer_count,
+        "lecture_room_reject_due_to_buffer_count": lecture_room_reject_due_to_buffer_count,
     }
 
 

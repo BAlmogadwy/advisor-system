@@ -14,7 +14,19 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test.utils import override_settings
 
-from core.services.timetable_rooming import get_capacity_buffer, simulate_buffer_impact
+from core.models import (
+    DeliveryBoard,
+    Room,
+    ScenarioSectionBudget,
+    SectionPlacement,
+    TermSection,
+    TimetableScenario,
+)
+from core.services.timetable_rooming import (
+    assign_rooms_to_board,
+    get_capacity_buffer,
+    simulate_buffer_impact,
+)
 
 pytestmark = pytest.mark.django_db
 
@@ -93,3 +105,111 @@ def test_buffer_compare_uses_current_setting_when_buffers_unspecified() -> None:
     # Default buffer sequence is {1.0, current} which dedupes+sorts.
     assert "current setting 1.1" in out.getvalue()
     assert "[1.0, 1.1]" in out.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# End-to-end parity: at the default buffer (1.1), planner output is unchanged
+# versus the hardcoded 1.1 it replaces.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def buffer_parity_fixture():
+    """Minimal scenario: one course, one placement, one room.
+
+    Course raw per-section demand = 20 students. With the default 1.1
+    buffer the planner sizes rooms at ``int(20 * 1.1) = 22``. A room of
+    capacity 22 will therefore fit at default; a room of capacity 21 will
+    not fit at default but would fit at buffer = 1.0.
+    """
+    scenario = TimetableScenario.objects.create(
+        academic_year="1448",
+        term="1",
+        name="Buffer Parity",
+    )
+    board = DeliveryBoard.objects.create(
+        scenario=scenario,
+        label="PARITY",
+        program="PAR",
+        display_order=1,
+    )
+    ScenarioSectionBudget.objects.create(
+        scenario=scenario,
+        course_code="PAR101",
+        department="PAR",
+        credit_hours=3,
+        planned_sections=1,
+        max_per_section=40,
+        total_demand=20,
+    )
+    term_section = TermSection.objects.create(
+        scenario=scenario,
+        course_code="PAR101",
+        course_number="101",
+        course_key="PAR101",
+        section="S1",
+    )
+    SectionPlacement.objects.create(
+        board=board,
+        term_section=term_section,
+        day="Sun",
+        start_time="08:00",
+        end_time="09:15",
+        room="",
+    )
+    return scenario, board
+
+
+def _make_lecture_room(code: str, capacity: int) -> Room:
+    return Room.objects.create(
+        room_code=code,
+        capacity=capacity,
+        room_type="lecture",
+        department="PAR",
+        section="M",
+    )
+
+
+def test_default_buffer_preserves_planner_parity_at_1_1(buffer_parity_fixture) -> None:
+    """At default buffer, a 22-cap room fits a raw-20 course (22 == int(20*1.1))."""
+    _, board = buffer_parity_fixture
+    _make_lecture_room("PAR-BUFFERED", 22)
+
+    result = assign_rooms_to_board(board.id)
+
+    assert result["assigned"] == 1
+    assert result["unassigned"] == 0
+    assert result["capacity_buffer"] == pytest.approx(1.1)
+    assert result["lecture_room_reject_due_to_buffer_count"] == 0
+
+
+def test_default_buffer_rejects_room_that_fits_raw_but_not_buffered(
+    buffer_parity_fixture,
+) -> None:
+    """A 21-cap room is feasible at buffer=1.0 (21 >= 20) but not at 1.1 (21 < 22).
+
+    This proves the buffer is actually being applied to room sizing and
+    that the lecture-only diagnostic counter increments in that case.
+    """
+    _, board = buffer_parity_fixture
+    _make_lecture_room("PAR-TIGHT", 21)
+
+    result = assign_rooms_to_board(board.id)
+
+    assert result["assigned"] == 0
+    assert result["unassigned"] == 1
+    assert result["lecture_room_reject_due_to_buffer_count"] == 1
+
+
+@override_settings(TIMETABLE_CAPACITY_BUFFER=1.0)
+def test_buffer_of_1_0_accepts_room_rejected_at_default(buffer_parity_fixture) -> None:
+    """With the buffer disabled, the 21-cap room fits the raw 20-demand course."""
+    _, board = buffer_parity_fixture
+    _make_lecture_room("PAR-TIGHT", 21)
+
+    result = assign_rooms_to_board(board.id)
+
+    assert result["assigned"] == 1
+    assert result["unassigned"] == 0
+    assert result["capacity_buffer"] == pytest.approx(1.0)
+    assert result["lecture_room_reject_due_to_buffer_count"] == 0

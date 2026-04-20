@@ -31,10 +31,16 @@ Goal: prove **no algorithmic behaviour change** at the default value.
 
 - `assign_rooms_to_board()` returns additionally:
   - `capacity_buffer: float`
-  - `room_reject_due_to_buffer_count: int` — rooms that would have fit at
-    `buffer = 1.00` but were rejected at the current buffer.
+  - `lecture_room_reject_due_to_buffer_count: int` — lecture rooms that would
+    have fit at `buffer = 1.00` but were rejected at the current buffer.
+    Labs are excluded because rooming ignores capacity for lab meetings.
 - `auto_place_board()` returns additionally:
   - `capacity_buffer: float`
+
+## Safety claim
+
+PR0 changes configuration plumbing only; default production semantics remain
+unchanged at `TIMETABLE_CAPACITY_BUFFER = 1.1`.
 
 ## Offline comparison helper
 

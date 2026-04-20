@@ -214,6 +214,9 @@ def build_section_states_for_scenario(
         # so a course with 25 recommended students gets a 25-cap room,
         # not a 50-cap room based on the budget ceiling.
         if budget and budget.planned_sections > 0 and budget.total_demand > 0:
+            # Deferred import: hoisting to module scope risks a circular
+            # import because timetable_rooming pulls in models/helpers that
+            # eventually reference optimizer state. Keep this local.
             from core.services.timetable_rooming import get_capacity_buffer
 
             per_section_demand = -(-budget.total_demand // budget.planned_sections)  # ceil
