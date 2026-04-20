@@ -39,7 +39,6 @@ so the assertion is behavioural — not a grep on source code.
 from __future__ import annotations
 
 import pytest
-from django.test.utils import override_settings
 
 # Contract tripwire: commit 1 suite fails at collection here.
 from core.services.timetable_room_oracle import (  # noqa: F401
@@ -51,6 +50,16 @@ from core.services.timetable_room_oracle import (  # noqa: F401
     ROOM_OCCUPIED,  # noqa: F401
     RoomFailureReason,  # noqa: F401
 )
+
+# NOTE: ``@override_settings(TIMETABLE_PR2_ROOM_ORACLE_ENABLED=True)`` belongs
+# on these test classes — but ``override_settings`` requires ``SimpleTestCase``
+# ancestry, and these classes are pytest-style (plain classes + pytest.mark)
+# so we can't decorate them at the class level today. The tests are all
+# ``pytest.skip`` bodies until commits 3 / 5 wire them up; when the bodies
+# land, each test will do ``with override_settings(...)`` locally, or the
+# classes will inherit from ``SimpleTestCase`` / ``TransactionTestCase``
+# (settled during commit 3/5 design). Until then no flag override is needed
+# because the skips fire before any oracle code runs.
 
 # ---------------------------------------------------------------------------
 # Shared helper: assert a planner return payload satisfies the PR2 contract.
@@ -96,7 +105,6 @@ def _assert_every_unplaced_has_reason(result: dict) -> None:
 # ===========================================================================
 
 
-@override_settings(TIMETABLE_PR2_ROOM_ORACLE_ENABLED=True)
 @pytest.mark.django_db
 class TestSiteAutoplaceBestOptionNone:
     """Site 1 — autoplace scoring returns None.
@@ -124,7 +132,6 @@ class TestSiteAutoplaceBestOptionNone:
 # ===========================================================================
 
 
-@override_settings(TIMETABLE_PR2_ROOM_ORACLE_ENABLED=True)
 @pytest.mark.django_db
 class TestSiteAutoplaceUnassignedFallback:
     """Site 2 — autoplace sets assigned_room='UNASSIGNED' in fallback."""
@@ -146,7 +153,6 @@ class TestSiteAutoplaceUnassignedFallback:
 # ===========================================================================
 
 
-@override_settings(TIMETABLE_PR2_ROOM_ORACLE_ENABLED=True)
 @pytest.mark.django_db
 class TestSiteRoomingUnassigned:
     """Site 3 — assign_rooms_to_board unassigned path.
@@ -181,7 +187,6 @@ class TestSiteRoomingUnassigned:
 # ===========================================================================
 
 
-@override_settings(TIMETABLE_PR2_ROOM_ORACLE_ENABLED=True)
 class TestSiteRoomRepairFalseReturn:
     """Site 4 — try_repair_rooms_locally returns False silently.
 
