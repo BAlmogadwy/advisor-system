@@ -57,10 +57,14 @@ def perf_students():
 
     # Prerequisites: PF002 requires PF001, PF004 requires PF003
     Prerequisite.objects.get_or_create(
-        program=program, course_code="PF002", prerequisite_course_code="PF001",
+        program=program,
+        course_code="PF002",
+        prerequisite_course_code="PF001",
     )
     Prerequisite.objects.get_or_create(
-        program=program, course_code="PF004", prerequisite_course_code="PF003",
+        program=program,
+        course_code="PF004",
+        prerequisite_course_code="PF003",
     )
 
     # Create 20 students (join year 47 → real_term ~2 for year 1448)
@@ -138,7 +142,7 @@ class TestBatchRecommenderWired:
         from core.services.conflict_matrix import build_conflict_matrix_report
 
         reset_queries()
-        result = build_conflict_matrix_report(1448, 1, program=program, limit=20)
+        build_conflict_matrix_report(1448, 1, program=program, limit=20)
         queries = len(connection.queries)
 
         assert queries < MAX_QUERIES_PER_REPORT, (

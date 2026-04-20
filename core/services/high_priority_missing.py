@@ -5,8 +5,6 @@ from typing import Any
 from core.models import Prerequisite, Student, StudentCourse
 from core.services.recommender import get_all_department_courses
 from core.services.student_helpers import (
-    get_student_passed_and_studying,
-    get_student_program,
     normalize_code,
 )
 
@@ -157,9 +155,9 @@ def run_missing_high_priority_report(
 
     # Batch-load student programs (1 query instead of N)
     _student_programs: dict[int, str] = {}
-    for sid_val, prog_val in Student.objects.filter(
-        student_id__in=students
-    ).values_list("student_id", "program"):
+    for sid_val, prog_val in Student.objects.filter(student_id__in=students).values_list(
+        "student_id", "program"
+    ):
         if prog_val:
             _student_programs[sid_val] = prog_val
 

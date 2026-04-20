@@ -2,12 +2,9 @@ from collections import defaultdict
 from collections.abc import Iterable
 
 from core.models import Prerequisite, Student, StudentCourse
-from core.services.recommender import calculate_real_student_term, recommend_next_courses
+from core.services.recommender import calculate_real_student_term
 from core.services.recommender_batch import batch_recommend, batch_recommend_multi_program
 from core.services.student_helpers import (
-    get_prerequisites,
-    get_student_passed_and_studying,
-    get_student_program,
     normalize_code,
 )
 
@@ -55,9 +52,12 @@ def build_recommendation_debug_report(
         return {
             "count": 0,
             "filters": {
-                "section": section, "program": program,
+                "section": section,
+                "program": program,
                 "join_year_prefixes": join_year_prefixes or [],
-                "limit": limit, "year": current_academic_year, "semester": current_semester,
+                "limit": limit,
+                "year": current_academic_year,
+                "semester": current_semester,
             },
             "items": [],
         }
@@ -65,9 +65,9 @@ def build_recommendation_debug_report(
     # ── Batch-load all data (3 queries instead of N*M) ───────────
     # 1. Student programs
     student_programs: dict[int, str] = {}
-    for sid_val, prog_val in Student.objects.filter(
-        student_id__in=student_ids
-    ).values_list("student_id", "program"):
+    for sid_val, prog_val in Student.objects.filter(student_id__in=student_ids).values_list(
+        "student_id", "program"
+    ):
         student_programs[sid_val] = prog_val or ""
 
     # 2. Student courses (passed + studying)
@@ -92,9 +92,9 @@ def build_recommendation_debug_report(
         if not prog_val:
             continue
         prereq_map[prog_val] = defaultdict(list)
-        for course_code, prereq_code in Prerequisite.objects.filter(
-            program=prog_val
-        ).values_list("course_code", "prerequisite_course_code"):
+        for course_code, prereq_code in Prerequisite.objects.filter(program=prog_val).values_list(
+            "course_code", "prerequisite_course_code"
+        ):
             cc = normalize_code(course_code)
             for part in str(prereq_code).split(","):
                 p = normalize_code(part)
@@ -105,7 +105,9 @@ def build_recommendation_debug_report(
     if program and "," not in program:
         all_recs = batch_recommend(student_ids, program, current_academic_year, current_semester)
     else:
-        all_recs = batch_recommend_multi_program(student_ids, current_academic_year, current_semester)
+        all_recs = batch_recommend_multi_program(
+            student_ids, current_academic_year, current_semester
+        )
 
     # ── Build items from pre-loaded data ─────────────────────────
     items: list[dict] = []
