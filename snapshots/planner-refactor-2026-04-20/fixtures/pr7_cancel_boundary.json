@@ -1,0 +1,26 @@
+{
+  "description": "PR7 — cooperative cancel at stage boundary. Cancel request during a run must flip status→cancelled at the next stage boundary; result_json stays null; last_stage_seen reflects the last completed stage.",
+  "scenario": {
+    "sections": [
+      {"course_code": "CS101", "section_code": "S1", "enrolment": 10, "instructor_id": "I1", "student_ids": ["ST001"]},
+      {"course_code": "CS102", "section_code": "S1", "enrolment": 10, "instructor_id": "I2", "student_ids": ["ST002"]}
+    ],
+    "slot_pool": [
+      {"day": "SUN", "start_time": "08:00", "end_time": "09:15"},
+      {"day": "MON", "start_time": "08:00", "end_time": "09:15"}
+    ],
+    "rooms": [
+      {"room_code": "A101", "capacity": 40, "room_type": "lecture", "gender": ""},
+      {"room_code": "A102", "capacity": 40, "room_type": "lecture", "gender": ""}
+    ]
+  },
+  "expected": {
+    "terminal_status": "cancelled",
+    "result_json_null_after_cancel": true,
+    "last_stage_seen_nonnull": true
+  },
+  "notes": [
+    "Commit 4 wires the cooperative cancel check. The test harness will seed cancel_requested=True before the runner starts, so the first stage-boundary check flips status→cancelled before any placement lands.",
+    "No preemption mid-stage — cancel only observed at boundaries (DoR §Implementation cautions)."
+  ]
+}

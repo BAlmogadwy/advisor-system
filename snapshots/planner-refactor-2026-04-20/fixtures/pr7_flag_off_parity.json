@@ -1,0 +1,23 @@
+{
+  "description": "PR7 — flag-off parity. With TIMETABLE_PR7_ASYNC_PLANNER_ENABLED=false, the existing sync planner path must produce a payload byte-equal to master @ 467a449 for the same scenario after strip_pr7_fields_for_parity.",
+  "scenario": {
+    "sections": [
+      {"course_code": "CS101", "section_code": "S1", "enrolment": 10, "instructor_id": "I1", "student_ids": ["ST001"]}
+    ],
+    "slot_pool": [
+      {"day": "SUN", "start_time": "08:00", "end_time": "09:15"}
+    ],
+    "rooms": [
+      {"room_code": "A101", "capacity": 40, "room_type": "lecture", "gender": ""}
+    ]
+  },
+  "expected": {
+    "flag_off_all_endpoints_404": true,
+    "flag_off_no_plannerjob_rows_created": true,
+    "flag_off_sync_payload_byte_equal_to_master": "after strip_pr7_fields_for_parity on both sides"
+  },
+  "notes": [
+    "Baseline ref: master @ 467a449 (post-PR6 tip). See docs/PR7-DOR.md §Acceptance bar 6.",
+    "Commit 1 expects the parity-helper import tripwire to fail (timetable_pr7_parity missing); commit 7 turns this test green."
+  ]
+}
