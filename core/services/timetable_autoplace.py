@@ -1436,8 +1436,15 @@ def auto_place_board(
                 if room_tracker:
                     for m in option:
                         duration = _to_min(m["end"]) - _to_min(m["start"])
+                        # Rule: only 4-credit courses (is_lab_course) go to
+                        # labs. The unified duration predicate only gates the
+                        # length; the cr==4 gate must stay on both paths.
                         if is_lab_heuristic_unified():
-                            rtype = "lab" if meeting_requires_lab_room(duration) else "lecture"
+                            rtype = (
+                                "lab"
+                                if (is_lab_course and meeting_requires_lab_room(duration))
+                                else "lecture"
+                            )
                         else:
                             rtype = "lab" if (duration > 80 and is_lab_course) else "lecture"
                         room_cap = 0 if rtype == "lab" else section_cap
@@ -1635,8 +1642,13 @@ def auto_place_board(
                 assigned_room = ""
                 if room_tracker:
                     duration = _to_min(m["end"]) - _to_min(m["start"])
+                    # Same cr==4 (is_lab_course) gate as the scoring loop above.
                     if is_lab_heuristic_unified():
-                        rtype = "lab" if meeting_requires_lab_room(duration) else "lecture"
+                        rtype = (
+                            "lab"
+                            if (is_lab_course and meeting_requires_lab_room(duration))
+                            else "lecture"
+                        )
                     else:
                         rtype = "lab" if (duration > 80 and is_lab_course) else "lecture"
                     # Try preferred room first (same room as previous meetings)
