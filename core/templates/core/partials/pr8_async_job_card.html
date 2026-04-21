@@ -1,0 +1,54 @@
+{% load static %}
+{% comment %}
+PR8 — async planner job card.
+
+Context:
+  pr8_job                             dict or None; shape mirrors PR7 poll response
+  TIMETABLE_PR8_ASYNC_JOB_UI_ENABLED  bool — PR8 UI flag
+  pr8_config_json                     pre-serialised JSON blob (csrfToken, endpoints,
+                                       scenarioId, mode, pollIntervalMs)
+
+Emits nothing when the PR8 flag is off, keeping the scenario page byte-identical
+to pre-PR8. Hidden controls are toggled client-side by the adapter based on status.
+{% endcomment %}
+{% if TIMETABLE_PR8_ASYNC_JOB_UI_ENABLED %}
+<section class="pr8-async-job-card" data-pr8-card aria-live="polite">
+  <header class="pr8-async-job-card__header">
+    <span
+      class="pr8-status-pill status-{{ pr8_job.status|default:'idle' }}"
+      data-pr8-status
+    >{{ pr8_job.status|default:'idle' }}</span>
+    <span class="pr8-async-job-card__title">Planner run</span>
+  </header>
+
+  <dl class="pr8-async-job-card__fields">
+    <dt>Submitted</dt><dd data-pr8-field="submitted_at">{{ pr8_job.submitted_at|default:'-' }}</dd>
+    <dt>Started</dt><dd data-pr8-field="started_at">{{ pr8_job.started_at|default:'-' }}</dd>
+    <dt>Finished</dt><dd data-pr8-field="finished_at">{{ pr8_job.finished_at|default:'-' }}</dd>
+    <dt>Last stage</dt><dd data-pr8-field="last_stage_seen">{{ pr8_job.last_stage_seen|default:'-' }}</dd>
+    {% if pr8_job.status == 'failed' %}
+      <dt>Error</dt><dd data-pr8-field="error_message">{{ pr8_job.error_message|default:'-' }}</dd>
+    {% endif %}
+  </dl>
+
+  <div class="pr8-async-job-card__controls">
+    <button type="button" data-pr8-action="submit"{% if pr8_job.status == 'queued' or pr8_job.status == 'running' %} disabled{% endif %}>
+      Run in background
+    </button>
+    <button type="button" data-pr8-action="cancel"{% if pr8_job.status != 'queued' and pr8_job.status != 'running' %} hidden{% endif %}>
+      Cancel
+    </button>
+    <button type="button" data-pr8-action="view-result"{% if pr8_job.status != 'succeeded' %} hidden{% endif %}>
+      View result
+    </button>
+    <button type="button" data-pr8-action="rerun"{% if pr8_job.status != 'failed' and pr8_job.status != 'cancelled' %} hidden{% endif %}>
+      Run again
+    </button>
+  </div>
+
+  <script data-pr8-config type="application/json">
+    {{ pr8_config_json|default:'{"pollIntervalMs": 2000}'|safe }}
+  </script>
+  <script src="{% static 'core/js/pr8_async_job_adapter.js' %}" defer></script>
+</section>
+{% endif %}
