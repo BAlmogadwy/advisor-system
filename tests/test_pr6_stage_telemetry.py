@@ -123,8 +123,10 @@ class TestRecordAndMerge(SimpleTestCase):
             self.assertEqual(out["stage_iterations"][k], 0)
 
 
-class TestFlagHelperDefault(SimpleTestCase):
-    """Flag defaults ``False`` through commits 2–7, flipped in commit 8."""
+class TestFlagHelperPostPromotion(SimpleTestCase):
+    """Flag default flipped to ``True`` at commit 8. Env override
+    ``TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED=false`` remains the live
+    kill-switch."""
 
     def test_flag_helper_exists_and_returns_bool(self) -> None:
         self.assertIsInstance(is_stage_telemetry_enabled(), bool)

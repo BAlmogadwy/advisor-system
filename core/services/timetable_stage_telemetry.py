@@ -26,11 +26,12 @@ A stage that did not run reports ``0``. Values are always integers.
 Flag contract (PR6 DoR §Flag plan):
 
 - ``TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED`` gates whether callers write
-  real values into the payload. When ``False`` (default through commits
-  2-7), callers use ``empty_stage_telemetry()`` as a zeroed-out
-  sentinel. The ``stage_telemetry`` block itself is **always present**
-  so consumers never need an ``if "stage_telemetry" in payload`` guard.
-- Flag flips to ``True`` at commit 8.
+  real values into the payload. When ``False``, callers use
+  ``empty_stage_telemetry()`` as a zeroed-out sentinel. The
+  ``stage_telemetry`` block itself is **always present** so consumers
+  never need an ``if "stage_telemetry" in payload`` guard.
+- **Default flipped to ``True`` at commit 8 (promotion).** Env override
+  ``TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED=false`` is the live kill-switch.
 
 Timing discipline (PR6 DoR §Implementation cautions):
 
@@ -141,8 +142,9 @@ def is_stage_telemetry_enabled() -> bool:
     """Return whether PR6 telemetry population is active.
 
     Reads ``settings.TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED``. Default
-    ``False`` in commits 2-7; commit 8 flips the default to ``True``.
-    Production can flip via the env var without a redeploy.
+    flipped to ``True`` at commit 8 (promotion). Production can flip
+    via the env var without a redeploy — set to ``false`` to restore
+    the flag-off sentinel behaviour at runtime.
 
     When ``False``:
     - Callers still emit the ``stage_telemetry`` block — it just stays

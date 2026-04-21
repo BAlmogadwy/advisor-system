@@ -369,3 +369,20 @@ TIMETABLE_LAB_HEURISTIC_UNIFIED = os.getenv("TIMETABLE_LAB_HEURISTIC_UNIFIED", "
 TIMETABLE_PR5_STAGE_TRACE_ENABLED = os.getenv(
     "TIMETABLE_PR5_STAGE_TRACE_ENABLED", "true"
 ).lower() in ("1", "true", "yes", "on")
+
+# ---------------------------------------------------------------------------
+# PR6 — stage-telemetry (refactor/pr6-stage-telemetry)
+# ---------------------------------------------------------------------------
+#
+# TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED: single flag gating PR6 observability-
+# only stage-telemetry population. When True, callers write real values into
+# ``result['stage_telemetry']['stage_ms']`` and ``stage_iterations`` for the
+# five V2 pipeline stages (greedy, sa, cpsat, chain, rooming_repair). When
+# False, the block is still present on every result (schema-stable) but every
+# value stays at 0. Default flipped to ``true`` at commit 8 (promotion). Env
+# override ``TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED=false`` reverts to zeroed
+# telemetry at runtime — no redeploy. See docs/PR6-DOR.md flag plan and
+# docs/PR6-PROMOTION-NOTE.md for rollback tiers.
+TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED = os.getenv(
+    "TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED", "true"
+).lower() in ("1", "true", "yes", "on")

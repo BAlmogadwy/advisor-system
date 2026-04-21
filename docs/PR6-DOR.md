@@ -306,3 +306,18 @@ Three tiers, same convention as PR3–PR5:
 ## Branch
 
 `refactor/pr6-stage-telemetry` (base: master @ `31f22dd` = PR5 tip).
+
+---
+
+## Closeout (commit 8)
+
+All eight commits landed on `refactor/pr6-stage-telemetry`. `TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED` default flipped to `True` at commit 8. Env override remains the live kill-switch (no redeploy needed). See `docs/PR6-PROMOTION-NOTE.md` for the three-tiered rollback path, PR6-specific caveats (observability-only; `stage_ms == 1` clamp convention), and flag-off parity usage (`strip_pr6_fields_for_parity`).
+
+Acceptance snapshot at promotion:
+
+- PR6 stage-telemetry suite: 17/17 passing.
+- PR6 acceptance pack: 9/9 passing.
+- PR5 decision-trace regression: 43 passing / 1 legit skip (stable).
+- PR3 acceptance pack: 21/21 stable.
+
+No open blockers. Non-goals listed above remain deferred.
