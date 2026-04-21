@@ -49,6 +49,6 @@ to pre-PR8. Hidden controls are toggled client-side by the adapter based on stat
   <script data-pr8-config type="application/json">
     {{ pr8_config_json|default:'{"pollIntervalMs": 2000}'|safe }}
   </script>
-  <script src="{% static 'core/js/pr8_async_job_adapter.js' %}" defer></script>
+  <script src="{% static 'core/js/pr8_async_job_adapter.js' %}?v=2" defer></script>
 </section>
 {% endif %}

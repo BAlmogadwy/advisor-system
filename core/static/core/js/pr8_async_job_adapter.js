@@ -110,11 +110,25 @@
     }
   }
 
+  function resolveScenarioId(state) {
+    // Static config wins when explicitly set; otherwise fall back to the
+    // workspace page state (window.TW.scenarioId) which the scenario
+    // selector dropdown keeps up to date.
+    if (state.cfg.scenarioId != null) return state.cfg.scenarioId;
+    if (window.TW && window.TW.scenarioId != null) return window.TW.scenarioId;
+    return null;
+  }
+
   function onSubmit(state) {
     if (state.inFlight) return;
+    var scenarioId = resolveScenarioId(state);
+    if (scenarioId == null) {
+      setStatusPill(state.card, "no-scenario");
+      return;
+    }
     state.inFlight = true;
     var body = JSON.stringify({
-      scenario_id: state.cfg.scenarioId,
+      scenario_id: scenarioId,
       mode: state.cfg.mode || "full_rebuild",
     });
     jsonFetch(state.cfg.submitUrl, {
