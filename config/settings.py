@@ -386,3 +386,16 @@ TIMETABLE_PR5_STAGE_TRACE_ENABLED = os.getenv(
 TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED = os.getenv(
     "TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED", "true"
 ).lower() in ("1", "true", "yes", "on")
+
+# TIMETABLE_PR7_ASYNC_PLANNER_ENABLED: single flag gating PR7 async-planner
+# execution path. When True, POST /planner-jobs/ dispatches the run on a
+# single-worker ThreadPoolExecutor and returns 201 immediately; poll /result/
+# surface the PlannerJob audit row. When False, all four /planner-jobs/*
+# endpoints 404 and no PlannerJob row is created — pre-PR7 behaviour is
+# byte-identical. Default flipped to ``true`` at commit 8 (promotion). Env
+# override ``TIMETABLE_PR7_ASYNC_PLANNER_ENABLED=false`` reverts the shim at
+# runtime — no redeploy. See docs/PR7-DOR.md flag plan and
+# docs/PR7-PROMOTION-NOTE.md for rollback tiers.
+TIMETABLE_PR7_ASYNC_PLANNER_ENABLED = os.getenv(
+    "TIMETABLE_PR7_ASYNC_PLANNER_ENABLED", "true"
+).lower() in ("1", "true", "yes", "on")

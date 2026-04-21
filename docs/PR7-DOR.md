@@ -342,10 +342,30 @@ Three tiers, same convention as PR3–PR6:
 
 ## Closeout
 
-To be filled at commit 8 with:
+**All 8 commits landed on `refactor/pr7-async-planner-execution`.**
 
-- final 8-commit summary
-- promotion commit hash
-- acceptance snapshot (test counts)
-- env kill-switch verification status
-- link to `docs/PR7-PROMOTION-NOTE.md`
+| # | Sha     | Subject |
+|---|---------|---------|
+| 0 | 963b652 | DoR — async planner execution |
+| 1 | 590eab3 | Failing tests + tripwires + PR7 scenario fixtures |
+| 2 | 8b8c8e0 | PlannerJob model + skeleton runner |
+| 3 | b19d7a4 | Runner execution path |
+| 4 | 6c295f8 | Cooperative cancellation helper |
+| 5 | 44e6bba | REST endpoints (submit/poll/result/cancel) |
+| 6 | b7b19f7 | ThreadPool dispatcher + UI toggle |
+| 7 | d0a893e | Parity helper + pr7_job_report CLI |
+| 8 | (this)  | Promotion — flag default → True + promotion note |
+
+**Acceptance.** `tests/test_pr7_async_planner.py` — 18 passed across
+14 classes (tripwire, model shape, flag helper, runner happy path,
+failure capture, cooperative cancel, four endpoint tests, UI toggle,
+parity helper, CLI, flag-off 404 bar, post-promotion default).
+PR3 / PR4 / PR5 / PR6 regression packs unchanged.
+
+**Env kill-switch.** `TIMETABLE_PR7_ASYNC_PLANNER_ENABLED=false`
+reverts the shim at runtime with no redeploy — all four endpoints
+404, no PlannerJob rows created, UI toggle hidden. Exercised by
+`TestFlagOffAllEndpoints404`.
+
+**Promotion note.** See [docs/PR7-PROMOTION-NOTE.md](PR7-PROMOTION-NOTE.md)
+for the three-tier rollback and scope floor / caveats.
