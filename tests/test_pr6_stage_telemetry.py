@@ -327,15 +327,161 @@ class TestCPSATStageEmission(TransactionTestCase):
             self.assertEqual(telemetry["stage_iterations"][k], 0)
 
 
-class TestChainStageEmission(SimpleTestCase):
-    """Green at commit 6."""
+def _seed_chain_triple_clump(scenario, board, day="SUN", start="08:00", end="09:15") -> None:
+    """Seed CS101|S1, CS102|S1, CS103|S1 all at the same slot so the chain-2
+    search on the bridge graph is guaranteed a solvable rotation. Mirrors
+    ``_seed_triple_clump`` in ``test_pr5_decision_trace.py``."""
+    from core.models import SectionPlacement, TermSection
 
-    def test_chain_ms_populated_when_chain_runs(self) -> None:
-        self.skipTest("wired at PR6 commit 6 (chain instrumentation)")
+    for course in ("CS101", "CS102", "CS103"):
+        ts, _ = TermSection.objects.get_or_create(
+            scenario=scenario,
+            course_key=course,
+            section="S1",
+            defaults={
+                "course_code": course,
+                "course_number": course,
+                "course_name": course,
+                "available_capacity": 30,
+                "source_tag": "pr6_chain_seed",
+            },
+        )
+        SectionPlacement.objects.create(
+            board=board,
+            term_section=ts,
+            day=day,
+            start_time=start,
+            end_time=end,
+            room="R1",
+            is_locked=False,
+        )
 
 
-class TestRoomingRepairStageEmission(SimpleTestCase):
-    """Green at commit 6."""
+class TestChainStageEmission(TransactionTestCase):
+    """Green at commit 6 — running chain-search over pr6_chain_telemetry.json
+    with the flag on populates chain.ms and chain.iterations (attempted, not
+    accepted) on the scenario-level stage_telemetry."""
 
-    def test_rooming_repair_ms_populated_when_repair_runs(self) -> None:
-        self.skipTest("wired at PR6 commit 6 (rooming-repair instrumentation)")
+    @override_settings(TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED=True)
+    def test_chain_populates_chain_keys_when_chain_runs(self) -> None:
+        from pr6_fixture_loader import load_pr6_fixture
+
+        from core.services.timetable_optimizer_v2 import optimise_current_timetable
+
+        scenario, board, _ = load_pr6_fixture("pr6_chain_telemetry.json")
+        _seed_chain_triple_clump(scenario, board)
+
+        result = optimise_current_timetable(
+            scenario.id,
+            run_local_search=False,
+            run_chain_search=True,
+            run_cpsat_polish=False,
+        )
+
+        telemetry = result.get("stage_telemetry")
+        self.assertIsNotNone(telemetry, "optimise_current_timetable must return stage_telemetry")
+        self.assertGreater(telemetry["stage_ms"]["chain"], 0)
+        self.assertGreater(telemetry["stage_iterations"]["chain"], 0)
+
+    @override_settings(TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED=False)
+    def test_flag_off_leaves_chain_telemetry_zero(self) -> None:
+        from pr6_fixture_loader import load_pr6_fixture
+
+        from core.services.timetable_optimizer_v2 import optimise_current_timetable
+
+        scenario, board, _ = load_pr6_fixture("pr6_chain_telemetry.json")
+        _seed_chain_triple_clump(scenario, board)
+
+        result = optimise_current_timetable(
+            scenario.id,
+            run_local_search=False,
+            run_chain_search=True,
+            run_cpsat_polish=False,
+        )
+
+        telemetry = result.get("stage_telemetry")
+        self.assertIsNotNone(telemetry)
+        for k in STAGE_KEYS:
+            self.assertEqual(telemetry["stage_ms"][k], 0)
+            self.assertEqual(telemetry["stage_iterations"][k], 0)
+
+
+def _seed_unassigned_for_repair(
+    scenario,
+    board,
+    course_code: str = "CS101",
+    section: str = "S1",
+    day: str = "SUN",
+    start: str = "08:00",
+    end: str = "09:15",
+) -> None:
+    """Seed a SectionPlacement with ``room='UNASSIGNED'`` so rooming's
+    2nd-pass repair logic has something to rescue. Mirrors
+    ``_seed_unassigned_placement`` in ``test_pr5_decision_trace.py``."""
+    from core.models import SectionPlacement, TermSection
+
+    ts, _ = TermSection.objects.get_or_create(
+        scenario=scenario,
+        course_key=course_code,
+        section=section,
+        defaults={
+            "course_code": course_code,
+            "course_number": course_code,
+            "course_name": course_code,
+            "available_capacity": 40,
+            "source_tag": "pr6_rooming_seed",
+        },
+    )
+    SectionPlacement.objects.create(
+        board=board,
+        term_section=ts,
+        day=day,
+        start_time=start,
+        end_time=end,
+        room="UNASSIGNED",
+        is_locked=False,
+    )
+
+
+class TestRoomingRepairStageEmission(TransactionTestCase):
+    """Green at commit 6 — driving assign_rooms_to_board directly with an
+    UNASSIGNED-seeded placement scopes timing to the repair pass only,
+    matching the PR6 DoR §3 guardrail."""
+
+    @override_settings(TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED=True)
+    def test_rooming_repair_populates_keys_when_repair_runs(self) -> None:
+        from pr6_fixture_loader import load_pr6_fixture
+
+        from core.services.timetable_rooming import assign_rooms_to_board
+
+        scenario, board, _ = load_pr6_fixture("pr6_rooming_repair_telemetry.json")
+        _seed_unassigned_for_repair(scenario, board)
+
+        result = assign_rooms_to_board(board.id)
+        telemetry = result.get("stage_telemetry")
+        self.assertIsNotNone(telemetry, "assign_rooms_to_board must return stage_telemetry")
+        self.assertGreater(telemetry["stage_ms"]["rooming_repair"], 0)
+        self.assertGreater(telemetry["stage_iterations"]["rooming_repair"], 0)
+        for k in ("greedy", "sa", "cpsat", "chain"):
+            self.assertEqual(telemetry["stage_ms"][k], 0, f"non-repair stage {k}.ms must be zero")
+            self.assertEqual(
+                telemetry["stage_iterations"][k],
+                0,
+                f"non-repair stage {k}.iterations must be zero",
+            )
+
+    @override_settings(TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED=False)
+    def test_flag_off_leaves_rooming_repair_telemetry_zero(self) -> None:
+        from pr6_fixture_loader import load_pr6_fixture
+
+        from core.services.timetable_rooming import assign_rooms_to_board
+
+        scenario, board, _ = load_pr6_fixture("pr6_rooming_repair_telemetry.json")
+        _seed_unassigned_for_repair(scenario, board)
+
+        result = assign_rooms_to_board(board.id)
+        telemetry = result.get("stage_telemetry")
+        self.assertIsNotNone(telemetry)
+        for k in STAGE_KEYS:
+            self.assertEqual(telemetry["stage_ms"][k], 0)
+            self.assertEqual(telemetry["stage_iterations"][k], 0)

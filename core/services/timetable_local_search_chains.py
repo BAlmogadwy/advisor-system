@@ -12,6 +12,7 @@ overlap partners — to keep the neighbourhood tractable.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from itertools import product
 
@@ -29,6 +30,11 @@ from core.services.timetable_candidate_eval import evaluate_generated_timetable_
 from core.services.timetable_decision_trace import DecisionTrace
 from core.services.timetable_room_repair import apply_move_to_grid, rollback_move
 from core.services.timetable_solver_codes import CHAIN_ROTATED, is_stage_trace_enabled
+from core.services.timetable_stage_telemetry import (
+    is_stage_telemetry_enabled,
+    record_stage_iterations,
+    record_stage_ms,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -226,6 +232,7 @@ def chain_local_search(
     course_room_requirements: dict[str, str] | None = None,
     max_iterations: int = 10,
     decision_trace_out: dict[str, dict] | None = None,
+    stage_telemetry: dict[str, dict[str, int]] | None = None,
 ) -> TimetableEvaluationResult:
     """Chain-2 local search — runs AFTER single-move search exhausts.
 
@@ -239,7 +246,16 @@ def chain_local_search(
     current_score = best_candidate.lexicographic_score
     total_improvements = 0
 
+    # PR6 commit 6 — stage-boundary timing. iterations = outer-loop
+    # iterations attempted (matches the natural loop counter, not the
+    # accepted-chain count). The timer wraps the entire chain pass,
+    # which is the observable work from the caller's perspective.
+    _telemetry_on = stage_telemetry is not None and is_stage_telemetry_enabled()
+    _chain_t0 = time.perf_counter() if _telemetry_on else 0.0
+    iterations_attempted = 0
+
     for iteration in range(max_iterations):
+        iterations_attempted = iteration + 1
         hotspot_courses = current_best.hotspot_courses
         if not hotspot_courses:
             logger.info("Chain search: no hotspot courses at iteration %d", iteration)
@@ -360,4 +376,9 @@ def chain_local_search(
             break
 
     logger.info("Chain search complete: %d improvements", total_improvements)
+
+    if _telemetry_on:
+        record_stage_ms(stage_telemetry, "chain", int((time.perf_counter() - _chain_t0) * 1000))
+        record_stage_iterations(stage_telemetry, "chain", iterations_attempted)
+
     return current_best

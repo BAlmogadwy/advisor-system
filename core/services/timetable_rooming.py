@@ -11,6 +11,7 @@ Provides:
 
 from __future__ import annotations
 
+import time
 from collections import defaultdict
 
 from django.conf import settings
@@ -35,6 +36,12 @@ from core.services.timetable_room_oracle import (
 from core.services.timetable_solver_codes import (
     ROOMING_REPAIR_REASSIGNED,
     is_stage_trace_enabled,
+)
+from core.services.timetable_stage_telemetry import (
+    empty_stage_telemetry,
+    is_stage_telemetry_enabled,
+    record_stage_iterations,
+    record_stage_ms,
 )
 
 
@@ -258,6 +265,8 @@ def assign_rooms_to_board(board_id: int) -> dict:
             "room_failure_breakdown": {},
             "unplaced_count": 0,
             "buffer_only_rejects": 0,
+            # PR6 commit 6 — schema-stable empty stage_telemetry on early-return.
+            "stage_telemetry": empty_stage_telemetry(),
         }
 
     programmes = [p.strip() for p in (board.program or "").split(",") if p.strip()]
@@ -269,6 +278,7 @@ def assign_rooms_to_board(board_id: int) -> dict:
             "room_failure_breakdown": {},
             "unplaced_count": 0,
             "buffer_only_rejects": 0,
+            "stage_telemetry": empty_stage_telemetry(),
         }
 
     rooms = get_programme_rooms(programmes)
@@ -280,6 +290,7 @@ def assign_rooms_to_board(board_id: int) -> dict:
             "room_failure_breakdown": {},
             "unplaced_count": 0,
             "buffer_only_rejects": 0,
+            "stage_telemetry": empty_stage_telemetry(),
         }
 
     board_gender = get_board_gender(board_id)
@@ -342,6 +353,19 @@ def assign_rooms_to_board(board_id: int) -> dict:
     decision_trace: dict[str, dict] = {}
     emit_trace = is_stage_trace_enabled()
 
+    # PR6 commit 6 — rooming_repair stage-boundary timing. Scoped to the
+    # repair pass only (UNASSIGNED → room reassignments), per ChatGPT
+    # guardrail: "keep timing scoped to the repair pass only, not the
+    # whole room assignment function. The first-pass rooming belongs
+    # outside this stage." We gate on whether any placement arrives
+    # carrying the UNASSIGNED sentinel; if none do, this is a pure
+    # first-pass call and both rooming_repair keys stay at zero.
+    _stage_telemetry: dict[str, dict[str, int]] = empty_stage_telemetry()
+    _repair_candidates = sum(1 for p in unassigned_placements if p.room == "UNASSIGNED")
+    _telemetry_on = is_stage_telemetry_enabled() and _repair_candidates > 0
+    _repair_t0 = time.perf_counter() if _telemetry_on else 0.0
+    _repair_reassignments = 0
+
     assigned = 0
     unassigned = 0
     # Labs currently ignore capacity in rooming (room_cap=0 below); buffer
@@ -378,6 +402,13 @@ def assign_rooms_to_board(board_id: int) -> dict:
             p.room = room_code
             p.save(update_fields=["room", "updated_at"])
             assigned += 1
+            # PR6 commit 6 — count only true repair reassignments
+            # (UNASSIGNED → room). Matches the semantics of the
+            # ROOMING_REPAIR_REASSIGNED sentinel; empty-string →
+            # assigned is the normal first-pass path and is NOT a
+            # repair reassignment.
+            if _telemetry_on and prev_room == "UNASSIGNED":
+                _repair_reassignments += 1
             # PR5 commit 6 — emit ROOMING_REPAIR_REASSIGNED when the 2nd
             # pass rescued a placement previously marked UNASSIGNED.
             # Strictly gated: empty-string → assigned is the normal
@@ -477,6 +508,14 @@ def assign_rooms_to_board(board_id: int) -> dict:
                 )
             room_failures.append(refined.to_dict())
 
+    if _telemetry_on:
+        record_stage_ms(
+            _stage_telemetry,
+            "rooming_repair",
+            max(1, int((time.perf_counter() - _repair_t0) * 1000)),
+        )
+        record_stage_iterations(_stage_telemetry, "rooming_repair", _repair_reassignments)
+
     return {
         "assigned": assigned,
         "unassigned": unassigned,
@@ -486,6 +525,7 @@ def assign_rooms_to_board(board_id: int) -> dict:
         "room_failure_breakdown": room_failure_breakdown(room_failures),
         "unplaced_count": unassigned,
         "decision_trace": decision_trace,
+        "stage_telemetry": _stage_telemetry,
     }
 
 

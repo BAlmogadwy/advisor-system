@@ -840,6 +840,7 @@ def optimise_scenario_timetable_v2(
                 course_room_requirements=None,
                 max_iterations=max_chain_iterations,
                 decision_trace_out=chain_trace_out,
+                stage_telemetry=result["stage_telemetry"],
             )
 
             if chain_result.lexicographic_score < current_eval_for_chain.lexicographic_score:
@@ -1007,6 +1008,14 @@ def optimise_scenario_timetable_v2(
             # PR5 commit 6: overlay rooming-repair trace (last-changer-wins).
             for k, v in (rooming_result.get("decision_trace") or {}).items():
                 result["decision_trace"][k] = v
+            # PR6 commit 6: sum board-level rooming_repair telemetry into
+            # the scenario-level aggregate. stage_ms sums wall times,
+            # stage_iterations sums reassignment counts across boards.
+            _board_tel = rooming_result.get("stage_telemetry") or {}
+            _board_ms = _board_tel.get("stage_ms", {}).get("rooming_repair", 0)
+            _board_it = _board_tel.get("stage_iterations", {}).get("rooming_repair", 0)
+            result["stage_telemetry"]["stage_ms"]["rooming_repair"] += int(_board_ms)
+            result["stage_telemetry"]["stage_iterations"]["rooming_repair"] += int(_board_it)
 
     elapsed = time.time() - t0
     result["elapsed_seconds"] = round(elapsed, 1)
@@ -1205,6 +1214,7 @@ def optimise_current_timetable(
             course_room_requirements=None,
             max_iterations=max_chain_iterations,
             decision_trace_out=chain_trace_out,
+            stage_telemetry=result["stage_telemetry"],
         )
         if chain_result.lexicographic_score < current_eval.lexicographic_score:
             result["chain_search_applied"] = True
@@ -1277,6 +1287,12 @@ def optimise_current_timetable(
             # PR5 commit 6: overlay rooming-repair trace (last-changer-wins).
             for k, v in (rooming_result.get("decision_trace") or {}).items():
                 result["decision_trace"][k] = v
+            # PR6 commit 6: sum board-level rooming_repair telemetry.
+            _board_tel = rooming_result.get("stage_telemetry") or {}
+            _board_ms = _board_tel.get("stage_ms", {}).get("rooming_repair", 0)
+            _board_it = _board_tel.get("stage_iterations", {}).get("rooming_repair", 0)
+            result["stage_telemetry"]["stage_ms"]["rooming_repair"] += int(_board_ms)
+            result["stage_telemetry"]["stage_iterations"]["rooming_repair"] += int(_board_it)
     else:
         result["persist_result"] = {"action": "no_change"}
         logger.info("No improvement found — board unchanged")
