@@ -22,6 +22,7 @@ from core.services.timetable_assignment_models import (
 from core.services.timetable_autoplace import WEEKDAYS
 from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
 from core.services.timetable_room_repair import (
+    PatternNotInCatalog,
     apply_move_to_grid,
     rollback_move,
     try_repair_rooms_locally,
@@ -300,7 +301,15 @@ def diagnostic_driven_local_search(
         moves_tried = 0
 
         for move in all_moves:
-            snapshot = apply_move_to_grid(move, sections_by_id, pattern_catalog)
+            try:
+                snapshot = apply_move_to_grid(move, sections_by_id, pattern_catalog)
+            except PatternNotInCatalog:
+                # Move generator proposed a pattern the canonical catalog
+                # didn't enumerate (can happen when the adaptive placer
+                # lands on a combination outside the enumerated space).
+                # Skip this move and carry on rather than aborting the
+                # whole optimiser run.
+                continue
 
             # Room feasibility check
             if rooms_by_id is not None and room_occupancies is not None:

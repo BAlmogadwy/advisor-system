@@ -19,6 +19,18 @@ from core.services.timetable_room_oracle import (
 )
 
 
+class PatternNotInCatalog(ValueError):
+    """Raised when a move references a pattern that isn't pre-enumerated.
+
+    The V2 move generator and the canonical catalog are built
+    independently; if the generator proposes a pattern the catalog
+    didn't enumerate (can happen when the adaptive placer produces a
+    day/time combination outside the enumerated space), lookup fails.
+    Callers should catch this and skip the move rather than crash the
+    whole optimiser.
+    """
+
+
 def _find_pattern_in_catalog(
     pattern_id: str,
     family_key: str,
@@ -27,7 +39,7 @@ def _find_pattern_in_catalog(
     for pat in catalog.get(family_key, []):
         if pat.pattern_id == pattern_id:
             return pat
-    raise ValueError(f"Pattern {pattern_id} not found in family {family_key}")
+    raise PatternNotInCatalog(f"Pattern {pattern_id} not found in family {family_key}")
 
 
 def apply_move_to_grid(
