@@ -243,10 +243,38 @@ def timetable_workspace_page(request: HttpRequest) -> HttpResponse:
     if deny:
         return deny
     defaults = load_defaults()
+    import json as _json
+
+    from django.conf import settings as _settings
+    from django.middleware.csrf import get_token as _csrf
+
+    from core.services.pr8_async_job_ui import (
+        POLL_INTERVAL_MS,
+        endpoint_map,
+        is_async_job_ui_effective,
+    )
+
+    pr8_on = is_async_job_ui_effective()
+    pr8_config = {
+        "submitUrl": endpoint_map()["submit"],
+        "pollUrl": endpoint_map()["poll"],
+        "resultUrl": endpoint_map()["result"],
+        "cancelUrl": endpoint_map()["cancel"],
+        "pollIntervalMs": POLL_INTERVAL_MS,
+        "csrfToken": _csrf(request) if pr8_on else "",
+        "scenarioId": None,
+        "mode": "full_rebuild",
+    }
     context = {
         **get_sidebar_context(request),
         "default_year": defaults.get("academic_year", ""),
         "default_term": defaults.get("term", ""),
+        "TIMETABLE_PR8_ASYNC_JOB_UI_ENABLED": pr8_on,
+        "TIMETABLE_PR7_ASYNC_PLANNER_ENABLED": getattr(
+            _settings, "TIMETABLE_PR7_ASYNC_PLANNER_ENABLED", False
+        ),
+        "pr8_job": None,
+        "pr8_config_json": _json.dumps(pr8_config),
     }
     return render(request, "core/timetable_workspace.html", context)
 

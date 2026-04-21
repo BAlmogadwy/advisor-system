@@ -399,3 +399,15 @@ TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED = os.getenv(
 TIMETABLE_PR7_ASYNC_PLANNER_ENABLED = os.getenv(
     "TIMETABLE_PR7_ASYNC_PLANNER_ENABLED", "true"
 ).lower() in ("1", "true", "yes", "on")
+
+# TIMETABLE_PR8_ASYNC_JOB_UI_ENABLED: single flag gating the PR8 async-job
+# UX card on the Timetable Workspace page. When True, renders a status
+# card with pill/submit/cancel/view-result/rerun controls that drives the
+# PR7 job endpoints. When False, no card renders — byte parity with
+# pre-PR8 scenario page. Default flipped to ``true`` at commit 8
+# (promotion). Env override ``TIMETABLE_PR8_ASYNC_JOB_UI_ENABLED=false``
+# hides the card at runtime with no redeploy. See docs/PR8-DOR.md flag
+# plan and docs/PR8-PROMOTION-NOTE.md for rollback tiers.
+TIMETABLE_PR8_ASYNC_JOB_UI_ENABLED = os.getenv(
+    "TIMETABLE_PR8_ASYNC_JOB_UI_ENABLED", "true"
+).lower() in ("1", "true", "yes", "on")
