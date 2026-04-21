@@ -67,6 +67,7 @@ from core.models import (
 )
 from core.services.timetable_decision_trace import (
     INSTRUCTOR_CLASH,
+    SAME_COURSE_INSTRUCTOR_CLASH,
     STUDENT_CONFLICT,
     Alternative,
     DecisionTrace,
@@ -1430,6 +1431,33 @@ def auto_place_board(
                                     (option, INSTRUCTOR_CLASH, clash_ctx)
                                 )
                             continue
+
+                # Same-course instructor clash: two sections of the same
+                # course cannot share a (day, start_time) because the same
+                # instructor typically teaches all sections of a course.
+                # This is independent of the INSTRUCTOR_CLASH filter above
+                # (which requires the ``instructor_id`` field to be set) —
+                # here we rely on the registrar's convention that course
+                # code → instructor. Rejected options are logged to the
+                # same trace bucket as INSTRUCTOR_CLASH.
+                same_course_ctx: dict | None = None
+                for m in option:
+                    for ps in placed_schedule:
+                        p_day, p_start, _p_end, p_code = ps[:4]
+                        if p_code == code and p_day == m["day"] and p_start == m["start"]:
+                            same_course_ctx = {
+                                "clashing_section": p_code,
+                                "same_course": True,
+                            }
+                            break
+                    if same_course_ctx is not None:
+                        break
+                if same_course_ctx is not None:
+                    if trace_enabled:
+                        pr4_instructor_rejected.append(
+                            (option, SAME_COURSE_INSTRUCTOR_CLASH, same_course_ctx)
+                        )
+                    continue
 
                 # Room feasibility: prefer options with rooms, penalize roomless
                 room_penalty = 0

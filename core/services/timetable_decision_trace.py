@@ -67,6 +67,13 @@ from django.conf import settings
 INSTRUCTOR_CLASH = "INSTRUCTOR_CLASH"
 STUDENT_CONFLICT = "STUDENT_CONFLICT"
 
+# Registrar convention: multiple sections of the same course are assumed
+# to share an instructor. Two such sections cannot occupy the same
+# (day, start_time) slot even if the ``instructor_id`` field is blank.
+# Emitted when the greedy placer or V2 move generator would produce
+# such a collision.
+SAME_COURSE_INSTRUCTOR_CLASH = "SAME_COURSE_INSTRUCTOR_CLASH"
+
 
 @dataclass(frozen=True)
 class Alternative:

@@ -368,6 +368,62 @@ def diagnose_unresolved(
     return "mixed_blockers"
 
 
+def _compute_same_course_section_spread(
+    sections_by_id: dict[str, SectionState],
+) -> int:
+    """Penalty for scattering same-course sections across the week.
+
+    Registrar rule: the same instructor typically teaches every section
+    of a course, so (a) two sections at the same (day, slot) are
+    instructor-clash and already hard-rejected upstream, and (b)
+    sections *should* be consecutive on the same day so the instructor
+    doesn't get a scattered schedule.
+
+    Penalty per pair of sections of the same course, summed over every
+    pair of sections of every multi-section course:
+
+    - same day, back-to-back (gap==0 min)        → 0
+    - same day, gap 1-30 min                      → 30
+    - same day, gap 31-120 min                    → 120
+    - same day, gap > 120 min                     → gap_minutes
+    - different days                              → 1000
+
+    Expressed in "minutes-equivalent" so the result can be folded into
+    ``total_gap_minutes`` without changing the tuple shape.
+    """
+    by_course: dict[str, list[SectionState]] = {}
+    for sec in sections_by_id.values():
+        by_course.setdefault(sec.course_code, []).append(sec)
+
+    total = 0
+    for secs in by_course.values():
+        if len(secs) < 2:
+            continue
+        first_meetings = []
+        for sec in secs:
+            if not sec.meetings:
+                continue
+            anchor = min(sec.meetings, key=lambda m: (m.day, m.start_min))
+            first_meetings.append(anchor)
+        for i in range(len(first_meetings)):
+            for j in range(i + 1, len(first_meetings)):
+                a, b = first_meetings[i], first_meetings[j]
+                if a.day != b.day:
+                    total += 1000
+                    continue
+                gap = abs(a.start_min - b.start_min) - 75
+                gap = max(0, gap)
+                if gap == 0:
+                    total += 0
+                elif gap <= 30:
+                    total += 30
+                elif gap <= 120:
+                    total += 120
+                else:
+                    total += gap
+    return total
+
+
 def evaluate_assignability_lexicographic(
     states: dict[str, StudentAssignmentState],
     profiles: dict[str, StudentProfile],
@@ -399,6 +455,13 @@ def evaluate_assignability_lexicographic(
 
     for section in sections_by_id.values():
         total_reserve_used += section.reserve_used()
+
+    # Fold the same-course section-spread penalty into total_gap_minutes
+    # so the tuple shape stays stable for downstream consumers (the
+    # final_score array has been 6-element forever). The spread penalty
+    # is already expressed in minutes-equivalent so the sum is
+    # apples-to-apples with the student day-gap contribution.
+    total_gap_minutes += _compute_same_course_section_spread(sections_by_id)
 
     return (
         unresolved_tier_a,

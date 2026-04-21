@@ -40,6 +40,24 @@ def _min_to_hhmm(m: int) -> str:
     return f"{m // 60:02d}:{m % 60:02d}"
 
 
+def _has_same_course_same_slot(sections_by_id: dict[str, SectionState]) -> bool:
+    """True iff two sections of the same course share a (day, start_min).
+
+    Registrar convention: course code implies a single instructor across
+    all sections, so two sections meeting at the same time would be an
+    instructor clash even when the ``instructor_id`` field is empty.
+    """
+    seen: dict[tuple[str, int, int], str] = {}
+    for sec in sections_by_id.values():
+        for m in sec.meetings:
+            key = (sec.course_code, m.day, m.start_min)
+            other = seen.get(key)
+            if other is not None and other != sec.section_id:
+                return True
+            seen[key] = sec.section_id
+    return False
+
+
 def _filter_moves_by_pr1_prayer(
     moves: list[TimetableMove],
     pattern_catalog: dict[str, list[CanonicalPattern]],
@@ -309,6 +327,14 @@ def diagnostic_driven_local_search(
                 # lands on a combination outside the enumerated space).
                 # Skip this move and carry on rather than aborting the
                 # whole optimiser run.
+                continue
+
+            # Same-course instructor-clash hard-reject: two sections of
+            # the same course cannot share a (day, start_min) because the
+            # same instructor typically teaches all sections. Scan after
+            # the move has been applied; rollback + skip if violated.
+            if _has_same_course_same_slot(sections_by_id):
+                _rollback(snapshot, sections_by_id, room_occupancies)
                 continue
 
             # Room feasibility check
