@@ -68,8 +68,6 @@ from __future__ import annotations
 
 from typing import Literal
 
-from django.conf import settings
-
 StageKey = Literal["greedy", "sa", "cpsat", "chain", "rooming_repair"]
 
 STAGE_KEYS: tuple[StageKey, ...] = (
@@ -138,21 +136,15 @@ def merge_stage_telemetry(
     return out
 
 
-def is_stage_telemetry_enabled() -> bool:
-    """Return whether PR6 telemetry population is active.
+def is_stage_telemetry_enabled() -> bool:  # noqa: D401 — back-compat re-export
+    """Back-compat re-export. Canonical home: ``core.services.timetable_flags``.
 
-    Reads ``settings.TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED``. Default
-    flipped to ``True`` at commit 8 (promotion). Production can flip
-    via the env var without a redeploy — set to ``false`` to restore
-    the flag-off sentinel behaviour at runtime.
-
-    When ``False``:
-    - Callers still emit the ``stage_telemetry`` block — it just stays
-      at the zeroed ``empty_stage_telemetry()`` value.
-    - Per-stage instrumentation short-circuits before any clock reads,
-      so there is no measurable overhead.
+    Reads ``settings.TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED``; see the
+    flags module for semantics.
     """
-    return bool(getattr(settings, STAGE_TELEMETRY_ENABLED_SETTING, False))
+    from core.services.timetable_flags import is_stage_telemetry_enabled as _impl
+
+    return _impl()
 
 
 __all__ = [
