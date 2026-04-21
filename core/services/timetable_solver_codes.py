@@ -85,7 +85,7 @@ def is_stage_trace_enabled() -> bool:
     parity) enforces: the pre-PR5 subset of payload fields is byte-
     identical to the PR4 master baseline.
     """
-    return bool(getattr(settings, STAGE_TRACE_ENABLED_SETTING, False))
+    return bool(getattr(settings, STAGE_TRACE_ENABLED_SETTING, True))
 
 
 __all__ = [

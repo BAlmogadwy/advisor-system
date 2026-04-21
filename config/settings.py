@@ -367,5 +367,5 @@ TIMETABLE_LAB_HEURISTIC_UNIFIED = os.getenv("TIMETABLE_LAB_HEURISTIC_UNIFIED", "
 # promotion commit). See docs/PR5-DOR.md flag plan and
 # docs/PR5-PROMOTION-NOTE.md (lands at commit 8) for rollback.
 TIMETABLE_PR5_STAGE_TRACE_ENABLED = os.getenv(
-    "TIMETABLE_PR5_STAGE_TRACE_ENABLED", "false"
+    "TIMETABLE_PR5_STAGE_TRACE_ENABLED", "true"
 ).lower() in ("1", "true", "yes", "on")
