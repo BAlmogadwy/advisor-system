@@ -385,8 +385,13 @@ def assign_rooms_to_board(board_id: int) -> dict:
         duration = _to_min(p.end_time) - _to_min(p.start_time)
         # Only 4-credit courses have lab meetings. 2-credit 100-min
         # meetings are long lectures, not labs.
+        # Rule: only 4-credit courses have lab meetings. A long (>=80 min)
+        # meeting of a non-4-credit course is a long lecture, not a lab.
+        # Keep the unified duration predicate as the duration gate; gate
+        # additionally on ``cr == 4`` so non-4-credit meetings never enter
+        # the lab pool regardless of length.
         if is_lab_heuristic_unified():
-            room_type = "lab" if meeting_requires_lab_room(duration) else "lecture"
+            room_type = "lab" if (cr == 4 and meeting_requires_lab_room(duration)) else "lecture"
         else:
             room_type = "lab" if (duration > 80 and cr == 4) else "lecture"
 
@@ -609,8 +614,11 @@ def simulate_buffer_impact(board_id: int, buffers: list[float]) -> dict:
             buffered_cap = int(raw_cap * buf)
             cr = credit_map.get(p.term_section.course_code, 3)
             duration = _to_min(p.end_time) - _to_min(p.start_time)
+            # Same cr==4 gate as assign_rooms_to_board (see comment there).
             if is_lab_heuristic_unified():
-                room_type = "lab" if meeting_requires_lab_room(duration) else "lecture"
+                room_type = (
+                    "lab" if (cr == 4 and meeting_requires_lab_room(duration)) else "lecture"
+                )
             else:
                 room_type = "lab" if (duration > 80 and cr == 4) else "lecture"
             room_cap = 0 if room_type == "lab" else buffered_cap
