@@ -2030,14 +2030,18 @@ def _adaptive_scenario(scenario_id: int) -> dict:
                 "end_time",
             )
         )
-        board_results[label] = {
-            "placed": best_placed,
-            "skipped": greedy["skipped"],
-            "placements": [
-                {"course_code": cc, "section": sec, "meetings": [{"day": d, "start": s, "end": e}]}
-                for cc, sec, d, s, e in final_placements
-            ],
-        }
+        # Carry the greedy baseline's full schema (decision_trace,
+        # stage_telemetry, room_failures, perturbation_metric,
+        # capacity_buffer, etc.) forward, then overlay the adaptive
+        # post-greedy phases. Keeps the observability payload shape
+        # byte-identical across strategies.
+        overlaid = dict(greedy)
+        overlaid["placed"] = best_placed
+        overlaid["placements"] = [
+            {"course_code": cc, "section": sec, "meetings": [{"day": d, "start": s, "end": e}]}
+            for cc, sec, d, s, e in final_placements
+        ]
+        board_results[label] = overlaid
         total_placed += best_placed
         total_skipped += greedy["skipped"]
         phases_log[label] = phase_info
