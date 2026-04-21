@@ -268,9 +268,24 @@ PR7 backend remains intact regardless.
 
 ## Closeout
 
-To be filled at commit 8 with:
+**All commits landed on `refactor/pr8-async-job-ui`.** Scope was
+compressed: c3–c6 collapsed into a single status-card partial commit
+since the partial + adapter cover all four subscopes.
 
-- final 8-commit summary
-- promotion commit hash
-- acceptance snapshot (test counts)
-- link to `docs/PR8-PROMOTION-NOTE.md`
+| # | Sha     | Subject |
+|---|---------|---------|
+| 0 | 6a2b070 | DoR — async job UX |
+| 1 | 117f324 | Failing UI tests + tripwires |
+| 2 | 8b4027d | JS adapter + python shim |
+| 3–6 | 0d380f0 | Status card partial (combined c3–c6) |
+| 7 | 5e5304b | Parity helper + acceptance pack |
+| 8 | (this)  | Promotion — flag default → True + workspace wire-in |
+
+**Acceptance.** `tests/test_pr8_async_job_ui.py` — ~25 tests across
+14 classes green. Flag-off byte parity preserved on the workspace
+page.
+
+**Env kill-switch.** `TIMETABLE_PR8_ASYNC_JOB_UI_ENABLED=false`
+hides the card at runtime; PR7 backend untouched.
+
+**Promotion note.** See [docs/PR8-PROMOTION-NOTE.md](PR8-PROMOTION-NOTE.md).
