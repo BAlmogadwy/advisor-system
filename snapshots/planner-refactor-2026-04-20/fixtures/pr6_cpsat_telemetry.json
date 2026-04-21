@@ -1,0 +1,23 @@
+{
+  "description": "PR6 — CP-SAT polish telemetry. Refined at commit 5 to mirror pr5_cpsat_improve. Stub at commit 1.",
+  "scenario": {
+    "sections": [
+      {"course_code": "CS101", "section_code": "S1", "enrolment": 10, "instructor_id": "I1", "student_ids": ["ST001"]}
+    ],
+    "slot_pool": [
+      {"day": "SUN", "start_time": "08:00", "end_time": "09:15"}
+    ],
+    "rooms": [
+      {"room_code": "A101", "capacity": 40, "room_type": "lecture", "gender": ""}
+    ]
+  },
+  "expected": {
+    "stage_ms_nonzero": ["greedy", "cpsat"],
+    "stage_iterations_nonzero": ["greedy", "cpsat"],
+    "cpsat_iterations_equals_one_if_run": true
+  },
+  "notes": [
+    "cpsat.iterations is defined as 1 if CP-SAT polish ran, else 0 (PR6 DoR).",
+    "Commit 5 refines this fixture to actually trigger a CPSAT improvement (copy from pr5_cpsat_improve)."
+  ]
+}
