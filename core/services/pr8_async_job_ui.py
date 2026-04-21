@@ -90,11 +90,11 @@ def render_progression_snapshot(kind: str) -> list[dict[str, Any]]:
     kind. UI tests use these to assert that each frame renders
     without breaking.
     """
-    base = [
+    base: list[dict[str, Any]] = [
         {"status": "queued", "last_stage_seen": None},
         {"status": "running", "last_stage_seen": "greedy"},
     ]
-    tail_by_kind = {
+    tail_by_kind: dict[str, list[dict[str, Any]]] = {
         "happy": [{"status": "succeeded", "last_stage_seen": "rooming_repair"}],
         "failed": [{"status": "failed", "last_stage_seen": "greedy", "error_message": "synthetic"}],
         "cancelled": [{"status": "cancelled", "last_stage_seen": "greedy"}],
