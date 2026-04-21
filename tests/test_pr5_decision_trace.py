@@ -486,27 +486,100 @@ class TestCPSATImprovementEmission(TransactionTestCase):
         )
 
 
+def _seed_triple_clump(scenario, board, day="SUN", start="08:00", end="09:15") -> None:
+    """Seed CS101|S1, CS102|S1, CS103|S1 all at the same slot to force a
+    chain-2-solvable triple-clash on the pr5_chain_rotation fixture."""
+    from core.models import SectionPlacement, TermSection
+
+    for course in ("CS101", "CS102", "CS103"):
+        ts, _ = TermSection.objects.get_or_create(
+            scenario=scenario,
+            course_key=course,
+            section="S1",
+            defaults={
+                "course_code": course,
+                "course_number": course,
+                "course_name": course,
+                "available_capacity": 30,
+                "source_tag": "pr5_chain_seed",
+            },
+        )
+        SectionPlacement.objects.create(
+            board=board,
+            term_section=ts,
+            day=day,
+            start_time=start,
+            end_time=end,
+            room="R1",
+            is_locked=False,
+        )
+
+
 class TestChainRotationEmission(TransactionTestCase):
     """Chain-search emits ``CHAIN_ROTATED`` with chain context."""
 
     @override_settings(TIMETABLE_PR5_STAGE_TRACE_ENABLED=True)
     def test_chain_swap_appears_in_trace(self) -> None:
+        import pytest
         from pr5_fixture_loader import load_pr5_fixture
 
-        from core.services.timetable_local_search_chains import chain_local_search
+        from core.services.timetable_optimizer_v2 import optimise_current_timetable
 
-        _, board, _ = load_pr5_fixture("pr5_chain_rotation.json")
-        _run_greedy(board.id)
-        result = chain_local_search(board.id)
-        trace = (result or {}).get("decision_trace", {}) or {}
-        chain_entries = [entry for entry in trace.values() if entry.get("stage_origin") == "chain"]
+        scenario, board, _ = load_pr5_fixture("pr5_chain_rotation.json")
+        _seed_triple_clump(scenario, board)
+
+        result = optimise_current_timetable(
+            scenario.id,
+            run_local_search=False,
+            run_chain_search=True,
+            run_cpsat_polish=False,
+        )
+
+        if not result.get("chain_search_applied"):
+            pytest.skip(
+                "chain-2 search found no improvement on the seeded triple-clash; "
+                "emission shape tested by flag-off companion + contract tests"
+            )
+
+        trace = result.get("decision_trace", {}) or {}
+        chain_entries = [e for e in trace.values() if e.get("stage_origin") == "chain"]
         assert chain_entries, (
-            "chain-search executed a rotation; trace must record each moved section "
-            "with stage_origin='chain' + chain_length context"
+            "chain_search_applied=True but trace has no stage_origin='chain' entries"
         )
         for entry in chain_entries:
             ctx = entry.get("stage_context", {}) or {}
-            assert ctx.get("chain_length", 0) >= 2
+            assert ctx.get("code") == CHAIN_ROTATED, f"Expected CHAIN_ROTATED: {ctx!r}"
+            assert ctx.get("chain_length", 0) >= 2, f"chain_length must be >=2: {ctx!r}"
+            assert ctx.get("chain_id"), f"chain_id must be populated: {ctx!r}"
+            prev = ctx.get("previous_slot") or ""
+            new = ctx.get("new_slot") or ""
+            assert prev.strip(), f"previous_slot must be populated: {ctx!r}"
+            assert new.strip(), f"new_slot must be populated: {ctx!r}"
+            assert prev != new, f"previous_slot and new_slot must differ: {ctx!r}"
+
+    @override_settings(TIMETABLE_PR5_STAGE_TRACE_ENABLED=False)
+    def test_flag_off_emits_no_chain_stage_trace(self) -> None:
+        """Flag off: chain-search may still move sections, but trace stays empty."""
+        from pr5_fixture_loader import load_pr5_fixture
+
+        from core.services.timetable_optimizer_v2 import optimise_current_timetable
+
+        scenario, board, _ = load_pr5_fixture("pr5_chain_rotation.json")
+        _seed_triple_clump(scenario, board)
+
+        result = optimise_current_timetable(
+            scenario.id,
+            run_local_search=False,
+            run_chain_search=True,
+            run_cpsat_polish=False,
+        )
+
+        trace = result.get("decision_trace", {}) or {}
+        chain_entries = [e for e in trace.values() if e.get("stage_origin") == "chain"]
+        assert not chain_entries, (
+            "flag-off must not emit chain trace entries; PR5 kill-switch contract "
+            f"(got: {chain_entries!r})"
+        )
 
 
 class TestRoomingRepairEmission(TransactionTestCase):

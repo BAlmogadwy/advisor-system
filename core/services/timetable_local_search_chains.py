@@ -24,10 +24,29 @@ from core.services.timetable_assignment_models import (
     TimetableEvaluationResult,
     TimetableMove,
 )
+from core.services.timetable_autoplace import WEEKDAYS
 from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
+from core.services.timetable_decision_trace import DecisionTrace
 from core.services.timetable_room_repair import apply_move_to_grid, rollback_move
+from core.services.timetable_solver_codes import CHAIN_ROTATED, is_stage_trace_enabled
 
 logger = logging.getLogger(__name__)
+
+
+def _fmt_hhmm(minutes: int) -> str:
+    return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+
+def _meeting_signature(sec: SectionState) -> tuple[tuple[int, int, int], ...]:
+    return tuple((m.day, m.start_min, m.end_min) for m in sec.meetings)
+
+
+def _section_code_key(sec: SectionState) -> str:
+    label = sec.section_id
+    prefix = f"{sec.course_code}_"
+    if label.startswith(prefix):
+        label = label[len(prefix) :]
+    return f"{sec.course_code}|{label}"
 
 
 @dataclass(frozen=True)
@@ -206,6 +225,7 @@ def chain_local_search(
     room_occupancies: dict[str, RoomOccupancy] | None = None,
     course_room_requirements: dict[str, str] | None = None,
     max_iterations: int = 10,
+    decision_trace_out: dict[str, dict] | None = None,
 ) -> TimetableEvaluationResult:
     """Chain-2 local search — runs AFTER single-move search exhausts.
 
@@ -263,11 +283,67 @@ def chain_local_search(
             _rollback_chain(snap_a, snap_b, sections_by_id, room_occupancies)
 
         if best_chain is not None and best_chain_result is not None:
+            # Snapshot pre-apply meeting signatures for trace emission —
+            # at this point state is post-rollback (i.e. pre-chain).
+            pre_sigs: dict[str, tuple[tuple[int, int, int], ...]] = {}
+            if decision_trace_out is not None and is_stage_trace_enabled():
+                for mv in (best_chain.move_a, best_chain.move_b):
+                    sid = mv.section_id_a
+                    if sid in sections_by_id:
+                        pre_sigs[sid] = _meeting_signature(sections_by_id[sid])
+
             # Re-apply winning chain permanently
             _apply_chain(best_chain, sections_by_id, pattern_catalog)
             current_best = best_chain_result
             current_score = best_chain_score
             total_improvements += 1
+
+            # PR5 commit 5 — emit CHAIN_ROTATED trace entries per section
+            # whose chosen meetings shifted. Only accepted chains (no
+            # rejected-chain telemetry); last-changer-wins by key in the
+            # caller's overlay.
+            if decision_trace_out is not None and is_stage_trace_enabled():
+                chain_id = f"chain_{iteration}"
+                for mv in (best_chain.move_a, best_chain.move_b):
+                    sid = mv.section_id_a
+                    if sid not in sections_by_id:
+                        continue
+                    sec = sections_by_id[sid]
+                    before = pre_sigs.get(sid, ())
+                    after = _meeting_signature(sec)
+                    if before == after:
+                        continue
+                    anchor_before = before[0] if before else (0, 0, 0)
+                    anchor_after = after[0]
+                    before_day = WEEKDAYS[anchor_before[0]] if before else ""
+                    after_day = WEEKDAYS[anchor_after[0]]
+                    previous_slot = (
+                        f"{before_day} {_fmt_hhmm(anchor_before[1])}-{_fmt_hhmm(anchor_before[2])}"
+                        if before
+                        else ""
+                    )
+                    new_slot = (
+                        f"{after_day} {_fmt_hhmm(anchor_after[1])}-{_fmt_hhmm(anchor_after[2])}"
+                    )
+                    section_code = _section_code_key(sec)
+                    entry = DecisionTrace(
+                        section_code=section_code,
+                        course_code=sec.course_code,
+                        chosen_day=after_day,
+                        chosen_start_time=_fmt_hhmm(anchor_after[1]),
+                        chosen_end_time=_fmt_hhmm(anchor_after[2]),
+                        chosen_room="",
+                        alternatives=(),
+                        stage_origin="chain",
+                        stage_context={
+                            "code": CHAIN_ROTATED,
+                            "chain_length": 2,
+                            "chain_id": chain_id,
+                            "previous_slot": previous_slot,
+                            "new_slot": new_slot,
+                        },
+                    )
+                    decision_trace_out[section_code] = entry.to_dict()
             logger.info(
                 "Chain iteration %d: improved %s -> %s (%d chains tried)",
                 iteration,

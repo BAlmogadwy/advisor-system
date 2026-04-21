@@ -817,6 +817,7 @@ def optimise_scenario_timetable_v2(
 
             t_chain_start = time.time()
             logger.info("Running chain-2 search (max %d iterations)...", max_chain_iterations)
+            chain_trace_out: dict[str, dict] = {}
             chain_result = chain_local_search(
                 best_candidate=current_eval_for_chain,
                 sections_by_id=sections_by_id,
@@ -827,6 +828,7 @@ def optimise_scenario_timetable_v2(
                 room_occupancies=None,
                 course_room_requirements=None,
                 max_iterations=max_chain_iterations,
+                decision_trace_out=chain_trace_out,
             )
 
             if chain_result.lexicographic_score < current_eval_for_chain.lexicographic_score:
@@ -841,6 +843,9 @@ def optimise_scenario_timetable_v2(
                 result["hotspot_courses"] = chain_result.hotspot_courses[:10]
                 result["unresolved_students"] = len(chain_result.unresolved_student_ids)
                 current_eval_for_chain = chain_result
+                # PR5 commit 5: overlay chain trace (last-changer-wins).
+                for k, v in chain_trace_out.items():
+                    result["decision_trace"][k] = v
             else:
                 result["chain_search_applied"] = False
                 logger.info("Chain search: no improvement found")
@@ -1154,6 +1159,7 @@ def optimise_current_timetable(
 
         t_chain = time.time()
         logger.info("Running chain-2 search (max %d iterations)...", max_chain_iterations)
+        chain_trace_out: dict[str, dict] = {}
         chain_result = chain_local_search(
             best_candidate=current_eval,
             sections_by_id=sections_by_id,
@@ -1164,6 +1170,7 @@ def optimise_current_timetable(
             room_occupancies=None,
             course_room_requirements=None,
             max_iterations=max_chain_iterations,
+            decision_trace_out=chain_trace_out,
         )
         if chain_result.lexicographic_score < current_eval.lexicographic_score:
             result["chain_search_applied"] = True
@@ -1171,6 +1178,9 @@ def optimise_current_timetable(
             result["hotspot_courses"] = chain_result.hotspot_courses[:10]
             result["unresolved_students"] = len(chain_result.unresolved_student_ids)
             current_eval = chain_result
+            # PR5 commit 5: overlay chain trace (last-changer-wins).
+            for k, v in chain_trace_out.items():
+                result["decision_trace"][k] = v
         else:
             result["chain_search_applied"] = False
         logger.info("Chain search completed in %.1fs", time.time() - t_chain)
