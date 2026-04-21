@@ -16,6 +16,7 @@ from collections import defaultdict
 from django.conf import settings
 
 from core.models import DeliveryBoard, Room, SectionPlacement
+from core.services.timetable_decision_trace import DecisionTrace
 from core.services.timetable_lab_predicate import (
     is_lab_heuristic_unified,
     meeting_requires_lab_room,
@@ -30,6 +31,10 @@ from core.services.timetable_room_oracle import (
     check_type_feasibility,
     is_room_oracle_enabled,
     room_failure_breakdown,
+)
+from core.services.timetable_solver_codes import (
+    ROOMING_REPAIR_REASSIGNED,
+    is_stage_trace_enabled,
 )
 
 
@@ -298,9 +303,12 @@ def assign_rooms_to_board(board_id: int) -> dict:
         .order_by("day", "start_time")
     )
 
-    # First pass: mark rooms already assigned (from greedy or previous run)
+    # First pass: mark rooms already assigned (from greedy or previous run).
+    # Exclude the sentinel "UNASSIGNED" so placements left unroomed by a
+    # prior pass become repair candidates below rather than being treated
+    # as if the sentinel occupied a slot.
     for p in placements:
-        if p.room:
+        if p.room and p.room != "UNASSIGNED":
             tracker.usage[(p.day, p.start_time)].add(p.room)
 
     # Get actual students per section and credit hours from budget
@@ -321,9 +329,18 @@ def assign_rooms_to_board(board_id: int) -> dict:
         budget_map[b.course_code] = int(raw * buffer_multiplier)
         credit_map[b.course_code] = b.credit_hours
 
-    # Sort unassigned placements by capacity DESC (largest first = best-fit-decreasing)
-    unassigned_placements = [p for p in placements if not p.room]
+    # Sort unassigned placements by capacity DESC (largest first = best-fit-decreasing).
+    # PR5 commit 6: also re-process placements carrying the "UNASSIGNED"
+    # sentinel so the rooming 2nd pass can repair them when a fitting room
+    # exists. Capture the sentinel state per placement BEFORE mutation so
+    # trace emission can gate strictly on the UNASSIGNED → assigned
+    # transition (no emission for empty-string → assigned, which is the
+    # normal first-pass path).
+    unassigned_placements = [p for p in placements if not p.room or p.room == "UNASSIGNED"]
     unassigned_placements.sort(key=lambda p: -(budget_map.get(p.term_section.course_code, 40)))
+    previous_room_by_id: dict[int, str] = {p.id: p.room for p in unassigned_placements}
+    decision_trace: dict[str, dict] = {}
+    emit_trace = is_stage_trace_enabled()
 
     assigned = 0
     unassigned = 0
@@ -357,9 +374,42 @@ def assign_rooms_to_board(board_id: int) -> dict:
         gender = _section_gender(p.term_section.section) or board_gender
         room_code = tracker.assign_best_fit(p.day, p.start_time, room_cap, room_type, gender)
         if room_code:
+            prev_room = previous_room_by_id.get(p.id, "")
             p.room = room_code
             p.save(update_fields=["room", "updated_at"])
             assigned += 1
+            # PR5 commit 6 — emit ROOMING_REPAIR_REASSIGNED when the 2nd
+            # pass rescued a placement previously marked UNASSIGNED.
+            # Strictly gated: empty-string → assigned is the normal
+            # first-pass path and does NOT emit.
+            if emit_trace and prev_room == "UNASSIGNED":
+                section_code = f"{p.term_section.course_code}|{p.term_section.section}"
+                start_str = (
+                    p.start_time.strftime("%H:%M")
+                    if hasattr(p.start_time, "strftime")
+                    else str(p.start_time)[:5]
+                )
+                end_str = (
+                    p.end_time.strftime("%H:%M")
+                    if hasattr(p.end_time, "strftime")
+                    else str(p.end_time)[:5]
+                )
+                entry = DecisionTrace(
+                    section_code=section_code,
+                    course_code=p.term_section.course_code,
+                    chosen_day=p.day,
+                    chosen_start_time=start_str,
+                    chosen_end_time=end_str,
+                    chosen_room=room_code,
+                    alternatives=(),
+                    stage_origin="rooming_repair",
+                    stage_context={
+                        "code": ROOMING_REPAIR_REASSIGNED,
+                        "previous_room": "UNASSIGNED",
+                        "new_room": room_code,
+                    },
+                )
+                decision_trace[section_code] = entry.to_dict()
         else:
             # Would a raw-cap room have fit? Used below to refine the oracle
             # rejection code into ROOM_BUFFER_REJECT when the section could
@@ -435,6 +485,7 @@ def assign_rooms_to_board(board_id: int) -> dict:
         "room_failures": room_failures,
         "room_failure_breakdown": room_failure_breakdown(room_failures),
         "unplaced_count": unassigned,
+        "decision_trace": decision_trace,
     }
 
 

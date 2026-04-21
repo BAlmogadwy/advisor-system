@@ -1,0 +1,34 @@
+{
+  "description": "PR5 commit 5 — chain-search trace emission (CHAIN_ROTATED). Three shared-student sections form a bridge-graph (CS101↔CS102↔CS103, no CS101↔CS103 overlap) so CS102 is the sole hotspot when all three are seeded at the same slot via ORM. chain_local_search's _find_overlap_partners excludes other hotspot courses, so CS102's partners = {CS101, CS103}; the search then picks a chain-2 that relocates CS102 + one partner to resolve the triple-clash. Test calls optimise_current_timetable(run_local_search=False, run_chain_search=True, run_cpsat_polish=False) on the seeded state so chain is the ONLY stage with a chance to move anything.",
+  "scenario": {
+    "sections": [
+      {"course_code": "CS101", "section_code": "S1", "enrolment": 10, "instructor_id": "I1",
+        "student_ids": ["ST001", "ST002", "ST003", "ST004", "ST005"]},
+      {"course_code": "CS102", "section_code": "S1", "enrolment": 10, "instructor_id": "I2",
+        "student_ids": ["ST001", "ST002", "ST003", "ST004", "ST005", "ST006", "ST007", "ST008", "ST009", "ST010"]},
+      {"course_code": "CS103", "section_code": "S1", "enrolment": 10, "instructor_id": "I3",
+        "student_ids": ["ST006", "ST007", "ST008", "ST009", "ST010"]}
+    ],
+    "slot_pool": [
+      {"day": "SUN", "start_time": "08:00", "end_time": "09:15"},
+      {"day": "MON", "start_time": "08:00", "end_time": "09:15"},
+      {"day": "TUE", "start_time": "08:00", "end_time": "09:15"},
+      {"day": "WED", "start_time": "08:00", "end_time": "09:15"}
+    ],
+    "rooms": [
+      {"room_code": "R1", "capacity": 30, "room_type": "lecture", "gender": ""}
+    ]
+  },
+  "expected": {
+    "chain_rotated_entries_gte": 1,
+    "stage_origin_chain_present": true,
+    "min_chain_length": 2
+  },
+  "notes": [
+    "Test: tests/test_pr5_decision_trace.py::TestChainRotationEmission",
+    "Share graph: ST001-5 in CS101 and CS102; ST006-10 in CS102 and CS103. No shared students between CS101 and CS103.",
+    "Test seeds all 3 sections at SUN 08:00 via ORM → CS102 students can't place (all clash); CS102 becomes unique hotspot.",
+    "chain-2 partners = {CS101, CS103} (neither is hotspot once the greedy-evaluator places their cohorts on their own slots or alternative patterns).",
+    "Chain rotation: move CS102 off SUN AND move CS101 or CS103 off SUN → resolves all student clashes, lex score drops, chain accepted."
+  ]
+}

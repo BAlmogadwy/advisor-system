@@ -1,0 +1,31 @@
+{
+  "description": "PR5 commit 4 — CP-SAT polisher trace emission + leak fix. Minimal fixture: two cross-course sections (CS101, CS102) sharing all 10 students. Slot pool has three options (MON 08:00, MON 09:30, TUE 08:00) and a single lecture room. Test code seeds both placements into the SAME slot (MON 08:00) directly via ORM to simulate a suboptimal state that the V2 multi-strategy greedy would never produce but CP-SAT can repair when called via optimise_current_timetable. CP-SAT's weighted-overlap proxy (shared*5) strongly prefers splitting the pair across two slots; the real evaluator then confirms the improvement. This exercises the commit-4 code path end-to-end: polisher emits CPSAT_IMPROVED trace + improved_sections, V2 overlays them into sections_by_id and decision_trace, and persistence writes the moved placement.",
+  "scenario": {
+    "sections": [
+      {"course_code": "CS101", "section_code": "S1", "enrolment": 10, "instructor_id": "I1",
+        "student_ids": ["ST001", "ST002", "ST003", "ST004", "ST005", "ST006", "ST007", "ST008", "ST009", "ST010"]},
+      {"course_code": "CS102", "section_code": "S1", "enrolment": 10, "instructor_id": "I2",
+        "student_ids": ["ST001", "ST002", "ST003", "ST004", "ST005", "ST006", "ST007", "ST008", "ST009", "ST010"]}
+    ],
+    "slot_pool": [
+      {"day": "MON", "start_time": "08:00", "end_time": "09:15"},
+      {"day": "MON", "start_time": "09:30", "end_time": "10:45"},
+      {"day": "TUE", "start_time": "08:00", "end_time": "09:15"}
+    ],
+    "rooms": [
+      {"room_code": "R1", "capacity": 30, "room_type": "lecture", "gender": ""}
+    ]
+  },
+  "expected": {
+    "cpsat_improved_entries_gte": 1,
+    "stage_origin_cpsat_present": true,
+    "previous_slot_populated": true
+  },
+  "notes": [
+    "Test: tests/test_pr5_decision_trace.py::TestCPSATImprovementEmission",
+    "Shared students: 10 (all of ST001-ST010 enrolled in both courses).",
+    "weight = 10 * 5 = 50 per co-located meeting-pair => CP-SAT strongly prefers to split.",
+    "Test seeds both placements at MON 08:00 via ORM then calls optimise_current_timetable with run_local_search=False/run_chain_search=False so CP-SAT runs on the seeded state directly.",
+    "Real evaluator confirms lexicographic_score strictly improves; polisher returns improved_sections + decision_trace; V2 persists."
+  ]
+}
