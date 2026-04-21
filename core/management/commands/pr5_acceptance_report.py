@@ -27,7 +27,7 @@ _TESTS_DIR = Path(django_settings.BASE_DIR) / "tests"
 if str(_TESTS_DIR) not in sys.path:
     sys.path.insert(0, str(_TESTS_DIR))
 
-_STAGE_LABELS = ("greedy", "sa", "cpsat", "chain", "rooming_repair")
+from core.services.timetable_stage_telemetry import STAGE_KEYS as _STAGE_LABELS  # noqa: E402
 
 _FIXTURES = (
     "pr5_sa_relocate.json",

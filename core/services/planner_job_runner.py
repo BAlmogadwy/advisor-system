@@ -64,18 +64,14 @@ def dispatch_planner_job(job_id: uuid.UUID | str) -> Future:
 
 ASYNC_PLANNER_ENABLED_SETTING = "TIMETABLE_PR7_ASYNC_PLANNER_ENABLED"
 
-_STAGE_ORDER = ("greedy", "sa", "cpsat", "chain", "rooming_repair")
+from core.services.timetable_stage_telemetry import STAGE_KEYS as _STAGE_ORDER  # noqa: E402
 
 
-def is_async_planner_enabled() -> bool:
-    """Return whether the PR7 async planner is active.
+def is_async_planner_enabled() -> bool:  # noqa: D401 — back-compat re-export
+    """Back-compat re-export. Canonical home: ``core.services.timetable_flags``."""
+    from core.services.timetable_flags import is_async_planner_enabled as _impl
 
-    Reads ``settings.TIMETABLE_PR7_ASYNC_PLANNER_ENABLED``. Default
-    ``False`` until commit 8 (promotion). Env override
-    ``TIMETABLE_PR7_ASYNC_PLANNER_ENABLED=false`` is the live
-    kill-switch once promoted.
-    """
-    return bool(getattr(settings, ASYNC_PLANNER_ENABLED_SETTING, False))
+    return _impl()
 
 
 def _compute_request_signature(scenario_id: int, mode: str) -> str:

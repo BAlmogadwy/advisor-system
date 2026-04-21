@@ -18,8 +18,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from django.conf import settings
-
 PR7_FLAG = "TIMETABLE_PR7_ASYNC_PLANNER_ENABLED"
 PR8_FLAG = "TIMETABLE_PR8_ASYNC_JOB_UI_ENABLED"
 
@@ -39,20 +37,22 @@ _PILL_CLASSES: dict[str, str] = {
 }
 
 
-def is_async_job_ui_enabled() -> bool:
-    return bool(getattr(settings, PR8_FLAG, False))
+def is_async_job_ui_enabled() -> bool:  # back-compat re-export
+    from core.services.timetable_flags import is_async_job_ui_enabled as _impl
+
+    return _impl()
 
 
-def is_async_planner_enabled() -> bool:
-    return bool(getattr(settings, PR7_FLAG, False))
+def is_async_planner_enabled() -> bool:  # back-compat re-export
+    from core.services.timetable_flags import is_async_planner_enabled as _impl
+
+    return _impl()
 
 
-def is_async_job_ui_effective() -> bool:
-    """True only when both the PR7 backend and the PR8 UI flags are on.
+def is_async_job_ui_effective() -> bool:  # back-compat re-export
+    from core.services.timetable_flags import is_async_job_ui_effective as _impl
 
-    PR8 UI hides cleanly if PR7 is off (DoR §"Interaction with PR7").
-    """
-    return is_async_planner_enabled() and is_async_job_ui_enabled()
+    return _impl()
 
 
 def is_terminal_status(status: str | None) -> bool:
@@ -90,11 +90,11 @@ def render_progression_snapshot(kind: str) -> list[dict[str, Any]]:
     kind. UI tests use these to assert that each frame renders
     without breaking.
     """
-    base = [
+    base: list[dict[str, Any]] = [
         {"status": "queued", "last_stage_seen": None},
         {"status": "running", "last_stage_seen": "greedy"},
     ]
-    tail_by_kind = {
+    tail_by_kind: dict[str, list[dict[str, Any]]] = {
         "happy": [{"status": "succeeded", "last_stage_seen": "rooming_repair"}],
         "failed": [{"status": "failed", "last_stage_seen": "greedy", "error_message": "synthetic"}],
         "cancelled": [{"status": "cancelled", "last_stage_seen": "greedy"}],

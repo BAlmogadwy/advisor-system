@@ -38,7 +38,7 @@ from core.services.timetable_candidate_eval import (
     evaluate_generated_timetable_candidate,
     rank_timetable_candidates,
 )
-from core.services.timetable_stage_telemetry import empty_stage_telemetry
+from core.services.timetable_stage_telemetry import STAGE_KEYS, empty_stage_telemetry
 from core.services.timetable_workspace import _to_minutes
 
 logger = logging.getLogger(__name__)
@@ -965,7 +965,7 @@ def optimise_scenario_timetable_v2(
     # across the full pipeline (DoR §3 aggregation rule).
     _scen_tel = scenario_place_result.get("stage_telemetry") or {}
     if isinstance(_scen_tel, dict):
-        for _k in ("greedy", "sa", "cpsat", "chain", "rooming_repair"):
+        for _k in STAGE_KEYS:
             result["stage_telemetry"]["stage_ms"][_k] += int(
                 _scen_tel.get("stage_ms", {}).get(_k, 0)
             )

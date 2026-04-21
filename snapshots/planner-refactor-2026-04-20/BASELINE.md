@@ -61,9 +61,14 @@ Priority order:
 
 ## Restore
 
-To revert any single file:
+The file-tree mirror that used to live under
+`snapshots/planner-refactor-2026-04-20/core/` and `/static/` was
+removed in PR9 (debt consolidation) — it was never tracked and had
+drifted out of sync with the baseline branch.
+
+To revert any single file, use the baseline branch directly:
 ```bash
-cp snapshots/planner-refactor-2026-04-20/core/services/timetable_autoplace.py core/services/
+git checkout baseline/pre-planner-refactor-2026-04-20 -- core/services/timetable_autoplace.py
 ```
 
 To revert everything:

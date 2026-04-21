@@ -24,7 +24,7 @@ this helper does NOT re-resolve origin; it trusts what the trace says.
 
 from __future__ import annotations
 
-_STAGE_KEYS: tuple[str, ...] = ("greedy", "sa", "cpsat", "chain", "rooming_repair")
+from core.services.timetable_stage_telemetry import STAGE_KEYS as _STAGE_KEYS
 
 
 def empty_changes_by_stage() -> dict[str, int]:
