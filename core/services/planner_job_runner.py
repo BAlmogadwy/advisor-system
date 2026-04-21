@@ -12,14 +12,55 @@ This is an **async UX shim**, not a distributed job system. See
 from __future__ import annotations
 
 import hashlib
+import os
 import traceback
 import uuid
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
 from django.conf import settings
+from django.db import close_old_connections
 from django.utils import timezone
 
 from core.models import PlannerJob
+
+_EXECUTOR: ThreadPoolExecutor | None = None
+
+
+def _get_executor() -> ThreadPoolExecutor:
+    global _EXECUTOR
+    if _EXECUTOR is None:
+        _EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pr7-planner")
+    return _EXECUTOR
+
+
+def _worker(job_id: str) -> None:
+    close_old_connections()
+    try:
+        run_planner_job(job_id)
+    finally:
+        close_old_connections()
+
+
+def _dispatch_sync() -> bool:
+    """True when running under pytest (in-memory SQLite can't be shared
+    with a background thread) or when an explicit override asks for it."""
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return True
+    return bool(getattr(settings, "TIMETABLE_PR7_DISPATCH_SYNC", False))
+
+
+def dispatch_planner_job(job_id: uuid.UUID | str) -> Future:
+    if _dispatch_sync():
+        fut: Future = Future()
+        try:
+            run_planner_job(job_id)
+            fut.set_result(None)
+        except BaseException as exc:  # noqa: BLE001
+            fut.set_exception(exc)
+        return fut
+    return _get_executor().submit(_worker, str(job_id))
+
 
 ASYNC_PLANNER_ENABLED_SETTING = "TIMETABLE_PR7_ASYNC_PLANNER_ENABLED"
 
@@ -117,6 +158,9 @@ def run_planner_job(job_id: uuid.UUID | str) -> None:
     if job is None:
         return
 
+    if job.status != PlannerJob.STATUS_QUEUED:
+        return
+
     if job.cancel_requested and job.status == PlannerJob.STATUS_QUEUED:
         job.status = PlannerJob.STATUS_CANCELLED
         job.started_at = timezone.now()
@@ -132,7 +176,9 @@ def run_planner_job(job_id: uuid.UUID | str) -> None:
         result = auto_place_scenario(job.scenario_id)
     except Exception as exc:
         job.status = PlannerJob.STATUS_FAILED
-        job.error_message = f"{type(exc).__name__}: {exc}\n\n{traceback.format_exc()}"
+        summary = f"{type(exc).__name__}: {exc}"
+        tb_tail = "\n".join(traceback.format_exc().splitlines()[-6:])
+        job.error_message = f"{summary}\n...\n{tb_tail}"[:4000]
         job.finished_at = timezone.now()
         job.save(update_fields=["status", "error_message", "finished_at"])
         return
@@ -149,6 +195,7 @@ def run_planner_job(job_id: uuid.UUID | str) -> None:
 __all__ = [
     "ASYNC_PLANNER_ENABLED_SETTING",
     "cancel_planner_job",
+    "dispatch_planner_job",
     "get_planner_job",
     "is_async_planner_enabled",
     "run_planner_job",

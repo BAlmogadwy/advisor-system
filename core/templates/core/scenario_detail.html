@@ -1,0 +1,23 @@
+{% comment %}
+PR7 commit 6 — minimal scenario detail shim.
+
+The scenario detail page today lives in ``timetable_workspace_split.html``
+and is rendered by ``tw_scenario_detail_view``. PR7's UX requirement is a
+single flag-gated "Run in background" toggle the user can tick before
+hitting the optimise button. This template exists as the PR7-owned
+slice; the workspace template will {% include %} the ``#pr7-async-toggle``
+region once the view starts passing the flag down (commit 6+ follow-up).
+
+Render contract: consumers pass ``TIMETABLE_PR7_ASYNC_PLANNER_ENABLED``
+in the context; when falsy, the block produces nothing (pre-PR7 byte
+parity). When truthy, a single <input id="async_planner" name="async_planner">
+is emitted — no redesign, no new layout.
+{% endcomment %}
+{% if TIMETABLE_PR7_ASYNC_PLANNER_ENABLED %}
+<div id="pr7-async-toggle" class="pr7-async-toggle">
+  <label for="async_planner">
+    <input type="checkbox" id="async_planner" name="async_planner" value="1">
+    <span>Run in background</span>
+  </label>
+</div>
+{% endif %}

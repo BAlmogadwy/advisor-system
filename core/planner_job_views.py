@@ -24,9 +24,9 @@ from django.views.decorators.http import require_http_methods
 
 from core.services.planner_job_runner import (
     cancel_planner_job,
+    dispatch_planner_job,
     get_planner_job,
     is_async_planner_enabled,
-    run_planner_job,
     submit_planner_job,
 )
 
@@ -50,7 +50,7 @@ def planner_job_submit(request: HttpRequest) -> HttpResponse:
         return JsonResponse({"detail": "bad scenario_id/mode"}, status=400)
     user = request.user if getattr(request, "user", None) else None
     job_id = submit_planner_job(scenario_id=scenario_id, mode=mode, user=user)
-    run_planner_job(job_id)
+    dispatch_planner_job(job_id)
     return JsonResponse({"job_id": str(job_id), "status": "queued"}, status=201)
 
 
