@@ -1,0 +1,26 @@
+{
+  "description": "PR7 — async happy path. Small scenario used by commit-3 runner tests: submit a job, poll through queued→running→succeeded, assert result_json byte-equals the sync-path payload for the same scenario.",
+  "scenario": {
+    "sections": [
+      {"course_code": "CS101", "section_code": "S1", "enrolment": 10, "instructor_id": "I1", "student_ids": ["ST001"]},
+      {"course_code": "CS102", "section_code": "S1", "enrolment": 10, "instructor_id": "I2", "student_ids": ["ST002"]}
+    ],
+    "slot_pool": [
+      {"day": "SUN", "start_time": "08:00", "end_time": "09:15"},
+      {"day": "MON", "start_time": "08:00", "end_time": "09:15"}
+    ],
+    "rooms": [
+      {"room_code": "A101", "capacity": 40, "room_type": "lecture", "gender": ""},
+      {"room_code": "A102", "capacity": 40, "room_type": "lecture", "gender": ""}
+    ]
+  },
+  "expected": {
+    "sync_vs_async_payload": "byte-equal after strip_pr7_fields_for_parity on both sides",
+    "async_terminal_status": "succeeded",
+    "last_stage_seen_min": "greedy"
+  },
+  "notes": [
+    "Trivial scenario — greedy alone places everything. Sufficient for proving the runner path without triggering SA / CP-SAT / chain / rooming_repair.",
+    "Commit 1 expects the importer tripwire to fail (planner_job_runner missing); commit 3 turns this suite green."
+  ]
+}

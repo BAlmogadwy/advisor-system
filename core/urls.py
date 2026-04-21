@@ -46,6 +46,12 @@ from .exam_views import (
     exam_timetable_page,
     exam_timetable_preview_courses_view,
 )
+from .planner_job_views import (
+    planner_job_cancel,
+    planner_job_poll,
+    planner_job_result,
+    planner_job_submit,
+)
 from .planner_views import (
     planner_build_view,
     planner_context_view,
@@ -469,4 +475,17 @@ urlpatterns = [
     ),
     # Dev role switch — guarded inside the view itself (requires DEBUG + env var)
     path("ops/dev/switch-role/", dev_role_switch_view, name="dev_role_switch"),
+    # PR7 async planner endpoints (flag-gated inside the views)
+    path("planner-jobs/", planner_job_submit, name="planner_job_submit"),
+    path("planner-jobs/<uuid:job_id>/", planner_job_poll, name="planner_job_poll"),
+    path(
+        "planner-jobs/<uuid:job_id>/result/",
+        planner_job_result,
+        name="planner_job_result",
+    ),
+    path(
+        "planner-jobs/<uuid:job_id>/cancel/",
+        planner_job_cancel,
+        name="planner_job_cancel",
+    ),
 ]

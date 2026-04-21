@@ -1,0 +1,23 @@
+{
+  "description": "PR7 — failure capture. A run that raises inside a stage flips status→failed; error_message carries traceback + context; last_stage_seen is the last stage completed before the raise.",
+  "scenario": {
+    "sections": [
+      {"course_code": "CS101", "section_code": "S1", "enrolment": 10, "instructor_id": "I1", "student_ids": ["ST001"]}
+    ],
+    "slot_pool": [
+      {"day": "SUN", "start_time": "08:00", "end_time": "09:15"}
+    ],
+    "rooms": [
+      {"room_code": "A101", "capacity": 40, "room_type": "lecture", "gender": ""}
+    ]
+  },
+  "expected": {
+    "terminal_status": "failed",
+    "error_message_populated": true,
+    "last_stage_seen_reflects_progression": "authoritative, written by runner at each boundary — not inferred from PR6 stage_ms"
+  },
+  "notes": [
+    "Commit 3 test harness will monkey-patch the SA stage to raise a synthetic exception after greedy completes.",
+    "Assert last_stage_seen == 'greedy' (the last completed boundary) even though PR6 stage_ms might or might not record SA timing depending on where the raise lands. This proves last_stage_seen is the authoritative progression signal."
+  ]
+}

@@ -638,3 +638,83 @@ class BoardStudentLink(models.Model):
 
     def __str__(self) -> str:
         return f"BSL({self.board_id}/{self.student_id}/{self.link_type})"
+
+
+class PlannerJob(models.Model):
+    """PR7 — async planner job audit row.
+
+    Single-web-process async shim. See ``docs/PR7-DOR.md`` for the full
+    "what this is not" floor (process-local; not durable across deploys;
+    cooperative cancel only; no cross-process recovery).
+    """
+
+    STATUS_QUEUED = "queued"
+    STATUS_RUNNING = "running"
+    STATUS_SUCCEEDED = "succeeded"
+    STATUS_FAILED = "failed"
+    STATUS_CANCELLED = "cancelled"
+    STATUS_CHOICES = (
+        (STATUS_QUEUED, "Queued"),
+        (STATUS_RUNNING, "Running"),
+        (STATUS_SUCCEEDED, "Succeeded"),
+        (STATUS_FAILED, "Failed"),
+        (STATUS_CANCELLED, "Cancelled"),
+    )
+
+    MODE_OPTIMISE_CURRENT = "optimise_current"
+    MODE_FULL_REBUILD = "full_rebuild"
+    MODE_CHOICES = (
+        (MODE_OPTIMISE_CURRENT, "Optimise current"),
+        (MODE_FULL_REBUILD, "Full rebuild"),
+    )
+
+    STAGE_CHOICES = (
+        ("greedy", "greedy"),
+        ("sa", "sa"),
+        ("cpsat", "cpsat"),
+        ("chain", "chain"),
+        ("rooming_repair", "rooming_repair"),
+    )
+
+    id = models.UUIDField(primary_key=True, editable=False)
+    scenario = models.ForeignKey(
+        TimetableScenario,
+        on_delete=models.CASCADE,
+        related_name="planner_jobs",
+    )
+    board = models.ForeignKey(
+        DeliveryBoard,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="planner_jobs",
+    )
+    mode = models.CharField(max_length=32, choices=MODE_CHOICES)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_QUEUED)
+    submitted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="planner_jobs",
+    )
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    error_message = models.TextField(null=True, blank=True)  # noqa: DJ001
+    result_json = models.JSONField(null=True, blank=True)
+    last_stage_seen = models.CharField(  # noqa: DJ001
+        max_length=32, choices=STAGE_CHOICES, null=True, blank=True
+    )
+    cancel_requested = models.BooleanField(default=False)
+    request_signature = models.CharField(max_length=64, blank=True, default="")
+
+    class Meta:
+        db_table = "planner_jobs"
+        indexes = [
+            models.Index(fields=["scenario", "status"], name="idx_pj_scenario_status"),
+            models.Index(fields=["submitted_by", "-submitted_at"], name="idx_pj_user_submitted"),
+        ]
+
+    def __str__(self) -> str:
+        return f"PlannerJob({self.id}/{self.status})"
