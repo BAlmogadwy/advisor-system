@@ -129,6 +129,23 @@ def cancel_planner_job(
     return True
 
 
+def _clear_scenario_placements(scenario_id: int) -> int:
+    """Delete every ``SectionPlacement`` attached to any board of the
+    given scenario. Returns the number of rows removed.
+
+    Used when ``mode=full_rebuild`` — PR7 commits 2-5 ignored mode
+    entirely and always ran fill-unplaced. Calling this before
+    ``auto_place_scenario`` restores the expected "rebuild from
+    scratch" semantic.
+    """
+    from core.models import SectionPlacement
+
+    deleted, _ = SectionPlacement.objects.filter(
+        board__scenario_id=scenario_id,
+    ).delete()
+    return deleted
+
+
 def _derive_last_stage(result: dict | None) -> str | None:
     if not isinstance(result, dict):
         return None
@@ -169,7 +186,11 @@ def run_planner_job(job_id: uuid.UUID | str) -> None:
     job.save(update_fields=["status", "started_at"])
 
     try:
-        result = auto_place_scenario(job.scenario_id)
+        if job.mode == PlannerJob.MODE_FULL_REBUILD:
+            _clear_scenario_placements(job.scenario_id)
+            result = auto_place_scenario(job.scenario_id, strategy="adaptive")
+        else:
+            result = auto_place_scenario(job.scenario_id)
     except Exception as exc:
         job.status = PlannerJob.STATUS_FAILED
         summary = f"{type(exc).__name__}: {exc}"

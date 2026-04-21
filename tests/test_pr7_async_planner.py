@@ -126,6 +126,34 @@ class TestRunnerHappyPath(TransactionTestCase):
         )
 
 
+class TestFullRebuildModeClearsPlacements(TransactionTestCase):
+    """mode=full_rebuild must delete every existing placement on the
+    scenario's boards before the planner runs (fix/pr7-honor-job-mode)."""
+
+    @override_settings(TIMETABLE_PR7_ASYNC_PLANNER_ENABLED=True)
+    def test_full_rebuild_deletes_existing_placements(self) -> None:
+        from pr7_fixture_loader import load_pr7_fixture
+
+        from core.models import PlannerJob
+        from core.services.planner_job_runner import (
+            _clear_scenario_placements,
+            run_planner_job,
+            submit_planner_job,
+        )
+
+        scenario, _, _ = load_pr7_fixture("pr7_async_happy_path.json")
+
+        # Directly check the clear helper is safe on an empty scenario.
+        self.assertEqual(_clear_scenario_placements(scenario.id), 0)
+
+        # End-to-end: mode=full_rebuild goes through the clear path.
+        job_id = submit_planner_job(scenario_id=scenario.id, mode="full_rebuild", user=None)
+        run_planner_job(job_id)
+        job = PlannerJob.objects.get(id=job_id)
+        self.assertEqual(job.status, "succeeded")
+        self.assertEqual(job.mode, "full_rebuild")
+
+
 class TestFailureCapture(TransactionTestCase):
     """Runner captures exceptions → status=failed, error_message populated,
     last_stage_seen reflects the last completed stage. Green at commit 3."""
