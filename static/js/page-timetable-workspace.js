@@ -1558,7 +1558,35 @@ async function runOptimiseV2(mode = 'current') {
     });
 
     if (!data || !data.ok) {
-      notify.error(IS_AR ? 'فشل التحسين' : 'Optimisation failed');
+      // Surface the real error code + message from the backend envelope
+      // instead of the generic "failed" so the registrar can tell which
+      // failure class they hit. twFetch() already toasts on HTTP non-2xx
+      // and returns null in that case, so we only raise an extra toast
+      // when data is present (2xx with {ok:false}). Persist the last 20
+      // errors in localStorage under 'tw.optimiseErrors' so the context
+      // outlives the toast and can be copied into a bug report.
+      const err = (data && data.error) || {};
+      const code = err.code || (data ? 'UNKNOWN' : 'HTTP_ERROR');
+      const msg = err.message || (IS_AR ? 'فشل التحسين' : 'Optimisation failed');
+      const details = err.details || null;
+      if (data) {
+        const label = IS_AR ? 'فشل التحسين' : 'Optimisation failed';
+        notify.error(`${label}: ${code} — ${msg}`);
+      }
+      console.error('[runOptimiseV2]', { code, message: msg, details, scenarioId: TW.scenarioId, mode });
+      try {
+        const key = 'tw.optimiseErrors';
+        const history = JSON.parse(localStorage.getItem(key) || '[]');
+        history.unshift({
+          at: new Date().toISOString(),
+          scenarioId: TW.scenarioId,
+          mode,
+          code,
+          message: msg,
+          details,
+        });
+        localStorage.setItem(key, JSON.stringify(history.slice(0, 20)));
+      } catch (_) { /* localStorage full / blocked — ignore */ }
       return;
     }
 
