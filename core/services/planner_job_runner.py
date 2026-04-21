@@ -66,6 +66,32 @@ def get_planner_job(job_id: uuid.UUID | str) -> PlannerJob | None:
     return PlannerJob.objects.filter(id=job_id).first()
 
 
+def cancel_planner_job(
+    job_id: uuid.UUID | str,
+    *,
+    user: Any | None = None,
+) -> bool:
+    """Cooperatively request cancellation of a planner job.
+
+    Sets ``cancel_requested=True``. The runner checks the flag at each
+    stage boundary (and before starting) and transitions to
+    ``cancelled`` if seen. Returns ``True`` when the flag was set,
+    ``False`` when the job does not exist or is already terminal.
+    """
+    job = PlannerJob.objects.filter(id=job_id).first()
+    if job is None:
+        return False
+    if job.status in {
+        PlannerJob.STATUS_SUCCEEDED,
+        PlannerJob.STATUS_FAILED,
+        PlannerJob.STATUS_CANCELLED,
+    }:
+        return False
+    job.cancel_requested = True
+    job.save(update_fields=["cancel_requested"])
+    return True
+
+
 def _derive_last_stage(result: dict | None) -> str | None:
     if not isinstance(result, dict):
         return None
@@ -122,6 +148,7 @@ def run_planner_job(job_id: uuid.UUID | str) -> None:
 
 __all__ = [
     "ASYNC_PLANNER_ENABLED_SETTING",
+    "cancel_planner_job",
     "get_planner_job",
     "is_async_planner_enabled",
     "run_planner_job",
