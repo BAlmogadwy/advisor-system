@@ -209,11 +209,32 @@ No flag, no env switch, no migration.
 
 ## Closeout
 
-To be filled at commit 8 with:
+**8 commits landed on `refactor/pr9-debt-consolidation`.**
 
-- final 8-commit summary
-- test-count before/after (expect no change)
-- regression-pack green snapshot (PR3/PR4/PR5/PR6/PR7/PR8)
-- list of files removed from repo cruft
-- list of files newly tracked
-- architecture note link
+| # | Sha     | Subject |
+|---|---------|---------|
+| 0 | 579b454 | DoR — debt consolidation |
+| 1 | 39b6786 | Repo-hygiene sweep |
+| 2 | 796f3b8 | Consolidate flag helpers into `timetable_flags` |
+| 3 | f4f9f39 | Stage-vocabulary single source of truth |
+| 4 | e535737 | Provenance-only lint test for PR5 stage fields |
+| 5 | 64e8dbc | Consolidate test-infra quirks into one doc |
+| 6 | 7c7f476 | Targeted mypy tightening on PR-touched planner files |
+| 7 | e304681 | Planner architecture one-sheet map |
+| 8 | (this)  | Closeout — no-op, DoR update only |
+
+**Test count.** 428 passed / 2 skipped (was 427 / 2 pre-PR9, +1 from
+`test_pr5_stage_provenance_inert`). No regressions on PR3–PR8
+acceptance packs.
+
+**Removed from repo.** `core/services.zip`, `prod_seed_rooms.py`,
+`prod_seed_rooms.sh`, `rooms_F_seed.json`, `rooms_merged.json`,
+`rooms_seed.json`, `seed_f_rooms.py`, `seed_m_rooms.py`,
+`snapshots/planner-refactor-2026-04-20/core/`,
+`snapshots/planner-refactor-2026-04-20/static/`, `static/mockups/`.
+
+**Newly tracked.** `core/services/timetable_flags.py`,
+`tests/test_pr5_stage_provenance_inert.py`,
+`docs/TEST-INFRA-QUIRKS.md`, `docs/PLANNER-ARCHITECTURE.md`.
+
+**Architecture note.** See [PLANNER-ARCHITECTURE.md](PLANNER-ARCHITECTURE.md).
