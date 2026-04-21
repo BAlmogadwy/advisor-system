@@ -979,7 +979,10 @@ def optimise_scenario_timetable_v2(
         for board in boards:
             # Clear rooms on changed placements so assign_rooms_to_board can redo them
             SectionPlacement.objects.filter(board=board, room="UNASSIGNED").update(room="")
-            assign_rooms_to_board(board.id)
+            rooming_result = assign_rooms_to_board(board.id)
+            # PR5 commit 6: overlay rooming-repair trace (last-changer-wins).
+            for k, v in (rooming_result.get("decision_trace") or {}).items():
+                result["decision_trace"][k] = v
 
     elapsed = time.time() - t0
     result["elapsed_seconds"] = round(elapsed, 1)
@@ -1238,7 +1241,10 @@ def optimise_current_timetable(
         boards = DeliveryBoard.objects.filter(scenario_id=scenario_id)
         for board in boards:
             SectionPlacement.objects.filter(board=board, room="UNASSIGNED").update(room="")
-            assign_rooms_to_board(board.id)
+            rooming_result = assign_rooms_to_board(board.id)
+            # PR5 commit 6: overlay rooming-repair trace (last-changer-wins).
+            for k, v in (rooming_result.get("decision_trace") or {}).items():
+                result["decision_trace"][k] = v
     else:
         result["persist_result"] = {"action": "no_change"}
         logger.info("No improvement found — board unchanged")

@@ -582,6 +582,48 @@ class TestChainRotationEmission(TransactionTestCase):
         )
 
 
+def _seed_unassigned_placement(
+    scenario,
+    board,
+    course_code: str = "CS101",
+    section: str = "S1",
+    day: str = "Sun",
+    start: str = "08:00",
+    end: str = "09:15",
+) -> None:
+    """Seed a SectionPlacement with ``room='UNASSIGNED'`` so rooming's
+    2nd-pass repair logic has something to rescue.
+
+    The PR3 loader only materialises ``locks`` — ``baseline_placements``
+    entries are read at runtime by warm-start, not persisted. PR5's
+    rooming-repair test needs an actual ``SectionPlacement`` row with the
+    UNASSIGNED sentinel, which is what this helper creates.
+    """
+    from core.models import SectionPlacement, TermSection
+
+    ts, _ = TermSection.objects.get_or_create(
+        scenario=scenario,
+        course_key=course_code,
+        section=section,
+        defaults={
+            "course_code": course_code,
+            "course_number": course_code,
+            "course_name": course_code,
+            "available_capacity": 40,
+            "source_tag": "pr5_rooming_seed",
+        },
+    )
+    SectionPlacement.objects.create(
+        board=board,
+        term_section=ts,
+        day=day,
+        start_time=start,
+        end_time=end,
+        room="UNASSIGNED",
+        is_locked=False,
+    )
+
+
 class TestRoomingRepairEmission(TransactionTestCase):
     """Rooming 2nd-pass emits ``ROOMING_REPAIR_REASSIGNED`` when it
     repairs an UNASSIGNED."""
@@ -592,7 +634,8 @@ class TestRoomingRepairEmission(TransactionTestCase):
 
         from core.services.timetable_rooming import assign_rooms_to_board
 
-        _, board, _ = load_pr5_fixture("pr5_rooming_repair.json")
+        scenario, board, _ = load_pr5_fixture("pr5_rooming_repair.json")
+        _seed_unassigned_placement(scenario, board)
         result = assign_rooms_to_board(board.id)
         trace = result.get("decision_trace", {}) or {}
         repair_entries = [
@@ -604,6 +647,28 @@ class TestRoomingRepairEmission(TransactionTestCase):
         for entry in repair_entries:
             ctx = entry.get("stage_context", {}) or {}
             assert ctx.get("previous_room") == "UNASSIGNED"
+            assert ctx.get("code") == "ROOMING_REPAIR_REASSIGNED"
+            assert ctx.get("new_room") and ctx["new_room"] != "UNASSIGNED"
+            assert entry.get("chosen_room") == ctx["new_room"]
+
+    @override_settings(TIMETABLE_PR5_STAGE_TRACE_ENABLED=False)
+    def test_flag_off_emits_no_rooming_repair_trace(self) -> None:
+        """Flag off: repair still happens, but trace stays empty."""
+        from pr5_fixture_loader import load_pr5_fixture
+
+        from core.services.timetable_rooming import assign_rooms_to_board
+
+        scenario, board, _ = load_pr5_fixture("pr5_rooming_repair.json")
+        _seed_unassigned_placement(scenario, board)
+        result = assign_rooms_to_board(board.id)
+        trace = result.get("decision_trace", {}) or {}
+        repair_entries = [
+            entry for entry in trace.values() if entry.get("stage_origin") == "rooming_repair"
+        ]
+        assert not repair_entries, (
+            "flag-off must not emit rooming-repair trace entries; PR5 kill-switch contract "
+            f"(got: {repair_entries!r})"
+        )
 
 
 class TestStageOriginSemantic(TransactionTestCase):
