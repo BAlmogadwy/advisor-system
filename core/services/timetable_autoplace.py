@@ -53,6 +53,7 @@ descending demand order (highest ``total_demand`` first).
 from __future__ import annotations
 
 import logging
+import time
 from collections import defaultdict
 from itertools import combinations
 
@@ -90,6 +91,12 @@ from core.services.timetable_room_oracle import (
     check_type_feasibility,
     is_room_oracle_enabled,
     room_failure_breakdown,
+)
+from core.services.timetable_stage_telemetry import (
+    empty_stage_telemetry,
+    is_stage_telemetry_enabled,
+    record_stage_iterations,
+    record_stage_ms,
 )
 from core.services.timetable_validation import (
     LOCK_RESPECT,
@@ -853,6 +860,8 @@ def auto_place_board(
             # ``removed`` here. Scenario-level aggregation (commit 6) sees
             # the true set via the boards that DO run through the pipeline.
             "perturbation_metric": compute_perturbation_metric([], None),
+            # PR6 commit 3 — telemetry block always present, zeros here.
+            "stage_telemetry": empty_stage_telemetry(),
         }
 
     scenario = board.scenario
@@ -1015,6 +1024,8 @@ def auto_place_board(
             # board's courses, so pass ``None`` rather than falsely
             # attributing scenario-wide entries as ``removed``.
             "perturbation_metric": compute_perturbation_metric([], None),
+            # PR6 commit 3 — zero telemetry on the no-budget fast path.
+            "stage_telemetry": empty_stage_telemetry(),
         }
 
     # ── 2. Build student-to-course mapping ────────────────────────────
@@ -1250,6 +1261,22 @@ def auto_place_board(
     # conflict space, and so on.
     max_sections_needed = max((cd["to_place"] for cd in course_data), default=0)
 
+    # PR6 commit 3 — greedy stage instrumentation.
+    # Per DoR §3 + ChatGPT commit-3 ruling:
+    #   greedy.ms         = placement-loop wall time only (monotonic clock)
+    #   greedy.iterations = section-placement decisions attempted
+    #                       (includes failed/unassigned attempts)
+    # Setup work (graph build, sort, room preload) is deliberately NOT
+    # timed — that keeps the metric comparable across scenarios with
+    # different setup costs. Flag-off short-circuits both reads so the
+    # non-telemetry path has zero measurable overhead.
+    _telemetry_on = is_stage_telemetry_enabled()
+    _greedy_attempts = 0
+    # perf_counter gives sub-millisecond resolution on Windows where
+    # monotonic() can round to the 15ms OS tick — matters for tiny
+    # fixtures where a 1-section placement finishes well under one tick.
+    _greedy_t0 = time.perf_counter() if _telemetry_on else 0.0
+
     for sec_round in range(1, max_sections_needed + 1):
         # Gap weighting: the primary group (S1) receives a 10x multiplier
         # on gap penalty, making the algorithm work hard to give them a
@@ -1274,6 +1301,12 @@ def auto_place_board(
             sec_idx = cd["already"] + sec_round
             if sec_round > cd["to_place"]:
                 continue
+
+            # PR6 commit 3 — count one placement decision attempted.
+            # Incremented past the to_place guard so rounds with nothing
+            # to do don't inflate the counter. Failed/unassigned attempts
+            # still count (ChatGPT ruling a).
+            _greedy_attempts += 1
 
             code = cd["code"]
             sec_label = f"S{sec_idx}"
@@ -1789,6 +1822,12 @@ def auto_place_board(
                     alternatives=tuple(alternatives),
                 ).to_dict()
 
+    # PR6 commit 3 — stop the greedy clock. Flag-off path stays at zeros.
+    _stage_telemetry = empty_stage_telemetry()
+    if _telemetry_on:
+        record_stage_ms(_stage_telemetry, "greedy", int((time.perf_counter() - _greedy_t0) * 1000))
+        record_stage_iterations(_stage_telemetry, "greedy", _greedy_attempts)
+
     logger.info(
         "auto_place_board(board=%s): placed=%d skipped=%d "
         "prayer_rule_on=%s (rejections=%d) lock_rule_on=%s (rejections=%d) "
@@ -1850,6 +1889,9 @@ def auto_place_board(
                 else None
             ),
         ),
+        # PR6 commit 3 — schema-stable telemetry block. Keys always
+        # present; values populated when the flag is on, zero otherwise.
+        "stage_telemetry": _stage_telemetry,
     }
 
 

@@ -33,7 +33,8 @@ Per PR6 DoR (docs/PR6-DOR.md):
 
 from __future__ import annotations
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, TransactionTestCase
+from django.test.utils import override_settings
 
 # Contract imports — the commit-1 tripwire. Every symbol below names
 # something commit 2 exposes. A rename or a dropped symbol breaks the
@@ -45,6 +46,15 @@ from core.services.timetable_stage_telemetry import (  # noqa: E402 — tripwire
     record_stage_iterations,
     record_stage_ms,
 )
+
+
+def _run_greedy(board_id: int) -> dict:
+    """Invoke the greedy placer. Local import keeps the planner stack
+    out of collection time (mirrors PR5's helper)."""
+    from core.services.timetable_autoplace import auto_place_board
+
+    return auto_place_board(board_id)
+
 
 STAGE_KEYS = ("greedy", "sa", "cpsat", "chain", "rooming_repair")
 
@@ -130,15 +140,44 @@ class TestFlagHelperDefault(SimpleTestCase):
 # ===========================================================================
 
 
-class TestGreedyStageEmission(SimpleTestCase):
-    """Green at commit 3."""
+class TestGreedyStageEmission(TransactionTestCase):
+    """Green at commit 3 — running greedy over pr6_greedy_telemetry.json
+    with the flag on populates greedy.ms and greedy.iterations without
+    touching any other stage key."""
 
-    def test_greedy_ms_populated_when_greedy_runs(self) -> None:
-        # Commit 3 wires this up by running the planner over
-        # pr6_greedy_telemetry.json and asserting
-        #   telemetry["stage_ms"]["greedy"] > 0
-        #   telemetry["stage_iterations"]["greedy"] > 0
-        self.skipTest("wired at PR6 commit 3 (greedy instrumentation)")
+    @override_settings(TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED=True)
+    def test_greedy_populates_only_greedy_keys(self) -> None:
+        from pr6_fixture_loader import load_pr6_fixture
+
+        _, board, _ = load_pr6_fixture("pr6_greedy_telemetry.json")
+        result = _run_greedy(board.id)
+        telemetry = result.get("stage_telemetry")
+
+        self.assertIsNotNone(telemetry, "auto_place_board must return stage_telemetry")
+        self.assertIn("stage_ms", telemetry)
+        self.assertIn("stage_iterations", telemetry)
+        self.assertGreater(telemetry["stage_ms"]["greedy"], 0)
+        self.assertGreater(telemetry["stage_iterations"]["greedy"], 0)
+        for k in ("sa", "cpsat", "chain", "rooming_repair"):
+            self.assertEqual(telemetry["stage_ms"][k], 0, f"non-greedy stage {k}.ms must be zero")
+            self.assertEqual(
+                telemetry["stage_iterations"][k],
+                0,
+                f"non-greedy stage {k}.iterations must be zero",
+            )
+
+    @override_settings(TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED=False)
+    def test_flag_off_leaves_all_telemetry_zero(self) -> None:
+        from pr6_fixture_loader import load_pr6_fixture
+
+        _, board, _ = load_pr6_fixture("pr6_greedy_telemetry.json")
+        result = _run_greedy(board.id)
+        telemetry = result.get("stage_telemetry")
+
+        self.assertIsNotNone(telemetry)
+        for k in STAGE_KEYS:
+            self.assertEqual(telemetry["stage_ms"][k], 0)
+            self.assertEqual(telemetry["stage_iterations"][k], 0)
 
 
 class TestSAStageEmission(SimpleTestCase):

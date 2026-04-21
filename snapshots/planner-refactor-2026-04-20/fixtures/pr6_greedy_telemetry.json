@@ -1,22 +1,31 @@
 {
-  "description": "PR6 — greedy-only placement. No SA/CPSAT/chain/rooming-repair triggers. Expect only greedy.ms and greedy.iterations > 0; all other stage keys zero.",
+  "description": "PR6 — greedy-only placement. Multi-section multi-slot scenario that exercises the greedy round-robin placer long enough that perf_counter measures a non-zero ms, without triggering any post-greedy stage. Expect only greedy.ms and greedy.iterations > 0; all other stage keys zero.",
   "scenario": {
     "sections": [
-      {"course_code": "CS101", "section_code": "S1", "enrolment": 10, "instructor_id": "I1", "student_ids": ["ST001"]}
+      {"course_code": "CS101", "section_code": "S1", "enrolment": 10, "instructor_id": "I1", "student_ids": ["ST001", "ST002", "ST003"]},
+      {"course_code": "CS102", "section_code": "S1", "enrolment": 10, "instructor_id": "I2", "student_ids": ["ST001", "ST002", "ST003"]},
+      {"course_code": "CS103", "section_code": "S1", "enrolment": 10, "instructor_id": "I3", "student_ids": ["ST004", "ST005", "ST006"]},
+      {"course_code": "CS104", "section_code": "S1", "enrolment": 10, "instructor_id": "I4", "student_ids": ["ST004", "ST005", "ST006"]}
     ],
     "slot_pool": [
-      {"day": "SUN", "start_time": "08:00", "end_time": "09:15"}
+      {"day": "SUN", "start_time": "08:00", "end_time": "09:15"},
+      {"day": "SUN", "start_time": "09:30", "end_time": "10:45"},
+      {"day": "MON", "start_time": "08:00", "end_time": "09:15"},
+      {"day": "MON", "start_time": "09:30", "end_time": "10:45"}
     ],
     "rooms": [
-      {"room_code": "A101", "capacity": 40, "room_type": "lecture", "gender": ""}
+      {"room_code": "A101", "capacity": 40, "room_type": "lecture", "gender": ""},
+      {"room_code": "A102", "capacity": 40, "room_type": "lecture", "gender": ""}
     ]
   },
   "expected": {
     "stage_ms_nonzero": ["greedy"],
     "stage_iterations_nonzero": ["greedy"],
-    "all_other_stages_zero": true
+    "all_other_stages_zero": true,
+    "iterations_gte": 4
   },
   "notes": [
-    "Commit 3 wires assertions: telemetry['stage_ms']['greedy'] > 0 and telemetry['stage_iterations']['greedy'] > 0, all others == 0."
+    "Four sections × two cohort pairs across four non-conflicting slots. Greedy places all four without stalling; post-greedy stages stay idle because there is no same-cohort clump to relax and no room-crowding to repair.",
+    "greedy.iterations should be >= 4 (one per section attempted). greedy.ms measured via time.perf_counter so even fast placements register non-zero."
   ]
 }
