@@ -52,6 +52,12 @@ from core.services.timetable_solver_codes import (
     SA_RELOCATE_ACCEPTED,
     is_stage_trace_enabled,
 )
+from core.services.timetable_stage_telemetry import (
+    empty_stage_telemetry,
+    is_stage_telemetry_enabled,
+    record_stage_iterations,
+    record_stage_ms,
+)
 
 
 def _to_min(t: str) -> int:
@@ -273,7 +279,7 @@ def optimize_board(
     try:
         board = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
     except DeliveryBoard.DoesNotExist:
-        return {"status": "error"}
+        return {"status": "error", "stage_telemetry": empty_stage_telemetry()}
 
     scenario = board.scenario
     slot_config = scenario.slot_config or DEFAULT_SLOTS
@@ -308,7 +314,12 @@ def optimize_board(
     )
 
     if not placements:
-        return {"status": "empty", "cost_before": 0, "cost_after": 0}
+        return {
+            "status": "empty",
+            "cost_before": 0,
+            "cost_after": 0,
+            "stage_telemetry": empty_stage_telemetry(),
+        }
 
     # Build sections list and initial schedule
     sections = []
@@ -425,6 +436,13 @@ def optimize_board(
     improvements = 0
     start_time = time.time()
 
+    # PR6 commit 4 — SA stage boundary fence (perf_counter for sub-ms
+    # resolution; monotonic across Python stdlib contract). Instrument
+    # only at the stage entry/exit, not inside the inner loop body
+    # (ChatGPT commit-4 ruling: no per-iteration timing arrays).
+    _telemetry_on = is_stage_telemetry_enabled()
+    _sa_t0 = time.perf_counter() if _telemetry_on else 0.0
+
     while time.time() - start_time < max_seconds:
         iterations += 1
         temperature *= cooling_rate
@@ -460,6 +478,13 @@ def optimize_board(
         else:
             # Rejected — undo
             _undo_move(schedule, sec_idx, m_idx, old_opt)
+
+    # PR6 commit 4 — close the SA stage fence. sa.iterations is the
+    # count of SA attempts (not accepted moves), per ChatGPT ruling.
+    _stage_telemetry = empty_stage_telemetry()
+    if _telemetry_on:
+        record_stage_ms(_stage_telemetry, "sa", int((time.perf_counter() - _sa_t0) * 1000))
+        record_stage_iterations(_stage_telemetry, "sa", iterations)
 
     # Restore best found
     schedule = best_schedule
@@ -515,6 +540,11 @@ def optimize_board(
         "schedule": schedule,
         "sections": sections,
         "decision_trace": decision_trace,
+        # PR6 commit 4 — schema-stable telemetry block; sa.* populated
+        # when flag on, zero otherwise. Other stage keys stay at zero
+        # (greedy.* lives on auto_place_board's payload; scenario-level
+        # aggregation at commit 7 sums per-key across both sources).
+        "stage_telemetry": _stage_telemetry,
     }
 
 

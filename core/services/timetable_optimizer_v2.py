@@ -38,6 +38,7 @@ from core.services.timetable_candidate_eval import (
     evaluate_generated_timetable_candidate,
     rank_timetable_candidates,
 )
+from core.services.timetable_stage_telemetry import empty_stage_telemetry
 from core.services.timetable_workspace import _to_minutes
 
 logger = logging.getLogger(__name__)
@@ -653,6 +654,8 @@ def optimise_scenario_timetable_v2(
                 "newly_placed_count": 0,
                 "removed_count": 0,
             },
+            # PR6 commit 5 — schema-stable empty stage_telemetry on early-return.
+            "stage_telemetry": empty_stage_telemetry(),
         }
 
     t1 = time.time()
@@ -672,6 +675,8 @@ def optimise_scenario_timetable_v2(
                 "newly_placed_count": 0,
                 "removed_count": 0,
             },
+            # PR6 commit 5 — schema-stable empty stage_telemetry on early-return.
+            "stage_telemetry": empty_stage_telemetry(),
         }
 
     t2 = time.time()
@@ -728,6 +733,12 @@ def optimise_scenario_timetable_v2(
             "newly_placed_count": 0,
             "removed_count": 0,
         },
+        # PR6 commit 5 — scenario-level stage_telemetry. Seeded empty here
+        # so the schema is stable on every V2 exit path. CP-SAT polisher
+        # populates cpsat.ms/iterations in-place when the flag is on and
+        # the solver is actually invoked (not merely enabled by config).
+        # Other stages' keys are wired in later PR6 commits.
+        "stage_telemetry": empty_stage_telemetry(),
     }
 
     # ── Step 4: Local search on the best candidate ──
@@ -829,6 +840,7 @@ def optimise_scenario_timetable_v2(
                 course_room_requirements=None,
                 max_iterations=max_chain_iterations,
                 decision_trace_out=chain_trace_out,
+                stage_telemetry=result["stage_telemetry"],
             )
 
             if chain_result.lexicographic_score < current_eval_for_chain.lexicographic_score:
@@ -886,6 +898,7 @@ def optimise_scenario_timetable_v2(
                 current_eval=current_eval_for_chain,
                 time_limit_seconds=cpsat_time_limit,
                 hotspot_only=cpsat_hotspot_only,
+                stage_telemetry=result["stage_telemetry"],
             )
 
             if cpsat_result is not None:
@@ -945,6 +958,20 @@ def optimise_scenario_timetable_v2(
     # returned them).
     if "perturbation_metric" in scenario_place_result:
         result["perturbation_metric"] = scenario_place_result["perturbation_metric"]
+    # PR6 commit 7 — scenario-level greedy telemetry aggregation. Each
+    # board's auto_place_board records greedy.ms/iterations into its own
+    # stage_telemetry, and auto_place_scenario sums those. Fold that
+    # scenario-level sum into the V2 result so scenario_sum == board_sum
+    # across the full pipeline (DoR §3 aggregation rule).
+    _scen_tel = scenario_place_result.get("stage_telemetry") or {}
+    if isinstance(_scen_tel, dict):
+        for _k in ("greedy", "sa", "cpsat", "chain", "rooming_repair"):
+            result["stage_telemetry"]["stage_ms"][_k] += int(
+                _scen_tel.get("stage_ms", {}).get(_k, 0)
+            )
+            result["stage_telemetry"]["stage_iterations"][_k] += int(
+                _scen_tel.get("stage_iterations", {}).get(_k, 0)
+            )
     # PR5 commit 7 — always seed ``changes_by_stage`` so the schema is
     # stable flag-on or flag-off. When no baseline is provided the
     # changed-from-baseline set is empty, so all five buckets are 0 and
@@ -995,6 +1022,14 @@ def optimise_scenario_timetable_v2(
             # PR5 commit 6: overlay rooming-repair trace (last-changer-wins).
             for k, v in (rooming_result.get("decision_trace") or {}).items():
                 result["decision_trace"][k] = v
+            # PR6 commit 6: sum board-level rooming_repair telemetry into
+            # the scenario-level aggregate. stage_ms sums wall times,
+            # stage_iterations sums reassignment counts across boards.
+            _board_tel = rooming_result.get("stage_telemetry") or {}
+            _board_ms = _board_tel.get("stage_ms", {}).get("rooming_repair", 0)
+            _board_it = _board_tel.get("stage_iterations", {}).get("rooming_repair", 0)
+            result["stage_telemetry"]["stage_ms"]["rooming_repair"] += int(_board_ms)
+            result["stage_telemetry"]["stage_iterations"]["rooming_repair"] += int(_board_it)
 
     elapsed = time.time() - t0
     result["elapsed_seconds"] = round(elapsed, 1)
@@ -1054,6 +1089,8 @@ def optimise_current_timetable(
                 "newly_placed_count": 0,
                 "removed_count": 0,
             },
+            # PR6 commit 5 — schema-stable empty stage_telemetry on early-return.
+            "stage_telemetry": empty_stage_telemetry(),
         }
 
     # ── Step 2: Read current placements as-is ──
@@ -1070,6 +1107,8 @@ def optimise_current_timetable(
                 "newly_placed_count": 0,
                 "removed_count": 0,
             },
+            # PR6 commit 5 — schema-stable empty stage_telemetry on early-return.
+            "stage_telemetry": empty_stage_telemetry(),
         }
 
     from core.services import timetable_student_assignment as ssa
@@ -1121,6 +1160,9 @@ def optimise_current_timetable(
             "newly_placed_count": 0,
             "removed_count": 0,
         },
+        # PR6 commit 5 — scenario-level stage_telemetry seeded empty; the
+        # CP-SAT polisher populates its keys when invoked with the flag on.
+        "stage_telemetry": empty_stage_telemetry(),
     }
 
     # ── Step 3: Local search on current state ──
@@ -1186,6 +1228,7 @@ def optimise_current_timetable(
             course_room_requirements=None,
             max_iterations=max_chain_iterations,
             decision_trace_out=chain_trace_out,
+            stage_telemetry=result["stage_telemetry"],
         )
         if chain_result.lexicographic_score < current_eval.lexicographic_score:
             result["chain_search_applied"] = True
@@ -1214,6 +1257,7 @@ def optimise_current_timetable(
             current_eval=current_eval,
             time_limit_seconds=cpsat_time_limit,
             hotspot_only=cpsat_hotspot_only,
+            stage_telemetry=result["stage_telemetry"],
         )
         if cpsat_result is not None:
             cpsat_eval = cpsat_result["eval"]
@@ -1257,6 +1301,12 @@ def optimise_current_timetable(
             # PR5 commit 6: overlay rooming-repair trace (last-changer-wins).
             for k, v in (rooming_result.get("decision_trace") or {}).items():
                 result["decision_trace"][k] = v
+            # PR6 commit 6: sum board-level rooming_repair telemetry.
+            _board_tel = rooming_result.get("stage_telemetry") or {}
+            _board_ms = _board_tel.get("stage_ms", {}).get("rooming_repair", 0)
+            _board_it = _board_tel.get("stage_iterations", {}).get("rooming_repair", 0)
+            result["stage_telemetry"]["stage_ms"]["rooming_repair"] += int(_board_ms)
+            result["stage_telemetry"]["stage_iterations"]["rooming_repair"] += int(_board_it)
     else:
         result["persist_result"] = {"action": "no_change"}
         logger.info("No improvement found — board unchanged")

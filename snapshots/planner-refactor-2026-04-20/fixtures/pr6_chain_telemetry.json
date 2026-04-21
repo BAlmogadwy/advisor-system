@@ -1,0 +1,32 @@
+{
+  "description": "PR6 commit 6 — chain-rotation stage telemetry. Mirrors pr5_chain_rotation.json: three shared-student sections form a bridge graph (CS101-CS102-CS103) so CS102 is the sole hotspot when all three seed the same slot. Test seeds all three at SUN 08:00 via ORM, then calls optimise_current_timetable with run_local_search=False and run_cpsat_polish=False so chain is the only stage that can move anything. With TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED=True, result.stage_telemetry.stage_ms.chain > 0 and chain.iterations == iterations attempted (matches the natural outer-loop counter, not accepted chains count). Other stage keys may stay zero at this commit scope.",
+  "scenario": {
+    "sections": [
+      {"course_code": "CS101", "section_code": "S1", "enrolment": 10, "instructor_id": "I1",
+        "student_ids": ["ST001", "ST002", "ST003", "ST004", "ST005"]},
+      {"course_code": "CS102", "section_code": "S1", "enrolment": 10, "instructor_id": "I2",
+        "student_ids": ["ST001", "ST002", "ST003", "ST004", "ST005", "ST006", "ST007", "ST008", "ST009", "ST010"]},
+      {"course_code": "CS103", "section_code": "S1", "enrolment": 10, "instructor_id": "I3",
+        "student_ids": ["ST006", "ST007", "ST008", "ST009", "ST010"]}
+    ],
+    "slot_pool": [
+      {"day": "SUN", "start_time": "08:00", "end_time": "09:15"},
+      {"day": "MON", "start_time": "08:00", "end_time": "09:15"},
+      {"day": "TUE", "start_time": "08:00", "end_time": "09:15"},
+      {"day": "WED", "start_time": "08:00", "end_time": "09:15"}
+    ],
+    "rooms": [
+      {"room_code": "R1", "capacity": 30, "room_type": "lecture", "gender": ""}
+    ]
+  },
+  "expected": {
+    "stage_ms_nonzero": ["chain"],
+    "stage_iterations_nonzero": ["chain"]
+  },
+  "notes": [
+    "Test seeds all three sections at SUN 08:00 via ORM so CS102 becomes the unique hotspot.",
+    "chain-2 partners = {CS101, CS103}; chain search rotates CS102 + a partner off SUN and the score strictly improves.",
+    "chain.iterations counts the attempted outer-loop iterations of chain_local_search (matches the natural loop, not accepted-chains count).",
+    "Flag-off variant must leave all five stage keys at 0 even though the chain run emits PR5 decision-trace entries."
+  ]
+}

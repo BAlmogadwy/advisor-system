@@ -1,0 +1,25 @@
+{
+  "description": "PR6 — scenario/board aggregation. Multi-board scenario where the scenario-level stage_telemetry must equal the per-key sum of board-level stage_telemetry for the same run.",
+  "scenario": {
+    "sections": [
+      {"course_code": "CS101", "section_code": "S1", "enrolment": 10, "instructor_id": "I1", "student_ids": ["ST001"]},
+      {"course_code": "CS102", "section_code": "S1", "enrolment": 10, "instructor_id": "I2", "student_ids": ["ST002"]}
+    ],
+    "slot_pool": [
+      {"day": "SUN", "start_time": "08:00", "end_time": "09:15"},
+      {"day": "MON", "start_time": "08:00", "end_time": "09:15"}
+    ],
+    "rooms": [
+      {"room_code": "A101", "capacity": 40, "room_type": "lecture", "gender": ""},
+      {"room_code": "A102", "capacity": 40, "room_type": "lecture", "gender": ""}
+    ]
+  },
+  "expected": {
+    "invariant": "scenario.stage_telemetry[key] == sum(board.stage_telemetry[key] for board in scenario.boards)",
+    "applies_to": ["stage_ms", "stage_iterations"]
+  },
+  "notes": [
+    "Commit 7 wires this: scenario-level merge via merge_stage_telemetry across boards.",
+    "Not a per-board payload in PR6 — only a scenario-level one. Invariant still holds structurally because merge is associative."
+  ]
+}

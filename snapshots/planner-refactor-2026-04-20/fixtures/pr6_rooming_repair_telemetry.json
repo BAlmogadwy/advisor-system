@@ -1,0 +1,28 @@
+{
+  "description": "PR6 commit 6 — rooming-repair stage telemetry. Mirrors pr5_rooming_repair: section has a baseline UNASSIGNED placement the second pass can repair. First pass rejects the tight room via the 1.1 capacity buffer (demand 35, TIGHT capacity 35 -> needs 39); a larger ROOMY room is picked up by the repair pass. With TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED=True, stage_telemetry.stage_ms.rooming_repair > 0 and stage_iterations.rooming_repair == reassignments count (matches ROOMING_REPAIR_REASSIGNED semantics). Test drives assign_rooms_to_board directly with the UNASSIGNED placement so timing is scoped to repair only.",
+  "scenario": {
+    "sections": [
+      {"course_code": "CS101", "section_code": "S1", "enrolment": 35, "instructor_id": "I1", "student_ids": ["ST001"]}
+    ],
+    "slot_pool": [
+      {"day": "SUN", "start_time": "08:00", "end_time": "09:15"}
+    ],
+    "rooms": [
+      {"room_code": "TIGHT", "capacity": 35, "room_type": "lecture", "gender": ""},
+      {"room_code": "ROOMY", "capacity": 60, "room_type": "lecture", "gender": ""}
+    ],
+    "baseline_placements": {
+      "CS101|S1": {"day": "SUN", "start_time": "08:00", "end_time": "09:15", "room": "UNASSIGNED"}
+    }
+  },
+  "expected": {
+    "stage_ms_nonzero": ["rooming_repair"],
+    "stage_iterations_nonzero": ["rooming_repair"]
+  },
+  "notes": [
+    "Test calls assign_rooms_to_board directly with a UNASSIGNED-seeded placement so telemetry is scoped to the repair pass only.",
+    "Demand 35, TIGHT raw cap 35 rejected by 1.1 buffer (needs 39); ROOMY cap 60 picked up by repair pass.",
+    "rooming_repair.iterations counts reassignments (matches ROOMING_REPAIR_REASSIGNED emission count).",
+    "Flag-off variant must leave all five stage keys at 0 even though ROOMING_REPAIR_REASSIGNED still emits to decision trace."
+  ]
+}
