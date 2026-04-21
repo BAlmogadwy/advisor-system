@@ -945,6 +945,18 @@ def optimise_scenario_timetable_v2(
     # returned them).
     if "perturbation_metric" in scenario_place_result:
         result["perturbation_metric"] = scenario_place_result["perturbation_metric"]
+    # PR5 commit 7 — always seed ``changes_by_stage`` so the schema is
+    # stable flag-on or flag-off. When no baseline is provided the
+    # changed-from-baseline set is empty, so all five buckets are 0 and
+    # the invariant ``sum == changes_from_baseline_count`` holds trivially.
+    from core.services.timetable_stage_summary import (
+        compute_changes_by_stage as _compute_cbs,
+    )
+
+    _pm = result.get("perturbation_metric") or {}
+    _changed_codes: set[str] = set()  # baseline=None in this path
+    _pm["changes_by_stage"] = _compute_cbs(result.get("decision_trace") or {}, _changed_codes)
+    result["perturbation_metric"] = _pm
 
     # Then: if local search improved the timetable, apply those
     # improvements on top of the baseline placements

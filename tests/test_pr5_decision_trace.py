@@ -740,8 +740,9 @@ class TestChangesByStageSum(TransactionTestCase):
             scenario, _, _ = load_pr5_fixture(fixture)
             result = optimise_scenario_timetable_v2(
                 scenario.id,
-                enable_sa=True,
-                enable_cpsat_polisher=True,
+                run_local_search=True,
+                run_chain_search=False,
+                run_cpsat_polish=True,
                 cpsat_time_limit=3.0,
             )
             perturbation = result.get("perturbation_metric", {}) or {}
