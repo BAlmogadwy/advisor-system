@@ -37,6 +37,14 @@ Timing discipline (PR6 DoR §Implementation cautions):
 - Callers MUST use ``time.monotonic()`` or ``time.perf_counter()`` —
   not ``datetime.now()`` — so NTP adjustments can't produce negative
   or wildly inflated deltas.
+- **Prefer ``time.perf_counter()``** for stage timing.
+  ``time.monotonic()`` on Windows rounds to the ~15 ms OS scheduler
+  tick, which made tiny fixtures report ``0 ms`` on the commit-3
+  greedy run even though real DB-write work was happening.
+  ``perf_counter()`` is also guaranteed monotonic (Python stdlib
+  contract) but offers sub-microsecond resolution on every supported
+  platform, so the metric stays meaningful regardless of fixture size.
+  All PR6 stage instrumentation (commits 3–6) uses ``perf_counter``.
 - This module stays clock-agnostic: it only stores the integer ms
   caller hands it. Keeping the monotonic discipline at the call site
   matches PR5's pattern (no implicit wall-time in helper modules).

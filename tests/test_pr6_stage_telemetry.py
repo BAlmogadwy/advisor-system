@@ -180,11 +180,55 @@ class TestGreedyStageEmission(TransactionTestCase):
             self.assertEqual(telemetry["stage_iterations"][k], 0)
 
 
-class TestSAStageEmission(SimpleTestCase):
-    """Green at commit 4."""
+class TestSAStageEmission(TransactionTestCase):
+    """Green at commit 4 — running SA over pr6_sa_telemetry.json with
+    the flag on populates sa.ms and sa.iterations on the SA result
+    payload."""
 
-    def test_sa_ms_populated_when_sa_runs(self) -> None:
-        self.skipTest("wired at PR6 commit 4 (SA instrumentation)")
+    @override_settings(
+        TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED=True,
+        TIMETABLE_PR5_STAGE_TRACE_ENABLED=True,
+    )
+    def test_sa_populates_sa_keys_when_sa_runs(self) -> None:
+        from pr6_fixture_loader import load_pr6_fixture
+
+        from core.services.timetable_local_search import optimize_and_persist_board
+
+        _, board, _ = load_pr6_fixture("pr6_sa_telemetry.json")
+        _run_greedy(board.id)
+        sa_result = optimize_and_persist_board(board.id, max_seconds=2.0)
+
+        telemetry = sa_result.get("stage_telemetry")
+        self.assertIsNotNone(telemetry, "optimize_and_persist_board must return stage_telemetry")
+        self.assertGreater(telemetry["stage_ms"]["sa"], 0)
+        self.assertGreater(telemetry["stage_iterations"]["sa"], 0)
+        # SA must equal iterations ATTEMPTED, not improvements accepted.
+        # Improvements are always <= iterations; a test scenario that
+        # accepts every move is atypical, so this guard ensures we're
+        # not silently counting only accepted moves.
+        self.assertGreaterEqual(
+            telemetry["stage_iterations"]["sa"],
+            sa_result.get("improvements", 0),
+        )
+        for k in ("greedy", "cpsat", "chain", "rooming_repair"):
+            self.assertEqual(telemetry["stage_ms"][k], 0)
+            self.assertEqual(telemetry["stage_iterations"][k], 0)
+
+    @override_settings(TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED=False)
+    def test_flag_off_sa_telemetry_zero(self) -> None:
+        from pr6_fixture_loader import load_pr6_fixture
+
+        from core.services.timetable_local_search import optimize_and_persist_board
+
+        _, board, _ = load_pr6_fixture("pr6_sa_telemetry.json")
+        _run_greedy(board.id)
+        sa_result = optimize_and_persist_board(board.id, max_seconds=2.0)
+
+        telemetry = sa_result.get("stage_telemetry")
+        self.assertIsNotNone(telemetry)
+        for k in STAGE_KEYS:
+            self.assertEqual(telemetry["stage_ms"][k], 0)
+            self.assertEqual(telemetry["stage_iterations"][k], 0)
 
 
 class TestCPSATStageEmission(SimpleTestCase):
