@@ -124,6 +124,14 @@ async function twFetch(url, opts = {}) {
       renderRightPanel(tab.dataset.tab);
     });
   });
+
+  // Keep the scenario selector in sync whenever the registrar edits Year/Sem
+  // without needing to click Generate.
+  ['twYear', 'twTerm'].forEach(id => $(id).addEventListener('change', loadScenarios));
+
+  // Prime the selector on first paint using the default year/term so it is
+  // never empty when the page loads.
+  loadScenarios();
 })();
 
 /* ── Generate Workspace ── */

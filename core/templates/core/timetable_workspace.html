@@ -67,8 +67,8 @@
   </div>
 </div>
 
-<!-- A2. Workspace Command Bar (hidden until scenario active) -->
-<div class="tw-cmd-bar d-none" id="twCmdBar">
+<!-- A2. Workspace Command Bar (always visible — scenario selector and Optimise button live here) -->
+<div class="tw-cmd-bar" id="twCmdBar">
   <label class="visually-hidden" for="twScenario">Scenario</label>
   <select id="twScenario" title="{% if LANGUAGE_CODE == 'ar' %}السيناريو{% else %}Scenario{% endif %}">
     <option value="">{% if LANGUAGE_CODE == 'ar' %}اختر سيناريو{% else %}Select Scenario{% endif %}</option>
@@ -93,7 +93,7 @@
 
   <span id="twValidationBadge" class="tw-badge tw-badge-draft">{% if LANGUAGE_CODE == 'ar' %}مسودة{% else %}Draft{% endif %}</span>
 
-  <span class="d-none" id="twOptimiseGroup" style="position:relative">
+  <span id="twOptimiseGroup" style="position:relative">
     <button class="tw-btn" id="twOptimise" type="button" title="{% if LANGUAGE_CODE == 'ar' %}تحسين الجدول الحالي{% else %}Improve current board{% endif %}">
       <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;margin-inline-end:3px"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
       {% if LANGUAGE_CODE == 'ar' %}تحسين{% else %}Optimise{% endif %}
@@ -196,5 +196,5 @@
   const defaultYear = {{ default_year }};
   const defaultTerm = {{ default_term }};
 </script>
-<script src="{% static 'js/page-timetable-workspace.js' %}?v=8"></script>
+<script src="{% static 'js/page-timetable-workspace.js' %}?v=9"></script>
 {% endblock %}
