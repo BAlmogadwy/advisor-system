@@ -49,6 +49,11 @@ const TW = {
   studentSummary: null,      // student classification summary
 };
 
+// Expose workspace state for the PR8 async-job UI adapter (reads
+// TW.scenarioId at submit time so the Run-in-background card targets
+// whatever scenario the registrar currently has active).
+window.TW = TW;
+
 /* ── API ── */
 async function twFetch(url, opts = {}) {
   // Wrap safeFetch with better error extraction for our {ok, error: {code, message}} format
