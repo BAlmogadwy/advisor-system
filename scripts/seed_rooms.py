@@ -1,9 +1,9 @@
 """Rooms-table seed — authoritative 62-room set.
 
-Syncs the ``Room`` table from two source PDFs:
-  F: 33 rooms (hall_capacity_cleaned)
-  M: 29 rooms (العدد الفعلي للقاعات والمعامل)
-Total: 62 rooms.
+Syncs the ``Room`` table from two source PDFs plus supplemental labs:
+  F: 33 rooms (hall_capacity_cleaned) — 7 labs + 26 lectures
+  M: 29 lecture rooms (العدد الفعلي للقاعات والمعامل) + 2 AI/DS labs
+Total: 64 rooms.
 
 Local usage (Windows bash / SQLite):
 
@@ -91,6 +91,12 @@ M_ROOMS = [
     ("172GD004", 40, "SC,SC2"),
 ]
 
+M_LABS = [
+    # (code, capacity, department) — M-side labs (building 172)
+    ("172GB001", 25, "AI,AI2,DS,DS2"),
+    ("172GB005", 25, "AI,AI2,DS,DS2"),
+]
+
 print(
     f"Before: F={Room.objects.filter(section='F').count()}, M={Room.objects.filter(section='M').count()}, total={Room.objects.count()}"
 )
@@ -108,8 +114,8 @@ for code, wing, bld, rtype, cap, dept in F_ROOMS:
         section="F",
     )
 
-# Sync M: drop orphans, upsert canonical
-pdf_m_codes = {c for c, _, _ in M_ROOMS}
+# Sync M: drop orphans, upsert canonical (lectures + labs)
+pdf_m_codes = {c for c, _, _ in M_ROOMS} | {c for c, _, _ in M_LABS}
 Room.objects.filter(section="M").exclude(room_code__in=pdf_m_codes).delete()
 for code, cap, dept in M_ROOMS:
     Room.objects.update_or_create(
@@ -119,6 +125,18 @@ for code, cap, dept in M_ROOMS:
             "capacity": cap,
             "department": dept,
             "room_type": "lecture",
+            "building": "",
+            "wing": "",
+        },
+    )
+for code, cap, dept in M_LABS:
+    Room.objects.update_or_create(
+        room_code=code,
+        section="M",
+        defaults={
+            "capacity": cap,
+            "department": dept,
+            "room_type": "lab",
             "building": "",
             "wing": "",
         },
