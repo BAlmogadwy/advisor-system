@@ -38,6 +38,7 @@ from core.services.timetable_candidate_eval import (
     evaluate_generated_timetable_candidate,
     rank_timetable_candidates,
 )
+from core.services.timetable_stage_telemetry import empty_stage_telemetry
 from core.services.timetable_workspace import _to_minutes
 
 logger = logging.getLogger(__name__)
@@ -653,6 +654,8 @@ def optimise_scenario_timetable_v2(
                 "newly_placed_count": 0,
                 "removed_count": 0,
             },
+            # PR6 commit 5 — schema-stable empty stage_telemetry on early-return.
+            "stage_telemetry": empty_stage_telemetry(),
         }
 
     t1 = time.time()
@@ -672,6 +675,8 @@ def optimise_scenario_timetable_v2(
                 "newly_placed_count": 0,
                 "removed_count": 0,
             },
+            # PR6 commit 5 — schema-stable empty stage_telemetry on early-return.
+            "stage_telemetry": empty_stage_telemetry(),
         }
 
     t2 = time.time()
@@ -728,6 +733,12 @@ def optimise_scenario_timetable_v2(
             "newly_placed_count": 0,
             "removed_count": 0,
         },
+        # PR6 commit 5 — scenario-level stage_telemetry. Seeded empty here
+        # so the schema is stable on every V2 exit path. CP-SAT polisher
+        # populates cpsat.ms/iterations in-place when the flag is on and
+        # the solver is actually invoked (not merely enabled by config).
+        # Other stages' keys are wired in later PR6 commits.
+        "stage_telemetry": empty_stage_telemetry(),
     }
 
     # ── Step 4: Local search on the best candidate ──
@@ -886,6 +897,7 @@ def optimise_scenario_timetable_v2(
                 current_eval=current_eval_for_chain,
                 time_limit_seconds=cpsat_time_limit,
                 hotspot_only=cpsat_hotspot_only,
+                stage_telemetry=result["stage_telemetry"],
             )
 
             if cpsat_result is not None:
@@ -1054,6 +1066,8 @@ def optimise_current_timetable(
                 "newly_placed_count": 0,
                 "removed_count": 0,
             },
+            # PR6 commit 5 — schema-stable empty stage_telemetry on early-return.
+            "stage_telemetry": empty_stage_telemetry(),
         }
 
     # ── Step 2: Read current placements as-is ──
@@ -1070,6 +1084,8 @@ def optimise_current_timetable(
                 "newly_placed_count": 0,
                 "removed_count": 0,
             },
+            # PR6 commit 5 — schema-stable empty stage_telemetry on early-return.
+            "stage_telemetry": empty_stage_telemetry(),
         }
 
     from core.services import timetable_student_assignment as ssa
@@ -1121,6 +1137,9 @@ def optimise_current_timetable(
             "newly_placed_count": 0,
             "removed_count": 0,
         },
+        # PR6 commit 5 — scenario-level stage_telemetry seeded empty; the
+        # CP-SAT polisher populates its keys when invoked with the flag on.
+        "stage_telemetry": empty_stage_telemetry(),
     }
 
     # ── Step 3: Local search on current state ──
@@ -1214,6 +1233,7 @@ def optimise_current_timetable(
             current_eval=current_eval,
             time_limit_seconds=cpsat_time_limit,
             hotspot_only=cpsat_hotspot_only,
+            stage_telemetry=result["stage_telemetry"],
         )
         if cpsat_result is not None:
             cpsat_eval = cpsat_result["eval"]

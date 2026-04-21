@@ -231,11 +231,100 @@ class TestSAStageEmission(TransactionTestCase):
             self.assertEqual(telemetry["stage_iterations"][k], 0)
 
 
-class TestCPSATStageEmission(SimpleTestCase):
-    """Green at commit 5."""
+def _seed_cpsat_overlapping_placements(scenario, board) -> None:
+    """Seed CS101|S1 and CS102|S1 into the same MON 08:00 slot so the
+    CP-SAT polisher is guaranteed to find (and improve) a cross-course
+    overlap. Mirrors ``_seed_overlapping_placements`` in
+    ``test_pr5_decision_trace.py`` — kept local here to avoid
+    cross-suite imports."""
+    from core.models import SectionPlacement, TermSection
 
-    def test_cpsat_ms_populated_when_cpsat_runs(self) -> None:
-        self.skipTest("wired at PR6 commit 5 (CP-SAT instrumentation)")
+    for course in ("CS101", "CS102"):
+        ts, _ = TermSection.objects.get_or_create(
+            scenario=scenario,
+            course_key=course,
+            section="S1",
+            defaults={
+                "course_code": course,
+                "course_number": course,
+                "course_name": course,
+                "available_capacity": 30,
+                "source_tag": "pr6_cpsat_seed",
+            },
+        )
+        SectionPlacement.objects.create(
+            board=board,
+            term_section=ts,
+            day="MON",
+            start_time="08:00",
+            end_time="09:15",
+            room="R1",
+            is_locked=False,
+        )
+
+
+class TestCPSATStageEmission(TransactionTestCase):
+    """Green at commit 5 — running the CP-SAT polisher over
+    pr6_cpsat_telemetry.json with the flag on populates cpsat.ms and
+    cpsat.iterations=1 on the scenario-level stage_telemetry. Other
+    stage keys stay zero at this commit."""
+
+    @override_settings(TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED=True)
+    def test_cpsat_populates_cpsat_keys_when_cpsat_runs(self) -> None:
+        from pr6_fixture_loader import load_pr6_fixture
+
+        from core.services.timetable_optimizer_v2 import optimise_current_timetable
+
+        scenario, board, _ = load_pr6_fixture("pr6_cpsat_telemetry.json")
+        _seed_cpsat_overlapping_placements(scenario, board)
+
+        result = optimise_current_timetable(
+            scenario.id,
+            run_local_search=False,
+            run_chain_search=False,
+            run_cpsat_polish=True,
+            cpsat_time_limit=15.0,
+        )
+
+        telemetry = result.get("stage_telemetry")
+        self.assertIsNotNone(telemetry, "optimise_current_timetable must return stage_telemetry")
+        self.assertIn("stage_ms", telemetry)
+        self.assertIn("stage_iterations", telemetry)
+        # Guardrail from PR6 DoR §3: iterations==1 means solver.solve()
+        # was actually invoked, not merely enabled by config.
+        self.assertEqual(telemetry["stage_iterations"]["cpsat"], 1)
+        self.assertGreater(telemetry["stage_ms"]["cpsat"], 0)
+        # Other stage keys stay zero at commit 5 (commits 6/7 wire them).
+        for k in ("sa", "chain", "rooming_repair"):
+            self.assertEqual(telemetry["stage_ms"][k], 0, f"non-cpsat stage {k}.ms must be zero")
+            self.assertEqual(
+                telemetry["stage_iterations"][k],
+                0,
+                f"non-cpsat stage {k}.iterations must be zero",
+            )
+
+    @override_settings(TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED=False)
+    def test_flag_off_leaves_cpsat_telemetry_zero(self) -> None:
+        from pr6_fixture_loader import load_pr6_fixture
+
+        from core.services.timetable_optimizer_v2 import optimise_current_timetable
+
+        scenario, board, _ = load_pr6_fixture("pr6_cpsat_telemetry.json")
+        _seed_cpsat_overlapping_placements(scenario, board)
+
+        result = optimise_current_timetable(
+            scenario.id,
+            run_local_search=False,
+            run_chain_search=False,
+            run_cpsat_polish=True,
+            cpsat_time_limit=15.0,
+        )
+
+        telemetry = result.get("stage_telemetry")
+        self.assertIsNotNone(telemetry)
+        for k in STAGE_KEYS:
+            self.assertEqual(telemetry["stage_ms"][k], 0)
+            self.assertEqual(telemetry["stage_iterations"][k], 0)
 
 
 class TestChainStageEmission(SimpleTestCase):

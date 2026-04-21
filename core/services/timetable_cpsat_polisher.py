@@ -16,6 +16,7 @@ confirmed by the student-assignment evaluator.
 from __future__ import annotations
 
 import logging
+import time
 from collections import defaultdict
 
 from ortools.sat.python import cp_model
@@ -38,6 +39,11 @@ from core.services.timetable_autoplace import (
 from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
 from core.services.timetable_decision_trace import DecisionTrace
 from core.services.timetable_solver_codes import CPSAT_IMPROVED, is_stage_trace_enabled
+from core.services.timetable_stage_telemetry import (
+    is_stage_telemetry_enabled,
+    record_stage_iterations,
+    record_stage_ms,
+)
 from core.services.timetable_workspace import _time_mask, _to_minutes
 
 logger = logging.getLogger(__name__)
@@ -86,6 +92,7 @@ def polish_scenario_with_cpsat(
     current_eval: TimetableEvaluationResult,
     time_limit_seconds: float = 60.0,
     hotspot_only: bool = False,
+    stage_telemetry: dict[str, dict[str, int]] | None = None,
 ) -> dict | None:
     """Run a global CP-SAT pass as a polisher on the current best timetable.
 
@@ -314,7 +321,16 @@ def polish_scenario_with_cpsat(
     solver.parameters.num_workers = 8
     solver.parameters.random_seed = 42
 
+    # PR6 commit 5 — stage-boundary timing. Guardrail: iterations==1 means
+    # the polisher was actually invoked (solver.solve() reached), not
+    # merely enabled by config. All early returns above this fence leave
+    # cpsat telemetry at zero (short-circuit semantics per DoR §3).
+    _telemetry_on = stage_telemetry is not None and is_stage_telemetry_enabled()
+    _cpsat_t0 = time.perf_counter() if _telemetry_on else 0.0
     status = solver.solve(model)
+    if _telemetry_on:
+        record_stage_ms(stage_telemetry, "cpsat", int((time.perf_counter() - _cpsat_t0) * 1000))
+        record_stage_iterations(stage_telemetry, "cpsat", 1)
     status_name = solver.status_name(status)
 
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):

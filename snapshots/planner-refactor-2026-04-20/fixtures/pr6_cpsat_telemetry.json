@@ -1,23 +1,29 @@
 {
-  "description": "PR6 — CP-SAT polish telemetry. Refined at commit 5 to mirror pr5_cpsat_improve. Stub at commit 1.",
+  "description": "PR6 commit 5 — CP-SAT stage telemetry. Mirrors pr5_cpsat_improve.json: two cross-course sections (CS101, CS102) sharing all 10 students across three slots and one lecture room. Test seeds both placements into the SAME slot (MON 08:00) via ORM, then calls optimise_current_timetable with run_local_search=False and run_chain_search=False so CP-SAT runs on the seeded state directly. The polisher's weighted-overlap proxy (shared*5) strongly prefers splitting the pair; the real evaluator confirms the improvement. With TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED=True, the result must carry stage_telemetry.stage_ms.cpsat > 0 and stage_telemetry.stage_iterations.cpsat == 1; other stage keys stay zero at this commit.",
   "scenario": {
     "sections": [
-      {"course_code": "CS101", "section_code": "S1", "enrolment": 10, "instructor_id": "I1", "student_ids": ["ST001"]}
+      {"course_code": "CS101", "section_code": "S1", "enrolment": 10, "instructor_id": "I1",
+        "student_ids": ["ST001", "ST002", "ST003", "ST004", "ST005", "ST006", "ST007", "ST008", "ST009", "ST010"]},
+      {"course_code": "CS102", "section_code": "S1", "enrolment": 10, "instructor_id": "I2",
+        "student_ids": ["ST001", "ST002", "ST003", "ST004", "ST005", "ST006", "ST007", "ST008", "ST009", "ST010"]}
     ],
     "slot_pool": [
-      {"day": "SUN", "start_time": "08:00", "end_time": "09:15"}
+      {"day": "MON", "start_time": "08:00", "end_time": "09:15"},
+      {"day": "MON", "start_time": "09:30", "end_time": "10:45"},
+      {"day": "TUE", "start_time": "08:00", "end_time": "09:15"}
     ],
     "rooms": [
-      {"room_code": "A101", "capacity": 40, "room_type": "lecture", "gender": ""}
+      {"room_code": "R1", "capacity": 30, "room_type": "lecture", "gender": ""}
     ]
   },
   "expected": {
-    "stage_ms_nonzero": ["greedy", "cpsat"],
-    "stage_iterations_nonzero": ["greedy", "cpsat"],
+    "stage_ms_nonzero": ["cpsat"],
+    "stage_iterations_nonzero": ["cpsat"],
     "cpsat_iterations_equals_one_if_run": true
   },
   "notes": [
-    "cpsat.iterations is defined as 1 if CP-SAT polish ran, else 0 (PR6 DoR).",
-    "Commit 5 refines this fixture to actually trigger a CPSAT improvement (copy from pr5_cpsat_improve)."
+    "Guardrail: cpsat.iterations == 1 means solver.solve() was actually invoked. Paths that short-circuit earlier (no scenario, no sections to polish) leave both keys at 0.",
+    "Test seeds MON 08:00 for both sections (same slot → heavy overlap) so CP-SAT is guaranteed to find an improvement and run its solver.",
+    "Flag-off variant: TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED=False must leave all five keys at 0 even though the polisher still runs and emits PR5 decision-trace entries."
   ]
 }
