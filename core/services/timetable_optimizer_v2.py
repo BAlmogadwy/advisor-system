@@ -958,6 +958,20 @@ def optimise_scenario_timetable_v2(
     # returned them).
     if "perturbation_metric" in scenario_place_result:
         result["perturbation_metric"] = scenario_place_result["perturbation_metric"]
+    # PR6 commit 7 — scenario-level greedy telemetry aggregation. Each
+    # board's auto_place_board records greedy.ms/iterations into its own
+    # stage_telemetry, and auto_place_scenario sums those. Fold that
+    # scenario-level sum into the V2 result so scenario_sum == board_sum
+    # across the full pipeline (DoR §3 aggregation rule).
+    _scen_tel = scenario_place_result.get("stage_telemetry") or {}
+    if isinstance(_scen_tel, dict):
+        for _k in ("greedy", "sa", "cpsat", "chain", "rooming_repair"):
+            result["stage_telemetry"]["stage_ms"][_k] += int(
+                _scen_tel.get("stage_ms", {}).get(_k, 0)
+            )
+            result["stage_telemetry"]["stage_iterations"][_k] += int(
+                _scen_tel.get("stage_iterations", {}).get(_k, 0)
+            )
     # PR5 commit 7 — always seed ``changes_by_stage`` so the schema is
     # stable flag-on or flag-off. When no baseline is provided the
     # changed-from-baseline set is empty, so all five buckets are 0 and

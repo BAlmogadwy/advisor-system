@@ -48,6 +48,19 @@ Timing discipline (PR6 DoR §Implementation cautions):
 - This module stays clock-agnostic: it only stores the integer ms
   caller hands it. Keeping the monotonic discipline at the call site
   matches PR5's pattern (no implicit wall-time in helper modules).
+
+Sub-millisecond clamp convention (PR6 commit 6):
+
+- A few stages (notably ``rooming_repair``) can finish in under 1 ms
+  on trivial fixtures. Raw ``int(elapsed_s * 1000)`` would truncate
+  such runs to ``0``, collapsing "ran for 0.1 ms" into "did not run".
+- Call sites that want to preserve the "``0`` means did not run"
+  invariant therefore clamp with ``max(1, int(...))`` when the stage
+  is known to have executed (telemetry is on and work was observed).
+  So a value of ``1`` can mean *"ran but faster than our millisecond
+  resolution"* — not exactly 1 ms wall time.
+- This is an observability-only convention; the raw ms write path
+  in ``record_stage_ms`` is unchanged and trusts the caller's integer.
 """
 
 from __future__ import annotations

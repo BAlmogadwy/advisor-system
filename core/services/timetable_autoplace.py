@@ -95,6 +95,7 @@ from core.services.timetable_room_oracle import (
 from core.services.timetable_stage_telemetry import (
     empty_stage_telemetry,
     is_stage_telemetry_enabled,
+    merge_stage_telemetry,
     record_stage_iterations,
     record_stage_ms,
 )
@@ -2254,6 +2255,16 @@ def auto_place_scenario(
         results[board.label] = r
         total_placed += r["placed"]
         total_skipped += r["skipped"]
+    # PR6 commit 7 — scenario-level stage_telemetry = sum of board-level.
+    # Aggregation rule per DoR §3: stage_ms and stage_iterations sum
+    # board-wise; no averaging. auto_place_board only touches greedy and
+    # rooming_repair, but the fold is key-agnostic so later stages (when
+    # called through this path) aggregate the same way.
+    _scenario_tel = empty_stage_telemetry()
+    for _board_result in results.values():
+        _bt = _board_result.get("stage_telemetry")
+        if isinstance(_bt, dict):
+            _scenario_tel = merge_stage_telemetry(_scenario_tel, _bt)
     return {
         "boards": results,
         "total_placed": total_placed,
@@ -2264,4 +2275,5 @@ def auto_place_scenario(
         # before counting, so summing the four counters across boards is
         # loss-free (no double-counting of ``removed``).
         "perturbation_metric": _sum_board_perturbation_metrics(results),
+        "stage_telemetry": _scenario_tel,
     }
