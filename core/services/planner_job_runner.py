@@ -64,7 +64,7 @@ def dispatch_planner_job(job_id: uuid.UUID | str) -> Future:
 
 ASYNC_PLANNER_ENABLED_SETTING = "TIMETABLE_PR7_ASYNC_PLANNER_ENABLED"
 
-_STAGE_ORDER = ("greedy", "sa", "cpsat", "chain", "rooming_repair")
+from core.services.timetable_stage_telemetry import STAGE_KEYS as _STAGE_ORDER  # noqa: E402
 
 
 def is_async_planner_enabled() -> bool:  # noqa: D401 — back-compat re-export
