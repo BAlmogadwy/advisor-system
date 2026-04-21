@@ -36,18 +36,15 @@ PR7_FLAG = "TIMETABLE_PR7_ASYNC_PLANNER_ENABLED"
 
 class TestPR7Tripwire(SimpleTestCase):
     """Tripwire — fails at commit 1, green at commit 2 when the model
-    and runner skeleton land."""
+    and runner skeleton land. The parity-helper import is exercised by
+    ``TestParityHelper`` (commit 7) to keep this class's green-turnover
+    aligned with commit 2."""
 
     def test_planner_job_model_importable(self) -> None:
         from core.models import PlannerJob  # noqa: F401
 
     def test_planner_job_runner_importable(self) -> None:
         from core.services import planner_job_runner  # noqa: F401
-
-    def test_pr7_parity_helper_importable(self) -> None:
-        from core.services.timetable_pr7_parity import (  # noqa: F401
-            strip_pr7_fields_for_parity,
-        )
 
 
 class TestPlannerJobShape(TransactionTestCase):
