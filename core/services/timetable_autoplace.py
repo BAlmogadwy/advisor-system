@@ -522,12 +522,33 @@ def _score_option(
                 student_overlap_penalty += shared
 
     # ── (2) Same-course overlap across ALL groups ─────────────────────
-    # Prevents the same instructor from being double-booked.
+    # Prevents the same instructor from being double-booked, and pushes
+    # sibling sections (S1/S2/S3 of the same course) onto the same day
+    # so the instructor isn't scattered across the week.
     same_course_overlap = 0
     if other_sections_masks:
         for other_code, other_mask in other_sections_masks:
             if other_code == my_code and (total_mask & other_mask):
                 same_course_overlap += 1
+    # Different-day penalty: for every already-placed section of the
+    # same course code NOT sharing a day with this candidate, add a
+    # large penalty. Weight 1000 per pair — large enough to dominate
+    # instructor_spread/time_variance but below hard overlap (+1 would
+    # be counted hundreds-of-times in overlap).
+    if placed_schedule:
+        option_days = {m["day"] for m in option}
+        same_course_days: dict[str, bool] = {}
+        for entry in placed_schedule:
+            entry_code = entry[3] if len(entry) > 3 else ""
+            if entry_code != my_code:
+                continue
+            entry_day = entry[0]
+            same_course_days.setdefault(entry_day, False)
+            if entry_day in option_days:
+                same_course_days[entry_day] = True
+        for shared in same_course_days.values():
+            if not shared:
+                same_course_overlap += 1000
 
     # ── (3) Student gap: idle minutes between on-campus classes ───────
     # Online courses are excluded because students do not need to be

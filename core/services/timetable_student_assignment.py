@@ -383,10 +383,14 @@ def _compute_same_course_section_spread(
     pair of sections of every multi-section course:
 
     - same day, back-to-back (gap==0 min)        → 0
-    - same day, gap 1-30 min                      → 30
-    - same day, gap 31-120 min                    → 120
-    - same day, gap > 120 min                     → gap_minutes
-    - different days                              → 1000
+    - same day, gap 1-30 min                      → 100
+    - same day, gap 31-120 min                    → 500
+    - same day, gap > 120 min                     → gap_minutes * 5
+    - different days                              → 100000
+
+    The different-day penalty is deliberately very large (100000 per
+    pair) so it dominates student-gap totals — registrar rule is that
+    same-course sections should share a day whenever feasible.
 
     Expressed in "minutes-equivalent" so the result can be folded into
     ``total_gap_minutes`` without changing the tuple shape.
@@ -409,18 +413,18 @@ def _compute_same_course_section_spread(
             for j in range(i + 1, len(first_meetings)):
                 a, b = first_meetings[i], first_meetings[j]
                 if a.day != b.day:
-                    total += 1000
+                    total += 100000
                     continue
                 gap = abs(a.start_min - b.start_min) - 75
                 gap = max(0, gap)
                 if gap == 0:
                     total += 0
                 elif gap <= 30:
-                    total += 30
+                    total += 100
                 elif gap <= 120:
-                    total += 120
+                    total += 500
                 else:
-                    total += gap
+                    total += gap * 5
     return total
 
 

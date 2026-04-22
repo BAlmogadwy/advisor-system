@@ -279,7 +279,20 @@ def chain_local_search(
         chains_tried = 0
 
         for chain in chains:
-            snap_a, snap_b = _apply_chain(chain, sections_by_id, pattern_catalog)
+            try:
+                snap_a, snap_b = _apply_chain(chain, sections_by_id, pattern_catalog)
+            except Exception:
+                continue
+
+            # Hard-reject: two sections of the same course must never share
+            # a (day, start_min) slot — registrar convention (one instructor
+            # per course). Mirrors the check in diagnostic_driven_local_search.
+            from core.services.timetable_local_search_v2 import _has_same_course_same_slot
+
+            if _has_same_course_same_slot(sections_by_id):
+                _rollback_chain(snap_a, snap_b, sections_by_id, room_occupancies)
+                chains_tried += 1
+                continue
 
             # Evaluate
             test_result = evaluate_generated_timetable_candidate(
