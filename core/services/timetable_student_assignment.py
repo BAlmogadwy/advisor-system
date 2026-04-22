@@ -383,9 +383,9 @@ def _compute_same_course_section_spread(
     pair of sections of every multi-section course:
 
     - same day, back-to-back (gap==0 min)        → 0
-    - same day, gap 1-30 min                      → 100
-    - same day, gap 31-120 min                    → 500
-    - same day, gap > 120 min                     → gap_minutes * 5
+    - same day, gap 1-30 min                      → 500
+    - same day, gap 31-120 min                    → 3000
+    - same day, gap > 120 min                     → gap_minutes * 50
     - different days                              → 100000
 
     The different-day penalty is deliberately very large (100000 per
@@ -420,11 +420,11 @@ def _compute_same_course_section_spread(
                 if gap == 0:
                     total += 0
                 elif gap <= 30:
-                    total += 100
-                elif gap <= 120:
                     total += 500
+                elif gap <= 120:
+                    total += 3000
                 else:
-                    total += gap * 5
+                    total += gap * 50
     return total
 
 
