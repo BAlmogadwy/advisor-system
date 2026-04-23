@@ -22,6 +22,8 @@ to pre-PR8. Hidden controls are toggled client-side by the adapter based on stat
   </header>
 
   <dl class="pr8-async-job-card__fields">
+    <dt>Scenario</dt><dd data-pr8-field="scenario">-</dd>
+    <dt>Output</dt><dd data-pr8-field="output_scenario">-</dd>
     <dt>Submitted</dt><dd data-pr8-field="submitted_at">{{ pr8_job.submitted_at|default:'-' }}</dd>
     <dt>Started</dt><dd data-pr8-field="started_at">{{ pr8_job.started_at|default:'-' }}</dd>
     <dt>Finished</dt><dd data-pr8-field="finished_at">{{ pr8_job.finished_at|default:'-' }}</dd>
@@ -49,6 +51,6 @@ to pre-PR8. Hidden controls are toggled client-side by the adapter based on stat
   <script data-pr8-config type="application/json">
     {{ pr8_config_json|default:'{"pollIntervalMs": 2000}'|safe }}
   </script>
-  <script src="{% static 'core/js/pr8_async_job_adapter.js' %}?v=2" defer></script>
+  <script src="{% static 'core/js/pr8_async_job_adapter.js' %}?v=4" defer></script>
 </section>
 {% endif %}
