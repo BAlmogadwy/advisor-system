@@ -403,28 +403,38 @@ def _compute_same_course_section_spread(
     for secs in by_course.values():
         if len(secs) < 2:
             continue
-        first_meetings = []
-        for sec in secs:
-            if not sec.meetings:
-                continue
-            anchor = min(sec.meetings, key=lambda m: (m.day, m.start_min))
-            first_meetings.append(anchor)
-        for i in range(len(first_meetings)):
-            for j in range(i + 1, len(first_meetings)):
-                a, b = first_meetings[i], first_meetings[j]
-                if a.day != b.day:
+        filtered = [sec for sec in secs if sec.meetings]
+        for i in range(len(filtered)):
+            for j in range(i + 1, len(filtered)):
+                sec_a, sec_b = filtered[i], filtered[j]
+                days_a = {m.day for m in sec_a.meetings}
+                days_b = {m.day for m in sec_b.meetings}
+                shared_days = days_a & days_b
+                if not shared_days:
                     total += 100000
                     continue
-                gap = abs(a.start_min - b.start_min) - 75
-                gap = max(0, gap)
-                if gap == 0:
-                    total += 0
-                elif gap <= 30:
-                    total += 500
-                elif gap <= 120:
-                    total += 3000
-                else:
-                    total += gap * 50
+                # Actual idle gap between the two sections' earliest
+                # meetings on each shared day — works for any meeting
+                # duration (75-min lectures, 100-min labs).
+                for day in shared_days:
+                    ma = min(
+                        (m for m in sec_a.meetings if m.day == day),
+                        key=lambda m: m.start_min,
+                    )
+                    mb = min(
+                        (m for m in sec_b.meetings if m.day == day),
+                        key=lambda m: m.start_min,
+                    )
+                    first, second = sorted([ma, mb], key=lambda m: m.start_min)
+                    gap = max(0, second.start_min - first.end_min)
+                    if gap == 0:
+                        total += 0
+                    elif gap <= 30:
+                        total += 500
+                    elif gap <= 120:
+                        total += 3000
+                    else:
+                        total += gap * 50
     return total
 
 

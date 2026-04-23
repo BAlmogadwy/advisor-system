@@ -41,20 +41,22 @@ def _min_to_hhmm(m: int) -> str:
 
 
 def _has_same_course_same_slot(sections_by_id: dict[str, SectionState]) -> bool:
-    """True iff two sections of the same course share a (day, start_min).
+    """True iff two sections of the same course overlap in time on the same day.
 
     Registrar convention: course code implies a single instructor across
-    all sections, so two sections meeting at the same time would be an
-    instructor clash even when the ``instructor_id`` field is empty.
+    all sections, so any time-overlap (not just identical start minutes)
+    is an instructor clash. Uses the 5-minute bitmask (`meeting.mask`) so
+    10:30-11:45 and 10:50-12:05 — which share 55 minutes but differ in
+    start — correctly register as a clash.
     """
-    seen: dict[tuple[str, int, int], str] = {}
+    by_course_day: dict[tuple[str, int], list[tuple[str, int]]] = {}
     for sec in sections_by_id.values():
         for m in sec.meetings:
-            key = (sec.course_code, m.day, m.start_min)
-            other = seen.get(key)
-            if other is not None and other != sec.section_id:
-                return True
-            seen[key] = sec.section_id
+            key = (sec.course_code, m.day)
+            for other_sid, other_mask in by_course_day.get(key, ()):
+                if other_sid != sec.section_id and (m.mask & other_mask):
+                    return True
+            by_course_day.setdefault(key, []).append((sec.section_id, m.mask))
     return False
 
 

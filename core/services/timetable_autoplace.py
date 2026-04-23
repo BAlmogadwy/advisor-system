@@ -614,7 +614,10 @@ def _score_option(
     #   - Slot-density load balancing: already-busy slots cost more, so
     #     the optimiser spreads horizontally rather than stacking every
     #     section at one peak slot (e.g. MON 14:30).
-    _SLOT_IDX_PENALTY = (0, 1, 2, 4, 8)  # indices 0-4
+    # Indices 0-5 match the 6-slot DEFAULT_SLOTS (09:00, 10:30, 10:50, 13:00,
+    # 14:30, 16:00). 10:30 and 10:50 are both morning — same weight (1).
+    # 13:00 = 2, 14:30 = 4, 16:00 = 8 (worst, kept as the unique peak penalty).
+    _SLOT_IDX_PENALTY = (0, 1, 1, 2, 4, 8)
     instructor_spread = 0
     if is_online:
         for m in option:
@@ -1219,6 +1222,7 @@ def auto_place_board(
             placed_schedule.append((lp.day, lp.start_time, lp.end_time, cc))
             all_placed_masks.append((cc, mask))
             slot_density[lp.start_time] += 1
+            day_density[lp.day] += 1
             if room_tracker and lp.room and lp.room != "UNASSIGNED":
                 room_tracker.mark_used(lp.day, lp.start_time, lp.end_time, lp.room)
             pr1_lock_rejections.append(
@@ -1498,11 +1502,19 @@ def auto_place_board(
                 # here we rely on the registrar's convention that course
                 # code → instructor. Rejected options are logged to the
                 # same trace bucket as INSTRUCTOR_CLASH.
+                # Time-overlap (not start-minute equality) so overlapping
+                # slots like 10:30-11:45 vs 10:50-12:05 are caught too.
                 same_course_ctx: dict | None = None
                 for m in option:
+                    m_start_min = _to_min(m["start"])
+                    m_end_min = _to_min(m["end"])
                     for ps in placed_schedule:
-                        p_day, p_start, _p_end, p_code = ps[:4]
-                        if p_code == code and p_day == m["day"] and p_start == m["start"]:
+                        p_day, p_start, p_end, p_code = ps[:4]
+                        if p_code != code or p_day != m["day"]:
+                            continue
+                        p_start_min = _to_min(p_start)
+                        p_end_min = _to_min(p_end)
+                        if p_start_min < m_end_min and p_end_min > m_start_min:
                             same_course_ctx = {
                                 "clashing_section": p_code,
                                 "same_course": True,

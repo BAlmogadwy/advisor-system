@@ -312,24 +312,49 @@ def repair_unassigned_after_greedy(
                     continue
 
                 occ_ts = occupant.term_section
-                occ_demand = occ_ts.available_capacity or 0
+                # Source demand from the budget map when available so a
+                # NULL available_capacity doesn't collapse the capacity
+                # filter to "any smallest room fits".
+                occ_budget = (rec.get("budget_map") or {}).get(occ_ts.course_code)
+                if occ_budget:
+                    occ_demand = int(occ_budget)
+                else:
+                    occ_demand = occ_ts.available_capacity or 40
                 # target_room_code is in U's pool(rtype, gender), so occupant's
                 # rtype must match U's rtype — same pool, same room_type.
                 occ_rtype = rtype
+                occ_end = (
+                    occupant.end_time.strftime("%H:%M")
+                    if hasattr(occupant.end_time, "strftime")
+                    else str(occupant.end_time)[:5]
+                )
 
-                tracker.release(day, start, target_room_code)
-                alt_room = tracker.assign_best_fit(day, start, occ_demand, occ_rtype, gender)
+                tracker.release(day, start, target_room_code, end=occ_end)
+                alt_room = tracker.assign_best_fit(
+                    day, start, occ_demand, occ_rtype, gender, end=occ_end
+                )
                 if alt_room and alt_room != target_room_code:
                     occupant.room = alt_room
                     occupant.save(update_fields=["room"])
                     occ_key = (occ_ts.id, day, start)
                     if occ_key in meeting_result_refs:
                         meeting_result_refs[occ_key]["room"] = alt_room
-                    tracker.usage[(day, start)].add(target_room_code)
+                    # Register U's new occupancy in BOTH indexes so the next
+                    # iteration's overlap-aware checks see the true state.
+                    if end is not None:
+                        tracker.mark_used(day, start, end, target_room_code)
+                    else:
+                        tracker.usage[(day, start)].add(target_room_code)
                     room_code = target_room_code
                     break
                 else:
-                    tracker.usage[(day, start)].add(target_room_code)
+                    # Swap attempt failed — put target_room_code back for the
+                    # occupant. If we had an end time, re-insert the interval
+                    # entry too so the stale removal doesn't persist.
+                    if end is not None:
+                        tracker.mark_used(day, start, occ_end, target_room_code)
+                    else:
+                        tracker.usage[(day, start)].add(target_room_code)
 
         if room_code:
             SectionPlacement.objects.filter(
@@ -757,7 +782,7 @@ def simulate_buffer_impact(board_id: int, buffers: list[float]) -> dict:
         .exclude(board=board)
         .exclude(room="")
         .exclude(room="UNASSIGNED")
-        .values_list("day", "start_time", "room")
+        .values_list("day", "start_time", "end_time", "room")
     )
 
     all_budgets = list(ScenarioSectionBudget.objects.filter(scenario=board.scenario))
@@ -780,12 +805,24 @@ def simulate_buffer_impact(board_id: int, buffers: list[float]) -> dict:
     results: list[dict] = []
     for buf in buffers:
         tracker = RoomTracker(rooms)
-        for day, start, room_code in other_usage:
-            tracker.usage[(day, start)].add(room_code)
+        for day, start, end, room_code in other_usage:
+            _s = str(start)[:5] if not isinstance(start, str) else start
+            _e = str(end)[:5] if not isinstance(end, str) else end
+            tracker.mark_used(day, _s, _e, room_code)
         # Seed with rooms already permanently assigned on THIS board.
         for p in placements:
             if p.room and p.room != "UNASSIGNED":
-                tracker.usage[(p.day, p.start_time)].add(p.room)
+                _s = (
+                    p.start_time.strftime("%H:%M")
+                    if hasattr(p.start_time, "strftime")
+                    else str(p.start_time)[:5]
+                )
+                _e = (
+                    p.end_time.strftime("%H:%M")
+                    if hasattr(p.end_time, "strftime")
+                    else str(p.end_time)[:5]
+                )
+                tracker.mark_used(p.day, _s, _e, p.room)
 
         assigned = 0
         unassigned = 0
@@ -808,12 +845,22 @@ def simulate_buffer_impact(board_id: int, buffers: list[float]) -> dict:
                 room_type = "lab" if (duration > 80 and cr == 4) else "lecture"
             room_cap = 0 if room_type == "lab" else buffered_cap
             gender = _section_gender(p.term_section.section) or board_gender
-            room_code = tracker.assign_best_fit(p.day, p.start_time, room_cap, room_type, gender)
+            _s = (
+                p.start_time.strftime("%H:%M")
+                if hasattr(p.start_time, "strftime")
+                else str(p.start_time)[:5]
+            )
+            _e = (
+                p.end_time.strftime("%H:%M")
+                if hasattr(p.end_time, "strftime")
+                else str(p.end_time)[:5]
+            )
+            room_code = tracker.assign_best_fit(p.day, _s, room_cap, room_type, gender, end=_e)
             if room_code:
                 assigned += 1
             else:
                 if room_type != "lab" and tracker.is_feasible(
-                    p.day, p.start_time, raw_cap, room_type, gender
+                    p.day, _s, raw_cap, room_type, gender, end=_e
                 ):
                     rejected_by_buffer += 1
                 unassigned += 1

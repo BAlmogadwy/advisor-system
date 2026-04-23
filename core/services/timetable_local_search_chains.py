@@ -196,9 +196,23 @@ def _apply_chain(
     sections_by_id: dict[str, SectionState],
     pattern_catalog: dict[str, list[CanonicalPattern]],
 ):
-    """Apply both moves of a chain. Returns (snapshot_a, snapshot_b)."""
+    """Apply both moves of a chain. Returns (snapshot_a, snapshot_b).
+
+    If move_b raises (e.g. ``PatternNotInCatalog`` for a generator-proposed
+    pattern missing from the catalog, or any ``KeyError``), we first roll
+    back move_a's in-place mutation of ``sections_by_id`` before
+    re-raising, so the caller never sees a half-applied chain.
+    """
     snap_a = apply_move_to_grid(chain.move_a, sections_by_id, pattern_catalog)
-    snap_b = apply_move_to_grid(chain.move_b, sections_by_id, pattern_catalog)
+    try:
+        snap_b = apply_move_to_grid(chain.move_b, sections_by_id, pattern_catalog)
+    except Exception:
+        for s in snap_a.snapshots:
+            sec = sections_by_id[s.section_id]
+            sec.pattern_id = s.old_pattern_id
+            sec.meetings = list(s.old_meetings)
+            sec.assigned_room_id = s.old_room_id
+        raise
     return snap_a, snap_b
 
 
