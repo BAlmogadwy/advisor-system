@@ -439,6 +439,7 @@ def _score_option(
     is_online: bool = False,
     online_codes_in_group: set[str] | None = None,
     overlap_matrix: dict | None = None,
+    slot_density: dict[str, int] | None = None,
 ) -> tuple[int, int, int, int, int, int]:
     """Score a candidate meeting option.  **Lower is better.**
 
@@ -596,18 +597,29 @@ def _score_option(
                     else:
                         student_gap += idle
 
-    # ── (4) Slot position preference ───────────────────────────────────
+    # ── (4) Slot position preference + load balancing ─────────────────
     # Online courses: penalise early slots (push to late).
-    # Non-online courses: penalise slot 5 (16:00-17:15) — students
-    # prefer earlier classes.
+    # Non-online courses:
+    #   - Gradient morning preference: slot 1 (09:00) is ideal, slot 5
+    #     (16:00) is worst. This tiles mornings first when student-
+    #     conflicts don't block, relieving peak mid-day saturation.
+    #   - Slot-density load balancing: already-busy slots cost more, so
+    #     the optimiser spreads horizontally rather than stacking every
+    #     section at one peak slot (e.g. MON 14:30).
+    _SLOT_IDX_PENALTY = (0, 1, 2, 4, 8)  # indices 0-4
     instructor_spread = 0
     if is_online:
         for m in option:
             instructor_spread += 10 - m["slot_idx"]
     else:
         for m in option:
-            if m["slot_idx"] == 4:  # slot 5 (0-indexed as 4)
-                instructor_spread += 5
+            idx = m["slot_idx"]
+            if 0 <= idx < len(_SLOT_IDX_PENALTY):
+                instructor_spread += _SLOT_IDX_PENALTY[idx]
+            else:
+                instructor_spread += 8
+            if slot_density is not None:
+                instructor_spread += slot_density.get(m["start"], 0) * 2
 
     # ── (5) Time consistency across days ──────────────────────────────
     # Zero if all meetings share the same slot index; +1 for each
@@ -1520,6 +1532,7 @@ def auto_place_board(
                     other_sections_masks=all_placed_masks,
                     is_online=is_online,
                     overlap_matrix=overlap_matrix,
+                    slot_density=slot_density,
                 )
                 # Apply the group-dependent gap weight (element [2] is
                 # student_gap).  This makes S1 gap-averse and S2+ tolerant.
