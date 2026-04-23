@@ -464,10 +464,15 @@ def assign_rooms_to_board(board_id: int) -> dict:
         .exclude(board=board)
         .exclude(room="")
         .exclude(room="UNASSIGNED")
-        .values_list("day", "start_time", "room")
+        .values_list("day", "start_time", "end_time", "room")
     )
-    for day, start, room_code in other_placements:
-        tracker.usage[(day, start)].add(room_code)
+    for day, start, end, room_code in other_placements:
+        # Use overlap-aware seeding so e.g. a 10:30-11:45 booking blocks
+        # a 10:50-12:05 booking on the same day in the same room. The
+        # old (day, start)-only key missed this because 10:30 != 10:50.
+        _s = str(start)[:5] if not isinstance(start, str) else start
+        _e = str(end)[:5] if not isinstance(end, str) else end
+        tracker.mark_used(day, _s, _e, room_code)
 
     # Load all placements for THIS board
     placements = list(
@@ -482,7 +487,17 @@ def assign_rooms_to_board(board_id: int) -> dict:
     # as if the sentinel occupied a slot.
     for p in placements:
         if p.room and p.room != "UNASSIGNED":
-            tracker.usage[(p.day, p.start_time)].add(p.room)
+            _s = (
+                p.start_time.strftime("%H:%M")
+                if hasattr(p.start_time, "strftime")
+                else str(p.start_time)[:5]
+            )
+            _e = (
+                p.end_time.strftime("%H:%M")
+                if hasattr(p.end_time, "strftime")
+                else str(p.end_time)[:5]
+            )
+            tracker.mark_used(p.day, _s, _e, p.room)
 
     # Get actual students per section and credit hours from budget
     from core.models import ScenarioSectionBudget
@@ -563,7 +578,15 @@ def assign_rooms_to_board(board_id: int) -> dict:
         # Prefer per-section gender (exam-style sections like 'M1'/'F1');
         # fall back to the board-level gender (timetable-style 'S1'/'S2').
         gender = _section_gender(p.term_section.section) or board_gender
-        room_code = tracker.assign_best_fit(p.day, p.start_time, room_cap, room_type, gender)
+        _s = (
+            p.start_time.strftime("%H:%M")
+            if hasattr(p.start_time, "strftime")
+            else str(p.start_time)[:5]
+        )
+        _e = (
+            p.end_time.strftime("%H:%M") if hasattr(p.end_time, "strftime") else str(p.end_time)[:5]
+        )
+        room_code = tracker.assign_best_fit(p.day, _s, room_cap, room_type, gender, end=_e)
         if room_code:
             prev_room = previous_room_by_id.get(p.id, "")
             p.room = room_code
