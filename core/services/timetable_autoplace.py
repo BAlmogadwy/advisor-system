@@ -1089,6 +1089,14 @@ def auto_place_board(
     # inside auto_place_board (scoring best_option=None, and tracker None
     # fallback). Surfaced on the return dict as ``room_failures``.
     room_failures: list[dict] = []
+    # Post-greedy rooming-repair pass: record every UNASSIGNED meeting
+    # together with its demand / type / gender so a second pass can try
+    # a direct fit or a 1-swap to recover room capacity the capacity-
+    # ascending greedy left idle (e.g. large room empty at a slot where
+    # a small section failed because its preferred small rooms were
+    # already booked).
+    unassigned_for_repair: list[dict] = []
+    meeting_result_refs: dict[tuple[int, str, str], dict] = {}
     # PR3 commit 3 — decision-trace capture (observational, flag-gated).
     # When ``trace_enabled`` is True we record one ``DecisionTrace`` per
     # placed section: the chosen slot plus up to 3 alternatives ordered
@@ -1779,6 +1787,20 @@ def auto_place_board(
                                     section_code=sec_label,
                                 )
                             room_failures.append(m_refined.to_dict())
+                            # Queue this meeting for the post-greedy repair pass.
+                            unassigned_for_repair.append(
+                                {
+                                    "ts_id": ts.id,
+                                    "day": m["day"],
+                                    "start": m["start"],
+                                    "end": m["end"],
+                                    "demand": 0 if rtype == "lab" else raw_cap,
+                                    "room_type": rtype,
+                                    "gender": board_gender,
+                                    "course_code": code,
+                                    "section_code": sec_label,
+                                }
+                            )
                     if not preferred_room and assigned_room and assigned_room != "UNASSIGNED":
                         preferred_room = assigned_room
 
@@ -1801,14 +1823,14 @@ def auto_place_board(
                 placed_schedule.append((m["day"], m["start"], m["end"], code))
                 all_placed_masks.append((code, mask))
                 slot_density[m["start"]] += 1
-                meeting_results.append(
-                    {
-                        "day": m["day"],
-                        "start": m["start"],
-                        "end": m["end"],
-                        "room": assigned_room,
-                    }
-                )
+                _meeting_entry = {
+                    "day": m["day"],
+                    "start": m["start"],
+                    "end": m["end"],
+                    "room": assigned_room,
+                }
+                meeting_results.append(_meeting_entry)
+                meeting_result_refs[(ts.id, m["day"], m["start"])] = _meeting_entry
 
             total_placed += 1
             placement_results.append(
@@ -1883,6 +1905,33 @@ def auto_place_board(
                     chosen_room=meeting_results[0].get("room", "") if meeting_results else "",
                     alternatives=tuple(alternatives),
                 ).to_dict()
+
+    # Post-greedy rooming-repair — try to rescue UNASSIGNED meetings by
+    # re-fitting or 1-swapping against already-placed rooms. No-op when
+    # the repair list is empty (all meetings got a room first try).
+    if room_tracker and unassigned_for_repair:
+        from core.services.timetable_rooming import repair_unassigned_after_greedy
+
+        try:
+            _repaired = repair_unassigned_after_greedy(
+                board=board,
+                tracker=room_tracker,
+                unassigned_records=unassigned_for_repair,
+                meeting_result_refs=meeting_result_refs,
+                room_failures=room_failures,
+            )
+            if _repaired:
+                logger.info(
+                    "auto_place_board(board=%s): rooming-repair rescued %d meeting(s)",
+                    board_id,
+                    _repaired,
+                )
+        except Exception:
+            logger.exception(
+                "auto_place_board(board=%s): rooming-repair pass failed; "
+                "leaving UNASSIGNED placements as-is",
+                board_id,
+            )
 
     # PR6 commit 3 — stop the greedy clock. Flag-off path stays at zeros.
     _stage_telemetry = empty_stage_telemetry()

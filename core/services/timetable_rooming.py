@@ -194,6 +194,113 @@ class RoomTracker:
             self.usage[key].discard(room_code)
 
 
+def repair_unassigned_after_greedy(
+    board,
+    tracker: RoomTracker,
+    unassigned_records: list[dict],
+    meeting_result_refs: dict[tuple[int, str, str], dict],
+    room_failures: list[dict],
+) -> int:
+    """Post-greedy 1-swap repair of UNASSIGNED meetings.
+
+    For each meeting left UNASSIGNED by the greedy placer:
+
+    1. **Direct fit** — the tracker state may have freed up since the
+       original attempt; try ``assign_best_fit`` again.
+    2. **1-swap** — find a placed meeting P at the same (day, start)
+       whose room R is compatible with the unassigned meeting U
+       (type + gender + capacity). If P can be moved to some other
+       currently-free room R' that also fits P, swap them: P → R',
+       U → R.
+
+    Updates the tracker, the DB ``SectionPlacement`` row, the in-memory
+    ``meeting_result_refs`` dict (so the returned payload reflects the
+    new rooms) and prunes the corresponding ``room_failures`` entry.
+
+    ``unassigned_records`` is a list of dicts, one per UNASSIGNED meeting,
+    each carrying ``{ts_id, day, start, end, demand, room_type, gender,
+    course_code, section_code}``.
+
+    ``meeting_result_refs`` maps ``(ts_id, day, start) -> meeting_dict``
+    so the caller's ``placements`` payload can be updated in place.
+
+    Returns the number of meetings newly assigned a room.
+    """
+    from core.models import SectionPlacement
+
+    repaired = 0
+    still_unassigned: list[dict] = []
+
+    for rec in unassigned_records:
+        day = rec["day"]
+        start = rec["start"]
+        demand = rec["demand"]
+        rtype = rec["room_type"]
+        gender = rec["gender"]
+
+        # Phase 1 — direct fit (tracker state may have changed).
+        room_code = tracker.assign_best_fit(day, start, demand, rtype, gender)
+
+        if not room_code:
+            # Phase 2 — 1-swap against any room currently occupied at (day, start)
+            # that would fit us AND whose occupant can move.
+            used_here = set(tracker.usage.get((day, start), set()))
+            pool = tracker._pool(rtype, gender)
+            fit_rooms = [r for r in pool if r["capacity"] >= demand and r["room_code"] in used_here]
+
+            for r in fit_rooms:
+                target_room_code = r["room_code"]
+                occupant = SectionPlacement.objects.filter(
+                    board=board, day=day, start_time=start, room=target_room_code
+                ).first()
+                if not occupant:
+                    continue
+
+                occ_ts = occupant.term_section
+                occ_demand = occ_ts.available_capacity or 0
+                # target_room_code is in U's pool(rtype, gender), so occupant's
+                # rtype must match U's rtype — same pool, same room_type.
+                occ_rtype = rtype
+
+                tracker.release(day, start, target_room_code)
+                alt_room = tracker.assign_best_fit(day, start, occ_demand, occ_rtype, gender)
+                if alt_room and alt_room != target_room_code:
+                    occupant.room = alt_room
+                    occupant.save(update_fields=["room"])
+                    occ_key = (occ_ts.id, day, start)
+                    if occ_key in meeting_result_refs:
+                        meeting_result_refs[occ_key]["room"] = alt_room
+                    tracker.usage[(day, start)].add(target_room_code)
+                    room_code = target_room_code
+                    break
+                else:
+                    tracker.usage[(day, start)].add(target_room_code)
+
+        if room_code:
+            SectionPlacement.objects.filter(
+                board=board, term_section_id=rec["ts_id"], day=day, start_time=start
+            ).update(room=room_code)
+            key = (rec["ts_id"], day, start)
+            if key in meeting_result_refs:
+                meeting_result_refs[key]["room"] = room_code
+            room_failures[:] = [
+                f
+                for f in room_failures
+                if not (
+                    f.get("day") == day
+                    and f.get("start_time") == start
+                    and f.get("course_code") == rec["course_code"]
+                    and f.get("section_code") == rec["section_code"]
+                )
+            ]
+            repaired += 1
+        else:
+            still_unassigned.append(rec)
+
+    unassigned_records[:] = still_unassigned
+    return repaired
+
+
 def check_room_feasibility(
     board_id: int,
     rooms: list[dict],
