@@ -964,10 +964,15 @@ def auto_place_board(
             .exclude(board=board)
             .exclude(room="")
             .exclude(room="UNASSIGNED")
-            .values_list("day", "start_time", "room")
+            .values_list("day", "start_time", "end_time", "room")
         )
-        for day, start, room_code in other_placements:
-            room_tracker.usage[(day, start)].add(room_code)
+        for day, start, end, room_code in other_placements:
+            # Register in both indexes so overlap detection catches e.g.
+            # 10:30-11:45 vs 10:50-12:05 collisions.
+            if end:
+                room_tracker.mark_used(day, start, end, room_code)
+            else:
+                room_tracker.usage[(day, start)].add(room_code)
 
     # ── 1. Load section budgets for this board's term level ───────────
     # Ordered by descending demand so the most popular courses are placed
@@ -1215,7 +1220,7 @@ def auto_place_board(
             all_placed_masks.append((cc, mask))
             slot_density[lp.start_time] += 1
             if room_tracker and lp.room and lp.room != "UNASSIGNED":
-                room_tracker.usage[(lp.day, lp.start_time)].add(lp.room)
+                room_tracker.mark_used(lp.day, lp.start_time, lp.end_time, lp.room)
             pr1_lock_rejections.append(
                 RejectionReason(
                     code=LOCK_RESPECT,
@@ -1743,10 +1748,17 @@ def auto_place_board(
                         rtype = "lab" if (duration > 80 and is_lab_course) else "lecture"
                     # Try preferred room first (same room as previous meetings)
                     if preferred_room and room_tracker.is_feasible(
-                        m["day"], m["start"], section_cap, rtype, board_gender
+                        m["day"], m["start"], section_cap, rtype, board_gender, end=m["end"]
                     ):
-                        used = room_tracker.usage.get((m["day"], m["start"]), set())
-                        if preferred_room not in used:
+                        # Overlap-aware check: does any interval on this day
+                        # that intersects [m.start, m.end] already hold
+                        # preferred_room? Catches e.g. 10:30-11:45 vs 10:50-12:05.
+                        busy_here = room_tracker._overlapping_rooms(
+                            m["day"],
+                            room_tracker._mins(m["start"]),
+                            room_tracker._mins(m["end"]),
+                        )
+                        if preferred_room not in busy_here:
                             from core.models import Room as _RoomModel
 
                             pr_obj = _RoomModel.objects.filter(room_code=preferred_room).first()
@@ -1759,7 +1771,9 @@ def auto_place_board(
                                     or (pr_obj.section or "").upper() == board_gender
                                 )
                             ):
-                                room_tracker.usage[(m["day"], m["start"])].add(preferred_room)
+                                room_tracker.mark_used(
+                                    m["day"], m["start"], m["end"], preferred_room
+                                )
                                 assigned_room = preferred_room
 
                     if not assigned_room:
@@ -1768,7 +1782,12 @@ def auto_place_board(
                         # capacity because students rotate through lab slots.
                         room_cap = 0 if rtype == "lab" else section_cap
                         best_fit = room_tracker.assign_best_fit(
-                            m["day"], m["start"], room_cap, rtype, board_gender
+                            m["day"],
+                            m["start"],
+                            room_cap,
+                            rtype,
+                            board_gender,
+                            end=m["end"],
                         )
                         if best_fit:
                             assigned_room = best_fit
@@ -1807,7 +1826,11 @@ def auto_place_board(
                                     or check_occupancy(
                                         m_section_dict,
                                         room_tracker.rooms,
-                                        room_tracker.usage.get((m["day"], m["start"]), set()),
+                                        room_tracker._overlapping_rooms(
+                                            m["day"],
+                                            room_tracker._mins(m["start"]),
+                                            room_tracker._mins(m["end"]),
+                                        ),
                                     )
                                 )
                             if m_refined is None:

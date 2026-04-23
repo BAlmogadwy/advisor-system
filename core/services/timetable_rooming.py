@@ -147,12 +147,37 @@ class RoomTracker:
             key=lambda r: r["capacity"],
         )
         self.usage: dict[tuple[str, str], set[str]] = defaultdict(set)
+        # Parallel time-interval index so overlapping slots (e.g. 10:30-11:45
+        # vs 10:50-12:05) correctly block the same room. ``usage`` keys by
+        # exact start-time only and would miss this; scan this list for any
+        # entry whose [s, e) intersects the candidate window.
+        self.intervals: dict[str, list[tuple[int, int, str]]] = defaultdict(list)
 
     def _pool(self, room_type: str, gender: str = "") -> list[dict]:
         base = self.lab_rooms if room_type == "lab" else self.lecture_rooms
         if gender in ("M", "F"):
             return [r for r in base if r.get("section", "") == gender]
         return base
+
+    @staticmethod
+    def _mins(t: str) -> int:
+        h, m = t.split(":")
+        return int(h) * 60 + int(m)
+
+    def _overlapping_rooms(self, day: str, start_min: int, end_min: int) -> set[str]:
+        """Rooms occupied by any booking that overlaps [start_min, end_min)."""
+        return {r for (s, e, r) in self.intervals.get(day, []) if s < end_min and e > start_min}
+
+    def mark_used(self, day: str, start: str, end: str, room_code: str) -> None:
+        """Record a (day, start, end, room) booking in both indexes.
+
+        Used when seeding the tracker from existing DB placements or when
+        reserving a preferred room for a known meeting. Keeps ``usage`` in
+        sync with the time-interval index so callers that read either
+        see consistent state.
+        """
+        self.usage[(day, start)].add(room_code)
+        self.intervals[day].append((self._mins(start), self._mins(end), room_code))
 
     def is_feasible(
         self,
@@ -161,9 +186,18 @@ class RoomTracker:
         min_capacity: int,
         room_type: str = "lecture",
         gender: str = "",
+        end: str | None = None,
     ) -> bool:
-        """Can we fit a section of *min_capacity* in this (day, start) slot?"""
-        used = self.usage.get((day, start), set())
+        """Can we fit a section of *min_capacity* in this slot?
+
+        When ``end`` is provided, the overlap-aware index is used so a
+        10:50-12:05 booking will see a busy 10:30-11:45 in the same room.
+        When omitted, falls back to exact (day, start) match.
+        """
+        if end is not None:
+            used = self._overlapping_rooms(day, self._mins(start), self._mins(end))
+        else:
+            used = self.usage.get((day, start), set())
         pool = self._pool(room_type, gender)
         return any(r["room_code"] not in used and r["capacity"] >= min_capacity for r in pool)
 
@@ -174,24 +208,44 @@ class RoomTracker:
         min_capacity: int,
         room_type: str = "lecture",
         gender: str = "",
+        end: str | None = None,
     ) -> str | None:
         """Assign the smallest sufficient room of matching type and gender.
 
+        When ``end`` is provided, excludes rooms whose time on this day
+        overlaps the candidate window — a fix for the bug where slots
+        2 (10:30-11:45) and 2b (10:50-12:05) could both get the same
+        room on the same day.
+
         Returns the ``room_code`` on success, or ``None`` if no room fits.
         """
-        used = self.usage.get((day, start), set())
+        if end is not None:
+            s_min = self._mins(start)
+            e_min = self._mins(end)
+            used = self._overlapping_rooms(day, s_min, e_min)
+        else:
+            s_min = e_min = None
+            used = self.usage.get((day, start), set())
         pool = self._pool(room_type, gender)
         for r in pool:  # already sorted by capacity ASC
             if r["room_code"] not in used and r["capacity"] >= min_capacity:
                 self.usage[(day, start)].add(r["room_code"])
+                if end is not None and s_min is not None and e_min is not None:
+                    self.intervals[day].append((s_min, e_min, r["room_code"]))
                 return r["room_code"]
         return None
 
-    def release(self, day: str, start: str, room_code: str) -> None:
+    def release(self, day: str, start: str, room_code: str, end: str | None = None) -> None:
         """Free a room (for undo/retry)."""
         key = (day, start)
         if key in self.usage:
             self.usage[key].discard(room_code)
+        if end is not None and day in self.intervals:
+            target = (self._mins(start), self._mins(end), room_code)
+            try:
+                self.intervals[day].remove(target)
+            except ValueError:
+                pass
 
 
 def repair_unassigned_after_greedy(
@@ -234,12 +288,13 @@ def repair_unassigned_after_greedy(
     for rec in unassigned_records:
         day = rec["day"]
         start = rec["start"]
+        end = rec.get("end")
         demand = rec["demand"]
         rtype = rec["room_type"]
         gender = rec["gender"]
 
         # Phase 1 — direct fit (tracker state may have changed).
-        room_code = tracker.assign_best_fit(day, start, demand, rtype, gender)
+        room_code = tracker.assign_best_fit(day, start, demand, rtype, gender, end=end)
 
         if not room_code:
             # Phase 2 — 1-swap against any room currently occupied at (day, start)
