@@ -1098,6 +1098,10 @@ def auto_place_board(
     # Slot density: count how many sections use each start_time.
     # Used to break ties by pushing courses to less-populated slots.
     slot_density: dict[str, int] = defaultdict(int)
+    # Day-density parallel to slot_density so the scorer can distinguish
+    # between "SUN 13:00" and "MON 13:00" — without this the tie was
+    # always broken by sort order, which picks SUN+TUE+THU.
+    day_density: dict[str, int] = defaultdict(int)
     placement_results: list[dict] = []
     total_placed = 0
     total_skipped = 0
@@ -1562,6 +1566,14 @@ def auto_place_board(
                 density_penalty = 0
                 for m in option:
                     density_penalty += slot_density[m["start"]] * 3
+                    # Day-density: heavier weight so MON/WED get filled instead
+                    # of stacking every lab on SUN/TUE/THU. Time-only slot_density
+                    # above doesn't distinguish days, so the scorer used to tie
+                    # on "SUN 13:00" vs "MON 13:00" and the sort order (which
+                    # prefers non-consecutive days) always picked SUN. This
+                    # term pushes overused days up and forces MON to win when
+                    # SUN/TUE/THU are crowded.
+                    density_penalty += day_density[m["day"]] * 5
 
                 # Instructor gap: for S2+ of the same course, penalize large gaps
                 # with S1 and reward adjacency. Two objectives:
@@ -1840,6 +1852,7 @@ def auto_place_board(
                 placed_schedule.append((m["day"], m["start"], m["end"], code))
                 all_placed_masks.append((code, mask))
                 slot_density[m["start"]] += 1
+                day_density[m["day"]] += 1
                 _meeting_entry = {
                     "day": m["day"],
                     "start": m["start"],
