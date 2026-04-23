@@ -273,18 +273,15 @@ def _generate_meeting_options(
     _DAY_IDX = {d: i for i, d in enumerate(WEEKDAYS)}
 
     def _day_spacing_score(combo: tuple[str, ...]) -> int:
-        """Lower = better spacing. 0 = all gaps ≥ 2 days. Penalise consecutive."""
-        indices = [_DAY_IDX[d] for d in combo]
-        indices.sort()
-        penalty = 0
-        for j in range(len(indices) - 1):
-            gap = indices[j + 1] - indices[j]
-            if gap == 1:
-                penalty += 10  # consecutive days — heavy penalty
-            elif gap == 2:
-                penalty += 0  # 1 day gap — ideal
-            # gap >= 3 is also fine
-        return penalty
+        """All day combos treated equally so MON/WED get used.
+
+        Previously consecutive-day pairs were penalised by +10 which
+        drove every 3-meeting course onto SUN+TUE+THU and left MON/WED
+        labs empty across all terms. Registrar feedback: back-to-back
+        days are fine, and leaving whole columns of the 2 lab rooms
+        idle is worse than any learning-spacing concern.
+        """
+        return 0
 
     day_combos = sorted(combinations(WEEKDAYS, num_meetings), key=_day_spacing_score)
 
