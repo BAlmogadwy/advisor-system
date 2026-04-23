@@ -273,15 +273,22 @@ def _generate_meeting_options(
     _DAY_IDX = {d: i for i, d in enumerate(WEEKDAYS)}
 
     def _day_spacing_score(combo: tuple[str, ...]) -> int:
-        """All day combos treated equally so MON/WED get used.
+        """Mild preference for non-consecutive days — easily overridden.
 
-        Previously consecutive-day pairs were penalised by +10 which
-        drove every 3-meeting course onto SUN+TUE+THU and left MON/WED
-        labs empty across all terms. Registrar feedback: back-to-back
-        days are fine, and leaving whole columns of the 2 lab rooms
-        idle is worse than any learning-spacing concern.
+        Previously +10 per consecutive-day pair, which dominated the
+        ordering and drove every 3-meeting course onto SUN+TUE+THU,
+        leaving MON/WED labs empty. Dropped to +1 so SUN+TUE+THU still
+        ranks marginally above MON+TUE+WED as a first try, but any
+        stronger signal (room availability, student conflicts, same-
+        course spread, slot-density load balance) comfortably overrides
+        it — so MON/WED labs can be filled when SUN/TUE/THU is full.
         """
-        return 0
+        indices = sorted(_DAY_IDX[d] for d in combo)
+        penalty = 0
+        for j in range(len(indices) - 1):
+            if indices[j + 1] - indices[j] == 1:
+                penalty += 1
+        return penalty
 
     day_combos = sorted(combinations(WEEKDAYS, num_meetings), key=_day_spacing_score)
 
