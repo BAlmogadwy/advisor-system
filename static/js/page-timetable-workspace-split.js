@@ -36,7 +36,8 @@ const DAY_LABELS = IS_AR
 
 const DEFAULT_LECTURE_SLOTS = [
   { label: '1', start: '09:00', end: '10:15' },
-  { label: '2', start: '10:30', end: '11:45' },
+  { label: '2a', start: '10:30', end: '11:45' },
+  { label: '2b', start: '10:50', end: '12:05' },
   { label: '3', start: '13:00', end: '14:15' },
   { label: '4', start: '14:30', end: '15:45' },
   { label: '5', start: '16:00', end: '17:15' },
@@ -1501,7 +1502,7 @@ function openSlotEditorModal() {
   const slots = S.scenarioMeta.slot_config || [];
   const labSlots = S.scenarioMeta.lab_slot_config || [];
   const slotsText = slots.length ? slots.map(s => `${s.label || ''}\t${s.start}\t${s.end}`).join('\n')
-    : '09:00-10:15\t09:00\t10:15\n10:30-11:45\t10:30\t11:45\n13:00-14:15\t13:00\t14:15\n14:30-15:45\t14:30\t15:45\n16:00-17:15\t16:00\t17:15';
+    : '09:00-10:15\t09:00\t10:15\n10:30-11:45\t10:30\t11:45\n10:50-12:05\t10:50\t12:05\n13:00-14:15\t13:00\t14:15\n14:30-15:45\t14:30\t15:45\n16:00-17:15\t16:00\t17:15';
   const labText = labSlots.length ? labSlots.map(s => `${s.label || ''}\t${s.start}\t${s.end}`).join('\n')
     : 'Lab 1\t09:00\t10:40\nLab 2\t10:45\t12:25\nLab 3\t13:00\t14:40\nLab 4\t14:45\t16:25\nLab 5\t16:30\t18:10\nLab 6\t18:10\t19:50';
 

@@ -182,7 +182,11 @@ def get_meeting_pattern(credit_hours: int) -> list[int]:
 DEFAULT_SLOTS = [
     {"label": "09:00-10:15", "start": "09:00", "end": "10:15"},
     {"label": "10:30-11:45", "start": "10:30", "end": "11:45"},
-    # -- prayer break gap: no slot starts between 11:35 and 12:59 --
+    # Post-lab variant: lets students with a 09:00-10:40 lab catch the
+    # next morning lecture (5-min turnaround). Planner treats it as a
+    # distinct slot candidate; sections pick whichever fits best.
+    {"label": "10:50-12:05", "start": "10:50", "end": "12:05"},
+    # -- prayer break gap: no slot starts between 12:06 and 12:59 --
     {"label": "13:00-14:15", "start": "13:00", "end": "14:15"},
     {"label": "14:30-15:45", "start": "14:30", "end": "15:45"},
     {"label": "16:00-17:15", "start": "16:00", "end": "17:15"},
