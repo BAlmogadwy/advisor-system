@@ -560,6 +560,182 @@ def test_run_multistart_persisted_payload_carries_schema_version() -> None:
     assert "role_winners" in payload["multistart"]
 
 
+# ---------------------------------------------------------------------------
+# Hardening: grouping metadata so the history panel can reconstruct
+# sibling-runs without label parsing.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_run_multistart_persists_group_id() -> None:
+    """All candidates from one multistart call share a UUID4 group_id."""
+    spec = {
+        0: {"overload": 0, "overflow": 5, "unassigned": 5},
+        1: {"overload": 5, "overflow": 0, "unassigned": 5, "conflicts": 1},
+        2: {"overload": 5, "overflow": 5, "unassigned": 0, "util": 0.9},
+        3: {"overload": 1, "overflow": 1, "unassigned": 1},
+    }
+    with patch(
+        "core.services.exam_timetable.build_exam_timetable",
+        side_effect=_fake_build_factory(spec),
+    ):
+        report = run_multistart(
+            label="g",
+            days=["SUN"],
+            periods=["P1"],
+            seeds=[0, 1, 2, 3],
+            time_budget_s=60,
+        )
+
+    group_ids: set[str] = set()
+    for run_id in report.run_ids.values():
+        persisted = ExamTimetableRun.objects.get(id=run_id)
+        payload = json.loads(persisted.result_json)
+        group_ids.add(payload["multistart"]["group_id"])
+    # All candidates from one call share one group_id.
+    assert len(group_ids) == 1
+    # And it's a 32-char hex (uuid4().hex).
+    assert len(next(iter(group_ids))) == 32
+
+
+@pytest.mark.django_db
+def test_run_multistart_persists_base_label_and_selected_flag() -> None:
+    spec = {0: {"overload": 0}}
+    with patch(
+        "core.services.exam_timetable.build_exam_timetable",
+        side_effect=_fake_build_factory(spec),
+    ):
+        report = run_multistart(
+            label="MyBase",
+            days=["SUN"],
+            periods=["P1"],
+            seeds=[0],
+            time_budget_s=60,
+        )
+    run_id = list(report.run_ids.values())[0]
+    payload = json.loads(ExamTimetableRun.objects.get(id=run_id).result_json)
+    assert payload["multistart"]["base_label"] == "MyBase"
+    assert payload["multistart"]["selected_from_multistart"] is True
+
+
+@pytest.mark.django_db
+def test_run_multistart_persists_candidate_rank() -> None:
+    """candidate_rank = ALL_CANDIDATE_ROLES.index of the first role
+    won, so 0 = recommended, 1 = lowest_overflow, etc."""
+    spec = {
+        0: {"overload": 0, "overflow": 5, "unassigned": 5},
+        1: {"overload": 5, "overflow": 0, "unassigned": 5, "conflicts": 1},
+        2: {"overload": 5, "overflow": 5, "unassigned": 0, "util": 0.9},
+        3: {"overload": 1, "overflow": 1, "unassigned": 1},
+    }
+    with patch(
+        "core.services.exam_timetable.build_exam_timetable",
+        side_effect=_fake_build_factory(spec),
+    ):
+        run_multistart(
+            label="r",
+            days=["SUN"],
+            periods=["P1"],
+            seeds=[0, 1, 2, 3],
+            time_budget_s=60,
+        )
+    rank_by_seed = {}
+    for run in ExamTimetableRun.objects.filter(label__startswith="r ::"):
+        payload = json.loads(run.result_json)
+        ms = payload["multistart"]
+        rank_by_seed[ms["seed"]] = ms["candidate_rank"]
+    # seed=3 wins recommended (rank 0); seed=1 wins lowest_overflow (1);
+    # seed=0 wins lowest_overload (2); seed=2 wins best_room_feasibility (3).
+    assert rank_by_seed == {3: 0, 1: 1, 0: 2, 2: 3}
+
+
+# ---------------------------------------------------------------------------
+# Hardening: completion metadata so a time-budget-cut multistart is
+# reproducible across machines.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_run_multistart_records_attempted_and_completed_seeds() -> None:
+    spec = {0: {"overload": 0}, 1: {"overload": 5}, 2: {"overload": 10}}
+    with patch(
+        "core.services.exam_timetable.build_exam_timetable",
+        side_effect=_fake_build_factory(spec),
+    ):
+        report = run_multistart(
+            label="c",
+            days=["SUN"],
+            periods=["P1"],
+            seeds=[0, 1, 2],
+            time_budget_s=60,
+        )
+    run_id = list(report.run_ids.values())[0]
+    payload = json.loads(ExamTimetableRun.objects.get(id=run_id).result_json)
+    ms = payload["multistart"]
+    assert ms["requested_n_runs"] == 3
+    assert ms["completed_n_runs"] == 3
+    assert ms["attempted_seeds"] == [0, 1, 2]
+    assert ms["completed_seeds"] == [0, 1, 2]
+    assert ms["timeout_hit"] is False
+    assert ms["time_budget_s"] == 60
+
+
+@pytest.mark.django_db
+def test_run_multistart_records_timeout_hit_when_budget_cuts_loop() -> None:
+    """A zero time-budget plus multiple seeds: first build completes
+    (the loop checks the deadline AFTER the first candidate is
+    collected), subsequent seeds are cut. timeout_hit=True."""
+    spec = {0: {"overload": 0}, 1: {"overload": 5}}
+    with patch(
+        "core.services.exam_timetable.build_exam_timetable",
+        side_effect=_fake_build_factory(spec),
+    ):
+        report = run_multistart(
+            label="t",
+            days=["SUN"],
+            periods=["P1"],
+            seeds=[0, 1],
+            time_budget_s=0.0,  # immediate cut after first candidate
+        )
+    run_id = list(report.run_ids.values())[0]
+    payload = json.loads(ExamTimetableRun.objects.get(id=run_id).result_json)
+    ms = payload["multistart"]
+    assert ms["timeout_hit"] is True
+    assert ms["completed_n_runs"] == 1
+    assert ms["completed_seeds"] == [0]
+    assert ms["attempted_seeds"] == [0, 1]
+
+
+# ---------------------------------------------------------------------------
+# Hardening: lowest_overload tie-breaker (peer-review-confirmed order).
+# ---------------------------------------------------------------------------
+
+
+def test_lowest_overload_breaks_ties_in_confirmed_order() -> None:
+    """Confirmed order: students_over_limit -> heavy_day -> max_credit_load
+    -> overflow -> unassigned -> multi_sitting -> -avg_util -> hard
+    -> seed."""
+    # Same overload (=5); break on heavy_day (a=5, b=2); b should win.
+    a = _candidate(0, overload=5, heavy=5)
+    b = _candidate(1, overload=5, heavy=2)
+    out = select_pareto_candidates([a, b])
+    assert out["lowest_overload"].seed == 1
+
+
+def test_lowest_overload_breaks_overload_and_heavy_tie_on_max_credit() -> None:
+    a = _candidate(0, overload=3, heavy=2, max_credit=10)
+    b = _candidate(1, overload=3, heavy=2, max_credit=4)
+    out = select_pareto_candidates([a, b])
+    assert out["lowest_overload"].seed == 1
+
+
+def test_lowest_overload_breaks_through_to_overflow_after_credit() -> None:
+    a = _candidate(0, overload=3, heavy=2, max_credit=5, overflow=5)
+    b = _candidate(1, overload=3, heavy=2, max_credit=5, overflow=1)
+    out = select_pareto_candidates([a, b])
+    assert out["lowest_overload"].seed == 1
+
+
 @pytest.mark.django_db
 def test_run_multistart_pin_rebuild_signal_with_baseline() -> None:
     # First persist a baseline run with two courses.

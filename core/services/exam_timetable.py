@@ -2072,6 +2072,27 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
     # defaults. Single read path: never ``json.loads(run.result_json)`` here.
     data = load_normalised_run(run)
 
+    # Hard rule for sentinel payloads: do NOT silently export an empty
+    # workbook from an unrenderable run. Registrar trust attaches to the
+    # exported artefact more than the web UI; a blank XLSX is worse than
+    # a controlled error because the registrar may distribute it without
+    # noticing the data is gone. Fail loudly with a message the view
+    # layer can surface as a 500 with body text.
+    status = data.get("status")
+    if status == "unrenderable":
+        reason = data.get("error", "payload could not be rendered")
+        raise RuntimeError(
+            f"Exam timetable run #{run_id} cannot be exported: {reason}. "
+            "The stored payload is missing, corrupt, or otherwise unreadable; "
+            "rebuild the run before exporting."
+        )
+    if status == "future_version_unrenderable":
+        raise RuntimeError(
+            f"Exam timetable run #{run_id} was created by a newer build of "
+            "the exam scheduler and cannot be exported by this version. "
+            "Upgrade the application or rebuild the run."
+        )
+
     schedule = data["schedule"]  # list of {course_code, slot_index, day, period}
     slots = data["slots"]  # list of {index, day, period}
     qa = data["qa"]  # QA metrics dict from _build_qa()

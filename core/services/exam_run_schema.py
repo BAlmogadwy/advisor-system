@@ -79,7 +79,12 @@ to ``_MIGRATORS`` and a regression test.
 # Display payload type
 # ---------------------------------------------------------------------------
 
-ExamRunStatus = Literal["ok", "feasibility_error", "unrenderable"]
+ExamRunStatus = Literal[
+    "ok",
+    "feasibility_error",
+    "unrenderable",
+    "future_version_unrenderable",
+]
 """Discriminator for which payload shape a consumer is looking at.
 
 - ``"ok"``: the scheduler ran and produced a schedule + QA + room plan.
@@ -87,6 +92,13 @@ ExamRunStatus = Literal["ok", "feasibility_error", "unrenderable"]
   and the scheduler did not run; payload carries ``violations`` only.
 - ``"unrenderable"``: the stored payload was missing, corrupt, or not a
   dict. Sentinel produced by the normaliser; never persisted.
+- ``"future_version_unrenderable"``: the stored payload's
+  ``schema_version`` is *higher* than ``EXAM_RUN_SCHEMA_VERSION``,
+  which means it was written by a newer build of the application.
+  This build cannot safely render it (forward migrators we don't
+  have may have renamed or repurposed keys). The original
+  ``schema_version`` is preserved in the returned payload so an
+  operator inspecting the row can identify the source build.
 """
 
 
@@ -244,6 +256,38 @@ def _unrenderable(reason: str) -> ExamRunDisplayPayload:
     return cast(ExamRunDisplayPayload, payload)
 
 
+def _future_version_unrenderable(
+    raw_payload: dict[str, Any], future_version: int
+) -> ExamRunDisplayPayload:
+    """Build the sentinel for payloads at a higher schema_version than we know.
+
+    Preserves the original ``schema_version`` so an operator inspecting
+    the row can identify the source build (which is the whole reason the
+    payload survived a downgrade scenario). Carries every "ok"-shape
+    default so consumers can render their empty-state cards uniformly,
+    plus an ``error`` message naming the version mismatch.
+    """
+    payload: dict[str, Any] = {
+        "schema_version": future_version,
+        "status": "future_version_unrenderable",
+        "error": (
+            f"Payload schema_version={future_version} is higher than this "
+            f"build's EXAM_RUN_SCHEMA_VERSION={EXAM_RUN_SCHEMA_VERSION}. "
+            "The payload was written by a newer build whose migrators we "
+            "do not have. Upgrade the application or rebuild the run."
+        ),
+        "violations": [],
+    }
+    # Preserve any forward-compat keys the future build added so
+    # operators can inspect them (e.g. via the management command's
+    # logging) without modifying them.
+    for key, value in raw_payload.items():
+        if key not in payload:
+            payload[key] = value
+    _fill_ok_defaults(payload)
+    return cast(ExamRunDisplayPayload, payload)
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -276,29 +320,34 @@ def normalise_exam_run_payload(raw: Any) -> ExamRunDisplayPayload:
     else:
         version = 0
 
+    # Hardening: a payload claiming a higher schema_version than this
+    # build knows about is unsafe to render with our current consumers.
+    # Forward migrators we don't have may have renamed or repurposed
+    # keys; silently passing the payload through with our defaults could
+    # corrupt the operator's view of a newer-build run. Surface it as a
+    # distinct sentinel status that the UI can render as a clear "this
+    # run was created by a newer build" card and the XLSX exporter can
+    # refuse cleanly.
+    if version > EXAM_RUN_SCHEMA_VERSION:
+        return _future_version_unrenderable(raw, version)
+
     # Mutate a copy so the caller's dict is untouched. Idempotency relies
     # on this: normalising a payload should not change the original.
     payload: dict[str, Any] = dict(raw)
 
-    # Forward-compat: a payload claiming to be at a higher version than
-    # this build knows about is passed through (we cannot run migrators
-    # we do not have). We still apply our defaults so any keys we KNOW
-    # about and the future payload omitted will fall through cleanly,
-    # but we leave unknown future keys verbatim.
-    if version <= EXAM_RUN_SCHEMA_VERSION:
-        for migrator in _MIGRATORS[version:]:
-            payload = migrator(payload)
+    for migrator in _MIGRATORS[version:]:
+        payload = migrator(payload)
 
     # Stamp current version and ensure status is set even if migrators
     # somehow skipped it (defensive — should be impossible with the
     # current migrator chain, but cheap insurance for future migrators).
-    payload["schema_version"] = max(
-        EXAM_RUN_SCHEMA_VERSION,
-        payload.get("schema_version", EXAM_RUN_SCHEMA_VERSION)
-        if isinstance(payload.get("schema_version"), int)
-        else EXAM_RUN_SCHEMA_VERSION,
-    )
-    if payload.get("status") not in ("ok", "feasibility_error", "unrenderable"):
+    payload["schema_version"] = EXAM_RUN_SCHEMA_VERSION
+    if payload.get("status") not in (
+        "ok",
+        "feasibility_error",
+        "unrenderable",
+        "future_version_unrenderable",
+    ):
         payload["status"] = "feasibility_error" if payload.get("feasibility_error") else "ok"
 
     status: ExamRunStatus = payload["status"]
@@ -310,6 +359,11 @@ def normalise_exam_run_payload(raw: Any) -> ExamRunDisplayPayload:
         # Persisted-unrenderable should be impossible (we never store the
         # sentinel) but if a caller hand-crafts one, fill ok defaults so
         # the UI's empty-state cards still have something to read.
+        _fill_ok_defaults(payload)
+    elif status == "future_version_unrenderable":
+        # Reached only if a caller hand-crafts this status on a payload
+        # that wasn't routed through ``_future_version_unrenderable``.
+        # Fill ok-shape defaults so the UI can still render empty cards.
         _fill_ok_defaults(payload)
 
     return cast(ExamRunDisplayPayload, payload)

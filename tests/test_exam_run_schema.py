@@ -229,6 +229,61 @@ def test_forward_compat_higher_schema_version_preserved() -> None:
     assert out["only_in_v99"] == "carried through"  # type: ignore[typeddict-item]
 
 
+def test_future_version_status_set_for_higher_schema_version() -> None:
+    """Hardening: a payload at a higher schema_version is unsafe to
+    render with our current consumers. Surface as an explicit
+    'future_version_unrenderable' status so the UI shows a clear
+    message and the XLSX exporter can refuse cleanly. The original
+    payload data is preserved (forward-compat) for operator inspection,
+    but the status forbids consumers from rendering it as if it were OK.
+    """
+    payload = _v1_ok_payload()
+    payload["schema_version"] = 99
+    out = normalise_exam_run_payload(payload)
+    assert out["status"] == "future_version_unrenderable"
+    assert "error" in out
+    assert "99" in out.get("error", "")
+
+
+def test_future_version_status_with_empty_input_uses_ok_defaults() -> None:
+    """A future-version payload with no real data still gets safe
+    defaults so any UI card that ignores the status discriminator
+    can iterate without crashing."""
+    out = normalise_exam_run_payload({"schema_version": 99})
+    assert out["status"] == "future_version_unrenderable"
+    assert out["schedule"] == []
+    assert out["qa"] == {}
+
+
+def test_future_version_preserves_original_schema_version() -> None:
+    """Operators inspecting a future-version row need to see what build
+    wrote it; we must NOT stamp it down to current."""
+    out = normalise_exam_run_payload({"schema_version": 99})
+    assert out["schema_version"] == 99
+
+
+def test_future_version_preserves_unknown_keys() -> None:
+    """Forward-compat: unknown keys from a future build survive
+    normalisation so an operator can inspect them."""
+    payload = {
+        "schema_version": 99,
+        "v99_only_field": {"summary": "from future"},
+        "another_v99_field": [1, 2, 3],
+    }
+    out = normalise_exam_run_payload(payload)
+    assert out["v99_only_field"] == {"summary": "from future"}  # type: ignore[typeddict-item]
+    assert out["another_v99_field"] == [1, 2, 3]  # type: ignore[typeddict-item]
+
+
+def test_future_version_idempotent() -> None:
+    """Re-normalising a future-version payload yields the same status
+    (it does NOT recover to ok just because we round-tripped it)."""
+    once = normalise_exam_run_payload({"schema_version": 99, "x": 1})
+    twice = normalise_exam_run_payload(dict(once))
+    assert once["status"] == twice["status"] == "future_version_unrenderable"
+    assert once["schema_version"] == twice["schema_version"] == 99
+
+
 def test_invalid_schema_version_treated_as_legacy() -> None:
     """Strings, negatives, None — anything that isn't a non-negative int
     is treated as v0 (legacy)."""
@@ -268,13 +323,19 @@ def test_schema_version_always_present(input_payload: object) -> None:
         {},
         {"schema_version": 1, "status": "ok"},
         {"feasibility_error": True},
+        {"schema_version": 99},  # future-version path
         "garbage",
         _v1_ok_payload(),
     ],
 )
 def test_status_always_valid(input_payload: object) -> None:
     out = normalise_exam_run_payload(input_payload)
-    assert out["status"] in ("ok", "feasibility_error", "unrenderable")
+    assert out["status"] in (
+        "ok",
+        "feasibility_error",
+        "unrenderable",
+        "future_version_unrenderable",
+    )
 
 
 def test_ok_defaults_safe_for_iteration() -> None:
@@ -564,6 +625,72 @@ def test_management_command_with_explicit_ids() -> None:
     payload_b = json.loads(legacy_b.result_json)
     assert payload_a.get("schema_version") == EXAM_RUN_SCHEMA_VERSION
     assert "schema_version" not in payload_b
+
+
+@pytest.mark.django_db
+def test_management_command_appends_audit_trail_on_migration() -> None:
+    """Every migrated row gains a ``normalisation_audit`` entry with
+    timestamp, from/to versions, and source-hash."""
+    legacy = {"schedule": []}  # v0
+    run = ExamTimetableRun.objects.create(label="legacy", result_json=json.dumps(legacy))
+    call_command("normalise_exam_runs", stdout=StringIO())
+    run.refresh_from_db()
+    payload = json.loads(run.result_json)
+    audit = payload["normalisation_audit"]
+    assert isinstance(audit, list)
+    assert len(audit) == 1
+    entry = audit[0]
+    assert entry["from_version"] == 0
+    assert entry["to_version"] == EXAM_RUN_SCHEMA_VERSION
+    assert isinstance(entry["at"], str)
+    assert isinstance(entry["source_hash"], str)
+    assert len(entry["source_hash"]) == 64  # sha256 hex
+
+
+@pytest.mark.django_db
+def test_management_command_audit_trail_is_append_only() -> None:
+    """A row already carrying audit history gains another entry rather
+    than having its history overwritten. We simulate a row already
+    migrated to v1 (schema_version stamped, prior audit recorded);
+    --force triggers another v1->v1 entry."""
+    pre_existing = [
+        {
+            "at": "2026-01-01T00:00:00+00:00",
+            "from_version": 0,
+            "to_version": 1,
+            "source_hash": "a" * 64,
+        }
+    ]
+    payload = {
+        "schema_version": EXAM_RUN_SCHEMA_VERSION,
+        "status": "ok",
+        "schedule": [],
+        "normalisation_audit": pre_existing,
+    }
+    run = ExamTimetableRun.objects.create(label="prior", result_json=json.dumps(payload))
+    call_command("normalise_exam_runs", "--force", stdout=StringIO())
+    run.refresh_from_db()
+    new_payload = json.loads(run.result_json)
+    audit = new_payload["normalisation_audit"]
+    assert len(audit) == 2
+    assert audit[0] == pre_existing[0]
+    assert audit[1]["from_version"] == EXAM_RUN_SCHEMA_VERSION
+    assert audit[1]["to_version"] == EXAM_RUN_SCHEMA_VERSION
+
+
+@pytest.mark.django_db
+def test_management_command_skips_future_version_rows() -> None:
+    """Future-version rows came from a newer build; downgrading could
+    corrupt data the newer build expects. Report but NOT modify."""
+    future = {"schema_version": 99, "schedule": []}
+    run = ExamTimetableRun.objects.create(label="future", result_json=json.dumps(future))
+    original = run.result_json
+    out = StringIO()
+    call_command("normalise_exam_runs", stdout=out)
+    run.refresh_from_db()
+    assert run.result_json == original
+    assert "schema_version higher" in out.getvalue()
+    assert str(run.id) in out.getvalue()
 
 
 # ---------------------------------------------------------------------------

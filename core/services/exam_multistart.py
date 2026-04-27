@@ -69,6 +69,7 @@ from __future__ import annotations
 
 import json
 import time
+import uuid
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Literal, cast
@@ -257,15 +258,32 @@ def _lowest_overflow_key(c: MultistartCandidate) -> tuple[int | float, ...]:
 
 
 def _lowest_overload_key(c: MultistartCandidate) -> tuple[int | float, ...]:
-    """Minimise students-over-limit first; tie-break on heavy-day,
-    multi-sitting, and hard violations. Multi-sitting is included so a
-    candidate that fixes overload by splitting sections doesn't quietly
-    win over one that fixes it via better day-spread."""
+    """Minimise students-over-limit first; tie-break order matches the
+    peer-review-confirmed sequence:
+
+        students_over_limit -> heavy_day_students -> max_credit_load_per_day
+        -> overflow_count -> unassigned_room_sections
+        -> multi_sitting_sections -> -avg_utilisation
+        -> hard_violations -> seed
+
+    Rationale (peer-review): overload and heavy-day are both student-pain
+    objectives; max_credit_load is a more granular shape of the same
+    pain (a student sitting two 4-credit exams hurts more than two
+    1-credit). Overflow comes before room details because it is a
+    visible scheduling-incompleteness signal. Multi-sitting is a
+    room-capacity/logistics consequence and outranks utilisation but
+    not the student-pain objectives. Hard violations remain the final
+    guard against degenerate candidates.
+    """
     m = c.metrics
     return (
         m.students_over_limit_count,
         m.heavy_day_students,
+        m.max_credit_load_per_day,
+        m.overflow_count,
+        m.unassigned_room_sections,
         m.multi_sitting_sections,
+        -m.avg_utilisation,
         m.same_slot_conflicts + m.bucket_day_violations,
         c.seed,
     )
@@ -431,14 +449,22 @@ def run_multistart(
     if not seed_list:
         seed_list = [0]
 
+    # Group identifier shared by every candidate persisted from this
+    # multistart call. The history panel can reconstruct sibling-runs
+    # by querying ``multistart.group_id`` instead of label-parsing.
+    group_id = uuid.uuid4().hex
+
     started_at = time.monotonic()
     deadline = started_at + max(0.0, time_budget_s)
 
     candidates: list[MultistartCandidate] = []
+    completed_seeds: list[int] = []
     feasibility_error: dict[str, Any] | None = None
+    timeout_hit = False
 
     for seed in seed_list:
         if candidates and time.monotonic() >= deadline:
+            timeout_hit = True
             break
 
         result = build_exam_timetable(
@@ -456,6 +482,8 @@ def run_multistart(
             thin_conflict_threshold=thin_conflict_threshold,
             persist=False,
         )
+
+        completed_seeds.append(seed)
 
         if result.get("status") == "feasibility_error":
             if feasibility_error is None:
@@ -492,6 +520,14 @@ def run_multistart(
     # Pin-and-rebuild baseline (loaded once, reused for every candidate).
     baseline = _baseline_placements(previous_run_id) if previous_run_id is not None else None
 
+    # Stable rank for the "candidate_rank" annotation: 0 = recommended,
+    # 1 = lowest_overflow, 2 = lowest_overload, 3 = best_room_feasibility.
+    # When a single seed wins multiple roles, the rank is the index of
+    # the *first* role it wins in ALL_CANDIDATE_ROLES order.
+    candidate_rank_by_seed: dict[int, int] = {}
+    for seed, winners in winners_by_seed.items():
+        candidate_rank_by_seed[seed] = ALL_CANDIDATE_ROLES.index(winners[0])
+
     # Persist each unique winning seed exactly once.
     run_ids: dict[int, int] = {}
     annotated_payloads: dict[int, dict[str, Any]] = {}
@@ -507,11 +543,29 @@ def run_multistart(
 
         annotated["multistart"] = {
             "schema_version": EXAM_RUN_SCHEMA_VERSION,
+            # Grouping metadata — lets the history panel reconstruct
+            # sibling-runs by querying multistart.group_id without
+            # parsing labels.
+            "group_id": group_id,
+            "base_label": label,
+            "selected_from_multistart": True,
+            "candidate_rank": candidate_rank_by_seed[seed],
+            # Per-candidate metadata.
             "seed": seed,
             "role_winners": list(role_winners),
             "previous_run_id": previous_run_id,
             "movement_count": movement_count,
             "courses_moved": courses_moved,
+            # Run-level completion metadata so an interrupted multistart
+            # is reproducible across machines: requested vs completed
+            # counts, the explicit seed lists, whether the time budget
+            # cut the loop short.
+            "requested_n_runs": len(seed_list),
+            "completed_n_runs": len(completed_seeds),
+            "attempted_seeds": list(seed_list),
+            "completed_seeds": list(completed_seeds),
+            "timeout_hit": timeout_hit,
+            "time_budget_s": time_budget_s,
         }
         stamp_schema_version(annotated)
 
