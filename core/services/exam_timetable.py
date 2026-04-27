@@ -46,6 +46,9 @@ from core.models import (
     TermSectionMeeting,
 )
 from core.services.exam_run_schema import (
+    STATUS_DERIVATION_VERSION,
+    derive_multi_sitting_details,
+    derive_status_surface,
     load_normalised_run,
     stamp_schema_version,
 )
@@ -1865,6 +1868,11 @@ def build_exam_timetable(
             {
                 "feasibility_error": True,
                 "status": "feasibility_error",
+                # v2 status surface: feasibility_error short-circuits
+                # to "infeasible" with no further flags.
+                "primary_status": "infeasible",
+                "status_flags": [],
+                "status_derivation_version": STATUS_DERIVATION_VERSION,
                 "violations": violations,
                 "courses_count": len(course_list),
                 "students_count": len(all_students),
@@ -1994,6 +2002,22 @@ def build_exam_timetable(
             }
         )
 
+    # ── v2 status surface tile authoring ──
+    # Multi-sitting details computed from the assign_rooms output. The
+    # derivation is in the schema module so the v1->v2 migrator and
+    # this build site share the same logic.
+    multi_sitting_details = derive_multi_sitting_details(assign_rooms)
+    qa["multi_sitting_sections"] = len(multi_sitting_details)
+    qa["multi_sitting_details"] = multi_sitting_details
+
+    # Manual-override signal: in this system, all same_slot_conflicts
+    # come from registrar pinned overrides (the scheduler refuses to
+    # produce them otherwise). Surface explicitly under the v2-named
+    # keys so the status derivation doesn't need to fall back to
+    # legacy_incomplete_qa for fresh builds.
+    qa["manual_override_count"] = qa.get("conflict_count", 0)
+    qa["manual_override_details"] = list(qa.get("same_slot_conflicts", []))
+
     # ── Assemble result dict ──
     # This dict is: (a) returned to the frontend as JSON, (b) persisted
     # in ExamTimetableRun.result_json for later viewing/export.
@@ -2001,26 +2025,31 @@ def build_exam_timetable(
     # ``normalise_exam_run_payload`` (see core.services.exam_run_schema),
     # so ``stamp_schema_version`` here is the only write site that needs
     # to know about the schema version constant.
-    result: dict = stamp_schema_version(
-        {
-            "status": "ok",
-            "students_count": len(all_students),
-            "courses": course_list,
-            "courses_count": len(course_list),
-            "conflicts": conflicts,
-            "conflicts_count": len(conflicts),
-            "slots": slots,
-            "schedule": schedule_entries,
-            "qa": qa,
-            "buckets_summary": buckets_summary,
-            "bucket_count": len(ptb),
-            "credit_map": credit_map,
-            "seed": seed,
-            "section_enrollment": section_enrollment,
-            "rooms_count": len(rooms_list),
-            "assign_rooms": assign_rooms,
-        }
-    )
+    _draft: dict = {
+        "status": "ok",
+        "students_count": len(all_students),
+        "courses": course_list,
+        "courses_count": len(course_list),
+        "conflicts": conflicts,
+        "conflicts_count": len(conflicts),
+        "slots": slots,
+        "schedule": schedule_entries,
+        "qa": qa,
+        "buckets_summary": buckets_summary,
+        "bucket_count": len(ptb),
+        "credit_map": credit_map,
+        "seed": seed,
+        "section_enrollment": section_enrollment,
+        "rooms_count": len(rooms_list),
+        "assign_rooms": assign_rooms,
+    }
+    # Compute the registrar status surface from the assembled draft
+    # so the headline + flags reflect the real run state.
+    primary_status, status_flags = derive_status_surface(_draft)
+    _draft["primary_status"] = primary_status
+    _draft["status_flags"] = status_flags
+    _draft["status_derivation_version"] = STATUS_DERIVATION_VERSION
+    result: dict = stamp_schema_version(_draft)
 
     # Persist (skipped in multi-start exploration mode where we evaluate
     # many candidates and only persist the selected Pareto few).

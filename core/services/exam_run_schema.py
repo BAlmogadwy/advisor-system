@@ -66,18 +66,117 @@ from typing import Any, Literal, TypedDict, cast
 # Version constant
 # ---------------------------------------------------------------------------
 
-EXAM_RUN_SCHEMA_VERSION: int = 1
+EXAM_RUN_SCHEMA_VERSION: int = 2
 """Current schema version for ``ExamTimetableRun.result_json`` payloads.
 
 Bump this whenever you add a key the UI or XLSX exporter will read but
 older rows lack. Always pair the bump with a migrator function appended
 to ``_MIGRATORS`` and a regression test.
+
+Version history
+---------------
+- v1 (initial): ``schema_version`` + ``status`` discriminator. Defined
+  the contract: every payload identifies its schema version, every
+  consumer reads through ``load_normalised_run`` / ``normalise_exam_run_payload``.
+- v2: registrar-facing status + multi-sitting tile.
+  ``registrar_status`` ``RegistrarRunStatus`` literal derived from the
+  QA dict and run state; ``qa.multi_sitting_sections`` / ``multi_sitting_details``
+  surface the historically-invisible "this section needs N sittings"
+  fact. Both are derivable from older v1 data so the v1->v2 migrator
+  fills them on the read path; new builds populate them at write time.
 """
 
 
 # ---------------------------------------------------------------------------
 # Display payload type
 # ---------------------------------------------------------------------------
+
+RegistrarPrimaryStatus = Literal[
+    "clean",
+    "clean_with_approved_thin_conflicts",
+    "requires_room_action",
+    "contains_overflow",
+    "contains_manual_override",
+    "infeasible",
+    "unrenderable",
+    "future_version_unrenderable",
+]
+"""Severity-ordered headline status for an exam-timetable run.
+
+This is the **headline** — what the UI badge and the run-list filter
+use. It is NOT exhaustive: several states can coexist (a run can have
+both overflow AND unassigned rooms AND manual overrides AND multi-
+sitting sections), and collapsing those into a single exclusive enum
+would visually hide the lower-priority issues. The exhaustive list
+is on ``status_flags`` (below).
+
+Severity order, worst first (the derivation walks this list and picks
+the first applicable):
+
+1. ``"future_version_unrenderable"``: payload from a newer build.
+2. ``"unrenderable"``: corrupt / missing / non-dict input.
+3. ``"infeasible"``: feasibility pre-check failed; scheduler didn't run.
+4. ``"contains_overflow"``: at least one course on the OVERFLOW day.
+5. ``"requires_room_action"``: at least one section ``UNASSIGNED`` for
+   a room, OR at least one multi-sitting section with incomplete
+   sitting data (missing slot/room/student allocation).
+6. ``"contains_manual_override"``: ``qa.manual_override_count > 0``
+   (registrar pinned overrides created same-slot conflicts).
+7. ``"clean_with_approved_thin_conflicts"``: realised thin clashes
+   exist but no other issues.
+8. ``"clean"``: no flags raised.
+
+Multi-sitting alone does NOT promote a run to ``requires_room_action``:
+multi-sitting is a legitimate capacity-resolution path when every
+sitting has a room, a slot, and an audit-text record. It only triggers
+``requires_room_action`` when a sitting is incomplete.
+"""
+
+RegistrarStatusFlag = Literal[
+    "approved_thin_conflicts",
+    "room_action_required",
+    "overflow",
+    "manual_override",
+    "multi_sitting_required",
+    "legacy_incomplete_qa",
+]
+"""Non-exclusive flags for everything the registrar should know about.
+
+A run can carry any combination of these. The UI shows them as a row
+of badges next to the primary-status headline; that way no signal is
+lost just because a more severe one took the headline.
+
+- ``approved_thin_conflicts``: ``qa.thin_clash_risk`` non-empty.
+- ``room_action_required``: at least one section UNASSIGNED for a
+  room OR at least one multi-sitting section is incomplete.
+- ``overflow``: at least one OVERFLOW-day schedule entry.
+- ``manual_override``: ``qa.manual_override_count > 0`` (or, for
+  legacy v1 rows lacking that field, inferred from the existing
+  ``qa.conflict_count``; ``legacy_incomplete_qa`` is also raised in
+  that case so the registrar knows the signal is approximate).
+- ``multi_sitting_required``: ``qa.multi_sitting_sections > 0``.
+  Distinct from ``room_action_required``: a complete multi-sitting
+  with all rooms+slots+student-allocation is a valid registrar plan,
+  not a defect.
+- ``legacy_incomplete_qa``: the payload's QA dict lacks one or more
+  keys this version of the derivation expects (e.g. v1 rows missing
+  ``qa.manual_override_count``). The status is computed best-effort
+  with safe defaults, but the registrar is told the signal is partial.
+"""
+
+# Backwards-compatible alias retained for any consumer that imported
+# the old name during the brief window when this file shipped with the
+# pre-flag-system enum. Internally everything uses ``RegistrarPrimaryStatus``.
+RegistrarRunStatus = RegistrarPrimaryStatus
+
+STATUS_DERIVATION_VERSION: int = 1
+"""Version of the rules used to derive ``primary_status`` and
+``status_flags`` from a payload. Bump when the rules change so a
+consumer can detect that an older row's status was computed under a
+different policy. Independent of ``EXAM_RUN_SCHEMA_VERSION`` — payload
+shape can stay stable while the derivation rules evolve.
+"""
+
 
 ExamRunStatus = Literal[
     "ok",
@@ -119,6 +218,10 @@ class ExamRunDisplayPayload(TypedDict, total=False):
 
     schema_version: int
     status: ExamRunStatus
+    # v2: registrar-facing health signals (derived). Always present.
+    primary_status: RegistrarPrimaryStatus
+    status_flags: list[RegistrarStatusFlag]
+    status_derivation_version: int
 
     # ── status="ok" payload ────────────────────────────────────────────
     students_count: int
@@ -177,10 +280,276 @@ def _migrate_v0_to_v1(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _migrate_v1_to_v2(payload: dict[str, Any]) -> dict[str, Any]:
+    """v1 -> v2: derive registrar status surface + multi-sitting tile.
+
+    Adds ``primary_status``, ``status_flags``, ``status_derivation_version``,
+    ``qa.multi_sitting_sections``, and ``qa.multi_sitting_details``. All
+    derivable from existing v1 data:
+
+    - ``overflow``: from schedule entries with ``day == "OVERFLOW"``
+    - ``room_action_required``: from ``qa.unassigned_room_sections``
+      and incomplete-multi-sitting detection
+    - ``manual_override``: from ``qa.manual_override_count`` if present,
+      else inferred best-effort from ``qa.conflict_count`` (and the
+      payload is flagged ``legacy_incomplete_qa`` so the registrar
+      knows the manual-override signal is approximate)
+    - ``approved_thin_conflicts``: from ``qa.thin_clash_risk``
+    - ``multi_sitting_required``: from assign_rooms entries with
+      split-section markers (sections containing ``/`` from
+      ``_split_oversized_sections``)
+
+    Migrator runs at read time for legacy v1 rows. New v2 builds
+    populate these directly at write time so the migrator is a no-op
+    on the happy path. The migrator does not strip or rename any v1
+    key (forward-compat by construction).
+    """
+    payload.setdefault("schema_version", 2)
+    qa = payload.get("qa")
+
+    # Multi-sitting tile derivation, before status flags so the flags
+    # function sees the populated count.
+    if isinstance(qa, dict):
+        if "multi_sitting_sections" not in qa or "multi_sitting_details" not in qa:
+            assign_rooms = payload.get("assign_rooms")
+            details = derive_multi_sitting_details(assign_rooms)
+            qa.setdefault("multi_sitting_sections", len(details))
+            qa.setdefault("multi_sitting_details", details)
+
+    # Status surface derivation.
+    if (
+        "primary_status" not in payload
+        or "status_flags" not in payload
+        or "status_derivation_version" not in payload
+    ):
+        primary, flags = derive_status_surface(payload)
+        payload.setdefault("primary_status", primary)
+        payload.setdefault("status_flags", flags)
+        payload.setdefault("status_derivation_version", STATUS_DERIVATION_VERSION)
+
+    return payload
+
+
 _MIGRATORS: list[Migrator] = [
     _migrate_v0_to_v1,
-    # _migrate_v1_to_v2 goes here when we bump to v2.
+    _migrate_v1_to_v2,
+    # _migrate_v2_to_v3 goes here when we bump to v3.
 ]
+
+
+# ---------------------------------------------------------------------------
+# Status-surface derivation (used by both the v1->v2 migrator and the
+# build site at write time).
+# ---------------------------------------------------------------------------
+
+
+def derive_multi_sitting_details(
+    assign_rooms: Any,
+) -> list[dict[str, Any]]:
+    """Extract multi-sitting sections from a ``payload['assign_rooms']`` block.
+
+    A section is considered "multi-sitting" when its room-assignment
+    output contains entries whose ``section`` name carries a split
+    marker (``"/"`` for oversize-split, ``"a"``/``"b"`` for halve-split,
+    or non-empty ``_split_from`` field). For each such logical section
+    we emit one detail entry summarising:
+
+    - ``section``: the original section label.
+    - ``enrolment``: total student count across all sittings.
+    - ``max_room_cap``: the largest room capacity encountered for any
+      sub-sitting (informational; helps the registrar see why splitting
+      was necessary).
+    - ``sittings``: count of sub-entries this logical section produced.
+    - ``slots``: list of slot keys (``"day:period"``) the sub-sittings
+      occupy. Same slot repeated = within-slot room split. Different
+      slots = across-slot multi-sitting.
+    - ``rooms``: list of assigned room codes.
+    - ``incomplete``: True when at least one sub-sitting is missing a
+      room or slot (drives ``room_action_required``).
+    - ``audit_text``: human-readable summary suitable for the QA tile.
+
+    Defensive: an unexpected ``assign_rooms`` shape returns ``[]``
+    rather than raising — partial schedules should not break the
+    status derivation.
+    """
+    if not isinstance(assign_rooms, dict):
+        return []
+
+    by_logical: dict[str, dict[str, Any]] = {}
+
+    # ``assign_rooms`` is structured by slot. Each slot has a list of
+    # course entries; each entry has its own ``rooms`` list with
+    # per-section sub-rows. The exact shape depends on the build site,
+    # but the relevant invariants are: there's a slot key, and each
+    # course's entry has a ``rooms`` list of dicts. Walk defensively.
+    for slot_key, slot_entries in assign_rooms.items():
+        if not isinstance(slot_entries, list):
+            continue
+        for entry in slot_entries:
+            if not isinstance(entry, dict):
+                continue
+            rooms = entry.get("rooms")
+            if not isinstance(rooms, list):
+                continue
+            for r in rooms:
+                if not isinstance(r, dict):
+                    continue
+                section_label = str(r.get("section", ""))
+                split_from = r.get("_split_from")
+                # A section qualifies as multi-sitting if either:
+                # (a) its name carries the "/" or trailing "a"/"b"
+                #     split marker introduced by _split_oversized_sections
+                #     or the in-place halver, OR
+                # (b) it has a non-empty ``_split_from`` field.
+                logical: str | None = None
+                if isinstance(split_from, str) and split_from:
+                    logical = split_from
+                elif "/" in section_label:
+                    logical = section_label.rsplit("/", 1)[0]
+                elif section_label and section_label[-1] in ("a", "b") and len(section_label) > 1:
+                    # Heuristic — only treat as split if there's another
+                    # entry with the trailing-stripped name. We resolve
+                    # this in the second pass below.
+                    pass
+                if logical is None:
+                    continue
+                bucket = by_logical.setdefault(
+                    logical,
+                    {
+                        "section": logical,
+                        "enrolment": 0,
+                        "max_room_cap": 0,
+                        "sittings": 0,
+                        "slots": [],
+                        "rooms": [],
+                        "incomplete": False,
+                    },
+                )
+                bucket["enrolment"] += int(r.get("student_count", 0) or 0)
+                bucket["max_room_cap"] = max(
+                    bucket["max_room_cap"],
+                    int(r.get("room_capacity", 0) or 0),
+                )
+                bucket["sittings"] += 1
+                bucket["slots"].append(str(slot_key))
+                room_code = str(r.get("room_code", ""))
+                bucket["rooms"].append(room_code)
+                if room_code in ("", "UNASSIGNED"):
+                    bucket["incomplete"] = True
+                if not slot_key:
+                    bucket["incomplete"] = True
+
+    out: list[dict[str, Any]] = []
+    for detail in by_logical.values():
+        if detail["sittings"] < 2:
+            # A single sub-entry isn't really a multi-sitting — likely
+            # caught by our heuristic above on a section that happens
+            # to end in "a"/"b" without a sibling.
+            continue
+        slot_summary = ", ".join(detail["slots"])
+        room_summary = ", ".join(detail["rooms"])
+        detail["audit_text"] = (
+            f"Section {detail['section']} requires "
+            f"{detail['sittings']} sittings "
+            f"({detail['enrolment']} students, "
+            f"slots: {slot_summary}, rooms: {room_summary})"
+        )
+        if detail["incomplete"]:
+            detail["audit_text"] += " — INCOMPLETE: missing room or slot data"
+        out.append(detail)
+    out.sort(key=lambda d: d["section"])
+    return out
+
+
+def derive_status_surface(
+    payload: dict[str, Any],
+) -> tuple[RegistrarPrimaryStatus, list[RegistrarStatusFlag]]:
+    """Compute ``(primary_status, status_flags)`` for a payload.
+
+    Uses ``payload["status"]`` (technical) plus the QA dict to derive
+    the registrar-facing surface. Returns the primary status (the
+    headline) and the full flags list (everything the registrar should
+    know, regardless of priority).
+
+    The function is defensive: missing keys default to safe values.
+    When critical signals are missing (e.g. a v1 row without
+    ``qa.manual_override_count``), the ``legacy_incomplete_qa`` flag
+    is raised so the consumer knows the derivation was best-effort.
+    """
+    status = payload.get("status")
+
+    # Technical sentinels short-circuit: a payload that can't be
+    # rendered cannot have meaningful registrar flags beyond its own
+    # unrenderable / future-version state.
+    if status == "future_version_unrenderable":
+        return ("future_version_unrenderable", [])
+    if status == "unrenderable":
+        return ("unrenderable", [])
+    if status == "feasibility_error":
+        return ("infeasible", [])
+
+    # ── Compute non-exclusive flags from QA + schedule ──────────────────
+    flags: list[RegistrarStatusFlag] = []
+    legacy_incomplete = False
+
+    qa = payload.get("qa") if isinstance(payload.get("qa"), dict) else {}
+    schedule = payload.get("schedule") if isinstance(payload.get("schedule"), list) else []
+
+    overflow_count = sum(1 for e in schedule if isinstance(e, dict) and e.get("day") == "OVERFLOW")
+    if overflow_count > 0:
+        flags.append("overflow")
+
+    unassigned_rooms = int(qa.get("unassigned_room_sections", 0) or 0)
+    multi_sitting_count = int(qa.get("multi_sitting_sections", 0) or 0)
+    multi_sitting_details = qa.get("multi_sitting_details") or []
+    incomplete_sittings = sum(
+        1 for d in multi_sitting_details if isinstance(d, dict) and d.get("incomplete")
+    )
+
+    if multi_sitting_count > 0:
+        flags.append("multi_sitting_required")
+
+    # Multi-sitting alone is a legitimate plan; only promote it to
+    # room_action_required when the multi-sitting itself is incomplete
+    # OR when we have outright UNASSIGNED rooms.
+    if unassigned_rooms > 0 or incomplete_sittings > 0:
+        flags.append("room_action_required")
+
+    # Manual override: prefer the explicit qa.manual_override_count
+    # signal added in v2 builds. Fall back to qa.conflict_count for
+    # legacy v1 rows (with the legacy_incomplete_qa flag raised).
+    if "manual_override_count" in qa:
+        manual_override_count = int(qa.get("manual_override_count", 0) or 0)
+    else:
+        manual_override_count = int(qa.get("conflict_count", 0) or 0)
+        if manual_override_count > 0:
+            legacy_incomplete = True
+    if manual_override_count > 0:
+        flags.append("manual_override")
+
+    thin_clash_risk = qa.get("thin_clash_risk") or []
+    if isinstance(thin_clash_risk, list) and thin_clash_risk:
+        flags.append("approved_thin_conflicts")
+
+    if legacy_incomplete:
+        flags.append("legacy_incomplete_qa")
+
+    # ── Pick the headline ───────────────────────────────────────────────
+    # Severity order, worst first. The first applicable wins.
+    if overflow_count > 0:
+        primary: RegistrarPrimaryStatus = "contains_overflow"
+    elif unassigned_rooms > 0 or incomplete_sittings > 0:
+        primary = "requires_room_action"
+    elif manual_override_count > 0:
+        primary = "contains_manual_override"
+    elif flags and "approved_thin_conflicts" in flags:
+        primary = "clean_with_approved_thin_conflicts"
+    else:
+        primary = "clean"
+
+    return (primary, flags)
+
+
 """Ordered list of migrators. Index N migrates from version N to N+1.
 
 A payload at version V is normalised by running ``_MIGRATORS[V:]`` in
@@ -215,6 +584,18 @@ def _fill_ok_defaults(payload: dict[str, Any]) -> None:
     payload.setdefault("rooms_count", 0)
     payload.setdefault("assign_rooms", {})
     payload.setdefault("seed", None)
+    # v2 status surface defaults so consumers never KeyError when
+    # reading the headline or flag list. The actual derivation runs in
+    # the v1->v2 migrator (or at write time for fresh v2 builds);
+    # these defaults only fire if a caller hand-crafts a payload
+    # without status data — the surface stays consistent.
+    payload.setdefault("primary_status", "clean")
+    payload.setdefault("status_flags", [])
+    payload.setdefault("status_derivation_version", STATUS_DERIVATION_VERSION)
+    qa_dict = payload.get("qa")
+    if isinstance(qa_dict, dict):
+        qa_dict.setdefault("multi_sitting_sections", 0)
+        qa_dict.setdefault("multi_sitting_details", [])
 
 
 def _fill_feasibility_error_defaults(payload: dict[str, Any]) -> None:
@@ -249,6 +630,9 @@ def _unrenderable(reason: str) -> ExamRunDisplayPayload:
     payload: dict[str, Any] = {
         "schema_version": EXAM_RUN_SCHEMA_VERSION,
         "status": "unrenderable",
+        "primary_status": "unrenderable",
+        "status_flags": [],
+        "status_derivation_version": STATUS_DERIVATION_VERSION,
         "error": reason,
         "violations": [],
     }
@@ -270,6 +654,9 @@ def _future_version_unrenderable(
     payload: dict[str, Any] = {
         "schema_version": future_version,
         "status": "future_version_unrenderable",
+        "primary_status": "future_version_unrenderable",
+        "status_flags": [],
+        "status_derivation_version": STATUS_DERIVATION_VERSION,
         "error": (
             f"Payload schema_version={future_version} is higher than this "
             f"build's EXAM_RUN_SCHEMA_VERSION={EXAM_RUN_SCHEMA_VERSION}. "

@@ -48,7 +48,10 @@ from django.core.management import call_command
 from core.models import ExamTimetableRun
 from core.services.exam_run_schema import (
     EXAM_RUN_SCHEMA_VERSION,
+    STATUS_DERIVATION_VERSION,
     ExamRunDisplayPayload,
+    derive_multi_sitting_details,
+    derive_status_surface,
     load_normalised_run,
     normalise_exam_run_payload,
     stamp_schema_version,
@@ -60,7 +63,10 @@ from core.services.exam_run_schema import (
 
 
 def _v1_ok_payload() -> dict:
-    """A canonical v1 ok-shape payload to compare against."""
+    """A canonical v1 ok-shape payload (no v2 status surface keys).
+
+    Used to test the v1->v2 migration path.
+    """
     return {
         "schema_version": 1,
         "status": "ok",
@@ -82,18 +88,62 @@ def _v1_ok_payload() -> dict:
     }
 
 
-def test_identity_v1() -> None:
-    payload = _v1_ok_payload()
+def _v2_ok_payload() -> dict:
+    """A canonical v2 ok-shape payload — already at current schema."""
+    return {
+        "schema_version": 2,
+        "status": "ok",
+        "primary_status": "clean",
+        "status_flags": [],
+        "status_derivation_version": 1,
+        "students_count": 42,
+        "courses": ["CS101", "CS102"],
+        "courses_count": 2,
+        "conflicts": [],
+        "conflicts_count": 0,
+        "slots": [{"index": 0, "day": "SUN", "period": "P1"}],
+        "schedule": [{"course_code": "CS101", "slot_index": 0, "day": "SUN", "period": "P1"}],
+        "qa": {
+            "total_courses": 2,
+            "multi_sitting_sections": 0,
+            "multi_sitting_details": [],
+        },
+        "buckets_summary": [],
+        "bucket_count": 1,
+        "credit_map": {"CS101": 3, "CS102": 3},
+        "seed": 42,
+        "section_enrollment": {},
+        "rooms_count": 0,
+        "assign_rooms": {},
+    }
+
+
+def test_identity_v2() -> None:
+    """A fully-formed v2 payload normalises to itself."""
+    payload = _v2_ok_payload()
     out = normalise_exam_run_payload(payload)
-    # Every input key survives untouched.
     for key, value in payload.items():
         assert out[key] == value, f"key {key!r} mutated by normaliser"
-    # schema_version still 1.
-    assert out["schema_version"] == 1
+    assert out["schema_version"] == 2
+
+
+def test_v1_payload_migrates_to_v2() -> None:
+    """A v1 payload with no status surface gets primary_status,
+    status_flags, multi-sitting tile, and the version stamped to v2."""
+    payload = _v1_ok_payload()
+    out = normalise_exam_run_payload(payload)
+    assert out["schema_version"] == 2
+    assert out["status"] == "ok"
+    # New v2 keys derived for legacy v1 input.
+    assert "primary_status" in out
+    assert "status_flags" in out
+    assert "status_derivation_version" in out
+    assert out["qa"].get("multi_sitting_sections") == 0
+    assert out["qa"].get("multi_sitting_details") == []
 
 
 def test_normaliser_does_not_mutate_input() -> None:
-    payload = _v1_ok_payload()
+    payload = _v2_ok_payload()
     snapshot = json.dumps(payload, sort_keys=True)
     normalise_exam_run_payload(payload)
     assert json.dumps(payload, sort_keys=True) == snapshot
@@ -135,7 +185,8 @@ def test_v0_legacy_feasibility_error_migrates() -> None:
     assert out["violations"] == [{"bucket": "(CS, T1)", "courses": 4, "days": 3}]
     # ok-shape defaults also present so consumers can index without branching.
     assert out["schedule"] == []
-    assert out["qa"] == {}
+    assert out["qa"].get("multi_sitting_sections") == 0
+    assert out["qa"].get("multi_sitting_details") == []
 
 
 def test_idempotent_on_v1_payload() -> None:
@@ -171,7 +222,8 @@ def test_none_input_returns_unrenderable_sentinel() -> None:
     assert "error" in out
     # ok-shape defaults available so UI can render the empty-state cards.
     assert out["schedule"] == []
-    assert out["qa"] == {}
+    assert out["qa"].get("multi_sitting_sections") == 0
+    assert out["qa"].get("multi_sitting_details") == []
 
 
 @pytest.mark.parametrize(
@@ -252,7 +304,8 @@ def test_future_version_status_with_empty_input_uses_ok_defaults() -> None:
     out = normalise_exam_run_payload({"schema_version": 99})
     assert out["status"] == "future_version_unrenderable"
     assert out["schedule"] == []
-    assert out["qa"] == {}
+    assert out["qa"].get("multi_sitting_sections") == 0
+    assert out["qa"].get("multi_sitting_details") == []
 
 
 def test_future_version_preserves_original_schema_version() -> None:
@@ -368,7 +421,8 @@ def test_feasibility_error_defaults_include_ok_keys() -> None:
     out = normalise_exam_run_payload({"feasibility_error": True})
     assert out["status"] == "feasibility_error"
     assert out["schedule"] == []
-    assert out["qa"] == {}
+    assert out["qa"].get("multi_sitting_sections") == 0
+    assert out["qa"].get("multi_sitting_details") == []
     assert out["slots"] == []
     assert out["violations"] == []
 
@@ -377,7 +431,8 @@ def test_unrenderable_sentinel_includes_ok_keys() -> None:
     out = normalise_exam_run_payload(None)
     assert out["status"] == "unrenderable"
     assert out["schedule"] == []
-    assert out["qa"] == {}
+    assert out["qa"].get("multi_sitting_sections") == 0
+    assert out["qa"].get("multi_sitting_details") == []
     assert out["violations"] == []
 
 
@@ -482,7 +537,8 @@ def test_load_normalised_run_with_legacy_v0_row() -> None:
     assert loaded["schema_version"] == EXAM_RUN_SCHEMA_VERSION
     # Missing keys filled with safe defaults.
     assert loaded["slots"] == []
-    assert loaded["qa"] == {}
+    assert loaded["qa"].get("multi_sitting_sections") == 0
+    assert loaded["qa"].get("multi_sitting_details") == []
     assert loaded["bucket_count"] == 0
 
 
@@ -691,6 +747,360 @@ def test_management_command_skips_future_version_rows() -> None:
     assert run.result_json == original
     assert "schema_version higher" in out.getvalue()
     assert str(run.id) in out.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# v2: registrar-facing status surface (primary_status + status_flags)
+# ---------------------------------------------------------------------------
+
+
+def test_status_surface_clean() -> None:
+    """A clean payload with no defects: primary='clean', flags empty."""
+    primary, flags = derive_status_surface(_v2_ok_payload())
+    assert primary == "clean"
+    assert flags == []
+
+
+def test_status_surface_overflow_promotes_to_overflow() -> None:
+    """An overflow entry on the schedule promotes the headline."""
+    payload = _v2_ok_payload()
+    payload["schedule"] = [
+        {"course_code": "CS101", "day": "SUN", "slot_index": 0},
+        {"course_code": "GS999", "day": "OVERFLOW", "slot_index": -1},
+    ]
+    primary, flags = derive_status_surface(payload)
+    assert primary == "contains_overflow"
+    assert "overflow" in flags
+
+
+def test_status_surface_unassigned_rooms_promote_to_room_action() -> None:
+    payload = _v2_ok_payload()
+    payload["qa"] = {**payload["qa"], "unassigned_room_sections": 3}
+    primary, flags = derive_status_surface(payload)
+    assert primary == "requires_room_action"
+    assert "room_action_required" in flags
+
+
+def test_status_surface_complete_multi_sitting_does_not_require_room_action() -> None:
+    """A multi-sitting section with all rooms assigned is a legitimate
+    capacity-resolution path — flag only, not a room-action escalation."""
+    payload = _v2_ok_payload()
+    payload["qa"] = {
+        **payload["qa"],
+        "multi_sitting_sections": 1,
+        "multi_sitting_details": [
+            {
+                "section": "GS101",
+                "sittings": 2,
+                "slots": ["MON:P1", "TUE:P1"],
+                "rooms": ["A101", "B202"],
+                "incomplete": False,
+            }
+        ],
+    }
+    primary, flags = derive_status_surface(payload)
+    assert primary == "clean"
+    assert "multi_sitting_required" in flags
+    assert "room_action_required" not in flags
+
+
+def test_status_surface_incomplete_multi_sitting_does_promote_room_action() -> None:
+    payload = _v2_ok_payload()
+    payload["qa"] = {
+        **payload["qa"],
+        "multi_sitting_sections": 1,
+        "multi_sitting_details": [
+            {
+                "section": "GS101",
+                "sittings": 2,
+                "slots": ["MON:P1", ""],
+                "rooms": ["A101", "UNASSIGNED"],
+                "incomplete": True,
+            }
+        ],
+    }
+    primary, flags = derive_status_surface(payload)
+    assert primary == "requires_room_action"
+    assert "room_action_required" in flags
+    assert "multi_sitting_required" in flags
+
+
+def test_status_surface_manual_override_via_explicit_qa_signal() -> None:
+    """v2 builds use qa.manual_override_count — no legacy_incomplete_qa flag."""
+    payload = _v2_ok_payload()
+    payload["qa"] = {**payload["qa"], "manual_override_count": 1}
+    primary, flags = derive_status_surface(payload)
+    assert primary == "contains_manual_override"
+    assert "manual_override" in flags
+    assert "legacy_incomplete_qa" not in flags
+
+
+def test_status_surface_manual_override_inferred_from_legacy_v1_qa() -> None:
+    """v1 rows lack qa.manual_override_count — infer from
+    qa.conflict_count and raise legacy_incomplete_qa so the registrar
+    knows the manual-override signal is approximate."""
+    payload = _v2_ok_payload()
+    qa = dict(payload["qa"])
+    qa.pop("manual_override_count", None)
+    qa["conflict_count"] = 2
+    payload["qa"] = qa
+    primary, flags = derive_status_surface(payload)
+    assert primary == "contains_manual_override"
+    assert "manual_override" in flags
+    assert "legacy_incomplete_qa" in flags
+
+
+def test_status_surface_thin_clashes_promote_to_clean_with_thin() -> None:
+    payload = _v2_ok_payload()
+    payload["qa"] = {**payload["qa"], "thin_clash_risk": [{"student": 1, "courses": ["A", "B"]}]}
+    primary, flags = derive_status_surface(payload)
+    assert primary == "clean_with_approved_thin_conflicts"
+    assert "approved_thin_conflicts" in flags
+
+
+def test_status_surface_severity_overflow_beats_room_action() -> None:
+    """When multiple flags are raised, primary picks the most severe.
+    Both flags remain on the list."""
+    payload = _v2_ok_payload()
+    payload["schedule"] = [{"course_code": "X", "day": "OVERFLOW", "slot_index": -1}]
+    payload["qa"] = {**payload["qa"], "unassigned_room_sections": 2}
+    primary, flags = derive_status_surface(payload)
+    assert primary == "contains_overflow"
+    # But room_action_required is still in the flags list — the
+    # registrar can see both issues.
+    assert "overflow" in flags
+    assert "room_action_required" in flags
+
+
+def test_status_surface_severity_room_action_beats_manual_override() -> None:
+    payload = _v2_ok_payload()
+    payload["qa"] = {
+        **payload["qa"],
+        "unassigned_room_sections": 1,
+        "manual_override_count": 1,
+    }
+    primary, flags = derive_status_surface(payload)
+    assert primary == "requires_room_action"
+    assert "room_action_required" in flags
+    assert "manual_override" in flags
+
+
+def test_status_surface_feasibility_error_short_circuits() -> None:
+    payload = {"status": "feasibility_error", "violations": []}
+    primary, flags = derive_status_surface(payload)
+    assert primary == "infeasible"
+    # No other flags computed — feasibility_error short-circuits.
+    assert flags == []
+
+
+def test_status_surface_unrenderable_short_circuits() -> None:
+    payload = {"status": "unrenderable"}
+    primary, flags = derive_status_surface(payload)
+    assert primary == "unrenderable"
+    assert flags == []
+
+
+def test_status_surface_future_version_short_circuits() -> None:
+    payload = {"status": "future_version_unrenderable"}
+    primary, flags = derive_status_surface(payload)
+    assert primary == "future_version_unrenderable"
+    assert flags == []
+
+
+def test_status_surface_defensive_against_missing_qa() -> None:
+    """A payload with no qa key at all still produces a valid surface."""
+    primary, flags = derive_status_surface({"status": "ok", "schedule": []})
+    assert primary == "clean"
+    assert flags == []
+
+
+# ---------------------------------------------------------------------------
+# v2: multi-sitting details extraction
+# ---------------------------------------------------------------------------
+
+
+def test_derive_multi_sitting_empty_when_no_assign_rooms() -> None:
+    assert derive_multi_sitting_details(None) == []
+    assert derive_multi_sitting_details({}) == []
+    assert derive_multi_sitting_details({"slot1": []}) == []
+
+
+def test_derive_multi_sitting_detects_split_sections_via_slash_marker() -> None:
+    """A section name like 'M5/1' / 'M5/2' indicates it was split by
+    the oversize splitter; we collapse them into one logical section."""
+    assign_rooms = {
+        "MON:P1": [
+            {
+                "course_code": "GS101",
+                "rooms": [
+                    {
+                        "section": "M5/1",
+                        "room_code": "A101",
+                        "student_count": 50,
+                        "room_capacity": 60,
+                    },
+                    {
+                        "section": "M5/2",
+                        "room_code": "A102",
+                        "student_count": 50,
+                        "room_capacity": 60,
+                    },
+                ],
+            }
+        ]
+    }
+    details = derive_multi_sitting_details(assign_rooms)
+    assert len(details) == 1
+    d = details[0]
+    assert d["section"] == "M5"
+    assert d["enrolment"] == 100
+    assert d["sittings"] == 2
+    assert d["slots"] == ["MON:P1", "MON:P1"]
+    assert d["rooms"] == ["A101", "A102"]
+    assert d["incomplete"] is False
+    assert "GS" not in d["audit_text"]  # the audit text references the section, not GS101
+    assert "M5" in d["audit_text"]
+    assert "2 sittings" in d["audit_text"]
+
+
+def test_derive_multi_sitting_detects_split_via_explicit_split_from_field() -> None:
+    """Even without a slash in the section name, an explicit
+    ``_split_from`` field marks the entry as part of a multi-sitting."""
+    assign_rooms = {
+        "MON:P1": [
+            {
+                "course_code": "GS101",
+                "rooms": [
+                    {
+                        "section": "X1",
+                        "_split_from": "M5",
+                        "room_code": "A101",
+                        "student_count": 50,
+                        "room_capacity": 60,
+                    },
+                    {
+                        "section": "X2",
+                        "_split_from": "M5",
+                        "room_code": "A102",
+                        "student_count": 50,
+                        "room_capacity": 60,
+                    },
+                ],
+            }
+        ]
+    }
+    details = derive_multi_sitting_details(assign_rooms)
+    assert len(details) == 1
+    assert details[0]["section"] == "M5"
+
+
+def test_derive_multi_sitting_marks_incomplete_when_room_unassigned() -> None:
+    assign_rooms = {
+        "MON:P1": [
+            {
+                "course_code": "GS101",
+                "rooms": [
+                    {
+                        "section": "M5/1",
+                        "room_code": "A101",
+                        "student_count": 50,
+                        "room_capacity": 60,
+                    },
+                    {
+                        "section": "M5/2",
+                        "room_code": "UNASSIGNED",
+                        "student_count": 50,
+                        "room_capacity": 0,
+                    },
+                ],
+            }
+        ]
+    }
+    details = derive_multi_sitting_details(assign_rooms)
+    assert details[0]["incomplete"] is True
+    assert "INCOMPLETE" in details[0]["audit_text"]
+
+
+def test_derive_multi_sitting_ignores_singletons() -> None:
+    """A single sub-entry that happens to match the heuristic is not
+    a multi-sitting (we only recognise it when there are 2+)."""
+    assign_rooms = {
+        "MON:P1": [
+            {
+                "course_code": "GS101",
+                "rooms": [
+                    {
+                        "section": "M5/1",
+                        "room_code": "A101",
+                        "student_count": 50,
+                        "room_capacity": 60,
+                    }
+                ],
+            }
+        ]
+    }
+    details = derive_multi_sitting_details(assign_rooms)
+    assert details == []
+
+
+def test_derive_multi_sitting_sorted_alphabetically_for_determinism() -> None:
+    assign_rooms = {
+        "MON:P1": [
+            {
+                "course_code": "X",
+                "rooms": [
+                    {
+                        "section": "Z3/1",
+                        "room_code": "A1",
+                        "student_count": 10,
+                        "room_capacity": 20,
+                    },
+                    {
+                        "section": "Z3/2",
+                        "room_code": "A2",
+                        "student_count": 10,
+                        "room_capacity": 20,
+                    },
+                    {
+                        "section": "A1/1",
+                        "room_code": "B1",
+                        "student_count": 10,
+                        "room_capacity": 20,
+                    },
+                    {
+                        "section": "A1/2",
+                        "room_code": "B2",
+                        "student_count": 10,
+                        "room_capacity": 20,
+                    },
+                ],
+            }
+        ]
+    }
+    details = derive_multi_sitting_details(assign_rooms)
+    assert [d["section"] for d in details] == ["A1", "Z3"]
+
+
+# ---------------------------------------------------------------------------
+# v1 -> v2 migrator integration via load_normalised_run
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_load_normalised_run_v1_row_gets_full_v2_surface() -> None:
+    v1_payload = {
+        "schema_version": 1,
+        "status": "ok",
+        "schedule": [],
+        "qa": {"unassigned_room_sections": 2},
+    }
+    run = ExamTimetableRun.objects.create(label="legacy", result_json=json.dumps(v1_payload))
+    loaded = load_normalised_run(run)
+    assert loaded["schema_version"] == EXAM_RUN_SCHEMA_VERSION
+    assert loaded["primary_status"] == "requires_room_action"
+    assert "room_action_required" in loaded["status_flags"]
+    assert loaded["status_derivation_version"] == STATUS_DERIVATION_VERSION
+    assert loaded["qa"].get("multi_sitting_sections") == 0
 
 
 # ---------------------------------------------------------------------------
