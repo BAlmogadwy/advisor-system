@@ -608,27 +608,37 @@ def _score_option(
     # ── (4) Slot position preference + load balancing ─────────────────
     # Online courses: penalise early slots (push to late).
     # Non-online courses:
-    #   - Gradient morning preference: slot 1 (09:00) is ideal, slot 5
-    #     (16:00) is worst. This tiles mornings first when student-
-    #     conflicts don't block, relieving peak mid-day saturation.
+    #   - Gradient morning preference: 09:00 ideal, latest slot worst.
+    #     This tiles mornings first when student-conflicts don't block,
+    #     relieving peak mid-day saturation.
     #   - Slot-density load balancing: already-busy slots cost more, so
     #     the optimiser spreads horizontally rather than stacking every
     #     section at one peak slot (e.g. MON 14:30).
-    # Indices 0-5 match the 6-slot DEFAULT_SLOTS (09:00, 10:30, 10:50, 13:00,
-    # 14:30, 16:00). 10:30 and 10:50 are both morning — same weight (1).
-    # 13:00 = 2, 14:30 = 4, 16:00 = 8 (worst, kept as the unique peak penalty).
-    _SLOT_IDX_PENALTY = (0, 1, 1, 2, 4, 8)
+    # Keyed by ``m["start"]`` directly to avoid a slot-grid divergence: a
+    # lab meeting's ``slot_idx`` indexes into DEFAULT_LAB_SLOTS (09:00,
+    # 10:45, 13:00, 14:45, 16:30), not DEFAULT_SLOTS, so an index-based
+    # gradient would silently mis-price labs (e.g. Lab 5 at 16:30 would
+    # receive the lecture-slot-5 weight of 4 instead of the 8 it deserves
+    # as the latest slot of its grid). Looking up by start time covers
+    # both grids consistently.
+    _SLOT_PENALTY_BY_START = {
+        "09:00": 0,
+        "10:30": 1,
+        "10:45": 1,
+        "10:50": 1,
+        "13:00": 2,
+        "14:30": 4,
+        "14:45": 4,
+        "16:00": 8,
+        "16:30": 8,
+    }
     instructor_spread = 0
     if is_online:
         for m in option:
             instructor_spread += 10 - m["slot_idx"]
     else:
         for m in option:
-            idx = m["slot_idx"]
-            if 0 <= idx < len(_SLOT_IDX_PENALTY):
-                instructor_spread += _SLOT_IDX_PENALTY[idx]
-            else:
-                instructor_spread += 8
+            instructor_spread += _SLOT_PENALTY_BY_START.get(m["start"], 8)
             if slot_density is not None:
                 instructor_spread += slot_density.get(m["start"], 0) * 2
 
@@ -1128,6 +1138,17 @@ def auto_place_board(
     # a small section failed because its preferred small rooms were
     # already booked).
     unassigned_for_repair: list[dict] = []
+    # Repair-pass safety net: per-course raw demand keyed by course_code,
+    # used by ``repair_unassigned_after_greedy`` when a swap candidate's
+    # ``available_capacity`` is NULL/0 so the capacity filter doesn't
+    # collapse to "any smallest room fits". Same ceil(total_demand /
+    # planned_sections) formula used everywhere else for raw_cap.
+    repair_budget_map: dict[str, int] = {}
+    for _b in budgets:
+        if _b.planned_sections and _b.planned_sections > 0:
+            repair_budget_map[_b.course_code] = -(-_b.total_demand // _b.planned_sections)
+        else:
+            repair_budget_map[_b.course_code] = int(_b.max_per_section or 0)
     meeting_result_refs: dict[tuple[int, str, str], dict] = {}
     # PR3 commit 3 — decision-trace capture (observational, flag-gated).
     # When ``trace_enabled`` is True we record one ``DecisionTrace`` per
@@ -1515,8 +1536,14 @@ def auto_place_board(
                         p_start_min = _to_min(p_start)
                         p_end_min = _to_min(p_end)
                         if p_start_min < m_end_min and p_end_min > m_start_min:
+                            # Use ``clashing_course`` (course code only) to
+                            # avoid colliding with the ``INSTRUCTOR_CLASH``
+                            # contract, which fills ``clashing_section`` with
+                            # a full ``"<course>|<section>"`` identifier.
+                            # ``placed_schedule`` carries only the course
+                            # code, so a section label is not available here.
                             same_course_ctx = {
-                                "clashing_section": p_code,
+                                "clashing_course": p_code,
                                 "same_course": True,
                             }
                             break
@@ -1867,6 +1894,7 @@ def auto_place_board(
                                     "gender": board_gender,
                                     "course_code": code,
                                     "section_code": sec_label,
+                                    "budget_map": repair_budget_map,
                                 }
                             )
                     if not preferred_room and assigned_room and assigned_room != "UNASSIGNED":

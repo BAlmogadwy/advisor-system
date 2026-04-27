@@ -280,6 +280,8 @@ def repair_unassigned_after_greedy(
 
     Returns the number of meetings newly assigned a room.
     """
+    from django.utils import timezone
+
     from core.models import SectionPlacement
 
     repaired = 0
@@ -297,17 +299,43 @@ def repair_unassigned_after_greedy(
         room_code = tracker.assign_best_fit(day, start, demand, rtype, gender, end=end)
 
         if not room_code:
-            # Phase 2 — 1-swap against any room currently occupied at (day, start)
-            # that would fit us AND whose occupant can move.
-            used_here = set(tracker.usage.get((day, start), set()))
+            # Phase 2 — 1-swap against any room whose current booking
+            # overlaps U's window (day, start..end) and which would fit U
+            # AND whose occupant can be relocated. Using the overlap-aware
+            # index here (rather than exact-start ``usage[(day, start)]``)
+            # lets us rescue collisions like an UNASSIGNED meeting at
+            # 10:50-12:05 when the only fitting room is held by an
+            # occupant at 10:30-11:45.
             pool = tracker._pool(rtype, gender)
+            if end is not None:
+                u_s_min = tracker._mins(start)
+                u_e_min = tracker._mins(end)
+                used_here = tracker._overlapping_rooms(day, u_s_min, u_e_min)
+            else:
+                used_here = set(tracker.usage.get((day, start), set()))
             fit_rooms = [r for r in pool if r["capacity"] >= demand and r["room_code"] in used_here]
 
             for r in fit_rooms:
                 target_room_code = r["room_code"]
-                occupant = SectionPlacement.objects.filter(
-                    board=board, day=day, start_time=start, room=target_room_code
-                ).first()
+                # Find the occupant whose interval actually overlaps U's
+                # window in this room. With the overlap-aware switch the
+                # occupant's start_time may differ from U's start_time.
+                if end is not None:
+                    occupant = (
+                        SectionPlacement.objects.filter(
+                            board=board,
+                            day=day,
+                            room=target_room_code,
+                            start_time__lt=end,
+                            end_time__gt=start,
+                        )
+                        .order_by("start_time")
+                        .first()
+                    )
+                else:
+                    occupant = SectionPlacement.objects.filter(
+                        board=board, day=day, start_time=start, room=target_room_code
+                    ).first()
                 if not occupant:
                     continue
 
@@ -323,20 +351,25 @@ def repair_unassigned_after_greedy(
                 # target_room_code is in U's pool(rtype, gender), so occupant's
                 # rtype must match U's rtype — same pool, same room_type.
                 occ_rtype = rtype
+                occ_start = (
+                    occupant.start_time.strftime("%H:%M")
+                    if hasattr(occupant.start_time, "strftime")
+                    else str(occupant.start_time)[:5]
+                )
                 occ_end = (
                     occupant.end_time.strftime("%H:%M")
                     if hasattr(occupant.end_time, "strftime")
                     else str(occupant.end_time)[:5]
                 )
 
-                tracker.release(day, start, target_room_code, end=occ_end)
+                tracker.release(day, occ_start, target_room_code, end=occ_end)
                 alt_room = tracker.assign_best_fit(
-                    day, start, occ_demand, occ_rtype, gender, end=occ_end
+                    day, occ_start, occ_demand, occ_rtype, gender, end=occ_end
                 )
                 if alt_room and alt_room != target_room_code:
                     occupant.room = alt_room
-                    occupant.save(update_fields=["room"])
-                    occ_key = (occ_ts.id, day, start)
+                    occupant.save(update_fields=["room", "updated_at"])
+                    occ_key = (occ_ts.id, day, occ_start)
                     if occ_key in meeting_result_refs:
                         meeting_result_refs[occ_key]["room"] = alt_room
                     # Register U's new occupancy in BOTH indexes so the next
@@ -347,19 +380,22 @@ def repair_unassigned_after_greedy(
                         tracker.usage[(day, start)].add(target_room_code)
                     room_code = target_room_code
                     break
-                else:
-                    # Swap attempt failed — put target_room_code back for the
-                    # occupant. If we had an end time, re-insert the interval
-                    # entry too so the stale removal doesn't persist.
-                    if end is not None:
-                        tracker.mark_used(day, start, occ_end, target_room_code)
-                    else:
-                        tracker.usage[(day, start)].add(target_room_code)
+                elif not alt_room:
+                    # Nothing fit the occupant. ``release`` removed
+                    # target_room_code with no replacement; restore it at
+                    # the occupant's slot so the tracker stays consistent.
+                    tracker.mark_used(day, occ_start, occ_end, target_room_code)
+                # else: ``alt_room == target_room_code``. ``assign_best_fit``
+                # already re-registered the room at the occupant's slot in
+                # both indexes — calling ``mark_used`` again would leave a
+                # duplicate ``intervals[day]`` entry that ``release`` (single
+                # ``list.remove``) cannot fully clean up later. Try the next
+                # candidate room instead.
 
         if room_code:
             SectionPlacement.objects.filter(
                 board=board, term_section_id=rec["ts_id"], day=day, start_time=start
-            ).update(room=room_code)
+            ).update(room=room_code, updated_at=timezone.now())
             key = (rec["ts_id"], day, start)
             if key in meeting_result_refs:
                 meeting_result_refs[key]["room"] = room_code
@@ -659,9 +695,12 @@ def assign_rooms_to_board(board_id: int) -> dict:
         else:
             # Would a raw-cap room have fit? Used below to refine the oracle
             # rejection code into ROOM_BUFFER_REJECT when the section could
-            # have been placed without the capacity buffer.
+            # have been placed without the capacity buffer. Pass ``end=_e``
+            # so an overlapping booking (e.g. a 10:30-11:45 occupant when
+            # placing 10:50-12:05) correctly counts as occupancy, not a
+            # buffer-only reject.
             is_buffer_only = room_type != "lab" and tracker.is_feasible(
-                p.day, p.start_time, raw_cap, room_type, gender
+                p.day, _s, raw_cap, room_type, gender, end=_e
             )
             p.room = "UNASSIGNED"
             p.save(update_fields=["room", "updated_at"])
@@ -709,7 +748,7 @@ def assign_rooms_to_board(board_id: int) -> dict:
                         or check_occupancy(
                             section_dict,
                             tracker.rooms,
-                            tracker.usage.get((p.day, p.start_time), set()),
+                            tracker._overlapping_rooms(p.day, tracker._mins(_s), tracker._mins(_e)),
                         )
                     )
             if refined is None:

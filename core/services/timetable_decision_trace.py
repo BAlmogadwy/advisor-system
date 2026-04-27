@@ -35,6 +35,8 @@ code and left empty otherwise):
 
 - ``INSTRUCTOR_CLASH``: ``clashing_section`` (``"<course>|<section>"``),
   ``clashing_instructor_id``.
+- ``SAME_COURSE_INSTRUCTOR_CLASH``: ``clashing_course`` (course code only —
+  ``placed_schedule`` does not carry a section label here), ``same_course``.
 - ``STUDENT_CONFLICT``: ``clashing_section``, ``shared_student_count``.
 - ``PRAYER_OVERLAP``: ``prayer_window`` (e.g. ``"dhuhr"``).
 - ``LOCK_RESPECT``: ``locked_section``.
