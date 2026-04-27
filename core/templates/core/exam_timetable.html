@@ -97,9 +97,9 @@
         <input id="etRandomize" class="form-check-input" type="checkbox" checked>
         <span class="form-check-label small">{% if LANGUAGE_CODE == 'ar' %}عشوائي{% else %}Shuffle{% endif %}</span>
       </label>
-      <label class="form-check form-switch mb-0 ms-2 d-flex align-items-center gap-1 u-cursor-pointer" title="{% if LANGUAGE_CODE == 'ar' %}المقررات التي لديها ≤N طالب تُجدول دون مراعاة تعارضات الطلاب; التعارضات الفعلية تظهر في تقرير الجودة{% else %}Courses with ≤N enrolled students are scheduled without honouring their student conflicts. Realised same-slot clashes are reported in QA so the registrar can pin them manually.{% endif %}">
+      <label class="form-check form-switch mb-0 ms-2 d-flex align-items-center gap-1 u-cursor-pointer" title="{% if LANGUAGE_CODE == 'ar' %}اسمح بتعارضات نفس الفترة للمقررات الصغيرة جداً (≤N طالب) وأبلغ عنها في تقرير الجودة — ليس مفتاح تحسين{% else %}Allow tiny-course same-slot clashes (≤N enrolled students); report them in QA. This is a policy toggle, not an optimisation knob.{% endif %}">
         <input id="etRelaxThin" class="form-check-input" type="checkbox">
-        <span class="form-check-label small">{% if LANGUAGE_CODE == 'ar' %}تخفيف الصغيرة{% else %}Relax thin{% endif %}</span>
+        <span class="form-check-label small">{% if LANGUAGE_CODE == 'ar' %}اسمح بتعارضات الصغيرة{% else %}Allow tiny-course clashes{% endif %}</span>
       </label>
       <input id="etThinThreshold" type="text" inputmode="numeric" pattern="[0-9]*" class="form-control form-control-compact" value="4" min="0" max="10" style="width:56px;" disabled aria-label="{% if LANGUAGE_CODE == 'ar' %}عتبة الصغيرة{% else %}Thin threshold{% endif %}">
       <small id="etSeedInfo" class="text-secondary ms-1 d-none"></small>
@@ -123,6 +123,35 @@
 
   <!-- ─── Results (hidden until built) ─── -->
   <div id="etResults" class="d-none">
+    <!-- v2 honest status surface: primary_status headline + status_flags
+         pills. The headline picks the most severe state; flags preserve
+         every non-exclusive fact so a registrar never loses sight of
+         e.g. overflow just because room action is more severe.
+         Bilingual copy is rendered into data-* attributes here so the
+         JS can look up by enum value without doing its own i18n. -->
+    <div id="statusCopyMap" class="d-none"
+      data-clean="{% if LANGUAGE_CODE == 'ar' %}نظيف{% else %}Clean{% endif %}"
+      data-clean_with_approved_thin_conflicts="{% if LANGUAGE_CODE == 'ar' %}نظيف مع تعارضات صغيرة معتمدة{% else %}Clean (with approved tiny-course clashes){% endif %}"
+      data-requires_room_action="{% if LANGUAGE_CODE == 'ar' %}يتطلب إجراء على القاعات{% else %}Requires room action{% endif %}"
+      data-contains_overflow="{% if LANGUAGE_CODE == 'ar' %}يحتوي على فترات إضافية{% else %}Contains overflow exams{% endif %}"
+      data-contains_manual_override="{% if LANGUAGE_CODE == 'ar' %}يحتوي على تجاوزات يدوية{% else %}Contains manual override conflicts{% endif %}"
+      data-infeasible="{% if LANGUAGE_CODE == 'ar' %}غير قابل للتحقيق{% else %}Infeasible{% endif %}"
+      data-unrenderable="{% if LANGUAGE_CODE == 'ar' %}لا يمكن عرضه{% else %}Cannot render this run{% endif %}"
+      data-future_version_unrenderable="{% if LANGUAGE_CODE == 'ar' %}بُني بإصدار أحدث{% else %}Created by a newer system version{% endif %}"
+      data-flag-approved_thin_conflicts="{% if LANGUAGE_CODE == 'ar' %}تعارضات صغيرة معتمدة{% else %}approved thin conflicts{% endif %}"
+      data-flag-room_action_required="{% if LANGUAGE_CODE == 'ar' %}يتطلب إجراء على القاعات{% else %}room action required{% endif %}"
+      data-flag-overflow="{% if LANGUAGE_CODE == 'ar' %}فترات إضافية{% else %}overflow{% endif %}"
+      data-flag-manual_override="{% if LANGUAGE_CODE == 'ar' %}تجاوز يدوي{% else %}manual override{% endif %}"
+      data-flag-multi_sitting_required="{% if LANGUAGE_CODE == 'ar' %}جلسات متعددة{% else %}multi-sitting required{% endif %}"
+      data-flag-legacy_incomplete_qa="{% if LANGUAGE_CODE == 'ar' %}بيانات قديمة غير كاملة{% else %}legacy / incomplete QA data{% endif %}">
+    </div>
+    <div id="kStatusBanner" class="et-panel d-none mb-2" style="border-left:4px solid var(--bs-primary);padding:10px 14px;">
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <span class="text-secondary small">{% if LANGUAGE_CODE == 'ar' %}الحالة{% else %}Status{% endif %}:</span>
+        <span id="kStatusPrimary" class="badge" style="font-size:0.95rem;">—</span>
+        <span id="kStatusFlags" class="d-flex gap-1 flex-wrap"></span>
+      </div>
+    </div>
     <!-- KPI Row -->
     <div class="et-panel">
       <h6 class="mb-2">{% if LANGUAGE_CODE == 'ar' %}الملخص{% else %}Summary{% endif %}</h6>
@@ -149,9 +178,33 @@
         <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}أقسام بدون قاعة{% else %}Unassigned sections{% endif %}</div><div class="v" id="kRoomUnassigned">0</div></div></div>
         <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}حجوزات مزدوجة{% else %}Double bookings{% endif %}</div><div class="v" id="kRoomDouble">0</div></div></div>
       </div>
+      <!-- v2 multi-sitting QA tile: surfaces sections that needed
+           multiple sittings (split across slots/rooms because no
+           single room could fit them). Display + drilldown only;
+           does NOT enter ranking. -->
+      <div id="kMultiSittingRow" class="row g-2 mt-1 d-none">
+        <div class="col-md-6"><div class="kpi kpi-click" data-drill="multi-sitting" title="{% if LANGUAGE_CODE == 'ar' %}أقسام تتطلب جلسات متعددة لأنها لا تتسع في قاعة واحدة — انقر للتفاصيل{% else %}Sections that needed multiple sittings because no single room could fit them — click for details{% endif %}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}أقسام بجلسات متعددة{% else %}Sections requiring multi-sitting{% endif %}</div><div class="v" id="kMultiSittingCount">0</div></div></div>
+      </div>
       <div id="kThinRow" class="row g-2 mt-1 d-none">
         <div class="col-md-6"><div class="kpi kpi-click" data-drill="thin-courses" title="{% if LANGUAGE_CODE == 'ar' %}مقررات صغيرة جدول دون مراعاة تعارضاتها{% else %}Thin courses scheduled without honouring their conflicts{% endif %}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}مقررات صغيرة (مخففة){% else %}Thin courses relaxed{% endif %}</div><div class="v" id="kThinCount">0</div></div></div>
         <div class="col-md-6"><div class="kpi kpi-click" data-drill="thin-clash" title="{% if LANGUAGE_CODE == 'ar' %}طلاب لديهم اختباران في نفس الفترة بسبب التخفيف{% else %}Students with two exams in the same slot from relaxation — pin one course to fix{% endif %}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}تعارضات فعلية بسبب التخفيف{% else %}Realised relaxation clashes{% endif %}</div><div class="v" id="kThinClash">0</div></div></div>
+      </div>
+      <!-- v3 telemetry: building-footprint card. Display-only — surfaces
+           operational pain so the registrar can later decide whether to
+           promote building affinity to a real objective. Does NOT enter
+           any ranking, scheduler, or candidate-selection logic. -->
+      <div id="kFootprintRow" class="row g-2 mt-1 d-none">
+        <div class="col-md-12"><div class="kpi" title="{% if LANGUAGE_CODE == 'ar' %}بصمة المبنى لكل فترة — إخباري فقط، لا يؤثر على ترتيب المرشحين{% else %}Building footprint per slot — informational only, no effect on candidate ranking.{% endif %}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}أكبر بصمة فترة{% else %}Largest slot footprint{% endif %}</div><div class="v" id="kFootprintLargest" style="font-size:0.95rem;font-weight:500;">—</div></div></div>
+      </div>
+      <!-- v3 telemetry: enrolment-snapshot integrity card. Helps the
+           registrar answer "why does this exported schedule differ from
+           what I expected?" by recording the input data state at build
+           time. Display-only. -->
+      <div id="kSnapshotRow" class="row g-2 mt-1 d-none">
+        <div class="col-md-3"><div class="kpi" title="{% if LANGUAGE_CODE == 'ar' %}وقت قراءة بيانات التسجيل{% else %}When the build read the enrolment data{% endif %}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}وقت اللقطة{% else %}Snapshot time{% endif %}</div><div class="v" id="kSnapshotTime" style="font-size:0.85rem;">—</div></div></div>
+        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}الأقسام في اللقطة{% else %}Sections in snapshot{% endif %}</div><div class="v" id="kSnapshotSections">0</div></div></div>
+        <div class="col-md-3"><div class="kpi" title="{% if LANGUAGE_CODE == 'ar' %}يستخدم مسار StudentCourse الاحتياطي بدلاً من بيانات الفصل{% else %}Used StudentCourse fallback path instead of TermSection data{% endif %}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}مسار احتياطي؟{% else %}Fallback path?{% endif %}</div><div class="v" id="kSnapshotFallback">—</div></div></div>
+        <div class="col-md-3"><div class="kpi" title="{% if LANGUAGE_CODE == 'ar' %}مجموع تجزئة المدخلات SHA-256 — لتأكيد عدم تغير البيانات{% else %}sha256 of canonical enrolment input — confirms data hasn't drifted{% endif %}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}بصمة المدخلات{% else %}Input checksum{% endif %}</div><div class="v" id="kSnapshotHash" style="font-family:monospace;font-size:0.7rem;">—</div></div></div>
       </div>
       <!-- Drilldown detail panel (hidden until a KPI is clicked) -->
       <div id="kpiDrill" class="mt-2 d-none">

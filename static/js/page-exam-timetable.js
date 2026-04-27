@@ -613,6 +613,35 @@ const _drillRenderers = {
       colspan: 4,
     };
   },
+  'multi-sitting'(rows) {
+    return {
+      title: IS_AR ? 'الأقسام بجلسات متعددة' : 'Sections Requiring Multi-Sitting',
+      head: `<tr>
+        <th>${IS_AR ? 'القسم' : 'Section'}</th>
+        <th>${IS_AR ? 'الطلاب' : 'Students'}</th>
+        <th>${IS_AR ? 'أكبر سعة قاعة' : 'Max room cap'}</th>
+        <th>${IS_AR ? 'عدد الجلسات' : 'Sittings'}</th>
+        <th>${IS_AR ? 'الفترات' : 'Slots'}</th>
+        <th>${IS_AR ? 'القاعات' : 'Rooms'}</th>
+        <th>${IS_AR ? 'الحالة' : 'State'}</th>
+      </tr>`,
+      body: rows.map(r => {
+        const incompleteBadge = r.incomplete
+          ? `<span class="badge bg-warning text-dark">${IS_AR ? 'غير مكتمل' : 'Incomplete'}</span>`
+          : `<span class="badge bg-success">${IS_AR ? 'مكتمل' : 'Complete'}</span>`;
+        return `<tr>
+          <td><strong>${r.section || ''}</strong></td>
+          <td>${r.enrolment || 0}</td>
+          <td>${r.max_room_cap || 0}</td>
+          <td>${r.sittings || 0}</td>
+          <td>${(r.slots || []).map(s => `<span class="badge bg-secondary me-1">${s}</span>`).join('')}</td>
+          <td>${(r.rooms || []).map(rm => `<code>${rm}</code>`).join(' ')}</td>
+          <td>${incompleteBadge}</td>
+        </tr>`;
+      }).join(''),
+      colspan: 7,
+    };
+  },
   'thin-clash'(rows) {
     const slotLabel = (si) => {
       const s = _slotsByIndex[si];
@@ -773,6 +802,138 @@ function renderResults(data) {
     $('kThinRow').classList.add('d-none');
   }
 
+  // v2 honest status surface: primary_status + status_flags banner.
+  // Always shown for v2+ payloads (the data is universally present);
+  // hidden only when the payload pre-dates v2 entirely.
+  const primaryStatus = data.primary_status;
+  const statusFlags = Array.isArray(data.status_flags) ? data.status_flags : [];
+  const banner = $('kStatusBanner');
+  const copyMap = $('statusCopyMap');
+  if (primaryStatus && copyMap) {
+    banner.classList.remove('d-none');
+    const labelKey = primaryStatus.replace(/-/g, '_');
+    // Defensive fallback: an unknown primary_status value (a future
+    // backend enum we don't yet know about) renders the raw key as
+    // its label and the secondary badge style — never throws, never
+    // silently disappears. The registrar sees an honest "I don't
+    // recognise this status" signal rather than a missing card.
+    const primaryLabel = copyMap.dataset[labelKey] || primaryStatus;
+    const primaryEl = $('kStatusPrimary');
+    primaryEl.textContent = primaryLabel;
+    const severityColour = ({
+      clean: 'bg-success',
+      clean_with_approved_thin_conflicts: 'bg-success',
+      requires_room_action: 'bg-warning text-dark',
+      contains_overflow: 'bg-warning text-dark',
+      contains_manual_override: 'bg-warning text-dark',
+      infeasible: 'bg-danger',
+      unrenderable: 'bg-secondary',
+      future_version_unrenderable: 'bg-secondary',
+    })[labelKey] || 'bg-secondary';
+    primaryEl.className = 'badge ' + severityColour;
+    // Render flags as smaller pills, deduplicated and ordered by
+    // registrar-action severity (most-actionable first), with unknown
+    // flags appended alphabetically so a future backend addition is
+    // visible (with the raw key) rather than swallowed.
+    //
+    // Severity order (peer-review confirmed): room action requires
+    // physical-world fix > overflow is a registrar-visible scheduling
+    // failure > manual override is a deliberate registrar bypass >
+    // approved thin conflicts is a policy-accepted soft cost >
+    // multi-sitting required is a logistics fact > legacy_incomplete_qa
+    // is a metadata caveat last.
+    const FLAG_DISPLAY_ORDER = [
+      'room_action_required',
+      'overflow',
+      'manual_override',
+      'approved_thin_conflicts',
+      'multi_sitting_required',
+      'legacy_incomplete_qa',
+    ];
+    const flagsEl = $('kStatusFlags');
+    flagsEl.innerHTML = '';
+    const uniqueFlags = [...new Set(statusFlags)];
+    uniqueFlags.sort((a, b) => {
+      const ai = FLAG_DISPLAY_ORDER.indexOf(a.replace(/-/g, '_'));
+      const bi = FLAG_DISPLAY_ORDER.indexOf(b.replace(/-/g, '_'));
+      // Known flags ordered by severity; unknowns appended alphabetically.
+      if (ai === -1 && bi === -1) return a.localeCompare(b);
+      if (ai === -1) return 1;
+      if (bi === -1) return -1;
+      return ai - bi;
+    });
+    uniqueFlags.forEach(flag => {
+      const flagKey = flag.replace(/-/g, '_');
+      // Same defensive fallback as primary_status: unknown flag renders
+      // the raw key, never disappears.
+      const flagLabel = copyMap.dataset['flag-' + flagKey] || flag;
+      const pill = document.createElement('span');
+      pill.className = 'badge bg-light text-dark border';
+      pill.style.fontSize = '0.75rem';
+      pill.textContent = flagLabel;
+      flagsEl.appendChild(pill);
+    });
+  } else {
+    banner.classList.add('d-none');
+  }
+
+  // v2 multi-sitting tile — surfaces the historically-invisible
+  // "this section needs N sittings" fact. Hidden when no sections
+  // required multi-sitting (count = 0).
+  const msCount = data.qa?.multi_sitting_sections ?? 0;
+  if (msCount > 0) {
+    $('kMultiSittingRow').classList.remove('d-none');
+    $('kMultiSittingCount').textContent = msCount;
+    $('kMultiSittingCount').className = 'v warn';
+  } else {
+    $('kMultiSittingRow').classList.add('d-none');
+  }
+
+  // v3 telemetry: building-footprint card — display-only, no ranking effect.
+  // Hidden when the payload lacks footprint data (legacy v1/v2 rows or
+  // older v3 rows that didn't capture building info per room entry).
+  const footprint = data.qa?.building_footprint ?? {};
+  const footprintSummary = footprint.largest_slot_footprint_summary ?? '';
+  const hasFootprint = !!footprintSummary;
+  if (hasFootprint) {
+    $('kFootprintRow').classList.remove('d-none');
+    $('kFootprintLargest').textContent = footprintSummary;
+  } else {
+    $('kFootprintRow').classList.add('d-none');
+  }
+
+  // v3 telemetry: enrolment-snapshot integrity card — answers
+  // "why does this exported schedule differ from what I expected?".
+  // Hidden when the payload lacks snapshot data (pre-v3 builds).
+  const snap = data.qa?.enrolment_snapshot ?? {};
+  const snapHash = snap.source_hash ?? '';
+  if (snapHash) {
+    $('kSnapshotRow').classList.remove('d-none');
+    // Render timestamp as YYYY-MM-DD HH:MM (no seconds) for readability.
+    const tsRaw = String(snap.snapshot_timestamp ?? '');
+    let tsDisplay = tsRaw;
+    if (tsRaw) {
+      const dt = new Date(tsRaw);
+      if (!Number.isNaN(dt.getTime())) {
+        const pad = (n) => String(n).padStart(2, '0');
+        tsDisplay = `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} `
+          + `${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+      }
+    }
+    $('kSnapshotTime').textContent = tsDisplay || '—';
+    $('kSnapshotSections').textContent = snap.sections_count ?? 0;
+    const fb = !!snap.fallback_used;
+    $('kSnapshotFallback').textContent = fb
+      ? (IS_AR ? 'نعم' : 'Yes')
+      : (IS_AR ? 'لا' : 'No');
+    $('kSnapshotFallback').className = 'v' + (fb ? ' warn' : '');
+    // Show only the first 12 hex chars + ellipsis — full hash is in payload.
+    $('kSnapshotHash').textContent = snapHash.slice(0, 12) + '…';
+    $('kSnapshotHash').title = snapHash;
+  } else {
+    $('kSnapshotRow').classList.add('d-none');
+  }
+
   // Index rooms-per-entry for the grid renderer: "day||period||course" → [codes]
   _roomsByEntry = {};
   for (const e of (data.schedule || [])) {
@@ -794,10 +955,11 @@ function renderResults(data) {
 
   // Store drilldown data + close any open panel
   _drillData = {
-    overload:       data.qa?.overload_details ?? [],
-    heavy:          data.qa?.heavy_day_details ?? [],
-    'thin-courses': data.qa?.thin_courses ?? [],
-    'thin-clash':   data.qa?.thin_clash_risk ?? [],
+    overload:        data.qa?.overload_details ?? [],
+    heavy:           data.qa?.heavy_day_details ?? [],
+    'thin-courses':  data.qa?.thin_courses ?? [],
+    'thin-clash':    data.qa?.thin_clash_risk ?? [],
+    'multi-sitting': data.qa?.multi_sitting_details ?? [],
   };
   closeDrill();
 

@@ -3,7 +3,7 @@ services:
     name: advisor-system
     runtime: python
     plan: starter
-    preDeployCommand: python manage.py migrate --noinput && python manage.py createcachetable --database default
+    preDeployCommand: python manage.py migrate --noinput && python manage.py createcachetable --database default && python manage.py normalise_exam_runs
     buildCommand: chmod +x build.sh && ./build.sh
     startCommand: gunicorn config.wsgi --bind 0.0.0.0:$PORT --workers 2 --timeout 120
     envVars:

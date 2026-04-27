@@ -45,6 +45,15 @@ from core.models import (
     StudentTermSection,
     TermSectionMeeting,
 )
+from core.services.exam_run_schema import (
+    STATUS_DERIVATION_VERSION,
+    compute_enrolment_snapshot,
+    derive_building_footprint,
+    derive_multi_sitting_details,
+    derive_status_surface,
+    load_normalised_run,
+    stamp_schema_version,
+)
 
 _DEPARTMENT_PREFIXES: set[str] = {"CS", "IS", "COE", "CYB", "AI", "DS"}
 _EXTERNAL_PREFIXES: set[str] = {"GS", "EDCT", "GSE", "ENV", "MATH", "STAT", "PHYS"}
@@ -1756,13 +1765,21 @@ def build_exam_timetable(
     assign_rooms: bool = True,
     rebalance_invigilators: bool = True,
     thin_conflict_threshold: int = 0,
+    persist: bool = True,
 ) -> dict:
     """
     End-to-end pipeline: build enrolled sets → conflict graph →
     programme-plan term buckets → feasibility check → greedy schedule
     → QA → persist JSON.
 
-    Returns the full result dict (also saved in ExamTimetableRun).
+    Returns the full result dict. When ``persist=True`` (the default,
+    matching pre-existing single-run callers) a row is written to
+    ``ExamTimetableRun`` and the row id appears in ``result["run_id"]``.
+    When ``persist=False`` the row is NOT written — the multi-start
+    runner uses this mode to evaluate many seeded builds before
+    selecting which 4 to persist as Pareto candidates, so the history
+    panel doesn't fill with throw-away exploratory runs.
+
     If a bucket feasibility violation is found, returns an error dict
     without scheduling (key "feasibility_error": True).
 
@@ -1782,6 +1799,13 @@ def build_exam_timetable(
                            Realised same-slot clashes for thin students
                            are reported in qa.thin_clash_risk so the
                            registrar can pin them manually if needed.
+        persist          – when True (default), writes an
+                           ``ExamTimetableRun`` row and stamps the
+                           returned dict with ``run_id``. When False,
+                           skips the DB write and returns the result
+                           dict unstamped — used by the multi-start
+                           runner to evaluate candidates before
+                           persisting only the selected ones.
     """
     # 1. Enrolled sets
     enrolled_sets = build_enrolled_sets(programs=programs, sections=sections)
@@ -1842,13 +1866,21 @@ def build_exam_timetable(
     # 4. Feasibility pre-check
     violations = check_bucket_feasibility(ptb, len(days))
     if violations:
-        return {
-            "feasibility_error": True,
-            "violations": violations,
-            "courses_count": len(course_list),
-            "students_count": len(all_students),
-            "bucket_count": len(ptb),
-        }
+        return stamp_schema_version(
+            {
+                "feasibility_error": True,
+                "status": "feasibility_error",
+                # v2 status surface: feasibility_error short-circuits
+                # to "infeasible" with no further flags.
+                "primary_status": "infeasible",
+                "status_flags": [],
+                "status_derivation_version": STATUS_DERIVATION_VERSION,
+                "violations": violations,
+                "courses_count": len(course_list),
+                "students_count": len(all_students),
+                "bucket_count": len(ptb),
+            }
+        )
 
     # 5. Slot pool (Cartesian product)
     slots: list[dict] = []
@@ -1972,10 +2004,73 @@ def build_exam_timetable(
             }
         )
 
+    # ── v2 + v3 telemetry authoring ──
+    # Step 4 enriches each schedule entry's ``rooms`` sub-list with the
+    # ``building`` field (looked up by room_code from rooms_list) so the
+    # v3 building-footprint derivation has the data it needs. This also
+    # gets persisted, which means historic v3 rows can re-derive the
+    # footprint on read if we ever need to — though by default we
+    # populate the footprint at write time and store it under
+    # ``qa.building_footprint``.
+    if rooms_list:
+        room_meta_by_code: dict[str, dict] = {str(r.get("room_code", "")): r for r in rooms_list}
+        for entry in schedule_entries:
+            for r in entry.get("rooms") or []:
+                if not isinstance(r, dict):
+                    continue
+                meta = room_meta_by_code.get(str(r.get("room_code", "")))
+                if meta:
+                    r.setdefault("building", str(meta.get("building", "") or ""))
+                    r.setdefault("floor", str(meta.get("floor", "") or ""))
+
+    # Multi-sitting details computed from schedule_entries (each entry's
+    # ``rooms`` list carries the section labels we detect splits from).
+    # The derivation is in the schema module so the v1->v2 migrator and
+    # this build site share the same logic.
+    multi_sitting_details = derive_multi_sitting_details(schedule_entries)
+    qa["multi_sitting_sections"] = len(multi_sitting_details)
+    qa["multi_sitting_details"] = multi_sitting_details
+
+    # Manual-override signal: in this system, all same_slot_conflicts
+    # come from registrar pinned overrides (the scheduler refuses to
+    # produce them otherwise). Surface explicitly under the v2-named
+    # keys so the status derivation doesn't need to fall back to
+    # legacy_incomplete_qa for fresh builds.
+    qa["manual_override_count"] = qa.get("conflict_count", 0)
+    qa["manual_override_details"] = list(qa.get("same_slot_conflicts", []))
+
+    # ── v3 telemetry blocks (display-only — no ranking/scheduler effect) ──
+    qa["building_footprint"] = derive_building_footprint(schedule_entries)
+
+    # Enrolment snapshot integrity: distinct sections counted from
+    # section_enrollment (a dict[course -> list[section_dict]]). The
+    # fallback flag is plumbed from build_enrolled_sets via a marker
+    # in the section labels: when the path used StudentCourse, every
+    # course gets a synthetic "ALL" section.
+    _sections_total = sum(len(v) for v in section_enrollment.values())
+    _synthetic_all = sum(
+        1
+        for course, sections in section_enrollment.items()
+        for s in sections
+        if str(s.get("section", "")).upper() == "ALL"
+    )
+    _fallback_used = _synthetic_all > 0 and _synthetic_all == len(section_enrollment)
+    qa["enrolment_snapshot"] = compute_enrolment_snapshot(
+        enrolled_sets,
+        sections_count=_sections_total,
+        fallback_used=_fallback_used,
+        synthetic_all_sections_count=_synthetic_all,
+    )
+
     # ── Assemble result dict ──
     # This dict is: (a) returned to the frontend as JSON, (b) persisted
     # in ExamTimetableRun.result_json for later viewing/export.
-    result: dict = {
+    # Both consumers go through ``load_normalised_run`` /
+    # ``normalise_exam_run_payload`` (see core.services.exam_run_schema),
+    # so ``stamp_schema_version`` here is the only write site that needs
+    # to know about the schema version constant.
+    _draft: dict = {
+        "status": "ok",
         "students_count": len(all_students),
         "courses": course_list,
         "courses_count": len(course_list),
@@ -1992,13 +2087,22 @@ def build_exam_timetable(
         "rooms_count": len(rooms_list),
         "assign_rooms": assign_rooms,
     }
+    # Compute the registrar status surface from the assembled draft
+    # so the headline + flags reflect the real run state.
+    primary_status, status_flags = derive_status_surface(_draft)
+    _draft["primary_status"] = primary_status
+    _draft["status_flags"] = status_flags
+    _draft["status_derivation_version"] = STATUS_DERIVATION_VERSION
+    result: dict = stamp_schema_version(_draft)
 
-    # Persist
-    run = ExamTimetableRun.objects.create(
-        label=label,
-        result_json=json.dumps(result, ensure_ascii=False),
-    )
-    result["run_id"] = run.id
+    # Persist (skipped in multi-start exploration mode where we evaluate
+    # many candidates and only persist the selected Pareto few).
+    if persist:
+        run = ExamTimetableRun.objects.create(
+            label=label,
+            result_json=json.dumps(result, ensure_ascii=False),
+        )
+        result["run_id"] = run.id
 
     return result
 
@@ -2036,11 +2140,35 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
     from openpyxl.utils import get_column_letter  # type: ignore[import-untyped]
 
     run = ExamTimetableRun.objects.get(id=run_id)
-    data = json.loads(run.result_json)
+    # Read through the normaliser so historic runs (pre-schema-versioning,
+    # or rows missing keys this exporter expects) render cleanly with safe
+    # defaults. Single read path: never ``json.loads(run.result_json)`` here.
+    data = load_normalised_run(run)
 
-    schedule = data.get("schedule", [])  # list of {course_code, slot_index, day, period}
-    slots = data.get("slots", [])  # list of {index, day, period}
-    qa = data.get("qa", {})  # QA metrics dict from _build_qa()
+    # Hard rule for sentinel payloads: do NOT silently export an empty
+    # workbook from an unrenderable run. Registrar trust attaches to the
+    # exported artefact more than the web UI; a blank XLSX is worse than
+    # a controlled error because the registrar may distribute it without
+    # noticing the data is gone. Fail loudly with a message the view
+    # layer can surface as a 500 with body text.
+    status = data.get("status")
+    if status == "unrenderable":
+        reason = data.get("error", "payload could not be rendered")
+        raise RuntimeError(
+            f"Exam timetable run #{run_id} cannot be exported: {reason}. "
+            "The stored payload is missing, corrupt, or otherwise unreadable; "
+            "rebuild the run before exporting."
+        )
+    if status == "future_version_unrenderable":
+        raise RuntimeError(
+            f"Exam timetable run #{run_id} was created by a newer build of "
+            "the exam scheduler and cannot be exported by this version. "
+            "Upgrade the application or rebuild the run."
+        )
+
+    schedule = data["schedule"]  # list of {course_code, slot_index, day, period}
+    slots = data["slots"]  # list of {index, day, period}
+    qa = data["qa"]  # QA metrics dict from _build_qa()
 
     # ── Styling constants ──
     header_font = Font(bold=True, size=11)
