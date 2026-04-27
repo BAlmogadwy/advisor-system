@@ -773,6 +773,51 @@ function renderResults(data) {
     $('kThinRow').classList.add('d-none');
   }
 
+  // v3 telemetry: building-footprint card — display-only, no ranking effect.
+  // Hidden when the payload lacks footprint data (legacy v1/v2 rows or
+  // older v3 rows that didn't capture building info per room entry).
+  const footprint = data.qa?.building_footprint ?? {};
+  const footprintSummary = footprint.largest_slot_footprint_summary ?? '';
+  const hasFootprint = !!footprintSummary;
+  if (hasFootprint) {
+    $('kFootprintRow').classList.remove('d-none');
+    $('kFootprintLargest').textContent = footprintSummary;
+  } else {
+    $('kFootprintRow').classList.add('d-none');
+  }
+
+  // v3 telemetry: enrolment-snapshot integrity card — answers
+  // "why does this exported schedule differ from what I expected?".
+  // Hidden when the payload lacks snapshot data (pre-v3 builds).
+  const snap = data.qa?.enrolment_snapshot ?? {};
+  const snapHash = snap.source_hash ?? '';
+  if (snapHash) {
+    $('kSnapshotRow').classList.remove('d-none');
+    // Render timestamp as YYYY-MM-DD HH:MM (no seconds) for readability.
+    const tsRaw = String(snap.snapshot_timestamp ?? '');
+    let tsDisplay = tsRaw;
+    if (tsRaw) {
+      const dt = new Date(tsRaw);
+      if (!Number.isNaN(dt.getTime())) {
+        const pad = (n) => String(n).padStart(2, '0');
+        tsDisplay = `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} `
+          + `${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+      }
+    }
+    $('kSnapshotTime').textContent = tsDisplay || '—';
+    $('kSnapshotSections').textContent = snap.sections_count ?? 0;
+    const fb = !!snap.fallback_used;
+    $('kSnapshotFallback').textContent = fb
+      ? (IS_AR ? 'نعم' : 'Yes')
+      : (IS_AR ? 'لا' : 'No');
+    $('kSnapshotFallback').className = 'v' + (fb ? ' warn' : '');
+    // Show only the first 12 hex chars + ellipsis — full hash is in payload.
+    $('kSnapshotHash').textContent = snapHash.slice(0, 12) + '…';
+    $('kSnapshotHash').title = snapHash;
+  } else {
+    $('kSnapshotRow').classList.add('d-none');
+  }
+
   // Index rooms-per-entry for the grid renderer: "day||period||course" → [codes]
   _roomsByEntry = {};
   for (const e of (data.schedule || [])) {

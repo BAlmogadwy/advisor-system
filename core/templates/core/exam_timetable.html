@@ -153,6 +153,23 @@
         <div class="col-md-6"><div class="kpi kpi-click" data-drill="thin-courses" title="{% if LANGUAGE_CODE == 'ar' %}مقررات صغيرة جدول دون مراعاة تعارضاتها{% else %}Thin courses scheduled without honouring their conflicts{% endif %}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}مقررات صغيرة (مخففة){% else %}Thin courses relaxed{% endif %}</div><div class="v" id="kThinCount">0</div></div></div>
         <div class="col-md-6"><div class="kpi kpi-click" data-drill="thin-clash" title="{% if LANGUAGE_CODE == 'ar' %}طلاب لديهم اختباران في نفس الفترة بسبب التخفيف{% else %}Students with two exams in the same slot from relaxation — pin one course to fix{% endif %}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}تعارضات فعلية بسبب التخفيف{% else %}Realised relaxation clashes{% endif %}</div><div class="v" id="kThinClash">0</div></div></div>
       </div>
+      <!-- v3 telemetry: building-footprint card. Display-only — surfaces
+           operational pain so the registrar can later decide whether to
+           promote building affinity to a real objective. Does NOT enter
+           any ranking, scheduler, or candidate-selection logic. -->
+      <div id="kFootprintRow" class="row g-2 mt-1 d-none">
+        <div class="col-md-12"><div class="kpi" title="{% if LANGUAGE_CODE == 'ar' %}بصمة المبنى لكل فترة — إخباري فقط، لا يؤثر على ترتيب المرشحين{% else %}Building footprint per slot — informational only, no effect on candidate ranking.{% endif %}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}أكبر بصمة فترة{% else %}Largest slot footprint{% endif %}</div><div class="v" id="kFootprintLargest" style="font-size:0.95rem;font-weight:500;">—</div></div></div>
+      </div>
+      <!-- v3 telemetry: enrolment-snapshot integrity card. Helps the
+           registrar answer "why does this exported schedule differ from
+           what I expected?" by recording the input data state at build
+           time. Display-only. -->
+      <div id="kSnapshotRow" class="row g-2 mt-1 d-none">
+        <div class="col-md-3"><div class="kpi" title="{% if LANGUAGE_CODE == 'ar' %}وقت قراءة بيانات التسجيل{% else %}When the build read the enrolment data{% endif %}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}وقت اللقطة{% else %}Snapshot time{% endif %}</div><div class="v" id="kSnapshotTime" style="font-size:0.85rem;">—</div></div></div>
+        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}الأقسام في اللقطة{% else %}Sections in snapshot{% endif %}</div><div class="v" id="kSnapshotSections">0</div></div></div>
+        <div class="col-md-3"><div class="kpi" title="{% if LANGUAGE_CODE == 'ar' %}يستخدم مسار StudentCourse الاحتياطي بدلاً من بيانات الفصل{% else %}Used StudentCourse fallback path instead of TermSection data{% endif %}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}مسار احتياطي؟{% else %}Fallback path?{% endif %}</div><div class="v" id="kSnapshotFallback">—</div></div></div>
+        <div class="col-md-3"><div class="kpi" title="{% if LANGUAGE_CODE == 'ar' %}مجموع تجزئة المدخلات SHA-256 — لتأكيد عدم تغير البيانات{% else %}sha256 of canonical enrolment input — confirms data hasn't drifted{% endif %}"><div class="k">{% if LANGUAGE_CODE == 'ar' %}بصمة المدخلات{% else %}Input checksum{% endif %}</div><div class="v" id="kSnapshotHash" style="font-family:monospace;font-size:0.7rem;">—</div></div></div>
+      </div>
       <!-- Drilldown detail panel (hidden until a KPI is clicked) -->
       <div id="kpiDrill" class="mt-2 d-none">
         <div class="d-flex align-items-center justify-content-between mb-1">
