@@ -45,6 +45,10 @@ from core.models import (
     StudentTermSection,
     TermSectionMeeting,
 )
+from core.services.exam_run_schema import (
+    load_normalised_run,
+    stamp_schema_version,
+)
 
 _DEPARTMENT_PREFIXES: set[str] = {"CS", "IS", "COE", "CYB", "AI", "DS"}
 _EXTERNAL_PREFIXES: set[str] = {"GS", "EDCT", "GSE", "ENV", "MATH", "STAT", "PHYS"}
@@ -1842,13 +1846,16 @@ def build_exam_timetable(
     # 4. Feasibility pre-check
     violations = check_bucket_feasibility(ptb, len(days))
     if violations:
-        return {
-            "feasibility_error": True,
-            "violations": violations,
-            "courses_count": len(course_list),
-            "students_count": len(all_students),
-            "bucket_count": len(ptb),
-        }
+        return stamp_schema_version(
+            {
+                "feasibility_error": True,
+                "status": "feasibility_error",
+                "violations": violations,
+                "courses_count": len(course_list),
+                "students_count": len(all_students),
+                "bucket_count": len(ptb),
+            }
+        )
 
     # 5. Slot pool (Cartesian product)
     slots: list[dict] = []
@@ -1975,23 +1982,30 @@ def build_exam_timetable(
     # ── Assemble result dict ──
     # This dict is: (a) returned to the frontend as JSON, (b) persisted
     # in ExamTimetableRun.result_json for later viewing/export.
-    result: dict = {
-        "students_count": len(all_students),
-        "courses": course_list,
-        "courses_count": len(course_list),
-        "conflicts": conflicts,
-        "conflicts_count": len(conflicts),
-        "slots": slots,
-        "schedule": schedule_entries,
-        "qa": qa,
-        "buckets_summary": buckets_summary,
-        "bucket_count": len(ptb),
-        "credit_map": credit_map,
-        "seed": seed,
-        "section_enrollment": section_enrollment,
-        "rooms_count": len(rooms_list),
-        "assign_rooms": assign_rooms,
-    }
+    # Both consumers go through ``load_normalised_run`` /
+    # ``normalise_exam_run_payload`` (see core.services.exam_run_schema),
+    # so ``stamp_schema_version`` here is the only write site that needs
+    # to know about the schema version constant.
+    result: dict = stamp_schema_version(
+        {
+            "status": "ok",
+            "students_count": len(all_students),
+            "courses": course_list,
+            "courses_count": len(course_list),
+            "conflicts": conflicts,
+            "conflicts_count": len(conflicts),
+            "slots": slots,
+            "schedule": schedule_entries,
+            "qa": qa,
+            "buckets_summary": buckets_summary,
+            "bucket_count": len(ptb),
+            "credit_map": credit_map,
+            "seed": seed,
+            "section_enrollment": section_enrollment,
+            "rooms_count": len(rooms_list),
+            "assign_rooms": assign_rooms,
+        }
+    )
 
     # Persist
     run = ExamTimetableRun.objects.create(
@@ -2036,11 +2050,14 @@ def export_exam_timetable_xlsx(run_id: int) -> Path:
     from openpyxl.utils import get_column_letter  # type: ignore[import-untyped]
 
     run = ExamTimetableRun.objects.get(id=run_id)
-    data = json.loads(run.result_json)
+    # Read through the normaliser so historic runs (pre-schema-versioning,
+    # or rows missing keys this exporter expects) render cleanly with safe
+    # defaults. Single read path: never ``json.loads(run.result_json)`` here.
+    data = load_normalised_run(run)
 
-    schedule = data.get("schedule", [])  # list of {course_code, slot_index, day, period}
-    slots = data.get("slots", [])  # list of {index, day, period}
-    qa = data.get("qa", {})  # QA metrics dict from _build_qa()
+    schedule = data["schedule"]  # list of {course_code, slot_index, day, period}
+    slots = data["slots"]  # list of {index, day, period}
+    qa = data["qa"]  # QA metrics dict from _build_qa()
 
     # ── Styling constants ──
     header_font = Font(bold=True, size=11)

@@ -27,6 +27,7 @@ from django.views.decorators.http import require_GET, require_POST
 from core.authz import throttle
 from core.models import ExamTimetableRun, Student
 from core.services.audit import log_audit_event
+from core.services.exam_run_schema import load_normalised_run
 from core.services.exam_timetable import (
     build_credit_map,
     build_enrolled_sets,
@@ -318,10 +319,11 @@ def exam_timetable_detail_view(request: HttpRequest, run_id: int) -> JsonRespons
     except ExamTimetableRun.DoesNotExist:
         return JsonResponse({"ok": False, "error": "Run not found"}, status=404)
 
-    try:
-        result = json.loads(run.result_json)
-    except (json.JSONDecodeError, TypeError):
-        return JsonResponse({"ok": False, "error": "Corrupt run data"}, status=500)
+    # Single read path: the normaliser handles legacy / corrupt /
+    # missing-key payloads gracefully (returns ``status="unrenderable"``
+    # rather than 500), so the UI receives a render-safe payload for
+    # any historic row regardless of when it was stored.
+    result = dict(load_normalised_run(run))
     result["run_id"] = run.id
     result["label"] = run.label
     result["created_at"] = run.created_at.isoformat() if run.created_at else ""
