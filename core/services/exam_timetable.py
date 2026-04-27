@@ -47,6 +47,8 @@ from core.models import (
 )
 from core.services.exam_run_schema import (
     STATUS_DERIVATION_VERSION,
+    compute_enrolment_snapshot,
+    derive_building_footprint,
     derive_multi_sitting_details,
     derive_status_surface,
     load_normalised_run,
@@ -2002,11 +2004,30 @@ def build_exam_timetable(
             }
         )
 
-    # ── v2 status surface tile authoring ──
-    # Multi-sitting details computed from the assign_rooms output. The
-    # derivation is in the schema module so the v1->v2 migrator and
+    # ── v2 + v3 telemetry authoring ──
+    # Step 4 enriches each schedule entry's ``rooms`` sub-list with the
+    # ``building`` field (looked up by room_code from rooms_list) so the
+    # v3 building-footprint derivation has the data it needs. This also
+    # gets persisted, which means historic v3 rows can re-derive the
+    # footprint on read if we ever need to — though by default we
+    # populate the footprint at write time and store it under
+    # ``qa.building_footprint``.
+    if rooms_list:
+        room_meta_by_code: dict[str, dict] = {str(r.get("room_code", "")): r for r in rooms_list}
+        for entry in schedule_entries:
+            for r in entry.get("rooms") or []:
+                if not isinstance(r, dict):
+                    continue
+                meta = room_meta_by_code.get(str(r.get("room_code", "")))
+                if meta:
+                    r.setdefault("building", str(meta.get("building", "") or ""))
+                    r.setdefault("floor", str(meta.get("floor", "") or ""))
+
+    # Multi-sitting details computed from schedule_entries (each entry's
+    # ``rooms`` list carries the section labels we detect splits from).
+    # The derivation is in the schema module so the v1->v2 migrator and
     # this build site share the same logic.
-    multi_sitting_details = derive_multi_sitting_details(assign_rooms)
+    multi_sitting_details = derive_multi_sitting_details(schedule_entries)
     qa["multi_sitting_sections"] = len(multi_sitting_details)
     qa["multi_sitting_details"] = multi_sitting_details
 
@@ -2017,6 +2038,29 @@ def build_exam_timetable(
     # legacy_incomplete_qa for fresh builds.
     qa["manual_override_count"] = qa.get("conflict_count", 0)
     qa["manual_override_details"] = list(qa.get("same_slot_conflicts", []))
+
+    # ── v3 telemetry blocks (display-only — no ranking/scheduler effect) ──
+    qa["building_footprint"] = derive_building_footprint(schedule_entries)
+
+    # Enrolment snapshot integrity: distinct sections counted from
+    # section_enrollment (a dict[course -> list[section_dict]]). The
+    # fallback flag is plumbed from build_enrolled_sets via a marker
+    # in the section labels: when the path used StudentCourse, every
+    # course gets a synthetic "ALL" section.
+    _sections_total = sum(len(v) for v in section_enrollment.values())
+    _synthetic_all = sum(
+        1
+        for course, sections in section_enrollment.items()
+        for s in sections
+        if str(s.get("section", "")).upper() == "ALL"
+    )
+    _fallback_used = _synthetic_all > 0 and _synthetic_all == len(section_enrollment)
+    qa["enrolment_snapshot"] = compute_enrolment_snapshot(
+        enrolled_sets,
+        sections_count=_sections_total,
+        fallback_used=_fallback_used,
+        synthetic_all_sections_count=_synthetic_all,
+    )
 
     # ── Assemble result dict ──
     # This dict is: (a) returned to the frontend as JSON, (b) persisted

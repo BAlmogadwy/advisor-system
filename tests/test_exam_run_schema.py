@@ -40,6 +40,7 @@ Test inventory
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from io import StringIO
 
 import pytest
@@ -50,6 +51,8 @@ from core.services.exam_run_schema import (
     EXAM_RUN_SCHEMA_VERSION,
     STATUS_DERIVATION_VERSION,
     ExamRunDisplayPayload,
+    compute_enrolment_snapshot,
+    derive_building_footprint,
     derive_multi_sitting_details,
     derive_status_surface,
     load_normalised_run,
@@ -89,11 +92,9 @@ def _v1_ok_payload() -> dict:
 
 
 def _v2_ok_payload() -> dict:
-    """A canonical v2 ok-shape payload — already at current schema.
+    """A canonical v2 ok-shape payload (no v3 telemetry blocks).
 
-    Mirrors what the build site produces: every v2 derivation field is
-    populated explicitly (including ``qa.manual_override_count = 0``)
-    so the status derivation does not fall back to legacy inference.
+    Used to test the v2->v3 migration path.
     """
     return {
         "schema_version": 2,
@@ -125,32 +126,71 @@ def _v2_ok_payload() -> dict:
     }
 
 
-def test_identity_v2() -> None:
-    """A fully-formed v2 payload normalises to itself."""
+def _v3_ok_payload() -> dict:
+    """A canonical v3 ok-shape payload — already at current schema.
+
+    Includes the v3 telemetry blocks (building_footprint +
+    enrolment_snapshot) populated to safe defaults.
+    """
     payload = _v2_ok_payload()
+    payload["schema_version"] = 3
+    payload["qa"]["building_footprint"] = {
+        "buildings_used_per_slot": {},
+        "buildings_used_per_gender_per_slot": {},
+        "max_rooms_per_building_per_slot": {},
+        "cross_building_clusters_per_dept": {},
+        "largest_slot_footprint_summary": "",
+    }
+    payload["qa"]["enrolment_snapshot"] = {
+        "snapshot_timestamp": "2026-04-27T07:00:00+00:00",
+        "students_count": 42,
+        "courses_count": 2,
+        "sections_count": 0,
+        "fallback_used": False,
+        "synthetic_all_sections_count": 0,
+        "source_hash": "a" * 64,
+    }
+    return payload
+
+
+def test_identity_v3() -> None:
+    """A fully-formed v3 payload normalises to itself."""
+    payload = _v3_ok_payload()
     out = normalise_exam_run_payload(payload)
     for key, value in payload.items():
         assert out[key] == value, f"key {key!r} mutated by normaliser"
-    assert out["schema_version"] == 2
+    assert out["schema_version"] == 3
 
 
-def test_v1_payload_migrates_to_v2() -> None:
-    """A v1 payload with no status surface gets primary_status,
-    status_flags, multi-sitting tile, and the version stamped to v2."""
+def test_v1_payload_migrates_to_v3() -> None:
+    """A v1 payload runs through both migrators and ends up at v3."""
     payload = _v1_ok_payload()
     out = normalise_exam_run_payload(payload)
-    assert out["schema_version"] == 2
+    assert out["schema_version"] == 3
     assert out["status"] == "ok"
-    # New v2 keys derived for legacy v1 input.
+    # v2 keys derived.
     assert "primary_status" in out
     assert "status_flags" in out
-    assert "status_derivation_version" in out
     assert out["qa"].get("multi_sitting_sections") == 0
-    assert out["qa"].get("multi_sitting_details") == []
+    # v3 keys filled with empty defaults (cannot be reconstructed).
+    assert "building_footprint" in out["qa"]
+    assert "enrolment_snapshot" in out["qa"]
+    assert out["qa"]["building_footprint"]["buildings_used_per_slot"] == {}
+    assert out["qa"]["enrolment_snapshot"]["source_hash"] == ""
+
+
+def test_v2_payload_migrates_to_v3() -> None:
+    """A v2 payload (with the v2 status surface but no telemetry)
+    gets the v3 telemetry blocks filled to empty defaults."""
+    payload = _v2_ok_payload()
+    out = normalise_exam_run_payload(payload)
+    assert out["schema_version"] == 3
+    assert "building_footprint" in out["qa"]
+    assert "enrolment_snapshot" in out["qa"]
 
 
 def test_normaliser_does_not_mutate_input() -> None:
-    payload = _v2_ok_payload()
+    payload = _v3_ok_payload()
     snapshot = json.dumps(payload, sort_keys=True)
     normalise_exam_run_payload(payload)
     assert json.dumps(payload, sort_keys=True) == snapshot
@@ -926,10 +966,10 @@ def test_status_surface_defensive_against_missing_qa() -> None:
 
 def test_status_surface_legacy_flag_fires_on_older_source_schema() -> None:
     """Schema-based legacy trigger: a row that arrived from
-    schema_version < current cannot have measured every v2 derivation
-    field at write time, so it gets legacy_incomplete_qa even when no
-    individual field is missing."""
-    payload = _v2_ok_payload()  # has all v2 fields populated
+    schema_version < current cannot have authored every current
+    derivation field at write time, so it gets legacy_incomplete_qa
+    even when no individual field is missing."""
+    payload = _v3_ok_payload()
     primary, flags = derive_status_surface(payload, source_schema_version=1)
     assert primary == "clean"
     assert "legacy_incomplete_qa" in flags
@@ -938,17 +978,17 @@ def test_status_surface_legacy_flag_fires_on_older_source_schema() -> None:
 def test_status_surface_legacy_flag_quiet_on_current_source_schema() -> None:
     """A row authored at the current schema version is authoritative
     by definition — no legacy_incomplete_qa flag."""
-    payload = _v2_ok_payload()
-    primary, flags = derive_status_surface(payload, source_schema_version=2)
+    payload = _v3_ok_payload()
+    primary, flags = derive_status_surface(payload, source_schema_version=3)
     assert primary == "clean"
     assert "legacy_incomplete_qa" not in flags
 
 
 def test_status_surface_legacy_flag_quiet_when_source_unknown_and_complete() -> None:
     """source_schema_version=None means "write-time call". When all
-    v2 fields are present we trust them and don't raise the legacy
+    fields are present we trust them and don't raise the legacy
     flag — that branch is for explicitly-tagged migrations."""
-    payload = _v2_ok_payload()
+    payload = _v3_ok_payload()
     primary, flags = derive_status_surface(payload, source_schema_version=None)
     assert primary == "clean"
     assert "legacy_incomplete_qa" not in flags
@@ -957,7 +997,7 @@ def test_status_surface_legacy_flag_quiet_when_source_unknown_and_complete() -> 
 def test_status_surface_legacy_flag_fires_on_v0_source() -> None:
     """A v0 row (no schema_version at all) is treated as source=0
     by the migrator, which is < current, so legacy_incomplete_qa fires."""
-    payload = _v2_ok_payload()
+    payload = _v3_ok_payload()
     primary, flags = derive_status_surface(payload, source_schema_version=0)
     assert "legacy_incomplete_qa" in flags
 
@@ -1131,6 +1171,242 @@ def test_derive_multi_sitting_sorted_alphabetically_for_determinism() -> None:
 
 # ---------------------------------------------------------------------------
 # v1 -> v2 migrator integration via load_normalised_run
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+# ---------------------------------------------------------------------------
+# v3: building footprint + enrolment snapshot telemetry
+# ---------------------------------------------------------------------------
+
+
+def test_derive_building_footprint_empty_for_missing_input() -> None:
+    out = derive_building_footprint(None)
+    assert out["buildings_used_per_slot"] == {}
+    assert out["largest_slot_footprint_summary"] == ""
+
+
+def test_derive_building_footprint_basic_per_slot() -> None:
+    assign_rooms = {
+        "MON:P1": [
+            {
+                "course_code": "CS101",
+                "rooms": [
+                    {"section": "M", "room_code": "A101", "building": "MAIN", "gender": "M"},
+                    {"section": "F", "room_code": "B201", "building": "ANNEX", "gender": "F"},
+                ],
+            }
+        ],
+        "TUE:P2": [
+            {
+                "course_code": "CS102",
+                "rooms": [
+                    {"section": "M", "room_code": "A102", "building": "MAIN", "gender": "M"},
+                    {"section": "M", "room_code": "A103", "building": "MAIN", "gender": "M"},
+                ],
+            }
+        ],
+    }
+    out = derive_building_footprint(assign_rooms)
+    assert out["buildings_used_per_slot"]["MON:P1"] == ["ANNEX", "MAIN"]
+    assert out["buildings_used_per_slot"]["TUE:P2"] == ["MAIN"]
+    assert out["max_rooms_per_building_per_slot"]["TUE:P2"] == 2
+    assert out["max_rooms_per_building_per_slot"]["MON:P1"] == 1
+
+
+def test_derive_building_footprint_per_gender_split() -> None:
+    assign_rooms = {
+        "MON:P1": [
+            {
+                "course_code": "CS101",
+                "rooms": [
+                    {"section": "M", "room_code": "A1", "building": "MAIN", "gender": "M"},
+                    {"section": "F", "room_code": "B1", "building": "ANNEX", "gender": "F"},
+                ],
+            }
+        ]
+    }
+    out = derive_building_footprint(assign_rooms)
+    per_gender = out["buildings_used_per_gender_per_slot"]["MON:P1"]
+    assert per_gender["M"] == ["MAIN"]
+    assert per_gender["F"] == ["ANNEX"]
+
+
+def test_derive_building_footprint_skips_unassigned() -> None:
+    """A room entry with room_code='UNASSIGNED' must not contribute
+    to footprint metrics — it isn't a real building."""
+    assign_rooms = {
+        "MON:P1": [
+            {
+                "course_code": "CS101",
+                "rooms": [
+                    {"section": "M", "room_code": "UNASSIGNED", "building": "MAIN", "gender": "M"},
+                ],
+            }
+        ]
+    }
+    out = derive_building_footprint(assign_rooms)
+    assert out["buildings_used_per_slot"] == {}
+
+
+def test_derive_building_footprint_skips_entries_without_building() -> None:
+    """Legacy rows whose room entries lack a 'building' field
+    contribute nothing to footprint metrics. This is the
+    'telemetry cannot be reconstructed from older data' rule
+    expressed at the function level."""
+    assign_rooms = {
+        "MON:P1": [
+            {
+                "course_code": "CS101",
+                "rooms": [
+                    {"section": "M", "room_code": "A1", "gender": "M"},  # no building
+                ],
+            }
+        ]
+    }
+    out = derive_building_footprint(assign_rooms)
+    assert out["buildings_used_per_slot"] == {}
+
+
+def test_derive_building_footprint_cross_building_clusters_per_dept() -> None:
+    """A dept's exams using >=2 buildings in the same slot counts
+    as one cross-building cluster for that dept."""
+    assign_rooms = {
+        "MON:P1": [
+            {
+                "course_code": "CS101",
+                "rooms": [
+                    {"section": "M", "room_code": "A1", "building": "MAIN", "gender": "M"},
+                    {"section": "M", "room_code": "B1", "building": "ANNEX", "gender": "M"},
+                ],
+            },
+            {
+                "course_code": "MATH200",
+                "rooms": [
+                    {"section": "M", "room_code": "C1", "building": "MAIN", "gender": "M"},
+                ],
+            },
+        ],
+        "TUE:P1": [
+            {
+                "course_code": "CS102",
+                "rooms": [
+                    {"section": "M", "room_code": "A2", "building": "MAIN", "gender": "M"},
+                ],
+            }
+        ],
+    }
+    out = derive_building_footprint(assign_rooms)
+    assert out["cross_building_clusters_per_dept"]["CS"] == 1
+    # MATH used only one building in MON:P1, no cross-building cluster.
+    assert "MATH" not in out["cross_building_clusters_per_dept"]
+
+
+def test_derive_building_footprint_largest_slot_summary() -> None:
+    assign_rooms = {
+        "MON:P1": [
+            {
+                "course_code": "CS101",
+                "rooms": [{"section": "M", "room_code": "A1", "building": "MAIN", "gender": "M"}],
+            }
+        ],
+        "TUE:P2": [
+            {
+                "course_code": "CS102",
+                "rooms": [
+                    {"section": "M", "room_code": "B1", "building": "MAIN", "gender": "M"},
+                    {"section": "M", "room_code": "C1", "building": "ANNEX", "gender": "M"},
+                    {"section": "M", "room_code": "D1", "building": "EAST", "gender": "M"},
+                ],
+            }
+        ],
+    }
+    out = derive_building_footprint(assign_rooms)
+    summary = out["largest_slot_footprint_summary"]
+    assert "TUE:P2" in summary
+    assert "3 rooms" in summary
+    assert "3 buildings" in summary
+
+
+def test_derive_building_footprint_custom_department_of() -> None:
+    assign_rooms = {
+        "MON:P1": [
+            {
+                "course_code": "GS-101",
+                "rooms": [
+                    {"section": "M", "room_code": "A1", "building": "MAIN", "gender": "M"},
+                    {"section": "M", "room_code": "B1", "building": "ANNEX", "gender": "M"},
+                ],
+            }
+        ]
+    }
+    out = derive_building_footprint(assign_rooms, department_of=lambda c: c.split("-")[0])
+    assert out["cross_building_clusters_per_dept"]["GS"] == 1
+
+
+def test_compute_enrolment_snapshot_basic() -> None:
+    enrolled = {
+        "CS101": {1, 2, 3},
+        "CS102": {2, 3, 4},
+    }
+    out = compute_enrolment_snapshot(
+        enrolled,
+        sections_count=2,
+        timestamp=datetime(2026, 4, 27, 7, 0, 0, tzinfo=UTC),
+    )
+    assert out["snapshot_timestamp"] == "2026-04-27T07:00:00+00:00"
+    assert out["students_count"] == 4  # distinct: 1,2,3,4
+    assert out["courses_count"] == 2
+    assert out["sections_count"] == 2
+    assert out["fallback_used"] is False
+    assert out["synthetic_all_sections_count"] == 0
+    assert isinstance(out["source_hash"], str)
+    assert len(out["source_hash"]) == 64
+
+
+def test_compute_enrolment_snapshot_hash_deterministic() -> None:
+    """Same input must produce the same hash regardless of dict
+    iteration order."""
+    a = {"CS101": {1, 2, 3}, "CS102": {4, 5}}
+    b = {"CS102": {5, 4}, "CS101": {3, 2, 1}}  # different insertion + set order
+    out_a = compute_enrolment_snapshot(a, timestamp=datetime(2026, 1, 1, tzinfo=UTC))
+    out_b = compute_enrolment_snapshot(b, timestamp=datetime(2026, 1, 1, tzinfo=UTC))
+    assert out_a["source_hash"] == out_b["source_hash"]
+
+
+def test_compute_enrolment_snapshot_hash_changes_when_data_changes() -> None:
+    a = {"CS101": {1, 2, 3}}
+    b = {"CS101": {1, 2, 3, 4}}
+    ts = datetime(2026, 1, 1, tzinfo=UTC)
+    out_a = compute_enrolment_snapshot(a, timestamp=ts)
+    out_b = compute_enrolment_snapshot(b, timestamp=ts)
+    assert out_a["source_hash"] != out_b["source_hash"]
+
+
+def test_compute_enrolment_snapshot_fallback_path() -> None:
+    out = compute_enrolment_snapshot(
+        {"CS101": {1, 2}},
+        sections_count=1,
+        fallback_used=True,
+        synthetic_all_sections_count=1,
+        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    assert out["fallback_used"] is True
+    assert out["synthetic_all_sections_count"] == 1
+
+
+def test_compute_enrolment_snapshot_defensive_against_non_dict() -> None:
+    out = compute_enrolment_snapshot(
+        "not a dict",  # type: ignore[arg-type]
+        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    assert out["students_count"] == 0
+    assert out["courses_count"] == 0
+    assert isinstance(out["source_hash"], str)
+
+
+# ---------------------------------------------------------------------------
+# v1 -> v2 -> v3 chained migration via load_normalised_run
 # ---------------------------------------------------------------------------
 
 

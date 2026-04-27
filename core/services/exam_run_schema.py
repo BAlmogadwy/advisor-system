@@ -58,15 +58,18 @@ the entire point of this module.
 
 from __future__ import annotations
 
+import hashlib
 import json
+from collections import Counter, defaultdict
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any, Literal, TypedDict, cast
 
 # ---------------------------------------------------------------------------
 # Version constant
 # ---------------------------------------------------------------------------
 
-EXAM_RUN_SCHEMA_VERSION: int = 2
+EXAM_RUN_SCHEMA_VERSION: int = 3
 """Current schema version for ``ExamTimetableRun.result_json`` payloads.
 
 Bump this whenever you add a key the UI or XLSX exporter will read but
@@ -79,11 +82,22 @@ Version history
   the contract: every payload identifies its schema version, every
   consumer reads through ``load_normalised_run`` / ``normalise_exam_run_payload``.
 - v2: registrar-facing status + multi-sitting tile.
-  ``registrar_status`` ``RegistrarRunStatus`` literal derived from the
-  QA dict and run state; ``qa.multi_sitting_sections`` / ``multi_sitting_details``
-  surface the historically-invisible "this section needs N sittings"
-  fact. Both are derivable from older v1 data so the v1->v2 migrator
-  fills them on the read path; new builds populate them at write time.
+  ``primary_status`` / ``status_flags`` / ``status_derivation_version``
+  derived from the QA dict and run state; ``qa.multi_sitting_sections``
+  + ``qa.multi_sitting_details`` surface the historically-invisible
+  "this section needs N sittings" fact. Both are derivable from older
+  v1 data so the v1->v2 migrator fills them on the read path; new
+  builds populate them at write time.
+- v3: telemetry block. ``qa.building_footprint`` captures
+  buildings-per-slot, buildings-per-gender-per-slot, max-rooms-per-
+  building-per-slot, cross-building clusters per dept, and a
+  largest-slot footprint summary string. ``qa.enrolment_snapshot``
+  captures snapshot_timestamp, students/courses/sections counts,
+  fallback flag, synthetic-ALL count, source_hash. Both are
+  display-only telemetry — they do NOT enter any ranking or
+  scheduler decision. Old rows cannot reconstruct telemetry, so the
+  v2->v3 migrator fills empty defaults; new builds populate at
+  write time.
 """
 
 
@@ -131,6 +145,76 @@ multi-sitting is a legitimate capacity-resolution path when every
 sitting has a room, a slot, and an audit-text record. It only triggers
 ``requires_room_action`` when a sitting is incomplete.
 """
+
+
+class BuildingFootprintTelemetry(TypedDict, total=False):
+    """v3: building/floor utilisation telemetry — display-only.
+
+    Every metric is derived from the assign_rooms output at write
+    time. Telemetry never enters scheduler placement, multistart
+    Pareto ranking, or any decision logic — it surfaces operational
+    pain so the registrar can decide whether building affinity is
+    worth promoting to a real objective later.
+
+    All metrics default to empty (``{}`` / ``""``) on legacy rows
+    migrated to v3 because we cannot reconstruct slot-level
+    building usage from the historic data. The registrar UI
+    renders empty-state copy for those rows.
+    """
+
+    buildings_used_per_slot: dict[str, list[str]]
+    """``slot_key -> sorted list of distinct building names``."""
+
+    buildings_used_per_gender_per_slot: dict[str, dict[str, list[str]]]
+    """``slot_key -> {"M": [...], "F": [...]}`` distinct buildings."""
+
+    max_rooms_per_building_per_slot: dict[str, int]
+    """``slot_key -> the max number of rooms used in any one building``."""
+
+    cross_building_clusters_per_dept: dict[str, int]
+    """``department -> count of slots where that dept's exams span >=2 buildings``."""
+
+    largest_slot_footprint_summary: str
+    """Human-readable headline, e.g. ``"Tuesday P2 uses 6 rooms across 4 buildings"``."""
+
+
+class EnrolmentSnapshotTelemetry(TypedDict, total=False):
+    """v3: integrity record for the enrolment data the build read.
+
+    Lets the registrar answer "why does this exported schedule
+    differ from what I expected?" by comparing the snapshot against
+    the live data at any time. ``source_hash`` is sha256 of a
+    canonical (sorted) JSON serialisation of the enrolled-sets dict;
+    two builds against identical input produce the same hash.
+
+    Defaults to empty/zero on legacy rows where the build did not
+    record a snapshot.
+    """
+
+    snapshot_timestamp: str
+    """ISO-8601 UTC of the moment the build read enrolment input."""
+
+    students_count: int
+    """Distinct student-ids across all enrolled-sets."""
+
+    courses_count: int
+    """Number of courses in the enrolment input."""
+
+    sections_count: int
+    """Number of (course, section) pairs in the section_enrollment dict."""
+
+    fallback_used: bool
+    """True when the build path used StudentCourse.status='studying'
+    fallback because StudentTermSection had no rows for the term."""
+
+    synthetic_all_sections_count: int
+    """When ``fallback_used`` is True the fallback path emits a
+    synthetic ``"ALL"`` section per course; this is that count.
+    Zero on the canonical TermSection-driven path."""
+
+    source_hash: str
+    """sha256 hex of the canonical enrolment input. 64 chars."""
+
 
 RegistrarStatusFlag = Literal[
     "approved_thin_conflicts",
@@ -282,6 +366,47 @@ def _migrate_v0_to_v1(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def _migrate_v2_to_v3(payload: dict[str, Any]) -> dict[str, Any]:
+    """v2 -> v3: fill empty telemetry defaults for legacy rows.
+
+    Telemetry (building footprint + enrolment snapshot) cannot be
+    reconstructed from data the older build did not record (no
+    timestamp, no per-room building lookup, no canonical input
+    hash). The migrator fills empty/zero defaults so the UI cards
+    render empty-state copy gracefully; new builds populate the
+    real values at write time via ``derive_building_footprint`` /
+    ``compute_enrolment_snapshot``.
+    """
+    payload.setdefault("schema_version", 3)
+    qa = payload.get("qa")
+    if isinstance(qa, dict):
+        qa.setdefault("building_footprint", _empty_building_footprint())
+        qa.setdefault("enrolment_snapshot", _empty_enrolment_snapshot())
+    return payload
+
+
+def _empty_building_footprint() -> dict[str, Any]:
+    return {
+        "buildings_used_per_slot": {},
+        "buildings_used_per_gender_per_slot": {},
+        "max_rooms_per_building_per_slot": {},
+        "cross_building_clusters_per_dept": {},
+        "largest_slot_footprint_summary": "",
+    }
+
+
+def _empty_enrolment_snapshot() -> dict[str, Any]:
+    return {
+        "snapshot_timestamp": "",
+        "students_count": 0,
+        "courses_count": 0,
+        "sections_count": 0,
+        "fallback_used": False,
+        "synthetic_all_sections_count": 0,
+        "source_hash": "",
+    }
+
+
 def _migrate_v1_to_v2(payload: dict[str, Any]) -> dict[str, Any]:
     """v1 -> v2: derive registrar status surface + multi-sitting tile.
 
@@ -320,11 +445,14 @@ def _migrate_v1_to_v2(payload: dict[str, Any]) -> dict[str, Any]:
     qa = payload.get("qa")
 
     # Multi-sitting tile derivation, before status flags so the flags
-    # function sees the populated count.
+    # function sees the populated count. Reads from ``payload["schedule"]``
+    # — the per-entry ``rooms`` list is what carries the section labels
+    # we detect splits from. ``payload["assign_rooms"]`` is a config
+    # bool, NOT the per-slot data (a long-standing naming quirk).
     if isinstance(qa, dict):
         if "multi_sitting_sections" not in qa or "multi_sitting_details" not in qa:
-            assign_rooms = payload.get("assign_rooms")
-            details = derive_multi_sitting_details(assign_rooms)
+            schedule = payload.get("schedule")
+            details = derive_multi_sitting_details(schedule)
             qa.setdefault("multi_sitting_sections", len(details))
             qa.setdefault("multi_sitting_details", details)
 
@@ -347,7 +475,8 @@ def _migrate_v1_to_v2(payload: dict[str, Any]) -> dict[str, Any]:
 _MIGRATORS: list[Migrator] = [
     _migrate_v0_to_v1,
     _migrate_v1_to_v2,
-    # _migrate_v2_to_v3 goes here when we bump to v3.
+    _migrate_v2_to_v3,
+    # _migrate_v3_to_v4 goes here when we bump to v4.
 ]
 
 
@@ -357,10 +486,42 @@ _MIGRATORS: list[Migrator] = [
 # ---------------------------------------------------------------------------
 
 
+def _normalise_room_input(input_: Any) -> dict[str, list[dict[str, Any]]]:
+    """Accept either a schedule list or a pre-grouped dict.
+
+    Returns a ``{slot_key: [{"course_code": ..., "rooms": [...]}, ...]}``
+    dict regardless of input form. Callers can pass:
+
+    - A v3 schedule list (each entry has ``day``, ``period``,
+      ``course_code``, ``rooms``) — typical production case.
+    - A pre-grouped dict — legacy/test-fixture form.
+
+    Anything else returns ``{}`` (defensive).
+    """
+    if isinstance(input_, dict):
+        return input_
+    if isinstance(input_, list):
+        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for entry in input_:
+            if not isinstance(entry, dict):
+                continue
+            day = str(entry.get("day", ""))
+            period = str(entry.get("period", ""))
+            slot_key = f"{day}:{period}" if day or period else ""
+            grouped[slot_key].append(
+                {
+                    "course_code": entry.get("course_code", ""),
+                    "rooms": entry.get("rooms", []) or [],
+                }
+            )
+        return dict(grouped)
+    return {}
+
+
 def derive_multi_sitting_details(
-    assign_rooms: Any,
+    schedule_or_assign_rooms: Any,
 ) -> list[dict[str, Any]]:
-    """Extract multi-sitting sections from a ``payload['assign_rooms']`` block.
+    """Extract multi-sitting sections from a schedule list or pre-grouped dict.
 
     A section is considered "multi-sitting" when its room-assignment
     output contains entries whose ``section`` name carries a split
@@ -382,21 +543,21 @@ def derive_multi_sitting_details(
       room or slot (drives ``room_action_required``).
     - ``audit_text``: human-readable summary suitable for the QA tile.
 
-    Defensive: an unexpected ``assign_rooms`` shape returns ``[]``
-    rather than raising — partial schedules should not break the
-    status derivation.
+    Defensive: an unexpected input shape returns ``[]`` rather than
+    raising — partial schedules should not break the status derivation.
     """
-    if not isinstance(assign_rooms, dict):
+    by_slot = _normalise_room_input(schedule_or_assign_rooms)
+    if not by_slot:
         return []
 
     by_logical: dict[str, dict[str, Any]] = {}
 
-    # ``assign_rooms`` is structured by slot. Each slot has a list of
+    # ``by_slot`` is structured by slot. Each slot has a list of
     # course entries; each entry has its own ``rooms`` list with
     # per-section sub-rows. The exact shape depends on the build site,
     # but the relevant invariants are: there's a slot key, and each
     # course's entry has a ``rooms`` list of dicts. Walk defensively.
-    for slot_key, slot_entries in assign_rooms.items():
+    for slot_key, slot_entries in by_slot.items():
         if not isinstance(slot_entries, list):
             continue
         for entry in slot_entries:
@@ -473,6 +634,207 @@ def derive_multi_sitting_details(
         out.append(detail)
     out.sort(key=lambda d: d["section"])
     return out
+
+
+def derive_building_footprint(
+    schedule_or_assign_rooms: Any,
+    *,
+    department_of: Callable[[str], str] | None = None,
+) -> dict[str, Any]:
+    """Compute the v3 building-footprint telemetry block.
+
+    Accepts either a schedule list (each entry having ``day``,
+    ``period``, ``course_code``, ``rooms``) or a pre-grouped
+    ``{slot_key: [course_entry, ...]}`` dict.
+
+    Defensive: returns ``_empty_building_footprint()`` when the input
+    structure is unexpected. Pure: no DB access, no I/O.
+
+    Each room entry in ``rooms`` is expected to carry ``room_code``,
+    ``gender`` and (after v3 build enrichment) ``building`` fields.
+    Entries lacking ``building`` are skipped — the metric reflects only
+    rooms whose building is known. Legacy rows (which never recorded
+    ``building`` per entry) therefore get empty metrics, matching the
+    "telemetry cannot be reconstructed" rule.
+
+    ``department_of`` defaults to splitting the course code at the
+    first run of digits ("CS101" -> "CS"). Override for institutions
+    with a different prefix convention.
+
+    Returns the dict shape declared by ``BuildingFootprintTelemetry``.
+    """
+    by_slot = _normalise_room_input(schedule_or_assign_rooms)
+    if not by_slot:
+        return _empty_building_footprint()
+
+    if department_of is None:
+        department_of = _default_department_of
+
+    buildings_per_slot: dict[str, set[str]] = defaultdict(set)
+    buildings_per_gender_per_slot: dict[str, dict[str, set[str]]] = defaultdict(
+        lambda: {"M": set(), "F": set(), "": set()}
+    )
+    rooms_per_building_per_slot: dict[str, Counter[str]] = defaultdict(Counter)
+    rooms_per_slot: Counter[str] = Counter()
+    # dept -> set of slot_keys where dept's exams span >=2 buildings
+    dept_cross_building_slots: dict[str, set[str]] = defaultdict(set)
+
+    for slot_key, slot_entries in by_slot.items():
+        if not isinstance(slot_entries, list):
+            continue
+        slot_str = str(slot_key)
+        # dept -> set of buildings used by that dept in this slot
+        dept_buildings_this_slot: dict[str, set[str]] = defaultdict(set)
+
+        for entry in slot_entries:
+            if not isinstance(entry, dict):
+                continue
+            course_code = str(entry.get("course_code", ""))
+            dept = department_of(course_code) if course_code else ""
+
+            rooms = entry.get("rooms")
+            if not isinstance(rooms, list):
+                continue
+            for r in rooms:
+                if not isinstance(r, dict):
+                    continue
+                building = r.get("building")
+                if not isinstance(building, str) or not building:
+                    continue
+                # Skip the UNASSIGNED sentinel for footprint purposes —
+                # it isn't a real building.
+                if str(r.get("room_code", "")).upper() == "UNASSIGNED":
+                    continue
+                gender = str(r.get("gender", "")).upper()
+                if gender not in ("M", "F"):
+                    gender = ""
+
+                buildings_per_slot[slot_str].add(building)
+                buildings_per_gender_per_slot[slot_str][gender].add(building)
+                rooms_per_building_per_slot[slot_str][building] += 1
+                rooms_per_slot[slot_str] += 1
+                if dept:
+                    dept_buildings_this_slot[dept].add(building)
+
+        for dept, buildings in dept_buildings_this_slot.items():
+            if len(buildings) >= 2:
+                dept_cross_building_slots[dept].add(slot_str)
+
+    # Build the largest-slot summary deterministically: pick the slot
+    # whose room count is highest; tie-break by slot key alphabetically.
+    largest_slot_summary = ""
+    if rooms_per_slot:
+        best_slot, best_count = max(
+            rooms_per_slot.items(),
+            key=lambda kv: (kv[1], -ord_summary(kv[0])),
+        )
+        building_count = len(buildings_per_slot.get(best_slot, set()))
+        largest_slot_summary = (
+            f"{best_slot} uses {best_count} rooms across "
+            f"{building_count} building" + ("s" if building_count != 1 else "")
+        )
+
+    return {
+        "buildings_used_per_slot": {
+            slot: sorted(blds) for slot, blds in buildings_per_slot.items()
+        },
+        "buildings_used_per_gender_per_slot": {
+            slot: {g: sorted(b) for g, b in genders.items() if b}
+            for slot, genders in buildings_per_gender_per_slot.items()
+        },
+        "max_rooms_per_building_per_slot": {
+            slot: max(counter.values()) if counter else 0
+            for slot, counter in rooms_per_building_per_slot.items()
+        },
+        "cross_building_clusters_per_dept": {
+            dept: len(slots) for dept, slots in dept_cross_building_slots.items()
+        },
+        "largest_slot_footprint_summary": largest_slot_summary,
+    }
+
+
+def ord_summary(slot_key: str) -> int:
+    """Tie-breaker helper: sum of ord codes for deterministic ordering.
+
+    Pure helper for ``derive_building_footprint``. We want stable
+    output across Python versions; ``max()`` with a numeric key
+    plus a small-but-deterministic secondary key gives that.
+    """
+    return sum(ord(c) for c in slot_key)
+
+
+def _default_department_of(course_code: str) -> str:
+    """Split a course code at the first digit run.
+
+    "CS101" -> "CS"; "MATH200" -> "MATH"; "GS-101" -> "GS-".
+
+    Pure string manipulation; no domain knowledge of which prefixes
+    are "departmental" vs "general studies" etc. The footprint
+    function uses this only for cross-building-cluster grouping; a
+    stricter mapping can be passed via ``department_of=...``.
+    """
+    for i, ch in enumerate(course_code):
+        if ch.isdigit():
+            return course_code[:i]
+    return course_code
+
+
+def compute_enrolment_snapshot(
+    enrolled_sets: dict[str, Any],
+    *,
+    sections_count: int = 0,
+    fallback_used: bool = False,
+    synthetic_all_sections_count: int = 0,
+    timestamp: datetime | None = None,
+) -> dict[str, Any]:
+    """Compute the v3 enrolment-snapshot telemetry block.
+
+    Pure (modulo ``datetime.now`` when ``timestamp`` is omitted).
+    The ``source_hash`` is sha256 of a canonical JSON serialisation
+    of ``enrolled_sets`` (course codes sorted, student id lists
+    sorted) — two builds against the same input produce the same
+    hash.
+
+    ``students_count`` is the count of distinct student ids across
+    all enrolled sets. ``courses_count`` is ``len(enrolled_sets)``.
+    ``sections_count`` is provided by the caller because section
+    bookkeeping lives outside ``enrolled_sets`` in this codebase.
+
+    ``fallback_used`` and ``synthetic_all_sections_count`` are
+    plumbed through verbatim — the schema function does not
+    second-guess the build site about which path produced the data.
+    """
+    if not isinstance(enrolled_sets, dict):
+        enrolled_sets = {}
+
+    distinct_students: set[Any] = set()
+    canonical: dict[str, list[Any]] = {}
+    for course_code in sorted(enrolled_sets.keys()):
+        sids = enrolled_sets[course_code]
+        try:
+            sid_list = sorted(sids)
+        except TypeError:
+            # Heterogeneous types in the set — fall back to string-sorted
+            # so the canonical form stays deterministic.
+            sid_list = sorted(sids, key=lambda s: str(s))
+        canonical[course_code] = sid_list
+        distinct_students.update(sid_list)
+
+    canonical_text = json.dumps(canonical, ensure_ascii=False, sort_keys=False)
+    source_hash = hashlib.sha256(canonical_text.encode("utf-8")).hexdigest()
+
+    if timestamp is None:
+        timestamp = datetime.now(UTC)
+
+    return {
+        "snapshot_timestamp": timestamp.isoformat(),
+        "students_count": len(distinct_students),
+        "courses_count": len(enrolled_sets),
+        "sections_count": int(sections_count),
+        "fallback_used": bool(fallback_used),
+        "synthetic_all_sections_count": int(synthetic_all_sections_count),
+        "source_hash": source_hash,
+    }
 
 
 def derive_status_surface(
@@ -652,6 +1014,11 @@ def _fill_ok_defaults(payload: dict[str, Any]) -> None:
     if isinstance(qa_dict, dict):
         qa_dict.setdefault("multi_sitting_sections", 0)
         qa_dict.setdefault("multi_sitting_details", [])
+        # v3: telemetry blocks. Defaults are empty so UI iterates
+        # without crashing on rows older than v3 (or fresh rows
+        # whose build site was somehow unable to compute them).
+        qa_dict.setdefault("building_footprint", _empty_building_footprint())
+        qa_dict.setdefault("enrolment_snapshot", _empty_enrolment_snapshot())
 
 
 def _fill_feasibility_error_defaults(payload: dict[str, Any]) -> None:
