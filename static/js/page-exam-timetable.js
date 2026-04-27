@@ -613,6 +613,35 @@ const _drillRenderers = {
       colspan: 4,
     };
   },
+  'multi-sitting'(rows) {
+    return {
+      title: IS_AR ? 'الأقسام بجلسات متعددة' : 'Sections Requiring Multi-Sitting',
+      head: `<tr>
+        <th>${IS_AR ? 'القسم' : 'Section'}</th>
+        <th>${IS_AR ? 'الطلاب' : 'Students'}</th>
+        <th>${IS_AR ? 'أكبر سعة قاعة' : 'Max room cap'}</th>
+        <th>${IS_AR ? 'عدد الجلسات' : 'Sittings'}</th>
+        <th>${IS_AR ? 'الفترات' : 'Slots'}</th>
+        <th>${IS_AR ? 'القاعات' : 'Rooms'}</th>
+        <th>${IS_AR ? 'الحالة' : 'State'}</th>
+      </tr>`,
+      body: rows.map(r => {
+        const incompleteBadge = r.incomplete
+          ? `<span class="badge bg-warning text-dark">${IS_AR ? 'غير مكتمل' : 'Incomplete'}</span>`
+          : `<span class="badge bg-success">${IS_AR ? 'مكتمل' : 'Complete'}</span>`;
+        return `<tr>
+          <td><strong>${r.section || ''}</strong></td>
+          <td>${r.enrolment || 0}</td>
+          <td>${r.max_room_cap || 0}</td>
+          <td>${r.sittings || 0}</td>
+          <td>${(r.slots || []).map(s => `<span class="badge bg-secondary me-1">${s}</span>`).join('')}</td>
+          <td>${(r.rooms || []).map(rm => `<code>${rm}</code>`).join(' ')}</td>
+          <td>${incompleteBadge}</td>
+        </tr>`;
+      }).join(''),
+      colspan: 7,
+    };
+  },
   'thin-clash'(rows) {
     const slotLabel = (si) => {
       const s = _slotsByIndex[si];
@@ -773,6 +802,61 @@ function renderResults(data) {
     $('kThinRow').classList.add('d-none');
   }
 
+  // v2 honest status surface: primary_status + status_flags banner.
+  // Always shown for v2+ payloads (the data is universally present);
+  // hidden only when the payload pre-dates v2 entirely.
+  const primaryStatus = data.primary_status;
+  const statusFlags = Array.isArray(data.status_flags) ? data.status_flags : [];
+  const banner = $('kStatusBanner');
+  const copyMap = $('statusCopyMap');
+  if (primaryStatus && copyMap) {
+    banner.classList.remove('d-none');
+    const labelKey = primaryStatus.replace(/-/g, '_');
+    const primaryLabel = copyMap.dataset[labelKey] || primaryStatus;
+    const primaryEl = $('kStatusPrimary');
+    primaryEl.textContent = primaryLabel;
+    // Severity colour mapping — keeps the headline's signal honest
+    // without becoming a decision input. Pre-set then chosen below.
+    primaryEl.className = 'badge';
+    const severityColour = ({
+      clean: 'bg-success',
+      clean_with_approved_thin_conflicts: 'bg-success',
+      requires_room_action: 'bg-warning text-dark',
+      contains_overflow: 'bg-warning text-dark',
+      contains_manual_override: 'bg-warning text-dark',
+      infeasible: 'bg-danger',
+      unrenderable: 'bg-secondary',
+      future_version_unrenderable: 'bg-secondary',
+    })[labelKey] || 'bg-secondary';
+    primaryEl.className = 'badge ' + severityColour;
+    // Render flags as smaller pills, deduplicated and sorted for stability.
+    const flagsEl = $('kStatusFlags');
+    flagsEl.innerHTML = '';
+    [...new Set(statusFlags)].sort().forEach(flag => {
+      const flagKey = flag.replace(/-/g, '_');
+      const flagLabel = copyMap.dataset['flag-' + flagKey] || flag;
+      const pill = document.createElement('span');
+      pill.className = 'badge bg-light text-dark border';
+      pill.style.fontSize = '0.75rem';
+      pill.textContent = flagLabel;
+      flagsEl.appendChild(pill);
+    });
+  } else {
+    banner.classList.add('d-none');
+  }
+
+  // v2 multi-sitting tile — surfaces the historically-invisible
+  // "this section needs N sittings" fact. Hidden when no sections
+  // required multi-sitting (count = 0).
+  const msCount = data.qa?.multi_sitting_sections ?? 0;
+  if (msCount > 0) {
+    $('kMultiSittingRow').classList.remove('d-none');
+    $('kMultiSittingCount').textContent = msCount;
+    $('kMultiSittingCount').className = 'v warn';
+  } else {
+    $('kMultiSittingRow').classList.add('d-none');
+  }
+
   // v3 telemetry: building-footprint card — display-only, no ranking effect.
   // Hidden when the payload lacks footprint data (legacy v1/v2 rows or
   // older v3 rows that didn't capture building info per room entry).
@@ -839,10 +923,11 @@ function renderResults(data) {
 
   // Store drilldown data + close any open panel
   _drillData = {
-    overload:       data.qa?.overload_details ?? [],
-    heavy:          data.qa?.heavy_day_details ?? [],
-    'thin-courses': data.qa?.thin_courses ?? [],
-    'thin-clash':   data.qa?.thin_clash_risk ?? [],
+    overload:        data.qa?.overload_details ?? [],
+    heavy:           data.qa?.heavy_day_details ?? [],
+    'thin-courses':  data.qa?.thin_courses ?? [],
+    'thin-clash':    data.qa?.thin_clash_risk ?? [],
+    'multi-sitting': data.qa?.multi_sitting_details ?? [],
   };
   closeDrill();
 
