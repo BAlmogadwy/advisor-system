@@ -812,12 +812,14 @@ function renderResults(data) {
   if (primaryStatus && copyMap) {
     banner.classList.remove('d-none');
     const labelKey = primaryStatus.replace(/-/g, '_');
+    // Defensive fallback: an unknown primary_status value (a future
+    // backend enum we don't yet know about) renders the raw key as
+    // its label and the secondary badge style — never throws, never
+    // silently disappears. The registrar sees an honest "I don't
+    // recognise this status" signal rather than a missing card.
     const primaryLabel = copyMap.dataset[labelKey] || primaryStatus;
     const primaryEl = $('kStatusPrimary');
     primaryEl.textContent = primaryLabel;
-    // Severity colour mapping — keeps the headline's signal honest
-    // without becoming a decision input. Pre-set then chosen below.
-    primaryEl.className = 'badge';
     const severityColour = ({
       clean: 'bg-success',
       clean_with_approved_thin_conflicts: 'bg-success',
@@ -829,11 +831,41 @@ function renderResults(data) {
       future_version_unrenderable: 'bg-secondary',
     })[labelKey] || 'bg-secondary';
     primaryEl.className = 'badge ' + severityColour;
-    // Render flags as smaller pills, deduplicated and sorted for stability.
+    // Render flags as smaller pills, deduplicated and ordered by
+    // registrar-action severity (most-actionable first), with unknown
+    // flags appended alphabetically so a future backend addition is
+    // visible (with the raw key) rather than swallowed.
+    //
+    // Severity order (peer-review confirmed): room action requires
+    // physical-world fix > overflow is a registrar-visible scheduling
+    // failure > manual override is a deliberate registrar bypass >
+    // approved thin conflicts is a policy-accepted soft cost >
+    // multi-sitting required is a logistics fact > legacy_incomplete_qa
+    // is a metadata caveat last.
+    const FLAG_DISPLAY_ORDER = [
+      'room_action_required',
+      'overflow',
+      'manual_override',
+      'approved_thin_conflicts',
+      'multi_sitting_required',
+      'legacy_incomplete_qa',
+    ];
     const flagsEl = $('kStatusFlags');
     flagsEl.innerHTML = '';
-    [...new Set(statusFlags)].sort().forEach(flag => {
+    const uniqueFlags = [...new Set(statusFlags)];
+    uniqueFlags.sort((a, b) => {
+      const ai = FLAG_DISPLAY_ORDER.indexOf(a.replace(/-/g, '_'));
+      const bi = FLAG_DISPLAY_ORDER.indexOf(b.replace(/-/g, '_'));
+      // Known flags ordered by severity; unknowns appended alphabetically.
+      if (ai === -1 && bi === -1) return a.localeCompare(b);
+      if (ai === -1) return 1;
+      if (bi === -1) return -1;
+      return ai - bi;
+    });
+    uniqueFlags.forEach(flag => {
       const flagKey = flag.replace(/-/g, '_');
+      // Same defensive fallback as primary_status: unknown flag renders
+      // the raw key, never disappears.
       const flagLabel = copyMap.dataset['flag-' + flagKey] || flag;
       const pill = document.createElement('span');
       pill.className = 'badge bg-light text-dark border';
