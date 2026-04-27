@@ -91,7 +91,7 @@ Version history
 # Display payload type
 # ---------------------------------------------------------------------------
 
-RegistrarPrimaryStatus = Literal[
+ExamRunPrimaryStatus = Literal[
     "clean",
     "clean_with_approved_thin_conflicts",
     "requires_room_action",
@@ -164,10 +164,12 @@ lost just because a more severe one took the headline.
   with safe defaults, but the registrar is told the signal is partial.
 """
 
-# Backwards-compatible alias retained for any consumer that imported
-# the old name during the brief window when this file shipped with the
-# pre-flag-system enum. Internally everything uses ``RegistrarPrimaryStatus``.
-RegistrarRunStatus = RegistrarPrimaryStatus
+# Backwards-compatible aliases retained for any consumer that imported
+# pre-rename names. Internally everything uses ``ExamRunPrimaryStatus``.
+# ``RegistrarPrimaryStatus`` was the v2 working name; ``RegistrarRunStatus``
+# was the pre-flag-system enum name.
+RegistrarPrimaryStatus = ExamRunPrimaryStatus
+RegistrarRunStatus = ExamRunPrimaryStatus
 
 STATUS_DERIVATION_VERSION: int = 1
 """Version of the rules used to derive ``primary_status`` and
@@ -219,7 +221,7 @@ class ExamRunDisplayPayload(TypedDict, total=False):
     schema_version: int
     status: ExamRunStatus
     # v2: registrar-facing health signals (derived). Always present.
-    primary_status: RegistrarPrimaryStatus
+    primary_status: ExamRunPrimaryStatus
     status_flags: list[RegistrarStatusFlag]
     status_derivation_version: int
 
@@ -291,9 +293,11 @@ def _migrate_v1_to_v2(payload: dict[str, Any]) -> dict[str, Any]:
     - ``room_action_required``: from ``qa.unassigned_room_sections``
       and incomplete-multi-sitting detection
     - ``manual_override``: from ``qa.manual_override_count`` if present,
-      else inferred best-effort from ``qa.conflict_count`` (and the
-      payload is flagged ``legacy_incomplete_qa`` so the registrar
-      knows the manual-override signal is approximate)
+      else inferred best-effort from ``qa.conflict_count``. The
+      derivation always raises ``legacy_incomplete_qa`` for migrated
+      rows because they could not have authored the v2 fields at write
+      time (they're filled here from inference, not authoritative
+      measurement).
     - ``approved_thin_conflicts``: from ``qa.thin_clash_risk``
     - ``multi_sitting_required``: from assign_rooms entries with
       split-section markers (sections containing ``/`` from
@@ -304,6 +308,14 @@ def _migrate_v1_to_v2(payload: dict[str, Any]) -> dict[str, Any]:
     on the happy path. The migrator does not strip or rename any v1
     key (forward-compat by construction).
     """
+    # Capture source version BEFORE stamping so derive_status_surface
+    # can mark the row legacy_incomplete_qa appropriately.
+    raw_source_version = payload.get("schema_version")
+    if isinstance(raw_source_version, int) and raw_source_version >= 0:
+        source_version = raw_source_version
+    else:
+        source_version = 0
+
     payload.setdefault("schema_version", 2)
     qa = payload.get("qa")
 
@@ -316,13 +328,15 @@ def _migrate_v1_to_v2(payload: dict[str, Any]) -> dict[str, Any]:
             qa.setdefault("multi_sitting_sections", len(details))
             qa.setdefault("multi_sitting_details", details)
 
-    # Status surface derivation.
+    # Status surface derivation. Pass the original source version so
+    # the legacy_incomplete_qa flag can fire on schema-based criteria,
+    # not just on missing-field fallback inference.
     if (
         "primary_status" not in payload
         or "status_flags" not in payload
         or "status_derivation_version" not in payload
     ):
-        primary, flags = derive_status_surface(payload)
+        primary, flags = derive_status_surface(payload, source_schema_version=source_version)
         payload.setdefault("primary_status", primary)
         payload.setdefault("status_flags", flags)
         payload.setdefault("status_derivation_version", STATUS_DERIVATION_VERSION)
@@ -463,7 +477,8 @@ def derive_multi_sitting_details(
 
 def derive_status_surface(
     payload: dict[str, Any],
-) -> tuple[RegistrarPrimaryStatus, list[RegistrarStatusFlag]]:
+    source_schema_version: int | None = None,
+) -> tuple[ExamRunPrimaryStatus, list[RegistrarStatusFlag]]:
     """Compute ``(primary_status, status_flags)`` for a payload.
 
     Uses ``payload["status"]`` (technical) plus the QA dict to derive
@@ -471,10 +486,34 @@ def derive_status_surface(
     headline) and the full flags list (everything the registrar should
     know, regardless of priority).
 
+    Parameters
+    ----------
+    payload
+        The (already-migrated, possibly stamped) payload dict. The
+        function reads ``status``, ``schedule``, and ``qa`` keys.
+    source_schema_version
+        The ORIGINAL ``schema_version`` of the payload BEFORE any
+        migration ran. Used to set ``legacy_incomplete_qa`` whenever
+        the payload arrived from a schema version older than current
+        (because a derivation can be "complete" only relative to the
+        rules of the schema that wrote it). Pass ``None`` for
+        write-time callers that built the payload at the current
+        version directly.
+
     The function is defensive: missing keys default to safe values.
-    When critical signals are missing (e.g. a v1 row without
-    ``qa.manual_override_count``), the ``legacy_incomplete_qa`` flag
-    is raised so the consumer knows the derivation was best-effort.
+    The ``legacy_incomplete_qa`` flag fires when ANY of:
+
+    - ``source_schema_version < EXAM_RUN_SCHEMA_VERSION`` (the row was
+      written under an older schema and could not have had every
+      derivation field populated authoritatively at write time);
+    - critical derivation fields are missing (e.g. ``qa`` is missing
+      altogether, or ``qa.manual_override_count`` is absent);
+    - we had to fall back to inferring a signal (e.g. inferring manual
+      override count from ``qa.conflict_count``).
+
+    This matches the peer-review-confirmed semantic: the flag tells the
+    registrar the difference between *zero observed* and *not measured
+    in this schema*.
     """
     status = payload.get("status")
 
@@ -492,7 +531,22 @@ def derive_status_surface(
     flags: list[RegistrarStatusFlag] = []
     legacy_incomplete = False
 
-    qa = payload.get("qa") if isinstance(payload.get("qa"), dict) else {}
+    # Schema-based legacy trigger: any payload whose source schema is
+    # older than current is by definition incomplete relative to the
+    # current derivation rules. The migrator may fill defaults, but
+    # those defaults are not authoritative measurements.
+    if source_schema_version is not None and source_schema_version < EXAM_RUN_SCHEMA_VERSION:
+        legacy_incomplete = True
+
+    qa_raw = payload.get("qa")
+    if isinstance(qa_raw, dict):
+        qa = qa_raw
+    else:
+        qa = {}
+        # No QA at all means we cannot measure most of the derivation
+        # signals — degrade to legacy-incomplete rather than pretending
+        # the run is "clean".
+        legacy_incomplete = True
     schedule = payload.get("schedule") if isinstance(payload.get("schedule"), list) else []
 
     overflow_count = sum(1 for e in schedule if isinstance(e, dict) and e.get("day") == "OVERFLOW")
@@ -517,13 +571,15 @@ def derive_status_surface(
 
     # Manual override: prefer the explicit qa.manual_override_count
     # signal added in v2 builds. Fall back to qa.conflict_count for
-    # legacy v1 rows (with the legacy_incomplete_qa flag raised).
+    # legacy v1 rows (with legacy_incomplete_qa flag raised — the
+    # source-schema check above usually catches this already, but the
+    # fallback also fires when a v2-claimed row arrived missing the
+    # field for any reason, which we still treat as partial).
     if "manual_override_count" in qa:
         manual_override_count = int(qa.get("manual_override_count", 0) or 0)
     else:
         manual_override_count = int(qa.get("conflict_count", 0) or 0)
-        if manual_override_count > 0:
-            legacy_incomplete = True
+        legacy_incomplete = True
     if manual_override_count > 0:
         flags.append("manual_override")
 
@@ -537,7 +593,7 @@ def derive_status_surface(
     # ── Pick the headline ───────────────────────────────────────────────
     # Severity order, worst first. The first applicable wins.
     if overflow_count > 0:
-        primary: RegistrarPrimaryStatus = "contains_overflow"
+        primary: ExamRunPrimaryStatus = "contains_overflow"
     elif unassigned_rooms > 0 or incomplete_sittings > 0:
         primary = "requires_room_action"
     elif manual_override_count > 0:

@@ -89,7 +89,12 @@ def _v1_ok_payload() -> dict:
 
 
 def _v2_ok_payload() -> dict:
-    """A canonical v2 ok-shape payload — already at current schema."""
+    """A canonical v2 ok-shape payload — already at current schema.
+
+    Mirrors what the build site produces: every v2 derivation field is
+    populated explicitly (including ``qa.manual_override_count = 0``)
+    so the status derivation does not fall back to legacy inference.
+    """
     return {
         "schema_version": 2,
         "status": "ok",
@@ -107,6 +112,8 @@ def _v2_ok_payload() -> dict:
             "total_courses": 2,
             "multi_sitting_sections": 0,
             "multi_sitting_details": [],
+            "manual_override_count": 0,
+            "manual_override_details": [],
         },
         "buckets_summary": [],
         "bucket_count": 1,
@@ -908,10 +915,51 @@ def test_status_surface_future_version_short_circuits() -> None:
 
 
 def test_status_surface_defensive_against_missing_qa() -> None:
-    """A payload with no qa key at all still produces a valid surface."""
+    """A payload with no qa key at all still produces a valid surface.
+    legacy_incomplete_qa is raised because we cannot measure most
+    signals authoritatively without the qa dict — exactly the safety
+    that flag is for."""
     primary, flags = derive_status_surface({"status": "ok", "schedule": []})
     assert primary == "clean"
-    assert flags == []
+    assert "legacy_incomplete_qa" in flags
+
+
+def test_status_surface_legacy_flag_fires_on_older_source_schema() -> None:
+    """Schema-based legacy trigger: a row that arrived from
+    schema_version < current cannot have measured every v2 derivation
+    field at write time, so it gets legacy_incomplete_qa even when no
+    individual field is missing."""
+    payload = _v2_ok_payload()  # has all v2 fields populated
+    primary, flags = derive_status_surface(payload, source_schema_version=1)
+    assert primary == "clean"
+    assert "legacy_incomplete_qa" in flags
+
+
+def test_status_surface_legacy_flag_quiet_on_current_source_schema() -> None:
+    """A row authored at the current schema version is authoritative
+    by definition — no legacy_incomplete_qa flag."""
+    payload = _v2_ok_payload()
+    primary, flags = derive_status_surface(payload, source_schema_version=2)
+    assert primary == "clean"
+    assert "legacy_incomplete_qa" not in flags
+
+
+def test_status_surface_legacy_flag_quiet_when_source_unknown_and_complete() -> None:
+    """source_schema_version=None means "write-time call". When all
+    v2 fields are present we trust them and don't raise the legacy
+    flag — that branch is for explicitly-tagged migrations."""
+    payload = _v2_ok_payload()
+    primary, flags = derive_status_surface(payload, source_schema_version=None)
+    assert primary == "clean"
+    assert "legacy_incomplete_qa" not in flags
+
+
+def test_status_surface_legacy_flag_fires_on_v0_source() -> None:
+    """A v0 row (no schema_version at all) is treated as source=0
+    by the migrator, which is < current, so legacy_incomplete_qa fires."""
+    payload = _v2_ok_payload()
+    primary, flags = derive_status_surface(payload, source_schema_version=0)
+    assert "legacy_incomplete_qa" in flags
 
 
 # ---------------------------------------------------------------------------
@@ -1099,6 +1147,10 @@ def test_load_normalised_run_v1_row_gets_full_v2_surface() -> None:
     assert loaded["schema_version"] == EXAM_RUN_SCHEMA_VERSION
     assert loaded["primary_status"] == "requires_room_action"
     assert "room_action_required" in loaded["status_flags"]
+    # Migrated v1 row also carries legacy_incomplete_qa: the source
+    # schema is older than current, so derived fields are not from
+    # authoritative measurement.
+    assert "legacy_incomplete_qa" in loaded["status_flags"]
     assert loaded["status_derivation_version"] == STATUS_DERIVATION_VERSION
     assert loaded["qa"].get("multi_sitting_sections") == 0
 
