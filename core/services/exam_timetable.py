@@ -1760,13 +1760,21 @@ def build_exam_timetable(
     assign_rooms: bool = True,
     rebalance_invigilators: bool = True,
     thin_conflict_threshold: int = 0,
+    persist: bool = True,
 ) -> dict:
     """
     End-to-end pipeline: build enrolled sets → conflict graph →
     programme-plan term buckets → feasibility check → greedy schedule
     → QA → persist JSON.
 
-    Returns the full result dict (also saved in ExamTimetableRun).
+    Returns the full result dict. When ``persist=True`` (the default,
+    matching pre-existing single-run callers) a row is written to
+    ``ExamTimetableRun`` and the row id appears in ``result["run_id"]``.
+    When ``persist=False`` the row is NOT written — the multi-start
+    runner uses this mode to evaluate many seeded builds before
+    selecting which 4 to persist as Pareto candidates, so the history
+    panel doesn't fill with throw-away exploratory runs.
+
     If a bucket feasibility violation is found, returns an error dict
     without scheduling (key "feasibility_error": True).
 
@@ -1786,6 +1794,13 @@ def build_exam_timetable(
                            Realised same-slot clashes for thin students
                            are reported in qa.thin_clash_risk so the
                            registrar can pin them manually if needed.
+        persist          – when True (default), writes an
+                           ``ExamTimetableRun`` row and stamps the
+                           returned dict with ``run_id``. When False,
+                           skips the DB write and returns the result
+                           dict unstamped — used by the multi-start
+                           runner to evaluate candidates before
+                           persisting only the selected ones.
     """
     # 1. Enrolled sets
     enrolled_sets = build_enrolled_sets(programs=programs, sections=sections)
@@ -2007,12 +2022,14 @@ def build_exam_timetable(
         }
     )
 
-    # Persist
-    run = ExamTimetableRun.objects.create(
-        label=label,
-        result_json=json.dumps(result, ensure_ascii=False),
-    )
-    result["run_id"] = run.id
+    # Persist (skipped in multi-start exploration mode where we evaluate
+    # many candidates and only persist the selected Pareto few).
+    if persist:
+        run = ExamTimetableRun.objects.create(
+            label=label,
+            result_json=json.dumps(result, ensure_ascii=False),
+        )
+        result["run_id"] = run.id
 
     return result
 

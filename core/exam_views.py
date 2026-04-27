@@ -27,6 +27,11 @@ from django.views.decorators.http import require_GET, require_POST
 from core.authz import throttle
 from core.models import ExamTimetableRun, Student
 from core.services.audit import log_audit_event
+from core.services.exam_multistart import (
+    is_multistart_enabled,
+    report_to_dict,
+    run_multistart,
+)
 from core.services.exam_run_schema import load_normalised_run
 from core.services.exam_timetable import (
     build_credit_map,
@@ -250,6 +255,58 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
     import random as _rnd
 
     seed = _rnd.randint(1, 2**31 - 1) if randomize else None
+
+    # Multi-start is feature-flagged. When TIMETABLE_EXAM_MULTISTART_ENABLED
+    # is set and the request opts in (``multistart=True``), the runner
+    # explores N seeded builds and returns the 4 mechanically-defined
+    # Pareto candidates ("recommended" / "lowest_overflow" /
+    # "lowest_overload" / "best_room_feasibility") in a single response.
+    # The single-run path remains the default; existing client code is
+    # unaffected.
+    multistart_requested = bool(payload.get("multistart", False))
+    if multistart_requested and is_multistart_enabled():
+        # Optional inputs; sensible defaults match the peer-review plan.
+        try:
+            n_runs = max(1, min(50, int(payload.get("n_runs", 20))))
+        except (ValueError, TypeError):
+            n_runs = 20
+        try:
+            time_budget_s = max(0.5, min(60.0, float(payload.get("time_budget_s", 12.0))))
+        except (ValueError, TypeError):
+            time_budget_s = 12.0
+        previous_run_id_raw = payload.get("previous_run_id")
+        try:
+            previous_run_id = int(previous_run_id_raw) if previous_run_id_raw is not None else None
+        except (ValueError, TypeError):
+            previous_run_id = None
+
+        try:
+            report = run_multistart(
+                label=label,
+                days=days,
+                periods=periods,
+                max_per_day=max_per_day,
+                programs=programs,
+                sections=sections,
+                selected_courses=selected_courses,
+                pinned=pinned,
+                n_runs=n_runs,
+                time_budget_s=time_budget_s,
+                assign_rooms=assign_rooms,
+                thin_conflict_threshold=thin_conflict_threshold,
+                previous_run_id=previous_run_id,
+            )
+        except Exception as exc:
+            return JsonResponse({"ok": False, "error": str(exc)}, status=500)
+
+        if report.feasibility_error is not None and not report.candidates_by_role:
+            return JsonResponse(
+                {"ok": False, "multistart": report_to_dict(report)},
+                status=400,
+            )
+        return JsonResponse(
+            {"ok": True, "mode": "multistart", "multistart": report_to_dict(report)}
+        )
 
     try:
         result = build_exam_timetable(
