@@ -2,6 +2,7 @@
 .env
 .venv/
 venv/
+node_modules/
 
 # Python
 __pycache__/
@@ -25,6 +26,7 @@ db.sqlite3-shm
 db.sqlite3-wal
 
 # Runtime & temp
+outputs/
 tmp/
 runtime/
 _adv_check.json

@@ -19,7 +19,19 @@ import pytest
 from django.contrib.auth.models import Group, User
 from django.test import Client
 
-from core.models import Course, ProgrammeRequirement
+from core.models import (
+    Course,
+    ElectiveCourse,
+    ElectiveTermMapping,
+    ProgrammeRequirement,
+    Student,
+    StudentCourse,
+)
+from core.section_plan_views import (
+    _apply_programme_course_names,
+    _format_export_course_name,
+    _merge_section_plan_rows_by_course_identity,
+)
 from core.services.rbac import (
     ROLE_ADVISOR,
     ROLE_GENERAL_ADVISOR,
@@ -28,6 +40,7 @@ from core.services.rbac import (
     ensure_scope_schema,
     set_user_scope,
 )
+from core.services.reporting import resolve_elective_recommendations
 from core.services.section_planning import (
     _load_programme_capacities,
     compute_plan_summary,
@@ -139,6 +152,72 @@ def test_compute_section_plan_full_status() -> None:
     assert plan[0]["avg_per_section"] == 40
 
 
+def test_section_planning_resolves_mapped_elective_placeholder() -> None:
+    """Mapped elective placeholders are counted as real deliverable courses."""
+    student = Student.objects.create(student_id=440000001, program="DS", section="M")
+    ai201 = _create_course("AI201", credit_hours=3)
+    ds332 = _create_course("DS332", credit_hours=4)
+    StudentCourse.objects.create(student=student, course=ai201, status="passed")
+    StudentCourse.objects.create(student=student, course=ds332, status="passed")
+
+    elective = ElectiveCourse.objects.create(
+        programme="DS",
+        course_code="DS485",
+        course_name="Decision Support Systems",
+        credit_hours=3,
+        prerequisites_csv="AI201,DS332",
+    )
+    ElectiveTermMapping.objects.create(
+        academic_year="1448",
+        term=1,
+        programme="DS",
+        placeholder_code="DS2",
+        elective=elective,
+    )
+
+    resolved = resolve_elective_recommendations(
+        {student.student_id: ["DS2", "DS321"]},
+        year=1448,
+        semester=1,
+        program="DS",
+    )
+
+    assert resolved[student.student_id] == ["DS485", "DS321"]
+
+    aggregate: Counter[str] = Counter()
+    for recs in resolved.values():
+        aggregate.update(recs)
+
+    plan = compute_section_plan(aggregate)
+    elective_row = next(row for row in plan if row["course_code"] == "DS485")
+    assert elective_row["course_name"] == "Decision Support Systems"
+    assert elective_row["credit_hours"] == 3
+
+
+def test_compute_section_plan_prefers_course_metadata_over_elective_catalogue() -> None:
+    """Official Course rows remain authoritative when an elective has the same code."""
+    Course.objects.create(
+        course_code="AI411",
+        description="Official Expert Systems",
+        credit_hours=4,
+        is_external=False,
+        department="AI",
+    )
+    ElectiveCourse.objects.create(
+        programme="AI",
+        course_code="AI411",
+        course_name="Elective Catalogue Expert Systems",
+        credit_hours=3,
+    )
+
+    plan = compute_section_plan(Counter({"AI411": 25}))
+
+    assert len(plan) == 1
+    assert plan[0]["course_name"] == "Official Expert Systems"
+    assert plan[0]["credit_hours"] == 4
+    assert plan[0]["max_per_section"] == 25
+
+
 def test_compute_section_plan_fallback_to_programme_requirement() -> None:
     """Course not in Course table falls back to ProgrammeRequirement for credits."""
     ProgrammeRequirement.objects.create(
@@ -173,6 +252,129 @@ def test_compute_section_plan_empty_aggregate() -> None:
     """Empty aggregate returns empty plan."""
     plan = compute_section_plan(Counter())
     assert plan == []
+
+
+def test_apply_programme_course_names_prefers_programme_requirement() -> None:
+    """Section Planning display uses the plan row name when one exists."""
+    Course.objects.create(
+        course_code="CS111",
+        department="CS",
+        description="GLOBAL COURSE NAME",
+        credit_hours=3,
+    )
+    ProgrammeRequirement.objects.create(
+        program="AI",
+        course_code="CS111",
+        course_name="PROGRAMMING I",
+        credit_hours=3,
+        programme_term=1,
+    )
+    plan = [
+        {
+            "department": "CS",
+            "course_code": "CS111",
+            "course_name": "GLOBAL COURSE NAME",
+            "credit_hours": 3,
+            "is_external": False,
+            "total_students": 4,
+            "num_sections": 1,
+            "max_per_section": 40,
+            "avg_per_section": 4,
+            "fill_percent": 10,
+            "status": "underfilled",
+        }
+    ]
+
+    updated = _apply_programme_course_names(plan, "AI")
+
+    assert updated[0]["course_name"] == "PROGRAMMING I"
+
+
+def test_merge_section_plan_rows_keeps_same_code_different_names_separate() -> None:
+    """Same code is not merged when the plan-specific course name differs."""
+    ai_row = {
+        "department": "CS",
+        "course_code": "CS111",
+        "course_name": "PROGRAMMING I",
+        "credit_hours": 3,
+        "is_external": False,
+        "total_students": 4,
+        "num_sections": 1,
+        "max_per_section": 40,
+        "avg_per_section": 4,
+        "fill_percent": 10,
+        "status": "underfilled",
+    }
+    ai2_row = {
+        **ai_row,
+        "course_name": "FUNDAMENTALS OF PROGRAMMING",
+        "total_students": 4,
+    }
+
+    merged = _merge_section_plan_rows_by_course_identity([("AI", [ai_row]), ("AI2", [ai2_row])])
+
+    assert len(merged) == 2
+    assert {row["course_name"] for row in merged} == {
+        "PROGRAMMING I",
+        "FUNDAMENTALS OF PROGRAMMING",
+    }
+    assert {row["total_students"] for row in merged} == {4}
+    assert {tuple(row["programs"]) for row in merged} == {("AI",), ("AI2",)}
+
+
+def test_merge_section_plan_rows_merges_same_code_and_name() -> None:
+    """Same code and same plan-specific name still combine safely."""
+    row_a = {
+        "department": "AI",
+        "course_code": "AI201",
+        "course_name": "MACHINE LEARNING",
+        "credit_hours": 3,
+        "is_external": False,
+        "total_students": 25,
+        "num_sections": 1,
+        "max_per_section": 20,
+        "avg_per_section": 25,
+        "fill_percent": 125,
+        "status": "full",
+    }
+    row_b = {
+        **row_a,
+        "total_students": 10,
+        "max_per_section": 30,
+    }
+
+    merged = _merge_section_plan_rows_by_course_identity([("AI", [row_a]), ("AI2", [row_b])])
+
+    assert len(merged) == 1
+    assert merged[0]["total_students"] == 35
+    assert merged[0]["max_per_section"] == 20
+    assert merged[0]["num_sections"] == 2
+    assert merged[0]["programs"] == ["AI", "AI2"]
+
+
+def test_format_export_course_name_uses_row_name_and_programs() -> None:
+    """XLSX combined rows show both the program tag and plan-specific name."""
+    row = {
+        "course_code": "CS111",
+        "course_name": "FUNDAMENTALS OF PROGRAMMING",
+        "programs": ["AI2"],
+    }
+
+    result = _format_export_course_name(row, {"CS111": "PROGRAMMING I"})
+
+    assert result == "AI2 - FUNDAMENTALS OF PROGRAMMING"
+
+
+def test_format_export_course_name_falls_back_to_catalog_name() -> None:
+    """Rows without plan-specific names keep the existing global fallback."""
+    row = {
+        "course_code": "CS111",
+        "course_name": "",
+    }
+
+    result = _format_export_course_name(row, {"CS111": "PROGRAMMING I"})
+
+    assert result == "PROGRAMMING I"
 
 
 # ── Integration tests for views ──────────────────────────────────

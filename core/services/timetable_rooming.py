@@ -246,12 +246,13 @@ def check_room_feasibility(
     return violations
 
 
-def assign_rooms_to_board(board_id: int) -> dict:
+def assign_rooms_to_board(board_id: int, *, respect_locked: bool = False) -> dict:
     """Post-placement room assignment for solver/annealing paths.
 
-    Assigns rooms to all ``SectionPlacement`` rows on the board that
-    currently have an empty ``room`` field.  Uses greedy best-fit per
-    (day, start_time) slot.
+    Assigns rooms to ``SectionPlacement`` rows on the board that currently
+    have an empty ``room`` field. Uses greedy best-fit per (day, start_time)
+    slot. When ``respect_locked`` is true, locked placements are treated as
+    fixed and are not assigned/repaired.
 
     Returns ``{assigned: int, unassigned: int}``.
     """
@@ -347,7 +348,16 @@ def assign_rooms_to_board(board_id: int) -> dict:
     # trace emission can gate strictly on the UNASSIGNED → assigned
     # transition (no emission for empty-string → assigned, which is the
     # normal first-pass path).
-    unassigned_placements = [p for p in placements if not p.room or p.room == "UNASSIGNED"]
+    locked_unassigned_count = sum(
+        1
+        for p in placements
+        if respect_locked and p.is_locked and (not p.room or p.room == "UNASSIGNED")
+    )
+    unassigned_placements = [
+        p
+        for p in placements
+        if (not p.room or p.room == "UNASSIGNED") and not (respect_locked and p.is_locked)
+    ]
     unassigned_placements.sort(key=lambda p: -(budget_map.get(p.term_section.course_code, 40)))
     previous_room_by_id: dict[int, str] = {p.id: p.room for p in unassigned_placements}
     decision_trace: dict[str, dict] = {}
@@ -367,7 +377,7 @@ def assign_rooms_to_board(board_id: int) -> dict:
     _repair_reassignments = 0
 
     assigned = 0
-    unassigned = 0
+    unassigned = locked_unassigned_count
     # Labs currently ignore capacity in rooming (room_cap=0 below); buffer
     # diagnostics therefore apply to lecture room assignment only.
     #
@@ -529,6 +539,7 @@ def assign_rooms_to_board(board_id: int) -> dict:
         "room_failures": room_failures,
         "room_failure_breakdown": room_failure_breakdown(room_failures),
         "unplaced_count": unassigned,
+        "locked_skipped": locked_unassigned_count,
         "decision_trace": decision_trace,
         "stage_telemetry": _stage_telemetry,
     }

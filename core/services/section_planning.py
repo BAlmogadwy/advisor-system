@@ -13,7 +13,7 @@ import re
 from collections import Counter
 from typing import Any
 
-from core.models import Course, ProgrammeRequirement
+from core.models import Course, ElectiveCourse, ProgrammeRequirement
 from core.services.student_helpers import normalize_code
 
 # ── Default capacity rules (matching legacy generate_course_sections.py) ──
@@ -34,27 +34,53 @@ def _build_course_info(
 ) -> dict[str, dict[str, Any]]:
     """Batch-lookup credit hours, is_external, and department for a list of course codes.
 
-    Falls back to ProgrammeRequirement if the Course row is missing.
+    Falls back to the elective catalogue, then ProgrammeRequirement, if the
+    Course row is missing.
     """
     info: dict[str, dict[str, Any]] = {}
+    lookup_codes = sorted({normalize_code(code) for code in course_codes if normalize_code(code)})
 
     # 1) Bulk-query the Course table
-    courses_qs = Course.objects.filter(course_code__in=course_codes).values_list(
+    courses_qs = Course.objects.filter(course_code__in=lookup_codes).values_list(
         "course_code",
+        "description",
         "credit_hours",
         "is_external",
         "department",
     )
-    for code, credits, is_ext, dept in courses_qs:
+    for code, description, credits, is_ext, dept in courses_qs:
         ncode = normalize_code(code)
         info[ncode] = {
+            "course_name": description or "",
             "credit_hours": credits or 3,
             "is_external": bool(is_ext),
             "department": dept or _extract_department(ncode),
         }
 
-    # 2) For any codes still missing, try ProgrammeRequirement
-    missing = [c for c in course_codes if normalize_code(c) not in info]
+    # 2) Real mapped programme electives live in ElectiveCourse, not Course.
+    missing = [c for c in lookup_codes if normalize_code(c) not in info]
+    if missing:
+        elective_qs = (
+            ElectiveCourse.objects.filter(course_code__in=missing)
+            .values_list("course_code", "course_name", "credit_hours")
+            .order_by("course_code", "programme")
+        )
+        seen: set[str] = set()
+        for code, course_name, credits in elective_qs:
+            ncode = normalize_code(code)
+            if ncode in seen or ncode in info:
+                continue
+            seen.add(ncode)
+            dept = _extract_department(ncode)
+            info[ncode] = {
+                "course_name": course_name or "",
+                "credit_hours": credits or 3,
+                "is_external": dept not in LOCAL_DEPARTMENTS,
+                "department": dept,
+            }
+
+    # 3) For any codes still missing, try ProgrammeRequirement
+    missing = [c for c in lookup_codes if normalize_code(c) not in info]
     if missing:
         pr_qs = ProgrammeRequirement.objects.filter(course_code__in=missing).values_list(
             "course_code",
@@ -68,17 +94,19 @@ def _build_course_info(
             seen.add(ncode)
             dept = _extract_department(ncode)
             info[ncode] = {
+                "course_name": "",
                 "credit_hours": credits or 3,
                 "is_external": dept not in LOCAL_DEPARTMENTS,
                 "department": dept,
             }
 
-    # 3) Anything still missing — derive from the code itself
-    for code in course_codes:
+    # 4) Anything still missing - derive from the code itself
+    for code in lookup_codes:
         ncode = normalize_code(code)
         if ncode not in info:
             dept = _extract_department(ncode)
             info[ncode] = {
+                "course_name": "",
                 "credit_hours": 3,
                 "is_external": dept not in LOCAL_DEPARTMENTS,
                 "department": dept,
@@ -241,6 +269,7 @@ def compute_section_plan(
     max_external: int = DEFAULT_MAX_EXTERNAL,
     course_overrides: dict[str, int] | None = None,
     programme_capacities: dict[str, int] | None = None,
+    course_metadata: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Compute section demand from aggregate recommendation counts.
 
@@ -272,25 +301,39 @@ def compute_section_plan(
 
     overrides = course_overrides or {}
     pr_caps = programme_capacities or {}
-    course_codes = list(aggregate.keys())
+    course_metadata = course_metadata or {}
+    course_codes = [
+        str(course_metadata.get(code, {}).get("course_code") or code) for code in aggregate.keys()
+    ]
     course_info = _build_course_info(course_codes)
 
     plan: list[dict[str, Any]] = []
 
-    for code, total_students in aggregate.items():
+    for course_key, total_students in aggregate.items():
+        meta = course_metadata.get(course_key, {})
+        code = str(meta.get("course_code") or course_key)
         ncode = normalize_code(code)
         ci = course_info.get(
             ncode,
             {
-                "credit_hours": 3,
+                "course_name": str(meta.get("course_name") or ""),
+                "credit_hours": int(meta.get("credit_hours") or 3),
                 "is_external": False,
                 "department": _extract_department(ncode),
             },
         )
+        if meta.get("course_name"):
+            ci["course_name"] = str(meta["course_name"])
+        if meta.get("credit_hours"):
+            ci["credit_hours"] = int(meta["credit_hours"])
+        if meta.get("department"):
+            ci["department"] = str(meta["department"])
 
         # 3-tier capacity resolution: override > programme > global rule
         if ncode in overrides:
             max_per_section = max(1, overrides[ncode])
+        elif str(course_key) in pr_caps:
+            max_per_section = max(1, pr_caps[str(course_key)])
         elif ncode in pr_caps:
             max_per_section = max(1, pr_caps[ncode])
         else:
@@ -317,7 +360,9 @@ def compute_section_plan(
         plan.append(
             {
                 "department": ci["department"],
+                "course_key": str(course_key),
                 "course_code": ncode,
+                "course_name": ci.get("course_name", ""),
                 "credit_hours": ci["credit_hours"],
                 "is_external": ci["is_external"],
                 "total_students": total_students,

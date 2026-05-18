@@ -45,6 +45,7 @@ from core.models import (
     TimeSlotTemplate,
     TimetableScenario,
 )
+from core.services.course_identity import planner_course_key
 from core.services.reporting import get_student_ids
 from core.services.section_planning import (
     DEFAULT_MAX_EXTERNAL,
@@ -322,6 +323,59 @@ def generate_workspace_scenario(
     else:
         all_recs = batch_recommend_multi_program(student_ids, year, semester)
 
+    from core.models import Course, Student
+
+    student_program_map: dict[int, str] = {}
+    for sid, prog in Student.objects.filter(student_id__in=student_ids).values_list(
+        "student_id", "program"
+    ):
+        if prog:
+            student_program_map[int(sid)] = str(prog)
+
+    course_name_by_program: dict[str, dict[str, str]] = defaultdict(dict)
+    course_meta_by_program: dict[str, dict[str, dict[str, object]]] = defaultdict(dict)
+    for row in ProgrammeRequirement.objects.filter(program__in=programs).values(
+        "program", "course_code", "course_name", "credit_hours", "type"
+    ):
+        prog = str(row["program"])
+        code = normalize_code(row["course_code"])
+        if not code:
+            continue
+        name = str(row.get("course_name") or "").strip()
+        course_name_by_program[prog][code] = name
+        course_meta_by_program[prog][code] = {
+            "course_code": code,
+            "course_name": name,
+            "credit_hours": row.get("credit_hours") or 3,
+            "department": "".join(ch for ch in code if ch.isalpha()),
+        }
+
+    course_fallback_names = {
+        normalize_code(code): description or ""
+        for code, description in Course.objects.values_list("course_code", "description")
+    }
+
+    def _student_program(student_id: int) -> str:
+        if len(programs) == 1:
+            return programs[0]
+        return student_program_map.get(student_id, "")
+
+    def _course_meta_for_student(student_id: int, code: object) -> dict[str, object]:
+        norm_code = normalize_code(code)
+        prog = _student_program(int(student_id))
+        meta = dict(course_meta_by_program.get(prog, {}).get(norm_code, {}))
+        if not meta:
+            meta = {
+                "course_code": norm_code,
+                "course_name": course_fallback_names.get(norm_code, ""),
+                "credit_hours": 3,
+                "department": "".join(ch for ch in norm_code if ch.isalpha()),
+            }
+        if not meta.get("course_name"):
+            meta["course_name"] = course_fallback_names.get(norm_code, "")
+        meta["course_key"] = planner_course_key(norm_code, meta.get("course_name"))
+        return meta
+
     # ── Step 1b: Replace elective placeholders with real courses ──
     # batch_recommend() returns plan codes as-is (AI1, CS1). Here we resolve
     # them to real elective courses based on student eligibility.
@@ -384,19 +438,27 @@ def generate_workspace_scenario(
     all_recs = _limit_electives_per_placeholder(all_recs, elective_map)
 
     # Filter out non-schedulable courses (capstone, training, etc.) and
-    # build two structures:
-    #   - ``aggregate``: Counter of course_code -> total demand across all
-    #     students (used by the section planner).
-    #   - ``student_recs``: per-student filtered recommendation lists
-    #     (used for classification and board links).
+    # build three structures:
+    #   - ``aggregate``: Counter of planner_course_key -> total demand.
+    #   - ``student_recs``: visible registrar course codes for classification.
+    #   - ``student_course_keys``: planner identities for scheduling.
     aggregate: Counter[str] = Counter()
     student_recs: dict[int, list[str]] = {}
+    student_course_keys: dict[int, list[str]] = {}
+    course_metadata: dict[str, dict[str, object]] = {}
 
     for sid, recs in all_recs.items():
         filtered = [c for c in recs if not _is_excluded_course(c)]
         if filtered:
-            aggregate.update(filtered)
+            keys: list[str] = []
+            for code in filtered:
+                meta = _course_meta_for_student(int(sid), code)
+                key = str(meta["course_key"])
+                course_metadata.setdefault(key, meta)
+                keys.append(key)
+            aggregate.update(keys)
             student_recs[sid] = filtered
+            student_course_keys[sid] = keys
 
     # ── Step 2: Classify students by primary term ────────────────
     # Each course in ProgrammeRequirement has a ``programme_term`` (the
@@ -411,8 +473,6 @@ def generate_workspace_scenario(
     # program's row was loaded last, misclassifying students from the
     # other program into the wrong term level (e.g. IS students landing
     # on even-term boards 4/8 instead of their correct odd-term 3/5/7/9).
-    from core.models import Student
-
     pr_qs = ProgrammeRequirement.objects.filter(program__in=programs).values_list(
         "program", "course_code", "programme_term"
     )
@@ -433,16 +493,8 @@ def generate_workspace_scenario(
     for prog_map in course_term_by_program.values():
         course_term_map.update(prog_map)
 
-    # Look up each student's enrolled program so we can use the correct
-    # per-program term map during classification. Only needed for multi-
-    # program scenarios — single-program skips this query.
-    student_program_map: dict[int, str] = {}
-    if len(programs) > 1:
-        for sid, prog in Student.objects.filter(
-            student_id__in=list(student_recs.keys()),
-        ).values_list("student_id", "program"):
-            if prog:
-                student_program_map[sid] = prog
+    # ``student_program_map`` was loaded before recommendation expansion so
+    # both classification and planner identity use the same programme source.
 
     classified: list[dict] = []
     term_student_counts: Counter[int] = Counter()
@@ -487,6 +539,19 @@ def generate_workspace_scenario(
         )
         term_student_counts[primary_term] += 1
 
+    course_key_term_counts: dict[str, Counter[int]] = defaultdict(Counter)
+    for sid, recs in student_recs.items():
+        student_prog = student_program_map.get(sid)
+        term_map = (
+            course_term_by_program.get(student_prog, course_term_map)
+            if student_prog
+            else course_term_map
+        )
+        for code, key in zip(recs, student_course_keys.get(sid, []), strict=False):
+            pt = term_map.get(normalize_code(code))
+            if pt is not None:
+                course_key_term_counts[key][pt] += 1
+
     # ── Step 3: Compute section plan (section budget) ─────────────
     # The section plan determines how many sections of each course are
     # needed, based on aggregate student demand and per-section capacity
@@ -498,11 +563,18 @@ def generate_workspace_scenario(
     # to respect the most restrictive constraint.
     programme_capacities: dict[str, int] = {}
     if aggregate:
+        capacity_codes = [
+            str(meta.get("course_code") or key) for key, meta in course_metadata.items()
+        ]
         for prog in programs:
-            caps = load_programme_capacities(prog, list(aggregate.keys()))
-            for code, cap in caps.items():
-                if code not in programme_capacities or cap < programme_capacities[code]:
-                    programme_capacities[code] = cap
+            caps = load_programme_capacities(prog, capacity_codes)
+            for key, meta in course_metadata.items():
+                code = normalize_code(meta.get("course_code"))
+                cap = caps.get(code)
+                if cap is None:
+                    continue
+                if key not in programme_capacities or cap < programme_capacities[key]:
+                    programme_capacities[key] = cap
 
     # Normalize any user-supplied course overrides so they match the
     # canonical upper-case-no-spaces format used everywhere else.
@@ -517,6 +589,7 @@ def generate_workspace_scenario(
         max_external=max_external,
         course_overrides=norm_overrides,
         programme_capacities=programme_capacities,
+        course_metadata=course_metadata,
     )
     summary = compute_plan_summary(plan)
 
@@ -593,6 +666,9 @@ def generate_workspace_scenario(
             primary_term=s["primary_term"],
             is_cross_term=s["is_cross_term"],
             recommended_courses=s["recommended_courses"],
+            recommended_course_keys=student_course_keys.get(
+                s["student_id"], s["recommended_courses"]
+            ),
         )
         for s in classified
     ]
@@ -603,22 +679,29 @@ def generate_workspace_scenario(
     #     demand, and the curriculum term the course belongs to.
     budget_objs = []
     for entry in plan:
+        course_key = str(entry.get("course_key") or entry["course_code"])
         code = entry["course_code"]
         # Look up which curriculum term this course belongs to so it
         # can be associated with the correct board later.
-        # For multi-program scenarios, pick the term where the course
-        # has the most student demand (not just last-seen).
-        norm_code = normalize_code(code)
-        pt_candidates = [
-            prog_map[norm_code]
-            for prog_map in course_term_by_program.values()
-            if norm_code in prog_map
-        ]
-        pt = max(set(pt_candidates), key=pt_candidates.count) if pt_candidates else None
+        # For same-code/different-name courses, use the term where this
+        # exact planner key has the most student demand.
+        key_terms = course_key_term_counts.get(course_key, Counter())
+        if key_terms:
+            pt = key_terms.most_common(1)[0][0]
+        else:
+            norm_code = normalize_code(code)
+            pt_candidates = [
+                prog_map[norm_code]
+                for prog_map in course_term_by_program.values()
+                if norm_code in prog_map
+            ]
+            pt = max(set(pt_candidates), key=pt_candidates.count) if pt_candidates else None
         budget_objs.append(
             ScenarioSectionBudget(
                 scenario=scenario,
+                course_key=course_key,
                 course_code=code,
+                course_name=str(entry.get("course_name") or ""),
                 department=entry.get("department", ""),
                 credit_hours=entry.get("credit_hours", 0),
                 planned_sections=entry["num_sections"],

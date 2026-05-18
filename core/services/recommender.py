@@ -57,6 +57,8 @@ def recommend_next_courses(
     student_id: int | str,
     current_academic_year: int,
     current_semester: int,
+    *,
+    resolve_electives: bool = True,
 ) -> list[str]:
     program = get_student_program(student_id)
     if not program:
@@ -118,4 +120,16 @@ def recommend_next_courses(
             recommendations.append(course)
             total_credits += course["credits"]
 
-    return [c["code"] for c in recommendations]
+    recommended_codes = [c["code"] for c in recommendations]
+    if not resolve_electives:
+        return recommended_codes
+
+    from core.services.reporting import resolve_elective_recommendations
+
+    resolved = resolve_elective_recommendations(
+        {int(student_id): recommended_codes},
+        year=current_academic_year,
+        semester=current_semester,
+        program=program,
+    )
+    return resolved.get(int(student_id), recommended_codes)

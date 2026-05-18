@@ -76,7 +76,16 @@ from core.services.audit import log_audit_event
 from core.services.rbac import ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_role
 from core.services.timetable_demand import compute_board_capacity
 from core.services.timetable_generate import generate_workspace_scenario
+from core.services.timetable_graph_twin import (
+    TimetableGraphError,
+    build_scenario_graph_summary,
+    build_scenario_graph_view,
+    neo4j_status,
+    sync_scenario_graph_to_neo4j,
+)
+from core.services.timetable_plan_lens import build_scenario_plan_lens
 from core.services.timetable_workspace import (
+    build_scenario_builder_actions,
     check_publish_readiness,
     compute_affected_students,
     compute_board_summary,
@@ -84,6 +93,9 @@ from core.services.timetable_workspace import (
     detect_board_conflicts,
     detect_cross_board_conflicts,
     get_scenario_boards_summary,
+    preview_placement_room_candidates,
+    preview_placement_slot_candidates,
+    preview_placement_student_evidence,
     validate_placement,
 )
 from core.settings_views import load_defaults
@@ -302,6 +314,41 @@ def timetable_workspace_split_page(request: HttpRequest) -> HttpResponse:
     return render(request, "core/timetable_workspace_split.html", context)
 
 
+@login_required(login_url="login")
+@require_GET
+def timetable_workspace_mri_page(request: HttpRequest) -> HttpResponse:
+    """Render the full-screen Timetable MRI diagnostic page."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    defaults = load_defaults()
+    context = {
+        **get_sidebar_context(request),
+        "default_year": defaults.get("academic_year", ""),
+        "default_term": defaults.get("term", ""),
+        "initial_scenario": request.GET.get("scenario") or "",
+        "initial_board": request.GET.get("board") or "",
+    }
+    return render(request, "core/timetable_workspace_mri.html", context)
+
+
+@login_required(login_url="login")
+@require_GET
+def timetable_workspace_graph_page(request: HttpRequest) -> HttpResponse:
+    """Render the Neo4j timetable graph twin control page."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    defaults = load_defaults()
+    context = {
+        **get_sidebar_context(request),
+        "default_year": defaults.get("academic_year", ""),
+        "default_term": defaults.get("term", ""),
+        "initial_scenario": request.GET.get("scenario") or "",
+    }
+    return render(request, "core/timetable_workspace_graph.html", context)
+
+
 # ── Generate Workspace Endpoint ──────────────────────────────────
 
 
@@ -399,6 +446,21 @@ def tw_scenario_budget_view(request: HttpRequest, scenario_id: int) -> JsonRespo
 
     budget = compute_scenario_budget(scenario_id)
     return _ok({"budget": budget})
+
+
+@login_required(login_url="login")
+@require_GET
+def tw_scenario_plan_lens_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
+    """Return read-only programme demand and section ownership metadata."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    try:
+        TimetableScenario.objects.get(id=scenario_id)
+    except TimetableScenario.DoesNotExist:
+        return _err("Scenario not found", code="NOT_FOUND", status=404)
+
+    return _ok({"plan_lens": build_scenario_plan_lens(scenario_id)})
 
 
 # ── Scenario Endpoints ───────────────────────────────────────────
@@ -548,6 +610,131 @@ def tw_scenario_slots_update_view(request: HttpRequest, scenario_id: int) -> Jso
 
 
 @login_required(login_url="login")
+@require_GET
+def tw_scenario_readiness_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
+    """Return publish readiness without mutating the scenario."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    try:
+        TimetableScenario.objects.get(id=scenario_id)
+    except TimetableScenario.DoesNotExist:
+        return _err("Scenario not found", code="NOT_FOUND", status=404)
+    readiness = check_publish_readiness(scenario_id)
+    return _ok(
+        {
+            "readiness": readiness,
+            "summary": {
+                "ready": readiness.get("ready", False),
+                "blockers": len(readiness.get("blockers", [])),
+                "warnings": len(readiness.get("warnings", [])),
+            },
+        }
+    )
+
+
+@login_required(login_url="login")
+@require_GET
+def tw_scenario_builder_actions_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
+    """Return the ranked next actions for professional timetable building."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    try:
+        TimetableScenario.objects.get(id=scenario_id)
+    except TimetableScenario.DoesNotExist:
+        return _err("Scenario not found", code="NOT_FOUND", status=404)
+    try:
+        limit = max(1, min(50, int(request.GET.get("limit", "18"))))
+    except ValueError:
+        limit = 18
+    return _ok(build_scenario_builder_actions(scenario_id, limit=limit))
+
+
+@login_required(login_url="login")
+@require_GET
+def tw_graph_status_view(request: HttpRequest) -> JsonResponse:
+    """Return local Neo4j driver/configuration readiness."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    return _ok({"neo4j": neo4j_status()})
+
+
+@login_required(login_url="login")
+@require_GET
+def tw_scenario_graph_summary_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
+    """Preview the scenario graph twin generated from Django source tables."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    try:
+        return _ok(build_scenario_graph_summary(scenario_id))
+    except TimetableGraphError as exc:
+        return _err(str(exc), code="GRAPH_SUMMARY_FAILED", status=404)
+
+
+@login_required(login_url="login")
+@require_GET
+def tw_scenario_graph_view_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
+    """Return an embedded graph slice for the selected timetable lens."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    mode = str(request.GET.get("mode") or "clashes")
+    progressive = str(request.GET.get("progressive") or "").lower() in {"1", "true", "yes"}
+    try:
+        max_limit = 1200 if mode == "plan" and progressive else 260
+        limit = max(20, min(max_limit, int(request.GET.get("limit", "80"))))
+    except ValueError:
+        limit = 80
+    include_students = str(request.GET.get("include_students") or "").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    try:
+        return _ok(
+            build_scenario_graph_view(
+                scenario_id,
+                mode=mode,
+                limit=limit,
+                program=str(request.GET.get("program") or ""),
+                plan_term=str(request.GET.get("plan_term") or ""),
+                include_students=include_students,
+                progressive=progressive,
+            )
+        )
+    except TimetableGraphError as exc:
+        return _err(str(exc), code="GRAPH_VIEW_FAILED", status=404)
+
+
+@login_required(login_url="login")
+@require_POST
+def tw_scenario_graph_sync_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
+    """Rebuild the selected scenario inside Neo4j."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    try:
+        result = sync_scenario_graph_to_neo4j(scenario_id)
+    except TimetableGraphError as exc:
+        return _err(str(exc), code="NEO4J_SYNC_FAILED", status=503)
+
+    log_audit_event(
+        request,
+        action="tw.graph.sync",
+        status="success",
+        details={
+            "scenario_id": scenario_id,
+            "node_count": result.get("summary", {}).get("node_count"),
+            "relationship_count": result.get("summary", {}).get("relationship_count"),
+        },
+    )
+    return _ok(result)
+
+
+@login_required(login_url="login")
 @require_POST
 def tw_scenario_publish_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
     """Publish (lock) a scenario, preventing further modifications.
@@ -616,6 +803,49 @@ def tw_scenario_export_view(request: HttpRequest, scenario_id: int) -> HttpRespo
     return response
 
 
+@login_required(login_url="login")
+@require_GET
+def tw_scenario_export_per_plan_view(request: HttpRequest, scenario_id: int) -> HttpResponse:
+    """Export one XLSX per program in the scenario, organised by plan term.
+
+    When the scenario spans a single program, returns a plain ``.xlsx``.
+    Otherwise, bundles each program's workbook into a ``.zip`` archive named
+    ``<scenario_name>__per_plan.zip``.
+
+    Within each program's workbook:
+
+    * **Plan Coverage** sheet — per-course audit (matched / misplaced /
+      missing) so the registrar can spot off-plan placements at a glance.
+    * **Term N** sheets — one per ``programme_term`` from this program's
+      ``ProgrammeRequirement`` rows.  Courses are placed under their plan
+      term, even when the scenario placed them on a different board's
+      nominal term.  Misplaced courses are tinted amber and labelled with
+      the actual board term ("AI113 S1 (on T3)").
+    """
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    if not TimetableScenario.objects.filter(id=scenario_id).exists():
+        return _err("Scenario not found", code="NOT_FOUND", status=404)
+
+    from core.services.timetable_per_plan_export import export_scenario_per_plan
+
+    search = (request.GET.get("search") or request.GET.get("q") or "").strip()
+    try:
+        path, filename, is_zip = export_scenario_per_plan(scenario_id, search=search)
+    except RuntimeError as exc:
+        return _err(str(exc), code="EXPORT_FAILED", status=500)
+
+    content_type = (
+        "application/zip"
+        if is_zip
+        else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+    response = FileResponse(open(path, "rb"), content_type=content_type)
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
 # ── Board Endpoints ──────────────────────────────────────────────
 
 
@@ -629,8 +859,10 @@ def tw_boards_list_view(request: HttpRequest) -> JsonResponse:
     scenario_id = request.GET.get("scenario_id")
     if not scenario_id:
         return _err("scenario_id is required", code="VALIDATION_SCENARIO", status=400)
-    boards_summary = get_scenario_boards_summary(int(scenario_id))
-    return _ok({"boards": boards_summary})
+    scenario_id_int = int(scenario_id)
+    boards_summary = get_scenario_boards_summary(scenario_id_int)
+    cross_board_clashes = detect_cross_board_conflicts(scenario_id_int)
+    return _ok({"boards": boards_summary, "cross_board_clashes": len(cross_board_clashes)})
 
 
 @login_required(login_url="login")
@@ -890,6 +1122,8 @@ def tw_placement_create_planned_view(request: HttpRequest) -> JsonResponse:
 
     board_id = payload.get("board_id")
     course_code = str(payload.get("course_code", "")).strip().upper()
+    course_key = str(payload.get("course_key") or course_code).strip().upper()
+    course_name = str(payload.get("course_name") or course_code).strip()
     section_label = str(payload.get("section_label", "")).strip().upper()
     day = str(payload.get("day", "")).strip().upper()
     start_time = str(payload.get("start_time", "")).strip()
@@ -911,8 +1145,8 @@ def tw_placement_create_planned_view(request: HttpRequest) -> JsonResponse:
     if board.scenario.status == "published":
         return _err("Cannot modify published scenario", code="SCENARIO_PUBLISHED", status=400)
 
-    # Find or create TermSection
-    course_key = course_code
+    # Find or create TermSection.  The visible course_code can be shared by
+    # different curriculum rows, so keep the planner course_key when supplied.
     ts, _created = TermSection.objects.get_or_create(
         scenario=board.scenario,
         course_key=course_key,
@@ -920,7 +1154,7 @@ def tw_placement_create_planned_view(request: HttpRequest) -> JsonResponse:
         defaults={
             "course_code": course_code,
             "course_number": course_code,
-            "course_name": course_code,
+            "course_name": course_name,
             "available_capacity": capacity,
             "source_tag": "tw_planned",
         },
@@ -968,6 +1202,7 @@ def tw_placement_create_planned_view(request: HttpRequest) -> JsonResponse:
             "placement_id": placement.id,
             "board_id": board.id,
             "course_code": course_code,
+            "course_key": course_key,
             "section_label": section_label,
         },
     )
@@ -1061,6 +1296,57 @@ def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
         },
         status=201,
     )
+
+
+@login_required(login_url="login")
+@require_GET
+def tw_placement_slot_candidates_view(request: HttpRequest, placement_id: int) -> JsonResponse:
+    """Return student-aware move candidates for a placement without mutating data."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    try:
+        preview = preview_placement_slot_candidates(placement_id)
+    except SectionPlacement.DoesNotExist:
+        return _err("Placement not found", code="NOT_FOUND", status=404)
+    return _ok(preview)
+
+
+@login_required(login_url="login")
+@require_GET
+def tw_placement_room_candidates_view(request: HttpRequest, placement_id: int) -> JsonResponse:
+    """Return room candidates for a placement at its current or previewed slot."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    try:
+        preview = preview_placement_room_candidates(
+            placement_id,
+            day=request.GET.get("day") or None,
+            start_time=request.GET.get("start_time") or None,
+            end_time=request.GET.get("end_time") or None,
+        )
+    except SectionPlacement.DoesNotExist:
+        return _err("Placement not found", code="NOT_FOUND", status=404)
+    return _ok(preview)
+
+
+@login_required(login_url="login")
+@require_GET
+def tw_placement_student_evidence_view(request: HttpRequest, placement_id: int) -> JsonResponse:
+    """Return exact student evidence for conflicts involving one placement."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    try:
+        limit = max(1, min(100, int(request.GET.get("limit", "40"))))
+    except ValueError:
+        limit = 40
+    try:
+        preview = preview_placement_student_evidence(placement_id, limit=limit)
+    except SectionPlacement.DoesNotExist:
+        return _err("Placement not found", code="NOT_FOUND", status=404)
+    return _ok(preview)
 
 
 @login_required(login_url="login")

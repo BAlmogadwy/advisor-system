@@ -18,7 +18,7 @@
   {# Preconnect for faster Google Fonts loading #}
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="{% static 'css/global.css' %}?v=21" rel="stylesheet">
+  <link href="{% static 'css/global.css' %}?v=25" rel="stylesheet">
   <link href="{% static 'css/bootstrap-compat.css' %}" rel="stylesheet">
   {% block extra_css %}{% endblock %}
 </head>
@@ -52,6 +52,11 @@
     </header>
     <div class="page-intro">{% block page_intro %}{% endblock %}</div>
     {% block content %}{% endblock %}
+    <footer class="system-footer" aria-label="System attribution">
+      <span>Academic Advising Intelligence Platform</span>
+      <span class="system-footer-sep" aria-hidden="true"></span>
+      <span>Concept, design, and implementation by <strong>Dr. Bassam Almogadwy</strong></span>
+    </footer>
     </div><!-- /.content-wrap -->
   </main>
 </div>

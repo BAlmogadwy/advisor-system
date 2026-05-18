@@ -225,7 +225,7 @@ const IS_AR = document.documentElement.lang === 'ar';
   const panels = document.querySelectorAll('.panel');
   /* Panel descriptions for page_intro subtitle */
   const PANEL_SUBS = {
-    overview:     IS_AR ? 'نظرة عامة على لوحة المرشد الأكاديمي.' : 'Overview of your advisor dashboard.',
+    overview:     IS_AR ? 'مركز القيادة التشغيلي.' : 'Live command center for advising, timetable health, audit integrity, and system readiness.',
     student:      IS_AR ? 'احصل على قائمة توصيات لكل طالب وصدّرها فوراً.' : 'Get a per-student recommendation list and export it instantly.',
     batch:        IS_AR ? 'معاينة التوصيات على مستوى الدفعة وتصدير CSV.' : 'Run cohort-level preview, inspect top courses, and export aggregate CSV.',
     prereq:       IS_AR ? 'استكشف روابط المتطلبات حسب البرنامج أو المقرر.' : 'Explore prerequisite links by program and optionally by a specific course.',
@@ -237,19 +237,23 @@ const IS_AR = document.documentElement.lang === 'ar';
     exports:      IS_AR ? 'روابط سريعة لجميع التصديرات التشغيلية.' : 'Quick links for all operational exports in one place.',
     highpriority: IS_AR ? 'تقرير الطلاب الذين يفتقدون مقررات فتح عالية الأولوية.' : 'Flag students missing high-impact unlock courses; export XLSX for advisor intervention.',
   };
+  const PANEL_TITLES = {
+    overview: IS_AR ? 'مركز القيادة' : 'Dashboard Command Center',
+  };
   function activatePanel(target) {
     links.forEach(l => l.classList.remove('active'));
     panels.forEach(p => p.classList.remove('active'));
     const link = Array.from(links).find((l) => l.dataset.target === target);
+    const titleText = link?.textContent?.trim() || PANEL_TITLES[target] || target;
     if (link) {
       link.classList.add('active');
-      const current = q('currentModule');
-      if (current) current.textContent = link.textContent?.trim() || target;
     }
+    const current = q('currentModule');
+    if (current) current.textContent = titleText;
     /* Update page intro title + subtitle */
     const introTitle = q('pageIntroTitle');
     const introSub = q('pageIntroSub');
-    if (introTitle && link) introTitle.textContent = link.textContent?.trim() || target;
+    if (introTitle) introTitle.textContent = titleText;
     if (introSub && PANEL_SUBS[target]) introSub.textContent = PANEL_SUBS[target];
     const panel = document.getElementById(target);
     if (panel) {
@@ -259,9 +263,10 @@ const IS_AR = document.documentElement.lang === 'ar';
         student:'studentIdInput', batch:'batchYear', prereq:'preProgram',
         scrape:'scrapeConcurrency', debug:'dbgYear', conflictmatrix:'cmYear',
         eligibility:'elCourse', advisoradmin:'advId', highpriority:'hpYear',
-        planviewer:'planProgram'
+        plan:'planProgram'
       };
       requestAnimationFrame(() => {
+        if (target === 'overview') return;
         const focusId = PANEL_FOCUS[target];
         const focusEl = focusId ? document.getElementById(focusId) : null;
         if (focusEl) { focusEl.focus({ preventScroll: true }); return; }
@@ -318,7 +323,7 @@ const IS_AR = document.documentElement.lang === 'ar';
     q('batchProgram').value = '';
     q('batchSection').value = '';
     const tbody = document.querySelector('#batchTable tbody');
-    if (tbody) tbody.innerHTML = `<tr><td colspan="4"><div class="ap-empty"><span class="ap-empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span></span><div class="ap-empty-title">${T.noBatchData}</div><div class="ap-empty-hint">${T.setBatchFilters}</div></div></td></tr>`;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="5"><div class="ap-empty"><span class="ap-empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span></span><div class="ap-empty-title">${T.noBatchData}</div><div class="ap-empty-hint">${T.setBatchFilters}</div></div></td></tr>`;
     q('batchMetrics').classList.add('d-none');
     q('batchCsv').href = '#';
     q('batchXlsx').href = '#';
@@ -328,10 +333,22 @@ const IS_AR = document.documentElement.lang === 'ar';
     setUpdated('batchUpdated');
   };
 
+  function batchProgramTags(row) {
+    const programs = Array.isArray(row.programs) ? row.programs.filter(Boolean) : [];
+    if (!row.show_programs || programs.length === 0) return '';
+    return `<span style="display:inline-flex;flex-wrap:wrap;gap:4px;margin-inline-end:6px;vertical-align:middle">${programs.map(p => `<span class="sp-pill sp-pill-ext">${esc(p)}</span>`).join('')}</span>`;
+  }
+
+  function batchCourseNameHtml(row) {
+    const name = String(row.course_name || '').trim();
+    if (!name && !row.show_programs) return '<span class="color-t3">-</span>';
+    return `${batchProgramTags(row)}<span>${name ? esc(name) : '-'}</span>`;
+  }
+
   q('runBatch').onclick = async () => {
     if (!requireFields(['batchYear','batchSemester'], 'batchUpdated', T.batchPreview)) return;
     const runBtn = q('runBatch');
-      showSkeleton('batchTable', 4);
+      showSkeleton('batchTable', 5);
     runBtn.disabled = true;
     runBtn.textContent = T.running;
 
@@ -341,7 +358,7 @@ const IS_AR = document.documentElement.lang === 'ar';
 
     const tbody = document.querySelector('#batchTable tbody');
     if (tbody) {
-      tbody.innerHTML = `<tr><td colspan="4" class="empty-note">${T.running}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="5" class="empty-note">${T.running}</td></tr>`;
     }
 
     let res, data;
@@ -349,7 +366,7 @@ const IS_AR = document.documentElement.lang === 'ar';
       res = await fetch(url);
       data = await res.json();
     } catch (err) {
-      if (tbody) tbody.innerHTML = `<tr><td colspan="4" class="text-danger">Network error</td></tr>`;
+      if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="text-danger">Network error</td></tr>`;
       q('batchMetrics').classList.add('d-none');
       setUpdated('batchUpdated', true);
       notify.error(T.batchLoadFailed, err.message || String(err));
@@ -364,7 +381,7 @@ const IS_AR = document.documentElement.lang === 'ar';
 
     if (!res.ok || !Array.isArray(data.top_recommended_courses)) {
       if (tbody) {
-        tbody.innerHTML = `<tr><td colspan="4" class="text-danger">${preciseError(res, data, T.batchLoadFailed)}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" class="text-danger">${preciseError(res, data, T.batchLoadFailed)}</td></tr>`;
       }
       q('batchTopChips').innerHTML = `<div class="empty-note">${T.batchRecFailed}</div>`;
       q('batchMetrics').classList.add('d-none');
@@ -381,7 +398,7 @@ const IS_AR = document.documentElement.lang === 'ar';
 
     if (tbody) {
       if (data.top_recommended_courses.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="4" class="empty-note">${T.noRecsFound}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="5" class="empty-note">${T.noRecsFound}</td></tr>`;
         q('batchTopChips').innerHTML = `<div class="empty-note">${T.noCoursesDisplay}</div>`;
       } else {
         const maxCount = Math.max(...data.top_recommended_courses.map((x) => Number(x.count) || 0), 1);
@@ -390,13 +407,13 @@ const IS_AR = document.documentElement.lang === 'ar';
             const count = Number(row.count) || 0;
             const pct = Math.max(3, Math.round((count / maxCount) * 100));
             const fillCls = idx < 3 ? 'cr-fill-hi' : idx < 8 ? 'cr-fill-md' : 'cr-fill-lo';
-            return `<tr class="cr-row"><td class="font-mono fw-bold" style="color:${idx < 3 ? 'var(--teal)' : 'var(--t3)'}; font-size:12px">${idx + 1}</td><td><span class="cr-id">${row.course_code}</span></td><td><span class="font-mono fw-semibold" style="font-size:13px">${count}</span></td><td><div class="cr-bar"><div class="cr-track" style="width:100px;"><div class="cr-fill ${fillCls}" style="width:${pct}%"></div></div><span class="cr-txt">${pct}%</span></div></td></tr>`;
+            return `<tr class="cr-row"><td class="font-mono fw-bold" style="color:${idx < 3 ? 'var(--teal)' : 'var(--t3)'}; font-size:12px">${idx + 1}</td><td><span class="cr-id">${esc(row.course_code || '')}</span></td><td>${batchCourseNameHtml(row)}</td><td><span class="font-mono fw-semibold" style="font-size:13px">${count}</span></td><td><div class="cr-bar"><div class="cr-track" style="width:100px;"><div class="cr-fill ${fillCls}" style="width:${pct}%"></div></div><span class="cr-txt">${pct}%</span></div></td></tr>`;
           })
           .join('');
 
         const top5 = data.top_recommended_courses.slice(0, 5);
         q('batchTopChips').innerHTML = top5
-          .map((x, i) => `<div class="rec"><div><div class="rec-code">${x.course_code}</div><div class="rec-pre">${x.count} ${T.studentsRecommended}</div></div><span class="pill-status pill-g"><span class="pill-dot"></span>#${i + 1}</span></div>`)
+          .map((x, i) => `<div class="rec"><div><div class="rec-code">${esc(x.course_code || '')}</div><div class="rec-pre">${batchCourseNameHtml(x)}</div><div class="rec-pre">${x.count} ${T.studentsRecommended}</div></div><span class="pill-status pill-g"><span class="pill-dot"></span>#${i + 1}</span></div>`)
           .join('');
       }
     }
@@ -646,7 +663,7 @@ const IS_AR = document.documentElement.lang === 'ar';
     prereqTbody.innerHTML = `<tr><td colspan="2" class="empty-note">${T.noPrereqData}</td></tr>`;
 
     if (!res.ok || !Array.isArray(data.items) || data.items.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="3" class="empty-note">${T.noPlanRows}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="4" class="empty-note">${T.noPlanRows}</td></tr>`;
       termBars.innerHTML = `<div class="empty-note">${T.noTermDist}</div>`;
       termCards.innerHTML = `<div class="empty-note">${T.noTermCards}</div>`;
       q('planMetrics').classList.add('d-none');
@@ -663,7 +680,10 @@ const IS_AR = document.documentElement.lang === 'ar';
     q('planMetrics').classList.remove('d-none');
 
     tbody.innerHTML = data.items
-      .map((row) => `<tr><td>${row.programme_term ?? '-'}</td><td><button type="button" class="btn btn-link p-0 plan-course-link" data-program="${data.program || ''}" data-course="${row.course_code}">${row.course_code}</button></td><td>${row.credit_hours ?? '-'}</td></tr>`)
+      .map((row) => {
+        const name = String(row.course_name || '').trim();
+        return `<tr><td>${row.programme_term ?? '-'}</td><td><button type="button" class="btn btn-link p-0 plan-course-link" data-program="${data.program || ''}" data-course="${row.course_code}">${row.course_code}</button></td><td>${name || '-'}</td><td>${row.credit_hours ?? '-'}</td></tr>`;
+      })
       .join('');
 
     const termMap = {};
@@ -674,7 +694,10 @@ const IS_AR = document.documentElement.lang === 'ar';
       termMap[term] = (termMap[term] || 0) + 1;
       termCredits[term] = (termCredits[term] || 0) + (Number(row.credit_hours) || 0);
       if (!termCourses[term]) termCourses[term] = [];
-      termCourses[term].push(String(row.course_code));
+      termCourses[term].push({
+        code: String(row.course_code),
+        name: String(row.course_name || '').trim(),
+      });
     });
 
     const max = Math.max(...Object.values(termMap));
@@ -691,7 +714,10 @@ const IS_AR = document.documentElement.lang === 'ar';
       .sort((a, b) => Number(a) - Number(b))
       .map((term) => {
         const chips = termCourses[term]
-          .map((c) => `<button type="button" class="pill plan-course-link" data-program="${data.program || ''}" data-course="${c}" title="${T.showPrereqFor(c)}">${c}</button>`)
+          .map((course) => {
+            const title = course.name ? `${course.code} - ${course.name}` : T.showPrereqFor(course.code);
+            return `<button type="button" class="pill plan-course-link" data-program="${data.program || ''}" data-course="${course.code}" title="${title}">${course.code}</button>`;
+          })
           .join('');
         return `<div class="col-md-4"><div class="term-card"><h4>${T.termHeading(term)}</h4><div class="small text-secondary mb-2">${T.termSummary(termMap[term], termCredits[term])}</div><div>${chips}</div></div></div>`;
       })
@@ -1833,7 +1859,8 @@ const IS_AR = document.documentElement.lang === 'ar';
 
   ['advId','advName','advEmail','advDept'].forEach((id) => q(id)?.addEventListener('input', clearAdvisorFieldErrors));
 
-  q('advSave').onclick = async () => {
+  const advSaveBtn = q('advSave');
+  if (advSaveBtn) advSaveBtn.onclick = async () => {
     clearAdvisorFieldErrors();
     const advisor_id = (q('advId').value || '').trim();
     const full_name = (q('advName').value || '').trim();
@@ -1893,7 +1920,8 @@ const IS_AR = document.documentElement.lang === 'ar';
     }
   };
 
-  q('advEnsureColumn').onclick = async () => {
+  const advEnsureColumnBtn = q('advEnsureColumn');
+  if (advEnsureColumnBtn) advEnsureColumnBtn.onclick = async () => {
     const btn = q('advEnsureColumn');
     btn.disabled = true;
     btn.textContent = T.enabling;
@@ -1920,7 +1948,8 @@ const IS_AR = document.documentElement.lang === 'ar';
   };
 
   /* ── Seed Advisors from Student Data ──────────────────────── */
-  q('advSeedBtn').onclick = async () => {
+  const advSeedBtn = q('advSeedBtn');
+  if (advSeedBtn) advSeedBtn.onclick = async () => {
     const btn = q('advSeedBtn');
     const outputEl = q('advSeedOutput');
     btn.disabled = true;
@@ -1957,7 +1986,8 @@ const IS_AR = document.documentElement.lang === 'ar';
     }
   };
 
-  q('advAssignCsvBtn').onclick = async () => {
+  const advAssignCsvBtn = q('advAssignCsvBtn');
+  if (advAssignCsvBtn) advAssignCsvBtn.onclick = async () => {
     const csv_text = (q('advAssignCsv').value || '').trim();
     if (!csv_text) {
       q('advMeta').textContent = T.pasteCsvFirst;
@@ -1994,7 +2024,8 @@ const IS_AR = document.documentElement.lang === 'ar';
     }
   };
 
-  q('advAssignOneBtn').onclick = async () => {
+  const advAssignOneBtn = q('advAssignOneBtn');
+  if (advAssignOneBtn) advAssignOneBtn.onclick = async () => {
     const sidRaw = (q('advAssignStudentId').value || '').trim();
     const aidRaw = (q('advAssignAdvisorId').value || '').trim();
     const sid = Number(sidRaw);

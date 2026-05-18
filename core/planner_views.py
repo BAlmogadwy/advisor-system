@@ -25,6 +25,7 @@ from core.services.rbac import ROLE_ADVISOR, ROLE_GENERAL_ADVISOR, ROLE_SUPER_AD
 from core.services.recommender import recommend_next_courses
 from core.services.student_helpers import get_student_passed_and_studying, normalize_code
 from core.services.student_sections import (
+    append_unmapped_studying_courses,
     ensure_student_section_schema,
     get_student_term_baseline,
     replace_student_term_sections,
@@ -204,6 +205,7 @@ def _planner_context_inner(
 
             mapped_qs = (
                 TermSection.objects.filter(
+                    scenario__isnull=True,
                     course_key__in=wanted,
                 )
                 .values("course_key")
@@ -221,44 +223,7 @@ def _planner_context_inner(
                         "Auto-map sections failed for student %s", student_id, exc_info=True
                     )
 
-    if not baseline:
-        # Fallback when no student->section mappings exist yet
-        fb_program = (
-            Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
-        )
-        fb_credit_map: dict[str, int] = {}
-        if fb_program:
-            for cc, ch in ProgrammeRequirement.objects.filter(
-                program__iexact=fb_program
-            ).values_list("course_code", "credit_hours"):
-                fb_credit_map[normalize_code(cc)] = ch or 0
-
-        fb_rows = (
-            StudentCourse.objects.filter(
-                student_id=student_id,
-                status__iexact="studying",
-            )
-            .select_related("course")
-            .order_by("course__course_code")
-        )
-        baseline = []
-        for sc in fb_rows:
-            c = sc.course
-            code_norm = normalize_code(c.course_code)
-            credits = fb_credit_map.get(code_norm, c.credit_hours or 0)
-            baseline.append(
-                {
-                    "course_code": c.course_code or "",
-                    "course_name": c.description or "",
-                    "credits": int(credits or 0),
-                    "section": "",
-                    "day": "",
-                    "start_time": "",
-                    "end_time": "",
-                    "room": "",
-                    "source": "fallback_studying",
-                }
-            )
+    baseline = append_unmapped_studying_courses(student_id, baseline)
 
     recommendation_warning = None
     try:
@@ -445,7 +410,7 @@ def planner_sections_catalog_view(request: HttpRequest) -> JsonResponse:
         return term_err
 
     try:
-        ts_qs = TermSection.objects.all()
+        ts_qs = TermSection.objects.filter(scenario__isnull=True)
         if isinstance(course_codes, list) and course_codes:
             normalized = [
                 str(c).replace(" ", "").strip().upper() for c in course_codes if str(c).strip()
@@ -460,6 +425,7 @@ def planner_sections_catalog_view(request: HttpRequest) -> JsonResponse:
             sid = ts.id
             grouped[sid] = {
                 "term_section_id": sid,
+                "course_key": ts.course_key or "",
                 "course_code": ts.course_code or "",
                 "course_number": ts.course_number or "",
                 "section": ts.section or "",

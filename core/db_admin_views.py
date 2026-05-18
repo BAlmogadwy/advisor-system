@@ -662,6 +662,9 @@ def elective_mapping_set_view(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "academic_year, term, programme required"}, status=400)
 
     result = set_elective_term_mapping(year, int(term), programme, mappings)
+    from core.services.reporting import clear_aggregate_cache
+
+    clear_aggregate_cache()
     log_audit_event(
         request,
         action="elective.mapping.set",

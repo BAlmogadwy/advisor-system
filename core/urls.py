@@ -40,6 +40,7 @@ from .exam_views import (
     exam_timetable_build_view,
     exam_timetable_delete_view,
     exam_timetable_detail_view,
+    exam_timetable_draft_impact_view,
     exam_timetable_export_view,
     exam_timetable_filters_view,
     exam_timetable_list_view,
@@ -108,6 +109,8 @@ from .sections_import_views import (
 )
 from .settings_views import defaults_settings_view
 from .timetable_workspace_views import (
+    timetable_workspace_graph_page,
+    timetable_workspace_mri_page,
     timetable_workspace_page,
     timetable_workspace_split_page,
     tw_board_capacity_view,
@@ -118,17 +121,28 @@ from .timetable_workspace_views import (
     tw_board_unplaced_view,
     tw_boards_list_view,
     tw_generate_workspace_view,
+    tw_graph_status_view,
     tw_optimise_v2_view,
     tw_placement_create_planned_view,
     tw_placement_create_view,
     tw_placement_lock_view,
     tw_placement_move_view,
     tw_placement_remove_view,
+    tw_placement_room_candidates_view,
+    tw_placement_slot_candidates_view,
+    tw_placement_student_evidence_view,
     tw_scenario_budget_view,
+    tw_scenario_builder_actions_view,
     tw_scenario_create_view,
     tw_scenario_detail_view,
+    tw_scenario_export_per_plan_view,
     tw_scenario_export_view,
+    tw_scenario_graph_summary_view,
+    tw_scenario_graph_sync_view,
+    tw_scenario_graph_view_view,
+    tw_scenario_plan_lens_view,
     tw_scenario_publish_view,
+    tw_scenario_readiness_view,
     tw_scenario_slots_update_view,
     tw_scenarios_list_view,
     tw_slot_template_create_view,
@@ -144,12 +158,30 @@ from .user_admin_views import (
     users_update_role_view,
 )
 from .views import dashboard, dev_role_switch_view, health
+from .virtual_advisor_views import (
+    virtual_advisor_chat_view,
+    virtual_advisor_health_view,
+    virtual_advisor_page,
+    virtual_advisor_tool_preview_view,
+)
 
 urlpatterns = [
     path("login/", login_view, name="login"),
     path("logout/", logout_view, name="logout"),
     path("", login_required(dashboard, login_url="login"), name="dashboard"),
     path("health/", health, name="health"),
+    path("virtual-advisor/", virtual_advisor_page, name="virtual_advisor_page"),
+    path(
+        "ops/virtual-advisor/health/",
+        virtual_advisor_health_view,
+        name="virtual_advisor_health",
+    ),
+    path(
+        "ops/virtual-advisor/tools/preview/",
+        virtual_advisor_tool_preview_view,
+        name="virtual_advisor_tool_preview",
+    ),
+    path("ops/virtual-advisor/chat/", virtual_advisor_chat_view, name="virtual_advisor_chat"),
     path("recommend/<int:student_id>/", recommend_view, name="recommend"),
     path("classify/", classify_view, name="classify"),
     path("parse-and-classify/", parse_and_classify_view, name="parse_and_classify"),
@@ -372,6 +404,11 @@ urlpatterns = [
         name="exam_timetable_build",
     ),
     path(
+        "ops/exam-timetable/draft-impact/",
+        login_required(exam_timetable_draft_impact_view),
+        name="exam_timetable_draft_impact",
+    ),
+    path(
         "ops/exam-timetable/list/",
         login_required(exam_timetable_list_view),
         name="exam_timetable_list",
@@ -398,16 +435,37 @@ urlpatterns = [
         timetable_workspace_split_page,
         name="timetable_workspace_split_page",
     ),
+    path(
+        "timetable-workspace/mri/",
+        timetable_workspace_mri_page,
+        name="timetable_workspace_mri_page",
+    ),
+    path(
+        "timetable-workspace/graph/",
+        timetable_workspace_graph_page,
+        name="timetable_workspace_graph_page",
+    ),
     path("ops/tw/generate-workspace/", tw_generate_workspace_view, name="tw_generate_workspace"),
+    path("ops/tw/graph/status/", tw_graph_status_view, name="tw_graph_status"),
     path(
         "ops/tw/scenarios/<int:scenario_id>/budget/",
         tw_scenario_budget_view,
         name="tw_scenario_budget",
     ),
     path(
+        "ops/tw/scenarios/<int:scenario_id>/plan-lens/",
+        tw_scenario_plan_lens_view,
+        name="tw_scenario_plan_lens",
+    ),
+    path(
         "ops/tw/scenarios/<int:scenario_id>/export.xlsx",
         tw_scenario_export_view,
         name="tw_scenario_export",
+    ),
+    path(
+        "ops/tw/scenarios/<int:scenario_id>/export-per-plan",
+        tw_scenario_export_per_plan_view,
+        name="tw_scenario_export_per_plan",
     ),
     path("ops/tw/scenarios/", tw_scenarios_list_view, name="tw_scenarios_list"),
     path("ops/tw/scenarios/create/", tw_scenario_create_view, name="tw_scenario_create"),
@@ -421,6 +479,31 @@ urlpatterns = [
         "ops/tw/scenarios/<int:scenario_id>/publish/",
         tw_scenario_publish_view,
         name="tw_scenario_publish",
+    ),
+    path(
+        "ops/tw/scenarios/<int:scenario_id>/readiness/",
+        tw_scenario_readiness_view,
+        name="tw_scenario_readiness",
+    ),
+    path(
+        "ops/tw/scenarios/<int:scenario_id>/builder-actions/",
+        tw_scenario_builder_actions_view,
+        name="tw_scenario_builder_actions",
+    ),
+    path(
+        "ops/tw/scenarios/<int:scenario_id>/graph/summary/",
+        tw_scenario_graph_summary_view,
+        name="tw_scenario_graph_summary",
+    ),
+    path(
+        "ops/tw/scenarios/<int:scenario_id>/graph/view/",
+        tw_scenario_graph_view_view,
+        name="tw_scenario_graph_view",
+    ),
+    path(
+        "ops/tw/scenarios/<int:scenario_id>/graph/sync/",
+        tw_scenario_graph_sync_view,
+        name="tw_scenario_graph_sync",
     ),
     path("ops/tw/boards/", tw_boards_list_view, name="tw_boards_list"),
     path("ops/tw/boards/create/", tw_board_create_view, name="tw_board_create"),
@@ -451,6 +534,21 @@ urlpatterns = [
         "ops/tw/placements/<int:placement_id>/move/",
         tw_placement_move_view,
         name="tw_placement_move",
+    ),
+    path(
+        "ops/tw/placements/<int:placement_id>/slot-candidates/",
+        tw_placement_slot_candidates_view,
+        name="tw_placement_slot_candidates",
+    ),
+    path(
+        "ops/tw/placements/<int:placement_id>/room-candidates/",
+        tw_placement_room_candidates_view,
+        name="tw_placement_room_candidates",
+    ),
+    path(
+        "ops/tw/placements/<int:placement_id>/student-evidence/",
+        tw_placement_student_evidence_view,
+        name="tw_placement_student_evidence",
     ),
     path(
         "ops/tw/placements/<int:placement_id>/remove/",

@@ -4,6 +4,8 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client
 from pytest import MonkeyPatch
 
+from core.models import Course, Prerequisite, ProgrammeRequirement
+from core.services.db_admin_ops import import_oracle_plan_from_rows
 from core.services.rbac import ROLE_SUPER_ADMIN, ensure_role_groups
 
 pytestmark = pytest.mark.django_db
@@ -209,6 +211,77 @@ def test_import_oracle_plan_endpoint(monkeypatch: MonkeyPatch) -> None:
     assert payload["requirements_upserted"] == 1
     assert payload["courses_upserted"] == 1
     assert payload["backup"]["size_bytes"] == 4444
+
+
+def test_import_oracle_plan_saves_programme_course_name(monkeypatch: MonkeyPatch) -> None:
+    """Oracle plan import stores the parsed name on the per-program requirement row."""
+    monkeypatch.setattr(
+        "core.services.db_admin_ops.create_backup_snapshot",
+        lambda: {"ok": True, "backup_path": "runtime/db_backups/test.db", "size_bytes": 1},
+    )
+
+    result = import_oracle_plan_from_rows(
+        "AI2",
+        [
+            {
+                "code": "CS111",
+                "en_name": "FUNDAMENTALS OF PROGRAMMING",
+                "credits": "3",
+                "level_number": "1",
+                "type": "Mandatory",
+                "is_online": 0,
+                "prereqs_str": "",
+            }
+        ],
+    )
+
+    requirement = ProgrammeRequirement.objects.get(program="AI2", course_code="CS111")
+    course = Course.objects.get(course_code="CS111")
+    assert result["requirements_upserted"] == 1
+    assert requirement.course_name == "FUNDAMENTALS OF PROGRAMMING"
+    assert requirement.credit_hours == 3
+    assert course.description == "FUNDAMENTALS OF PROGRAMMING"
+
+
+def test_import_oracle_plan_updates_existing_programme_course_name(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Re-importing a plan refreshes ProgrammeRequirement.course_name safely."""
+    monkeypatch.setattr(
+        "core.services.db_admin_ops.create_backup_snapshot",
+        lambda: {"ok": True, "backup_path": "runtime/db_backups/test.db", "size_bytes": 1},
+    )
+    ProgrammeRequirement.objects.create(
+        program="CS2",
+        course_code="CS112",
+        course_name="PROGRAMMING II",
+        credit_hours=3,
+        programme_term=2,
+    )
+    Prerequisite.objects.create(
+        program="CS2",
+        course_code="CS112",
+        prerequisite_course_code="CS111",
+    )
+
+    import_oracle_plan_from_rows(
+        "CS2",
+        [
+            {
+                "code": "CS112",
+                "en_name": "PROGRAMMING I",
+                "credits": "3",
+                "level_number": "2",
+                "type": "Mandatory",
+                "is_online": 0,
+                "prereqs_str": "",
+            }
+        ],
+    )
+
+    requirement = ProgrammeRequirement.objects.get(program="CS2", course_code="CS112")
+    assert requirement.course_name == "PROGRAMMING I"
+    assert not Prerequisite.objects.filter(program="CS2", course_code="CS112").exists()
 
 
 def test_db_admin_requires_auth(client: Client) -> None:

@@ -55,6 +55,7 @@ const S = {
   scenarioId: null,
   scenarioMeta: null,
   boards: [],
+  crossBoardClashCount: 0,
   // Up to 16 pane slots (a 4×4 matrix is the max the picker exposes).
   // The current layout (cols × rows) decides how many are visible; the
   // rest carry `hidden` on their DOM node and no boardId.
@@ -65,11 +66,33 @@ const S = {
   redoStack: [],
   selectedPaneIdx: null,
   selectedPlacementId: null,
+  search: '',
+  protections: {
+    instructors: new Set(),
+    rooms: new Set(),
+    times: new Set(),
+  },
   // Data-driven grid shape. Anything from 1×1 up to 4×4 is allowed;
   // the actual upper bound at runtime is also gated by viewport fit.
   cols: 2,
   rows: 2,
   dragSource: null,
+  slotAssist: {
+    active: false,
+    paneIdx: null,
+    placementId: null,
+    kind: null,
+    candidates: new Map(),
+    requestToken: 0,
+    pendingMove: null,
+  },
+  planLens: {
+    plans: [],
+    courses: {},
+    sections: {},
+    active: 'ALL',
+    loaded: false,
+  },
 };
 
 // 16 pane labels (A..P) so every visible pane has a stable, readable name
@@ -114,6 +137,21 @@ const RP = {
   open: false,
   tab: 'issues',
   capacity: {}, // boardId -> capacity response
+  fixQueue: {
+    token: 0,
+    cache: {},
+    items: [],
+  },
+  builder: {
+    token: 0,
+    resolverToken: 0,
+    readiness: null,
+    actions: [],
+    activeAction: null,
+    resolver: null,
+    roomCache: {},
+    studentCache: {},
+  },
 };
 
 // Bottom panel state
@@ -155,6 +193,197 @@ function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+function normaliseCourseCode(code) {
+  return String(code || '').replace(/\u00a0/g, ' ').trim().toUpperCase().replace(/\s+/g, '');
+}
+
+function courseKeyOf(item) {
+  return String(item?.course_key || item?.course_code || '').trim();
+}
+
+function activePlanFilter() {
+  return S.planLens.active || 'ALL';
+}
+
+function sectionLensForPlacement(placement) {
+  const sid = placement?.term_section_id == null ? '' : String(placement.term_section_id);
+  return S.planLens.sections[sid] || null;
+}
+
+function courseLensForItem(item) {
+  return S.planLens.courses[courseKeyOf(item)] || null;
+}
+
+function itemMatchesPlanLens(item) {
+  const filter = activePlanFilter();
+  if (filter === 'ALL') return true;
+  const sectionLens = sectionLensForPlacement(item);
+  if (sectionLens) {
+    if (filter === 'SHARED') return !!sectionLens.shared || sectionLens.role === 'shared';
+    return (sectionLens.filter_plans || []).includes(filter);
+  }
+  const courseLens = courseLensForItem(item);
+  if (!courseLens) return true;
+  if (filter === 'SHARED') return !!courseLens.shared_overflow;
+  const plans = courseLens.plans || {};
+  const allocation = courseLens.allocation || {};
+  return Number(plans[filter] || 0) > 0 || Number(allocation[filter] || 0) > 0;
+}
+
+function activeSplitSearch() {
+  return (S.search || '').trim().toUpperCase();
+}
+
+function splitPlacementSearchText(placement) {
+  const lens = sectionLensForPlacement(placement);
+  const lensBits = lens
+    ? [lens.owner, lens.owner_label, lens.role, ...(lens.filter_plans || [])].filter(Boolean).join(' ')
+    : '';
+  const meetingBits = (placement?.meetings || [])
+    .map(m => [m.instructor, m.room, m.day, m.start_time, m.end_time].filter(Boolean).join(' '))
+    .join(' ');
+  return [
+    placement?.course_code,
+    placement?.course_key,
+    placement?.course_name,
+    placement?.section,
+    placement?.department,
+    placement?.day,
+    placement?.start_time,
+    placement?.end_time,
+    placement?.room,
+    placement?.instructor,
+    meetingBits,
+    lensBits,
+  ].filter(Boolean).join(' ').toUpperCase();
+}
+
+function itemMatchesSplitSearch(item) {
+  const q = activeSplitSearch();
+  return !q || splitPlacementSearchText(item).includes(q);
+}
+
+function budgetMatchesSplitSearch(item, search) {
+  if (!search) return true;
+  const courseLens = courseLensForItem(item);
+  const lensBits = courseLens
+    ? Object.entries(courseLens.plans || {})
+        .filter(([, count]) => Number(count) > 0)
+        .map(([plan, count]) => `${plan} ${count}`)
+        .join(' ')
+    : '';
+  return [
+    item?.course_code,
+    item?.course_key,
+    item?.course_name,
+    item?.department,
+    item?.programme_term,
+    lensBits,
+  ].filter(v => v != null).join(' ').toUpperCase().includes(search);
+}
+
+function refreshSplitSearch() {
+  const q = activeSplitSearch();
+  let total = 0;
+  let matched = 0;
+  S.panes.slice(0, paneCount()).forEach(p => {
+    const placements = p.boardData?.placements || [];
+    total += placements.length;
+    matched += placements.filter(itemMatchesSplitSearch).length;
+  });
+  const input = $('twsSearch');
+  if (input) {
+    input.title = q ? `${matched}/${total} timetable matches` : (IS_AR ? 'Ø¨Ø­Ø« ÙÙŠ Ø§Ù„Ø¬Ø¯ÙˆÙ„' : 'Search timetable');
+  }
+  const status = $('twsStatusHover');
+  if (status) {
+    status.textContent = q
+      ? `Search ${matched}/${total}: ${S.search}`
+      : 'Search cleared';
+  }
+}
+
+function planLensLabelForPlacement(placement) {
+  const lens = sectionLensForPlacement(placement);
+  if (!lens) return '';
+  if (lens.shared) return 'Shared';
+  if (lens.owner && lens.owner !== 'UNALLOCATED') return lens.owner;
+  return '';
+}
+
+function planLensBadgesHtml(placement) {
+  const lens = sectionLensForPlacement(placement);
+  if (!lens) return '';
+  const label = planLensLabelForPlacement(placement);
+  if (!label) return '';
+  const counts = lens.actual_plans || {};
+  const actual = Object.entries(counts)
+    .filter(([, count]) => Number(count) > 0)
+    .sort((a, b) => Number(b[1]) - Number(a[1]))
+    .slice(0, 2)
+    .map(([plan, count]) => `${plan} ${count}`)
+    .join(' ');
+  const cls = lens.shared ? ' shared' : '';
+  const title = actual
+    ? `${label} ${lens.role || ''} | actual ${actual}`
+    : `${label} ${lens.role || ''}`;
+  return `<span class="plan-badges${cls}" title="${esc(title)}"><span>${esc(label)}</span>${actual ? `<em>${esc(actual)}</em>` : ''}</span>`;
+}
+
+function renderPlanLensControls() {
+  const wrap = $('twsPlanLens');
+  if (!wrap) return;
+  const plans = S.planLens.plans || [];
+  const active = activePlanFilter();
+  const buttons = ['ALL']
+    .concat(plans)
+    .concat(['SHARED'])
+    .map(plan => {
+      const label = plan === 'ALL' ? 'All' : plan === 'SHARED' ? 'Shared' : plan;
+      return `<button type="button" class="tws-plan-chip${active === plan ? ' on' : ''}" data-plan="${esc(plan)}">${esc(label)}</button>`;
+    })
+    .join('');
+  wrap.innerHTML = `<span class="plbl">Plan lens</span>${buttons}`;
+  wrap.querySelectorAll('[data-plan]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      S.planLens.active = btn.dataset.plan || 'ALL';
+      renderPlanLensControls();
+      for (let i = 0; i < paneCount(); i++) renderPane(i);
+      if (SB.open) renderSidebar();
+      const label = btn.textContent || 'All';
+      $('twsStatusHover').textContent = `Plan lens ${label}`;
+    });
+  });
+}
+
+function resetPlanLens() {
+  S.planLens = { plans: [], courses: {}, sections: {}, active: 'ALL', loaded: false };
+  renderPlanLensControls();
+}
+
+async function loadPlanLens({ rerender = false } = {}) {
+  if (!S.scenarioId) {
+    resetPlanLens();
+    return;
+  }
+  const data = await api(`/ops/tw/scenarios/${S.scenarioId}/plan-lens/`);
+  if (!data || !data.plan_lens) {
+    S.planLens.loaded = false;
+    renderPlanLensControls();
+    return;
+  }
+  const active = S.planLens.active || 'ALL';
+  S.planLens = Object.assign({ plans: [], courses: {}, sections: {}, active, loaded: true }, data.plan_lens);
+  if (S.planLens.active !== 'ALL' && !S.planLens.plans.includes(S.planLens.active) && S.planLens.active !== 'SHARED') {
+    S.planLens.active = 'ALL';
+  }
+  renderPlanLensControls();
+  if (rerender) {
+    for (let i = 0; i < paneCount(); i++) renderPane(i);
+    if (SB.open) renderSidebar();
+  }
+}
+
 // 20 distinct mid-dark course colours — tuned for a dark workspace so
 // they distinguish courses at a glance without looking washed-out like
 // the main page's light pastels. Each is ~35 % saturation / 40 % lightness
@@ -182,18 +411,21 @@ const COURSE_COLORS = [
   ['#4C5F73', '#7E93A8'],  // slate
 ];
 const _courseColorMap = {};
+function courseColorKey(code) {
+  return normaliseCourseCode(code) || '__UNKNOWN__';
+}
 function courseColor(code) {
-  if (!code) return COURSE_COLORS[0][0];
-  if (!_courseColorMap[code]) {
+  const key = courseColorKey(code);
+  if (!_courseColorMap[key]) {
     const idx = Object.keys(_courseColorMap).length % COURSE_COLORS.length;
-    _courseColorMap[code] = COURSE_COLORS[idx];
+    _courseColorMap[key] = COURSE_COLORS[idx];
   }
-  return _courseColorMap[code][0];
+  return _courseColorMap[key][0];
 }
 function courseColorBorder(code) {
-  if (!code) return COURSE_COLORS[0][1];
-  if (!_courseColorMap[code]) courseColor(code);
-  return _courseColorMap[code][1];
+  const key = courseColorKey(code);
+  if (!_courseColorMap[key]) courseColor(key);
+  return _courseColorMap[key][1];
 }
 function isLabPlacement(p) {
   if (!p || !p.start_time || !p.end_time) return false;
@@ -206,6 +438,612 @@ function isLabPlacement(p) {
   const diff = toMin(p.end_time) - toMin(p.start_time);
   return Number.isFinite(diff) && diff > 80;
 }
+
+function toMinutes(t) {
+  const parts = String(t || '').split(':');
+  const h = Number(parts[0]), m = Number(parts[1]);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return NaN;
+  return h * 60 + m;
+}
+
+function durationMinutes(start, end) {
+  const a = toMinutes(start), b = toMinutes(end);
+  return Number.isFinite(a) && Number.isFinite(b) ? b - a : 0;
+}
+
+function timeOverlaps(aStart, aEnd, bStart, bEnd) {
+  const a0 = toMinutes(aStart), a1 = toMinutes(aEnd);
+  const b0 = toMinutes(bStart), b1 = toMinutes(bEnd);
+  if (![a0, a1, b0, b1].every(Number.isFinite)) return false;
+  return a0 < b1 && b0 < a1;
+}
+
+function placementInstructor(p) {
+  return ((p && p.meetings && p.meetings[0]) ? p.meetings[0].instructor : '') || '';
+}
+
+function sectionRank(section) {
+  const m = String(section || '').match(/\d+/);
+  return m ? Number(m[0]) : 999;
+}
+
+function slotAssistKey(kind, day, start) {
+  return `${kind}:${day}:${start}`;
+}
+
+function slotKindForPlacement(placement) {
+  return isLabPlacement(placement) ? 'lab' : 'lect';
+}
+
+function placementShortLabel(placement) {
+  return `${placement.course_code || ''} ${placement.section || ''}`.trim();
+}
+
+function protectionKey() {
+  return `twsSplitProtections:${S.scenarioId || 'none'}`;
+}
+
+function protectionValue(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function timeProtectionKey(day, start) {
+  return `${protectionValue(day)}:${String(start || '').trim()}`;
+}
+
+function resetProtections() {
+  S.protections = { instructors: new Set(), rooms: new Set(), times: new Set() };
+}
+
+function loadProtections() {
+  resetProtections();
+  if (!S.scenarioId) return;
+  try {
+    const raw = localStorage.getItem(protectionKey());
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    S.protections.instructors = new Set((data.instructors || []).map(protectionValue).filter(Boolean));
+    S.protections.rooms = new Set((data.rooms || []).map(protectionValue).filter(Boolean));
+    S.protections.times = new Set((data.times || []).map(String).filter(Boolean));
+  } catch {
+    resetProtections();
+  }
+}
+
+function saveProtections() {
+  if (!S.scenarioId) return;
+  localStorage.setItem(protectionKey(), JSON.stringify({
+    instructors: Array.from(S.protections.instructors),
+    rooms: Array.from(S.protections.rooms),
+    times: Array.from(S.protections.times),
+  }));
+}
+
+function toggleProtection(kind, value) {
+  const set = S.protections[kind];
+  const key = kind === 'times' ? String(value || '') : protectionValue(value);
+  if (!set || !key) return false;
+  if (set.has(key)) {
+    set.delete(key);
+    saveProtections();
+    return false;
+  }
+  set.add(key);
+  saveProtections();
+  return true;
+}
+
+function placementProtectionReasons(placement) {
+  if (!placement) return [];
+  const reasons = [];
+  const instructor = protectionValue(placementInstructor(placement));
+  const room = protectionValue(placement.room);
+  const time = timeProtectionKey(placement.day, placement.start_time);
+  if (placement.is_locked) reasons.push(IS_AR ? 'مقفلة' : 'locked section');
+  if (instructor && S.protections.instructors.has(instructor)) reasons.push(`${IS_AR ? 'مدرس محمي' : 'protected instructor'} ${placementInstructor(placement)}`);
+  if (room && room !== 'UNASSIGNED' && S.protections.rooms.has(room)) reasons.push(`${IS_AR ? 'قاعة محمية' : 'protected room'} ${placement.room}`);
+  if (S.protections.times.has(time)) reasons.push(`${IS_AR ? 'وقت محمي' : 'protected time'} ${placement.day} ${placement.start_time}`);
+  return reasons;
+}
+
+function isPlacementProtected(placement) {
+  return placementProtectionReasons(placement).length > 0;
+}
+
+function slotPoolForPlacement(boardData, placement) {
+  const kind = slotKindForPlacement(placement);
+  const base = kind === 'lab'
+    ? ((boardData.lab_slot_config && boardData.lab_slot_config.length) ? boardData.lab_slot_config : DEFAULT_LAB_SLOTS)
+    : ((boardData.slot_config && boardData.slot_config.length) ? boardData.slot_config : DEFAULT_LECTURE_SLOTS);
+  const duration = durationMinutes(placement.start_time, placement.end_time);
+  const matching = base.filter(slot => Math.abs(durationMinutes(slot.start, slot.end) - duration) <= 5);
+  return matching.length ? matching : base;
+}
+
+function courseCompanionForSplitMove(boardData, placement) {
+  const instructor = placementInstructor(placement).trim().toUpperCase();
+  const courseCode = normaliseCourseCode(placement.course_code);
+  const rank = sectionRank(placement.section);
+  const kind = slotKindForPlacement(placement);
+  return (boardData.placements || [])
+    .filter(p => String(p.id) !== String(placement.id))
+    .filter(p => normaliseCourseCode(p.course_code) === courseCode)
+    .filter(p => String(p.section || '') !== String(placement.section || ''))
+    .filter(p => slotKindForPlacement(p) === kind)
+    .sort((a, b) => {
+      const ai = placementInstructor(a).trim().toUpperCase();
+      const bi = placementInstructor(b).trim().toUpperCase();
+      const aSameInstructor = instructor && ai === instructor ? 0 : 1;
+      const bSameInstructor = instructor && bi === instructor ? 0 : 1;
+      return aSameInstructor - bSameInstructor ||
+        Math.abs(sectionRank(a.section) - rank) - Math.abs(sectionRank(b.section) - rank) ||
+        sectionRank(a.section) - sectionRank(b.section) ||
+        String(a.section || '').localeCompare(String(b.section || ''));
+    })[0] || null;
+}
+
+function classifySplitTargets(boardData, targets) {
+  const movingIds = new Set(targets.map(t => String(t.placement.id)));
+  const seen = new Set();
+  const evidence = [];
+  let critical = 0;
+  let warning = 0;
+
+  function add(kind, a, b) {
+    const key = `${kind}:${[a, b].map(String).sort().join(':')}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }
+
+  function compare(target, other) {
+    const otherPlacement = other.placement || other;
+    if (String(target.day) !== String(other.day)) return;
+    if (!timeOverlaps(target.start, target.end, other.start_time || other.start, other.end_time || other.end)) return;
+
+    const otherId = otherPlacement.id || `target-${otherPlacement.course_code}-${otherPlacement.section}`;
+    const targetName = placementShortLabel(target.placement);
+    const otherName = placementShortLabel(otherPlacement);
+    const otherSlot = `${other.day || otherPlacement.day} ${other.start_time || other.start}-${other.end_time || other.end}`;
+
+    if (add('time', target.placement.id, otherId)) {
+      critical += 1;
+      evidence.push(`${otherName} already uses ${otherSlot}`);
+    }
+
+    const instructor = placementInstructor(target.placement).trim().toUpperCase();
+    const otherInstructor = placementInstructor(otherPlacement).trim().toUpperCase();
+    if (instructor && otherInstructor && instructor === otherInstructor && add('instructor', target.placement.id, otherId)) {
+      critical += 1;
+      evidence.push(`${placementInstructor(target.placement)} teaches ${targetName} and ${otherName}`);
+    }
+
+    const room = String(target.placement.room || '').trim().toUpperCase();
+    const otherRoom = String(other.room || otherPlacement.room || '').trim().toUpperCase();
+    if (room && otherRoom && room !== 'UNASSIGNED' && room === otherRoom && add('room', target.placement.id, otherId)) {
+      warning += 1;
+      evidence.push(`${target.placement.room} is already occupied`);
+    }
+  }
+
+  targets.forEach(target => {
+    (boardData.placements || []).forEach(other => {
+      if (movingIds.has(String(other.id))) return;
+      compare(target, other);
+    });
+  });
+
+  targets.forEach((target, idx) => {
+    targets.slice(idx + 1).forEach(other => {
+      compare(target, {
+        id: other.placement.id,
+        placement: other.placement,
+        day: other.day,
+        start_time: other.start,
+        end_time: other.end,
+        room: other.placement.room,
+      });
+    });
+  });
+
+  return { critical, warning, evidence: evidence.slice(0, 3) };
+}
+
+function splitPairOption(boardData, placement, day, slot, slots) {
+  const companion = courseCompanionForSplitMove(boardData, placement);
+  if (!companion) return null;
+  const idx = slots.findIndex(s => s.start === slot.start && s.end === slot.end);
+  if (idx < 0) return null;
+  const selectedRank = sectionRank(placement.section);
+  const companionRank = sectionRank(companion.section);
+  const naturalRelation = companionRank >= selectedRank ? 'after' : 'before';
+  const options = [
+    { relation: 'after', slot: slots[idx + 1] },
+    { relation: 'before', slot: slots[idx - 1] },
+  ].filter(option => option.slot);
+
+  return options.map(option => {
+    const transition = option.relation === 'after'
+      ? toMinutes(option.slot.start) - toMinutes(slot.end)
+      : toMinutes(slot.start) - toMinutes(option.slot.end);
+    if (transition < 0 || transition > 15) return null;
+    const targets = [
+      { placement, day, start: slot.start, end: slot.end },
+      { placement: companion, day, start: option.slot.start, end: option.slot.end },
+    ];
+    const result = classifySplitTargets(boardData, targets);
+    const preferred = option.relation === naturalRelation;
+    const score = (result.critical * 1000) + (result.warning * 120) + (preferred ? -35 : 0) + transition;
+    return {
+      companion,
+      relation: option.relation,
+      start: option.slot.start,
+      end: option.slot.end,
+      critical: result.critical,
+      warning: result.warning,
+      transition,
+      preferred,
+      score,
+    };
+  }).filter(Boolean).sort((a, b) => a.score - b.score)[0] || null;
+}
+
+function splitSlotScore(candidate, placement) {
+  return (candidate.critical * 1000) +
+    (candidate.warning * 120) +
+    (candidate.pair && !candidate.pair.critical ? -35 : 0) +
+    (String(candidate.day) === String(placement.day) ? 0 : 12) +
+    Math.round(Math.abs(toMinutes(candidate.start) - toMinutes(placement.start_time)) / 10);
+}
+
+function buildSplitSlotCandidates(paneIdx, placement) {
+  const boardData = S.panes[paneIdx]?.boardData;
+  if (!boardData || !placement) return [];
+  const kind = slotKindForPlacement(placement);
+  const slots = slotPoolForPlacement(boardData, placement);
+  const rows = [];
+  DAYS.forEach(day => {
+    slots.forEach(slot => {
+      if (String(day) === String(placement.day) && String(slot.start) === String(placement.start_time)) return;
+      const result = classifySplitTargets(boardData, [
+        { placement, day, start: slot.start, end: slot.end },
+      ]);
+      const pair = splitPairOption(boardData, placement, day, slot, slots);
+      if (pair) {
+        const pairReasons = placementProtectionReasons(pair.companion);
+        if (pairReasons.length) pair.protected = pairReasons;
+      }
+      const candidate = {
+        kind,
+        day,
+        start: slot.start,
+        end: slot.end,
+        critical: result.critical,
+        warning: result.warning,
+        evidence: result.evidence,
+        pair,
+      };
+      candidate.score = splitSlotScore(candidate, placement);
+      rows.push(candidate);
+    });
+  });
+  rows.sort((a, b) => a.score - b.score || DAYS.indexOf(a.day) - DAYS.indexOf(b.day) || toMinutes(a.start) - toMinutes(b.start));
+  rows.forEach((row, idx) => { row.rank = idx + 1; });
+  return rows;
+}
+
+function splitSlotLabel(candidate) {
+  if (!candidate) return '';
+  if (candidate.pair && !candidate.pair.protected) return 'Bundle';
+  const improvement = Number(candidate.impact_improvement || 0);
+  const savedStudents = Number(candidate.student_improvement || 0);
+  if (improvement > 0 && savedStudents > 0) return `Save ${savedStudents}`;
+  if (improvement > 0) return 'Improve';
+  if (candidate.badge) return candidate.badge;
+  if (candidate.rank === 1) return candidate.critical ? 'Least bad' : 'Best';
+  const students = Number(candidate.student_affected_count || candidate.studentAffected || 0);
+  if (students) return `${students} students`;
+  if (candidate.critical) return `${candidate.critical} conflict`;
+  if (candidate.warning) return `${candidate.warning} warning`;
+  return 'Clean';
+}
+
+function candidateImpactSummary(candidate) {
+  if (!candidate || candidate.current_impact_score == null) return '';
+  const beforeStudents = Number(candidate.current_student_affected_count || 0);
+  const afterStudents = Number(candidate.student_affected_count || candidate.studentAffected || 0);
+  const studentDelta = Number(candidate.student_improvement || (beforeStudents - afterStudents));
+  const beforeCritical = Number(candidate.current_critical_count || 0);
+  const afterCritical = Number(candidate.critical_count || candidate.critical || 0);
+  const criticalDelta = Number(candidate.critical_improvement || (beforeCritical - afterCritical));
+  const beforeWarning = Number(candidate.current_warning_count || 0);
+  const afterWarning = Number(candidate.warning_count || candidate.warning || 0);
+  const warningDelta = Number(candidate.warning_improvement || (beforeWarning - afterWarning));
+  const bits = [`students ${beforeStudents}->${afterStudents}`];
+  if (studentDelta > 0) bits.push(`save ${studentDelta}`);
+  else if (studentDelta < 0) bits.push(`${Math.abs(studentDelta)} more`);
+  if (criticalDelta > 0) bits.push(`critical ${beforeCritical}->${afterCritical}`);
+  else if (criticalDelta < 0) bits.push(`+${Math.abs(criticalDelta)} critical`);
+  if (warningDelta > 0) bits.push(`warnings ${beforeWarning}->${afterWarning}`);
+  return bits.join(' | ');
+}
+
+function candidateEvidenceList(candidate) {
+  const rows = Array.isArray(candidate?.evidence) ? candidate.evidence : [];
+  return rows
+    .map(item => {
+      if (typeof item === 'string') {
+        return { kind: 'note', tone: 'note', title: item, detail: '', student_count: 0 };
+      }
+      if (!item || typeof item !== 'object') return null;
+      return {
+        ...item,
+        kind: String(item.kind || 'note').toLowerCase(),
+        tone: String(item.tone || '').toLowerCase(),
+        title: String(item.title || ''),
+        detail: String(item.detail || ''),
+        student_count: Number(item.student_count || item.studentCount || 0),
+      };
+    })
+    .filter(Boolean);
+}
+
+function candidateEvidenceText(evidence) {
+  if (!evidence) return '';
+  return `${evidence.title || ''}${evidence.detail ? ` | ${evidence.detail}` : ''}`.trim();
+}
+
+function candidateHasEvidence(candidate, kinds) {
+  const wanted = new Set(kinds);
+  return candidateEvidenceList(candidate).some(e => wanted.has(e.kind));
+}
+
+function candidatePrimaryEvidence(candidate) {
+  const rows = candidateEvidenceList(candidate);
+  if (!rows.length) return null;
+  const riskWeight = { critical: 0, warning: 1, note: 2 };
+  const kindWeight = {
+    cross_board_room: 0,
+    room: 1,
+    students: 2,
+    cross_board_students: 3,
+    instructor: 4,
+    same_course: 5,
+    note: 9,
+  };
+  return [...rows].sort((a, b) => {
+    const aRisk = riskWeight[a.tone] ?? 3;
+    const bRisk = riskWeight[b.tone] ?? 3;
+    return aRisk - bRisk || (kindWeight[a.kind] ?? 8) - (kindWeight[b.kind] ?? 8);
+  })[0];
+}
+
+function candidateSignalTags(candidate) {
+  if (!candidate) return [];
+  const rows = candidateEvidenceList(candidate);
+  const tags = [];
+  const add = value => {
+    if (value && !tags.includes(value)) tags.push(value);
+  };
+  const studentCount = Number(candidate.student_affected_count || candidate.studentAffected || 0)
+    || rows.reduce((sum, row) => sum + Number(row.student_count || 0), 0);
+  if (candidateHasEvidence(candidate, ['cross_board_room', 'room'])) add('Room busy');
+  if (studentCount > 0) add(`Students ${studentCount}`);
+  if (candidateHasEvidence(candidate, ['instructor'])) add('Instructor');
+  if (candidateHasEvidence(candidate, ['same_course'])) add('Same course');
+  if (candidate.pair) add(candidate.pair.protected ? 'Pair blocked' : 'Bundle');
+  if (!tags.length && (candidate.critical || candidate.critical_count)) add(`${candidate.critical || candidate.critical_count} issue`);
+  if (!tags.length && (candidate.warning || candidate.warning_count)) add(`${candidate.warning || candidate.warning_count} warn`);
+  return tags;
+}
+
+function candidateSlotSignalLine(candidate, tone) {
+  const tags = candidateSignalTags(candidate);
+  if (tags.length) return tags.slice(0, 2).join(' | ');
+  if (candidate?.pair) {
+    return `${candidate.pair.companion.section || 'Pair'} ${candidate.pair.relation} ${candidate.pair.start}`;
+  }
+  if (tone === 'avoid') return `${candidate.critical || candidate.critical_count || 1} issue`;
+  if (tone === 'risky') return `${candidate.warning || candidate.warning_count || 1} warn`;
+  return '0 students';
+}
+
+function splitSlotDetail(candidate) {
+  if (!candidate) return '';
+  const students = Number(candidate.student_affected_count || candidate.studentAffected || 0);
+  const impact = candidateImpactSummary(candidate);
+  const evidenceText = candidateEvidenceText(candidatePrimaryEvidence(candidate));
+  const tags = candidateSignalTags(candidate);
+  const signals = tags.length ? `signals: ${tags.join(', ')}` : '';
+  const main = students
+    ? `${students} affected students${evidenceText ? ` | ${evidenceText}` : ''}`
+    : candidate.critical
+      ? (evidenceText || `${candidate.critical} conflict`)
+      : candidate.warning
+        ? (evidenceText || `${candidate.warning} warning`)
+        : (candidate.studentAware ? '0 affected students' : 'No local clash');
+  const mainWithImpact = [impact, main, signals].filter(Boolean).join(' | ');
+  if (!candidate.pair) return mainWithImpact;
+  if (candidate.pair.protected) {
+    return `${mainWithImpact}; pair blocked (${candidate.pair.protected.join(', ')})`;
+  }
+  const pairStatus = candidate.pair.critical
+    ? `${candidate.pair.critical} pair conflicts`
+    : candidate.pair.warning
+      ? `${candidate.pair.warning} pair warnings`
+      : 'pair clean';
+  return `${mainWithImpact}; ${candidate.pair.companion.section || 'pair'} ${candidate.pair.relation} ${candidate.pair.start}-${candidate.pair.end} (${pairStatus})`;
+}
+
+function slotAssistTone(candidate) {
+  const tone = candidate?.tone;
+  if (tone === 'avoid' || tone === 'critical') return 'avoid';
+  if (tone === 'risky' || tone === 'watch') return 'risky';
+  if (tone === 'clean' || tone === 'stable') return 'clean';
+  if (candidate?.critical) return 'avoid';
+  if (candidate?.warning) return 'risky';
+  return 'clean';
+}
+
+function clearSlotAssistDecorations() {
+  document.querySelectorAll('.tws-pane .cell.assist-clean, .tws-pane .cell.assist-risky, .tws-pane .cell.assist-avoid, .tws-pane .cell.assist-best, .tws-pane .cell.assist-preview, .tws-pane .cell.assist-room, .tws-pane .cell.assist-student, .tws-pane .cell.assist-instructor').forEach(cell => {
+    cell.classList.remove('assist-clean', 'assist-risky', 'assist-avoid', 'assist-best', 'assist-preview', 'assist-room', 'assist-student', 'assist-instructor');
+    delete cell.dataset.slotAssistKey;
+    delete cell.dataset.slotAssistTitle;
+    cell.querySelectorAll('.slot-assist-badge, .slot-assist-detail').forEach(el => el.remove());
+  });
+  document.querySelectorAll('.tws-pane.assist-active').forEach(pane => pane.classList.remove('assist-active'));
+}
+
+function clearSlotAssist() {
+  clearSlotAssistDecorations();
+  S.slotAssist.active = false;
+  S.slotAssist.paneIdx = null;
+  S.slotAssist.placementId = null;
+  S.slotAssist.kind = null;
+  S.slotAssist.candidates = new Map();
+  S.slotAssist.requestToken += 1;
+  S.slotAssist.pendingMove = null;
+}
+
+function showSlotAssistCellStatus(cell) {
+  if (!S.slotAssist.active || !cell?.dataset.slotAssistKey) return;
+  const candidate = S.slotAssist.candidates.get(cell.dataset.slotAssistKey);
+  if (!candidate) return;
+  $('twsStatusHover').textContent = `${splitSlotLabel(candidate)} ${candidate.day} ${candidate.start}-${candidate.end}: ${splitSlotDetail(candidate)}`;
+}
+
+function slotCellForCandidate(paneIdx, candidate, kind = null) {
+  const pane = paneEl(paneIdx);
+  if (!pane || !candidate) return null;
+  const slotKind = kind || candidate.kind || S.slotAssist.kind || 'lect';
+  const grid = slotKind === 'lab' ? '.lab-grid' : '.lect-grid';
+  return pane.querySelector(`${grid} .cell[data-day="${candidate.day}"][data-start="${candidate.start}"]`);
+}
+
+function restorePendingMovePreview() {
+  const pending = S.slotAssist.pendingMove;
+  if (!pending || String(pending.placementId) !== String(S.slotAssist.placementId)) return;
+  const cell = slotCellForCandidate(pending.paneIdx, pending, S.slotAssist.kind);
+  if (cell && !cell.classList.contains('filled')) {
+    cell.classList.add('assist-preview');
+    const key = slotAssistKey(S.slotAssist.kind, pending.day, pending.start);
+    const candidate = S.slotAssist.candidates.get(key);
+    const located = findPlacement(pending.placementId);
+    const label = located ? placementShortLabel(located.placement) : 'Selection';
+    if (candidate) {
+      const pairText = canBundleCandidate(candidate)
+        ? ` Bundle ${placementShortLabel(candidate.pair.companion)} ${candidate.pair.relation} ${candidate.pair.start}-${candidate.pair.end}.`
+        : '';
+      $('twsStatusHover').textContent = `Preview move ${label} -> ${pending.day} ${pending.start}-${pending.end}: ${splitSlotDetail(candidate)}.${pairText} Click same slot again to apply.`;
+    }
+  }
+}
+
+function paintSlotAssistCandidates(paneIdx, placement, candidates, opts = {}) {
+  const pane = paneEl(paneIdx);
+  const selector = S.slotAssist.kind === 'lab' ? '.lab-grid .cell' : '.lect-grid .cell';
+  pane?.classList.add('assist-active');
+  pane?.querySelectorAll(selector).forEach(cell => {
+    const key = slotAssistKey(S.slotAssist.kind, cell.dataset.day, cell.dataset.start);
+    const candidate = S.slotAssist.candidates.get(key);
+    if (!candidate) return;
+    cell.dataset.slotAssistKey = key;
+    cell.dataset.slotAssistTitle = splitSlotDetail(candidate);
+    cell.title = `${candidate.day} ${candidate.start}-${candidate.end} | ${splitSlotLabel(candidate)} | ${splitSlotDetail(candidate)}`;
+    const tone = slotAssistTone(candidate);
+    if (tone === 'avoid') cell.classList.add('assist-avoid');
+    else if (tone === 'risky') cell.classList.add('assist-risky');
+    else cell.classList.add('assist-clean');
+    if (candidateHasEvidence(candidate, ['cross_board_room', 'room'])) cell.classList.add('assist-room');
+    if (Number(candidate.student_affected_count || candidate.studentAffected || 0) > 0 || candidateHasEvidence(candidate, ['students', 'cross_board_students'])) cell.classList.add('assist-student');
+    if (candidateHasEvidence(candidate, ['instructor'])) cell.classList.add('assist-instructor');
+    if (candidate.rank === 1) cell.classList.add('assist-best');
+    if (candidate.rank <= 4) {
+      const badge = document.createElement('span');
+      badge.className = 'slot-assist-badge';
+      badge.textContent = splitSlotLabel(candidate);
+      const detail = document.createElement('span');
+      detail.className = 'slot-assist-detail';
+      detail.textContent = candidateSlotSignalLine(candidate, tone);
+      cell.appendChild(badge);
+      cell.appendChild(detail);
+    }
+  });
+  const clean = candidates.filter(c => slotAssistTone(c) === 'clean').length;
+  const affected = candidates.reduce((sum, c) => sum + Number(c.student_affected_count || c.studentAffected || 0), 0);
+  const best = candidates[0];
+  const bestText = best ? `${best.day} ${best.start}-${best.end}` : 'none';
+  const pairText = best?.pair ? ` | pair ${best.pair.companion.section || ''} ${best.pair.relation} ${best.pair.start}-${best.pair.end}` : '';
+  const source = opts.studentAware ? ` | student-aware ${affected} total pressure` : '';
+  const actionText = opts.sticky ? 'Click a highlighted empty slot to preview; click again to move' : 'drop on a highlighted slot';
+  $('twsStatusHover').textContent = `${opts.sticky ? 'Selected' : 'Dragging'} ${placementShortLabel(placement)} | ${clean} clean | recommended ${bestText}${pairText}${source} | ${actionText}`;
+  restorePendingMovePreview();
+}
+
+function normaliseStudentAwareCandidate(row) {
+  return {
+    ...row,
+    studentAware: true,
+    critical: Number(row.critical_count || 0),
+    warning: Number(row.warning_count || 0),
+    studentAffected: Number(row.student_affected_count || 0),
+  };
+}
+
+async function refreshStudentAwareSlotAssist(placementId, token, opts = {}) {
+  const data = await api(`/ops/tw/placements/${placementId}/slot-candidates/`);
+  if (!data || !S.slotAssist.active || token !== S.slotAssist.requestToken) return;
+  if (String(S.slotAssist.placementId) !== String(placementId)) return;
+  const located = findPlacement(placementId);
+  if (!located) return;
+  const placement = located.placement;
+  const rows = (data.candidates || []).map(normaliseStudentAwareCandidate);
+  if (!rows.length) return;
+  rows.forEach(row => {
+    const key = slotAssistKey(row.kind || S.slotAssist.kind, row.day, row.start);
+    const existing = S.slotAssist.candidates.get(key) || {};
+    S.slotAssist.candidates.set(key, { ...existing, ...row });
+  });
+  clearSlotAssistDecorations();
+  const candidates = Array.from(S.slotAssist.candidates.values())
+    .sort((a, b) => (a.rank || 999) - (b.rank || 999) || (a.score || 0) - (b.score || 0));
+  paintSlotAssistCandidates(S.slotAssist.paneIdx, placement, candidates, { ...opts, studentAware: true });
+}
+
+function beginSlotAssist(paneIdx, placementId, opts = {}) {
+  const located = findPlacement(placementId);
+  if (!located) return;
+  const placement = located.placement;
+  const sourcePaneIdx = Number.isFinite(paneIdx) ? paneIdx : located.paneIdx;
+  const candidates = buildSplitSlotCandidates(sourcePaneIdx, placement);
+  clearSlotAssistDecorations();
+  S.slotAssist.active = true;
+  S.slotAssist.paneIdx = sourcePaneIdx;
+  S.slotAssist.placementId = placementId;
+  S.slotAssist.kind = slotKindForPlacement(placement);
+  S.slotAssist.requestToken += 1;
+  S.slotAssist.pendingMove = null;
+  const token = S.slotAssist.requestToken;
+  S.slotAssist.candidates = new Map(candidates.map(c => [slotAssistKey(c.kind, c.day, c.start), c]));
+  paintSlotAssistCandidates(sourcePaneIdx, placement, candidates, opts);
+  refreshStudentAwareSlotAssist(placementId, token, opts);
+}
+
+function applySlotDragHint(cell) {
+  if (S.slotAssist.active && cell?.dataset.slotAssistKey) {
+    const candidate = S.slotAssist.candidates.get(cell.dataset.slotAssistKey);
+    const tone = slotAssistTone(candidate);
+    if (tone === 'avoid') cell.classList.add('drop-critical');
+    else if (tone === 'risky') cell.classList.add('drop-warning');
+    else cell.classList.add('drop-valid');
+    showSlotAssistCellStatus(cell);
+    return;
+  }
+  if (cell.classList.contains('filled')) cell.classList.add('drop-warning');
+  else cell.classList.add('drop-valid');
+}
+
 function groupPlacements(placements) {
   const bySec = {};
   placements.forEach(p => {
@@ -251,15 +1089,30 @@ async function onScenarioChange() {
   // Every cached structure belongs to the previous scenario and would
   // paint stale data if left in place — invalidate before loading new.
   RP.capacity = {};
+  RP.fixQueue.cache = {};
+  RP.fixQueue.items = [];
+  RP.fixQueue.token += 1;
+  RP.builder.token += 1;
+  RP.builder.resolverToken += 1;
+  RP.builder.readiness = null;
+  RP.builder.actions = [];
+  RP.builder.activeAction = null;
+  RP.builder.resolver = null;
+  RP.builder.roomCache = {};
+  RP.builder.studentCache = {};
   SB.budget = [];
   SB.search = '';
+  S.search = '';
+  resetPlanLens();
   const search = $('twsSectionSearch'); if (search) search.value = '';
+  const canvasSearch = $('twsSearch'); if (canvasSearch) canvasSearch.value = '';
   // If a drawer is open it's pointing at a now-invalid placement id.
   if (typeof DRAWER !== 'undefined' && DRAWER.placementId != null) closeDrawer();
 
   const sid = $('twsScenario').value;
   if (!sid) {
     S.scenarioId = null;
+    resetProtections();
     S.boards = [];
     $('twsPublish').disabled = true;
     $('twsOptimise').disabled = true;
@@ -272,8 +1125,13 @@ async function onScenarioChange() {
   if (!data) return;
   S.scenarioId = data.scenario.id;
   S.scenarioMeta = data.scenario;
-  const bdata = await api(`/ops/tw/boards/?scenario_id=${sid}`);
+  loadProtections();
+  const [bdata] = await Promise.all([
+    api(`/ops/tw/boards/?scenario_id=${sid}`),
+    loadPlanLens(),
+  ]);
   S.boards = (bdata && bdata.boards) || [];
+  S.crossBoardClashCount = (bdata && Number(bdata.cross_board_clashes || 0)) || 0;
 
   for (let i = 0; i < paneCount(); i++) {
     S.panes[i].boardId = S.boards[i] ? S.boards[i].id : null;
@@ -305,15 +1163,14 @@ async function onScenarioChange() {
 }
 
 function updateAggregateMetrics() {
-  let total = 0, placed = 0, cross = 0;
+  let total = 0, placed = 0;
   S.boards.forEach(b => {
     total += (b.primary_count || 0) + (b.visitor_count || 0);
     placed += (b.placement_count || 0);
-    cross += (b.critical || 0);
   });
   $('twsStStudents').textContent = total || '—';
   $('twsStPlaced').textContent = placed || '—';
-  $('twsStCross').textContent = cross || '0';
+  $('twsStCross').textContent = String(S.crossBoardClashCount || 0);
 }
 
 /* ── Slot bar (boards-on-canvas) ── */
@@ -394,6 +1251,7 @@ async function loadAndRenderPane(idx) {
         student_impact: cdata.student_impact || {} }
     : {};
   renderPane(idx);
+  if (activeSplitSearch()) refreshSplitSearch();
 }
 
 function renderPaneEmpty(idx) {
@@ -422,7 +1280,13 @@ function renderPane(idx) {
 
   const slots = (data.slot_config && data.slot_config.length) ? data.slot_config : DEFAULT_LECTURE_SLOTS;
   const labSlots = (data.lab_slot_config && data.lab_slot_config.length) ? data.lab_slot_config : DEFAULT_LAB_SLOTS;
-  const placements = data.placements || [];
+  const allPlacements = data.placements || [];
+  const lensPlacements = allPlacements.filter(itemMatchesPlanLens);
+  const placements = lensPlacements.filter(itemMatchesSplitSearch);
+  const lensHidden = allPlacements.length - lensPlacements.length;
+  const lensActive = activePlanFilter();
+  const searchActive = activeSplitSearch();
+  const searchHidden = lensPlacements.length - placements.length;
 
   // Split into lecture vs lab by duration
   const lectP = placements.filter(pl => !isLabPlacement(pl));
@@ -434,18 +1298,11 @@ function renderPane(idx) {
   const groupLect = activeGroup ? lectP.filter(pl => (pl.section || 'S1') === activeGroup.id) : [];
   const groupLab = activeGroup ? labP.filter(pl => (pl.section || 'S1') === activeGroup.id) : [];
 
-  const conflicts = data.conflicts || {};
-  const overlaps = conflicts.overlaps || [];
-  const instrClashes = conflicts.instructor_clashes || [];
-  const roomClashes = conflicts.room_clashes || [];
-  const clashIds = new Set();
-  overlaps.forEach(o => (o.ids || []).forEach(id => clashIds.add(id)));
-  instrClashes.forEach(c => (c.ids || []).forEach(id => clashIds.add(id)));
-  roomClashes.forEach(c => (c.ids || []).forEach(id => clashIds.add(id)));
+  const issueMap = placementIssueMap(data.conflicts || {}, p.boardId);
 
   // Group-level clash detection: does any placement in each group collide?
   const groupHasClash = groups.map(g =>
-    g.placements.some(pl => clashIds.has(pl.id))
+    g.placements.some(pl => placementIssuesFromMap(issueMap, pl.id).length)
   );
 
   // Group tab label = "Gn  Xc · Yst" — mockup format with student counts.
@@ -476,6 +1333,8 @@ function renderPane(idx) {
       </span>
       <div class="gtabs">${gtabsHtml || '<span class="gtab on">—</span>'}</div>
       <span class="kpis">
+        ${lensActive !== 'ALL' ? `<span class="kpi lens">${esc(lensActive === 'SHARED' ? 'Shared' : lensActive)} <b>${placements.length}/${allPlacements.length}</b></span>` : ''}
+        ${searchActive ? `<span class="kpi lens">Search <b>${placements.length}/${lensPlacements.length}</b></span>` : ''}
         <span class="kpi">${T.placed} <b>${placedCount}</b></span>
         <span class="kpi ${hasGroupClash ? '' : 'clean'}">${hasGroupClash ? `<b class="warn">${T.clashShort}</b>` : `<b>${T.noClash}</b>`}</span>
       </span>
@@ -484,9 +1343,9 @@ function renderPane(idx) {
         <button data-action="maximise" title="Maximise">⤢</button>
       </span>
     </div>
-    <div class="pane-body">
+      <div class="pane-body">
       <div class="lect-block">
-        ${renderGridHTML(slots, groupLect, clashIds, 'lect')}
+        ${renderGridHTML(slots, groupLect, issueMap, 'lect')}
       </div>
       <div class="lab-block${groupLab.length ? '' : ' collapsed'}">
         <div class="block-head" data-action="toggle-lab">
@@ -499,13 +1358,15 @@ function renderPane(idx) {
               : T.noLab
           }</span>
         </div>
-        ${renderGridHTML(labSlots, groupLab, clashIds, 'lab')}
+        ${renderGridHTML(labSlots, groupLab, issueMap, 'lab')}
       </div>
     </div>
     <div class="pane-status">
       <span class="dot${hasGroupClash ? ' warn' : ''}"></span>
       <span>${esc(board.label)} · G${p.group + 1}</span>
       <span>${(board.primary_count || 0)}${(board.visitor_count || 0) ? '+' + board.visitor_count : ''} st</span>
+      ${lensHidden ? `<span>${lensHidden} hidden by lens</span>` : ''}
+      ${searchHidden ? `<span>${searchHidden} hidden by search</span>` : ''}
       <span class="sp"></span>
       ${groups.length > 1
         ? `<span>${groups.length - 1} ${IS_AR ? 'مجموعات أخرى' : 'more groups'} ↓</span>`
@@ -516,7 +1377,7 @@ function renderPane(idx) {
   bindPaneControls(idx);
 }
 
-function renderGridHTML(slots, placements, clashIds, kind) {
+function renderGridHTML(slots, placements, issueMap, kind) {
   // Mockup layout: slots on Y-axis (rows), days on X-axis (columns).
   // pane-ruler: one header row — "SLOT"/"LAB" corner + day labels.
   // slot-row × N: one per slot — slot number + cells for each day.
@@ -533,7 +1394,14 @@ function renderGridHTML(slots, placements, clashIds, kind) {
     h += `<div class="slbl">${label}</div>`;
     DAYS.forEach((day) => {
       const placement = placements.find(pl => pl.day === day && pl.start_time === slot.start);
-      const hasClash = placement && clashIds.has(placement.id);
+      const issues = placement ? placementIssuesFromMap(issueMap, placement.id) : [];
+      const hasClash = issues.length > 0;
+      const clashTone = issues.some(i => i.tone === 'critical') ? 'critical'
+        : issues.some(i => i.tone === 'warn') ? 'warn'
+        : 'cross';
+      const issueTitle = hasClash
+        ? ` title="${esc((IS_AR ? 'افتح دليل التعارض: ' : 'Open clash evidence: ') + [...new Set(issues.map(i => i.kind))].join(' | '))}"`
+        : '';
       const cellAttrs = `data-day="${day}" data-start="${slot.start}" data-end="${slot.end}"`;
       if (placement) {
         const room = placement.room ? esc(placement.room) : '';
@@ -542,10 +1410,11 @@ function renderGridHTML(slots, placements, clashIds, kind) {
         const bg = courseColor(placement.course_code);
         const accent = courseColorBorder(placement.course_code);
         const style = `background:${bg};border-left-color:${accent}`;
-        const cls = `cell filled${hasClash ? ' clash' : ''}${placement.is_locked ? ' locked' : ''}`;
-        h += `<div class="${cls}" ${cellAttrs} data-placement-id="${placement.id}" draggable="${placement.is_locked ? 'false' : 'true'}" style="${style}">`;
+        const cls = `cell filled${hasClash ? ' clash clash-' + clashTone : ''}${placement.is_locked ? ' locked' : ''}`;
+        h += `<div class="${cls}" ${cellAttrs}${issueTitle} data-placement-id="${placement.id}" draggable="${placement.is_locked ? 'false' : 'true'}" style="${style}">`;
         h += `<span class="cid">${esc(placement.course_code)} ${esc(placement.section || '')}</span>`;
         h += `<span class="cmeta">${room}${stu ? '·' + stu : ''}</span>`;
+        h += planLensBadgesHtml(placement);
         h += `</div>`;
       } else {
         h += `<div class="cell" ${cellAttrs}></div>`;
@@ -585,34 +1454,43 @@ function bindPaneControls(idx) {
   });
   // Cell interactions — click to select, drag/drop, sync-hover
   el.querySelectorAll('.cell').forEach(cell => {
-    cell.addEventListener('mouseenter', () => broadcastHover(idx, cell.dataset.day, cell.dataset.start));
+    cell.addEventListener('mouseenter', () => {
+      broadcastHover(idx, cell.dataset.day, cell.dataset.start);
+      showSlotAssistCellStatus(cell);
+    });
     cell.addEventListener('mouseleave', () => broadcastHover(idx, null, null));
     cell.addEventListener('dragover', (e) => {
       e.preventDefault();
-      // Mirror main-page feedback: highlight occupied cells in amber (will
-      // collide) and empty cells in teal (clean drop).
-      if (cell.classList.contains('filled')) cell.classList.add('drop-warning');
-      else cell.classList.add('drop-valid');
+      applySlotDragHint(cell);
     });
     cell.addEventListener('dragleave', () =>
       cell.classList.remove('drop-valid', 'drop-warning', 'drop-critical'));
     cell.addEventListener('drop', (e) => onCellDrop(idx, cell, e));
+    cell.addEventListener('click', (e) => {
+      if (previewSelectedMoveToSlot(idx, cell)) {
+        e.stopPropagation();
+      }
+    });
     if (cell.classList.contains('filled')) {
       cell.addEventListener('dragstart', (e) => {
         if (cell.classList.contains('locked')) { e.preventDefault(); return; }
         const pid = cell.dataset.placementId;
         S.dragSource = { paneIdx: idx, placementId: pid ? parseInt(pid) : null };
+        beginSlotAssist(idx, S.dragSource.placementId);
         e.dataTransfer.setData('text/plain', JSON.stringify({ type: 'move', placement_id: S.dragSource.placementId, source_pane: idx }));
         e.dataTransfer.effectAllowed = 'move';
       });
+      cell.addEventListener('dragend', () => clearSlotAssist());
       cell.addEventListener('click', () => {
         document.querySelectorAll('.tws-pane .cell.selected').forEach(c => c.classList.remove('selected'));
         cell.classList.add('selected');
         S.selectedPaneIdx = idx;
         S.selectedPlacementId = parseInt(cell.dataset.placementId);
         $('twsStatusHover').textContent = `Selected ${cell.querySelector('.cid')?.textContent}`;
-        // Refresh selection tab if the inspector is showing it
-        if (RP.open && RP.tab === 'selection') renderRpanel();
+        beginSlotAssist(idx, S.selectedPlacementId, { sticky: true });
+        // Conflicted cells open directly into evidence so the marker is actionable.
+        if (cell.classList.contains('clash')) openSelectionInspector();
+        else if (RP.open && RP.tab === 'selection') renderRpanel();
       });
       cell.addEventListener('dblclick', (e) => {
         e.stopPropagation();
@@ -627,13 +1505,233 @@ function findPlacement(placementId) {
   for (let i = 0; i < paneCount(); i++) {
     const data = S.panes[i].boardData;
     if (!data) continue;
-    const found = (data.placements || []).find(p => p.id === placementId);
+    const found = (data.placements || []).find(p => String(p.id) === String(placementId));
     if (found) return { placement: found, paneIdx: i };
   }
   return null;
 }
+
+async function movePlacementToSlot({
+  placementId,
+  targetPaneIdx,
+  sourcePaneIdx,
+  day,
+  start,
+  end,
+  room,
+  allowProtected = false,
+  refresh = true,
+  clearAssist = true,
+  notifyResult = true,
+  recordUndo = true,
+  force = false,
+}) {
+  const located = findPlacement(placementId);
+  if (!located) { notify.error(IS_AR ? 'تعذر تحديد الموقع' : 'Source placement not found'); return null; }
+  const reasons = placementProtectionReasons(located.placement);
+  if (!allowProtected && reasons.length) {
+    notify.warning(`${placementShortLabel(located.placement)} ${IS_AR ? 'محمي' : 'is protected'}: ${reasons.join(', ')}`);
+    return null;
+  }
+  const oldDay = located.placement.day;
+  const oldStart = located.placement.start_time;
+  const oldEnd = located.placement.end_time;
+  const oldRoom = located.placement.room || '';
+  const newRoom = room === undefined ? oldRoom : room;
+  if (!force && day === oldDay && start === oldStart && newRoom === oldRoom) return null;
+
+  const payload = { day, start_time: start, end_time: end };
+  if (room !== undefined) payload.room = room;
+  const data = await api(`/ops/tw/placements/${placementId}/move/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!data) { notify.error(T.moveFail); return null; }
+
+  const undoAction = {
+    type: 'move',
+    placement_id: placementId,
+    old_day: oldDay, old_start: oldStart, old_end: oldEnd,
+    old_room: oldRoom,
+    new_day: day, new_start: start, new_end: end,
+    new_room: newRoom,
+  };
+  if (recordUndo) {
+    S.undoStack.push(undoAction);
+    S.redoStack = [];
+    updateUndoRedoButtons();
+  }
+
+  const v = data.validation || {};
+  if (notifyResult) {
+    if ((v.critical_count || 0) > 0) {
+      notify.warning(IS_AR ? `تم النقل مع ${v.critical_count} تعارض` : `Moved with ${v.critical_count} conflict(s)`);
+    } else {
+      notify.success(T.moveOk);
+    }
+  }
+
+  if (clearAssist) clearSlotAssist();
+  const sourceIdx = Number.isFinite(sourcePaneIdx) ? sourcePaneIdx : located.paneIdx;
+  const boardIds = new Set();
+  const targetBoard = S.panes[targetPaneIdx]?.boardId;
+  const sourceBoard = S.panes[sourceIdx]?.boardId;
+  if (targetBoard) boardIds.add(targetBoard);
+  if (sourceBoard) boardIds.add(sourceBoard);
+  if (refresh) {
+    for (let i = 0; i < paneCount(); i++) {
+      if (boardIds.has(S.panes[i].boardId)) await loadAndRenderPane(i);
+    }
+    await refreshBoardsSummary();
+  }
+  return data;
+}
+
+function canBundleCandidate(candidate) {
+  return !!(candidate?.pair?.companion && !candidate.pair.protected?.length);
+}
+
+async function applyCandidateMove({ placementId, targetPaneIdx, sourcePaneIdx, candidate, day, start, end, room, auto = false }) {
+  const located = findPlacement(placementId);
+  if (!located) return null;
+  const pair = candidate && canBundleCandidate(candidate) ? candidate.pair : null;
+  const bundleLabel = pair ? `${placementShortLabel(located.placement)} + ${placementShortLabel(pair.companion)}` : placementShortLabel(located.placement);
+  const targetRoom = room === undefined ? (located.placement.room || '') : room;
+  const firstMove = {
+    type: 'move',
+    placement_id: placementId,
+    old_day: located.placement.day,
+    old_start: located.placement.start_time,
+    old_end: located.placement.end_time,
+    old_room: located.placement.room || '',
+    new_day: day || candidate?.day,
+    new_start: start || candidate?.start,
+    new_end: end || candidate?.end,
+    new_room: targetRoom,
+  };
+  const secondMove = pair ? {
+    type: 'move',
+    placement_id: pair.companion.id,
+    old_day: pair.companion.day,
+    old_start: pair.companion.start_time,
+    old_end: pair.companion.end_time,
+    old_room: pair.companion.room || '',
+    new_day: day || candidate.day,
+    new_start: pair.start,
+    new_end: pair.end,
+    new_room: pair.companion.room || '',
+  } : null;
+  const first = await movePlacementToSlot({
+    placementId,
+    targetPaneIdx,
+    sourcePaneIdx,
+    day: firstMove.new_day,
+    start: firstMove.new_start,
+    end: firstMove.new_end,
+    room,
+    refresh: !pair,
+    clearAssist: !pair,
+    notifyResult: !auto && !pair,
+    recordUndo: !pair,
+  });
+  if (!first) return null;
+
+  if (pair) {
+    const second = await movePlacementToSlot({
+      placementId: pair.companion.id,
+      targetPaneIdx,
+      sourcePaneIdx: targetPaneIdx,
+      day: secondMove.new_day,
+      start: secondMove.new_start,
+      end: secondMove.new_end,
+      refresh: true,
+      clearAssist: true,
+      notifyResult: false,
+      recordUndo: false,
+    });
+    if (!second) {
+      await movePlacementToSlot({
+        placementId,
+        targetPaneIdx: located.paneIdx,
+        sourcePaneIdx: targetPaneIdx,
+        day: firstMove.old_day,
+        start: firstMove.old_start,
+        end: firstMove.old_end,
+        room: firstMove.old_room,
+        allowProtected: true,
+        refresh: true,
+        clearAssist: true,
+        notifyResult: false,
+        recordUndo: false,
+        force: true,
+      });
+      notify.error(IS_AR ? 'تعذر نقل الحزمة؛ تمت استعادة الشعبة الأولى.' : 'Bundle move failed; first section was restored.');
+      return null;
+    }
+    S.undoStack.push({ type: 'bundle_move', moves: [firstMove, secondMove], label: bundleLabel });
+    S.redoStack = [];
+    updateUndoRedoButtons();
+    notify.success(auto
+      ? `${IS_AR ? 'تم نقل الحزمة' : 'Bundled move applied'}: ${bundleLabel}`
+      : `${IS_AR ? 'تم نقل الحزمة' : 'Bundled back-to-back move'}: ${bundleLabel}`);
+  }
+  return first;
+}
+
+function previewSelectedMoveToSlot(paneIdx, cell) {
+  if (!S.slotAssist.active || !S.selectedPlacementId || cell.classList.contains('filled')) return false;
+  if (String(S.slotAssist.placementId) !== String(S.selectedPlacementId)) return false;
+  const key = cell.dataset.slotAssistKey || slotAssistKey(S.slotAssist.kind, cell.dataset.day, cell.dataset.start);
+  const candidate = S.slotAssist.candidates.get(key);
+  if (!candidate) return false;
+  const day = cell.dataset.day;
+  const start = cell.dataset.start;
+  const end = cell.dataset.end;
+  const pending = S.slotAssist.pendingMove;
+  if (
+    pending
+    && String(pending.placementId) === String(S.selectedPlacementId)
+    && pending.paneIdx === paneIdx
+    && pending.day === day
+    && pending.start === start
+  ) {
+    if (pending.applying) return true;
+    pending.applying = true;
+    $('twsStatusHover').textContent = `Moving to ${day} ${start}-${end}...`;
+    applyCandidateMove({
+      placementId: S.selectedPlacementId,
+      targetPaneIdx: paneIdx,
+      sourcePaneIdx: Number.isFinite(S.selectedPaneIdx) ? S.selectedPaneIdx : paneIdx,
+      candidate,
+      day,
+      start,
+      end,
+    }).finally(() => {
+      if (S.slotAssist.pendingMove) S.slotAssist.pendingMove.applying = false;
+    });
+    return true;
+  }
+
+  document.querySelectorAll('.tws-pane .cell.assist-preview').forEach(el => el.classList.remove('assist-preview'));
+  cell.classList.add('assist-preview');
+  S.slotAssist.pendingMove = { placementId: S.selectedPlacementId, paneIdx, day, start, end };
+  const located = findPlacement(S.selectedPlacementId);
+  const label = located ? placementShortLabel(located.placement) : 'Selection';
+  const pairText = canBundleCandidate(candidate)
+    ? ` Bundle ${placementShortLabel(candidate.pair.companion)} ${candidate.pair.relation} ${candidate.pair.start}-${candidate.pair.end}.`
+    : '';
+  $('twsStatusHover').textContent = `Preview move ${label} -> ${day} ${start}-${end}: ${splitSlotDetail(candidate)}.${pairText} Click same slot again to apply.`;
+  if (RP.open && RP.tab === 'selection') renderRpanel();
+  return true;
+}
+
 async function onCellDrop(paneIdx, cell, e) {
   e.preventDefault();
+  const dropCandidate = S.slotAssist.active && cell?.dataset.slotAssistKey
+    ? S.slotAssist.candidates.get(cell.dataset.slotAssistKey)
+    : null;
+  clearSlotAssist();
   cell.classList.remove('drop-valid', 'drop-warning', 'drop-critical');
   let payload;
   try { payload = JSON.parse(e.dataTransfer.getData('text/plain')); } catch { return; }
@@ -651,6 +1749,8 @@ async function onCellDrop(paneIdx, cell, e) {
       body: JSON.stringify({
         board_id: boardId,
         course_code: payload.course_code,
+        course_key: payload.course_key || payload.course_code,
+        course_name: payload.course_name || payload.course_code,
         section_label: payload.section_label,
         day, start_time: start, end_time: end,
         capacity: payload.max_per_section || 40,
@@ -679,56 +1779,15 @@ async function onCellDrop(paneIdx, cell, e) {
   }
   if (payload.type !== 'move' || !payload.placement_id) return;
 
-  // Capture old position BEFORE the mutation so undo can revert cleanly,
-  // matching the main page's onDrop behaviour. If the placement isn't in
-  // our cached boardData (stale cache, mid-optimise, etc.) we abort — the
-  // main page relies on the same pre-check.
-  const located = findPlacement(payload.placement_id);
-  if (!located) { notify.error(IS_AR ? 'تعذّر تحديد الموقع' : 'Source placement not found'); return; }
-  const oldDay = located.placement.day;
-  const oldStart = located.placement.start_time;
-  const oldEnd = located.placement.end_time;
-
-  // day, start, end already captured at the top of onCellDrop
-  // Skip no-op drops
-  if (day === oldDay && start === oldStart) return;
-
-  const data = await api(`/ops/tw/placements/${payload.placement_id}/move/`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ day, start_time: start, end_time: end }),
+  await applyCandidateMove({
+    placementId: payload.placement_id,
+    targetPaneIdx: paneIdx,
+    sourcePaneIdx: Number.isFinite(payload.source_pane) ? payload.source_pane : paneIdx,
+    candidate: dropCandidate,
+    day,
+    start,
+    end,
   });
-  if (!data) { notify.error(IS_AR ? 'تعذّر النقل' : 'Move failed'); return; }
-
-  // Push full-fidelity undo entry — identical shape to main-page undo stack.
-  S.undoStack.push({
-    type: 'move',
-    placement_id: payload.placement_id,
-    old_day: oldDay, old_start: oldStart, old_end: oldEnd,
-    new_day: day, new_start: start, new_end: end,
-  });
-  S.redoStack = [];
-  updateUndoRedoButtons();
-
-  // Match main-page UX: show a warning toast when placement lands on conflicts
-  // and a success toast otherwise.
-  const v = data.validation || {};
-  if ((v.critical_count || 0) > 0) {
-    notify.warning(IS_AR
-      ? `تم النقل مع ${v.critical_count} تعارض`
-      : `Moved with ${v.critical_count} conflict(s)`);
-  } else {
-    notify.success(IS_AR ? 'تم النقل' : 'Moved');
-  }
-
-  // Refresh every pane that could be affected (target, source, and any pane
-  // showing the same board), plus aggregate metrics.
-  const sourceIdx = Number.isFinite(payload.source_pane) ? payload.source_pane : paneIdx;
-  const boardIds = new Set([S.panes[paneIdx].boardId, S.panes[sourceIdx].boardId]);
-  for (let i = 0; i < paneCount(); i++) {
-    if (boardIds.has(S.panes[i].boardId)) await loadAndRenderPane(i);
-  }
-  await refreshBoardsSummary();
 }
 
 async function refreshBoardsSummary() {
@@ -736,12 +1795,25 @@ async function refreshBoardsSummary() {
   const bdata = await api(`/ops/tw/boards/?scenario_id=${S.scenarioId}`);
   if (bdata && bdata.boards) {
     S.boards = bdata.boards;
+    S.crossBoardClashCount = Number(bdata.cross_board_clashes || 0);
     updateAggregateMetrics();
     renderSlotBar();
   }
+  await loadPlanLens({ rerender: true });
   // Invalidate capacity cache and refresh the panels if open — mutations
   // may have changed conflict counts and capacity deltas.
   RP.capacity = {};
+  RP.fixQueue.cache = {};
+  RP.fixQueue.items = [];
+  RP.fixQueue.token += 1;
+  RP.builder.token += 1;
+  RP.builder.resolverToken += 1;
+  RP.builder.readiness = null;
+  RP.builder.actions = [];
+  RP.builder.activeAction = null;
+  RP.builder.resolver = null;
+  RP.builder.roomCache = {};
+  RP.builder.studentCache = {};
   if (RP.open) renderRpanel();
   if (BP.open) renderBpanel();
 }
@@ -992,6 +2064,779 @@ function renderRpanel() {
   else if (RP.tab === 'capacity') renderRpanelCapacity(body);
   else if (RP.tab === 'selection') renderRpanelSelection(body);
 }
+
+function openSelectionInspector() {
+  if (!RP.open) toggleRpanel(true);
+  if (RP.tab !== 'selection') setRpanelTab('selection');
+  else renderRpanel();
+}
+
+function issueRowIds(row) {
+  return (row?.ids || [row?.placement_a_id, row?.placement_b_id]).filter(id => id != null);
+}
+
+function addPlacementIssue(map, id, issue) {
+  const key = String(id);
+  const list = map.get(key) || [];
+  list.push(issue);
+  map.set(key, list);
+}
+
+function placementIssuesFromMap(map, placementId) {
+  return map.get(String(placementId)) || [];
+}
+
+function placementIssueMap(conflicts, boardId) {
+  const map = new Map();
+  (conflicts.overlaps || []).forEach(row => {
+    const sections = (row.sections || []).join(' / ');
+    const shared = row.shared_students != null
+      ? ` | ${row.shared_students} shared students`
+      : '';
+    issueRowIds(row).forEach(id => addPlacementIssue(map, id, {
+      kind: 'Same-board time clash',
+      tone: row.severity === 'warning' ? 'warn' : 'critical',
+      title: sections || 'Same-board time clash',
+      detail: `${row.detail || ''}${shared}`,
+    }));
+  });
+  (conflicts.instructor_clashes || []).forEach(row => {
+    issueRowIds(row).forEach(id => addPlacementIssue(map, id, {
+      kind: 'Instructor clash',
+      tone: 'critical',
+      title: `${row.instructor || 'Instructor'} | ${(row.sections || []).join(' / ')}`,
+      detail: row.detail || '',
+    }));
+  });
+  (conflicts.room_clashes || []).forEach(row => {
+    issueRowIds(row).forEach(id => addPlacementIssue(map, id, {
+      kind: 'Room clash',
+      tone: 'warn',
+      title: `${row.room || 'Room'} | ${(row.sections || []).join(' / ')}`,
+      detail: row.detail || '',
+    }));
+  });
+  (conflicts.cross_board || []).forEach(row => {
+    const isBoardA = String(row.board_a_id) === String(boardId);
+    const isBoardB = String(row.board_b_id) === String(boardId);
+    if (!isBoardA && !isBoardB) return;
+    const otherSection = isBoardA ? row.section_b : row.section_a;
+    const otherBoard = isBoardA ? row.board_b_label : row.board_a_label;
+    issueRowIds(row).forEach(id => addPlacementIssue(map, id, {
+      kind: 'Student clash across boards',
+      tone: 'cross',
+      title: `${isBoardA ? row.section_a : row.section_b} vs ${otherSection}`,
+      detail: `${row.overlap_count || 0} affected students | across boards with ${otherBoard || 'Other board'}${row.time ? ' | ' + row.time : ''}`,
+    }));
+  });
+  return map;
+}
+
+function readinessConsoleHtml(readiness) {
+  if (!readiness) {
+    return `<div class="tws-builder-console loading">${IS_AR ? 'جاري فحص الجاهزية...' : 'Checking readiness...'}</div>`;
+  }
+  const blockers = readiness.blockers || [];
+  const warnings = readiness.warnings || [];
+  const ready = !!readiness.ready;
+  const rows = [
+    { label: IS_AR ? 'الحواجز' : 'Blockers', value: blockers.length, tone: blockers.length ? 'block' : 'ok' },
+    { label: IS_AR ? 'تحذيرات' : 'Warnings', value: warnings.length, tone: warnings.length ? 'warn' : 'ok' },
+    { label: IS_AR ? 'النشر' : 'Publish', value: ready ? (IS_AR ? 'جاهز' : 'Ready') : (IS_AR ? 'غير جاهز' : 'Blocked'), tone: ready ? 'ok' : 'block' },
+  ];
+  const details = [...blockers.slice(0, 3).map(text => ({ tone: 'block', text })), ...warnings.slice(0, 2).map(text => ({ tone: 'warn', text }))];
+  return `<div class="tws-builder-console ${ready ? 'ready' : 'blocked'}">
+    <div class="tws-builder-title">${IS_AR ? 'فحص الجاهزية' : 'Readiness console'}</div>
+    <div class="tws-builder-kpis">
+      ${rows.map(row => `<span class="${row.tone}"><b>${esc(row.value)}</b>${esc(row.label)}</span>`).join('')}
+    </div>
+    ${details.length
+      ? `<div class="tws-builder-notes">${details.map(d => `<div class="${d.tone}">${esc(d.text)}</div>`).join('')}</div>`
+      : `<div class="tws-builder-notes"><div class="ok">${IS_AR ? 'لا توجد حواجز نشر حالياً.' : 'No publish blockers right now.'}</div></div>`}
+  </div>`;
+}
+
+function builderActionKey(action) {
+  return [
+    action?.kind || '',
+    action?.board_id || '',
+    action?.course_code || '',
+    (action?.placement_ids || []).join(','),
+    action?.title || '',
+  ].join('|');
+}
+
+function actionPlacementIds(action) {
+  return (action?.placement_ids || [])
+    .map(v => parseInt(v))
+    .filter(Number.isFinite);
+}
+
+function isRoomGuidedAction(action) {
+  return ['room_clash', 'unassigned_room'].includes(action?.kind || '');
+}
+
+function isTimeGuidedAction(action) {
+  return ['student_time_clash', 'instructor_clash'].includes(action?.kind || '');
+}
+
+function actionCardHtml(action, idx) {
+  const ids = (action.placement_ids || []).join(',');
+  const severity = action.severity || 'warn';
+  const board = action.board_label ? `<span>${esc(action.board_label)}</span>` : '';
+  const course = action.course_code ? `<span>${esc(action.course_code)}</span>` : '';
+  const active = RP.builder.activeAction && builderActionKey(RP.builder.activeAction) === builderActionKey(action) ? ' active' : '';
+  return `<div class="tws-builder-action ${severity}${active}" data-action-idx="${idx}" data-placement-ids="${esc(ids)}" data-kind="${esc(action.kind || '')}">
+    <div class="tws-builder-action-main">
+      <b>${esc(action.title || '')}</b>
+      <em>${esc(action.cta || '')}</em>
+    </div>
+    <div class="tws-builder-action-detail">${esc(action.detail || '')}</div>
+    <div class="tws-builder-action-meta">${board}${course}<span>${esc(action.kind || '')}</span></div>
+  </div>`;
+}
+
+function renderBuilderActionsHtml(actions) {
+  if (!actions) {
+    return `<div class="tws-fix-empty">${IS_AR ? 'جاري ترتيب الخطوات التالية...' : 'Ranking next actions...'}</div>`;
+  }
+  if (!actions.length) {
+    return `<div class="tws-fix-empty">${IS_AR ? 'لا توجد خطوات عاجلة.' : 'No urgent builder actions.'}</div>`;
+  }
+  return actions.slice(0, 8).map(actionCardHtml).join('');
+}
+
+async function ensureActionBoardVisible(action) {
+  const boardId = parseInt(action?.board_id);
+  if (!Number.isFinite(boardId)) return null;
+  for (let i = 0; i < paneCount(); i++) {
+    if (S.panes[i]?.boardId === boardId) return i;
+  }
+  let targetPane = -1;
+  for (let i = 0; i < paneCount(); i++) {
+    if (!S.panes[i]?.boardId) {
+      targetPane = i;
+      break;
+    }
+  }
+  if (targetPane < 0 && Number.isFinite(S.selectedPaneIdx) && S.selectedPaneIdx >= 0 && S.selectedPaneIdx < paneCount()) {
+    targetPane = S.selectedPaneIdx;
+  }
+  if (targetPane < 0) targetPane = 0;
+  await setPaneBoard(targetPane, boardId);
+  return targetPane;
+}
+
+function selectPlacementForGuidance(placementId, paneIdx, opts = {}) {
+  document.querySelectorAll('.tws-pane .cell.selected').forEach(c => c.classList.remove('selected'));
+  const sourceCell = document.querySelector(`.tws-pane .cell[data-placement-id="${placementId}"]`);
+  if (sourceCell) {
+    sourceCell.classList.add('selected');
+    sourceCell.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  S.selectedPaneIdx = paneIdx;
+  S.selectedPlacementId = placementId;
+  if (opts.slotAssist) beginSlotAssist(paneIdx, placementId, { sticky: true });
+}
+
+function roomCodeKey(roomCode) {
+  return String(roomCode || '').trim().toUpperCase();
+}
+
+function bestRoomCandidate(roomData, currentRoom) {
+  const rooms = roomData?.candidates || [];
+  const current = roomCodeKey(currentRoom);
+  return rooms.find(room => room.available && room.slot_clean && roomCodeKey(room.room_code) !== current)
+    || rooms.find(room => room.available && roomCodeKey(room.room_code) !== current)
+    || rooms.find(room => room.available && room.slot_clean)
+    || rooms.find(room => room.available)
+    || null;
+}
+
+function guidedSlotFromPlacement(placement) {
+  return {
+    label: 'Current slot',
+    day: placement.day,
+    start: placement.start_time,
+    end: placement.end_time,
+  };
+}
+
+function guidedSlotFromCandidate(candidate) {
+  return {
+    label: splitSlotLabel(candidate),
+    day: candidate.day,
+    start: candidate.start,
+    end: candidate.end,
+  };
+}
+
+async function roomCandidatesForGuidedSlot(placementId, slot) {
+  const key = roomCacheKey(placementId, slot);
+  if (RP.builder.roomCache[key]) return RP.builder.roomCache[key];
+  const qs = new URLSearchParams({ day: slot.day, start_time: slot.start, end_time: slot.end });
+  const data = await api(`/ops/tw/placements/${placementId}/room-candidates/?${qs.toString()}`);
+  if (data) RP.builder.roomCache[key] = data;
+  return data;
+}
+
+function guidedCandidateRank(item) {
+  const c = item?.candidate || {};
+  return (
+    (canBundleCandidate(c) ? 160000 : 0)
+    + Number(c.impact_improvement || 0) * 1000
+    + Number(c.student_improvement || 0) * 100
+    + Number(c.critical_improvement || 0) * 100
+    + Number(c.warning_improvement || 0) * 10
+    - Number(c.score || 0)
+  );
+}
+
+function guidedRoomRank(item) {
+  const room = item?.room || {};
+  return (
+    (room.available ? 100000 : 0)
+    + (room.slot_clean ? 20000 : 0)
+    - Number(room.score || 0)
+  );
+}
+
+async function buildGuidedRoomResolver(action, locatedItems) {
+  const options = [];
+  await Promise.all(locatedItems.map(async item => {
+    const slot = guidedSlotFromPlacement(item.placement);
+    const roomData = await roomCandidatesForGuidedSlot(item.placement.id, slot);
+    const room = bestRoomCandidate(roomData, item.placement.room);
+    if (!room) return;
+    options.push({
+      status: 'ready',
+      mode: 'room',
+      action,
+      placementId: item.placement.id,
+      paneIdx: item.paneIdx,
+      placement: item.placement,
+      slot,
+      room,
+      roomData,
+    });
+  }));
+  if (!options.length) {
+    return {
+      status: 'empty',
+      mode: 'room',
+      action,
+      message: 'No available room candidate was found for the affected section.',
+    };
+  }
+  options.sort((a, b) => guidedRoomRank(b) - guidedRoomRank(a));
+  return options[0];
+}
+
+async function buildGuidedTimeResolver(action, locatedItems) {
+  const options = [];
+  await Promise.all(locatedItems.map(async item => {
+    const data = await api(`/ops/tw/placements/${item.placement.id}/slot-candidates/`);
+    const candidate = bestVisibleQueueCandidate(item.paneIdx, item.placement, data);
+    if (!candidate) return;
+    const slot = guidedSlotFromCandidate(candidate);
+    const roomData = await roomCandidatesForGuidedSlot(item.placement.id, slot);
+    options.push({
+      status: 'ready',
+      mode: 'time',
+      action,
+      placementId: item.placement.id,
+      paneIdx: item.paneIdx,
+      placement: item.placement,
+      candidate,
+      slot,
+      room: bestRoomCandidate(roomData, item.placement.room),
+      roomData,
+    });
+  }));
+  if (!options.length) {
+    return {
+      status: 'empty',
+      mode: 'time',
+      action,
+      message: 'No improving empty slot is visible for this action. Open another board pane or unlock protected sections.',
+    };
+  }
+  options.sort((a, b) => guidedCandidateRank(b) - guidedCandidateRank(a));
+  return options[0];
+}
+
+function paintGuidedResolverTarget(resolver) {
+  if (resolver?.mode !== 'time' || !resolver.candidate) return;
+  const located = findPlacement(resolver.placementId);
+  if (!located) return;
+  const placement = located.placement;
+  const candidate = resolver.candidate;
+  beginSlotAssist(located.paneIdx, resolver.placementId, { sticky: true });
+  const kind = candidate.kind || slotKindForPlacement(placement);
+  const key = slotAssistKey(kind, candidate.day, candidate.start);
+  const existing = S.slotAssist.candidates.get(key) || {};
+  S.slotAssist.candidates.set(key, { ...existing, ...candidate });
+  const targetCell = slotCellForCandidate(located.paneIdx, candidate, kind);
+  if (!targetCell || targetCell.classList.contains('filled')) return;
+  targetCell.dataset.slotAssistKey = key;
+  targetCell.dataset.slotAssistTitle = splitSlotDetail(candidate);
+  const tone = slotAssistTone(candidate);
+  targetCell.classList.add(tone === 'avoid' ? 'assist-avoid' : tone === 'risky' ? 'assist-risky' : 'assist-clean');
+  document.querySelectorAll('.tws-pane .cell.assist-preview').forEach(el => el.classList.remove('assist-preview'));
+  targetCell.classList.add('assist-preview');
+  S.slotAssist.pendingMove = {
+    placementId: resolver.placementId,
+    paneIdx: located.paneIdx,
+    day: candidate.day,
+    start: candidate.start,
+    end: candidate.end,
+  };
+  $('twsStatusHover').textContent = `Guided fix preview ${placementShortLabel(placement)} -> ${candidate.day} ${candidate.start}-${candidate.end}: ${splitSlotDetail(candidate)}`;
+}
+
+async function focusMissingSectionAction(action) {
+  toggleSidebar(true);
+  SB.search = action.course_code || '';
+  const search = $('twsSectionSearch');
+  if (search) search.value = SB.search;
+  await loadSidebarBudget();
+  notify.info && notify.info(`Opened required sections for ${action.course_code || 'this course'}`);
+}
+
+async function beginGuidedAction(action) {
+  if (!action) return;
+  const token = ++RP.builder.resolverToken;
+  RP.builder.activeAction = action;
+  RP.builder.resolver = { status: 'loading', action, message: 'Building the safest guided fix...' };
+
+  const placementIds = actionPlacementIds(action);
+  if (!placementIds.length) {
+    if (action.kind === 'missing_section') await focusMissingSectionAction(action);
+    RP.builder.resolver = {
+      status: 'manual',
+      action,
+      message: action.kind === 'missing_section'
+        ? 'Drag the missing section from Required Sections into a highlighted slot.'
+        : 'This action needs a manual step before a placement can be selected.',
+    };
+    if (RP.open) renderRpanel();
+    return;
+  }
+
+  await ensureActionBoardVisible(action);
+  if (token !== RP.builder.resolverToken) return;
+
+  const locatedItems = placementIds
+    .map(id => {
+      const located = findPlacement(id);
+      return located ? { placement: located.placement, paneIdx: located.paneIdx } : null;
+    })
+    .filter(Boolean);
+  if (!locatedItems.length) {
+    RP.builder.resolver = {
+      status: 'empty',
+      action,
+      message: 'The affected placement is not visible yet. Load its board and try again.',
+    };
+    if (RP.open) renderRpanel();
+    return;
+  }
+
+  const first = locatedItems[0];
+  selectPlacementForGuidance(first.placement.id, first.paneIdx, { slotAssist: isTimeGuidedAction(action) });
+  setRpanelTab('selection');
+
+  const resolver = isRoomGuidedAction(action)
+    ? await buildGuidedRoomResolver(action, locatedItems)
+    : await buildGuidedTimeResolver(action, locatedItems);
+  if (token !== RP.builder.resolverToken) return;
+  RP.builder.resolver = resolver;
+  if (resolver.placementId) {
+    selectPlacementForGuidance(resolver.placementId, resolver.paneIdx, { slotAssist: false });
+    paintGuidedResolverTarget(resolver);
+  }
+  if (RP.open && RP.tab === 'selection') renderRpanel();
+}
+
+function guidedResolverHtml(placement) {
+  const resolver = RP.builder.resolver;
+  const action = RP.builder.activeAction;
+  if (!action || !resolver) return '';
+  const ids = actionPlacementIds(action).map(String);
+  const selectedMatches = !ids.length || ids.includes(String(placement.id)) || String(resolver.placementId || '') === String(placement.id);
+  if (!selectedMatches) return '';
+
+  const title = action.title || 'Guided resolver';
+  const detail = action.detail || '';
+  if (resolver.status === 'loading') {
+    return `<div class="tws-guided-resolver loading">
+      <div class="tws-guided-head"><b>Guided resolver</b><span>working</span></div>
+      <div class="tws-guided-title">${esc(title)}</div>
+      <div class="tws-guided-detail">${esc(resolver.message || 'Computing the safest option...')}</div>
+    </div>`;
+  }
+  if (resolver.status !== 'ready') {
+    return `<div class="tws-guided-resolver warn">
+      <div class="tws-guided-head"><b>Guided resolver</b><span>manual</span></div>
+      <div class="tws-guided-title">${esc(title)}</div>
+      <div class="tws-guided-detail">${esc(resolver.message || detail || 'No automatic fix is ready.')}</div>
+    </div>`;
+  }
+
+  const slot = resolver.slot || {};
+  const room = resolver.room;
+  const roomText = room
+    ? `${room.room_code}${room.capacity ? ` | ${room.capacity} seats` : ''}${room.slot_clean ? ' | clean' : room.available ? ' | available' : ''}`
+    : 'No room change suggested';
+  const buttonText = resolver.applying ? 'Applying...' : 'Apply guided fix';
+  let impactHtml = '';
+  if (resolver.mode === 'time') {
+    const c = resolver.candidate || {};
+    const before = Number(c.current_student_affected_count || 0);
+    const after = Number(c.student_affected_count || c.studentAffected || 0);
+    const saved = Number(c.student_improvement || before - after || 0);
+    const tags = candidateSignalTags(c).slice(0, 4);
+    impactHtml = `<div class="tws-guided-metrics">
+      <span><b>${before}</b> before</span>
+      <span><b>${after}</b> after</span>
+      <span><b>${saved > 0 ? `-${saved}` : saved}</b> students</span>
+    </div>
+    ${tags.length ? `<div class="tws-fix-tags">${tags.map(tag => `<span>${esc(tag)}</span>`).join('')}</div>` : ''}
+    ${canBundleCandidate(c) ? `<div class="tws-fix-bundle">Bundle ${esc(placementShortLabel(c.pair.companion))} ${esc(c.pair.relation)} ${esc(c.pair.start)}-${esc(c.pair.end)}</div>` : ''}`;
+  }
+  return `<div class="tws-guided-resolver ready">
+    <div class="tws-guided-head"><b>Guided resolver</b><span>${esc(resolver.mode === 'room' ? 'room' : 'time')}</span></div>
+    <div class="tws-guided-title">${esc(title)}</div>
+    <div class="tws-guided-detail">${esc(detail)}</div>
+    <div class="tws-guided-steps">
+      <span><b>1</b>Select ${esc(placementShortLabel(placement))}</span>
+      <span><b>2</b>${esc(slot.label || 'Target')} ${esc(slot.day || '')} ${esc(slot.start || '')}-${esc(slot.end || '')}</span>
+      <span><b>3</b>Room ${esc(roomText)}</span>
+    </div>
+    ${impactHtml}
+    <button class="tws-btn primary tws-guided-apply" id="twsApplyGuidedFix" ${resolver.applying ? 'disabled' : ''}>${esc(buttonText)}</button>
+  </div>`;
+}
+
+async function applyGuidedResolver() {
+  const resolver = RP.builder.resolver;
+  if (!resolver || resolver.status !== 'ready' || resolver.applying) return;
+  resolver.applying = true;
+  if (RP.open && RP.tab === 'selection') renderRpanel();
+  let ok = false;
+  if (resolver.mode === 'room') {
+    const data = await applyRoomCandidate(resolver.placementId, resolver.room, resolver.slot);
+    ok = data !== null;
+  } else {
+    const located = findPlacement(resolver.placementId);
+    const roomCode = resolver.room?.room_code && roomCodeKey(resolver.room.room_code) !== roomCodeKey(located?.placement?.room)
+      ? resolver.room.room_code
+      : undefined;
+    const data = await applyCandidateMove({
+      placementId: resolver.placementId,
+      targetPaneIdx: resolver.paneIdx,
+      sourcePaneIdx: resolver.paneIdx,
+      candidate: resolver.candidate,
+      room: roomCode,
+      auto: true,
+    });
+    ok = !!data;
+  }
+  if (ok) {
+    const needsGuidedToast = resolver.mode === 'time' && !canBundleCandidate(resolver.candidate);
+    RP.builder.activeAction = null;
+    RP.builder.resolver = null;
+    if (needsGuidedToast) notify.success('Guided fix applied');
+  } else if (RP.builder.resolver) {
+    RP.builder.resolver.applying = false;
+    if (RP.open && RP.tab === 'selection') renderRpanel();
+  }
+}
+
+async function refreshBuilderConsole(body) {
+  if (!S.scenarioId || !body) return;
+  const token = ++RP.builder.token;
+  const readinessBox = body.querySelector('#twsReadinessConsole');
+  const actionsBox = body.querySelector('#twsNextActions');
+  if (readinessBox) readinessBox.innerHTML = readinessConsoleHtml(RP.builder.readiness);
+  if (actionsBox) actionsBox.innerHTML = renderBuilderActionsHtml(RP.builder.actions.length ? RP.builder.actions : null);
+  const [readinessData, actionsData] = await Promise.all([
+    api(`/ops/tw/scenarios/${S.scenarioId}/readiness/`),
+    api(`/ops/tw/scenarios/${S.scenarioId}/builder-actions/?limit=12`),
+  ]);
+  if (token !== RP.builder.token || !RP.open || RP.tab !== 'issues') return;
+  RP.builder.readiness = readinessData?.readiness || actionsData?.readiness || null;
+  RP.builder.actions = actionsData?.actions || [];
+  if (readinessBox) readinessBox.innerHTML = readinessConsoleHtml(RP.builder.readiness);
+  if (actionsBox) {
+    actionsBox.innerHTML = renderBuilderActionsHtml(RP.builder.actions);
+    const actionCount = body.querySelector('#twsNextActionsCount');
+    if (actionCount) actionCount.textContent = String(RP.builder.actions.length);
+    actionsBox.querySelectorAll('.tws-builder-action[data-placement-ids]').forEach(card => {
+      card.addEventListener('click', () => {
+        const action = RP.builder.actions[parseInt(card.dataset.actionIdx || '-1')];
+        if (!action) return;
+        const ids = actionPlacementIds(action);
+        if (ids.length) highlightPlacements(ids);
+        beginGuidedAction(action);
+      });
+    });
+  }
+}
+
+function collectFixQueuePlacementIds(boards) {
+  const ids = new Set();
+  boards.forEach(b => {
+    (b.conflicts.overlaps || []).forEach(o => (o.ids || []).forEach(id => ids.add(id)));
+    (b.conflicts.instructor_clashes || []).forEach(o => (o.ids || []).forEach(id => ids.add(id)));
+    (b.conflicts.room_clashes || []).forEach(o => (o.ids || []).forEach(id => ids.add(id)));
+    (b.conflicts.cross_board || []).forEach(o => issueRowIds(o).forEach(id => ids.add(id)));
+  });
+  return Array.from(ids).filter(id => {
+    const located = findPlacement(id);
+    return located && !isPlacementProtected(located.placement);
+  });
+}
+
+function bestVisibleQueueCandidate(paneIdx, placement, data) {
+  const kind = slotKindForPlacement(placement);
+  const localBySlot = new Map(
+    buildSplitSlotCandidates(paneIdx, placement)
+      .map(c => [slotAssistKey(c.kind, c.day, c.start), c])
+  );
+  const candidates = (data?.candidates || []).map(row => {
+    const normal = normaliseStudentAwareCandidate(row);
+    const local = localBySlot.get(slotAssistKey(normal.kind || kind, normal.day, normal.start)) || {};
+    return { ...local, ...normal, pair: local.pair };
+  });
+  return candidates
+    .filter(c => {
+      const cell = slotCellForCandidate(paneIdx, c, c.kind || kind);
+      if (!cell || cell.classList.contains('filled')) return false;
+      const improvement = Number(c.impact_improvement || 0);
+      const studentImprovement = Number(c.student_improvement || 0);
+      const criticalImprovement = Number(c.critical_improvement || 0);
+      return improvement > 0 || studentImprovement > 0 || criticalImprovement > 0;
+    })
+    .sort((a, b) =>
+      (canBundleCandidate(b) ? 160 : 0) - (canBundleCandidate(a) ? 160 : 0)
+      ||
+      Number(b.impact_improvement || 0) - Number(a.impact_improvement || 0)
+      || Number(b.student_improvement || 0) - Number(a.student_improvement || 0)
+      || Number(b.critical_improvement || 0) - Number(a.critical_improvement || 0)
+      || Number(a.score || 0) - Number(b.score || 0)
+    )[0] || null;
+}
+
+function fixQueueCardHtml(item, idx) {
+  const c = item.candidate;
+  const before = Number(c.current_student_affected_count || 0);
+  const after = Number(c.student_affected_count || c.studentAffected || 0);
+  const saved = Number(c.student_improvement || before - after);
+  const critical = Number(c.critical_improvement || 0);
+  const warning = Number(c.warning_improvement || 0);
+  const badge = saved > 0 ? `Save ${saved}` : critical > 0 ? `Reduce critical` : warning > 0 ? 'Reduce warning' : 'Improve';
+  const studentDelta = saved > 0 ? `-${saved}` : saved < 0 ? `+${Math.abs(saved)}` : '0';
+  const bundle = canBundleCandidate(c)
+    ? `<div class="tws-fix-bundle">${IS_AR ? 'حزمة متتالية' : 'Bundle'} ${esc(placementShortLabel(c.pair.companion))} ${esc(c.pair.relation)} ${esc(c.pair.start)}-${esc(c.pair.end)}</div>`
+    : '';
+  const tags = candidateSignalTags(c);
+  const tagHtml = tags.length
+    ? `<div class="tws-fix-tags">${tags.slice(0, 4).map(tag => `<span>${esc(tag)}</span>`).join('')}</div>`
+    : '';
+  const tone = slotAssistTone(c);
+  return `<div class="tws-fix-card ${tone}" data-fix-idx="${idx}">
+    <div class="tws-fix-main">
+      <span class="tws-fix-badge">${esc(badge)}</span>
+      <b>${esc(item.label)}</b>
+      <span>${esc(c.day)} ${esc(c.start)}-${esc(c.end)}</span>
+    </div>
+    <div class="tws-fix-impact">
+      <span>${IS_AR ? 'قبل' : 'Before'} <b>${before}</b></span>
+      <span>${IS_AR ? 'بعد' : 'After'} <b>${after}</b></span>
+      <span>${IS_AR ? 'الطلاب' : 'Students'} <b>${studentDelta}</b></span>
+    </div>
+    ${tagHtml}
+    ${bundle}
+    <div class="tws-fix-evidence">${esc(splitSlotDetail(c))}</div>
+  </div>`;
+}
+
+async function refreshFixQueue(boards) {
+  const container = $('twsFixQueueBody');
+  if (!container) return;
+  const placementIds = collectFixQueuePlacementIds(boards).slice(0, 18);
+  if (!placementIds.length) {
+    container.innerHTML = `<div class="tws-fix-empty">${IS_AR ? 'لا توجد مشاكل قابلة للترتيب في اللوحات المعروضة.' : 'No visible issue placements to rank.'}</div>`;
+    $('twsFixQueueCount').textContent = '0';
+    return;
+  }
+
+  const token = ++RP.fixQueue.token;
+  container.innerHTML = `<div class="tws-fix-empty">${IS_AR ? 'جاري حساب أفضل النقلات...' : 'Calculating best moves...'}</div>`;
+  await Promise.all(placementIds.map(async id => {
+    if (RP.fixQueue.cache[id]) return;
+    const data = await api(`/ops/tw/placements/${id}/slot-candidates/`);
+    if (data) RP.fixQueue.cache[id] = data;
+  }));
+  if (token !== RP.fixQueue.token) return;
+
+  const items = [];
+  placementIds.forEach(id => {
+    const located = findPlacement(id);
+    const data = RP.fixQueue.cache[id];
+    if (!located || !data) return;
+    const candidate = bestVisibleQueueCandidate(located.paneIdx, located.placement, data);
+    if (!candidate) return;
+    items.push({
+      placementId: id,
+      paneIdx: located.paneIdx,
+      label: placementShortLabel(located.placement),
+      placement: located.placement,
+      candidate,
+    });
+  });
+
+  items.sort((a, b) =>
+    (canBundleCandidate(b.candidate) ? 160 : 0) - (canBundleCandidate(a.candidate) ? 160 : 0)
+    || Number(b.candidate.impact_improvement || 0) - Number(a.candidate.impact_improvement || 0)
+    || Number(b.candidate.student_improvement || 0) - Number(a.candidate.student_improvement || 0)
+    || Number(a.candidate.score || 0) - Number(b.candidate.score || 0)
+  );
+  const seenMoveKeys = new Set();
+  const dedupedItems = [];
+  items.forEach(item => {
+    const key = [
+      item.label,
+      item.candidate.kind || slotKindForPlacement(item.placement),
+      item.candidate.day,
+      item.candidate.start,
+    ].join('|');
+    if (seenMoveKeys.has(key)) return;
+    seenMoveKeys.add(key);
+    dedupedItems.push(item);
+  });
+  RP.fixQueue.items = dedupedItems.slice(0, 6);
+  $('twsFixQueueCount').textContent = String(RP.fixQueue.items.length);
+  if (!RP.fixQueue.items.length) {
+    container.innerHTML = `<div class="tws-fix-empty">${IS_AR ? 'لا توجد نقلة محسنة إلى خانة فارغة حالياً.' : 'No improving move to an empty visible slot right now.'}</div>`;
+    return;
+  }
+  container.innerHTML = RP.fixQueue.items.map(fixQueueCardHtml).join('');
+  container.querySelectorAll('.tws-fix-card').forEach(card => {
+    card.addEventListener('click', () => previewFixQueueItem(parseInt(card.dataset.fixIdx)));
+  });
+}
+
+function previewFixQueueItem(idx) {
+  const item = RP.fixQueue.items[idx];
+  if (!item) return;
+  document.querySelectorAll('.tws-pane .cell.selected').forEach(c => c.classList.remove('selected'));
+  const sourceCell = document.querySelector(`.tws-pane .cell[data-placement-id="${item.placementId}"]`);
+  if (sourceCell) sourceCell.classList.add('selected');
+  S.selectedPaneIdx = item.paneIdx;
+  S.selectedPlacementId = item.placementId;
+  beginSlotAssist(item.paneIdx, item.placementId, { sticky: true });
+  const key = slotAssistKey(item.candidate.kind || slotKindForPlacement(item.placement), item.candidate.day, item.candidate.start);
+  const existing = S.slotAssist.candidates.get(key) || {};
+  S.slotAssist.candidates.set(key, { ...existing, ...item.candidate });
+  const targetCell = slotCellForCandidate(item.paneIdx, item.candidate, item.candidate.kind || slotKindForPlacement(item.placement));
+  if (targetCell) {
+    targetCell.dataset.slotAssistKey = key;
+    targetCell.dataset.slotAssistTitle = splitSlotDetail(item.candidate);
+    const tone = slotAssistTone(item.candidate);
+    targetCell.classList.add(tone === 'avoid' ? 'assist-avoid' : tone === 'risky' ? 'assist-risky' : 'assist-clean');
+    previewSelectedMoveToSlot(item.paneIdx, targetCell);
+  }
+  if (sourceCell) sourceCell.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function confirmAutoFixModal({ boardLabel, moves, bundleCount }) {
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = value => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const rows = moves.map(item => {
+      const c = item.candidate;
+      const saved = Number(c.student_improvement || 0);
+      const bundle = canBundleCandidate(c) ? ` + ${placementShortLabel(c.pair.companion)}` : '';
+      return `<div class="tws-auto-row">
+        <b>${esc(item.label)}${esc(bundle)}</b>
+        <span>${esc(c.day)} ${esc(c.start)}-${esc(c.end)}</span>
+        <em>${saved > 0 ? `save ${saved}` : 'improve'}</em>
+      </div>`;
+    }).join('');
+    openModal({
+      title: IS_AR ? 'إصلاح لوحة واحدة' : 'Auto-fix one board',
+      sub: boardLabel,
+      body: `<div class="tws-auto-confirm">
+        <p>${IS_AR ? 'سيتم تطبيق النقلات التالية على اللوحة فقط. يمكن التراجع عنها من زر التراجع.' : `This will apply ${moves.length} move(s) on this board only. Undo remains available after applying.`}</p>
+        ${bundleCount ? `<p class="note">${bundleCount} ${IS_AR ? 'حزمة متتالية' : 'back-to-back bundle(s)'}.</p>` : ''}
+        ${rows}
+      </div>`,
+      buttons: [
+        { label: IS_AR ? 'إلغاء' : 'Cancel', onClick: () => finish(false) },
+        { label: IS_AR ? 'تطبيق' : 'Apply moves', variant: 'primary', onClick: () => finish(true) },
+      ],
+      onClose: () => finish(false),
+    });
+  });
+}
+
+async function autoFixOneBoard() {
+  if (!RP.fixQueue.items.length) {
+    notify.warning(IS_AR ? 'لا توجد نقلات مقترحة' : 'No suggested moves ready');
+    return;
+  }
+  const selectedBoardId = Number.isFinite(S.selectedPaneIdx) ? S.panes[S.selectedPaneIdx]?.boardId : null;
+  const seed = RP.fixQueue.items.find(item => selectedBoardId && S.panes[item.paneIdx]?.boardId === selectedBoardId)
+    || RP.fixQueue.items[0];
+  const boardId = S.panes[seed.paneIdx]?.boardId;
+  const boardLabel = (S.boards.find(b => b.id === boardId) || {}).label || `Pane ${seed.paneIdx + 1}`;
+  const moves = RP.fixQueue.items
+    .filter(item => S.panes[item.paneIdx]?.boardId === boardId)
+    .filter(item => !isPlacementProtected(item.placement))
+    .slice(0, 3);
+  if (!moves.length) {
+    notify.warning(IS_AR ? 'كل النقلات لهذه اللوحة محمية' : 'All moves on this board are protected');
+    return;
+  }
+  const bundleCount = moves.filter(item => canBundleCandidate(item.candidate)).length;
+  const ok = await confirmAutoFixModal({ boardLabel, moves, bundleCount });
+  if (!ok) return;
+
+  const btn = $('twsAutoFixBoard');
+  if (btn) btn.disabled = true;
+  let applied = 0;
+  try {
+    for (const item of moves) {
+      const current = findPlacement(item.placementId);
+      if (!current || isPlacementProtected(current.placement)) continue;
+      const targetCell = slotCellForCandidate(current.paneIdx, item.candidate, item.candidate.kind || slotKindForPlacement(current.placement));
+      if (!targetCell || targetCell.classList.contains('filled')) continue;
+      const result = await applyCandidateMove({
+        placementId: item.placementId,
+        targetPaneIdx: current.paneIdx,
+        sourcePaneIdx: current.paneIdx,
+        candidate: item.candidate,
+        auto: true,
+      });
+      if (result) applied += 1;
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+  if (applied) {
+    notify.success(IS_AR ? `تم تطبيق ${applied} نقلة` : `Auto-fix applied ${applied} move(s)`);
+  } else {
+    notify.warning(IS_AR ? 'لم يتم تطبيق أي نقلة' : 'No moves were applied');
+  }
+  await refreshBoardsSummary();
+}
+
 function renderRpanelIssues(body) {
   const boards = aggregateVisibleBoardsData();
   if (!boards.length) {
@@ -1008,15 +2853,23 @@ function renderRpanelIssues(body) {
     (b.conflicts.instructor_clashes || []).forEach(o => iClashes.push({ ...o, _paneIdx: b.paneIdx, _boardLabel: b.boardLabel }));
     (b.conflicts.room_clashes || []).forEach(o => rClashes.push({ ...o, _paneIdx: b.paneIdx, _boardLabel: b.boardLabel }));
     (b.conflicts.cross_board || []).forEach(o => {
-      // Dedupe cross-board by the pair of ids (a,b) so it's not listed twice
-      const key = [o.board_a_id, o.board_b_id].sort().join('-') + ':' + (o.section_a || '') + (o.section_b || '');
+      // Dedupe by the exact placement pair so the same cross-board clash is
+      // never listed twice when both boards are visible.
+      const ids = issueRowIds(o).map(String).sort();
+      const key = ids.length === 2
+        ? ids.join(':')
+        : [o.board_a_id, o.board_b_id].sort().join('-') + ':' + (o.section_a || '') + (o.section_b || '');
       if (!crossBoard.some(x => x._key === key)) crossBoard.push({ ...o, _key: key });
     });
   });
   const total = overlaps.length + iClashes.length + rClashes.length + crossBoard.length;
   $('twsRpCountIssues').textContent = String(total);
   if (total === 0) {
-    body.innerHTML = `<div class="tws-empty-state"><span class="ic">✓</span>${IS_AR ? 'لا توجد مشاكل' : 'No issues'}</div>`;
+    body.innerHTML = `<div id="twsReadinessConsole">${readinessConsoleHtml(RP.builder.readiness)}</div>
+      <div class="section-head fix">${IS_AR ? 'الخطوات التالية' : 'Next best actions'}<span class="n" id="twsNextActionsCount">...</span></div>
+      <div id="twsNextActions" class="tws-builder-actions">${renderBuilderActionsHtml(RP.builder.actions.length ? RP.builder.actions : null)}</div>
+      <div class="tws-empty-state"><span class="ic">✓</span>${IS_AR ? 'لا توجد مشاكل' : 'No issues'}</div>`;
+    refreshBuilderConsole(body);
     return;
   }
   const issueRow = (kind, title, meta, ids, paneIdx) => {
@@ -1035,18 +2888,64 @@ function renderRpanelIssues(body) {
       return acc;
     }, []);
     const paneBadges = panesInvolved.map(n => `<span class="pane-badge">P${n}</span>`).join(' ');
-    return `<div class="tws-issue" data-cross='${JSON.stringify({ a: c.board_a_id, b: c.board_b_id, sa: c.section_a, sb: c.section_b })}'>
+    const ids = issueRowIds(c);
+    const count = Number(c.overlap_count || c.affected_student_count || 0);
+    const headline = `${count} ${count === 1 ? 'Student Clash' : 'Student Clashes'}`;
+    const timeParts = String(c.time || '').split(' vs ');
+    const timeA = c.time_a || timeParts[0] || '';
+    const timeB = c.time_b || timeParts[1] || '';
+    const students = Array.isArray(c.affected_students) ? c.affected_students : [];
+    const visibleStudents = students.slice(0, 6);
+    const studentChips = students.slice(0, 6).map(s => `<span>${esc(s.student_id)} · ${esc(s.program || '')}${s.primary_term ? ` T${esc(s.primary_term)}` : ''}${s.section ? ` · ${esc(s.section)}` : ''}</span>`).join('');
+    const hiddenStudentCount = Math.max(0, count - visibleStudents.length);
+    const moreStudents = hiddenStudentCount ? `<em>+${hiddenStudentCount} more</em>` : '';
+    const crossPayload = { a: c.board_a_id, b: c.board_b_id, sa: c.section_a, sb: c.section_b, ids };
+    const fixPayloadA = {
+      a: c.board_a_id,
+      b: c.board_b_id,
+      board_id: c.board_a_id,
+      placement_id: c.placement_a_id,
+      placement_ids: ids,
+      title: headline,
+      detail: `${c.section_a} vs ${c.section_b} | ${count} affected students`,
+    };
+    const fixPayloadB = {
+      a: c.board_a_id,
+      b: c.board_b_id,
+      board_id: c.board_b_id,
+      placement_id: c.placement_b_id,
+      placement_ids: ids,
+      title: headline,
+      detail: `${c.section_a} vs ${c.section_b} | ${count} affected students`,
+    };
+    return `<div class="tws-issue tws-student-clash" data-cross='${esc(JSON.stringify(crossPayload))}'>
       <span class="dot cross"></span>
       <div class="body">
-        <div class="title">${esc(c.section_a)} ↔ ${esc(c.section_b)} ${paneBadges}</div>
-        <div class="meta">${c.overlap_count || 0} ${IS_AR ? 'طالب مشترك' : 'shared students'} · ${esc(c.board_a_label || '')} ↔ ${esc(c.board_b_label || '')}</div>
+        <div class="title"><b>${esc(headline)}</b>${paneBadges}</div>
+        <div class="tws-clash-pair">${esc(c.section_a)} vs ${esc(c.section_b)}</div>
+        <div class="meta">${esc(c.board_a_label || '')} ${esc(timeA)} vs ${esc(c.board_b_label || '')} ${esc(timeB)}</div>
+        <div class="tws-student-preview">${studentChips}${moreStudents}</div>
+        <div class="tws-clash-actions">
+          <button type="button" class="tws-mini-action tws-cross-fix" data-cross-fix='${esc(JSON.stringify(fixPayloadA))}'>Safe move ${esc(c.section_a || 'A')}</button>
+          <button type="button" class="tws-mini-action tws-cross-fix" data-cross-fix='${esc(JSON.stringify(fixPayloadB))}'>Safe move ${esc(c.section_b || 'B')}</button>
+        </div>
       </div>
     </div>`;
   };
 
-  let html = '';
+  let html = `<div id="twsReadinessConsole">${readinessConsoleHtml(RP.builder.readiness)}</div>
+    <div class="section-head fix">${IS_AR ? 'الخطوات التالية' : 'Next best actions'}<span class="n" id="twsNextActionsCount">...</span></div>
+    <div id="twsNextActions" class="tws-builder-actions">${renderBuilderActionsHtml(RP.builder.actions.length ? RP.builder.actions : null)}</div>
+    <div class="section-head fix">${IS_AR ? 'قائمة الإصلاح' : 'Fix queue'}<span class="n" id="twsFixQueueCount">...</span></div>
+    <div class="tws-fix-actions">
+      <button class="tws-mini-action" id="twsAutoFixBoard" type="button">${IS_AR ? 'إصلاح لوحة واحدة' : 'Auto-fix one board'}</button>
+      <button class="tws-mini-action" id="twsClearProtections" type="button">${IS_AR ? 'مسح الحماية' : 'Clear protections'}</button>
+    </div>
+    <div id="twsFixQueueBody" class="tws-fix-queue">
+      <div class="tws-fix-empty">${IS_AR ? 'جاري حساب أفضل النقلات...' : 'Calculating best moves...'}</div>
+    </div>`;
   if (overlaps.length) {
-    html += `<div class="section-head danger">${IS_AR ? 'تداخل زمني' : 'Time overlap'}<span class="n">${overlaps.length}</span></div>`;
+    html += `<div class="section-head danger">${IS_AR ? 'تعارض زمني داخل اللوحة' : 'Same-board time clash'}<span class="n">${overlaps.length}</span></div>`;
     html += overlaps.map(o => issueRow('critical', (o.sections || []).join(' / '), `${o._boardLabel}${o.detail ? ' · ' + o.detail : ''}`, o.ids, o._paneIdx)).join('');
   }
   if (iClashes.length) {
@@ -1058,10 +2957,21 @@ function renderRpanelIssues(body) {
     html += rClashes.map(o => issueRow('warn', `${o.room || '—'} · ${(o.sections || []).join(' / ')}`, `${o._boardLabel}${o.detail ? ' · ' + o.detail : ''}`, o.ids, o._paneIdx)).join('');
   }
   if (crossBoard.length) {
-    html += `<div class="section-head cross">${IS_AR ? 'عبر اللوحات' : 'Cross-board'}<span class="n">${crossBoard.length}</span></div>`;
+    html += `<div class="section-head cross">${IS_AR ? 'تعارض طلاب عبر اللوحات' : 'Cross-board student clashes'}<span class="n">${crossBoard.length}</span></div>`;
     html += crossBoard.map(crossRow).join('');
   }
   body.innerHTML = html;
+  body.querySelector('#twsAutoFixBoard')?.addEventListener('click', autoFixOneBoard);
+  body.querySelector('#twsClearProtections')?.addEventListener('click', () => {
+    resetProtections();
+    saveProtections();
+    RP.fixQueue.cache = {};
+    RP.fixQueue.items = [];
+    renderRpanel();
+    notify.success(IS_AR ? 'تم مسح الحماية' : 'Protections cleared');
+  });
+  refreshFixQueue(boards);
+  refreshBuilderConsole(body);
 
   // Wire issue row clicks
   body.querySelectorAll('.tws-issue[data-ids]').forEach(row => {
@@ -1071,6 +2981,12 @@ function renderRpanelIssues(body) {
     row.addEventListener('click', () => {
       const c = JSON.parse(row.dataset.cross);
       handleCrossBoardClick(c);
+    });
+  });
+  body.querySelectorAll('.tws-cross-fix[data-cross-fix]').forEach(btn => {
+    btn.addEventListener('click', async ev => {
+      ev.stopPropagation();
+      await beginCrossBoardStudentFix(JSON.parse(btn.dataset.crossFix));
     });
   });
 }
@@ -1087,7 +3003,7 @@ function highlightPlacements(ids) {
   // Auto-clear after 3s
   setTimeout(() => document.querySelectorAll('.tws-pane .cell.highlight').forEach(c => c.classList.remove('highlight')), 3000);
 }
-function handleCrossBoardClick(c) {
+async function handleCrossBoardClick(c) {
   // Identify panes showing these boards. If neither is on canvas, load
   // board B into the first empty (or last) pane so user sees both sides.
   const inA = S.panes.findIndex(p => p.boardId === c.a);
@@ -1097,19 +3013,49 @@ function handleCrossBoardClick(c) {
   const lastVisible = paneCount() - 1;
   if (inA < 0 && inB < 0) {
     // Load both into the first two panes
-    setPaneBoard(0, c.a);
-    if (paneCount() > 1) setPaneBoard(1, c.b);
+    await setPaneBoard(0, c.a);
+    if (paneCount() > 1) await setPaneBoard(1, c.b);
     notify.info && notify.info(IS_AR ? 'تم تحميل اللوحتين' : 'Loaded both boards');
   } else if (inA < 0) {
     const empty = visible.findIndex(p => !p.boardId);
-    setPaneBoard(empty >= 0 ? empty : lastVisible, c.a);
+    await setPaneBoard(empty >= 0 ? empty : lastVisible, c.a);
   } else if (inB < 0) {
     const empty = visible.findIndex(p => !p.boardId);
-    setPaneBoard(empty >= 0 ? empty : lastVisible, c.b);
+    await setPaneBoard(empty >= 0 ? empty : lastVisible, c.b);
   }
+  if (c.ids && c.ids.length) highlightPlacements(c.ids);
   // Scroll into pane A view
   const pi = S.panes.findIndex(p => p.boardId === c.a);
   if (pi >= 0) paneEl(pi)?.scrollIntoView({ block: 'center' });
+}
+
+async function beginCrossBoardStudentFix(action) {
+  if (!action?.placement_id) return;
+  await handleCrossBoardClick({
+    a: action.a,
+    b: action.b,
+    ids: action.placement_ids || [action.placement_id],
+  });
+  await ensureActionBoardVisible({ board_id: action.board_id });
+  if (action.placement_ids?.length) highlightPlacements(action.placement_ids);
+  const located = findPlacement(action.placement_id);
+  if (!located) {
+    notify.warning && notify.warning(IS_AR ? 'حمّل اللوحة المتأثرة أولاً' : 'Load the affected board first');
+    return;
+  }
+  if (isPlacementProtected(located.placement)) {
+    notify.warning && notify.warning(`${placementShortLabel(located.placement)} ${IS_AR ? 'محمي' : 'is protected'}`);
+    return;
+  }
+  await beginGuidedAction({
+    kind: 'student_time_clash',
+    severity: 'block',
+    title: action.title || (IS_AR ? 'تعارض طلاب عبر اللوحات' : 'Student clash across boards'),
+    detail: action.detail || (IS_AR ? 'اختر نقلة آمنة تقلل الطلاب المتأثرين.' : 'Find a safer slot that reduces affected students.'),
+    cta: IS_AR ? 'اعرض النقلات الآمنة' : 'Show safe moves',
+    board_id: action.board_id,
+    placement_ids: [action.placement_id],
+  });
 }
 function renderRpanelCapacity(body) {
   const boards = aggregateVisibleBoardsData();
@@ -1173,6 +3119,140 @@ function _renderCapacityNow(body, boards) {
   }
   body.innerHTML = html;
 }
+
+function selectionRoomSlot(placement, pending) {
+  return pending
+    ? { day: pending.day, start: pending.start, end: pending.end, label: 'Preview slot' }
+    : { day: placement.day, start: placement.start_time, end: placement.end_time, label: 'Current slot' };
+}
+
+function roomCacheKey(placementId, slot) {
+  return [placementId, slot.day, slot.start, slot.end].join('|');
+}
+
+function roomCandidateCardHtml(room, idx, currentRoom) {
+  const tone = room.tone || (room.available ? 'clean' : 'block');
+  const reasons = room.reasons && room.reasons.length ? room.reasons.slice(0, 2).join(' | ') : (room.available ? 'available' : 'not available');
+  const isCurrent = String(currentRoom || '').trim().toUpperCase() === String(room.room_code || '').trim().toUpperCase();
+  const apply = room.available
+    ? `<button class="tws-room-apply" data-room-idx="${idx}" type="button">${isCurrent ? 'Keep' : 'Apply'}</button>`
+    : `<button class="tws-room-apply" type="button" disabled>Blocked</button>`;
+  return `<div class="tws-room-card ${tone}">
+    <div class="tws-room-main">
+      <b>${esc(room.room_code)}</b>
+      <span>${esc(room.room_type)} · ${esc(room.section || 'Any')} · ${room.capacity || 0}</span>
+      ${apply}
+    </div>
+    <div class="tws-room-detail">${esc(reasons)}</div>
+    ${room.occupied_by && room.occupied_by.length
+      ? `<div class="tws-room-occupied">${room.occupied_by.slice(0, 2).map(o => `${esc(o.board_label)} ${esc(o.section)} ${esc(o.start)}-${esc(o.end)}`).join('<br>')}</div>`
+      : ''}
+  </div>`;
+}
+
+function studentEvidenceHtml(data) {
+  if (!data) return `<div class="tws-fix-empty">Loading student evidence...</div>`;
+  const conflicts = data.conflicts || [];
+  if (!conflicts.length) {
+    return `<div class="tws-fix-empty">No direct student evidence for this placement's current time.</div>`;
+  }
+  const rows = conflicts.slice(0, 4).map(c => `<div class="tws-student-evidence-row">
+    <div class="tws-student-evidence-main">
+      <b>${esc(c.course_code)}-${esc(c.section)}</b>
+      <span>${esc(c.board_label)} · ${esc(c.time)}</span>
+      <em>${c.affected_count || 0} students</em>
+    </div>
+    ${(c.students || []).slice(0, 5).map(s => `<div class="tws-student-chip">${esc(s.student_id)} · ${esc(s.program || '')}${s.section ? ` ${esc(s.section)}` : ''}${s.total_earned_credits != null ? ` · ${s.total_earned_credits}cr` : ''}</div>`).join('')}
+  </div>`).join('');
+  return `<div class="tws-student-evidence-summary"><b>${data.affected_student_count || 0}</b> affected unique students · ${esc(data.source || '')}</div>${rows}`;
+}
+
+async function applyRoomCandidate(placementId, room, slot) {
+  const located = findPlacement(placementId);
+  if (!located || !room?.room_code) return null;
+  const p = located.placement;
+  const oldRoom = p.room || '';
+  const oldDay = p.day;
+  const oldStart = p.start_time;
+  const oldEnd = p.end_time;
+  if (oldRoom === room.room_code && oldDay === slot.day && oldStart === slot.start) {
+    notify.success('Room already assigned');
+    return { already_assigned: true };
+  }
+  const data = await doMove(placementId, slot.day, slot.start, slot.end, room.room_code);
+  if (!data) {
+    notify.error('Room assignment failed');
+    return null;
+  }
+  S.undoStack.push({
+    type: 'move',
+    placement_id: placementId,
+    old_day: oldDay,
+    old_start: oldStart,
+    old_end: oldEnd,
+    old_room: oldRoom,
+    new_day: slot.day,
+    new_start: slot.start,
+    new_end: slot.end,
+    new_room: room.room_code,
+  });
+  S.redoStack = [];
+  updateUndoRedoButtons();
+  clearSlotAssist();
+  const boardId = S.panes[located.paneIdx]?.boardId;
+  for (let i = 0; i < paneCount(); i++) {
+    if (S.panes[i].boardId === boardId) await loadAndRenderPane(i);
+  }
+  await refreshBoardsSummary();
+  S.selectedPlacementId = placementId;
+  S.selectedPaneIdx = located.paneIdx;
+  notify.success(`Assigned room ${room.room_code}`);
+  return data;
+}
+
+async function refreshSelectionBuilderPanels(body, placement, pending) {
+  const roomBox = body.querySelector('#twsRoomCandidates');
+  const studentBox = body.querySelector('#twsStudentEvidence');
+  const placementId = placement.id;
+  const slot = selectionRoomSlot(placement, pending);
+  const token = ++RP.builder.token;
+  if (roomBox) roomBox.innerHTML = `<div class="tws-fix-empty">Finding rooms for ${esc(slot.day)} ${esc(slot.start)}-${esc(slot.end)}...</div>`;
+  if (studentBox) studentBox.innerHTML = studentEvidenceHtml(RP.builder.studentCache[placementId]);
+
+  const key = roomCacheKey(placementId, slot);
+  const roomPromise = RP.builder.roomCache[key]
+    ? Promise.resolve(RP.builder.roomCache[key])
+    : api(`/ops/tw/placements/${placementId}/room-candidates/?${new URLSearchParams({ day: slot.day, start_time: slot.start, end_time: slot.end }).toString()}`).then(data => {
+      if (data) RP.builder.roomCache[key] = data;
+      return data;
+    });
+  const studentPromise = RP.builder.studentCache[placementId]
+    ? Promise.resolve(RP.builder.studentCache[placementId])
+    : api(`/ops/tw/placements/${placementId}/student-evidence/?limit=40`).then(data => {
+      if (data) RP.builder.studentCache[placementId] = data;
+      return data;
+    });
+
+  const [roomData, studentData] = await Promise.all([roomPromise, studentPromise]);
+  if (token !== RP.builder.token || !RP.open || RP.tab !== 'selection' || String(S.selectedPlacementId) !== String(placementId)) return;
+  if (roomBox) {
+    const rooms = roomData?.candidates || [];
+    const target = roomData?.target || {};
+    roomBox.innerHTML = `<div class="tws-room-target">
+      <b>${esc(slot.label)}</b>
+      <span>${esc(slot.day)} ${esc(slot.start)}-${esc(slot.end)} · ${esc(target.required_type || '')} · ${target.required_capacity || 0} seats${target.required_gender ? ` · ${esc(target.required_gender)}` : ''}</span>
+    </div>
+    ${rooms.length ? rooms.slice(0, 8).map((room, idx) => roomCandidateCardHtml(room, idx, placement.room)).join('') : `<div class="tws-fix-empty">No rooms found.</div>`}`;
+    roomBox.querySelectorAll('.tws-room-apply[data-room-idx]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const room = rooms[parseInt(btn.dataset.roomIdx || '-1')];
+        applyRoomCandidate(placementId, room, slot);
+      });
+    });
+  }
+  if (studentBox) studentBox.innerHTML = studentEvidenceHtml(studentData);
+}
+
 function renderRpanelSelection(body) {
   if (!S.selectedPlacementId) {
     body.innerHTML = `<div class="tws-empty-state"><span class="ic">◉</span>${IS_AR ? 'اختر شعبة للاطلاع' : 'Click a placement to inspect'}</div>`;
@@ -1183,6 +3263,23 @@ function renderRpanelSelection(body) {
   const p = located.placement;
   const instructor = (p.meetings && p.meetings[0]) ? p.meetings[0].instructor : '—';
   const board = S.boards.find(b => b.id === S.panes[located.paneIdx].boardId) || { label: '—' };
+  const pending = S.slotAssist.pendingMove && String(S.slotAssist.pendingMove.placementId) === String(p.id)
+    ? S.slotAssist.pendingMove
+    : null;
+  const pendingCandidate = pending
+    ? S.slotAssist.candidates.get(slotAssistKey(S.slotAssist.kind, pending.day, pending.start))
+    : null;
+  const instructorKey = protectionValue(instructor);
+  const roomKey = protectionValue(p.room);
+  const timeKey = timeProtectionKey(p.day, p.start_time);
+  const instructorProtected = instructorKey && S.protections.instructors.has(instructorKey);
+  const roomProtected = roomKey && roomKey !== 'UNASSIGNED' && S.protections.rooms.has(roomKey);
+  const timeProtected = S.protections.times.has(timeKey);
+  const protectionReasons = placementProtectionReasons(p);
+  const selectedIssues = placementIssuesFromMap(
+    placementIssueMap((S.panes[located.paneIdx].boardData || {}).conflicts || {}, S.panes[located.paneIdx].boardId),
+    p.id,
+  );
   body.innerHTML = `
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'المقرر' : 'Course'}</span><span class="value">${esc(p.course_code)}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'الاسم' : 'Name'}</span><span class="value">${esc(p.course_name || '—')}</span></div>
@@ -1194,6 +3291,31 @@ function renderRpanelSelection(body) {
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'المدرس' : 'Instructor'}</span><span class="value">${esc(instructor)}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'السعة' : 'Capacity'}</span><span class="value">${p.available_capacity || '—'}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'مقفل' : 'Locked'}</span><span class="value">${p.is_locked ? (IS_AR ? 'نعم' : 'Yes') : (IS_AR ? 'لا' : 'No')}</span></div>
+    ${selectionConflictEvidenceHtml(selectedIssues)}
+    <div class="tws-protect-panel">
+      <div class="tws-protect-title">${IS_AR ? 'حماية التحريك التلقائي' : 'Move protection'}</div>
+      <div class="tws-protect-grid">
+        <button class="tws-protect-btn${p.is_locked ? ' on' : ''}" data-protect="section">${p.is_locked ? (IS_AR ? 'فتح الشعبة' : 'Unlock section') : (IS_AR ? 'قفل الشعبة' : 'Lock section')}</button>
+        <button class="tws-protect-btn${instructorProtected ? ' on' : ''}" data-protect="instructor" ${instructorKey ? '' : 'disabled'}>${IS_AR ? 'حماية المدرس' : 'Protect instructor'}</button>
+        <button class="tws-protect-btn${roomProtected ? ' on' : ''}" data-protect="room" ${roomKey && roomKey !== 'UNASSIGNED' ? '' : 'disabled'}>${IS_AR ? 'حماية القاعة' : 'Protect room'}</button>
+        <button class="tws-protect-btn${timeProtected ? ' on' : ''}" data-protect="time">${IS_AR ? 'حماية الوقت' : 'Protect time'}</button>
+      </div>
+      <div class="tws-protect-note">${protectionReasons.length ? esc(protectionReasons.join(' · ')) : (IS_AR ? 'غير محمي من الإصلاح التلقائي.' : 'Not protected from auto-fix.')}</div>
+    </div>
+    ${guidedResolverHtml(p)}
+    <div class="tws-sel-action">
+      ${pending
+        ? `<b>${IS_AR ? 'معاينة النقل' : 'Move preview'}:</b> ${esc(pending.day)} ${esc(pending.start)}-${esc(pending.end)} · ${esc(splitSlotDetail(pendingCandidate))}<br>${IS_AR ? 'انقر نفس الخلية مرة أخرى للتطبيق.' : 'Click the same highlighted slot again to apply.'}`
+        : `<b>${IS_AR ? 'إجراء سريع' : 'Quick action'}:</b> ${IS_AR ? 'بعد تحديد الشعبة، انقر خانة مضاءة للمعاينة ثم انقرها مرة ثانية للنقل.' : 'After selecting this section, click a highlighted empty slot to preview, then click it again to move.'}`}
+    </div>
+    <div class="tws-builder-panel">
+      <div class="tws-builder-title">${IS_AR ? 'وضع القاعة' : 'Room assignment mode'}</div>
+      <div id="twsRoomCandidates" class="tws-room-list"><div class="tws-fix-empty">${IS_AR ? 'جاري فحص القاعات...' : 'Checking rooms...'}</div></div>
+    </div>
+    <div class="tws-builder-panel">
+      <div class="tws-builder-title">${IS_AR ? 'دليل الطلاب' : 'Student evidence'}</div>
+      <div id="twsStudentEvidence" class="tws-student-evidence"><div class="tws-fix-empty">${IS_AR ? 'جاري تحميل الطلاب...' : 'Loading students...'}</div></div>
+    </div>
     <div style="display:flex;gap:6px;margin-top:12px">
       <button class="tws-btn" id="twsSelOpen" style="flex:1">${IS_AR ? 'عرض التفاصيل' : 'Open drawer'}</button>
     </div>
@@ -1201,6 +3323,46 @@ function renderRpanelSelection(body) {
   // Wire the button — no inline onclick
   const openBtn = body.querySelector('#twsSelOpen');
   if (openBtn) openBtn.addEventListener('click', () => openDrawer(located.paneIdx, p.id));
+  const guidedBtn = body.querySelector('#twsApplyGuidedFix');
+  if (guidedBtn) guidedBtn.addEventListener('click', applyGuidedResolver);
+  body.querySelectorAll('.tws-protect-btn[data-protect]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const kind = btn.dataset.protect;
+      if (kind === 'section') {
+        await doToggleLock(p.id, located.paneIdx);
+        return;
+      }
+      if (kind === 'instructor') toggleProtection('instructors', instructor);
+      if (kind === 'room') toggleProtection('rooms', p.room);
+      if (kind === 'time') toggleProtection('times', timeKey);
+      RP.fixQueue.cache = {};
+      RP.fixQueue.items = [];
+      if (RP.open) renderRpanel();
+      notify.success(IS_AR ? 'تم تحديث الحماية' : 'Protection updated');
+    });
+  });
+  refreshSelectionBuilderPanels(body, p, pending);
+}
+
+function selectionConflictEvidenceHtml(issues) {
+  if (!issues.length) {
+    return `<div class="tws-conflict-evidence clean">
+      <div class="tws-conflict-title">${IS_AR ? 'دليل التعارض' : 'Clash evidence'}<span>${IS_AR ? 'نظيف' : 'Clean'}</span></div>
+      <div class="tws-conflict-empty">${IS_AR ? 'لا توجد تعارضات مسجلة لهذه الشعبة.' : 'No recorded clashes for this placement.'}</div>
+    </div>`;
+  }
+  const rows = issues.map(issue => `<div class="tws-conflict-row ${esc(issue.tone || '')}">
+    <span class="dot"></span>
+    <div>
+      <b>${esc(issue.kind)}</b>
+      <strong>${esc(issue.title || '')}</strong>
+      <em>${esc(issue.detail || '')}</em>
+    </div>
+  </div>`).join('');
+  return `<div class="tws-conflict-evidence">
+    <div class="tws-conflict-title">${IS_AR ? 'دليل التعارض' : 'Clash evidence'}<span>${issues.length}</span></div>
+    ${rows}
+  </div>`;
 }
 
 /* ── Left sidebar (required sections, drag-create) ───────────────── */
@@ -1225,10 +3387,11 @@ function renderSidebar() {
     body.innerHTML = `<div class="tws-empty-state"><span class="ic">ⓘ</span>${IS_AR ? 'اختر سيناريو أولاً' : 'Select a scenario first'}</div>`;
     return;
   }
-  const q = (SB.search || '').trim().toUpperCase();
+  const q = (SB.search || S.search || '').trim().toUpperCase();
   const filtered = SB.budget
-    .filter(b => !q || (b.course_code || '').toUpperCase().includes(q) || (b.department || '').toUpperCase().includes(q))
-    .sort((a, b) => (b.remaining_sections || 0) - (a.remaining_sections || 0) || a.course_code.localeCompare(b.course_code));
+    .filter(itemMatchesPlanLens)
+    .filter(b => budgetMatchesSplitSearch(b, q))
+    .sort((a, b) => (b.remaining_sections || 0) - (a.remaining_sections || 0) || courseKeyOf(a).localeCompare(courseKeyOf(b)));
   if (!filtered.length) {
     body.innerHTML = `<div class="tws-empty-state"><span class="ic">—</span>${IS_AR ? 'لا توجد نتائج' : 'No matches'}</div>`;
     return;
@@ -1238,10 +3401,15 @@ function renderSidebar() {
     const planned = b.planned_sections || 0;
     const remaining = b.remaining_sections != null ? b.remaining_sections : Math.max(0, planned - used);
     const exhausted = remaining <= 0;
+    const key = courseKeyOf(b);
+    const courseLens = courseLensForItem(b);
+    const planBits = courseLens && courseLens.plans
+      ? Object.entries(courseLens.plans).filter(([, count]) => Number(count) > 0).map(([plan, count]) => `${plan} ${count}`).join(' ')
+      : '';
     // Store payload as an id; the real object lives in a side map so we
     // don't have to round-trip JSON through a double-quoted attribute,
     // which would mis-escape any single-quote character in the string.
-    return `<div class="tws-sec-item${exhausted ? ' exhausted' : ''}" draggable="${exhausted ? 'false' : 'true'}" data-code="${esc(b.course_code)}" data-used="${used}" title="${esc(b.department || b.course_code)} · ${b.credit_hours || 0}h">
+    return `<div class="tws-sec-item${exhausted ? ' exhausted' : ''}" draggable="${exhausted ? 'false' : 'true'}" data-key="${esc(key)}" data-code="${esc(b.course_code)}" data-used="${used}" title="${esc(b.department || b.course_code)} · ${b.credit_hours || 0}h">
       <div class="code">
         <span>${esc(b.course_code)}</span>
         <span class="count${exhausted ? ' exhausted' : ''}"><span class="used">${used}</span>/${planned}</span>
@@ -1254,18 +3422,22 @@ function renderSidebar() {
         ${b.credit_hours ? `<span class="dem">${b.credit_hours}h</span>` : ''}
         ${b.max_per_section ? `<span class="dem">${IS_AR ? 'حد' : 'cap'} ${b.max_per_section}</span>` : ''}
       </div>
+      ${planBits ? `<div class="meta plan-line">${esc(planBits)}${courseLens.shared_overflow ? ' | shared overflow' : ''}</div>` : ''}
     </div>`;
   }).join('');
   // Wire drag sources — look up the budget row by code + used count at
   // dragstart time so we always send fresh data even after budget updates.
   body.querySelectorAll('.tws-sec-item[draggable="true"]').forEach(el => {
     el.addEventListener('dragstart', (e) => {
+      const key = el.dataset.key || el.dataset.code;
       const code = el.dataset.code;
       const used = parseInt(el.dataset.used || '0');
-      const b = SB.budget.find(x => x.course_code === code) || {};
+      const b = SB.budget.find(x => courseKeyOf(x) === key) || {};
       const payload = {
         type: 'create_planned',
         course_code: code,
+        course_key: courseKeyOf(b) || code,
+        course_name: b.course_name || '',
         section_label: `S${used + 1}`,
         department: b.department || '',
         credit_hours: b.credit_hours || 0,
@@ -1942,13 +4114,38 @@ function updateUndoRedoButtons() {
   if (r) r.disabled = S.redoStack.length === 0;
 }
 
-async function doMove(placementId, day, start, end) {
+async function doMove(placementId, day, start, end, room) {
+  const payload = { day, start_time: start, end_time: end };
+  if (room !== undefined) payload.room = room;
   const data = await api(`/ops/tw/placements/${placementId}/move/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ day, start_time: start, end_time: end }),
+    body: JSON.stringify(payload),
   });
   return data;
+}
+
+async function applyMoveList(moves, direction) {
+  const ordered = direction === 'undo' ? [...moves].reverse() : [...moves];
+  const applied = [];
+  for (const move of ordered) {
+    const data = direction === 'undo'
+      ? await doMove(move.placement_id, move.old_day, move.old_start, move.old_end, move.old_room)
+      : await doMove(move.placement_id, move.new_day, move.new_start, move.new_end, move.new_room);
+    if (!data) {
+      const rollbackDirection = direction === 'undo' ? 'redo' : 'undo';
+      for (const done of applied.reverse()) {
+        if (rollbackDirection === 'undo') {
+          await doMove(done.placement_id, done.old_day, done.old_start, done.old_end, done.old_room);
+        } else {
+          await doMove(done.placement_id, done.new_day, done.new_start, done.new_end, done.new_room);
+        }
+      }
+      return false;
+    }
+    applied.push(move);
+  }
+  return true;
 }
 
 async function doCreate(action) {
@@ -1974,10 +4171,15 @@ async function doUndo() {
   const action = S.undoStack.pop();
   if (!action) return;
   if (action.type === 'move') {
-    const data = await doMove(action.placement_id, action.old_day, action.old_start, action.old_end);
+    const data = await doMove(action.placement_id, action.old_day, action.old_start, action.old_end, action.old_room);
     if (!data) { S.undoStack.push(action); return; }
     S.redoStack.push(action);
     notify.success(IS_AR ? 'تم التراجع' : 'Undone');
+  } else if (action.type === 'bundle_move') {
+    const ok = await applyMoveList(action.moves || [], 'undo');
+    if (!ok) { S.undoStack.push(action); return; }
+    S.redoStack.push(action);
+    notify.success(IS_AR ? 'تم التراجع عن الحزمة' : 'Bundle undone');
   } else if (action.type === 'remove') {
     // Undo remove = re-create the placement at its original position.
     const data = await doCreate(action);
@@ -2002,10 +4204,15 @@ async function doRedo() {
   const action = S.redoStack.pop();
   if (!action) return;
   if (action.type === 'move') {
-    const data = await doMove(action.placement_id, action.new_day, action.new_start, action.new_end);
+    const data = await doMove(action.placement_id, action.new_day, action.new_start, action.new_end, action.new_room);
     if (!data) { S.redoStack.push(action); return; }
     S.undoStack.push(action);
     notify.success(IS_AR ? 'تم الإعادة' : 'Redone');
+  } else if (action.type === 'bundle_move') {
+    const ok = await applyMoveList(action.moves || [], 'redo');
+    if (!ok) { S.redoStack.push(action); return; }
+    S.undoStack.push(action);
+    notify.success(IS_AR ? 'تمت إعادة الحزمة' : 'Bundle redone');
   } else if (action.type === 'remove') {
     // Redo remove = delete again (using the newly-restored placement id).
     const targetId = action.restored_placement_id || action.placement_id;
@@ -2180,7 +4387,16 @@ async function doPublish() {
 }
 function doExport() {
   if (!S.scenarioId) return;
-  window.open(`/ops/tw/scenarios/${S.scenarioId}/export.xlsx`, '_blank');
+  const params = new URLSearchParams();
+  const parts = [];
+  const plan = activePlanFilter();
+  const search = activeSplitSearch();
+  if (plan && plan !== 'ALL') parts.push(plan);
+  if (search) parts.push(search);
+  const query = parts.join(' ').trim();
+  if (query) params.set('search', query);
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  window.open(`/ops/tw/scenarios/${S.scenarioId}/export-per-plan${suffix}`, '_blank');
 }
 
 /* ── Init ── */
@@ -2231,6 +4447,12 @@ function doExport() {
 
   // Sidebar toggle + search
   $('twsSidebarToggle')?.addEventListener('click', () => toggleSidebar());
+  $('twsSearch')?.addEventListener('input', (e) => {
+    S.search = e.target.value || '';
+    for (let i = 0; i < paneCount(); i++) renderPane(i);
+    if (SB.open) renderSidebar();
+    refreshSplitSearch();
+  });
   $('twsSectionSearch')?.addEventListener('input', (e) => {
     SB.search = e.target.value;
     renderSidebar();

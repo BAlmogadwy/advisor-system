@@ -10,6 +10,10 @@ from core.services.timetable_assignment_models import (
     StudentProfile,
     UnresolvedReason,
 )
+from core.services.timetable_same_course import (
+    make_meeting_window,
+    same_course_section_spread_penalty,
+)
 
 
 def build_sections_by_course(
@@ -379,49 +383,39 @@ def _compute_same_course_section_spread(
     sections *should* be consecutive on the same day so the instructor
     doesn't get a scattered schedule.
 
+    The adjacency requirement is intentionally stronger than a normal
+    student day-gap penalty:
+
+    - two sections of a course should form one back-to-back pair
+    - three or more sections should have at least one back-to-back pair
+
     Penalty per pair of sections of the same course, summed over every
     pair of sections of every multi-section course:
 
-    - same day, back-to-back (gap==0 min)        → 0
+    - same day, back-to-back/consecutive slot    → 0
     - same day, gap 1-30 min                      → 30
     - same day, gap 31-120 min                    → 120
     - same day, gap > 120 min                     → gap_minutes
     - different days                              → 1000
+    - same-day overlap                            → 10000
+
+    A course that fails the required adjacent-pair rule receives an
+    additional 5000-minute-equivalent penalty. A small passing-time gap
+    up to 15 minutes counts as consecutive, matching the split-screen
+    bundle recommender.
 
     Expressed in "minutes-equivalent" so the result can be folded into
     ``total_gap_minutes`` without changing the tuple shape.
     """
-    by_course: dict[str, list[SectionState]] = {}
+    by_course = defaultdict(list)
     for sec in sections_by_id.values():
-        by_course.setdefault(sec.course_code, []).append(sec)
-
-    total = 0
-    for secs in by_course.values():
-        if len(secs) < 2:
-            continue
-        first_meetings = []
-        for sec in secs:
-            if not sec.meetings:
-                continue
-            anchor = min(sec.meetings, key=lambda m: (m.day, m.start_min))
-            first_meetings.append(anchor)
-        for i in range(len(first_meetings)):
-            for j in range(i + 1, len(first_meetings)):
-                a, b = first_meetings[i], first_meetings[j]
-                if a.day != b.day:
-                    total += 1000
-                    continue
-                gap = abs(a.start_min - b.start_min) - 75
-                gap = max(0, gap)
-                if gap == 0:
-                    total += 0
-                elif gap <= 30:
-                    total += 30
-                elif gap <= 120:
-                    total += 120
-                else:
-                    total += gap
-    return total
+        by_course[sec.course_code].append(
+            [
+                make_meeting_window(sec.course_code, m.day, m.start_min, m.end_min, sec.section_id)
+                for m in sec.meetings
+            ]
+        )
+    return same_course_section_spread_penalty(by_course)
 
 
 def evaluate_assignability_lexicographic(

@@ -1,65 +1,186 @@
-    <!-- ── Overview Landing Panel ── -->
-    <div id="overview" class="panel active" role="region" aria-label="{% if LANGUAGE_CODE == 'ar' %}نظرة عامة{% else %}Overview{% endif %}">
-      <h2 class="ov-greeting" id="ovGreeting" tabindex="-1">{% if LANGUAGE_CODE == 'ar' %}صباح الخير{% else %}Good morning{% endif %}, {{ user.get_short_name|default:user.username }}</h2>
-      <div class="ov-date" id="ovDate"></div>
+    <div id="overview" class="panel active" role="region" aria-label="Dashboard Command Center">
+      <section class="dcc-hero" aria-labelledby="dccTitle">
+        <div>
+          <div class="dcc-eyebrow">Live Command Center</div>
+          <h2 class="dcc-title" id="dccTitle">Good morning, {{ user.get_short_name|default:user.username }}</h2>
+          <div class="dcc-subtitle">
+            Scope-aware overview for advising, timetable building, audit integrity, and operational readiness.
+          </div>
+        </div>
+        <div class="dcc-hero-status {% if command_center.audit.ok %}dcc-status-ok{% else %}dcc-status-danger{% endif %}">
+          <span class="dcc-status-dot" aria-hidden="true"></span>
+          <span>{% if command_center.audit.ok %}Audit chain OK{% else %}Audit chain failed{% endif %}</span>
+          <strong>{{ command_center.audit.checked }}</strong>
+          <span>records checked</span>
+        </div>
+      </section>
 
-      <div class="ov-kpis">
-        <div class="ov-kpi" tabindex="0" role="button" aria-label="{% if LANGUAGE_CODE == 'ar' %}الطلاب المعينون{% else %}Students Assigned{% endif %}" onclick="activatePanel('batch');history.pushState(null,'','#batch')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">
-          <div class="ov-kpi-icon teal">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-          </div>
-          <div class="ov-kpi-label">{% if LANGUAGE_CODE == 'ar' %}الطلاب المعينون{% else %}Students Assigned{% endif %}</div>
-          <div class="ov-kpi-value" id="ovKpiStudents">0</div>
-        </div>
-        <div class="ov-kpi" tabindex="0" role="button" aria-label="{% if LANGUAGE_CODE == 'ar' %}توصيات معلقة{% else %}Pending Recommendations{% endif %}" onclick="activatePanel('batch');history.pushState(null,'','#batch')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">
-          <div class="ov-kpi-icon royal">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
-          </div>
-          <div class="ov-kpi-label">{% if LANGUAGE_CODE == 'ar' %}توصيات معلقة{% else %}Pending Recommendations{% endif %}</div>
-          <div class="ov-kpi-value" id="ovKpiPending">0</div>
-        </div>
-        <div class="ov-kpi" tabindex="0" role="button" aria-label="{% if LANGUAGE_CODE == 'ar' %}جداول متأخرة{% else %}Overdue Schedules{% endif %}" onclick="activatePanel('scrape');history.pushState(null,'','#scrape')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">
-          <div class="ov-kpi-icon warning">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-          </div>
-          <div class="ov-kpi-label">{% if LANGUAGE_CODE == 'ar' %}جداول متأخرة{% else %}Overdue Schedules{% endif %}</div>
-          <div class="ov-kpi-value" id="ovKpiOverdue">0</div>
-        </div>
-        <div class="ov-kpi" tabindex="0" role="button" aria-label="{% if LANGUAGE_CODE == 'ar' %}أولوية عالية مفقودة{% else %}High Priority Missing{% endif %}" onclick="activatePanel('highpriority');history.pushState(null,'','#highpriority')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click()}">
-          <div class="ov-kpi-icon danger">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-          </div>
-          <div class="ov-kpi-label">{% if LANGUAGE_CODE == 'ar' %}أولوية عالية مفقودة{% else %}High Priority Missing{% endif %}</div>
-          <div class="ov-kpi-value" id="ovKpiHighPri">0</div>
-        </div>
-      </div>
+      <section class="dcc-kpis" aria-label="Executive metrics">
+        <a class="dcc-kpi dcc-kpi-primary" href="#batch" onclick="event.preventDefault();activatePanel('batch');history.pushState(null,'','#batch')">
+          <span class="dcc-kpi-label">Students in scope</span>
+          <strong>{{ command_center.kpis.students }}</strong>
+          <span class="dcc-kpi-note">{{ command_center.kpis.mapped_students }} advisor-mapped</span>
+        </a>
+        <a class="dcc-kpi" href="#highpriority" onclick="event.preventDefault();activatePanel('highpriority');history.pushState(null,'','#highpriority')">
+          <span class="dcc-kpi-label">Action queue</span>
+          <strong>{{ command_center.kpis.urgent }}</strong>
+          <span class="dcc-kpi-note">risk, zero-load, audit, and timetable signals</span>
+        </a>
+        <a class="dcc-kpi" href="/timetable-workspace/split/?scenario={{ command_center.timetable.scenario_id }}">
+          <span class="dcc-kpi-label">Latest timetable</span>
+          <strong>{{ command_center.timetable.cross_board_clashes }}</strong>
+          <span class="dcc-kpi-note">cross-board clashes</span>
+        </a>
+        <a class="dcc-kpi" href="#eligibility" onclick="event.preventDefault();activatePanel('eligibility');history.pushState(null,'','#eligibility')">
+          <span class="dcc-kpi-label">85+ earned credits</span>
+          <strong>{{ command_center.kpis.near_graduation }}</strong>
+          <span class="dcc-kpi-note">near-graduation students</span>
+        </a>
+      </section>
 
-      <div class="ov-actions">
-        <a class="ov-action" href="#student" onclick="event.preventDefault();activatePanel('student');history.pushState(null,'','#student')">
-          <div class="ov-action-icon"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>
-          <div class="ov-action-text">{% if LANGUAGE_CODE == 'ar' %}البحث عن طالب{% else %}Look up a student{% endif %}</div>
-        </a>
-        <a class="ov-action" href="/planner/">
-          <div class="ov-action-icon"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div>
-          <div class="ov-action-text">{% if LANGUAGE_CODE == 'ar' %}بناء الجدول الزمني{% else %}Build timetable{% endif %}</div>
-        </a>
-        <a class="ov-action" href="#batch" onclick="event.preventDefault();activatePanel('batch');history.pushState(null,'','#batch')">
-          <div class="ov-action-icon"><svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></div>
-          <div class="ov-action-text">{% if LANGUAGE_CODE == 'ar' %}تشغيل التوصيات الجماعية{% else %}Run batch recommender{% endif %}</div>
-        </a>
-        <a class="ov-action" href="/advisor-portfolio/">
-          <div class="ov-action-icon"><svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
-          <div class="ov-action-text">{% if LANGUAGE_CODE == 'ar' %}عرض الملف الشخصي{% else %}View portfolio{% endif %}</div>
-        </a>
-      </div>
-
-      <div class="ov-activity">
-        <div class="ov-activity-title">{% if LANGUAGE_CODE == 'ar' %}النشاط الأخير{% else %}Recent Activity{% endif %}</div>
-        <div id="ovActivityFeed">
-          <div class="ov-activity-item">
-            <span class="ov-activity-ts">--:--</span>
-            <span>{% if LANGUAGE_CODE == 'ar' %}لا يوجد نشاط حديث حتى الآن. استخدم لوحة التحكم لبدء العمل.{% else %}No recent activity yet. Use the dashboard modules to get started.{% endif %}</span>
+      <section class="dcc-grid" aria-label="Operational panels">
+        <div class="dcc-panel dcc-panel-wide">
+          <div class="dcc-panel-head">
+            <div>
+              <div class="dcc-panel-kicker">Where to work first</div>
+              <h3>Operational Triage</h3>
+            </div>
+            <a href="/audit-explorer/" class="dcc-link">Open Audit</a>
+          </div>
+          <div class="dcc-triage">
+            <a class="dcc-triage-row {% if command_center.audit.ok %}is-clean{% else %}is-danger{% endif %}" href="/audit-explorer/">
+              <span class="dcc-triage-dot"></span>
+              <span>
+                <strong>Audit integrity</strong>
+                {% if command_center.audit.ok %}
+                  <small>Healthy chain, {{ command_center.audit.hmac_count }} HMAC rows and {{ command_center.audit.legacy_count }} legacy rows validated.</small>
+                {% else %}
+                  <small>Broken chain. Invalid row sample: {{ command_center.audit.invalid_ids|join:", " }}</small>
+                {% endif %}
+              </span>
+            </a>
+            <a class="dcc-triage-row {% if command_center.kpis.low_gpa %}is-warning{% else %}is-clean{% endif %}" href="/advisor-portfolio/">
+              <span class="dcc-triage-dot"></span>
+              <span>
+                <strong>{{ command_center.kpis.low_gpa }} low-GPA students</strong>
+                <small>Students below GPA 2.0 inside the current role scope.</small>
+              </span>
+            </a>
+            <a class="dcc-triage-row {% if command_center.kpis.zero_load %}is-warning{% else %}is-clean{% endif %}" href="#debug" onclick="event.preventDefault();activatePanel('debug');history.pushState(null,'','#debug')">
+              <span class="dcc-triage-dot"></span>
+              <span>
+                <strong>{{ command_center.kpis.zero_load }} zero-load students</strong>
+                <small>Students with no current registered credits recorded.</small>
+              </span>
+            </a>
+            <a class="dcc-triage-row {% if command_center.timetable.unassigned_rooms %}is-warning{% else %}is-clean{% endif %}" href="{{ command_center.timetable.split_url }}">
+              <span class="dcc-triage-dot"></span>
+              <span>
+                <strong>{{ command_center.timetable.unassigned_rooms }} unassigned rooms</strong>
+                <small>{{ command_center.timetable.name }} has {{ command_center.timetable.placements }} placed sections.</small>
+              </span>
+            </a>
           </div>
         </div>
-      </div>
+
+        <div class="dcc-panel">
+          <div class="dcc-panel-head">
+            <div>
+              <div class="dcc-panel-kicker">Academic data</div>
+              <h3>Program Radar</h3>
+            </div>
+            <a href="#plan" class="dcc-link" onclick="event.preventDefault();activatePanel('plan');history.pushState(null,'','#plan')">Plan</a>
+          </div>
+          <div class="dcc-program-list">
+            {% for item in command_center.academic.programs %}
+              <div class="dcc-program-row">
+                <span>{{ item.program }}</span>
+                <strong>{{ item.count }}</strong>
+              </div>
+            {% empty %}
+              <div class="dcc-empty">No scoped program population found.</div>
+            {% endfor %}
+          </div>
+          <div class="dcc-mini-stats">
+            <span>{{ command_center.academic.courses }} courses</span>
+            <span>{{ command_center.academic.requirements }} requirements</span>
+            <span>{{ command_center.academic.prerequisites }} prereq links</span>
+          </div>
+        </div>
+
+        <div class="dcc-panel">
+          <div class="dcc-panel-head">
+            <div>
+              <div class="dcc-panel-kicker">Timetable builder</div>
+              <h3>Scenario Health</h3>
+            </div>
+            <a href="{{ command_center.timetable.mri_url }}" class="dcc-link">MRI</a>
+          </div>
+          <div class="dcc-scenario-name">{{ command_center.timetable.name }}</div>
+          <div class="dcc-scenario-meta">
+            {{ command_center.timetable.year }}/{{ command_center.timetable.term }} · {{ command_center.timetable.status }}
+          </div>
+          <div class="dcc-mini-grid">
+            <div><strong>{{ command_center.timetable.students }}</strong><span>students</span></div>
+            <div><strong>{{ command_center.timetable.boards }}</strong><span>boards</span></div>
+            <div><strong>{{ command_center.timetable.placements }}</strong><span>placed</span></div>
+            <div><strong>{{ command_center.timetable.cross_board_clashes }}</strong><span>cross-board</span></div>
+          </div>
+          <div class="dcc-panel-actions">
+            <a href="{{ command_center.timetable.split_url }}">Open Split</a>
+            <a href="{{ command_center.timetable.mri_url }}">Open MRI</a>
+            <a href="{{ command_center.timetable.graph_url }}">Open Graph</a>
+          </div>
+        </div>
+
+        <div class="dcc-panel">
+          <div class="dcc-panel-head">
+            <div>
+              <div class="dcc-panel-kicker">Operations</div>
+              <h3>System Readiness</h3>
+            </div>
+            <a href="/user-management/" class="dcc-link">Users</a>
+          </div>
+          <div class="dcc-readiness-list">
+            <div><span>Advisors</span><strong>{{ command_center.operations.advisors }}</strong></div>
+            <div><span>Users</span><strong>{{ command_center.operations.users }}</strong></div>
+            <div><span>Scenarios</span><strong>{{ command_center.operations.scenarios }}</strong></div>
+            <div><span>Planner jobs running</span><strong>{{ command_center.operations.running_jobs }}</strong></div>
+            <div><span>Planner jobs failed</span><strong>{{ command_center.operations.failed_jobs }}</strong></div>
+          </div>
+        </div>
+
+        <div class="dcc-panel dcc-panel-wide">
+          <div class="dcc-panel-head">
+            <div>
+              <div class="dcc-panel-kicker">Trace</div>
+              <h3>Recent System Activity</h3>
+            </div>
+            <a href="/audit-explorer/" class="dcc-link">Full trail</a>
+          </div>
+          <div class="dcc-activity-list">
+            {% for item in command_center.recent_activity %}
+              <a class="dcc-activity-row" href="/audit-explorer/?user={{ item.actor|urlencode }}">
+                <span class="dcc-activity-time">{{ item.ts }}</span>
+                <strong>{{ item.action }}</strong>
+                <span>{{ item.actor }}</span>
+                <em class="dcc-activity-status is-{{ item.status }}">{{ item.status }}</em>
+              </a>
+            {% empty %}
+              <div class="dcc-empty">No audit activity yet.</div>
+            {% endfor %}
+          </div>
+        </div>
+      </section>
+
+      <section class="dcc-launcher" aria-label="Fast actions">
+        <a href="#student" onclick="event.preventDefault();activatePanel('student');history.pushState(null,'','#student')">Student plan</a>
+        <a href="/virtual-advisor/">Virtual advisor</a>
+        <a href="#batch" onclick="event.preventDefault();activatePanel('batch');history.pushState(null,'','#batch')">Batch demand</a>
+        <a href="/section-planning/">Section planning</a>
+        <a href="/timetable-workspace/">Timetable workspace</a>
+        <a href="{{ command_center.timetable.graph_url }}">Graph twin</a>
+        <a href="/exam-timetable/">Exam timetable</a>
+        <a href="/db-admin/">Data console</a>
+      </section>
     </div>

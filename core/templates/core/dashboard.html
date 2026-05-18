@@ -8,7 +8,7 @@
 {% endblock %}
 
 {% block page_h1_attrs %}id="currentModule" class="page-header-module"{% endblock %}
-{% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}نظام توصيات الطلاب{% else %}Student Recommender{% endif %}{% endblock %}
+{% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}مركز القيادة{% else %}Dashboard Command Center{% endif %}{% endblock %}
 {% block page_chips %}
           <span class="ph-chip ph-chip-role">{{ role }}</span>
           <span class="ph-chip ph-chip-scope" title="{{ role_scope_hint }}">{{ role_scope_hint|truncatechars:40 }}</span>
@@ -17,8 +17,8 @@
 {% endblock %}
 
 {% block page_intro %}
-      <h2 id="pageIntroTitle">{% if LANGUAGE_CODE == 'ar' %}نظام توصيات الطلاب{% else %}Student Recommender{% endif %}</h2>
-      <div class="panel-sub" id="pageIntroSub">{% if LANGUAGE_CODE == 'ar' %}احصل على قائمة توصيات لكل طالب وصدّرها فوراً.{% else %}Get a per-student recommendation list and export it instantly.{% endif %}</div>
+      <h2 id="pageIntroTitle">{% if LANGUAGE_CODE == 'ar' %}مركز القيادة{% else %}Dashboard Command Center{% endif %}</h2>
+      <div class="panel-sub" id="pageIntroSub">{% if LANGUAGE_CODE == 'ar' %}مركز القيادة التشغيلي للإرشاد والجداول والتدقيق.{% else %}Live command center for advising, timetable health, audit integrity, and system readiness.{% endif %}</div>
 {% endblock %}
 
 {% block content %}

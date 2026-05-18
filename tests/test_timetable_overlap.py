@@ -162,6 +162,10 @@ class TestCoursesShareStudents:
         matrix = build_overlap_matrix(overlap_scenario.id, {"OV_A", "OV_B", "OV_C"})
         assert courses_share_students(matrix, "OV_A", "OV_A") is True
 
+    def test_same_course_normalized(self, overlap_scenario):
+        matrix = build_overlap_matrix(overlap_scenario.id, {"OV_A", "OV_B", "OV_C"})
+        assert courses_share_students(matrix, " ov_a ", "OV_A") is True
+
 
 class TestSharedStudentCount:
     def test_counts(self, overlap_scenario):
@@ -173,6 +177,10 @@ class TestSharedStudentCount:
     def test_same_course_sentinel(self, overlap_scenario):
         matrix = build_overlap_matrix(overlap_scenario.id, {"OV_A", "OV_B", "OV_C"})
         assert shared_student_count(matrix, "OV_A", "OV_A") == 999
+
+    def test_same_course_sentinel_normalized(self, overlap_scenario):
+        matrix = build_overlap_matrix(overlap_scenario.id, {"OV_A", "OV_B", "OV_C"})
+        assert shared_student_count(matrix, " ov_a ", "OV_A") == 999
 
 
 class TestCourseOverlapLoad:

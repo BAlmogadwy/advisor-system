@@ -36,6 +36,13 @@ from core.services.timetable_autoplace import (
     WEEKDAYS,
     _time_mask,
 )
+from core.services.timetable_same_course import (
+    has_same_course_overlap as same_course_windows_overlap,
+)
+from core.services.timetable_same_course import (
+    make_meeting_window,
+    same_course_section_spread_penalty,
+)
 
 
 def _to_min(t: str) -> int:
@@ -44,6 +51,29 @@ def _to_min(t: str) -> int:
 
 
 PRAYER_BOUNDARY = 13 * 60
+
+
+def _same_course_windows_by_course(schedule: dict[int, list[dict]], sections: list[dict]) -> dict:
+    by_course = defaultdict(list)
+    for idx, meetings in schedule.items():
+        sec = sections[idx]
+        code = sec["code"]
+        label = sec.get("label", str(idx))
+        by_course[code].append(
+            [make_meeting_window(code, m["day"], m["start"], m["end"], label) for m in meetings]
+        )
+    return by_course
+
+
+def _same_course_spread_cost(schedule: dict[int, list[dict]], sections: list[dict]) -> int:
+    return same_course_section_spread_penalty(_same_course_windows_by_course(schedule, sections))
+
+
+def _has_same_course_overlap(schedule: dict[int, list[dict]], sections: list[dict]) -> bool:
+    return any(
+        same_course_windows_overlap(meetings)
+        for meetings in _same_course_windows_by_course(schedule, sections).values()
+    )
 
 
 def _build_schedule_from_db(
@@ -186,7 +216,7 @@ def _compute_balance_score(
                     if gap > 0:
                         gap_total += gap * w
 
-    return imbalance + gap_total
+    return imbalance + gap_total + _same_course_spread_cost(schedule, sections)
 
 
 def _check_constraints(schedule: dict, sections: list, overlap_matrix: dict | None = None) -> bool:
@@ -218,15 +248,8 @@ def _check_constraints(schedule: dict, sections: list, overlap_matrix: dict | No
                 if shared >= HARD_OVERLAP_THRESHOLD:
                     return False
 
-    course_masks: dict[str, list[int]] = defaultdict(list)
-    for i, meetings in schedule.items():
-        for m in meetings:
-            course_masks[sections[i]["code"]].append(m["mask"])
-    for _code, masks in course_masks.items():
-        for a in range(len(masks)):
-            for b in range(a + 1, len(masks)):
-                if masks[a] & masks[b]:
-                    return False
+    if _has_same_course_overlap(schedule, sections):
+        return False
 
     for i, meetings in schedule.items():  # noqa: B007
         days = [m["day"] for m in meetings]

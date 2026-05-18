@@ -21,6 +21,8 @@ def export_batch_recommender_xlsx(
     section: str | None,
     student_count: int,
     aggregate: dict[str, int],
+    *,
+    course_rows: list[dict[str, object]] | None = None,
 ) -> Path:
     """Export batch recommender results as styled XLSX."""
     try:
@@ -29,7 +31,7 @@ def export_batch_recommender_xlsx(
     except ImportError as exc:
         raise RuntimeError("openpyxl is required") from exc
 
-    from core.models import Course, Prerequisite, StudentCourse
+    from core.models import Course, Prerequisite, Student, StudentCourse
     from core.services.student_helpers import normalize_code
 
     # ── Styles ───────────────────────────────────────────────────
@@ -53,13 +55,54 @@ def export_batch_recommender_xlsx(
     center = Alignment(horizontal="center", vertical="center")
 
     # ── Pre-load data ────────────────────────────────────────────
-    sorted_courses = sorted(aggregate.items(), key=lambda x: -x[1])
-    course_codes = [code for code, _ in sorted_courses]
+    if course_rows is None:
+        sorted_rows: list[dict[str, object]] = [
+            {
+                "course_code": normalize_code(code),
+                "course_name": "",
+                "count": int(count),
+                "programs": [],
+                "show_programs": False,
+            }
+            for code, count in aggregate.items()
+        ]
+    else:
+        sorted_rows = [
+            {
+                "course_code": normalize_code(str(row.get("course_code", ""))),
+                "course_name": str(row.get("course_name", "") or ""),
+                "count": int(row.get("count", 0) or 0),
+                "programs": list(row.get("programs", []))
+                if isinstance(row.get("programs"), list)
+                else [],
+                "show_programs": bool(row.get("show_programs", False)),
+            }
+            for row in course_rows
+            if row.get("course_code")
+        ]
+    sorted_rows.sort(
+        key=lambda row: (
+            -int(row.get("count", 0)),
+            str(row.get("course_code", "")),
+            str(row.get("course_name", "")),
+        )
+    )
+    course_codes = sorted({str(row["course_code"]) for row in sorted_rows})
 
     # Course names
     course_names: dict[str, str] = {}
     for c in Course.objects.filter(course_code__in=course_codes):
         course_names[c.course_code.upper()] = c.description or ""
+
+    def _display_course_name(row: dict[str, object]) -> str:
+        code = normalize_code(str(row.get("course_code", "")))
+        name = str(row.get("course_name") or course_names.get(code, "") or "")
+        programs = row.get("programs", [])
+        program_list = [str(p) for p in programs] if isinstance(programs, list) else []
+        if row.get("show_programs") and program_list:
+            prefix = ", ".join(program_list)
+            return f"{prefix} - {name}" if name else prefix
+        return name
 
     # Prerequisites
     programs_to_check = [p.strip() for p in (program or "").split(",") if p.strip()]
@@ -91,9 +134,18 @@ def export_batch_recommender_xlsx(
 
     # Build: course_code -> set of student_ids who need it
     course_to_students: dict[str, set[int]] = defaultdict(set)
+    student_programs: dict[int, str] = {
+        sid: str(prog or "").strip()
+        for sid, prog in Student.objects.filter(student_id__in=scoped_sids).values_list(
+            "student_id", "program"
+        )
+    }
+    course_to_students_by_program: dict[tuple[str, str], set[int]] = defaultdict(set)
     for sid, recs in all_recs.items():
         for code in recs:
-            course_to_students[normalize_code(code)].add(sid)
+            code_n = normalize_code(code)
+            course_to_students[code_n].add(sid)
+            course_to_students_by_program[(code_n, student_programs.get(sid, ""))].add(sid)
 
     # Step 2: For each prereq, get which students are studying it
     all_prereq_codes = set()
@@ -109,18 +161,6 @@ def export_batch_recommender_xlsx(
             student_id__in=scoped_sids,
         ).values_list("student_id", "course__course_code"):
             studying_by_student[sid_val].add(normalize_code(code))
-
-    # Step 3: For each (recommended_course, prerequisite), count how many
-    # students who need the course are studying the prerequisite
-    # prereq_studying_per_course[course_code][prereq_code] = count
-    prereq_studying_per_course: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
-    for code_n in course_codes:
-        cn = normalize_code(code_n)
-        prereqs = prereq_map.get(cn, [])
-        students_needing = course_to_students.get(cn, set())
-        for pr in prereqs:
-            cnt = sum(1 for sid in students_needing if pr in studying_by_student.get(sid, set()))
-            prereq_studying_per_course[cn][pr] = cnt
 
     # Prereq course names
     prereq_names: dict[str, str] = {}
@@ -167,9 +207,22 @@ def export_batch_recommender_xlsx(
 
     # Data rows
     row = 3
-    for rank, (code, count) in enumerate(sorted_courses, start=1):
-        prereqs = prereq_map.get(normalize_code(code), [])
-        name = course_names.get(code.upper(), "")
+    for rank, row_data in enumerate(sorted_rows, start=1):
+        code = str(row_data["course_code"])
+        count = int(row_data["count"])
+        code_n = normalize_code(code)
+        prereqs = prereq_map.get(code_n, [])
+        name = _display_course_name(row_data)
+        row_programs_raw = row_data.get("programs", [])
+        row_programs = (
+            [str(p) for p in row_programs_raw] if isinstance(row_programs_raw, list) else []
+        )
+        if row_programs:
+            students_needing: set[int] = set()
+            for prog in row_programs:
+                students_needing.update(course_to_students_by_program.get((code_n, prog), set()))
+        else:
+            students_needing = set(course_to_students.get(code_n, set()))
 
         # ── Course header row ────────────────────────────────────
         # Rank
@@ -203,14 +256,17 @@ def export_batch_recommender_xlsx(
             cell.fill = PatternFill(start_color="D5F5E3", end_color="D5F5E3", fill_type="solid")
 
         # Prereq summary in course row
-        code_n = normalize_code(code)
         if not prereqs:
             cell = ws.cell(row=row, column=5, value="No prerequisites")
             cell.font = no_prereq_font
             cell.fill = course_fill
             cell.border = thin_border
         else:
-            studying_total = sum(prereq_studying_per_course[code_n].get(p, 0) for p in prereqs)
+            prereq_studying_counts = {
+                p: sum(1 for sid in students_needing if p in studying_by_student.get(sid, set()))
+                for p in prereqs
+            }
+            studying_total = sum(prereq_studying_counts.values())
             if studying_total > 0:
                 cell = ws.cell(
                     row=row,
@@ -231,7 +287,9 @@ def export_batch_recommender_xlsx(
 
         # ── Prerequisite sub-rows ────────────────────────────────
         for pr in prereqs:
-            studying_cnt = prereq_studying_per_course[code_n].get(pr, 0)
+            studying_cnt = sum(
+                1 for sid in students_needing if pr in studying_by_student.get(sid, set())
+            )
             pr_name = prereq_names.get(pr.upper(), "")
 
             ws.cell(row=row, column=1).border = thin_border
@@ -263,7 +321,7 @@ def export_batch_recommender_xlsx(
             row += 1
 
     # Totals
-    total_demand = sum(aggregate.values())
+    total_demand = sum(int(row.get("count", 0)) for row in sorted_rows)
     for c in range(1, 6):
         ws.cell(row=row, column=c).border = Border(
             left=thin_side,
@@ -272,7 +330,7 @@ def export_batch_recommender_xlsx(
             bottom=thick_side,
         )
     ws.cell(row=row, column=2, value="TOTAL").font = Font(bold=True, size=10)
-    ws.cell(row=row, column=3, value=f"{len(sorted_courses)} courses").font = Font(
+    ws.cell(row=row, column=3, value=f"{len(sorted_rows)} courses").font = Font(
         size=9, color="666666"
     )
     ws.cell(row=row, column=4, value=total_demand).font = Font(bold=True, size=10, color="0A8E6E")
@@ -304,7 +362,7 @@ def export_batch_recommender_xlsx(
         bold=True, size=14, color="0A8E6E"
     )
     ws_sum.cell(row=7, column=1, value="Courses Found").font = Font(bold=True, size=9)
-    ws_sum.cell(row=7, column=2, value=len(sorted_courses))
+    ws_sum.cell(row=7, column=2, value=len(sorted_rows))
     ws_sum.cell(row=8, column=1, value="Total Demand").font = Font(bold=True, size=9)
     ws_sum.cell(row=8, column=2, value=total_demand)
 
@@ -318,11 +376,13 @@ def export_batch_recommender_xlsx(
         cell.alignment = hdr_align
         cell.border = thin_border
 
-    for i, (code, count) in enumerate(sorted_courses[:10]):
+    for i, row_data in enumerate(sorted_rows[:10]):
+        code = str(row_data["course_code"])
+        count = int(row_data["count"])
         r = 12 + i
         ws_sum.cell(row=r, column=1, value=code).font = Font(bold=True, size=9)
         ws_sum.cell(row=r, column=1).border = thin_border
-        ws_sum.cell(row=r, column=2, value=course_names.get(code.upper(), "")).font = Font(size=8)
+        ws_sum.cell(row=r, column=2, value=_display_course_name(row_data)).font = Font(size=8)
         ws_sum.cell(row=r, column=2).border = thin_border
         ws_sum.cell(row=r, column=3, value=count).border = thin_border
         ws_sum.cell(row=r, column=3).alignment = center

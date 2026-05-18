@@ -105,12 +105,40 @@ function toMins(t){
   return h*60+m;
 }
 
+function courseKey(row){
+  const key=String(row?.course_key||'').replace(/\s+/g,'').toUpperCase();
+  if(key) return key;
+  const code=String(row?.course_code||'').replace(/\s+/g,'').toUpperCase();
+  const num=String(row?.course_number||'').replace(/\s+/g,'').toUpperCase();
+  if(code&&num&&code!==num) return `${code}${num}`;
+  return code||num;
+}
+
+function courseLabel(row){
+  const code=courseKey(row);
+  const section=String(row?.section||'').trim();
+  return `${code}${section ? ` ${section}` : ''}`.trim();
+}
+
 /* _isDark and colorForCourse now in shared-utils.js */
 
 function renderBaselineWeeklyCompact(baseline){
   const host=q('baselineWeekly');
   const rows=(baseline||[]).filter(r=>r.day&&r.start_time&&r.end_time);
-  if(!rows.length){ host.innerHTML=`<span class="text-secondary">${T.noMappedSlots}</span>`; return; }
+  const unmappedByCode={};
+  (baseline||[]).filter(r=>!(r.day&&r.start_time&&r.end_time)).forEach(r=>{
+    const code=courseKey(r);
+    if(code) unmappedByCode[code]=r;
+  });
+  const unmapped=Object.values(unmappedByCode);
+  const unmappedHtml=unmapped.length
+    ? `<div class="planner-banner planner-banner-warn mt-2" style="font-size:12px">
+        <span class="i" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
+        ${unmapped.length} registered course${unmapped.length===1?'':'s'} have no mapped timetable slots:
+        ${unmapped.map(r=>`<strong>${courseKey(r)}</strong>`).join(', ')}
+      </div>`
+    : '';
+  if(!rows.length){ host.innerHTML=`<span class="text-secondary">${T.noMappedSlots}</span>${unmappedHtml}`; return; }
 
   const dayOrder=['SUN','MON','TUE','WED','THU'];
   const dayLabel = UI.dayShort;
@@ -128,7 +156,7 @@ function renderBaselineWeeklyCompact(baseline){
     if(st===null||en===null||en<=st) return;
     const stSlot = Math.floor(st/step)*step;
     const span=Math.max(1, Math.ceil((en-stSlot)/step));
-    startsByDay[d][stSlot]={label:`${r.course_code||''} ${r.section||''}`.trim(), room:r.room||'', start:r.start_time, end:r.end_time, span, source:r.source||''};
+    startsByDay[d][stSlot]={label:courseLabel(r), room:r.room||'', start:r.start_time, end:r.end_time, span, source:r.source||''};
   });
 
   let html='<div class="table-responsive"><table class="table table-sm table-bordered align-middle"><thead><tr>';
@@ -154,7 +182,7 @@ function renderBaselineWeeklyCompact(baseline){
     html+='</tr>';
   }
   html+='</tbody></table></div>';
-  host.innerHTML=html;
+  host.innerHTML=html+unmappedHtml;
 }
 
 function renderVisualTimetable(source='baseline'){
@@ -185,7 +213,7 @@ function renderVisualTimetable(source='baseline'){
           day: normalizeDay(mm.day),
           start:mm.start_time,
           end:mm.end_time,
-          label:`${m.course_code||''}${m.course_number||''} ${m.section||''}`.trim(),
+          label:courseLabel(m),
           room:mm.room||'',
           kind:'planned'
         })
@@ -358,7 +386,7 @@ async function renderPlanPalette(studentId){
 
     const secByCourse={};
     sections.forEach(s=>{
-      const k=String((s.course_code||'') + (s.course_number||'')).replace(/\s+/g,'').toUpperCase();
+      const k=courseKey(s);
       (secByCourse[k] ||= []).push(s);
     });
 
@@ -512,7 +540,7 @@ async function renderAvailableSections(){
     /* 4. Group sections by course key */
     const secByCourse={};
     sections.forEach(s=>{
-      const k=String((s.course_code||'')+(s.course_number||'')).replace(/\s+/g,'').toUpperCase();
+      const k=courseKey(s);
       (secByCourse[k]||=[]).push(s);
     });
 
@@ -857,7 +885,7 @@ q('runBuilder').onclick=async()=>{
       <div><strong>${IS_AR?'الخيار':'Option'} ${opt.name}</strong> - ${IS_AR?'تمت الجدولة':'Scheduled'} ${opt.scheduled}/${opt.target}</div>
       <div class="small text-secondary">${rationale}</div>
       <div class="mt-1">
-        ${(opt.mappings||[]).map(m=>`<div>• ${m.course_code}${m.course_number} → ${m.section}</div>`).join('') || `<span class="text-secondary">${T.noMappings}</span>`}
+        ${(opt.mappings||[]).map(m=>`<div>• ${courseKey(m)} → ${m.section}</div>`).join('') || `<span class="text-secondary">${T.noMappings}</span>`}
       </div>
       <div class="mt-1 text-danger">
         ${(opt.unscheduled||[]).map(u=>`<div>• ${u.course_code}: ${u.reason}</div>`).join('')}
@@ -925,11 +953,21 @@ q('fetchBtn').onclick=async()=>{
   q('baselineTotals').textContent=`${IS_AR ? 'المقررات' : 'Courses'}: ${data.baseline_totals.courses} | ${IS_AR ? 'الساعات' : 'Credits'}: ${data.baseline_totals.credits}`;
 
   const srcCounts={};
-  (data.baseline||[]).forEach(x=>{ const s=(x.source||'mapped'); srcCounts[s]=(srcCounts[s]||0)+1; });
-  const srcText=Object.entries(srcCounts).map(([k,v])=>`${k}:${v}`).join(' | ');
+  (data.baseline||[]).forEach(x=>{
+    const s=(x.source||'mapped');
+    const key=x.term_section_id || `${courseKey(x)}|${x.section||''}`;
+    (srcCounts[s] ||= new Set()).add(String(key));
+  });
+  const srcText=Object.entries(srcCounts).map(([k,v])=>`${k}:${v.size}`).join(' | ');
   if(srcText){ q('baselineTotals').textContent += IS_AR ? ` | المصدر: ${srcText}` : ` | Source: ${srcText}`; }
 
-  const fallbackRows=(data.baseline||[]).filter(x=>String(x.source||'').toLowerCase().includes('fallback')).length;
+  const fallbackKeys=new Set();
+  (data.baseline||[]).forEach(x=>{
+    if(String(x.source||'').toLowerCase().includes('fallback')){
+      fallbackKeys.add(String(x.term_section_id || `${courseKey(x)}|${x.section||''}`));
+    }
+  });
+  const fallbackRows=fallbackKeys.size;
   const quality=fallbackRows
     ? (IS_AR ? `جزئي (${fallbackRows} احتياطي)` : `partial (${fallbackRows} fallback)`)
     : (IS_AR ? 'جيد' : 'good');

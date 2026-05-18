@@ -45,6 +45,7 @@ from core.models import (
     StudentTermSection,
     TermSectionMeeting,
 )
+from core.services.course_identity import planner_course_key
 from core.services.exam_run_schema import (
     STATUS_DERIVATION_VERSION,
     compute_enrolment_snapshot,
@@ -104,13 +105,24 @@ def build_credit_map(course_codes: list[str] | set[str]) -> dict[str, int]:
     Missing / NULL / zero credit_hours default to ``_CREDIT_DEFAULT``
     so the penalty formula degrades gracefully.
     """
+    display_to_source = {str(cc): _source_code_for_display(str(cc)) for cc in course_codes}
     rows = Course.objects.filter(
-        course_code__in=list(course_codes),
+        course_code__in=sorted(set(display_to_source.values())),
     ).values_list("course_code", "credit_hours")
-    cm: dict[str, int] = {cc: (ch if ch and ch > 0 else _CREDIT_DEFAULT) for cc, ch in rows}
-    for cc in course_codes:
-        cm.setdefault(cc, _CREDIT_DEFAULT)
+    source_cm: dict[str, int] = {cc: (ch if ch and ch > 0 else _CREDIT_DEFAULT) for cc, ch in rows}
+    cm: dict[str, int] = {}
+    for display, source in display_to_source.items():
+        cm[display] = source_cm.get(source, _CREDIT_DEFAULT)
     return cm
+
+
+def _source_code_for_display(display_code: str, explicit_source: object = None) -> str:
+    source = str(explicit_source or "").strip()
+    if source:
+        return source
+    if display_code.endswith(")") and " (" in display_code:
+        return display_code.rsplit(" (", 1)[0]
+    return display_code
 
 
 def _credit_pair_penalty(credits_on_day: list[int]) -> int:
@@ -134,9 +146,9 @@ def build_enrolled_sets(
 ) -> dict[str, set[int]]:
     """Return {course_code: {student_id, …}} for current-term enrolments.
 
-    Uses StudentTermSection (scraped timetable data) when available for
-    the current academic year/term, falling back to StudentCourse with
-    status='studying' when no timetable data exists.
+    Uses StudentCourse.status='studying' as the exam source of truth.
+    Same-code courses with different programme names are split into
+    display keys such as "CS112 (1)" and "CS112 (2)".
 
     Optional filters narrow the student population:
         programs – only include students whose program is in this list
@@ -147,6 +159,9 @@ def build_enrolled_sets(
     # Detect the latest academic year/term that has ANY data. The fallback
     # only triggers when the source itself is empty — filters that match no
     # students must not silently cross over to StudentCourse.
+    enrolled, _meta = build_enrolled_sets_with_meta(programs=programs, sections=sections)
+    return enrolled
+
     latest = (
         StudentTermSection.objects.order_by("-academic_year", "-term")
         .values_list("academic_year", "term")
@@ -194,6 +209,95 @@ def build_enrolled_sets(
     return dict(enrolled_sc)
 
 
+def build_enrolled_sets_with_meta(
+    programs: list[str] | None = None,
+    sections: list[str] | None = None,
+) -> tuple[dict[str, set[int]], dict[str, dict]]:
+    """Return selected students' studying courses plus display/source metadata."""
+    qs_sc = StudentCourse.objects.filter(status="studying").select_related("course", "student")
+    if programs:
+        qs_sc = qs_sc.filter(student__program__in=programs)
+    if sections:
+        qs_sc = qs_sc.filter(student__section__in=sections)
+
+    rows = list(
+        qs_sc.values_list(
+            "course__course_code",
+            "course__description",
+            "student_id",
+            "student__program",
+        )
+    )
+    source_codes = {str(code) for code, _desc, _sid, _program in rows}
+    if not source_codes:
+        return {}, {}
+
+    pr_rows = list(
+        ProgrammeRequirement.objects.filter(course_code__in=source_codes).values_list(
+            "program",
+            "course_code",
+            "course_name",
+            "programme_term",
+        )
+    )
+    pr_name_by_program_code = {
+        (str(program), str(code)): str(name or "").strip() for program, code, name, _term in pr_rows
+    }
+
+    enrolled_by_identity: dict[tuple[str, str], set[int]] = defaultdict(set)
+    identity_name: dict[tuple[str, str], str] = {}
+    for source, course_desc, student_id, program in rows:
+        source_code = str(source)
+        name = (
+            pr_name_by_program_code.get((str(program), source_code))
+            or str(course_desc or "").strip()
+        )
+        identity = planner_course_key(source_code, name)
+        enrolled_by_identity[(source_code, identity)].add(int(student_id))
+        identity_name.setdefault((source_code, identity), name)
+
+    identity_term_rank: dict[tuple[str, str], int] = {}
+    for _program, source, name, term in pr_rows:
+        source_code = str(source)
+        identity = planner_course_key(source_code, name)
+        key = (source_code, identity)
+        rank = int(term or 999)
+        identity_term_rank[key] = min(identity_term_rank.get(key, rank), rank)
+        identity_name.setdefault(key, str(name or "").strip())
+
+    identities_by_source: dict[str, list[str]] = defaultdict(list)
+    for source, identity in enrolled_by_identity:
+        identities_by_source[source].append(identity)
+    for source in identities_by_source:
+        identities_by_source[source] = sorted(
+            set(identities_by_source[source]),
+            key=lambda identity: (
+                identity_term_rank.get((source, identity), 999),
+                identity,
+            ),
+        )
+
+    display_by_identity: dict[tuple[str, str], str] = {}
+    for source, identities in identities_by_source.items():
+        if len(identities) == 1:
+            display_by_identity[(source, identities[0])] = source
+        else:
+            for idx, identity in enumerate(identities, start=1):
+                display_by_identity[(source, identity)] = f"{source} ({idx})"
+
+    enrolled: dict[str, set[int]] = {}
+    meta: dict[str, dict] = {}
+    for (source, identity), student_ids in enrolled_by_identity.items():
+        display = display_by_identity[(source, identity)]
+        enrolled[display] = set(student_ids)
+        meta[display] = {
+            "source_course_code": source,
+            "course_name": identity_name.get((source, identity), ""),
+            "course_identity": identity,
+        }
+    return dict(enrolled), meta
+
+
 # ── 2. Conflict graph ──────────────────────────────────────────
 
 
@@ -236,6 +340,7 @@ def build_conflict_graph(
 
 def build_plan_term_buckets(
     running_courses: set[str],
+    course_meta: dict[str, dict] | None = None,
 ) -> tuple[dict[tuple[str, int], set[str]], dict[str, list[tuple[str, int]]]]:
     """Map running courses to (program, programme_term) buckets.
 
@@ -243,9 +348,21 @@ def build_plan_term_buckets(
         buckets       – {(program, programme_term): {course_codes}}
         course_buckets – {course_code: [(program, term), …]} reverse index
     """
+    meta = course_meta or {}
+    source_to_display: dict[str, list[str]] = defaultdict(list)
+    identity_by_display: dict[str, str] = {}
+    for display in running_courses:
+        display_code = str(display)
+        m = meta.get(display_code, {})
+        source = _source_code_for_display(display_code, m.get("source_course_code"))
+        identity = str(m.get("course_identity") or source)
+        source_to_display[source].append(display_code)
+        identity_by_display[display_code] = identity
+
     rows = ProgrammeRequirement.objects.filter(
-        course_code__in=running_courses, programme_term__isnull=False
-    ).values_list("program", "course_code", "programme_term")
+        course_code__in=set(source_to_display),
+        programme_term__isnull=False,
+    ).values_list("program", "course_code", "course_name", "programme_term")
 
     # Forward index: (program, term) → {course_codes}
     buckets: dict[tuple[str, int], set[str]] = defaultdict(set)
@@ -253,10 +370,23 @@ def build_plan_term_buckets(
     # in multiple programmes, e.g. service courses shared across AI & DS)
     course_buckets: dict[str, list[tuple[str, int]]] = defaultdict(list)
 
-    for program, course_code, programme_term in rows:
+    for program, course_code, course_name, programme_term in rows:
         key = (program, int(programme_term or 0))
-        buckets[key].add(course_code)
-        course_buckets[course_code].append(key)
+        row_identity = planner_course_key(course_code, course_name)
+        displays = [
+            display
+            for display in source_to_display.get(str(course_code), [])
+            if identity_by_display.get(display, display) == row_identity
+        ]
+        if not displays:
+            displays = [
+                display
+                for display in source_to_display.get(str(course_code), [])
+                if identity_by_display.get(display, display) == str(course_code)
+            ]
+        for display in displays:
+            buckets[key].add(display)
+            course_buckets[display].append(key)
 
     return dict(buckets), dict(course_buckets)
 
@@ -298,6 +428,7 @@ def schedule(
     course_buckets: dict[str, list[tuple[str, int]]] | None = None,
     pinned: list[dict] | None = None,
     credit_map: dict[str, int] | None = None,
+    preferred_slots: dict[str, int] | None = None,
     seed: int | None = None,
 ) -> list[dict]:
     """
@@ -356,6 +487,7 @@ def schedule(
     _ptb = plan_term_buckets or {}  # (program, term) → {course_codes}
     _cb = course_buckets or {}  # course_code → [(program, term), …]
     _cm = credit_map or {}  # course_code → credit_hours
+    _pref = preferred_slots or {}  # course_code → preferred slot_index
 
     def _constraint_degree(c: str) -> int:
         """Heuristic: courses with more conflicts + more bucket-mates are harder
@@ -519,6 +651,7 @@ def schedule(
                 float("inf"),
                 float("inf"),
                 float("inf"),
+                float("inf"),
             )
             # Reservoir sampling counter for ties when seed is provided.
             ties_seen = 0
@@ -571,6 +704,7 @@ def schedule(
                     penalty,
                     credit_penalty,
                     spacing_penalty,
+                    0 if _pref.get(course) == si else 1,
                     day_load[day],
                     slot_load[si],
                 )
@@ -588,7 +722,9 @@ def schedule(
             chosen = best_slot
         else:
             # No enrolled data available — fall back to least-loaded slot
-            chosen = min(candidates, key=lambda si: slot_load[si])
+            chosen = min(
+                candidates, key=lambda si: (0 if _pref.get(course) == si else 1, slot_load[si])
+            )
 
         assignment[course] = chosen
         slot_load[chosen] += 1
@@ -693,6 +829,12 @@ def _build_qa(
     # Lookup maps: course → its assigned slot index / day
     course_slot: dict[str, int] = {e["course_code"]: e["slot_index"] for e in schedule_entries}
     course_day: dict[str, str] = {e["course_code"]: e["day"] for e in schedule_entries}
+    course_identity: dict[str, str] = {
+        e["course_code"]: str(
+            e.get("course_identity") or e.get("source_course_code") or e["course_code"]
+        )
+        for e in schedule_entries
+    }
 
     slots_used = len({e["slot_index"] for e in schedule_entries})
 
@@ -804,11 +946,12 @@ def _build_qa(
         bucket_count = len(plan_term_buckets)
         for (program, term), bucket_courses in sorted(plan_term_buckets.items()):
             # Group this bucket's courses by their assigned day
-            day_groups_b: dict[str, list[str]] = defaultdict(list)
+            day_groups_b: dict[str, dict[str, str]] = defaultdict(dict)
             for cc in bucket_courses:
                 day = course_day.get(cc)
                 if day is not None and day != "OVERFLOW":
-                    day_groups_b[day].append(cc)
+                    identity = course_identity.get(cc, cc)
+                    day_groups_b[day].setdefault(identity, cc)
             # Any day with ≥2 bucket-mates is a violation
             for day, ccs in day_groups_b.items():
                 if len(ccs) >= 2:
@@ -817,7 +960,7 @@ def _build_qa(
                             "program": program,
                             "programme_term": term,
                             "day": day,
-                            "courses": sorted(ccs),
+                            "courses": sorted(ccs.values()),
                         }
                     )
 
@@ -1749,6 +1892,40 @@ def _build_room_qa(
     }
 
 
+def _build_section_enrollment_from_enrolled_sets(
+    enrolled_sets: dict[str, set[int]],
+) -> dict[str, list[dict]]:
+    """Build exam room demand from the same student sets used for scheduling."""
+    student_ids: set[int] = set()
+    for sids in enrolled_sets.values():
+        student_ids.update(sids)
+    section_by_student = {
+        int(sid): str(section or "").strip()
+        for sid, section in Student.objects.filter(student_id__in=student_ids).values_list(
+            "student_id",
+            "section",
+        )
+    }
+    result: dict[str, list[dict]] = {}
+    for course_code, sids in enrolled_sets.items():
+        grouped: dict[str, set[int]] = defaultdict(set)
+        for sid in sids:
+            grouped[section_by_student.get(int(sid), "") or _SYNTHETIC_SECTION_LABEL].add(int(sid))
+        result[course_code] = [
+            {
+                "section": section_label,
+                "student_count": len(section_sids),
+                "preferred_room": "",
+                "gender": _section_gender(section_label),
+            }
+            for section_label, section_sids in sorted(
+                grouped.items(),
+                key=lambda item: (_section_gender(item[0]), item[0]),
+            )
+        ]
+    return result
+
+
 # ── 6. Orchestrator ────────────────────────────────────────────
 
 
@@ -1808,12 +1985,16 @@ def build_exam_timetable(
                            persisting only the selected ones.
     """
     # 1. Enrolled sets
-    enrolled_sets = build_enrolled_sets(programs=programs, sections=sections)
+    enrolled_sets, course_meta = build_enrolled_sets_with_meta(
+        programs=programs,
+        sections=sections,
+    )
 
     # 1b. Filter to user-selected courses (if provided from preview step)
     if selected_courses is not None:
         keep = set(selected_courses)
         enrolled_sets = {cc: sids for cc, sids in enrolled_sets.items() if cc in keep}
+        course_meta = {cc: meta for cc, meta in course_meta.items() if cc in keep}
 
     course_list = sorted(enrolled_sets.keys())
 
@@ -1861,7 +2042,7 @@ def build_exam_timetable(
                     adj[n].pop(cc, None)
 
     # 3. Programme-plan term buckets
-    ptb, cb = build_plan_term_buckets(set(course_list))
+    ptb, cb = build_plan_term_buckets(set(course_list), course_meta=course_meta)
 
     # 4. Feasibility pre-check
     violations = check_bucket_feasibility(ptb, len(days))
@@ -1903,6 +2084,12 @@ def build_exam_timetable(
         credit_map=credit_map,
         seed=seed,
     )
+    for entry in schedule_entries:
+        meta = course_meta.get(entry["course_code"], {})
+        source = _source_code_for_display(entry["course_code"], meta.get("source_course_code"))
+        entry["source_course_code"] = source
+        entry["course_name"] = str(meta.get("course_name") or "")
+        entry["course_identity"] = str(meta.get("course_identity") or source)
 
     # 7. QA report — validate hard constraints and compute quality metrics
     qa = _build_qa(
@@ -1934,11 +2121,7 @@ def build_exam_timetable(
     room_feasibility: list[dict] = []
     room_qa: dict = {}
     if assign_rooms:
-        section_enrollment = build_section_enrollment(
-            set(course_list),
-            programs=programs,
-            sections=sections,
-        )
+        section_enrollment = _build_section_enrollment_from_enrolled_sets(enrolled_sets)
         rooms_list = list(
             Room.objects.all().values(
                 "room_code", "capacity", "section", "department", "building", "floor"

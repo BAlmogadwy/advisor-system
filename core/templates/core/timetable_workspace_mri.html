@@ -1,0 +1,221 @@
+{% extends "core/base.html" %}
+{% load i18n static %}
+{% get_current_language as LANGUAGE_CODE %}
+
+{% block title %}{% if LANGUAGE_CODE == 'ar' %}تصوير الجدول{% else %}Timetable MRI{% endif %}{% endblock %}
+
+{% block main_padding %}p-0{% endblock %}
+
+{% block extra_css %}
+  <link href="{% static 'css/timetable-mri-full.css' %}?v=20" rel="stylesheet">
+{% endblock %}
+
+{% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}تصوير الجدول{% else %}Timetable MRI{% endif %}{% endblock %}
+{% block page_header_right %}{% endblock %}
+
+{% block content %}
+{% csrf_token %}
+<div class="twm-page" id="twmPage">
+  <header class="twm-topbar">
+    <div>
+      <div class="twm-kicker">Diagnostic twin</div>
+      <h2>Timetable MRI</h2>
+    </div>
+    <div class="twm-controls">
+      <label for="twmYear">
+        <span>Year</span>
+        <input id="twmYear" type="text" inputmode="numeric" value="{{ default_year }}" aria-label="Year">
+      </label>
+      <label for="twmTerm">
+        <span>Sem</span>
+        <input id="twmTerm" type="text" inputmode="numeric" value="{{ default_term }}" aria-label="Sem">
+      </label>
+      <label class="twm-scenario-control" for="twmScenario">
+        <span>Scenario</span>
+        <select id="twmScenario" aria-label="Scenario">
+          <option value="">Loading scenarios...</option>
+        </select>
+      </label>
+      <label for="twmBoard">
+        <span>Board</span>
+        <select id="twmBoard" aria-label="Board">
+          <option value="">All boards</option>
+        </select>
+      </label>
+      <a class="twm-btn" id="twmBack" href="/timetable-workspace/">Workspace</a>
+    </div>
+  </header>
+
+  <main class="twm-main">
+    <nav class="twm-mode-rail" aria-label="MRI scan modes">
+      <button class="active" type="button" data-twm-mode="system">System</button>
+      <button type="button" data-twm-mode="groups">Groups</button>
+      <button type="button" data-twm-mode="students">Students</button>
+      <button type="button" data-twm-mode="actions">Actions</button>
+      <button type="button" data-twm-mode="build">Build</button>
+    </nav>
+
+    <section class="twm-hero" id="twmSectionSystem" data-twm-section="system">
+      <div class="twm-score-card" id="twmScoreCard">
+        <div class="twm-score-ring">
+          <span id="twmPressure" aria-live="polite">0</span>
+          <small>pressure</small>
+        </div>
+        <div>
+          <div class="twm-kicker">Current scan</div>
+          <h3 id="twmScanTitle">Select a scenario</h3>
+          <p id="twmScanSubtitle">The MRI page reads the existing workspace data and turns it into diagnostic layers.</p>
+          <div class="twm-pressure-explain" id="twmPressureExplain"></div>
+          <div class="twm-handoff" id="twmHandoff" aria-label="Open this timetable context in another workspace view"></div>
+        </div>
+      </div>
+      <div class="twm-metrics" id="twmMetrics"></div>
+    </section>
+
+    <section class="twm-top-surgery" id="twmTopSurgery" aria-live="polite"></section>
+
+    <section class="twm-grid">
+      <article class="twm-panel twm-board-map">
+        <div class="twm-panel-head">
+          <div>
+            <div class="twm-kicker">Scenario anatomy</div>
+            <h3>Board Map</h3>
+          </div>
+          <span id="twmBoardCount">0 boards</span>
+        </div>
+        <div class="twm-board-map-body" id="twmBoardMap"></div>
+      </article>
+
+      <article class="twm-panel twm-layers">
+        <div class="twm-panel-head">
+          <div>
+            <div class="twm-kicker">Diagnostic scans</div>
+            <h3>MRI Layers</h3>
+          </div>
+          <span id="twmLayerStatus">No scan</span>
+        </div>
+        <div id="twmLayers"></div>
+      </article>
+
+      <article class="twm-panel twm-flow" id="twmSectionStudents" data-twm-section="students">
+        <div class="twm-panel-head">
+          <div>
+            <div class="twm-kicker">Student movement</div>
+            <h3>Diagnostic Theatre</h3>
+          </div>
+          <span id="twmFlowStatus">0 affected</span>
+        </div>
+        <canvas id="twmFlowCanvas" width="1100" height="520" aria-label="Interactive scenario graph"></canvas>
+        <div class="twm-graph-tools" aria-label="Graph controls">
+          <button id="twmGraphExpandAll" type="button">Expand all</button>
+          <button id="twmGraphCollapseAll" type="button">Collapse all</button>
+          <button id="twmGraphResetLayout" type="button">Reset layout</button>
+          <label class="twm-graph-density" for="twmGraphGroupLimit">
+            <span>Groups</span>
+            <select id="twmGraphGroupLimit" aria-label="Visible groups per expanded board">
+              <option value="4">Top 4</option>
+              <option value="6" selected>Top 6</option>
+              <option value="8">Top 8</option>
+              <option value="all">All</option>
+            </select>
+          </label>
+          <button id="twmGraphLabels" type="button" aria-pressed="false">Focus labels</button>
+          <div class="twm-graph-lenses" aria-label="Graph lens">
+            <button class="active" data-twm-graph-lens="pressure" type="button">Pressure</button>
+            <button data-twm-graph-lens="affected" type="button">Affected</button>
+            <button data-twm-graph-lens="clashes" type="button">Clashes</button>
+            <button data-twm-graph-lens="capacity" type="button">Seats</button>
+          </div>
+        </div>
+        <div class="twm-graph-detail" id="twmGraphDetail">
+          <strong>Graph drill-down</strong>
+          <span>Click a term node to reveal its groups, then click a group for clash and course details.</span>
+        </div>
+        <div class="twm-theatre-legend">
+          <span><i class="stable"></i> clean pressure</span>
+          <span><i class="watch"></i> constraint pressure</span>
+          <span><i class="critical"></i> direct student harm</span>
+        </div>
+      </article>
+
+      <article class="twm-panel twm-hotspots" id="twmSectionActions" data-twm-section="actions">
+        <div class="twm-panel-head">
+          <div>
+            <div class="twm-kicker">Where to operate first</div>
+            <h3>Hot Spots</h3>
+          </div>
+          <span id="twmHotspotCount">0</span>
+        </div>
+        <div id="twmHotspots"></div>
+      </article>
+
+      <article class="twm-panel twm-genome">
+        <div class="twm-panel-head">
+          <div>
+            <div class="twm-kicker">Scenario genome</div>
+            <h3>DNA Strip</h3>
+          </div>
+          <span id="twmGenomeStatus">No genome</span>
+        </div>
+        <div id="twmGenome"></div>
+      </article>
+
+      <article class="twm-panel twm-groups" id="twmSectionGroups" data-twm-section="groups">
+        <div class="twm-panel-head">
+          <div>
+            <div class="twm-kicker">Board anatomy</div>
+            <h3>Group MRI</h3>
+          </div>
+          <span id="twmGroupStatus">No groups</span>
+        </div>
+        <div id="twmGroups"></div>
+      </article>
+
+      <article class="twm-panel twm-students">
+        <div class="twm-panel-head">
+          <div>
+            <div class="twm-kicker">Student impact</div>
+            <h3>Impact Slices</h3>
+          </div>
+          <span id="twmStudentStatus">No affected students</span>
+        </div>
+        <div id="twmStudentSlices"></div>
+      </article>
+
+      <article class="twm-panel twm-interventions">
+        <div class="twm-panel-head">
+          <div>
+            <div class="twm-kicker">Decision support</div>
+            <h3>Intervention Queue</h3>
+          </div>
+          <span id="twmInterventionStatus">No actions</span>
+        </div>
+        <div id="twmInterventions"></div>
+      </article>
+
+      <article class="twm-panel twm-build" id="twmSectionBuild" data-twm-section="build">
+        <div class="twm-panel-head">
+          <div>
+            <div class="twm-kicker">Build cockpit</div>
+            <h3>Suggested Moves</h3>
+          </div>
+          <span id="twmBuildStatus">No moves</span>
+        </div>
+        <div id="twmBuildMoves"></div>
+      </article>
+    </section>
+  </main>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  const LANGUAGE_CODE = "{{ LANGUAGE_CODE|default:'en' }}";
+  const djCsrfToken = "{{ csrf_token }}";
+  const defaultYear = "{{ default_year }}";
+  const defaultTerm = "{{ default_term }}";
+  const initialScenario = "{{ initial_scenario|escapejs }}";
+  const initialBoard = "{{ initial_board|escapejs }}";
+</script>
+<script src="{% static 'js/page-timetable-mri.js' %}?v=20"></script>
+{% endblock %}

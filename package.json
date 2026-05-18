@@ -1,0 +1,15 @@
+{
+  "scripts": {
+    "build:nvl": "esbuild static/js/vendor/timetable-nvl-entry.js --bundle --format=iife --global-name=TimetableNvlBundle --outfile=static/js/vendor/timetable-nvl.bundle.js",
+    "build:cytoscape": "esbuild static/js/vendor/timetable-cytoscape-entry.js --bundle --format=iife --global-name=TimetableCyGraphBundle --outfile=static/js/vendor/timetable-cytoscape.bundle.js"
+  },
+  "devDependencies": {
+    "@neo4j-nvl/base": "1.1.0",
+    "@neo4j-nvl/interaction-handlers": "1.1.0",
+    "cytoscape": "^3.33.3",
+    "esbuild": "0.27.1"
+  },
+  "overrides": {
+    "lodash": "4.18.1"
+  }
+}

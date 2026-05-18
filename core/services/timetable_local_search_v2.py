@@ -27,6 +27,7 @@ from core.services.timetable_room_repair import (
     rollback_move,
     try_repair_rooms_locally,
 )
+from core.services.timetable_same_course import has_same_course_overlap, make_meeting_window
 from core.services.timetable_validation import (
     get_prayer_windows,
     is_prayer_overlap_rule_enabled,
@@ -40,21 +41,25 @@ def _min_to_hhmm(m: int) -> str:
     return f"{m // 60:02d}:{m % 60:02d}"
 
 
-def _has_same_course_same_slot(sections_by_id: dict[str, SectionState]) -> bool:
-    """True iff two sections of the same course share a (day, start_min).
+def _has_same_course_overlap(sections_by_id: dict[str, SectionState]) -> bool:
+    """True iff two sections of the same course overlap in time.
 
     Registrar convention: course code implies a single instructor across
-    all sections, so two sections meeting at the same time would be an
+    all sections, so overlapping same-course sections would be an
     instructor clash even when the ``instructor_id`` field is empty.
     """
-    seen: dict[tuple[str, int, int], str] = {}
+    by_course: dict[str, list] = {}
     for sec in sections_by_id.values():
-        for m in sec.meetings:
-            key = (sec.course_code, m.day, m.start_min)
-            other = seen.get(key)
-            if other is not None and other != sec.section_id:
-                return True
-            seen[key] = sec.section_id
+        by_course.setdefault(sec.course_code, []).extend(
+            [
+                make_meeting_window(sec.course_code, m.day, m.start_min, m.end_min, sec.section_id)
+                for m in sec.meetings
+            ]
+        )
+
+    for meetings in by_course.values():
+        if has_same_course_overlap(meetings):
+            return True
     return False
 
 
@@ -128,6 +133,7 @@ def generate_all_repattern_moves(
     sections_by_id: dict[str, SectionState],
     pattern_catalog: dict[str, list[CanonicalPattern]],
     priority_sections: set[str] | None = None,
+    locked_section_ids: set[str] | None = None,
 ) -> list[TimetableMove]:
     """Generate repattern moves for ALL sections (or priority subset).
 
@@ -135,8 +141,11 @@ def generate_all_repattern_moves(
     """
     moves: list[TimetableMove] = []
     targets = priority_sections if priority_sections else set(sections_by_id.keys())
+    locked = locked_section_ids or set()
 
     for sec_id in sorted(targets):
+        if sec_id in locked:
+            continue
         sec = sections_by_id.get(sec_id)
         if not sec:
             continue
@@ -158,6 +167,7 @@ def generate_swap_moves(
     sections_by_id: dict[str, SectionState],
     pattern_catalog: dict[str, list[CanonicalPattern]],
     hotspot_courses: list[str],
+    locked_section_ids: set[str] | None = None,
 ) -> list[TimetableMove]:
     """Generate pairwise swap moves between hotspot sections and others.
 
@@ -166,6 +176,7 @@ def generate_swap_moves(
     """
     moves: list[TimetableMove] = []
     hotspot_set = set(hotspot_courses[:10])
+    locked = locked_section_ids or set()
 
     # Group sections by pattern_family
     family_sections: dict[str, list[str]] = {}
@@ -181,10 +192,14 @@ def generate_swap_moves(
             continue
 
         for i, sid_a in enumerate(sec_ids):
+            if sid_a in locked:
+                continue
             sec_a = sections_by_id[sid_a]
             if sec_a.course_code not in hotspot_set:
                 continue
             for sid_b in sec_ids[i + 1 :]:
+                if sid_b in locked:
+                    continue
                 sec_b = sections_by_id[sid_b]
                 if sec_a.course_code == sec_b.course_code:
                     continue
@@ -231,6 +246,7 @@ def diagnostic_driven_local_search(
     room_occupancies: dict[str, RoomOccupancy] | None = None,
     course_room_requirements: dict[str, str] | None = None,
     max_iterations: int = 50,
+    locked_section_ids: set[str] | None = None,
 ) -> TimetableEvaluationResult:
     """Multi-pass local search with aggressive move generation.
 
@@ -252,6 +268,7 @@ def diagnostic_driven_local_search(
     # Large scenarios: switch to first-improvement to avoid multi-minute
     # iterations. 80 sections is the threshold (~45 courses × 2 sections).
     use_first_improvement = len(sections_by_id) > 80
+    locked = locked_section_ids or set()
 
     # Time budget: stop after 3 minutes regardless of iteration count.
     # Prevents the server from freezing on large scenarios.
@@ -291,15 +308,34 @@ def diagnostic_driven_local_search(
 
         # Phase 1: Repattern priority sections (focused — most improvements come from here)
         all_moves.extend(
-            generate_all_repattern_moves(sections_by_id, pattern_catalog, priority_sections)
+            generate_all_repattern_moves(
+                sections_by_id,
+                pattern_catalog,
+                priority_sections,
+                locked_section_ids=locked,
+            )
         )
         # Phase 2: Pairwise swaps — helps when two courses block each other;
         # exchanging their patterns can unblock both simultaneously
-        all_moves.extend(generate_swap_moves(sections_by_id, pattern_catalog, hotspot_courses))
+        all_moves.extend(
+            generate_swap_moves(
+                sections_by_id,
+                pattern_catalog,
+                hotspot_courses,
+                locked_section_ids=locked,
+            )
+        )
         # Phase 3 (after iteration 5): Exhaustive — try ALL sections.
         # Expensive but catches improvements the focused phases miss.
         if iteration >= 5:
-            all_moves.extend(generate_all_repattern_moves(sections_by_id, pattern_catalog, None))
+            all_moves.extend(
+                generate_all_repattern_moves(
+                    sections_by_id,
+                    pattern_catalog,
+                    None,
+                    locked_section_ids=locked,
+                )
+            )
 
         # PR1 candidate-gen filter: drop moves whose target pattern
         # overlaps any configured prayer window. No-op when the flag
@@ -330,10 +366,10 @@ def diagnostic_driven_local_search(
                 continue
 
             # Same-course instructor-clash hard-reject: two sections of
-            # the same course cannot share a (day, start_min) because the
-            # same instructor typically teaches all sections. Scan after
-            # the move has been applied; rollback + skip if violated.
-            if _has_same_course_same_slot(sections_by_id):
+            # the same course cannot overlap because the same instructor
+            # typically teaches all sections. Scan after the move has been
+            # applied; rollback + skip if violated.
+            if _has_same_course_overlap(sections_by_id):
                 _rollback(snapshot, sections_by_id, room_occupancies)
                 continue
 

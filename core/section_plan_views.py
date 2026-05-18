@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import tempfile
 from pathlib import Path
 
@@ -38,6 +39,105 @@ from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
 
 logger = logging.getLogger(__name__)
+
+
+def _apply_programme_course_names(plan: list[dict], program: str) -> list[dict]:
+    """Overlay ProgrammeRequirement.course_name for display-only plan rows."""
+    course_codes = [
+        normalize_code(str(row.get("course_code", ""))) for row in plan if row.get("course_code")
+    ]
+    if not course_codes:
+        return [dict(row) for row in plan]
+
+    names = {
+        normalize_code(code): course_name or ""
+        for code, course_name in ProgrammeRequirement.objects.filter(
+            program=program,
+            course_code__in=course_codes,
+        ).values_list("course_code", "course_name")
+    }
+
+    updated: list[dict] = []
+    for row in plan:
+        row_copy = dict(row)
+        code = normalize_code(str(row_copy.get("course_code", "")))
+        row_copy["course_name"] = names.get(code) or row_copy.get("course_name", "")
+        updated.append(row_copy)
+    return updated
+
+
+def _merge_section_plan_rows_by_course_identity(
+    program_plans: list[tuple[str, list[dict]]],
+) -> list[dict]:
+    """Merge multi-program rows by course code and plan-specific course name."""
+    merged: dict[tuple[str, str], dict] = {}
+
+    for program, plan in program_plans:
+        for row in plan:
+            code = normalize_code(str(row.get("course_code", "")))
+            name = str(row.get("course_name", "") or "")
+            key = (code, name)
+
+            if key not in merged:
+                row_copy = dict(row)
+                row_copy["course_code"] = code
+                row_copy["course_name"] = name
+                row_copy["total_students"] = 0
+                row_copy["programs"] = []
+                merged[key] = row_copy
+
+            target = merged[key]
+            if program not in target["programs"]:
+                target["programs"].append(program)
+            target["total_students"] += int(row.get("total_students") or 0)
+            target["max_per_section"] = min(
+                int(target.get("max_per_section") or 1),
+                int(row.get("max_per_section") or 1),
+            )
+            target["is_external"] = bool(target.get("is_external")) or bool(row.get("is_external"))
+
+    result = []
+    for row in merged.values():
+        max_per_section = max(1, int(row.get("max_per_section") or 1))
+        total_students = int(row.get("total_students") or 0)
+        num_sections = max(1, math.ceil(total_students / max_per_section))
+        avg_per_section = math.ceil(total_students / num_sections)
+        fill_percent = round((avg_per_section / max_per_section) * 100)
+
+        if avg_per_section >= max_per_section:
+            status = "full"
+        elif avg_per_section < 10:
+            status = "underfilled"
+        else:
+            status = ""
+
+        row["total_students"] = total_students
+        row["num_sections"] = num_sections
+        row["avg_per_section"] = avg_per_section
+        row["fill_percent"] = fill_percent
+        row["status"] = status
+        row["programs"] = sorted(row.get("programs") or [])
+        result.append(row)
+
+    result.sort(
+        key=lambda r: (
+            r.get("department", ""),
+            r.get("course_code", ""),
+            r.get("course_name", ""),
+        )
+    )
+    return result
+
+
+def _format_export_course_name(row: dict, course_names: dict[str, str]) -> str:
+    """Return the display name written into the XLSX export."""
+    code = normalize_code(str(row.get("course_code", "")))
+    course_name = str(row.get("course_name") or course_names.get(code, "") or "")
+    programs = [str(program) for program in row.get("programs", []) if str(program).strip()]
+    if programs:
+        program_label = ", ".join(programs)
+        return f"{program_label} - {course_name}" if course_name else program_label
+    return course_name
 
 
 def _require_general_advisor(request: HttpRequest) -> JsonResponse | None:
@@ -180,25 +280,23 @@ def section_plan_generate_view(request: HttpRequest) -> JsonResponse:
     try:
         if isinstance(program, list):
             # ── Multi-program mode ──
-            from collections import Counter
-
             result_programs: list[dict] = []
             total_student_count = 0
-            combined_agg: Counter[str] = Counter()
             for prog in program:
                 sc, agg = build_aggregate_counts(
                     params["year"],
                     params["semester"],
                     program=prog,
                     section=params["section"],
+                    resolve_electives=True,
                 )
-                combined_agg += agg
                 pr_caps = load_programme_capacities(prog, list(agg.keys()))
                 plan = compute_section_plan(
                     agg,
                     **capacity_kwargs,
                     programme_capacities=pr_caps,
                 )
+                plan = _apply_programme_course_names(plan, prog)
                 summary = compute_plan_summary(plan)
                 result_programs.append(
                     {
@@ -210,20 +308,9 @@ def section_plan_generate_view(request: HttpRequest) -> JsonResponse:
                 )
                 total_student_count += sc
 
-            # Build combined union plan using min capacities across programs
-            combined_codes = list(combined_agg.keys())
-            combined_pr_caps: dict[str, int] = {}
-            for prog in program:
-                caps = load_programme_capacities(prog, combined_codes)
-                for code, cap in caps.items():
-                    if code in combined_pr_caps:
-                        combined_pr_caps[code] = min(combined_pr_caps[code], cap)
-                    else:
-                        combined_pr_caps[code] = cap
-            combined_plan = compute_section_plan(
-                combined_agg,
-                **capacity_kwargs,
-                programme_capacities=combined_pr_caps,
+            # Build combined plan by the same identity shown in the table.
+            combined_plan = _merge_section_plan_rows_by_course_identity(
+                [(prog_data["program"], prog_data["plan"]) for prog_data in result_programs]
             )
             combined_summary = compute_plan_summary(combined_plan)
 
@@ -268,6 +355,7 @@ def section_plan_generate_view(request: HttpRequest) -> JsonResponse:
                 params["semester"],
                 program=program,
                 section=params["section"],
+                resolve_electives=True,
             )
             pr_caps = load_programme_capacities(program, list(aggregate.keys()))
             plan = compute_section_plan(
@@ -275,6 +363,7 @@ def section_plan_generate_view(request: HttpRequest) -> JsonResponse:
                 **capacity_kwargs,
                 programme_capacities=pr_caps,
             )
+            plan = _apply_programme_course_names(plan, program)
             summary = compute_plan_summary(plan)
 
             return JsonResponse(
@@ -296,6 +385,7 @@ def section_plan_generate_view(request: HttpRequest) -> JsonResponse:
                 params["semester"],
                 program=None,
                 section=params["section"],
+                resolve_electives=True,
             )
             plan = compute_section_plan(aggregate, **capacity_kwargs)
             summary = compute_plan_summary(plan)
@@ -524,6 +614,7 @@ def section_plan_export_view(request: HttpRequest) -> HttpResponseBase:
                     params["semester"],
                     program=prog,
                     section=params["section"],
+                    resolve_electives=True,
                 )
                 pr_caps = load_programme_capacities(prog, list(agg.keys()))
                 plan = compute_section_plan(
@@ -531,12 +622,14 @@ def section_plan_export_view(request: HttpRequest) -> HttpResponseBase:
                     **capacity_kwargs,
                     programme_capacities=pr_caps,
                 )
+                plan = _apply_programme_course_names(plan, prog)
+                plan = _filter_plan(plan)
                 summary = compute_plan_summary(plan)
                 programs_data.append(
                     {
                         "program": prog,
-                        "plan": _filter_plan(plan),
-                        "summary": compute_plan_summary(_filter_plan(plan)),
+                        "plan": plan,
+                        "summary": summary,
                     }
                 )
             path = _export_section_plan_xlsx(
@@ -553,6 +646,7 @@ def section_plan_export_view(request: HttpRequest) -> HttpResponseBase:
                 params["semester"],
                 program=program,
                 section=params["section"],
+                resolve_electives=True,
             )
             pr_caps = load_programme_capacities(program, list(aggregate.keys()))
             plan = compute_section_plan(
@@ -560,6 +654,7 @@ def section_plan_export_view(request: HttpRequest) -> HttpResponseBase:
                 **capacity_kwargs,
                 programme_capacities=pr_caps,
             )
+            plan = _apply_programme_course_names(plan, program)
             plan = _filter_plan(plan)
             summary = compute_plan_summary(plan)
             path = _export_section_plan_xlsx(plan, summary, params, mode="single")
@@ -572,6 +667,7 @@ def section_plan_export_view(request: HttpRequest) -> HttpResponseBase:
                 params["semester"],
                 program=None,
                 section=params["section"],
+                resolve_electives=True,
             )
             plan = _filter_plan(compute_section_plan(aggregate, **capacity_kwargs))
             summary = compute_plan_summary(plan)
@@ -728,7 +824,7 @@ def _export_section_plan_xlsx(
             c.border = cell_border
 
             # Course name
-            course_name = _course_names.get(normalize_code(row["course_code"]), "")
+            course_name = _format_export_course_name(row, _course_names)
             c = ws.cell(row=r, column=4, value=course_name)
             c.font = Font(size=9, color="566573")
             c.alignment = left_center
@@ -935,10 +1031,9 @@ def _export_section_plan_xlsx(
 
     if mode == "multi" and programs_data:
         # ── Combined sheet first (all programs merged) ──
-        combined_plan: list[dict] = []
-        for prog_entry in programs_data:
-            combined_plan.extend(prog_entry["plan"])
-        combined_plan.sort(key=lambda r: (r.get("department", ""), r.get("course_code", "")))
+        combined_plan = _merge_section_plan_rows_by_course_identity(
+            [(prog_entry["program"], prog_entry["plan"]) for prog_entry in programs_data]
+        )
         combined_summary = compute_plan_summary(combined_plan)
 
         default_sheet = wb.active

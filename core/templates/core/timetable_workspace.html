@@ -6,7 +6,10 @@
 
 {% block main_padding %}p-0{% endblock %}
 
-{% block extra_css %}{# All timetable-workspace styles live in static/css/global.css (TIMETABLE WORKSPACE section). #}{% endblock %}
+{% block extra_css %}
+  {# Timetable MRI is loaded as a versioned additive extension stylesheet. #}
+  <link href="{% static 'css/timetable-mri.css' %}?v=1" rel="stylesheet">
+{% endblock %}
 
 {% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}محطة بناء الجدول{% else %}Timetable Workspace{% endif %}{% endblock %}
 
@@ -90,6 +93,8 @@
 
   <button class="tw-btn" id="twUndo" type="button" disabled title="Undo">&#x21B6;</button>
   <button class="tw-btn" id="twRedo" type="button" disabled title="Redo">&#x21B7;</button>
+  <button class="tw-btn" id="twMriPage" type="button" title="{% if LANGUAGE_CODE == 'ar' %}فتح تصوير الجدول الكامل{% else %}Open full Timetable MRI{% endif %}">MRI</button>
+  <a class="tw-btn" id="twGraphPage" href="/timetable-workspace/graph/" title="Open Neo4j graph twin" style="text-decoration:none">Graph</a>
 
   <span id="twValidationBadge" class="tw-badge tw-badge-draft">{% if LANGUAGE_CODE == 'ar' %}مسودة{% else %}Draft{% endif %}</span>
 
@@ -110,9 +115,21 @@
     </div>
   </span>
 
-  <button class="tw-btn d-none" id="twExport" type="button" title="{% if LANGUAGE_CODE == 'ar' %}تصدير{% else %}Export XLSX{% endif %}">
-    &#x1F4E5; {% if LANGUAGE_CODE == 'ar' %}تصدير{% else %}Export{% endif %}
-  </button>
+  <span id="twExportGroup" class="tw-btn-group" style="display:inline-flex; position:relative;">
+    <button class="tw-btn" id="twExport" type="button" disabled style="padding:5px 10px;" title="{% if LANGUAGE_CODE == 'ar' %}تصدير حسب الفلتر أو حسب كل خطة{% else %}Filtered export, or one workbook per plan when no filter is active{% endif %}">
+      &#x1F4E5; {% if LANGUAGE_CODE == 'ar' %}تصدير{% else %}Export{% endif %}
+    </button><button class="tw-btn" id="twExportMenu" type="button" disabled style="padding:5px 4px;border-inline-start:1px solid var(--line);margin-inline-start:-1px;" title="{% if LANGUAGE_CODE == 'ar' %}خيارات التصدير{% else %}Export options{% endif %}">&#x25BE;</button>
+    <div class="fs-md" id="twExportDropdown" style="display:none; position:absolute; top:100%; right:0; z-index:100; min-width:260px; margin-top:4px; background:var(--card); border:1px solid var(--line); border-radius:var(--radius-sm); box-shadow:var(--shadow-card)">
+      <div class="tw-export-item u-cursor-pointer" data-mode="combined" style="padding:8px 12px; border-bottom:1px solid var(--line)">
+        <div class="fw-semibold text-teal">{% if LANGUAGE_CODE == 'ar' %}ملف موحد{% else %}Combined workbook{% endif %}</div>
+        <div class="fs-xs text-t4">{% if LANGUAGE_CODE == 'ar' %}ملف واحد بأوراق لكل مدة لوحة{% else %}One XLSX organised by board term{% endif %}</div>
+      </div>
+      <div class="tw-export-item u-cursor-pointer" data-mode="per-plan" style="padding:8px 12px">
+        <div class="fw-semibold" style="color:var(--royal)">{% if LANGUAGE_CODE == 'ar' %}ملف لكل خطة{% else %}One file per plan{% endif %}</div>
+        <div class="fs-xs text-t4">{% if LANGUAGE_CODE == 'ar' %}ملف XLSX لكل برنامج بأوراق حسب فصل الخطة{% else %}One XLSX per program, sheets by plan term{% endif %}</div>
+      </div>
+    </div>
+  </span>
 
   <button class="tw-btn tw-btn-primary" id="twPublish" type="button" disabled
     {% if LANGUAGE_CODE == 'ar' %}نشر{% else %}Publish{% endif %}
@@ -162,6 +179,7 @@
       <div class="tw-panel-tab active" data-tab="issues">{% if LANGUAGE_CODE == 'ar' %}المشاكل{% else %}Issues{% endif %}</div>
       <div class="tw-panel-tab" data-tab="capacity">{% if LANGUAGE_CODE == 'ar' %}السعة{% else %}Capacity{% endif %}</div>
       <div class="tw-panel-tab" data-tab="selection">{% if LANGUAGE_CODE == 'ar' %}التحديد{% else %}Selection{% endif %}</div>
+      <div class="tw-panel-tab" data-tab="mri">MRI</div>
     </div>
     <div class="tw-panel-body" id="twRightBody">
       <div class="tw-empty" style="padding:24px;">
@@ -196,5 +214,5 @@
   const defaultYear = {{ default_year }};
   const defaultTerm = {{ default_term }};
 </script>
-<script src="{% static 'js/page-timetable-workspace.js' %}?v=10"></script>
+<script src="{% static 'js/page-timetable-workspace.js' %}?v=18"></script>
 {% endblock %}

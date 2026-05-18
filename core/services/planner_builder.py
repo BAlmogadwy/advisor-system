@@ -51,6 +51,27 @@ _SLOTS_PER_DAY = 24 * 60 // _SLOT_MINUTES  # 288
 _TOTAL_WEEK_SLOTS = 7 * _SLOTS_PER_DAY  # 2016
 
 
+def _norm_course_key(value: Any) -> str:
+    return str(value or "").replace(" ", "").upper()
+
+
+def _option_course_key(option: dict[str, Any]) -> str:
+    key = _norm_course_key(option.get("course_key"))
+    if key:
+        return key
+    code = _norm_course_key(option.get("course_code"))
+    number = _norm_course_key(option.get("course_number"))
+    if code and number and number != code:
+        return _norm_course_key(f"{code}{number}")
+    return code or number
+
+
+def _display_course_label(row: dict[str, Any]) -> str:
+    code = _option_course_key(row)
+    section = str(row.get("section", "") or "").strip()
+    return f"{code} {section}".strip()
+
+
 def _to_minutes(t: str) -> int:
     hh, mm = t.split(":")
     return int(hh) * 60 + int(mm)
@@ -169,6 +190,7 @@ def _catalog_for_courses(
     wanted = {str(c).replace(" ", "").upper() for c in course_codes}
     rows = (
         TermSection.objects.filter(
+            scenario__isnull=True,
             course_key__in=wanted,
         )
         .order_by("course_code", "course_number", "section")
@@ -185,15 +207,13 @@ def _catalog_for_courses(
     )
     out: dict[str, list[dict[str, Any]]] = {}
     for sid, code, num, course_key, sec, name, reg, cap in rows:
-        full = (
-            str(course_key or "").replace(" ", "").upper()
-            or f"{str(code or '').strip()}{str(num or '').strip()}".upper()
-        )
+        full = _norm_course_key(course_key) or _norm_course_key(f"{code or ''}{num or ''}")
         out.setdefault(full, []).append(
             {
                 "term_section_id": int(sid),
-                "course_code": str(code or ""),
-                "course_number": str(num or ""),
+                "course_code": full,
+                "course_key": full,
+                "course_number": "",
                 "section": str(sec or ""),
                 "course_name": str(name or ""),
                 "registered_count": int(reg) if reg is not None and str(reg).isdigit() else None,
@@ -219,7 +239,7 @@ def _choose(
             e = str(r.get("end_time", "")).strip()
             if d and s and e:
                 m = Meeting(day=DAY_MAP.get(d, d), start=s, end=e)
-                label = f"baseline {r.get('course_code', '')}{r.get('course_number', '')} {r.get('section', '')}".strip()
+                label = f"baseline {_display_course_label(r)}".strip()
                 occupied.append(OccupiedSlot(meeting=m, label=label))
 
     selected: list[dict[str, Any]] = []
@@ -298,7 +318,7 @@ def _choose(
                 break
             option_conflicts.append(
                 {
-                    "tried_section": f"{opt.get('course_code', '')}{opt.get('course_number', '')}:{opt.get('section', '')}",
+                    "tried_section": f"{_option_course_key(opt)}:{opt.get('section', '')}",
                     "conflicts": conflicts_for_opt,
                 }
             )
@@ -314,7 +334,7 @@ def _choose(
             occupied.append(
                 OccupiedSlot(
                     meeting=m,
-                    label=f"selected {picked.get('course_code', '')}{picked.get('course_number', '')} {picked.get('section', '')}",
+                    label=f"selected {_display_course_label(picked)}",
                 )
             )
         selected.append(picked)
@@ -534,8 +554,7 @@ def _bitmask_build_option_b(
 
     chosen_course: set[str] = set()
     for sel_item in selected:
-        code = str(sel_item.get("course_code", "")) + str(sel_item.get("course_number", ""))
-        chosen_course.add(code.replace(" ", "").upper())
+        chosen_course.add(_option_course_key(sel_item))
 
     for c in eligible:
         code = str(c["_code"])
@@ -736,8 +755,7 @@ def _bitmask_build_option_c(
 
     chosen_course: set[str] = set()
     for sel_item in selected:
-        code = str(sel_item.get("course_code", "")) + str(sel_item.get("course_number", ""))
-        chosen_course.add(code.replace(" ", "").upper())
+        chosen_course.add(_option_course_key(sel_item))
 
     for c in eligible:
         code = str(c["_code"])
@@ -1076,8 +1094,7 @@ def _cp_build_option(
     for sid, v in var_by_sid.items():
         if solver.Value(v) == 1:
             opt = option_by_sid[sid]
-            code = str(opt.get("course_code", "")) + str(opt.get("course_number", ""))
-            chosen_course.add(code.replace(" ", "").upper())
+            chosen_course.add(_option_course_key(opt))
             selected.append(opt)
 
     pair_set = {(a, b) for (a, b) in _get_conflict_pairs(option_by_sid)}
@@ -1263,6 +1280,7 @@ def build_plans(
             "mappings": [
                 {
                     "course_code": s.get("course_code", ""),
+                    "course_key": s.get("course_key", "") or _option_course_key(s),
                     "course_number": s.get("course_number", ""),
                     "section": s.get("section", ""),
                     "term_section_id": s.get("term_section_id"),

@@ -1,0 +1,244 @@
+{% extends "core/base.html" %}
+{% load i18n static %}
+{% get_current_language as LANGUAGE_CODE %}
+
+{% block title %}Timetable Graph Twin{% endblock %}
+{% block main_padding %}p-0{% endblock %}
+
+{% block extra_css %}
+  <link href="{% static 'css/timetable-graph.css' %}?v=9" rel="stylesheet">
+{% endblock %}
+
+{% block page_heading %}Timetable Graph Twin{% endblock %}
+{% block page_header_right %}{% endblock %}
+
+{% block content %}
+{% csrf_token %}
+<div class="tg-shell" id="tgShell">
+  <header class="tg-topbar">
+    <div>
+      <div class="tg-kicker">Neo4j relationship intelligence</div>
+      <h2>Student timetable planning graph</h2>
+      <p>Django remains the source of truth. Neo4j receives a rebuildable scenario twin for relationship analysis, drill-down, and future graph recommendations.</p>
+    </div>
+    <div class="tg-actions">
+      <a class="tg-btn" href="/timetable-workspace/">Workspace</a>
+      <a class="tg-btn" href="/timetable-workspace/mri/{% if initial_scenario %}?scenario={{ initial_scenario }}{% endif %}">MRI</a>
+    </div>
+  </header>
+
+  <section class="tg-console" aria-label="Graph twin controls">
+    <label>
+      <span>Year</span>
+      <input id="tgYear" type="text" inputmode="numeric" value="{{ default_year }}">
+    </label>
+    <label>
+      <span>Term</span>
+      <input id="tgTerm" type="text" inputmode="numeric" value="{{ default_term }}">
+    </label>
+    <label class="tg-scenario-field">
+      <span>Scenario</span>
+      <select id="tgScenario">
+        <option value="">Load scenarios first</option>
+      </select>
+    </label>
+    <button class="tg-btn tg-btn-secondary" id="tgLoadScenarios" type="button">Load Scenarios</button>
+    <button class="tg-btn tg-btn-secondary" id="tgPreview" type="button">Preview Graph</button>
+    <button class="tg-btn tg-btn-primary" id="tgSync" type="button">Sync Neo4j</button>
+    <button class="tg-btn tg-btn-secondary" id="tgCheck" type="button">Check Neo4j</button>
+  </section>
+
+  <main class="tg-layout">
+    <section class="tg-left">
+      <article class="tg-card tg-status-card">
+        <div class="tg-card-head">
+          <div>
+            <div class="tg-kicker">Connection</div>
+            <h3>Neo4j status</h3>
+          </div>
+          <span class="tg-pill" id="tgNeo4jPill">Checking</span>
+        </div>
+        <p id="tgNeo4jMessage">Checking the local Neo4j configuration.</p>
+        <dl class="tg-kv">
+          <div><dt>Driver</dt><dd id="tgDriver">-</dd></div>
+          <div><dt>URI</dt><dd id="tgUri">-</dd></div>
+          <div><dt>Database</dt><dd id="tgDatabase">-</dd></div>
+        </dl>
+      </article>
+
+      <article class="tg-card">
+        <div class="tg-card-head">
+          <div>
+            <div class="tg-kicker">Graph contract</div>
+            <h3>Student-centered model</h3>
+          </div>
+        </div>
+        <div class="tg-contract">
+          <div><strong>Program</strong><span>HAS_PLAN_TERM</span><strong>Plan Term</strong></div>
+          <div><strong>Plan Term</strong><span>HAS_GROUP</span><strong>Term Group</strong></div>
+          <div><strong>Term Group</strong><span>SCHEDULES_COURSE</span><strong>Course</strong></div>
+          <div><strong>Section</strong><span>OF_COURSE</span><strong>Course</strong></div>
+          <div><strong>Student</strong><span>CURRENTLY_REGISTERED_IN</span><strong>Section</strong></div>
+          <div><strong>Section</strong><span>CLASHES_WITH</span><strong>Section</strong></div>
+        </div>
+      </article>
+
+      <article class="tg-card">
+        <div class="tg-card-head">
+          <div>
+            <div class="tg-kicker">Next graph use</div>
+            <h3>Professional timetable build path</h3>
+          </div>
+        </div>
+        <ol class="tg-path">
+          <li>Preview the exact graph generated from the selected scenario.</li>
+          <li>Sync to Neo4j only when the local server is configured.</li>
+          <li>Use Cypher/graph algorithms to find high-impact sections, shared-student communities, and safe move candidates.</li>
+          <li>Feed accepted recommendations back into Django draft scenarios with audit logs.</li>
+        </ol>
+      </article>
+    </section>
+
+    <section class="tg-main">
+      <article class="tg-card tg-graph-card">
+        <div class="tg-card-head">
+          <div>
+            <div class="tg-kicker">Scenario graph preview</div>
+            <h3 id="tgScenarioName">No scenario selected</h3>
+          </div>
+          <span id="tgScenarioStatus" class="tg-pill">Idle</span>
+        </div>
+        <div class="tg-metric-grid" id="tgMetrics"></div>
+        <div class="tg-mini-graph" id="tgMiniGraph" aria-label="Graph preview diagram">
+          <div class="tg-node tg-node-student">Students</div>
+          <div class="tg-node tg-node-course">Courses</div>
+          <div class="tg-node tg-node-section">Sections</div>
+          <div class="tg-node tg-node-slot">Slots</div>
+          <div class="tg-edge e1"><span>STUDIES</span></div>
+          <div class="tg-edge e2"><span>HAS_SECTION</span></div>
+          <div class="tg-edge e3"><span>PLACED_IN</span></div>
+          <div class="tg-edge e4"><span>REGISTERED</span></div>
+        </div>
+      </article>
+
+      <article class="tg-card tg-explorer-card">
+        <div class="tg-card-head tg-explorer-head">
+          <div>
+            <div class="tg-kicker">Interactive graph explorer</div>
+            <h3>Timetable Relationship Explorer</h3>
+          </div>
+          <div class="tg-mode-switch" aria-label="Graph explorer modes">
+            <button class="active" type="button" data-tg-mode="plan">Plan View</button>
+            <button type="button" data-tg-mode="clashes">Clashes</button>
+            <button type="button" data-tg-mode="students">Students</button>
+            <button type="button" data-tg-mode="placements">Placements</button>
+          </div>
+        </div>
+        <div class="tg-plan-controls" id="tgPlanControls">
+          <label>
+            <span>Program</span>
+            <select id="tgPlanProgram">
+              <option value="">All programs</option>
+            </select>
+          </label>
+          <label>
+            <span>Plan term</span>
+            <select id="tgPlanTerm">
+              <option value="">All terms</option>
+            </select>
+          </label>
+          <label class="tg-plan-check">
+            <input id="tgPlanStudents" type="checkbox">
+            <span>Show enrolled students</span>
+          </label>
+          <button class="tg-btn tg-btn-secondary" id="tgPlanReset" type="button">Reset Tree</button>
+          <span class="tg-tree-summary" id="tgTreeSummary">Program -> Term -> Group -> Course -> Section</span>
+        </div>
+        <div class="tg-graph-tools" id="tgGraphTools">
+          <label>
+            <span>Find node</span>
+            <input id="tgGraphSearch" type="search" placeholder="Student, section, course, group">
+          </label>
+          <button class="tg-tool-btn" id="tgGraphFit" type="button">Fit</button>
+          <button class="tg-tool-btn" id="tgGraphZoomIn" type="button">Zoom +</button>
+          <button class="tg-tool-btn" id="tgGraphZoomOut" type="button">Zoom -</button>
+          <button class="tg-tool-btn" id="tgGraphLayout" type="button">Layout</button>
+          <button class="tg-tool-btn" id="tgGraphExpand" type="button">Expand</button>
+          <button class="tg-tool-btn" id="tgGraphCollapse" type="button">Collapse Branch</button>
+          <span class="tg-tool-status" id="tgGraphToolStatus">Select or search a graph node.</span>
+        </div>
+        <div class="tg-explorer">
+          <div class="tg-explorer-stage">
+            <div id="tgGraphCanvas" class="tg-graph-canvas is-hidden" aria-label="Interactive timetable graph"></div>
+            <svg id="tgExplorerSvg" class="tg-svg-fallback" viewBox="0 0 920 460" role="img" aria-label="Interactive timetable graph">
+              <g id="tgExplorerEdges"></g>
+              <g id="tgExplorerNodes"></g>
+            </svg>
+            <div class="tg-explorer-empty" id="tgExplorerEmpty">Select a scenario to load a timetable-specific graph view.</div>
+          </div>
+          <aside class="tg-explorer-detail" id="tgExplorerDetail">
+            <div class="tg-kicker">Selection</div>
+            <h4>No node selected</h4>
+            <p>Click a node or relationship to inspect why it exists. Drag nodes to rearrange the graph.</p>
+          </aside>
+        </div>
+      </article>
+
+      <div class="tg-two">
+        <article class="tg-card">
+          <div class="tg-card-head">
+            <div>
+              <div class="tg-kicker">Node inventory</div>
+              <h3>What will become nodes</h3>
+            </div>
+          </div>
+          <div class="tg-count-grid" id="tgNodeCounts"></div>
+        </article>
+
+        <article class="tg-card">
+          <div class="tg-card-head">
+            <div>
+              <div class="tg-kicker">Relationship inventory</div>
+              <h3>What will become edges</h3>
+            </div>
+          </div>
+          <div class="tg-count-grid" id="tgRelCounts"></div>
+        </article>
+      </div>
+
+      <article class="tg-card">
+        <div class="tg-card-head">
+          <div>
+            <div class="tg-kicker">Evidence samples</div>
+            <h3>First relationships from the twin</h3>
+          </div>
+          <span id="tgSampleCount" class="tg-pill">0 rows</span>
+        </div>
+        <div class="tg-samples" id="tgSamples">
+          <div class="tg-empty">Choose a scenario to inspect the graph rows before syncing.</div>
+        </div>
+      </article>
+    </section>
+  </main>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  window.twGraphConfig = {
+    defaultYear: "{{ default_year|escapejs }}",
+    defaultTerm: "{{ default_term|escapejs }}",
+    initialScenario: "{{ initial_scenario|escapejs }}",
+    csrfToken: "{{ csrf_token }}",
+    scenariosUrl: "{% url 'tw_scenarios_list' %}",
+    statusUrl: "{% url 'tw_graph_status' %}",
+    summaryUrlTemplate: "/ops/tw/scenarios/__SCENARIO_ID__/graph/summary/",
+    viewUrlTemplate: "/ops/tw/scenarios/__SCENARIO_ID__/graph/view/",
+    syncUrlTemplate: "/ops/tw/scenarios/__SCENARIO_ID__/graph/sync/",
+    slotCandidatesUrlTemplate: "/ops/tw/placements/__PLACEMENT_ID__/slot-candidates/",
+    studentEvidenceUrlTemplate: "/ops/tw/placements/__PLACEMENT_ID__/student-evidence/"
+  };
+</script>
+<script src="{% static 'js/vendor/timetable-cytoscape.bundle.js' %}?v=3"></script>
+<script src="{% static 'js/page-timetable-graph.js' %}?v=6"></script>
+{% endblock %}

@@ -16,9 +16,10 @@ const T = {
   conflicts: IS_AR ? 'تعارضات' : 'Conflicts',
   publishConfirm: IS_AR ? 'هل تريد نشر هذا السيناريو؟' : 'Publish this scenario?',
   published_ok: IS_AR ? 'تم النشر' : 'Published successfully',
-  overlap: IS_AR ? 'تداخل زمني' : 'Time overlap',
+  overlap: IS_AR ? 'تعارض زمني داخل اللوحة' : 'Same-board time clash',
   instrClash: IS_AR ? 'تعارض مدرس' : 'Instructor clash',
   roomClash: IS_AR ? 'تعارض قاعة' : 'Room clash',
+  crossBoardClash: IS_AR ? 'تعارض عبر اللوحات' : 'Cross-board clash',
 };
 
 const CSRF = document.querySelector('[name=csrfmiddlewaretoken]')?.value || 'djCsrfToken';
@@ -47,6 +48,12 @@ const TW = {
   generatedPlan: null,       // section plan from generate
   sectionBudget: null,       // budget per course
   studentSummary: null,      // student classification summary
+  planLens: {
+    plans: [],
+    courses: {},
+    sections: {},
+    loaded: false,
+  },
 };
 
 // Expose workspace state for the PR8 async-job UI adapter (reads
@@ -86,7 +93,21 @@ async function twFetch(url, opts = {}) {
   $('twNewScenario').addEventListener('click', createScenarioPrompt);
   $('twNewBoard').addEventListener('click', createBoardPrompt);
   $('twSlotEdit').addEventListener('click', openSlotEditor);
-  $('twExport').addEventListener('click', exportScenario);
+  // Export: main button follows the active Plan Lens/search filter.
+  $('twExport').addEventListener('click', () => exportScenario('per-plan'));
+  $('twExportMenu').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const dd = $('twExportDropdown');
+    dd.style.display = dd.style.display === 'none' ? 'block' : 'none';
+  });
+  document.querySelectorAll('.tw-export-item').forEach(item => {
+    item.addEventListener('mouseenter', () => { item.style.background = 'var(--brand-soft)'; });
+    item.addEventListener('mouseleave', () => { item.style.background = ''; });
+    item.addEventListener('click', () => {
+      $('twExportDropdown').style.display = 'none';
+      exportScenario(item.dataset.mode);
+    });
+  });
   // Optimise: main button = "current" mode, dropdown items = specific mode
   $('twOptimise').addEventListener('click', () => runOptimiseV2('current'));
   $('twOptimiseMenu').addEventListener('click', (e) => {
@@ -102,13 +123,23 @@ async function twFetch(url, opts = {}) {
       runOptimiseV2(item.dataset.mode);
     });
   });
-  // Close dropdown on outside click
+  // Close dropdowns on outside click
   document.addEventListener('click', (e) => {
     if (!$('twOptimiseGroup').contains(e.target)) {
       $('twOptimiseDropdown').style.display = 'none';
     }
+    if (!$('twExportGroup').contains(e.target)) {
+      $('twExportDropdown').style.display = 'none';
+    }
   });
   $('twPublish').addEventListener('click', publishScenario);
+  $('twMriPage').addEventListener('click', openFullMriPage);
+  $('twGraphPage').addEventListener('click', openGraphTwinPage);
+  $('twSearch')?.addEventListener('input', debounce(() => {
+    renderGrid();
+    renderBudgetSidebar();
+    updateSearchStatus();
+  }, 120));
   $('twSectionSearch').addEventListener('input', debounce(renderBudgetSidebar, 200));
 
   // Bottom panel toggle
@@ -187,7 +218,9 @@ async function runGenerate() {
   $('twPublish').disabled = false;
   $('twNewBoard').style.display = '';
   $('twSlotEdit').style.display = '';
-  $('twExport').style.display = '';
+  $('twExportGroup').style.display = '';
+  $('twExport').disabled = false;
+  $('twExportMenu').disabled = false;
   $('twOptimiseGroup').style.display = '';
 
   // Populate scenario dropdown with just this scenario
@@ -236,19 +269,28 @@ async function onScenarioChange() {
   const sid = $('twScenario').value;
   if (!sid) { TW.scenarioId = null; resetWorkspace(); return; }
 
+  resetPlanLens();
   const data = await twFetch(`/ops/tw/scenarios/${sid}/`);
   if (!data) return;
 
   TW.scenarioId = data.scenario.id;
   TW.scenario = data.scenario;
+  const search = $('twSearch');
+  if (search) {
+    search.value = '';
+    search.title = 'Search timetable';
+  }
 
   updateValidationBadge();
   $('twPublish').disabled = data.scenario.status === 'published';
   $('twNewBoard').style.display = '';
   $('twSlotEdit').style.display = data.scenario.status === 'published' ? 'none' : '';
-  $('twExport').style.display = '';
+  $('twExportGroup').style.display = '';
+  $('twExport').disabled = false;
+  $('twExportMenu').disabled = false;
   $('twOptimiseGroup').style.display = '';
 
+  await loadPlanLens();
   await loadBoards();
 }
 
@@ -345,7 +387,7 @@ async function loadBudget() {
 function renderBudgetSidebar() {
   const list = $('twSectionList');
   const budget = TW.sectionBudget || [];
-  const search = ($('twSectionSearch').value || '').trim().toUpperCase();
+  const search = sectionBudgetSearch();
 
   if (budget.length === 0) {
     list.innerHTML = `<div class="text-t4 fs-md" style="padding:12px">${IS_AR ? 'اضغط "توليد" أولاً' : 'Click "Generate" first'}</div>`;
@@ -358,10 +400,7 @@ function renderBudgetSidebar() {
   const activeTerm = activeBoard ? activeBoard.nominal_term : null;
 
   if (search) {
-    items = items.filter(c =>
-      (c.course_code || '').toUpperCase().includes(search) ||
-      (c.department || '').toUpperCase().includes(search)
-    );
+    items = items.filter(c => budgetMatchesSearch(c, search));
   }
 
   list.innerHTML = '';
@@ -440,7 +479,8 @@ async function loadConflicts() {
   const data = await twFetch(`/ops/tw/boards/${TW.boardId}/conflicts/`);
   if (data) {
     TW.conflicts = data;
-    renderRightPanel('issues');
+    const activeTab = document.querySelector('.tw-right .tw-panel-tab.active');
+    renderRightPanel((activeTab && activeTab.dataset.tab) || 'issues');
     updateQuickStats();
   }
 }
@@ -489,14 +529,36 @@ async function publishScenario() {
   $('twSlotEdit').style.display = 'none';
 }
 
-function exportScenario() {
+function openGraphTwinPage(event) {
+  if (event) event.preventDefault();
+  const params = new URLSearchParams();
+  if (TW.scenarioId) params.set('scenario', TW.scenarioId);
+  window.location.href = `/timetable-workspace/graph/${params.toString() ? '?' + params.toString() : ''}`;
+}
+
+function exportScenario(mode) {
   if (!TW.scenarioId) { notify.error(IS_AR ? 'اختر سيناريو' : 'No scenario selected'); return; }
-  window.open(`/ops/tw/scenarios/${TW.scenarioId}/export.xlsx`, '_blank');
+  const params = new URLSearchParams();
+  const search = activeWorkspaceSearch();
+  if (mode === 'per-plan' && search) params.set('search', search);
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  const url = mode === 'per-plan'
+    ? `/ops/tw/scenarios/${TW.scenarioId}/export-per-plan${suffix}`
+    : `/ops/tw/scenarios/${TW.scenarioId}/export.xlsx`;
+  window.open(url, '_blank');
+}
+
+function openFullMriPage() {
+  const params = new URLSearchParams();
+  if (TW.scenarioId) params.set('scenario', TW.scenarioId);
+  if (TW.boardId) params.set('board', TW.boardId);
+  window.location.href = `/timetable-workspace/mri/${params.toString() ? '?' + params.toString() : ''}`;
 }
 
 /* ── Rendering ── */
 function resetWorkspace() {
   TW.boards = []; TW.placements = []; TW.conflicts = {}; TW.capacityData = null;
+  resetPlanLens();
   $('twBoardTabs').innerHTML = '';
   $('twBoardsNav').innerHTML = '';
   $('twSectionList').innerHTML = '';
@@ -506,7 +568,9 @@ function resetWorkspace() {
   $('twBoardStrip').style.display = 'none';
   $('twNewBoard').style.display = 'none';
   $('twSlotEdit').style.display = 'none';
-  $('twExport').style.display = 'none';
+  $('twExportGroup').style.display = 'none';
+  $('twExport').disabled = true;
+  $('twExportMenu').disabled = true;
   $('twOptimiseGroup').style.display = 'none';
   updateQuickStats();
 }
@@ -555,7 +619,7 @@ function renderBoardStrip() {
   const roomC = (TW.conflicts.room_clashes || []).length;
   const si = TW.conflicts.student_impact || {};
   const affected = si.affected_count || 0;
-  const crossBoard = (TW.conflicts.cross_board_conflicts || []).length;
+  const crossBoard = activeBoardCrossBoardClashes().length;
   // Get student counts from board detail
   const activeBoard = TW.boards.find(b => b.id === TW.boardId);
   const primary = activeBoard ? (activeBoard.primary_count || 0) : 0;
@@ -566,7 +630,7 @@ function renderBoardStrip() {
     <div class="tw-metric"><div class="num${overlaps > 0 ? ' danger' : ''}">${overlaps}</div><div class="lbl">${T.overlap}</div></div>
     <div class="tw-metric"><div class="num${instrC > 0 ? ' danger' : ''}">${instrC}</div><div class="lbl">${T.instrClash}</div></div>
     <div class="tw-metric"><div class="num${roomC > 0 ? ' danger' : ''}">${roomC}</div><div class="lbl">${T.roomClash}</div></div>
-    <div class="tw-metric"><div class="num${crossBoard > 0 ? ' danger' : ''}">${crossBoard}</div><div class="lbl">${IS_AR ? 'عبر اللوحات' : 'Cross-Board'}</div></div>
+    <div class="tw-metric"><div class="num${crossBoard > 0 ? ' danger' : ''}">${crossBoard}</div><div class="lbl">${T.crossBoardClash}</div></div>
   `;
 }
 
@@ -611,12 +675,164 @@ const COURSE_COLORS = [
   '#D6DBDF','#ABEBC6','#FAD7A0','#D2B4DE','#AEB6BF',
 ];
 const _courseColorMap = {};
+function courseColorKey(code) {
+  return String(code || '').replace(/\u00a0/g, ' ').trim().toUpperCase().replace(/\s+/g, '') || '__UNKNOWN__';
+}
 function courseColor(code) {
-  if (!_courseColorMap[code]) {
+  const key = courseColorKey(code);
+  if (!_courseColorMap[key]) {
     const idx = Object.keys(_courseColorMap).length % COURSE_COLORS.length;
-    _courseColorMap[code] = COURSE_COLORS[idx];
+    _courseColorMap[key] = COURSE_COLORS[idx];
   }
-  return _courseColorMap[code];
+  return _courseColorMap[key];
+}
+
+function courseKeyOf(item) {
+  return String(item?.course_key || item?.course_code || '').trim();
+}
+
+function resetPlanLens() {
+  TW.planLens = { plans: [], courses: {}, sections: {}, loaded: false };
+}
+
+async function loadPlanLens() {
+  if (!TW.scenarioId) {
+    resetPlanLens();
+    return;
+  }
+  const data = await twFetch(`/ops/tw/scenarios/${TW.scenarioId}/plan-lens/`);
+  if (!data || !data.plan_lens) {
+    TW.planLens.loaded = false;
+    return;
+  }
+  TW.planLens = Object.assign({ plans: [], courses: {}, sections: {}, loaded: true }, data.plan_lens);
+}
+
+function sectionLensForPlacement(placement) {
+  const sid = placement?.term_section_id == null ? '' : String(placement.term_section_id);
+  return TW.planLens.sections[sid] || null;
+}
+
+function courseLensForItem(item) {
+  return TW.planLens.courses[courseKeyOf(item)] || null;
+}
+
+function planTokenFromSearch(search) {
+  const q = String(search || '').trim().toUpperCase();
+  if (!q) return '';
+  if (q === 'SHARED') return 'SHARED';
+  return (TW.planLens.plans || []).includes(q) ? q : '';
+}
+
+function itemMatchesPlanToken(item, token) {
+  if (!token) return false;
+  const sectionLens = sectionLensForPlacement(item);
+  if (sectionLens) {
+    if (token === 'SHARED') return !!sectionLens.shared || sectionLens.role === 'shared';
+    return (sectionLens.filter_plans || []).includes(token);
+  }
+  const courseLens = courseLensForItem(item);
+  if (!courseLens) return false;
+  if (token === 'SHARED') return !!courseLens.shared_overflow;
+  const plans = courseLens.plans || {};
+  const allocation = courseLens.allocation || {};
+  return Number(plans[token] || 0) > 0 || Number(allocation[token] || 0) > 0;
+}
+
+function hasDuplicateCourseCode(code) {
+  const target = courseColorKey(code);
+  if (!target || target === '__UNKNOWN__') return false;
+  const keys = Object.keys(TW.planLens.courses || {}).filter(key => {
+    const prefix = String(key).split('::')[0];
+    return courseColorKey(prefix) === target;
+  });
+  return new Set(keys).size > 1;
+}
+
+function compactCourseName(name) {
+  return String(name || '').replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function activeWorkspaceSearch() {
+  return ($('twSearch')?.value || '').trim().toUpperCase();
+}
+
+function workspaceSearchTokens() {
+  return activeWorkspaceSearch().split(/\s+/).filter(Boolean);
+}
+
+function sectionBudgetSearch() {
+  const local = ($('twSectionSearch')?.value || '').trim().toUpperCase();
+  return local || activeWorkspaceSearch();
+}
+
+function placementSearchText(p) {
+  const lens = sectionLensForPlacement(p);
+  const lensBits = lens
+    ? [lens.owner, lens.owner_label, lens.role, ...(lens.filter_plans || [])].filter(Boolean).join(' ')
+    : '';
+  const meetingBits = (p.meetings || [])
+    .map(m => [m.instructor, m.room, m.day, m.start_time, m.end_time].filter(Boolean).join(' '))
+    .join(' ');
+  return [
+    p.course_code,
+    p.course_key,
+    p.course_name,
+    p.section,
+    p.department,
+    p.day,
+    p.start_time,
+    p.end_time,
+    p.room,
+    p.instructor,
+    meetingBits,
+    lensBits,
+  ].filter(Boolean).join(' ').toUpperCase();
+}
+
+function placementMatchesWorkspaceSearch(p) {
+  const tokens = workspaceSearchTokens();
+  if (!tokens.length) return true;
+  const text = placementSearchText(p);
+  return tokens.every(token => {
+    const planToken = planTokenFromSearch(token);
+    return planToken ? itemMatchesPlanToken(p, planToken) : text.includes(token);
+  });
+}
+
+function budgetMatchesSearch(c, search) {
+  if (!search) return true;
+  const courseLens = courseLensForItem(c);
+  const lensBits = courseLens
+    ? Object.entries(courseLens.plans || {})
+        .filter(([, count]) => Number(count) > 0)
+        .map(([plan, count]) => `${plan} ${count}`)
+        .join(' ')
+    : '';
+  const text = [
+    c.course_code,
+    c.course_key,
+    c.course_name,
+    c.department,
+    c.programme_term,
+    lensBits,
+  ].filter(v => v != null).join(' ').toUpperCase();
+  return search.split(/\s+/).filter(Boolean).every(token => {
+    const planToken = planTokenFromSearch(token);
+    return planToken ? itemMatchesPlanToken(c, planToken) : text.includes(token);
+  });
+}
+
+function updateSearchStatus() {
+  const input = $('twSearch');
+  if (!input) return;
+  const q = activeWorkspaceSearch();
+  if (!q) {
+    input.title = IS_AR ? 'Search timetable' : 'Search timetable';
+    return;
+  }
+  const matched = TW.placements.filter(placementMatchesWorkspaceSearch).length;
+  input.title = `${matched}/${TW.placements.length} timetable matches`;
 }
 
 function renderGridWithSlots(slots, labSlots) {
@@ -627,10 +843,15 @@ function renderGridWithSlots(slots, labSlots) {
   gridEl.innerHTML = '';
 
   labSlots = labSlots || [];
+  const search = activeWorkspaceSearch();
+  const visiblePlacements = search
+    ? TW.placements.filter(placementMatchesWorkspaceSearch)
+    : TW.placements;
+  updateSearchStatus();
 
   // ── Split placements into student groups by section label ──
   const bySec = {};
-  TW.placements.forEach(p => {
+  visiblePlacements.forEach(p => {
     const sec = p.section || 'S1';
     if (!bySec[sec]) bySec[sec] = [];
     bySec[sec].push(p);
@@ -660,7 +881,7 @@ function renderGridWithSlots(slots, labSlots) {
   groupKeys.forEach((secKey, gi) => {
     const groupPlacements = bySec[secKey];
     const tsIds = new Set(groupPlacements.map(p => p.term_section_id));
-    const allForGroup = TW.placements.filter(p => tsIds.has(p.term_section_id));
+    const allForGroup = visiblePlacements.filter(p => tsIds.has(p.term_section_id));
 
     // Separate lecture and lab placements
     const lecturePlacements = allForGroup.filter(p => !isLabPlacement(p));
@@ -671,7 +892,9 @@ function renderGridWithSlots(slots, labSlots) {
       const courses = new Set(groupPlacements.map(p => p.course_code));
       const hdr = document.createElement('div');
       hdr.style.cssText = 'text-align:center;font-size:.82rem;font-weight:700;color:var(--royal);padding:8px 0 4px;';
-      hdr.textContent = `Group ${gi+1} — ${courses.size} courses`;
+      hdr.textContent = search
+        ? `Group ${gi+1} — ${courses.size} courses (${groupPlacements.length} matches)`
+        : `Group ${gi+1} — ${courses.size} courses`;
       gridEl.appendChild(hdr);
     }
 
@@ -754,15 +977,15 @@ function _renderSingleGrid(container, slots, placements, className, secKey) {
       if (cellPlacements.length === 1) {
         const p = cellPlacements[0];
         const card = createPlacementCard(p);
-        card.style.background = courseColor(p.course_code);
         cell.appendChild(card);
       } else if (cellPlacements.length > 1) {
         // Conflict: multiple in same cell
         cellPlacements.forEach(p => {
-          const card = createPlacementCard(p);
-          card.classList.add('critical');
-          cell.appendChild(card);
-        });
+        const card = createPlacementCard(p);
+        card.classList.add('critical');
+        card.classList.remove('info');
+        cell.appendChild(card);
+      });
       }
 
       table.appendChild(cell);
@@ -777,22 +1000,51 @@ function createPlacementCard(p) {
   card.className = 'tw-card';
   card.draggable = true;
   card.dataset.placementId = p.id;
+  card.style.background = courseColor(p.course_code);
   if (p.is_locked) card.classList.add('locked');
 
   // Check if this placement has conflicts
   const overlaps = (TW.conflicts.overlaps || []);
   const instrClashes = (TW.conflicts.instructor_clashes || []);
   const roomClashes = (TW.conflicts.room_clashes || []);
-  const hasCritical = overlaps.some(o => (o.ids || []).includes(p.id))
-    || instrClashes.some(c => (c.ids || []).includes(p.id));
-  const hasWarning = roomClashes.some(c => (c.ids || []).includes(p.id));
+  const crossBoardClashes = activeBoardCrossBoardClashes();
+  const placementId = String(p.id);
+  const issueLabels = [];
+  const includesPlacement = row => (row.ids || []).map(String).includes(placementId);
+  const includesCrossPlacement = row => {
+    const ids = row.ids || [row.placement_a_id, row.placement_b_id].filter(Boolean);
+    return ids.map(String).includes(placementId);
+  };
+  const hasStudentClash = overlaps.some(includesPlacement);
+  const hasInstructorClash = instrClashes.some(includesPlacement);
+  const hasRoomIssue = roomClashes.some(includesPlacement);
+  const hasCrossBoardClash = crossBoardClashes.some(includesCrossPlacement);
+  if (hasStudentClash) issueLabels.push(T.overlap);
+  if (hasInstructorClash) issueLabels.push(T.instrClash);
+  if (hasRoomIssue) issueLabels.push(T.roomClash);
+  if (hasCrossBoardClash) issueLabels.push(T.crossBoardClash);
+  const hasCritical = hasStudentClash || hasInstructorClash;
+  const hasWarning = hasRoomIssue;
   if (hasCritical) card.classList.add('critical');
   else if (hasWarning) card.classList.add('warning');
+  else if (hasCrossBoardClash) card.classList.add('info');
+  if (issueLabels.length) {
+    card.classList.add('has-issue');
+    card.title = issueLabels.length === 1
+      ? issueLabels[0]
+      : `${T.conflicts}: ${issueLabels.join(' | ')}`;
+  }
 
   const instructor = (p.meetings && p.meetings[0]) ? p.meetings[0].instructor : '';
+  const courseName = compactCourseName(p.course_name);
+  const showCourseName = courseName && hasDuplicateCourseCode(p.course_code);
+  const identityTitle = [p.course_key, courseName].filter(Boolean).join(' | ');
+  if (identityTitle) {
+    card.title = [card.title, identityTitle].filter(Boolean).join(' | ');
+  }
   card.innerHTML = `
     <div class="cc">${esc(p.course_code)} ${esc(p.section)}</div>
-    <div class="ci">${esc(instructor)}${p.room ? ' | ' + esc(p.room) : ''}${p.available_capacity ? ' | ' + p.available_capacity : ''}</div>
+    <div class="ci">${showCourseName ? esc(courseName) : esc(instructor)}${p.room ? ' | ' + esc(p.room) : ''}${p.available_capacity ? ' | ' + p.available_capacity : ''}</div>
   `;
 
   card.addEventListener('dragstart', (e) => {
@@ -818,7 +1070,7 @@ function createPlacementCard(p) {
 
 function renderUnplacedList() {
   const list = $('twSectionList');
-  const search = ($('twSectionSearch').value || '').trim().toUpperCase();
+  const search = sectionBudgetSearch();
   list.innerHTML = '';
 
   let items = TW.unplacedSections;
@@ -1040,7 +1292,7 @@ function renderRightPanel(tab) {
     const overlaps = TW.conflicts.overlaps || [];
     const iClashes = TW.conflicts.instructor_clashes || [];
     const rClashes = TW.conflicts.room_clashes || [];
-    const xConflictsEarly = TW.conflicts.cross_board_conflicts || [];
+    const xConflictsEarly = activeBoardCrossBoardClashes();
     const total = overlaps.length + iClashes.length + rClashes.length + xConflictsEarly.length;
 
     if (total === 0) {
@@ -1079,16 +1331,18 @@ function renderRightPanel(tab) {
         </div>`;
       });
     }
-    // Cross-board conflicts
-    const xConflicts = TW.conflicts.cross_board_conflicts || [];
+    // Cross-board clashes
+    const xConflicts = activeBoardCrossBoardClashes();
     if (xConflicts.length) {
-      html += `<div class="fs-xs fw-bold text-caps" style="color:var(--royal); margin:8px 0 4px; letter-spacing:.04em">${IS_AR ? 'تعارضات عبر اللوحات' : 'Cross-Board'} (${xConflicts.length})</div>`;
+      html += `<div class="fs-xs fw-bold text-caps" style="color:var(--royal); margin:8px 0 4px; letter-spacing:.04em">${T.crossBoardClash} (${xConflicts.length})</div>`;
       xConflicts.forEach(c => {
-        html += `<div class="tw-issue-row u-cursor-pointer" onclick="selectBoard(${c.board_a_id === TW.boardId ? c.board_b_id : c.board_a_id})">
-          <span class="tw-issue-dot" style="background:var(--royal)"></span>
+        const ids = c.ids || [c.placement_a_id, c.placement_b_id].filter(Boolean);
+        const targetBoard = c.board_a_id === TW.boardId ? c.board_b_id : c.board_a_id;
+        html += `<div class="tw-issue-row u-cursor-pointer" data-ids='${JSON.stringify(ids)}' data-board-target="${targetBoard}">
+          <span class="tw-issue-dot info"></span>
           <div>
             <div class="fw-semibold">${esc(c.section_a)} &harr; ${esc(c.section_b)}</div>
-            <div class="fs-xs text-t4">${c.overlap_count} ${IS_AR ? 'طلاب مشتركين' : 'shared students'} | ${esc(c.board_a_label)} &harr; ${esc(c.board_b_label)}</div>
+            <div class="fs-xs text-t4">${c.overlap_count} ${IS_AR ? 'طلاب مشتركين' : 'shared students'} at the same time | ${esc(c.board_a_label)} &harr; ${esc(c.board_b_label)}</div>
           </div>
         </div>`;
       });
@@ -1098,14 +1352,14 @@ function renderRightPanel(tab) {
 
     // Wire issue rows to highlight cards on grid
     body.querySelectorAll('.tw-issue-row[data-ids]').forEach(row => {
-      row.addEventListener('click', () => {
-        document.querySelectorAll('.tw-card.highlight').forEach(c => c.classList.remove('highlight'));
+      row.addEventListener('click', async () => {
+        const targetBoard = parseInt(row.dataset.boardTarget || '', 10);
         try {
           const ids = JSON.parse(row.dataset.ids);
-          ids.forEach(id => {
-            const card = document.querySelector(`.tw-card[data-placement-id="${id}"]`);
-            if (card) { card.classList.add('highlight'); card.scrollIntoView({behavior:'smooth', block:'nearest'}); }
-          });
+          if (Number.isFinite(targetBoard) && targetBoard && targetBoard !== TW.boardId) {
+            await selectBoard(targetBoard);
+          }
+          highlightWorkspacePlacements(ids);
         } catch {}
       });
     });
@@ -1158,7 +1412,219 @@ function renderRightPanel(tab) {
     });
     if (courses.length > 30) html += `<p class="fs-xs text-t4">${IS_AR ? 'وأكثر...' : `+${courses.length - 30} more...`}</p>`;
     body.innerHTML = html;
+  } else if (tab === 'mri') {
+    renderMriPanel(body);
   }
+}
+
+function renderMriPanel(body) {
+  const activeBoard = TW.boards.find(b => b.id === TW.boardId) || {};
+  const overlaps = TW.conflicts.overlaps || [];
+  const iClashes = TW.conflicts.instructor_clashes || [];
+  const rClashes = TW.conflicts.room_clashes || [];
+  const crossBoard = activeBoardCrossBoardClashes();
+  const impact = TW.conflicts.student_impact || {};
+  const capacity = TW.capacityData || {};
+  const capTotals = capacity.totals || {};
+  const capCourses = capacity.courses || [];
+  const deficitCourses = capCourses.filter(c => (c.deficit || 0) > 0);
+  const primary = activeBoard.primary_count || 0;
+  const visitor = activeBoard.visitor_count || 0;
+  const students = primary + visitor;
+  const boardStudents = TW.boards.map(b => (b.primary_count || 0) + (b.visitor_count || 0));
+  const avgBoardStudents = boardStudents.length
+    ? Math.round(boardStudents.reduce((sum, n) => sum + n, 0) / boardStudents.length)
+    : 0;
+  const studentDelta = Math.abs(students - avgBoardStudents);
+  const critical = overlaps.length + iClashes.length;
+  const warnings = rClashes.length + crossBoard.length + deficitCourses.length;
+  const affected = impact.affected_count || 0;
+  const blocked = impact.blocked_count || 0;
+  const pressure = Math.min(100, Math.round(
+    overlaps.length * 28 +
+    iClashes.length * 20 +
+    rClashes.length * 12 +
+    crossBoard.length * 4 +
+    deficitCourses.length * 8 +
+    Math.min(25, Math.ceil(affected / 4)) +
+    blocked * 2
+  ));
+  const status = pressure >= 70 ? 'critical' : pressure >= 35 ? 'watch' : 'stable';
+
+  const rows = [
+    {
+      key: 'student-flow',
+      label: 'Student flow',
+      value: affected,
+      max: Math.max(1, students),
+      tone: blocked > 0 ? 'critical' : affected > 0 ? 'watch' : 'stable',
+      detail: `${affected} affected, ${impact.resolvable_count || 0} reroutable, ${blocked} blocked`,
+    },
+    {
+      key: 'time-layer',
+      label: 'Same-board clash',
+      value: overlaps.length,
+      max: Math.max(1, TW.placements.length),
+      tone: overlaps.length ? 'critical' : 'stable',
+      detail: `${overlaps.length} same-board time clashes`,
+    },
+    {
+      key: 'cross-board-clash',
+      label: 'Cross-board clash',
+      value: crossBoard.length,
+      max: Math.max(1, TW.boards.length * 4),
+      tone: crossBoard.length ? 'watch' : 'stable',
+      detail: `${crossBoard.length} verified shared-student clashes`,
+    },
+    {
+      key: 'capacity-layer',
+      label: 'Capacity layer',
+      value: capTotals.deficit || 0,
+      max: Math.max(1, capTotals.demand || 1),
+      tone: (capTotals.deficit || 0) > 0 ? 'watch' : 'stable',
+      detail: `${deficitCourses.length} courses under capacity`,
+    },
+    {
+      key: 'resource-layer',
+      label: 'Room/instructor layer',
+      value: iClashes.length + rClashes.length,
+      max: Math.max(1, TW.placements.length),
+      tone: iClashes.length ? 'critical' : rClashes.length ? 'watch' : 'stable',
+      detail: `${iClashes.length} instructor, ${rClashes.length} room`,
+    },
+    {
+      key: 'term-layer',
+      label: 'Term/board layer',
+      value: studentDelta,
+      max: Math.max(1, avgBoardStudents),
+      tone: studentDelta > Math.max(15, avgBoardStudents * 0.35) ? 'watch' : 'stable',
+      detail: `Term ${activeBoard.nominal_term || '-'} | ${students} students vs ${avgBoardStudents || 0} board average`,
+    },
+  ];
+
+  const topPairs = [
+    ...overlaps.map(o => ({
+      kind: 'Same-board time clash',
+      tone: 'critical',
+      ids: o.ids || [],
+      title: (o.sections || []).join(' / '),
+      detail: o.detail || '',
+    })),
+    ...crossBoard.slice(0, 6).map(c => ({
+      kind: 'Cross-board clash',
+      tone: 'watch',
+      ids: c.ids || [c.placement_a_id, c.placement_b_id].filter(Boolean),
+      targetBoard: c.board_a_id === TW.boardId ? c.board_b_id : c.board_a_id,
+      title: `${c.section_a} <-> ${c.section_b}`,
+      detail: `${c.overlap_count} shared students at the same time | ${c.board_a_label} <-> ${c.board_b_label}`,
+    })),
+    ...deficitCourses.slice(0, 4).map(c => ({
+      kind: 'Capacity',
+      tone: 'watch',
+      title: c.course_code,
+      detail: `${c.demand} demand / ${c.raw_capacity} seats / ${c.deficit} deficit`,
+    })),
+  ].slice(0, 10);
+
+  const studentDetails = (impact.overlap_details || []).slice(0, 5);
+
+  body.innerHTML = `
+    <div class="tw-mri">
+      <div class="tw-mri-hero ${status}">
+        <div>
+          <div class="tw-mri-kicker">Timetable MRI</div>
+          <div class="tw-mri-title">${esc(activeBoard.label || 'No board selected')}</div>
+          <div class="tw-mri-sub">${students} students scanned across ${TW.placements.length} placed sections</div>
+        </div>
+        <div class="tw-mri-score">
+          <span>${pressure}</span>
+          <small>pressure</small>
+        </div>
+      </div>
+
+      <div class="tw-mri-scan" aria-label="MRI pressure scan">
+        ${rows.map(r => `<span class="${r.tone}" style="--w:${mriPct(r.value, r.max)}%"></span>`).join('')}
+      </div>
+
+      <div class="tw-mri-metrics">
+        <div><span>${critical}</span><small>critical</small></div>
+        <div><span>${warnings}</span><small>warnings</small></div>
+        <div><span>${affected}</span><small>affected</small></div>
+        <div><span>${capTotals.deficit || 0}</span><small>seat gap</small></div>
+      </div>
+
+      <div class="tw-mri-section-title">Diagnostic Layers</div>
+      ${rows.map(r => `
+        <button class="tw-mri-layer ${r.tone}" type="button" data-mri-layer="${esc(r.key)}">
+          <span class="tw-mri-layer-main">
+            <strong>${esc(r.label)}</strong>
+            <em>${esc(r.detail)}</em>
+          </span>
+          <span class="tw-mri-bar"><i style="width:${mriPct(r.value, r.max)}%"></i></span>
+        </button>
+      `).join('')}
+
+      <div class="tw-mri-section-title">Hot Spots</div>
+      ${topPairs.length ? topPairs.map(h => `
+        <button class="tw-mri-hotspot ${h.tone}" type="button"
+          ${h.ids ? `data-ids='${JSON.stringify(h.ids)}'` : ''}
+          ${h.targetBoard ? `data-board-target="${h.targetBoard}"` : ''}>
+          <span>${esc(h.kind)}</span>
+          <strong>${esc(h.title || '-')}</strong>
+          <em>${esc(h.detail || '')}</em>
+        </button>
+      `).join('') : `<div class="tw-mri-empty">No active hot spots in this board.</div>`}
+
+      <div class="tw-mri-section-title">Student Impact Slice</div>
+      ${studentDetails.length ? studentDetails.map(d => `
+        <div class="tw-mri-students ${d.blocked ? 'critical' : 'stable'}">
+          <div><strong>${esc((d.courses || []).join(' / '))}</strong><span>${d.affected} affected</span></div>
+          <small>${d.resolvable ? 'Alternative route exists' : 'No clean route found'}${(d.students || []).length ? ' | sample: ' + esc((d.students || []).join(', ')) : ''}</small>
+        </div>
+      `).join('') : `<div class="tw-mri-empty">No student overlap slice for this board.</div>`}
+    </div>
+  `;
+
+  wireMriInteractions(body);
+}
+
+function mriPct(value, max) {
+  if (!max || max <= 0) return 0;
+  return Math.max(3, Math.min(100, Math.round((value / max) * 100)));
+}
+
+function activeBoardCrossBoardClashes() {
+  const boardId = String(TW.boardId);
+  return (TW.conflicts.cross_board_conflicts || []).filter(c =>
+    String(c.board_a_id) === boardId || String(c.board_b_id) === boardId
+  );
+}
+
+function highlightWorkspacePlacements(ids) {
+  document.querySelectorAll('.tw-card.highlight').forEach(c => c.classList.remove('highlight'));
+  let firstCard = null;
+  (ids || []).forEach(id => {
+    const card = document.querySelector(`.tw-card[data-placement-id="${id}"]`);
+    if (card) {
+      card.classList.add('highlight');
+      if (!firstCard) firstCard = card;
+    }
+  });
+  if (firstCard) firstCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function wireMriInteractions(body) {
+  body.querySelectorAll('.tw-mri-hotspot').forEach(row => {
+    row.addEventListener('click', async () => {
+      const targetBoard = parseInt(row.dataset.boardTarget || '', 10);
+      let ids = [];
+      try { ids = JSON.parse(row.dataset.ids || '[]'); } catch {}
+      if (Number.isFinite(targetBoard) && targetBoard && targetBoard !== TW.boardId) {
+        await selectBoard(targetBoard);
+      }
+      if (ids.length) highlightWorkspacePlacements(ids);
+    });
+  });
 }
 
 async function toggleLock(pid) {
@@ -1216,7 +1682,9 @@ async function loadCapacity() {
     TW.capacityData = data;
     // If capacity tab is active, re-render
     const activeTab = document.querySelector('.tw-right .tw-panel-tab.active');
-    if (activeTab && activeTab.dataset.tab === 'capacity') renderRightPanel('capacity');
+    if (activeTab && (activeTab.dataset.tab === 'capacity' || activeTab.dataset.tab === 'mri')) {
+      renderRightPanel(activeTab.dataset.tab);
+    }
     // Also update bottom demand tab if open
     const activeBottom = document.querySelector('.tw-bottom .tw-panel-tab.active');
     if (activeBottom && activeBottom.dataset.tab === 'demand') renderBottomPanel('demand');

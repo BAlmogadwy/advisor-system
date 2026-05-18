@@ -5,7 +5,7 @@ from django.http import FileResponse, HttpRequest, HttpResponse, HttpResponseBas
 from django.views.decorators.http import require_GET
 
 from core.authz import role_required
-from core.models import Prerequisite, ProgrammeRequirement
+from core.models import Course, Prerequisite, ProgrammeRequirement, Student
 from core.services.advisors import list_students_by_advisor
 from core.services.conflict_matrix import build_conflict_matrix_report, export_conflict_matrix_xlsx
 from core.services.debug_reporting import build_recommendation_debug_report
@@ -57,6 +57,120 @@ def _excel_csv_response(filename: str, csv_text: str) -> HttpResponse:
     response = HttpResponse(body, content_type="text/csv; charset=utf-8")
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response
+
+
+def _parse_programs(program: str | None) -> list[str] | None:
+    if not program:
+        return None
+    return [p.strip() for p in program.split(",") if p.strip()]
+
+
+def _student_programs_for_filter(program: str | None, section: str | None) -> list[str]:
+    parsed = _parse_programs(program)
+    if parsed is not None:
+        return parsed
+
+    qs = Student.objects.exclude(program__isnull=True).exclude(program="")
+    if section:
+        qs = qs.filter(section=section)
+    return sorted({str(p).strip() for p in qs.values_list("program", flat=True) if str(p).strip()})
+
+
+def _course_name_fallbacks(course_codes: list[str]) -> dict[str, str]:
+    return {
+        normalize_code(code): description or ""
+        for code, description in Course.objects.filter(course_code__in=course_codes).values_list(
+            "course_code", "description"
+        )
+    }
+
+
+def _programme_course_names(program: str, course_codes: list[str]) -> dict[str, str]:
+    return {
+        normalize_code(code): course_name or ""
+        for code, course_name in ProgrammeRequirement.objects.filter(
+            program=program,
+            course_code__in=course_codes,
+        ).values_list("course_code", "course_name")
+    }
+
+
+def _build_batch_course_rows(
+    *,
+    year: int,
+    semester: int,
+    program: str | None,
+    section: str | None,
+    limit: int | None = None,
+) -> tuple[int, list[dict[str, object]]]:
+    """Return batch recommender rows grouped by plan-specific course identity."""
+    student_count, aggregate = build_aggregate_counts(
+        year=year,
+        semester=semester,
+        program=program,
+        section=section,
+    )
+    program_list = _student_programs_for_filter(program, section)
+    show_programs = len(program_list) != 1
+
+    course_codes = [normalize_code(code) for code in aggregate.keys()]
+    fallback_names = _course_name_fallbacks(course_codes)
+    merged: dict[tuple[str, str], dict[str, object]] = {}
+
+    if program_list:
+        for prog in program_list:
+            _prog_student_count, prog_aggregate = build_aggregate_counts(
+                year=year,
+                semester=semester,
+                program=prog,
+                section=section,
+            )
+            prog_codes = [normalize_code(code) for code in prog_aggregate.keys()]
+            prog_names = _programme_course_names(prog, prog_codes)
+            for raw_code, count in prog_aggregate.items():
+                code = normalize_code(raw_code)
+                course_name = prog_names.get(code) or fallback_names.get(code, "")
+                key = (code, course_name)
+                if key not in merged:
+                    merged[key] = {
+                        "course_code": code,
+                        "course_name": course_name,
+                        "count": 0,
+                        "programs": [],
+                        "show_programs": show_programs,
+                    }
+                merged[key]["count"] = int(merged[key]["count"]) + int(count)
+                programs = merged[key]["programs"]
+                if isinstance(programs, list) and prog not in programs:
+                    programs.append(prog)
+
+    if not merged:
+        for raw_code, count in aggregate.items():
+            code = normalize_code(raw_code)
+            course_name = fallback_names.get(code, "")
+            merged[(code, course_name)] = {
+                "course_code": code,
+                "course_name": course_name,
+                "count": int(count),
+                "programs": program_list,
+                "show_programs": show_programs,
+            }
+
+    rows = list(merged.values())
+    for row in rows:
+        programs = row.get("programs")
+        if isinstance(programs, list):
+            row["programs"] = sorted(programs)
+    rows.sort(
+        key=lambda row: (
+            -int(row.get("count", 0)),
+            str(row.get("course_code", "")),
+            str(row.get("course_name", "")),
+        )
+    )
+    if limit is not None:
+        rows = rows[:limit]
+    return student_count, rows
 
 
 def _program_importance_scores(program: str) -> dict[str, float]:
@@ -248,11 +362,12 @@ def report_summary_view(request: HttpRequest) -> JsonResponse:
     if scope_err:
         return scope_err
 
-    student_count, aggregate = build_aggregate_counts(
+    student_count, rows = _build_batch_course_rows(
         year=year,
         semester=semester,
         program=program,
         section=section,
+        limit=20,
     )
 
     return JsonResponse(
@@ -262,9 +377,7 @@ def report_summary_view(request: HttpRequest) -> JsonResponse:
             "program": program,
             "section": section,
             "student_count": student_count,
-            "top_recommended_courses": [
-                {"course_code": code, "count": count} for code, count in aggregate.most_common(20)
-            ],
+            "top_recommended_courses": rows,
         }
     )
 
@@ -324,7 +437,7 @@ def export_aggregate_csv_view(request: HttpRequest) -> HttpResponse:
     if scope_err:
         return scope_err
 
-    student_count, aggregate = build_aggregate_counts(
+    student_count, rows = _build_batch_course_rows(
         year=year,
         semester=semester,
         program=program,
@@ -334,10 +447,32 @@ def export_aggregate_csv_view(request: HttpRequest) -> HttpResponse:
     out = StringIO()
     writer = csv.writer(out)
     writer.writerow(
-        ["year", "semester", "program", "section", "student_count", "course_code", "count"]
+        [
+            "year",
+            "semester",
+            "program",
+            "section",
+            "student_count",
+            "programs",
+            "course_code",
+            "course_name",
+            "count",
+        ]
     )
-    for code, count in aggregate.most_common():
-        writer.writerow([year, semester, program or "", section or "", student_count, code, count])
+    for row in rows:
+        writer.writerow(
+            [
+                year,
+                semester,
+                program or "",
+                section or "",
+                student_count,
+                ",".join(row.get("programs", [])) if isinstance(row.get("programs"), list) else "",
+                row.get("course_code", ""),
+                row.get("course_name", ""),
+                row.get("count", 0),
+            ]
+        )
 
     return _excel_csv_response(f"aggregate_{year}_{semester}.csv", out.getvalue())
 
@@ -362,7 +497,7 @@ def export_aggregate_xlsx_view(request: HttpRequest) -> HttpResponse:
     if scope_err:
         return scope_err
 
-    student_count, aggregate = build_aggregate_counts(
+    student_count, rows = _build_batch_course_rows(
         year=year,
         semester=semester,
         program=program,
@@ -372,7 +507,13 @@ def export_aggregate_xlsx_view(request: HttpRequest) -> HttpResponse:
     from core.services.batch_export import export_batch_recommender_xlsx
 
     path = export_batch_recommender_xlsx(
-        year, semester, program, section, student_count, dict(aggregate)
+        year,
+        semester,
+        program,
+        section,
+        student_count,
+        {str(row.get("course_code", "")): int(row.get("count", 0)) for row in rows},
+        course_rows=rows,
     )
     prog_label = program or "all"
     filename = f"batch_recommender_{prog_label}_{year}_T{semester}.xlsx"
@@ -1041,6 +1182,7 @@ def program_plan_view(request: HttpRequest) -> JsonResponse:
         .order_by("programme_term", "course_code")
         .values_list(
             "course_code",
+            "course_name",
             "programme_term",
             "credit_hours",
         )
@@ -1049,8 +1191,9 @@ def program_plan_view(request: HttpRequest) -> JsonResponse:
     items = [
         {
             "course_code": str(r[0]),
-            "programme_term": int(r[1]) if r[1] is not None else None,
-            "credit_hours": int(r[2]) if r[2] is not None else None,
+            "course_name": str(r[1] or ""),
+            "programme_term": int(r[2]) if r[2] is not None else None,
+            "credit_hours": int(r[3]) if r[3] is not None else None,
         }
         for r in pp_rows
     ]

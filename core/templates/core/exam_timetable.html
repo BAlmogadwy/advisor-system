@@ -93,6 +93,8 @@
     <div class="mt-3 d-flex gap-2 align-items-center flex-wrap">
       <button id="loadCoursesBtn" class="btn btn-outline-primary">{% if LANGUAGE_CODE == 'ar' %}تحميل المقررات{% else %}Load Courses{% endif %}</button>
       <button id="buildBtn" class="btn btn-primary" disabled>{% if LANGUAGE_CODE == 'ar' %}بناء الجدول{% else %}Build Timetable{% endif %}</button>
+      <button id="saveLoadedBtn" class="btn btn-outline-success d-none" disabled>{% if LANGUAGE_CODE == 'ar' %}حفظ التغييرات{% else %}Save Changes{% endif %}</button>
+      <button id="optimizeLoadedBtn" class="btn btn-outline-primary d-none" disabled>{% if LANGUAGE_CODE == 'ar' %}تحسين من السجل{% else %}Optimize From Loaded Run{% endif %}</button>
       <label class="form-check form-switch mb-0 ms-2 d-flex align-items-center gap-1 u-cursor-pointer" title="{% if LANGUAGE_CODE == 'ar' %}تبديل عشوائي: كل بناء ينتج جدول مختلف{% else %}Shuffle: each build produces a different timetable variant{% endif %}">
         <input id="etRandomize" class="form-check-input" type="checkbox" checked>
         <span class="form-check-label small">{% if LANGUAGE_CODE == 'ar' %}عشوائي{% else %}Shuffle{% endif %}</span>
@@ -152,6 +154,9 @@
         <span id="kStatusFlags" class="d-flex gap-1 flex-wrap"></span>
       </div>
     </div>
+    <div id="draftImpactBanner" class="alert alert-warning py-2 mb-2 d-none">
+      {% if LANGUAGE_CODE == 'ar' %}تأثير مبدئي بعد النقل. احفظ التغييرات أو حسّن من السجل لتحديث القاعات والتصدير نهائياً.{% else %}Draft impact after move. Save Changes or Optimize From Loaded Run to refresh rooms and final export.{% endif %}
+    </div>
     <!-- KPI Row -->
     <div class="et-panel">
       <h6 class="mb-2">{% if LANGUAGE_CODE == 'ar' %}الملخص{% else %}Summary{% endif %}</h6>
@@ -159,7 +164,7 @@
         <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}المقررات{% else %}Courses{% endif %}</div><div class="v" id="kCourses">0</div></div></div>
         <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}الطلاب{% else %}Students{% endif %}</div><div class="v" id="kStudents">0</div></div></div>
         <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}الفترات المستخدمة{% else %}Slots used{% endif %}</div><div class="v" id="kSlots">0</div></div></div>
-        <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}التعارضات{% else %}Conflicts{% endif %}</div><div class="v" id="kConflicts">0</div></div></div>
+        <div class="col-md-3"><div class="kpi kpi-click" data-drill="conflicts"><div class="k">{% if LANGUAGE_CODE == 'ar' %}التعارضات{% else %}Conflicts{% endif %}</div><div class="v" id="kConflicts">0</div></div></div>
       </div>
       <div class="row g-2 mt-1">
         <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}حواف التعارض{% else %}Conflict edges{% endif %}</div><div class="v" id="kEdges">0</div></div></div>
@@ -222,7 +227,7 @@
     </div>
 
     <!-- QA Warnings -->
-    <div id="qaWarnings" class="et-panel d-none">
+    <div id="qaWarnings" class="et-panel d-none" hidden>
       <h6 class="mb-2 et-qa-title">{% if LANGUAGE_CODE == 'ar' %}تحذيرات الجودة{% else %}QA Warnings{% endif %}</h6>
       <div id="qaBody"></div>
     </div>
@@ -299,5 +304,5 @@
   const LANGUAGE_CODE = "{{ LANGUAGE_CODE|default:'en' }}";
   const djCsrfToken = "{{ csrf_token }}";
 </script>
-<script src="{% static 'js/page-exam-timetable.js' %}?v=1"></script>
+<script src="{% static 'js/page-exam-timetable.js' %}?v=2"></script>
 {% endblock %}

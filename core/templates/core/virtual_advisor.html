@@ -1,0 +1,128 @@
+{% extends "core/base.html" %}
+{% load static %}
+
+{% block title %}Virtual Advisor{% endblock %}
+{% block page_heading %}Virtual Advisor{% endblock %}
+{% block page_chips %}
+  <span class="ph-chip ph-chip-page">Local LLM</span>
+  <span class="ph-chip ph-chip-context">LM Studio</span>
+  <span class="ph-chip ph-chip-scope">Scoped student data</span>
+{% endblock %}
+{% block page_intro %}
+  <p class="mb-0">A private academic advisor powered by the local model running on this computer. Student answers are grounded in verified records before the model responds.</p>
+{% endblock %}
+
+{% block content %}
+<section class="va-shell" aria-label="Virtual advisor workspace">
+  <aside class="va-side" aria-label="Advisor context">
+    <div class="va-panel">
+      <div class="va-panel-head">
+        <div>
+          <div class="va-kicker">Local Model</div>
+          <h2>Runtime</h2>
+        </div>
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="vaRefreshModels">Check</button>
+      </div>
+      <div class="va-status" id="vaStatus">
+        <span class="va-status-dot"></span>
+        <span>Checking local server...</span>
+      </div>
+      <dl class="va-runtime">
+        <div><dt>Endpoint</dt><dd>{{ llm_base_url }}</dd></div>
+        <div><dt>Default</dt><dd>{{ llm_default_model|default:"Auto from LM Studio" }}</dd></div>
+      </dl>
+      <label class="va-label" for="vaModel">Model</label>
+      <select id="vaModel" class="va-input" aria-label="Local model">
+        <option value="">Auto loaded model</option>
+      </select>
+    </div>
+
+    <div class="va-panel">
+      <div class="va-panel-head">
+        <div>
+          <div class="va-kicker">Verified Context</div>
+          <h2>Student</h2>
+        </div>
+      </div>
+      <label class="va-label" for="vaStudentId">Student ID</label>
+      <input id="vaStudentId" class="va-input" type="text" inputmode="numeric" maxlength="20" autocomplete="off" placeholder="Optional">
+      <div class="va-grid-2">
+        <div>
+          <label class="va-label" for="vaAcademicYear">Year</label>
+          <input id="vaAcademicYear" class="va-input" type="text" inputmode="numeric" maxlength="4" autocomplete="off" value="{{ academic_year }}">
+        </div>
+        <div>
+          <label class="va-label" for="vaTerm">Term</label>
+          <input id="vaTerm" class="va-input" type="text" inputmode="numeric" maxlength="1" autocomplete="off" value="{{ term }}">
+        </div>
+      </div>
+      <div class="va-context-card" id="vaContextSummary">
+        Add a student ID when you want the advisor to use profile, credits, passed courses, current courses, and recommended next courses.
+      </div>
+    </div>
+  </aside>
+
+  <section class="va-panel va-results-panel" aria-label="Verified advisor results">
+    <div class="va-panel-head">
+      <div>
+        <div class="va-kicker">Verified Tools</div>
+        <h2>Result Evidence</h2>
+      </div>
+      <button type="button" class="btn btn-sm btn-outline-secondary" id="vaDownloadResults" disabled>CSV</button>
+    </div>
+    <div class="va-tool-results" id="vaToolResults">
+      Ask a dataset question, for example: “Find students with 90+ hours and CS323 passed.”
+    </div>
+  </section>
+
+  <section class="va-chat" aria-label="Advisor conversation">
+    <div class="va-chat-top">
+      <div>
+        <div class="va-kicker">Conversation</div>
+        <h2>Ask the Local Advisor</h2>
+      </div>
+      <button type="button" class="btn btn-sm btn-outline-secondary" id="vaClear">Clear</button>
+    </div>
+    <div class="va-messages" id="vaMessages" aria-live="polite">
+      <article class="va-message va-message-assistant">
+        <div class="va-avatar">AI</div>
+        <div class="va-bubble">
+          I am connected to the local advisor layer. Add a student ID for grounded advice, then ask in English or Arabic.
+        </div>
+      </article>
+    </div>
+    <form class="va-composer" id="vaForm">
+      {% csrf_token %}
+      <label class="sr-only" for="vaQuestion">Question</label>
+      <textarea id="vaQuestion" rows="3" placeholder="Ask about graduation readiness, next courses, prerequisites, timetable risk, or student progress."></textarea>
+      <button type="submit" class="btn btn-primary" id="vaSend">Ask</button>
+    </form>
+  </section>
+
+  <section class="va-panel va-prompt-panel" aria-label="Fast advisor prompts">
+    <div class="va-panel-head">
+      <div>
+        <div class="va-kicker">Prompts</div>
+        <h2>Fast Tests</h2>
+      </div>
+    </div>
+    <div class="va-examples">
+      <button type="button" data-va-example="Explain this student's graduation risk using only verified credits and missing requirements.">Graduation risk</button>
+      <button type="button" data-va-example="Which courses should this student consider next term, and why?">Next courses</button>
+      <button type="button" data-va-example="Summarize the student's missing prerequisites and the safest next action.">Prerequisite gaps</button>
+    </div>
+  </section>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  window.virtualAdvisorConfig = {
+    healthUrl: "{% url 'virtual_advisor_health' %}",
+    toolPreviewUrl: "{% url 'virtual_advisor_tool_preview' %}",
+    chatUrl: "{% url 'virtual_advisor_chat' %}",
+    csrfToken: "{{ csrf_token }}"
+  };
+</script>
+<script src="{% static 'js/page-virtual-advisor.js' %}?v=3"></script>
+{% endblock %}

@@ -1,0 +1,281 @@
+.tw-mri {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 0.78rem;
+}
+
+.tw-mri-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background:
+    radial-gradient(circle at 18% 10%, rgba(10, 142, 110, 0.18), transparent 34%),
+    linear-gradient(135deg, rgba(10, 142, 110, 0.12), rgba(61, 90, 254, 0.08));
+}
+
+.tw-mri-hero.watch {
+  background:
+    radial-gradient(circle at 18% 10%, rgba(217, 119, 6, 0.22), transparent 34%),
+    linear-gradient(135deg, rgba(217, 119, 6, 0.12), rgba(61, 90, 254, 0.08));
+}
+
+.tw-mri-hero.critical {
+  background:
+    radial-gradient(circle at 18% 10%, rgba(192, 48, 48, 0.26), transparent 34%),
+    linear-gradient(135deg, rgba(192, 48, 48, 0.16), rgba(61, 90, 254, 0.08));
+}
+
+.tw-mri-kicker {
+  color: var(--teal);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.tw-mri-title {
+  margin-top: 2px;
+  color: var(--ink);
+  font-size: 0.92rem;
+  font-weight: 800;
+}
+
+.tw-mri-sub {
+  margin-top: 2px;
+  color: var(--t4);
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+
+.tw-mri-score {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 58px;
+  height: 58px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.18);
+  box-shadow: inset 0 0 20px rgba(10, 142, 110, 0.18);
+}
+
+.tw-mri-score span {
+  color: var(--ink);
+  font-size: 1.05rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.tw-mri-score small {
+  color: var(--t4);
+  font-size: 0.56rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.tw-mri-scan {
+  display: grid;
+  gap: 3px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: repeating-linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.04) 0 1px,
+    transparent 1px 12px
+  );
+}
+
+.tw-mri-scan span {
+  height: 7px;
+  width: var(--w);
+  min-width: 10px;
+  border-radius: 999px;
+  box-shadow: 0 0 12px currentColor;
+}
+
+.tw-mri-scan .stable {
+  color: var(--teal);
+  background: currentColor;
+}
+
+.tw-mri-scan .watch {
+  color: var(--amber);
+  background: currentColor;
+}
+
+.tw-mri-scan .critical {
+  color: var(--danger);
+  background: currentColor;
+}
+
+.tw-mri-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.tw-mri-metrics div {
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.tw-mri-metrics span {
+  display: block;
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+.tw-mri-metrics small {
+  display: block;
+  margin-top: 1px;
+  color: var(--t4);
+  font-size: 0.62rem;
+  text-transform: uppercase;
+}
+
+.tw-mri-section-title {
+  margin-top: 4px;
+  color: var(--t4);
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.tw-mri-layer,
+.tw-mri-hotspot {
+  appearance: none;
+  display: block;
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  line-height: 1.3;
+  text-align: start;
+  cursor: pointer;
+}
+
+.tw-mri-layer:hover,
+.tw-mri-hotspot:hover {
+  border-color: var(--teal-border);
+  background: var(--brand-soft);
+}
+
+.tw-mri-layer-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tw-mri-layer strong,
+.tw-mri-hotspot strong {
+  display: block;
+  color: var(--ink);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.tw-mri-layer em,
+.tw-mri-hotspot em,
+.tw-mri-students small {
+  display: block;
+  margin-top: 2px;
+  color: var(--t4);
+  font-size: 0.66rem;
+  font-style: normal;
+  line-height: 1.35;
+}
+
+.tw-mri-bar {
+  display: block;
+  height: 4px;
+  margin-top: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--line);
+}
+
+.tw-mri-bar i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--teal);
+}
+
+.tw-mri-layer.watch .tw-mri-bar i {
+  background: var(--amber);
+}
+
+.tw-mri-layer.critical .tw-mri-bar i {
+  background: var(--danger);
+}
+
+.tw-mri-hotspot {
+  border-inline-start-width: 3px;
+}
+
+.tw-mri-hotspot span {
+  color: var(--t4);
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.tw-mri-hotspot.watch {
+  border-inline-start-color: var(--amber);
+}
+
+.tw-mri-hotspot.critical {
+  border-inline-start-color: var(--danger);
+}
+
+.tw-mri-students {
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.tw-mri-students div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tw-mri-students strong {
+  color: var(--ink);
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.tw-mri-students span {
+  color: var(--teal);
+  font-size: 0.66rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.tw-mri-students.critical span {
+  color: var(--danger);
+}
+
+.tw-mri-empty {
+  padding: 10px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--t4);
+  font-size: 0.72rem;
+}

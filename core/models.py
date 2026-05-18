@@ -80,6 +80,7 @@ class StudentCourse(models.Model):
 class ProgrammeRequirement(models.Model):
     program = models.TextField()
     course_code = models.TextField()
+    course_name = models.TextField(blank=True, default="")
     type = models.TextField(blank=True, default="")
     programme_term = models.IntegerField(null=True, blank=True)
     credit_hours = models.IntegerField(null=True, blank=True)
@@ -566,6 +567,7 @@ class ScenarioStudentMap(models.Model):
     primary_term = models.IntegerField()
     is_cross_term = models.BooleanField(default=False)
     recommended_courses = models.JSONField(default=list)
+    recommended_course_keys = models.JSONField(default=list)
 
     class Meta:
         db_table = "scenario_student_maps"
@@ -590,7 +592,9 @@ class ScenarioSectionBudget(models.Model):
         on_delete=models.CASCADE,
         related_name="section_budgets",
     )
+    course_key = models.TextField(blank=True, null=True)  # noqa: DJ001
     course_code = models.TextField()
+    course_name = models.TextField(blank=True, default="")
     department = models.TextField(blank=True, default="")
     credit_hours = models.IntegerField(default=0)
     planned_sections = models.IntegerField(default=0)
@@ -602,16 +606,23 @@ class ScenarioSectionBudget(models.Model):
         db_table = "scenario_section_budgets"
         constraints = [
             models.UniqueConstraint(
-                fields=["scenario", "course_code"],
-                name="ux_ssb_scenario_course",
+                fields=["scenario", "course_key"],
+                condition=models.Q(course_key__isnull=False) & ~models.Q(course_key=""),
+                name="ux_ssb_scenario_course_key",
             ),
         ]
         indexes = [
             models.Index(fields=["scenario"], name="idx_ssb_scenario"),
+            models.Index(fields=["scenario", "course_key"], name="idx_ssb_scenario_key"),
         ]
 
     def __str__(self) -> str:
-        return f"Budget({self.scenario_id}/{self.course_code})"
+        return f"Budget({self.scenario_id}/{self.course_key or self.course_code})"
+
+    def save(self, *args, **kwargs) -> None:
+        if not self.course_key:
+            self.course_key = self.course_code
+        super().save(*args, **kwargs)
 
 
 class BoardStudentLink(models.Model):

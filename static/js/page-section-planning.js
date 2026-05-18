@@ -290,7 +290,7 @@ function renderResults(data) {
 /* ── Build table rows HTML from a plan array ── */
 function buildPlanRows(plan) {
   if (!plan.length) {
-    return `<tr><td colspan="10" class="empty-note">${T.noRecs}</td></tr>`;
+    return `<tr><td colspan="11" class="empty-note">${T.noRecs}</td></tr>`;
   }
   return plan.map((row, idx) => {
     const fillCls = row.fill_percent >= 80 ? 'sp-fill-hi'
@@ -303,10 +303,16 @@ function buildPlanRows(plan) {
       statusHtml = `<span class="sp-pill sp-pill-under">${T.underfilled}</span>`;
     }
     const extBadge = row.is_external ? ` <span class="sp-pill sp-pill-ext">EXT</span>` : '';
+    const programs = Array.isArray(row.programs) ? row.programs.filter(Boolean) : [];
+    const programTags = programs.length
+      ? `<span style="display:inline-flex;flex-wrap:wrap;gap:4px;margin-inline-end:6px;vertical-align:middle">${programs.map(p => `<span class="sp-pill sp-pill-ext">${esc(p)}</span>`).join('')}</span>`
+      : '';
+    const courseName = row.course_name || '';
     return `<tr>
       <td>${idx + 1}</td>
       <td><strong>${row.department}</strong></td>
       <td><span class="cr-id">${row.course_code}</span>${extBadge}</td>
+      <td>${programTags}<span>${courseName}</span></td>
       <td class="text-center">${row.credit_hours}</td>
       <td class="text-center"><strong>${row.total_students}</strong></td>
       <td class="text-center"><strong>${row.num_sections}</strong></td>
@@ -341,6 +347,7 @@ function buildTableHeaderHtml() {
     <th data-sort="num">#</th>
     <th data-sort="text">${IS_AR ? 'القسم' : 'Dept'}</th>
     <th data-sort="text">${IS_AR ? 'المقرر' : 'Course'}</th>
+    <th data-sort="text">${IS_AR ? 'اسم المقرر' : 'Course Name'}</th>
     <th data-sort="num">${IS_AR ? 'ساعات' : 'Cr'}</th>
     <th data-sort="num">${IS_AR ? 'الطلاب' : 'Students'}</th>
     <th data-sort="num">${IS_AR ? 'الشعب' : 'Sections'}</th>
@@ -378,7 +385,7 @@ function renderSingleProgramResults(data) {
   const plan = data.plan || [];
 
   if (!plan.length) {
-    tbody.innerHTML = `<tr><td colspan="10" class="empty-note">${T.noRecs}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="11" class="empty-note">${T.noRecs}</td></tr>`;
     $('spDeptGrid').innerHTML = '';
     return;
   }
@@ -421,7 +428,7 @@ function renderMultiProgramResults(data) {
   const combinedPlan = data.combined_plan || [];
   const tbody = $('spTable').querySelector('tbody');
   if (!combinedPlan.length) {
-    tbody.innerHTML = `<tr><td colspan="10" class="empty-note">${T.noRecs}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="11" class="empty-note">${T.noRecs}</td></tr>`;
     $('spDeptGrid').innerHTML = '';
   } else {
     tbody.innerHTML = buildPlanRows(combinedPlan);
@@ -592,7 +599,7 @@ $('spReset').onclick = () => {
   $('spTable').style.display = '';
   $('spPager').style.display = '';
   $('spTable').querySelector('tbody').innerHTML =
-    `<tr><td colspan="10" class="empty-note">${IS_AR ? 'حدد السنة والفصل ثم انقر حساب.' : 'Set Year & Semester, then click Generate.'}</td></tr>`;
+    `<tr><td colspan="11" class="empty-note">${IS_AR ? 'حدد السنة والفصل ثم انقر حساب.' : 'Set Year & Semester, then click Generate.'}</td></tr>`;
   $('spDeptGrid').innerHTML = '';
   $('spDeptGrid').parentElement.style.display = '';
 
@@ -614,34 +621,30 @@ $('spReset').onclick = () => {
   function applyDeptFilter() {
     const raw = filterInput.value.trim().toUpperCase();
     const prefixes = raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : [];
-    const tbody = document.querySelector('#spTable tbody');
-    if (!tbody) return;
+    document.querySelectorAll('.tbl-card tbody').forEach(tbody => {
+      const rows = tbody.querySelectorAll('tr');
+      rows.forEach(row => {
+        if (!prefixes.length) {
+          row.style.display = '';
+          return;
+        }
+        // Course code is in the 3rd column (index 2)
+        const courseCell = row.querySelector('td:nth-child(3)');
+        if (!courseCell) { row.style.display = ''; return; }
+        const code = (courseCell.textContent || '').trim().toUpperCase();
+        const match = prefixes.some(p => code.startsWith(p));
+        row.style.display = match ? '' : 'none';
+      });
 
-    const rows = tbody.querySelectorAll('tr');
-    let shown = 0;
-    rows.forEach(row => {
-      if (!prefixes.length) {
-        row.style.display = '';
-        shown++;
-        return;
-      }
-      // Course code is in the 3rd column (index 2)
-      const courseCell = row.querySelector('td:nth-child(3)');
-      if (!courseCell) { row.style.display = ''; return; }
-      const code = (courseCell.textContent || '').trim().toUpperCase();
-      const match = prefixes.some(p => code.startsWith(p));
-      row.style.display = match ? '' : 'none';
-      if (match) shown++;
-    });
-
-    // Re-number visible rows
-    let num = 0;
-    rows.forEach(row => {
-      if (row.style.display !== 'none') {
-        num++;
-        const numCell = row.querySelector('td:first-child');
-        if (numCell) numCell.textContent = num;
-      }
+      // Re-number visible rows per table.
+      let num = 0;
+      rows.forEach(row => {
+        if (row.style.display !== 'none') {
+          num++;
+          const numCell = row.querySelector('td:first-child');
+          if (numCell) numCell.textContent = num;
+        }
+      });
     });
   }
 

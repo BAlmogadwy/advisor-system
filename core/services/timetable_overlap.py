@@ -46,7 +46,8 @@ def build_course_students_map(
 
     Scans ALL students in the scenario (not filtered by primary_term)
     so cross-term visitor students are included.  Only courses in
-    *course_codes* are tracked.
+    *course_codes* are tracked. New planner scenarios pass planner course
+    keys here; older scenarios fall back to visible course codes.
 
     Parameters
     ----------
@@ -61,7 +62,7 @@ def build_course_students_map(
     course_students: dict[str, set[int]] = defaultdict(set)
 
     for sm in ScenarioStudentMap.objects.filter(scenario_id=scenario_id):
-        for code in sm.recommended_courses:
+        for code in sm.recommended_course_keys or sm.recommended_courses:
             nc = normalize_code(code)
             if nc in codes_norm:
                 course_students[nc].add(sm.student_id)
@@ -98,7 +99,8 @@ def build_overlap_matrix(
     matrix: dict[tuple[str, str], int] = defaultdict(int)
 
     for sm in ScenarioStudentMap.objects.filter(scenario_id=scenario_id):
-        hits = sorted({normalize_code(c) for c in sm.recommended_courses} & codes_norm)
+        course_values = sm.recommended_course_keys or sm.recommended_courses
+        hits = sorted({normalize_code(c) for c in course_values} & codes_norm)
         for a, b in combinations(hits, 2):
             matrix[overlap_key(a, b)] += 1
 
@@ -111,7 +113,7 @@ def courses_share_students(
     code_b: str,
 ) -> bool:
     """Check if two courses share any students (O(1) lookup)."""
-    if code_a == code_b:
+    if normalize_code(code_a) == normalize_code(code_b):
         return True  # same course always "shares"
     return matrix.get(overlap_key(code_a, code_b), 0) > 0
 
@@ -131,7 +133,7 @@ def shared_student_count(
     that care about same-course should check code equality first rather
     than relying on this sentinel.
     """
-    if code_a == code_b:
+    if normalize_code(code_a) == normalize_code(code_b):
         return SAME_COURSE_SENTINEL
     return matrix.get(overlap_key(code_a, code_b), 0)
 

@@ -38,6 +38,9 @@ Hard constraints (violations are never accepted)
 Soft constraints (penalised but not forbidden)
 ----------------------------------------------
   - Cross-course student overlap: penalty proportional to shared student count.
+  - Same-course sections should form a back-to-back pair; for 2 sections,
+    the second section is strongly pushed beside the first, and for 3+
+    sections at least one pair should be consecutive.
   - Prefer the same time-slot index across all meeting days for one course.
   - Minimise idle gaps between on-campus classes for courses sharing students.
   - Online courses should be placed in late slots.
@@ -92,6 +95,11 @@ from core.services.timetable_room_oracle import (
     check_type_feasibility,
     is_room_oracle_enabled,
     room_failure_breakdown,
+)
+from core.services.timetable_same_course import (
+    first_overlapping_same_course_window,
+    make_meeting_window,
+    same_course_candidate_penalty,
 )
 from core.services.timetable_stage_telemetry import (
     empty_stage_telemetry,
@@ -426,6 +434,57 @@ def _to_min(t: str) -> int:
     """
     h, m = t.split(":")
     return int(h) * 60 + int(m)
+
+
+def _placed_same_course_windows(
+    placed_schedule: list[tuple[str, str, str, str]],
+    my_code: str,
+):
+    return [
+        make_meeting_window(my_code, entry[0], entry[1], entry[2])
+        for entry in placed_schedule
+        if len(entry) > 3 and entry[3] == my_code
+    ]
+
+
+def _option_same_course_windows(option: list[dict], my_code: str):
+    return [
+        make_meeting_window(my_code, meeting["day"], meeting["start"], meeting["end"])
+        for meeting in option
+    ]
+
+
+def _same_course_overlap_context(
+    option: list[dict],
+    placed_schedule: list[tuple[str, str, str, str]],
+    my_code: str,
+) -> dict | None:
+    """Return trace context if this option overlaps an existing same-course section."""
+    overlap = first_overlapping_same_course_window(
+        _option_same_course_windows(option, my_code),
+        _placed_same_course_windows(placed_schedule, my_code),
+    )
+    if overlap is not None:
+        _candidate, existing = overlap
+        return {
+            "clashing_section": my_code,
+            "same_course": True,
+            "existing_day": existing.day,
+            "existing_start": f"{existing.start_min // 60:02d}:{existing.start_min % 60:02d}",
+            "existing_end": f"{existing.end_min // 60:02d}:{existing.end_min % 60:02d}",
+        }
+    return None
+
+
+def _same_course_back_to_back_penalty(
+    option: list[dict],
+    placed_schedule: list[tuple[str, str, str, str]],
+    my_code: str,
+) -> int:
+    return same_course_candidate_penalty(
+        _option_same_course_windows(option, my_code),
+        _placed_same_course_windows(placed_schedule, my_code),
+    )
 
 
 def _score_option(
@@ -949,7 +1008,7 @@ def auto_place_board(
     # on every board that has even one student needing it).
     from core.models import BoardStudentLink
 
-    budget_codes = {b.course_code for b in budgets}
+    budget_codes = {b.course_key or b.course_code for b in budgets}
     board_student_ids = set(
         BoardStudentLink.objects.filter(board=board).values_list("student_id", flat=True)
     )
@@ -960,7 +1019,7 @@ def auto_place_board(
         )
         cross_term_demand: dict[str, int] = defaultdict(int)
         for sm in student_maps_for_board:
-            for code in sm.recommended_courses:
+            for code in sm.recommended_course_keys or sm.recommended_courses:
                 if code not in budget_codes:
                     cross_term_demand[code] += 1
 
@@ -972,7 +1031,7 @@ def auto_place_board(
                 # Check if already placed on another board
                 already_placed = SectionPlacement.objects.filter(
                     board__scenario=scenario,
-                    term_section__course_code=course_code,
+                    term_section__course_key=course_code,
                 ).exists()
                 if already_placed:
                     continue
@@ -991,7 +1050,10 @@ def auto_place_board(
                         scenario=scenario, student_id__in=other_sids
                     )
                     other_count = sum(
-                        1 for sm in other_maps if course_code in (sm.recommended_courses or [])
+                        1
+                        for sm in other_maps
+                        if course_code
+                        in (sm.recommended_course_keys or sm.recommended_courses or [])
                     )
                     if other_count > this_board_count:
                         best_board = False
@@ -999,7 +1061,7 @@ def auto_place_board(
 
                 if best_board:
                     cb = ScenarioSectionBudget.objects.filter(
-                        scenario=scenario, course_code=course_code
+                        scenario=scenario, course_key=course_code
                     ).first()
                     if cb:
                         budgets.append(cb)
@@ -1035,7 +1097,7 @@ def auto_place_board(
     student_maps = ScenarioStudentMap.objects.filter(scenario=scenario)
     course_students: dict[str, set[int]] = defaultdict(set)
     for sm in student_maps:
-        for code in sm.recommended_courses:
+        for code in sm.recommended_course_keys or sm.recommended_courses:
             course_students[code].add(sm.student_id)
 
     # ── Build real student-overlap matrix ───────────────────────────────
@@ -1108,7 +1170,7 @@ def auto_place_board(
             TermSectionMeeting.objects.filter(term_section__scenario_id=scenario.id)
             .exclude(instructor="")
             .values_list(
-                "term_section__course_code",
+                "term_section__course_key",
                 "term_section__section",
                 "day",
                 "start_time",
@@ -1155,7 +1217,7 @@ def auto_place_board(
             .order_by("day", "start_time")
         )
         for lp in locked_placements:
-            cc = lp.term_section.course_code
+            cc = lp.term_section.course_key or lp.term_section.course_code
             mask = _time_mask(lp.day, lp.start_time, lp.end_time)
             placed_masks.append((cc, mask))
             placed_schedule.append((lp.day, lp.start_time, lp.end_time, cc))
@@ -1225,11 +1287,13 @@ def auto_place_board(
     # placing and pre-generate all feasible meeting options.
     course_data: list[dict] = []
     for budget in budgets:
-        code = budget.course_code
+        code = budget.course_key or budget.course_code
+        display_code = budget.course_code
+        course_name = budget.course_name or display_code
         credit_hours = budget.credit_hours or 3
         pattern = get_meeting_pattern(credit_hours)
         already = (
-            SectionPlacement.objects.filter(board=board, term_section__course_code=code)
+            SectionPlacement.objects.filter(board=board, term_section__course_key=code)
             .values("term_section_id")
             .distinct()
             .count()
@@ -1245,6 +1309,8 @@ def auto_place_board(
         course_data.append(
             {
                 "code": code,
+                "display_code": display_code,
+                "course_name": course_name,
                 "budget": budget,
                 "credit_hours": credit_hours,
                 "pattern": pattern,
@@ -1252,7 +1318,7 @@ def auto_place_board(
                 "to_place": to_place,
                 "all_options": all_options,
                 "students": course_students.get(code, set()),
-                "is_online": code.upper() in online_codes,
+                "is_online": display_code.upper() in online_codes,
             }
         )
 
@@ -1311,6 +1377,7 @@ def auto_place_board(
             _greedy_attempts += 1
 
             code = cd["code"]
+            display_code = cd.get("display_code", code)
             sec_label = f"S{sec_idx}"
             my_students = cd["students"]
             all_options = cd["all_options"]
@@ -1372,7 +1439,7 @@ def auto_place_board(
                                 "day": m["day"],
                                 "start_time": m["start"],
                                 "end_time": m["end"],
-                                "course_code": code,
+                                "course_code": display_code,
                             },
                             prayer_windows,
                         )
@@ -1433,25 +1500,14 @@ def auto_place_board(
                             continue
 
                 # Same-course instructor clash: two sections of the same
-                # course cannot share a (day, start_time) because the same
-                # instructor typically teaches all sections of a course.
+                # course cannot overlap because the same instructor
+                # typically teaches all sections of a course.
                 # This is independent of the INSTRUCTOR_CLASH filter above
                 # (which requires the ``instructor_id`` field to be set) —
                 # here we rely on the registrar's convention that course
                 # code → instructor. Rejected options are logged to the
                 # same trace bucket as INSTRUCTOR_CLASH.
-                same_course_ctx: dict | None = None
-                for m in option:
-                    for ps in placed_schedule:
-                        p_day, p_start, _p_end, p_code = ps[:4]
-                        if p_code == code and p_day == m["day"] and p_start == m["start"]:
-                            same_course_ctx = {
-                                "clashing_section": p_code,
-                                "same_course": True,
-                            }
-                            break
-                    if same_course_ctx is not None:
-                        break
+                same_course_ctx = _same_course_overlap_context(option, placed_schedule, code)
                 if same_course_ctx is not None:
                     if trace_enabled:
                         pr4_instructor_rejected.append(
@@ -1517,31 +1573,15 @@ def auto_place_board(
                 for m in option:
                     density_penalty += slot_density[m["start"]] * 3
 
-                # Instructor gap: for S2+ of the same course, penalize large gaps
-                # with S1 and reward adjacency. Two objectives:
-                #   - NEVER stack (same slot = +50 penalty)
-                #   - Prefer adjacent slots (75-100min gap = -10 reward)
-                #   - Penalize large gaps proportionally (instructor idle time)
-                instructor_gap_penalty = 0
-                if sec_round > 1:
-                    s1_day_starts: dict[str, list[int]] = defaultdict(list)
-                    for ps_entry in placed_schedule:
-                        if len(ps_entry) > 3 and ps_entry[3] == code:
-                            s1_day_starts[ps_entry[0]].append(_to_min(ps_entry[1]))
-
-                    for m in option:
-                        m_start = _to_min(m["start"])
-                        if m["day"] in s1_day_starts:
-                            for s1_start in s1_day_starts[m["day"]]:
-                                gap = abs(m_start - s1_start)
-                                if gap == 0:
-                                    instructor_gap_penalty += 50  # stacking: heavy penalty
-                                elif 75 <= gap <= 100:
-                                    instructor_gap_penalty -= 10  # adjacent: reward
-                                elif gap > 100:
-                                    instructor_gap_penalty += (
-                                        gap // 30
-                                    )  # large gap: proportional penalty
+                # Same-course section adjacency: create the back-to-back
+                # section pair during generation, not as a later optimiser
+                # repair. The penalty is added to the high-priority overlap
+                # bucket below so it dominates normal gap/density concerns.
+                same_course_adjacency_penalty = _same_course_back_to_back_penalty(
+                    option,
+                    placed_schedule,
+                    code,
+                )
 
                 # raw_score[5] = student_overlap_penalty (sum of shared counts
                 # for overlapping course pairs).  Placed in its own score
@@ -1554,12 +1594,11 @@ def auto_place_board(
                 score = (
                     raw_score[0],
                     raw_score[1],
-                    raw_score[5],  # student overlap: higher priority than gap
+                    raw_score[5] + same_course_adjacency_penalty,
                     raw_score[2] * gap_weight
                     + slot_penalty
                     + time_var_penalty
                     + room_penalty
-                    + instructor_gap_penalty
                     + density_penalty,
                     raw_score[3],
                     raw_score[4],
@@ -1617,7 +1656,7 @@ def auto_place_board(
                 refined: RoomFailureReason | None = None
                 if is_room_oracle_enabled() and room_tracker:
                     section_dict = {
-                        "course_code": code,
+                        "course_code": display_code,
                         "section_code": sec_label,
                         "day": "",
                         "start_time": "",
@@ -1639,7 +1678,7 @@ def auto_place_board(
                         day="",
                         start_time="",
                         end_time="",
-                        course_code=code,
+                        course_code=display_code,
                         section_code=sec_label,
                     )
                 room_failures.append(refined.to_dict())
@@ -1652,9 +1691,9 @@ def auto_place_board(
                 course_key=code,
                 section=sec_label,
                 defaults={
-                    "course_code": code,
-                    "course_number": code,
-                    "course_name": code,
+                    "course_code": display_code,
+                    "course_number": display_code,
+                    "course_name": cd.get("course_name") or display_code,
                     "available_capacity": cd["budget"].max_per_section,
                     "source_tag": "tw_auto",
                 },
@@ -1723,7 +1762,7 @@ def auto_place_board(
                             # report NO_ROOM_CAPACITY for a lab pool that
                             # the tracker would have treated as adequate.
                             m_section_dict = {
-                                "course_code": code,
+                                "course_code": display_code,
                                 "section_code": sec_label,
                                 "day": m["day"],
                                 "start_time": m["start"],
@@ -1754,7 +1793,7 @@ def auto_place_board(
                                     day=m["day"],
                                     start_time=m["start"],
                                     end_time=m["end"],
-                                    course_code=code,
+                                    course_code=display_code,
                                     section_code=sec_label,
                                 )
                             room_failures.append(m_refined.to_dict())
@@ -1792,7 +1831,9 @@ def auto_place_board(
             total_placed += 1
             placement_results.append(
                 {
-                    "course_code": code,
+                    "course_key": code,
+                    "course_code": display_code,
+                    "course_name": cd.get("course_name") or display_code,
                     "section": sec_label,
                     "credit_hours": cd["credit_hours"],
                     "meetings": meeting_results,
@@ -1855,7 +1896,7 @@ def auto_place_board(
                     alternatives = alternatives[:3]
                 decision_trace[section_code_full] = DecisionTrace(
                     section_code=section_code_full,
-                    course_code=code,
+                    course_code=display_code,
                     chosen_day=chosen_first["day"],
                     chosen_start_time=chosen_first["start"],
                     chosen_end_time=chosen_first["end"],
@@ -2032,7 +2073,7 @@ def _adaptive_scenario(scenario_id: int) -> dict:
             board_courses_p4 = set(
                 ScenarioSectionBudget.objects.filter(
                     scenario=board.scenario, programme_term=board.nominal_term
-                ).values_list("course_code", flat=True)
+                ).values_list("course_key", flat=True)
             )
             om_p4 = _bom_phase4(board.scenario_id, board_courses_p4)
             infeasible = find_infeasible_hotspots(board.id, om_p4)

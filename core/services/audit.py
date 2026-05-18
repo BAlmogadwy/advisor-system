@@ -5,6 +5,7 @@ import json
 import logging
 from datetime import UTC, datetime, timedelta
 from io import StringIO
+from threading import Lock
 from typing import Any
 
 from django.conf import settings
@@ -14,6 +15,7 @@ from django.http import HttpRequest
 from core.models import AuditLog
 
 logger = logging.getLogger(__name__)
+_AUDIT_WRITE_LOCK = Lock()
 
 
 def ensure_audit_schema() -> None:
@@ -60,6 +62,36 @@ def _compute_entry_hash(
     ).hexdigest()
 
 
+def _compute_legacy_entry_hash(
+    *,
+    ts_utc: str,
+    actor_username: str,
+    actor_role: str,
+    action: str,
+    endpoint: str,
+    method: str,
+    status: str,
+    details_json: str,
+    error_text: str,
+    prev_hash: str,
+) -> str:
+    canonical = "|".join(
+        [
+            prev_hash,
+            ts_utc,
+            actor_username,
+            actor_role,
+            action,
+            endpoint,
+            method,
+            status,
+            details_json,
+            error_text,
+        ]
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def _parse_ts(raw: str) -> datetime | None:
     if not raw:
         return None
@@ -86,39 +118,40 @@ def _emit_security_alert(
         details_json = json.dumps({"rule": rule, **details}, ensure_ascii=False)
         error_text = ""
 
-        with transaction.atomic():
-            last = (
-                AuditLog.objects.select_for_update()
-                .order_by("-id")
-                .values_list("entry_hash", flat=True)
-                .first()
-            )
-            prev_hash = str(last) if last else "GENESIS"
-            entry_hash = _compute_entry_hash(
-                ts_utc=ts_utc,
-                actor_username=actor_username,
-                actor_role=actor_role,
-                action=action,
-                endpoint=endpoint,
-                method=method,
-                status=status,
-                details_json=details_json,
-                error_text=error_text,
-                prev_hash=prev_hash,
-            )
-            AuditLog.objects.create(
-                ts_utc=ts_utc,
-                actor_username=actor_username,
-                actor_role=actor_role,
-                action=action,
-                endpoint=endpoint,
-                method=method,
-                status=status,
-                details_json=details_json,
-                error_text=error_text,
-                prev_hash=prev_hash,
-                entry_hash=entry_hash,
-            )
+        with _AUDIT_WRITE_LOCK:
+            with transaction.atomic():
+                last = (
+                    AuditLog.objects.select_for_update()
+                    .order_by("-id")
+                    .values_list("entry_hash", flat=True)
+                    .first()
+                )
+                prev_hash = str(last) if last else "GENESIS"
+                entry_hash = _compute_entry_hash(
+                    ts_utc=ts_utc,
+                    actor_username=actor_username,
+                    actor_role=actor_role,
+                    action=action,
+                    endpoint=endpoint,
+                    method=method,
+                    status=status,
+                    details_json=details_json,
+                    error_text=error_text,
+                    prev_hash=prev_hash,
+                )
+                AuditLog.objects.create(
+                    ts_utc=ts_utc,
+                    actor_username=actor_username,
+                    actor_role=actor_role,
+                    action=action,
+                    endpoint=endpoint,
+                    method=method,
+                    status=status,
+                    details_json=details_json,
+                    error_text=error_text,
+                    prev_hash=prev_hash,
+                    entry_hash=entry_hash,
+                )
     except Exception:
         return
 
@@ -212,39 +245,40 @@ def log_audit_event(
         details_json = json.dumps(details or {}, ensure_ascii=False)
         error_trimmed = error_text[:500]
 
-        with transaction.atomic():
-            last = (
-                AuditLog.objects.select_for_update()
-                .order_by("-id")
-                .values_list("entry_hash", flat=True)
-                .first()
-            )
-            prev_hash = str(last) if last else "GENESIS"
-            entry_hash = _compute_entry_hash(
-                ts_utc=ts_utc,
-                actor_username=actor_username,
-                actor_role=actor_role,
-                action=action,
-                endpoint=endpoint,
-                method=method,
-                status=status,
-                details_json=details_json,
-                error_text=error_trimmed,
-                prev_hash=prev_hash,
-            )
-            AuditLog.objects.create(
-                ts_utc=ts_utc,
-                actor_username=actor_username,
-                actor_role=actor_role,
-                action=action,
-                endpoint=endpoint,
-                method=method,
-                status=status,
-                details_json=details_json,
-                error_text=error_trimmed,
-                prev_hash=prev_hash,
-                entry_hash=entry_hash,
-            )
+        with _AUDIT_WRITE_LOCK:
+            with transaction.atomic():
+                last = (
+                    AuditLog.objects.select_for_update()
+                    .order_by("-id")
+                    .values_list("entry_hash", flat=True)
+                    .first()
+                )
+                prev_hash = str(last) if last else "GENESIS"
+                entry_hash = _compute_entry_hash(
+                    ts_utc=ts_utc,
+                    actor_username=actor_username,
+                    actor_role=actor_role,
+                    action=action,
+                    endpoint=endpoint,
+                    method=method,
+                    status=status,
+                    details_json=details_json,
+                    error_text=error_trimmed,
+                    prev_hash=prev_hash,
+                )
+                AuditLog.objects.create(
+                    ts_utc=ts_utc,
+                    actor_username=actor_username,
+                    actor_role=actor_role,
+                    action=action,
+                    endpoint=endpoint,
+                    method=method,
+                    status=status,
+                    details_json=details_json,
+                    error_text=error_trimmed,
+                    prev_hash=prev_hash,
+                    entry_hash=entry_hash,
+                )
 
         _check_critical_alerts(
             request,
@@ -356,12 +390,15 @@ def validate_hash_chain(limit: int = 2000) -> dict[str, Any]:
 
     prev_expected = "GENESIS"
     invalid_ids: list[int] = []
+    legacy_ids: list[int] = []
+    hmac_ids: list[int] = []
+    legacy_allowed = True
     checked = 0
     for r in rows:
         checked += 1
         prev_hash = str(r.prev_hash or "")
         entry_hash = str(r.entry_hash or "")
-        recomputed = _compute_entry_hash(
+        recomputed_hmac = _compute_entry_hash(
             ts_utc=str(r.ts_utc or ""),
             actor_username=str(r.actor_username or ""),
             actor_role=str(r.actor_role or ""),
@@ -373,8 +410,35 @@ def validate_hash_chain(limit: int = 2000) -> dict[str, Any]:
             error_text=str(r.error_text or ""),
             prev_hash=prev_hash,
         )
-        if prev_hash != prev_expected or entry_hash != recomputed:
+        recomputed_legacy = _compute_legacy_entry_hash(
+            ts_utc=str(r.ts_utc or ""),
+            actor_username=str(r.actor_username or ""),
+            actor_role=str(r.actor_role or ""),
+            action=str(r.action or ""),
+            endpoint=str(r.endpoint or ""),
+            method=str(r.method or ""),
+            status=str(r.status or ""),
+            details_json=str(r.details_json or "{}"),
+            error_text=str(r.error_text or ""),
+            prev_hash=prev_hash,
+        )
+
+        if entry_hash == recomputed_hmac:
+            hmac_ids.append(r.id)
+            legacy_allowed = False
+        elif legacy_allowed and entry_hash == recomputed_legacy:
+            legacy_ids.append(r.id)
+        else:
+            invalid_ids.append(r.id)
+
+        if prev_hash != prev_expected:
             invalid_ids.append(r.id)
         prev_expected = entry_hash
 
-    return {"checked": checked, "ok": len(invalid_ids) == 0, "invalid_ids": invalid_ids[:100]}
+    return {
+        "checked": checked,
+        "ok": len(invalid_ids) == 0,
+        "invalid_ids": invalid_ids[:100],
+        "legacy_count": len(legacy_ids),
+        "hmac_count": len(hmac_ids),
+    }

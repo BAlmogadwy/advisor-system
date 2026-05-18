@@ -191,6 +191,135 @@ class TestCompactStrategy:
         auto_place_board(board.id, strategy="compact")
         _assert_labs_use_lab_slots(board)
 
+    def test_same_course_two_sections_are_generated_back_to_back(self):
+        scenario = TimetableScenario.objects.create(
+            academic_year="1448",
+            term="1",
+            name="Back-to-back planner test",
+            slot_config=DEFAULT_SLOTS,
+            lab_slot_config=DEFAULT_LAB_SLOTS,
+        )
+        board = DeliveryBoard.objects.create(
+            scenario=scenario,
+            label="Term 1",
+            nominal_term=1,
+            program="BTB",
+            display_order=1,
+        )
+        Course.objects.get_or_create(
+            course_code="BTB101",
+            defaults={"credit_hours": 3, "department": "BTB"},
+        )
+        ProgrammeRequirement.objects.get_or_create(
+            program="BTB",
+            course_code="BTB101",
+            defaults={"programme_term": 1, "credit_hours": 3},
+        )
+        ScenarioSectionBudget.objects.create(
+            scenario=scenario,
+            course_code="BTB101",
+            department="BTB",
+            credit_hours=3,
+            planned_sections=2,
+            max_per_section=25,
+            total_demand=40,
+            programme_term=1,
+        )
+        for idx in range(20):
+            ScenarioStudentMap.objects.create(
+                scenario=scenario,
+                student_id=9910000 + idx,
+                primary_term=1,
+                recommended_courses=["BTB101"],
+            )
+        Room.objects.create(
+            room_code="BTB-R1",
+            capacity=50,
+            department="BTB",
+            room_type="lecture",
+            building="B1",
+        )
+
+        result = auto_place_board(board.id, strategy="compact")
+        assert result["skipped"] == 0
+
+        placements = list(
+            SectionPlacement.objects.filter(board=board, term_section__course_code="BTB101")
+            .select_related("term_section")
+            .order_by("term_section__section", "day", "start_time")
+        )
+        by_section: dict[str, list[SectionPlacement]] = {}
+        for placement in placements:
+            by_section.setdefault(placement.term_section.section, []).append(placement)
+
+        assert set(by_section) == {"S1", "S2"}
+        assert len(by_section["S1"]) == len(by_section["S2"]) == 2
+        assert _sections_are_back_to_back(by_section["S1"], by_section["S2"])
+
+    def test_same_course_three_sections_generate_at_least_one_back_to_back_pair(self):
+        scenario = TimetableScenario.objects.create(
+            academic_year="1448",
+            term="1",
+            name="Back-to-back three-section planner test",
+            slot_config=DEFAULT_SLOTS,
+            lab_slot_config=DEFAULT_LAB_SLOTS,
+        )
+        board = DeliveryBoard.objects.create(
+            scenario=scenario,
+            label="Term 1",
+            nominal_term=1,
+            program="BT3",
+            display_order=1,
+        )
+        Course.objects.get_or_create(
+            course_code="BTB301",
+            defaults={"credit_hours": 3, "department": "BT3"},
+        )
+        ProgrammeRequirement.objects.get_or_create(
+            program="BT3",
+            course_code="BTB301",
+            defaults={"programme_term": 1, "credit_hours": 3},
+        )
+        ScenarioSectionBudget.objects.create(
+            scenario=scenario,
+            course_code="BTB301",
+            department="BT3",
+            credit_hours=3,
+            planned_sections=3,
+            max_per_section=25,
+            total_demand=60,
+            programme_term=1,
+        )
+        for idx in range(30):
+            ScenarioStudentMap.objects.create(
+                scenario=scenario,
+                student_id=9920000 + idx,
+                primary_term=1,
+                recommended_courses=["BTB301"],
+            )
+        Room.objects.create(
+            room_code="BT3-R1",
+            capacity=50,
+            department="BT3",
+            room_type="lecture",
+            building="B1",
+        )
+
+        result = auto_place_board(board.id, strategy="compact")
+        assert result["skipped"] == 0
+
+        placements = list(
+            SectionPlacement.objects.filter(board=board, term_section__course_code="BTB301")
+            .select_related("term_section")
+            .order_by("term_section__section", "day", "start_time")
+        )
+        by_section: dict[str, list[SectionPlacement]] = {}
+        for placement in placements:
+            by_section.setdefault(placement.term_section.section, []).append(placement)
+
+        assert set(by_section) == {"S1", "S2", "S3"}
+        assert _course_has_back_to_back_pair(by_section)
+
 
 class TestOptimalStrategy:
     """Test CP-SAT optimal strategy with fallback."""
@@ -458,6 +587,42 @@ def _assert_no_same_group_overlaps(placements):
     count = _count_student_overlaps(placements)
     if count > 0:
         raise AssertionError(f"{count} student overlap(s) found")
+
+
+def _sections_are_back_to_back(left, right) -> bool:
+    """Every meeting in ``right`` has a same-day consecutive partner in ``left``."""
+
+    def _to_min(t):
+        h, m = str(t).split(":")
+        return int(h) * 60 + int(m)
+
+    def _gap(a, b):
+        if a.day != b.day:
+            return None
+        a_s, a_e = _to_min(a.start_time), _to_min(a.end_time)
+        b_s, b_e = _to_min(b.start_time), _to_min(b.end_time)
+        if a_s < b_e and b_s < a_e:
+            return -1
+        return b_s - a_e if a_e <= b_s else a_s - b_e
+
+    for right_meeting in right:
+        if not any(
+            (gap := _gap(left_meeting, right_meeting)) is not None and 0 <= gap <= 15
+            for left_meeting in left
+        ):
+            return False
+    return True
+
+
+def _course_has_back_to_back_pair(by_section: dict[str, list[SectionPlacement]]) -> bool:
+    labels = sorted(by_section)
+    for idx, left_label in enumerate(labels):
+        for right_label in labels[idx + 1 :]:
+            left = by_section[left_label]
+            right = by_section[right_label]
+            if _sections_are_back_to_back(left, right) or _sections_are_back_to_back(right, left):
+                return True
+    return False
 
 
 def _assert_labs_use_lab_slots(board):

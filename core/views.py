@@ -9,6 +9,7 @@ from django.shortcuts import render
 from django.views.decorators.http import require_POST
 
 from core.models import ProgrammeRequirement
+from core.services.dashboard_command_center import build_dashboard_command_center
 from core.services.rbac import (
     ROLE_ADVISOR,
     ROLE_GENERAL_ADVISOR,
@@ -113,6 +114,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         "scope_departments": department_scope,
         "scope_advisor_id": advisor_scope,
         "debug_mode": bool(settings.DEBUG),
+        "command_center": build_dashboard_command_center(scope),
     }
 
     if student_id_raw:

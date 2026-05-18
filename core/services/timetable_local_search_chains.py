@@ -111,6 +111,7 @@ def generate_chain_2_moves(
     pattern_catalog: dict[str, list[CanonicalPattern]],
     student_profiles: dict[str, StudentProfile],
     max_alternatives_per_section: int = 5,
+    locked_section_ids: set[str] | None = None,
 ) -> list[ChainMove]:
     """Generate chain-2 moves: hotspot section + overlap partner section.
 
@@ -121,6 +122,7 @@ def generate_chain_2_moves(
     """
     chains: list[ChainMove] = []
     partners = _find_overlap_partners(hotspot_courses[:5], student_profiles, top_n=5)
+    locked = locked_section_ids or set()
 
     if not partners:
         return chains
@@ -142,6 +144,8 @@ def generate_chain_2_moves(
 
             # Get alternative patterns for hotspot sections
             for h_sid in hotspot_sec_ids:
+                if h_sid in locked:
+                    continue
                 h_sec = sections_by_id[h_sid]
                 h_alts = [
                     p
@@ -154,6 +158,8 @@ def generate_chain_2_moves(
 
                 # Get alternative patterns for partner sections
                 for p_sid in partner_sec_ids:
+                    if p_sid in locked:
+                        continue
                     p_sec = sections_by_id[p_sid]
                     p_alts = [
                         p
@@ -233,6 +239,7 @@ def chain_local_search(
     max_iterations: int = 10,
     decision_trace_out: dict[str, dict] | None = None,
     stage_telemetry: dict[str, dict[str, int]] | None = None,
+    locked_section_ids: set[str] | None = None,
 ) -> TimetableEvaluationResult:
     """Chain-2 local search — runs AFTER single-move search exhausts.
 
@@ -266,6 +273,7 @@ def chain_local_search(
             sections_by_id,
             pattern_catalog,
             student_profiles,
+            locked_section_ids=locked_section_ids,
         )
 
         if not chains:

@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "core",
+    "whatsapp_gateway",
 ]
 
 MIDDLEWARE = [
@@ -122,6 +123,35 @@ CACHES = {
 
 # Legacy parity DB used by migrated advisor logic (can be overridden via env var)
 DB_PATH = os.getenv("ADVISOR_DB_PATH", str(BASE_DIR / "db.sqlite3"))
+
+# Local-only OpenAI-compatible LLM endpoint.  LM Studio defaults to this port.
+LOCAL_LLM_BASE_URL = os.getenv("LOCAL_LLM_BASE_URL", "http://localhost:1234/v1")
+LOCAL_LLM_MODEL = os.getenv("LOCAL_LLM_MODEL", "")
+LOCAL_LLM_TIMEOUT_SECONDS = float(os.getenv("LOCAL_LLM_TIMEOUT_SECONDS", "120"))
+LOCAL_LLM_MAX_TOKENS = int(os.getenv("LOCAL_LLM_MAX_TOKENS", "1400"))
+LOCAL_LLM_ALLOW_REMOTE = os.getenv("LOCAL_LLM_ALLOW_REMOTE", "false").lower() == "true"
+
+# WhatsApp Advisor Gateway. Keep credentials out of the repository.
+WHATSAPP_CLOUD_API_VERSION = os.getenv("WHATSAPP_CLOUD_API_VERSION", "v23.0")
+WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "")
+WHATSAPP_APP_SECRET = os.getenv("WHATSAPP_APP_SECRET", "")
+WHATSAPP_REQUIRE_SIGNATURE = (
+    os.getenv("WHATSAPP_REQUIRE_SIGNATURE", "false" if DEBUG else "true").lower() == "true"
+)
+WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
+WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
+WHATSAPP_STUDENT_EMAIL_DOMAIN = os.getenv("WHATSAPP_STUDENT_EMAIL_DOMAIN", "")
+WHATSAPP_OTP_TTL_SECONDS = int(os.getenv("WHATSAPP_OTP_TTL_SECONDS", "300"))
+WHATSAPP_OTP_MAX_ATTEMPTS = int(os.getenv("WHATSAPP_OTP_MAX_ATTEMPTS", "5"))
+WHATSAPP_ALLOW_SUPER_ADMIN = os.getenv("WHATSAPP_ALLOW_SUPER_ADMIN", "false").lower() == "true"
+
+DEFAULT_FROM_EMAIL = os.getenv("DEFAULT_FROM_EMAIL", "advisor-bot@localhost")
+
+# Optional Neo4j graph twin for timetable relationship analysis.
+NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+NEO4J_USERNAME = os.getenv("NEO4J_USERNAME", "neo4j")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "")
+NEO4J_DATABASE = os.getenv("NEO4J_DATABASE", "neo4j")
 
 # Portal credentials for scraper/runtime commands
 PORTAL_ADMIN_USERNAME = os.getenv("PORTAL_ADMIN_USERNAME", "")

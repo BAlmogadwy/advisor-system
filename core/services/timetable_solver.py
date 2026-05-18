@@ -35,6 +35,13 @@ from core.services.timetable_autoplace import (
     _time_mask,
     get_meeting_pattern,
 )
+from core.services.timetable_same_course import (
+    SAME_COURSE_DIFFERENT_DAY_PENALTY,
+    SAME_COURSE_MISSING_ADJACENT_PAIR_PENALTY,
+    SAME_COURSE_OVERLAP_PENALTY,
+    is_back_to_back_gap,
+    same_day_gap_penalty,
+)
 
 
 def _to_min(t: str) -> int:
@@ -43,6 +50,66 @@ def _to_min(t: str) -> int:
 
 
 PRAYER_BOUNDARY = 13 * 60
+
+
+def _option_end_min(option: tuple) -> int:
+    return option[7] if len(option) > 7 else _to_min(option[4])
+
+
+def _same_course_option_penalty(option_a: tuple, option_b: tuple) -> int:
+    if option_a[0] != option_b[0]:
+        return SAME_COURSE_DIFFERENT_DAY_PENALTY
+    start_a, end_a = option_a[6], _option_end_min(option_a)
+    start_b, end_b = option_b[6], _option_end_min(option_b)
+    if start_a < end_b and start_b < end_a:
+        return SAME_COURSE_OVERLAP_PENALTY
+    gap = start_b - end_a if end_a <= start_b else start_a - end_b
+    return 0 if is_back_to_back_gap(gap) else same_day_gap_penalty(gap)
+
+
+def _add_same_course_adjacency_penalties(
+    model: cp_model.CpModel,
+    penalties: list,
+    assign: list,
+    sec_options: list,
+    sections: list[dict],
+) -> None:
+    by_course: dict[str, list[int]] = defaultdict(list)
+    for idx, sec in enumerate(sections):
+        by_course[sec["code"]].append(idx)
+
+    for _code, indices in by_course.items():
+        if len(indices) < 2:
+            continue
+        pair_has_adjacent_term = []
+        for pos_a in range(len(indices)):
+            for pos_b in range(pos_a + 1, len(indices)):
+                i_a, i_b = indices[pos_a], indices[pos_b]
+                adjacent_terms = []
+                for m_a in range(len(sec_options[i_a])):
+                    for m_b in range(len(sec_options[i_b])):
+                        for o_a, opt_a in enumerate(sec_options[i_a][m_a]):
+                            for o_b, opt_b in enumerate(sec_options[i_b][m_b]):
+                                weight = _same_course_option_penalty(opt_a, opt_b)
+                                both = model.new_bool_var(
+                                    f"same_course_{i_a}_{m_a}_{o_a}_{i_b}_{m_b}_{o_b}"
+                                )
+                                model.add(assign[i_a][m_a][o_a] + assign[i_b][m_b][o_b] - 1 <= both)
+                                model.add(both <= assign[i_a][m_a][o_a])
+                                model.add(both <= assign[i_b][m_b][o_b])
+                                if weight:
+                                    penalties.append(both * weight)
+                                else:
+                                    adjacent_terms.append(both)
+                if adjacent_terms:
+                    pair_adjacent = model.new_bool_var(f"same_course_pair_adjacent_{i_a}_{i_b}")
+                    model.add_max_equality(pair_adjacent, adjacent_terms)
+                    pair_has_adjacent_term.append(pair_adjacent)
+
+        if pair_has_adjacent_term:
+            has_required_pair = model.new_bool_var(f"same_course_required_pair_{_code}")
+            model.add_max_equality(has_required_pair, pair_has_adjacent_term)
+            penalties.append((1 - has_required_pair) * SAME_COURSE_MISSING_ADJACENT_PAIR_PENALTY)
 
 
 def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
@@ -95,11 +162,12 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
     # Build sections to place
     sections = []
     for budget in budgets:
-        code = budget.course_code
+        code = budget.course_key or budget.course_code
+        display_code = budget.course_code
         cr = budget.credit_hours or 3
         pattern = get_meeting_pattern(cr)
         already = (
-            SectionPlacement.objects.filter(board=board, term_section__course_code=code)
+            SectionPlacement.objects.filter(board=board, term_section__course_key=code)
             .values("term_section_id")
             .distinct()
             .count()
@@ -109,10 +177,12 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
             sections.append(
                 {
                     "code": code,
+                    "display_code": display_code,
+                    "course_name": budget.course_name or display_code,
                     "sec_num": sec_num,
                     "label": f"S{sec_num}",
                     "pattern": pattern,
-                    "is_online": code.upper() in online_codes,
+                    "is_online": display_code.upper() in online_codes,
                     "capacity": budget.max_per_section,
                 }
             )
@@ -208,6 +278,7 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
     # the gap in minutes is added to the penalty.
 
     penalties = []
+    _add_same_course_adjacency_penalties(model, penalties, assign, sec_options, sections)
 
     # Pre-compute slot end times in minutes for gap calculation
     slot_end_min = {}
@@ -409,6 +480,8 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
         placements.append(
             {
                 "course_code": sec["code"],
+                "display_code": sec["display_code"],
+                "course_name": sec.get("course_name", sec["display_code"]),
                 "section": sec["label"],
                 "sec_num": sec["sec_num"],
                 "meetings": meetings,
@@ -453,7 +526,7 @@ def persist_solver_result(board_id: int, result: dict) -> dict:
     scenario = board.scenario
 
     budget_map = {
-        b.course_code: b
+        (b.course_key or b.course_code): b
         for b in ScenarioSectionBudget.objects.filter(
             scenario=scenario, programme_term=board.nominal_term
         )
@@ -461,6 +534,7 @@ def persist_solver_result(board_id: int, result: dict) -> dict:
 
     for p in result["placements"]:
         code = p["course_code"]
+        display_code = p.get("display_code", code)
         budget = budget_map.get(code)
         cap = budget.max_per_section if budget else 40
 
@@ -469,9 +543,10 @@ def persist_solver_result(board_id: int, result: dict) -> dict:
             course_key=code,
             section=p["section"],
             defaults={
-                "course_code": code,
-                "course_number": code,
-                "course_name": code,
+                "course_code": display_code,
+                "course_number": display_code,
+                "course_name": p.get("course_name")
+                or (budget.course_name if budget else display_code),
                 "available_capacity": cap,
                 "source_tag": "tw_auto",
             },
@@ -569,11 +644,12 @@ def solve_board_with_hints(
 
     sections = []
     for budget in budgets:
-        code = budget.course_code
+        code = budget.course_key or budget.course_code
+        display_code = budget.course_code
         cr = budget.credit_hours or 3
         pattern = get_meeting_pattern(cr)
         already = (
-            SectionPlacement.objects.filter(board=board, term_section__course_code=code)
+            SectionPlacement.objects.filter(board=board, term_section__course_key=code)
             .values("term_section_id")
             .distinct()
             .count()
@@ -583,10 +659,12 @@ def solve_board_with_hints(
             sections.append(
                 {
                     "code": code,
+                    "display_code": display_code,
+                    "course_name": budget.course_name or display_code,
                     "sec_num": sec_num,
                     "label": f"S{sec_num}",
                     "pattern": pattern,
-                    "is_online": code.upper() in online_codes,
+                    "is_online": display_code.upper() in online_codes,
                     "capacity": budget.max_per_section,
                 }
             )
@@ -662,6 +740,7 @@ def solve_board_with_hints(
 
     # (0b) SOFT student-overlap time penalty (same as solve_board)
     penalties = []
+    _add_same_course_adjacency_penalties(model, penalties, assign, sec_options, sections)
     for a_pos in range(len(sections)):
         for b_pos in range(a_pos + 1, len(sections)):
             code_a, code_b = sections[a_pos]["code"], sections[b_pos]["code"]
@@ -846,6 +925,8 @@ def solve_board_with_hints(
         placements.append(
             {
                 "course_code": sec["code"],
+                "display_code": sec["display_code"],
+                "course_name": sec.get("course_name", sec["display_code"]),
                 "section": sec["label"],
                 "sec_num": sec["sec_num"],
                 "meetings": meetings,

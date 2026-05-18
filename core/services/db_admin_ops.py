@@ -376,6 +376,8 @@ def import_oracle_plan_from_rows(
         {code, en_name, credits, level_number, type, prereqs_str}
 
     ``prereqs_str`` is a comma-separated string of prerequisite course codes.
+    ``en_name`` is stored both in the global Course catalogue and on the
+    ProgrammeRequirement row so same-code courses can keep plan-specific names.
 
     Returns counts: ``{requirements_upserted, prerequisites_inserted, courses_upserted}``.
     """
@@ -401,7 +403,7 @@ def import_oracle_plan_from_rows(
             credits = int(str(row.get("credits", 0)).strip() or 0)
             level_number = int(str(row.get("level_number", 0)).strip() or 0)
             course_type = str(row.get("type", "Mandatory")).strip() or "Mandatory"
-            en_name = str(row.get("en_name", "")).strip()
+            en_name = str(row.get("en_name", row.get("course_name", ""))).strip()
             is_online = bool(int(str(row.get("is_online", 0)).strip() or 0))
 
             # Upsert ProgrammeRequirement
@@ -413,6 +415,7 @@ def import_oracle_plan_from_rows(
                     "programme_term": level_number,
                     "credit_hours": credits,
                     "is_online": is_online,
+                    "course_name": en_name,
                 },
             )
             requirements_upserted += 1

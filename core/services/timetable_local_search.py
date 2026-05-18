@@ -48,6 +48,13 @@ from core.services.timetable_autoplace import (
     _time_mask,
 )
 from core.services.timetable_decision_trace import DecisionTrace
+from core.services.timetable_same_course import (
+    has_same_course_overlap as same_course_windows_overlap,
+)
+from core.services.timetable_same_course import (
+    make_meeting_window,
+    same_course_section_spread_penalty,
+)
 from core.services.timetable_solver_codes import (
     SA_RELOCATE_ACCEPTED,
     is_stage_trace_enabled,
@@ -69,6 +76,29 @@ PRAYER_BOUNDARY = 13 * 60  # 13:00
 
 
 # ── Cost Function ────────────────────────────────────────────────
+
+
+def _same_course_windows_by_course(schedule: dict[int, list[dict]], sections: list[dict]) -> dict:
+    by_course = defaultdict(list)
+    for idx, meetings in schedule.items():
+        sec = sections[idx]
+        code = sec["code"]
+        label = sec.get("label", str(idx))
+        by_course[code].append(
+            [make_meeting_window(code, m["day"], m["start"], m["end"], label) for m in meetings]
+        )
+    return by_course
+
+
+def _same_course_spread_cost(schedule: dict[int, list[dict]], sections: list[dict]) -> int:
+    return same_course_section_spread_penalty(_same_course_windows_by_course(schedule, sections))
+
+
+def _has_same_course_overlap(schedule: dict[int, list[dict]], sections: list[dict]) -> bool:
+    return any(
+        same_course_windows_overlap(meetings)
+        for meetings in _same_course_windows_by_course(schedule, sections).values()
+    )
 
 
 def _compute_cost(
@@ -138,6 +168,7 @@ def _compute_cost(
                         gap *= 1.5
                     total_cost += gap * w
 
+    total_cost += _same_course_spread_cost(schedule, sections)
     return total_cost
 
 
@@ -177,17 +208,8 @@ def _check_hard_constraints(
                     return False
 
     # 2. Same course different sections don't overlap
-    course_masks: dict[str, list[int]] = defaultdict(list)
-    for i, meetings in schedule.items():  # noqa: B007
-        sec = sections[i]
-        for m in meetings:
-            course_masks[sec["code"]].append(m["mask"])
-
-    for _code, masks in course_masks.items():
-        for a in range(len(masks)):
-            for b in range(a + 1, len(masks)):
-                if masks[a] & masks[b]:
-                    return False
+    if _has_same_course_overlap(schedule, sections):
+        return False
 
     # 3. All different days per section
     for i, meetings in schedule.items():  # noqa: B007

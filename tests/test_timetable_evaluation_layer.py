@@ -101,3 +101,87 @@ def test_rank_timetable_candidates_prefers_lower_lexicographic_score() -> None:
 
     assert [result.candidate_id for result in ranked] == ["good", "bad"]
     assert ranked[0].lexicographic_score < ranked[1].lexicographic_score
+
+
+def test_same_course_sections_accept_duration_aware_back_to_back() -> None:
+    adjacent_sections = [
+        _section("CS101-S1", "CS101", [(0, 540, 640)]),
+        _section("CS101-S2", "CS101", [(0, 640, 740)]),
+    ]
+    consecutive_slot_sections = [
+        _section("CS101-S1", "CS101", [(0, 540, 640)]),
+        _section("CS101-S2", "CS101", [(0, 655, 755)]),
+    ]
+    separated_sections = [
+        _section("CS101-S1", "CS101", [(0, 540, 640)]),
+        _section("CS101-S2", "CS101", [(0, 675, 775)]),
+    ]
+    profiles = {
+        "S1": StudentProfile(
+            student_id="S1",
+            department="CS",
+            recommended_courses=["CS101"],
+            risk_tier=RiskTier.C,
+            intra_tier_score=1.0,
+        )
+    }
+
+    adjacent = evaluate_generated_timetable_candidate(
+        candidate_id="adjacent",
+        generated_sections=adjacent_sections,
+        student_profiles=profiles,
+        course_rigidity={"CS101": 1.0},
+    )
+    separated = evaluate_generated_timetable_candidate(
+        candidate_id="separated",
+        generated_sections=separated_sections,
+        student_profiles=profiles,
+        course_rigidity={"CS101": 1.0},
+    )
+    consecutive_slot = evaluate_generated_timetable_candidate(
+        candidate_id="consecutive_slot",
+        generated_sections=consecutive_slot_sections,
+        student_profiles=profiles,
+        course_rigidity={"CS101": 1.0},
+    )
+
+    assert adjacent.lexicographic_score[4] == 0
+    assert consecutive_slot.lexicographic_score[4] == 0
+    assert separated.lexicographic_score[4] >= 5000
+
+
+def test_three_same_course_sections_require_at_least_one_back_to_back_pair() -> None:
+    with_pair_sections = [
+        _section("CS101-S1", "CS101", [(0, 540, 615)]),
+        _section("CS101-S2", "CS101", [(0, 615, 690)]),
+        _section("CS101-S3", "CS101", [(2, 540, 615)]),
+    ]
+    no_pair_sections = [
+        _section("CS101-S1", "CS101", [(0, 540, 615)]),
+        _section("CS101-S2", "CS101", [(1, 540, 615)]),
+        _section("CS101-S3", "CS101", [(2, 540, 615)]),
+    ]
+    profiles = {
+        "S1": StudentProfile(
+            student_id="S1",
+            department="CS",
+            recommended_courses=["CS101"],
+            risk_tier=RiskTier.C,
+            intra_tier_score=1.0,
+        )
+    }
+
+    with_pair = evaluate_generated_timetable_candidate(
+        candidate_id="with_pair",
+        generated_sections=with_pair_sections,
+        student_profiles=profiles,
+        course_rigidity={"CS101": 1.0},
+    )
+    no_pair = evaluate_generated_timetable_candidate(
+        candidate_id="no_pair",
+        generated_sections=no_pair_sections,
+        student_profiles=profiles,
+        course_rigidity={"CS101": 1.0},
+    )
+
+    assert no_pair.lexicographic_score[4] >= with_pair.lexicographic_score[4] + 5000

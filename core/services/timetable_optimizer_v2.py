@@ -64,13 +64,13 @@ def build_student_profiles_for_scenario(
                       (students struggling most get first pick).
     """
     maps = ScenarioStudentMap.objects.filter(scenario_id=scenario_id).values_list(
-        "student_id", "recommended_courses"
+        "student_id", "recommended_course_keys", "recommended_courses"
     )
     if not maps:
         return {}
 
     student_ids = [m[0] for m in maps]
-    rec_courses_by_sid: dict[int, list[str]] = {m[0]: m[1] for m in maps}
+    rec_courses_by_sid: dict[int, list[str]] = {m[0]: (m[1] or m[2] or []) for m in maps}
 
     # Bulk-fetch student metadata
     from core.models import Student
@@ -179,7 +179,8 @@ def build_section_states_for_scenario(
 
     # Budget lookup for capacity
     budgets = {
-        b.course_code: b for b in ScenarioSectionBudget.objects.filter(scenario_id=scenario_id)
+        (b.course_key or b.course_code): b
+        for b in ScenarioSectionBudget.objects.filter(scenario_id=scenario_id)
     }
 
     # Group placements by term_section
@@ -192,7 +193,7 @@ def build_section_states_for_scenario(
     sections: list[SectionState] = []
     for ts_id, pls in grouped.items():
         ts = ts_lookup[ts_id]
-        course_code = ts.course_code
+        course_code = ts.course_key or ts.course_code
         budget = budgets.get(course_code)
 
         meetings: list[SectionMeeting] = []
@@ -265,6 +266,21 @@ def build_section_states_for_scenario(
     return sections
 
 
+def build_locked_section_ids_for_scenario(scenario_id: int) -> set[str]:
+    """Return section IDs that must stay fixed during optimisation.
+
+    UI locks live on individual placements, while optimiser moves operate
+    on whole section patterns. If any meeting for a section is locked, the
+    safest behaviour is to freeze that whole section.
+    """
+    rows = (
+        SectionPlacement.objects.filter(board__scenario_id=scenario_id, is_locked=True)
+        .select_related("term_section")
+        .values_list("term_section__course_key", "term_section__section")
+    )
+    return {f"{course_code}_{section}" for course_code, section in rows}
+
+
 # ── Adapter C: Course Rigidity ───────────────────────────────────
 
 
@@ -283,7 +299,7 @@ def build_course_rigidity_for_scenario(
 
     for b in budgets:
         if b.planned_sections <= 0:
-            rigidity[b.course_code] = 0.5
+            rigidity[b.course_key or b.course_code] = 0.5
             continue
 
         # Demand pressure: how full are the sections?
@@ -297,7 +313,7 @@ def build_course_rigidity_for_scenario(
         lab_bonus = 0.15 if b.credit_hours == 4 else 0.0
 
         score = min(1.0, (demand_ratio * 0.5) + (scarcity * 0.3) + lab_bonus + 0.05)
-        rigidity[b.course_code] = round(score, 3)
+        rigidity[b.course_key or b.course_code] = round(score, 3)
 
     return rigidity
 
@@ -350,7 +366,7 @@ def build_room_state_for_scenario(
             "start_time",
             "end_time",
             "term_section_id",
-            "term_section__course_code",
+            "term_section__course_key",
             "term_section__section",
         )
     )
@@ -372,16 +388,17 @@ def build_room_state_for_scenario(
         occ.occupied_mask_by_day[meeting.day] |= meeting.mask
 
         # Use course_code_section format to match sections_by_id keys
-        section_id = f"{pl['term_section__course_code']}_{pl['term_section__section']}"
+        section_id = f"{pl['term_section__course_key']}_{pl['term_section__section']}"
         occ.assigned_section_ids.add(section_id)
 
     # Course → room type requirements
     course_room_requirements: dict[str, str] = {}
     budgets = ScenarioSectionBudget.objects.filter(scenario_id=scenario_id).values(
-        "course_code", "credit_hours"
+        "course_key", "course_code", "credit_hours"
     )
     for b in budgets:
-        course_room_requirements[b["course_code"]] = "lab" if b["credit_hours"] == 4 else "lecture"
+        key = b["course_key"] or b["course_code"]
+        course_room_requirements[key] = "lab" if b["credit_hours"] == 4 else "lecture"
 
     # Ensure ALL rooms have an occupancy entry (even if empty)
     # so room repair can assign sections to currently-empty rooms
@@ -437,7 +454,7 @@ def persist_section_states_to_scenario(
 
     for _ts_id, pls in grouped.items():
         ts = pls[0].term_section
-        key = (ts.course_code, ts.section)
+        key = (ts.course_key or ts.course_code, ts.section)
         state = state_lookup.get(key)
         if not state:
             skipped += len(pls)
@@ -532,8 +549,10 @@ def _generate_candidates_for_scenario(
     candidates: list[dict] = []
 
     for idx, strategy in enumerate(strategies):
-        # Clear existing placements for a fresh run
-        SectionPlacement.objects.filter(board__scenario_id=scenario_id).delete()
+        # Clear existing unlocked placements for a fresh run. Locked
+        # placements are the user's hard constraints and must survive a full
+        # rebuild so the auto-placer can reserve those cells.
+        SectionPlacement.objects.filter(board__scenario_id=scenario_id, is_locked=False).delete()
 
         logger.info(
             "Generating candidate %d/%d with strategy=%s", idx + 1, len(strategies), strategy
@@ -679,6 +698,8 @@ def optimise_scenario_timetable_v2(
             "stage_telemetry": empty_stage_telemetry(),
         }
 
+    locked_section_ids = build_locked_section_ids_for_scenario(scenario_id)
+
     t2 = time.time()
     logger.info("Generated %d candidates in %.1fs", len(candidates), t2 - t1)
 
@@ -772,6 +793,7 @@ def optimise_scenario_timetable_v2(
                 room_occupancies=None,
                 course_room_requirements=None,
                 max_iterations=max_search_iterations,
+                locked_section_ids=locked_section_ids,
             )
 
             score_before = best.lexicographic_score
@@ -841,6 +863,7 @@ def optimise_scenario_timetable_v2(
                 max_iterations=max_chain_iterations,
                 decision_trace_out=chain_trace_out,
                 stage_telemetry=result["stage_telemetry"],
+                locked_section_ids=locked_section_ids,
             )
 
             if chain_result.lexicographic_score < current_eval_for_chain.lexicographic_score:
@@ -899,6 +922,7 @@ def optimise_scenario_timetable_v2(
                 time_limit_seconds=cpsat_time_limit,
                 hotspot_only=cpsat_hotspot_only,
                 stage_telemetry=result["stage_telemetry"],
+                locked_section_ids=locked_section_ids,
             )
 
             if cpsat_result is not None:
@@ -934,7 +958,7 @@ def optimise_scenario_timetable_v2(
     # in sections_by_id, not as full placements.
     # First: re-place using the winning strategy (baseline placement)
     winning_strategy = best.candidate_id.rsplit("_", 1)[0]
-    SectionPlacement.objects.filter(board__scenario_id=scenario_id).delete()
+    SectionPlacement.objects.filter(board__scenario_id=scenario_id, is_locked=False).delete()
     from core.services.timetable_autoplace import auto_place_scenario
 
     scenario_place_result = auto_place_scenario(
@@ -1017,8 +1041,12 @@ def optimise_scenario_timetable_v2(
         boards = DeliveryBoard.objects.filter(scenario_id=scenario_id)
         for board in boards:
             # Clear rooms on changed placements so assign_rooms_to_board can redo them
-            SectionPlacement.objects.filter(board=board, room="UNASSIGNED").update(room="")
-            rooming_result = assign_rooms_to_board(board.id)
+            SectionPlacement.objects.filter(
+                board=board,
+                room="UNASSIGNED",
+                is_locked=False,
+            ).update(room="")
+            rooming_result = assign_rooms_to_board(board.id, respect_locked=True)
             # PR5 commit 6: overlay rooming-repair trace (last-changer-wins).
             for k, v in (rooming_result.get("decision_trace") or {}).items():
                 result["decision_trace"][k] = v
@@ -1111,6 +1139,8 @@ def optimise_current_timetable(
             "stage_telemetry": empty_stage_telemetry(),
         }
 
+    locked_section_ids = build_locked_section_ids_for_scenario(scenario_id)
+
     from core.services import timetable_student_assignment as ssa
 
     sections_by_id = ssa.build_sections_by_id(sections)
@@ -1189,6 +1219,7 @@ def optimise_current_timetable(
             room_occupancies=None,
             course_room_requirements=None,
             max_iterations=max_search_iterations,
+            locked_section_ids=locked_section_ids,
         )
 
         score_before = baseline.lexicographic_score
@@ -1229,6 +1260,7 @@ def optimise_current_timetable(
             max_iterations=max_chain_iterations,
             decision_trace_out=chain_trace_out,
             stage_telemetry=result["stage_telemetry"],
+            locked_section_ids=locked_section_ids,
         )
         if chain_result.lexicographic_score < current_eval.lexicographic_score:
             result["chain_search_applied"] = True
@@ -1258,6 +1290,7 @@ def optimise_current_timetable(
             time_limit_seconds=cpsat_time_limit,
             hotspot_only=cpsat_hotspot_only,
             stage_telemetry=result["stage_telemetry"],
+            locked_section_ids=locked_section_ids,
         )
         if cpsat_result is not None:
             cpsat_eval = cpsat_result["eval"]
@@ -1296,8 +1329,12 @@ def optimise_current_timetable(
 
         boards = DeliveryBoard.objects.filter(scenario_id=scenario_id)
         for board in boards:
-            SectionPlacement.objects.filter(board=board, room="UNASSIGNED").update(room="")
-            rooming_result = assign_rooms_to_board(board.id)
+            SectionPlacement.objects.filter(
+                board=board,
+                room="UNASSIGNED",
+                is_locked=False,
+            ).update(room="")
+            rooming_result = assign_rooms_to_board(board.id, respect_locked=True)
             # PR5 commit 6: overlay rooming-repair trace (last-changer-wins).
             for k, v in (rooming_result.get("decision_trace") or {}).items():
                 result["decision_trace"][k] = v

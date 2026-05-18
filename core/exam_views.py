@@ -25,19 +25,34 @@ from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
 from core.authz import throttle
-from core.models import ExamTimetableRun, Student
+from core.models import ExamTimetableRun, ProgrammeRequirement, Room, Student, StudentCourse
 from core.services.audit import log_audit_event
+from core.services.course_identity import planner_course_key
 from core.services.exam_multistart import (
     is_multistart_enabled,
     report_to_dict,
     run_multistart,
 )
-from core.services.exam_run_schema import load_normalised_run
+from core.services.exam_run_schema import (
+    STATUS_DERIVATION_VERSION,
+    compute_enrolment_snapshot,
+    derive_building_footprint,
+    derive_multi_sitting_details,
+    derive_status_surface,
+    load_normalised_run,
+    stamp_schema_version,
+)
 from core.services.exam_timetable import (
+    _build_qa,
+    _build_room_qa,
+    assign_rooms_to_schedule,
+    build_conflict_graph,
     build_credit_map,
-    build_enrolled_sets,
+    build_enrolled_sets_with_meta,
     build_exam_timetable,
+    check_room_feasibility,
     export_exam_timetable_xlsx,
+    schedule,
 )
 from core.services.rbac import ROLE_SUPER_ADMIN, get_user_role
 from core.sidebar_context import get_sidebar_context
@@ -109,7 +124,10 @@ def exam_timetable_preview_courses_view(request: HttpRequest) -> JsonResponse:
         else []
     ) or None
 
-    enrolled_sets = build_enrolled_sets(programs=programs, sections=sections)
+    enrolled_sets, course_meta = build_enrolled_sets_with_meta(
+        programs=programs,
+        sections=sections,
+    )
 
     # Fetch credit hours for all preview courses
     course_codes = list(enrolled_sets.keys())
@@ -120,19 +138,26 @@ def exam_timetable_preview_courses_view(request: HttpRequest) -> JsonResponse:
     # studies family (institutional convention — those are delivered online).
     from core.models import ProgrammeRequirement
 
-    pr_qs = ProgrammeRequirement.objects.filter(course_code__in=course_codes, is_online=True)
+    source_codes = {
+        str(course_meta.get(cc, {}).get("source_course_code") or _source_code_for_display(cc))
+        for cc in course_codes
+    }
+    pr_qs = ProgrammeRequirement.objects.filter(course_code__in=source_codes, is_online=True)
     if programs:
         pr_qs = pr_qs.filter(program__in=programs)
     online_set = set(pr_qs.values_list("course_code", flat=True))
-    online_set.update(cc for cc in course_codes if cc.startswith(("GS", "GSE")))
+    online_set.update(cc for cc in source_codes if cc.startswith(("GS", "GSE")))
 
     courses = sorted(
         [
             {
                 "course_code": cc,
+                "source_course_code": course_meta.get(cc, {}).get("source_course_code", cc),
+                "course_name": course_meta.get(cc, {}).get("course_name", ""),
+                "course_identity": course_meta.get(cc, {}).get("course_identity", cc),
                 "enrolled_count": len(sids),
                 "credit_hours": credit_map.get(cc, 3),
-                "is_online": cc in online_set,
+                "is_online": course_meta.get(cc, {}).get("source_course_code", cc) in online_set,
             }
             for cc, sids in enrolled_sets.items()
         ],
@@ -177,6 +202,7 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
     randomize = payload.get("randomize", False)
     assign_rooms = bool(payload.get("assign_rooms", True))
     thin_threshold_raw = payload.get("thin_conflict_threshold", 0)
+    mode = str(payload.get("mode") or "").strip()
 
     if not label:
         return JsonResponse({"ok": False, "error": "label is required"}, status=400)
@@ -255,6 +281,40 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
     import random as _rnd
 
     seed = _rnd.randint(1, 2**31 - 1) if randomize else None
+    base_schedule_raw = payload.get("base_schedule")
+    if isinstance(base_schedule_raw, list):
+        try:
+            if mode == "optimize_loaded":
+                result = _optimise_loaded_schedule(
+                    label=label,
+                    days=days,
+                    periods=periods,
+                    max_per_day=max_per_day,
+                    schedule_raw=base_schedule_raw,
+                    selected_courses=selected_courses,
+                    pinned=pinned,
+                    assign_rooms=assign_rooms,
+                    seed=seed,
+                    thin_conflict_threshold=thin_conflict_threshold,
+                )
+            else:
+                result = _rebuild_loaded_schedule(
+                    label=label,
+                    days=days,
+                    periods=periods,
+                    max_per_day=max_per_day,
+                    schedule_raw=base_schedule_raw,
+                    selected_courses=selected_courses,
+                    assign_rooms=assign_rooms,
+                    seed=seed,
+                    thin_conflict_threshold=thin_conflict_threshold,
+                    rebuild_mode="loaded_schedule",
+                )
+            return JsonResponse({"ok": True, **result})
+        except ValueError as exc:
+            return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+        except Exception as exc:
+            return JsonResponse({"ok": False, "error": str(exc)}, status=500)
 
     # Multi-start is feature-flagged. When TIMETABLE_EXAM_MULTISTART_ENABLED
     # is set and the request opts in (``multistart=True``), the runner
@@ -328,6 +388,586 @@ def exam_timetable_build_view(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"ok": True, **result})
     except Exception as exc:
         return JsonResponse({"ok": False, "error": str(exc)}, status=500)
+
+
+def _source_code_for_display(display_code: str, explicit_source: object = None) -> str:
+    source = str(explicit_source or "").strip()
+    if source:
+        return source
+    # Imported duplicate displays are stored as "CS112 (1)" / "CS112 (2)".
+    if display_code.endswith(")") and " (" in display_code:
+        return display_code.rsplit(" (", 1)[0]
+    return display_code
+
+
+def _course_identity_for_entry(entry: dict) -> str:
+    explicit = str(entry.get("course_identity") or "").strip()
+    if explicit:
+        return explicit
+    source = _source_code_for_display(
+        str(entry.get("course_code", "")).strip(),
+        entry.get("source_course_code"),
+    )
+    return planner_course_key(source, entry.get("course_name"))
+
+
+def _build_draft_enrolled_sets(schedule_entries: list[dict]) -> dict[str, set[int]]:
+    source_to_display: dict[str, list[str]] = {}
+    identity_by_display: dict[str, str] = {}
+    for entry in schedule_entries:
+        display = str(entry.get("course_code", "")).strip()
+        if not display:
+            continue
+        source = _source_code_for_display(display, entry.get("source_course_code"))
+        identity_by_display[display] = _course_identity_for_entry(entry)
+        source_to_display.setdefault(source, [])
+        if display not in source_to_display[source]:
+            source_to_display[source].append(display)
+
+    source_codes = set(source_to_display)
+    if not source_codes:
+        return {}
+
+    source_sets: dict[str, set[int]] = {code: set() for code in source_codes}
+    student_ids: set[int] = set()
+    qs = StudentCourse.objects.filter(
+        course__course_code__in=source_codes,
+        status="studying",
+    ).values_list("course__course_code", "student_id")
+    for source, student_id in qs.iterator():
+        sid = int(student_id)
+        source_sets[str(source)].add(sid)
+        student_ids.add(sid)
+
+    pr_name_by_program_code = {
+        (str(program), str(code)): str(name or "").strip()
+        for program, code, name in ProgrammeRequirement.objects.filter(
+            course_code__in=source_codes
+        ).values_list("program", "course_code", "course_name")
+    }
+    student_identity: dict[tuple[str, int], str] = {}
+    identity_rows = StudentCourse.objects.filter(
+        course__course_code__in=source_codes,
+        status="studying",
+    ).select_related("course", "student")
+    for sc in identity_rows:
+        source = str(sc.course.course_code)
+        sid = int(sc.student_id)
+        program = str(sc.student.program or "")
+        name = pr_name_by_program_code.get((program, source)) or str(sc.course.description or "")
+        student_identity[(source, sid)] = planner_course_key(source, name)
+
+    enrolled_sets: dict[str, set[int]] = {}
+    for source, displays in source_to_display.items():
+        sids = set(source_sets.get(source, set()))
+        if len(displays) <= 1:
+            enrolled_sets[displays[0]] = sids
+            continue
+
+        by_identity = {identity_by_display.get(display, display): display for display in displays}
+        buckets: dict[str, set[int]] = {display: set() for display in displays}
+        unmatched: list[int] = []
+        for sid in sorted(sids):
+            display = by_identity.get(student_identity.get((source, sid), ""))
+            if display:
+                buckets[display].add(sid)
+            else:
+                unmatched.append(sid)
+        ordered = sorted(displays)
+        for idx, sid in enumerate(unmatched):
+            buckets[ordered[idx % len(ordered)]].add(sid)
+        for display, bucket in buckets.items():
+            enrolled_sets[display] = bucket
+    return enrolled_sets
+
+
+def _draft_plan_term_buckets(schedule_entries: list[dict]) -> dict[tuple[str, int], set[str]]:
+    source_to_display: dict[str, list[str]] = {}
+    for entry in schedule_entries:
+        display = str(entry.get("course_code", "")).strip()
+        if not display:
+            continue
+        source = _source_code_for_display(display, entry.get("source_course_code"))
+        source_to_display.setdefault(source, []).append(display)
+
+    rows = ProgrammeRequirement.objects.filter(
+        course_code__in=set(source_to_display),
+        programme_term__isnull=False,
+    ).values_list("program", "course_code", "course_name", "programme_term")
+    buckets: dict[tuple[str, int], set[str]] = {}
+    identity_by_display = {
+        str(entry.get("course_code", "")): _course_identity_for_entry(entry)
+        for entry in schedule_entries
+    }
+    for program, source, name, term in rows:
+        key = (str(program), int(term or 0))
+        row_identity = planner_course_key(source, name)
+        matches = [
+            display
+            for display in source_to_display.get(str(source), [])
+            if identity_by_display.get(display, display) == row_identity
+        ]
+        if not matches and all(
+            identity_by_display.get(display, display) == str(source)
+            for display in source_to_display.get(str(source), [])
+        ):
+            matches = list(source_to_display.get(str(source), []))
+        buckets.setdefault(key, set()).update(matches)
+    return buckets
+
+
+def _course_buckets_from_plan_terms(
+    plan_term_buckets: dict[tuple[str, int], set[str]],
+) -> dict[str, list[tuple[str, int]]]:
+    course_buckets: dict[str, list[tuple[str, int]]] = {}
+    for bucket_key, courses in plan_term_buckets.items():
+        for course_code in courses:
+            course_buckets.setdefault(course_code, []).append(bucket_key)
+    return course_buckets
+
+
+def _normalise_loaded_schedule_entries(
+    schedule_raw: list,
+    days: list[str],
+    periods: list[str],
+    selected_courses: list[str] | None,
+) -> list[dict]:
+    selected = set(selected_courses) if selected_courses is not None else None
+    slot_index_by_key: dict[tuple[str, str], int] = {}
+    slots_len = 0
+    for day in days:
+        for period in periods:
+            slot_index_by_key[(day, period)] = slots_len
+            slots_len += 1
+
+    schedule_entries: list[dict] = []
+    overflow_idx = slots_len
+    for raw in schedule_raw:
+        if not isinstance(raw, dict):
+            continue
+        course_code = str(raw.get("course_code", "")).strip()
+        day = str(raw.get("day", "")).strip()
+        period = str(raw.get("period", "")).strip()
+        if not course_code or not day or not period:
+            continue
+        if selected is not None and course_code not in selected:
+            continue
+
+        if day == "OVERFLOW":
+            try:
+                slot_index = int(raw.get("slot_index", overflow_idx))
+            except (ValueError, TypeError):
+                slot_index = overflow_idx
+            overflow_idx = max(overflow_idx, slot_index + 1)
+        else:
+            slot_index = slot_index_by_key.get((day, period))
+            if slot_index is None:
+                raise ValueError(
+                    f"Loaded schedule course {course_code} uses slot {day} {period}, "
+                    "which is not in the current header."
+                )
+
+        entry = dict(raw)
+        entry["course_code"] = course_code
+        entry["source_course_code"] = _source_code_for_display(
+            course_code,
+            raw.get("source_course_code"),
+        )
+        entry["course_name"] = str(raw.get("course_name") or "")
+        entry["course_identity"] = _course_identity_for_entry(entry)
+        entry["day"] = day
+        entry["period"] = period
+        entry["slot_index"] = slot_index
+        entry["rooms"] = []
+        schedule_entries.append(entry)
+
+    if not schedule_entries:
+        raise ValueError("Loaded schedule has no selected courses to rebuild.")
+    return sorted(schedule_entries, key=lambda e: (int(e.get("slot_index", 0)), e["course_code"]))
+
+
+def _student_section_gender(section_label: str) -> str:
+    first = str(section_label or "").strip().upper()[:1]
+    return first if first in {"M", "F"} else "M"
+
+
+def _build_section_enrollment_from_sets(
+    enrolled_sets: dict[str, set[int]],
+) -> dict[str, list[dict]]:
+    student_ids: set[int] = set()
+    for sids in enrolled_sets.values():
+        student_ids.update(sids)
+    section_by_student = {
+        int(sid): str(section or "").strip()
+        for sid, section in Student.objects.filter(student_id__in=student_ids).values_list(
+            "student_id",
+            "section",
+        )
+    }
+
+    result: dict[str, list[dict]] = {}
+    for course_code, sids in enrolled_sets.items():
+        per_section: dict[str, set[int]] = {}
+        for sid in sids:
+            section_label = section_by_student.get(int(sid), "") or "ALL"
+            per_section.setdefault(section_label, set()).add(int(sid))
+        result[course_code] = [
+            {
+                "section": section_label,
+                "student_count": len(section_sids),
+                "preferred_room": "",
+                "gender": _student_section_gender(section_label),
+            }
+            for section_label, section_sids in sorted(
+                per_section.items(),
+                key=lambda item: (_student_section_gender(item[0]), item[0]),
+            )
+        ]
+    return result
+
+
+def _rooms_with_metadata() -> list[dict]:
+    return list(
+        Room.objects.all().values(
+            "room_code",
+            "capacity",
+            "section",
+            "department",
+            "building",
+            "floor",
+        )
+    )
+
+
+def _attach_room_metadata(schedule_entries: list[dict], rooms_list: list[dict]) -> None:
+    room_meta_by_code = {str(room.get("room_code", "")): room for room in rooms_list}
+    for entry in schedule_entries:
+        for room_row in entry.get("rooms") or []:
+            if not isinstance(room_row, dict):
+                continue
+            meta = room_meta_by_code.get(str(room_row.get("room_code", "")))
+            if meta:
+                room_row.setdefault("building", str(meta.get("building", "") or ""))
+                room_row.setdefault("floor", str(meta.get("floor", "") or ""))
+
+
+def _rebuild_loaded_schedule(
+    *,
+    label: str,
+    days: list[str],
+    periods: list[str],
+    max_per_day: int,
+    schedule_raw: list,
+    selected_courses: list[str] | None,
+    assign_rooms: bool,
+    seed: int | None,
+    thin_conflict_threshold: int,
+    rebuild_mode: str = "loaded_schedule",
+) -> dict:
+    """Persist a loaded Previous Run after drag/drop edits.
+
+    This path keeps the visible schedule exactly as loaded/moved instead
+    of treating display rows such as ``CS112 (1)`` as fresh DB course
+    codes. Enrolment, bucket, QA and room calculations are rebuilt from
+    the course identity metadata carried by the schedule entries.
+    """
+    schedule_entries = _normalise_loaded_schedule_entries(
+        schedule_raw,
+        days,
+        periods,
+        selected_courses,
+    )
+    course_list = sorted({entry["course_code"] for entry in schedule_entries})
+    enrolled_sets = _build_draft_enrolled_sets(schedule_entries)
+
+    all_students: set[int] = set()
+    for sids in enrolled_sets.values():
+        all_students.update(sids)
+
+    source_credit_map = build_credit_map(
+        {
+            _source_code_for_display(entry["course_code"], entry.get("source_course_code"))
+            for entry in schedule_entries
+        }
+    )
+    credit_map: dict[str, int] = {}
+    for entry in schedule_entries:
+        code = entry["course_code"]
+        source = _source_code_for_display(code, entry.get("source_course_code"))
+        credit_map[code] = source_credit_map.get(source, source_credit_map.get(code, 3))
+
+    conflicts, _adj = build_conflict_graph(enrolled_sets)
+    plan_term_buckets = _draft_plan_term_buckets(schedule_entries)
+    qa = _build_qa(
+        enrolled_sets,
+        schedule_entries,
+        max_per_day=max_per_day,
+        plan_term_buckets=plan_term_buckets,
+        credit_map=credit_map,
+    )
+    qa["thin_threshold"] = thin_conflict_threshold
+    qa["thin_courses"] = []
+    qa["thin_clash_risk"] = []
+
+    section_enrollment: dict[str, list[dict]] = {}
+    rooms_list: list[dict] = []
+    room_feasibility: list[dict] = []
+    if assign_rooms:
+        section_enrollment = _build_section_enrollment_from_sets(enrolled_sets)
+        rooms_list = _rooms_with_metadata()
+        room_feasibility = check_room_feasibility(section_enrollment, rooms_list)
+        for entry in schedule_entries:
+            entry["rooms"] = []
+        assign_rooms_to_schedule(schedule_entries, section_enrollment, rooms_list, seed=seed)
+        _attach_room_metadata(schedule_entries, rooms_list)
+        room_qa = _build_room_qa(schedule_entries, rooms_list)
+        qa = _build_qa(
+            enrolled_sets,
+            schedule_entries,
+            max_per_day=max_per_day,
+            plan_term_buckets=plan_term_buckets,
+            credit_map=credit_map,
+        )
+        qa["rooms"] = room_qa
+        qa["room_feasibility_violations"] = room_feasibility
+        qa["rebalance_moves"] = 0
+        qa["thin_threshold"] = thin_conflict_threshold
+        qa["thin_courses"] = []
+        qa["thin_clash_risk"] = []
+
+    buckets_summary = [
+        {
+            "program": program,
+            "programme_term": term,
+            "course_count": len(courses),
+            "courses": sorted(courses),
+        }
+        for (program, term), courses in sorted(plan_term_buckets.items())
+    ]
+
+    multi_sitting_details = derive_multi_sitting_details(schedule_entries)
+    qa["multi_sitting_sections"] = len(multi_sitting_details)
+    qa["multi_sitting_details"] = multi_sitting_details
+    qa["manual_override_count"] = qa.get("conflict_count", 0)
+    qa["manual_override_details"] = list(qa.get("same_slot_conflicts", []))
+    qa["building_footprint"] = derive_building_footprint(schedule_entries)
+
+    sections_total = sum(len(v) for v in section_enrollment.values())
+    synthetic_all = sum(
+        1
+        for sections in section_enrollment.values()
+        for section in sections
+        if str(section.get("section", "")).upper() == "ALL"
+    )
+    qa["enrolment_snapshot"] = compute_enrolment_snapshot(
+        enrolled_sets,
+        sections_count=sections_total,
+        fallback_used=False,
+        synthetic_all_sections_count=synthetic_all,
+    )
+
+    slots: list[dict] = []
+    slot_idx = 0
+    for day in days:
+        for period in periods:
+            slots.append({"index": slot_idx, "day": day, "period": period})
+            slot_idx += 1
+
+    draft = {
+        "status": "ok",
+        "students_count": len(all_students),
+        "courses": course_list,
+        "courses_count": len(course_list),
+        "conflicts": conflicts,
+        "conflicts_count": len(conflicts),
+        "slots": slots,
+        "schedule": schedule_entries,
+        "qa": qa,
+        "buckets_summary": buckets_summary,
+        "bucket_count": len(plan_term_buckets),
+        "credit_map": credit_map,
+        "seed": seed,
+        "section_enrollment": section_enrollment,
+        "rooms_count": len(rooms_list),
+        "assign_rooms": assign_rooms,
+        "rebuild_mode": rebuild_mode,
+    }
+    primary_status, status_flags = derive_status_surface(draft)
+    draft["primary_status"] = primary_status
+    draft["status_flags"] = status_flags
+    draft["status_derivation_version"] = STATUS_DERIVATION_VERSION
+    result = stamp_schema_version(draft)
+
+    run = ExamTimetableRun.objects.create(
+        label=label,
+        result_json=json.dumps(result, ensure_ascii=False),
+    )
+    result["run_id"] = run.id
+    return result
+
+
+def _optimise_loaded_schedule(
+    *,
+    label: str,
+    days: list[str],
+    periods: list[str],
+    max_per_day: int,
+    schedule_raw: list,
+    selected_courses: list[str] | None,
+    pinned: list[dict[str, str]] | None,
+    assign_rooms: bool,
+    seed: int | None,
+    thin_conflict_threshold: int,
+) -> dict:
+    base_entries = _normalise_loaded_schedule_entries(
+        schedule_raw,
+        days,
+        periods,
+        selected_courses,
+    )
+    meta_by_course = {entry["course_code"]: entry for entry in base_entries}
+    course_list = sorted(meta_by_course)
+    enrolled_sets = _build_draft_enrolled_sets(base_entries)
+    conflicts, adj = build_conflict_graph(enrolled_sets)
+    plan_term_buckets = _draft_plan_term_buckets(base_entries)
+    course_buckets = _course_buckets_from_plan_terms(plan_term_buckets)
+    source_credit_map = build_credit_map(
+        {
+            _source_code_for_display(entry["course_code"], entry.get("source_course_code"))
+            for entry in base_entries
+        }
+    )
+    credit_map = {
+        entry["course_code"]: source_credit_map.get(
+            _source_code_for_display(entry["course_code"], entry.get("source_course_code")),
+            3,
+        )
+        for entry in base_entries
+    }
+
+    slots: list[dict] = []
+    idx = 0
+    for day in days:
+        for period in periods:
+            slots.append({"index": idx, "day": day, "period": period})
+            idx += 1
+    preferred_slots = {
+        entry["course_code"]: int(entry.get("slot_index", 0) or 0) for entry in base_entries
+    }
+    optimised = schedule(
+        course_list,
+        adj,
+        slots,
+        enrolled_sets=enrolled_sets,
+        max_per_day=max_per_day,
+        plan_term_buckets=plan_term_buckets,
+        course_buckets=course_buckets,
+        pinned=pinned,
+        credit_map=credit_map,
+        preferred_slots=preferred_slots,
+        seed=seed,
+    )
+    optimised_entries: list[dict] = []
+    for entry in optimised:
+        meta = meta_by_course.get(entry["course_code"], {})
+        optimised_entries.append(
+            {
+                **entry,
+                "source_course_code": meta.get("source_course_code"),
+                "course_name": meta.get("course_name", ""),
+                "course_identity": meta.get("course_identity", ""),
+            }
+        )
+    return _rebuild_loaded_schedule(
+        label=label,
+        days=days,
+        periods=periods,
+        max_per_day=max_per_day,
+        schedule_raw=optimised_entries,
+        selected_courses=selected_courses,
+        assign_rooms=assign_rooms,
+        seed=seed,
+        thin_conflict_threshold=thin_conflict_threshold,
+        rebuild_mode="optimized_from_loaded",
+    )
+
+
+@require_POST
+def exam_timetable_draft_impact_view(request: HttpRequest) -> JsonResponse:
+    """Recompute lightweight QA for an unsaved drag/drop draft schedule.
+
+    This intentionally does not run room assignment. Room utilisation,
+    unassigned sections, multi-sitting, and building footprint remain the
+    last backend-built values until the user rebuilds.
+    """
+    deny = _require_super_admin(request)
+    if deny:
+        return deny
+
+    try:
+        payload = json.loads(request.body.decode("utf-8")) if request.body else {}
+    except Exception:
+        return JsonResponse({"ok": False, "error": "Invalid JSON"}, status=400)
+
+    schedule_raw = payload.get("schedule", [])
+    if not isinstance(schedule_raw, list):
+        return JsonResponse({"ok": False, "error": "schedule must be a list"}, status=400)
+
+    schedule_entries: list[dict] = []
+    for entry in schedule_raw:
+        if not isinstance(entry, dict):
+            continue
+        course_code = str(entry.get("course_code", "")).strip()
+        day = str(entry.get("day", "")).strip()
+        period = str(entry.get("period", "")).strip()
+        if not course_code or not day or not period:
+            continue
+        try:
+            slot_index = int(entry.get("slot_index", 0))
+        except (ValueError, TypeError):
+            slot_index = 0
+        schedule_entries.append(
+            {
+                **entry,
+                "course_code": course_code,
+                "source_course_code": _source_code_for_display(
+                    course_code, entry.get("source_course_code")
+                ),
+                "course_name": str(entry.get("course_name") or ""),
+                "course_identity": _course_identity_for_entry(
+                    {**entry, "course_code": course_code}
+                ),
+                "day": day,
+                "period": period,
+                "slot_index": slot_index,
+            }
+        )
+
+    try:
+        max_per_day = max(1, int(payload.get("max_per_day", 2)))
+    except (ValueError, TypeError):
+        max_per_day = 2
+
+    enrolled_sets = _build_draft_enrolled_sets(schedule_entries)
+    credit_map_raw = payload.get("credit_map", {})
+    credit_map: dict[str, int] = {}
+    if isinstance(credit_map_raw, dict):
+        for code, value in credit_map_raw.items():
+            try:
+                credit_map[str(code)] = int(value or 3)
+            except (ValueError, TypeError):
+                credit_map[str(code)] = 3
+    for code in enrolled_sets:
+        credit_map.setdefault(code, 3)
+
+    qa = _build_qa(
+        enrolled_sets,
+        schedule_entries,
+        max_per_day=max_per_day,
+        plan_term_buckets=_draft_plan_term_buckets(schedule_entries),
+        credit_map=credit_map,
+    )
+    return JsonResponse({"ok": True, "qa": qa})
 
 
 @require_GET

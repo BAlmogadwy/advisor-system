@@ -93,6 +93,7 @@ def polish_scenario_with_cpsat(
     time_limit_seconds: float = 60.0,
     hotspot_only: bool = False,
     stage_telemetry: dict[str, dict[str, int]] | None = None,
+    locked_section_ids: set[str] | None = None,
 ) -> dict | None:
     """Run a global CP-SAT pass as a polisher on the current best timetable.
 
@@ -131,7 +132,10 @@ def polish_scenario_with_cpsat(
     # Build cross-board overlap matrix
     overlap = build_cross_board_overlap_matrix(scenario_id)
 
-    # Determine which sections to include in the model
+    # Determine which sections to include in the model. Locked sections
+    # remain fixed; otherwise the verified score could assume a move that
+    # persistence later refuses to write.
+    locked = locked_section_ids or set()
     if hotspot_only:
         hotspot_set = set(current_eval.hotspot_courses[:10])
         # Add overlap partners
@@ -141,11 +145,19 @@ def polish_scenario_with_cpsat(
                     hotspot_set.add(cb)
                 elif cb == code and count >= 3:
                     hotspot_set.add(ca)
-        sections_to_polish = [s for s in current_sections if s.course_code in hotspot_set]
-        fixed_sections = [s for s in current_sections if s.course_code not in hotspot_set]
+        sections_to_polish = [
+            s
+            for s in current_sections
+            if s.course_code in hotspot_set and s.section_id not in locked
+        ]
+        fixed_sections = [
+            s
+            for s in current_sections
+            if s.course_code not in hotspot_set or s.section_id in locked
+        ]
     else:
-        sections_to_polish = list(current_sections)
-        fixed_sections = []
+        sections_to_polish = [s for s in current_sections if s.section_id not in locked]
+        fixed_sections = [s for s in current_sections if s.section_id in locked]
 
     if not sections_to_polish:
         logger.info("CP-SAT polisher: no sections to polish")

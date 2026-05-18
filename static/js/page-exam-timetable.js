@@ -16,7 +16,7 @@
  *   _drillData       – {overload: [], heavy: []} detail records for KPI drilldown
  *   _programCourses  – {programName: Set(course_codes)} for programme-based filtering
  */
-const IS_AR = 'LANGUAGE_CODE' === 'ar';
+const IS_AR = LANGUAGE_CODE === 'ar';
 const T = {
   ready:      IS_AR ? 'جاهز. حدد الفلاتر ثم انقر تحميل المقررات.' : 'Ready. Select filters then click Load Courses.',
   building:   IS_AR ? 'جارٍ بناء الجدول...' : 'Building timetable...',
@@ -42,6 +42,12 @@ const T = {
   deselectOnline: IS_AR ? 'إلغاء تحديد الإلكترونية' : 'Deselect online',
   loadFirst:      IS_AR ? 'يرجى تحميل المقررات أولاً.' : 'Please load courses first.',
   noSelected:     IS_AR ? 'يرجى اختيار مقرر واحد على الأقل.' : 'Please select at least one course.',
+  loadedRunAction: IS_AR ? 'Use Save Changes or Optimize for the loaded run. Click Load Courses for a fresh build.' : 'Use Save Changes or Optimize for the loaded run. Click Load Courses for a fresh build.',
+  savingLoaded:   IS_AR ? 'Saving loaded-run changes...' : 'Saving loaded-run changes...',
+  optimizing:     IS_AR ? 'Optimizing from loaded run...' : 'Optimizing from loaded run...',
+  optimized:      IS_AR ? 'Optimized run saved.' : 'Optimized run saved.',
+  savedChanges:   IS_AR ? 'Loaded-run changes saved.' : 'Loaded-run changes saved.',
+  buildPinned:    IS_AR ? 'Build ({n} pinned)' : 'Build ({n} pinned)',
   show:           IS_AR ? 'عرض' : 'Show',
   hide:           IS_AR ? 'إخفاء' : 'Hide',
   students:       IS_AR ? 'طلاب' : 'students',
@@ -63,8 +69,11 @@ const $ = id => document.getElementById(id);
 
 /* ── Day label generator ── */
 const WORK_DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu'];
+let _loadedRunDaysOverride = null;
 
 function generateDayLabels() {
+  if (_loadedRunDaysOverride) return [..._loadedRunDaysOverride];
+
   const startDay = $('etStartDay').value;
   const count    = parseInt($('etNumDays').value, 10) || 5;
   const startIdx = WORK_DAYS.indexOf(startDay);
@@ -86,8 +95,14 @@ function updateDayPreview() {
   $('dayPreview').textContent = generateDayLabels().join(', ');
 }
 
-$('etStartDay').addEventListener('change', updateDayPreview);
-$('etNumDays').addEventListener('input', updateDayPreview);
+$('etStartDay').addEventListener('change', () => {
+  _loadedRunDaysOverride = null;
+  updateDayPreview();
+});
+$('etNumDays').addEventListener('input', () => {
+  _loadedRunDaysOverride = null;
+  updateDayPreview();
+});
 updateDayPreview();
 
 /* ── Structured period repeater ── */
@@ -113,6 +128,17 @@ function addPeriodRow(startVal, endVal) {
   $('etPeriodsRepeater').appendChild(row);
   row.querySelector('.et-period-remove').addEventListener('click', () => { row.remove(); syncPeriodsHidden(); });
   row.querySelectorAll('input').forEach(inp => inp.addEventListener('change', syncPeriodsHidden));
+}
+
+function setPeriodRows(periods) {
+  const box = $('etPeriodsRepeater');
+  box.innerHTML = '';
+  const values = periods.length ? periods : ['08:00-10:00', '10:30-12:30', '13:00-15:00'];
+  values.forEach(period => {
+    const [startVal, endVal] = String(period).split('-').map(s => s.trim());
+    addPeriodRow(startVal || '', endVal || '');
+  });
+  syncPeriodsHidden();
 }
 
 /* Wire existing remove buttons & inputs */
@@ -160,6 +186,31 @@ function getCheckedValues(containerId) {
   return [...$(containerId).querySelectorAll('input:checked')].map(cb => cb.value);
 }
 
+function escapeAttr(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[ch]));
+}
+
+function sourceCodeFromDisplay(displayCode, explicitSource) {
+  const source = String(explicitSource ?? '').trim();
+  if (source) return source;
+  return String(displayCode ?? '').replace(/\s+\(\d+\)$/, '');
+}
+
+function getCheckedCourseEntries() {
+  return [...$('courseList').querySelectorAll('input:checked')].map(cb => ({
+    course_code: cb.value,
+    source_course_code: cb.dataset.sourceCode || sourceCodeFromDisplay(cb.value),
+    course_name: cb.dataset.courseName || '',
+    course_identity: cb.dataset.courseIdentity || '',
+  }));
+}
+
 async function loadFilters() {
   try {
     const res = await fetch('/ops/exam-timetable/filters/', {
@@ -191,6 +242,7 @@ function clearCoursePreview() {
   document.querySelectorAll('.select-sep').forEach(s => s.classList.add('d-none'));
   $('buildBtn').disabled = true;
   _coursesLoaded = false;
+  updateLoadedRunActions();
 }
 
 function renderCourseChips(courses) {
@@ -201,17 +253,19 @@ function renderCourseChips(courses) {
     $('toggleAllCourses').textContent = '';
     $('buildBtn').disabled = true;
     _coursesLoaded = false;
+    updateLoadedRunActions();
     return;
   }
 
   // Group by department prefix, then sub-group by level (first digit)
   const deptMap = {};
   for (const c of courses) {
-    const dept = c.course_code.match(/^[A-Za-z]+/)?.[0] || '?';
+    const code = String(c.course_code ?? '');
+    const dept = code.match(/^[A-Za-z]+/)?.[0] || '?';
     if (!deptMap[dept]) deptMap[dept] = {};
-    const level = c.course_code.match(/\d/)?.[0] || '0';
+    const level = code.match(/\d/)?.[0] || '0';
     if (!deptMap[dept][level]) deptMap[dept][level] = [];
-    deptMap[dept][level].push(c);
+    deptMap[dept][level].push({ ...c, course_code: code });
   }
 
   const deptKeys = Object.keys(deptMap).sort();
@@ -229,9 +283,11 @@ function renderCourseChips(courses) {
       html += `<div class="et-level-row">`;
       html += `<span class="et-level-badge">L${level}</span>`;
       for (const c of deptMap[dept][level]) {
+        const code = String(c.course_code ?? '');
+        const sourceCode = sourceCodeFromDisplay(code, c.source_course_code);
         const crLabel = c.credit_hours ? ` | ${c.credit_hours}cr` : '';
         const onlineMark = c.is_online ? ' <span class="et-online-dot" title="online" aria-label="online">●</span>' : '';
-        html += `<label class="et-chip active"><input type="checkbox" value="${c.course_code}" checked data-online="${c.is_online ? '1' : '0'}">${c.course_code}${onlineMark} <small class="opacity-75">(${c.enrolled_count}${crLabel})</small></label>`;
+        html += `<label class="et-chip active"><input type="checkbox" value="${escapeAttr(code)}" checked data-online="${c.is_online ? '1' : '0'}" data-source-code="${escapeAttr(sourceCode)}" data-course-name="${escapeAttr(c.course_name || '')}" data-course-identity="${escapeAttr(c.course_identity || '')}">${code}${onlineMark} <small class="opacity-75">(${c.enrolled_count}${crLabel})</small></label>`;
       }
       html += `</div>`;
     }
@@ -271,6 +327,7 @@ function renderCourseChips(courses) {
 
   _coursesLoaded = true;
   $('buildBtn').disabled = false;
+  updateLoadedRunActions();
   $('selectComputerCourses').textContent = T.selectComputer;
   $('selectGeneralCourses').textContent = T.selectGeneral;
   // Online toggle only appears when at least one course is flagged online,
@@ -390,12 +447,16 @@ $('etRelaxThin').addEventListener('change', () => {
 
 // Clear course list when filters change
 ['progList', 'secList'].forEach(id => {
-  $(id).addEventListener('click', () => { if (_coursesLoaded) clearCoursePreview(); });
+  $(id).addEventListener('click', () => {
+    if (_loadedRunForRebuild) enterFreshBuildMode();
+    if (_coursesLoaded) clearCoursePreview();
+  });
 });
 
 $('loadCoursesBtn').addEventListener('click', async () => {
   const programs = getCheckedValues('progList');
   const sections = getCheckedValues('secList');
+  enterFreshBuildMode();
 
   $('loadCoursesBtn').disabled = true;
   $('etStatus').textContent = T.loadingCourses;
@@ -411,6 +472,11 @@ $('loadCoursesBtn').addEventListener('click', async () => {
     if (!data.ok) throw new Error(data.error || T.reqFailed);
 
     const courses = data.courses ?? [];
+    _currentResultData = null;
+    _pinnedCourses = {};
+    _loadedRunForRebuild = false;
+    _scheduleHasDraftMoves = false;
+    updatePinBar();
     $('coursePreview').classList.remove('d-none');
     renderCourseChips(courses);
 
@@ -431,6 +497,13 @@ $('loadCoursesBtn').addEventListener('click', async () => {
 
 /* ── Step 2: Build Timetable ── */
 $('buildBtn').addEventListener('click', async () => {
+  if (_loadedRunForRebuild) {
+    $('etStatus').textContent = T.loadedRunAction;
+    $('etStatus').className = 'alert alert-warning mt-2 py-2 mb-0';
+    updateLoadedRunActions();
+    return;
+  }
+
   if (!_coursesLoaded) {
     $('etStatus').textContent = T.loadFirst;
     $('etStatus').className = 'alert alert-warning mt-2 py-2 mb-0';
@@ -438,6 +511,7 @@ $('buildBtn').addEventListener('click', async () => {
   }
 
   const selectedCourses = getCheckedValues('courseList');
+  const selectedCourseEntries = getCheckedCourseEntries();
   if (!selectedCourses.length) {
     $('etStatus').textContent = T.noSelected;
     $('etStatus').className = 'alert alert-warning mt-2 py-2 mb-0';
@@ -480,10 +554,40 @@ $('buildBtn').addEventListener('click', async () => {
   $('etStatus').className = 'alert alert-info mt-2 py-2 mb-0';
 
   try {
+    const selectedSet = new Set(selectedCourses);
+    const shouldRebuildExactSchedule = false;
+    const baseSchedule = shouldRebuildExactSchedule
+      ? _currentResultData.schedule
+        .filter(e => selectedSet.has(e.course_code))
+        .map(e => ({
+          course_code: e.course_code,
+          source_course_code: e.source_course_code || sourceCodeFromDisplay(e.course_code),
+          course_name: e.course_name || '',
+          course_identity: e.course_identity || '',
+          day: e.day,
+          period: e.period,
+          slot_index: e.slot_index,
+        }))
+      : undefined;
+    const payload = {
+      label,
+      days,
+      periods,
+      max_per_day: maxPerDay,
+      programs,
+      sections,
+      selected_courses: selectedCourses,
+      selected_course_entries: selectedCourseEntries,
+      pinned: Object.keys(_pinnedCourses).length ? Object.values(_pinnedCourses) : undefined,
+      randomize,
+      thin_conflict_threshold: thinThreshold,
+      previous_run_id: _currentResultData?.run_id,
+      base_schedule: baseSchedule && baseSchedule.length ? baseSchedule : undefined,
+    };
     const res = await fetch('/ops/exam-timetable/build/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
-      body: JSON.stringify({ label, days, periods, max_per_day: maxPerDay, programs, sections, selected_courses: selectedCourses, pinned: Object.keys(_pinnedCourses).length ? Object.values(_pinnedCourses) : undefined, randomize, thin_conflict_threshold: thinThreshold }),
+      body: JSON.stringify(payload),
     });
     const data = await res.json();
     if (!data.ok) {
@@ -503,6 +607,8 @@ $('buildBtn').addEventListener('click', async () => {
     }
 
     renderResults(data);
+    _loadedRunForRebuild = data.rebuild_mode === 'loaded_schedule';
+    _scheduleHasDraftMoves = false;
     updatePinBar();
     $('etStatus').textContent = T.done;
     $('etStatus').className = 'alert alert-success mt-2 py-2 mb-0';
@@ -518,6 +624,116 @@ $('buildBtn').addEventListener('click', async () => {
 /* ── Program → courses mapping (for schedule filter) ── */
 // Built from buckets_summary in each build result.  Allows the schedule
 // filter to accept a programme name (e.g. "AI") and highlight all its courses.
+function loadedBaseSchedule(selectedCourses) {
+  if (!_currentResultData || !Array.isArray(_currentResultData.schedule)) return undefined;
+  const selectedSet = new Set(selectedCourses);
+  const rows = _currentResultData.schedule
+    .filter(e => selectedSet.has(e.course_code))
+    .map(e => ({
+      course_code: e.course_code,
+      source_course_code: e.source_course_code || sourceCodeFromDisplay(e.course_code),
+      course_name: e.course_name || '',
+      course_identity: e.course_identity || '',
+      day: e.day,
+      period: e.period,
+      slot_index: e.slot_index,
+    }));
+  return rows.length ? rows : undefined;
+}
+
+function readThinThresholdForPost() {
+  if (!$('etRelaxThin').checked) return 0;
+  const raw = parseInt($('etThinThreshold').value, 10);
+  let n = isNaN(raw) ? 0 : raw;
+  n = Math.max(0, Math.min(10, n));
+  if (n < 1) {
+    n = 4;
+    $('etThinThreshold').value = '4';
+  }
+  return n;
+}
+
+function collectLoadedRunPayload(mode) {
+  const selectedCourses = getCheckedValues('courseList');
+  if (!selectedCourses.length) {
+    $('etStatus').textContent = T.noSelected;
+    $('etStatus').className = 'alert alert-warning mt-2 py-2 mb-0';
+    return null;
+  }
+  const label = $('etLabel').value.trim();
+  const perStr = $('etPeriods').value.trim();
+  const days = generateDayLabels();
+  if (!label || !perStr || !days.length) {
+    $('etStatus').textContent = T.fillAll;
+    $('etStatus').className = 'alert alert-warning mt-2 py-2 mb-0';
+    return null;
+  }
+  const baseSchedule = loadedBaseSchedule(selectedCourses);
+  if (!baseSchedule) {
+    $('etStatus').textContent = T.loadedRunAction;
+    $('etStatus').className = 'alert alert-warning mt-2 py-2 mb-0';
+    return null;
+  }
+  return {
+    label,
+    days,
+    periods: perStr.split(',').map(s => s.trim()).filter(Boolean),
+    max_per_day: parseInt($('etMaxPerDay').value, 10) || 2,
+    programs: getCheckedValues('progList'),
+    sections: getCheckedValues('secList'),
+    selected_courses: selectedCourses,
+    selected_course_entries: getCheckedCourseEntries(),
+    pinned: Object.keys(_pinnedCourses).length ? Object.values(_pinnedCourses) : undefined,
+    randomize: $('etRandomize').checked,
+    thin_conflict_threshold: readThinThresholdForPost(),
+    previous_run_id: _currentResultData?.run_id,
+    update_run_id: mode === 'optimize_loaded' && _currentResultData?.rebuild_mode === 'optimized_from_loaded'
+      ? _currentResultData.run_id
+      : undefined,
+    mode,
+    base_schedule: baseSchedule,
+  };
+}
+
+async function runLoadedRunAction(mode, button, busyText, successText) {
+  const payload = collectLoadedRunPayload(mode);
+  if (!payload) return;
+  button.disabled = true;
+  $('etStatus').textContent = busyText;
+  $('etStatus').className = 'alert alert-info mt-2 py-2 mb-0';
+  try {
+    const res = await fetch('/ops/exam-timetable/build/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || T.reqFailed);
+    renderResults(data);
+    _loadedRunForRebuild = true;
+    _scheduleHasDraftMoves = false;
+    updatePinBar();
+    updateLoadedRunActions();
+    $('etStatus').textContent = successText;
+    $('etStatus').className = 'alert alert-success mt-2 py-2 mb-0';
+    loadHistory();
+  } catch (err) {
+    $('etStatus').textContent = T.error + ': ' + err.message;
+    $('etStatus').className = 'alert alert-danger mt-2 py-2 mb-0';
+  } finally {
+    button.disabled = false;
+    updateLoadedRunActions();
+  }
+}
+
+$('saveLoadedBtn')?.addEventListener('click', () => {
+  runLoadedRunAction('save_loaded_changes', $('saveLoadedBtn'), T.savingLoaded, T.savedChanges);
+});
+
+$('optimizeLoadedBtn')?.addEventListener('click', () => {
+  runLoadedRunAction('optimize_loaded', $('optimizeLoadedBtn'), T.optimizing, T.optimized);
+});
+
 let _programCourses = {};   // { programName: Set([course_code, ...]) }
 
 /* ── Room assignments per grid cell (for renderScheduleGrid) ── */
@@ -536,8 +752,48 @@ let _currentRunId = null;
 let _creditMap = {};        // { course_code: credit_hours }
 
 /* ── KPI drilldown data ── */
-let _drillData = { overload: [], heavy: [], 'thin-courses': [], 'thin-clash': [] };
+let _drillData = { conflicts: [], overload: [], heavy: [], 'thin-courses': [], 'thin-clash': [] };
 let _slotsByIndex = {};
+let _currentResultData = null;
+let _draftImpactSeq = 0;
+let _loadedRunForRebuild = false;
+let _scheduleHasDraftMoves = false;
+
+function updateLoadedRunActions() {
+  const hasLoadedSchedule = Boolean(
+    _loadedRunForRebuild
+    && _currentResultData
+    && Array.isArray(_currentResultData.schedule)
+    && _currentResultData.schedule.length
+  );
+  const saveBtn = $('saveLoadedBtn');
+  const optimizeBtn = $('optimizeLoadedBtn');
+  if (saveBtn) {
+    saveBtn.classList.toggle('d-none', !hasLoadedSchedule || !_scheduleHasDraftMoves);
+    saveBtn.disabled = !hasLoadedSchedule || !_scheduleHasDraftMoves;
+  }
+  if (optimizeBtn) {
+    optimizeBtn.classList.toggle('d-none', !hasLoadedSchedule);
+    optimizeBtn.disabled = !hasLoadedSchedule;
+  }
+  if (hasLoadedSchedule) {
+    $('buildBtn').disabled = true;
+    $('buildBtn').title = T.loadedRunAction;
+  } else {
+    $('buildBtn').disabled = !_coursesLoaded;
+    $('buildBtn').title = '';
+  }
+}
+
+function enterFreshBuildMode() {
+  _currentResultData = null;
+  _loadedRunForRebuild = false;
+  _scheduleHasDraftMoves = false;
+  _pinnedCourses = {};
+  setDraftImpactState('clean');
+  updatePinBar();
+  updateLoadedRunActions();
+}
 
 function closeDrill() {
   $('kpiDrill').classList.add('d-none');
@@ -545,7 +801,226 @@ function closeDrill() {
 }
 
 // Render helpers — each returns {title, head, body, colspan} for openDrill
+function hideLegacyQaWarnings() {
+  const panel = $('qaWarnings');
+  if (!panel) return;
+  panel.hidden = true;
+  panel.classList.add('d-none');
+  const body = $('qaBody');
+  if (body) body.innerHTML = '';
+}
+
+function cloneData(data) {
+  return JSON.parse(JSON.stringify(data || {}));
+}
+
+function setDraftImpactState(state) {
+  const banner = $('draftImpactBanner');
+  if (!banner) return;
+  banner.classList.toggle('d-none', state === 'clean');
+  if (state === 'loading') {
+    banner.textContent = IS_AR
+      ? 'جاري حساب التأثير المبدئي للنقل...'
+      : 'Calculating draft move impact...';
+  } else if (state === 'ready') {
+    banner.textContent = IS_AR
+      ? 'تأثير مبدئي بعد النقل. أعد البناء لتحديث القاعات والتصدير نهائياً.'
+      : 'Draft impact after move. Save Changes or Optimize From Loaded Run to refresh rooms and final export.';
+  } else if (state === 'error') {
+    banner.textContent = IS_AR
+      ? 'تعذر حساب التأثير المبدئي. أعد البناء للحصول على الأرقام النهائية.'
+      : 'Could not calculate draft impact. Save Changes or Optimize From Loaded Run for final numbers.';
+  }
+}
+
+function applyDraftQaToCards(qa) {
+  if (!qa) return;
+  $('kSlots').textContent = qa.slots_used ?? 0;
+  $('kMaxDay').textContent = qa.max_exams_per_day_per_student ?? 0;
+  const overLimit = qa.students_over_limit_per_day ?? qa.students_over_2_per_day ?? 0;
+  $('kOver2').textContent = overLimit;
+  $('kOver2').className = 'v' + (overLimit > 0 ? ' warn' : '');
+  const cc = qa.conflict_count ?? 0;
+  $('kConflicts').textContent = cc;
+  $('kConflicts').className = 'v' + (cc > 0 ? ' warn' : '');
+  const bv = qa.bucket_day_violations_count ?? 0;
+  $('kBucketViol').textContent = bv;
+  $('kBucketViol').className = 'v' + (bv > 0 ? ' warn' : '');
+  const maxCr = qa.max_credit_load_per_day ?? 0;
+  $('kMaxCredit').textContent = maxCr;
+  $('kMaxCredit').className = 'v' + (maxCr > 8 ? ' warn' : '');
+  const hd = qa.heavy_day_students ?? 0;
+  $('kHeavyDay').textContent = hd;
+  $('kHeavyDay').className = 'v' + (hd > 0 ? ' warn' : '');
+  _drillData.overload = qa.overload_details ?? [];
+  _drillData.heavy = qa.heavy_day_details ?? [];
+  _drillData.conflicts = [
+    ...(qa.same_slot_conflicts ?? []).map(r => ({ ...r, kind: 'same-slot' })),
+    ...(qa.bucket_day_violations ?? []).map(r => ({ ...r, kind: 'bucket-day' })),
+  ];
+  closeDrill();
+  hideLegacyQaWarnings();
+}
+
+function updateCurrentScheduleMove(courseCode, day, period) {
+  if (!_currentResultData || !Array.isArray(_currentResultData.schedule)) return;
+  const slots = Array.isArray(_currentResultData.slots) ? _currentResultData.slots : [];
+  const targetSlot = slots.find(s => s.day === day && s.period === period);
+  const entry = _currentResultData.schedule.find(e => e.course_code === courseCode);
+  if (!entry) return;
+  entry.day = day;
+  entry.period = period;
+  if (targetSlot) entry.slot_index = targetSlot.index;
+}
+
+async function refreshDraftImpact() {
+  if (!_currentResultData || !Array.isArray(_currentResultData.schedule)) return;
+  const seq = ++_draftImpactSeq;
+  setDraftImpactState('loading');
+  try {
+    const res = await fetch('/ops/exam-timetable/draft-impact/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+      body: JSON.stringify({
+        schedule: _currentResultData.schedule,
+        max_per_day: _currentResultData.qa?.max_per_day ?? parseInt($('etMaxPerDay').value, 10) ?? 2,
+        credit_map: _currentResultData.credit_map ?? {},
+      }),
+    });
+    const data = await res.json();
+    if (seq !== _draftImpactSeq) return;
+    if (!res.ok || !data.ok) throw new Error(data.error || T.reqFailed);
+    _currentResultData.qa = { ...(_currentResultData.qa || {}), ...(data.qa || {}) };
+    applyDraftQaToCards(data.qa);
+    setDraftImpactState('ready');
+  } catch (_err) {
+    if (seq === _draftImpactSeq) setDraftImpactState('error');
+  }
+}
+
+function uniqueByOrder(items) {
+  const seen = new Set();
+  const out = [];
+  for (const item of items) {
+    if (item == null || item === '' || seen.has(item)) continue;
+    seen.add(item);
+    out.push(item);
+  }
+  return out;
+}
+
+function hydrateHeaderFromRun(data) {
+  $('etLabel').value = data.label ?? '';
+
+  const slots = Array.isArray(data.slots) ? data.slots : [];
+  const days = uniqueByOrder(slots.map(s => s.day).filter(Boolean));
+  const periods = uniqueByOrder(slots.map(s => s.period).filter(Boolean));
+
+  if (days.length) {
+    _loadedRunDaysOverride = days;
+    const firstDayToken = String(days[0]).slice(0, 3);
+    if (WORK_DAYS.includes(firstDayToken)) $('etStartDay').value = firstDayToken;
+    $('etNumDays').value = String(days.length);
+    updateDayPreview();
+  }
+
+  if (periods.length) {
+    setPeriodRows(periods);
+  }
+
+  $('etMaxPerDay').value = String(data.qa?.max_per_day ?? 2);
+
+  const thinThreshold = Number(data.qa?.thin_threshold ?? 0);
+  $('etRelaxThin').checked = thinThreshold > 0;
+  $('etThinThreshold').disabled = thinThreshold <= 0;
+  $('etThinThreshold').value = String(thinThreshold > 0 ? thinThreshold : 4);
+
+  const schedule = Array.isArray(data.schedule) ? data.schedule : [];
+  const enrollmentCount = (code) => {
+    const rows = data.section_enrollment?.[code];
+    if (!Array.isArray(rows)) return '';
+    return rows.reduce((sum, row) => sum + (parseInt(row.student_count, 10) || 0), 0);
+  };
+  const courseRows = [];
+  const seenCourses = new Set();
+  for (const entry of schedule) {
+    const code = String(entry.course_code || '').trim();
+    if (!code || seenCourses.has(code)) continue;
+    seenCourses.add(code);
+    const sourceCode = sourceCodeFromDisplay(code, entry.source_course_code);
+    courseRows.push({
+      course_code: code,
+      source_course_code: sourceCode,
+      course_name: entry.course_name || '',
+      course_identity: entry.course_identity || '',
+      enrolled_count: enrollmentCount(code),
+      credit_hours: data.credit_map?.[code] ?? data.credit_map?.[sourceCode] ?? '',
+      is_online: false,
+    });
+  }
+  const storedCourses = Array.isArray(data.courses) ? data.courses : [];
+  for (const rawCode of storedCourses) {
+    const code = String(rawCode || '').trim();
+    if (!code || seenCourses.has(code)) continue;
+    seenCourses.add(code);
+    const sourceCode = sourceCodeFromDisplay(code);
+    courseRows.push({
+      course_code: code,
+      source_course_code: sourceCode,
+      course_name: '',
+      course_identity: '',
+      enrolled_count: enrollmentCount(code),
+      credit_hours: data.credit_map?.[code] ?? data.credit_map?.[sourceCode] ?? '',
+      is_online: false,
+    });
+  }
+  if (courseRows.length) {
+    $('coursePreview').classList.remove('d-none');
+    renderCourseChips(courseRows);
+    $('courseCount').textContent = IS_AR
+      ? `(من السجل ${courseRows.length})`
+      : `(from run ${courseRows.length})`;
+  } else {
+    clearCoursePreview();
+  }
+}
+
 const _drillRenderers = {
+  conflicts(rows) {
+    const slotLabel = (si) => {
+      const s = _slotsByIndex[si];
+      return s ? `${s.day} ${s.period}` : `#${si}`;
+    };
+    return {
+      title: IS_AR ? 'تفاصيل التعارضات' : 'Conflict Detail',
+      head: `<tr>
+        <th>${IS_AR ? 'النوع' : 'Type'}</th>
+        <th>${IS_AR ? 'الطالب / المجموعة' : 'Student / Bucket'}</th>
+        <th>${IS_AR ? 'الفترة / اليوم' : 'Slot / Day'}</th>
+        <th>${IS_AR ? 'المقررات' : 'Courses'}</th>
+      </tr>`,
+      body: rows.map(r => {
+        const isBucket = r.kind === 'bucket-day';
+        const typeBadge = isBucket
+          ? `<span class="badge bg-warning text-dark">${IS_AR ? 'مجموعة' : 'Bucket'}</span>`
+          : `<span class="badge bg-danger">${IS_AR ? 'طالب' : 'Student'}</span>`;
+        const who = isBucket
+          ? `${r.program || ''}/Term${r.programme_term ?? ''}`
+          : `<strong>${r.student_id}</strong>`;
+        const when = isBucket ? (r.day || '') : slotLabel(r.slot_index);
+        const courses = (r.courses || []).map(c =>
+          `<span class="drill-course-chip" style="background:${colorForCourse(c)};border:1px solid ${colorForCourseBorder(c)}">${c}</span>`
+        ).join('');
+        return `<tr>
+          <td>${typeBadge}</td>
+          <td>${who}</td>
+          <td>${when}</td>
+          <td>${courses}</td>
+        </tr>`;
+      }).join(''),
+      colspan: 4,
+    };
+  },
   overload(rows) {
     return {
       title: IS_AR ? 'تفاصيل الطلاب المتجاوزين' : 'Overloaded Students Detail',
@@ -720,6 +1195,9 @@ function buildProgramCoursesMap(bucketsSummary) {
 
 /* ── Render Results ── */
 function renderResults(data) {
+  _currentResultData = cloneData(data);
+  hideLegacyQaWarnings();
+  setDraftImpactState('clean');
   buildProgramCoursesMap(data.buckets_summary);
   $('etResults').classList.remove('d-none');
 
@@ -955,6 +1433,10 @@ function renderResults(data) {
 
   // Store drilldown data + close any open panel
   _drillData = {
+    conflicts:       [
+      ...(data.qa?.same_slot_conflicts ?? []).map(r => ({ ...r, kind: 'same-slot' })),
+      ...(data.qa?.bucket_day_violations ?? []).map(r => ({ ...r, kind: 'bucket-day' })),
+    ],
     overload:        data.qa?.overload_details ?? [],
     heavy:           data.qa?.heavy_day_details ?? [],
     'thin-courses':  data.qa?.thin_courses ?? [],
@@ -962,37 +1444,7 @@ function renderResults(data) {
     'multi-sitting': data.qa?.multi_sitting_details ?? [],
   };
   closeDrill();
-
-  // QA Warnings
-  const conflicts = data.qa?.same_slot_conflicts ?? [];
-  const bucketViols = data.qa?.bucket_day_violations ?? [];
-  const hasWarnings = conflicts.length > 0 || bucketViols.length > 0;
-
-  if (hasWarnings) {
-    $('qaWarnings').classList.remove('d-none');
-    let warningHtml = '';
-    warningHtml += conflicts.map(c =>
-      `<div class="alert alert-danger py-1 px-2 mb-1 small">${
-        T.sameSlot
-          .replace('{sid}', c.student_id)
-          .replace('{n}', c.courses.length)
-          .replace('{slot}', c.slot_index)
-          .replace('{courses}', c.courses.join(', '))
-      }</div>`
-    ).join('');
-    warningHtml += bucketViols.map(v =>
-      `<div class="alert alert-warning py-1 px-2 mb-1 small">${
-        T.bucketViol
-          .replace('{prog}', v.program)
-          .replace('{term}', v.programme_term)
-          .replace('{courses}', v.courses.join(', '))
-          .replace('{day}', v.day)
-      }</div>`
-    ).join('');
-    $('qaBody').innerHTML = warningHtml;
-  } else {
-    $('qaWarnings').classList.add('d-none');
-  }
+  hideLegacyQaWarnings();
 
   // Schedule grid
   const schedule = data.schedule ?? [];
@@ -1173,8 +1625,9 @@ function updatePinBar() {
   $('pinCount').textContent = T.pinCount.replace('{n}', n);
   // Update build button text
   $('buildBtn').textContent = n > 0
-    ? T.rebuild.replace('{n}', n)
+    ? T.buildPinned.replace('{n}', n)
     : (IS_AR ? 'بناء الجدول' : 'Build Timetable');
+  updateLoadedRunActions();
 }
 
 $('schedGrid').addEventListener('dragstart', (e) => {
@@ -1231,6 +1684,10 @@ $('schedGrid').addEventListener('drop', (e) => {
   }
 
   updatePinBar();
+  updateCurrentScheduleMove(cc, day, period);
+  _scheduleHasDraftMoves = true;
+  updateLoadedRunActions();
+  refreshDraftImpact();
 });
 
 // Double-click to unpin
@@ -1525,9 +1982,11 @@ async function loadRun(runId) {
     if (!data.ok) throw new Error(data.error || T.reqFailed);
 
     _pinnedCourses = {};        // clear pins when viewing a saved run
+    hydrateHeaderFromRun(data);
     renderResults(data);
+    _loadedRunForRebuild = true;
+    _scheduleHasDraftMoves = false;
     updatePinBar();
-    $('etLabel').value = data.label ?? '';
     $('etStatus').textContent = T.done;
     $('etStatus').className = 'alert alert-success mt-2 py-2 mb-0';
 

@@ -17,8 +17,11 @@ from core.models import (
     ProgrammeRequirement,
     Student,
     StudentCourse,
+    StudentTermSection,
+    TermSection,
 )
 from core.services.exam_timetable import (
+    _build_qa,
     build_conflict_graph,
     build_enrolled_sets,
     build_exam_timetable,
@@ -60,6 +63,52 @@ def test_build_enrolled_sets() -> None:
     assert enrolled["EX102"] == {990001, 990002}
     assert enrolled["EX201"] == {990002, 990003}
     assert enrolled["EX301"] == {990003}
+
+
+def test_build_enrolled_sets_uses_studying_courses_not_partial_section_snapshot() -> None:
+    _setup_fixture()
+    ts = TermSection.objects.create(
+        course_code="EX",
+        course_number="101",
+        course_key="EX101",
+        course_name="Example",
+        section="M1",
+    )
+    StudentTermSection.objects.create(
+        student_id=990001,
+        academic_year="1447",
+        term="2",
+        term_section=ts,
+    )
+
+    enrolled = build_enrolled_sets()
+
+    assert set(enrolled) == {"EX101", "EX102", "EX201", "EX301"}
+
+
+def test_build_enrolled_sets_splits_same_code_by_program_course_name() -> None:
+    course = Course.objects.create(course_code="DUP101", credit_hours=3)
+    s1 = Student.objects.create(student_id=991001, program="P1")
+    s2 = Student.objects.create(student_id=991002, program="P2")
+    StudentCourse.objects.create(student=s1, course=course, status="studying")
+    StudentCourse.objects.create(student=s2, course=course, status="studying")
+    ProgrammeRequirement.objects.create(
+        program="P1",
+        course_code="DUP101",
+        course_name="First Course",
+        programme_term=1,
+    )
+    ProgrammeRequirement.objects.create(
+        program="P2",
+        course_code="DUP101",
+        course_name="Second Course",
+        programme_term=2,
+    )
+
+    enrolled = build_enrolled_sets()
+
+    assert enrolled["DUP101 (1)"] == {991001}
+    assert enrolled["DUP101 (2)"] == {991002}
 
 
 def test_build_conflict_graph() -> None:
@@ -271,6 +320,41 @@ def test_schedule_bucket_day_rule() -> None:
     assert course_day["EX101"] != course_day["EX102"], (
         f"EX101 and EX102 (AI/Term1) should not share day: {course_day['EX101']}"
     )
+
+
+def test_bucket_qa_uses_course_identity_not_display_code_only() -> None:
+    """Same visible code with different plan names is not collapsed."""
+    schedule_entries = [
+        {
+            "course_code": "CS112 (1)",
+            "source_course_code": "CS112",
+            "course_identity": "CS112::PROGRAMMING_I",
+            "day": "Mon",
+            "period": "08:30-10:30",
+            "slot_index": 0,
+        },
+        {
+            "course_code": "CS112 (2)",
+            "source_course_code": "CS112",
+            "course_identity": "CS112::PROGRAMMING_II",
+            "day": "Mon",
+            "period": "11:00-13:00",
+            "slot_index": 1,
+        },
+    ]
+    enrolled_sets = {"CS112 (1)": {1}, "CS112 (2)": {2}}
+    plan_term_buckets = {
+        ("AI2", 2): {"CS112 (1)"},
+        ("AI", 4): {"CS112 (2)"},
+    }
+
+    qa = _build_qa(
+        enrolled_sets,
+        schedule_entries,
+        plan_term_buckets=plan_term_buckets,
+    )
+
+    assert qa["bucket_day_violations_count"] == 0
 
 
 def test_schedule_multi_bucket_course() -> None:
