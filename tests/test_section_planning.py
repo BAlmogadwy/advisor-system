@@ -40,7 +40,10 @@ from core.services.rbac import (
     ensure_scope_schema,
     set_user_scope,
 )
-from core.services.reporting import resolve_elective_recommendations
+from core.services.reporting import (
+    build_course_identity_aggregate_counts,
+    resolve_elective_recommendations,
+)
 from core.services.section_planning import (
     _load_programme_capacities,
     compute_plan_summary,
@@ -352,6 +355,45 @@ def test_merge_section_plan_rows_merges_same_code_and_name() -> None:
     assert merged[0]["programs"] == ["AI", "AI2"]
 
 
+def test_build_course_identity_aggregate_counts_splits_same_code_by_plan_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    Course.objects.create(course_code="CS111", description="PROGRAMMING I", credit_hours=4)
+    ProgrammeRequirement.objects.create(
+        program="AI",
+        course_code="CS111",
+        course_name="PROGRAMMING I",
+        credit_hours=4,
+    )
+    ProgrammeRequirement.objects.create(
+        program="AI2",
+        course_code="CS111",
+        course_name="FUNDAMENTALS OF PROGRAMMING",
+        credit_hours=4,
+    )
+    Student.objects.create(student_id=991101, registration_no="991101", program="AI")
+    Student.objects.create(student_id=992101, registration_no="992101", program="AI2")
+
+    monkeypatch.setattr(
+        "core.services.reporting.batch_recommend_multi_program",
+        lambda student_ids, _year, _term: {sid: ["CS111"] for sid in student_ids},
+    )
+
+    student_count, aggregate, metadata = build_course_identity_aggregate_counts(1448, 1)
+
+    assert student_count == 2
+    assert aggregate == Counter(
+        {
+            "CS111::PROGRAMMING_I": 1,
+            "CS111::FUNDAMENTALS_OF_PROGRAMMING": 1,
+        }
+    )
+    assert metadata["CS111::PROGRAMMING_I"]["course_name"] == "PROGRAMMING I"
+    assert metadata["CS111::FUNDAMENTALS_OF_PROGRAMMING"]["course_name"] == (
+        "FUNDAMENTALS OF PROGRAMMING"
+    )
+
+
 def test_format_export_course_name_uses_row_name_and_programs() -> None:
     """XLSX combined rows show both the program tag and plan-specific name."""
     row = {
@@ -568,6 +610,58 @@ def test_section_plan_generate_with_overrides(client: Client) -> None:
     assert r.status_code == 200
     data = r.json()
     assert data["ok"] is True
+
+
+def test_section_plan_generate_combined_splits_same_code_different_plan_names(
+    client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.authz import _rate_buckets
+
+    _rate_buckets.clear()
+    _login_as(client, "sp-combined-identity", ROLE_GENERAL_ADVISOR)
+
+    Course.objects.create(course_code="CS111", description="PROGRAMMING I", credit_hours=4)
+    ProgrammeRequirement.objects.create(
+        program="AI",
+        course_code="CS111",
+        course_name="PROGRAMMING I",
+        credit_hours=4,
+    )
+    ProgrammeRequirement.objects.create(
+        program="AI2",
+        course_code="CS111",
+        course_name="FUNDAMENTALS OF PROGRAMMING",
+        credit_hours=4,
+    )
+    Student.objects.create(student_id=991101, registration_no="991101", program="AI")
+    Student.objects.create(student_id=992101, registration_no="992101", program="AI2")
+
+    monkeypatch.setattr(
+        "core.services.reporting.batch_recommend_multi_program",
+        lambda student_ids, _year, _term: {sid: ["CS111"] for sid in student_ids},
+    )
+
+    response = client.post(
+        "/ops/section-planning/generate/",
+        json.dumps({"year": 1448, "semester": 1}),
+        content_type="application/json",
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["ok"] is True
+    assert data["mode"] == "combined"
+    rows = data["plan"]
+    assert len(rows) == 2
+    assert {row["course_key"] for row in rows} == {
+        "CS111::PROGRAMMING_I",
+        "CS111::FUNDAMENTALS_OF_PROGRAMMING",
+    }
+    assert {row["course_name"] for row in rows} == {
+        "PROGRAMMING I",
+        "FUNDAMENTALS OF PROGRAMMING",
+    }
 
 
 # ── Programme capacities (3-tier resolution) ──────────────────

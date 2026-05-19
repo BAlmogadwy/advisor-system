@@ -23,8 +23,9 @@ from django.views.decorators.http import require_GET, require_POST
 
 from core.authz import role_required, throttle
 from core.models import ProgrammeRequirement
+from core.services.course_identity import planner_course_key
 from core.services.rbac import ROLE_GENERAL_ADVISOR, get_user_role
-from core.services.reporting import build_aggregate_counts
+from core.services.reporting import build_aggregate_counts, build_course_identity_aggregate_counts
 from core.services.section_planning import (
     DEFAULT_MAX_EXTERNAL,
     DEFAULT_MAX_LOCAL_4CR,
@@ -70,16 +71,17 @@ def _merge_section_plan_rows_by_course_identity(
     program_plans: list[tuple[str, list[dict]]],
 ) -> list[dict]:
     """Merge multi-program rows by course code and plan-specific course name."""
-    merged: dict[tuple[str, str], dict] = {}
+    merged: dict[str, dict] = {}
 
     for program, plan in program_plans:
         for row in plan:
             code = normalize_code(str(row.get("course_code", "")))
             name = str(row.get("course_name", "") or "")
-            key = (code, name)
+            key = planner_course_key(code, name)
 
             if key not in merged:
                 row_copy = dict(row)
+                row_copy["course_key"] = key
                 row_copy["course_code"] = code
                 row_copy["course_name"] = name
                 row_copy["total_students"] = 0
@@ -380,14 +382,18 @@ def section_plan_generate_view(request: HttpRequest) -> JsonResponse:
 
         else:
             # ── Combined mode (no program filter) ──
-            student_count, aggregate = build_aggregate_counts(
+            student_count, aggregate, course_metadata = build_course_identity_aggregate_counts(
                 params["year"],
                 params["semester"],
                 program=None,
                 section=params["section"],
                 resolve_electives=True,
             )
-            plan = compute_section_plan(aggregate, **capacity_kwargs)
+            plan = compute_section_plan(
+                aggregate,
+                **capacity_kwargs,
+                course_metadata=course_metadata,
+            )
             summary = compute_plan_summary(plan)
 
             return JsonResponse(
@@ -662,14 +668,20 @@ def section_plan_export_view(request: HttpRequest) -> HttpResponseBase:
 
         else:
             # ── Combined export (no program filter) ──
-            _sc, aggregate = build_aggregate_counts(
+            _sc, aggregate, course_metadata = build_course_identity_aggregate_counts(
                 params["year"],
                 params["semester"],
                 program=None,
                 section=params["section"],
                 resolve_electives=True,
             )
-            plan = _filter_plan(compute_section_plan(aggregate, **capacity_kwargs))
+            plan = _filter_plan(
+                compute_section_plan(
+                    aggregate,
+                    **capacity_kwargs,
+                    course_metadata=course_metadata,
+                )
+            )
             summary = compute_plan_summary(plan)
             path = _export_section_plan_xlsx(plan, summary, params, mode="combined")
             filename = f"section_plan_{params['year']}_{params['semester']}.xlsx"

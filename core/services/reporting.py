@@ -1,7 +1,8 @@
 import time
 from collections import Counter, defaultdict
 
-from core.models import ElectiveTermMapping, Student, StudentCourse
+from core.models import ElectiveTermMapping, ProgrammeRequirement, Student, StudentCourse
+from core.services.course_identity import planner_course_key
 from core.services.recommender_batch import batch_recommend, batch_recommend_multi_program
 from core.services.student_helpers import normalize_code
 
@@ -78,6 +79,100 @@ def build_aggregate_counts(
         oldest = min(_aggregate_cache, key=lambda k: _aggregate_cache[k][0])
         del _aggregate_cache[oldest]
     return result
+
+
+def build_course_identity_aggregate_counts(
+    year: int,
+    semester: int,
+    program: str | list[str] | None = None,
+    section: str | None = None,
+    *,
+    resolve_electives: bool = False,
+) -> tuple[int, Counter[str], dict[str, dict[str, object]]]:
+    """Build recommendation counts keyed by planner course identity.
+
+    The public course code is not always unique across plans. Section/timetable
+    planning needs to keep same-code courses with different plan names separate,
+    while still displaying the registrar-facing code.
+    """
+    if isinstance(program, str) and "," in program:
+        program = [p.strip() for p in program.split(",") if p.strip()]
+    if isinstance(program, list) and len(program) == 1:
+        program = program[0]
+
+    student_ids = get_student_ids(program=program, section=section)
+    if not student_ids:
+        return 0, Counter(), {}
+
+    student_programs = {
+        int(sid): str(prog)
+        for sid, prog in Student.objects.filter(student_id__in=student_ids).values_list(
+            "student_id", "program"
+        )
+        if prog
+    }
+
+    if program and isinstance(program, str):
+        all_recs = batch_recommend(student_ids, program, year, semester)
+        programmes = [program]
+    else:
+        all_recs = batch_recommend_multi_program(student_ids, year, semester)
+        if isinstance(program, list):
+            programmes = list(program)
+        else:
+            programmes = sorted(set(student_programs.values()))
+
+    if resolve_electives:
+        all_recs = resolve_elective_recommendations(
+            all_recs,
+            year=year,
+            semester=semester,
+            program=program,
+        )
+
+    requirement_meta: dict[str, dict[str, dict[str, object]]] = {}
+    if programmes:
+        for row in ProgrammeRequirement.objects.filter(program__in=programmes).values(
+            "program",
+            "course_code",
+            "course_name",
+            "credit_hours",
+        ):
+            prog = str(row.get("program") or "")
+            code = normalize_code(row.get("course_code"))
+            if not prog or not code:
+                continue
+            requirement_meta.setdefault(prog, {})[code] = {
+                "course_code": code,
+                "course_name": str(row.get("course_name") or "").strip(),
+                "credit_hours": row.get("credit_hours") or 3,
+                "department": "".join(ch for ch in code if ch.isalpha()),
+            }
+
+    aggregate: Counter[str] = Counter()
+    course_metadata: dict[str, dict[str, object]] = {}
+
+    for sid, recs in all_recs.items():
+        student_program = program if isinstance(program, str) else student_programs.get(int(sid))
+        program_meta = requirement_meta.get(str(student_program), {})
+        for code in recs:
+            ncode = normalize_code(code)
+            if not ncode:
+                continue
+            meta = dict(program_meta.get(ncode, {}))
+            if not meta:
+                meta = {
+                    "course_code": ncode,
+                    "course_name": "",
+                    "credit_hours": 3,
+                    "department": "".join(ch for ch in ncode if ch.isalpha()),
+                }
+            key = planner_course_key(ncode, meta.get("course_name"))
+            meta["course_key"] = key
+            course_metadata.setdefault(key, meta)
+            aggregate[key] += 1
+
+    return len(student_ids), aggregate, course_metadata
 
 
 def resolve_elective_recommendations(
