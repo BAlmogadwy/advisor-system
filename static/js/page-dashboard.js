@@ -136,6 +136,8 @@ const IS_AR = document.documentElement.lang === 'ar';
     failedLoadEligibility: IS_AR ? 'تعذّر تحميل تقرير الأهلية.' : 'Failed to load eligibility report.',
     noEligibleIds: IS_AR ? 'لا يوجد طلاب مؤهلون لهذا الفلتر.' : 'No eligible student IDs for this filter.',
     eligibilityLoaded: IS_AR ? 'تم تحميل تقرير الأهلية' : 'Eligibility report loaded',
+    idsCopied: (n) => IS_AR ? `تم نسخ ${n} رقم طالب — الصقها في صفحة التوافر الجماعي` : `Copied ${n} student IDs — paste into Group Availability`,
+    noIdsToCopy: IS_AR ? 'لا توجد أرقام مؤهلة للنسخ. شغّل الفحص أولاً.' : 'No eligible IDs to copy. Run a check first.',
 
     // ── Advisor ──
     selectAdvisor: IS_AR ? 'اختر مرشداً' : 'Select advisor',
@@ -2173,6 +2175,32 @@ const IS_AR = document.documentElement.lang === 'ar';
   q('cmLoadPreset')?.addEventListener('click', () => loadPreset('conflictmatrix', ['cmYear','cmSemester','cmSection','cmProgram','cmJoin','cmLimit']));
   q('elSavePreset')?.addEventListener('click', () => savePreset('eligibility', ['elCourse','elSection','elProgram','elJoin','elMode']));
   q('elLoadPreset')?.addEventListener('click', () => loadPreset('eligibility', ['elCourse','elSection','elProgram','elJoin','elMode']));
+  q('elCopyIds')?.addEventListener('click', async () => {
+    // Scrape every eligible ID from the table (paginateTable only hides rows, so all are in the DOM).
+    const ids = Array.from(document.querySelectorAll('#elTable .cr-id'))
+      .map((el) => el.textContent.trim())
+      .filter(Boolean);
+    if (!ids.length) { toast(T.noIdsToCopy, false); return; }
+    const text = ids.join('\n'); // Group Availability parses any non-digit separator; newline = one ID per line.
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (e) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      try { document.execCommand('copy'); } finally { ta.remove(); }
+    }
+    const btn = q('elCopyIds');
+    const orig = btn.innerHTML;
+    btn.classList.add('copied');
+    btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>' + T.copied;
+    setTimeout(() => { btn.innerHTML = orig; btn.classList.remove('copied'); }, 1500);
+    toast(T.idsCopied(ids.length), true);
+  });
   q('hpSavePreset')?.addEventListener('click', () => savePreset('highpriority', ['hpYear','hpSemester','hpSection','hpProgram','hpJoin','hpParity','hpDiscount','hpMinScore','hpTopK','hpStudying']));
   q('hpLoadPreset')?.addEventListener('click', () => loadPreset('highpriority', ['hpYear','hpSemester','hpSection','hpProgram','hpJoin','hpParity','hpDiscount','hpMinScore','hpTopK','hpStudying']));
 
