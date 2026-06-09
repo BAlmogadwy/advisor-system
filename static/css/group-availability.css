@@ -27,11 +27,7 @@
 }
 
 .ga-kicker {
-  color: var(--brand);
   font-size: 0.72rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
   margin-bottom: 0.5rem;
 }
 
@@ -61,8 +57,8 @@
 
 .ga-input:focus,
 .ga-textarea:focus {
-  border-color: rgba(10, 142, 110, 0.55);
-  box-shadow: 0 0 0 3px rgba(10, 142, 110, 0.11);
+  border-color: color-mix(in srgb, var(--teal) 55%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--teal) 11%, transparent);
 }
 
 .ga-grid-2 {
@@ -99,7 +95,7 @@
 }
 
 .ga-stat-num { font-size: 1.3rem; font-weight: 800; color: var(--t1); line-height: 1.1; }
-.ga-stat-num.is-good { color: #0a8e6e; }
+.ga-stat-num.is-good { color: var(--teal); }
 .ga-stat-lbl { font-size: 0.66rem; color: var(--t4); text-transform: uppercase; letter-spacing: 0.05em; }
 
 .ga-flags { margin-top: 0.7rem; display: grid; gap: 0.4rem; }
@@ -148,7 +144,7 @@
 .ga-legend { display: flex; flex-wrap: wrap; gap: 0.8rem; font-size: 0.74rem; color: var(--t3); }
 .ga-legend-item { display: inline-flex; align-items: center; gap: 0.35rem; }
 .ga-swatch { width: 0.85rem; height: 0.85rem; border-radius: 3px; border: 1px solid var(--line); }
-.ga-swatch-free { background: rgba(10, 142, 110, 0.22); border-color: rgba(10, 142, 110, 0.5); }
+.ga-swatch-free { background: color-mix(in srgb, var(--teal) 22%, transparent); border-color: color-mix(in srgb, var(--teal) 50%, transparent); }
 .ga-swatch-some { background: rgba(217, 119, 6, 0.20); border-color: rgba(217, 119, 6, 0.5); }
 .ga-swatch-most { background: rgba(192, 48, 48, 0.20); border-color: rgba(192, 48, 48, 0.5); }
 
@@ -202,7 +198,7 @@
   transition: filter 0.12s;
 }
 
-.ga-cell.is-free { background: rgba(10, 142, 110, 0.12); }
+.ga-cell.is-free { background: color-mix(in srgb, var(--teal) 12%, transparent); }
 .ga-cell.is-some { background: rgba(217, 119, 6, 0.13); cursor: pointer; }
 .ga-cell.is-most { background: rgba(192, 48, 48, 0.15); cursor: pointer; }
 .ga-cell.is-some:hover,
@@ -211,8 +207,8 @@
 
 .ga-cell-num { font-size: 1.05rem; font-weight: 800; color: var(--t1); line-height: 1; }
 .ga-cell-sub { font-size: 0.62rem; color: var(--t4); text-transform: uppercase; letter-spacing: 0.04em; }
-.ga-cell.is-free .ga-cell-check { color: #0a8e6e; font-size: 1.1rem; font-weight: 800; }
-.ga-cell.is-free .ga-cell-sub { color: #0a8e6e; }
+.ga-cell.is-free .ga-cell-check { color: var(--teal); font-size: 1.1rem; font-weight: 800; }
+.ga-cell.is-free .ga-cell-sub { color: var(--teal); }
 
 /* ── Occupant detail ─────────────────────────────────────────── */
 .ga-detail {
