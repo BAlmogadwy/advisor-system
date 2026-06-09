@@ -8,7 +8,7 @@ board represents a single nominal term-level (e.g. "Level 3") and belongs to
 a TimetableScenario.
 
 The algorithm's primary goal is to **minimise student scheduling conflicts**
-using a real student-overlap matrix (built from ``ScenarioStudentMap``) rather
+using a real student-overlap matrix (built from canonical course requests) rather
 than fake cohort groupings.  Cross-course conflicts are soft penalties
 proportional to shared student count; same-course overlap is hard.
 
@@ -16,7 +16,7 @@ Key concepts
 ------------
 * **Delivery board** -- a grid of days x slots for one term level.
 * **Overlap matrix** -- maps course pairs to their shared student count,
-  built from ScenarioStudentMap.  Drives all conflict scoring.
+  built from canonical scenario course requests. Drives all conflict scoring.
 * **Meeting pattern** -- how many weekly meetings a course needs, and the
   duration of each, determined by credit hours.
 * **Prayer-break window** -- a hard constraint blocking any meeting from
@@ -63,7 +63,6 @@ from itertools import combinations
 from core.models import (
     DeliveryBoard,
     ScenarioSectionBudget,
-    ScenarioStudentMap,
     SectionPlacement,
     TermSection,
     TermSectionMeeting,
@@ -76,10 +75,15 @@ from core.services.timetable_decision_trace import (
     DecisionTrace,
     is_decision_trace_enabled,
 )
+from core.services.timetable_demand import (
+    compute_course_students_index,
+    load_scenario_course_demands,
+)
 from core.services.timetable_lab_predicate import (
     is_lab_heuristic_unified,
     meeting_requires_lab_room,
 )
+from core.services.timetable_online import OnlineCourseLookup, normalise_course_code
 from core.services.timetable_pr4_instructor import (
     is_instructor_clash_enabled,
     normalise_instructor,
@@ -370,6 +374,17 @@ def _generate_meeting_options(
                     all_options.append(option)
 
     return all_options
+
+
+def generate_meeting_options(
+    pattern: list[int],
+    slot_config: list[dict],
+    lab_slot_config: list[dict] | None = None,
+    blocked_slots: list[dict] | None = None,
+) -> list[list[dict]]:
+    """Public wrapper for generating complete weekly meeting patterns."""
+
+    return _generate_meeting_options(pattern, slot_config, lab_slot_config, blocked_slots)
 
 
 # ── Placement Strategies ─────────────────────────────────────────
@@ -859,7 +874,7 @@ def auto_place_board(
     1. Load the board's scenario, slot configuration, and section budgets
        (sorted by descending ``total_demand`` so high-demand courses get
        first pick of slots).
-    2. Build a ``course_students`` map from ``ScenarioStudentMap`` -- this
+    2. Build a ``course_students`` map from canonical course requests -- this
        records which students need each course and drives conflict scoring.
     3. Pre-compute feasible meeting options for every course (respecting
        credit hours, prayer break, etc.).
@@ -971,6 +986,8 @@ def auto_place_board(
     programmes = [p.strip() for p in (board.program or "").split(",") if p.strip()]
     room_list = get_programme_rooms(programmes) if programmes else []
     room_tracker = RoomTracker(room_list) if room_list else None
+    online_lookup = OnlineCourseLookup()
+    online_codes: set[str] = online_lookup.codes_for_board(board)
     # Board-wide gender derived from linked students (homogeneous in
     # practice). Restricts the room pool to matching-section rooms.
     board_gender = get_board_gender(board_id)
@@ -982,10 +999,14 @@ def auto_place_board(
             .exclude(board=board)
             .exclude(room="")
             .exclude(room="UNASSIGNED")
-            .values_list("day", "start_time", "room")
+            .select_related("board", "term_section")
         )
-        for day, start, room_code in other_placements:
-            room_tracker.usage[(day, start)].add(room_code)
+        for other in other_placements:
+            if online_lookup.is_online_course_for_board(
+                other.board, other.term_section.course_code
+            ):
+                continue
+            room_tracker.usage[(other.day, other.start_time)].add(other.room)
 
     # ── 1. Load section budgets for this board's term level ───────────
     # Ordered by descending demand so the most popular courses are placed
@@ -1014,14 +1035,11 @@ def auto_place_board(
     )
     if board_student_ids:
         # Find courses needed by students on this board but not in budget
-        student_maps_for_board = ScenarioStudentMap.objects.filter(
-            scenario=scenario, student_id__in=board_student_ids
-        )
+        scenario_demands = load_scenario_course_demands(scenario.id)
         cross_term_demand: dict[str, int] = defaultdict(int)
-        for sm in student_maps_for_board:
-            for code in sm.recommended_course_keys or sm.recommended_courses:
-                if code not in budget_codes:
-                    cross_term_demand[code] += 1
+        for demand in scenario_demands:
+            if demand.student_id in board_student_ids and demand.course_key not in budget_codes:
+                cross_term_demand[demand.course_key] += 1
 
         if cross_term_demand:
             # For each cross-term course, check if THIS board has the
@@ -1046,14 +1064,10 @@ def auto_place_board(
                             "student_id", flat=True
                         )
                     )
-                    other_maps = ScenarioStudentMap.objects.filter(
-                        scenario=scenario, student_id__in=other_sids
-                    )
                     other_count = sum(
                         1
-                        for sm in other_maps
-                        if course_code
-                        in (sm.recommended_course_keys or sm.recommended_courses or [])
+                        for demand in scenario_demands
+                        if demand.student_id in other_sids and demand.course_key == course_code
                     )
                     if other_count > this_board_count:
                         best_board = False
@@ -1093,12 +1107,8 @@ def auto_place_board(
         }
 
     # ── 2. Build student-to-course mapping ────────────────────────────
-    # For each course code, collect the set of student IDs that need it.
-    student_maps = ScenarioStudentMap.objects.filter(scenario=scenario)
-    course_students: dict[str, set[int]] = defaultdict(set)
-    for sm in student_maps:
-        for code in sm.recommended_course_keys or sm.recommended_courses:
-            course_students[code].add(sm.student_id)
+    # For each planner course key, collect the set of student IDs that need it.
+    course_students = compute_course_students_index(scenario.id)
 
     # ── Build real student-overlap matrix ───────────────────────────────
     from core.services.timetable_overlap import (
@@ -1223,7 +1233,12 @@ def auto_place_board(
             placed_schedule.append((lp.day, lp.start_time, lp.end_time, cc))
             all_placed_masks.append((cc, mask))
             slot_density[lp.start_time] += 1
-            if room_tracker and lp.room and lp.room != "UNASSIGNED":
+            if (
+                room_tracker
+                and lp.room
+                and lp.room != "UNASSIGNED"
+                and normalise_course_code(lp.term_section.course_code) not in online_codes
+            ):
                 room_tracker.usage[(lp.day, lp.start_time)].add(lp.room)
             pr1_lock_rejections.append(
                 RejectionReason(
@@ -1269,19 +1284,6 @@ def auto_place_board(
                         alternatives=(decision_trace_lock_alt,),
                     ).to_dict()
 
-    # ── 3. Identify online courses (from ProgrammeRequirement) ────────
-    # Online courses receive a late-slot preference penalty so they are
-    # scheduled after on-campus classes, letting students leave first.
-    from core.models import ProgrammeRequirement as PR
-
-    online_codes: set[str] = set()
-    if board.program:
-        programs = [p.strip() for p in board.program.split(",") if p.strip()]
-        online_qs = PR.objects.filter(program__in=programs, is_online=True).values_list(
-            "course_code", flat=True
-        )
-        online_codes = {c.strip().upper() for c in online_qs}
-
     # ── 4. Pre-compute per-course data ────────────────────────────────
     # For each budgeted course, determine how many sections still need
     # placing and pre-generate all feasible meeting options.
@@ -1318,7 +1320,7 @@ def auto_place_board(
                 "to_place": to_place,
                 "all_options": all_options,
                 "students": course_students.get(code, set()),
-                "is_online": display_code.upper() in online_codes,
+                "is_online": normalise_course_code(display_code) in online_codes,
             }
         )
 
@@ -1517,7 +1519,7 @@ def auto_place_board(
 
                 # Room feasibility: prefer options with rooms, penalize roomless
                 room_penalty = 0
-                if room_tracker:
+                if room_tracker and not is_online:
                     for m in option:
                         duration = _to_min(m["end"]) - _to_min(m["start"])
                         # Rule: only 4-credit courses (is_lab_course) go to
@@ -1707,7 +1709,7 @@ def auto_place_board(
             for m in best_option:
                 # Assign room if tracker available
                 assigned_room = ""
-                if room_tracker:
+                if room_tracker and not is_online:
                     duration = _to_min(m["end"]) - _to_min(m["start"])
                     # Same cr==4 (is_lab_course) gate as the scoring loop above.
                     if is_lab_heuristic_unified():

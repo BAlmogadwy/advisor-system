@@ -18,6 +18,7 @@ from core.models import (
     TimetableScenario,
 )
 from core.services.timetable_autoplace import DEFAULT_LAB_SLOTS, DEFAULT_SLOTS
+from core.services.timetable_demand import sync_scenario_student_course_requests
 from core.services.timetable_overlap import build_overlap_matrix
 from core.services.timetable_pair_feasibility import (
     _bfs_augment,
@@ -73,6 +74,24 @@ def feasibility_scenario():
             is_cross_term=False,
             recommended_courses=["PF_A", "PF_B", "PF_C"],
         )
+
+    # The overlap / pair-feasibility services source shared-student counts
+    # from the canonical ``ScenarioStudentCourseRequest`` table, so mirror
+    # the same 20 students × {PF_A, PF_B, PF_C} demand there too.
+    sync_scenario_student_course_requests(
+        scenario=scenario,
+        classified_students=[
+            {
+                "student_id": 7700001 + i,
+                "recommended_courses": ["PF_A", "PF_B", "PF_C"],
+                "primary_term": 1,
+                "is_cross_term": False,
+            }
+            for i in range(20)
+        ],
+        student_course_keys={7700001 + i: ["PF_A", "PF_B", "PF_C"] for i in range(20)},
+        source="pair_feasibility_test",
+    )
 
     for code in ["PF_A", "PF_B", "PF_C"]:
         ScenarioSectionBudget.objects.create(

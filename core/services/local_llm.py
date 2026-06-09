@@ -73,7 +73,7 @@ class LocalLLMClient:
             },
         )
         try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:  # noqa: S310
+            with urlopen(request, timeout=self.timeout_seconds) as response:  # noqa: S310  # nosec B310
                 text = response.read().decode("utf-8")
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")

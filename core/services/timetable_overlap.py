@@ -3,7 +3,7 @@ core/services/timetable_overlap.py
 Real student-pair overlap utilities for the timetable planner.
 
 Replaces the fake cohort/S1-S2 grouping with an actual course-overlap
-matrix built from ScenarioStudentMap.  Used by all placement engines
+matrix built from canonical scenario request rows.  Used by all placement engines
 (greedy, CP-SAT, local search, load-balanced) and the conflict
 detection layer.
 
@@ -22,6 +22,7 @@ from collections.abc import Collection
 from itertools import combinations
 
 from core.services.student_helpers import normalize_code
+from core.services.timetable_demand import compute_course_students_map
 
 # Threshold for treating a student overlap as a hard/critical constraint.
 # Pairs with >= HARD_OVERLAP_THRESHOLD shared students are hard-blocked in
@@ -42,12 +43,11 @@ def build_course_students_map(
     scenario_id: int,
     course_codes: Collection[str],
 ) -> dict[str, set[int]]:
-    """Build {course_code: {student_ids}} from ScenarioStudentMap.
+    """Build {course_code: {student_ids}} from scenario course requests.
 
     Scans ALL students in the scenario (not filtered by primary_term)
     so cross-term visitor students are included.  Only courses in
-    *course_codes* are tracked. New planner scenarios pass planner course
-    keys here; older scenarios fall back to visible course codes.
+    *course_codes* are tracked.
 
     Parameters
     ----------
@@ -56,18 +56,7 @@ def build_course_students_map(
     course_codes : Collection[str]
         The board's actual course codes (from ScenarioSectionBudget).
     """
-    from core.models import ScenarioStudentMap
-
-    codes_norm = {normalize_code(c) for c in course_codes if c}
-    course_students: dict[str, set[int]] = defaultdict(set)
-
-    for sm in ScenarioStudentMap.objects.filter(scenario_id=scenario_id):
-        for code in sm.recommended_course_keys or sm.recommended_courses:
-            nc = normalize_code(code)
-            if nc in codes_norm:
-                course_students[nc].add(sm.student_id)
-
-    return dict(course_students)
+    return compute_course_students_map(scenario_id, course_codes)
 
 
 def build_overlap_matrix(
@@ -93,14 +82,18 @@ def build_overlap_matrix(
         ``{(courseA, courseB): shared_student_count}`` with keys sorted
         alphabetically.  Missing keys imply 0 overlap.
     """
-    from core.models import ScenarioStudentMap
-
     codes_norm = {normalize_code(c) for c in course_codes if c}
     matrix: dict[tuple[str, str], int] = defaultdict(int)
 
-    for sm in ScenarioStudentMap.objects.filter(scenario_id=scenario_id):
-        course_values = sm.recommended_course_keys or sm.recommended_courses
-        hits = sorted({normalize_code(c) for c in course_values} & codes_norm)
+    course_students = compute_course_students_map(scenario_id, course_codes)
+    students_by_course: dict[int, set[str]] = defaultdict(set)
+    for course_key, student_ids in course_students.items():
+        if course_key not in codes_norm:
+            continue
+        for student_id in student_ids:
+            students_by_course[int(student_id)].add(course_key)
+    for hits_for_student in students_by_course.values():
+        hits = sorted(hits_for_student & codes_norm)
         for a, b in combinations(hits, 2):
             matrix[overlap_key(a, b)] += 1
 

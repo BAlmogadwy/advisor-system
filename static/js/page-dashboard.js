@@ -206,7 +206,6 @@ const IS_AR = document.documentElement.lang === 'ar';
 
     // ── Command Palette ──
     paletteHint: IS_AR ? 'أدخل رقم طالب للانتقال مباشرة لخطته' : 'Type a student ID to jump directly to their plan',
-    students: IS_AR ? 'الطلاب' : 'Students',
     openPlan: IS_AR ? 'فتح الخطة' : 'Open plan',
     directNav: IS_AR ? 'انتقال مباشر' : 'Direct navigation',
     navToStudentPlan: IS_AR ? 'الانتقال لخطة الطالب' : 'Navigate to student plan',
@@ -572,7 +571,6 @@ const IS_AR = document.documentElement.lang === 'ar';
 
     /* normalize: split comma-separated prerequisites into individual edges */
     const norm = normalizePrereqs(data.items);
-    const courseSet = new Set(norm.map(x => x.course_code));
     const allSet = new Set(norm.flatMap(x => [x.course_code, x.prerequisite_course_code]));
     q('preMetricProgram').textContent = data.program || '-';
     q('preMetricCourses').textContent = String(allSet.size);
@@ -2066,9 +2064,12 @@ const IS_AR = document.documentElement.lang === 'ar';
     }
   };
 
-  /* ── Advisor Portfolio JS → moved to standalone page at /advisor-portfolio/ ── */
-  let advisorStudentsCache = [];  // kept for ⌘K palette compatibility
-  window._advisorStudentsCache = advisorStudentsCache;
+  function requestSidebarBadgeUpdate() {
+    if (typeof window.updateSidebarBadges === 'function') {
+      window.updateSidebarBadges();
+    }
+    document.dispatchEvent(new Event('dashboard:badges:update'));
+  }
 
   q('hpRun').onclick = async () => {
     if (!requireFields(['hpYear','hpSemester'], 'hpMeta', T.highPriorityReport)) return;
@@ -2089,6 +2090,7 @@ const IS_AR = document.documentElement.lang === 'ar';
       q('hpMeta').textContent = preciseError(null, null, 'Network request failed.', err);
       setUpdated('hpUpdated', true);
       tbody.innerHTML = '<tr><td colspan="5" class="text-danger">Network error while loading report.</td></tr>';
+      requestSidebarBadgeUpdate();
       toast(T.hpFailed, false);
       btn.disabled = false;
       btn.textContent = T.runReport;
@@ -2098,6 +2100,7 @@ const IS_AR = document.documentElement.lang === 'ar';
       q('hpMeta').textContent = preciseError(res, data, 'Failed to load report.');
       setUpdated('hpUpdated', true);
       tbody.innerHTML = '<tr><td colspan="5" class="text-danger">Failed to load report.</td></tr>';
+      requestSidebarBadgeUpdate();
       btn.disabled = false;
       btn.textContent = T.runReport;
       return;
@@ -2110,6 +2113,7 @@ const IS_AR = document.documentElement.lang === 'ar';
     btn.disabled = false;
     btn.textContent = T.runReport;
     paginateTable('hpTable', 'hpPager', 25);
+    requestSidebarBadgeUpdate();
   };
 
   async function copyLinkFrom(elId, label) {
@@ -2144,6 +2148,7 @@ const IS_AR = document.documentElement.lang === 'ar';
     q('exEligibilityCsv').href = `/export/course-eligibility.csv?course_code=${encodeURIComponent(q('elCourse')?.value || '')}&section=${encodeURIComponent(q('elSection')?.value || '')}&program=${encodeURIComponent(q('elProgram')?.value || '')}&join_years=${encodeURIComponent(q('elJoin')?.value || '')}&mode=${encodeURIComponent(q('elMode')?.value || 'relaxed')}`;
     q('exAdvisorCsv').href = '/advisor-portfolio/';  // portfolio is now standalone
     q('exHighPriorityXlsx').href = `/export/missing-high-priority.xlsx?year=${encodeURIComponent(q('hpYear')?.value || '')}&semester=${encodeURIComponent(q('hpSemester')?.value || '')}&section=${encodeURIComponent(q('hpSection')?.value || '')}&program=${encodeURIComponent(q('hpProgram')?.value || '')}&join_years=${encodeURIComponent(q('hpJoin')?.value || '')}&term_parity=${encodeURIComponent(q('hpParity')?.value || '0')}&discount=${encodeURIComponent(q('hpDiscount')?.value || '1_over_d')}&min_score=${encodeURIComponent(q('hpMinScore')?.value || '2.0')}&top_k=${encodeURIComponent(q('hpTopK')?.value || '10')}&studying_counts_as_passed=${encodeURIComponent(q('hpStudying')?.value || 'false')}`;
+    requestSidebarBadgeUpdate();
   }
 
   document.querySelectorAll('.ex-copy').forEach((b) => {
@@ -2467,7 +2472,7 @@ const IS_AR = document.documentElement.lang === 'ar';
     const hpEl = q('ovKpiHighPri');
     if (hpEl && hpCount > 0) hpEl.textContent = String(hpCount);
   }
-  setInterval(refreshOverviewKpis, 4000);
+  setInterval(refreshOverviewKpis, 60000);
 
   /* ── Student Context Sidebar: populate when student plan loads ── */
   (() => {

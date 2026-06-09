@@ -39,7 +39,7 @@ Key models used:
     - ``TermSection``          -- the catalogue section (course_code + section label)
     - ``TermSectionMeeting``   -- one meeting row of a TermSection (day + times)
     - ``ScenarioSectionBudget``-- per-course budget (planned sections / max per section)
-    - ``ScenarioStudentMap``   -- per-student list of recommended courses
+    - ``ScenarioStudentCourseRequest`` -- canonical per-student course demand
     - ``BoardStudentLink``     -- many-to-many link of students to boards
 """
 
@@ -48,18 +48,36 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 
+from django.db import transaction
+
 from core.models import (
     BoardStudentLink,
     DeliveryBoard,
     Room,
     ScenarioSectionBudget,
-    ScenarioStudentMap,
     SectionPlacement,
     Student,
     TermSection,
     TermSectionMeeting,
+    TimetableScenario,
 )
 from core.services.student_helpers import normalize_code
+from core.services.timetable_demand import (
+    compute_course_students_index,
+    load_scenario_course_demands,
+)
+from core.services.timetable_online import (
+    OnlineCourseLookup,
+    exclude_online_courses_for_board,
+    normalise_course_code,
+)
+from core.services.timetable_quality import (
+    DAY_LABEL_BY_INDEX,
+    TIMETABLE_QUALITY_POLICY,
+    day_balance_penalty,
+    meeting_weak_slot_penalty,
+    quality_reason_rows,
+)
 
 # ── Bitmask constants (same as planner_builder) ─────────────────
 #
@@ -132,6 +150,84 @@ def _time_mask(day: str, start_time: str, end_time: str) -> int:
     return ((1 << (end_idx - start_idx)) - 1) << start_idx
 
 
+def _slot_ranking_reasons(
+    *,
+    evidence_rows: list[dict],
+    quality: dict,
+    affected_students: int,
+) -> list[dict]:
+    """Build small, user-facing diagnostics explaining candidate ranking."""
+
+    reasons: list[dict] = []
+    risk_order = {"critical": 0, "warning": 1, "note": 2}
+    for row in sorted(
+        evidence_rows,
+        key=lambda item: (
+            risk_order.get(str(item.get("tone") or "").lower(), 3),
+            -int(item.get("student_count") or 0),
+            str(item.get("kind") or ""),
+        ),
+    )[:4]:
+        reasons.append(
+            {
+                "kind": str(row.get("kind") or "evidence"),
+                "tone": str(row.get("tone") or "note"),
+                "title": str(row.get("title") or "Placement evidence"),
+                "detail": str(row.get("detail") or ""),
+                "student_count": int(row.get("student_count") or 0),
+            }
+        )
+
+    if affected_students and not any(
+        reason["kind"] in {"students", "cross_board_students"} for reason in reasons
+    ):
+        reasons.append(
+            {
+                "kind": "student_pressure",
+                "tone": "warning",
+                "title": f"{affected_students} affected student(s)",
+                "detail": "Students share another course at this time.",
+                "student_count": int(affected_students),
+            }
+        )
+
+    quality_reasons = list((quality or {}).get("reasons") or [])
+    if quality_reasons:
+        top_quality = quality_reasons[0]
+        reasons.append(
+            {
+                "kind": "quality",
+                "tone": "note",
+                "title": str(top_quality.get("label") or "Timetable quality pressure"),
+                "detail": f"Soft quality penalty +{int(top_quality.get('penalty') or 0)}.",
+                "component": str(top_quality.get("component") or ""),
+                "penalty": int(top_quality.get("penalty") or 0),
+            }
+        )
+
+    if not reasons:
+        reasons.append(
+            {
+                "kind": "clean",
+                "tone": "good",
+                "title": "Clean target",
+                "detail": "No direct conflict, student pressure, or quality penalty detected.",
+            }
+        )
+    return reasons
+
+
+def _slot_primary_reason(reasons: list[dict]) -> str:
+    if not reasons:
+        return ""
+    first = reasons[0]
+    title = str(first.get("title") or "").strip()
+    detail = str(first.get("detail") or "").strip()
+    if detail and title:
+        return f"{title}: {detail}"
+    return title or detail
+
+
 def _placement_mask(p: SectionPlacement) -> int:
     """Return the bitmask for a single ``SectionPlacement`` row.
 
@@ -190,6 +286,7 @@ class PlacementInfo:
         room:             Room code (may be empty).
         instructor:       Instructor name from the first meeting row
                           (empty string if none recorded).
+        is_online:        True when the course is online for this board.
         mask:             Pre-computed 2016-bit bitmask for the
                           placement's own day/time slot.
     """
@@ -204,6 +301,7 @@ class PlacementInfo:
     end_time: str
     room: str
     instructor: str
+    is_online: bool
     mask: int
 
 
@@ -219,6 +317,13 @@ def _load_board_placements(board_id: int) -> list[PlacementInfo]:
     Returns:
         List of :class:`PlacementInfo` objects with pre-computed masks.
     """
+    online_codes: set[str] = set()
+    try:
+        board = DeliveryBoard.objects.get(id=board_id)
+        online_codes = OnlineCourseLookup().codes_for_board(board)
+    except DeliveryBoard.DoesNotExist:
+        pass
+
     placements = (
         SectionPlacement.objects.filter(board_id=board_id)
         .select_related("term_section")
@@ -242,6 +347,7 @@ def _load_board_placements(board_id: int) -> list[PlacementInfo]:
                 end_time=p.end_time,
                 room=p.room,
                 instructor=instructor,
+                is_online=normalise_course_code(p.term_section.course_code) in online_codes,
                 mask=_time_mask(p.day, p.start_time, p.end_time),
             )
         )
@@ -299,7 +405,7 @@ def detect_board_conflicts(board_id: int) -> dict:
     for item in items:
         if item.instructor:
             by_instructor[item.instructor.strip().upper()].append(item)
-        if item.room and item.room.strip().upper() != "UNASSIGNED":
+        if not item.is_online and item.room and item.room.strip().upper() != "UNASSIGNED":
             by_room[item.room.strip().upper()].append(item)
 
     seen_pairs: set[tuple[int, int]] = set()
@@ -418,6 +524,7 @@ def validate_placement(
     room: str,
     term_section_id: int,
     exclude_placement_id: int | None = None,
+    ignore_overlap_term_section_ids: set[int] | None = None,
 ) -> dict:
     """Pre-flight validation for a new or moved placement.
 
@@ -450,18 +557,25 @@ def validate_placement(
     """
     items = _load_board_placements(board_id)
     new_mask = _time_mask(day, start_time, end_time)
+    ignored_overlap_term_sections = {
+        int(value) for value in (ignore_overlap_term_section_ids or set())
+    }
 
     # Get instructor for the section being placed
     meeting = TermSectionMeeting.objects.filter(term_section_id=term_section_id).first()
     new_instructor = meeting.instructor if meeting else ""
 
     ts = TermSection.objects.filter(id=term_section_id).first()
+    online_lookup = OnlineCourseLookup()
+    new_is_online = False
 
     # Build real overlap matrix for this board
 
     board_obj: DeliveryBoard | None = None
     try:
         board_obj = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
+        if ts:
+            new_is_online = online_lookup.is_online_course_for_board(board_obj, ts.course_code)
         board_courses = {item.course_key for item in items}
         if ts:
             board_courses.add(ts.course_key or ts.course_code)
@@ -491,23 +605,25 @@ def validate_placement(
 
             ts_key = (ts.course_key or ts.course_code) if ts else ""
             same_course = bool(ts and _same_course_code(item.course_key, ts_key))
-            shared = (
-                _ssc_val(_overlap_mat, ts_key, item.course_key)
-                if ts and not same_course
-                else (SAME_COURSE_SENTINEL if same_course else 0)
-            )
-
-            if same_course or shared > 0:
-                is_critical = same_course or shared >= HARD_OVERLAP_THRESHOLD
-                overlaps.append(
-                    {
-                        "id": item.id,
-                        "section": f"{item.course_code}-{item.section}",
-                        "detail": f"{item.day} {item.start_time}-{item.end_time}",
-                        "severity": "critical" if is_critical else "warning",
-                        "shared_students": shared if not same_course else None,
-                    }
+            ignore_student_overlap = item.term_section_id in ignored_overlap_term_sections
+            if not ignore_student_overlap:
+                shared = (
+                    _ssc_val(_overlap_mat, ts_key, item.course_key)
+                    if ts and not same_course
+                    else (SAME_COURSE_SENTINEL if same_course else 0)
                 )
+
+                if same_course or shared > 0:
+                    is_critical = same_course or shared >= HARD_OVERLAP_THRESHOLD
+                    overlaps.append(
+                        {
+                            "id": item.id,
+                            "section": f"{item.course_code}-{item.section}",
+                            "detail": f"{item.day} {item.start_time}-{item.end_time}",
+                            "severity": "critical" if is_critical else "warning",
+                            "shared_students": shared if not same_course else None,
+                        }
+                    )
 
             # Instructor clash
             if (
@@ -524,8 +640,8 @@ def validate_placement(
                 )
 
             # Room clash on the same board (exclude blank/UNASSIGNED).
-            room_key = _room_key(room)
-            if room_key and room_key == _room_key(item.room):
+            room_key = "" if new_is_online else _room_key(room)
+            if room_key and not item.is_online and room_key == _room_key(item.room):
                 room_clashes.append(
                     {
                         "id": item.id,
@@ -535,7 +651,7 @@ def validate_placement(
                     }
                 )
 
-    room_key = _room_key(room)
+    room_key = "" if new_is_online else _room_key(room)
     if board_obj and room_key:
         cross_board_placements = (
             SectionPlacement.objects.filter(board__scenario=board_obj.scenario)
@@ -548,6 +664,10 @@ def validate_placement(
             cross_board_placements = cross_board_placements.exclude(id=exclude_placement_id)
 
         for other in cross_board_placements:
+            if online_lookup.is_online_course_for_board(
+                other.board, other.term_section.course_code
+            ):
+                continue
             if room_key != _room_key(other.room):
                 continue
             other_mask = _time_mask(other.day, other.start_time, other.end_time)
@@ -606,7 +726,11 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
     course_key = placement.term_section.course_key or placement.term_section.course_code
     course_code = placement.term_section.course_code
     course_norm = normalize_code(course_key)
-    room_norm = _room_key(placement.room)
+    online_lookup = OnlineCourseLookup()
+    placement_is_online = online_lookup.is_online_course_for_board(
+        placement.board, placement.term_section.course_code
+    )
+    room_norm = "" if placement_is_online else _room_key(placement.room)
     duration = _to_minutes(placement.end_time) - _to_minutes(placement.start_time)
     is_lab = duration > 80
     slot_config = scenario.lab_slot_config if is_lab else scenario.slot_config
@@ -630,6 +754,11 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
     new_meeting = TermSectionMeeting.objects.filter(term_section=placement.term_section).first()
     new_instructor = (new_meeting.instructor if new_meeting else "").strip().upper()
     days = ["SUN", "MON", "TUE", "WED", "THU"]
+    base_day_counts = Counter(
+        _DAY_INDEX.get(str(other.day).upper(), 99)
+        for other in scenario_placements
+        if other.id != placement.id and _DAY_INDEX.get(str(other.day).upper(), 99) < len(days)
+    )
 
     def shared_students(other_code: str) -> set[int]:
         if normalize_code(other_code) == course_norm:
@@ -643,6 +772,33 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
             "title": title,
             "detail": detail,
             "student_count": count,
+        }
+
+    def slot_quality(day: str, start: str, end: str) -> dict:
+        day_index = _DAY_INDEX.get(str(day).upper(), 99)
+        counts = Counter(base_day_counts)
+        if day_index < len(days):
+            counts[day_index] += 1
+        components = {
+            "weak_slot": meeting_weak_slot_penalty(
+                day_index,
+                _to_minutes(start),
+                _to_minutes(end),
+            ),
+            "day_balance": day_balance_penalty(counts),
+            "spare_capacity": 0,
+            "section_balance": 0,
+            "room_change": 0,
+            "student_day_overload": 0,
+        }
+        return {
+            "policy": TIMETABLE_QUALITY_POLICY,
+            "penalty": sum(int(value or 0) for value in components.values()),
+            "components": components,
+            "day_load": {
+                DAY_LABEL_BY_INDEX[index]: int(counts.get(index, 0)) for index in range(len(days))
+            },
+            "reasons": quality_reason_rows(components),
         }
 
     def score_slot(day: str, start: str, end: str) -> dict:
@@ -706,7 +862,7 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
                 )
 
             item_room = _room_key(item.room)
-            if room_norm and room_norm == item_room:
+            if room_norm and not item.is_online and room_norm == item_room:
                 room_warning += 1
                 candidate_evidence.append(
                     evidence(
@@ -724,7 +880,13 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
             if not (candidate_mask & other_mask):
                 continue
 
-            if room_norm and room_norm == _room_key(other.room):
+            if (
+                room_norm
+                and not online_lookup.is_online_course_for_board(
+                    other.board, other.term_section.course_code
+                )
+                and room_norm == _room_key(other.room)
+            ):
                 room_warning += 1
                 candidate_evidence.append(
                     evidence(
@@ -760,7 +922,13 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
         critical = overlap_critical + instructor_critical + cross_critical
         warning = overlap_warning + room_warning + cross_warning
         impact_score = critical * 1000 + warning * 140 + len(affected_students) * 4
+        quality = slot_quality(day, start, end)
         tone = "avoid" if critical else ("risky" if warning or affected_students else "clean")
+        ranking_reasons = _slot_ranking_reasons(
+            evidence_rows=candidate_evidence,
+            quality=quality,
+            affected_students=len(affected_students),
+        )
 
         return {
             "tone": tone,
@@ -770,7 +938,11 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
             "cross_board_student_count": len(affected_cross_board),
             "student_affected_count": len(affected_students),
             "impact_score": impact_score,
+            "quality_score": int(quality["penalty"]),
+            "timetable_quality": quality,
             "evidence": candidate_evidence[:5],
+            "ranking_reasons": ranking_reasons,
+            "primary_reason": _slot_primary_reason(ranking_reasons),
         }
 
     current_impact = score_slot(placement.day, placement.start_time, placement.end_time)
@@ -788,6 +960,7 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
             impact = score_slot(day, start, end)
             score = (
                 impact["impact_score"]
+                + impact["quality_score"]
                 + (0 if day == placement.day else 12)
                 + round(abs(_to_minutes(start) - _to_minutes(placement.start_time)) / 10)
             )
@@ -848,9 +1021,627 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
             "end": placement.end_time,
         },
         "current_impact": current_impact,
-        "student_source": "scenario_student_maps",
+        "student_source": "scenario_course_requests",
         "hard_student_threshold": HARD_OVERLAP_THRESHOLD,
         "candidates": candidates,
+    }
+
+
+def preview_planned_section_slot_candidates(
+    board_id: int,
+    *,
+    course_code: str,
+    course_key: str | None = None,
+    section_label: str | None = None,
+    credit_hours: int | None = None,
+    max_per_section: int | None = None,
+    kind: str | None = None,
+    limit: int = 80,
+) -> dict:
+    """Return ranked target slots for creating a planned missing section.
+
+    This is the read-only companion to ``tw_placement_create_planned_view``.
+    It lets the UI guide the advisor before any row is created, using the
+    same student-overlap and timetable-quality signals as placement moves.
+    """
+    from core.services.timetable_autoplace import (
+        DEFAULT_LAB_SLOTS,
+        DEFAULT_SLOTS,
+        generate_meeting_options,
+        get_meeting_pattern,
+    )
+    from core.services.timetable_overlap import (
+        HARD_OVERLAP_THRESHOLD,
+        build_course_students_map,
+    )
+
+    board = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
+    scenario = board.scenario
+    code = str(course_code or "").strip().upper()
+    key = str(course_key or code).strip().upper()
+    section = str(section_label or "S1").strip().upper()
+    if not code:
+        raise ValueError("course_code is required")
+
+    budget = (
+        ScenarioSectionBudget.objects.filter(scenario=scenario, course_key=key).first()
+        or ScenarioSectionBudget.objects.filter(scenario=scenario, course_code=code).first()
+    )
+    effective_credit_hours = int(
+        credit_hours if credit_hours is not None else getattr(budget, "credit_hours", 0) or 0
+    )
+    required_meetings = infer_required_meeting_count(
+        scenario.id,
+        key,
+        fallback_credit_hours=effective_credit_hours,
+    )
+    requested_kind = normalise_course_code(kind or "")
+    include_lab = requested_kind in {"LAB", "LABS"}
+    include_lecture = requested_kind not in {"LAB", "LABS"}
+    slot_sets: list[tuple[str, list[dict]]] = []
+    if include_lecture:
+        slot_sets.append(("lect", scenario.slot_config or DEFAULT_SLOTS))
+    if include_lab or not requested_kind:
+        slot_sets.append(("lab", scenario.lab_slot_config or DEFAULT_LAB_SLOTS))
+
+    existing_section = (
+        TermSection.objects.filter(scenario=scenario, course_key=key, section=section)
+        .prefetch_related("meetings")
+        .first()
+    )
+    existing_meetings = list(existing_section.meetings.all()) if existing_section else []
+    new_instructor = (existing_meetings[0].instructor if existing_meetings else "").strip().upper()
+
+    board_items = _load_board_placements(board.id)
+    scenario_placements = list(
+        SectionPlacement.objects.filter(board__scenario=scenario)
+        .select_related("board", "term_section")
+        .prefetch_related("term_section__meetings")
+    )
+    all_courses = {key}
+    all_courses.update(item.course_key for item in board_items)
+    all_courses.update(
+        p.term_section.course_key or p.term_section.course_code for p in scenario_placements
+    )
+    course_students = build_course_students_map(scenario.id, all_courses)
+    planned_students = course_students.get(normalize_code(key), set())
+    days = ["SUN", "MON", "TUE", "WED", "THU"]
+    base_day_counts = Counter(
+        _DAY_INDEX.get(str(other.day).upper(), 99)
+        for other in scenario_placements
+        if _DAY_INDEX.get(str(other.day).upper(), 99) < len(days)
+    )
+
+    def shared_students(other_code: str) -> set[int]:
+        if normalize_code(other_code) == normalize_code(key):
+            return set()
+        return planned_students & course_students.get(normalize_code(other_code), set())
+
+    def evidence(kind_: str, tone: str, title: str, detail: str, count: int = 0) -> dict:
+        return {
+            "kind": kind_,
+            "tone": tone,
+            "title": title,
+            "detail": detail,
+            "student_count": count,
+        }
+
+    def slot_quality(day: str, start: str, end: str) -> dict:
+        day_index = _DAY_INDEX.get(str(day).upper(), 99)
+        counts = Counter(base_day_counts)
+        if day_index < len(days):
+            counts[day_index] += 1
+        components = {
+            "weak_slot": meeting_weak_slot_penalty(
+                day_index,
+                _to_minutes(start),
+                _to_minutes(end),
+            ),
+            "day_balance": day_balance_penalty(counts),
+            "spare_capacity": 0,
+            "section_balance": 0,
+            "room_change": 0,
+            "student_day_overload": 0,
+        }
+        return {
+            "policy": TIMETABLE_QUALITY_POLICY,
+            "penalty": sum(int(value or 0) for value in components.values()),
+            "components": components,
+            "day_load": {
+                DAY_LABEL_BY_INDEX[index]: int(counts.get(index, 0)) for index in range(len(days))
+            },
+            "reasons": quality_reason_rows(components),
+        }
+
+    def score_slot(slot_kind: str, day: str, start: str, end: str) -> dict:
+        candidate_mask = _time_mask(day, start, end)
+        affected_same_board: set[int] = set()
+        affected_cross_board: set[int] = set()
+        candidate_evidence: list[dict] = []
+        overlap_critical = 0
+        overlap_warning = 0
+        instructor_critical = 0
+        cross_critical = 0
+        cross_warning = 0
+
+        for item in board_items:
+            if not (candidate_mask & item.mask):
+                continue
+            if _same_course_code(item.course_key, key):
+                overlap_critical += 1
+                candidate_evidence.append(
+                    evidence(
+                        "same_course",
+                        "critical",
+                        f"Same course section {item.course_code}-{item.section}",
+                        f"{item.day} {item.start_time}-{item.end_time}",
+                    )
+                )
+            else:
+                shared = shared_students(item.course_key)
+                if shared:
+                    affected_same_board.update(shared)
+                    is_hard = len(shared) >= HARD_OVERLAP_THRESHOLD
+                    if is_hard:
+                        overlap_critical += 1
+                    else:
+                        overlap_warning += 1
+                    candidate_evidence.append(
+                        evidence(
+                            "students",
+                            "critical" if is_hard else "warning",
+                            f"{len(shared)} students also need {item.course_code}-{item.section}",
+                            f"Same-board overlap at {item.day} {item.start_time}-{item.end_time}",
+                            len(shared),
+                        )
+                    )
+
+            if (
+                new_instructor
+                and item.instructor
+                and new_instructor == item.instructor.strip().upper()
+            ):
+                instructor_critical += 1
+                candidate_evidence.append(
+                    evidence(
+                        "instructor",
+                        "critical",
+                        f"Instructor clash: {item.instructor}",
+                        f"{item.course_code}-{item.section} is at {item.day} {item.start_time}-{item.end_time}",
+                    )
+                )
+
+        for other in scenario_placements:
+            if other.board_id == board.id:
+                continue
+            other_mask = _time_mask(other.day, other.start_time, other.end_time)
+            if not (candidate_mask & other_mask):
+                continue
+            shared = shared_students(
+                other.term_section.course_key or other.term_section.course_code
+            )
+            if not shared:
+                continue
+            affected_cross_board.update(shared)
+            is_hard = len(shared) >= HARD_OVERLAP_THRESHOLD
+            if is_hard:
+                cross_critical += 1
+            else:
+                cross_warning += 1
+            candidate_evidence.append(
+                evidence(
+                    "cross_board_students",
+                    "critical" if is_hard else "warning",
+                    f"{len(shared)} students also need {other.term_section.course_code}-{other.term_section.section}",
+                    f"{other.board.label} at {other.day} {other.start_time}-{other.end_time}",
+                    len(shared),
+                )
+            )
+
+        affected_students = affected_same_board | affected_cross_board
+        critical = overlap_critical + instructor_critical + cross_critical
+        warning = overlap_warning + cross_warning
+        impact_score = critical * 1000 + warning * 140 + len(affected_students) * 4
+        quality = slot_quality(day, start, end)
+        kind_penalty = 0 if slot_kind == "lect" else 35
+        score = impact_score + int(quality["penalty"]) + kind_penalty
+        tone = "avoid" if critical else ("risky" if warning or affected_students else "clean")
+        ranking_reasons = _slot_ranking_reasons(
+            evidence_rows=candidate_evidence,
+            quality=quality,
+            affected_students=len(affected_students),
+        )
+        return {
+            "kind": slot_kind,
+            "day": day,
+            "start": start,
+            "end": end,
+            "score": score,
+            "tone": tone,
+            "critical_count": critical,
+            "warning_count": warning,
+            "same_board_student_count": len(affected_same_board),
+            "cross_board_student_count": len(affected_cross_board),
+            "student_affected_count": len(affected_students),
+            "impact_score": impact_score,
+            "quality_score": int(quality["penalty"]),
+            "timetable_quality": quality,
+            "evidence": candidate_evidence[:6],
+            "ranking_reasons": ranking_reasons,
+            "primary_reason": _slot_primary_reason(ranking_reasons),
+        }
+
+    def meeting_kind(start: str, end: str) -> str:
+        return "lab" if (_to_minutes(end) - _to_minutes(start)) > 75 else "lect"
+
+    def meeting_pattern_for_request() -> list[int]:
+        if effective_credit_hours:
+            pattern = list(get_meeting_pattern(effective_credit_hours))
+        elif required_meetings >= 3:
+            pattern = [75, 75, 100]
+        else:
+            pattern = [75] * max(1, required_meetings)
+        if len(pattern) < required_meetings:
+            pattern.extend([75] * (required_meetings - len(pattern)))
+        return pattern[:required_meetings]
+
+    def spacing_penalty(option: list[dict]) -> int:
+        indexes = sorted(_DAY_INDEX.get(str(row.get("day", "")).upper(), 99) for row in option)
+        penalty = 0
+        for first, second in zip(indexes, indexes[1:], strict=False):
+            if second - first == 1:
+                penalty += 25
+        return penalty
+
+    def score_pattern(option: list[dict], index: int) -> dict:
+        meetings: list[dict] = []
+        slot_scores: list[dict] = []
+        for row in option:
+            day = str(row.get("day", "")).upper()
+            start = str(row.get("start", ""))
+            end = str(row.get("end", ""))
+            kind_ = meeting_kind(start, end)
+            slot_score = score_slot(kind_, day, start, end)
+            slot_scores.append(slot_score)
+            meetings.append(
+                {
+                    "kind": kind_,
+                    "day": day,
+                    "start": start,
+                    "end": end,
+                    "slot_idx": int(row.get("slot_idx") or 0),
+                }
+            )
+
+        critical = sum(int(row.get("critical_count") or 0) for row in slot_scores)
+        warning = sum(int(row.get("warning_count") or 0) for row in slot_scores)
+        affected = sum(int(row.get("student_affected_count") or 0) for row in slot_scores)
+        slot_index_penalty = 25 * max(
+            0,
+            len({meeting["slot_idx"] for meeting in meetings}) - 1,
+        )
+        day_spacing_penalty = spacing_penalty(option)
+        quality_score = sum(int(row.get("quality_score") or 0) for row in slot_scores)
+        impact_score = sum(int(row.get("impact_score") or 0) for row in slot_scores)
+        pattern_penalty = slot_index_penalty + day_spacing_penalty
+        score = sum(int(row.get("score") or 0) for row in slot_scores) + pattern_penalty
+        tone = "avoid" if critical else ("risky" if warning or affected else "clean")
+
+        evidence_rows = [
+            evidence
+            for slot_score in slot_scores
+            for evidence in list(slot_score.get("evidence") or [])[:2]
+        ][:6]
+        ranking_reasons = [
+            reason
+            for slot_score in slot_scores
+            for reason in list(slot_score.get("ranking_reasons") or [])[:2]
+        ][:5]
+        if day_spacing_penalty:
+            ranking_reasons.append(
+                {
+                    "kind": "pattern_spacing",
+                    "tone": "note",
+                    "title": "Consecutive-day pattern",
+                    "detail": "The complete section uses adjacent teaching days.",
+                    "penalty": day_spacing_penalty,
+                }
+            )
+        if slot_index_penalty:
+            ranking_reasons.append(
+                {
+                    "kind": "pattern_consistency",
+                    "tone": "note",
+                    "title": "Mixed slot pattern",
+                    "detail": "The complete section cannot keep the same time index for all meetings.",
+                    "penalty": slot_index_penalty,
+                }
+            )
+        if not ranking_reasons:
+            ranking_reasons = [
+                {
+                    "kind": "clean",
+                    "tone": "good",
+                    "title": "Clean full pattern",
+                    "detail": "All required meetings fit without direct conflict or student pressure.",
+                }
+            ]
+
+        first = meetings[0]
+        return {
+            "candidate_id": f"pattern-{index}",
+            "kind": first["kind"],
+            "is_pattern": True,
+            "requires_full_section_pattern": True,
+            "required_meetings": required_meetings,
+            "day": first["day"],
+            "start": first["start"],
+            "end": first["end"],
+            "meetings": meetings,
+            "score": score,
+            "tone": tone,
+            "critical_count": critical,
+            "warning_count": warning,
+            "same_board_student_count": sum(
+                int(row.get("same_board_student_count") or 0) for row in slot_scores
+            ),
+            "cross_board_student_count": sum(
+                int(row.get("cross_board_student_count") or 0) for row in slot_scores
+            ),
+            "student_affected_count": affected,
+            "impact_score": impact_score,
+            "quality_score": quality_score + pattern_penalty,
+            "pattern_quality": {
+                "slot_consistency_penalty": slot_index_penalty,
+                "day_spacing_penalty": day_spacing_penalty,
+            },
+            "timetable_quality": {
+                "policy": TIMETABLE_QUALITY_POLICY,
+                "penalty": quality_score + pattern_penalty,
+                "components": {
+                    "meeting_quality": quality_score,
+                    "slot_consistency": slot_index_penalty,
+                    "day_spacing": day_spacing_penalty,
+                },
+                "reasons": [],
+            },
+            "evidence": evidence_rows,
+            "ranking_reasons": ranking_reasons[:7],
+            "primary_reason": _slot_primary_reason(ranking_reasons),
+        }
+
+    if required_meetings > 1:
+        pattern = meeting_pattern_for_request()
+        options = generate_meeting_options(
+            pattern,
+            scenario.slot_config or DEFAULT_SLOTS,
+            scenario.lab_slot_config or DEFAULT_LAB_SLOTS,
+        )
+        candidates = [score_pattern(option, idx) for idx, option in enumerate(options, start=1)]
+        candidates.sort(
+            key=lambda c: (
+                c["score"],
+                _DAY_INDEX.get(str(c["day"]).upper(), 99),
+                _to_minutes(str(c["start"])),
+            )
+        )
+        for idx, candidate in enumerate(candidates, start=1):
+            candidate["rank"] = idx
+            if idx == 1:
+                candidate["badge"] = (
+                    "Best pattern" if candidate["tone"] == "clean" else "Least bad pattern"
+                )
+            elif candidate["tone"] == "clean":
+                candidate["badge"] = "Clean pattern"
+            elif candidate["student_affected_count"]:
+                candidate["badge"] = f"{candidate['student_affected_count']} students"
+            elif candidate["tone"] == "risky":
+                candidate["badge"] = "Risky pattern"
+            else:
+                candidate["badge"] = "Avoid"
+
+        limited = candidates[: max(1, int(limit or 80))]
+        return {
+            "board": {
+                "id": board.id,
+                "label": board.label,
+                "nominal_term": board.nominal_term,
+            },
+            "request": {
+                "course_code": code,
+                "course_key": key,
+                "section_label": section,
+                "credit_hours": effective_credit_hours,
+                "max_per_section": int(
+                    max_per_section
+                    if max_per_section is not None
+                    else getattr(budget, "max_per_section", 0) or 0
+                ),
+                "required_meetings_per_section": required_meetings,
+                "requires_full_section_pattern": True,
+            },
+            "status": "ready",
+            "summary": {
+                "total": len(candidates),
+                "clean": sum(1 for c in candidates if c["tone"] == "clean"),
+                "risky": sum(1 for c in candidates if c["tone"] == "risky"),
+                "avoid": sum(1 for c in candidates if c["tone"] == "avoid"),
+            },
+            "candidates": limited,
+        }
+
+    candidates: list[dict] = []
+    for slot_kind, slots in slot_sets:
+        for day in days:
+            for slot in slots:
+                start = str(slot.get("start", ""))
+                end = str(slot.get("end", ""))
+                if not start or not end:
+                    continue
+                candidates.append(score_slot(slot_kind, day, start, end))
+
+    candidates.sort(
+        key=lambda c: (
+            c["score"],
+            days.index(str(c["day"])),
+            _to_minutes(str(c["start"])),
+            0 if c["kind"] == "lect" else 1,
+        )
+    )
+    for idx, candidate in enumerate(candidates, start=1):
+        candidate["rank"] = idx
+        if idx == 1:
+            candidate["badge"] = "Best" if candidate["tone"] == "clean" else "Least bad"
+        elif candidate["student_affected_count"]:
+            candidate["badge"] = f"{candidate['student_affected_count']} students"
+        elif candidate["tone"] == "clean":
+            candidate["badge"] = "Clean"
+        elif candidate["tone"] == "risky":
+            candidate["badge"] = "Risky"
+        else:
+            candidate["badge"] = "Avoid"
+
+    limited = candidates[: max(1, int(limit or 80))]
+    return {
+        "board": {
+            "id": board.id,
+            "label": board.label,
+            "nominal_term": board.nominal_term,
+        },
+        "request": {
+            "course_code": code,
+            "course_key": key,
+            "section_label": section,
+            "credit_hours": effective_credit_hours,
+            "max_per_section": int(
+                max_per_section
+                if max_per_section is not None
+                else getattr(budget, "max_per_section", 0) or 0
+            ),
+            "required_meetings_per_section": required_meetings,
+            "requires_full_section_pattern": False,
+        },
+        "status": "ready",
+        "summary": {
+            "total": len(candidates),
+            "clean": sum(1 for c in candidates if c["tone"] == "clean"),
+            "risky": sum(1 for c in candidates if c["tone"] == "risky"),
+            "avoid": sum(1 for c in candidates if c["tone"] == "avoid"),
+        },
+        "candidates": limited,
+    }
+
+
+def _normalise_planned_meeting_rows(rows: list[dict]) -> list[dict[str, str]]:
+    meetings: list[dict[str, str]] = []
+    for row in rows:
+        day = str(row.get("day", "")).strip().upper()
+        start = str(row.get("start_time") or row.get("start") or "").strip()
+        end = str(row.get("end_time") or row.get("end") or "").strip()
+        room = str(row.get("room") or "").strip()
+        if not day or not start or not end:
+            raise ValueError("Each planned meeting needs day, start_time, and end_time.")
+        if _time_mask(day, start, end) == 0:
+            raise ValueError(f"Invalid planned meeting time: {day} {start}-{end}.")
+        meetings.append({"day": day, "start_time": start, "end_time": end, "room": room})
+    if not meetings:
+        raise ValueError("At least one planned meeting is required.")
+    if len({row["day"] for row in meetings}) != len(meetings):
+        raise ValueError("A complete planned section pattern must use one meeting per day.")
+    if len({(row["day"], row["start_time"]) for row in meetings}) != len(meetings):
+        raise ValueError("Duplicate planned section meeting target.")
+    return meetings
+
+
+def create_planned_section_placements(
+    board_id: int,
+    *,
+    course_code: str,
+    course_key: str | None,
+    course_name: str | None,
+    section_label: str,
+    capacity: int,
+    meetings: list[dict],
+) -> dict:
+    """Create a planned section and all required placement rows atomically."""
+
+    board = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
+    if board.scenario.status == "published":
+        raise ValueError("Cannot modify published scenario.")
+
+    code = str(course_code or "").strip().upper()
+    key = str(course_key or code).strip().upper()
+    section = str(section_label or "").strip().upper()
+    name = str(course_name or code).strip()
+    if not code or not key or not section:
+        raise ValueError("course_code, course_key, and section_label are required.")
+
+    budget = (
+        ScenarioSectionBudget.objects.filter(scenario=board.scenario, course_key=key).first()
+        or ScenarioSectionBudget.objects.filter(scenario=board.scenario, course_code=code).first()
+    )
+    required_meetings = infer_required_meeting_count(
+        board.scenario_id,
+        key,
+        fallback_credit_hours=getattr(budget, "credit_hours", 0) if budget else None,
+    )
+    meeting_rows = _normalise_planned_meeting_rows(meetings)
+    if required_meetings > 1 and len(meeting_rows) != required_meetings:
+        raise ValueError(f"{code} needs a complete {required_meetings}-meeting section pattern.")
+    if required_meetings <= 1 and len(meeting_rows) != 1:
+        raise ValueError(f"{code} only needs one planned meeting target.")
+
+    with transaction.atomic():
+        term_section, _created = TermSection.objects.get_or_create(
+            scenario=board.scenario,
+            course_key=key,
+            section=section,
+            defaults={
+                "course_code": code,
+                "course_number": code,
+                "course_name": name,
+                "available_capacity": capacity,
+                "source_tag": "tw_planned",
+            },
+        )
+        placements: list[SectionPlacement] = []
+        validations = []
+        for row in meeting_rows:
+            TermSectionMeeting.objects.get_or_create(
+                term_section=term_section,
+                day=row["day"],
+                start_time=row["start_time"],
+                end_time=row["end_time"],
+                room=row["room"],
+                instructor="",
+            )
+            validations.append(
+                validate_placement(
+                    board_id=board.id,
+                    day=row["day"],
+                    start_time=row["start_time"],
+                    end_time=row["end_time"],
+                    room=row["room"],
+                    term_section_id=term_section.id,
+                )
+            )
+            placements.append(
+                SectionPlacement.objects.create(
+                    board=board,
+                    term_section=term_section,
+                    day=row["day"],
+                    start_time=row["start_time"],
+                    end_time=row["end_time"],
+                    room=row["room"],
+                )
+            )
+
+    return {
+        "board": board,
+        "term_section": term_section,
+        "placements": placements,
+        "validations": validations,
+        "required_meetings": required_meetings,
     }
 
 
@@ -865,16 +1656,6 @@ def _time_overlap(
 def _section_gender(section: object | None) -> str:
     first = str(section or "").strip()[:1].upper()
     return first if first in {"M", "F"} else ""
-
-
-def _room_type_for_slot(start_time: str, end_time: str) -> str:
-    from core.services.timetable_lab_predicate import meeting_requires_lab_room
-
-    try:
-        duration = _to_minutes(end_time) - _to_minutes(start_time)
-    except (TypeError, ValueError):
-        duration = 0
-    return "lab" if meeting_requires_lab_room(duration) else "lecture"
 
 
 def _room_department_fits(room: Room, board: DeliveryBoard) -> bool:
@@ -893,9 +1674,10 @@ def preview_placement_room_candidates(
     day: str | None = None,
     start_time: str | None = None,
     end_time: str | None = None,
+    ignore_overlap_term_section_ids: set[int] | None = None,
 ) -> dict:
     """Return room candidates for assigning a placement at a target slot."""
-    from core.services.timetable_rooming import get_board_gender
+    from core.services.timetable_rooming import get_board_gender, room_type_for_placement
 
     placement = SectionPlacement.objects.select_related("board__scenario", "term_section").get(
         id=placement_id
@@ -905,10 +1687,45 @@ def preview_placement_room_candidates(
     target_end = str(end_time or placement.end_time).strip()
     term_section = placement.term_section
     board = placement.board
+    online_lookup = OnlineCourseLookup()
+    is_online = online_lookup.is_online_course_for_board(board, term_section.course_code)
+    if is_online:
+        return {
+            "placement": {
+                "id": placement.id,
+                "course_code": term_section.course_code,
+                "section": term_section.section,
+                "board_id": board.id,
+                "board_label": board.label,
+                "current_room": placement.room,
+                "is_online": True,
+            },
+            "target": {
+                "day": target_day,
+                "start": target_start,
+                "end": target_end,
+                "required_capacity": 0,
+                "required_type": "online",
+                "required_gender": "",
+                "is_online": True,
+            },
+            "candidates": [],
+            "summary": {
+                "total": 0,
+                "available": 0,
+                "clean": 0,
+                "blocked": 0,
+                "is_online": True,
+            },
+        }
     required_capacity = int(
         term_section.registered_count or term_section.available_capacity or board.target_size or 0
     )
-    required_type = _room_type_for_slot(target_start, target_end)
+    required_type = room_type_for_placement(
+        placement,
+        start_time=target_start,
+        end_time=target_end,
+    )
     required_gender = _section_gender(term_section.section) or get_board_gender(board.id)
 
     target_mask = _time_mask(target_day, target_start, target_end)
@@ -921,6 +1738,8 @@ def preview_placement_room_candidates(
         .select_related("board", "term_section")
     )
     for other in occupiers:
+        if online_lookup.is_online_course_for_board(other.board, other.term_section.course_code):
+            continue
         other_mask = _time_mask(other.day, other.start_time, other.end_time)
         if not (target_mask & other_mask):
             continue
@@ -948,7 +1767,7 @@ def preview_placement_room_candidates(
         occupied = occupied_by_room.get(_room_key(room_code), [])
         fits_type = room_type == required_type
         fits_gender = not required_gender or room_gender in {"", required_gender}
-        fits_capacity = required_type == "lab" or room_capacity >= required_capacity
+        fits_capacity = room_capacity >= required_capacity
         department_fit = _room_department_fits(room, board)
 
         validation = validate_placement(
@@ -959,6 +1778,7 @@ def preview_placement_room_candidates(
             room=room_code,
             term_section_id=term_section.id,
             exclude_placement_id=placement.id,
+            ignore_overlap_term_section_ids=ignore_overlap_term_section_ids,
         )
 
         reasons = []
@@ -976,15 +1796,14 @@ def preview_placement_room_candidates(
             reasons.append(f"{validation['critical_count']} time/instructor issue(s)")
 
         resource_available = fits_type and fits_gender and fits_capacity and not occupied
-        slot_clean = resource_available and validation.get("critical_count", 0) == 0
-        tone = (
-            "clean"
-            if slot_clean and validation.get("warning_count", 0) == 0
-            else ("warn" if resource_available else "block")
+        schedule_clean = (
+            resource_available
+            and validation.get("critical_count", 0) == 0
+            and validation.get("warning_count", 0) == 0
         )
-        capacity_slack = (
-            room_capacity - required_capacity if required_type != "lab" else room_capacity
-        )
+        policy_clean = schedule_clean and department_fit
+        tone = "clean" if policy_clean else ("warn" if resource_available else "block")
+        capacity_slack = room_capacity - required_capacity
         score = (
             (0 if resource_available else 100000)
             + (0 if validation.get("critical_count", 0) == 0 else 20000)
@@ -1004,10 +1823,13 @@ def preview_placement_room_candidates(
                 "capacity": room_capacity,
                 "section": room_gender,
                 "available": resource_available,
-                "slot_clean": slot_clean,
+                "slot_clean": policy_clean,
                 "tone": tone,
                 "score": score,
                 "capacity_slack": capacity_slack,
+                "resource_available": resource_available,
+                "schedule_clean": schedule_clean,
+                "policy_clean": policy_clean,
                 "fits_type": fits_type,
                 "fits_gender": fits_gender,
                 "fits_capacity": fits_capacity,
@@ -1038,6 +1860,7 @@ def preview_placement_room_candidates(
             "board_id": board.id,
             "board_label": board.label,
             "current_room": placement.room,
+            "is_online": False,
         },
         "target": {
             "day": target_day,
@@ -1046,6 +1869,7 @@ def preview_placement_room_candidates(
             "required_capacity": required_capacity,
             "required_type": required_type,
             "required_gender": required_gender,
+            "is_online": False,
         },
         "candidates": candidates[:60],
         "summary": {
@@ -1053,7 +1877,222 @@ def preview_placement_room_candidates(
             "available": sum(1 for c in candidates if c["available"]),
             "clean": sum(1 for c in candidates if c["slot_clean"]),
             "blocked": sum(1 for c in candidates if not c["available"]),
+            "is_online": False,
         },
+    }
+
+
+def _room_reservation_key(room_code: str, day: str, start: str, end: str) -> str:
+    return "|".join(
+        [
+            _room_key(room_code),
+            str(day or "").strip().upper(),
+            str(start or "").strip(),
+            str(end or "").strip(),
+        ]
+    )
+
+
+def _candidate_is_clean_room(room: dict) -> bool:
+    return (
+        bool(room.get("available"))
+        and bool(room.get("slot_clean"))
+        and (room.get("schedule_clean", True) is not False)
+        and (room.get("policy_clean", True) is not False)
+    )
+
+
+def _best_clean_room_candidate(
+    preview: dict,
+    *,
+    current_room: str,
+    reserved: set[str],
+) -> dict | None:
+    current = _room_key(current_room)
+    target = preview.get("target") or {}
+    for room in preview.get("candidates") or []:
+        room_code = _room_key(room.get("room_code"))
+        if not room_code or room_code == current:
+            continue
+        if not _candidate_is_clean_room(room):
+            continue
+        reservation = _room_reservation_key(
+            room_code,
+            str(target.get("day") or ""),
+            str(target.get("start") or ""),
+            str(target.get("end") or ""),
+        )
+        if reservation in reserved:
+            continue
+        return room
+    return None
+
+
+def preview_bulk_clean_room_assignments(scenario_id: int, *, limit: int = 20) -> dict:
+    """Return clean room assignments that can be safely applied in one batch."""
+
+    scenario = TimetableScenario.objects.get(id=scenario_id)
+    placements = (
+        SectionPlacement.objects.filter(board__scenario=scenario)
+        .select_related("board", "term_section")
+        .order_by("board__display_order", "board__label", "day", "start_time", "id")
+    )
+    reserved: set[str] = set()
+    assignments: list[dict] = []
+    skipped: list[dict] = []
+    total_unassigned = 0
+    max_items = max(1, min(100, int(limit or 20)))
+
+    for placement in placements:
+        current_room = _room_key(placement.room)
+        if current_room and current_room != "UNASSIGNED":
+            continue
+        total_unassigned += 1
+        if placement.is_locked:
+            skipped.append(
+                {
+                    "placement_id": placement.id,
+                    "reason": "locked",
+                    "label": f"{placement.term_section.course_code}-{placement.term_section.section}",
+                }
+            )
+            continue
+        if len(assignments) >= max_items:
+            continue
+
+        preview = preview_placement_room_candidates(placement.id)
+        if (preview.get("target") or {}).get("is_online"):
+            skipped.append(
+                {
+                    "placement_id": placement.id,
+                    "reason": "online",
+                    "label": f"{placement.term_section.course_code}-{placement.term_section.section}",
+                }
+            )
+            continue
+        room = _best_clean_room_candidate(
+            preview,
+            current_room=placement.room,
+            reserved=reserved,
+        )
+        if not room:
+            skipped.append(
+                {
+                    "placement_id": placement.id,
+                    "reason": "no_clean_room",
+                    "label": f"{placement.term_section.course_code}-{placement.term_section.section}",
+                    "summary": preview.get("summary") or {},
+                }
+            )
+            continue
+
+        target = preview.get("target") or {}
+        reservation = _room_reservation_key(
+            str(room.get("room_code") or ""),
+            str(target.get("day") or placement.day),
+            str(target.get("start") or placement.start_time),
+            str(target.get("end") or placement.end_time),
+        )
+        reserved.add(reservation)
+        assignments.append(
+            {
+                "placement_id": placement.id,
+                "board_id": placement.board_id,
+                "board_label": placement.board.label,
+                "course_code": placement.term_section.course_code,
+                "section": placement.term_section.section,
+                "label": f"{placement.term_section.course_code}-{placement.term_section.section}",
+                "day": str(target.get("day") or placement.day),
+                "start": str(target.get("start") or placement.start_time),
+                "end": str(target.get("end") or placement.end_time),
+                "slot": {
+                    "day": str(target.get("day") or placement.day),
+                    "start": str(target.get("start") or placement.start_time),
+                    "end": str(target.get("end") or placement.end_time),
+                },
+                "old_room": placement.room or "",
+                "room": room,
+                "new_room": str(room.get("room_code") or ""),
+                "required_capacity": int(target.get("required_capacity") or 0),
+                "required_type": str(target.get("required_type") or ""),
+                "capacity_slack": int(room.get("capacity_slack") or 0),
+            }
+        )
+
+    return {
+        "scenario_id": scenario.id,
+        "limit": max_items,
+        "total_unassigned": total_unassigned,
+        "ready_count": len(assignments),
+        "skipped_count": len(skipped),
+        "assignments": assignments,
+        "skipped": skipped[:40],
+        "truncated": len(assignments) >= max_items and total_unassigned > len(assignments),
+    }
+
+
+def apply_bulk_clean_room_assignments(scenario_id: int, *, limit: int = 20) -> dict:
+    """Apply the clean room batch after re-validating each assignment."""
+
+    scenario = TimetableScenario.objects.get(id=scenario_id)
+    if scenario.status == "published":
+        raise ValueError("Cannot modify published scenario")
+
+    with transaction.atomic():
+        preview = preview_bulk_clean_room_assignments(scenario_id, limit=limit)
+        placement_ids = [int(item["placement_id"]) for item in preview["assignments"]]
+        locked = {
+            placement.id: placement
+            for placement in SectionPlacement.objects.select_for_update()
+            .filter(id__in=placement_ids, board__scenario=scenario)
+            .select_related("board", "term_section")
+        }
+        applied: list[dict] = []
+        skipped: list[dict] = list(preview.get("skipped") or [])
+        for item in preview["assignments"]:
+            placement = locked.get(int(item["placement_id"]))
+            if not placement:
+                skipped.append({**item, "reason": "missing_after_preview"})
+                continue
+            if placement.is_locked:
+                skipped.append({**item, "reason": "locked_after_preview"})
+                continue
+
+            current_room = _room_key(placement.room)
+            if current_room and current_room != "UNASSIGNED":
+                skipped.append({**item, "reason": "already_assigned_after_preview"})
+                continue
+
+            recheck = preview_placement_room_candidates(placement.id)
+            room = _best_clean_room_candidate(recheck, current_room=placement.room, reserved=set())
+            if not room or _room_key(room.get("room_code")) != _room_key(item["new_room"]):
+                skipped.append({**item, "reason": "room_no_longer_clean"})
+                continue
+
+            old_room = placement.room or ""
+            placement.room = str(item["new_room"] or "")
+            placement.save(update_fields=["room", "updated_at"])
+            applied.append(
+                {
+                    **item,
+                    "old_day": placement.day,
+                    "old_start": placement.start_time,
+                    "old_end": placement.end_time,
+                    "old_room": old_room,
+                    "new_day": placement.day,
+                    "new_start": placement.start_time,
+                    "new_end": placement.end_time,
+                    "new_room": placement.room,
+                }
+            )
+
+    return {
+        "scenario_id": scenario.id,
+        "requested_count": len(preview.get("assignments") or []),
+        "applied_count": len(applied),
+        "skipped_count": len(skipped),
+        "applied": applied,
+        "skipped": skipped[:60],
     }
 
 
@@ -1109,8 +2148,8 @@ def preview_placement_student_evidence(placement_id: int, *, limit: int = 40) ->
     course_students = build_course_students_map(scenario.id, all_courses)
     moving_students = course_students.get(course_norm, set())
     primary_terms = {
-        sm.student_id: sm.primary_term
-        for sm in ScenarioStudentMap.objects.filter(scenario=scenario)
+        demand.student_id: demand.primary_term
+        for demand in load_scenario_course_demands(scenario.id)
     }
 
     conflicts: list[dict] = []
@@ -1167,7 +2206,7 @@ def preview_placement_student_evidence(placement_id: int, *, limit: int = 40) ->
             "board_label": placement.board.label,
             "time": f"{placement.day} {placement.start_time}-{placement.end_time}",
         },
-        "source": "scenario_student_maps",
+        "source": "scenario_course_requests",
         "affected_student_count": len(affected_total),
         "students": _student_rows(affected_total, primary_terms, limit),
         "conflicts": conflicts,
@@ -1178,6 +2217,7 @@ def build_scenario_builder_actions(scenario_id: int, *, limit: int = 18) -> dict
     """Rank the next practical actions a timetable builder should take."""
     readiness = check_publish_readiness(scenario_id)
     actions: list[dict] = []
+    online_lookup = OnlineCourseLookup()
 
     def add(
         kind: str,
@@ -1190,22 +2230,28 @@ def build_scenario_builder_actions(scenario_id: int, *, limit: int = 18) -> dict
         board_label: str = "",
         placement_ids: list[int] | None = None,
         course_code: str = "",
+        course_key: str = "",
+        programme_term: int | None = None,
         cta: str = "",
+        extra: dict | None = None,
     ) -> None:
-        actions.append(
-            {
-                "kind": kind,
-                "severity": severity,
-                "title": title,
-                "detail": detail,
-                "score": score,
-                "board_id": board_id,
-                "board_label": board_label,
-                "placement_ids": placement_ids or [],
-                "course_code": course_code,
-                "cta": cta,
-            }
-        )
+        action = {
+            "kind": kind,
+            "severity": severity,
+            "title": title,
+            "detail": detail,
+            "score": score,
+            "board_id": board_id,
+            "board_label": board_label,
+            "placement_ids": placement_ids or [],
+            "course_code": course_code,
+            "course_key": course_key,
+            "programme_term": programme_term,
+            "cta": cta,
+        }
+        if extra:
+            action.update(extra)
+        actions.append(action)
 
     for blocker in readiness.get("blockers", []):
         add(
@@ -1231,7 +2277,7 @@ def build_scenario_builder_actions(scenario_id: int, *, limit: int = 18) -> dict
                 board_id=board.id,
                 board_label=board.label,
                 placement_ids=ids,
-                cta="Preview safe slots",
+                cta="Preview candidate slots",
             )
         for clash in conflicts.get("instructor_clashes", []):
             ids = [int(x) for x in clash.get("ids", []) if x]
@@ -1259,10 +2305,16 @@ def build_scenario_builder_actions(scenario_id: int, *, limit: int = 18) -> dict
                 placement_ids=ids,
                 cta="Open room mode",
             )
+        unroomed_qs = SectionPlacement.objects.filter(
+            board=board,
+            room="UNASSIGNED",
+        ).select_related("term_section")
         unroomed = list(
-            SectionPlacement.objects.filter(board=board, room="UNASSIGNED")
-            .select_related("term_section")
-            .order_by("day", "start_time")[:5]
+            exclude_online_courses_for_board(
+                unroomed_qs,
+                board,
+                lookup=online_lookup,
+            ).order_by("day", "start_time")[:5]
         )
         for placement in unroomed:
             add(
@@ -1284,12 +2336,22 @@ def build_scenario_builder_actions(scenario_id: int, *, limit: int = 18) -> dict
             continue
         add(
             "missing_section",
-            "warn",
+            "block" if item.get("requires_full_section_pattern") else "warn",
             f"Place {remaining} more section(s) of {item['course_code']}",
             f"Demand {item.get('total_demand', 0)}; planned {item.get('planned_sections', 0)}; used {item.get('used_sections', 0)}",
             score=52000 + remaining * 1000,
             course_code=str(item["course_code"]),
-            cta="Drag from required sections",
+            course_key=str(item.get("course_key") or item["course_code"]),
+            programme_term=item.get("programme_term"),
+            cta=(
+                "Full-section wizard required"
+                if item.get("requires_full_section_pattern")
+                else "Click required section"
+            ),
+            extra={
+                "required_meetings_per_section": item.get("required_meetings_per_section", 1),
+                "requires_full_section_pattern": bool(item.get("requires_full_section_pattern")),
+            },
         )
 
     actions.sort(
@@ -1310,6 +2372,250 @@ def build_scenario_builder_actions(scenario_id: int, *, limit: int = 18) -> dict
     }
 
 
+def _bulk_time_move_target_key(board_id: int, day: str, start: str) -> str:
+    return "|".join([str(board_id), str(day or "").upper(), str(start or "")])
+
+
+def _is_bulk_safe_time_candidate(candidate: dict) -> bool:
+    """Conservative bulk-safe subset of slot candidates.
+
+    Single manual moves may still choose risky-but-useful options. Bulk auto
+    moves are stricter: no hard/warning preview issues and a measurable local
+    improvement.
+    """
+
+    if not candidate:
+        return False
+    if candidate.get("pair"):
+        return False
+    if str(candidate.get("tone") or "").lower() != "clean":
+        return False
+    if int(candidate.get("critical_count") or candidate.get("critical") or 0) > 0:
+        return False
+    if int(candidate.get("warning_count") or candidate.get("warning") or 0) > 0:
+        return False
+    return any(
+        int(candidate.get(key) or 0) > 0
+        for key in (
+            "impact_improvement",
+            "student_improvement",
+            "critical_improvement",
+            "warning_improvement",
+        )
+    )
+
+
+def preview_bulk_safe_time_moves(
+    scenario_id: int,
+    *,
+    board_id: int | None = None,
+    limit: int = 3,
+) -> dict:
+    """Return clean time moves that can be applied as a small server-side batch."""
+
+    scenario = TimetableScenario.objects.get(id=scenario_id)
+    max_items = max(1, min(12, int(limit or 3)))
+    actions = build_scenario_builder_actions(scenario_id, limit=120).get("actions") or []
+    candidate_placement_ids: list[int] = []
+    seen: set[int] = set()
+    for action in actions:
+        if action.get("kind") not in {"student_time_clash", "instructor_clash"}:
+            continue
+        if board_id is not None and int(action.get("board_id") or 0) != int(board_id):
+            continue
+        for raw_id in action.get("placement_ids") or []:
+            placement_id = int(raw_id)
+            if placement_id in seen:
+                continue
+            seen.add(placement_id)
+            candidate_placement_ids.append(placement_id)
+
+    placements = {
+        placement.id: placement
+        for placement in SectionPlacement.objects.filter(
+            id__in=candidate_placement_ids,
+            board__scenario=scenario,
+        ).select_related("board", "term_section")
+    }
+    reserved_targets: set[str] = set()
+    moves: list[dict] = []
+    skipped: list[dict] = []
+    for placement_id in candidate_placement_ids:
+        if len(moves) >= max_items:
+            break
+        placement = placements.get(placement_id)
+        if not placement:
+            continue
+        label = f"{placement.term_section.course_code}-{placement.term_section.section}"
+        if placement.is_locked:
+            skipped.append({"placement_id": placement_id, "label": label, "reason": "locked"})
+            continue
+        preview = preview_placement_slot_candidates(placement.id)
+        selected = None
+        for candidate in preview.get("candidates") or []:
+            if not _is_bulk_safe_time_candidate(candidate):
+                continue
+            target_key = _bulk_time_move_target_key(
+                placement.board_id,
+                str(candidate.get("day") or ""),
+                str(candidate.get("start") or ""),
+            )
+            if target_key in reserved_targets:
+                continue
+            occupied = (
+                SectionPlacement.objects.filter(
+                    board=placement.board,
+                    day=str(candidate.get("day") or ""),
+                    start_time=str(candidate.get("start") or ""),
+                )
+                .exclude(id=placement.id)
+                .exists()
+            )
+            if occupied:
+                continue
+            selected = candidate
+            reserved_targets.add(target_key)
+            break
+        if not selected:
+            skipped.append(
+                {"placement_id": placement_id, "label": label, "reason": "no_clean_improving_slot"}
+            )
+            continue
+        moves.append(
+            {
+                "placement_id": placement.id,
+                "board_id": placement.board_id,
+                "board_label": placement.board.label,
+                "label": label,
+                "course_code": placement.term_section.course_code,
+                "section": placement.term_section.section,
+                "old_day": placement.day,
+                "old_start": placement.start_time,
+                "old_end": placement.end_time,
+                "old_room": placement.room or "",
+                "new_day": str(selected.get("day") or ""),
+                "new_start": str(selected.get("start") or ""),
+                "new_end": str(selected.get("end") or ""),
+                "new_room": placement.room or "",
+                "candidate": selected,
+                "primary_reason": selected.get("primary_reason") or "",
+            }
+        )
+
+    return {
+        "scenario_id": scenario.id,
+        "board_id": board_id,
+        "limit": max_items,
+        "ready_count": len(moves),
+        "skipped_count": len(skipped),
+        "moves": moves,
+        "skipped": skipped[:60],
+    }
+
+
+def apply_bulk_safe_time_moves(
+    scenario_id: int,
+    *,
+    board_id: int | None = None,
+    limit: int = 3,
+) -> dict:
+    """Apply conservative clean time moves after re-validating inside a transaction."""
+
+    scenario = TimetableScenario.objects.get(id=scenario_id)
+    if scenario.status == "published":
+        raise ValueError("Cannot modify published scenario")
+
+    with transaction.atomic():
+        preview = preview_bulk_safe_time_moves(scenario_id, board_id=board_id, limit=limit)
+        requested = list(preview.get("moves") or [])
+        placement_ids = [int(item["placement_id"]) for item in requested]
+        locked = {
+            placement.id: placement
+            for placement in SectionPlacement.objects.select_for_update()
+            .filter(id__in=placement_ids, board__scenario=scenario)
+            .select_related("board", "term_section")
+        }
+        applied: list[dict] = []
+        skipped: list[dict] = list(preview.get("skipped") or [])
+        for item in requested:
+            placement = locked.get(int(item["placement_id"]))
+            if not placement:
+                skipped.append({**item, "reason": "missing_after_preview"})
+                continue
+            if placement.is_locked:
+                skipped.append({**item, "reason": "locked_after_preview"})
+                continue
+
+            fresh_preview = preview_placement_slot_candidates(placement.id)
+            fresh = next(
+                (
+                    row
+                    for row in fresh_preview.get("candidates") or []
+                    if str(row.get("day")) == str(item["new_day"])
+                    and str(row.get("start")) == str(item["new_start"])
+                    and str(row.get("end")) == str(item["new_end"])
+                ),
+                None,
+            )
+            if not fresh or not _is_bulk_safe_time_candidate(fresh):
+                skipped.append({**item, "reason": "candidate_no_longer_clean"})
+                continue
+            occupied = (
+                SectionPlacement.objects.filter(
+                    board=placement.board,
+                    day=str(item["new_day"]),
+                    start_time=str(item["new_start"]),
+                )
+                .exclude(id=placement.id)
+                .exists()
+            )
+            if occupied:
+                skipped.append({**item, "reason": "target_no_longer_empty"})
+                continue
+            validation = validate_placement(
+                board_id=placement.board_id,
+                day=str(item["new_day"]),
+                start_time=str(item["new_start"]),
+                end_time=str(item["new_end"]),
+                room=placement.room or "",
+                term_section_id=placement.term_section_id,
+                exclude_placement_id=placement.id,
+            )
+            if validation.get("critical_count", 0) or validation.get("warning_count", 0):
+                skipped.append({**item, "reason": "validation_no_longer_clean"})
+                continue
+
+            old_day, old_start, old_end = placement.day, placement.start_time, placement.end_time
+            old_room = placement.room or ""
+            placement.day = str(item["new_day"])
+            placement.start_time = str(item["new_start"])
+            placement.end_time = str(item["new_end"])
+            placement.save(update_fields=["day", "start_time", "end_time", "updated_at"])
+            applied.append(
+                {
+                    **item,
+                    "old_day": old_day,
+                    "old_start": old_start,
+                    "old_end": old_end,
+                    "old_room": old_room,
+                    "new_day": placement.day,
+                    "new_start": placement.start_time,
+                    "new_end": placement.end_time,
+                    "new_room": placement.room or "",
+                }
+            )
+
+    return {
+        "scenario_id": scenario.id,
+        "board_id": board_id,
+        "requested_count": len(requested),
+        "applied_count": len(applied),
+        "skipped_count": len(skipped),
+        "applied": applied,
+        "skipped": skipped[:80],
+    }
+
+
 def compute_affected_students(board_id: int) -> dict:
     """Assess student impact of time-overlapping placements on a board.
 
@@ -1317,7 +2623,7 @@ def compute_affected_students(board_id: int) -> dict:
     :func:`detect_board_conflicts`):
 
     1. Extract the two course codes from the ``"CS101-A"`` labels.
-    2. Use ``ScenarioStudentMap.recommended_courses`` to find students
+    2. Use canonical scenario course requests to find students
        who need *both* courses -- these are the "affected" students.
     3. Search for **alternative sections** of either course that do not
        overlap with the *other* placement's time slot.  If at least one
@@ -1364,7 +2670,7 @@ def compute_affected_students(board_id: int) -> dict:
     all_placements = _load_board_placements(board_id)
     from core.models import TermSectionMeeting as TSM
 
-    # ── Precompute course→students map from ScenarioStudentMap (not StudentCourse) ──
+    # Precompute course->students map from canonical scenario demand.
     from core.services.timetable_overlap import build_course_students_map
 
     overlap_courses: set[str] = set()
@@ -1532,7 +2838,12 @@ def compute_board_summary(board_id: int) -> dict:
     }
 
 
-def get_scenario_boards_summary(scenario_id: int) -> list[dict]:
+def get_scenario_boards_summary(
+    scenario_id: int,
+    *,
+    boards: list[DeliveryBoard] | None = None,
+    conflicts_by_board: dict[int, dict] | None = None,
+) -> list[dict]:
     """Return a summary row for every board in a scenario.
 
     Each row includes placement count, primary/visitor student counts,
@@ -1545,11 +2856,15 @@ def get_scenario_boards_summary(scenario_id: int) -> list[dict]:
     Returns:
         List of dicts ordered by ``DeliveryBoard.display_order``.
     """
-    boards = DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order")
+    if boards is None:
+        boards = list(
+            DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order")
+        )
+    conflicts_by_board = conflicts_by_board or {}
     result = []
     for b in boards:
         placed = SectionPlacement.objects.filter(board=b).count()
-        conflicts = detect_board_conflicts(b.id)
+        conflicts = conflicts_by_board.get(b.id) or detect_board_conflicts(b.id)
         primary_count = BoardStudentLink.objects.filter(board=b, link_type="primary").count()
         visitor_count = BoardStudentLink.objects.filter(board=b, link_type="visitor").count()
         result.append(
@@ -1572,6 +2887,77 @@ def get_scenario_boards_summary(scenario_id: int) -> list[dict]:
 # ── Section Budget ──────────────────────────────────────────────
 
 
+def _section_meeting_counts(scenario_id: int) -> dict[str, dict[str, int]]:
+    """Return placement counts keyed by course_key then section label."""
+
+    counts: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    placements = SectionPlacement.objects.filter(board__scenario_id=scenario_id).select_related(
+        "term_section"
+    )
+    for placement in placements:
+        key = placement.term_section.course_key or placement.term_section.course_code
+        section = placement.term_section.section
+        counts[key][section] += 1
+    return {key: dict(value) for key, value in counts.items()}
+
+
+def infer_required_meeting_count(
+    scenario_id: int,
+    course_key: str,
+    *,
+    fallback_credit_hours: int | None = None,
+    section_counts_by_course: dict[str, dict[str, int]] | None = None,
+) -> int:
+    """Infer how many placement rows make a complete section for a course."""
+
+    key = str(course_key or "").strip()
+    if key:
+        section_counts_by_course = section_counts_by_course or _section_meeting_counts(scenario_id)
+        counts = [count for count in section_counts_by_course.get(key, {}).values() if count]
+        if counts:
+            inferred = max(counts)
+            if inferred > 1:
+                return inferred
+    if int(fallback_credit_hours or 0) >= 4:
+        return 3
+    return 1
+
+
+def compute_incomplete_section_patterns(scenario_id: int) -> list[dict]:
+    """Find placed sections that look incomplete against their course pattern."""
+
+    budget_by_key = {
+        (row.course_key or row.course_code): row
+        for row in ScenarioSectionBudget.objects.filter(scenario_id=scenario_id)
+    }
+    counts_by_course = _section_meeting_counts(scenario_id)
+    issues: list[dict] = []
+    for course_key, section_counts in counts_by_course.items():
+        budget = budget_by_key.get(course_key)
+        expected = infer_required_meeting_count(
+            scenario_id,
+            course_key,
+            fallback_credit_hours=getattr(budget, "credit_hours", 0) if budget else None,
+            section_counts_by_course=counts_by_course,
+        )
+        if expected <= 1:
+            continue
+        for section, placed_count in sorted(section_counts.items()):
+            if placed_count >= expected:
+                continue
+            issues.append(
+                {
+                    "course_key": course_key,
+                    "course_code": getattr(budget, "course_code", course_key.split("::", 1)[0]),
+                    "section": section,
+                    "placed_meetings": placed_count,
+                    "expected_meetings": expected,
+                    "missing_meetings": expected - placed_count,
+                }
+            )
+    return issues
+
+
 def compute_scenario_budget(scenario_id: int) -> list[dict]:
     """Compare planned section budgets against actual board usage.
 
@@ -1591,6 +2977,7 @@ def compute_scenario_budget(scenario_id: int) -> list[dict]:
         List of per-course dicts sorted by ``(programme_term, course_code)``.
     """
     budgets = ScenarioSectionBudget.objects.filter(scenario_id=scenario_id)
+    section_counts_by_course = _section_meeting_counts(scenario_id)
 
     # Count DISTINCT sections per planner course key -- keyed by course_key, valued
     # by the *set* of section labels (e.g. {"A", "B"}).  This avoids
@@ -1611,6 +2998,12 @@ def compute_scenario_budget(scenario_id: int) -> list[dict]:
     for b in budgets:
         key = b.course_key or b.course_code
         used = used_counts.get(key, 0)
+        required_meetings = infer_required_meeting_count(
+            scenario_id,
+            key,
+            fallback_credit_hours=b.credit_hours,
+            section_counts_by_course=section_counts_by_course,
+        )
         result.append(
             {
                 "course_key": key,
@@ -1625,11 +3018,145 @@ def compute_scenario_budget(scenario_id: int) -> list[dict]:
                 "used_sections": used,
                 "remaining_sections": max(0, b.planned_sections - used),
                 "boards_using": sorted(board_usage.get(key, set())),
+                "required_meetings_per_section": required_meetings,
+                "requires_full_section_pattern": required_meetings > 1,
             }
         )
 
     result.sort(key=lambda x: (x.get("programme_term") or 0, x["course_code"]))
     return result
+
+
+def summarize_cross_board_conflict_impact(cross_conflicts: list[dict]) -> dict:
+    """Summarise cross-board clashes using actual affected students first.
+
+    ``conflict_pairs`` is still useful as a diagnostic count, but the
+    operational metric for the timetable builder is how many unique students
+    are affected and how many student-clash incidences remain.
+    """
+
+    from core.services.timetable_overlap import HARD_OVERLAP_THRESHOLD
+
+    affected_students: set[int] = set()
+    high_affected_students: set[int] = set()
+    conflicts_per_student: Counter[int] = Counter()
+    student_conflict_incidences = 0
+    high_conflict_pairs = 0
+
+    for conflict in cross_conflicts or []:
+        student_ids: set[int] = set()
+        for raw_id in conflict.get("affected_student_ids") or []:
+            try:
+                student_ids.add(int(raw_id))
+            except (TypeError, ValueError):
+                continue
+
+        overlap_count = int(
+            conflict.get("affected_student_count")
+            or conflict.get("overlap_count")
+            or len(student_ids)
+            or 0
+        )
+        affected_students.update(student_ids)
+        student_conflict_incidences += overlap_count
+
+        for student_id in student_ids:
+            conflicts_per_student[student_id] += 1
+
+        if overlap_count >= HARD_OVERLAP_THRESHOLD:
+            high_conflict_pairs += 1
+            high_affected_students.update(student_ids)
+
+    return {
+        "conflict_pairs": len(cross_conflicts or []),
+        "affected_students": len(affected_students),
+        "student_conflict_incidences": student_conflict_incidences,
+        "high_conflict_pairs": high_conflict_pairs,
+        "high_affected_students": len(high_affected_students),
+        "max_conflicts_per_student": max(conflicts_per_student.values() or [0]),
+    }
+
+
+def compute_scenario_safety_summary(
+    scenario_id: int,
+    *,
+    boards: list[DeliveryBoard] | None = None,
+    board_conflicts_by_id: dict[int, dict] | None = None,
+    cross_board_conflicts: list[dict] | None = None,
+) -> dict:
+    """Return the backend truth contract used by the split workspace UI."""
+
+    if boards is None:
+        boards = list(
+            DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order")
+        )
+    board_conflicts_by_id = board_conflicts_by_id or {}
+    placements = SectionPlacement.objects.filter(board__scenario_id=scenario_id).select_related(
+        "board", "term_section"
+    )
+    online_lookup = OnlineCourseLookup()
+    budget = compute_scenario_budget(scenario_id)
+    same_board = {"overlaps": 0, "instructors": 0, "rooms": 0}
+    for board in boards:
+        conflicts = board_conflicts_by_id.get(board.id) or detect_board_conflicts(board.id)
+        same_board["overlaps"] += len(conflicts.get("overlaps", []))
+        same_board["instructors"] += len(conflicts.get("instructor_clashes", []))
+        same_board["rooms"] += len(conflicts.get("room_clashes", []))
+
+    physical_unassigned = 0
+    online_without_room = 0
+    room_assigned = 0
+    for placement in placements:
+        room = str(placement.room or "").strip()
+        is_online = online_lookup.is_online_course_for_board(
+            placement.board, placement.term_section.course_code
+        )
+        if room and room.upper() != "UNASSIGNED":
+            room_assigned += 1
+        if is_online:
+            if not room:
+                online_without_room += 1
+        elif not room or room.upper() == "UNASSIGNED":
+            physical_unassigned += 1
+
+    links = BoardStudentLink.objects.filter(board__scenario_id=scenario_id)
+    cross_conflicts = (
+        cross_board_conflicts
+        if cross_board_conflicts is not None
+        else detect_cross_board_conflicts(scenario_id)
+    )
+    cross_impact = summarize_cross_board_conflict_impact(cross_conflicts)
+
+    return {
+        "boards": len(boards),
+        "placements": placements.count(),
+        "unique_students": len(
+            {demand.student_id for demand in load_scenario_course_demands(scenario_id)}
+        ),
+        "board_student_links_total": links.count(),
+        "primary_student_links": links.filter(link_type="primary").count(),
+        "visitor_student_links": links.exclude(link_type="primary").count(),
+        "room_assigned": room_assigned,
+        "physical_unassigned_rooms": physical_unassigned,
+        "online_without_room": online_without_room,
+        "same_board_conflicts": same_board,
+        "cross_board_conflicts": cross_impact["conflict_pairs"],
+        "cross_board_affected_students": cross_impact["affected_students"],
+        "cross_board_student_conflict_incidences": cross_impact["student_conflict_incidences"],
+        "high_cross_board_conflicts": cross_impact["high_conflict_pairs"],
+        "high_cross_board_affected_students": cross_impact["high_affected_students"],
+        "max_cross_board_conflicts_per_student": cross_impact["max_conflicts_per_student"],
+        "budget": {
+            "rows": len(budget),
+            "planned_sections": sum(int(row.get("planned_sections", 0) or 0) for row in budget),
+            "used_sections": sum(int(row.get("used_sections", 0) or 0) for row in budget),
+            "remaining_sections": sum(int(row.get("remaining_sections", 0) or 0) for row in budget),
+            "missing_required_sections": [
+                row for row in budget if int(row.get("remaining_sections", 0) or 0) > 0
+            ],
+        },
+        "incomplete_section_patterns": compute_incomplete_section_patterns(scenario_id),
+    }
 
 
 # ── Cross-Board Conflict Detection ──────────────────────────────
@@ -1645,8 +3172,8 @@ def detect_cross_board_conflicts(scenario_id: int) -> list[dict]:
 
     1. A placement on board_a and a placement on board_b overlap in time
        (bitmask AND), **and**
-    2. At least one student in ``ScenarioStudentMap`` needs courses from
-       *both* placements (set intersection of recommended_courses).
+    2. At least one student in canonical scenario course requests needs
+       courses from *both* placements.
 
     De-duplicated by sorted placement IDs so each exact section-pair clash
     appears at most once.  Results are sorted by descending ``overlap_count``
@@ -1670,13 +3197,21 @@ def detect_cross_board_conflicts(scenario_id: int) -> list[dict]:
         board_placements[b.id] = _load_board_placements(b.id)
 
     # Build an inverted index: planner course key -> set of student IDs that
-    # need that course (from the scenario's pre-computed recommendations).
-    student_maps = list(ScenarioStudentMap.objects.filter(scenario_id=scenario_id))
-    course_students: dict[str, set[int]] = defaultdict(set)
-    for sm in student_maps:
-        for code in sm.recommended_course_keys or sm.recommended_courses:
-            course_students[code].add(sm.student_id)
-    primary_terms = {sm.student_id: sm.primary_term for sm in student_maps}
+    # need that course from canonical scenario course requests.
+    placement_course_keys = {
+        placement.course_key
+        for placements in board_placements.values()
+        for placement in placements
+        if placement.course_key
+    }
+    course_students = compute_course_students_index(
+        scenario_id,
+        course_keys=placement_course_keys,
+    )
+    primary_terms = {
+        demand.student_id: demand.primary_term
+        for demand in load_scenario_course_demands(scenario_id, course_keys=placement_course_keys)
+    }
     student_row_cache: dict[int, dict] = {}
 
     def affected_student_rows(student_ids: set[int], limit: int = 12) -> list[dict]:
@@ -1749,7 +3284,9 @@ def detect_cross_board_conflicts(scenario_id: int) -> list[dict]:
                                     "board_b_label": board_b.label,
                                     "time_b": f"{pb.day} {pb.start_time}-{pb.end_time}",
                                     "overlap_count": len(shared),
-                                    "affected_student_ids": sorted(shared)[:40],
+                                    "affected_student_count": len(shared),
+                                    "affected_student_ids": sorted(shared),
+                                    "affected_student_ids_sample": sorted(shared)[:40],
                                     "affected_students": affected_student_rows(shared),
                                     "time": f"{pa.day} {pa.start_time}-{pa.end_time} vs "
                                     f"{pb.day} {pb.start_time}-{pb.end_time}",
@@ -1784,6 +3321,7 @@ def check_publish_readiness(scenario_id: int) -> dict:
     boards = DeliveryBoard.objects.filter(scenario_id=scenario_id)
     blockers: list[str] = []
     warnings: list[str] = []
+    online_lookup = OnlineCourseLookup()
 
     if boards.count() == 0:
         blockers.append("No boards in this scenario")
@@ -1803,18 +3341,18 @@ def check_publish_readiness(scenario_id: int) -> dict:
 
         # Room clashes: block publish when rooms are actively assigned
         room_clashes = len(conflicts.get("room_clashes", []))
-        has_rooms = (
-            SectionPlacement.objects.filter(board=board)
-            .exclude(room="")
-            .exclude(room="UNASSIGNED")
-            .exists()
+        offline_placements = exclude_online_courses_for_board(
+            SectionPlacement.objects.filter(board=board),
+            board,
+            lookup=online_lookup,
         )
+        has_rooms = offline_placements.exclude(room="").exclude(room="UNASSIGNED").exists()
 
         if room_clashes > 0 and has_rooms:
             blockers.append(f"Board '{board.label}': {room_clashes} room conflicts")
 
         # Unassigned rooms when rooms are expected
-        unassigned_rooms = SectionPlacement.objects.filter(board=board, room="UNASSIGNED").count()
+        unassigned_rooms = offline_placements.filter(room="UNASSIGNED").count()
         if unassigned_rooms > 0:
             blockers.append(f"Board '{board.label}': {unassigned_rooms} sections without rooms")
 
@@ -1831,6 +3369,23 @@ def check_publish_readiness(scenario_id: int) -> dict:
     if high_overlap_cross:
         warnings.append(
             f"{len(high_overlap_cross)} cross-board conflicts with {HARD_OVERLAP_THRESHOLD}+ shared students"
+        )
+
+    missing_sections = [
+        item for item in compute_scenario_budget(scenario_id) if item["remaining_sections"] > 0
+    ]
+    for item in missing_sections:
+        blockers.append(
+            "Missing required section: "
+            f"{item['course_code']} needs {item['remaining_sections']} more "
+            f"(planned {item['planned_sections']}, used {item['used_sections']})"
+        )
+
+    for issue in compute_incomplete_section_patterns(scenario_id):
+        blockers.append(
+            "Incomplete section pattern: "
+            f"{issue['course_code']}-{issue['section']} has "
+            f"{issue['placed_meetings']}/{issue['expected_meetings']} meetings"
         )
 
     return {

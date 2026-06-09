@@ -103,6 +103,31 @@ def test_rank_timetable_candidates_prefers_lower_lexicographic_score() -> None:
     assert ranked[0].lexicographic_score < ranked[1].lexicographic_score
 
 
+def test_rank_timetable_candidates_uses_quality_as_tie_breaker() -> None:
+    clean_sections = [
+        _section("CS101-A", "CS101", [(0, 540, 615)]),
+        _section("MA101-A", "MA101", [(1, 540, 615)]),
+    ]
+    weak_sections = [
+        _section("CS101-A", "CS101", [(4, 960, 1035)]),
+        _section("MA101-A", "MA101", [(4, 960, 1035)]),
+    ]
+
+    ranked = rank_timetable_candidates(
+        candidate_list=[
+            {"id": "weak", "sections": weak_sections},
+            {"id": "clean", "sections": clean_sections},
+        ],
+        student_profiles={},
+        course_rigidity={},
+    )
+
+    assert [result.candidate_id for result in ranked] == ["clean", "weak"]
+    assert ranked[0].lexicographic_score == ranked[1].lexicographic_score
+    assert ranked[0].quality_score["penalty"] < ranked[1].quality_score["penalty"]
+    assert ranked[1].quality_score["components"]["weak_slot"] > 0
+
+
 def test_same_course_sections_accept_duration_aware_back_to_back() -> None:
     adjacent_sections = [
         _section("CS101-S1", "CS101", [(0, 540, 640)]),

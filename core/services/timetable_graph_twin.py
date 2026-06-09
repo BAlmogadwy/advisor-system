@@ -14,7 +14,6 @@ from core.models import (
     DeliveryBoard,
     Prerequisite,
     ProgrammeRequirement,
-    ScenarioStudentMap,
     SectionPlacement,
     Student,
     StudentCourse,
@@ -23,6 +22,7 @@ from core.models import (
     TimetableScenario,
 )
 from core.services.student_helpers import normalize_code
+from core.services.timetable_demand import StudentCourseDemand, load_scenario_course_demands
 from core.services.timetable_workspace import detect_board_conflicts, detect_cross_board_conflicts
 
 try:
@@ -228,12 +228,12 @@ def build_scenario_graph_payload(scenario_id: int) -> dict[str, Any]:
         .select_related("board", "term_section")
         .order_by("board__display_order", "day", "start_time", "id")
     )
-    scenario_maps = list(ScenarioStudentMap.objects.filter(scenario=scenario))
+    scenario_demands = load_scenario_course_demands(scenario.id)
     board_links = list(
         BoardStudentLink.objects.filter(board__scenario=scenario).select_related("board")
     )
 
-    student_ids = {sm.student_id for sm in scenario_maps}
+    student_ids = {demand.student_id for demand in scenario_demands}
     student_ids.update(link.student_id for link in board_links)
     student_rows = {
         row["student_id"]: row
@@ -259,10 +259,10 @@ def build_scenario_graph_payload(scenario_id: int) -> dict[str, Any]:
     )
 
     course_codes: set[str] = set()
-    for sm in scenario_maps:
-        course_codes.update(
-            normalize_code(code) for code in sm.recommended_courses if normalize_code(code)
-        )
+    for demand in scenario_demands:
+        code = normalize_code(demand.course_key)
+        if code:
+            course_codes.add(code)
     for placement in placements:
         course_codes.add(normalize_code(placement.term_section.course_code))
 
@@ -315,7 +315,7 @@ def build_scenario_graph_payload(scenario_id: int) -> dict[str, Any]:
     _add_course_nodes(nodes, course_codes, course_names)
     _add_student_nodes(nodes, rels, scenario.id, student_ids, student_rows)
     _add_board_nodes(nodes, rels, scenario.id, boards)
-    _add_student_course_rels(rels, scenario.id, scenario_maps, studying_rows)
+    _add_student_course_rels(rels, scenario.id, scenario_demands, studying_rows)
     _add_curriculum_rels(nodes, rels, scenario.id, req_rows, prereq_rows)
     _add_section_nodes_and_rels(nodes, rels, scenario.id, placements)
     _add_current_section_rels(rels, scenario.id, student_ids, placements)
@@ -481,24 +481,28 @@ def _add_board_nodes(
 def _add_student_course_rels(
     rels: list[dict[str, Any]],
     scenario_id: int,
-    scenario_maps: list[ScenarioStudentMap],
+    scenario_demands: list[StudentCourseDemand],
     studying_rows: list[dict[str, Any]],
 ) -> None:
-    for sm in scenario_maps:
-        for code_raw in sm.recommended_courses:
-            code = normalize_code(code_raw)
-            if code:
-                rels.append(
-                    _rel(
-                        "NEEDS_IN_SCENARIO",
-                        "TTStudent",
-                        _student_key(sm.student_id),
-                        "TTCourse",
-                        _course_key(code),
-                        scenario_id,
-                        {"primary_term": sm.primary_term, "is_cross_term": sm.is_cross_term},
-                    )
+    for demand in scenario_demands:
+        code = normalize_code(demand.course_key)
+        if code:
+            rels.append(
+                _rel(
+                    "NEEDS_IN_SCENARIO",
+                    "TTStudent",
+                    _student_key(demand.student_id),
+                    "TTCourse",
+                    _course_key(code),
+                    scenario_id,
+                    {
+                        "primary_term": demand.primary_term,
+                        "is_cross_term": demand.is_cross_term,
+                        "status": demand.status,
+                        "priority": demand.priority,
+                    },
                 )
+            )
     for row in studying_rows:
         code = normalize_code(row.get("course__course_code"))
         if code:

@@ -2082,7 +2082,7 @@ async function runOptimiseV2(mode = 'current') {
     if (o.all_scores && o.all_scores.length > 1) {
       body += `<div style="margin-bottom:10px"><span class="fs-sm fw-bold text-caps" style="color:var(--royal)">${IS_AR ? 'مقارنة المرشحين' : 'Candidate Comparison'} (${o.candidates_evaluated} strategies)</span>`;
       body += `<table class="w-100 fs-sm" style="border-collapse:collapse; margin-top:4px">`;
-      body += `<tr class="text-t4" style="border-bottom:1px solid var(--line)"><th style="text-align:start;padding:3px 4px">Strategy</th><th class="text-end" style="padding:3px 4px">Tier-A</th><th class="text-end" style="padding:3px 4px">Unresolved</th><th class="text-end" style="padding:3px 4px">Clashes</th><th class="text-end" style="padding:3px 4px">Gaps</th></tr>`;
+      body += `<tr class="text-t4" style="border-bottom:1px solid var(--line)"><th style="text-align:start;padding:3px 4px">Strategy</th><th class="text-end" style="padding:3px 4px">Tier-A</th><th class="text-end" style="padding:3px 4px">Unresolved</th><th class="text-end" style="padding:3px 4px">Clashes</th><th class="text-end" style="padding:3px 4px">Gaps</th><th class="text-end" style="padding:3px 4px">Quality</th></tr>`;
       o.all_scores.forEach(s => {
         const isBest = s.id === o.best_candidate_id;
         const style = isBest ? 'background:rgba(10,142,110,.06);font-weight:600' : '';
@@ -2092,6 +2092,7 @@ async function runOptimiseV2(mode = 'current') {
         body += `<td class="font-mono" style="text-align:end; padding:3px 4px">${s.score[1]}</td>`;
         body += `<td class="font-mono" style="text-align:end; padding:3px 4px; color:${s.score[3]>0?'var(--danger)':'var(--teal)'}">${s.score[3]}</td>`;
         body += `<td class="font-mono" style="text-align:end; padding:3px 4px">${s.score[4].toLocaleString()}</td>`;
+        body += `<td class="font-mono" style="text-align:end; padding:3px 4px">${Number(s.quality_penalty || 0).toLocaleString()}</td>`;
         body += `</tr>`;
       });
       body += `</table></div>`;
@@ -2119,6 +2120,17 @@ async function runOptimiseV2(mode = 'current') {
     body += `</table></div>`;
 
     // Before → After summary (current mode only)
+    const quality = o.quality_score || {};
+    if (quality.penalty != null) {
+      const rows = Object.entries(quality.components || {})
+        .filter(([, value]) => Number(value || 0) > 0)
+        .sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0))
+        .map(([name, value]) => `<span style="padding:2px 8px;border-radius:999px;background:rgba(80,104,240,.08);color:var(--royal);font-size:11px">${name.replace(/_/g, ' ')}: ${Number(value || 0).toLocaleString()}</span>`)
+        .join('');
+      body += `<div style="margin-bottom:10px"><span class="fs-sm fw-bold text-caps" style="color:var(--royal)">${IS_AR ? 'Ø¬ÙˆØ¯Ø© Ø§Ù„Ø¬Ø¯ÙˆÙ„' : 'Timetable quality'}</span>`;
+      body += `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px"><span style="padding:2px 8px;border-radius:999px;background:rgba(10,142,110,.08);color:var(--teal);font-size:11px">Penalty: ${Number(quality.penalty || 0).toLocaleString()}</span>${rows}</div></div>`;
+    }
+
     if (o.mode === 'current' && o.baseline_score) {
       const bs = o.baseline_score;
       const fs = o.final_score;

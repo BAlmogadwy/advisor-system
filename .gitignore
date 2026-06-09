@@ -57,3 +57,6 @@ datadump.json
 *.webp
 !static/**/*.png
 !static/**/*.webp
+
+# Ad-hoc data exports (student lists, etc.) — generated, may contain PII
+*.xlsx

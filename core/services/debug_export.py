@@ -65,8 +65,13 @@ def export_recommendation_debug_xlsx(payload: dict) -> Path:
     max_recs = max((len(i.get("recommended_courses", [])) for i in items), default=0)
 
     headers = [
-        "Student ID", "Program", "Real Term", "Next Term",
-        "Passed", "Studying", "Recommended Courses",
+        "Student ID",
+        "Program",
+        "Real Term",
+        "Next Term",
+        "Passed",
+        "Studying",
+        "Recommended Courses",
     ]
     # Add one prerequisite column per possible recommended course
     for i in range(max_recs):
@@ -175,10 +180,14 @@ def export_recommendation_debug_xlsx(payload: dict) -> Path:
 
                 if has_missing:
                     cell.font = Font(size=8, bold=True, color="C03030")
-                    cell.fill = PatternFill(start_color="F4CCCC", end_color="F4CCCC", fill_type="solid")
+                    cell.fill = PatternFill(
+                        start_color="F4CCCC", end_color="F4CCCC", fill_type="solid"
+                    )
                 elif has_studying:
                     cell.font = Font(size=8, bold=True, color="C03030")
-                    cell.fill = PatternFill(start_color="FADBD8", end_color="FADBD8", fill_type="solid")
+                    cell.fill = PatternFill(
+                        start_color="FADBD8", end_color="FADBD8", fill_type="solid"
+                    )
                 else:
                     cell.font = Font(size=8, color="0A8E6E")
                     cell.fill = passed_fill
@@ -219,7 +228,9 @@ def export_recommendation_debug_xlsx(payload: dict) -> Path:
     ws_sum = wb.create_sheet(title="Summary")
 
     # Filters
-    ws_sum.cell(row=1, column=1, value="Recommendation Debug Report").font = Font(bold=True, size=12)
+    ws_sum.cell(row=1, column=1, value="Recommendation Debug Report").font = Font(
+        bold=True, size=12
+    )
     ws_sum.cell(row=2, column=1, value="Year").font = bold_font
     ws_sum.cell(row=2, column=2, value=filters.get("year", ""))
     ws_sum.cell(row=2, column=3, value="Semester").font = bold_font
@@ -344,7 +355,9 @@ def export_recommendation_debug_xlsx(payload: dict) -> Path:
         ws_cd.cell(row=row, column=1).border = thin_border
         ws_cd.cell(row=row, column=2, value=len(sids)).border = thin_border
         ws_cd.cell(row=row, column=2).alignment = center_align
-        ws_cd.cell(row=row, column=3, value=", ".join(str(s) for s in sorted(sids))).font = Font(size=8)
+        ws_cd.cell(row=row, column=3, value=", ".join(str(s) for s in sorted(sids))).font = Font(
+            size=8
+        )
         ws_cd.cell(row=row, column=3).border = thin_border
         ws_cd.cell(row=row, column=3).alignment = wrap_align
         row += 1

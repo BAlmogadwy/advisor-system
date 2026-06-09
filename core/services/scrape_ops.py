@@ -60,6 +60,7 @@ def _is_pid_running(pid: int) -> bool:
         # On Windows, os.kill(pid, 0) is unreliable — use ctypes or tasklist
         try:
             import ctypes
+
             kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
             SYNCHRONIZE = 0x00100000
             handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)

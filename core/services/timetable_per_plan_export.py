@@ -40,7 +40,6 @@ from core.models import (
     DeliveryBoard,
     ProgrammeRequirement,
     ScenarioSectionBudget,
-    ScenarioStudentMap,
     SectionPlacement,
     Student,
     TermSectionMeeting,
@@ -48,6 +47,7 @@ from core.models import (
 )
 from core.services.course_identity import display_course_label, planner_course_key
 from core.services.timetable_autoplace import DEFAULT_LAB_SLOTS, DEFAULT_SLOTS
+from core.services.timetable_demand import load_scenario_course_demands
 from core.services.timetable_plan_lens import build_scenario_plan_lens
 
 DAY_LABELS = ["SUN", "MON", "TUE", "WED", "THU"]
@@ -1345,8 +1345,10 @@ def _write_plan_term_conflict_matrix(
     """Render a student conflict matrix for this program/plan term."""
     from openpyxl.styles import Border, Font, PatternFill, Side
 
-    student_maps = list(ScenarioStudentMap.objects.filter(scenario=scenario, primary_term=term_num))
-    student_ids = [int(row.student_id) for row in student_maps]
+    demands = [
+        row for row in load_scenario_course_demands(scenario.id) if row.primary_term == term_num
+    ]
+    student_ids = sorted({int(row.student_id) for row in demands})
     program_by_student = {
         int(student_id): _upper(program_name)
         for student_id, program_name in Student.objects.filter(
@@ -1354,23 +1356,19 @@ def _write_plan_term_conflict_matrix(
         ).values_list("student_id", "program")
     }
     target_program = _upper(program)
-    rows = [
-        row for row in student_maps if program_by_student.get(int(row.student_id)) == target_program
-    ]
+    rows = [row for row in demands if program_by_student.get(int(row.student_id)) == target_program]
 
     course_students: dict[str, set[int]] = defaultdict(set)
     for row in rows:
-        raw_keys = row.recommended_course_keys or row.recommended_courses or []
-        for raw_key in raw_keys:
-            course_key = _norm(raw_key)
-            if not course_key:
-                continue
-            if export_filter.text_tokens and not _matches_text_tokens(
-                export_filter.text_tokens,
-                _course_search_text(course_key, course_names),
-            ):
-                continue
-            course_students[course_key].add(int(row.student_id))
+        course_key = _norm(row.course_key)
+        if not course_key:
+            continue
+        if export_filter.text_tokens and not _matches_text_tokens(
+            export_filter.text_tokens,
+            _course_search_text(course_key, course_names),
+        ):
+            continue
+        course_students[course_key].add(int(row.student_id))
 
     courses = sorted(
         course_students.keys(),

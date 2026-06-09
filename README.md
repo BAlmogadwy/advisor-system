@@ -17,6 +17,9 @@ build-throttle and verbose error pages.
 
 ## Feature areas
 
+For the durable context from the latest timetable-optimisation work, read
+[PROJECT_MEMORY.md](PROJECT_MEMORY.md) before changing the timetable builder.
+
 ### 1. Advisor portfolio
 Per-advisor roster with focus filters (needs attention, risk, zero hours),
 student plan matrix, eligible-course recommendations, and CSV export.

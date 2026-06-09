@@ -17,6 +17,7 @@ TimetableScenario from scratch.  The pipeline:
   5. Create the TimetableScenario, one DeliveryBoard per active term level,
      and persist:
        - ScenarioStudentMap  (student classification records)
+       - ScenarioStudentCourseRequest  (normalised per-course demand rows)
        - ScenarioSectionBudget  (planned sections per course)
        - BoardStudentLink  (primary + visitor links between students
          and boards)
@@ -56,6 +57,7 @@ from core.services.section_planning import (
     load_programme_capacities,
 )
 from core.services.student_helpers import normalize_code
+from core.services.timetable_demand import sync_scenario_student_course_requests
 
 # ---------------------------------------------------------------------------
 # Course exclusion rules
@@ -673,6 +675,11 @@ def generate_workspace_scenario(
         for s in classified
     ]
     ScenarioStudentMap.objects.bulk_create(ssm_objs, ignore_conflicts=True)
+    sync_scenario_student_course_requests(
+        scenario=scenario,
+        classified_students=classified,
+        student_course_keys=student_course_keys,
+    )
 
     # 5b. ScenarioSectionBudget — one row per course, recording the
     #     number of planned sections, capacity per section, total

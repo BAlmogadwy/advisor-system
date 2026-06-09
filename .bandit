@@ -6,6 +6,7 @@ exclude_dirs:
   - .claude
   - import_old
   - csv_export
+  - tmp
 skips:
   - B101
   - B105

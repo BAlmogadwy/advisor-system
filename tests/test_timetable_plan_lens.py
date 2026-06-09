@@ -4,6 +4,7 @@ import pytest
 
 from core.models import (
     ScenarioSectionBudget,
+    ScenarioStudentCourseRequest,
     ScenarioStudentMap,
     Student,
     TermSection,
@@ -22,6 +23,25 @@ def _create_student(student_id: int, program: str) -> None:
         program=program,
         section="M",
         status="active",
+    )
+
+
+def _add_request(
+    scenario: TimetableScenario,
+    student_id: int,
+    course_key: str,
+    *,
+    primary_term: int,
+) -> None:
+    ScenarioStudentCourseRequest.objects.create(
+        scenario=scenario,
+        student_id=student_id,
+        course_key=course_key,
+        course_code=course_key.split("::", 1)[0],
+        primary_term=primary_term,
+        status=ScenarioStudentCourseRequest.STATUS_REQUESTED,
+        priority=ScenarioStudentCourseRequest.PRIORITY_NORMAL,
+        source="test",
     )
 
 
@@ -68,6 +88,7 @@ def test_plan_lens_allocates_plan_owned_and_shared_sections_without_mutating() -
             recommended_courses=["CS111"],
             recommended_course_keys=[course_key],
         )
+        _add_request(scenario, sid, course_key, primary_term=3)
     for offset in range(28):
         sid = 991000 + offset
         _create_student(sid, "DS")
@@ -78,10 +99,12 @@ def test_plan_lens_allocates_plan_owned_and_shared_sections_without_mutating() -
             recommended_courses=["CS111"],
             recommended_course_keys=[course_key],
         )
+        _add_request(scenario, sid, course_key, primary_term=3)
 
     before = {
         "students": Student.objects.count(),
         "maps": ScenarioStudentMap.objects.count(),
+        "requests": ScenarioStudentCourseRequest.objects.count(),
         "budgets": ScenarioSectionBudget.objects.count(),
         "sections": TermSection.objects.count(),
     }
@@ -91,6 +114,7 @@ def test_plan_lens_allocates_plan_owned_and_shared_sections_without_mutating() -
     after = {
         "students": Student.objects.count(),
         "maps": ScenarioStudentMap.objects.count(),
+        "requests": ScenarioStudentCourseRequest.objects.count(),
         "budgets": ScenarioSectionBudget.objects.count(),
         "sections": TermSection.objects.count(),
     }
