@@ -1,0 +1,237 @@
+/* Group Availability finder — scoped page styles.
+   Mirrors the design-system panel/input conventions (see .va-* in global.css)
+   and uses rgba overlays for the busy/free cells so they read correctly in
+   both light and Deep-Navy dark themes. */
+
+.ga-shell {
+  display: grid;
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (max-width: 920px) {
+  .ga-shell { grid-template-columns: 1fr; }
+}
+
+/* ── Side panels ─────────────────────────────────────────────── */
+.ga-side { display: grid; gap: 0.9rem; align-content: start; }
+
+.ga-panel {
+  border: 1px solid var(--line);
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  padding: 1rem;
+  min-width: 0;
+}
+
+.ga-kicker {
+  color: var(--brand);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 0.5rem;
+}
+
+.ga-label {
+  display: block;
+  color: var(--t3);
+  font-size: 0.78rem;
+  font-weight: 700;
+  margin: 0.65rem 0 0.28rem;
+}
+
+.ga-input,
+.ga-textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--t1);
+  border-radius: 8px;
+  padding: 0.6rem 0.7rem;
+  outline: none;
+  font-family: inherit;
+}
+
+.ga-textarea { resize: vertical; line-height: 1.5; }
+
+.ga-input:focus,
+.ga-textarea:focus {
+  border-color: rgba(10, 142, 110, 0.55);
+  box-shadow: 0 0 0 3px rgba(10, 142, 110, 0.11);
+}
+
+.ga-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.ga-hint { color: var(--t4); font-size: 0.74rem; margin-top: 0.35rem; min-height: 1em; }
+
+.ga-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.9rem;
+}
+
+.ga-status { font-size: 0.8rem; color: var(--t3); margin-top: 0.6rem; min-height: 1em; }
+.ga-status.is-bad { color: var(--danger, #dc2626); }
+
+/* ── Summary panel ───────────────────────────────────────────── */
+.ga-summary-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(70px, 1fr));
+  gap: 0.5rem;
+}
+
+.ga-stat {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.5rem 0.6rem;
+  background: var(--surface);
+  text-align: center;
+}
+
+.ga-stat-num { font-size: 1.3rem; font-weight: 800; color: var(--t1); line-height: 1.1; }
+.ga-stat-num.is-good { color: #0a8e6e; }
+.ga-stat-lbl { font-size: 0.66rem; color: var(--t4); text-transform: uppercase; letter-spacing: 0.05em; }
+
+.ga-flags { margin-top: 0.7rem; display: grid; gap: 0.4rem; }
+
+.ga-flag {
+  font-size: 0.76rem;
+  border-radius: 8px;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid;
+}
+.ga-flag.is-warn { color: #92400e; background: rgba(217, 119, 6, 0.10); border-color: rgba(217, 119, 6, 0.30); }
+.ga-flag.is-info { color: var(--t2); background: var(--surface); border-color: var(--line); }
+
+/* ── Main grid area ──────────────────────────────────────────── */
+.ga-main {
+  border: 1px solid var(--line);
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+  padding: 1rem;
+  min-width: 0;
+}
+
+.ga-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.9rem;
+}
+
+.ga-tabs { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+
+.ga-tab {
+  border: 0;
+  background: transparent;
+  color: var(--t3);
+  font-weight: 700;
+  font-size: 0.8rem;
+  padding: 0.45rem 0.85rem;
+  cursor: pointer;
+}
+.ga-tab.is-active { background: var(--brand); color: #fff; }
+
+.ga-legend { display: flex; flex-wrap: wrap; gap: 0.8rem; font-size: 0.74rem; color: var(--t3); }
+.ga-legend-item { display: inline-flex; align-items: center; gap: 0.35rem; }
+.ga-swatch { width: 0.85rem; height: 0.85rem; border-radius: 3px; border: 1px solid var(--line); }
+.ga-swatch-free { background: rgba(10, 142, 110, 0.22); border-color: rgba(10, 142, 110, 0.5); }
+.ga-swatch-some { background: rgba(217, 119, 6, 0.20); border-color: rgba(217, 119, 6, 0.5); }
+.ga-swatch-most { background: rgba(192, 48, 48, 0.20); border-color: rgba(192, 48, 48, 0.5); }
+
+.ga-empty { color: var(--t4); text-align: center; padding: 2.5rem 1rem; font-size: 0.9rem; }
+
+/* The weekly grid: slot-label column + one column per weekday. */
+.ga-grid {
+  display: grid;
+  grid-template-columns: 92px repeat(var(--ga-days, 5), minmax(0, 1fr));
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.ga-grid-corner,
+.ga-grid-dayhead {
+  padding: 0.5rem 0.4rem;
+  background: var(--glass-bg-header);
+  border-bottom: 1px solid var(--line);
+  color: var(--t2);
+  font-size: 0.74rem;
+  font-weight: 800;
+  text-align: center;
+}
+.ga-grid-dayhead { border-inline-start: 1px solid var(--line); }
+
+.ga-grid-slotlabel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0.4rem;
+  border-bottom: 1px solid var(--line);
+  color: var(--t4);
+  font-size: 0.68rem;
+  text-align: center;
+  background: var(--surface);
+}
+
+.ga-cell {
+  position: relative;
+  min-height: 58px;
+  border-bottom: 1px solid var(--line);
+  border-inline-start: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.1rem;
+  cursor: default;
+  transition: filter 0.12s;
+}
+
+.ga-cell.is-free { background: rgba(10, 142, 110, 0.12); }
+.ga-cell.is-some { background: rgba(217, 119, 6, 0.13); cursor: pointer; }
+.ga-cell.is-most { background: rgba(192, 48, 48, 0.15); cursor: pointer; }
+.ga-cell.is-some:hover,
+.ga-cell.is-most:hover { filter: brightness(1.06); }
+.ga-cell.is-selected { outline: 2px solid var(--brand); outline-offset: -2px; }
+
+.ga-cell-num { font-size: 1.05rem; font-weight: 800; color: var(--t1); line-height: 1; }
+.ga-cell-sub { font-size: 0.62rem; color: var(--t4); text-transform: uppercase; letter-spacing: 0.04em; }
+.ga-cell.is-free .ga-cell-check { color: #0a8e6e; font-size: 1.1rem; font-weight: 800; }
+.ga-cell.is-free .ga-cell-sub { color: #0a8e6e; }
+
+/* ── Occupant detail ─────────────────────────────────────────── */
+.ga-detail {
+  margin-top: 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 0.8rem;
+}
+.ga-detail-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.5rem; }
+.ga-detail-head strong { color: var(--t1); font-size: 0.9rem; }
+.ga-detail-body { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+
+.ga-occ {
+  font-size: 0.74rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.25rem 0.55rem;
+  color: var(--t2);
+  background: var(--card);
+}
+.ga-occ b { color: var(--t1); }

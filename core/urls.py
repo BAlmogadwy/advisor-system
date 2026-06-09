@@ -47,6 +47,10 @@ from .exam_views import (
     exam_timetable_page,
     exam_timetable_preview_courses_view,
 )
+from .group_availability_views import (
+    group_availability_compute_view,
+    group_availability_page,
+)
 from .planner_job_views import (
     planner_job_cancel,
     planner_job_poll,
@@ -182,6 +186,12 @@ urlpatterns = [
         name="virtual_advisor_tool_preview",
     ),
     path("ops/virtual-advisor/chat/", virtual_advisor_chat_view, name="virtual_advisor_chat"),
+    path("group-availability/", group_availability_page, name="group_availability_page"),
+    path(
+        "ops/group-availability/compute/",
+        group_availability_compute_view,
+        name="group_availability_compute",
+    ),
     path("recommend/<int:student_id>/", recommend_view, name="recommend"),
     path("classify/", classify_view, name="classify"),
     path("parse-and-classify/", parse_and_classify_view, name="parse_and_classify"),

@@ -1,0 +1,82 @@
+{% extends "core/base.html" %}
+{% load static i18n %}
+{% get_current_language as LANGUAGE_CODE %}
+
+{% block title %}{% if LANGUAGE_CODE == 'ar' %}توافر المجموعة{% else %}Group Availability{% endif %}{% endblock %}
+{% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}توافر المجموعة{% else %}Group Availability{% endif %}{% endblock %}
+{% block page_chips %}
+  <span class="ph-chip ph-chip-page">{% if LANGUAGE_CODE == 'ar' %}مخطط الشعب{% else %}Section planning{% endif %}</span>
+  <span class="ph-chip ph-chip-context">{% if LANGUAGE_CODE == 'ar' %}جداول الطلاب الحالية{% else %}Current student schedules{% endif %}</span>
+{% endblock %}
+{% block page_intro %}
+  <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}الصق قائمة بأرقام الطلاب لرؤية الأوقات المشغولة لهم مجتمعين. الخلايا الخضراء فارغة للجميع — وهي أوقات مناسبة لفتح شعبة جديدة بدون تعارض.{% else %}Paste a list of student IDs to see their combined weekly busy slots. Green cells are free for everyone — good times to open a new section conflict-free.{% endif %}</p>
+{% endblock %}
+
+{% block content %}
+<section class="ga-shell" aria-label="{% if LANGUAGE_CODE == 'ar' %}مساحة عمل توافر المجموعة{% else %}Group availability workspace{% endif %}">
+
+  <aside class="ga-side" aria-label="{% if LANGUAGE_CODE == 'ar' %}مدخلات{% else %}Inputs{% endif %}">
+    <div class="ga-panel">
+      <div class="ga-kicker">{% if LANGUAGE_CODE == 'ar' %}الطلاب{% else %}Students{% endif %}</div>
+      <label class="ga-label" for="gaIds">{% if LANGUAGE_CODE == 'ar' %}أرقام الطلاب{% else %}Student IDs{% endif %}</label>
+      <textarea id="gaIds" class="ga-input ga-textarea" rows="8" autocomplete="off"
+        placeholder="{% if LANGUAGE_CODE == 'ar' %}الصق الأرقام مفصولة بفواصل أو أسطر&#10;مثال:&#10;4012345&#10;4012346&#10;4012347{% else %}Paste IDs separated by commas or new lines&#10;e.g.&#10;4012345&#10;4012346&#10;4012347{% endif %}"></textarea>
+      <div class="ga-hint" id="gaCountHint" aria-live="polite"></div>
+
+      <div class="ga-actions">
+        <button type="button" class="btn btn-primary" id="gaCompute">{% if LANGUAGE_CODE == 'ar' %}عرض التوافر{% else %}Show availability{% endif %}</button>
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="gaClear">{% if LANGUAGE_CODE == 'ar' %}مسح{% else %}Clear{% endif %}</button>
+      </div>
+      <div class="ga-status" id="gaStatus" role="status" aria-live="polite"></div>
+    </div>
+
+    <div class="ga-panel ga-summary-panel" id="gaSummary" hidden>
+      <div class="ga-kicker">{% if LANGUAGE_CODE == 'ar' %}الملخص{% else %}Summary{% endif %}</div>
+      <div class="ga-summary-stats" id="gaSummaryStats"></div>
+      <div class="ga-flags" id="gaFlags"></div>
+    </div>
+  </aside>
+
+  <section class="ga-main" aria-label="{% if LANGUAGE_CODE == 'ar' %}شبكة التوافر الأسبوعية{% else %}Weekly availability grid{% endif %}">
+    <div class="ga-toolbar">
+      <div class="ga-tabs" role="tablist" aria-label="{% if LANGUAGE_CODE == 'ar' %}نوع الشبكة{% else %}Grid type{% endif %}">
+        <button type="button" class="ga-tab is-active" id="gaTabLecture" role="tab" aria-selected="true" data-grid="lecture">{% if LANGUAGE_CODE == 'ar' %}محاضرات (75 د){% else %}Lecture (75m){% endif %}</button>
+        <button type="button" class="ga-tab" id="gaTabLab" role="tab" aria-selected="false" data-grid="lab">{% if LANGUAGE_CODE == 'ar' %}معامل (100 د){% else %}Lab (100m){% endif %}</button>
+      </div>
+      <div class="ga-legend" aria-hidden="false">
+        <span class="ga-legend-item"><span class="ga-swatch ga-swatch-free"></span>{% if LANGUAGE_CODE == 'ar' %}متاح للجميع{% else %}Free for all{% endif %}</span>
+        <span class="ga-legend-item"><span class="ga-swatch ga-swatch-some"></span>{% if LANGUAGE_CODE == 'ar' %}بعضهم مشغول{% else %}Some busy{% endif %}</span>
+        <span class="ga-legend-item"><span class="ga-swatch ga-swatch-most"></span>{% if LANGUAGE_CODE == 'ar' %}معظمهم مشغول{% else %}Most busy{% endif %}</span>
+      </div>
+    </div>
+
+    <div class="ga-grid-wrap" id="gaGridWrap">
+      <div class="ga-empty" id="gaEmpty">{% if LANGUAGE_CODE == 'ar' %}أدخل أرقام الطلاب ثم اضغط «عرض التوافر».{% else %}Enter student IDs and press “Show availability”.{% endif %}</div>
+    </div>
+
+    <div class="ga-detail" id="gaDetail" hidden aria-live="polite">
+      <div class="ga-detail-head">
+        <strong id="gaDetailTitle"></strong>
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="gaDetailClose" aria-label="{% if LANGUAGE_CODE == 'ar' %}إغلاق{% else %}Close{% endif %}">×</button>
+      </div>
+      <div class="ga-detail-body" id="gaDetailBody"></div>
+    </div>
+  </section>
+</section>
+{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{% static 'css/group-availability.css' %}?v=1">
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  window.groupAvailabilityConfig = {
+    computeUrl: "{% url 'group_availability_compute' %}",
+    csrfToken: "{{ csrf_token }}",
+    lang: "{{ LANGUAGE_CODE }}",
+    maxStudents: {{ max_students }}
+  };
+</script>
+<script src="{% static 'js/page-group-availability.js' %}?v=2"></script>
+{% endblock %}
