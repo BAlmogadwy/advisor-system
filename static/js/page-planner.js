@@ -195,12 +195,17 @@ function renderVisualTimetable(source='baseline'){
     );
   }
 
+  /* Keep Registered mode: a builder plan ADDS to the student's current
+     registrations, so builder views must show baseline + planned together.
+     Ignore Registered mode: the plan replaces registrations — planned only. */
+  const keepRegistered=(q('mode')?.value!=='ignore');
   let meetings=[];
   if(source==='baseline') meetings=baseline;
   else if(source==='overlay') meetings=[...baseline,...planned];
-  else meetings=planned;
+  else meetings=keepRegistered?[...baseline,...planned]:planned;
 
-  // Conflict pre-pass (overlay: baseline vs planned) — view-specific, stays here.
+  // Conflict pre-pass (baseline vs planned) — applies to any mixed view.
+  const mixedView=(source==='overlay')||(source!=='baseline'&&keepRegistered);
   const enriched=meetings
     .map(m=>({...m, st:toMins(m.start), en:toMins(m.end), conflict:false}))
     .filter(m=>m.st!==null && m.en!==null && m.en>m.st);
@@ -209,7 +214,7 @@ function renderVisualTimetable(source='baseline'){
       const a=enriched[i], b=enriched[j];
       if(a.day!==b.day) continue;
       if(!(a.st < b.en && b.st < a.en)) continue;
-      if(source==='overlay' && a.kind!==b.kind){ a.conflict=true; b.conflict=true; }
+      if(mixedView && a.kind!==b.kind){ a.conflict=true; b.conflict=true; }
     }
   }
 
@@ -231,6 +236,7 @@ function renderVisualTimetable(source='baseline'){
 q('mode').addEventListener('change',()=>{
   q('planningBanner').classList.toggle('d-none', q('mode').value!=='ignore');
   if(currentCtx?.student_id){ renderPlanPalette(currentCtx.student_id); renderAvailableSections(); }
+  renderVisualTimetable(q('visualSource').value || 'baseline');
 });
 
 q('visualSource').addEventListener('change',(e)=>renderVisualTimetable(e.target.value));
