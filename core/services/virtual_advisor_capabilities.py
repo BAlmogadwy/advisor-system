@@ -255,12 +255,45 @@ def _ctx_year_term(
     return year, term, None
 
 
+_FIND_STUDENTS_MESSAGE_ROWS = 30
+
+
 def _exec_find_students(
     args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
 ) -> dict[str, Any]:
     from core.services.virtual_advisor import find_students_tool
 
-    return find_students_tool(args, scope=scope)
+    result = find_students_tool(args, scope=scope)
+
+    # Token diet for the agent loop: a 500-row dump is ~20k prompt tokens
+    # and slows or times out the next turn. Keep a representative page and
+    # attach summary statistics over the returned rows so overview
+    # questions ("how are they doing?") need no raw dump at all.
+    students = result.get("students") or []
+    if students:
+        gpas = [s.get("gpa") for s in students if isinstance(s.get("gpa"), int | float)]
+        credits = [
+            s.get("total_earned_credits")
+            for s in students
+            if isinstance(s.get("total_earned_credits"), int | float)
+        ]
+        stats: dict[str, Any] = {"rows_in_stats": len(students)}
+        if gpas:
+            stats.update(
+                {
+                    "gpa_min": round(min(gpas), 2),
+                    "gpa_avg": round(sum(gpas) / len(gpas), 2),
+                    "gpa_max": round(max(gpas), 2),
+                    "gpa_below_2_count": sum(1 for g in gpas if g < 2.0),
+                }
+            )
+        if credits:
+            stats["avg_earned_credits"] = round(sum(credits) / len(credits), 1)
+        result["summary_stats"] = stats
+    if len(students) > _FIND_STUDENTS_MESSAGE_ROWS:
+        result["students"] = students[:_FIND_STUDENTS_MESSAGE_ROWS]
+        result["students_omitted"] = len(students) - _FIND_STUDENTS_MESSAGE_ROWS
+    return result
 
 
 def _exec_get_student_context(
@@ -585,12 +618,24 @@ def _exec_portfolio_triage(
         forced = own
     elif role == ROLE_GENERAL_ADVISOR:
         if not requested:
-            return {"ok": False, "error": "advisor_id is required."}
+            return {
+                "ok": False,
+                "error": (
+                    "advisor_id is required. To search students by name across "
+                    "programs, use find_students with name_contains instead."
+                ),
+            }
         advisor_id = requested
         allowed_departments = _scope_departments(scope)
     else:
         if not requested:
-            return {"ok": False, "error": "advisor_id is required."}
+            return {
+                "ok": False,
+                "error": (
+                    "advisor_id is required. To search students by name across "
+                    "programs, use find_students with name_contains instead."
+                ),
+            }
         advisor_id = requested
 
     focus = str(args.get("focus") or "all").strip().lower()
@@ -686,10 +731,12 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
         AdvisorCapability(
             name="find_students",
             description=(
-                "Find students in verified university records using filters: earned "
-                "credits, GPA range, program, gender section (M/F), advisor, and "
-                "course status (passed / studying / missing). Use for any cohort "
-                "question such as 'list AI students who passed AI331'."
+                "Find students in verified university records using filters: name "
+                "fragment, earned credits, GPA range, program, gender section "
+                "(M/F), advisor, and course status (passed / studying / missing). "
+                "Use for any cohort question ('list AI students who passed "
+                "AI331') and for finding students by name. The result includes "
+                "summary_stats over the matched rows for overview questions."
             ),
             parameters={
                 "type": "object",
@@ -699,6 +746,10 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                     "min_gpa": {"type": "number"},
                     "max_gpa": {"type": "number"},
                     "program": {"type": "string", "description": "Program code, e.g. AI, CS2"},
+                    "name_contains": {
+                        "type": "string",
+                        "description": "Filter by a fragment of the student's name (Arabic or English)",
+                    },
                     "sections": {
                         "type": "array",
                         "items": {"type": "string", "enum": ["M", "F"]},

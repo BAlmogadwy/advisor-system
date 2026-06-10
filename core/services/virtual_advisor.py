@@ -52,7 +52,7 @@ def _loop_max_tokens() -> int:
 SYSTEM_PROMPT = """You are a private local university virtual academic advisor.
 
 Rules:
-- Answer in the same language as the user's latest question.
+- Answer in the same language as the user's latest question. When the user message carries an answer_language field, write the final answer in that language.
 - Use only the verified_context JSON supplied by the university system.
 - When verified_context includes tool_results, treat them as authoritative query results.
 - If a requested fact is missing from verified_context, say that the system data does not show it.
@@ -66,7 +66,7 @@ Rules:
 SYSTEM_PROMPT_AGENT = """You are a private local university virtual academic advisor with verified data tools.
 
 Rules:
-- Answer in the same language as the user's latest question (Arabic questions get Arabic answers).
+- Write the final answer in the language named by the answer_language field of the user message. Never switch languages on your own.
 - Your ONLY source of facts is the verified_context JSON and the results of the tools you call. Never answer a data question from memory.
 - Call tools to gather evidence BEFORE answering. Chain tools when needed (e.g. lookup_course to resolve a vague course name, then find_students with the exact code).
 - If a tool returns an error, adjust the arguments or try another tool; explain the limitation only if no tool can answer.
@@ -332,8 +332,14 @@ def find_students_tool(
     }
     filters = {k: v for k, v in filters.items() if v not in (None, "", [])}
 
+    name_contains = str(args.get("name_contains") or "").strip()
+    if name_contains:
+        filters["name_contains"] = name_contains
+
     qs = Student.objects.all()
     qs, applied_scope = _apply_student_scope(qs, scope)
+    if name_contains:
+        qs = qs.filter(name__icontains=name_contains)
     if min_earned is not None:
         qs = qs.filter(total_earned_credits__gte=min_earned)
     if max_earned is not None:
@@ -904,6 +910,18 @@ def build_verified_student_context(
             "studying": sorted(studying)[:_MAX_CONTEXT_COURSES],
             "remaining_requirements": _compact_course_rows(remaining_rows, names),
             "remaining_requirement_count": len(remaining_rows),
+            # Exact plan totals, so the model never has to assume a
+            # "standard" degree size (battery testing caught it guessing
+            # 132 hours when these were absent).
+            "programme_totals": {
+                "total_plan_credit_hours": sum(
+                    int(row.get("credit_hours") or 0) for row in requirement_rows
+                ),
+                "remaining_credit_hours": sum(
+                    int(row.get("credit_hours") or 0) for row in remaining_rows
+                ),
+                "remaining_course_count": len(remaining_rows),
+            },
         },
         "recommendations": [
             {
@@ -965,6 +983,13 @@ def _assistant_prefill_for_model(model: str) -> str | None:
 
 
 _STUDENT_ID_RE = re.compile(r"\b\d{6,9}\b")
+_ARABIC_SCRIPT_RE = re.compile(r"[؀-ۿ]")
+
+
+def _answer_language(question: str) -> str:
+    """Deterministic answer-language pin (battery testing showed the model
+    occasionally answering English questions in Arabic)."""
+    return "Arabic" if _ARABIC_SCRIPT_RE.search(question or "") else "English"
 
 
 def _unverified_student_ids(answer: str, evidence_texts: list[str]) -> list[str]:
@@ -1094,7 +1119,9 @@ def _run_agent_loop(
             "role": "user",
             "content": (
                 "Answer the question now using only the evidence gathered above. "
-                "Do not request more tools."
+                "Do not request more tools. If the evidence is insufficient, say "
+                "plainly what could not be retrieved and suggest the next step — "
+                "do not guess and do not invent missing details."
             ),
         }
     )
@@ -1162,7 +1189,11 @@ def answer_virtual_advisor(
     context_json = json.dumps(context, ensure_ascii=False)
     user_message = {
         "role": "user",
-        "content": (f"verified_context:\n{context_json}\n\nlatest_question:\n{question.strip()}"),
+        "content": (
+            f"verified_context:\n{context_json}\n\n"
+            f"answer_language: {_answer_language(question)}\n\n"
+            f"latest_question:\n{question.strip()}"
+        ),
     }
 
     if telemetry["enabled"] and loop_supported:
@@ -1203,7 +1234,9 @@ def answer_virtual_advisor(
         user_message = {
             "role": "user",
             "content": (
-                f"verified_context:\n{context_json}\n\nlatest_question:\n{question.strip()}"
+                f"verified_context:\n{context_json}\n\n"
+                f"answer_language: {_answer_language(question)}\n\n"
+                f"latest_question:\n{question.strip()}"
             ),
         }
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]

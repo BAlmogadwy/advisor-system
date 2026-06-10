@@ -613,6 +613,101 @@ def test_course_prerequisites_capability() -> None:
     assert own["per_program"][0]["program"] == "AI"
 
 
+def test_find_students_name_contains_filter() -> None:
+    _make_students()
+    registry = get_default_registry()
+
+    result = registry.execute(
+        "find_students",
+        {"name_contains": "Agent Loop AI"},
+        scope={"role": ROLE_SUPER_ADMIN},
+    )
+    assert result["ok"] is True
+    assert result["count"] == 1
+    assert result["students"][0]["student_id"] == 6001001
+    assert result["filters"]["name_contains"] == "Agent Loop AI"
+
+
+def test_find_students_caps_rows_and_adds_summary_stats() -> None:
+    Student.objects.bulk_create(
+        Student(
+            student_id=6100000 + i,
+            name=f"Bulk Student {i}",
+            program="AI",
+            section="M",
+            gpa=1.5 if i < 5 else 3.5,
+            total_earned_credits=60 + i,
+        )
+        for i in range(40)
+    )
+    registry = get_default_registry()
+
+    result = registry.execute(
+        "find_students",
+        {"program": "AI", "limit": 200},
+        scope={"role": ROLE_SUPER_ADMIN},
+    )
+    assert result["count"] == 40
+    # Message payload is capped; the omission is explicit.
+    assert len(result["students"]) == 30
+    assert result["students_omitted"] == 10
+    stats = result["summary_stats"]
+    assert stats["rows_in_stats"] == 40
+    assert stats["gpa_below_2_count"] == 5
+    assert stats["gpa_min"] == 1.5
+    assert stats["gpa_max"] == 3.5
+
+
+def test_student_context_includes_programme_totals() -> None:
+    _make_students()
+    registry = get_default_registry()
+
+    result = registry.execute(
+        "get_student_context",
+        {},
+        scope={"role": ROLE_STUDENT, "student_id": 6001001},
+        ctx={"academic_year": 1448, "term": 1},
+    )
+    totals = result["student_context"]["course_evidence"]["programme_totals"]
+    # Plan = AI331 (3cr, passed) + AI431 (3cr, remaining).
+    assert totals["total_plan_credit_hours"] == 6
+    assert totals["remaining_credit_hours"] == 3
+    assert totals["remaining_course_count"] == 1
+
+
+def test_answer_language_pinned_in_user_message() -> None:
+    _make_students()
+    fake = FakeToolClient(turns=[_tool_turn(content="ok")])
+    answer_virtual_advisor(
+        question="كم ساعة باقي علي؟",
+        student_id=6001001,
+        scope={"role": ROLE_STUDENT, "student_id": 6001001},
+        client=fake,
+    )
+    assert "answer_language: Arabic" in fake.tool_messages_seen[0][-1]["content"]
+
+    fake_en = FakeToolClient(turns=[_tool_turn(content="ok")])
+    answer_virtual_advisor(
+        question="how many hours left?",
+        student_id=6001001,
+        scope={"role": ROLE_STUDENT, "student_id": 6001001},
+        client=fake_en,
+    )
+    assert "answer_language: English" in fake_en.tool_messages_seen[0][-1]["content"]
+
+
+def test_portfolio_triage_missing_advisor_hint_points_to_find_students() -> None:
+    registry = get_default_registry()
+    result = registry.execute(
+        "portfolio_triage",
+        {"search": "سارة"},
+        scope={"role": ROLE_SUPER_ADMIN},
+    )
+    assert result["ok"] is False
+    assert "find_students" in result["error"]
+    assert "name_contains" in result["error"]
+
+
 def test_grounded_student_id_does_not_trigger_retry() -> None:
     _make_students()
     fake = FakeToolClient(
