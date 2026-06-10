@@ -374,6 +374,66 @@ def _exec_lookup_course(
     }
 
 
+def _exec_course_prerequisites(
+    args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
+) -> dict[str, Any]:
+    from core.models import Prerequisite, ProgrammeRequirement, Student
+    from core.services.student_helpers import get_prerequisites
+
+    course_code = normalize_code(args.get("course_code"))
+    if not course_code:
+        return {"ok": False, "error": "course_code is required."}
+
+    program = str(args.get("program") or "").strip().upper()
+    if not program and _scope_role(scope) == ROLE_STUDENT:
+        own = scope.get("student_id")
+        row = Student.objects.filter(student_id=own).values_list("program", flat=True).first()
+        program = str(row or "").strip().upper()
+
+    if program:
+        programs = [program]
+    else:
+        programs = sorted(
+            set(
+                Prerequisite.objects.filter(course_code__iexact=course_code).values_list(
+                    "program", flat=True
+                )
+            )
+            | set(
+                ProgrammeRequirement.objects.filter(course_code__iexact=course_code).values_list(
+                    "program", flat=True
+                )
+            )
+        )
+    if not programs:
+        return {
+            "ok": True,
+            "course_code": course_code,
+            "per_program": [],
+            "note": "Course not found in any programme plan.",
+        }
+
+    per_program: list[dict[str, Any]] = []
+    for prog in programs[:12]:
+        prereqs = get_prerequisites(course_code, prog)
+        plan_row = (
+            ProgrammeRequirement.objects.filter(program=prog, course_code__iexact=course_code)
+            .values("course_name", "programme_term", "credit_hours")
+            .first()
+        )
+        per_program.append(
+            {
+                "program": prog,
+                "prerequisites": prereqs,
+                "course_name": str((plan_row or {}).get("course_name") or "").strip(),
+                "programme_term": (plan_row or {}).get("programme_term"),
+                "credit_hours": (plan_row or {}).get("credit_hours"),
+            }
+        )
+
+    return {"ok": True, "course_code": course_code, "per_program": per_program}
+
+
 def _exec_course_eligibility(
     args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
 ) -> dict[str, Any]:
@@ -733,6 +793,33 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
             },
             allowed_roles=_ALL_ROLES,
             executor=_exec_recommend_courses,
+        )
+    )
+
+    registry.register(
+        AdvisorCapability(
+            name="course_prerequisites",
+            description=(
+                "Official prerequisites for one course (per program), including "
+                "hour-based requirements like '90(HOURS)', plus the course's "
+                "plan term and credit hours. Use for 'can I/he take X' and "
+                "'why is X blocked' questions, combined with the student's "
+                "passed courses from get_student_context."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "course_code": {"type": "string"},
+                    "program": {
+                        "type": "string",
+                        "description": "Program code. Omit for the student's own program.",
+                    },
+                },
+                "required": ["course_code"],
+                "additionalProperties": False,
+            },
+            allowed_roles=_ALL_ROLES,
+            executor=_exec_course_prerequisites,
         )
     )
 

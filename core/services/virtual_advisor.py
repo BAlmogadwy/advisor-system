@@ -12,6 +12,7 @@ from core.services.local_llm import (
     ChatResult,
     LocalLLMBadRequest,
     LocalLLMClient,
+    LocalLLMUnavailable,
     ToolChatResult,
 )
 from core.services.rbac import (
@@ -42,6 +43,10 @@ def _max_tool_iterations() -> int:
 
 def _max_tool_calls() -> int:
     return max(1, int(getattr(settings, "VIRTUAL_ADVISOR_MAX_TOOL_CALLS", 12)))
+
+
+def _loop_max_tokens() -> int:
+    return max(256, int(getattr(settings, "VIRTUAL_ADVISOR_LOOP_MAX_TOKENS", 3000)))
 
 
 SYSTEM_PROMPT = """You are a private local university virtual academic advisor.
@@ -1016,12 +1021,24 @@ def _run_agent_loop(
         telemetry["iterations"] = iteration + 1
         try:
             turn: ToolChatResult = llm.chat_with_tools(
-                messages, tools=tool_schemas, model=resolved_model
+                messages,
+                tools=tool_schemas,
+                model=resolved_model,
+                max_tokens=_loop_max_tokens(),
             )
         except LocalLLMBadRequest:
             if iteration == 0:
                 raise  # model/server rejected tools — caller falls back
             logger.warning("Tool turn rejected mid-loop; forcing a final no-tools answer.")
+            telemetry["turn_error"] = "bad_request_mid_loop"
+            break
+        except LocalLLMUnavailable as exc:
+            # Timeouts and reasoning-budget exhaustion on a tool turn must
+            # not 503 the whole chat. Degrade: answer from the evidence
+            # gathered so far via the plain path (whose prefill suppresses
+            # hidden reasoning on Qwen thinking models).
+            logger.warning("Tool turn failed (%s); forcing a final no-tools answer.", exc)
+            telemetry["turn_error"] = str(exc)[:200]
             break
         usage = turn.usage or usage
 
@@ -1084,6 +1101,7 @@ def _run_agent_loop(
     final: ChatResult = llm.chat(
         messages,
         model=resolved_model,
+        max_tokens=_loop_max_tokens(),
         assistant_prefill=_assistant_prefill_for_model(resolved_model),
     )
     telemetry["forced_final"] = True
@@ -1101,26 +1119,25 @@ def answer_virtual_advisor(
     scope: dict[str, Any] | None = None,
     client: LocalLLMClient | None = None,
 ) -> dict[str, Any]:
+    # Default the academic term when the caller did not supply one
+    # (the WhatsApp gateway never does). Without this, every
+    # time-dependent capability errors with "academic_year and term
+    # are required" outside the web UI.
+    if academic_year is None or term is None:
+        from core.settings_views import load_defaults
+
+        defaults = load_defaults()
+        academic_year = academic_year if academic_year is not None else defaults["academic_year"]
+        term = term if term is not None else defaults["term"]
+
     context = build_verified_student_context(
         student_id=student_id,
         academic_year=academic_year,
         term=term,
     )
-    # Deterministic regex planner stays as a seed: its results give the
-    # model a free head start and keep the legacy single-shot path useful
-    # when the loop is disabled or unsupported.
-    tool_results = run_planned_tools(question, scope=scope)
-    if tool_results:
-        context["tool_results"] = tool_results
-    context_json = json.dumps(context, ensure_ascii=False)
 
     llm = client or LocalLLMClient()
     resolved_model = llm.resolve_model(model)
-
-    user_message = {
-        "role": "user",
-        "content": (f"verified_context:\n{context_json}\n\nlatest_question:\n{question.strip()}"),
-    }
 
     telemetry: dict[str, Any] = {
         "enabled": is_agent_loop_enabled(),
@@ -1130,8 +1147,10 @@ def answer_virtual_advisor(
         "fallback_reason": None,
         "forced_final": False,
         "grounding_retry": False,
+        "turn_error": None,
     }
     agent_tool_results: list[dict[str, Any]] = []
+    tool_results: list[dict[str, Any]] = []
     answer = ""
     usage: dict[str, Any] = {}
     answer_model = resolved_model
@@ -1140,7 +1159,18 @@ def answer_virtual_advisor(
     if telemetry["enabled"] and not loop_supported:
         telemetry["fallback_reason"] = "client_has_no_tool_support"
 
+    context_json = json.dumps(context, ensure_ascii=False)
+    user_message = {
+        "role": "user",
+        "content": (f"verified_context:\n{context_json}\n\nlatest_question:\n{question.strip()}"),
+    }
+
     if telemetry["enabled"] and loop_supported:
+        # Loop mode: NO regex seed. Battery testing showed the seed dumping
+        # up to 100 unfiltered student rows into context (~13k prompt
+        # tokens), which slowed every turn and tempted the model to answer
+        # from a misleading sample instead of calling find_students with
+        # the right filters. The model fetches precisely what it needs.
         loop_messages: list[dict[str, Any]] = [
             {"role": "system", "content": SYSTEM_PROMPT_AGENT},
             *_sanitize_history(history),
@@ -1156,11 +1186,26 @@ def answer_virtual_advisor(
                 telemetry=telemetry,
             )
             telemetry["loop_used"] = True
+            # The UI evidence panel reads ``tool_results``; in loop mode
+            # the agent's tool results are that evidence.
+            tool_results = agent_tool_results
         except LocalLLMBadRequest as exc:
             logger.warning("Model rejected tool calling; falling back to single-shot: %s", exc)
             telemetry["fallback_reason"] = "tools_rejected_by_model"
 
     if not telemetry["loop_used"]:
+        # Single-shot fallback: the deterministic regex planner seeds the
+        # context exactly as before the agent loop existed.
+        tool_results = run_planned_tools(question, scope=scope)
+        if tool_results:
+            context["tool_results"] = tool_results
+        context_json = json.dumps(context, ensure_ascii=False)
+        user_message = {
+            "role": "user",
+            "content": (
+                f"verified_context:\n{context_json}\n\nlatest_question:\n{question.strip()}"
+            ),
+        }
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         messages.extend(_sanitize_history(history))
         messages.append(user_message)

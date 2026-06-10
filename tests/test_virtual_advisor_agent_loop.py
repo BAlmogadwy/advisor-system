@@ -510,6 +510,109 @@ def test_grounding_retry_on_unverified_student_id() -> None:
     assert "9876543" in correction
 
 
+def test_agent_loop_survives_mid_loop_turn_failure() -> None:
+    """A timeout/reasoning-budget failure on a tool turn must degrade to a
+    forced final answer, never a 503."""
+    _make_students()
+
+    class FlakyToolClient(FakeToolClient):
+        def chat_with_tools(self, messages, **kwargs):
+            if self._turn_idx >= 1:
+                self._turn_idx += 1
+                raise LocalLLMUnavailable("Local LLM request timed out.")
+            return super().chat_with_tools(messages, **kwargs)
+
+    fake = FlakyToolClient(
+        turns=[_tool_turn(tool_calls=(_tool_call("find_students", {"program": "AI"}),))],
+        plain_answers=["Recovered answer from evidence gathered before the timeout."],
+    )
+
+    result = answer_virtual_advisor(
+        question="how are AI students doing?",
+        scope={"role": ROLE_SUPER_ADMIN},
+        client=fake,
+    )
+
+    agent = result["agent"]
+    assert agent["loop_used"] is True
+    assert agent["forced_final"] is True
+    assert "timed out" in agent["turn_error"]
+    assert result["answer"] == "Recovered answer from evidence gathered before the timeout."
+    # Evidence from the successful first turn is preserved.
+    assert agent["tool_results"][0]["count"] == 1
+
+
+def test_loop_mode_skips_regex_seed_and_mirrors_agent_evidence() -> None:
+    """In loop mode the regex planner must NOT seed the context (token
+    bloat + misleading samples); ``tool_results`` mirrors agent evidence."""
+    _make_students()
+    fake = FakeToolClient(
+        turns=[
+            _tool_turn(tool_calls=(_tool_call("find_students", {"program": "AI"}),)),
+            _tool_turn(content="done"),
+        ]
+    )
+
+    # This wording triggers the legacy regex planner ("find", "students").
+    result = answer_virtual_advisor(
+        question="find AI students with 90 credit hours",
+        scope={"role": ROLE_SUPER_ADMIN},
+        client=fake,
+    )
+
+    # Context sent to the model carries no seeded tool_results blob.
+    first_turn_user = fake.tool_messages_seen[0][-1]["content"]
+    assert '"tool_results"' not in first_turn_user
+    # Response evidence mirrors what the agent actually fetched.
+    assert result["tool_results"] == result["agent"]["tool_results"]
+    assert result["tool_results"][0]["tool"] == "find_students"
+
+
+def test_year_term_default_when_caller_omits_them() -> None:
+    """WhatsApp callers pass no academic year/term; the service must
+    default them so time-dependent capabilities work."""
+    _make_students()
+    fake = FakeToolClient(turns=[_tool_turn(content="ok")])
+
+    result = answer_virtual_advisor(
+        question="what should I take?",
+        student_id=6001001,
+        scope={"role": ROLE_STUDENT, "student_id": 6001001},
+        client=fake,
+    )
+
+    term_context = result["verified_context"]["term_context"]
+    assert term_context["academic_year"] is not None
+    assert term_context["term"] is not None
+
+
+def test_course_prerequisites_capability() -> None:
+    _make_students()
+    from core.models import Prerequisite
+
+    Prerequisite.objects.create(program="AI", course_code="AI431", prerequisite_course_code="AI331")
+    registry = get_default_registry()
+
+    explicit = registry.execute(
+        "course_prerequisites",
+        {"course_code": "AI431", "program": "AI"},
+        scope={"role": ROLE_SUPER_ADMIN},
+    )
+    assert explicit["ok"] is True
+    assert explicit["per_program"][0]["program"] == "AI"
+    assert "AI331" in explicit["per_program"][0]["prerequisites"]
+    assert explicit["per_program"][0]["programme_term"] == 8
+
+    # Student scope: program defaults to the student's own program.
+    own = registry.execute(
+        "course_prerequisites",
+        {"course_code": "AI431"},
+        scope={"role": ROLE_STUDENT, "student_id": 6001001},
+    )
+    assert own["ok"] is True
+    assert own["per_program"][0]["program"] == "AI"
+
+
 def test_grounded_student_id_does_not_trigger_retry() -> None:
     _make_students()
     fake = FakeToolClient(
