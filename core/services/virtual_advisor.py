@@ -464,6 +464,23 @@ _PROGRAM_STOPWORDS = {
     "WHICH",
     "WHO",
     "WOMEN",
+    # quantifier / question words that can precede "students" but are not programs
+    "MANY",
+    "MOST",
+    "SOME",
+    "FEW",
+    "HOW",
+    "THESE",
+    "EACH",
+    "BOTH",
+    "COUNT",
+    "TOTAL",
+    "NUMBER",
+    "NEW",
+    "ACTIVE",
+    "CURRENT",
+    "CURRENTLY",
+    "AVERAGE",
 }
 
 

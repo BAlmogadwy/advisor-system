@@ -650,3 +650,22 @@ def test_student_like_vague_question_uses_verified_context_without_dataset_tool(
     assert "verified_context" in prompt
     assert "AI331" in prompt
     assert "AI431" in prompt
+
+
+def test_extract_program_ignores_quantifier_words() -> None:
+    """Regression: 'how many students ...' must not parse a quantifier word as a program.
+
+    Previously _extract_program matched the word before 'students' (e.g. MANY/MOST/
+    SOME), so find_students_tool applied program='MANY' and returned zero matches for
+    any question that didn't explicitly name a program.
+    """
+    from core.services.virtual_advisor import _extract_program
+
+    assert _extract_program("How many students passed AI331?", ["AI331"]) == ""
+    assert _extract_program("most students with low GPA", []) == ""
+    assert _extract_program("how many active students", []) == ""
+    # real program codes are still extracted correctly
+    assert _extract_program("List AI students", []) == "AI"
+    assert _extract_program("how many CS students", []) == "CS"
+    assert _extract_program("most DS students", []) == "DS"
+    assert _extract_program("students in program IS", []) == "IS"
