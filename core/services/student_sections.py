@@ -1,7 +1,46 @@
 from __future__ import annotations
 
+from django.db.models import Q
+
 from core.models import ProgrammeRequirement, Student, StudentCourse, StudentTermSection
 from core.services.student_helpers import normalize_code
+
+# Sections are gender-segregated and labelled with a leading gender tag, e.g.
+# "M7", "F3" (first character is the cohort gender). A student (Student.section
+# is "M" or "F") may only see/take sections of their own gender. Labels without
+# an M/F prefix are treated as ungendered and shown to everyone.
+
+
+def section_gender(section_label: str) -> str:
+    """Return 'M'/'F' for a gendered section label (e.g. 'M7'/'F3'), else ''."""
+    s = (section_label or "").strip().upper()
+    return s[0] if s[:1] in ("M", "F") else ""
+
+
+def student_gender(student_id: int | str) -> str:
+    """Return the student's cohort gender ('M'/'F') from Student.section, else ''."""
+    try:
+        sid = int(student_id)
+    except (TypeError, ValueError):
+        return ""
+    sec = Student.objects.filter(student_id=sid).values_list("section", flat=True).first()
+    g = (sec or "").strip().upper()
+    return g if g in ("M", "F") else ""
+
+
+def gender_section_filter(gender: str) -> Q:
+    """Build a Q() keeping only sections a ``gender`` student may take.
+
+    Keeps the student's own gender sections PLUS any ungendered section (open to
+    all). An unknown/blank gender returns an all-pass Q() so callers never
+    accidentally hide every section. Used by both the planner's section catalog
+    (display) and the build (scheduling) so they can never disagree.
+    """
+    g = (gender or "").strip().upper()
+    if g not in ("M", "F"):
+        return Q()
+    gendered = Q(section__istartswith="M") | Q(section__istartswith="F")
+    return Q(section__istartswith=g) | ~gendered
 
 
 def _section_course_key(term_section) -> str:

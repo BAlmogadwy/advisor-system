@@ -378,7 +378,7 @@ async function renderPlanPalette(studentId){
       const secRes=await fetch('/ops/planner/sections-catalog/',{
         method:'POST',
         headers:{'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
-        body:JSON.stringify({academic_year:currentCtx.academic_year,term:currentCtx.term,course_codes:codes})
+        body:JSON.stringify({student_id:currentCtx.student_id,academic_year:currentCtx.academic_year,term:currentCtx.term,course_codes:codes})
       });
       const secData=await secRes.json();
       sections=secData.sections||[];
@@ -532,7 +532,7 @@ async function renderAvailableSections(){
     const secRes=await fetch('/ops/planner/sections-catalog/',{
       method:'POST',
       headers:{'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
-      body:JSON.stringify({academic_year:currentCtx.academic_year,term:currentCtx.term,course_codes:codes})
+      body:JSON.stringify({student_id:currentCtx.student_id,academic_year:currentCtx.academic_year,term:currentCtx.term,course_codes:codes})
     });
     const secData=await secRes.json();
     const sections=secData.sections||[];
@@ -772,6 +772,7 @@ q('runBuilder').onclick=async()=>{
       method:'POST',
       headers:{'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
       body:JSON.stringify({
+        student_id:currentCtx.student_id,
         academic_year:currentCtx.academic_year,
         term:currentCtx.term,
         mode:q('mode').value,

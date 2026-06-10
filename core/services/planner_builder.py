@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from core.models import TermSection, TermSectionMeeting
+from core.services.student_sections import gender_section_filter
 
 try:
     from ortools.sat.python import cp_model  # type: ignore
@@ -183,27 +184,25 @@ def _section_meetings(term_section_id: int) -> list[Meeting]:
 
 
 def _catalog_for_courses(
-    year: str, term: str, course_codes: list[str]
+    year: str, term: str, course_codes: list[str], gender: str = ""
 ) -> dict[str, list[dict[str, Any]]]:  # year/term kept for API compatibility
     if not course_codes:
         return {}
     wanted = {str(c).replace(" ", "").upper() for c in course_codes}
-    rows = (
-        TermSection.objects.filter(
-            scenario__isnull=True,
-            course_key__in=wanted,
-        )
-        .order_by("course_code", "course_number", "section")
-        .values_list(
-            "id",
-            "course_code",
-            "course_number",
-            "course_key",
-            "section",
-            "course_name",
-            "registered_count",
-            "available_capacity",
-        )
+    qs = TermSection.objects.filter(scenario__isnull=True, course_key__in=wanted)
+    if gender:
+        # Gender-segregated: only schedule the student into their own cohort's
+        # sections (plus any ungendered section).
+        qs = qs.filter(gender_section_filter(gender))
+    rows = qs.order_by("course_code", "course_number", "section").values_list(
+        "id",
+        "course_code",
+        "course_number",
+        "course_key",
+        "section",
+        "course_name",
+        "registered_count",
+        "available_capacity",
     )
     out: dict[str, list[dict[str, Any]]] = {}
     for sid, code, num, course_key, sec, name, reg, cap in rows:
@@ -1135,6 +1134,7 @@ def build_plans(
     strict_per_course: bool = False,
     consider_capacity: bool = True,
     max_credits: int = 0,
+    gender: str = "",
 ) -> dict[str, Any]:
     codes = sorted(
         {
@@ -1143,7 +1143,7 @@ def build_plans(
             if str(x.get("course_code", "")).strip()
         }
     )
-    catalog = _catalog_for_courses(year, term, codes)
+    catalog = _catalog_for_courses(year, term, codes, gender)
 
     # Filter catalog for courses with pinned (advisor-selected) sections.
     # When pinned_sections is present, the builder only considers those
