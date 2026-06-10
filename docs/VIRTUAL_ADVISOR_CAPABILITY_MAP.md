@@ -32,8 +32,37 @@ The "Recommended Next Build Slice" below is now built:
 - Identity/scope rules are enforced in executors server-side
   (`_resolve_scoped_student_id`, `_resolve_scoped_programs`) — never from
   model-supplied arguments.
-- Tests: `tests/test_virtual_advisor_agent_loop.py` (22 tests) plus the
-  legacy suite which now pins the fallback path.
+- Tests: `tests/test_virtual_advisor_agent_loop.py` plus the legacy
+  suite which now pins the fallback path.
+
+### Live-tested hardening (cycles 1-3, 2026-06-11)
+
+Four live batteries (28 realistic AR/EN questions against LM Studio
+qwen3.6-35b-a3b across student/advisor/general-advisor scopes) drove
+three fix cycles. Battery 1: 3/8 hard failures; battery 4: 0 failures,
+all answers correct and grounded, latency 19-121s.
+
+- 9th capability: `course_prerequisites` (all roles; per-program prereq
+  codes incl. hour rules + plan term/credits).
+- Loop turn failures (timeout / reasoning-budget) degrade to a forced
+  final answer from gathered evidence instead of HTTP 503.
+- Loop mode skips the regex seed (it dumped 100 unfiltered rows ≈13k
+  prompt tokens and invited sample-based wrong answers); the model
+  queries precisely instead.
+- `find_students`: `name_contains` filter; agent payload capped at 30
+  rows with `summary_stats` (gpa min/avg/max, below-2 count, avg
+  credits) over all matched rows — overview questions answer from
+  stats (230s → 35s, 22k → 5k tokens).
+- Deterministic `answer_language` pin (Arabic-script detection) stops
+  language drift; `programme_totals` in student context stops the
+  model assuming a "standard" 132-hour degree (exact plan totals).
+- Hijri sanity guard: model-supplied `academic_year` outside 1400-1500
+  (it once sent 2024) or `term` outside 1-3 falls back to configured
+  defaults; explicit legitimate terms pass through.
+- Tunables: `VIRTUAL_ADVISOR_LOOP_MAX_TOKENS` (3000),
+  `VIRTUAL_ADVISOR_TOOL_TURN_TIMEOUT_SECONDS` (75),
+  `VIRTUAL_ADVISOR_MAX_TOOL_ITERATIONS` (5),
+  `VIRTUAL_ADVISOR_MAX_TOOL_CALLS` (12).
 
 ## Non-Negotiables
 
