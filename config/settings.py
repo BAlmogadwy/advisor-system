@@ -143,6 +143,12 @@ VIRTUAL_ADVISOR_MAX_TOOL_CALLS = int(os.getenv("VIRTUAL_ADVISOR_MAX_TOOL_CALLS",
 # variants) burn output tokens on hidden reasoning before tool calls or
 # answers, so loop turns need more headroom than plain chat turns.
 VIRTUAL_ADVISOR_LOOP_MAX_TOKENS = int(os.getenv("VIRTUAL_ADVISOR_LOOP_MAX_TOKENS", "3000"))
+# Per-turn HTTP timeout for tool-enabled turns. Thinking models can stall
+# a tool turn for the full LOCAL_LLM_TIMEOUT_SECONDS; a shorter per-turn
+# limit hands control to the fast no-tools rescue path sooner.
+VIRTUAL_ADVISOR_TOOL_TURN_TIMEOUT_SECONDS = float(
+    os.getenv("VIRTUAL_ADVISOR_TOOL_TURN_TIMEOUT_SECONDS", "75")
+)
 
 # WhatsApp Advisor Gateway. Keep credentials out of the repository.
 WHATSAPP_CLOUD_API_VERSION = os.getenv("WHATSAPP_CLOUD_API_VERSION", "v23.0")

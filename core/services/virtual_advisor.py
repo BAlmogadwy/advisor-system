@@ -49,6 +49,10 @@ def _loop_max_tokens() -> int:
     return max(256, int(getattr(settings, "VIRTUAL_ADVISOR_LOOP_MAX_TOKENS", 3000)))
 
 
+def _tool_turn_timeout() -> float:
+    return max(10.0, float(getattr(settings, "VIRTUAL_ADVISOR_TOOL_TURN_TIMEOUT_SECONDS", 75)))
+
+
 SYSTEM_PROMPT = """You are a private local university virtual academic advisor.
 
 Rules:
@@ -72,6 +76,7 @@ Rules:
 - If a tool returns an error, adjust the arguments or try another tool; explain the limitation only if no tool can answer.
 - When evidence is sufficient, STOP calling tools and give the final answer.
 - If the question is ambiguous (which student, which course, which term), ask ONE short clarifying question instead of guessing.
+- Academic years are Hijri (e.g. 1448), never Gregorian. Tools default to the configured current year/term — omit academic_year/term arguments unless the user explicitly names a different term.
 - Do not invent grades, rules, prerequisites, graduation status, rooms, sections, approvals, or student ids. Every specific fact must appear in the evidence.
 - Keep advice practical: what is known, why it matters, and the next safest action.
 - Never expose chain-of-thought; cite concise evidence instead.
@@ -1050,6 +1055,7 @@ def _run_agent_loop(
                 tools=tool_schemas,
                 model=resolved_model,
                 max_tokens=_loop_max_tokens(),
+                timeout_seconds=_tool_turn_timeout(),
             )
         except LocalLLMBadRequest:
             if iteration == 0:

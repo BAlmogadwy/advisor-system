@@ -248,8 +248,22 @@ def _ctx_year_term(
         except (TypeError, ValueError):
             return None
 
-    year = _coerce(args.get("academic_year")) or _coerce(ctx.get("academic_year"))
-    term = _coerce(args.get("term")) or _coerce(ctx.get("term"))
+    # Sanity guard: the academic calendar is Hijri (e.g. 1448). Live
+    # testing caught the model passing Gregorian years (2024); silently
+    # fall back to the configured defaults rather than running tools
+    # against a phantom year. The executed year/term are echoed in every
+    # tool result, so the model sees what was actually used.
+    year_arg = _coerce(args.get("academic_year"))
+    if year_arg is not None and not (1400 <= year_arg <= 1500):
+        logger.warning("Ignoring implausible academic_year=%s from model args", year_arg)
+        year_arg = None
+    term_arg = _coerce(args.get("term"))
+    if term_arg is not None and term_arg not in (1, 2, 3):
+        logger.warning("Ignoring implausible term=%s from model args", term_arg)
+        term_arg = None
+
+    year = year_arg or _coerce(ctx.get("academic_year"))
+    term = term_arg or _coerce(ctx.get("term"))
     if year is None or term is None:
         return None, None, "academic_year and term are required (none configured for this chat)."
     return year, term, None

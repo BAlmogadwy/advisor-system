@@ -97,7 +97,11 @@ class LocalLLMClient:
         )
 
     def _request(
-        self, method: str, path: str, payload: dict[str, Any] | None = None
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | None = None,
+        timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
         body = json.dumps(payload).encode("utf-8") if payload is not None else None
         request = Request(
@@ -109,8 +113,9 @@ class LocalLLMClient:
                 "Content-Type": "application/json",
             },
         )
+        effective_timeout = timeout_seconds if timeout_seconds else self.timeout_seconds
         try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:  # noqa: S310  # nosec B310
+            with urlopen(request, timeout=effective_timeout) as response:  # noqa: S310  # nosec B310
                 text = response.read().decode("utf-8")
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
@@ -199,6 +204,7 @@ class LocalLLMClient:
         temperature: float = 0.2,
         max_tokens: int | None = None,
         tool_choice: str = "auto",
+        timeout_seconds: float | None = None,
     ) -> ToolChatResult:
         """One tool-enabled chat turn against the OpenAI-compatible server.
 
@@ -217,7 +223,7 @@ class LocalLLMClient:
             "tools": tools,
             "tool_choice": tool_choice,
         }
-        data = self._request("POST", "/chat/completions", payload)
+        data = self._request("POST", "/chat/completions", payload, timeout_seconds=timeout_seconds)
         choices = data.get("choices") or []
         first = choices[0] if choices and isinstance(choices[0], dict) else {}
         message = first.get("message") if isinstance(first.get("message"), dict) else {}

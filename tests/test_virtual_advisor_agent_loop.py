@@ -147,12 +147,22 @@ class FakeToolClient:
         return requested_model or "fake-tools"
 
     def chat_with_tools(
-        self, messages, *, tools, model=None, temperature=0.2, max_tokens=None, tool_choice="auto"
+        self,
+        messages,
+        *,
+        tools,
+        model=None,
+        temperature=0.2,
+        max_tokens=None,
+        tool_choice="auto",
+        timeout_seconds=None,
     ):
         if self.reject_tools:
             raise LocalLLMBadRequest("tools are not supported by this model")
         self.tool_messages_seen.append([dict(m) for m in messages])
         self.tools_seen.append(tools)
+        self.last_max_tokens = max_tokens
+        self.last_timeout_seconds = timeout_seconds
         turn = self.turns[min(self._turn_idx, len(self.turns) - 1)]
         self._turn_idx += 1
         return turn
@@ -613,6 +623,37 @@ def test_course_prerequisites_capability() -> None:
     assert own["per_program"][0]["program"] == "AI"
 
 
+def test_year_term_sanity_guard_rejects_gregorian_years() -> None:
+    """Live testing caught the model passing academic_year=2024 (Gregorian);
+    the registry must fall back to the configured Hijri defaults."""
+    _make_students()
+    registry = get_default_registry()
+
+    result = registry.execute(
+        "recommend_courses",
+        {"academic_year": 2024, "term": 7},
+        scope={"role": ROLE_STUDENT, "student_id": 6001001},
+        ctx={"academic_year": 1448, "term": 1},
+    )
+    assert result["ok"] is True
+    assert result["academic_year"] == 1448
+    assert result["term"] == 1
+
+
+def test_loop_passes_budgets_to_tool_turns() -> None:
+    _make_students()
+    fake = FakeToolClient(turns=[_tool_turn(content="ok")])
+
+    answer_virtual_advisor(
+        question="hello",
+        scope={"role": ROLE_SUPER_ADMIN},
+        client=fake,
+    )
+
+    assert fake.last_max_tokens == 3000
+    assert fake.last_timeout_seconds == 75.0
+
+
 def test_find_students_name_contains_filter() -> None:
     _make_students()
     registry = get_default_registry()
@@ -737,10 +778,16 @@ def _client_with_fake_response(
     client = LocalLLMClient(base_url="http://localhost:1234/v1")
     captured: dict[str, Any] = {}
 
-    def fake_request(method: str, path: str, payload: dict[str, Any] | None = None):
+    def fake_request(
+        method: str,
+        path: str,
+        payload: dict[str, Any] | None = None,
+        timeout_seconds: float | None = None,
+    ):
         captured["method"] = method
         captured["path"] = path
         captured["payload"] = payload
+        captured["timeout_seconds"] = timeout_seconds
         return response
 
     monkeypatch.setattr(client, "_request", fake_request)
