@@ -303,7 +303,10 @@ class Command(BaseCommand):
         for prog in sorted(programs_in_batch):
             if not prog:
                 continue
-            result = resolve_elective_placeholders(prog)
+            # Sync ORM work — run in a thread, same as _process_student.
+            # Calling it directly on the event-loop thread raises
+            # SynchronousOnlyOperation.
+            result = await asyncio.to_thread(resolve_elective_placeholders, prog)
             total_resolved += result["resolved_count"]
             total_updates += result["total_updates"]
             if result["resolved_count"] > 0:
