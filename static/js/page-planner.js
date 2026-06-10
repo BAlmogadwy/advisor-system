@@ -148,13 +148,15 @@ function renderBaselineWeeklyCompact(baseline){
     source: r.source||'',
   }));
   const grid=WeekGrid.renderWeekGrid({
+    mode: 'blocks',
     blocks,
     timeLabel: UI.time,
     dayLabels: UI.dayShort,
     empty: `<span class="text-secondary">${T.noMappedSlots}</span>`,
-    pick: (cur,inc)=>inc, // original baseline grid: last write wins
+    pick: (cur,inc)=>inc, // last write wins
     bg: m=>colorForCourse(m.label),
-    cellHtml: m=>`<div class="fw-semibold">${m.label}</div><div class="small text-secondary">${m.start}-${m.end}</div>`,
+    accent: m=>colorForCourseBorder(m.label),
+    cellHtml: m=>`<span class="wg-cid">${m.label}</span><span class="wg-meta">${m.start}-${m.end}</span>`,
   });
   host.innerHTML=grid+unmappedHtml;
 }
