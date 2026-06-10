@@ -213,20 +213,16 @@ function renderVisualTimetable(source='baseline'){
 
   const conflictBg=(getComputedStyle(document.documentElement).getPropertyValue('--pl-conflict-cell').trim() || '#fecaca');
   host.innerHTML=WeekGrid.renderWeekGrid({
+    mode: 'blocks',
     blocks: enriched,
     timeLabel: UI.time,
     dayLabels: UI.dayShort,
     empty: `<span class="text-secondary">${IS_AR ? 'لا توجد لقاءات جدول لعرضها.' : 'No timetable meetings to display.'}</span>`,
-    pick: (cur,inc)=>(inc.conflict?inc:cur), // original: keep first unless incoming is a conflict
+    pick: (cur,inc)=>(inc.conflict?inc:cur), // keep first unless incoming is a conflict
     bg: m=>(m.conflict?conflictBg:colorForCourse(m.label)),
-    cellHtml: m=>{
-      const badge = m.conflict
-        ? `<span class="badge text-bg-danger">${IS_AR ? 'تعارض' : 'conflict'}</span>`
-        : (m.kind==='planned'
-          ? `<span class="badge text-bg-success">${IS_AR ? 'مخطط' : 'planned'}</span>`
-          : `<span class="badge text-bg-primary">${IS_AR ? 'أساس' : 'baseline'}</span>`);
-      return `<div class="fw-semibold">${m.label}</div><div class="small text-secondary">${m.start}-${m.end}</div><div class="mt-1">${badge}</div>`;
-    },
+    accent: m=>(m.conflict?'#ef4444':colorForCourseBorder(m.label)),
+    cellClass: m=>(m.conflict?'wg-clash':(m.kind==='planned'?'wg-planned':'')),
+    cellHtml: m=>`<span class="wg-cid">${m.label}</span><span class="wg-meta">${m.start}-${m.end}</span>`,
   });
 }
 

@@ -5262,6 +5262,101 @@ html[data-theme="dark"] .tw-issue-row:hover            { background: rgba(10,142
   --pl-conflict-cell: #fecaca;
 }
 
+/* ------------------------------------------------------------
+   Shared WeekGrid — "blocks" mode (split-screen look)
+   Themed CSS-grid emitted by WeekGrid.renderWeekGrid({mode:'blocks'}).
+   Pastel cell background + accent left-border arrive inline from
+   colorForCourse()/colorForCourseBorder() (already theme-aware), so
+   this owns only layout, grid lines, headers, and status markers —
+   light + dark both work via design tokens.
+   ------------------------------------------------------------ */
+.wg-blocks {
+  display:          grid;
+  grid-template-columns: 50px repeat(var(--wg-days, 5), minmax(0, 1fr));
+  grid-auto-rows:   21px;
+  gap:              1px;
+  background:       var(--line);
+  border:           1px solid var(--line);
+  border-radius:    var(--radius);
+  overflow:         hidden;
+}
+.wg-blocks .wg-h {
+  display:          flex;
+  align-items:      center;
+  justify-content:  center;
+  background:       var(--card);
+  font-size:        10.5px;
+  font-weight:      700;
+  color:            var(--t3);
+  text-transform:   uppercase;
+  letter-spacing:   0.03em;
+  position:         sticky;
+  top:              0;
+  z-index:          3;
+}
+.wg-blocks .wg-cor { color: var(--t4); }
+.wg-blocks .wg-t {
+  display:          flex;
+  align-items:      center;
+  justify-content:  center;
+  background:       var(--card);
+  font-family:      var(--font-mono, monospace);
+  font-size:        9px;
+  color:            var(--t4);
+}
+.wg-blocks .wg-cell {
+  background:       var(--pl-overlay-1);
+  min-width:        0;
+  overflow:         hidden;
+}
+.wg-blocks .wg-filled {
+  position:             relative;
+  display:              flex;
+  flex-direction:       column;
+  justify-content:      center;
+  gap:                  1px;
+  padding:              2px 5px;
+  overflow:             hidden;
+  border-inline-start:  3px solid var(--teal);
+  border-radius:        0 2px 2px 0;
+  z-index:              1;
+}
+.wg-blocks .wg-filled .wg-cid {
+  font-family:      var(--font-mono, monospace);
+  font-weight:      700;
+  font-size:        10px;
+  line-height:      1.1;
+  color:            var(--ink);
+  white-space:      nowrap;
+  overflow:         hidden;
+  text-overflow:    ellipsis;
+}
+.wg-blocks .wg-filled .wg-meta {
+  font-size:        8.5px;
+  line-height:      1;
+  color:            var(--t4);
+  white-space:      nowrap;
+  overflow:         hidden;
+  text-overflow:    ellipsis;
+}
+/* status markers: planned = dashed accent; conflict = red outline + corner dot */
+.wg-blocks .wg-filled.wg-planned { border-inline-start-style: dashed; }
+.wg-blocks .wg-filled.wg-clash {
+  outline:          2px solid var(--pl-conflict-cell);
+  outline-offset:   -2px;
+}
+.wg-blocks .wg-filled.wg-clash::after {
+  content:          '';
+  position:         absolute;
+  top:              2px;
+  inset-inline-end: 2px;
+  width:            6px;
+  height:           6px;
+  border-radius:    50%;
+  background:       #ef4444;
+  box-shadow:       0 0 5px #ef4444;
+}
+
 /* Workflow stepper */
 .wf-stepper {
   display:         flex;

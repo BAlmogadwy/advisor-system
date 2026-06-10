@@ -1,14 +1,16 @@
 /* shared-timetable.js — single source of truth for weekly timetable grids.
  *
- * Phase 1 covers the "clock grid": day columns × continuous clock-time rows
- * (default 30-minute ticks) with blocks that span multiple rows via <td rowspan>.
- * Several pages used to hand-roll this identical scaffold; they now feed
- * normalised blocks + small callbacks here so every clock-style timetable looks
- * and behaves the same and a layout/RTL/dark-mode fix lands in one place.
+ * Covers the "clock grid": day columns × continuous clock-time rows (default
+ * 30-minute ticks) with blocks that span multiple rows. Two visual modes share
+ * one geometry pass (_prepare):
+ *   - mode:'table'  (default) — Bootstrap <table> with <td rowspan> (compact list look)
+ *   - mode:'blocks'           — themed CSS-grid of pastel cells with an accent
+ *                               left-border + clash markers (the "split-screen" look)
  *
  * The module is colour- and data-agnostic: callers decide a cell's background
- * (bg) and inner markup (cellHtml), and how to resolve two blocks landing in the
- * same cell (pick). This module owns only the grid geometry.
+ * (bg), accent border (accent), extra classes (cellClass) and inner markup
+ * (cellHtml), plus how to resolve two blocks landing in the same cell (pick).
+ * This module owns only grid geometry + scaffold.
  *
  * Exposed as the global `WeekGrid` (the codebase uses plain globals, not ES
  * modules — see shared-utils.js / shared-ux.js).
@@ -30,38 +32,13 @@
     return h * 60 + m;
   }
 
-  /**
-   * renderWeekGrid(opts) -> HTML string
-   *
-   * @param {Object}   opts
-   * @param {Array}    opts.blocks      [{day, start, end, ...any}] — `day` already
-   *                                    normalised to a column key (SUN..THU).
-   *                                    Invalid/zero-length times are dropped.
-   * @param {Function} opts.cellHtml    (block) => inner HTML for a placed cell.
-   *                                    `block` carries the original fields plus
-   *                                    `span` (number of rows it occupies).
-   * @param {Function} [opts.bg]        (block) => CSS background value. Default ''.
-   * @param {Function} [opts.pick]      (existing, incoming) => kept block when two
-   *                                    blocks start in the same cell.
-   *                                    Default keeps the first (existing).
-   * @param {string}   [opts.timeLabel] corner header label. Default ''.
-   * @param {string}   [opts.empty]     HTML returned when there are no valid
-   *                                    blocks. Default ''.
-   * @param {string[]} [opts.days]      column order. Default SUN..THU.
-   * @param {Object}   [opts.dayLabels] {SUN:'Sun', ...} header labels.
-   * @param {number}   [opts.step]      minutes per row. Default 30.
-   * @param {number}   [opts.padMinutes] minutes of padding added before the first
-   *                                    and after the last meeting. Default 30.
-   * @returns {string} HTML (a .table-responsive wrapper around the grid table).
-   */
-  function renderWeekGrid(opts) {
-    opts = opts || {};
+  /* Shared geometry: filter valid blocks, compute the visible time window, and
+   * bucket each block by day + start tick (carrying its row span). Used by both
+   * render modes so they never disagree on layout. */
+  function _prepare(opts) {
     var days = opts.days || DAY_ORDER;
-    var dayLabels = opts.dayLabels || {};
     var step = opts.step || 30;
     var pad = opts.padMinutes == null ? 30 : opts.padMinutes;
-    var cellHtml = opts.cellHtml || function () { return ''; };
-    var bgOf = opts.bg || function () { return ''; };
     var pick = opts.pick || function (existing) { return existing; };
 
     var enriched = (opts.blocks || [])
@@ -74,7 +51,7 @@
       })
       .filter(function (b) { return b._st !== null && b._en !== null && b._en > b._st; });
 
-    if (!enriched.length) return opts.empty || '';
+    if (!enriched.length) return { empty: true, days: days, step: step };
 
     var rawMin = Math.min.apply(null, enriched.map(function (b) { return b._st; }));
     var rawMax = Math.max.apply(null, enriched.map(function (b) { return b._en; }));
@@ -86,11 +63,23 @@
     enriched.forEach(function (b) {
       if (!startsByDay[b.day]) startsByDay[b.day] = {};
       var stSlot = Math.floor(b._st / step) * step;
-      var span = Math.max(1, Math.ceil((b._en - stSlot) / step));
-      b.span = span;
+      b.span = Math.max(1, Math.ceil((b._en - stSlot) / step));
       var cur = startsByDay[b.day][stSlot];
       startsByDay[b.day][stSlot] = cur ? pick(cur, b) : b;
     });
+
+    return { empty: false, days: days, step: step, startMin: startMin, endMin: endMin, startsByDay: startsByDay };
+  }
+
+  function _hhmm(t) {
+    return String(Math.floor(t / 60)).padStart(2, '0') + ':' + String(t % 60).padStart(2, '0');
+  }
+
+  /* mode:'table' — preserves the historical Bootstrap-table output byte-for-byte. */
+  function _renderTable(opts, p) {
+    var days = p.days, dayLabels = opts.dayLabels || {}, step = p.step;
+    var cellHtml = opts.cellHtml || function () { return ''; };
+    var bgOf = opts.bg || function () { return ''; };
 
     var html = '<div class="table-responsive"><table class="table table-sm table-bordered align-middle"><thead><tr>';
     html += '<th style="width:70px">' + (opts.timeLabel || '') + '</th>';
@@ -99,13 +88,11 @@
 
     var carry = {};
     days.forEach(function (d) { carry[d] = 0; });
-    for (var t = startMin; t < endMin; t += step) {
-      var hh = String(Math.floor(t / 60)).padStart(2, '0');
-      var mm = String(t % 60).padStart(2, '0');
-      html += '<tr><td class="text-secondary">' + hh + ':' + mm + '</td>';
+    for (var t = p.startMin; t < p.endMin; t += step) {
+      html += '<tr><td class="text-secondary">' + _hhmm(t) + '</td>';
       days.forEach(function (d) {
         if (carry[d] > 0) { carry[d] -= 1; return; }
-        var m = startsByDay[d][t];
+        var m = p.startsByDay[d][t];
         if (!m) { html += '<td></td>'; return; }
         carry[d] = Math.max(0, (m.span || 1) - 1);
         var bg = bgOf(m);
@@ -116,6 +103,62 @@
     }
     html += '</tbody></table></div>';
     return html;
+  }
+
+  /* mode:'blocks' — themed CSS-grid (the split-screen look). Empty cells paint
+   * the grid lines; placed blocks overlay them via explicit grid-row spans. */
+  function _renderBlocks(opts, p) {
+    var days = p.days, dayLabels = opts.dayLabels || {}, step = p.step;
+    var rows = (p.endMin - p.startMin) / step;
+    var cellHtml = opts.cellHtml || function () { return ''; };
+    var bgOf = opts.bg || function () { return ''; };
+    var accentOf = opts.accent || function () { return ''; };
+    var classOf = opts.cellClass || function () { return ''; };
+
+    var h = '<div class="wg-blocks" style="--wg-days:' + days.length + '" role="grid">';
+    // Header row (row 1): time corner + day labels.
+    h += '<div class="wg-h wg-cor" style="grid-row:1;grid-column:1">' + (opts.timeLabel || '') + '</div>';
+    days.forEach(function (d, di) {
+      h += '<div class="wg-h wg-dh" style="grid-row:1;grid-column:' + (di + 2) + '">' + (dayLabels[d] || d) + '</div>';
+    });
+    // Time labels (column 1) + empty day cells — paint the background grid.
+    for (var i = 0; i < rows; i++) {
+      h += '<div class="wg-t" style="grid-row:' + (i + 2) + ';grid-column:1">' + _hhmm(p.startMin + i * step) + '</div>';
+    }
+    days.forEach(function (d, di) {
+      for (var r = 0; r < rows; r++) {
+        h += '<div class="wg-cell" style="grid-row:' + (r + 2) + ';grid-column:' + (di + 2) + '"></div>';
+      }
+    });
+    // Placed blocks overlay the empty cells (later in source → on top).
+    days.forEach(function (d, di) {
+      var byTick = p.startsByDay[d] || {};
+      Object.keys(byTick).forEach(function (slotKey) {
+        var m = byTick[slotKey];
+        var startTick = (Number(slotKey) - p.startMin) / step;
+        if (startTick < 0) return;
+        var style = 'grid-column:' + (di + 2) + ';grid-row:' + (startTick + 2) + ' / span ' + (m.span || 1) + ';';
+        var bg = bgOf(m); if (bg) style += 'background:' + bg + ';';
+        var accent = accentOf(m); if (accent) style += 'border-inline-start-color:' + accent + ';';
+        var extra = classOf(m);
+        h += '<div class="wg-cell wg-filled' + (extra ? ' ' + extra : '') + '" style="' + style + '">' + cellHtml(m) + '</div>';
+      });
+    });
+    h += '</div>';
+    return h;
+  }
+
+  /**
+   * renderWeekGrid(opts) -> HTML string. See file header for opts.
+   *  Common: blocks, days, dayLabels, step, padMinutes, timeLabel, empty,
+   *          cellHtml(block), bg(block), pick(existing,incoming).
+   *  mode:'blocks' also reads: accent(block), cellClass(block).
+   */
+  function renderWeekGrid(opts) {
+    opts = opts || {};
+    var p = _prepare(opts);
+    if (p.empty) return opts.empty || '';
+    return opts.mode === 'blocks' ? _renderBlocks(opts, p) : _renderTable(opts, p);
   }
 
   global.WeekGrid = { renderWeekGrid: renderWeekGrid, toMinutes: toMinutes, DAY_ORDER: DAY_ORDER };
