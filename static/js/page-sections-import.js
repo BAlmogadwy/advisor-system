@@ -1,4 +1,4 @@
-const IS_AR = 'LANGUAGE_CODE' === 'ar';
+const IS_AR = document.documentElement.lang === 'ar';
 const T = {
   noAction: IS_AR ? 'لا يوجد إجراء بعد.' : 'No action yet.',
   requestFailed: IS_AR ? 'فشل الطلب' : 'Request failed',

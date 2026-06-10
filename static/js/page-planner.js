@@ -1,4 +1,4 @@
-const IS_AR = 'LANGUAGE_CODE' === 'ar';
+const IS_AR = document.documentElement.lang === 'ar';
 
 const UI = {
   time: IS_AR ? 'الوقت' : 'Time',

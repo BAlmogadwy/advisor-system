@@ -74,14 +74,24 @@ def _display_course_label(row: dict[str, Any]) -> str:
 
 
 def _to_minutes(t: str) -> int:
-    hh, mm = t.split(":")
-    return int(hh) * 60 + int(mm)
+    """Minutes since midnight from 'HH:MM'. Returns -1 for unparseable/empty
+    input so one dirty time string never aborts the whole build; callers treat a
+    negative start (or end <= start) as 'no valid meeting'."""
+    try:
+        hh, mm = str(t).strip().split(":")
+        return int(hh) * 60 + int(mm)
+    except (ValueError, AttributeError, TypeError):
+        return -1
 
 
 def _overlap(a: Meeting, b: Meeting) -> bool:
     if a.day != b.day:
         return False
-    return _to_minutes(a.start) < _to_minutes(b.end) and _to_minutes(b.start) < _to_minutes(a.end)
+    a_s, a_e = _to_minutes(a.start), _to_minutes(a.end)
+    b_s, b_e = _to_minutes(b.start), _to_minutes(b.end)
+    if a_s < 0 or a_e <= a_s or b_s < 0 or b_e <= b_s:
+        return False  # malformed/zero-length meeting -> treat as non-conflicting
+    return a_s < b_e and b_s < a_e
 
 
 def _slot_text(m: Meeting) -> str:
@@ -95,7 +105,7 @@ def _meeting_mask(m: Meeting) -> int:
         return 0
     st = _to_minutes(m.start)
     en = _to_minutes(m.end)
-    if en <= st:
+    if st < 0 or en <= st:
         return 0
     start_idx = (day_idx * 24 * 60 + st) // _SLOT_MINUTES
     end_idx = (day_idx * 24 * 60 + en) // _SLOT_MINUTES
@@ -131,7 +141,7 @@ def _section_day_masks(meetings: list[Meeting]) -> tuple[int, int, int, int, int
             continue
         st = _to_minutes(m.start)
         en = _to_minutes(m.end)
-        if en <= st:
+        if st < 0 or en <= st:
             continue
         s = st // _SLOT_MINUTES
         e = en // _SLOT_MINUTES
@@ -147,7 +157,7 @@ def _gap_minutes_from_meetings(meetings: list[Meeting]) -> int:
         d = str(m.day or "").upper()[:3]
         st = _to_minutes(m.start)
         en = _to_minutes(m.end)
-        if en <= st:
+        if st < 0 or en <= st:
             continue
         by_day.setdefault(d, []).append((st, en))
 
@@ -694,7 +704,7 @@ def _bitmask_build_option_c(
                 d = str(m.day or "").upper()[:3]
                 st = _to_minutes(m.start)
                 en = _to_minutes(m.end)
-                if en <= st:
+                if st < 0 or en <= st:
                     continue
                 by_day.setdefault(d, []).append((st, en))
                 latest_finish = max(latest_finish, en)
@@ -974,7 +984,8 @@ def _cp_build_option(
         for m in meetings:
             if str(m.day) != day:
                 continue
-            if _to_minutes(m.start) <= t < _to_minutes(m.end):
+            cs, ce = _to_minutes(m.start), _to_minutes(m.end)
+            if cs >= 0 and ce > cs and cs <= t < ce:
                 return True
         return False
 

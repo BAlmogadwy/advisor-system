@@ -1,5 +1,5 @@
 /* ── Section Planning — client-side logic ── */
-const IS_AR = 'LANGUAGE_CODE' === 'ar';
+const IS_AR = document.documentElement.lang === 'ar';
 const T = {
   generating:  IS_AR ? 'جارٍ الحساب...' : 'Generating...',
   done:        IS_AR ? 'تم حساب خطة الشعب بنجاح.' : 'Section plan generated successfully.',
