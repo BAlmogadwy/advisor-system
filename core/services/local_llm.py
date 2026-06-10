@@ -20,12 +20,49 @@ class LocalLLMUnavailable(LocalLLMError):
     """Raised when the local LLM server cannot be reached."""
 
 
+class LocalLLMBadRequest(LocalLLMUnavailable):
+    """Raised when the local LLM rejects the request payload (HTTP 400).
+
+    Subclasses ``LocalLLMUnavailable`` so existing ``except`` blocks keep
+    working; the agent loop catches this specifically to fall back to the
+    plain no-tools chat path when a loaded model rejects ``tools``.
+    """
+
+
 @dataclass(frozen=True)
 class ChatResult:
     content: str
     model: str
     usage: dict[str, Any]
     raw: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ToolCallRequest:
+    """One function call requested by the model."""
+
+    id: str
+    name: str
+    arguments: dict[str, Any]
+    raw_arguments: str
+
+
+@dataclass(frozen=True)
+class ToolChatResult:
+    """Result of a tool-enabled chat turn.
+
+    ``content`` may legitimately be empty when the model requested tool
+    calls instead of answering. ``assistant_message`` is the verbatim
+    assistant message dict so the caller can append it to the running
+    conversation before adding ``role:"tool"`` results.
+    """
+
+    content: str
+    tool_calls: tuple[ToolCallRequest, ...]
+    model: str
+    usage: dict[str, Any]
+    raw: dict[str, Any]
+    assistant_message: dict[str, Any]
 
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
@@ -77,6 +114,8 @@ class LocalLLMClient:
                 text = response.read().decode("utf-8")
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
+            if exc.code == 400:
+                raise LocalLLMBadRequest(f"Local LLM rejected the request: {detail}") from exc
             raise LocalLLMUnavailable(f"Local LLM returned HTTP {exc.code}: {detail}") from exc
         except URLError as exc:
             raise LocalLLMUnavailable(f"Local LLM is not reachable: {exc.reason}") from exc
@@ -149,6 +188,88 @@ class LocalLLMClient:
             model=str(data.get("model") or resolved_model),
             usage=data.get("usage") if isinstance(data.get("usage"), dict) else {},
             raw=data,
+        )
+
+    def chat_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]],
+        model: str | None = None,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+        tool_choice: str = "auto",
+    ) -> ToolChatResult:
+        """One tool-enabled chat turn against the OpenAI-compatible server.
+
+        Unlike :meth:`chat`, an empty ``content`` is valid here when the
+        model returned ``tool_calls`` instead of a final answer. Messages
+        are passed through verbatim, so callers may include prior
+        assistant messages carrying ``tool_calls`` and ``role:"tool"``
+        results keyed by ``tool_call_id``.
+        """
+        resolved_model = self.resolve_model(model)
+        payload: dict[str, Any] = {
+            "model": resolved_model,
+            "messages": list(messages),
+            "temperature": temperature,
+            "max_tokens": int(max_tokens or getattr(settings, "LOCAL_LLM_MAX_TOKENS", 900)),
+            "tools": tools,
+            "tool_choice": tool_choice,
+        }
+        data = self._request("POST", "/chat/completions", payload)
+        choices = data.get("choices") or []
+        first = choices[0] if choices and isinstance(choices[0], dict) else {}
+        message = first.get("message") if isinstance(first.get("message"), dict) else {}
+        content = str(message.get("content") or "").strip()
+
+        tool_calls: list[ToolCallRequest] = []
+        for entry in message.get("tool_calls") or []:
+            if not isinstance(entry, dict):
+                continue
+            function = entry.get("function") if isinstance(entry.get("function"), dict) else {}
+            name = str(function.get("name") or "").strip()
+            if not name:
+                continue
+            raw_arguments = str(function.get("arguments") or "")
+            try:
+                parsed = json.loads(raw_arguments) if raw_arguments.strip() else {}
+            except json.JSONDecodeError:
+                parsed = {}
+            tool_calls.append(
+                ToolCallRequest(
+                    id=str(entry.get("id") or f"call_{len(tool_calls)}"),
+                    name=name,
+                    arguments=parsed if isinstance(parsed, dict) else {},
+                    raw_arguments=raw_arguments,
+                )
+            )
+
+        if not content and not tool_calls:
+            reasoning = str(message.get("reasoning_content", "")).strip()
+            finish_reason = str(first.get("finish_reason", "")).strip()
+            if reasoning and finish_reason == "length":
+                raise LocalLLMUnavailable(
+                    "Local LLM used the full token budget for hidden reasoning before a final "
+                    "answer. Increase LOCAL_LLM_MAX_TOKENS or choose a non-thinking model."
+                )
+            raise LocalLLMUnavailable(
+                "Local LLM returned neither content nor tool calls for a tool-enabled turn."
+            )
+
+        # Verbatim assistant message for conversation continuity; LM Studio
+        # expects the original tool_calls block to precede role:"tool" results.
+        assistant_message: dict[str, Any] = {"role": "assistant", "content": content or ""}
+        if message.get("tool_calls"):
+            assistant_message["tool_calls"] = message["tool_calls"]
+
+        return ToolChatResult(
+            content=content,
+            tool_calls=tuple(tool_calls),
+            model=str(data.get("model") or resolved_model),
+            usage=data.get("usage") if isinstance(data.get("usage"), dict) else {},
+            raw=data,
+            assistant_message=assistant_message,
         )
 
 

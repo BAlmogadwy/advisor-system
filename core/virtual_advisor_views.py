@@ -128,6 +128,7 @@ def virtual_advisor_chat_view(request: HttpRequest) -> JsonResponse:
     except LocalLLMError as exc:
         return JsonResponse({"error": str(exc), "source": "local_llm"}, status=503)
 
+    agent_meta = result.get("agent") if isinstance(result.get("agent"), dict) else {}
     log_audit_event(
         request,
         action="virtual_advisor.chat",
@@ -138,6 +139,13 @@ def virtual_advisor_chat_view(request: HttpRequest) -> JsonResponse:
             "question_chars": len(question),
             "answer_chars": len(str(result.get("answer", ""))),
             "model": result.get("model"),
+            "agent_loop_used": bool(agent_meta.get("loop_used")),
+            "agent_iterations": agent_meta.get("iterations"),
+            "agent_tools_called": [
+                str(item.get("name"))
+                for item in agent_meta.get("tools_called", [])
+                if isinstance(item, dict)
+            ],
         },
     )
     return JsonResponse(result)

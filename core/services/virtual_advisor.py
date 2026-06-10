@@ -1,11 +1,19 @@
 import json
+import logging
 import re
+import time
 from typing import Any
 
+from django.conf import settings
 from django.db.models import Q, QuerySet
 
 from core.models import Course, Prerequisite, ProgrammeRequirement, Student
-from core.services.local_llm import ChatResult, LocalLLMClient
+from core.services.local_llm import (
+    ChatResult,
+    LocalLLMBadRequest,
+    LocalLLMClient,
+    ToolChatResult,
+)
 from core.services.rbac import (
     ROLE_ADVISOR,
     ROLE_GENERAL_ADVISOR,
@@ -14,11 +22,26 @@ from core.services.rbac import (
 )
 from core.services.recommender import recommend_next_courses
 from core.services.student_helpers import get_student_passed_and_studying, normalize_code
+from core.services.virtual_advisor_capabilities import get_default_registry
+
+logger = logging.getLogger(__name__)
 
 _MAX_CONTEXT_COURSES = 80
 _MAX_HISTORY_MESSAGES = 8
 _MAX_TOOL_ROWS = 500
 _QWEN_EMPTY_THINK_PREFILL = "<think>\n</think>\n\n"
+
+
+def is_agent_loop_enabled() -> bool:
+    return bool(getattr(settings, "VIRTUAL_ADVISOR_AGENT_LOOP_ENABLED", True))
+
+
+def _max_tool_iterations() -> int:
+    return max(1, int(getattr(settings, "VIRTUAL_ADVISOR_MAX_TOOL_ITERATIONS", 5)))
+
+
+def _max_tool_calls() -> int:
+    return max(1, int(getattr(settings, "VIRTUAL_ADVISOR_MAX_TOOL_CALLS", 12)))
 
 
 SYSTEM_PROMPT = """You are a private local university virtual academic advisor.
@@ -33,6 +56,22 @@ Rules:
 - Never expose chain-of-thought; provide concise evidence from the context instead.
 - Treat recommendations as advising support, not official approval.
 - For list questions, summarize the count, filters used, and show the most relevant rows instead of repeating every row.
+"""
+
+SYSTEM_PROMPT_AGENT = """You are a private local university virtual academic advisor with verified data tools.
+
+Rules:
+- Answer in the same language as the user's latest question (Arabic questions get Arabic answers).
+- Your ONLY source of facts is the verified_context JSON and the results of the tools you call. Never answer a data question from memory.
+- Call tools to gather evidence BEFORE answering. Chain tools when needed (e.g. lookup_course to resolve a vague course name, then find_students with the exact code).
+- If a tool returns an error, adjust the arguments or try another tool; explain the limitation only if no tool can answer.
+- When evidence is sufficient, STOP calling tools and give the final answer.
+- If the question is ambiguous (which student, which course, which term), ask ONE short clarifying question instead of guessing.
+- Do not invent grades, rules, prerequisites, graduation status, rooms, sections, approvals, or student ids. Every specific fact must appear in the evidence.
+- Keep advice practical: what is known, why it matters, and the next safest action.
+- Never expose chain-of-thought; cite concise evidence instead.
+- Treat recommendations as advising support, not official approval.
+- For list questions, summarize the count and filters used, then show the most relevant rows.
 """
 
 
@@ -920,6 +959,137 @@ def _assistant_prefill_for_model(model: str) -> str | None:
     return None
 
 
+_STUDENT_ID_RE = re.compile(r"\b\d{6,9}\b")
+
+
+def _unverified_student_ids(answer: str, evidence_texts: list[str]) -> list[str]:
+    """Student-id grounding check.
+
+    Returns ids mentioned in *answer* that appear in none of the
+    evidence texts (context JSON, tool results, or the user's own
+    question). High-precision on purpose: only 6-9 digit runs are
+    treated as student ids; course codes and credit numbers never match.
+    """
+    mentioned = set(_STUDENT_ID_RE.findall(answer or ""))
+    if not mentioned:
+        return []
+    evidence = "\n".join(evidence_texts)
+    return sorted(sid for sid in mentioned if sid not in evidence)
+
+
+def _summarise_tool_args(args: dict[str, Any]) -> dict[str, Any]:
+    """Telemetry-safe argument summary (caps long lists/strings)."""
+    summary: dict[str, Any] = {}
+    for key, value in args.items():
+        if isinstance(value, list):
+            summary[key] = value[:5] + ["…"] if len(value) > 5 else value
+        elif isinstance(value, str) and len(value) > 80:
+            summary[key] = value[:77] + "…"
+        else:
+            summary[key] = value
+    return summary
+
+
+def _run_agent_loop(
+    *,
+    llm: LocalLLMClient,
+    resolved_model: str,
+    messages: list[dict[str, Any]],
+    scope: dict[str, Any] | None,
+    ctx: dict[str, Any],
+    telemetry: dict[str, Any],
+) -> tuple[str, dict[str, Any], list[dict[str, Any]]]:
+    """Run the tool-calling loop. Returns (answer, usage, agent_tool_results).
+
+    Raises ``LocalLLMBadRequest`` only when the very first tools request is
+    rejected (caller falls back to the single-shot path); later turns degrade
+    to a forced no-tools answer instead.
+    """
+    registry = get_default_registry()
+    tool_schemas = registry.tool_schemas_for_scope(scope)
+    agent_tool_results: list[dict[str, Any]] = []
+    seen_calls: dict[str, dict[str, Any]] = {}
+    total_calls = 0
+    usage: dict[str, Any] = {}
+
+    for iteration in range(_max_tool_iterations()):
+        telemetry["iterations"] = iteration + 1
+        try:
+            turn: ToolChatResult = llm.chat_with_tools(
+                messages, tools=tool_schemas, model=resolved_model
+            )
+        except LocalLLMBadRequest:
+            if iteration == 0:
+                raise  # model/server rejected tools — caller falls back
+            logger.warning("Tool turn rejected mid-loop; forcing a final no-tools answer.")
+            break
+        usage = turn.usage or usage
+
+        if not turn.tool_calls:
+            if turn.content:
+                return turn.content, usage, agent_tool_results
+            break  # neither calls nor content — force a final answer below
+
+        messages.append(turn.assistant_message)
+        for call in turn.tool_calls:
+            total_calls += 1
+            if total_calls > _max_tool_calls():
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "content": json.dumps(
+                            {"ok": False, "error": "Tool budget exhausted. Answer now."},
+                            ensure_ascii=False,
+                        ),
+                    }
+                )
+                continue
+            dedup_key = f"{call.name}:{json.dumps(call.arguments, sort_keys=True)}"
+            if dedup_key in seen_calls:
+                result = {**seen_calls[dedup_key], "note": "duplicate call; reusing prior result"}
+            else:
+                started = time.perf_counter()
+                result = registry.execute(call.name, call.arguments, scope=scope, ctx=ctx)
+                elapsed_ms = int((time.perf_counter() - started) * 1000)
+                seen_calls[dedup_key] = result
+                agent_tool_results.append(result)
+                telemetry["tools_called"].append(
+                    {
+                        "name": call.name,
+                        "ok": bool(result.get("ok")),
+                        "ms": elapsed_ms,
+                        "args": _summarise_tool_args(call.arguments),
+                    }
+                )
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": json.dumps(result, ensure_ascii=False, default=str),
+                }
+            )
+
+    # Iteration or budget limit reached: force a final answer from the
+    # evidence gathered so far, with tools disabled.
+    messages.append(
+        {
+            "role": "user",
+            "content": (
+                "Answer the question now using only the evidence gathered above. "
+                "Do not request more tools."
+            ),
+        }
+    )
+    final: ChatResult = llm.chat(
+        messages,
+        model=resolved_model,
+        assistant_prefill=_assistant_prefill_for_model(resolved_model),
+    )
+    telemetry["forced_final"] = True
+    return final.content, final.usage or usage, agent_tool_results
+
+
 def answer_virtual_advisor(
     *,
     question: str,
@@ -936,35 +1106,112 @@ def answer_virtual_advisor(
         academic_year=academic_year,
         term=term,
     )
+    # Deterministic regex planner stays as a seed: its results give the
+    # model a free head start and keep the legacy single-shot path useful
+    # when the loop is disabled or unsupported.
     tool_results = run_planned_tools(question, scope=scope)
     if tool_results:
         context["tool_results"] = tool_results
-        context["tool_schemas"] = ADVISOR_TOOL_SCHEMAS
-    context_json = json.dumps(context, ensure_ascii=False, indent=2)
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    messages.extend(_sanitize_history(history))
-    messages.append(
-        {
-            "role": "user",
-            "content": (
-                f"verified_context:\n{context_json}\n\nlatest_question:\n{question.strip()}"
-            ),
-        }
-    )
+    context_json = json.dumps(context, ensure_ascii=False)
 
     llm = client or LocalLLMClient()
     resolved_model = llm.resolve_model(model)
-    result: ChatResult = llm.chat(
-        messages,
-        model=resolved_model,
-        assistant_prefill=_assistant_prefill_for_model(resolved_model),
-    )
+
+    user_message = {
+        "role": "user",
+        "content": (f"verified_context:\n{context_json}\n\nlatest_question:\n{question.strip()}"),
+    }
+
+    telemetry: dict[str, Any] = {
+        "enabled": is_agent_loop_enabled(),
+        "loop_used": False,
+        "iterations": 0,
+        "tools_called": [],
+        "fallback_reason": None,
+        "forced_final": False,
+        "grounding_retry": False,
+    }
+    agent_tool_results: list[dict[str, Any]] = []
+    answer = ""
+    usage: dict[str, Any] = {}
+    answer_model = resolved_model
+
+    loop_supported = callable(getattr(llm, "chat_with_tools", None))
+    if telemetry["enabled"] and not loop_supported:
+        telemetry["fallback_reason"] = "client_has_no_tool_support"
+
+    if telemetry["enabled"] and loop_supported:
+        loop_messages: list[dict[str, Any]] = [
+            {"role": "system", "content": SYSTEM_PROMPT_AGENT},
+            *_sanitize_history(history),
+            user_message,
+        ]
+        try:
+            answer, usage, agent_tool_results = _run_agent_loop(
+                llm=llm,
+                resolved_model=resolved_model,
+                messages=loop_messages,
+                scope=scope,
+                ctx={"academic_year": academic_year, "term": term},
+                telemetry=telemetry,
+            )
+            telemetry["loop_used"] = True
+        except LocalLLMBadRequest as exc:
+            logger.warning("Model rejected tool calling; falling back to single-shot: %s", exc)
+            telemetry["fallback_reason"] = "tools_rejected_by_model"
+
+    if not telemetry["loop_used"]:
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        messages.extend(_sanitize_history(history))
+        messages.append(user_message)
+        result: ChatResult = llm.chat(
+            messages,
+            model=resolved_model,
+            assistant_prefill=_assistant_prefill_for_model(resolved_model),
+        )
+        answer = result.content
+        usage = result.usage
+        answer_model = result.model
+
+    # Grounding check: any student id in the answer must exist in the
+    # evidence (context, seed tools, agent tools) or the question itself.
+    evidence_texts = [
+        context_json,
+        question,
+        *(json.dumps(item, ensure_ascii=False, default=str) for item in agent_tool_results),
+    ]
+    unverified = _unverified_student_ids(answer, evidence_texts)
+    if unverified:
+        telemetry["grounding_retry"] = True
+        correction = (
+            "Your draft answer mentioned student ids that do not appear in the verified "
+            f"evidence: {', '.join(unverified)}. Rewrite the answer strictly from the "
+            "evidence; never invent identifiers."
+        )
+        retry_messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            user_message,
+            {"role": "assistant", "content": answer},
+            {"role": "user", "content": correction},
+        ]
+        try:
+            corrected: ChatResult = llm.chat(
+                retry_messages,
+                model=resolved_model,
+                assistant_prefill=_assistant_prefill_for_model(resolved_model),
+            )
+            if corrected.content:
+                answer = corrected.content
+        except Exception:  # pragma: no cover - degrade to the draft answer
+            logger.exception("Grounding retry failed; keeping the original answer")
+
     return {
         "ok": True,
-        "answer": result.content,
-        "model": result.model,
-        "usage": result.usage,
+        "answer": answer,
+        "model": answer_model,
+        "usage": usage,
         "context_summary": _context_summary(context),
         "tool_results": tool_results,
         "verified_context": context,
+        "agent": {**telemetry, "tool_results": agent_tool_results},
     }
