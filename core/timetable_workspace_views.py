@@ -59,10 +59,10 @@ import logging
 import re
 
 from django.contrib.auth.decorators import login_required
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.http import FileResponse, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
-from django.views.decorators.http import require_GET, require_POST
+from django.views.decorators.http import require_GET, require_http_methods, require_POST
 
 from core.models import (
     DeliveryBoard,
@@ -70,10 +70,14 @@ from core.models import (
     TermSection,
     TermSectionMeeting,
     TimeSlotTemplate,
+    TimetableRepairGlobalPlan,
+    TimetableRepairJob,
+    TimetableRepairRun,
     TimetableScenario,
 )
 from core.services.audit import log_audit_event
 from core.services.rbac import ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_role
+from core.services.section_move_optimisation import section_move_optimisation_engine
 from core.services.timetable_demand import compute_board_capacity
 from core.services.timetable_generate import generate_workspace_scenario
 from core.services.timetable_graph_twin import (
@@ -83,25 +87,69 @@ from core.services.timetable_graph_twin import (
     neo4j_status,
     sync_scenario_graph_to_neo4j,
 )
+from core.services.timetable_move_outcome import preview_placement_student_outcome_candidates
+from core.services.timetable_online import OnlineCourseLookup
 from core.services.timetable_plan_lens import build_scenario_plan_lens
+from core.services.timetable_repair import (
+    TimetableRepairOperationError,
+    apply_global_repair_plan,
+    approve_global_repair_plan,
+    create_global_repair_plan,
+    global_repair_plan_detail,
+    rollback_global_repair_plan,
+    simulate_timetable_repair_scope,
+)
+from core.services.timetable_repair_jobs import (
+    cancel_repair_job,
+    get_repair_job,
+    list_repair_jobs,
+    recover_stale_repair_jobs,
+    repair_job_collection_api_contract,
+    retry_repair_job,
+    serialize_repair_job,
+    submit_repair_analysis_job,
+    submit_repair_simulation_job,
+)
+from core.services.timetable_student_blockers import build_scenario_student_blockers
 from core.services.timetable_workspace import (
+    apply_bulk_clean_room_assignments,
+    apply_bulk_safe_time_moves,
     build_scenario_builder_actions,
     check_publish_readiness,
     compute_affected_students,
     compute_board_summary,
     compute_scenario_budget,
+    compute_scenario_safety_summary,
+    create_planned_section_placements,
     detect_board_conflicts,
     detect_cross_board_conflicts,
     get_scenario_boards_summary,
+    preview_bulk_clean_room_assignments,
+    preview_bulk_safe_time_moves,
     preview_placement_room_candidates,
     preview_placement_slot_candidates,
     preview_placement_student_evidence,
+    preview_planned_section_slot_candidates,
+    summarize_cross_board_conflict_impact,
     validate_placement,
 )
 from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
 
 logger = logging.getLogger(__name__)
+
+_PLACEMENT_SNAPSHOT_FIELDS = (
+    "id",
+    "board_id",
+    "term_section_id",
+    "day",
+    "start_time",
+    "end_time",
+    "room",
+    "is_locked",
+    "created_at",
+    "updated_at",
+)
 
 
 # ── Helpers ──────────────────────────────────────────────────────
@@ -241,6 +289,128 @@ def _placement_to_dict(p: SectionPlacement) -> dict[str, object]:
 
 
 # ── Page View ────────────────────────────────────────────────────
+
+
+def _snapshot_scenario_placements(scenario_id: int) -> list[dict[str, object]]:
+    """Capture current placements so an unsafe optimiser run can be restored."""
+    return list(
+        SectionPlacement.objects.filter(board__scenario_id=scenario_id)
+        .order_by("id")
+        .values(*_PLACEMENT_SNAPSHOT_FIELDS)
+    )
+
+
+def _restore_scenario_placements(
+    scenario_id: int,
+    snapshot: list[dict[str, object]],
+) -> None:
+    """Restore a placement snapshot inside one transaction."""
+    with transaction.atomic():
+        SectionPlacement.objects.filter(board__scenario_id=scenario_id).delete()
+        SectionPlacement.objects.bulk_create(
+            [SectionPlacement(**row) for row in snapshot],
+            batch_size=500,
+        )
+
+
+def _optimiser_safety_metric(summary: dict[str, object], metric: str) -> int:
+    same_board = summary.get("same_board_conflicts") or {}
+    if metric == "same_board_overlaps" and isinstance(same_board, dict):
+        return int(same_board.get("overlaps") or 0)
+    if metric == "same_board_instructors" and isinstance(same_board, dict):
+        return int(same_board.get("instructors") or 0)
+    if metric == "same_board_rooms" and isinstance(same_board, dict):
+        return int(same_board.get("rooms") or 0)
+    return int(summary.get(metric) or 0)
+
+
+def _score_metric(score: object, index: int) -> int | None:
+    if not isinstance(score, list) or len(score) <= index:
+        return None
+    try:
+        return int(score[index])
+    except (TypeError, ValueError):
+        return None
+
+
+def _optimiser_student_outcome_regression(result: dict[str, object]) -> dict[str, object]:
+    """Block regressions in the actual student solver objective."""
+    checks = [
+        (0, "tier_a_unresolved", "Tier-A unresolved students"),
+        (1, "unresolved_students", "Unresolved students"),
+        (2, "unassigned_courses", "Unassigned courses"),
+        (3, "time_clashes", "Student time clashes"),
+    ]
+    regressions = []
+    before = result.get("baseline_score")
+    after = result.get("final_score")
+    for index, metric, label in checks:
+        before_value = _score_metric(before, index)
+        after_value = _score_metric(after, index)
+        if before_value is None or after_value is None:
+            continue
+        if after_value > before_value:
+            regressions.append(
+                {
+                    "metric": metric,
+                    "label": label,
+                    "before": before_value,
+                    "after": after_value,
+                    "delta": after_value - before_value,
+                }
+            )
+    return {"blocked": bool(regressions), "regressions": regressions}
+
+
+def _optimiser_safety_regression(
+    before: dict[str, object],
+    after: dict[str, object],
+) -> dict[str, object]:
+    """Block hard operational regressions, not board-level tradeoffs."""
+    checks = [
+        ("same_board_overlaps", "Same-board time overlaps"),
+        ("same_board_instructors", "Same-board instructor clashes"),
+        ("same_board_rooms", "Same-board room clashes"),
+    ]
+    regressions = []
+    for metric, label in checks:
+        before_value = _optimiser_safety_metric(before, metric)
+        after_value = _optimiser_safety_metric(after, metric)
+        if after_value > before_value:
+            regressions.append(
+                {
+                    "metric": metric,
+                    "label": label,
+                    "before": before_value,
+                    "after": after_value,
+                    "delta": after_value - before_value,
+                }
+            )
+    return {"blocked": bool(regressions), "regressions": regressions}
+
+
+def _attach_optimiser_safety_metrics(
+    result: dict[str, object],
+    before: dict[str, object],
+    after: dict[str, object],
+) -> None:
+    """Attach secondary board metrics consumed by the split-workspace UI."""
+    before_pairs = _optimiser_safety_metric(before, "cross_board_conflicts")
+    after_pairs = _optimiser_safety_metric(after, "cross_board_conflicts")
+    before_affected = _optimiser_safety_metric(before, "cross_board_affected_students")
+    after_affected = _optimiser_safety_metric(after, "cross_board_affected_students")
+    before_incidences = _optimiser_safety_metric(before, "cross_board_student_conflict_incidences")
+    after_incidences = _optimiser_safety_metric(after, "cross_board_student_conflict_incidences")
+
+    result["cross_board_before"] = before_pairs
+    result["cross_board_after"] = after_pairs
+    result["cross_board_delta"] = before_pairs - after_pairs
+    result["cross_board_affected_students_before"] = before_affected
+    result["cross_board_affected_students_after"] = after_affected
+    result["cross_board_affected_students_delta"] = before_affected - after_affected
+    result["cross_board_student_conflict_incidences_before"] = before_incidences
+    result["cross_board_student_conflict_incidences_after"] = after_incidences
+    result["cross_board_student_conflict_incidences_delta"] = before_incidences - after_incidences
 
 
 @login_required(login_url="login")
@@ -653,6 +823,124 @@ def tw_scenario_builder_actions_view(request: HttpRequest, scenario_id: int) -> 
 
 @login_required(login_url="login")
 @require_GET
+def tw_scenario_clean_room_assignments_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
+    """Preview clean room assignments that can be applied as one batch."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    try:
+        TimetableScenario.objects.get(id=scenario_id)
+    except TimetableScenario.DoesNotExist:
+        return _err("Scenario not found", code="NOT_FOUND", status=404)
+    try:
+        limit = max(1, min(100, int(request.GET.get("limit", "20"))))
+    except ValueError:
+        limit = 20
+    return _ok(preview_bulk_clean_room_assignments(scenario_id, limit=limit))
+
+
+@login_required(login_url="login")
+@require_POST
+def tw_scenario_clean_room_assignments_apply_view(
+    request: HttpRequest, scenario_id: int
+) -> JsonResponse:
+    """Apply clean room assignments as a single audited batch operation."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    payload, err = _safe_json(request)
+    if err:
+        return err
+    try:
+        TimetableScenario.objects.get(id=scenario_id)
+    except TimetableScenario.DoesNotExist:
+        return _err("Scenario not found", code="NOT_FOUND", status=404)
+    try:
+        limit = max(1, min(100, int(payload.get("limit", 20))))
+    except (TypeError, ValueError):
+        limit = 20
+    try:
+        result = apply_bulk_clean_room_assignments(scenario_id, limit=limit)
+    except ValueError as exc:
+        return _err(str(exc), code="SCENARIO_PUBLISHED", status=400)
+    log_audit_event(
+        request,
+        action="tw.clean_rooms.apply_bulk",
+        status="success",
+        details={
+            "scenario_id": scenario_id,
+            "applied_count": result.get("applied_count", 0),
+            "requested_count": result.get("requested_count", 0),
+        },
+    )
+    return _ok(result)
+
+
+@login_required(login_url="login")
+@require_GET
+def tw_scenario_safe_time_moves_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
+    """Preview conservative clean time moves for auto-fix workflows."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    try:
+        TimetableScenario.objects.get(id=scenario_id)
+    except TimetableScenario.DoesNotExist:
+        return _err("Scenario not found", code="NOT_FOUND", status=404)
+    try:
+        limit = max(1, min(12, int(request.GET.get("limit", "3"))))
+    except ValueError:
+        limit = 3
+    board_id = request.GET.get("board_id")
+    try:
+        parsed_board_id = int(board_id) if board_id else None
+    except ValueError:
+        parsed_board_id = None
+    return _ok(preview_bulk_safe_time_moves(scenario_id, board_id=parsed_board_id, limit=limit))
+
+
+@login_required(login_url="login")
+@require_POST
+def tw_scenario_safe_time_moves_apply_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
+    """Apply conservative clean time moves in a single revalidated batch."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    payload, err = _safe_json(request)
+    if err:
+        return err
+    try:
+        TimetableScenario.objects.get(id=scenario_id)
+    except TimetableScenario.DoesNotExist:
+        return _err("Scenario not found", code="NOT_FOUND", status=404)
+    try:
+        limit = max(1, min(12, int(payload.get("limit", 3))))
+    except (TypeError, ValueError):
+        limit = 3
+    try:
+        board_id = int(payload["board_id"]) if payload.get("board_id") else None
+    except (TypeError, ValueError):
+        board_id = None
+    try:
+        result = apply_bulk_safe_time_moves(scenario_id, board_id=board_id, limit=limit)
+    except ValueError as exc:
+        return _err(str(exc), code="SCENARIO_PUBLISHED", status=400)
+    log_audit_event(
+        request,
+        action="tw.safe_time_moves.apply_bulk",
+        status="success",
+        details={
+            "scenario_id": scenario_id,
+            "board_id": board_id,
+            "applied_count": result.get("applied_count", 0),
+            "requested_count": result.get("requested_count", 0),
+        },
+    )
+    return _ok(result)
+
+
+@login_required(login_url="login")
+@require_GET
 def tw_graph_status_view(request: HttpRequest) -> JsonResponse:
     """Return local Neo4j driver/configuration readiness."""
     deny = _require_general_advisor(request)
@@ -846,6 +1134,18 @@ def tw_scenario_export_per_plan_view(request: HttpRequest, scenario_id: int) -> 
     return response
 
 
+@login_required(login_url="login")
+@require_GET
+def tw_scenario_student_blockers_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
+    """Return actual student blockers grouped by course for the inspector."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    if not TimetableScenario.objects.filter(id=scenario_id).exists():
+        return _err("Scenario not found", code="NOT_FOUND", status=404)
+    return _ok(build_scenario_student_blockers(scenario_id))
+
+
 # ── Board Endpoints ──────────────────────────────────────────────
 
 
@@ -860,9 +1160,33 @@ def tw_boards_list_view(request: HttpRequest) -> JsonResponse:
     if not scenario_id:
         return _err("scenario_id is required", code="VALIDATION_SCENARIO", status=400)
     scenario_id_int = int(scenario_id)
-    boards_summary = get_scenario_boards_summary(scenario_id_int)
+    boards = list(
+        DeliveryBoard.objects.filter(scenario_id=scenario_id_int).order_by("display_order")
+    )
+    board_conflicts = {board.id: detect_board_conflicts(board.id) for board in boards}
+    boards_summary = get_scenario_boards_summary(
+        scenario_id_int,
+        boards=boards,
+        conflicts_by_board=board_conflicts,
+    )
     cross_board_clashes = detect_cross_board_conflicts(scenario_id_int)
-    return _ok({"boards": boards_summary, "cross_board_clashes": len(cross_board_clashes)})
+    cross_board_impact = summarize_cross_board_conflict_impact(cross_board_clashes)
+    return _ok(
+        {
+            "boards": boards_summary,
+            "cross_board_clashes": cross_board_impact["conflict_pairs"],
+            "cross_board_affected_students": cross_board_impact["affected_students"],
+            "cross_board_student_conflict_incidences": cross_board_impact[
+                "student_conflict_incidences"
+            ],
+            "scenario_summary": compute_scenario_safety_summary(
+                scenario_id_int,
+                boards=boards,
+                board_conflicts_by_id=board_conflicts,
+                cross_board_conflicts=cross_board_clashes,
+            ),
+        }
+    )
 
 
 @login_required(login_url="login")
@@ -1102,17 +1426,49 @@ def tw_board_unplaced_view(request: HttpRequest, board_id: int) -> JsonResponse:
     return _ok({"unplaced": unplaced, "count": len(unplaced)})
 
 
+@login_required(login_url="login")
+@require_GET
+def tw_board_planned_slot_candidates_view(request: HttpRequest, board_id: int) -> JsonResponse:
+    """Return ranked read-only target slots for a missing planned section."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+
+    course_code = str(request.GET.get("course_code", "")).strip().upper()
+    if not course_code:
+        return _err("course_code is required", code="VALIDATION_COURSE", status=400)
+
+    def _optional_int(name: str) -> int | None:
+        raw = str(request.GET.get(name, "")).strip()
+        if not raw:
+            return None
+        return int(raw)
+
+    try:
+        preview = preview_planned_section_slot_candidates(
+            board_id,
+            course_code=course_code,
+            course_key=str(request.GET.get("course_key") or course_code).strip().upper(),
+            section_label=str(request.GET.get("section_label") or "S1").strip().upper(),
+            credit_hours=_optional_int("credit_hours"),
+            max_per_section=_optional_int("max_per_section"),
+            kind=str(request.GET.get("kind") or "").strip(),
+            limit=_optional_int("limit") or 80,
+        )
+    except DeliveryBoard.DoesNotExist:
+        return _err("Board not found", code="NOT_FOUND", status=404)
+    except ValueError as exc:
+        return _err(str(exc), code="VALIDATION_PLANNED_SLOT", status=400)
+    return _ok(preview)
+
+
 # ── Placement Endpoints ──────────────────────────────────────────
 
 
 @login_required(login_url="login")
 @require_POST
 def tw_placement_create_planned_view(request: HttpRequest) -> JsonResponse:
-    """Create a placement from generated plan data.
-
-    Auto-creates a TermSection if one doesn't exist for the course/section combo,
-    then places it on the board.
-    """
+    """Create one planned section, including full multi-meeting patterns."""
     deny = _require_general_advisor(request)
     if deny:
         return deny
@@ -1129,63 +1485,47 @@ def tw_placement_create_planned_view(request: HttpRequest) -> JsonResponse:
     start_time = str(payload.get("start_time", "")).strip()
     end_time = str(payload.get("end_time", "")).strip()
     capacity = int(payload.get("capacity", 40))
+    raw_meetings = payload.get("meetings")
 
-    if not all([board_id, course_code, section_label, day, start_time, end_time]):
+    if isinstance(raw_meetings, list) and raw_meetings:
+        meetings = raw_meetings
+    elif day and start_time and end_time:
+        meetings = [{"day": day, "start_time": start_time, "end_time": end_time}]
+    else:
+        meetings = []
+
+    if not all([board_id, course_code, section_label]) or not meetings:
         return _err(
-            "board_id, course_code, section_label, day, start_time, end_time are required",
+            "board_id, course_code, section_label, and at least one meeting are required",
             code="VALIDATION_PLACEMENT",
             status=400,
         )
 
     try:
-        board = DeliveryBoard.objects.select_related("scenario").get(id=int(board_id))  # type: ignore[arg-type]
+        result = create_planned_section_placements(
+            int(board_id),  # type: ignore[arg-type]
+            course_code=course_code,
+            course_key=course_key,
+            course_name=course_name,
+            section_label=section_label,
+            capacity=capacity,
+            meetings=meetings,
+        )
     except DeliveryBoard.DoesNotExist:
         return _err("Board not found", code="NOT_FOUND", status=404)
-
-    if board.scenario.status == "published":
-        return _err("Cannot modify published scenario", code="SCENARIO_PUBLISHED", status=400)
-
-    # Find or create TermSection.  The visible course_code can be shared by
-    # different curriculum rows, so keep the planner course_key when supplied.
-    ts, _created = TermSection.objects.get_or_create(
-        scenario=board.scenario,
-        course_key=course_key,
-        section=section_label,
-        defaults={
-            "course_code": course_code,
-            "course_number": course_code,
-            "course_name": course_name,
-            "available_capacity": capacity,
-            "source_tag": "tw_planned",
-        },
-    )
-
-    # Also create the meeting record
-    TermSectionMeeting.objects.get_or_create(
-        term_section=ts,
-        day=day,
-        start_time=start_time,
-        end_time=end_time,
-        defaults={"room": "", "instructor": ""},
-    )
-
-    # Validate
-    validation = validate_placement(
-        board_id=board.id,
-        day=day,
-        start_time=start_time,
-        end_time=end_time,
-        room="",
-        term_section_id=ts.id,
-    )
-
-    try:
-        placement = SectionPlacement.objects.create(
-            board=board,
-            term_section=ts,
-            day=day,
-            start_time=start_time,
-            end_time=end_time,
+    except ValueError as exc:
+        message = str(exc)
+        code = (
+            "SCENARIO_PUBLISHED"
+            if "published" in message.lower()
+            else "FULL_SECTION_PATTERN_REQUIRED"
+            if "complete" in message.lower() and "meeting" in message.lower()
+            else "VALIDATION_PLANNED_PATTERN"
+        )
+        return _err(
+            message,
+            code=code,
+            status=400,
         )
     except IntegrityError:
         return _err(
@@ -1194,19 +1534,40 @@ def tw_placement_create_planned_view(request: HttpRequest) -> JsonResponse:
             status=409,
         )
 
+    placements = list(result["placements"])
+    validations = list(result["validations"])
+    placement = placements[0]
+    validation = {
+        "valid": not any(int(v.get("critical_count") or 0) for v in validations),
+        "critical_count": sum(int(v.get("critical_count") or 0) for v in validations),
+        "warning_count": sum(int(v.get("warning_count") or 0) for v in validations),
+        "items": validations,
+    }
+
     log_audit_event(
         request,
         action="tw.placement.create_planned",
         status="success",
         details={
             "placement_id": placement.id,
-            "board_id": board.id,
+            "placement_ids": [item.id for item in placements],
+            "board_id": result["board"].id,
             "course_code": course_code,
             "course_key": course_key,
             "section_label": section_label,
+            "meeting_count": len(placements),
         },
     )
-    return _ok({"placement": _placement_to_dict(placement), "validation": validation}, status=201)
+    return _ok(
+        {
+            "placement": _placement_to_dict(placement),
+            "placements": [_placement_to_dict(item) for item in placements],
+            "validation": validation,
+            "validations": validations,
+            "required_meetings": result["required_meetings"],
+        },
+        status=201,
+    )
 
 
 @login_required(login_url="login")
@@ -1250,6 +1611,9 @@ def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
         ts = TermSection.objects.get(id=int(term_section_id))  # type: ignore[arg-type]
     except TermSection.DoesNotExist:
         return _err("TermSection not found", code="NOT_FOUND", status=404)
+
+    if OnlineCourseLookup().is_online_course_for_board(board, ts.course_code):
+        room = ""
 
     # Validate before persisting
     validation = validate_placement(
@@ -1310,6 +1674,629 @@ def tw_placement_slot_candidates_view(request: HttpRequest, placement_id: int) -
     except SectionPlacement.DoesNotExist:
         return _err("Placement not found", code="NOT_FOUND", status=404)
     return _ok(preview)
+
+
+@login_required(login_url="login")
+@require_http_methods(["GET", "POST"])
+def tw_placement_student_outcome_candidates_view(
+    request: HttpRequest, placement_id: int
+) -> JsonResponse:
+    """Return move candidates scored by full student reassignment outcome."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    candidate_moves = None
+    if request.method == "POST":
+        payload, err = _safe_json(request)
+        if err:
+            return err
+        raw_candidates = payload.get("candidates")
+        if isinstance(raw_candidates, list):
+            candidate_moves = raw_candidates[:60]
+    try:
+        preview = preview_placement_student_outcome_candidates(
+            placement_id,
+            candidate_moves=candidate_moves,
+        )
+    except SectionPlacement.DoesNotExist:
+        return _err("Placement not found", code="NOT_FOUND", status=404)
+    return _ok(preview)
+
+
+@login_required(login_url="login")
+@require_POST
+def tw_repair_analyse_view(request: HttpRequest) -> JsonResponse:
+    """Create a read-only audited registration repair analysis run."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    payload, err = _safe_json(request)
+    if err:
+        return err
+
+    placement_id = payload.get("placement_id")
+    if not placement_id:
+        return _err("placement_id is required", code="VALIDATION_PLACEMENT", status=400)
+    blocked_student_ids = payload.get("blocked_student_ids") or []
+    if not isinstance(blocked_student_ids, list):
+        return _err(
+            "blocked_student_ids must be an array",
+            code="VALIDATION_BLOCKED_STUDENTS",
+            status=400,
+        )
+    blocked_requests = payload.get("blocked_requests") or []
+    if not isinstance(blocked_requests, list):
+        return _err(
+            "blocked_requests must be an array",
+            code="VALIDATION_BLOCKED_REQUESTS",
+            status=400,
+        )
+    limits = payload.get("limits") or {}
+    if not isinstance(limits, dict):
+        return _err("limits must be an object", code="VALIDATION_LIMITS", status=400)
+
+    try:
+        detail = section_move_optimisation_engine.analyse_section_move(
+            placement_id=int(placement_id),
+            blocked_student_ids=blocked_student_ids,
+            blocked_requests=blocked_requests,
+            mode=str(payload.get("mode") or "conservative"),
+            move_scope=str(payload.get("move_scope") or "single_session"),
+            requested_by=request.user,
+            limits=limits,
+            active_plan_filter=str(payload.get("active_plan_filter") or "ALL"),
+        )
+    except (TypeError, ValueError):
+        return _err("placement_id must be an integer", code="VALIDATION_PLACEMENT", status=400)
+    except SectionPlacement.DoesNotExist:
+        return _err("Placement not found", code="NOT_FOUND", status=404)
+    return _ok(detail, status=201)
+
+
+@login_required(login_url="login")
+@require_POST
+def tw_repair_simulate_view(request: HttpRequest) -> JsonResponse:
+    """Run a bounded analysis-only repair simulation across a scenario scope."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    payload, err = _safe_json(request)
+    if err:
+        return err
+
+    scenario_id = payload.get("scenario_id")
+    if not scenario_id:
+        return _err("scenario_id is required", code="VALIDATION_SCENARIO", status=400)
+    course_keys = payload.get("course_keys") or []
+    if not isinstance(course_keys, list):
+        return _err("course_keys must be an array", code="VALIDATION_COURSE_KEYS", status=400)
+    limits = payload.get("limits") or {}
+    if not isinstance(limits, dict):
+        return _err("limits must be an object", code="VALIDATION_LIMITS", status=400)
+    nominal_term = payload.get("nominal_term")
+    try:
+        result = simulate_timetable_repair_scope(
+            scenario_id=int(scenario_id),
+            program=str(payload.get("program") or ""),
+            nominal_term=int(nominal_term) if nominal_term not in {None, ""} else None,
+            course_keys=[str(course) for course in course_keys],
+            requested_by=request.user,
+            limits=limits,
+            max_placements=int(payload.get("max_placements") or 8),
+        )
+    except (TypeError, ValueError):
+        return _err(
+            "scenario_id and max_placements must be integers",
+            code="VALIDATION_SIMULATION",
+            status=400,
+        )
+    except TimetableScenario.DoesNotExist:
+        return _err("Scenario not found", code="NOT_FOUND", status=404)
+    return _ok({"simulation": result}, status=201)
+
+
+@login_required(login_url="login")
+@require_POST
+def tw_repair_global_plan_create_view(request: HttpRequest) -> JsonResponse:
+    """Create a durable programme/level repair plan targeting unresolved students."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    payload, err = _safe_json(request)
+    if err:
+        return err
+
+    scenario_id = payload.get("scenario_id")
+    if not scenario_id:
+        return _err("scenario_id is required", code="VALIDATION_SCENARIO", status=400)
+    course_keys = payload.get("course_keys") or []
+    if not isinstance(course_keys, list):
+        return _err("course_keys must be an array", code="VALIDATION_COURSE_KEYS", status=400)
+    limits = payload.get("limits") or {}
+    if not isinstance(limits, dict):
+        return _err("limits must be an object", code="VALIDATION_LIMITS", status=400)
+    nominal_term = payload.get("nominal_term")
+    try:
+        plan = create_global_repair_plan(
+            scenario_id=int(scenario_id),
+            program=str(payload.get("program") or ""),
+            nominal_term=int(nominal_term) if nominal_term not in {None, ""} else None,
+            course_keys=[str(course) for course in course_keys],
+            mode=str(payload.get("mode") or TimetableRepairRun.MODE_CONSERVATIVE),
+            requested_by=request.user,
+            limits=limits,
+            max_placements=int(payload.get("max_placements") or 8),
+            notes=str(payload.get("notes") or ""),
+        )
+    except (TypeError, ValueError):
+        return _err(
+            "Invalid global repair plan payload", code="VALIDATION_GLOBAL_REPAIR_PLAN", status=400
+        )
+    except TimetableScenario.DoesNotExist:
+        return _err("Scenario not found", code="NOT_FOUND", status=404)
+    except TimetableRepairOperationError as exc:
+        return _err(exc.message, code=exc.code, status=exc.status, details=exc.details)
+    log_audit_event(
+        request,
+        action="tw.repair.global_plan.create",
+        status="success",
+        details={"plan_id": plan["plan"]["id"], "scenario_id": int(scenario_id)},
+    )
+    return _ok(plan, status=201)
+
+
+@login_required(login_url="login")
+@require_GET
+def tw_repair_global_plan_detail_view(request: HttpRequest, plan_id) -> JsonResponse:
+    """Return one global repair plan with selected repair items."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    try:
+        plan = global_repair_plan_detail(plan_id)
+    except TimetableRepairGlobalPlan.DoesNotExist:
+        return _err("Global repair plan not found", code="NOT_FOUND", status=404)
+    return _ok(plan)
+
+
+@login_required(login_url="login")
+@require_POST
+def tw_repair_global_plan_approve_view(request: HttpRequest, plan_id) -> JsonResponse:
+    """Approve all ready candidates in a global repair plan."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    payload, err = _safe_json(request)
+    if err:
+        return err
+    try:
+        plan = approve_global_repair_plan(
+            plan_id,
+            decided_by=request.user,
+            notes=str(payload.get("notes") or ""),
+        )
+    except TimetableRepairGlobalPlan.DoesNotExist:
+        return _err("Global repair plan not found", code="NOT_FOUND", status=404)
+    except TimetableRepairOperationError as exc:
+        return _err(exc.message, code=exc.code, status=exc.status, details=exc.details)
+    log_audit_event(
+        request,
+        action="tw.repair.global_plan.approve",
+        status="success",
+        details={"plan_id": str(plan_id)},
+    )
+    return _ok(plan)
+
+
+@login_required(login_url="login")
+@require_POST
+def tw_repair_global_plan_apply_view(request: HttpRequest, plan_id) -> JsonResponse:
+    """Apply an approved global repair plan."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    try:
+        plan = apply_global_repair_plan(plan_id, decided_by=request.user)
+    except TimetableRepairGlobalPlan.DoesNotExist:
+        return _err("Global repair plan not found", code="NOT_FOUND", status=404)
+    except TimetableRepairOperationError as exc:
+        return _err(exc.message, code=exc.code, status=exc.status, details=exc.details)
+    log_audit_event(
+        request,
+        action="tw.repair.global_plan.apply",
+        status="success",
+        details={"plan_id": str(plan_id)},
+    )
+    return _ok(plan)
+
+
+@login_required(login_url="login")
+@require_POST
+def tw_repair_global_plan_rollback_view(request: HttpRequest, plan_id) -> JsonResponse:
+    """Rollback all applied items in a global repair plan."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    try:
+        plan = rollback_global_repair_plan(plan_id, decided_by=request.user)
+    except TimetableRepairGlobalPlan.DoesNotExist:
+        return _err("Global repair plan not found", code="NOT_FOUND", status=404)
+    except TimetableRepairOperationError as exc:
+        return _err(exc.message, code=exc.code, status=exc.status, details=exc.details)
+    log_audit_event(
+        request,
+        action="tw.repair.global_plan.rollback",
+        status="success",
+        details={"plan_id": str(plan_id)},
+    )
+    return _ok(plan)
+
+
+@login_required(login_url="login")
+@require_POST
+def tw_repair_job_submit_view(request: HttpRequest) -> JsonResponse:
+    """Submit a durable repair analysis/simulation job."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    payload, err = _safe_json(request)
+    if err:
+        return err
+
+    kind = str(payload.get("kind") or TimetableRepairJob.KIND_ANALYSIS)
+    limits = payload.get("limits") or {}
+    if not isinstance(limits, dict):
+        return _err("limits must be an object", code="VALIDATION_LIMITS", status=400)
+    try:
+        if kind == TimetableRepairJob.KIND_ANALYSIS:
+            placement_id = payload.get("placement_id")
+            if not placement_id:
+                return _err("placement_id is required", code="VALIDATION_PLACEMENT", status=400)
+            blocked_student_ids = payload.get("blocked_student_ids") or []
+            if not isinstance(blocked_student_ids, list):
+                return _err(
+                    "blocked_student_ids must be an array",
+                    code="VALIDATION_BLOCKED_STUDENTS",
+                    status=400,
+                )
+            blocked_requests = payload.get("blocked_requests") or []
+            if not isinstance(blocked_requests, list):
+                return _err(
+                    "blocked_requests must be an array",
+                    code="VALIDATION_BLOCKED_REQUESTS",
+                    status=400,
+                )
+            job = submit_repair_analysis_job(
+                placement_id=int(placement_id),
+                blocked_student_ids=blocked_student_ids,
+                blocked_requests=blocked_requests,
+                mode=str(payload.get("mode") or "conservative"),
+                requested_by=request.user,
+                limits=limits,
+                active_plan_filter=str(payload.get("active_plan_filter") or "ALL"),
+            )
+        elif kind == TimetableRepairJob.KIND_SIMULATION:
+            scenario_id = payload.get("scenario_id")
+            if not scenario_id:
+                return _err("scenario_id is required", code="VALIDATION_SCENARIO", status=400)
+            course_keys = payload.get("course_keys") or []
+            if not isinstance(course_keys, list):
+                return _err(
+                    "course_keys must be an array", code="VALIDATION_COURSE_KEYS", status=400
+                )
+            nominal_term = payload.get("nominal_term")
+            job = submit_repair_simulation_job(
+                scenario_id=int(scenario_id),
+                program=str(payload.get("program") or ""),
+                nominal_term=int(nominal_term) if nominal_term not in {None, ""} else None,
+                course_keys=course_keys,
+                requested_by=request.user,
+                limits=limits,
+                max_placements=int(payload.get("max_placements") or 8),
+            )
+        else:
+            return _err(
+                "Unsupported repair job kind", code="VALIDATION_REPAIR_JOB_KIND", status=400
+            )
+    except (TypeError, ValueError):
+        return _err("Invalid repair job payload", code="VALIDATION_REPAIR_JOB", status=400)
+    except (SectionPlacement.DoesNotExist, TimetableScenario.DoesNotExist):
+        return _err("Repair job target not found", code="NOT_FOUND", status=404)
+    return _ok({"job": serialize_repair_job(job)}, status=201)
+
+
+@login_required(login_url="login")
+@require_GET
+def tw_repair_job_list_view(request: HttpRequest) -> JsonResponse:
+    """Return recent repair jobs for an operational monitor."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+
+    allowed_kinds = {choice[0] for choice in TimetableRepairJob.KIND_CHOICES}
+    allowed_statuses = {choice[0] for choice in TimetableRepairJob.STATUS_CHOICES}
+    kind = str(request.GET.get("kind") or "")
+    status = str(request.GET.get("status") or "")
+    if kind and kind not in allowed_kinds:
+        return _err("Unsupported repair job kind", code="VALIDATION_REPAIR_JOB_KIND", status=400)
+    if status and status not in allowed_statuses:
+        return _err(
+            "Unsupported repair job status", code="VALIDATION_REPAIR_JOB_STATUS", status=400
+        )
+
+    scenario_id = None
+    raw_scenario_id = request.GET.get("scenario_id")
+    raw_limit = request.GET.get("limit") or 50
+    try:
+        if raw_scenario_id not in {None, ""}:
+            scenario_id = int(raw_scenario_id)
+        limit = int(raw_limit)
+    except (TypeError, ValueError):
+        return _err(
+            "scenario_id and limit must be integers", code="VALIDATION_REPAIR_JOB_LIST", status=400
+        )
+
+    mine = str(request.GET.get("mine") or "").lower() in {"1", "true", "yes"}
+    submitted_by_id = request.user.id if mine else None
+    jobs, meta = list_repair_jobs(
+        scenario_id=scenario_id,
+        kind=kind,
+        status=status,
+        submitted_by_id=submitted_by_id,
+        limit=limit,
+    )
+    return _ok(
+        {
+            "api_contract": repair_job_collection_api_contract(),
+            "filters": meta["filters"],
+            "count": len(jobs),
+            "has_more": bool(meta["has_more"]),
+            "jobs": [serialize_repair_job(job) for job in jobs],
+        }
+    )
+
+
+@login_required(login_url="login")
+@require_POST
+def tw_repair_job_recover_stale_view(request: HttpRequest) -> JsonResponse:
+    """Recover stale running repair jobs for operational maintenance."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    payload, err = _safe_json(request)
+    if err:
+        return err
+    try:
+        stale_after_seconds = int(payload.get("stale_after_seconds") or 30 * 60)
+        max_attempts = int(payload.get("max_attempts") or 3)
+        limit = int(payload.get("limit") or 50)
+    except (TypeError, ValueError):
+        return _err(
+            "Recovery options must be integers", code="VALIDATION_REPAIR_JOB_RECOVERY", status=400
+        )
+    recovered = recover_stale_repair_jobs(
+        stale_after_seconds=stale_after_seconds,
+        max_attempts=max_attempts,
+        limit=limit,
+        worker_id=f"api-recovery:{request.user.id}",
+    )
+    return _ok(
+        {
+            "count": len(recovered),
+            "jobs": [serialize_repair_job(job) for job in recovered],
+        }
+    )
+
+
+@login_required(login_url="login")
+@require_GET
+def tw_repair_job_poll_view(request: HttpRequest, job_id) -> JsonResponse:
+    """Poll a repair job without returning the full result package."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    job = get_repair_job(job_id)
+    if job is None:
+        return _err("Repair job not found", code="NOT_FOUND", status=404)
+    return _ok({"job": serialize_repair_job(job)})
+
+
+@login_required(login_url="login")
+@require_GET
+def tw_repair_job_result_view(request: HttpRequest, job_id) -> JsonResponse:
+    """Return the full repair job result after the job succeeds."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    job = get_repair_job(job_id)
+    if job is None:
+        return _err("Repair job not found", code="NOT_FOUND", status=404)
+    if job.status != TimetableRepairJob.STATUS_SUCCEEDED:
+        return _err(
+            "Repair job result is not ready", code="REPAIR_JOB_RESULT_NOT_READY", status=404
+        )
+    return _ok({"job": serialize_repair_job(job, include_result=True)})
+
+
+@login_required(login_url="login")
+@require_POST
+def tw_repair_job_cancel_view(request: HttpRequest, job_id) -> JsonResponse:
+    """Cooperatively request cancellation of a queued/running repair job."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    ok = cancel_repair_job(job_id, requested_by=request.user)
+    if not ok:
+        return _err("Repair job cannot be cancelled", code="REPAIR_JOB_CANNOT_CANCEL", status=404)
+    job = get_repair_job(job_id)
+    return _ok({"job": serialize_repair_job(job) if job else {"job_id": str(job_id)}})
+
+
+@login_required(login_url="login")
+@require_POST
+def tw_repair_job_retry_view(request: HttpRequest, job_id) -> JsonResponse:
+    """Create a fresh queued retry for a failed/cancelled repair job."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    payload, err = _safe_json(request)
+    if err:
+        return err
+    source = get_repair_job(job_id)
+    if source is None:
+        return _err("Repair job not found", code="NOT_FOUND", status=404)
+    try:
+        max_attempts = int(payload.get("max_attempts") or 3)
+    except (TypeError, ValueError):
+        return _err(
+            "max_attempts must be an integer", code="VALIDATION_REPAIR_JOB_RETRY", status=400
+        )
+    retry = retry_repair_job(
+        job_id,
+        requested_by=request.user,
+        max_attempts=max_attempts,
+    )
+    if retry is None:
+        return _err(
+            "Repair job cannot be retried",
+            code="REPAIR_JOB_CANNOT_RETRY",
+            status=409,
+            details={"status": source.status, "attempt_count": int(source.attempt_count or 0)},
+        )
+    return _ok({"job": serialize_repair_job(retry)}, status=201)
+
+
+@login_required(login_url="login")
+@require_GET
+def tw_repair_run_detail_view(request: HttpRequest, run_id) -> JsonResponse:
+    """Return one audited repair run with candidates and snapshots."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    try:
+        detail = section_move_optimisation_engine.run_detail(run_id)
+    except TimetableRepairRun.DoesNotExist:
+        return _err("Repair run not found", code="NOT_FOUND", status=404)
+    return _ok(detail)
+
+
+@login_required(login_url="login")
+@require_GET
+def tw_repair_run_report_view(request: HttpRequest, run_id) -> JsonResponse:
+    """Return a stable admin evidence report for one repair run."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    try:
+        report = section_move_optimisation_engine.report(
+            run_id,
+            candidate_id=(request.GET.get("candidate_id") or None),
+        )
+    except TimetableRepairRun.DoesNotExist:
+        return _err("Repair run not found", code="NOT_FOUND", status=404)
+    except TimetableRepairOperationError as exc:
+        return _err(exc.message, code=exc.code, status=exc.status, details=exc.details)
+    return _ok(report)
+
+
+@login_required(login_url="login")
+@require_GET
+def tw_repair_candidate_detail_view(
+    request: HttpRequest,
+    run_id,
+    candidate_id: str,
+) -> JsonResponse:
+    """Return one repair candidate with direct evidence and student-level changes."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    try:
+        detail = section_move_optimisation_engine.candidate_detail(run_id, candidate_id)
+    except TimetableRepairRun.DoesNotExist:
+        return _err("Repair run not found", code="NOT_FOUND", status=404)
+    except TimetableRepairOperationError as exc:
+        return _err(exc.message, code=exc.code, status=exc.status, details=exc.details)
+    return _ok(detail)
+
+
+@login_required(login_url="login")
+@require_POST
+def tw_repair_candidate_approve_view(
+    request: HttpRequest, run_id, candidate_id: str
+) -> JsonResponse:
+    """Approve a solved repair candidate without applying it."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    payload, err = _safe_json(request)
+    if err:
+        return err
+    try:
+        detail = section_move_optimisation_engine.approve_candidate(
+            run_id,
+            candidate_id,
+            decided_by=request.user,
+            notes=str(payload.get("notes") or ""),
+        )
+    except TimetableRepairRun.DoesNotExist:
+        return _err("Repair run not found", code="NOT_FOUND", status=404)
+    except TimetableRepairOperationError as exc:
+        return _err(exc.message, code=exc.code, status=exc.status, details=exc.details)
+    log_audit_event(
+        request,
+        action="tw.repair.approve",
+        status="success",
+        details={"run_id": str(run_id), "candidate_id": candidate_id},
+    )
+    return _ok(detail)
+
+
+@login_required(login_url="login")
+@require_POST
+def tw_repair_candidate_apply_view(request: HttpRequest, run_id, candidate_id: str) -> JsonResponse:
+    """Apply an approved repair candidate inside one transaction."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    try:
+        detail = section_move_optimisation_engine.apply_candidate(
+            run_id,
+            candidate_id,
+            decided_by=request.user,
+        )
+    except TimetableRepairRun.DoesNotExist:
+        return _err("Repair run not found", code="NOT_FOUND", status=404)
+    except TimetableRepairOperationError as exc:
+        return _err(exc.message, code=exc.code, status=exc.status, details=exc.details)
+    log_audit_event(
+        request,
+        action="tw.repair.apply",
+        status="success",
+        details={"run_id": str(run_id), "candidate_id": candidate_id},
+    )
+    return _ok(detail)
+
+
+@login_required(login_url="login")
+@require_POST
+def tw_repair_run_rollback_view(request: HttpRequest, run_id) -> JsonResponse:
+    """Rollback the applied repair candidate for a run."""
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    try:
+        detail = section_move_optimisation_engine.rollback_run(run_id, decided_by=request.user)
+    except TimetableRepairRun.DoesNotExist:
+        return _err("Repair run not found", code="NOT_FOUND", status=404)
+    except TimetableRepairOperationError as exc:
+        return _err(exc.message, code=exc.code, status=exc.status, details=exc.details)
+    log_audit_event(
+        request,
+        action="tw.repair.rollback",
+        status="success",
+        details={"run_id": str(run_id)},
+    )
+    return _ok(detail)
 
 
 @login_required(login_url="login")
@@ -1385,6 +2372,10 @@ def tw_placement_move_view(request: HttpRequest, placement_id: int) -> JsonRespo
     new_start = str(payload.get("start_time", placement.start_time)).strip()
     new_end = str(payload.get("end_time", placement.end_time)).strip()
     new_room = str(payload.get("room", placement.room)).strip()
+    if OnlineCourseLookup().is_online_course_for_board(
+        placement.board, placement.term_section.course_code
+    ):
+        new_room = ""
 
     old_day, old_start, old_end = placement.day, placement.start_time, placement.end_time
 
@@ -1599,6 +2590,8 @@ def tw_optimise_v2_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
     run_chain = bool(payload.get("run_chain_search", True))
     run_cpsat = bool(payload.get("run_cpsat_polish", True))
     cpsat_limit = float(payload.get("cpsat_time_limit", 60))
+    placement_snapshot = _snapshot_scenario_placements(scenario_id)
+    safety_before = compute_scenario_safety_summary(scenario_id)
 
     try:
         if mode == "full":
@@ -1631,6 +2624,7 @@ def tw_optimise_v2_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
         import logging
         import traceback
 
+        _restore_scenario_placements(scenario_id, placement_snapshot)
         logging.getLogger(__name__).exception("V2 optimiser failed")
         return _err(
             f"Optimiser error: {traceback.format_exc(limit=3)}",
@@ -1640,5 +2634,42 @@ def tw_optimise_v2_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
 
     if "error" in result:
         return _err(result["error"], code="OPTIMISER_NO_DATA", status=400)
+
+    safety_after = compute_scenario_safety_summary(scenario_id)
+    student_regression = _optimiser_student_outcome_regression(result)
+    safety_regression = _optimiser_safety_regression(safety_before, safety_after)
+    blocking_regressions = list(student_regression["regressions"]) + list(
+        safety_regression["regressions"]
+    )
+    if blocking_regressions:
+        candidate_final_score = result.get("final_score")
+        _restore_scenario_placements(scenario_id, placement_snapshot)
+        safety_after = compute_scenario_safety_summary(scenario_id)
+        result["safety_blocked"] = True
+        result["safety_regression"] = {
+            "blocked": True,
+            "regressions": blocking_regressions,
+        }
+        result["candidate_final_score"] = candidate_final_score
+        result["persist_result"] = {
+            "action": "rolled_back_safety_regression",
+            "reason": "Optimiser candidate worsened the student outcome or hard operational constraints.",
+            "regressions": blocking_regressions,
+        }
+        baseline_score = result.get("baseline_score")
+        if isinstance(baseline_score, list):
+            result["final_score"] = baseline_score
+            if len(baseline_score) > 1:
+                result["unresolved_students"] = baseline_score[1]
+        logger.warning(
+            "V2 optimiser result rolled back for scenario %d: %s",
+            scenario_id,
+            blocking_regressions,
+        )
+    else:
+        result["safety_blocked"] = False
+        result["safety_regression"] = {"blocked": False, "regressions": []}
+
+    _attach_optimiser_safety_metrics(result, safety_before, safety_after)
 
     return _ok({"optimisation": result})

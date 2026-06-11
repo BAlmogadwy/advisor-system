@@ -40,12 +40,12 @@ from core.models import (
     BoardStudentLink,
     DeliveryBoard,
     ScenarioSectionBudget,
-    ScenarioStudentMap,
     SectionPlacement,
     TermSectionMeeting,
     TimetableScenario,
 )
 from core.services.timetable_autoplace import DEFAULT_SLOTS, get_meeting_pattern
+from core.services.timetable_demand import load_scenario_course_demands
 from core.services.timetable_workspace import compute_scenario_budget, detect_board_conflicts
 
 
@@ -994,12 +994,14 @@ def _write_mini_conflict_matrix(
         BoardStudentLink.objects.filter(board_id__in=board_ids).values_list("student_id", flat=True)
     )
 
-    # Get ALL recommended courses for these students (not filtered by term)
-    student_maps = ScenarioStudentMap.objects.filter(scenario=scenario, student_id__in=student_ids)
+    # Get all canonical course requests for these students (not filtered by term)
+    demands = [
+        row for row in load_scenario_course_demands(scenario.id) if row.student_id in student_ids
+    ]
     course_students: dict[str, set[int]] = defaultdict(set)
-    for sm in student_maps:
-        for code in sm.recommended_courses:
-            course_students[code].add(sm.student_id)
+    for demand in demands:
+        if demand.course_key:
+            course_students[demand.course_key].add(demand.student_id)
 
     courses = sorted(course_students.keys())
     n = len(courses)
@@ -1118,7 +1120,7 @@ def _build_conflict_matrix_sheet(
     wb : openpyxl.Workbook
         The workbook to add the sheet to.
     scenario : TimetableScenario
-        The scenario whose ``ScenarioStudentMap`` records provide the data.
+        The scenario whose canonical course requests provide the data.
     hdr_fill, hdr_font, hdr_align, thin_border, normal_font, bold_font, center_align
         Pre-built openpyxl style objects shared across the workbook.
     """
@@ -1126,12 +1128,12 @@ def _build_conflict_matrix_sheet(
 
     ws = wb.create_sheet(title="Conflicts (All)")
 
-    # Load student-course data from ScenarioStudentMap (all students, all courses)
-    student_maps = ScenarioStudentMap.objects.filter(scenario=scenario)
+    # Load student-course data from canonical scenario requests.
+    demands = load_scenario_course_demands(scenario.id)
     course_students: dict[str, set[int]] = defaultdict(set)
-    for sm in student_maps:
-        for code in sm.recommended_courses:
-            course_students[code].add(sm.student_id)
+    for demand in demands:
+        if demand.course_key:
+            course_students[demand.course_key].add(demand.student_id)
 
     courses = sorted(course_students.keys())
     n = len(courses)
@@ -1155,7 +1157,8 @@ def _build_conflict_matrix_sheet(
 
     # Title
     ws.cell(row=1, column=1, value="Student Conflict Matrix").font = Font(bold=True, size=12)
-    ws.cell(row=2, column=1, value=f"{n} courses, {len(student_maps)} students").font = Font(
+    student_count = len({demand.student_id for demand in demands})
+    ws.cell(row=2, column=1, value=f"{n} courses, {student_count} students").font = Font(
         size=9, color="666666"
     )
 

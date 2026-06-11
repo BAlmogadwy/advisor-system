@@ -165,26 +165,29 @@ def _ensure_term_section(
     meetings: list[dict[str, str]],
     source_tag: str = "scraper_timetable",
 ) -> int:
-    """Get or create a TermSection (+ meetings) from timetable data."""
+    """Get or create a TermSection and ensure ALL its meetings exist.
+
+    Meetings are ensured (idempotent get_or_create) for pre-existing sections
+    too, so re-ingesting a fuller timetable backfills meetings an earlier partial
+    scrape missed — a section is never frozen at its first-seen meeting.
+    """
+    now_str = datetime.now(UTC).isoformat()
     # Look up global (non-scenario) sections for imported/scraped data
     ts = TermSection.objects.filter(
         scenario__isnull=True, course_key=course_key, section=section
     ).first()
-    if ts is not None:
-        return ts.id
-
-    now_str = datetime.now(UTC).isoformat()
-    ts = TermSection.objects.create(
-        source_tag=source_tag,
-        course_name=course_name,
-        course_code=course_code,
-        course_number=course_number,
-        course_key=course_key,
-        section=section,
-        source_file=f"timetable_ingest_{source_tag}",
-        created_at=now_str,
-        updated_at=now_str,
-    )
+    if ts is None:
+        ts = TermSection.objects.create(
+            source_tag=source_tag,
+            course_name=course_name,
+            course_code=course_code,
+            course_number=course_number,
+            course_key=course_key,
+            section=section,
+            source_file=f"timetable_ingest_{source_tag}",
+            created_at=now_str,
+            updated_at=now_str,
+        )
 
     for m in meetings:
         TermSectionMeeting.objects.get_or_create(
@@ -257,17 +260,18 @@ def ingest_student_timetable_html(
     section_ids: list[int] = []
     external_created: list[str] = []
 
-    # Collect meeting data per (course_code, course_number, section)
+    # ── Pass 1 — accumulate the COMPLETE meeting list per section ────────────
+    # One parsed row == one meeting (a course meeting Sun+Tue yields two rows;
+    # continuation rows add more). Every row for a section must be gathered
+    # BEFORE the section is created, otherwise the section is created on its
+    # first row and the remaining meetings are silently dropped.
     section_meetings: dict[tuple[str, str, str], list[dict[str, str]]] = {}
-    # Collect course metadata from the first row per course_key
     course_meta: dict[str, dict[str, str]] = {}
-
-    seen_section_key: set[tuple[str, str, str]] = set()
+    section_course_key: dict[tuple[str, str, str], str] = {}
     for r in rows:
         key = (r["course_code"], r["course_number"], r["section"])
         course_key = f"{r['course_code']}{r['course_number']}".replace(" ", "").upper()
-
-        # Collect meeting data for all rows (including continuation rows)
+        section_course_key[key] = course_key
         section_meetings.setdefault(key, []).append(
             {
                 "day": r.get("day", ""),
@@ -278,8 +282,7 @@ def ingest_student_timetable_html(
                 "room": r.get("room", ""),
             }
         )
-
-        # Store course metadata once
+        # Store course metadata from the first row per course_key
         if course_key not in course_meta:
             course_meta[course_key] = {
                 "course_code": r["course_code"],
@@ -289,12 +292,13 @@ def ingest_student_timetable_html(
                 "section": r["section"],
             }
 
-        if key in seen_section_key:
-            continue
-        seen_section_key.add(key)
+    # ── Pass 2 — create/link each section with its full meeting list ─────────
+    for key, meetings in section_meetings.items():
+        course_code, course_number, section = key
+        course_key = section_course_key[key]
+        meta = course_meta[course_key]
 
         # Determine if this is an external course (not in the study plan)
-        is_external = False
         if study_plan_codes is not None:
             is_external = course_key not in study_plan_codes
         else:
@@ -304,56 +308,28 @@ def ingest_student_timetable_html(
                 course_code=course_key,
             ).exists()
 
-        ts_id = (
-            TermSection.objects.filter(
-                scenario__isnull=True,
-                course_key=course_key,
-                section=r["section"],
-            )
-            .values_list("id", flat=True)
-            .first()
-        )
-        if ts_id is not None:
-            section_ids.append(int(ts_id))
-            # Ensure external Course + StudentCourse exist even when TermSection was pre-imported
-            if is_external:
-                meta = course_meta[course_key]
-                course_obj = _ensure_external_course(
-                    course_key=course_key,
-                    course_code=meta["course_code"],
-                    course_number=meta["course_number"],
-                    course_name=meta["course_name"],
-                    credits_str=meta["credits"],
-                )
-                _ensure_student_course_studying(student_id, course_obj)
-                if course_key not in external_created:
-                    external_created.append(course_key)
-        else:
-            # TermSection not in DB — auto-create from timetable data
-            meta = course_meta[course_key]
-            meetings = section_meetings.get(key, [])
-
-            if is_external:
-                course_obj = _ensure_external_course(
-                    course_key=course_key,
-                    course_code=meta["course_code"],
-                    course_number=meta["course_number"],
-                    course_name=meta["course_name"],
-                    credits_str=meta["credits"],
-                )
-                _ensure_student_course_studying(student_id, course_obj)
-                external_created.append(course_key)
-
-            ts_id_new = _ensure_term_section(
+        if is_external:
+            course_obj = _ensure_external_course(
                 course_key=course_key,
                 course_code=meta["course_code"],
                 course_number=meta["course_number"],
                 course_name=meta["course_name"],
-                section=meta["section"],
-                meetings=meetings,
-                source_tag="external" if is_external else "scraper_timetable",
+                credits_str=meta["credits"],
             )
-            section_ids.append(ts_id_new)
+            _ensure_student_course_studying(student_id, course_obj)
+            if course_key not in external_created:
+                external_created.append(course_key)
+
+        ts_id = _ensure_term_section(
+            course_key=course_key,
+            course_code=course_code,
+            course_number=course_number,
+            course_name=meta["course_name"],
+            section=section,
+            meetings=meetings,
+            source_tag="external" if is_external else "scraper_timetable",
+        )
+        section_ids.append(ts_id)
 
     replace_student_term_sections(student_id, year, term, section_ids, source="scraper_timetable")
 

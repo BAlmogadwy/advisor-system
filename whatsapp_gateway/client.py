@@ -35,7 +35,7 @@ def send_whatsapp_text(*, to_wa_id: str, text: str) -> dict[str, Any]:
         },
     )
     try:
-        with urlopen(request, timeout=30) as response:  # noqa: S310
+        with urlopen(request, timeout=30) as response:  # noqa: S310  # nosec B310
             data = json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")

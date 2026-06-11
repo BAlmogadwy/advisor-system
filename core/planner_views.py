@@ -27,8 +27,10 @@ from core.services.student_helpers import get_student_passed_and_studying, norma
 from core.services.student_sections import (
     append_unmapped_studying_courses,
     ensure_student_section_schema,
+    gender_section_filter,
     get_student_term_baseline,
     replace_student_term_sections,
+    student_gender,
 )
 from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
@@ -399,6 +401,7 @@ def planner_sections_catalog_view(request: HttpRequest) -> JsonResponse:
     year = str(payload.get("academic_year", "")).strip()
     term = str(payload.get("term", "")).strip()
     course_codes = payload.get("course_codes", [])
+    student_id = str(payload.get("student_id", "")).strip()
 
     if not year or not term:
         return _err(
@@ -411,6 +414,11 @@ def planner_sections_catalog_view(request: HttpRequest) -> JsonResponse:
 
     try:
         ts_qs = TermSection.objects.filter(scenario__isnull=True)
+        # Gender-segregated sections: only surface the student's own cohort
+        # (M/F) sections. Gender is derived server-side from Student.section.
+        gender = student_gender(student_id) if student_id else ""
+        if gender:
+            ts_qs = ts_qs.filter(gender_section_filter(gender))
         if isinstance(course_codes, list) and course_codes:
             normalized = [
                 str(c).replace(" ", "").strip().upper() for c in course_codes if str(c).strip()
@@ -473,6 +481,7 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
     strict_sections = bool(payload.get("strict_sections", False))
     shortlist = payload.get("shortlist", [])
     baseline = payload.get("baseline", [])
+    student_id = str(payload.get("student_id", "")).strip()
 
     if not year or not term:
         return _err(
@@ -485,6 +494,20 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
         return term_err
     if mode not in {"keep", "ignore"}:
         return _err("mode must be keep or ignore", code="VALIDATION_MODE", status=400)
+
+    # Resolve the student for scope enforcement + gender-segregated sections.
+    # Gender is derived server-side (never trusted from the client); when a
+    # student_id is supplied the build only schedules that student's own cohort
+    # sections, and the request is gated by the caller's student scope.
+    gender = ""
+    if student_id:
+        student_id_int, sid_err = _parse_student_id(student_id)
+        if sid_err:
+            return sid_err
+        scope_deny = require_student_scope(request, student_id_int)
+        if scope_deny:
+            return scope_deny
+        gender = student_gender(student_id_int)
 
     normalized_shortlist: list[dict[str, object]] = []
     for item in shortlist:
@@ -540,6 +563,7 @@ def planner_build_view(request: HttpRequest) -> JsonResponse:
             strict_per_course=strict_sections,
             consider_capacity=consider_capacity,
             max_credits=max_credits,
+            gender=gender,
         )
         result["mode"] = mode
         return _ok(result)

@@ -21,10 +21,7 @@ from collections import defaultdict
 
 from ortools.sat.python import cp_model
 
-from core.models import (
-    DeliveryBoard,
-    ScenarioStudentMap,
-)
+from core.models import DeliveryBoard
 from core.services.timetable_assignment_models import (
     SectionMeeting,
     SectionState,
@@ -38,6 +35,7 @@ from core.services.timetable_autoplace import (
 )
 from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
 from core.services.timetable_decision_trace import DecisionTrace
+from core.services.timetable_demand import load_scenario_course_demands
 from core.services.timetable_solver_codes import CPSAT_IMPROVED, is_stage_trace_enabled
 from core.services.timetable_stage_telemetry import (
     is_stage_telemetry_enabled,
@@ -58,9 +56,9 @@ def build_cross_board_overlap_matrix(
     course_a < course_b lexicographically.
     """
     course_students: dict[str, set[int]] = defaultdict(set)
-    for sm in ScenarioStudentMap.objects.filter(scenario_id=scenario_id):
-        for code in sm.recommended_courses or []:
-            course_students[code].add(sm.student_id)
+    for demand in load_scenario_course_demands(scenario_id):
+        if demand.course_key:
+            course_students[demand.course_key].add(demand.student_id)
 
     overlap: dict[tuple[str, str], int] = {}
     codes = sorted(course_students.keys())

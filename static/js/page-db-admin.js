@@ -1,4 +1,4 @@
-const IS_AR = 'LANGUAGE_CODE' === 'ar';
+const IS_AR = document.documentElement.lang === 'ar';
 const T = {
   runPreviewFirst: IS_AR ? 'يرجى تشغيل تحليل + معاينة أولاً.' : 'Please run Parse + Preview first.',
   requestFailed:  IS_AR ? 'فشل الطلب' : 'Request failed',

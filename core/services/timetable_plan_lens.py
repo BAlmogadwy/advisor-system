@@ -4,10 +4,9 @@ import re
 from collections import Counter, defaultdict
 from typing import Any
 
-from django.db.models import QuerySet
-
-from core.models import ScenarioSectionBudget, ScenarioStudentMap, Student, TermSection
+from core.models import ScenarioSectionBudget, Student, TermSection
 from core.services import timetable_student_assignment as ssa
+from core.services.timetable_demand import StudentCourseDemand, load_scenario_course_demands
 from core.services.timetable_optimizer_v2 import (
     build_course_rigidity_for_scenario,
     build_section_states_for_scenario,
@@ -45,22 +44,19 @@ def _student_program_map(student_ids: list[int]) -> dict[int, str]:
 
 
 def _demand_by_course_and_plan(
-    maps: QuerySet[ScenarioStudentMap],
+    demands: list[StudentCourseDemand],
 ) -> tuple[dict[str, Counter[str]], set[str]]:
-    rows = list(maps)
-    student_ids = [int(row.student_id) for row in rows]
+    student_ids = sorted({int(row.student_id) for row in demands})
     programs = _student_program_map(student_ids)
     by_course: dict[str, Counter[str]] = defaultdict(Counter)
     plans: set[str] = set()
 
-    for row in rows:
+    for row in demands:
         program = programs.get(int(row.student_id), "UNKNOWN")
         plans.add(program)
-        course_keys = row.recommended_course_keys or row.recommended_courses or []
-        for raw_key in course_keys:
-            course_key = _clean_course_key(raw_key)
-            if course_key:
-                by_course[course_key][program] += 1
+        course_key = _clean_course_key(row.course_key)
+        if course_key:
+            by_course[course_key][program] += 1
 
     return dict(by_course), plans
 
@@ -230,8 +226,8 @@ def _assign_targets_to_sections(
 
 def build_scenario_plan_lens(scenario_id: int) -> dict[str, Any]:
     """Build a read-only programme/plan lens over one shared scenario pool."""
-    maps = ScenarioStudentMap.objects.filter(scenario_id=scenario_id)
-    demand_by_course, observed_plans = _demand_by_course_and_plan(maps)
+    demands = load_scenario_course_demands(scenario_id)
+    demand_by_course, observed_plans = _demand_by_course_and_plan(demands)
     plans = _ordered_plans(observed_plans)
 
     budgets = {

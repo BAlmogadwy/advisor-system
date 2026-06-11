@@ -1,11 +1,20 @@
 import json
+import logging
 import re
+import time
 from typing import Any
 
+from django.conf import settings
 from django.db.models import Q, QuerySet
 
 from core.models import Course, Prerequisite, ProgrammeRequirement, Student
-from core.services.local_llm import ChatResult, LocalLLMClient
+from core.services.local_llm import (
+    ChatResult,
+    LocalLLMBadRequest,
+    LocalLLMClient,
+    LocalLLMUnavailable,
+    ToolChatResult,
+)
 from core.services.rbac import (
     ROLE_ADVISOR,
     ROLE_GENERAL_ADVISOR,
@@ -14,6 +23,9 @@ from core.services.rbac import (
 )
 from core.services.recommender import recommend_next_courses
 from core.services.student_helpers import get_student_passed_and_studying, normalize_code
+from core.services.virtual_advisor_capabilities import get_default_registry
+
+logger = logging.getLogger(__name__)
 
 _MAX_CONTEXT_COURSES = 80
 _MAX_HISTORY_MESSAGES = 8
@@ -21,10 +33,30 @@ _MAX_TOOL_ROWS = 500
 _QWEN_EMPTY_THINK_PREFILL = "<think>\n</think>\n\n"
 
 
+def is_agent_loop_enabled() -> bool:
+    return bool(getattr(settings, "VIRTUAL_ADVISOR_AGENT_LOOP_ENABLED", True))
+
+
+def _max_tool_iterations() -> int:
+    return max(1, int(getattr(settings, "VIRTUAL_ADVISOR_MAX_TOOL_ITERATIONS", 5)))
+
+
+def _max_tool_calls() -> int:
+    return max(1, int(getattr(settings, "VIRTUAL_ADVISOR_MAX_TOOL_CALLS", 12)))
+
+
+def _loop_max_tokens() -> int:
+    return max(256, int(getattr(settings, "VIRTUAL_ADVISOR_LOOP_MAX_TOKENS", 3000)))
+
+
+def _tool_turn_timeout() -> float:
+    return max(10.0, float(getattr(settings, "VIRTUAL_ADVISOR_TOOL_TURN_TIMEOUT_SECONDS", 75)))
+
+
 SYSTEM_PROMPT = """You are a private local university virtual academic advisor.
 
 Rules:
-- Answer in the same language as the user's latest question.
+- Answer in the same language as the user's latest question. When the user message carries an answer_language field, write the final answer in that language.
 - Use only the verified_context JSON supplied by the university system.
 - When verified_context includes tool_results, treat them as authoritative query results.
 - If a requested fact is missing from verified_context, say that the system data does not show it.
@@ -33,6 +65,23 @@ Rules:
 - Never expose chain-of-thought; provide concise evidence from the context instead.
 - Treat recommendations as advising support, not official approval.
 - For list questions, summarize the count, filters used, and show the most relevant rows instead of repeating every row.
+"""
+
+SYSTEM_PROMPT_AGENT = """You are a private local university virtual academic advisor with verified data tools.
+
+Rules:
+- Write the final answer in the language named by the answer_language field of the user message. Never switch languages on your own.
+- Your ONLY source of facts is the verified_context JSON and the results of the tools you call. Never answer a data question from memory.
+- Call tools to gather evidence BEFORE answering. Chain tools when needed (e.g. lookup_course to resolve a vague course name, then find_students with the exact code).
+- If a tool returns an error, adjust the arguments or try another tool; explain the limitation only if no tool can answer.
+- When evidence is sufficient, STOP calling tools and give the final answer.
+- If the question is ambiguous (which student, which course, which term), ask ONE short clarifying question instead of guessing.
+- Academic years are Hijri (e.g. 1448), never Gregorian. Tools default to the configured current year/term — omit academic_year/term arguments unless the user explicitly names a different term.
+- Do not invent grades, rules, prerequisites, graduation status, rooms, sections, approvals, or student ids. Every specific fact must appear in the evidence.
+- Keep advice practical: what is known, why it matters, and the next safest action.
+- Never expose chain-of-thought; cite concise evidence instead.
+- Treat recommendations as advising support, not official approval.
+- For list questions, summarize the count and filters used, then show the most relevant rows.
 """
 
 
@@ -288,8 +337,14 @@ def find_students_tool(
     }
     filters = {k: v for k, v in filters.items() if v not in (None, "", [])}
 
+    name_contains = str(args.get("name_contains") or "").strip()
+    if name_contains:
+        filters["name_contains"] = name_contains
+
     qs = Student.objects.all()
     qs, applied_scope = _apply_student_scope(qs, scope)
+    if name_contains:
+        qs = qs.filter(name__icontains=name_contains)
     if min_earned is not None:
         qs = qs.filter(total_earned_credits__gte=min_earned)
     if max_earned is not None:
@@ -464,6 +519,23 @@ _PROGRAM_STOPWORDS = {
     "WHICH",
     "WHO",
     "WOMEN",
+    # quantifier / question words that can precede "students" but are not programs
+    "MANY",
+    "MOST",
+    "SOME",
+    "FEW",
+    "HOW",
+    "THESE",
+    "EACH",
+    "BOTH",
+    "COUNT",
+    "TOTAL",
+    "NUMBER",
+    "NEW",
+    "ACTIVE",
+    "CURRENT",
+    "CURRENTLY",
+    "AVERAGE",
 }
 
 
@@ -843,6 +915,18 @@ def build_verified_student_context(
             "studying": sorted(studying)[:_MAX_CONTEXT_COURSES],
             "remaining_requirements": _compact_course_rows(remaining_rows, names),
             "remaining_requirement_count": len(remaining_rows),
+            # Exact plan totals, so the model never has to assume a
+            # "standard" degree size (battery testing caught it guessing
+            # 132 hours when these were absent).
+            "programme_totals": {
+                "total_plan_credit_hours": sum(
+                    int(row.get("credit_hours") or 0) for row in requirement_rows
+                ),
+                "remaining_credit_hours": sum(
+                    int(row.get("credit_hours") or 0) for row in remaining_rows
+                ),
+                "remaining_course_count": len(remaining_rows),
+            },
         },
         "recommendations": [
             {
@@ -903,6 +987,160 @@ def _assistant_prefill_for_model(model: str) -> str | None:
     return None
 
 
+_STUDENT_ID_RE = re.compile(r"\b\d{6,9}\b")
+_ARABIC_SCRIPT_RE = re.compile(r"[؀-ۿ]")
+
+
+def _answer_language(question: str) -> str:
+    """Deterministic answer-language pin (battery testing showed the model
+    occasionally answering English questions in Arabic)."""
+    return "Arabic" if _ARABIC_SCRIPT_RE.search(question or "") else "English"
+
+
+def _unverified_student_ids(answer: str, evidence_texts: list[str]) -> list[str]:
+    """Student-id grounding check.
+
+    Returns ids mentioned in *answer* that appear in none of the
+    evidence texts (context JSON, tool results, or the user's own
+    question). High-precision on purpose: only 6-9 digit runs are
+    treated as student ids; course codes and credit numbers never match.
+    """
+    mentioned = set(_STUDENT_ID_RE.findall(answer or ""))
+    if not mentioned:
+        return []
+    evidence = "\n".join(evidence_texts)
+    return sorted(sid for sid in mentioned if sid not in evidence)
+
+
+def _summarise_tool_args(args: dict[str, Any]) -> dict[str, Any]:
+    """Telemetry-safe argument summary (caps long lists/strings)."""
+    summary: dict[str, Any] = {}
+    for key, value in args.items():
+        if isinstance(value, list):
+            summary[key] = value[:5] + ["…"] if len(value) > 5 else value
+        elif isinstance(value, str) and len(value) > 80:
+            summary[key] = value[:77] + "…"
+        else:
+            summary[key] = value
+    return summary
+
+
+def _run_agent_loop(
+    *,
+    llm: LocalLLMClient,
+    resolved_model: str,
+    messages: list[dict[str, Any]],
+    scope: dict[str, Any] | None,
+    ctx: dict[str, Any],
+    telemetry: dict[str, Any],
+) -> tuple[str, dict[str, Any], list[dict[str, Any]]]:
+    """Run the tool-calling loop. Returns (answer, usage, agent_tool_results).
+
+    Raises ``LocalLLMBadRequest`` only when the very first tools request is
+    rejected (caller falls back to the single-shot path); later turns degrade
+    to a forced no-tools answer instead.
+    """
+    registry = get_default_registry()
+    tool_schemas = registry.tool_schemas_for_scope(scope)
+    agent_tool_results: list[dict[str, Any]] = []
+    seen_calls: dict[str, dict[str, Any]] = {}
+    total_calls = 0
+    usage: dict[str, Any] = {}
+
+    for iteration in range(_max_tool_iterations()):
+        telemetry["iterations"] = iteration + 1
+        try:
+            turn: ToolChatResult = llm.chat_with_tools(
+                messages,
+                tools=tool_schemas,
+                model=resolved_model,
+                max_tokens=_loop_max_tokens(),
+                timeout_seconds=_tool_turn_timeout(),
+            )
+        except LocalLLMBadRequest:
+            if iteration == 0:
+                raise  # model/server rejected tools — caller falls back
+            logger.warning("Tool turn rejected mid-loop; forcing a final no-tools answer.")
+            telemetry["turn_error"] = "bad_request_mid_loop"
+            break
+        except LocalLLMUnavailable as exc:
+            # Timeouts and reasoning-budget exhaustion on a tool turn must
+            # not 503 the whole chat. Degrade: answer from the evidence
+            # gathered so far via the plain path (whose prefill suppresses
+            # hidden reasoning on Qwen thinking models).
+            logger.warning("Tool turn failed (%s); forcing a final no-tools answer.", exc)
+            telemetry["turn_error"] = str(exc)[:200]
+            break
+        usage = turn.usage or usage
+
+        if not turn.tool_calls:
+            if turn.content:
+                return turn.content, usage, agent_tool_results
+            break  # neither calls nor content — force a final answer below
+
+        messages.append(turn.assistant_message)
+        for call in turn.tool_calls:
+            total_calls += 1
+            if total_calls > _max_tool_calls():
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "content": json.dumps(
+                            {"ok": False, "error": "Tool budget exhausted. Answer now."},
+                            ensure_ascii=False,
+                        ),
+                    }
+                )
+                continue
+            dedup_key = f"{call.name}:{json.dumps(call.arguments, sort_keys=True)}"
+            if dedup_key in seen_calls:
+                result = {**seen_calls[dedup_key], "note": "duplicate call; reusing prior result"}
+            else:
+                started = time.perf_counter()
+                result = registry.execute(call.name, call.arguments, scope=scope, ctx=ctx)
+                elapsed_ms = int((time.perf_counter() - started) * 1000)
+                seen_calls[dedup_key] = result
+                agent_tool_results.append(result)
+                telemetry["tools_called"].append(
+                    {
+                        "name": call.name,
+                        "ok": bool(result.get("ok")),
+                        "ms": elapsed_ms,
+                        "args": _summarise_tool_args(call.arguments),
+                    }
+                )
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    "content": json.dumps(result, ensure_ascii=False, default=str),
+                }
+            )
+
+    # Iteration or budget limit reached: force a final answer from the
+    # evidence gathered so far, with tools disabled.
+    messages.append(
+        {
+            "role": "user",
+            "content": (
+                "Answer the question now using only the evidence gathered above. "
+                "Do not request more tools. If the evidence is insufficient, say "
+                "plainly what could not be retrieved and suggest the next step — "
+                "do not guess and do not invent missing details."
+            ),
+        }
+    )
+    final: ChatResult = llm.chat(
+        messages,
+        model=resolved_model,
+        max_tokens=_loop_max_tokens(),
+        assistant_prefill=_assistant_prefill_for_model(resolved_model),
+    )
+    telemetry["forced_final"] = True
+    return final.content, final.usage or usage, agent_tool_results
+
+
 def answer_virtual_advisor(
     *,
     question: str,
@@ -914,40 +1152,150 @@ def answer_virtual_advisor(
     scope: dict[str, Any] | None = None,
     client: LocalLLMClient | None = None,
 ) -> dict[str, Any]:
+    # Default the academic term when the caller did not supply one
+    # (the WhatsApp gateway never does). Without this, every
+    # time-dependent capability errors with "academic_year and term
+    # are required" outside the web UI.
+    if academic_year is None or term is None:
+        from core.settings_views import load_defaults
+
+        defaults = load_defaults()
+        academic_year = academic_year if academic_year is not None else defaults["academic_year"]
+        term = term if term is not None else defaults["term"]
+
     context = build_verified_student_context(
         student_id=student_id,
         academic_year=academic_year,
         term=term,
     )
-    tool_results = run_planned_tools(question, scope=scope)
-    if tool_results:
-        context["tool_results"] = tool_results
-        context["tool_schemas"] = ADVISOR_TOOL_SCHEMAS
-    context_json = json.dumps(context, ensure_ascii=False, indent=2)
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    messages.extend(_sanitize_history(history))
-    messages.append(
-        {
-            "role": "user",
-            "content": (
-                f"verified_context:\n{context_json}\n\nlatest_question:\n{question.strip()}"
-            ),
-        }
-    )
 
     llm = client or LocalLLMClient()
     resolved_model = llm.resolve_model(model)
-    result: ChatResult = llm.chat(
-        messages,
-        model=resolved_model,
-        assistant_prefill=_assistant_prefill_for_model(resolved_model),
-    )
+
+    telemetry: dict[str, Any] = {
+        "enabled": is_agent_loop_enabled(),
+        "loop_used": False,
+        "iterations": 0,
+        "tools_called": [],
+        "fallback_reason": None,
+        "forced_final": False,
+        "grounding_retry": False,
+        "turn_error": None,
+    }
+    agent_tool_results: list[dict[str, Any]] = []
+    tool_results: list[dict[str, Any]] = []
+    answer = ""
+    usage: dict[str, Any] = {}
+    answer_model = resolved_model
+
+    loop_supported = callable(getattr(llm, "chat_with_tools", None))
+    if telemetry["enabled"] and not loop_supported:
+        telemetry["fallback_reason"] = "client_has_no_tool_support"
+
+    context_json = json.dumps(context, ensure_ascii=False)
+    user_message = {
+        "role": "user",
+        "content": (
+            f"verified_context:\n{context_json}\n\n"
+            f"answer_language: {_answer_language(question)}\n\n"
+            f"latest_question:\n{question.strip()}"
+        ),
+    }
+
+    if telemetry["enabled"] and loop_supported:
+        # Loop mode: NO regex seed. Battery testing showed the seed dumping
+        # up to 100 unfiltered student rows into context (~13k prompt
+        # tokens), which slowed every turn and tempted the model to answer
+        # from a misleading sample instead of calling find_students with
+        # the right filters. The model fetches precisely what it needs.
+        loop_messages: list[dict[str, Any]] = [
+            {"role": "system", "content": SYSTEM_PROMPT_AGENT},
+            *_sanitize_history(history),
+            user_message,
+        ]
+        try:
+            answer, usage, agent_tool_results = _run_agent_loop(
+                llm=llm,
+                resolved_model=resolved_model,
+                messages=loop_messages,
+                scope=scope,
+                ctx={"academic_year": academic_year, "term": term},
+                telemetry=telemetry,
+            )
+            telemetry["loop_used"] = True
+            # The UI evidence panel reads ``tool_results``; in loop mode
+            # the agent's tool results are that evidence.
+            tool_results = agent_tool_results
+        except LocalLLMBadRequest as exc:
+            logger.warning("Model rejected tool calling; falling back to single-shot: %s", exc)
+            telemetry["fallback_reason"] = "tools_rejected_by_model"
+
+    if not telemetry["loop_used"]:
+        # Single-shot fallback: the deterministic regex planner seeds the
+        # context exactly as before the agent loop existed.
+        tool_results = run_planned_tools(question, scope=scope)
+        if tool_results:
+            context["tool_results"] = tool_results
+        context_json = json.dumps(context, ensure_ascii=False)
+        user_message = {
+            "role": "user",
+            "content": (
+                f"verified_context:\n{context_json}\n\n"
+                f"answer_language: {_answer_language(question)}\n\n"
+                f"latest_question:\n{question.strip()}"
+            ),
+        }
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        messages.extend(_sanitize_history(history))
+        messages.append(user_message)
+        result: ChatResult = llm.chat(
+            messages,
+            model=resolved_model,
+            assistant_prefill=_assistant_prefill_for_model(resolved_model),
+        )
+        answer = result.content
+        usage = result.usage
+        answer_model = result.model
+
+    # Grounding check: any student id in the answer must exist in the
+    # evidence (context, seed tools, agent tools) or the question itself.
+    evidence_texts = [
+        context_json,
+        question,
+        *(json.dumps(item, ensure_ascii=False, default=str) for item in agent_tool_results),
+    ]
+    unverified = _unverified_student_ids(answer, evidence_texts)
+    if unverified:
+        telemetry["grounding_retry"] = True
+        correction = (
+            "Your draft answer mentioned student ids that do not appear in the verified "
+            f"evidence: {', '.join(unverified)}. Rewrite the answer strictly from the "
+            "evidence; never invent identifiers."
+        )
+        retry_messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            user_message,
+            {"role": "assistant", "content": answer},
+            {"role": "user", "content": correction},
+        ]
+        try:
+            corrected: ChatResult = llm.chat(
+                retry_messages,
+                model=resolved_model,
+                assistant_prefill=_assistant_prefill_for_model(resolved_model),
+            )
+            if corrected.content:
+                answer = corrected.content
+        except Exception:  # pragma: no cover - degrade to the draft answer
+            logger.exception("Grounding retry failed; keeping the original answer")
+
     return {
         "ok": True,
-        "answer": result.content,
-        "model": result.model,
-        "usage": result.usage,
+        "answer": answer,
+        "model": answer_model,
+        "usage": usage,
         "context_summary": _context_summary(context),
         "tool_results": tool_results,
         "verified_context": context,
+        "agent": {**telemetry, "tool_results": agent_tool_results},
     }

@@ -136,6 +136,8 @@ const IS_AR = document.documentElement.lang === 'ar';
     failedLoadEligibility: IS_AR ? 'تعذّر تحميل تقرير الأهلية.' : 'Failed to load eligibility report.',
     noEligibleIds: IS_AR ? 'لا يوجد طلاب مؤهلون لهذا الفلتر.' : 'No eligible student IDs for this filter.',
     eligibilityLoaded: IS_AR ? 'تم تحميل تقرير الأهلية' : 'Eligibility report loaded',
+    idsCopied: (n) => IS_AR ? `تم نسخ ${n} رقم طالب — الصقها في صفحة التوافر الجماعي` : `Copied ${n} student IDs — paste into Group Availability`,
+    noIdsToCopy: IS_AR ? 'لا توجد أرقام مؤهلة للنسخ. شغّل الفحص أولاً.' : 'No eligible IDs to copy. Run a check first.',
 
     // ── Advisor ──
     selectAdvisor: IS_AR ? 'اختر مرشداً' : 'Select advisor',
@@ -206,7 +208,6 @@ const IS_AR = document.documentElement.lang === 'ar';
 
     // ── Command Palette ──
     paletteHint: IS_AR ? 'أدخل رقم طالب للانتقال مباشرة لخطته' : 'Type a student ID to jump directly to their plan',
-    students: IS_AR ? 'الطلاب' : 'Students',
     openPlan: IS_AR ? 'فتح الخطة' : 'Open plan',
     directNav: IS_AR ? 'انتقال مباشر' : 'Direct navigation',
     navToStudentPlan: IS_AR ? 'الانتقال لخطة الطالب' : 'Navigate to student plan',
@@ -572,7 +573,6 @@ const IS_AR = document.documentElement.lang === 'ar';
 
     /* normalize: split comma-separated prerequisites into individual edges */
     const norm = normalizePrereqs(data.items);
-    const courseSet = new Set(norm.map(x => x.course_code));
     const allSet = new Set(norm.flatMap(x => [x.course_code, x.prerequisite_course_code]));
     q('preMetricProgram').textContent = data.program || '-';
     q('preMetricCourses').textContent = String(allSet.size);
@@ -2066,9 +2066,12 @@ const IS_AR = document.documentElement.lang === 'ar';
     }
   };
 
-  /* ── Advisor Portfolio JS → moved to standalone page at /advisor-portfolio/ ── */
-  let advisorStudentsCache = [];  // kept for ⌘K palette compatibility
-  window._advisorStudentsCache = advisorStudentsCache;
+  function requestSidebarBadgeUpdate() {
+    if (typeof window.updateSidebarBadges === 'function') {
+      window.updateSidebarBadges();
+    }
+    document.dispatchEvent(new Event('dashboard:badges:update'));
+  }
 
   q('hpRun').onclick = async () => {
     if (!requireFields(['hpYear','hpSemester'], 'hpMeta', T.highPriorityReport)) return;
@@ -2089,6 +2092,7 @@ const IS_AR = document.documentElement.lang === 'ar';
       q('hpMeta').textContent = preciseError(null, null, 'Network request failed.', err);
       setUpdated('hpUpdated', true);
       tbody.innerHTML = '<tr><td colspan="5" class="text-danger">Network error while loading report.</td></tr>';
+      requestSidebarBadgeUpdate();
       toast(T.hpFailed, false);
       btn.disabled = false;
       btn.textContent = T.runReport;
@@ -2098,6 +2102,7 @@ const IS_AR = document.documentElement.lang === 'ar';
       q('hpMeta').textContent = preciseError(res, data, 'Failed to load report.');
       setUpdated('hpUpdated', true);
       tbody.innerHTML = '<tr><td colspan="5" class="text-danger">Failed to load report.</td></tr>';
+      requestSidebarBadgeUpdate();
       btn.disabled = false;
       btn.textContent = T.runReport;
       return;
@@ -2110,6 +2115,7 @@ const IS_AR = document.documentElement.lang === 'ar';
     btn.disabled = false;
     btn.textContent = T.runReport;
     paginateTable('hpTable', 'hpPager', 25);
+    requestSidebarBadgeUpdate();
   };
 
   async function copyLinkFrom(elId, label) {
@@ -2144,6 +2150,7 @@ const IS_AR = document.documentElement.lang === 'ar';
     q('exEligibilityCsv').href = `/export/course-eligibility.csv?course_code=${encodeURIComponent(q('elCourse')?.value || '')}&section=${encodeURIComponent(q('elSection')?.value || '')}&program=${encodeURIComponent(q('elProgram')?.value || '')}&join_years=${encodeURIComponent(q('elJoin')?.value || '')}&mode=${encodeURIComponent(q('elMode')?.value || 'relaxed')}`;
     q('exAdvisorCsv').href = '/advisor-portfolio/';  // portfolio is now standalone
     q('exHighPriorityXlsx').href = `/export/missing-high-priority.xlsx?year=${encodeURIComponent(q('hpYear')?.value || '')}&semester=${encodeURIComponent(q('hpSemester')?.value || '')}&section=${encodeURIComponent(q('hpSection')?.value || '')}&program=${encodeURIComponent(q('hpProgram')?.value || '')}&join_years=${encodeURIComponent(q('hpJoin')?.value || '')}&term_parity=${encodeURIComponent(q('hpParity')?.value || '0')}&discount=${encodeURIComponent(q('hpDiscount')?.value || '1_over_d')}&min_score=${encodeURIComponent(q('hpMinScore')?.value || '2.0')}&top_k=${encodeURIComponent(q('hpTopK')?.value || '10')}&studying_counts_as_passed=${encodeURIComponent(q('hpStudying')?.value || 'false')}`;
+    requestSidebarBadgeUpdate();
   }
 
   document.querySelectorAll('.ex-copy').forEach((b) => {
@@ -2168,6 +2175,32 @@ const IS_AR = document.documentElement.lang === 'ar';
   q('cmLoadPreset')?.addEventListener('click', () => loadPreset('conflictmatrix', ['cmYear','cmSemester','cmSection','cmProgram','cmJoin','cmLimit']));
   q('elSavePreset')?.addEventListener('click', () => savePreset('eligibility', ['elCourse','elSection','elProgram','elJoin','elMode']));
   q('elLoadPreset')?.addEventListener('click', () => loadPreset('eligibility', ['elCourse','elSection','elProgram','elJoin','elMode']));
+  q('elCopyIds')?.addEventListener('click', async () => {
+    // Scrape every eligible ID from the table (paginateTable only hides rows, so all are in the DOM).
+    const ids = Array.from(document.querySelectorAll('#elTable .cr-id'))
+      .map((el) => el.textContent.trim())
+      .filter(Boolean);
+    if (!ids.length) { toast(T.noIdsToCopy, false); return; }
+    const text = ids.join('\n'); // Group Availability parses any non-digit separator; newline = one ID per line.
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (e) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      try { document.execCommand('copy'); } finally { ta.remove(); }
+    }
+    const btn = q('elCopyIds');
+    const orig = btn.innerHTML;
+    btn.classList.add('copied');
+    btn.innerHTML = '<span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>' + T.copied;
+    setTimeout(() => { btn.innerHTML = orig; btn.classList.remove('copied'); }, 1500);
+    toast(T.idsCopied(ids.length), true);
+  });
   q('hpSavePreset')?.addEventListener('click', () => savePreset('highpriority', ['hpYear','hpSemester','hpSection','hpProgram','hpJoin','hpParity','hpDiscount','hpMinScore','hpTopK','hpStudying']));
   q('hpLoadPreset')?.addEventListener('click', () => loadPreset('highpriority', ['hpYear','hpSemester','hpSection','hpProgram','hpJoin','hpParity','hpDiscount','hpMinScore','hpTopK','hpStudying']));
 
@@ -2467,7 +2500,7 @@ const IS_AR = document.documentElement.lang === 'ar';
     const hpEl = q('ovKpiHighPri');
     if (hpEl && hpCount > 0) hpEl.textContent = String(hpCount);
   }
-  setInterval(refreshOverviewKpis, 4000);
+  setInterval(refreshOverviewKpis, 60000);
 
   /* ── Student Context Sidebar: populate when student plan loads ── */
   (() => {

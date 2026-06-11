@@ -36,7 +36,6 @@ from collections import defaultdict
 
 from core.models import (
     DeliveryBoard,
-    ProgrammeRequirement,
     SectionPlacement,
     TermSection,
     TermSectionMeeting,
@@ -48,6 +47,7 @@ from core.services.timetable_autoplace import (
     _time_mask,
 )
 from core.services.timetable_decision_trace import DecisionTrace
+from core.services.timetable_online import OnlineCourseLookup, normalise_course_code
 from core.services.timetable_same_course import (
     has_same_course_overlap as same_course_windows_overlap,
 )
@@ -125,7 +125,7 @@ def _compute_cost(
 
     for i, meetings in schedule.items():  # noqa: B007
         sec = sections[i]
-        if sec["code"] in online_codes:
+        if normalise_course_code(sec["code"]) in online_codes:
             continue
         for m in meetings:
             s_min = _to_min(m["start"])
@@ -318,15 +318,7 @@ def optimize_board(
     )
     overlap_matrix = _bom(scenario.id, board_courses) if board_courses else {}
 
-    # Load online codes
-    online_codes: set[str] = set()
-    if board.program:
-        programs = [p.strip() for p in board.program.split(",") if p.strip()]
-        online_codes = set(
-            ProgrammeRequirement.objects.filter(program__in=programs, is_online=True).values_list(
-                "course_code", flat=True
-            )
-        )
+    online_codes = OnlineCourseLookup().codes_for_board(board)
 
     # Load current placements as the initial solution
     placements = list(
@@ -364,7 +356,7 @@ def optimize_board(
                     "sec_num": sec_num,
                     "label": sec_label,
                     "term_section_id": p.term_section_id,
-                    "is_online": p.term_section.course_code in online_codes,
+                    "is_online": normalise_course_code(p.term_section.course_code) in online_codes,
                 }
             )
             schedule[idx] = []

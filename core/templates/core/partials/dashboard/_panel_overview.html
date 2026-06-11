@@ -28,8 +28,8 @@
         </a>
         <a class="dcc-kpi" href="/timetable-workspace/split/?scenario={{ command_center.timetable.scenario_id }}">
           <span class="dcc-kpi-label">Latest timetable</span>
-          <strong>{{ command_center.timetable.cross_board_clashes }}</strong>
-          <span class="dcc-kpi-note">cross-board clashes</span>
+          <strong>{{ command_center.timetable.cross_board_affected_students }}</strong>
+          <span class="dcc-kpi-note">{{ command_center.timetable.cross_board_clashes }} cross-board section clashes</span>
         </a>
         <a class="dcc-kpi" href="#eligibility" onclick="event.preventDefault();activatePanel('eligibility');history.pushState(null,'','#eligibility')">
           <span class="dcc-kpi-label">85+ earned credits</span>
@@ -124,7 +124,7 @@
             <div><strong>{{ command_center.timetable.students }}</strong><span>students</span></div>
             <div><strong>{{ command_center.timetable.boards }}</strong><span>boards</span></div>
             <div><strong>{{ command_center.timetable.placements }}</strong><span>placed</span></div>
-            <div><strong>{{ command_center.timetable.cross_board_clashes }}</strong><span>cross-board</span></div>
+            <div><strong>{{ command_center.timetable.cross_board_affected_students }}</strong><span>affected</span></div>
           </div>
           <div class="dcc-panel-actions">
             <a href="{{ command_center.timetable.split_url }}">Open Split</a>

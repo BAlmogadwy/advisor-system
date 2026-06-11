@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import IntEnum
+from typing import Any
 
 
 class RiskTier(IntEnum):
@@ -187,3 +188,4 @@ class TimetableEvaluationResult:
     hotspot_courses: list[str]
     capacity_pressure_courses: list[str]
     reserve_heavy_sections: list[tuple[str, float]]
+    quality_score: dict[str, Any] = field(default_factory=dict)

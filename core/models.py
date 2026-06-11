@@ -1,3 +1,5 @@
+import uuid
+
 from django.conf import settings
 from django.db import models
 
@@ -586,6 +588,77 @@ class ScenarioStudentMap(models.Model):
         return f"SSM({self.scenario_id}/{self.student_id}→T{self.primary_term})"
 
 
+class ScenarioStudentCourseRequest(models.Model):
+    """Normalised per-student course demand for a timetable scenario.
+
+    ``ScenarioStudentMap`` remains the compact scenario classification snapshot. This
+    table is the canonical row-level source for features that need request
+    status, priority, blocked reason, or efficient course/student queries.
+    """
+
+    STATUS_REQUESTED = "requested"
+    STATUS_BLOCKED = "blocked"
+    STATUS_SERVED = "served"
+    STATUS_IGNORED = "ignored"
+    STATUS_CANCELLED = "cancelled"
+    STATUS_CHOICES = (
+        (STATUS_REQUESTED, "Requested"),
+        (STATUS_BLOCKED, "Blocked"),
+        (STATUS_SERVED, "Served"),
+        (STATUS_IGNORED, "Ignored"),
+        (STATUS_CANCELLED, "Cancelled"),
+    )
+
+    PRIORITY_NORMAL = "normal"
+    PRIORITY_GRADUATING = "graduating"
+    PRIORITY_MANUAL_APPROVAL = "manual_approval"
+    PRIORITY_SPECIAL_CASE = "special_case"
+    PRIORITY_CHOICES = (
+        (PRIORITY_NORMAL, "Normal"),
+        (PRIORITY_GRADUATING, "Graduating"),
+        (PRIORITY_MANUAL_APPROVAL, "Manual approval"),
+        (PRIORITY_SPECIAL_CASE, "Special case"),
+    )
+
+    scenario = models.ForeignKey(
+        TimetableScenario,
+        on_delete=models.CASCADE,
+        related_name="student_course_requests",
+    )
+    student_id = models.IntegerField()
+    course_key = models.TextField()
+    course_code = models.TextField()
+    course_name = models.TextField(blank=True, default="")
+    primary_term = models.IntegerField(null=True, blank=True)
+    is_cross_term = models.BooleanField(default=False)
+    status = models.CharField(max_length=24, choices=STATUS_CHOICES, default=STATUS_REQUESTED)
+    priority = models.CharField(max_length=32, choices=PRIORITY_CHOICES, default=PRIORITY_NORMAL)
+    reason_blocked = models.CharField(max_length=80, blank=True, default="")
+    reason_detail = models.TextField(blank=True, default="")
+    source = models.CharField(max_length=64, default="batch_recommender")
+    source_payload = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "scenario_student_course_requests"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["scenario", "student_id", "course_key"],
+                name="ux_sscr_scenario_student_course",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["scenario", "course_key"], name="idx_sscr_scenario_course"),
+            models.Index(fields=["scenario", "student_id"], name="idx_sscr_scenario_student"),
+            models.Index(fields=["scenario", "status"], name="idx_sscr_scenario_status"),
+            models.Index(fields=["scenario", "priority"], name="idx_sscr_scenario_priority"),
+        ]
+
+    def __str__(self) -> str:
+        return f"SSCR({self.scenario_id}/{self.student_id}/{self.course_key})"
+
+
 class ScenarioSectionBudget(models.Model):
     scenario = models.ForeignKey(
         TimetableScenario,
@@ -729,3 +802,561 @@ class PlannerJob(models.Model):
 
     def __str__(self) -> str:
         return f"PlannerJob({self.id}/{self.status})"
+
+
+class TimetableRepairRun(models.Model):
+    """Audited, read-first registration repair analysis run."""
+
+    STATUS_PENDING = "pending"
+    STATUS_RUNNING = "running"
+    STATUS_COMPLETED = "completed"
+    STATUS_FAILED = "failed"
+    STATUS_CANCELLED = "cancelled"
+    STATUS_CHOICES = (
+        (STATUS_PENDING, "Pending"),
+        (STATUS_RUNNING, "Running"),
+        (STATUS_COMPLETED, "Completed"),
+        (STATUS_FAILED, "Failed"),
+        (STATUS_CANCELLED, "Cancelled"),
+    )
+
+    MODE_CONSERVATIVE = "conservative"
+    MODE_BALANCED = "balanced"
+    MODE_SIMULATION = "simulation"
+    MODE_CHOICES = (
+        (MODE_CONSERVATIVE, "Conservative"),
+        (MODE_BALANCED, "Balanced"),
+        (MODE_SIMULATION, "Simulation"),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    scenario = models.ForeignKey(
+        TimetableScenario,
+        on_delete=models.CASCADE,
+        related_name="repair_runs",
+    )
+    target_placement = models.ForeignKey(
+        SectionPlacement,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="repair_runs",
+    )
+    target_section = models.ForeignKey(
+        TermSection,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="repair_runs",
+    )
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="timetable_repair_runs",
+    )
+    mode = models.CharField(max_length=24, choices=MODE_CHOICES, default=MODE_CONSERVATIVE)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    requested_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    solver_version = models.CharField(max_length=64, default="repair-readonly-v1")
+    constraint_version = models.CharField(max_length=64, default="repair-constraints-v1")
+    objective_version = models.CharField(max_length=64, default="conservative-readonly-v1")
+    request_payload = models.JSONField(default=dict)
+    summary_json = models.JSONField(default=dict)
+    before_snapshot = models.JSONField(default=dict)
+    error_message = models.TextField(blank=True, default="")
+
+    class Meta:
+        db_table = "timetable_repair_runs"
+        indexes = [
+            models.Index(fields=["scenario", "-requested_at"], name="idx_trr_scenario_time"),
+            models.Index(fields=["requested_by", "-requested_at"], name="idx_trr_user_time"),
+            models.Index(fields=["status"], name="idx_trr_status"),
+        ]
+
+    def __str__(self) -> str:
+        return f"RepairRun({self.id}/{self.mode}/{self.status})"
+
+
+class TimetableRepairCandidate(models.Model):
+    """A candidate section move evaluated within a repair run."""
+
+    STATUS_FEASIBLE = "feasible"
+    STATUS_REJECTED = "rejected_before_solver"
+    STATUS_NOT_SOLVED = "not_solved"
+    STATUS_CHOICES = (
+        (STATUS_FEASIBLE, "Feasible"),
+        (STATUS_REJECTED, "Rejected before solver"),
+        (STATUS_NOT_SOLVED, "Not solved"),
+    )
+
+    run = models.ForeignKey(
+        TimetableRepairRun,
+        on_delete=models.CASCADE,
+        related_name="candidates",
+    )
+    candidate_id = models.CharField(max_length=64)
+    day = models.TextField()
+    start_time = models.TextField()
+    end_time = models.TextField()
+    room = models.TextField(blank=True, default="")
+    status = models.CharField(max_length=32, choices=STATUS_CHOICES, default=STATUS_NOT_SOLVED)
+    solver_status = models.CharField(max_length=32, blank=True, default="not_run")
+    score_rank = models.IntegerField(null=True, blank=True)
+    metrics_json = models.JSONField(default=dict)
+    explanation_json = models.JSONField(default=dict)
+    rejection_reasons = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "timetable_repair_candidates"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["run", "candidate_id"],
+                name="ux_trc_run_candidate",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["run", "status"], name="idx_trc_run_status"),
+            models.Index(fields=["run", "score_rank"], name="idx_trc_run_rank"),
+        ]
+
+    def __str__(self) -> str:
+        return f"RepairCandidate({self.run_id}/{self.candidate_id}/{self.status})"
+
+
+class TimetableRepairCandidateMetric(models.Model):
+    """Normalized scalar metrics for querying and reporting repair candidates."""
+
+    candidate = models.ForeignKey(
+        TimetableRepairCandidate,
+        on_delete=models.CASCADE,
+        related_name="metric_rows",
+    )
+    metric_key = models.CharField(max_length=160)
+    category = models.CharField(max_length=64, blank=True, default="")
+    value_number = models.FloatField(null=True, blank=True)
+    value_text = models.TextField(blank=True, default="")
+    value_json = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "timetable_repair_candidate_metrics"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["candidate", "metric_key"],
+                name="ux_trcm_candidate_metric",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["candidate"], name="idx_trcm_candidate"),
+            models.Index(fields=["category", "metric_key"], name="idx_trcm_category_key"),
+            models.Index(fields=["metric_key"], name="idx_trcm_key"),
+        ]
+
+    def __str__(self) -> str:
+        return f"RepairCandidateMetric({self.candidate_id}/{self.metric_key})"
+
+
+class TimetableRepairRejectedCandidate(models.Model):
+    """Structured rejection evidence for candidates skipped before solving."""
+
+    run = models.ForeignKey(
+        TimetableRepairRun,
+        on_delete=models.CASCADE,
+        related_name="rejected_candidates",
+    )
+    candidate = models.ForeignKey(
+        TimetableRepairCandidate,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="rejection_rows",
+    )
+    candidate_key = models.CharField(max_length=64)
+    day = models.TextField()
+    start_time = models.TextField()
+    end_time = models.TextField()
+    room = models.TextField(blank=True, default="")
+    reasons_json = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "timetable_repair_rejected_candidates"
+        indexes = [
+            models.Index(fields=["run"], name="idx_trrc_run"),
+        ]
+
+    def __str__(self) -> str:
+        return f"RepairRejected({self.run_id}/{self.candidate_key})"
+
+
+class TimetableRepairStudentChange(models.Model):
+    """Student-level change proposed by a repair candidate."""
+
+    CHANGE_UNCHANGED = "unchanged"
+    CHANGE_MOVED = "moved_section"
+    CHANGE_NEWLY_REGISTERED = "newly_registered"
+    CHANGE_UNRESOLVED = "unresolved"
+    CHANGE_LOST = "lost_course"
+    CHANGE_LOCKED = "locked"
+    CHANGE_CHOICES = (
+        (CHANGE_UNCHANGED, "Unchanged"),
+        (CHANGE_MOVED, "Moved section"),
+        (CHANGE_NEWLY_REGISTERED, "Newly registered"),
+        (CHANGE_UNRESOLVED, "Unresolved"),
+        (CHANGE_LOST, "Lost course"),
+        (CHANGE_LOCKED, "Locked"),
+    )
+
+    candidate = models.ForeignKey(
+        TimetableRepairCandidate,
+        on_delete=models.CASCADE,
+        related_name="student_changes",
+    )
+    student_id = models.IntegerField()
+    course_key = models.TextField()
+    before_section_id = models.TextField(blank=True, default="")
+    after_section_id = models.TextField(blank=True, default="")
+    change_type = models.CharField(max_length=32, choices=CHANGE_CHOICES)
+    details_json = models.JSONField(default=dict)
+
+    class Meta:
+        db_table = "timetable_repair_student_changes"
+        indexes = [
+            models.Index(fields=["candidate"], name="idx_trsc_candidate"),
+            models.Index(fields=["student_id"], name="idx_trsc_student"),
+            models.Index(fields=["course_key"], name="idx_trsc_course"),
+        ]
+
+    def __str__(self) -> str:
+        return f"RepairStudentChange({self.candidate_id}/{self.student_id}/{self.change_type})"
+
+
+class TimetableRepairSnapshot(models.Model):
+    """JSON snapshot used for audit, rollback design, and reproducibility."""
+
+    KIND_BEFORE = "before"
+    KIND_AFTER = "after"
+    KIND_COMPONENT = "component"
+    KIND_CHOICES = (
+        (KIND_BEFORE, "Before"),
+        (KIND_AFTER, "After"),
+        (KIND_COMPONENT, "Component"),
+    )
+
+    run = models.ForeignKey(
+        TimetableRepairRun,
+        on_delete=models.CASCADE,
+        related_name="snapshots",
+    )
+    kind = models.CharField(max_length=24, choices=KIND_CHOICES)
+    payload_json = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "timetable_repair_snapshots"
+        indexes = [
+            models.Index(fields=["run", "kind"], name="idx_trs_run_kind"),
+        ]
+
+    def __str__(self) -> str:
+        return f"RepairSnapshot({self.run_id}/{self.kind})"
+
+
+class TimetableRepairSolverLog(models.Model):
+    """Compact solver/audit events for one repair run."""
+
+    run = models.ForeignKey(
+        TimetableRepairRun,
+        on_delete=models.CASCADE,
+        related_name="solver_logs",
+    )
+    candidate = models.ForeignKey(
+        TimetableRepairCandidate,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="solver_logs",
+    )
+    level = models.CharField(max_length=16, default="info")
+    message = models.TextField()
+    payload_json = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "timetable_repair_solver_logs"
+        indexes = [
+            models.Index(fields=["run", "created_at"], name="idx_trsl_run_time"),
+        ]
+
+    def __str__(self) -> str:
+        return f"RepairSolverLog({self.run_id}/{self.level})"
+
+
+class TimetableRepairApproval(models.Model):
+    """Approval gate for future apply/rollback flows."""
+
+    STATUS_PENDING = "pending"
+    STATUS_APPROVED = "approved"
+    STATUS_REJECTED = "rejected"
+    STATUS_APPLIED = "applied"
+    STATUS_ROLLED_BACK = "rolled_back"
+    STATUS_CHOICES = (
+        (STATUS_PENDING, "Pending"),
+        (STATUS_APPROVED, "Approved"),
+        (STATUS_REJECTED, "Rejected"),
+        (STATUS_APPLIED, "Applied"),
+        (STATUS_ROLLED_BACK, "Rolled back"),
+    )
+
+    run = models.ForeignKey(
+        TimetableRepairRun,
+        on_delete=models.CASCADE,
+        related_name="approvals",
+    )
+    candidate = models.ForeignKey(
+        TimetableRepairCandidate,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="approvals",
+    )
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="requested_timetable_repair_approvals",
+    )
+    decided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="decided_timetable_repair_approvals",
+    )
+    status = models.CharField(max_length=24, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    notes = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    decided_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "timetable_repair_approvals"
+        indexes = [
+            models.Index(fields=["run", "status"], name="idx_tra_run_status"),
+        ]
+
+    def __str__(self) -> str:
+        return f"RepairApproval({self.run_id}/{self.status})"
+
+
+class TimetableRepairGlobalPlan(models.Model):
+    """Coordinated programme/level repair plan built from fresh repair runs."""
+
+    STATUS_DRAFT = "draft"
+    STATUS_APPROVED = "approved"
+    STATUS_APPLIED = "applied"
+    STATUS_ROLLED_BACK = "rolled_back"
+    STATUS_FAILED = "failed"
+    STATUS_EMPTY = "empty"
+    STATUS_CHOICES = (
+        (STATUS_DRAFT, "Draft"),
+        (STATUS_APPROVED, "Approved"),
+        (STATUS_APPLIED, "Applied"),
+        (STATUS_ROLLED_BACK, "Rolled back"),
+        (STATUS_FAILED, "Failed"),
+        (STATUS_EMPTY, "Empty"),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    scenario = models.ForeignKey(
+        TimetableScenario,
+        on_delete=models.CASCADE,
+        related_name="repair_global_plans",
+    )
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="requested_timetable_repair_global_plans",
+    )
+    decided_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="decided_timetable_repair_global_plans",
+    )
+    status = models.CharField(max_length=24, choices=STATUS_CHOICES, default=STATUS_DRAFT)
+    scope_program = models.CharField(max_length=64, blank=True, default="")
+    scope_nominal_term = models.IntegerField(null=True, blank=True)
+    mode = models.CharField(
+        max_length=24,
+        choices=TimetableRepairRun.MODE_CHOICES,
+        default=TimetableRepairRun.MODE_CONSERVATIVE,
+    )
+    request_signature = models.CharField(max_length=64)
+    request_payload = models.JSONField(default=dict)
+    simulation_json = models.JSONField(default=dict)
+    summary_json = models.JSONField(default=dict)
+    notes = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    decided_at = models.DateTimeField(null=True, blank=True)
+    applied_at = models.DateTimeField(null=True, blank=True)
+    rolled_back_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "timetable_repair_global_plans"
+        indexes = [
+            models.Index(fields=["scenario", "-created_at"], name="idx_trgp_scenario_time"),
+            models.Index(fields=["status"], name="idx_trgp_status"),
+            models.Index(fields=["request_signature"], name="idx_trgp_signature"),
+        ]
+
+    def __str__(self) -> str:
+        return f"RepairGlobalPlan({self.id}/{self.status})"
+
+
+class TimetableRepairGlobalPlanItem(models.Model):
+    """One applyable repair candidate selected into a global repair plan."""
+
+    STATUS_READY = "ready"
+    STATUS_APPROVED = "approved"
+    STATUS_APPLIED = "applied"
+    STATUS_ROLLED_BACK = "rolled_back"
+    STATUS_SKIPPED = "skipped"
+    STATUS_FAILED = "failed"
+    STATUS_CHOICES = (
+        (STATUS_READY, "Ready"),
+        (STATUS_APPROVED, "Approved"),
+        (STATUS_APPLIED, "Applied"),
+        (STATUS_ROLLED_BACK, "Rolled back"),
+        (STATUS_SKIPPED, "Skipped"),
+        (STATUS_FAILED, "Failed"),
+    )
+
+    plan = models.ForeignKey(
+        TimetableRepairGlobalPlan,
+        on_delete=models.CASCADE,
+        related_name="items",
+    )
+    sequence = models.PositiveIntegerField()
+    repair_run = models.ForeignKey(
+        TimetableRepairRun,
+        on_delete=models.CASCADE,
+        related_name="global_plan_items",
+    )
+    candidate = models.ForeignKey(
+        TimetableRepairCandidate,
+        on_delete=models.CASCADE,
+        related_name="global_plan_items",
+    )
+    placement = models.ForeignKey(
+        SectionPlacement,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="repair_global_plan_items",
+    )
+    course_key = models.TextField(blank=True, default="")
+    status = models.CharField(max_length=24, choices=STATUS_CHOICES, default=STATUS_READY)
+    metrics_json = models.JSONField(default=dict)
+    impact_json = models.JSONField(default=dict)
+    notes = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "timetable_repair_global_plan_items"
+        constraints = [
+            models.UniqueConstraint(fields=["plan", "sequence"], name="ux_trgpi_plan_sequence"),
+            models.UniqueConstraint(fields=["plan", "repair_run"], name="ux_trgpi_plan_run"),
+            models.UniqueConstraint(fields=["plan", "candidate"], name="ux_trgpi_plan_candidate"),
+        ]
+        indexes = [
+            models.Index(fields=["plan", "status"], name="idx_trgpi_plan_status"),
+            models.Index(fields=["repair_run"], name="idx_trgpi_run"),
+            models.Index(fields=["candidate"], name="idx_trgpi_candidate"),
+        ]
+
+    def __str__(self) -> str:
+        return f"RepairGlobalPlanItem({self.plan_id}/{self.sequence}/{self.status})"
+
+
+class TimetableRepairJob(models.Model):
+    """Durable queue row for repair analysis and simulation work."""
+
+    STATUS_QUEUED = "queued"
+    STATUS_RUNNING = "running"
+    STATUS_SUCCEEDED = "succeeded"
+    STATUS_FAILED = "failed"
+    STATUS_CANCELLED = "cancelled"
+    STATUS_CHOICES = (
+        (STATUS_QUEUED, "Queued"),
+        (STATUS_RUNNING, "Running"),
+        (STATUS_SUCCEEDED, "Succeeded"),
+        (STATUS_FAILED, "Failed"),
+        (STATUS_CANCELLED, "Cancelled"),
+    )
+
+    KIND_ANALYSIS = "repair_analysis"
+    KIND_SIMULATION = "repair_simulation"
+    KIND_CHOICES = (
+        (KIND_ANALYSIS, "Repair analysis"),
+        (KIND_SIMULATION, "Repair simulation"),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    kind = models.CharField(max_length=32, choices=KIND_CHOICES)
+    scenario = models.ForeignKey(
+        TimetableScenario,
+        on_delete=models.CASCADE,
+        related_name="repair_jobs",
+    )
+    repair_run = models.ForeignKey(
+        TimetableRepairRun,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="jobs",
+    )
+    submitted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="timetable_repair_jobs",
+    )
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_QUEUED)
+    request_signature = models.CharField(max_length=64)
+    cache_fingerprint = models.CharField(max_length=64, blank=True, default="")
+    request_payload = models.JSONField(default=dict)
+    progress_json = models.JSONField(default=dict)
+    result_json = models.JSONField(default=dict)
+    error_message = models.TextField(blank=True, default="")
+    cancel_requested = models.BooleanField(default=False)
+    attempt_count = models.IntegerField(default=0)
+    locked_by = models.CharField(max_length=128, blank=True, default="")
+    locked_at = models.DateTimeField(null=True, blank=True)
+    heartbeat_at = models.DateTimeField(null=True, blank=True)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "timetable_repair_jobs"
+        indexes = [
+            models.Index(
+                fields=["kind", "status", "submitted_at"], name="idx_trj_kind_status_time"
+            ),
+            models.Index(fields=["scenario", "kind", "status"], name="idx_trj_scenario_kind"),
+            models.Index(fields=["submitted_by", "-submitted_at"], name="idx_trj_user_submitted"),
+            models.Index(fields=["request_signature"], name="idx_trj_signature"),
+        ]
+
+    def __str__(self) -> str:
+        return f"RepairJob({self.id}/{self.kind}/{self.status})"

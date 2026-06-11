@@ -6,6 +6,7 @@ from core.models import (
     Course,
     ProgrammeRequirement,
     ScenarioSectionBudget,
+    ScenarioStudentCourseRequest,
     ScenarioStudentMap,
     Student,
     TimetableScenario,
@@ -109,6 +110,14 @@ def test_optimizer_profiles_use_planner_course_keys_when_available() -> None:
         primary_term=3,
         recommended_courses=["CS111"],
         recommended_course_keys=["CS111::PROGRAMMING_I"],
+    )
+    ScenarioStudentCourseRequest.objects.create(
+        scenario=scenario,
+        student_id=993101,
+        course_key="CS111::PROGRAMMING_I",
+        course_code="CS111",
+        primary_term=3,
+        status=ScenarioStudentCourseRequest.STATUS_REQUESTED,
     )
 
     profiles = build_student_profiles_for_scenario(scenario.id)

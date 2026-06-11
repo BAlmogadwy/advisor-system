@@ -3,7 +3,8 @@ from __future__ import annotations
 from typing import Any
 
 from django.contrib.auth.models import User
-from django.db.models import Count, Q
+from django.db.models import Count, F, Q
+from django.db.models.functions import Trim, Upper
 
 from core.models import (
     AcademicAdvisor,
@@ -16,10 +17,12 @@ from core.models import (
     ScenarioStudentMap,
     SectionPlacement,
     Student,
+    TimetableRepairJob,
     TimetableScenario,
 )
 from core.services.audit import validate_hash_chain
 from core.services.rbac import ROLE_ADVISOR, ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN
+from core.services.timetable_online import OnlineCourseLookup, exclude_online_courses_for_board
 
 
 def _student_scope_q(scope: dict[str, Any]) -> Q:
@@ -62,6 +65,7 @@ def _latest_timetable_snapshot() -> dict[str, Any]:
             "placements": 0,
             "unassigned_rooms": 0,
             "cross_board_clashes": 0,
+            "cross_board_affected_students": 0,
             "split_url": "/timetable-workspace/",
             "mri_url": "/timetable-workspace/",
             "graph_url": "/timetable-workspace/graph/",
@@ -69,12 +73,33 @@ def _latest_timetable_snapshot() -> dict[str, Any]:
 
     boards_qs = DeliveryBoard.objects.filter(scenario=scenario)
     placements_qs = SectionPlacement.objects.filter(board__scenario=scenario)
+    online_lookup = OnlineCourseLookup()
+    unassigned_rooms = 0
+    for board in boards_qs:
+        no_room_qs = (
+            SectionPlacement.objects.filter(board=board)
+            .annotate(_room_norm=Upper(Trim(F("room"))))
+            .filter(Q(room__isnull=True) | Q(_room_norm="") | Q(_room_norm="UNASSIGNED"))
+        )
+        unassigned_rooms += exclude_online_courses_for_board(
+            no_room_qs,
+            board,
+            lookup=online_lookup,
+        ).count()
     try:
-        from core.services.timetable_workspace import detect_cross_board_conflicts
+        from core.services.timetable_workspace import (
+            detect_cross_board_conflicts,
+            summarize_cross_board_conflict_impact,
+        )
 
-        cross_board_clashes = len(detect_cross_board_conflicts(int(scenario.id)))
+        cross_board_impact = summarize_cross_board_conflict_impact(
+            detect_cross_board_conflicts(int(scenario.id))
+        )
+        cross_board_clashes = cross_board_impact["conflict_pairs"]
+        cross_board_affected_students = cross_board_impact["affected_students"]
     except Exception:
         cross_board_clashes = 0
+        cross_board_affected_students = 0
 
     return {
         "has_scenario": True,
@@ -86,8 +111,9 @@ def _latest_timetable_snapshot() -> dict[str, Any]:
         "boards": boards_qs.count(),
         "students": ScenarioStudentMap.objects.filter(scenario=scenario).count(),
         "placements": placements_qs.count(),
-        "unassigned_rooms": placements_qs.filter(Q(room="") | Q(room__iexact="UNASSIGNED")).count(),
+        "unassigned_rooms": unassigned_rooms,
         "cross_board_clashes": cross_board_clashes,
+        "cross_board_affected_students": cross_board_affected_students,
         "split_url": f"/timetable-workspace/split/?scenario={scenario.id}",
         "mri_url": f"/timetable-workspace/mri/?scenario={scenario.id}",
         "graph_url": f"/timetable-workspace/graph/?scenario={scenario.id}",
@@ -125,6 +151,12 @@ def build_dashboard_command_center(scope: dict[str, Any]) -> dict[str, Any]:
         status__in=[PlannerJob.STATUS_QUEUED, PlannerJob.STATUS_RUNNING]
     ).count()
     failed_jobs = PlannerJob.objects.filter(status=PlannerJob.STATUS_FAILED).count()
+    running_repair_jobs = TimetableRepairJob.objects.filter(
+        status__in=[TimetableRepairJob.STATUS_QUEUED, TimetableRepairJob.STATUS_RUNNING]
+    ).count()
+    failed_repair_jobs = TimetableRepairJob.objects.filter(
+        status=TimetableRepairJob.STATUS_FAILED
+    ).count()
 
     urgent_count = (
         low_gpa_students
@@ -160,6 +192,8 @@ def build_dashboard_command_center(scope: dict[str, Any]) -> dict[str, Any]:
             "scenarios": TimetableScenario.objects.count(),
             "running_jobs": running_jobs,
             "failed_jobs": failed_jobs,
+            "running_repair_jobs": running_repair_jobs,
+            "failed_repair_jobs": failed_repair_jobs,
         },
         "audit": {
             "ok": bool(audit_chain.get("ok")),

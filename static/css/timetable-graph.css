@@ -2,7 +2,7 @@
   min-height: calc(100vh - 24px);
   padding: 18px;
   background:
-    linear-gradient(135deg, rgba(10, 142, 110, 0.08), transparent 34%),
+    linear-gradient(135deg, color-mix(in srgb, var(--teal) 8%, transparent), transparent 34%),
     linear-gradient(315deg, rgba(83, 103, 255, 0.08), transparent 38%);
 }
 
@@ -42,11 +42,7 @@
 }
 
 .tg-kicker {
-  color: var(--teal);
   font-size: .68rem;
-  font-weight: 800;
-  letter-spacing: .08em;
-  text-transform: uppercase;
 }
 
 .tg-actions,
@@ -112,7 +108,7 @@
 }
 
 .tg-btn:hover {
-  border-color: rgba(10, 142, 110, .48);
+  border-color: color-mix(in srgb, var(--teal) 48%, transparent);
   color: var(--teal);
 }
 
@@ -177,8 +173,8 @@
 }
 
 .tg-pill[data-tone="good"] {
-  border-color: rgba(10, 142, 110, .45);
-  background: rgba(10, 142, 110, .12);
+  border-color: color-mix(in srgb, var(--teal) 45%, transparent);
+  background: color-mix(in srgb, var(--teal) 12%, transparent);
   color: var(--teal);
 }
 
@@ -246,7 +242,7 @@
 }
 
 .tg-contract strong {
-  background: rgba(10, 142, 110, .08);
+  background: color-mix(in srgb, var(--teal) 8%, transparent);
 }
 
 .tg-contract span {
@@ -324,7 +320,7 @@
 .tg-node-student {
   left: 10%;
   top: 34%;
-  background: linear-gradient(135deg, #0a8e6e, #18b698);
+  background: linear-gradient(135deg, var(--teal), #18b698);
 }
 
 .tg-node-course {
@@ -407,7 +403,7 @@
   top: 55%;
   width: 318px;
   transform: rotate(28deg);
-  background: rgba(10, 142, 110, .56);
+  background: color-mix(in srgb, var(--teal) 56%, transparent);
 }
 
 .tg-edge.e4 span {
@@ -441,8 +437,8 @@
 }
 
 .tg-mode-switch button.active {
-  border-color: rgba(10, 142, 110, .52);
-  background: rgba(10, 142, 110, .14);
+  border-color: color-mix(in srgb, var(--teal) 52%, transparent);
+  background: color-mix(in srgb, var(--teal) 14%, transparent);
   color: var(--teal);
 }
 
@@ -1012,7 +1008,7 @@
 }
 
 .tg-svg-edge[data-tone="active"] {
-  stroke: rgba(10, 142, 110, .76);
+  stroke: color-mix(in srgb, var(--teal) 76%, transparent);
   stroke-width: 2.4;
 }
 
@@ -1039,7 +1035,7 @@
 }
 
 .tg-svg-node[data-type="TTStudent"] circle {
-  fill: #0a8e6e;
+  fill: var(--teal);
 }
 
 .tg-svg-node[data-type="TTSlot"] circle {

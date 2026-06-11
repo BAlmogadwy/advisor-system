@@ -54,6 +54,7 @@ const S = {
   scenarios: [],
   scenarioId: null,
   scenarioMeta: null,
+  scenarioSummary: null,
   boards: [],
   crossBoardClashCount: 0,
   // Up to 16 pane slots (a 4×4 matrix is the max the picker exposes).
@@ -76,6 +77,7 @@ const S = {
   // the actual upper bound at runtime is also gated by viewport fit.
   cols: 2,
   rows: 2,
+  maximised: null,
   dragSource: null,
   slotAssist: {
     active: false,
@@ -85,6 +87,16 @@ const S = {
     candidates: new Map(),
     requestToken: 0,
     pendingMove: null,
+    deepRepairRun: null,
+    deepRepairLoading: false,
+  },
+  createAssist: {
+    active: false,
+    payload: null,
+    targetPaneIdxs: [],
+    candidates: new Map(),
+    requestToken: 0,
+    loading: false,
   },
   planLens: {
     plans: [],
@@ -117,7 +129,7 @@ const MIN_PANE_H = 240;
 const QUAD_CHROME_X = 16; // 6px padding × 2 + a few px gap buffer
 const QUAD_CHROME_Y = 16;
 // Vertical space consumed by topbar + boards-bar + ctrls + status below .tws-quad.
-const TWS_CHROME_Y = 150;
+const TWS_CHROME_Y = 112;
 
 /* Maximum cols/rows that fit the current viewport without squishing cells. */
 function viewportMaxCols() {
@@ -137,6 +149,12 @@ const RP = {
   open: false,
   tab: 'issues',
   capacity: {}, // boardId -> capacity response
+  studentBlockers: {
+    token: 0,
+    scenarioId: null,
+    data: null,
+    activeCourse: null,
+  },
   fixQueue: {
     token: 0,
     cache: {},
@@ -151,6 +169,23 @@ const RP = {
     resolver: null,
     roomCache: {},
     studentCache: {},
+  },
+  repair: {
+    token: 0,
+    placementId: null,
+    run: null,
+    mode: 'conservative',
+    moveScope: 'single_session',
+    blockedIdsText: '',
+    busy: false,
+  },
+  globalRepair: {
+    plan: null,
+    busy: false,
+    mode: 'conservative',
+    maxPlacements: 8,
+    maxSolverSeconds: 5,
+    courseKeysText: '',
   },
 };
 
@@ -311,23 +346,51 @@ function planLensLabelForPlacement(placement) {
   return '';
 }
 
+function planLensActualEntries(placement) {
+  const lens = sectionLensForPlacement(placement);
+  if (!lens) return [];
+  const counts = lens.actual_plans || {};
+  return Object.entries(counts)
+    .filter(([, count]) => Number(count) > 0)
+    .sort((a, b) => Number(b[1]) - Number(a[1]) || String(a[0]).localeCompare(String(b[0])));
+}
+
+function planLensPlanLabels(placement) {
+  const labels = planLensActualEntries(placement).map(([plan]) => String(plan));
+  if (labels.length) return labels;
+  const label = planLensLabelForPlacement(placement);
+  return label ? [label] : [];
+}
+
+function planLensCountsText(placement) {
+  return planLensActualEntries(placement)
+    .map(([plan, count]) => `${plan} ${count}`)
+    .join(' · ');
+}
+
+function planLensDetailsFieldsHtml(placement, fieldClass = 'tws-sel-field') {
+  const lens = sectionLensForPlacement(placement);
+  if (!lens) return '';
+  const labels = planLensPlanLabels(placement);
+  const plans = labels.length ? labels.join(' · ') : '—';
+  const counts = planLensCountsText(placement) || '—';
+  const total = Number(lens.actual_total || 0);
+  const countText = total > 0 && counts !== '—' ? `${counts} · total ${total}` : counts;
+  return `
+    <div class="${fieldClass}"><span class="label">Plans</span><span class="value">${esc(plans)}</span></div>
+    <div class="${fieldClass}"><span class="label">Plan counts</span><span class="value mono">${esc(countText)}</span></div>
+  `;
+}
+
 function planLensBadgesHtml(placement) {
   const lens = sectionLensForPlacement(placement);
   if (!lens) return '';
-  const label = planLensLabelForPlacement(placement);
+  const labels = planLensPlanLabels(placement);
+  const label = labels.length ? labels.slice(0, 3).join(' ') : planLensLabelForPlacement(placement);
   if (!label) return '';
-  const counts = lens.actual_plans || {};
-  const actual = Object.entries(counts)
-    .filter(([, count]) => Number(count) > 0)
-    .sort((a, b) => Number(b[1]) - Number(a[1]))
-    .slice(0, 2)
-    .map(([plan, count]) => `${plan} ${count}`)
-    .join(' ');
   const cls = lens.shared ? ' shared' : '';
-  const title = actual
-    ? `${label} ${lens.role || ''} | actual ${actual}`
-    : `${label} ${lens.role || ''}`;
-  return `<span class="plan-badges${cls}" title="${esc(title)}"><span>${esc(label)}</span>${actual ? `<em>${esc(actual)}</em>` : ''}</span>`;
+  const title = `${labels.length ? labels.join(', ') : label}${lens.role ? ` | ${lens.role}` : ''}`;
+  return `<span class="plan-badges${cls}" title="${esc(title)}"><span>${esc(label)}</span></span>`;
 }
 
 function renderPlanLensControls() {
@@ -343,7 +406,7 @@ function renderPlanLensControls() {
       return `<button type="button" class="tws-plan-chip${active === plan ? ' on' : ''}" data-plan="${esc(plan)}">${esc(label)}</button>`;
     })
     .join('');
-  wrap.innerHTML = `<span class="plbl">Plan lens</span>${buttons}`;
+  wrap.innerHTML = buttons;
   wrap.querySelectorAll('[data-plan]').forEach(btn => {
     btn.addEventListener('click', () => {
       S.planLens.active = btn.dataset.plan || 'ALL';
@@ -468,7 +531,12 @@ function sectionRank(section) {
 }
 
 function slotAssistKey(kind, day, start) {
-  return `${kind}:${day}:${start}`;
+  return `${normaliseSlotKind(kind)}:${day}:${start}`;
+}
+
+function normaliseSlotKind(kind) {
+  const value = String(kind || '').trim().toLowerCase();
+  return value.startsWith('lab') ? 'lab' : 'lect';
 }
 
 function slotKindForPlacement(placement) {
@@ -691,9 +759,269 @@ function splitPairOption(boardData, placement, day, slot, slots) {
 function splitSlotScore(candidate, placement) {
   return (candidate.critical * 1000) +
     (candidate.warning * 120) +
+    candidateQualityPenalty(candidate) +
     (candidate.pair && !candidate.pair.critical ? -35 : 0) +
     (String(candidate.day) === String(placement.day) ? 0 : 12) +
     Math.round(Math.abs(toMinutes(candidate.start) - toMinutes(placement.start_time)) / 10);
+}
+
+function candidateOutcome(candidate) {
+  return candidate?.student_outcome || null;
+}
+
+function candidateExactRepair(candidate) {
+  return candidate?.exact_repair || candidate?.metrics?.exact_repair || null;
+}
+
+function candidateHasDeepRepair(candidate) {
+  return !!candidate?.deepRepair;
+}
+
+function slotAssistExactRepairLoading(candidate = null) {
+  if (!S.slotAssist.deepRepairLoading) return false;
+  if (!candidate) return true;
+  return !candidateHasDeepRepair(candidate) && !candidateExactRepair(candidate)?.enabled;
+}
+
+function candidateExactRepairSolved(candidate) {
+  const exact = candidateExactRepair(candidate);
+  if (!exact?.enabled) return false;
+  const status = String(candidate?.solver_status || exact.solver_status || '').toLowerCase();
+  const candidateStatus = String(candidate?.status || '').toLowerCase();
+  return ['optimal', 'feasible'].includes(status)
+    && (!candidateStatus || candidateStatus === 'feasible');
+}
+
+function exactRepairRankKey(candidate) {
+  const exact = candidateExactRepair(candidate);
+  const ranking = candidate?.metrics?.ranking || {};
+  if (Array.isArray(ranking.rank_key) && ranking.rank_key.length) {
+    return ranking.rank_key.map(value => Number.isFinite(Number(value)) ? Number(value) : String(value));
+  }
+  if (!exact?.enabled) return [1, 999999, 999999, 0, 0, 999999, 999999, 999999];
+  const solved = candidateExactRepairSolved(candidate) ? 0 : 1;
+  return [
+    solved,
+    Number(exact.existing_lost || 0),
+    Number(exact.unresolved_blocked || 0),
+    -Number(exact.blocked_recovered || 0),
+    -Number(exact.requested_courses_recovered || 0),
+    Number(exact.students_moved || 0),
+    Number(exact.section_changes || 0),
+    Number(exact.timetable_quality?.penalty || 0),
+  ];
+}
+
+function candidateQualityPenalty(candidate) {
+  if (!candidate) return 0;
+  const direct = candidate.timetable_quality?.penalty ?? candidate.quality_score;
+  if (direct != null) return Number(direct || 0);
+  return Number(candidate.student_outcome?.after?.quality_penalty || 0);
+}
+
+function candidateQualitySignal(candidate) {
+  const quality = candidate?.timetable_quality || {};
+  const reasons = Array.isArray(quality.reasons) ? quality.reasons : [];
+  const top = reasons.find(row => Number(row.penalty || 0) > 0);
+  if (!top) return '';
+  return `${String(top.label || top.component || 'Quality')} ${Number(top.penalty || 0)}`;
+}
+
+function compareScoreLists(a = [], b = []) {
+  const len = Math.max(a.length, b.length);
+  for (let i = 0; i < len; i += 1) {
+    const av = Number(a[i] ?? 999999);
+    const bv = Number(b[i] ?? 999999);
+    if (av !== bv) return av - bv;
+  }
+  return 0;
+}
+
+function compareRankLists(a = [], b = []) {
+  const len = Math.max(a.length, b.length);
+  for (let i = 0; i < len; i += 1) {
+    const av = a[i] ?? 999999;
+    const bv = b[i] ?? 999999;
+    if (typeof av === 'number' && typeof bv === 'number') {
+      if (av !== bv) return av - bv;
+    } else {
+      const cmp = String(av).localeCompare(String(bv));
+      if (cmp) return cmp;
+    }
+  }
+  return 0;
+}
+
+function compareOutcomeCandidates(a, b) {
+  const ae = candidateExactRepair(a);
+  const be = candidateExactRepair(b);
+  if (ae || be || candidateHasDeepRepair(a) || candidateHasDeepRepair(b)) {
+    const exactCompare = compareRankLists(exactRepairRankKey(a), exactRepairRankKey(b));
+    if (exactCompare) return exactCompare;
+    const ar = Number(a?.score_rank || 999999);
+    const br = Number(b?.score_rank || 999999);
+    if (ar !== br) return ar - br;
+  }
+  const ao = candidateOutcome(a);
+  const bo = candidateOutcome(b);
+  if (ao || bo) {
+    const scoreCompare = compareScoreLists(ao?.after?.score || [], bo?.after?.score || []);
+    if (scoreCompare) return scoreCompare;
+    const qualityCompare = candidateQualityPenalty(a) - candidateQualityPenalty(b);
+    if (qualityCompare) return qualityCompare;
+    const unresolvedCompare = Number(ao?.unresolved_course_delta ?? 999999) - Number(bo?.unresolved_course_delta ?? 999999);
+    if (unresolvedCompare) return unresolvedCompare;
+    const blockedCompare = Number(ao?.blocked_students_delta ?? 999999) - Number(bo?.blocked_students_delta ?? 999999);
+    if (blockedCompare) return blockedCompare;
+  }
+  return (a.rank || 999) - (b.rank || 999) || (a.score || 0) - (b.score || 0);
+}
+
+function candidateOutcomeSignal(candidate) {
+  const exact = candidateExactRepair(candidate);
+  if (exact?.enabled) {
+    const lost = Number(exact.existing_lost || 0);
+    const recovered = Number(exact.blocked_recovered || 0);
+    const requested = Number(exact.requested_courses_recovered || 0);
+    const unresolved = Number(exact.unresolved_blocked || 0);
+    if (lost > 0) return `Would lose ${lost} existing course${lost === 1 ? '' : 's'}`;
+    if (!candidateExactRepairSolved(candidate)) return 'No exact repair solution';
+    if (recovered > 0) return `${recovered} blocked student${recovered === 1 ? '' : 's'} recovered`;
+    if (unresolved > 0) return `${unresolved} blocked student${unresolved === 1 ? '' : 's'} remain`;
+    if (requested > 0) return `${requested} requested course${requested === 1 ? '' : 's'} served`;
+    return 'Exact repair: no change';
+  }
+  if (candidateHasDeepRepair(candidate)) return 'No exact repair solution';
+  if (slotAssistExactRepairLoading(candidate)) return 'Exact student repair running';
+  return '';
+}
+
+function candidateOutcomeImpact(candidate) {
+  const outcome = candidateOutcome(candidate);
+  if (!outcome) return '';
+  const before = outcome.before || {};
+  const after = outcome.after || {};
+  const bits = [
+    `blocked ${Number(before.blocked_students || 0)}->${Number(after.blocked_students || 0)}`,
+    `courses ${Number(before.unresolved_courses || 0)}->${Number(after.unresolved_courses || 0)}`,
+  ];
+  const allClashDelta = Number(outcome.all_clash_delta || 0);
+  const mixedDelta = Number(outcome.mixed_blockers_delta || 0);
+  if (allClashDelta) bits.push(`all_clash ${Number(before.all_clash || 0)}->${Number(after.all_clash || 0)}`);
+  if (mixedDelta) bits.push(`mixed ${Number(before.mixed_blockers || 0)}->${Number(after.mixed_blockers || 0)}`);
+  const improved = Number(outcome.improved_student_count || 0);
+  const worsened = Number(outcome.worsened_student_count || 0);
+  if (improved || worsened) bits.push(`students ${improved} better/${worsened} worse`);
+  return bits.join(' | ');
+}
+
+function candidateRegressionReason(candidate) {
+  if (!candidate) return 'missing candidate';
+  const exact = candidateExactRepair(candidate);
+  if (exact?.enabled) {
+    const lost = Number(exact.existing_lost || 0);
+    if (lost > 0) return `would lose ${lost} existing course${lost === 1 ? '' : 's'}`;
+    if (!candidateExactRepairSolved(candidate)) return 'no exact repair solution';
+    return '';
+  }
+  if (candidateHasDeepRepair(candidate)) return 'no exact repair solution';
+  const pairCritical = Number(candidate.pair?.critical || 0);
+  if (pairCritical > 0) return `adds ${pairCritical} pair conflict${pairCritical === 1 ? '' : 's'}`;
+  const outcome = candidateOutcome(candidate);
+  if (outcome) {
+    const clashDelta = Number(outcome.actual_clash_delta || 0);
+    const unresolvedDelta = Number(outcome.unresolved_course_delta || 0);
+    const blockedDelta = Number(outcome.blocked_students_delta || 0);
+    const worsened = Number(outcome.worsened_student_count || 0);
+    if (clashDelta > 0) return `adds ${clashDelta} real student clash${clashDelta === 1 ? '' : 'es'}`;
+    if (unresolvedDelta > 0) return `adds ${unresolvedDelta} blocked course request${unresolvedDelta === 1 ? '' : 's'}`;
+    if (blockedDelta > 0) return `adds ${blockedDelta} blocked student${blockedDelta === 1 ? '' : 's'}`;
+    if (worsened > 0) return `worsens ${worsened} student${worsened === 1 ? '' : 's'}`;
+  }
+  const criticalDelta = Number(candidate.critical_improvement || 0);
+  if (criticalDelta < 0) return `adds ${Math.abs(criticalDelta)} critical issue${criticalDelta === -1 ? '' : 's'}`;
+  if (candidate?.student_outcome_tone === 'worsens') return 'worsens student outcome';
+  if (candidateHasEvidence(candidate, ['instructor', 'same_course'])) return 'creates a hard local conflict';
+  if (slotAssistTone(candidate) === 'avoid') return 'keeps a critical target conflict';
+  return '';
+}
+
+function candidateIsHardRegression(candidate) {
+  return !!candidateRegressionReason(candidate);
+}
+
+function candidateIsValidatedSafe(candidate) {
+  if (!candidate || candidateIsHardRegression(candidate)) return false;
+  if (slotAssistExactRepairLoading(candidate)) return false;
+  if (Number(candidate.critical_count || 0) > 0) return false;
+  const exact = candidateExactRepair(candidate);
+  if (exact?.enabled) {
+    return candidateExactRepairSolved(candidate)
+      && Number(exact.existing_lost || 0) === 0
+      && (
+        Number(exact.blocked_recovered || 0) > 0
+        || Number(exact.requested_courses_recovered || 0) > 0
+      );
+  }
+  if (candidateHasDeepRepair(candidate)) return false;
+  const outcome = candidateOutcome(candidate);
+  if (!outcome) return false;
+  const clashDelta = Number(outcome.actual_clash_delta || 0);
+  const unresolvedDelta = Number(outcome.unresolved_course_delta || 0);
+  const blockedDelta = Number(outcome.blocked_students_delta || 0);
+  const worsened = Number(outcome.worsened_student_count || 0);
+  if (clashDelta > 0 || unresolvedDelta > 0 || blockedDelta > 0 || worsened > 0) return false;
+  return clashDelta < 0
+    || unresolvedDelta < 0
+    || blockedDelta < 0
+    || Number(outcome.improved_student_count || 0) > 0;
+}
+
+function candidateHasUsefulImprovement(candidate) {
+  if (!candidate) return false;
+  if (slotAssistExactRepairLoading(candidate)) return false;
+  const exact = candidateExactRepair(candidate);
+  if (exact?.enabled) {
+    return candidateExactRepairSolved(candidate)
+      && Number(exact.existing_lost || 0) === 0
+      && (
+        Number(exact.blocked_recovered || 0) > 0
+        || Number(exact.requested_courses_recovered || 0) > 0
+      );
+  }
+  if (candidateHasDeepRepair(candidate)) return false;
+  const outcome = candidateOutcome(candidate);
+  if (outcome) {
+    if (Number(outcome.actual_clash_delta || 0) < 0) return true;
+    if (Number(outcome.unresolved_course_delta || 0) < 0) return true;
+    if (Number(outcome.blocked_students_delta || 0) < 0) return true;
+    if (Number(outcome.improved_student_count || 0) > 0) return true;
+  }
+  return Number(candidate.impact_improvement || 0) > 0
+    || Number(candidate.student_improvement || 0) > 0
+    || Number(candidate.critical_improvement || 0) > 0
+    || Number(candidate.warning_improvement || 0) > 0;
+}
+
+function quickFixCandidateRank(candidate) {
+  const outcome = candidateOutcome(candidate) || {};
+  return (
+    (canBundleCandidate(candidate) ? 160000 : 0)
+    + Math.max(0, -Number(outcome.actual_clash_delta || 0)) * 6000
+    + Math.max(0, -Number(outcome.unresolved_course_delta || 0)) * 1400
+    + Math.max(0, -Number(outcome.blocked_students_delta || 0)) * 350
+    + Number(outcome.improved_student_count || 0) * 25
+    + Number(candidate.impact_improvement || 0) * 1000
+    + Number(candidate.student_improvement || 0) * 100
+    + Number(candidate.critical_improvement || 0) * 100
+    + Number(candidate.warning_improvement || 0) * 10
+    - Number(candidate.score || 0)
+  );
+}
+
+function compareQuickFixCandidates(a, b) {
+  return quickFixCandidateRank(b) - quickFixCandidateRank(a)
+    || compareOutcomeCandidates(a, b);
 }
 
 function buildSplitSlotCandidates(paneIdx, placement) {
@@ -734,6 +1062,8 @@ function buildSplitSlotCandidates(paneIdx, placement) {
 
 function splitSlotLabel(candidate) {
   if (!candidate) return '';
+  const outcomeSignal = candidateOutcomeSignal(candidate);
+  if (outcomeSignal) return outcomeSignal;
   if (candidate.pair && !candidate.pair.protected) return 'Bundle';
   const improvement = Number(candidate.impact_improvement || 0);
   const savedStudents = Number(candidate.student_improvement || 0);
@@ -749,7 +1079,27 @@ function splitSlotLabel(candidate) {
 }
 
 function candidateImpactSummary(candidate) {
+  const exact = candidateExactRepair(candidate);
+  if (exact?.enabled) {
+    const bits = [];
+    bits.push(`exact repair recovered ${Number(exact.blocked_recovered || 0)}`);
+    bits.push(`unresolved ${Number(exact.unresolved_blocked || 0)}`);
+    bits.push(`lost ${Number(exact.existing_lost || 0)}`);
+    bits.push(`moved ${Number(exact.students_moved || 0)}`);
+    const cascade = exact.cascade || {};
+    if (cascade.requires_multi_course_cascade) {
+      bits.push(`cascade ${Number(cascade.touched_course_count || 0)} courses`);
+    }
+    return bits.join(' | ');
+  }
+  if (candidateHasDeepRepair(candidate)) {
+    const status = candidate.status || 'not_solved';
+    const solver = candidate.solver_status || 'not_run';
+    return `exact repair ${status} (${solver})`;
+  }
+  if (slotAssistExactRepairLoading(candidate)) return 'exact student repair running';
   if (!candidate || candidate.current_impact_score == null) return '';
+  const outcomeImpact = candidateOutcomeImpact(candidate);
   const beforeStudents = Number(candidate.current_student_affected_count || 0);
   const afterStudents = Number(candidate.student_affected_count || candidate.studentAffected || 0);
   const studentDelta = Number(candidate.student_improvement || (beforeStudents - afterStudents));
@@ -759,7 +1109,11 @@ function candidateImpactSummary(candidate) {
   const beforeWarning = Number(candidate.current_warning_count || 0);
   const afterWarning = Number(candidate.warning_count || candidate.warning || 0);
   const warningDelta = Number(candidate.warning_improvement || (beforeWarning - afterWarning));
-  const bits = [`students ${beforeStudents}->${afterStudents}`];
+  const bits = [];
+  if (outcomeImpact) bits.push(`outcome ${outcomeImpact}`);
+  const qualitySignal = candidateQualitySignal(candidate);
+  if (qualitySignal) bits.push(qualitySignal);
+  bits.push(`cross risk ${beforeStudents}->${afterStudents}`);
   if (studentDelta > 0) bits.push(`save ${studentDelta}`);
   else if (studentDelta < 0) bits.push(`${Math.abs(studentDelta)} more`);
   if (criticalDelta > 0) bits.push(`critical ${beforeCritical}->${afterCritical}`);
@@ -791,6 +1145,49 @@ function candidateEvidenceList(candidate) {
 function candidateEvidenceText(evidence) {
   if (!evidence) return '';
   return `${evidence.title || ''}${evidence.detail ? ` | ${evidence.detail}` : ''}`.trim();
+}
+
+function candidateRankingReasons(candidate) {
+  const rows = Array.isArray(candidate?.ranking_reasons) ? candidate.ranking_reasons : [];
+  return rows
+    .map(item => {
+      if (!item || typeof item !== 'object') return null;
+      return {
+        ...item,
+        kind: String(item.kind || 'note').toLowerCase(),
+        tone: String(item.tone || 'note').toLowerCase(),
+        title: String(item.title || ''),
+        detail: String(item.detail || ''),
+        penalty: Number(item.penalty || 0),
+        student_count: Number(item.student_count || item.studentCount || 0),
+      };
+    })
+    .filter(Boolean);
+}
+
+function candidatePrimaryReason(candidate) {
+  if (candidate?.primary_reason) return String(candidate.primary_reason);
+  const reason = candidateRankingReasons(candidate)[0];
+  if (reason) return candidateEvidenceText(reason);
+  return candidateEvidenceText(candidatePrimaryEvidence(candidate));
+}
+
+function candidateReasonToneClass(reason) {
+  const tone = String(reason?.tone || '').toLowerCase();
+  if (tone === 'good' || tone === 'clean') return ' good';
+  if (tone === 'critical' || tone === 'avoid') return ' muted';
+  return '';
+}
+
+function candidateReasonChipsHtml(candidate, limit = 3) {
+  const reasons = candidateRankingReasons(candidate).slice(0, limit);
+  if (!reasons.length) return '';
+  return `<div class="tws-repair-reasons">${reasons.map(reason => {
+    const label = reason.kind === 'quality' && reason.penalty
+      ? `${reason.title} +${Number(reason.penalty)}`
+      : reason.title;
+    return `<span class="tws-repair-chip${candidateReasonToneClass(reason)}">${esc(label || reason.kind)}</span>`;
+  }).join('')}</div>`;
 }
 
 function candidateHasEvidence(candidate, kinds) {
@@ -827,6 +1224,10 @@ function candidateSignalTags(candidate) {
   };
   const studentCount = Number(candidate.student_affected_count || candidate.studentAffected || 0)
     || rows.reduce((sum, row) => sum + Number(row.student_count || 0), 0);
+  const outcomeSignal = candidateOutcomeSignal(candidate);
+  const qualitySignal = candidateQualitySignal(candidate);
+  if (outcomeSignal) add(outcomeSignal);
+  if (qualitySignal) add(qualitySignal);
   if (candidateHasEvidence(candidate, ['cross_board_room', 'room'])) add('Room busy');
   if (studentCount > 0) add(`Students ${studentCount}`);
   if (candidateHasEvidence(candidate, ['instructor'])) add('Instructor');
@@ -838,6 +1239,8 @@ function candidateSignalTags(candidate) {
 }
 
 function candidateSlotSignalLine(candidate, tone) {
+  const outcomeSignal = candidateOutcomeSignal(candidate);
+  if (outcomeSignal) return outcomeSignal;
   const tags = candidateSignalTags(candidate);
   if (tags.length) return tags.slice(0, 2).join(' | ');
   if (candidate?.pair) {
@@ -846,6 +1249,457 @@ function candidateSlotSignalLine(candidate, tone) {
   if (tone === 'avoid') return `${candidate.critical || candidate.critical_count || 1} issue`;
   if (tone === 'risky') return `${candidate.warning || candidate.warning_count || 1} warn`;
   return '0 students';
+}
+
+function candidateGridBadge(candidate, tone) {
+  if (!candidate) return '';
+  const exact = candidateExactRepair(candidate);
+  if (exact?.enabled) {
+    const lost = Number(exact.existing_lost || 0);
+    const recovered = Number(exact.blocked_recovered || 0);
+    const unresolved = Number(exact.unresolved_blocked || 0);
+    const moved = Number(exact.students_moved || 0);
+    if (lost > 0) return `Lost ${lost}`;
+    if (!candidateExactRepairSolved(candidate)) return 'No solve';
+    if (recovered > 0) return `Repair ${recovered}`;
+    if (unresolved > 0) return `Unres ${unresolved}`;
+    if (moved > 0) return `Move ${moved}`;
+    return 'Exact';
+  }
+  if (candidateHasDeepRepair(candidate)) {
+    return String(candidate.status || '').toLowerCase() === 'rejected_before_solver' ? 'Reject' : 'No solve';
+  }
+  if (slotAssistExactRepairLoading(candidate)) return 'Solving';
+  const outcome = candidateOutcome(candidate);
+  if (outcome) {
+    if (tone === 'avoid' && candidateHasEvidence(candidate, ['instructor'])) return 'Inst';
+    if (tone === 'avoid' && candidateHasEvidence(candidate, ['same_course'])) return 'Course';
+    if (tone === 'avoid' && candidateHasEvidence(candidate, ['cross_board_room', 'room'])) return 'Room';
+    return tone === 'avoid' ? 'Check' : tone === 'risky' ? 'Pending' : 'Ready';
+  }
+  if (canBundleCandidate(candidate)) return '+1';
+  if (candidate?.pair?.protected?.length) return 'Pair';
+  const savedStudents = Number(candidate.student_improvement || 0);
+  if (savedStudents > 0) return `-${savedStudents}`;
+  if (tone === 'clean') return candidate.rank === 1 ? 'Best' : 'OK';
+  if (candidateHasEvidence(candidate, ['cross_board_room', 'room'])) return 'Room';
+  if (candidateHasEvidence(candidate, ['instructor'])) return 'Inst';
+  const students = Number(candidate.student_affected_count || candidate.studentAffected || 0);
+  if (students || candidateHasEvidence(candidate, ['students', 'cross_board_students'])) return 'Stu';
+  if (tone === 'avoid') return 'Block';
+  return 'Risk';
+}
+
+function renderSlotAssistSummary(pane, placement, candidates, opts = {}) {
+  if (!pane || !placement) return;
+  pane.querySelector('.tws-assist-summary')?.remove();
+  const exactLoading = slotAssistExactRepairLoading();
+  const actionable = candidates.filter(candidate => {
+    const cell = slotCellForCandidate(S.slotAssist.paneIdx, candidate, candidate.kind || S.slotAssist.kind);
+    return cell && !cell.classList.contains('filled');
+  });
+  const hasOutcome = !exactLoading && actionable.some(candidate => candidateExactRepair(candidate)?.enabled);
+  const counts = actionable.reduce((acc, candidate) => {
+    const tone = slotAssistTone(candidate);
+    acc[tone] += 1;
+    return acc;
+  }, { clean: 0, risky: 0, avoid: 0 });
+  const best = actionable.find(candidate => slotAssistTone(candidate) === 'clean') || actionable[0] || candidates[0];
+  const bestText = exactLoading
+    ? `Exact student repair running for ${actionable.length} candidate slot${actionable.length === 1 ? '' : 's'}`
+    : (best ? `${best.day} ${best.start}-${best.end}` : 'none');
+  const detail = !exactLoading && best && canBundleCandidate(best)
+    ? `+ ${placementShortLabel(best.pair.companion)}`
+    : '';
+  const summary = document.createElement('div');
+  summary.className = `tws-assist-summary${exactLoading ? ' loading' : ''}`;
+  summary.setAttribute('role', 'status');
+  const cleanLabel = exactLoading ? 'Done' : (hasOutcome ? 'Help' : 'OK');
+  const riskyLabel = exactLoading ? 'Solving' : (hasOutcome ? 'Neutral' : 'Risk');
+  const avoidLabel = exactLoading ? 'Rejected' : (hasOutcome ? 'Worse' : 'Block');
+  const cleanCount = exactLoading ? 0 : counts.clean;
+  const riskyCount = exactLoading ? actionable.length : counts.risky;
+  const avoidCount = exactLoading ? 0 : counts.avoid;
+  summary.innerHTML = `
+    <div class="tws-assist-main">
+      <b>${esc(placementShortLabel(placement))}</b>
+      <span>${esc(bestText)}${detail ? ` · ${esc(detail)}` : ''}</span>
+    </div>
+    <div class="tws-assist-counts" aria-label="${esc(IS_AR ? 'ملخص النقلات' : 'Move summary')}">
+      <span class="clean"><em>${cleanLabel}</em>${cleanCount}</span>
+      <span class="risky"><em>${riskyLabel}</em>${riskyCount}</span>
+      <span class="avoid"><em>${avoidLabel}</em>${avoidCount}</span>
+    </div>
+    <button type="button" class="tws-assist-clear" aria-label="${esc(IS_AR ? 'إلغاء التحديد' : 'Clear selection')}" title="${esc(IS_AR ? 'إلغاء التحديد' : 'Clear selection')}">×</button>
+  `;
+  summary.querySelector('.tws-assist-clear')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    clearPlacementSelection();
+  });
+  pane.querySelector('.pane-body')?.before(summary);
+}
+
+function createPayloadFromBudgetRow(b, usedOverride = null) {
+  const code = String(b?.course_code || '').trim().toUpperCase();
+  const used = Number.isFinite(usedOverride) ? usedOverride : parseInt(b?.used_sections || '0', 10);
+  return {
+    type: 'create_planned',
+    course_code: code,
+    course_key: courseKeyOf(b) || code,
+    course_name: b?.course_name || code,
+    section_label: `S${Number.isFinite(used) ? used + 1 : 1}`,
+    department: b?.department || '',
+    credit_hours: b?.credit_hours || 0,
+    max_per_section: b?.max_per_section || 40,
+    total_students: b?.total_demand || 0,
+    programme_term: b?.programme_term ?? null,
+    planned_sections: b?.planned_sections || 0,
+    used_sections: Number.isFinite(used) ? used : 0,
+    requires_full_section_pattern: !!b?.requires_full_section_pattern,
+    required_meetings_per_section: b?.required_meetings_per_section || 1,
+  };
+}
+
+function createAssistLabel(payload) {
+  return `${payload?.course_code || 'Course'} ${payload?.section_label || ''}`.trim();
+}
+
+function createAssistCandidateKey(candidate) {
+  if (!candidate) return '';
+  if (candidate.candidate_id) return `${candidate.paneIdx}:${candidate.candidate_id}`;
+  return `${candidate.paneIdx}:${slotAssistKey(candidate.kind || 'lect', candidate.day, candidate.start)}`;
+}
+
+function createAssistTone(candidate) {
+  const tone = candidate?.tone;
+  if (tone === 'avoid' || tone === 'critical') return 'avoid';
+  if (tone === 'risky' || tone === 'watch') return 'risky';
+  if (candidate?.critical_count || candidate?.critical) return 'avoid';
+  if (candidate?.warning_count || candidate?.warning || candidate?.student_affected_count) return 'risky';
+  return 'clean';
+}
+
+function compareCreateAssistCandidates(a, b) {
+  const at = createAssistTone(a);
+  const bt = createAssistTone(b);
+  const toneRank = { clean: 0, risky: 1, avoid: 2 };
+  return (toneRank[at] || 0) - (toneRank[bt] || 0)
+    || Number(a.score || 0) - Number(b.score || 0)
+    || candidateQualityPenalty(a) - candidateQualityPenalty(b)
+    || Number(a.paneIdx || 0) - Number(b.paneIdx || 0)
+    || DAYS.indexOf(String(a.day || 'SUN')) - DAYS.indexOf(String(b.day || 'SUN'))
+    || toMinutes(a.start) - toMinutes(b.start)
+    || String(a.kind || '').localeCompare(String(b.kind || ''));
+}
+
+function createAssistDetail(candidate) {
+  if (!candidate) return '';
+  const reasonText = candidatePrimaryReason(candidate);
+  const evidenceText = candidateEvidenceText(candidatePrimaryEvidence(candidate));
+  const tags = candidateSignalTags(candidate).slice(0, 4);
+  const affected = Number(candidate.student_affected_count || 0);
+  const base = candidate.critical_count
+    ? (reasonText || evidenceText || `${candidate.critical_count} critical conflict(s)`)
+    : candidate.warning_count
+      ? (reasonText || evidenceText || `${candidate.warning_count} warning(s)`)
+      : affected
+        ? (reasonText || `${affected} affected student(s)`)
+        : (reasonText || 'Clean target');
+  return [base, tags.length ? tags.join(', ') : ''].filter(Boolean).join(' | ');
+}
+
+function createAssistCandidateMeetings(candidate) {
+  const rows = Array.isArray(candidate?.meetings) && candidate.meetings.length
+    ? candidate.meetings
+    : candidate
+      ? [{ kind: candidate.kind || 'lect', day: candidate.day, start: candidate.start, end: candidate.end }]
+      : [];
+  return rows
+    .map(row => ({
+      kind: normaliseSlotKind(row.kind || candidate?.kind || 'lect'),
+      day: String(row.day || '').toUpperCase(),
+      start: String(row.start || row.start_time || ''),
+      end: String(row.end || row.end_time || ''),
+    }))
+    .filter(row => row.day && row.start && row.end);
+}
+
+function createAssistTargetLabel(candidate) {
+  if (!candidate) return '';
+  const pane = POS_LABELS[Number(candidate.paneIdx || 0)] || `Pane ${Number(candidate.paneIdx || 0) + 1}`;
+  const board = candidate.boardLabel || S.panes[candidate.paneIdx]?.boardData?.board?.label || '';
+  const meetings = createAssistCandidateMeetings(candidate);
+  if (meetings.length > 1) {
+    const pattern = meetings.map(m => `${m.day} ${m.start}`).join(', ');
+    return `${pane}${board ? ` - ${board}` : ''} - Pattern ${pattern}`;
+  }
+  const kind = normaliseSlotKind(candidate.kind) === 'lab' ? 'Lab' : 'Slot';
+  return `${pane}${board ? ` · ${board}` : ''} · ${kind} ${candidate.day} ${candidate.start}`;
+}
+
+function createAssistTargetPanes(payload) {
+  const visible = [];
+  for (let i = 0; i < paneCount(); i += 1) {
+    const pane = S.panes[i];
+    if (!pane?.boardId || !pane.boardData) continue;
+    visible.push({ idx: i, pane });
+  }
+  const term = payload?.programme_term == null ? '' : String(payload.programme_term);
+  const matchingTerm = term
+    ? visible.filter(item => String(item.pane.boardData?.board?.nominal_term || '') === term)
+    : [];
+  return matchingTerm.length ? matchingTerm : visible;
+}
+
+function renderCreateSectionSummary(targetPane, payload, highlighted, candidates = []) {
+  if (!targetPane || !payload) return;
+  targetPane.querySelector('.tws-create-assist-summary')?.remove();
+  const sorted = (candidates || [])
+    .filter(createAssistCandidateIsVisibleAndEmpty)
+    .slice()
+    .sort(compareCreateAssistCandidates);
+  const counts = sorted.reduce((acc, candidate) => {
+    acc[createAssistTone(candidate)] += 1;
+    return acc;
+  }, { clean: 0, risky: 0, avoid: 0 });
+  const topTargets = sorted.slice(0, 6);
+  const summary = document.createElement('div');
+  summary.className = 'tws-assist-summary tws-create-assist-summary';
+  summary.setAttribute('role', 'status');
+  summary.innerHTML = `
+    <div class="tws-assist-main">
+      <b>${esc(createAssistLabel(payload))}</b>
+      <span>${esc(highlighted ? `${highlighted} empty target slot(s)` : 'No empty target slots visible')}</span>
+    </div>
+    <div class="tws-assist-counts" aria-label="${esc(IS_AR ? 'ملخص وضع الشعبة' : 'Section placement summary')}">
+      <span class="clean"><em>${IS_AR ? 'ضع' : 'Place'}</em>${highlighted}</span>
+    </div>
+    <button type="button" class="tws-assist-clear" aria-label="${esc(IS_AR ? 'إلغاء' : 'Clear placement mode')}" title="${esc(IS_AR ? 'إلغاء' : 'Clear placement mode')}">×</button>
+  `;
+  const targetText = S.createAssist.loading
+    ? 'Finding best target slots...'
+    : topTargets.length
+      ? `${topTargets.length} ranked target(s), ${counts.clean} clean`
+      : highlighted
+        ? `${highlighted} empty fallback target(s)`
+        : 'No empty target slots visible';
+  const mainText = summary.querySelector('.tws-assist-main span');
+  if (mainText) mainText.textContent = targetText;
+  const countsBox = summary.querySelector('.tws-assist-counts');
+  if (countsBox && topTargets.length) {
+    countsBox.innerHTML = `
+      <span class="clean"><em>Clean</em>${counts.clean}</span>
+      <span class="risky"><em>Risk</em>${counts.risky}</span>
+      <span class="avoid"><em>Avoid</em>${counts.avoid}</span>
+    `;
+  }
+  if (topTargets.length) {
+    const targetsEl = document.createElement('div');
+    targetsEl.className = 'tws-create-targets';
+    targetsEl.innerHTML = topTargets.map((candidate, idx) => {
+      const tone = createAssistTone(candidate);
+      const key = createAssistCandidateKey(candidate);
+      return `<button type="button" class="tws-create-target ${tone}" data-create-target-key="${esc(key)}" ${tone === 'avoid' ? 'disabled' : ''} title="${esc(createAssistDetail(candidate))}">
+        <span>${idx + 1}</span>${esc(createAssistTargetLabel(candidate))}
+      </button>`;
+    }).join('');
+    summary.appendChild(targetsEl);
+    targetsEl.querySelectorAll('.tws-create-target[data-create-target-key]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const candidate = S.createAssist.candidates.get(btn.dataset.createTargetKey || '');
+        if (!candidate || createAssistTone(candidate) === 'avoid') return;
+        btn.disabled = true;
+        await applyCreateAssistCandidate(candidate);
+      });
+    });
+
+    const best = topTargets.find(candidate => createAssistTone(candidate) !== 'avoid') || topTargets[0];
+    const primaryReason = candidatePrimaryReason(best);
+    const diagnostics = document.createElement('div');
+    diagnostics.className = 'tws-create-diagnostics';
+    diagnostics.innerHTML = `
+      <div><b>Why this target</b><span>${esc(primaryReason || createAssistDetail(best))}</span></div>
+      ${candidateReasonChipsHtml(best, 4)}
+    `;
+    summary.appendChild(diagnostics);
+  }
+  summary.querySelector('.tws-assist-clear')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    clearCreateSectionAssist({ announce: true });
+  });
+  targetPane.querySelector('.pane-body')?.before(summary);
+}
+
+function paintCreateSectionTargets() {
+  if (!S.createAssist.active || !S.createAssist.payload) return;
+  const payload = S.createAssist.payload;
+  clearCreateSectionAssistDecorations();
+  const targets = createAssistTargetPanes(payload);
+  S.createAssist.targetPaneIdxs = targets.map(item => item.idx);
+  const label = createAssistLabel(payload);
+  let highlighted = 0;
+  let firstPaneEl = null;
+  const rankedCandidates = Array.from(S.createAssist.candidates.values()).sort(compareCreateAssistCandidates);
+  targets.forEach(({ idx }) => {
+    const pane = paneEl(idx);
+    if (!pane) return;
+    if (!firstPaneEl) firstPaneEl = pane;
+    pane.classList.add('assist-active', 'create-assist-active');
+    if (rankedCandidates.length || payload.requires_full_section_pattern) return;
+    pane.querySelectorAll('.block-grid .cell').forEach(cell => {
+      if (cell.classList.contains('filled')) return;
+      if (paneHasPlacementAtSlot(idx, slotKindForCell(cell), cell.dataset.day, cell.dataset.start)) return;
+      highlighted += 1;
+      cell.dataset.createAssist = '1';
+      cell.classList.add('assist-clean', 'assist-create');
+      if (highlighted === 1) cell.classList.add('assist-best');
+      cell.title = `${IS_AR ? 'ضع' : 'Place'} ${label} | ${cell.dataset.day} ${cell.dataset.start}-${cell.dataset.end}`;
+      if (highlighted <= 10) {
+        const badge = document.createElement('span');
+        badge.className = 'slot-assist-badge';
+        badge.textContent = IS_AR ? 'ضع' : 'Place';
+        cell.appendChild(badge);
+      }
+    });
+  });
+  if (rankedCandidates.length) {
+    rankedCandidates.forEach(candidate => {
+      const pane = paneEl(candidate.paneIdx);
+      if (!pane) return;
+      const cell = slotCellForCandidate(candidate.paneIdx, candidate, candidate.kind || 'lect');
+      if (!cell || !createAssistCandidateIsVisibleAndEmpty(candidate)) return;
+      highlighted += 1;
+      const tone = createAssistTone(candidate);
+      const key = createAssistCandidateKey(candidate);
+      cell.dataset.createAssist = '1';
+      cell.dataset.createAssistKey = key;
+      cell.classList.add('assist-create');
+      if (tone === 'avoid') cell.classList.add('assist-avoid');
+      else if (tone === 'risky') cell.classList.add('assist-risky');
+      else cell.classList.add('assist-clean');
+      if (highlighted === 1 && tone !== 'avoid') cell.classList.add('assist-best');
+      if (candidateHasEvidence(candidate, ['students', 'cross_board_students'])) cell.classList.add('assist-student');
+      if (candidateHasEvidence(candidate, ['instructor', 'same_course'])) cell.classList.add('assist-instructor');
+      cell.title = `${IS_AR ? 'Ø¶Ø¹' : 'Place'} ${label} | ${createAssistTargetLabel(candidate)} | ${createAssistDetail(candidate)}`;
+      if (highlighted <= 12) {
+        const badge = document.createElement('span');
+        badge.className = 'slot-assist-badge';
+        const meetingCount = createAssistCandidateMeetings(candidate).length;
+        badge.textContent = meetingCount > 1 ? `1/${meetingCount}` : candidateGridBadge(candidate, tone);
+        cell.appendChild(badge);
+      }
+      createAssistCandidateCells(candidate).slice(1).forEach((extraCell, meetingIdx) => {
+        extraCell.dataset.createAssist = '1';
+        extraCell.dataset.createAssistKey = key;
+        extraCell.classList.add('assist-create');
+        if (tone === 'avoid') extraCell.classList.add('assist-avoid');
+        else if (tone === 'risky') extraCell.classList.add('assist-risky');
+        else extraCell.classList.add('assist-clean');
+        extraCell.title = cell.title;
+        const badge = document.createElement('span');
+        badge.className = 'slot-assist-badge';
+        badge.textContent = `${meetingIdx + 2}/${createAssistCandidateMeetings(candidate).length}`;
+        extraCell.appendChild(badge);
+      });
+    });
+  }
+  renderCreateSectionSummary(firstPaneEl, payload, highlighted, rankedCandidates);
+  const key = payload.course_key || payload.course_code;
+  if (key) {
+    const escapedKey = window.CSS?.escape ? CSS.escape(key) : String(key).replace(/"/g, '\\"');
+    document.querySelector(`.tws-sec-item[data-key="${escapedKey}"]`)?.classList.add('create-active');
+  }
+  const status = $('twsStatusHover');
+  if (status) {
+    status.textContent = highlighted
+      ? `${IS_AR ? 'اختر خانة فارغة لوضع' : 'Click a highlighted empty slot to place'} ${label}`
+      : `${label}: ${IS_AR ? 'لا توجد خانات فارغة ظاهرة' : 'no empty target slots visible'}`;
+    const best = rankedCandidates.find(candidate => {
+      const cell = slotCellForCandidate(candidate.paneIdx, candidate, candidate.kind || 'lect');
+      return cell && !cell.classList.contains('filled') && createAssistTone(candidate) !== 'avoid';
+    });
+    if (S.createAssist.loading) {
+      status.textContent = `${IS_AR ? 'جاري حساب أفضل الأهداف' : 'Finding best targets for'} ${label}...`;
+    } else if (best) {
+      status.textContent = `${IS_AR ? 'أفضل هدف' : 'Best target'} ${label}: ${createAssistTargetLabel(best)} | ${createAssistDetail(best)}`;
+    }
+  }
+}
+
+function createAssistPreviewParams(payload) {
+  const params = new URLSearchParams({
+    course_code: payload.course_code || '',
+    course_key: payload.course_key || payload.course_code || '',
+    section_label: payload.section_label || 'S1',
+    limit: '50',
+  });
+  if (payload.credit_hours) params.set('credit_hours', String(payload.credit_hours));
+  if (payload.max_per_section) params.set('max_per_section', String(payload.max_per_section));
+  if (payload.kind) params.set('kind', String(payload.kind));
+  return params;
+}
+
+async function refreshCreateSectionCandidates(token) {
+  if (!S.createAssist.active || !S.createAssist.payload) return;
+  const payload = S.createAssist.payload;
+  const targets = createAssistTargetPanes(payload);
+  const params = createAssistPreviewParams(payload);
+  const rows = [];
+  const messages = [];
+  await Promise.all(targets.map(async ({ idx, pane }) => {
+    const boardId = pane.boardId;
+    if (!boardId) return;
+    const data = await api(`/ops/tw/boards/${boardId}/planned-slot-candidates/?${params.toString()}`);
+    if (!data) return;
+    if (data.message && data.status !== 'ready') messages.push(data.message);
+    (data.candidates || []).forEach(candidate => {
+      rows.push({
+        ...candidate,
+        paneIdx: idx,
+        boardId,
+        boardLabel: data.board?.label || pane.boardData?.board?.label || '',
+      });
+    });
+  }));
+  if (!S.createAssist.active || token !== S.createAssist.requestToken) return;
+  S.createAssist.loading = false;
+  S.createAssist.candidates = new Map();
+  rows.sort(compareCreateAssistCandidates).forEach(candidate => {
+    S.createAssist.candidates.set(createAssistCandidateKey(candidate), candidate);
+  });
+  paintCreateSectionTargets();
+  if (!rows.length && messages.length) notify.warning(messages[0]);
+}
+
+async function applyCreateAssistCandidate(candidate) {
+  if (!candidate || !S.createAssist.active || !S.createAssist.payload) return null;
+  const cell = slotCellForCandidate(candidate.paneIdx, candidate, candidate.kind || 'lect');
+  if (!cell || !createAssistCandidateIsVisibleAndEmpty(candidate)) {
+    notify.warning(IS_AR ? 'اختر خانة فارغة' : 'Choose an empty slot');
+    return null;
+  }
+  document.querySelectorAll('.tws-pane .cell.assist-preview').forEach(el => el.classList.remove('assist-preview'));
+  createAssistCandidateCells(candidate).forEach(targetCell => targetCell.classList.add('assist-preview'));
+  const data = await createPlannedPlacementFromCandidate(candidate, S.createAssist.payload);
+  if (data) clearCreateSectionAssist();
+  return data;
+}
+
+function beginCreateSectionAssist(payload) {
+  if (!payload?.course_code) return false;
+  clearPlacementSelection({ announce: false });
+  clearSlotAssist();
+  S.createAssist.active = true;
+  S.createAssist.payload = payload;
+  S.createAssist.targetPaneIdxs = [];
+  S.createAssist.candidates = new Map();
+  S.createAssist.loading = true;
+  const token = ++S.createAssist.requestToken;
+  paintCreateSectionTargets();
+  refreshCreateSectionCandidates(token);
+  return true;
 }
 
 function splitSlotDetail(candidate) {
@@ -876,6 +1730,32 @@ function splitSlotDetail(candidate) {
 }
 
 function slotAssistTone(candidate) {
+  const exact = candidateExactRepair(candidate);
+  if (exact?.enabled) {
+    if (Number(exact.existing_lost || 0) > 0) return 'avoid';
+    if (!candidateExactRepairSolved(candidate)) return 'avoid';
+    if (Number(exact.blocked_recovered || 0) > 0) return 'clean';
+    if (Number(exact.requested_courses_recovered || 0) > 0) return 'clean';
+    return 'risky';
+  }
+  if (candidateHasDeepRepair(candidate)) return 'avoid';
+  if (slotAssistExactRepairLoading(candidate)) return 'risky';
+  const outcome = candidateOutcome(candidate);
+  if (outcome) {
+    const clashDelta = Number(outcome.actual_clash_delta || 0);
+    const unresolvedDelta = Number(outcome.unresolved_course_delta || 0);
+    const blockedDelta = Number(outcome.blocked_students_delta || 0);
+    const worsened = Number(outcome.worsened_student_count || 0);
+    if (clashDelta > 0) return 'avoid';
+    if (unresolvedDelta > 0 || blockedDelta > 0) return 'avoid';
+    if (worsened > 0) return 'risky';
+    if (clashDelta < 0 || unresolvedDelta < 0 || blockedDelta < 0) return 'clean';
+  }
+  if (candidateHasEvidence(candidate, ['instructor', 'same_course'])) return 'avoid';
+  const outcomeTone = candidate?.student_outcome_tone;
+  if (outcomeTone === 'worsens') return 'avoid';
+  if (outcomeTone === 'improves') return 'clean';
+  if (outcomeTone === 'stable') return 'risky';
   const tone = candidate?.tone;
   if (tone === 'avoid' || tone === 'critical') return 'avoid';
   if (tone === 'risky' || tone === 'watch') return 'risky';
@@ -886,13 +1766,15 @@ function slotAssistTone(candidate) {
 }
 
 function clearSlotAssistDecorations() {
-  document.querySelectorAll('.tws-pane .cell.assist-clean, .tws-pane .cell.assist-risky, .tws-pane .cell.assist-avoid, .tws-pane .cell.assist-best, .tws-pane .cell.assist-preview, .tws-pane .cell.assist-room, .tws-pane .cell.assist-student, .tws-pane .cell.assist-instructor').forEach(cell => {
-    cell.classList.remove('assist-clean', 'assist-risky', 'assist-avoid', 'assist-best', 'assist-preview', 'assist-room', 'assist-student', 'assist-instructor');
+  document.querySelectorAll('.tws-pane .cell[data-slot-assist-key], .tws-pane .cell[data-slot-assist-title], .tws-pane .cell.assist-clean, .tws-pane .cell.assist-risky, .tws-pane .cell.assist-avoid, .tws-pane .cell.assist-loading, .tws-pane .cell.assist-best, .tws-pane .cell.assist-preview, .tws-pane .cell.assist-room, .tws-pane .cell.assist-student, .tws-pane .cell.assist-instructor').forEach(cell => {
+    cell.classList.remove('assist-clean', 'assist-risky', 'assist-avoid', 'assist-loading', 'assist-best', 'assist-preview', 'assist-room', 'assist-student', 'assist-instructor');
     delete cell.dataset.slotAssistKey;
     delete cell.dataset.slotAssistTitle;
+    cell.removeAttribute('title');
     cell.querySelectorAll('.slot-assist-badge, .slot-assist-detail').forEach(el => el.remove());
   });
   document.querySelectorAll('.tws-pane.assist-active').forEach(pane => pane.classList.remove('assist-active'));
+  document.querySelectorAll('.tws-assist-summary').forEach(el => el.remove());
 }
 
 function clearSlotAssist() {
@@ -904,6 +1786,59 @@ function clearSlotAssist() {
   S.slotAssist.candidates = new Map();
   S.slotAssist.requestToken += 1;
   S.slotAssist.pendingMove = null;
+  S.slotAssist.deepRepairRun = null;
+  S.slotAssist.deepRepairLoading = false;
+}
+
+function clearCreateSectionAssistDecorations() {
+  document.querySelectorAll('.tws-pane .cell[data-create-assist], .tws-pane .cell.assist-create').forEach(cell => {
+    cell.classList.remove('assist-clean', 'assist-risky', 'assist-avoid', 'assist-best', 'assist-preview', 'assist-create', 'assist-student', 'assist-instructor');
+    delete cell.dataset.createAssist;
+    delete cell.dataset.createAssistKey;
+    cell.removeAttribute('title');
+    cell.querySelectorAll('.slot-assist-badge, .slot-assist-detail').forEach(el => el.remove());
+  });
+  document.querySelectorAll('.tws-pane.create-assist-active').forEach(pane => pane.classList.remove('assist-active', 'create-assist-active'));
+  document.querySelectorAll('.tws-create-assist-summary').forEach(el => el.remove());
+  document.querySelectorAll('.tws-sec-item.create-active').forEach(el => el.classList.remove('create-active'));
+}
+
+function clearCreateSectionAssist({ announce = false } = {}) {
+  const wasActive = S.createAssist.active;
+  clearCreateSectionAssistDecorations();
+  S.createAssist.active = false;
+  S.createAssist.payload = null;
+  S.createAssist.targetPaneIdxs = [];
+  S.createAssist.candidates = new Map();
+  S.createAssist.loading = false;
+  S.createAssist.requestToken += 1;
+  if (announce && wasActive) {
+    const status = $('twsStatusHover');
+    if (status) status.textContent = IS_AR ? 'تم إلغاء وضع الشعب' : 'Section placement mode cleared';
+  }
+  return wasActive;
+}
+
+function hasActivePlacementSelection() {
+  return S.selectedPlacementId != null
+    || !!document.querySelector('.tws-pane .cell.selected')
+    || S.slotAssist.active
+    || S.createAssist.active;
+}
+
+function clearPlacementSelection({ announce = true } = {}) {
+  const hadSelection = hasActivePlacementSelection();
+  document.querySelectorAll('.tws-pane .cell.selected').forEach(cell => cell.classList.remove('selected'));
+  S.selectedPlacementId = null;
+  S.selectedPaneIdx = null;
+  clearSlotAssist();
+  clearCreateSectionAssist();
+  if (RP.open && RP.tab === 'selection') renderRpanel();
+  if (announce && hadSelection) {
+    const status = $('twsStatusHover');
+    if (status) status.textContent = IS_AR ? 'تم إلغاء التحديد' : 'Selection cleared';
+  }
+  return hadSelection;
 }
 
 function showSlotAssistCellStatus(cell) {
@@ -916,9 +1851,37 @@ function showSlotAssistCellStatus(cell) {
 function slotCellForCandidate(paneIdx, candidate, kind = null) {
   const pane = paneEl(paneIdx);
   if (!pane || !candidate) return null;
-  const slotKind = kind || candidate.kind || S.slotAssist.kind || 'lect';
+  const slotKind = normaliseSlotKind(kind || candidate.kind || S.slotAssist.kind || 'lect');
   const grid = slotKind === 'lab' ? '.lab-grid' : '.lect-grid';
-  return pane.querySelector(`${grid} .cell[data-day="${candidate.day}"][data-start="${candidate.start}"]`);
+  return pane.querySelector(`${grid} .cell[data-day="${candidate.day}"][data-start="${candidate.start}"]`)
+    || pane.querySelector(`.block-grid .cell[data-day="${candidate.day}"][data-start="${candidate.start}"]`);
+}
+
+function createAssistCandidateCells(candidate) {
+  if (!candidate) return [];
+  return createAssistCandidateMeetings(candidate)
+    .map(meeting => slotCellForCandidate(candidate.paneIdx, meeting, meeting.kind))
+    .filter(Boolean);
+}
+
+function createAssistCandidateIsVisibleAndEmpty(candidate) {
+  const meetings = createAssistCandidateMeetings(candidate);
+  const cells = createAssistCandidateCells(candidate);
+  return meetings.length > 0 && cells.length === meetings.length && cells.every(cell => !cell.classList.contains('filled'));
+}
+
+function slotKindForCell(cell) {
+  return cell?.closest('.lab-grid') ? 'lab' : 'lect';
+}
+
+function paneHasPlacementAtSlot(paneIdx, kind, day, start) {
+  const placements = S.panes[paneIdx]?.boardData?.placements || [];
+  const slotKind = normaliseSlotKind(kind || 'lect');
+  return placements.some(placement =>
+    normaliseSlotKind(slotKindForPlacement(placement)) === slotKind
+    && String(placement.day || '').toUpperCase() === String(day || '').toUpperCase()
+    && String(placement.start_time || '') === String(start || '')
+  );
 }
 
 function restorePendingMovePreview() {
@@ -942,42 +1905,92 @@ function restorePendingMovePreview() {
 
 function paintSlotAssistCandidates(paneIdx, placement, candidates, opts = {}) {
   const pane = paneEl(paneIdx);
-  const selector = S.slotAssist.kind === 'lab' ? '.lab-grid .cell' : '.lect-grid .cell';
   pane?.classList.add('assist-active');
-  pane?.querySelectorAll(selector).forEach(cell => {
-    const key = slotAssistKey(S.slotAssist.kind, cell.dataset.day, cell.dataset.start);
+  const emptyRanked = new Map();
+  let visibleBadgeRank = 0;
+  candidates.forEach(candidate => {
+    const kind = normaliseSlotKind(candidate.kind || S.slotAssist.kind);
+    const key = slotAssistKey(kind, candidate.day, candidate.start);
+    S.slotAssist.candidates.set(key, { ...candidate, kind });
+    const cell = slotCellForCandidate(paneIdx, candidate, kind);
+    if (!cell || cell.classList.contains('filled')) return;
+    visibleBadgeRank += 1;
+    emptyRanked.set(key, visibleBadgeRank);
+  });
+  let emptyHighlighted = 0;
+  pane?.querySelectorAll('.block-grid .cell').forEach(cell => {
+    const kind = slotKindForCell(cell);
+    const key = slotAssistKey(kind, cell.dataset.day, cell.dataset.start);
     const candidate = S.slotAssist.candidates.get(key);
     if (!candidate) return;
     cell.dataset.slotAssistKey = key;
     cell.dataset.slotAssistTitle = splitSlotDetail(candidate);
-    cell.title = `${candidate.day} ${candidate.start}-${candidate.end} | ${splitSlotLabel(candidate)} | ${splitSlotDetail(candidate)}`;
+    const exactLoading = slotAssistExactRepairLoading(candidate);
+    cell.title = exactLoading
+      ? `${candidate.day} ${candidate.start}-${candidate.end} | Exact student repair is running`
+      : `${candidate.day} ${candidate.start}-${candidate.end} | ${splitSlotLabel(candidate)} | ${splitSlotDetail(candidate)}`;
     const tone = slotAssistTone(candidate);
     if (tone === 'avoid') cell.classList.add('assist-avoid');
     else if (tone === 'risky') cell.classList.add('assist-risky');
     else cell.classList.add('assist-clean');
+    if (exactLoading) cell.classList.add('assist-loading');
     if (candidateHasEvidence(candidate, ['cross_board_room', 'room'])) cell.classList.add('assist-room');
     if (Number(candidate.student_affected_count || candidate.studentAffected || 0) > 0 || candidateHasEvidence(candidate, ['students', 'cross_board_students'])) cell.classList.add('assist-student');
     if (candidateHasEvidence(candidate, ['instructor'])) cell.classList.add('assist-instructor');
-    if (candidate.rank === 1) cell.classList.add('assist-best');
-    if (candidate.rank <= 4) {
+    if (!exactLoading && candidate.rank === 1 && !cell.classList.contains('filled')) cell.classList.add('assist-best');
+    const badgeRank = emptyRanked.get(key) || 0;
+    if (!cell.classList.contains('filled') && badgeRank > 0) {
+      emptyHighlighted += 1;
       const badge = document.createElement('span');
       badge.className = 'slot-assist-badge';
-      badge.textContent = splitSlotLabel(candidate);
-      const detail = document.createElement('span');
-      detail.className = 'slot-assist-detail';
-      detail.textContent = candidateSlotSignalLine(candidate, tone);
+      badge.textContent = candidateGridBadge(candidate, tone);
       cell.appendChild(badge);
-      cell.appendChild(detail);
     }
   });
-  const clean = candidates.filter(c => slotAssistTone(c) === 'clean').length;
+  renderSlotAssistSummary(pane, placement, candidates, opts);
+  const actionable = candidates.filter(c => {
+    const cell = slotCellForCandidate(paneIdx, c, c.kind || S.slotAssist.kind);
+    return cell && !cell.classList.contains('filled');
+  });
+  const statRows = actionable.length ? actionable : candidates;
+  const clean = statRows.filter(c => slotAssistTone(c) === 'clean').length;
   const affected = candidates.reduce((sum, c) => sum + Number(c.student_affected_count || c.studentAffected || 0), 0);
-  const best = candidates[0];
-  const bestText = best ? `${best.day} ${best.start}-${best.end}` : 'none';
+  const deepRows = candidates.filter(candidateHasDeepRepair);
+  const exactRows = deepRows.filter(c => candidateExactRepair(c)?.enabled);
+  const outcomeRows = candidates.filter(c => candidateOutcome(c));
+  const helps = deepRows.length
+    ? exactRows.filter(c => Number(candidateExactRepair(c)?.blocked_recovered || 0) > 0).length
+    : outcomeRows.filter(c => c.student_outcome_tone === 'improves').length;
+  const worsens = deepRows.length
+    ? deepRows.filter(c => Number(candidateExactRepair(c)?.existing_lost || 0) > 0 || !candidateExactRepairSolved(c)).length
+    : outcomeRows.filter(c => c.student_outcome_tone === 'worsens').length;
+  const bestSafe = actionable.find(candidateIsValidatedSafe);
+  const best = bestSafe
+    || actionable.find(candidate => slotAssistTone(candidate) === 'clean')
+    || actionable.find(candidate => slotAssistTone(candidate) === 'risky')
+    || actionable[0]
+    || candidates[0];
+  const bestText = best ? `${bestSafe ? 'validated ' : 'manual review '}${best.day} ${best.start}-${best.end}` : 'none';
   const pairText = best?.pair ? ` | pair ${best.pair.companion.section || ''} ${best.pair.relation} ${best.pair.start}-${best.pair.end}` : '';
-  const source = opts.studentAware ? ` | student-aware ${affected} total pressure` : '';
-  const actionText = opts.sticky ? 'Click a highlighted empty slot to preview; click again to move' : 'drop on a highlighted slot';
-  $('twsStatusHover').textContent = `${opts.sticky ? 'Selected' : 'Dragging'} ${placementShortLabel(placement)} | ${clean} clean | recommended ${bestText}${pairText}${source} | ${actionText}`;
+  const exactLoading = slotAssistExactRepairLoading();
+  const source = exactLoading
+    ? ` | exact repair running for ${actionable.length} slots`
+    : deepRows.length
+    ? ` | exact repair ${helps} recover / ${worsens} blocked`
+    : outcomeRows.length
+    ? ''
+    : (opts.studentAware ? ` | student-aware ${affected} total pressure` : '');
+  const actionText = emptyHighlighted
+    ? (exactLoading
+      ? 'wait for exact repair results'
+      : exactRows.length
+      ? 'Click a Repair/Help slot to approve and apply the exact student repair'
+      : (opts.sticky ? 'Click a highlighted empty slot to preview; click again to move' : 'drop on a highlighted slot'))
+    : 'No empty candidate slots visible in this pane';
+  const statusLead = exactLoading
+    ? `${opts.sticky ? 'Selected' : 'Dragging'} ${placementShortLabel(placement)} | solving actual student repair`
+    : `${opts.sticky ? 'Selected' : 'Dragging'} ${placementShortLabel(placement)} | ${clean} clean | recommended ${bestText}${pairText}`;
+  $('twsStatusHover').textContent = `${statusLead}${source} | ${actionText}`;
   restorePendingMovePreview();
 }
 
@@ -991,8 +2004,71 @@ function normaliseStudentAwareCandidate(row) {
   };
 }
 
+function studentOutcomeCandidatePayload(candidates) {
+  return candidates.slice(0, 60).map(candidate => {
+    const row = {
+      kind: candidate.kind || S.slotAssist.kind,
+      day: candidate.day,
+      start: candidate.start,
+      end: candidate.end,
+    };
+    if (canBundleCandidate(candidate)) {
+      row.pair = {
+        placement_id: candidate.pair.companion.id,
+        day: candidate.day,
+        start: candidate.pair.start,
+        end: candidate.pair.end,
+      };
+    }
+    return row;
+  });
+}
+
+function moveOutcomeCandidatePayload(candidate, placement) {
+  const row = {
+    kind: candidate.kind || slotKindForPlacement(placement),
+    day: candidate.day,
+    start: candidate.start,
+    end: candidate.end,
+  };
+  if (canBundleCandidate(candidate)) {
+    row.pair = {
+      placement_id: candidate.pair.companion.id,
+      day: candidate.day,
+      start: candidate.pair.start,
+      end: candidate.pair.end,
+    };
+  }
+  return row;
+}
+
+async function enrichMoveCandidate(placementId, placement, candidate) {
+  if (!placementId || !placement || !candidate) return candidate;
+  try {
+    const data = await api(`/ops/tw/placements/${placementId}/student-outcome-candidates/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ candidates: [moveOutcomeCandidatePayload(candidate, placement)] }),
+    });
+    const row = (data?.candidates || [])[0];
+    if (!row) return candidate;
+    const normal = normaliseStudentAwareCandidate(row);
+    const pair = normal.pair && candidate.pair
+      ? { ...candidate.pair, ...normal.pair, companion: candidate.pair.companion || normal.pair.companion }
+      : (candidate.pair || normal.pair);
+    return { ...candidate, ...normal, pair };
+  } catch {
+    return candidate;
+  }
+}
+
 async function refreshStudentAwareSlotAssist(placementId, token, opts = {}) {
-  const data = await api(`/ops/tw/placements/${placementId}/slot-candidates/`);
+  const localCandidates = Array.from(S.slotAssist.candidates.values());
+  const data = await api(`/ops/tw/placements/${placementId}/student-outcome-candidates/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ candidates: studentOutcomeCandidatePayload(localCandidates) }),
+  });
   if (!data || !S.slotAssist.active || token !== S.slotAssist.requestToken) return;
   if (String(S.slotAssist.placementId) !== String(placementId)) return;
   const located = findPlacement(placementId);
@@ -1003,15 +2079,101 @@ async function refreshStudentAwareSlotAssist(placementId, token, opts = {}) {
   rows.forEach(row => {
     const key = slotAssistKey(row.kind || S.slotAssist.kind, row.day, row.start);
     const existing = S.slotAssist.candidates.get(key) || {};
-    S.slotAssist.candidates.set(key, { ...existing, ...row });
+    const pair = row.pair && existing.pair
+      ? { ...existing.pair, ...row.pair, companion: existing.pair.companion || row.pair.companion }
+      : (row.pair || existing.pair);
+    S.slotAssist.candidates.set(key, { ...existing, ...row, pair });
   });
   clearSlotAssistDecorations();
   const candidates = Array.from(S.slotAssist.candidates.values())
-    .sort((a, b) => (a.rank || 999) - (b.rank || 999) || (a.score || 0) - (b.score || 0));
+    .sort(compareOutcomeCandidates);
   paintSlotAssistCandidates(S.slotAssist.paneIdx, placement, candidates, { ...opts, studentAware: true });
 }
 
+function normaliseDeepRepairCandidate(row, runId) {
+  const metrics = row?.metrics || {};
+  return {
+    deepRepair: true,
+    deepRepairRunId: runId || '',
+    deepRepairCandidateId: row?.candidate_id || '',
+    day: row?.day || '',
+    start: row?.start_time || row?.start || '',
+    end: row?.end_time || row?.end || '',
+    room: row?.room || '',
+    status: row?.status || '',
+    solver_status: row?.solver_status || '',
+    score_rank: row?.score_rank || null,
+    metrics,
+    exact_repair: metrics.exact_repair || {},
+    decision: row?.decision || {},
+    preflight: row?.preflight || {},
+    student_change_count: row?.student_change_count || 0,
+    explanation: row?.explanation || {},
+    badge: row?.badge || '',
+  };
+}
+
+async function refreshDeepRepairSlotAssist(placementId, token, opts = {}) {
+  const localCandidates = Array.from(S.slotAssist.candidates.values());
+  if (!localCandidates.length) return;
+  S.slotAssist.deepRepairLoading = true;
+  const requestedCandidateCount = Math.min(80, Math.max(1, localCandidates.length));
+  let data = null;
+  try {
+    data = await api('/ops/tw/repair/analyse/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        placement_id: placementId,
+        blocked_student_ids: [],
+        blocked_requests: [],
+        mode: 'conservative',
+        move_scope: RP.repair.moveScope || 'single_session',
+        active_plan_filter: activePlanFilter(),
+        limits: {
+          max_candidates: requestedCandidateCount,
+          max_solver_seconds: 5,
+          max_total_solver_seconds: 45,
+        },
+      }),
+    });
+  } catch {
+    data = null;
+  }
+  S.slotAssist.deepRepairLoading = false;
+  if (!data || !S.slotAssist.active || token !== S.slotAssist.requestToken || String(S.slotAssist.placementId) !== String(placementId)) {
+    if (S.slotAssist.active && token === S.slotAssist.requestToken && String(S.slotAssist.placementId) === String(placementId)) {
+      const retryLocated = findPlacement(placementId);
+      if (retryLocated) {
+        clearSlotAssistDecorations();
+        const pendingCandidates = Array.from(S.slotAssist.candidates.values()).sort(compareOutcomeCandidates);
+        paintSlotAssistCandidates(S.slotAssist.paneIdx, retryLocated.placement, pendingCandidates, opts);
+      }
+    }
+    return;
+  }
+  const located = findPlacement(placementId);
+  if (!located) return;
+  S.slotAssist.deepRepairRun = data;
+  const runId = data?.run?.id || '';
+  (data.candidates || []).forEach(row => {
+    const deep = normaliseDeepRepairCandidate(row, runId);
+    if (!deep.day || !deep.start) return;
+    const key = slotAssistKey(deep.kind || S.slotAssist.kind, deep.day, deep.start);
+    const existing = S.slotAssist.candidates.get(key) || {};
+    S.slotAssist.candidates.set(key, { ...existing, ...deep, kind: existing.kind || S.slotAssist.kind });
+  });
+  clearSlotAssistDecorations();
+  const candidates = Array.from(S.slotAssist.candidates.values()).sort(compareOutcomeCandidates);
+  paintSlotAssistCandidates(S.slotAssist.paneIdx, located.placement, candidates, {
+    ...opts,
+    studentAware: true,
+    deepRepair: true,
+  });
+}
+
 function beginSlotAssist(paneIdx, placementId, opts = {}) {
+  clearCreateSectionAssist();
   const located = findPlacement(placementId);
   if (!located) return;
   const placement = located.placement;
@@ -1024,10 +2186,13 @@ function beginSlotAssist(paneIdx, placementId, opts = {}) {
   S.slotAssist.kind = slotKindForPlacement(placement);
   S.slotAssist.requestToken += 1;
   S.slotAssist.pendingMove = null;
+  S.slotAssist.deepRepairRun = null;
+  S.slotAssist.deepRepairLoading = !!opts.sticky && candidates.length > 0;
   const token = S.slotAssist.requestToken;
   S.slotAssist.candidates = new Map(candidates.map(c => [slotAssistKey(c.kind, c.day, c.start), c]));
   paintSlotAssistCandidates(sourcePaneIdx, placement, candidates, opts);
-  refreshStudentAwareSlotAssist(placementId, token, opts);
+  if (!opts.sticky) refreshStudentAwareSlotAssist(placementId, token, opts);
+  if (opts.sticky) refreshDeepRepairSlotAssist(placementId, token, opts);
 }
 
 function applySlotDragHint(cell) {
@@ -1089,6 +2254,13 @@ async function onScenarioChange() {
   // Every cached structure belongs to the previous scenario and would
   // paint stale data if left in place — invalidate before loading new.
   RP.capacity = {};
+  RP.studentBlockers = {
+    token: RP.studentBlockers.token + 1,
+    scenarioId: null,
+    data: null,
+    activeCourse: null,
+  };
+  if ($('twsRpCountStudents')) $('twsRpCountStudents').textContent = '0';
   RP.fixQueue.cache = {};
   RP.fixQueue.items = [];
   RP.fixQueue.token += 1;
@@ -1100,6 +2272,8 @@ async function onScenarioChange() {
   RP.builder.resolver = null;
   RP.builder.roomCache = {};
   RP.builder.studentCache = {};
+  RP.globalRepair.plan = null;
+  RP.globalRepair.busy = false;
   SB.budget = [];
   SB.search = '';
   S.search = '';
@@ -1112,10 +2286,12 @@ async function onScenarioChange() {
   const sid = $('twsScenario').value;
   if (!sid) {
     S.scenarioId = null;
+    S.scenarioSummary = null;
     resetProtections();
     S.boards = [];
     $('twsPublish').disabled = true;
     $('twsOptimise').disabled = true;
+    $('twsGlobalRepairPlan') && ($('twsGlobalRepairPlan').disabled = true);
     $('twsExport').disabled = true;
     renderSlotBar();
     for (let i = 0; i < paneCount(); i++) renderPaneEmpty(i);
@@ -1131,7 +2307,9 @@ async function onScenarioChange() {
     loadPlanLens(),
   ]);
   S.boards = (bdata && bdata.boards) || [];
+  S.scenarioSummary = (bdata && bdata.scenario_summary) || null;
   S.crossBoardClashCount = (bdata && Number(bdata.cross_board_clashes || 0)) || 0;
+  S.crossBoardAffectedCount = (bdata && Number(bdata.cross_board_affected_students || 0)) || 0;
 
   for (let i = 0; i < paneCount(); i++) {
     S.panes[i].boardId = S.boards[i] ? S.boards[i].id : null;
@@ -1146,11 +2324,12 @@ async function onScenarioChange() {
   $('twsSub').textContent =
     `${data.scenario.name} · ${data.scenario.status.toUpperCase()} · ${S.boards.length} boards`;
   $('twsStBoards').textContent = S.boards.length;
-  $('twsPublish').disabled = data.scenario.status === 'published';
+  const published = data.scenario.status === 'published';
+  $('twsPublish').disabled = published;
   $('twsOptimise').disabled = false;
   $('twsOptimiseMenu') && ($('twsOptimiseMenu').disabled = false);
+  $('twsGlobalRepairPlan') && ($('twsGlobalRepairPlan').disabled = published);
   $('twsExport').disabled = false;
-  const published = data.scenario.status === 'published';
   $('twsNewBoard') && ($('twsNewBoard').disabled = published);
   $('twsSlots') && ($('twsSlots').disabled = published);
   $('twsElectives') && ($('twsElectives').disabled = false);
@@ -1168,9 +2347,26 @@ function updateAggregateMetrics() {
     total += (b.primary_count || 0) + (b.visitor_count || 0);
     placed += (b.placement_count || 0);
   });
-  $('twsStStudents').textContent = total || '—';
-  $('twsStPlaced').textContent = placed || '—';
-  $('twsStCross').textContent = String(S.crossBoardClashCount || 0);
+  const summary = S.scenarioSummary || {};
+  const uniqueStudents = Number(summary.unique_students || 0);
+  const boardLinks = Number(summary.board_student_links_total || total || 0);
+  const placementCount = Number(summary.placements || placed || 0);
+  const fallback = '-';
+  if ($('twsStStudents')) $('twsStStudents').textContent = uniqueStudents || fallback;
+  if ($('twsStLinks')) $('twsStLinks').textContent = boardLinks || fallback;
+  if ($('twsStPlaced')) $('twsStPlaced').textContent = placementCount || fallback;
+  if ($('twsStCross')) {
+    const affected = Number(summary.cross_board_affected_students ?? S.crossBoardAffectedCount ?? 0);
+    const pairs = Number(summary.cross_board_conflicts ?? S.crossBoardClashCount ?? 0);
+    const incidences = Number(summary.cross_board_student_conflict_incidences || 0);
+    $('twsStCross').textContent = affected ? `${affected} students` : String(pairs || 0);
+    const metric = $('twsStCross').closest('.metric');
+    if (metric) {
+      metric.title = affected
+        ? `${affected} actual students affected by ${pairs} cross-board section clashes (${incidences} student-clash incidences)`
+        : `${pairs} cross-board section clashes`;
+    }
+  }
 }
 
 /* ── Slot bar (boards-on-canvas) ── */
@@ -1184,17 +2380,19 @@ function renderSlotBar() {
   // pre-allocated, but panes beyond cols×rows are hidden and shouldn't
   // appear in the board-bar.
   wrap.innerHTML = S.panes.slice(0, paneCount()).map((p, i) => {
+    const paneLetter = String.fromCharCode(65 + i);
     const opts = ['<option value="">—</option>']
       .concat(S.boards.map(b => `<option value="${b.id}"${b.id === p.boardId ? ' selected' : ''}>${esc(b.label)}</option>`))
       .join('');
     const off = !p.boardId;
     return `
       <div class="tws-bslot t${i}${off ? ' off' : ''}" data-pane="${i}">
-        <div class="pos">${POS_LABELS[i]}</div>
+        <div class="pos" title="${esc(POS_LABELS[i])}">${paneLetter}</div>
         <div class="seg">
-          <select data-role="board-select">${opts}</select>
+          <select data-role="board-select" aria-label="${esc(POS_LABELS[i])} board">${opts}</select>
         </div>
         <button class="off-toggle" data-role="off-toggle"
+                aria-label="${off ? (IS_AR ? 'عرض اللوحة' : 'Show pane') : (IS_AR ? 'إخفاء اللوحة' : 'Hide pane')}"
                 title="${off ? (IS_AR ? 'عرض' : 'Show pane') : (IS_AR ? 'إخفاء' : 'Hide pane')}">${off ? '+' : '×'}</button>
       </div>`;
   }).join('');
@@ -1251,6 +2449,7 @@ async function loadAndRenderPane(idx) {
         student_impact: cdata.student_impact || {} }
     : {};
   renderPane(idx);
+  if (S.createAssist.active) paintCreateSectionTargets();
   if (activeSplitSearch()) refreshSplitSearch();
 }
 
@@ -1262,13 +2461,14 @@ function renderPaneEmpty(idx) {
       <span class="term-pick"><span class="caret">▾</span></span>
       <span class="kpis"></span>
       <span class="icons">
-        <button data-action="reload" title="Reload">↻</button>
-        <button data-action="maximise" title="Maximise">⤢</button>
+        <button data-action="reload" title="Reload pane" aria-label="Reload pane">↻</button>
+        <button data-action="maximise" title="Maximise pane" aria-label="Maximise pane">⤢</button>
       </span>
     </div>
     <div class="empty-pane">${T.selectBoard}</div>
   `;
   bindPaneControls(idx);
+  updateMaximiseButtons();
 }
 
 function renderPane(idx) {
@@ -1339,8 +2539,8 @@ function renderPane(idx) {
         <span class="kpi ${hasGroupClash ? '' : 'clean'}">${hasGroupClash ? `<b class="warn">${T.clashShort}</b>` : `<b>${T.noClash}</b>`}</span>
       </span>
       <span class="icons">
-        <button data-action="reload" title="Reload">↻</button>
-        <button data-action="maximise" title="Maximise">⤢</button>
+        <button data-action="reload" title="Reload pane" aria-label="Reload pane">↻</button>
+        <button data-action="maximise" title="Maximise pane" aria-label="Maximise pane">⤢</button>
       </span>
     </div>
       <div class="pane-body">
@@ -1375,6 +2575,7 @@ function renderPane(idx) {
     </div>
   `;
   bindPaneControls(idx);
+  updateMaximiseButtons();
 }
 
 function renderGridHTML(slots, placements, issueMap, kind) {
@@ -1406,12 +2607,18 @@ function renderGridHTML(slots, placements, issueMap, kind) {
       if (placement) {
         const room = placement.room ? esc(placement.room) : '';
         const stu = placement.available_capacity || '';
+        const placementTitle = [
+          `${placement.course_code || ''} ${placement.section || ''}`.trim(),
+          room ? `${IS_AR ? 'قاعة' : 'Room'} ${room}` : '',
+          stu ? `${stu} ${IS_AR ? 'مقاعد' : 'seats'}` : '',
+        ].filter(Boolean).join(' · ');
         // Per-course pastel palette (user request) — matches XLSX export.
         const bg = courseColor(placement.course_code);
         const accent = courseColorBorder(placement.course_code);
         const style = `background:${bg};border-left-color:${accent}`;
         const cls = `cell filled${hasClash ? ' clash clash-' + clashTone : ''}${placement.is_locked ? ' locked' : ''}`;
-        h += `<div class="${cls}" ${cellAttrs}${issueTitle} data-placement-id="${placement.id}" draggable="${placement.is_locked ? 'false' : 'true'}" style="${style}">`;
+        const title = issueTitle || ` title="${esc(placementTitle)}"`;
+        h += `<div class="${cls}" ${cellAttrs}${title} data-placement-id="${placement.id}" draggable="${placement.is_locked ? 'false' : 'true'}" style="${style}">`;
         h += `<span class="cid">${esc(placement.course_code)} ${esc(placement.section || '')}</span>`;
         h += `<span class="cmeta">${room}${stu ? '·' + stu : ''}</span>`;
         h += planLensBadgesHtml(placement);
@@ -1439,7 +2646,7 @@ function bindPaneControls(idx) {
     });
   });
   // Header actions
-  el.querySelectorAll('.pane-hd .ri button').forEach(btn => {
+  el.querySelectorAll('.pane-hd .icons button, .pane-hd .ri button').forEach(btn => {
     const action = btn.dataset.action;
     btn.addEventListener('click', () => {
       if (action === 'reload') loadAndRenderPane(idx);
@@ -1450,7 +2657,13 @@ function bindPaneControls(idx) {
   const labHead = el.querySelector('[data-action="toggle-lab"]');
   if (labHead) labHead.addEventListener('click', () => {
     const block = labHead.closest('.lab-block');
-    if (block) block.classList.toggle('collapsed');
+    if (!block) return;
+    const compactHeight = window.matchMedia && window.matchMedia('(max-height: 760px)').matches;
+    if (compactHeight && !block.classList.contains('collapsed')) {
+      block.classList.toggle('compact-open');
+    } else {
+      block.classList.toggle('collapsed');
+    }
   });
   // Cell interactions — click to select, drag/drop, sync-hover
   el.querySelectorAll('.cell').forEach(cell => {
@@ -1466,7 +2679,11 @@ function bindPaneControls(idx) {
     cell.addEventListener('dragleave', () =>
       cell.classList.remove('drop-valid', 'drop-warning', 'drop-critical'));
     cell.addEventListener('drop', (e) => onCellDrop(idx, cell, e));
-    cell.addEventListener('click', (e) => {
+    cell.addEventListener('click', async (e) => {
+      if (await applyCreateAssistToCell(idx, cell)) {
+        e.stopPropagation();
+        return;
+      }
       if (previewSelectedMoveToSlot(idx, cell)) {
         e.stopPropagation();
       }
@@ -1501,6 +2718,24 @@ function bindPaneControls(idx) {
 }
 
 /* ── Drag & drop handler — mirrors main-page onDrop semantics ── */
+function initPaneHeaderActionDelegation() {
+  const quad = $('twsQuad');
+  if (!quad) return;
+  quad.addEventListener('click', (e) => {
+    const btn = e.target?.closest?.('button[data-action]');
+    if (!btn || !quad.contains(btn)) return;
+    const action = btn.dataset.action;
+    if (action !== 'reload' && action !== 'maximise') return;
+    const pane = btn.closest('.tws-pane');
+    const paneIdx = Number(pane?.dataset.idx);
+    if (!Number.isFinite(paneIdx)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (action === 'reload') loadAndRenderPane(paneIdx);
+    else maximisePane(paneIdx);
+  }, true);
+}
+
 function findPlacement(placementId) {
   for (let i = 0; i < paneCount(); i++) {
     const data = S.panes[i].boardData;
@@ -1589,7 +2824,11 @@ async function movePlacementToSlot({
 }
 
 function canBundleCandidate(candidate) {
-  return !!(candidate?.pair?.companion && !candidate.pair.protected?.length);
+  return !!(
+    candidate?.pair?.companion
+    && !candidate.pair.protected?.length
+    && Number(candidate.pair.critical || 0) === 0
+  );
 }
 
 async function applyCandidateMove({ placementId, targetPaneIdx, sourcePaneIdx, candidate, day, start, end, room, auto = false }) {
@@ -1679,6 +2918,115 @@ async function applyCandidateMove({ placementId, targetPaneIdx, sourcePaneIdx, c
   return first;
 }
 
+function openDeepRepairCandidateFromSlot(candidate, placementId) {
+  const run = S.slotAssist.deepRepairRun;
+  if (!run || !candidate?.deepRepairCandidateId) return false;
+  RP.repair.placementId = placementId;
+  RP.repair.run = run;
+  RP.repair.busy = false;
+  toggleRpanel(true);
+  setRpanelTab('repair');
+  $('twsStatusHover').textContent = `Move optimisation ${candidate.deepRepairCandidateId} loaded. Review, approve, then apply from the repair panel.`;
+  return true;
+}
+
+function deepRepairCandidateForSlot(candidate) {
+  const run = S.slotAssist.deepRepairRun || RP.repair.run;
+  const candidateId = candidate?.deepRepairCandidateId || candidate?.candidate_id || '';
+  if (!run || !candidateId) return { run, candidateId, candidate };
+  const full = (run.candidates || []).find(row => String(row.candidate_id) === String(candidateId));
+  return { run, candidateId, candidate: full || candidate };
+}
+
+function candidateDirectRepairReady(candidate) {
+  const exact = candidateExactRepair(candidate);
+  const status = String(candidate?.status || '').toLowerCase();
+  const solverStatus = String(candidate?.solver_status || exact?.solver_status || '').toLowerCase();
+  const usefulRecovery = Number(exact?.blocked_recovered || 0) > 0
+    || Number(exact?.requested_courses_recovered || 0) > 0;
+  return candidate?.deepRepair
+    && !!(candidate?.deepRepairCandidateId || candidate?.candidate_id)
+    && status === 'feasible'
+    && ['optimal', 'feasible'].includes(solverStatus)
+    && Number(exact?.existing_lost || 0) === 0
+    && usefulRecovery;
+}
+
+async function applyDeepRepairCandidateFromSlot(candidate, placementId, cell = null) {
+  const resolved = deepRepairCandidateForSlot(candidate);
+  const run = resolved.run;
+  const candidateId = resolved.candidateId;
+  const fullCandidate = resolved.candidate;
+  if (!run || !candidateId || !fullCandidate) return false;
+  RP.repair.placementId = placementId;
+  RP.repair.run = run;
+  RP.repair.busy = false;
+  const ready = candidateDirectRepairReady({ ...candidate, ...fullCandidate, deepRepair: true, deepRepairCandidateId: candidateId });
+  if (!ready) {
+    openDeepRepairCandidateFromSlot(candidate, placementId);
+    notify.error(IS_AR ? 'Ù‡Ø°Ø§ Ø§Ù„Ù…ÙˆØ¶Ø¹ Ù„ÙŠØ³ Ø¥ØµÙ„Ø§Ø­Ø§Ù‹ Ù‚Ø§Ø¨Ù„Ø§Ù‹ Ù„Ù„ØªØ·Ø¨ÙŠÙ‚.' : 'This slot is not an apply-ready repair. Review the repair panel details.');
+    return true;
+  }
+  const ok = await confirmRepairAction({
+    title: `Apply optimisation ${candidateId}`,
+    sub: 'This will move the selected section and apply the audited student reassignment for this slot.',
+    body: `<div class="tws-repair-panel">
+      ${repairActionMetricsHtml(fullCandidate)}
+      ${repairDecisionGateHtml(fullCandidate)}
+      ${repairPreflightGateHtml(fullCandidate)}
+      <div class="tws-repair-explain">
+        <div class="tws-repair-section-title">Direct slot optimisation</div>
+        <div class="tws-repair-explain-row"><b>Click target</b><span>${esc(fullCandidate.day || candidate.day)} ${esc(fullCandidate.start_time || candidate.start)}-${esc(fullCandidate.end_time || candidate.end)}${fullCandidate.room ? ` · ${esc(fullCandidate.room)}` : ''}</span></div>
+        <div class="tws-repair-explain-row"><b>Safety</b><span>The existing approval preflight and transactional apply checks will run before any write.</span></div>
+        <div class="tws-repair-explain-row"><b>Rollback</b><span>The optimisation remains rollbackable from the repair panel after apply.</span></div>
+      </div>
+    </div>`,
+    confirmLabel: 'Apply optimisation',
+  });
+  if (!ok) return true;
+  if (cell) cell.classList.add('assist-loading');
+  $('twsStatusHover').textContent = `Applying optimisation ${candidateId}...`;
+  const runId = run?.run?.id;
+  if (!runId) {
+    if (cell) cell.classList.remove('assist-loading');
+    notify.error(IS_AR ? 'Ù„Ø§ ÙŠÙˆØ¬Ø¯ ØªØ­Ù„ÙŠÙ„ Ø¥ØµÙ„Ø§Ø­ Ù†Ø´Ø·.' : 'No active repair run is available for this slot.');
+    return true;
+  }
+  const approved = await api(`/ops/tw/repair/runs/${runId}/candidates/${candidateId}/approve/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ notes: 'Approved from direct slot optimisation click' }),
+  });
+  if (!approved) {
+    if (cell) cell.classList.remove('assist-loading');
+    notify.error(IS_AR ? 'ÙØ´Ù„ Ø§Ø¹ØªÙ…Ø§Ø¯ Ø§Ù„Ø¥ØµÙ„Ø§Ø­' : 'Repair approval failed');
+    openDeepRepairCandidateFromSlot(candidate, placementId);
+    return true;
+  }
+  RP.repair.run = approved;
+  S.slotAssist.deepRepairRun = approved;
+  const applied = await api(`/ops/tw/repair/runs/${runId}/candidates/${candidateId}/apply/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  if (!applied) {
+    if (cell) cell.classList.remove('assist-loading');
+    notify.error(IS_AR ? 'ÙØ´Ù„ ØªØ·Ø¨ÙŠÙ‚ Ø§Ù„Ø¥ØµÙ„Ø§Ø­' : 'Repair apply failed');
+    toggleRpanel(true);
+    setRpanelTab('repair');
+    return true;
+  }
+  RP.repair.run = applied;
+  S.slotAssist.deepRepairRun = applied;
+  await refreshAfterRepairMutation();
+  clearSlotAssist();
+  $('twsStatusHover').textContent = `Optimisation ${candidateId} applied. Rollback is available from the repair panel.`;
+  notify.success(IS_AR ? 'ØªÙ… ØªØ·Ø¨ÙŠÙ‚ Ø§Ù„Ø¥ØµÙ„Ø§Ø­' : `Optimisation ${candidateId} applied`);
+  if (RP.open) renderRpanel();
+  return true;
+}
+
 function previewSelectedMoveToSlot(paneIdx, cell) {
   if (!S.slotAssist.active || !S.selectedPlacementId || cell.classList.contains('filled')) return false;
   if (String(S.slotAssist.placementId) !== String(S.selectedPlacementId)) return false;
@@ -1689,6 +3037,15 @@ function previewSelectedMoveToSlot(paneIdx, cell) {
   const start = cell.dataset.start;
   const end = cell.dataset.end;
   const pending = S.slotAssist.pendingMove;
+  if (candidate.deepRepair && candidate.deepRepairCandidateId) {
+    document.querySelectorAll('.tws-pane .cell.assist-preview').forEach(el => el.classList.remove('assist-preview'));
+    cell.classList.add('assist-preview');
+    applyDeepRepairCandidateFromSlot(candidate, S.selectedPlacementId, cell).catch(() => {
+      cell.classList.remove('assist-loading');
+      notify.error(IS_AR ? 'ÙØ´Ù„ ØªØ·Ø¨ÙŠÙ‚ Ø§Ù„Ø¥ØµÙ„Ø§Ø­' : 'Repair apply failed');
+    });
+    return true;
+  }
   if (
     pending
     && String(pending.placementId) === String(S.selectedPlacementId)
@@ -1721,8 +3078,123 @@ function previewSelectedMoveToSlot(paneIdx, cell) {
   const pairText = canBundleCandidate(candidate)
     ? ` Bundle ${placementShortLabel(candidate.pair.companion)} ${candidate.pair.relation} ${candidate.pair.start}-${candidate.pair.end}.`
     : '';
-  $('twsStatusHover').textContent = `Preview move ${label} -> ${day} ${start}-${end}: ${splitSlotDetail(candidate)}.${pairText} Click same slot again to apply.`;
+  const actionText = 'Click same slot again to apply.';
+  $('twsStatusHover').textContent = `Preview move ${label} -> ${day} ${start}-${end}: ${splitSlotDetail(candidate)}.${pairText} ${actionText}`;
   if (RP.open && RP.tab === 'selection') renderRpanel();
+  return true;
+}
+
+async function createPlannedPlacementFromMeetings(boardId, payload, meetings) {
+  const data = await api('/ops/tw/placements/create-planned/', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      board_id: boardId,
+      course_code: payload.course_code,
+      course_key: payload.course_key || payload.course_code,
+      course_name: payload.course_name || payload.course_code,
+      section_label: payload.section_label,
+      meetings,
+      capacity: payload.max_per_section || 40,
+    }),
+  });
+  if (!data) return null;
+  const v = data.validation || {};
+  if ((v.critical_count || 0) > 0) {
+    notify.warning(IS_AR ? `Placed with ${v.critical_count} conflict(s)` : `Placed with ${v.critical_count} conflict(s)`);
+  } else {
+    const count = Array.isArray(data.placements) ? data.placements.length : 1;
+    notify.success(count > 1 ? `Placed full ${count}-meeting pattern` : (IS_AR ? 'Placed' : 'Placed'));
+  }
+  return data;
+}
+
+async function createPlannedPlacementFromCell(paneIdx, cell, payload) {
+  const boardId = S.panes[paneIdx].boardId;
+  if (!boardId) {
+    notify.error(IS_AR ? 'Select a board in this pane first' : 'Select a board in this pane first');
+    return null;
+  }
+  if (cell.classList.contains('filled')) {
+    notify.warning(IS_AR ? 'Choose an empty slot' : 'Choose an empty slot');
+    return null;
+  }
+  const day = cell.dataset.day;
+  const start = cell.dataset.start;
+  const end = cell.dataset.end;
+  const data = await createPlannedPlacementFromMeetings(boardId, payload, [{ day, start_time: start, end_time: end }]);
+  if (!data) return null;
+  S.undoStack.push({
+    type: 'create', placement_id: data.placement.id, board_id: boardId,
+    term_section_id: data.placement.term_section_id,
+    day, start_time: start, end_time: end, room: '',
+  });
+  S.redoStack = [];
+  updateUndoRedoButtons();
+  await loadAndRenderPane(paneIdx);
+  await refreshBoardsSummary();
+  await loadSidebarBudget();
+  return data;
+}
+
+async function createPlannedPlacementFromCandidate(candidate, payload) {
+  const boardId = candidate?.boardId || S.panes[candidate?.paneIdx]?.boardId;
+  const meetings = createAssistCandidateMeetings(candidate).map(meeting => ({
+    day: meeting.day,
+    start_time: meeting.start,
+    end_time: meeting.end,
+  }));
+  if (!boardId || !meetings.length) {
+    notify.warning(IS_AR ? 'Ø§Ø®ØªØ± Ø®Ø§Ù†Ø© ÙØ§Ø±ØºØ©' : 'Choose an empty slot');
+    return null;
+  }
+  const data = await createPlannedPlacementFromMeetings(boardId, payload, meetings);
+  if (!data) return null;
+  const placements = Array.isArray(data.placements) && data.placements.length
+    ? data.placements
+    : [data.placement].filter(Boolean);
+  if (placements.length > 1) {
+    S.undoStack.push({
+      type: 'bundle_create',
+      placement_ids: placements.map(item => item.id),
+      board_id: boardId,
+      payload: {
+        course_code: payload.course_code,
+        course_key: payload.course_key || payload.course_code,
+        course_name: payload.course_name || payload.course_code,
+        section_label: payload.section_label,
+        max_per_section: payload.max_per_section || 40,
+      },
+      meetings,
+      label: createAssistLabel(payload),
+    });
+  } else if (placements[0]) {
+    S.undoStack.push({
+      type: 'create',
+      placement_id: placements[0].id,
+      board_id: boardId,
+      term_section_id: placements[0].term_section_id,
+      day: meetings[0].day,
+      start_time: meetings[0].start_time,
+      end_time: meetings[0].end_time,
+      room: '',
+    });
+  }
+  S.redoStack = [];
+  updateUndoRedoButtons();
+  await loadAndRenderPane(candidate.paneIdx);
+  await refreshBoardsSummary();
+  await loadSidebarBudget();
+  return data;
+}
+
+async function applyCreateAssistToCell(paneIdx, cell) {
+  if (!S.createAssist.active || !cell?.dataset.createAssist || !S.createAssist.payload) return false;
+  const key = cell.dataset.createAssistKey || '';
+  const candidate = key ? S.createAssist.candidates.get(key) : null;
+  const data = candidate
+    ? await createPlannedPlacementFromCandidate(candidate, S.createAssist.payload)
+    : await createPlannedPlacementFromCell(paneIdx, cell, S.createAssist.payload);
+  if (data) clearCreateSectionAssist();
   return true;
 }
 
@@ -1736,49 +3208,16 @@ async function onCellDrop(paneIdx, cell, e) {
   let payload;
   try { payload = JSON.parse(e.dataTransfer.getData('text/plain')); } catch { return; }
 
-  const day = cell.dataset.day;
-  const start = cell.dataset.start;
-  const end = cell.dataset.end;
-
-  // Drag from sidebar: create a planned placement on the target pane's board.
   if (payload.type === 'create_planned') {
-    const boardId = S.panes[paneIdx].boardId;
-    if (!boardId) { notify.error(IS_AR ? 'اختر لوحة أولاً' : 'Select a board in this pane first'); return; }
-    const data = await api('/ops/tw/placements/create-planned/', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        board_id: boardId,
-        course_code: payload.course_code,
-        course_key: payload.course_key || payload.course_code,
-        course_name: payload.course_name || payload.course_code,
-        section_label: payload.section_label,
-        day, start_time: start, end_time: end,
-        capacity: payload.max_per_section || 40,
-      }),
-    });
-    if (!data) return;
-    const v = data.validation || {};
-    if ((v.critical_count || 0) > 0) {
-      notify.warning(IS_AR ? `تم الوضع مع ${v.critical_count} تعارض` : `Placed with ${v.critical_count} conflict(s)`);
-    } else {
-      notify.success(IS_AR ? 'تم الوضع' : 'Placed');
-    }
-    // Track as a 'create' action — undo will delete, redo will re-create.
-    S.undoStack.push({
-      type: 'create', placement_id: data.placement.id, board_id: boardId,
-      term_section_id: data.placement.term_section_id,
-      day, start_time: start, end_time: end, room: '',
-    });
-    S.redoStack = [];
-    updateUndoRedoButtons();
-    // Reload the target pane and refresh sidebar + aggregates
-    await loadAndRenderPane(paneIdx);
-    await refreshBoardsSummary();
-    await loadSidebarBudget();
+    await createPlannedPlacementFromCell(paneIdx, cell, payload);
+    clearCreateSectionAssist();
     return;
   }
   if (payload.type !== 'move' || !payload.placement_id) return;
 
+  const day = cell.dataset.day;
+  const start = cell.dataset.start;
+  const end = cell.dataset.end;
   await applyCandidateMove({
     placementId: payload.placement_id,
     targetPaneIdx: paneIdx,
@@ -1795,7 +3234,9 @@ async function refreshBoardsSummary() {
   const bdata = await api(`/ops/tw/boards/?scenario_id=${S.scenarioId}`);
   if (bdata && bdata.boards) {
     S.boards = bdata.boards;
+    S.scenarioSummary = bdata.scenario_summary || null;
     S.crossBoardClashCount = Number(bdata.cross_board_clashes || 0);
+    S.crossBoardAffectedCount = Number(bdata.cross_board_affected_students || 0);
     updateAggregateMetrics();
     renderSlotBar();
   }
@@ -1803,6 +3244,12 @@ async function refreshBoardsSummary() {
   // Invalidate capacity cache and refresh the panels if open — mutations
   // may have changed conflict counts and capacity deltas.
   RP.capacity = {};
+  RP.studentBlockers = {
+    token: RP.studentBlockers.token + 1,
+    scenarioId: null,
+    data: null,
+    activeCourse: RP.studentBlockers.activeCourse,
+  };
   RP.fixQueue.cache = {};
   RP.fixQueue.items = [];
   RP.fixQueue.token += 1;
@@ -1834,14 +3281,64 @@ function broadcastHover(sourcePaneIdx, day, start) {
 }
 
 /* ── Layout ── */
+function paneSlotSnapshot() {
+  const q = $('twsQuad');
+  if (!q) return [];
+  return Array.from(q.children)
+    .filter(el => el.classList && el.classList.contains('tws-pane'))
+    .map(el => ({ el, idx: el.dataset.idx }));
+}
+
+function restorePaneSlots(slots) {
+  const q = $('twsQuad');
+  if (!q || !Array.isArray(slots)) return;
+  slots.forEach(slot => {
+    if (!slot || !slot.el) return;
+    slot.el.dataset.idx = String(slot.idx);
+    q.appendChild(slot.el);
+  });
+}
+
+function updateMaximiseButtons() {
+  const restore = !!S.maximised;
+  document.querySelectorAll('[data-action="maximise"]').forEach(btn => {
+    btn.textContent = restore ? '⤡' : '⤢';
+    btn.classList.toggle('active', restore);
+    btn.setAttribute('aria-label', restore ? 'Restore split layout' : 'Maximise pane');
+    btn.title = restore ? 'Restore split layout' : 'Maximise pane';
+  });
+}
+
+function restoreMaximisedPane(layoutOverride = null) {
+  const snap = S.maximised;
+  if (!snap) return false;
+  S.maximised = null;
+  if (Array.isArray(snap.panes)) S.panes = snap.panes;
+  restorePaneSlots(snap.domSlots);
+  const cols = layoutOverride?.cols || snap.cols || 2;
+  const rows = layoutOverride?.rows || snap.rows || 2;
+  applyLayout(cols, rows, { keepMaximisedState: true });
+  for (let i = 0; i < paneCount(); i++) {
+    const p = S.panes[i];
+    if (!p || !p.boardId || !p.boardData) renderPaneEmpty(i);
+    else renderPane(i);
+  }
+  updateMaximiseButtons();
+  return true;
+}
+
 // Apply an arbitrary C×R layout (clamped to [1..4] on each axis). Viewport
 // fit is enforced by the picker before this is called, but we clamp again
 // defensively so programmatic callers (shortcuts, maximise) never wedge a
 // shape that can't render.
-function applyLayout(cols, rows) {
-  const prev = paneCount();
+function applyLayout(cols, rows, opts = {}) {
   const c = Math.max(1, Math.min(4, cols | 0));
   const r = Math.max(1, Math.min(4, rows | 0));
+  if (S.maximised && !opts.keepMaximisedState) {
+    restoreMaximisedPane({ cols: c, rows: r });
+    return;
+  }
+  const prev = paneCount();
   S.cols = c; S.rows = r;
   const q = $('twsQuad');
   q.style.setProperty('--tws-cols', String(c));
@@ -1875,9 +3372,19 @@ function applyLayout(cols, rows) {
     // slot count it shows is derived from paneCount().
     renderSlotBar();
   }
+  updateMaximiseButtons();
 }
 function maximisePane(idx) {
-  applyLayout(1, 1);
+  if (S.maximised) {
+    restoreMaximisedPane();
+    return;
+  }
+  S.maximised = {
+    cols: S.cols,
+    rows: S.rows,
+    panes: S.panes.slice(),
+    domSlots: paneSlotSnapshot(),
+  };
   if (idx !== 0) {
     // Swap the whole DOM slots (node + data-idx) so paneEl(i) keeps
     // returning the element that holds pane state i. Previously only the
@@ -1893,9 +3400,10 @@ function maximisePane(idx) {
       b.dataset.idx = '0';
     }
     const tmp = S.panes[0]; S.panes[0] = S.panes[idx]; S.panes[idx] = tmp;
-    renderSlotBar();
-    for (let i = 0; i < paneCount(); i++) renderPane(i);
   }
+  applyLayout(1, 1, { keepMaximisedState: true });
+  for (let i = 0; i < paneCount(); i++) renderPane(i);
+  updateMaximiseButtons();
 }
 
 /* ── Matrix layout picker ──
@@ -2027,9 +3535,19 @@ function toggleRpanel(force) {
   RP.open = (typeof force === 'boolean') ? force : !RP.open;
   const body = $('twsBody');
   const btn = $('twsRpanelToggle');
+  const panel = $('twsRpanel');
   body.classList.toggle('rp-open', RP.open);
-  if (btn) btn.classList.toggle('primary', RP.open);
+  if (btn) {
+    btn.classList.toggle('primary', RP.open);
+    btn.setAttribute('aria-expanded', String(RP.open));
+  }
+  if (panel) panel.setAttribute('aria-hidden', String(!RP.open));
   if (RP.open) renderRpanel();
+}
+function closeRpanel({ focusTrigger = false } = {}) {
+  if (!RP.open) return;
+  toggleRpanel(false);
+  if (focusTrigger) document.querySelector('#twsViewMenu > summary')?.focus();
 }
 function setRpanelTab(tab) {
   RP.tab = tab;
@@ -2061,7 +3579,9 @@ function renderRpanel() {
   const body = $('twsRpanelBody');
   if (!body) return;
   if (RP.tab === 'issues') renderRpanelIssues(body);
+  else if (RP.tab === 'students') renderRpanelStudentBlockers(body);
   else if (RP.tab === 'capacity') renderRpanelCapacity(body);
+  else if (RP.tab === 'repair') renderRpanelRepair(body);
   else if (RP.tab === 'selection') renderRpanelSelection(body);
 }
 
@@ -2243,13 +3763,29 @@ function roomCodeKey(roomCode) {
   return String(roomCode || '').trim().toUpperCase();
 }
 
+function roomIsAssignable(room) {
+  return !!room?.available
+    && room.fits_type !== false
+    && room.fits_gender !== false
+    && room.fits_capacity !== false;
+}
+
+function roomIsScheduleClean(room) {
+  return roomIsAssignable(room)
+    && (room.schedule_clean ?? room.slot_clean) !== false
+    && (room.policy_clean ?? true) !== false
+    && room.department_fit !== false
+    && Number(room.validation?.critical_count || 0) === 0
+    && Number(room.validation?.warning_count || 0) === 0;
+}
+
 function bestRoomCandidate(roomData, currentRoom) {
   const rooms = roomData?.candidates || [];
   const current = roomCodeKey(currentRoom);
-  return rooms.find(room => room.available && room.slot_clean && roomCodeKey(room.room_code) !== current)
-    || rooms.find(room => room.available && roomCodeKey(room.room_code) !== current)
-    || rooms.find(room => room.available && room.slot_clean)
-    || rooms.find(room => room.available)
+  return rooms.find(room => roomIsScheduleClean(room) && roomCodeKey(room.room_code) !== current)
+    || rooms.find(room => roomIsAssignable(room) && roomCodeKey(room.room_code) !== current)
+    || rooms.find(room => roomIsScheduleClean(room))
+    || rooms.find(room => roomIsAssignable(room))
     || null;
 }
 
@@ -2282,21 +3818,14 @@ async function roomCandidatesForGuidedSlot(placementId, slot) {
 
 function guidedCandidateRank(item) {
   const c = item?.candidate || {};
-  return (
-    (canBundleCandidate(c) ? 160000 : 0)
-    + Number(c.impact_improvement || 0) * 1000
-    + Number(c.student_improvement || 0) * 100
-    + Number(c.critical_improvement || 0) * 100
-    + Number(c.warning_improvement || 0) * 10
-    - Number(c.score || 0)
-  );
+  return quickFixCandidateRank(c);
 }
 
 function guidedRoomRank(item) {
   const room = item?.room || {};
   return (
-    (room.available ? 100000 : 0)
-    + (room.slot_clean ? 20000 : 0)
+    (roomIsAssignable(room) ? 100000 : 0)
+    + (roomIsScheduleClean(room) ? 20000 : 0)
     - Number(room.score || 0)
   );
 }
@@ -2336,8 +3865,10 @@ async function buildGuidedTimeResolver(action, locatedItems) {
   const options = [];
   await Promise.all(locatedItems.map(async item => {
     const data = await api(`/ops/tw/placements/${item.placement.id}/slot-candidates/`);
-    const candidate = bestVisibleQueueCandidate(item.paneIdx, item.placement, data);
+    let candidate = bestVisibleQueueCandidate(item.paneIdx, item.placement, data);
     if (!candidate) return;
+    candidate = await enrichMoveCandidate(item.placement.id, item.placement, candidate);
+    if (!candidateIsValidatedSafe(candidate)) return;
     const slot = guidedSlotFromCandidate(candidate);
     const roomData = await roomCandidatesForGuidedSlot(item.placement.id, slot);
     options.push({
@@ -2358,7 +3889,7 @@ async function buildGuidedTimeResolver(action, locatedItems) {
       status: 'empty',
       mode: 'time',
       action,
-      message: 'No improving empty slot is visible for this action. Open another board pane or unlock protected sections.',
+      message: 'No automatically applicable improving empty slot is visible for this action. Open another board pane or review the section manually.',
     };
   }
   options.sort((a, b) => guidedCandidateRank(b) - guidedCandidateRank(a));
@@ -2400,23 +3931,50 @@ async function focusMissingSectionAction(action) {
   const search = $('twsSectionSearch');
   if (search) search.value = SB.search;
   await loadSidebarBudget();
-  notify.info && notify.info(`Opened required sections for ${action.course_code || 'this course'}`);
+  const actionKey = String(action.course_key || '').trim().toUpperCase();
+  const actionCode = String(action.course_code || '').trim().toUpperCase();
+  const target = SB.budget.find(b => {
+    const sameCourse = actionKey
+      ? String(courseKeyOf(b) || '').toUpperCase() === actionKey
+      : (!actionCode || String(b.course_code || '').toUpperCase() === actionCode);
+    const remaining = Number(b.remaining_sections ?? Math.max(0, Number(b.planned_sections || 0) - Number(b.used_sections || 0)));
+    return sameCourse && remaining > 0;
+  });
+  if (!target) {
+    notify.warning && notify.warning(`No remaining required section was found for ${action.course_code || 'this course'}`);
+    return null;
+  }
+  const payload = createPayloadFromBudgetRow(target);
+  beginCreateSectionAssist(payload);
+  const required = target.required_meetings_per_section || action.required_meetings_per_section || 1;
+  notify.info && notify.info(required > 1
+    ? `Select a ranked full ${required}-meeting pattern for ${createAssistLabel(payload)}`
+    : `Select a highlighted slot for ${createAssistLabel(payload)}`);
+  return payload;
 }
 
 async function beginGuidedAction(action) {
   if (!action) return;
   const token = ++RP.builder.resolverToken;
   RP.builder.activeAction = action;
-  RP.builder.resolver = { status: 'loading', action, message: 'Building the safest guided fix...' };
+  RP.builder.resolver = { status: 'loading', action, message: 'Building a guided fix...' };
 
   const placementIds = actionPlacementIds(action);
   if (!placementIds.length) {
-    if (action.kind === 'missing_section') await focusMissingSectionAction(action);
+    if (action.kind === 'missing_section' && action.board_id) await ensureActionBoardVisible(action);
+    if (token !== RP.builder.resolverToken) return;
+    const createPayload = action.kind === 'missing_section'
+      ? await focusMissingSectionAction(action)
+      : null;
     RP.builder.resolver = {
-      status: 'manual',
+      status: createPayload ? 'manual' : 'empty',
       action,
       message: action.kind === 'missing_section'
-        ? 'Drag the missing section from Required Sections into a highlighted slot.'
+        ? ((action.requires_full_section_pattern && !createPayload)
+          ? 'This course needs a complete multi-meeting section pattern; single-slot placement is disabled.'
+          : createPayload
+          ? 'Click a highlighted empty slot to place the missing required section.'
+          : 'No remaining required section is available in the sidebar budget.')
         : 'This action needs a manual step before a placement can be selected.',
     };
     if (RP.open) renderRpanel();
@@ -2472,7 +4030,7 @@ function guidedResolverHtml(placement) {
     return `<div class="tws-guided-resolver loading">
       <div class="tws-guided-head"><b>Guided resolver</b><span>working</span></div>
       <div class="tws-guided-title">${esc(title)}</div>
-      <div class="tws-guided-detail">${esc(resolver.message || 'Computing the safest option...')}</div>
+      <div class="tws-guided-detail">${esc(resolver.message || 'Computing the best applicable option...')}</div>
     </div>`;
   }
   if (resolver.status !== 'ready') {
@@ -2485,8 +4043,9 @@ function guidedResolverHtml(placement) {
 
   const slot = resolver.slot || {};
   const room = resolver.room;
+  const roomClean = room ? roomIsScheduleClean(room) : false;
   const roomText = room
-    ? `${room.room_code}${room.capacity ? ` | ${room.capacity} seats` : ''}${room.slot_clean ? ' | clean' : room.available ? ' | available' : ''}`
+    ? `${room.room_code}${room.capacity ? ` | ${room.capacity} seats` : ''}${roomClean ? ' | clean schedule' : roomIsAssignable(room) ? ' | room fits' : ''}`
     : 'No room change suggested';
   const buttonText = resolver.applying ? 'Applying...' : 'Apply guided fix';
   let impactHtml = '';
@@ -2528,6 +4087,19 @@ async function applyGuidedResolver() {
     const data = await applyRoomCandidate(resolver.placementId, resolver.room, resolver.slot);
     ok = data !== null;
   } else {
+    if (!candidateIsValidatedSafe(resolver.candidate)) {
+      resolver.applying = false;
+      notify.warning('Guided fix paused: not validated safe. Review manually.');
+      if (RP.open && RP.tab === 'selection') renderRpanel();
+      return;
+    }
+    const regression = candidateRegressionReason(resolver.candidate);
+    if (regression) {
+      resolver.applying = false;
+      notify.warning(`Guided fix paused: ${regression}. Review manually.`);
+      if (RP.open && RP.tab === 'selection') renderRpanel();
+      return;
+    }
     const located = findPlacement(resolver.placementId);
     const roomCode = resolver.room?.room_code && roomCodeKey(resolver.room.room_code) !== roomCodeKey(located?.placement?.room)
       ? resolver.room.room_code
@@ -2613,19 +4185,18 @@ function bestVisibleQueueCandidate(paneIdx, placement, data) {
     .filter(c => {
       const cell = slotCellForCandidate(paneIdx, c, c.kind || kind);
       if (!cell || cell.classList.contains('filled')) return false;
-      const improvement = Number(c.impact_improvement || 0);
-      const studentImprovement = Number(c.student_improvement || 0);
-      const criticalImprovement = Number(c.critical_improvement || 0);
-      return improvement > 0 || studentImprovement > 0 || criticalImprovement > 0;
+      return candidateIsValidatedSafe(c);
     })
-    .sort((a, b) =>
-      (canBundleCandidate(b) ? 160 : 0) - (canBundleCandidate(a) ? 160 : 0)
-      ||
-      Number(b.impact_improvement || 0) - Number(a.impact_improvement || 0)
-      || Number(b.student_improvement || 0) - Number(a.student_improvement || 0)
-      || Number(b.critical_improvement || 0) - Number(a.critical_improvement || 0)
-      || Number(a.score || 0) - Number(b.score || 0)
-    )[0] || null;
+    .sort(compareQuickFixCandidates)[0] || null;
+}
+
+function compareFixQueueItems(a, b) {
+  return compareQuickFixCandidates(a.candidate, b.candidate);
+}
+
+async function enrichFixQueueItem(item) {
+  const candidate = await enrichMoveCandidate(item.placementId, item.placement, item.candidate);
+  return { ...item, candidate };
 }
 
 function fixQueueCardHtml(item, idx) {
@@ -2659,6 +4230,10 @@ function fixQueueCardHtml(item, idx) {
     ${tagHtml}
     ${bundle}
     <div class="tws-fix-evidence">${esc(splitSlotDetail(c))}</div>
+    <div class="tws-fix-card-actions">
+      <button type="button" class="tws-mini-action tws-fix-preview" data-fix-idx="${idx}">Preview</button>
+      <button type="button" class="tws-mini-action tws-fix-apply" data-fix-idx="${idx}">Apply</button>
+    </div>
   </div>`;
 }
 
@@ -2681,14 +4256,14 @@ async function refreshFixQueue(boards) {
   }));
   if (token !== RP.fixQueue.token) return;
 
-  const items = [];
+  const preliminaryItems = [];
   placementIds.forEach(id => {
     const located = findPlacement(id);
     const data = RP.fixQueue.cache[id];
     if (!located || !data) return;
     const candidate = bestVisibleQueueCandidate(located.paneIdx, located.placement, data);
     if (!candidate) return;
-    items.push({
+    preliminaryItems.push({
       placementId: id,
       paneIdx: located.paneIdx,
       label: placementShortLabel(located.placement),
@@ -2697,12 +4272,16 @@ async function refreshFixQueue(boards) {
     });
   });
 
-  items.sort((a, b) =>
-    (canBundleCandidate(b.candidate) ? 160 : 0) - (canBundleCandidate(a.candidate) ? 160 : 0)
-    || Number(b.candidate.impact_improvement || 0) - Number(a.candidate.impact_improvement || 0)
-    || Number(b.candidate.student_improvement || 0) - Number(a.candidate.student_improvement || 0)
-    || Number(a.candidate.score || 0) - Number(b.candidate.score || 0)
-  );
+  preliminaryItems.sort(compareFixQueueItems);
+  const items = [];
+  for (const item of preliminaryItems.slice(0, 12)) {
+    if (token !== RP.fixQueue.token) return;
+    const enriched = await enrichFixQueueItem(item);
+    if (candidateIsHardRegression(enriched.candidate)) continue;
+    if (!candidateHasUsefulImprovement(enriched.candidate)) continue;
+    items.push(enriched);
+  }
+  items.sort(compareFixQueueItems);
   const seenMoveKeys = new Set();
   const dedupedItems = [];
   items.forEach(item => {
@@ -2724,7 +4303,24 @@ async function refreshFixQueue(boards) {
   }
   container.innerHTML = RP.fixQueue.items.map(fixQueueCardHtml).join('');
   container.querySelectorAll('.tws-fix-card').forEach(card => {
-    card.addEventListener('click', () => previewFixQueueItem(parseInt(card.dataset.fixIdx)));
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('button')) return;
+      previewFixQueueItem(parseInt(card.dataset.fixIdx));
+    });
+  });
+  container.querySelectorAll('.tws-fix-preview').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      previewFixQueueItem(parseInt(btn.dataset.fixIdx));
+    });
+  });
+  container.querySelectorAll('.tws-fix-apply').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      await applyFixQueueItem(parseInt(btn.dataset.fixIdx));
+    });
   });
 }
 
@@ -2749,6 +4345,47 @@ function previewFixQueueItem(idx) {
     previewSelectedMoveToSlot(item.paneIdx, targetCell);
   }
   if (sourceCell) sourceCell.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+async function applyFixQueueItem(idx) {
+  const item = RP.fixQueue.items[idx];
+  if (!item) return;
+  if (!candidateIsValidatedSafe(item.candidate)) {
+    notify.warning('Move paused: not validated safe. Preview it manually first.');
+    previewFixQueueItem(idx);
+    return;
+  }
+  const regression = candidateRegressionReason(item.candidate);
+  if (regression) {
+    notify.warning(`Move paused: ${regression}. Preview it manually first.`);
+    previewFixQueueItem(idx);
+    return;
+  }
+  const current = findPlacement(item.placementId);
+  if (!current || isPlacementProtected(current.placement)) {
+    notify.warning('This section is no longer available for quick apply.');
+    return;
+  }
+  const targetCell = slotCellForCandidate(
+    current.paneIdx,
+    item.candidate,
+    item.candidate.kind || slotKindForPlacement(current.placement)
+  );
+  if (!targetCell || targetCell.classList.contains('filled')) {
+    notify.warning('Target slot is no longer empty. Recalculate the queue.');
+    return;
+  }
+  const result = await applyCandidateMove({
+    placementId: item.placementId,
+    targetPaneIdx: current.paneIdx,
+    sourcePaneIdx: current.paneIdx,
+    candidate: item.candidate,
+    auto: true,
+  });
+  if (result) {
+    notify.success(`Applied ${item.label} to ${item.candidate.day} ${item.candidate.start}-${item.candidate.end}`);
+    await refreshBoardsSummary();
+  }
 }
 
 function confirmAutoFixModal({ boardLabel, moves, bundleCount }) {
@@ -2786,7 +4423,219 @@ function confirmAutoFixModal({ boardLabel, moves, bundleCount }) {
   });
 }
 
+const BULK_ROOM_ASSIGN_LIMIT = 20;
+
+async function collectCleanRoomAssignments(limit = BULK_ROOM_ASSIGN_LIMIT) {
+  const data = await api(`/ops/tw/scenarios/${S.scenarioId}/clean-room-assignments/?limit=${encodeURIComponent(limit)}`);
+  const items = (data?.assignments || []).map(item => ({
+    ...item,
+    placementId: item.placement_id,
+    boardId: item.board_id,
+    boardLabel: item.board_label || `Board ${item.board_id}`,
+    slot: item.slot || { day: item.day, start: item.start, end: item.end },
+  }));
+  return {
+    items,
+    totalActions: Number(data?.total_unassigned || items.length || 0),
+    skipped: data?.skipped || [],
+  };
+}
+
+function confirmBulkRoomModal({ items, totalActions }) {
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = value => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const rows = items.map(item => `<div class="tws-auto-row">
+      <b>${esc(item.label)}</b>
+      <span>${esc(item.boardLabel)} · ${esc(item.slot.day)} ${esc(item.slot.start)}-${esc(item.slot.end)}</span>
+      <em>${esc(item.room.room_code)}</em>
+    </div>`).join('');
+    const more = Math.max(0, totalActions - items.length);
+    openModal({
+      title: IS_AR ? 'Assign clean rooms' : 'Assign clean rooms',
+      sub: `${items.length} clean assignment${items.length === 1 ? '' : 's'}`,
+      body: `<div class="tws-auto-confirm">
+        <p>${IS_AR ? 'This applies only room candidates that fit requirements and have a clean schedule. Undo remains available for each assignment.' : 'This applies only room candidates that fit requirements and have a clean schedule. Undo remains available for each assignment.'}</p>
+        ${more ? `<p class="note">${more} more room action(s) can be handled in another batch.</p>` : ''}
+        ${rows}
+      </div>`,
+      buttons: [
+        { label: IS_AR ? 'Cancel' : 'Cancel', onClick: () => finish(false) },
+        { label: IS_AR ? 'Assign rooms' : 'Assign rooms', variant: 'primary', onClick: () => finish(true) },
+      ],
+      onClose: () => finish(false),
+    });
+  });
+}
+
+async function bulkAssignCleanRooms() {
+  if (!S.scenarioId) return;
+  const btn = $('twsBulkCleanRooms');
+  if (btn) btn.disabled = true;
+  let items = [];
+  let totalActions = 0;
+  try {
+    if (btn) btn.textContent = IS_AR ? 'Checking...' : 'Checking...';
+    const result = await collectCleanRoomAssignments();
+    items = result.items || [];
+    totalActions = result.totalActions || 0;
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = IS_AR ? 'Assign clean rooms' : 'Assign clean rooms';
+    }
+  }
+  if (!items.length) {
+    notify.warning(IS_AR ? 'No clean room assignments are ready.' : 'No clean room assignments are ready.');
+    return;
+  }
+  const ok = await confirmBulkRoomModal({ items, totalActions });
+  if (!ok) return;
+
+  if (btn) btn.disabled = true;
+  let data = null;
+  try {
+    data = await api(`/ops/tw/scenarios/${S.scenarioId}/clean-room-assignments/apply/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ limit: BULK_ROOM_ASSIGN_LIMIT }),
+    });
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+  const appliedRows = data?.applied || [];
+  const applied = Number(data?.applied_count || appliedRows.length || 0);
+  const touchedBoards = new Set(appliedRows.map(row => Number(row.board_id)).filter(Boolean));
+  if (appliedRows.length) {
+    S.undoStack.push({
+      type: 'bundle_move',
+      label: 'bulk_clean_rooms',
+      moves: appliedRows.map(row => ({
+        type: 'move',
+        placement_id: row.placement_id,
+        old_day: row.old_day || row.day,
+        old_start: row.old_start || row.start,
+        old_end: row.old_end || row.end,
+        old_room: row.old_room || '',
+        new_day: row.new_day || row.day,
+        new_start: row.new_start || row.start,
+        new_end: row.new_end || row.end,
+        new_room: row.new_room || row.room?.room_code || '',
+      })),
+    });
+    S.redoStack = [];
+    updateUndoRedoButtons();
+  }
+  RP.builder.roomCache = {};
+  RP.builder.actions = [];
+  for (let i = 0; i < paneCount(); i += 1) {
+    if (touchedBoards.has(Number(S.panes[i].boardId))) await loadAndRenderPane(i);
+  }
+  await refreshBoardsSummary();
+  await loadSidebarBudget();
+  if (RP.open && RP.tab === 'issues') renderRpanel();
+  if (applied) {
+    notify.success(`Assigned ${applied} clean room${applied === 1 ? '' : 's'}`);
+  } else {
+    notify.warning(IS_AR ? 'No rooms were assigned.' : 'No rooms were assigned.');
+  }
+}
+
 async function autoFixOneBoard() {
+  if (!S.scenarioId) return;
+  const selectedBoardId = Number.isFinite(S.selectedPaneIdx)
+    ? Number(S.panes[S.selectedPaneIdx]?.boardId || 0)
+    : 0;
+  const seed = RP.fixQueue.items.find(item => (
+    selectedBoardId && Number(S.panes[item.paneIdx]?.boardId || 0) === selectedBoardId
+  )) || RP.fixQueue.items[0];
+  const boardId = selectedBoardId || Number(seed ? S.panes[seed.paneIdx]?.boardId || 0 : 0);
+  if (!boardId) {
+    notify.warning(IS_AR ? 'No board selected.' : 'No board is selected.');
+    return;
+  }
+  const boardLabel = (S.boards.find(b => Number(b.id) === Number(boardId)) || {}).label || `Board ${boardId}`;
+  const btn = $('twsAutoFixBoard');
+  if (btn) btn.disabled = true;
+  let preview = null;
+  try {
+    const qs = new URLSearchParams({ board_id: String(boardId), limit: '3' });
+    preview = await api(`/ops/tw/scenarios/${S.scenarioId}/safe-time-moves/?${qs.toString()}`);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+  const moves = (preview?.moves || []).map(row => ({
+    ...row,
+    placementId: row.placement_id,
+    boardId: row.board_id,
+    label: row.label || `${row.course_code || 'Course'}-${row.section || ''}`,
+    candidate: row.candidate || {
+      day: row.new_day,
+      start: row.new_start,
+      end: row.new_end,
+      student_improvement: 0,
+    },
+  }));
+  if (!moves.length) {
+    notify.warning(IS_AR ? 'No clean safe moves are ready for this board.' : 'No clean safe moves are ready for this board.');
+    return;
+  }
+  const bundleCount = moves.filter(item => canBundleCandidate(item.candidate)).length;
+  const ok = await confirmAutoFixModal({ boardLabel, moves, bundleCount });
+  if (!ok) return;
+
+  if (btn) btn.disabled = true;
+  let result = null;
+  try {
+    result = await api(`/ops/tw/scenarios/${S.scenarioId}/safe-time-moves/apply/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ board_id: boardId, limit: 3 }),
+    });
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+  const appliedRows = result?.applied || [];
+  const applied = Number(result?.applied_count || appliedRows.length || 0);
+  if (appliedRows.length) {
+    S.undoStack.push({
+      type: 'bundle_move',
+      label: 'bulk_safe_time_moves',
+      moves: appliedRows.map(row => ({
+        type: 'move',
+        placement_id: row.placement_id,
+        old_day: row.old_day,
+        old_start: row.old_start,
+        old_end: row.old_end,
+        old_room: row.old_room || '',
+        new_day: row.new_day,
+        new_start: row.new_start,
+        new_end: row.new_end,
+        new_room: row.new_room || '',
+      })),
+    });
+    S.redoStack = [];
+    updateUndoRedoButtons();
+  }
+  RP.fixQueue.cache = {};
+  RP.fixQueue.items = [];
+  for (let i = 0; i < paneCount(); i += 1) {
+    if (Number(S.panes[i].boardId) === Number(boardId)) await loadAndRenderPane(i);
+  }
+  if (applied) {
+    notify.success(IS_AR ? `Applied ${applied} move(s)` : `Auto-fix applied ${applied} move(s)`);
+  } else {
+    notify.warning(IS_AR ? 'No moves were applied.' : 'No moves were applied.');
+  }
+  await refreshBoardsSummary();
+  if (RP.open && RP.tab === 'issues') renderRpanel();
+}
+
+async function autoFixOneBoardClientFallback() {
   if (!RP.fixQueue.items.length) {
     notify.warning(IS_AR ? 'لا توجد نقلات مقترحة' : 'No suggested moves ready');
     return;
@@ -2799,6 +4648,8 @@ async function autoFixOneBoard() {
   const moves = RP.fixQueue.items
     .filter(item => S.panes[item.paneIdx]?.boardId === boardId)
     .filter(item => !isPlacementProtected(item.placement))
+    .filter(item => !candidateIsHardRegression(item.candidate))
+    .filter(item => candidateHasUsefulImprovement(item.candidate))
     .slice(0, 3);
   if (!moves.length) {
     notify.warning(IS_AR ? 'كل النقلات لهذه اللوحة محمية' : 'All moves on this board are protected');
@@ -2815,6 +4666,7 @@ async function autoFixOneBoard() {
     for (const item of moves) {
       const current = findPlacement(item.placementId);
       if (!current || isPlacementProtected(current.placement)) continue;
+      if (candidateIsHardRegression(item.candidate)) continue;
       const targetCell = slotCellForCandidate(current.paneIdx, item.candidate, item.candidate.kind || slotKindForPlacement(current.placement));
       if (!targetCell || targetCell.classList.contains('filled')) continue;
       const result = await applyCandidateMove({
@@ -2866,9 +4718,13 @@ function renderRpanelIssues(body) {
   $('twsRpCountIssues').textContent = String(total);
   if (total === 0) {
     body.innerHTML = `<div id="twsReadinessConsole">${readinessConsoleHtml(RP.builder.readiness)}</div>
+      <div class="tws-fix-actions">
+        <button class="tws-mini-action" id="twsBulkCleanRooms" type="button">${IS_AR ? 'Assign clean rooms' : 'Assign clean rooms'}</button>
+      </div>
       <div class="section-head fix">${IS_AR ? 'الخطوات التالية' : 'Next best actions'}<span class="n" id="twsNextActionsCount">...</span></div>
       <div id="twsNextActions" class="tws-builder-actions">${renderBuilderActionsHtml(RP.builder.actions.length ? RP.builder.actions : null)}</div>
       <div class="tws-empty-state"><span class="ic">✓</span>${IS_AR ? 'لا توجد مشاكل' : 'No issues'}</div>`;
+    body.querySelector('#twsBulkCleanRooms')?.addEventListener('click', bulkAssignCleanRooms);
     refreshBuilderConsole(body);
     return;
   }
@@ -2926,8 +4782,8 @@ function renderRpanelIssues(body) {
         <div class="meta">${esc(c.board_a_label || '')} ${esc(timeA)} vs ${esc(c.board_b_label || '')} ${esc(timeB)}</div>
         <div class="tws-student-preview">${studentChips}${moreStudents}</div>
         <div class="tws-clash-actions">
-          <button type="button" class="tws-mini-action tws-cross-fix" data-cross-fix='${esc(JSON.stringify(fixPayloadA))}'>Safe move ${esc(c.section_a || 'A')}</button>
-          <button type="button" class="tws-mini-action tws-cross-fix" data-cross-fix='${esc(JSON.stringify(fixPayloadB))}'>Safe move ${esc(c.section_b || 'B')}</button>
+          <button type="button" class="tws-mini-action tws-cross-fix" data-cross-fix='${esc(JSON.stringify(fixPayloadA))}'>Review move ${esc(c.section_a || 'A')}</button>
+          <button type="button" class="tws-mini-action tws-cross-fix" data-cross-fix='${esc(JSON.stringify(fixPayloadB))}'>Review move ${esc(c.section_b || 'B')}</button>
         </div>
       </div>
     </div>`;
@@ -2939,6 +4795,7 @@ function renderRpanelIssues(body) {
     <div class="section-head fix">${IS_AR ? 'قائمة الإصلاح' : 'Fix queue'}<span class="n" id="twsFixQueueCount">...</span></div>
     <div class="tws-fix-actions">
       <button class="tws-mini-action" id="twsAutoFixBoard" type="button">${IS_AR ? 'إصلاح لوحة واحدة' : 'Auto-fix one board'}</button>
+      <button class="tws-mini-action" id="twsBulkCleanRooms" type="button">${IS_AR ? 'Assign clean rooms' : 'Assign clean rooms'}</button>
       <button class="tws-mini-action" id="twsClearProtections" type="button">${IS_AR ? 'مسح الحماية' : 'Clear protections'}</button>
     </div>
     <div id="twsFixQueueBody" class="tws-fix-queue">
@@ -2962,6 +4819,7 @@ function renderRpanelIssues(body) {
   }
   body.innerHTML = html;
   body.querySelector('#twsAutoFixBoard')?.addEventListener('click', autoFixOneBoard);
+  body.querySelector('#twsBulkCleanRooms')?.addEventListener('click', bulkAssignCleanRooms);
   body.querySelector('#twsClearProtections')?.addEventListener('click', () => {
     resetProtections();
     saveProtections();
@@ -3051,12 +4909,193 @@ async function beginCrossBoardStudentFix(action) {
     kind: 'student_time_clash',
     severity: 'block',
     title: action.title || (IS_AR ? 'تعارض طلاب عبر اللوحات' : 'Student clash across boards'),
-    detail: action.detail || (IS_AR ? 'اختر نقلة آمنة تقلل الطلاب المتأثرين.' : 'Find a safer slot that reduces affected students.'),
-    cta: IS_AR ? 'اعرض النقلات الآمنة' : 'Show safe moves',
+    detail: action.detail || (IS_AR ? 'راجع النقلات المرشحة. يظهر تطبيق مباشر فقط عند عدم وجود تراجع.' : 'Review candidate moves. Direct apply appears only when no regression is found.'),
+    cta: IS_AR ? 'راجع النقلات' : 'Review moves',
     board_id: action.board_id,
     placement_ids: [action.placement_id],
   });
 }
+
+function setStudentBlockersCount(value) {
+  const el = $('twsRpCountStudents');
+  if (el) el.textContent = String(value || 0);
+}
+
+function renderRpanelStudentBlockers(body) {
+  if (!S.scenarioId) {
+    setStudentBlockersCount(0);
+    body.innerHTML = `<div class="tws-empty-state"><span class="ic">ⓘ</span>${IS_AR ? 'اختر سيناريو أولاً' : 'Select a scenario first'}</div>`;
+    return;
+  }
+  const scenarioId = S.scenarioId;
+  if (RP.studentBlockers.scenarioId === scenarioId && RP.studentBlockers.data) {
+    renderStudentBlockersNow(body, RP.studentBlockers.data);
+    return;
+  }
+  const token = ++RP.studentBlockers.token;
+  body.innerHTML = `<div class="tws-fix-empty">${IS_AR ? 'جاري حساب تعارضات الطلاب الفعلية...' : 'Calculating actual student blockers...'}</div>`;
+  api(`/ops/tw/scenarios/${scenarioId}/student-blockers/`).then(data => {
+    if (!data || token !== RP.studentBlockers.token || S.scenarioId !== scenarioId) return;
+    RP.studentBlockers.scenarioId = scenarioId;
+    RP.studentBlockers.data = data;
+    if (RP.open && RP.tab === 'students') renderStudentBlockersNow($('twsRpanelBody'), data);
+  });
+}
+
+function renderStudentBlockersNow(body, data) {
+  if (!body) return;
+  const summary = data?.summary || {};
+  const courses = data?.courses || [];
+  setStudentBlockersCount(summary.issue_students || summary.blocked_students || 0);
+  if (!data?.available) {
+    body.innerHTML = `<div class="tws-empty-state"><span class="ic">ⓘ</span>${IS_AR ? 'لا توجد بيانات طلاب كافية' : 'No student assignment data available'}</div>`;
+    return;
+  }
+  if (!courses.length) {
+    body.innerHTML = `<div class="tws-blocker-totals">
+      <div class="m"><b>0</b><span>${IS_AR ? 'طلاب عالقون' : 'blocked students'}</span></div>
+      <div class="m"><b>${Number(summary.actual_assigned_clashes || 0)}</b><span>${IS_AR ? 'تعارضات فعلية' : 'assigned clashes'}</span></div>
+    </div>
+    <div class="tws-empty-state"><span class="ic">✓</span>${IS_AR ? 'لا توجد تعارضات طلاب فعلية' : 'No actual student blockers'}</div>`;
+    return;
+  }
+  const rows = courses.slice(0, 60).map(studentBlockerCourseHtml).join('');
+  body.innerHTML = `<div class="tws-blocker-totals">
+    <div class="m"><b>${Number(summary.blocked_students || 0)}</b><span>${IS_AR ? 'طلاب عالقون' : 'blocked students'}</span></div>
+    <div class="m"><b>${Number(summary.blocked_course_requests || summary.unresolved_courses || 0)}</b><span>${IS_AR ? 'طلبات عالقة' : 'blocked requests'}</span></div>
+    <div class="m"><b>${Number(summary.actual_assigned_clashes || 0)}</b><span>${IS_AR ? 'تعارضات مسجلة' : 'assigned clashes'}</span></div>
+    <div class="m"><b>${Number(summary.course_count || courses.length)}</b><span>${IS_AR ? 'مقررات' : 'courses'}</span></div>
+  </div>
+  <div class="section-head cross">${IS_AR ? 'المقررات حسب الطلاب المتأثرين' : 'Courses by actual student impact'}<span class="n">${courses.length}</span></div>
+  ${rows}
+  ${courses.length > 60 ? `<div class="tws-empty-state" style="padding:8px 0">+${courses.length - 60} more</div>` : ''}`;
+
+  body.querySelectorAll('.tws-blocker-course').forEach(row => {
+    row.addEventListener('click', () => {
+      body.querySelectorAll('.tws-blocker-course.active').forEach(el => el.classList.remove('active'));
+      row.classList.add('active');
+      RP.studentBlockers.activeCourse = row.dataset.courseKey || '';
+      let ids = [];
+      try { ids = JSON.parse(row.dataset.placementIds || '[]'); } catch {}
+      const visible = highlightCoursePlacements(row.dataset.courseKey || '', ids);
+      const label = row.dataset.courseCode || row.dataset.courseKey || 'course';
+      const students = Number(row.dataset.students || 0);
+      const requests = Number(row.dataset.requests || 0);
+      $('twsStatusHover').textContent = visible
+        ? `${label}: ${students} students, ${requests} blocked request(s). Highlighted ${visible} visible placement(s).`
+        : `${label}: ${students} students, ${requests} blocked request(s). No visible placement for this course on the canvas.`;
+    });
+  });
+}
+
+function studentBlockerCourseHtml(row) {
+  const reasonCounts = row.reason_counts || {};
+  const allClash = Number(reasonCounts.all_clash || 0);
+  const mixed = Number(reasonCounts.mixed_blockers || 0);
+  const full = Number(reasonCounts.full || 0);
+  const reserve = Number(reasonCounts.reserve_only || 0);
+  const assignedClashStudents = Number(row.assigned_clash_student_count || 0);
+  const samples = (row.sample_students || []).slice(0, 4)
+    .map(s => `<span>${esc(s.student_id)}${s.program ? ` · ${esc(s.program)}` : ''}${s.risk_tier ? ` · ${esc(s.risk_tier)}` : ''}</span>`)
+    .join('');
+  const meta = [
+    `<span class="danger" title="Every current section for this course clashes with the student's assigned timetable.">all clash ${allClash}</span>`,
+    mixed ? `<span class="warn" title="A mix of time, capacity, reserve, or other blockers prevents assignment.">mixed ${mixed}</span>` : '',
+    full ? `<span class="warn" title="All currently usable sections are full.">full ${full}</span>` : '',
+    reserve ? `<span title="Only reserved seats remain under the current priority policy.">reserve ${reserve}</span>` : '',
+    assignedClashStudents ? `<span class="danger" title="Students currently assigned to overlapping sections.">assigned clash ${assignedClashStudents}</span>` : '',
+    `<span class="ok">${Number(row.section_count || 0)} section(s)</span>`,
+  ].filter(Boolean).join('');
+  return `<div class="tws-blocker-course${RP.studentBlockers.activeCourse === row.course_key ? ' active' : ''}"
+      data-course-key="${esc(row.course_key)}"
+      data-course-code="${esc(row.course_code)}"
+      data-students="${Number(row.issue_student_count || row.unique_student_count || 0)}"
+      data-requests="${Number(row.unresolved_course_count || 0)}"
+      data-placement-ids='${esc(JSON.stringify(row.placement_ids || []))}'>
+    <div class="tws-blocker-main">
+      <div class="tws-blocker-title">
+        <b>${esc(row.course_code || row.course_key)}</b>
+        <span>${esc(row.course_name || row.course_key || '')}</span>
+      </div>
+      <div class="tws-blocker-count"><b>${Number(row.issue_student_count || row.unique_student_count || 0)}</b>${IS_AR ? 'طالب' : 'students'}</div>
+    </div>
+    <div class="tws-blocker-meta">${meta}</div>
+    ${samples ? `<div class="tws-blocker-students">${samples}</div>` : ''}
+  </div>`;
+}
+
+function highlightCoursePlacements(courseKey, placementIds = []) {
+  const ids = Array.isArray(placementIds) ? placementIds.filter(id => id != null) : [];
+  document.querySelectorAll('.tws-pane .cell.highlight').forEach(c => c.classList.remove('highlight'));
+  let firstCell = null;
+  let count = 0;
+  ids.forEach(id => {
+    document.querySelectorAll(`.tws-pane .cell[data-placement-id="${id}"]`).forEach(cell => {
+      cell.classList.add('highlight');
+      count += 1;
+      if (!firstCell) firstCell = cell;
+    });
+  });
+  if (!count && courseKey) {
+    const wanted = normaliseCourseCode(courseKey);
+    const wantedCode = normaliseCourseCode(String(courseKey).split('::', 1)[0]);
+    S.panes.slice(0, paneCount()).forEach(pane => {
+      (pane.boardData?.placements || []).forEach(placement => {
+        const key = normaliseCourseCode(courseKeyOf(placement));
+        const code = normaliseCourseCode(placement.course_code);
+        if (key !== wanted && code !== wantedCode) return;
+        document.querySelectorAll(`.tws-pane .cell[data-placement-id="${placement.id}"]`).forEach(cell => {
+          cell.classList.add('highlight');
+          count += 1;
+          if (!firstCell) firstCell = cell;
+        });
+      });
+    });
+  }
+  if (firstCell) firstCell.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  setTimeout(() => document.querySelectorAll('.tws-pane .cell.highlight').forEach(c => c.classList.remove('highlight')), 3500);
+  return count;
+}
+
+function aggregateCapacityCourses(boards) {
+  const byCourse = new Map();
+  boards.forEach(b => {
+    const cap = RP.capacity[b.boardId];
+    if (!cap) return;
+    (cap.courses || []).forEach(c => {
+      const key = c.course_key || c.course_code || '';
+      if (!key) return;
+      const prev = byCourse.get(key) || {
+        course_key: key,
+        course_code: c.course_code || key,
+        course_name: c.course_name || '',
+        demand: 0,
+        raw_capacity: 0,
+        placed_sections: 0,
+        deficit: 0,
+      };
+      // Demand is scenario-level unique students, so count it once per
+      // course. Capacity is physical seats, so sum it across visible boards.
+      prev.demand = Math.max(prev.demand || 0, Number(c.demand || 0));
+      prev.raw_capacity += Number(c.raw_capacity || 0);
+      prev.placed_sections += Number(c.placed_sections || 0);
+      if (!prev.course_name && c.course_name) prev.course_name = c.course_name;
+      byCourse.set(key, prev);
+    });
+  });
+  const courses = [...byCourse.values()].map(c => ({
+    ...c,
+    deficit: Math.max(0, Number(c.demand || 0) - Number(c.raw_capacity || 0)),
+  })).sort((a, b) => (b.deficit || 0) - (a.deficit || 0) || (b.demand || 0) - (a.demand || 0) || a.course_code.localeCompare(b.course_code) || String(a.course_name || '').localeCompare(String(b.course_name || '')));
+  const totals = courses.reduce((acc, c) => {
+    acc.demand += Number(c.demand || 0);
+    acc.raw_capacity += Number(c.raw_capacity || 0);
+    acc.deficit += Number(c.deficit || 0);
+    return acc;
+  }, { demand: 0, raw_capacity: 0, deficit: 0 });
+  return { courses, totals };
+}
+
 function renderRpanelCapacity(body) {
   const boards = aggregateVisibleBoardsData();
   if (!boards.length) {
@@ -3077,24 +5116,10 @@ function renderRpanelCapacity(body) {
   if (!fetches.length) _renderCapacityNow(body, boards);
 }
 function _renderCapacityNow(body, boards) {
-  const byCourse = new Map();
-  let totalDemand = 0, totalCap = 0, totalDeficit = 0;
-  boards.forEach(b => {
-    const cap = RP.capacity[b.boardId];
-    if (!cap) return;
-    const t = cap.totals || {};
-    totalDemand += t.demand || 0;
-    totalCap += t.raw_capacity || 0;
-    totalDeficit += t.deficit || 0;
-    (cap.courses || []).forEach(c => {
-      const prev = byCourse.get(c.course_code) || { course_code: c.course_code, demand: 0, raw_capacity: 0, deficit: 0 };
-      prev.demand += c.demand || 0;
-      prev.raw_capacity += c.raw_capacity || 0;
-      prev.deficit += c.deficit || 0;
-      byCourse.set(c.course_code, prev);
-    });
-  });
-  const courses = [...byCourse.values()].sort((a, b) => (b.deficit || 0) - (a.deficit || 0));
+  const { courses, totals } = aggregateCapacityCourses(boards);
+  const totalDemand = totals.demand;
+  const totalCap = totals.raw_capacity;
+  const totalDeficit = totals.deficit;
   if (!courses.length) {
     body.innerHTML = `<div class="tws-empty-state"><span class="ic">ⓘ</span>${IS_AR ? 'لا توجد بيانات' : 'No capacity data'}</div>`;
     return;
@@ -3106,9 +5131,10 @@ function _renderCapacityNow(body, boards) {
   </div>`;
   courses.slice(0, 30).forEach(c => {
     const pct = c.demand > 0 ? Math.min(100, Math.round((c.raw_capacity / c.demand) * 100)) : 100;
+    const name = c.course_name && c.course_name !== c.course_code ? `<em>${esc(c.course_name)}</em>` : '';
     html += `<div class="tws-cap-row">
       <div class="hd">
-        <span class="code">${esc(c.course_code)}</span>
+        <span class="code" title="${esc(c.course_key || c.course_code)}">${esc(c.course_code)}${name}</span>
         <span class="nums">${c.demand} / ${c.raw_capacity}${c.deficit > 0 ? ` · <b class="deficit">-${c.deficit}</b>` : ''}</span>
       </div>
       <div class="bar${c.deficit > 0 ? ' deficit' : ''}"><span style="width:${pct}%"></span></div>
@@ -3118,6 +5144,1347 @@ function _renderCapacityNow(body, boards) {
     html += `<div class="tws-empty-state" style="padding:8px 0">${IS_AR ? '' : '+'} ${courses.length - 30} ${IS_AR ? 'أكثر' : 'more'}</div>`;
   }
   body.innerHTML = html;
+}
+
+function parseRepairBlockedIds(raw) {
+  const seen = new Set();
+  return String(raw || '')
+    .split(/[\s,;]+/)
+    .map(v => v.trim())
+    .filter(Boolean)
+    .map(v => Number.parseInt(v, 10))
+    .filter(v => Number.isFinite(v))
+    .filter(v => {
+      if (seen.has(v)) return false;
+      seen.add(v);
+      return true;
+    });
+}
+
+function buildRepairBlockedRequests(raw, placement) {
+  const courseKey = placement?.course_key || placement?.course_code || '';
+  return parseRepairBlockedIds(raw).map(studentId => ({
+    student_id: studentId,
+    course_key: courseKey,
+    status: 'blocked',
+    priority: 'normal',
+    reason: 'manual_repair_panel',
+    source: 'split_repair_panel',
+  }));
+}
+
+function approvalStatusForCandidate(run, candidateId) {
+  const rows = run?.approvals || [];
+  const row = [...rows].reverse().find(item => String(item.candidate_id || '') === String(candidateId || ''));
+  return row?.status || '';
+}
+
+function bestRepairCandidate(run) {
+  return (run?.candidates || []).find(c => c.status === 'feasible') || null;
+}
+
+function repairMetricHtml(label, value, cls = '') {
+  return `<div class="tws-repair-metric ${cls}"><b>${esc(value ?? 0)}</b><span>${esc(label)}</span></div>`;
+}
+
+function repairModeLabel(mode) {
+  const labels = {
+    conservative: 'Conservative',
+    balanced: 'Balanced',
+    simulation: 'Simulation',
+  };
+  return labels[String(mode || '').toLowerCase()] || 'Conservative';
+}
+
+function repairSolverStrategyLabel(strategy) {
+  const labels = {
+    min_cost_flow: 'Min-cost flow',
+    profile_pattern_cp_sat: 'Profile CP-SAT',
+    large_neighbourhood_cp_sat: 'Bounded LNS',
+    student_level_cp_sat: 'Student CP-SAT',
+  };
+  return labels[String(strategy || '')] || (strategy ? String(strategy).replace(/_/g, ' ') : 'Not solved');
+}
+
+function repairSolverStrategyChipsHtml(exact) {
+  if (!exact?.solver_strategy) return '';
+  const flow = exact.min_cost_flow || {};
+  const lns = exact.large_neighbourhood || {};
+  const profile = exact.profile_solver || {};
+  const warm = exact.warm_start || {};
+  const budget = exact.solver_budget || {};
+  const chips = [
+    `<span class="tws-repair-chip good">${esc(repairSolverStrategyLabel(exact.solver_strategy))}</span>`,
+  ];
+  if (flow.used) chips.push(`<span class="tws-repair-chip">${Number(flow.arc_count || 0)} flow arcs</span>`);
+  if (lns.used) chips.push(`<span class="tws-repair-chip">${Number(lns.relaxed_student_count || 0)} relaxed</span>`);
+  if (profile.strategy) chips.push(`<span class="tws-repair-chip">${Number(profile.pattern_count || 0)} patterns</span>`);
+  if (warm.used) chips.push(`<span class="tws-repair-chip">${Number(warm.hint_count || 0)} hints</span>`);
+  if (budget.total_seconds) chips.push(`<span class="tws-repair-chip muted">${Number(budget.total_seconds || 0)}s budget</span>`);
+  return `<div class="tws-repair-reasons">${chips.join('')}</div>`;
+}
+
+function repairSolverStrategyCountsHtml(summary) {
+  const counts = summary?.student_solver?.solver_strategy_counts || {};
+  const entries = Object.entries(counts).filter(([, value]) => Number(value || 0) > 0);
+  if (!entries.length) return '';
+  const rows = entries.slice(0, 4).map(([strategy, value]) => (
+    `<span class="tws-repair-chip">${esc(repairSolverStrategyLabel(strategy))} ${Number(value)}</span>`
+  )).join('');
+  return `<div class="tws-repair-reasons">${rows}</div>`;
+}
+
+function repairStatusBadge(candidate, approvalStatus) {
+  const exact = candidate?.metrics?.exact_repair || {};
+  if (approvalStatus === 'applied') return `<span class="badge good">Applied</span>`;
+  if (approvalStatus === 'approved') return `<span class="badge good">Approved</span>`;
+  if (approvalStatus === 'rolled_back') return `<span class="badge">Rolled back</span>`;
+  if (candidate?.status === 'feasible' && ['optimal', 'feasible'].includes(candidate?.solver_status)) {
+    if (Number(exact.existing_lost || 0) === 0) return `<span class="badge good">${esc(candidate.solver_status)}</span>`;
+    return `<span class="badge bad">Loss blocked</span>`;
+  }
+  if (candidate?.status === 'rejected_before_solver') return `<span class="badge bad">Rejected</span>`;
+  return `<span class="badge warn">${esc(candidate?.solver_status || candidate?.status || 'Not solved')}</span>`;
+}
+
+function repairDecisionLabel(code) {
+  const labels = {
+    REPAIR_SIMULATION_ONLY: 'Simulation only',
+    REPAIR_CANDIDATE_NOT_FEASIBLE: 'Not feasible',
+    REPAIR_CANDIDATE_NOT_SOLVED: 'Not solved',
+    REPAIR_EXISTING_LOSS_BLOCKED: 'Existing loss',
+    REPAIR_NO_STUDENT_CHANGES: 'No audit rows',
+    REPAIR_ALREADY_APPLIED: 'Already applied',
+    REPAIR_ALREADY_ROLLED_BACK: 'Already rolled back',
+    REPAIR_UNRESOLVED_REMAIN: 'Unresolved remain',
+    REPAIR_MOVES_EXISTING_STUDENTS: 'Moves students',
+    REPAIR_MULTI_COURSE_CASCADE: 'Cascade',
+    REPAIR_RUN_STALE: 'Run stale',
+    REPAIR_RUN_NOT_COMPLETED: 'Run incomplete',
+    REPAIR_RUN_FINGERPRINT_MISSING: 'Fingerprint missing',
+    REPAIR_RUN_FINGERPRINT_ERROR: 'Fingerprint error',
+  };
+  return labels[String(code || '')] || String(code || 'Unknown').replace(/_/g, ' ').toLowerCase();
+}
+
+function repairDecisionGateHtml(candidate) {
+  const decision = candidate?.decision || {};
+  const blocked = Array.isArray(decision.blocked_reasons) ? decision.blocked_reasons : [];
+  const cautions = Array.isArray(decision.cautions) ? decision.cautions : [];
+  const chips = [];
+  if (decision.risk_level) {
+    chips.push(`<span class="tws-repair-chip${decision.risk_level === 'safe' ? ' good' : decision.risk_level === 'blocked' ? ' muted' : ''}">Decision ${esc(decision.risk_level)}</span>`);
+  }
+  blocked.slice(0, 3).forEach(row => chips.push(`<span class="tws-repair-chip muted">${esc(repairDecisionLabel(row.code))}</span>`));
+  cautions.slice(0, 3).forEach(row => chips.push(`<span class="tws-repair-chip">${esc(repairDecisionLabel(row.code))}</span>`));
+  return chips.length ? `<div class="tws-repair-reasons">${chips.join('')}</div>` : '';
+}
+
+function repairPreflightGateHtml(candidate) {
+  const preflight = candidate?.preflight || {};
+  if (!preflight.status) return '';
+  const blocked = Array.isArray(preflight.blocking_reasons) ? preflight.blocking_reasons : [];
+  const tone = preflight.status === 'fresh' ? ' good' : preflight.status === 'stale' ? ' muted' : '';
+  const chips = [
+    `<span class="tws-repair-chip${tone}">Preflight ${esc(preflight.status)}</span>`,
+  ];
+  if (preflight.approve_ready) chips.push('<span class="tws-repair-chip good">approval ready</span>');
+  if (preflight.apply_ready) chips.push('<span class="tws-repair-chip good">apply ready</span>');
+  blocked.slice(0, 3).forEach(row => chips.push(`<span class="tws-repair-chip muted">${esc(repairDecisionLabel(row.code))}</span>`));
+  return `<div class="tws-repair-reasons">${chips.join('')}</div>`;
+}
+
+function repairPreflightDetailHtml(candidate) {
+  const preflight = candidate?.preflight || {};
+  if (!preflight.status) return '';
+  const checks = Array.isArray(preflight.checks) ? preflight.checks : [];
+  const rows = checks.map(row => `<div class="tws-repair-change-row">
+    <span>${esc(String(row.name || '').replace(/_/g, ' '))} - ${esc(row.status || '')}</span>
+    <em>${esc(row.message || '')}</em>
+  </div>`).join('');
+  const blockers = (preflight.blocking_reasons || []).map(row => `<div class="tws-repair-explain-row">
+    <b>${esc(repairDecisionLabel(row.code))}</b><span>${esc(row.message || '')}</span>
+  </div>`).join('');
+  return `<div class="tws-repair-explain">
+    <div class="tws-repair-section-title">Current-state preflight</div>
+    <div class="tws-repair-reasons">
+      <span class="tws-repair-chip${preflight.current_state_valid ? ' good' : ' muted'}">${esc(preflight.status)}</span>
+      <span class="tws-repair-chip">${preflight.approve_ready ? 'approval ready' : 'approval blocked'}</span>
+      <span class="tws-repair-chip">${preflight.apply_ready ? 'apply ready' : 'apply blocked'}</span>
+    </div>
+    ${rows || (preflight.skipped_reason ? `<div class="tws-repair-explain-row"><b>Skipped</b><span>${esc(String(preflight.skipped_reason).replace(/_/g, ' '))}</span></div>` : '')}
+    ${blockers}
+  </div>`;
+}
+
+function repairRollbackReadinessHtml(run) {
+  const readiness = run?.rollback_preflight || {};
+  if (!readiness.status || readiness.status === 'not_applicable') return '';
+  const chips = [
+    `<span class="tws-repair-chip${readiness.rollback_ready ? ' good' : ' muted'}">Rollback ${esc(readiness.status)}</span>`,
+  ];
+  if (readiness.candidate_id) chips.push(`<span class="tws-repair-chip">${esc(readiness.candidate_id)}</span>`);
+  (readiness.blocking_reasons || []).slice(0, 3).forEach(row => {
+    chips.push(`<span class="tws-repair-chip muted">${esc(repairDecisionLabel(row.code))}</span>`);
+  });
+  return `<div class="tws-repair-reasons">${chips.join('')}</div>`;
+}
+
+function repairRollbackReadinessDetailHtml(run) {
+  const readiness = run?.rollback_preflight || {};
+  if (!readiness.status || readiness.status === 'not_applicable') return '';
+  const rows = (readiness.checks || []).map(row => `<div class="tws-repair-change-row">
+    <span>${esc(String(row.name || '').replace(/_/g, ' '))} - ${esc(row.status || '')}</span>
+    <em>${esc(row.message || '')}</em>
+  </div>`).join('');
+  const blockers = (readiness.blocking_reasons || []).map(row => `<div class="tws-repair-explain-row">
+    <b>${esc(repairDecisionLabel(row.code))}</b><span>${esc(row.message || '')}</span>
+  </div>`).join('');
+  return `<div class="tws-repair-explain">
+    <div class="tws-repair-section-title">Rollback readiness</div>
+    <div class="tws-repair-reasons">
+      <span class="tws-repair-chip${readiness.rollback_ready ? ' good' : ' muted'}">${esc(readiness.status)}</span>
+      ${readiness.candidate_id ? `<span class="tws-repair-chip">${esc(readiness.candidate_id)}</span>` : ''}
+    </div>
+    ${rows}
+    ${blockers}
+  </div>`;
+}
+
+function repairRunFreshnessHtml(run) {
+  const freshness = run?.run_freshness || {};
+  if (!freshness.status) return '';
+  const status = String(freshness.status || '');
+  const tone = freshness.recommendation_current ? ' good' : status === 'stale' || status === 'blocked' ? ' muted' : '';
+  const chips = [
+    `<span class="tws-repair-chip${tone}">Run ${esc(status.replace(/_/g, ' '))}</span>`,
+  ];
+  if (freshness.requires_rerun) chips.push('<span class="tws-repair-chip muted">re-run required</span>');
+  if (freshness.fingerprint_matches_analysis) chips.push('<span class="tws-repair-chip good">snapshot match</span>');
+  if (freshness.approval_state && freshness.approval_state !== 'none') {
+    chips.push(`<span class="tws-repair-chip">${esc(String(freshness.approval_state).replace(/_/g, ' '))}</span>`);
+  }
+  (freshness.blocking_reasons || []).slice(0, 2).forEach(row => {
+    chips.push(`<span class="tws-repair-chip muted">${esc(repairDecisionLabel(row.code))}</span>`);
+  });
+  return `<div class="tws-repair-reasons">${chips.join('')}</div>`;
+}
+
+function repairRunFreshnessDetailHtml(run) {
+  const freshness = run?.run_freshness || {};
+  if (!freshness.status) return '';
+  const rows = (freshness.checks || []).map(row => `<div class="tws-repair-change-row">
+    <span>${esc(String(row.name || '').replace(/_/g, ' '))} - ${esc(row.status || '')}</span>
+    <em>${esc(row.message || '')}</em>
+  </div>`).join('');
+  const blockers = (freshness.blocking_reasons || []).map(row => `<div class="tws-repair-explain-row">
+    <b>${esc(repairDecisionLabel(row.code))}</b><span>${esc(row.message || '')}</span>
+  </div>`).join('');
+  return `<div class="tws-repair-explain">
+    <div class="tws-repair-section-title">Run freshness</div>
+    <div class="tws-repair-reasons">
+      <span class="tws-repair-chip${freshness.recommendation_current ? ' good' : ' muted'}">${esc(String(freshness.status).replace(/_/g, ' '))}</span>
+      ${freshness.requires_rerun ? '<span class="tws-repair-chip muted">re-run required</span>' : ''}
+      ${freshness.fingerprint_matches_analysis ? '<span class="tws-repair-chip good">fingerprint match</span>' : '<span class="tws-repair-chip muted">fingerprint changed</span>'}
+    </div>
+    ${freshness.message ? `<div class="tws-repair-explain-row"><b>Status</b><span>${esc(freshness.message)}</span></div>` : ''}
+    ${rows}
+    ${blockers}
+  </div>`;
+}
+
+function repairAuditTimelineHtml(run, opts = {}) {
+  const timeline = Array.isArray(run?.audit_timeline) ? run.audit_timeline : [];
+  if (!timeline.length) return '';
+  const limit = opts.limit || 8;
+  const rows = timeline.slice(-limit).reverse().map(row => `<div class="tws-repair-change-row">
+    <span>${esc(String(row.event || '').replace(/_/g, ' '))}${row.candidate_id ? ` - ${esc(row.candidate_id)}` : ''}</span>
+    <em>${esc(row.summary || row.actor || row.created_at || '')}</em>
+  </div>`).join('');
+  return `<div class="tws-repair-explain">
+    <div class="tws-repair-section-title">Audit timeline</div>
+    ${rows}
+    ${run?.audit_logs_truncated ? '<div class="tws-repair-reasons"><span class="tws-repair-chip muted">log list truncated</span></div>' : ''}
+  </div>`;
+}
+
+function repairRankingChipsHtml(candidate) {
+  const ranking = candidate?.metrics?.ranking || {};
+  if (!ranking.strategy && !ranking.primary_reason) return '';
+  const chips = [];
+  if (ranking.score_rank) chips.push(`<span class="tws-repair-chip good">Rank ${Number(ranking.score_rank)}</span>`);
+  chips.push(`<span class="tws-repair-chip">${esc(String(ranking.strategy || 'ranking').replace(/_/g, ' '))}</span>`);
+  if (ranking.primary_reason) chips.push(`<span class="tws-repair-chip">${esc(ranking.primary_reason)}</span>`);
+  return `<div class="tws-repair-reasons">${chips.join('')}</div>`;
+}
+
+function repairRankingDetailHtml(candidate) {
+  const ranking = candidate?.metrics?.ranking || {};
+  if (!ranking.strategy) return '';
+  const rows = (ranking.criteria || []).map(row => `<div class="tws-repair-change-row">
+    <span>${esc(String(row.name || '').replace(/_/g, ' '))}</span>
+    <em>${esc(row.sense || '')} ${esc(row.value ?? '')}</em>
+  </div>`).join('');
+  return `<div class="tws-repair-explain">
+    <div class="tws-repair-section-title">Ranking evidence</div>
+    <div class="tws-repair-reasons">
+      ${ranking.score_rank ? `<span class="tws-repair-chip good">Rank ${Number(ranking.score_rank)}</span>` : ''}
+      <span class="tws-repair-chip">${esc(String(ranking.strategy || '').replace(/_/g, ' '))}</span>
+    </div>
+    ${ranking.primary_reason ? `<div class="tws-repair-explain-row"><b>Reason</b><span>${esc(ranking.primary_reason)}</span></div>` : ''}
+    ${rows}
+  </div>`;
+}
+
+function repairCandidateEvaluationSummaryHtml(summary) {
+  const evaluation = summary?.candidate_evaluation || {};
+  if (!evaluation.mode) return '';
+  const budget = evaluation.budget || {};
+  const budgetSkipped = Number(budget.budget_skipped_solver_count || 0);
+  return `<div class="tws-repair-reasons">
+    <span class="tws-repair-chip">${Number(evaluation.selected_candidate_count || 0)}/${Number(evaluation.prepared_candidate_count || 0)} candidates</span>
+    <span class="tws-repair-chip">${Number(evaluation.solver_invoked_count || 0)} solved</span>
+    <span class="tws-repair-chip">${Number(evaluation.total_evaluation_runtime_ms || 0)} ms</span>
+    ${budget.limit_seconds ? `<span class="tws-repair-chip muted">${Number(budget.limit_seconds)}s budget</span>` : ''}
+    ${budgetSkipped ? `<span class="tws-repair-chip muted">${budgetSkipped} skipped by budget</span>` : ''}
+    <span class="tws-repair-chip muted">${esc(String(evaluation.mode).replace(/_/g, ' '))}</span>
+  </div>${evaluation.best_candidate_reason ? `<span>${esc(evaluation.best_candidate_reason)}</span>` : ''}`;
+}
+
+function repairBlockedDemandHtml(summary, opts = {}) {
+  const demand = summary?.blocked_demand || {};
+  if (!demand.version) return '';
+  const rows = Array.isArray(demand.rows) ? demand.rows : [];
+  const limit = opts.limit || 0;
+  const active = Number(demand.active_request_count || 0);
+  const chips = [
+    `<span class="tws-repair-chip${active ? ' good' : ' muted'}">${active} active request${active === 1 ? '' : 's'}</span>`,
+    `<span class="tws-repair-chip">${esc(demand.target_course_key || '')}</span>`,
+  ];
+  if (demand.explicit_request_count || demand.explicit_student_count) {
+    chips.push(`<span class="tws-repair-chip">explicit ${Number(demand.explicit_request_count || demand.explicit_student_count || 0)}</span>`);
+  }
+  if (demand.inferred_request_count) chips.push(`<span class="tws-repair-chip">scenario ${Number(demand.inferred_request_count)}</span>`);
+  if (demand.already_registered_count) chips.push(`<span class="tws-repair-chip muted">${Number(demand.already_registered_count)} already registered</span>`);
+  if (demand.ignored_request_count) chips.push(`<span class="tws-repair-chip muted">${Number(demand.ignored_request_count)} ignored</span>`);
+  const detailRows = limit ? rows.slice(0, limit).map(row => `<div class="tws-repair-change-row">
+    <span>${esc(row.student_id)} - ${esc(row.course_key)} - ${esc(row.source || '')}</span>
+    <em>${row.already_registered_target ? 'already registered' : esc(row.reason || row.priority || '')}</em>
+  </div>`).join('') : '';
+  return `<div class="tws-repair-explain">
+    <div class="tws-repair-section-title">Blocked demand</div>
+    <div class="tws-repair-reasons">${chips.join('')}</div>
+    ${detailRows}
+  </div>`;
+}
+
+function repairReasonLabel(code) {
+  const labels = {
+    NO_ELIGIBLE_TARGET_SECTION: 'No eligible target section',
+    NO_TARGET_SECTION_OPTIONS: 'No target sections',
+    NO_CAPACITY_AFTER_REPAIR: 'No capacity after repair',
+    TIMETABLE_CLASH_WITH_PROTECTED_COURSES: 'Clashes with protected courses',
+    CAPACITY_OR_TIMETABLE_BLOCKED: 'Capacity or clash blocked',
+    CONSERVATIVE_SOLVER_NOT_SELECTED: 'Not selected by conservative solver',
+    SECTION_GENDER_MISMATCH: 'Gender side mismatch',
+    PROGRAM_MISMATCH: 'Programme mismatch',
+    MISSING_PREREQUISITES: 'Missing prerequisites',
+    PROTECTED_STUDENT: 'Protected student',
+    PROTECTED_ASSIGNMENT: 'Protected assignment',
+    LOCKED_SECTION: 'Locked section',
+    NO_POLICY_CLEAN_ROOM: 'No clean room',
+    TARGET_PLACEMENT_LOCKED: 'Target locked',
+    TIME_OR_INSTRUCTOR_CONFLICT: 'Time or instructor conflict',
+    COURSE_ALREADY_TAKEN_OR_STUDYING: 'Already taken or studying',
+  };
+  return labels[String(code || '')] || String(code || 'Unknown').replace(/_/g, ' ').toLowerCase();
+}
+
+function repairReasonCountsHtml(counts, opts = {}) {
+  const entries = Object.entries(counts || {}).filter(([, value]) => Number(value || 0) > 0);
+  if (!entries.length) return '';
+  const limit = opts.limit || 4;
+  const rows = entries.slice(0, limit).map(([code, value]) => (
+    `<span class="tws-repair-chip">${esc(repairReasonLabel(code))}${Number(value || 0) > 1 ? ` ${Number(value)}` : ''}</span>`
+  )).join('');
+  const extra = entries.length > limit ? `<span class="tws-repair-chip muted">+${entries.length - limit}</span>` : '';
+  return `<div class="tws-repair-reasons">${rows}${extra}</div>`;
+}
+
+function repairRejectionCounts(candidate) {
+  const counts = {};
+  (candidate?.rejection_reasons || []).forEach(reason => {
+    const code = reason?.code || 'UNKNOWN';
+    counts[code] = (counts[code] || 0) + 1;
+  });
+  return counts;
+}
+
+function repairCandidateReasonHtml(candidate) {
+  const exact = candidate?.metrics?.exact_repair || {};
+  const rejected = repairRejectionCounts(candidate);
+  const unresolved = exact.unresolved_diagnostics?.reason_counts || {};
+  const eligibility = exact.eligibility_policy?.rejection_counts || {};
+  if (Object.keys(rejected).length) return repairReasonCountsHtml(rejected);
+  if (Object.keys(unresolved).length) return repairReasonCountsHtml(unresolved);
+  if (Object.keys(eligibility).length) return repairReasonCountsHtml(eligibility, { limit: 3 });
+  return '';
+}
+
+function repairCascadeCardHtml(candidate) {
+  const cascade = candidate?.metrics?.exact_repair?.cascade || {};
+  if (!cascade.requires_multi_course_cascade) return '';
+  const courses = cascade.touched_course_count || (cascade.touched_courses || []).length || 0;
+  const students = cascade.multi_course_student_count || 0;
+  return `<div class="tws-repair-reasons">
+    <span class="tws-repair-chip good">Cascade</span>
+    <span class="tws-repair-chip">${Number(courses)} courses</span>
+    <span class="tws-repair-chip">${Number(students)} multi-course student${Number(students) === 1 ? '' : 's'}</span>
+  </div>`;
+}
+
+function repairChangeDirection(ch) {
+  return `${esc(ch.before_section_id || 'new')} -> ${esc(ch.after_section_id || '-')}`;
+}
+
+function repairChangeDetailHtml(ch) {
+  const reason = ch.details?.unresolved_reason;
+  if (reason?.code) return `<small>${esc(repairReasonLabel(reason.code))}</small>`;
+  const policy = ch.details?.policy || ch.details?.eligibility_policy || '';
+  return policy ? `<small>${esc(String(policy).replace(/_/g, ' '))}</small>` : '';
+}
+
+function repairRejectedDetailHtml(candidate) {
+  const reasons = candidate?.rejection_reasons || [];
+  if (!reasons.length) return '';
+  const rows = reasons.slice(0, 12).map(reason => `<div class="tws-repair-explain-row">
+    <b>${esc(repairReasonLabel(reason.code))}</b>
+    <span>${esc(reason.message || reason.code || '')}</span>
+  </div>`).join('');
+  return `<div class="tws-repair-explain"><div class="tws-repair-section-title">Rejected before solver</div>${rows}</div>`;
+}
+
+function repairUnresolvedDetailHtml(exact) {
+  const data = exact?.unresolved_diagnostics || {};
+  const students = data.students || [];
+  const counts = data.reason_counts || {};
+  if (!students.length && !Object.keys(counts).length) return '';
+  const studentRows = students.slice(0, 20).map(row => `<div class="tws-repair-explain-row">
+    <b>${esc(row.student_id)} - ${esc(repairReasonLabel(row.code))}</b>
+    <span>${esc(row.message || '')}</span>
+  </div>`).join('');
+  return `<div class="tws-repair-explain">
+    <div class="tws-repair-section-title">Unresolved reason</div>
+    ${repairReasonCountsHtml(counts, { limit: 6 })}
+    ${studentRows}
+  </div>`;
+}
+
+function repairEligibilityDetailHtml(exact) {
+  const policy = exact?.eligibility_policy || {};
+  const samples = policy.samples || [];
+  const counts = policy.rejection_counts || {};
+  const priorityCounts = policy.priority_group_counts || {};
+  const mobilityCounts = policy.mobility_policy_counts || {};
+  if (!samples.length && !Object.keys(counts).length && !Object.keys(priorityCounts).length) return '';
+  const priorityRows = Object.entries(priorityCounts)
+    .filter(([, value]) => Number(value || 0) > 0)
+    .map(([label, value]) => `<span class="tws-repair-chip">${esc(String(label).replace(/_/g, ' '))} ${Number(value)}</span>`)
+    .join('');
+  const mobilityRows = Object.entries(mobilityCounts)
+    .filter(([, value]) => Number(value || 0) > 0)
+    .map(([label, value]) => `<span class="tws-repair-chip">${esc(String(label).replace(/_/g, ' '))} ${Number(value)}</span>`)
+    .join('');
+  const rows = samples.slice(0, 8).map(sample => {
+    const reasonCounts = {};
+    (sample.reasons || []).forEach(reason => {
+      const code = reason?.code || 'UNKNOWN';
+      reasonCounts[code] = (reasonCounts[code] || 0) + 1;
+    });
+    return `<div class="tws-repair-explain-row">
+      <b>${esc(sample.student_id)} - ${esc(sample.course_key || '')} - ${esc(sample.section || '')}</b>
+      ${repairReasonCountsHtml(reasonCounts, { limit: 3 })}
+    </div>`;
+  }).join('');
+  return `<div class="tws-repair-explain">
+    <div class="tws-repair-section-title">Eligibility checks</div>
+    ${priorityRows || mobilityRows ? `<div class="tws-repair-reasons">${priorityRows}${mobilityRows}</div>` : ''}
+    ${repairReasonCountsHtml(counts, { limit: 6 })}
+    ${rows}
+  </div>`;
+}
+
+function repairObjectiveTraceHtml(exact) {
+  const trace = exact?.objective?.trace || [];
+  if (!trace.length) return '';
+  const rows = trace.map(stage => `<div class="tws-repair-change-row">
+    <span>${esc(stage.stage)} - ${esc(stage.name || '')} - ${esc(stage.status || '')}</span>
+    <em>${esc(stage.value ?? '-')} · ${Number(stage.runtime_ms || 0)} ms · ${Number(stage.branches || 0)} branches</em>
+  </div>`).join('');
+  return `<div class="tws-repair-explain"><div class="tws-repair-section-title">Objective stages</div>${rows}</div>`;
+}
+
+function repairSolverStrategyDetailHtml(exact) {
+  if (!exact?.solver_strategy) return '';
+  return `<div class="tws-repair-explain">
+    <div class="tws-repair-section-title">Solver strategy</div>
+    <div class="tws-repair-reasons">
+      <span class="tws-repair-chip good">${esc(repairSolverStrategyLabel(exact.solver_strategy))}</span>
+      <span class="tws-repair-chip">${Number(exact.variables || 0)} active vars</span>
+      <span class="tws-repair-chip">${Number(exact.student_level_variables || 0)} student vars baseline</span>
+      <span class="tws-repair-chip">${Number(exact.runtime_ms || 0)} ms</span>
+    </div>
+  </div>`;
+}
+
+function repairSolverBudgetDetailHtml(exact) {
+  const budget = exact?.solver_budget || {};
+  if (!budget.enabled) return '';
+  return `<div class="tws-repair-explain">
+    <div class="tws-repair-section-title">Solver budget</div>
+    <div class="tws-repair-reasons">
+      <span class="tws-repair-chip">${Number(budget.total_seconds || 0)}s candidate budget</span>
+      <span class="tws-repair-chip">${Number(budget.stage_seconds || 0)}s per stage</span>
+      <span class="tws-repair-chip">${Number(budget.runtime_ms || 0)} ms runtime</span>
+      <span class="tws-repair-chip${budget.proof_complete ? ' good' : ' muted'}">${budget.proof_complete ? 'proved' : 'bounded result'}</span>
+    </div>
+  </div>`;
+}
+
+function repairWarmStartDetailHtml(exact) {
+  const warm = exact?.warm_start || {};
+  if (!warm.enabled) return '';
+  return `<div class="tws-repair-explain">
+    <div class="tws-repair-section-title">Warm start</div>
+    <div class="tws-repair-reasons">
+      <span class="tws-repair-chip${warm.used ? ' good' : ' muted'}">${warm.used ? 'Used' : 'Not used'}</span>
+      <span class="tws-repair-chip">${esc(String(warm.strategy || warm.reason || 'solver hint').replace(/_/g, ' '))}</span>
+      <span class="tws-repair-chip">${Number(warm.hint_count || 0)} hints</span>
+      ${warm.profile_current_pattern_count ? `<span class="tws-repair-chip">${Number(warm.profile_current_pattern_count)} stable profiles</span>` : ''}
+      ${warm.current_assignment_hint_count ? `<span class="tws-repair-chip">${Number(warm.current_assignment_hint_count)} current assignments</span>` : ''}
+    </div>
+  </div>`;
+}
+
+function repairMinCostFlowDetailHtml(exact) {
+  const flow = exact?.min_cost_flow || {};
+  if (!flow.enabled && !flow.used) return '';
+  return `<div class="tws-repair-explain">
+    <div class="tws-repair-section-title">Min-cost flow shortcut</div>
+    <div class="tws-repair-reasons">
+      <span class="tws-repair-chip${flow.used ? ' good' : ' muted'}">${flow.used ? 'Used' : 'Not used'}</span>
+      <span class="tws-repair-chip">${esc(flow.reason || flow.strategy || 'simple one-course cases only')}</span>
+      <span class="tws-repair-chip">${Number(flow.student_count || 0)} students</span>
+      <span class="tws-repair-chip">${Number(flow.section_count || 0)} sections</span>
+      <span class="tws-repair-chip">${Number(flow.arc_count || 0)} arcs</span>
+    </div>
+  </div>`;
+}
+
+function repairLargeNeighbourhoodDetailHtml(exact) {
+  const lns = exact?.large_neighbourhood || {};
+  if (!lns.enabled && !lns.used) return '';
+  const attempts = Array.isArray(lns.attempts) ? lns.attempts : [];
+  const rows = attempts.slice(0, 8).map(row => {
+    const status = row.status || 'not_solved';
+    const detail = row.failure_reason || row.reason || '';
+    const vars = row.variables == null ? '' : ` - ${Number(row.variables)} vars`;
+    const recovered = Number(row.blocked_recovered || 0);
+    return `<div class="tws-repair-change-row" title="${esc(detail)}">
+    <span>${esc(row.name || 'neighbourhood')} - ${esc(status)}${detail ? ` - ${esc(detail)}` : ''}</span>
+    <em>${Number(row.relaxed_student_count || 0)} relaxed${vars}${recovered ? ` - ${recovered} recovered` : ''}</em>
+  </div>`;
+  }).join('');
+  return `<div class="tws-repair-explain">
+    <div class="tws-repair-section-title">Bounded LNS fallback</div>
+    <div class="tws-repair-reasons">
+      <span class="tws-repair-chip${lns.used ? ' good' : ' muted'}">${lns.used ? 'Used' : 'Not used'}</span>
+      <span class="tws-repair-chip">${esc(lns.reason || lns.neighbourhood || 'not needed')}</span>
+      <span class="tws-repair-chip">${Number(lns.relaxed_student_count || 0)} relaxed</span>
+      <span class="tws-repair-chip">${Number(lns.fixed_student_count || 0)} fixed</span>
+      <span class="tws-repair-chip">${Number(lns.neighbourhood_count || attempts.length || 0)} attempts</span>
+    </div>
+    ${rows}
+  </div>`;
+}
+
+function repairCascadeDetailHtml(exact) {
+  const cascade = exact?.cascade || {};
+  if (!cascade.required_change_count && !cascade.requires_multi_course_cascade) return '';
+  const courses = (cascade.touched_courses || []).join(', ') || '-';
+  const rows = (cascade.required_change_samples || []).slice(0, 20).map(row => `<div class="tws-repair-change-row">
+    <span>${esc(row.student_id)} - ${esc(row.course_key)} - ${esc(String(row.change_type || '').replace(/_/g, ' '))}</span>
+    <em>${esc(row.before_section_id || 'new')} -> ${esc(row.after_section_id || '-')}</em>
+  </div>`).join('');
+  return `<div class="tws-repair-explain">
+    <div class="tws-repair-section-title">Cascade impact</div>
+    <div class="tws-repair-reasons">
+      <span class="tws-repair-chip${cascade.requires_multi_course_cascade ? ' good' : ''}">${cascade.requires_multi_course_cascade ? 'Multi-course cascade' : 'Direct repair'}</span>
+      <span class="tws-repair-chip">${Number(cascade.touched_course_count || 0)} touched courses</span>
+      <span class="tws-repair-chip">${Number(cascade.required_change_count || 0)} required changes</span>
+    </div>
+    <div class="tws-repair-explain-row"><b>Courses</b><span>${esc(courses)}</span></div>
+    ${rows}
+  </div>`;
+}
+
+function repairCompressionDetailHtml(exact) {
+  const data = exact?.profile_compression || {};
+  if (!data.enabled) return '';
+  const profiles = data.sample_profiles || [];
+  const rows = profiles.slice(0, 8).map(row => `<div class="tws-repair-change-row">
+    <span>${esc(row.profile_id)} - ${Number(row.student_count || 0)} student${Number(row.student_count || 0) === 1 ? '' : 's'}</span>
+    <em>${Number(row.option_variable_count || 0)} vars</em>
+  </div>`).join('');
+  return `<div class="tws-repair-explain">
+    <div class="tws-repair-section-title">Profile compression</div>
+    <div class="tws-repair-reasons">
+      <span class="tws-repair-chip">${Number(data.student_count || 0)} students</span>
+      <span class="tws-repair-chip">${Number(data.profile_count || 0)} profiles</span>
+      <span class="tws-repair-chip">${Number(data.estimated_variable_reduction || 0)} fewer vars later</span>
+      ${data.solver_used ? '<span class="tws-repair-chip good">profile solver used</span>' : ''}
+    </div>
+    ${rows}
+  </div>`;
+}
+
+function repairConflictPolicyDetailHtml(exact) {
+  const policy = exact?.conflict_policy || {};
+  if (!policy.strategy) return '';
+  return `<div class="tws-repair-explain">
+    <div class="tws-repair-section-title">Conflict constraints</div>
+    <div class="tws-repair-reasons">
+      <span class="tws-repair-chip">${Number(policy.logical_conflict_edges || 0)} conflict edges</span>
+      <span class="tws-repair-chip">${Number(policy.at_most_one_constraints || 0)} grouped</span>
+      <span class="tws-repair-chip">${Number(policy.pairwise_constraints || 0)} pairwise</span>
+      ${policy.too_large ? '<span class="tws-repair-chip muted">limit reached</span>' : ''}
+    </div>
+  </div>`;
+}
+
+function repairCandidateCardHtml(candidate, run, isBest) {
+  const exact = candidate.metrics?.exact_repair || {};
+  const approvalStatus = approvalStatusForCandidate(run, candidate.candidate_id);
+  const decision = candidate.decision || {};
+  const preflight = candidate.preflight || {};
+  const simulationOnly = String(run?.run?.mode || '').toLowerCase() === 'simulation';
+  const fallbackCanApprove = candidate.status === 'feasible'
+    && ['optimal', 'feasible'].includes(candidate.solver_status)
+    && Number(exact.existing_lost || 0) === 0
+    && !simulationOnly
+    && !['approved', 'applied'].includes(approvalStatus);
+  const canApprove = (typeof decision.approve_allowed === 'boolean' ? decision.approve_allowed : fallbackCanApprove)
+    && preflight.approve_ready !== false;
+  const canApply = (typeof decision.apply_allowed === 'boolean' ? decision.apply_allowed : approvalStatus === 'approved' && !simulationOnly)
+    && preflight.apply_ready !== false;
+  const rejected = candidate.status !== 'feasible';
+  const changes = (run.student_changes || [])
+    .filter(ch => String(ch.candidate_id) === String(candidate.candidate_id))
+    .filter(ch => !['unchanged', 'unresolved'].includes(ch.change_type))
+    .slice(0, 4);
+  const changeRows = changes.length
+    ? `<div class="tws-repair-changes">${changes.map(ch => `<div class="tws-repair-change-row">
+        <span>${esc(ch.student_id)} · ${esc(ch.course_key)} · ${esc(ch.change_type.replace(/_/g, ' '))}</span>
+        <em>${esc(ch.before_section_id || 'new')} → ${esc(ch.after_section_id || '—')}</em>
+      </div>`).join('')}</div>`
+    : '';
+  const reasonsHtml = repairCandidateReasonHtml(candidate);
+  return `<div class="tws-repair-candidate ${isBest ? 'best' : ''} ${rejected ? 'rejected' : ''}">
+    <div class="hd">
+      <div class="when"><b>${esc(candidate.candidate_id)}</b><span>${esc(candidate.day)} ${esc(candidate.start_time)}-${esc(candidate.end_time)}</span></div>
+      ${repairStatusBadge(candidate, approvalStatus)}
+    </div>
+    <div class="tws-repair-metrics">
+      ${repairMetricHtml('Recovered', exact.blocked_recovered ?? '—')}
+      ${repairMetricHtml('Lost', exact.existing_lost ?? '—')}
+      ${repairMetricHtml('Moved', exact.students_moved ?? '—')}
+      ${repairMetricHtml('Unresolved', exact.unresolved_blocked ?? '—')}
+    </div>
+    <span>${candidate.room ? `Room ${esc(candidate.room)} · ` : ''}${candidate.student_change_count || 0} audited student change row(s)</span>
+    ${repairSolverStrategyChipsHtml(exact)}
+    ${repairCascadeCardHtml(candidate)}
+    ${repairDecisionGateHtml(candidate)}
+    ${repairPreflightGateHtml(candidate)}
+    ${repairRankingChipsHtml(candidate)}
+    ${simulationOnly ? '<div class="tws-repair-reasons"><span class="tws-repair-chip muted">Simulation only</span></div>' : ''}
+    ${reasonsHtml}
+    ${changeRows}
+    <div class="acts">
+      <button class="tws-mini-action" data-repair-detail="${esc(candidate.candidate_id)}" type="button">Details</button>
+      <button class="tws-mini-action" data-repair-report="${esc(candidate.candidate_id)}" type="button">Report</button>
+      <button class="tws-mini-action" data-repair-approve="${esc(candidate.candidate_id)}" type="button" ${canApprove ? '' : 'disabled'}>Approve</button>
+      <button class="tws-mini-action" data-repair-apply="${esc(candidate.candidate_id)}" type="button" ${canApply ? '' : 'disabled'}>Apply</button>
+    </div>
+  </div>`;
+}
+
+function repairRunSummaryHtml(run) {
+  if (!run) return '';
+  const summary = run.summary || {};
+  const solver = summary.student_solver || {};
+  const best = bestRepairCandidate(run);
+  const exact = best?.metrics?.exact_repair || solver.best_candidate_metrics || {};
+  const applied = summary.application?.status === 'applied';
+  const rolledBack = summary.rollback?.status === 'rolled_back';
+  const rollbackReady = run?.rollback_preflight?.rollback_ready !== false;
+  const mode = run?.run?.mode || RP.repair.mode || 'conservative';
+  const cacheHit = !!run?.cache?.hit;
+  return `<div class="tws-repair-summary">
+    <div class="tws-repair-metrics">
+      ${repairMetricHtml('Feasible', summary.feasible_candidate_count ?? 0)}
+      ${repairMetricHtml('Recovered', exact.blocked_recovered ?? 0)}
+      ${repairMetricHtml('Moved', exact.students_moved ?? 0)}
+      ${repairMetricHtml('Mode', repairModeLabel(mode))}
+    </div>
+    <span>${applied ? `Applied ${esc(summary.application.candidate_id || '')}` : rolledBack ? `Rolled back ${esc(summary.rollback.candidate_id || '')}` : `Best candidate ${esc(summary.best_candidate_id || '—')}`}</span>
+    ${repairSolverStrategyCountsHtml(summary)}
+    ${repairRunFreshnessHtml(run)}
+    ${repairBlockedDemandHtml(summary)}
+    ${repairCandidateEvaluationSummaryHtml(summary)}
+    ${repairRollbackReadinessHtml(run)}
+    ${cacheHit ? '<div class="tws-repair-reasons"><span class="tws-repair-chip good">Cached result reused</span></div>' : ''}
+    ${repairAuditTimelineHtml(run, { limit: 5 })}
+    ${run ? '<div style="margin-top:8px"><button class="tws-mini-action" id="twsRepairReport" type="button">Run report</button></div>' : ''}
+    ${applied ? `<div style="margin-top:8px"><button class="tws-mini-action danger" id="twsRepairRollback" type="button" ${rollbackReady ? '' : 'disabled'}>Rollback applied repair</button></div>` : ''}
+  </div>`;
+}
+
+function repairCandidateDetailModal(candidate, run) {
+  const exact = candidate.metrics?.exact_repair || {};
+  const changes = (run.student_changes || []).filter(ch => String(ch.candidate_id) === String(candidate.candidate_id));
+  const rows = changes.slice(0, 80).map(ch => `<div class="tws-repair-change-row">
+    <span>${esc(ch.student_id)} · ${esc(ch.course_key)} · ${esc(ch.change_type.replace(/_/g, ' '))}</span>
+    <em>${esc(ch.before_section_id || 'new')} → ${esc(ch.after_section_id || '—')}</em>
+  </div>`).join('');
+  openModal({
+    title: `Repair ${candidate.candidate_id}`,
+    sub: `${candidate.day} ${candidate.start_time}-${candidate.end_time}${candidate.room ? ` · ${candidate.room}` : ''}`,
+    width: 'wide',
+    body: `<div class="tws-repair-panel">
+      <div class="tws-repair-metrics">
+        ${repairMetricHtml('Recovered', exact.blocked_recovered ?? 0)}
+        ${repairMetricHtml('Lost', exact.existing_lost ?? 0)}
+        ${repairMetricHtml('Moved', exact.students_moved ?? 0)}
+        ${repairMetricHtml('Mode', repairModeLabel(run?.run?.mode || exact.mode || RP.repair.mode))}
+      </div>
+      ${repairSolverStrategyDetailHtml(exact)}
+      ${repairSolverBudgetDetailHtml(exact)}
+      ${repairWarmStartDetailHtml(exact)}
+      ${repairMinCostFlowDetailHtml(exact)}
+      ${repairLargeNeighbourhoodDetailHtml(exact)}
+      ${repairRunFreshnessDetailHtml(run)}
+      ${repairBlockedDemandHtml(run?.summary || {}, { limit: 12 })}
+      ${repairPreflightDetailHtml(candidate)}
+      ${repairRankingDetailHtml(candidate)}
+      ${repairAuditTimelineHtml(run, { limit: 10 })}
+      ${repairRejectedDetailHtml(candidate)}
+      ${repairUnresolvedDetailHtml(exact)}
+      ${repairCascadeDetailHtml(exact)}
+      ${repairCompressionDetailHtml(exact)}
+      ${repairConflictPolicyDetailHtml(exact)}
+      ${repairEligibilityDetailHtml(exact)}
+      ${repairObjectiveTraceHtml(exact)}
+      <div class="tws-repair-changes">${rows || '<span>No student changes were proposed for this candidate.</span>'}</div>
+    </div>`,
+    buttons: [{ label: 'Close' }],
+  });
+}
+
+function repairCandidateById(candidateId) {
+  const candidates = RP.repair.run?.candidates || [];
+  return candidates.find(c => String(c.candidate_id) === String(candidateId)) || null;
+}
+
+function repairActionMetricsHtml(candidate) {
+  const exact = candidate?.metrics?.exact_repair || {};
+  return `<div class="tws-repair-metrics">
+    ${repairMetricHtml('Recovered', exact.blocked_recovered ?? 0)}
+    ${repairMetricHtml('Lost', exact.existing_lost ?? 0)}
+    ${repairMetricHtml('Moved', exact.students_moved ?? 0)}
+    ${repairMetricHtml('Unresolved', exact.unresolved_blocked ?? 0)}
+  </div>`;
+}
+
+function confirmRepairAction(opts) {
+  return new Promise(resolve => {
+    let settled = false;
+    const done = value => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    openModal({
+      title: opts.title || 'Confirm repair action',
+      sub: opts.sub || '',
+      width: opts.width || '',
+      body: opts.body || '',
+      onClose: () => done(null),
+      buttons: [
+        { label: opts.cancelLabel || 'Cancel', onClick: () => done(null) },
+        {
+          label: opts.confirmLabel || 'Confirm',
+          variant: 'primary',
+          onClick: modal => {
+            if (opts.collect) done(opts.collect(modal));
+            else done(true);
+          },
+        },
+      ],
+    });
+  });
+}
+
+async function runRepairAnalysisFromPanel() {
+  if (!S.selectedPlacementId) return;
+  const placementId = S.selectedPlacementId;
+  const text = $('twsRepairBlockedIds')?.value || '';
+  RP.repair.blockedIdsText = text;
+  RP.repair.busy = true;
+  renderRpanel();
+  const data = await api('/ops/tw/repair/analyse/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      placement_id: placementId,
+      blocked_student_ids: parseRepairBlockedIds(text),
+      blocked_requests: buildRepairBlockedRequests(text, findPlacement(placementId)?.placement || {}),
+      mode: RP.repair.mode || 'conservative',
+      move_scope: RP.repair.moveScope || 'single_session',
+      active_plan_filter: activePlanFilter(),
+      limits: { max_candidates: 80, max_solver_seconds: 5, max_total_solver_seconds: 45 },
+    }),
+  });
+  RP.repair.busy = false;
+  if (!data) {
+    notify.error(IS_AR ? 'فشل تحليل الإصلاح' : 'Repair analysis failed');
+    renderRpanel();
+    return;
+  }
+  RP.repair.placementId = placementId;
+  RP.repair.run = data;
+  notify.success(IS_AR ? 'تم تحليل الإصلاح' : 'Repair analysis ready');
+  renderRpanel();
+}
+
+async function approveRepairCandidateFromPanel(candidateId) {
+  const runId = RP.repair.run?.run?.id;
+  if (!runId || !candidateId) return;
+  const candidate = repairCandidateById(candidateId);
+  if (!candidate) return;
+  const notes = await confirmRepairAction({
+    title: `Approve repair ${candidateId}`,
+    sub: 'Approval validates current timetable and student assignments before enabling apply.',
+    body: `<div class="tws-repair-panel">
+      ${repairActionMetricsHtml(candidate)}
+      ${repairDecisionGateHtml(candidate)}
+      ${repairPreflightGateHtml(candidate)}
+      <div class="tws-repair-explain">
+        <div class="tws-repair-section-title">Approval gate</div>
+        <div class="tws-repair-explain-row"><b>Preflight</b><span>Placement, room feasibility, and student assignment state will be rechecked now.</span></div>
+        <div class="tws-repair-explain-row"><b>Apply</b><span>No timetable or registration write happens during approval.</span></div>
+      </div>
+      <div class="tws-repair-form">
+        <textarea id="twsRepairApprovalNotes" placeholder="Approval notes">Approved from split workspace repair panel</textarea>
+      </div>
+    </div>`,
+    confirmLabel: 'Approve',
+    collect: modal => modal.querySelector('#twsRepairApprovalNotes')?.value || 'Approved from split workspace repair panel',
+  });
+  if (notes == null) return;
+  const data = await api(`/ops/tw/repair/runs/${runId}/candidates/${candidateId}/approve/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ notes }),
+  });
+  if (!data) {
+    notify.error(IS_AR ? 'فشل اعتماد الإصلاح' : 'Repair approval failed');
+    return;
+  }
+  RP.repair.run = data;
+  notify.success(IS_AR ? 'تم الاعتماد' : 'Optimisation approved');
+  renderRpanel();
+}
+
+async function applyRepairCandidateFromPanel(candidateId) {
+  const runId = RP.repair.run?.run?.id;
+  if (!runId || !candidateId) return;
+  const candidate = repairCandidateById(candidateId);
+  if (!candidate) return;
+  const ok = await confirmRepairAction({
+    title: `Apply optimisation ${candidateId}`,
+    sub: 'This writes the section move and audited student assignment changes.',
+    body: `<div class="tws-repair-panel">
+      ${repairActionMetricsHtml(candidate)}
+      ${repairDecisionGateHtml(candidate)}
+      ${repairPreflightGateHtml(candidate)}
+      <div class="tws-repair-explain">
+        <div class="tws-repair-section-title">Controlled write</div>
+        <div class="tws-repair-explain-row"><b>Transaction</b><span>Timetable and student assignment changes are applied together.</span></div>
+        <div class="tws-repair-explain-row"><b>Rollback</b><span>Rollback stays available as long as repair-owned assignments are not manually changed.</span></div>
+      </div>
+    </div>`,
+    confirmLabel: 'Apply optimisation',
+  });
+  if (!ok) return;
+  const data = await api(`/ops/tw/repair/runs/${runId}/candidates/${candidateId}/apply/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  if (!data) {
+    notify.error(IS_AR ? 'فشل تطبيق الإصلاح' : 'Repair apply failed');
+    return;
+  }
+  RP.repair.run = data;
+  await refreshAfterRepairMutation();
+  notify.success(IS_AR ? 'تم تطبيق الإصلاح' : 'Optimisation applied');
+  renderRpanel();
+}
+
+async function rollbackRepairFromPanel() {
+  const runId = RP.repair.run?.run?.id;
+  if (!runId) return;
+  const appliedId = RP.repair.run?.summary?.application?.candidate_id || '';
+  const candidate = appliedId ? repairCandidateById(appliedId) : null;
+  const ok = await confirmRepairAction({
+    title: appliedId ? `Rollback repair ${appliedId}` : 'Rollback repair',
+    sub: 'This restores the original placement and reverses repair-owned assignment changes.',
+    body: `<div class="tws-repair-panel">
+      ${candidate ? repairActionMetricsHtml(candidate) : ''}
+      ${repairRollbackReadinessDetailHtml(RP.repair.run)}
+      <div class="tws-repair-explain">
+        <div class="tws-repair-section-title">Rollback safety</div>
+        <div class="tws-repair-explain-row"><b>Ownership check</b><span>Only assignments written by this repair run are rolled back.</span></div>
+        <div class="tws-repair-explain-row"><b>Manual edits</b><span>If a repair-owned assignment was changed manually, rollback stops for review.</span></div>
+      </div>
+    </div>`,
+    confirmLabel: 'Rollback repair',
+  });
+  if (!ok) return;
+  const data = await api(`/ops/tw/repair/runs/${runId}/rollback/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  if (!data) {
+    notify.error(IS_AR ? 'فشل الاسترجاع' : 'Rollback failed');
+    return;
+  }
+  RP.repair.run = data;
+  await refreshAfterRepairMutation();
+  notify.success(IS_AR ? 'تم الاسترجاع' : 'Repair rolled back');
+  renderRpanel();
+}
+
+function openRepairReportFromPanel(candidateId = '') {
+  const runId = RP.repair.run?.run?.id;
+  if (!runId) return;
+  const qs = candidateId ? `?candidate_id=${encodeURIComponent(candidateId)}` : '';
+  window.open(`/ops/tw/repair/runs/${encodeURIComponent(runId)}/report/${qs}`, '_blank');
+}
+
+function globalRepairMetricHtml(label, value, cls = '') {
+  return repairMetricHtml(label, value, cls);
+}
+
+function globalRepairPlanStatusLabel(status) {
+  const map = {
+    draft: 'Draft',
+    approved: 'Approved',
+    applied: 'Applied',
+    rolled_back: 'Rolled back',
+    empty: 'No ready repairs',
+    failed: 'Failed',
+  };
+  return map[String(status || '').toLowerCase()] || String(status || 'Draft').replace(/_/g, ' ');
+}
+
+function globalRepairPlanCanApprove(plan) {
+  const status = String(plan?.plan?.status || '').toLowerCase();
+  return status === 'draft' && Number(plan?.summary?.active_item_count || 0) > 0;
+}
+
+function globalRepairPlanCanApply(plan) {
+  return String(plan?.plan?.status || '').toLowerCase() === 'approved';
+}
+
+function globalRepairPlanCanRollback(plan) {
+  return String(plan?.plan?.status || '').toLowerCase() === 'applied';
+}
+
+function globalRepairPlanSummaryHtml(plan) {
+  if (!plan) return '';
+  const summary = plan.summary || {};
+  const totals = summary.estimated_totals || {};
+  const status = plan.plan?.status || summary.status || '';
+  const governance = summary.governance || {};
+  const skipped = summary.skipped || [];
+  const selected = summary.simulation?.selected_count ?? 0;
+  const scanned = summary.simulation?.scanned_run_count ?? 0;
+  const scenarioUnresolved = summary.scenario_unresolved || {};
+  const unresolvedBefore = totals.scenario_unresolved_students_before ?? scenarioUnresolved.student_count;
+  const unresolvedAfter = totals.scenario_unresolved_students_after_plan ?? unresolvedBefore;
+  return `<div class="tws-repair-summary">
+    <div class="tws-repair-metrics">
+      ${globalRepairMetricHtml('Scenario unresolved', unresolvedBefore ?? 0, Number(unresolvedBefore || 0) ? 'bad' : 'good')}
+      ${globalRepairMetricHtml('After plan', unresolvedAfter ?? 0, Number(unresolvedAfter || 0) ? '' : 'good')}
+      ${globalRepairMetricHtml('Students recovered', totals.distinct_target_students_recovered ?? 0, 'good')}
+      ${globalRepairMetricHtml('Existing lost', totals.existing_lost ?? 0, Number(totals.existing_lost || 0) ? 'bad' : '')}
+      ${globalRepairMetricHtml('Items', summary.active_item_count ?? 0)}
+    </div>
+    <div class="tws-repair-reasons">
+      <span class="tws-repair-chip good">Objective: unresolved students</span>
+      <span class="tws-repair-chip">${esc(globalRepairPlanStatusLabel(status))}</span>
+      <span class="tws-repair-chip">${Number(selected)} selected from ${Number(scanned)} scans</span>
+      ${governance.approval_required ? '<span class="tws-repair-chip">approval required</span>' : ''}
+      ${governance.cross_board_is_not_primary_objective ? '<span class="tws-repair-chip muted">cross-board diagnostic only</span>' : ''}
+    </div>
+    ${skipped.length ? `<div class="tws-repair-explain">
+      <div class="tws-repair-section-title">Skipped opportunities</div>
+      ${skipped.slice(0, 5).map(row => `<div class="tws-repair-explain-row">
+        <b>${esc(row.course_key || row.code || 'Skipped')}</b><span>${esc(row.message || row.code || '')}</span>
+      </div>`).join('')}
+    </div>` : ''}
+  </div>`;
+}
+
+function globalRepairPlanItemsHtml(plan) {
+  const items = plan?.items || [];
+  if (!items.length) {
+    return `<div class="tws-fix-empty">No apply-ready repair items were found for the scanned actual unresolved-student hotspots. Try a wider scan or use Optimise current for scenario-level unresolved-student improvement.</div>`;
+  }
+  return `<div class="tws-repair-list">
+    ${items.map(item => {
+      const metrics = item.metrics || {};
+      const impact = item.impact || {};
+      const recovered = impact.target_recovered_student_ids || [];
+      return `<div class="tws-repair-candidate ${item.status === 'applied' ? 'best' : ''}">
+        <div class="hd">
+          <div class="when"><b>${esc(item.course_key || 'Course')}</b><span>Placement ${esc(item.placement_id || '')} · ${esc(item.status || '')}</span></div>
+          <span class="tws-repair-chip">${esc(item.candidate_id || '')}</span>
+        </div>
+        <div class="tws-repair-metrics">
+          ${globalRepairMetricHtml('Recovered', metrics.blocked_recovered ?? 0)}
+          ${globalRepairMetricHtml('Unresolved', metrics.unresolved_blocked ?? 0)}
+          ${globalRepairMetricHtml('Moved', metrics.students_moved ?? 0)}
+          ${globalRepairMetricHtml('Changes', metrics.section_changes ?? 0)}
+        </div>
+        <span>${Number(recovered.length || 0)} distinct target student sample(s) recovered in this item.</span>
+        <div class="acts">
+          ${item.links?.run_report ? `<button class="tws-mini-action" data-global-repair-report="${esc(item.links.run_report)}" type="button">Report</button>` : ''}
+        </div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+function globalRepairPlanFormHtml() {
+  return `<div class="tws-repair-panel">
+    <div class="tws-repair-target">
+      <b>Global unresolved-student repair plan</b><br>
+      <span>Build an approval-first plan from current scenario demand. The primary objective is to reduce unresolved students.</span>
+    </div>
+    <div class="tws-repair-form">
+      <select id="twsGlobalRepairMode" class="tws-repair-mode">
+        <option value="conservative" ${RP.globalRepair.mode === 'conservative' ? 'selected' : ''}>Conservative</option>
+        <option value="balanced" ${RP.globalRepair.mode === 'balanced' ? 'selected' : ''}>Balanced</option>
+      </select>
+      <input id="twsGlobalRepairMaxPlacements" type="number" min="1" max="25" step="1" value="${Number(RP.globalRepair.maxPlacements || 8)}" placeholder="Max placements">
+      <input id="twsGlobalRepairSolverSeconds" type="number" min="1" max="30" step="1" value="${Number(RP.globalRepair.maxSolverSeconds || 5)}" placeholder="Solver seconds">
+      <textarea id="twsGlobalRepairCourseKeys" placeholder="Optional course keys, separated by commas">${esc(RP.globalRepair.courseKeysText || '')}</textarea>
+      <span>Leave courses blank to let the system choose unresolved-student hotspots. Apply still requires approval and guarded preflight.</span>
+      <div id="twsGlobalRepairStatus" class="tws-fix-empty" style="display:none"></div>
+    </div>
+  </div>`;
+}
+
+function globalRepairPlanResultHtml(plan) {
+  return `<div class="tws-repair-panel">
+    ${globalRepairPlanSummaryHtml(plan)}
+    ${globalRepairPlanItemsHtml(plan)}
+  </div>`;
+}
+
+function wireGlobalRepairPlanModal(modal, plan) {
+  modal.querySelectorAll('[data-global-repair-report]').forEach(btn => {
+    btn.addEventListener('click', () => window.open(btn.dataset.globalRepairReport, '_blank'));
+  });
+  modal.querySelector('#twsGlobalRepairApprove')?.addEventListener('click', () => approveGlobalRepairPlanFromModal(modal));
+  modal.querySelector('#twsGlobalRepairApply')?.addEventListener('click', () => applyGlobalRepairPlanFromModal(modal));
+  modal.querySelector('#twsGlobalRepairRollback')?.addEventListener('click', () => rollbackGlobalRepairPlanFromModal(modal));
+  updateGlobalRepairPlanActionBar(modal, plan);
+}
+
+function updateGlobalRepairPlanActionBar(modal, plan) {
+  const bar = modal.querySelector('#twsGlobalRepairActions');
+  if (!bar) return;
+  bar.innerHTML = `
+    <button class="tws-mini-action" id="twsGlobalRepairApprove" type="button" ${globalRepairPlanCanApprove(plan) ? '' : 'disabled'}>Approve plan</button>
+    <button class="tws-mini-action" id="twsGlobalRepairApply" type="button" ${globalRepairPlanCanApply(plan) ? '' : 'disabled'}>Apply plan</button>
+    <button class="tws-mini-action danger" id="twsGlobalRepairRollback" type="button" ${globalRepairPlanCanRollback(plan) ? '' : 'disabled'}>Rollback plan</button>
+  `;
+  bar.querySelector('#twsGlobalRepairApprove')?.addEventListener('click', () => approveGlobalRepairPlanFromModal(modal));
+  bar.querySelector('#twsGlobalRepairApply')?.addEventListener('click', () => applyGlobalRepairPlanFromModal(modal));
+  bar.querySelector('#twsGlobalRepairRollback')?.addEventListener('click', () => rollbackGlobalRepairPlanFromModal(modal));
+}
+
+function setGlobalRepairPlanModalResult(modal, plan) {
+  const body = modal.querySelector('#twsModalBody');
+  if (!body) return;
+  body.innerHTML = `
+    <div id="twsGlobalRepairActions" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px"></div>
+    ${globalRepairPlanResultHtml(plan)}
+  `;
+  wireGlobalRepairPlanModal(modal, plan);
+}
+
+function readGlobalRepairPlanPayload(modal) {
+  const mode = modal.querySelector('#twsGlobalRepairMode')?.value || RP.globalRepair.mode || 'conservative';
+  const rawMaxPlacements = Number(modal.querySelector('#twsGlobalRepairMaxPlacements')?.value || 8);
+  const rawSolverSeconds = Number(modal.querySelector('#twsGlobalRepairSolverSeconds')?.value || 5);
+  const maxPlacements = Math.max(1, Math.min(25, Number.isFinite(rawMaxPlacements) ? rawMaxPlacements : 8));
+  const maxSolverSeconds = Math.max(1, Math.min(30, Number.isFinite(rawSolverSeconds) ? rawSolverSeconds : 5));
+  const courseKeysText = modal.querySelector('#twsGlobalRepairCourseKeys')?.value || '';
+  const courseKeys = courseKeysText.split(',').map(part => part.trim()).filter(Boolean);
+  RP.globalRepair.mode = mode;
+  RP.globalRepair.maxPlacements = maxPlacements;
+  RP.globalRepair.maxSolverSeconds = maxSolverSeconds;
+  RP.globalRepair.courseKeysText = courseKeysText;
+  return {
+    scenario_id: S.scenarioId,
+    mode,
+    max_placements: maxPlacements,
+    course_keys: courseKeys,
+    limits: {
+      max_candidates: 8,
+      max_solver_seconds: maxSolverSeconds,
+    },
+    notes: 'Created from split workspace global unresolved-student repair plan.',
+  };
+}
+
+async function createGlobalRepairPlanFromModal(modal) {
+  if (!S.scenarioId || RP.globalRepair.busy) return false;
+  const status = modal.querySelector('#twsGlobalRepairStatus');
+  if (status) {
+    status.style.display = '';
+    status.textContent = 'Building global repair plan...';
+  }
+  RP.globalRepair.busy = true;
+  const data = await api('/ops/tw/repair/global-plans/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(readGlobalRepairPlanPayload(modal)),
+  });
+  RP.globalRepair.busy = false;
+  if (!data) {
+    if (status) status.textContent = 'Global repair plan failed. Check the current scenario state and try again.';
+    notify.error('Global repair plan failed');
+    return false;
+  }
+  RP.globalRepair.plan = data;
+  setGlobalRepairPlanModalResult(modal, data);
+  notify.success('Global repair plan ready');
+  return false;
+}
+
+async function approveGlobalRepairPlanFromModal(modal) {
+  const planId = RP.globalRepair.plan?.plan?.id;
+  if (!planId) return;
+  const data = await api(`/ops/tw/repair/global-plans/${encodeURIComponent(planId)}/approve/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ notes: 'Approved from split workspace global repair plan.' }),
+  });
+  if (!data) {
+    notify.error('Global repair approval failed');
+    return;
+  }
+  RP.globalRepair.plan = data;
+  setGlobalRepairPlanModalResult(modal, data);
+  notify.success('Global repair plan approved');
+}
+
+async function applyGlobalRepairPlanFromModal(modal) {
+  const planId = RP.globalRepair.plan?.plan?.id;
+  if (!planId) return;
+  const ok = await confirmRepairAction({
+    title: 'Apply global repair plan',
+    sub: 'This applies all approved repair items and writes timetable/student assignment changes.',
+    body: `<div class="tws-repair-panel">
+      ${globalRepairPlanSummaryHtml(RP.globalRepair.plan)}
+      <div class="tws-repair-explain">
+        <div class="tws-repair-section-title">Controlled global write</div>
+        <div class="tws-repair-explain-row"><b>Primary target</b><span>Reduce unresolved students using fresh approved repair runs.</span></div>
+        <div class="tws-repair-explain-row"><b>Safety</b><span>Each item uses the existing candidate preflight before write.</span></div>
+      </div>
+    </div>`,
+    confirmLabel: 'Apply plan',
+  });
+  if (!ok) {
+    openGlobalRepairPlanModal(RP.globalRepair.plan);
+    return;
+  }
+  const data = await api(`/ops/tw/repair/global-plans/${encodeURIComponent(planId)}/apply/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  if (!data) {
+    notify.error('Global repair apply failed');
+    openGlobalRepairPlanModal(RP.globalRepair.plan);
+    return;
+  }
+  RP.globalRepair.plan = data;
+  await refreshAfterRepairMutation();
+  notify.success('Global repair plan applied');
+  openGlobalRepairPlanModal(data);
+}
+
+async function rollbackGlobalRepairPlanFromModal(modal) {
+  const planId = RP.globalRepair.plan?.plan?.id;
+  if (!planId) return;
+  const ok = await confirmRepairAction({
+    title: 'Rollback global repair plan',
+    sub: 'This rolls back the repair-owned writes in reverse order.',
+    body: `<div class="tws-repair-panel">
+      ${globalRepairPlanSummaryHtml(RP.globalRepair.plan)}
+      <div class="tws-repair-explain">
+        <div class="tws-repair-section-title">Rollback safety</div>
+        <div class="tws-repair-explain-row"><b>Ownership</b><span>Only changes written by this global repair plan are rolled back.</span></div>
+      </div>
+    </div>`,
+    confirmLabel: 'Rollback plan',
+  });
+  if (!ok) {
+    openGlobalRepairPlanModal(RP.globalRepair.plan);
+    return;
+  }
+  const data = await api(`/ops/tw/repair/global-plans/${encodeURIComponent(planId)}/rollback/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  if (!data) {
+    notify.error('Global repair rollback failed');
+    openGlobalRepairPlanModal(RP.globalRepair.plan);
+    return;
+  }
+  RP.globalRepair.plan = data;
+  await refreshAfterRepairMutation();
+  notify.success('Global repair plan rolled back');
+  openGlobalRepairPlanModal(data);
+}
+
+function openGlobalRepairPlanModal(plan = null) {
+  if (!S.scenarioId) {
+    notify.warning('Select a scenario first');
+    return;
+  }
+  const existing = plan || RP.globalRepair.plan;
+  openModal({
+    title: 'Global unresolved-student repair',
+    sub: 'Scenario-level plan using actual student repair runs',
+    width: 'wide',
+    body: existing
+      ? `<div id="twsGlobalRepairActions" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px"></div>${globalRepairPlanResultHtml(existing)}`
+      : globalRepairPlanFormHtml(),
+    buttons: existing
+      ? [{ label: 'Close' }]
+      : [
+          { label: 'Cancel' },
+          { label: 'Build plan', variant: 'primary', onClick: createGlobalRepairPlanFromModal },
+        ],
+  });
+  const modal = $('twsModal');
+  if (existing && modal) wireGlobalRepairPlanModal(modal, existing);
+}
+
+async function refreshAfterRepairMutation() {
+  RP.capacity = {};
+  RP.builder.roomCache = {};
+  RP.builder.studentCache = {};
+  RP.studentBlockers = {
+    token: RP.studentBlockers.token + 1,
+    scenarioId: null,
+    data: null,
+    activeCourse: RP.studentBlockers.activeCourse,
+  };
+  for (let i = 0; i < paneCount(); i += 1) {
+    if (S.panes[i].boardId) await loadAndRenderPane(i);
+  }
+  await refreshBoardsSummary();
+  if (SB.open) await loadSidebarBudget();
+}
+
+function renderRpanelRepair(body) {
+  if (!S.selectedPlacementId) {
+    body.innerHTML = `<div class="tws-empty-state"><span class="ic">◎</span>${IS_AR ? 'اختر شعبة أولاً' : 'Select a placement first'}</div>`;
+    return;
+  }
+  const located = findPlacement(S.selectedPlacementId);
+  if (!located) {
+    body.innerHTML = `<div class="tws-empty-state"><span class="ic">◎</span>${IS_AR ? 'الشعبة غير موجودة' : 'Selected placement was not found'}</div>`;
+    return;
+  }
+  const placement = located.placement;
+  const run = String(RP.repair.placementId) === String(placement.id) ? RP.repair.run : null;
+  const candidates = run?.candidates || [];
+  const bestId = run?.summary?.best_candidate_id || bestRepairCandidate(run)?.candidate_id || '';
+  body.innerHTML = `<div class="tws-repair-panel">
+    <div class="tws-repair-target">
+      <b>${esc(placement.course_code)} ${esc(placement.section || '')}</b><br>
+      <span>${esc(placement.day)} ${esc(placement.start_time)}-${esc(placement.end_time)} · ${esc(placement.room || 'No room')} · ${esc(placement.course_name || '')}</span>
+    </div>
+    <div class="tws-repair-form">
+      <select id="twsRepairMode" class="tws-repair-mode">
+        <option value="conservative" ${RP.repair.mode === 'conservative' ? 'selected' : ''}>Conservative</option>
+        <option value="balanced" ${RP.repair.mode === 'balanced' ? 'selected' : ''}>Balanced</option>
+        <option value="simulation" ${RP.repair.mode === 'simulation' ? 'selected' : ''}>Simulation only</option>
+      </select>
+      <select id="twsRepairMoveScope" class="tws-repair-mode">
+        <option value="single_session" ${RP.repair.moveScope === 'single_session' ? 'selected' : ''}>Selected session only</option>
+        <option value="all_sessions" ${RP.repair.moveScope === 'all_sessions' ? 'selected' : ''}>All sessions + lab</option>
+        <option value="lectures_only" ${RP.repair.moveScope === 'lectures_only' ? 'selected' : ''}>Lectures only</option>
+      </select>
+      <textarea id="twsRepairBlockedIds" placeholder="Optional blocked student IDs, separated by commas">${esc(RP.repair.blockedIdsText || '')}</textarea>
+      <button class="tws-btn primary" id="twsRunRepair" type="button" ${RP.repair.busy ? 'disabled' : ''}>${RP.repair.busy ? 'Analysing...' : 'Analyse move'}</button>
+      <span>${IS_AR ? 'اترك القائمة فارغة لاستخدام طلبات المقرر من السيناريو.' : 'Leave blank to use scenario course demand as the recovery target.'}</span>
+    </div>
+    ${repairRunSummaryHtml(run)}
+    <div class="tws-repair-list">
+      ${candidates.length
+        ? candidates.map(candidate => repairCandidateCardHtml(candidate, run, String(candidate.candidate_id) === String(bestId))).join('')
+        : `<div class="tws-fix-empty">${IS_AR ? 'لم يتم تشغيل تحليل الإصلاح بعد.' : 'No repair analysis has been run for this selected section yet.'}</div>`}
+    </div>
+  </div>`;
+  body.querySelector('#twsRepairBlockedIds')?.addEventListener('input', e => {
+    RP.repair.blockedIdsText = e.target.value || '';
+  });
+  body.querySelector('#twsRepairMode')?.addEventListener('change', e => {
+    RP.repair.mode = e.target.value || 'conservative';
+  });
+  body.querySelector('#twsRepairMoveScope')?.addEventListener('change', e => {
+    RP.repair.moveScope = e.target.value || 'single_session';
+  });
+  body.querySelector('#twsRunRepair')?.addEventListener('click', runRepairAnalysisFromPanel);
+  body.querySelector('#twsRepairReport')?.addEventListener('click', () => openRepairReportFromPanel());
+  body.querySelector('#twsRepairRollback')?.addEventListener('click', rollbackRepairFromPanel);
+  body.querySelectorAll('[data-repair-detail]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const candidate = candidates.find(c => String(c.candidate_id) === String(btn.dataset.repairDetail));
+      if (candidate) repairCandidateDetailModal(candidate, run);
+    });
+  });
+  body.querySelectorAll('[data-repair-approve]').forEach(btn => {
+    btn.addEventListener('click', () => approveRepairCandidateFromPanel(btn.dataset.repairApprove));
+  });
+  body.querySelectorAll('[data-repair-report]').forEach(btn => {
+    btn.addEventListener('click', () => openRepairReportFromPanel(btn.dataset.repairReport));
+  });
+  body.querySelectorAll('[data-repair-apply]').forEach(btn => {
+    btn.addEventListener('click', () => applyRepairCandidateFromPanel(btn.dataset.repairApply));
+  });
 }
 
 function selectionRoomSlot(placement, pending) {
@@ -3130,11 +6497,27 @@ function roomCacheKey(placementId, slot) {
   return [placementId, slot.day, slot.start, slot.end].join('|');
 }
 
+function roomCandidateStatusText(room) {
+  const reasons = Array.isArray(room?.reasons) ? room.reasons.filter(Boolean) : [];
+  if (!roomIsAssignable(room)) {
+    return reasons.slice(0, 3).join(' | ') || 'Blocked for this section';
+  }
+  if (roomIsScheduleClean(room)) return 'Room fits and the schedule is clean';
+  if (roomIsAssignable(room) && reasons.length) return reasons.slice(0, 3).join(' | ');
+  if (Number(room.validation?.critical_count || 0) > 0) {
+    return reasons.slice(0, 3).join(' | ') || 'Room fits, but time/instructor conflict remains';
+  }
+  if (Number(room.validation?.warning_count || 0) > 0) {
+    return reasons.slice(0, 3).join(' | ') || 'Room fits, with schedule warning';
+  }
+  return reasons.slice(0, 3).join(' | ') || 'Room fits this section';
+}
+
 function roomCandidateCardHtml(room, idx, currentRoom) {
-  const tone = room.tone || (room.available ? 'clean' : 'block');
-  const reasons = room.reasons && room.reasons.length ? room.reasons.slice(0, 2).join(' | ') : (room.available ? 'available' : 'not available');
+  const tone = room.tone || (roomIsScheduleClean(room) ? 'clean' : roomIsAssignable(room) ? 'warn' : 'block');
+  const detail = roomCandidateStatusText(room);
   const isCurrent = String(currentRoom || '').trim().toUpperCase() === String(room.room_code || '').trim().toUpperCase();
-  const apply = room.available
+  const apply = roomIsAssignable(room)
     ? `<button class="tws-room-apply" data-room-idx="${idx}" type="button">${isCurrent ? 'Keep' : 'Apply'}</button>`
     : `<button class="tws-room-apply" type="button" disabled>Blocked</button>`;
   return `<div class="tws-room-card ${tone}">
@@ -3143,7 +6526,7 @@ function roomCandidateCardHtml(room, idx, currentRoom) {
       <span>${esc(room.room_type)} · ${esc(room.section || 'Any')} · ${room.capacity || 0}</span>
       ${apply}
     </div>
-    <div class="tws-room-detail">${esc(reasons)}</div>
+    <div class="tws-room-detail">${esc(detail)}</div>
     ${room.occupied_by && room.occupied_by.length
       ? `<div class="tws-room-occupied">${room.occupied_by.slice(0, 2).map(o => `${esc(o.board_label)} ${esc(o.section)} ${esc(o.start)}-${esc(o.end)}`).join('<br>')}</div>`
       : ''}
@@ -3167,46 +6550,64 @@ function studentEvidenceHtml(data) {
   return `<div class="tws-student-evidence-summary"><b>${data.affected_student_count || 0}</b> affected unique students · ${esc(data.source || '')}</div>${rows}`;
 }
 
-async function applyRoomCandidate(placementId, room, slot) {
+async function applyRoomCandidate(placementId, room, slot, opts = {}) {
+  const {
+    refresh = true,
+    notifyResult = true,
+    recordUndo = true,
+    requireScheduleClean = false,
+  } = opts;
   const located = findPlacement(placementId);
   if (!located || !room?.room_code) return null;
+  if (requireScheduleClean && !roomIsScheduleClean(room)) {
+    if (notifyResult) notify.warning('This room is not clean enough for bulk assignment.');
+    return null;
+  }
+  if (!roomIsAssignable(room)) {
+    if (notifyResult) notify.warning('This room does not meet the section requirements.');
+    return null;
+  }
   const p = located.placement;
   const oldRoom = p.room || '';
   const oldDay = p.day;
   const oldStart = p.start_time;
   const oldEnd = p.end_time;
   if (oldRoom === room.room_code && oldDay === slot.day && oldStart === slot.start) {
-    notify.success('Room already assigned');
+    if (notifyResult) notify.success('Room already assigned');
     return { already_assigned: true };
   }
   const data = await doMove(placementId, slot.day, slot.start, slot.end, room.room_code);
   if (!data) {
-    notify.error('Room assignment failed');
+    if (notifyResult) notify.error('Room assignment failed');
     return null;
   }
-  S.undoStack.push({
-    type: 'move',
-    placement_id: placementId,
-    old_day: oldDay,
-    old_start: oldStart,
-    old_end: oldEnd,
-    old_room: oldRoom,
-    new_day: slot.day,
-    new_start: slot.start,
-    new_end: slot.end,
-    new_room: room.room_code,
-  });
-  S.redoStack = [];
-  updateUndoRedoButtons();
+  if (recordUndo) {
+    S.undoStack.push({
+      type: 'move',
+      placement_id: placementId,
+      old_day: oldDay,
+      old_start: oldStart,
+      old_end: oldEnd,
+      old_room: oldRoom,
+      new_day: slot.day,
+      new_start: slot.start,
+      new_end: slot.end,
+      new_room: room.room_code,
+    });
+    S.redoStack = [];
+    updateUndoRedoButtons();
+  }
   clearSlotAssist();
   const boardId = S.panes[located.paneIdx]?.boardId;
-  for (let i = 0; i < paneCount(); i++) {
-    if (S.panes[i].boardId === boardId) await loadAndRenderPane(i);
+  if (refresh) {
+    for (let i = 0; i < paneCount(); i++) {
+      if (S.panes[i].boardId === boardId) await loadAndRenderPane(i);
+    }
+    await refreshBoardsSummary();
+    S.selectedPlacementId = placementId;
+    S.selectedPaneIdx = located.paneIdx;
   }
-  await refreshBoardsSummary();
-  S.selectedPlacementId = placementId;
-  S.selectedPaneIdx = located.paneIdx;
-  notify.success(`Assigned room ${room.room_code}`);
+  if (notifyResult) notify.success(`Assigned room ${room.room_code}`);
   return data;
 }
 
@@ -3238,11 +6639,18 @@ async function refreshSelectionBuilderPanels(body, placement, pending) {
   if (roomBox) {
     const rooms = roomData?.candidates || [];
     const target = roomData?.target || {};
-    roomBox.innerHTML = `<div class="tws-room-target">
-      <b>${esc(slot.label)}</b>
-      <span>${esc(slot.day)} ${esc(slot.start)}-${esc(slot.end)} · ${esc(target.required_type || '')} · ${target.required_capacity || 0} seats${target.required_gender ? ` · ${esc(target.required_gender)}` : ''}</span>
-    </div>
-    ${rooms.length ? rooms.slice(0, 8).map((room, idx) => roomCandidateCardHtml(room, idx, placement.room)).join('') : `<div class="tws-fix-empty">No rooms found.</div>`}`;
+    const onlineRoom = !!(target.is_online || roomData?.summary?.is_online);
+    roomBox.innerHTML = onlineRoom
+      ? `<div class="tws-room-target">
+          <b>${esc(slot.label)}</b>
+          <span>${esc(slot.day)} ${esc(slot.start)}-${esc(slot.end)} · online</span>
+        </div>
+        <div class="tws-fix-empty">${IS_AR ? 'مقرر إلكتروني، لا يحتاج إلى قاعة.' : 'Online course, no physical room needed.'}</div>`
+      : `<div class="tws-room-target">
+          <b>${esc(slot.label)}</b>
+          <span>${esc(slot.day)} ${esc(slot.start)}-${esc(slot.end)} · ${esc(target.required_type || '')} · ${target.required_capacity || 0} seats${target.required_gender ? ` · ${esc(target.required_gender)}` : ''}</span>
+        </div>
+        ${rooms.length ? rooms.slice(0, 8).map((room, idx) => roomCandidateCardHtml(room, idx, placement.room)).join('') : `<div class="tws-fix-empty">No rooms found.</div>`}`;
     roomBox.querySelectorAll('.tws-room-apply[data-room-idx]').forEach(btn => {
       btn.addEventListener('click', () => {
         const room = rooms[parseInt(btn.dataset.roomIdx || '-1')];
@@ -3284,6 +6692,7 @@ function renderRpanelSelection(body) {
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'المقرر' : 'Course'}</span><span class="value">${esc(p.course_code)}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'الاسم' : 'Name'}</span><span class="value">${esc(p.course_name || '—')}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'الشعبة' : 'Section'}</span><span class="value">${esc(p.section || '—')}</span></div>
+    ${planLensDetailsFieldsHtml(p)}
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'اللوحة' : 'Board'}</span><span class="value">${esc(board.label)}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'اليوم' : 'Day'}</span><span class="value">${esc(p.day)}</span></div>
     <div class="tws-sel-field"><span class="label">${IS_AR ? 'الوقت' : 'Time'}</span><span class="value">${esc(p.start_time)} – ${esc(p.end_time)}</span></div>
@@ -3318,11 +6727,14 @@ function renderRpanelSelection(body) {
     </div>
     <div style="display:flex;gap:6px;margin-top:12px">
       <button class="tws-btn" id="twsSelOpen" style="flex:1">${IS_AR ? 'عرض التفاصيل' : 'Open drawer'}</button>
+      <button class="tws-btn primary" id="twsSelRepair" style="flex:1">${IS_AR ? 'إصلاح' : 'Repair'}</button>
     </div>
   `;
   // Wire the button — no inline onclick
   const openBtn = body.querySelector('#twsSelOpen');
   if (openBtn) openBtn.addEventListener('click', () => openDrawer(located.paneIdx, p.id));
+  const repairBtn = body.querySelector('#twsSelRepair');
+  if (repairBtn) repairBtn.addEventListener('click', () => setRpanelTab('repair'));
   const guidedBtn = body.querySelector('#twsApplyGuidedFix');
   if (guidedBtn) guidedBtn.addEventListener('click', applyGuidedResolver);
   body.querySelectorAll('.tws-protect-btn[data-protect]').forEach(btn => {
@@ -3428,22 +6840,16 @@ function renderSidebar() {
   // Wire drag sources — look up the budget row by code + used count at
   // dragstart time so we always send fresh data even after budget updates.
   body.querySelectorAll('.tws-sec-item[draggable="true"]').forEach(el => {
+    el.addEventListener('click', () => {
+      const key = el.dataset.key || el.dataset.code;
+      const b = SB.budget.find(x => courseKeyOf(x) === key);
+      if (!b) return;
+      beginCreateSectionAssist(createPayloadFromBudgetRow(b));
+    });
     el.addEventListener('dragstart', (e) => {
       const key = el.dataset.key || el.dataset.code;
-      const code = el.dataset.code;
-      const used = parseInt(el.dataset.used || '0');
       const b = SB.budget.find(x => courseKeyOf(x) === key) || {};
-      const payload = {
-        type: 'create_planned',
-        course_code: code,
-        course_key: courseKeyOf(b) || code,
-        course_name: b.course_name || '',
-        section_label: `S${used + 1}`,
-        department: b.department || '',
-        credit_hours: b.credit_hours || 0,
-        max_per_section: b.max_per_section || 40,
-        total_students: b.total_demand || 0,
-      };
+      const payload = createPayloadFromBudgetRow(b, parseInt(el.dataset.used || '0', 10));
       try {
         e.dataTransfer.setData('text/plain', JSON.stringify(payload));
         e.dataTransfer.effectAllowed = 'copy';
@@ -3456,9 +6862,15 @@ function renderSidebar() {
 // openModal({ title, sub, body, width, buttons: [{label, variant, onClick}], onClose })
 // buttons: variant in { 'primary', '' (default) }. onClick can return false to keep modal open.
 let _modalOpen = false;
+let _modalLastFocus = null;
 function openModal(opts) {
   const modal = $('twsModal');
   const backdrop = $('twsModalBackdrop');
+  _modalLastFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  modal.hidden = false;
+  backdrop.hidden = false;
+  modal.setAttribute('aria-hidden', 'false');
+  backdrop.setAttribute('aria-hidden', 'false');
   $('twsModalTitle').textContent = opts.title || '';
   $('twsModalSub').textContent = opts.sub || '';
   const bodyEl = $('twsModalBody');
@@ -3477,7 +6889,9 @@ function openModal(opts) {
     btn.textContent = b.label;
     if (b.variant === 'primary') btn.classList.add('primary');
     if (b.id) btn.id = b.id;
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
       const res = b.onClick ? await b.onClick(modal) : undefined;
       if (res !== false) closeModal();
     });
@@ -3487,15 +6901,50 @@ function openModal(opts) {
   backdrop.classList.add('open');
   _modalOpen = true;
   _modalOnClose = opts.onClose || null;
-  // Focus first input
-  setTimeout(() => bodyEl.querySelector('input, select, textarea, button')?.focus(), 40);
+  // Focus the first actionable control; confirmation dialogs often only have footer buttons.
+  setTimeout(() => {
+    const target = bodyEl.querySelector('input, select, textarea, button')
+      || footer.querySelector('button')
+      || $('twsModalClose');
+    target?.focus();
+  }, 40);
 }
 let _modalOnClose = null;
 function closeModal() {
-  $('twsModal').classList.remove('open');
-  $('twsModalBackdrop').classList.remove('open');
+  const modal = $('twsModal');
+  const backdrop = $('twsModalBackdrop');
+  modal.classList.remove('open');
+  backdrop.classList.remove('open');
+  modal.setAttribute('aria-hidden', 'true');
+  backdrop.setAttribute('aria-hidden', 'true');
+  modal.hidden = true;
+  backdrop.hidden = true;
   _modalOpen = false;
   if (_modalOnClose) { try { _modalOnClose(); } catch {} _modalOnClose = null; }
+  const focusTarget = _modalLastFocus;
+  _modalLastFocus = null;
+  if (focusTarget && document.contains(focusTarget)) {
+    setTimeout(() => focusTarget.focus?.(), 0);
+  }
+}
+
+function leaveSplitWorkspace() {
+  if (window.history.length > 1) window.history.back();
+  else window.location.href = '/timetable-workspace/';
+}
+
+function confirmCloseSplitWorkspace() {
+  if (_modalOpen) return;
+  closeOpenDetailsMenus();
+  openModal({
+    title: IS_AR ? 'إغلاق مساحة المقارنة؟' : 'Close split compare?',
+    sub: IS_AR ? 'ستغادر هذه الشاشة.' : 'You will leave this split workspace.',
+    body: `<div class="hint">${IS_AR ? 'هل أنت متأكد أنك تريد إغلاق هذه النافذة؟' : 'Are you sure you want to close this window?'}</div>`,
+    buttons: [
+      { label: IS_AR ? 'لا' : 'No' },
+      { label: IS_AR ? 'نعم، إغلاق' : 'Yes, close', variant: 'primary', onClick: leaveSplitWorkspace },
+    ],
+  });
 }
 
 /* ── Generate Scenario (inline) ──────────────────────────────────── */
@@ -3859,28 +7308,10 @@ function renderBpanelDemand(body, meta) {
   if (!fetches.length) _renderDemandNow(body, meta, boards);
 }
 function _renderDemandNow(body, meta, boards) {
-  const byCourse = new Map();
-  let totDemand = 0, totCap = 0, totDeficit = 0;
-  boards.forEach(b => {
-    const cap = RP.capacity[b.boardId];
-    if (!cap) return;
-    const t = cap.totals || {};
-    totDemand += t.demand || 0;
-    totCap += t.raw_capacity || 0;
-    totDeficit += t.deficit || 0;
-    (cap.courses || []).forEach(c => {
-      const prev = byCourse.get(c.course_code) || {
-        course_code: c.course_code, demand: 0, raw_capacity: 0,
-        placed_sections: 0, deficit: 0,
-      };
-      prev.demand += c.demand || 0;
-      prev.raw_capacity += c.raw_capacity || 0;
-      prev.placed_sections += c.placed_sections || 0;
-      prev.deficit += c.deficit || 0;
-      byCourse.set(c.course_code, prev);
-    });
-  });
-  const courses = [...byCourse.values()].sort((a, b) => (b.deficit || 0) - (a.deficit || 0) || a.course_code.localeCompare(b.course_code));
+  const { courses, totals } = aggregateCapacityCourses(boards);
+  const totDemand = totals.demand;
+  const totCap = totals.raw_capacity;
+  const totDeficit = totals.deficit;
   if (!courses.length) {
     body.innerHTML = `<div class="tws-empty-state"><span class="ic">ⓘ</span>${IS_AR ? 'لا توجد بيانات' : 'No demand data'}</div>`;
     if (meta) meta.textContent = '';
@@ -3895,8 +7326,9 @@ function _renderDemandNow(body, meta, boards) {
       <th>${IS_AR ? 'العجز' : 'Deficit'}</th>
     </tr></thead><tbody>`;
   courses.forEach(c => {
+    const name = c.course_name && c.course_name !== c.course_code ? `<small>${esc(c.course_name)}</small>` : '';
     html += `<tr>
-      <td class="code">${esc(c.course_code)}</td>
+      <td class="code" title="${esc(c.course_key || c.course_code)}">${esc(c.course_code)}${name}</td>
       <td>${c.demand}</td>
       <td>${c.raw_capacity}</td>
       <td>${c.placed_sections}</td>
@@ -4023,6 +7455,7 @@ function openDrawer(paneIdx, placementId) {
     <div class="field"><span class="label">${IS_AR ? 'المقرر' : 'Course'}</span><span class="value mono">${esc(p.course_code)}</span></div>
     <div class="field"><span class="label">${IS_AR ? 'الاسم' : 'Name'}</span><span class="value">${esc(p.course_name || '—')}</span></div>
     <div class="field"><span class="label">${IS_AR ? 'الشعبة' : 'Section'}</span><span class="value mono">${esc(p.section || '—')}</span></div>
+    ${planLensDetailsFieldsHtml(p, 'field')}
     <div class="field"><span class="label">${IS_AR ? 'اليوم' : 'Day'}</span><span class="value mono">${esc(p.day)}</span></div>
     <div class="field"><span class="label">${IS_AR ? 'الوقت' : 'Time'}</span><span class="value mono">${esc(p.start_time)}–${esc(p.end_time)}</span></div>
     <div class="field"><span class="label">${IS_AR ? 'القاعة' : 'Room'}</span><span class="value mono">${esc(p.room || '—')}</span></div>
@@ -4045,6 +7478,7 @@ function openDrawer(paneIdx, placementId) {
 
   $('twsDrawer').classList.add('open');
   $('twsDrawer').setAttribute('aria-hidden', 'false');
+  $('twsDrawer').removeAttribute('inert');
   $('twsDrawerBackdrop').classList.add('open');
 }
 
@@ -4053,6 +7487,7 @@ function closeDrawer() {
   DRAWER.paneIdx = null;
   $('twsDrawer').classList.remove('open');
   $('twsDrawer').setAttribute('aria-hidden', 'true');
+  $('twsDrawer').setAttribute('inert', '');
   $('twsDrawerBackdrop').classList.remove('open');
 }
 
@@ -4161,10 +7596,35 @@ async function doCreate(action) {
     }),
   });
 }
+async function doCreatePlanned(action) {
+  const payload = action.payload || {};
+  return api('/ops/tw/placements/create-planned/', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      board_id: action.board_id,
+      course_code: payload.course_code,
+      course_key: payload.course_key || payload.course_code,
+      course_name: payload.course_name || payload.course_code,
+      section_label: payload.section_label,
+      capacity: payload.max_per_section || 40,
+      meetings: action.meetings || [],
+    }),
+  });
+}
 async function doRemoveApi(placementId) {
   return api(`/ops/tw/placements/${placementId}/remove/`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ override: true }),
   });
+}
+
+async function removePlacementList(placementIds = []) {
+  const removed = [];
+  for (const placementId of [...placementIds].reverse()) {
+    const data = await doRemoveApi(placementId);
+    if (!data) return { ok: false, removed };
+    removed.push(placementId);
+  }
+  return { ok: true, removed };
 }
 
 async function doUndo() {
@@ -4193,6 +7653,11 @@ async function doUndo() {
     if (!data) { S.undoStack.push(action); return; }
     S.redoStack.push(action);
     notify.success(IS_AR ? 'تم التراجع' : 'Undone');
+  } else if (action.type === 'bundle_create') {
+    const result = await removePlacementList(action.placement_ids || []);
+    if (!result.ok) { S.undoStack.push(action); return; }
+    S.redoStack.push(action);
+    notify.success('Full pattern undone');
   }
   updateUndoRedoButtons();
   for (let i = 0; i < paneCount(); i++) await loadAndRenderPane(i);
@@ -4227,6 +7692,12 @@ async function doRedo() {
     const newId = data.placement && data.placement.id;
     S.undoStack.push({ ...action, placement_id: newId });
     notify.success(IS_AR ? 'تم الإعادة' : 'Redone');
+  } else if (action.type === 'bundle_create') {
+    const data = await doCreatePlanned(action);
+    if (!data) { S.redoStack.push(action); return; }
+    const placements = Array.isArray(data.placements) ? data.placements : [];
+    S.undoStack.push({ ...action, placement_ids: placements.map(item => item.id) });
+    notify.success('Full pattern redone');
   }
   updateUndoRedoButtons();
   for (let i = 0; i < paneCount(); i++) await loadAndRenderPane(i);
@@ -4274,6 +7745,26 @@ function showOptimiseResults(o, mode) {
   const isFull = mode === 'full';
   const score = o.final_score || [];
   const assigned = (o.total_students || 0) - (o.unresolved_students || 0);
+  const crossBefore = Number(o.cross_board_before ?? NaN);
+  const crossAfter = Number(o.cross_board_after ?? NaN);
+  const hasCrossMetric = Number.isFinite(crossBefore) && Number.isFinite(crossAfter);
+  const crossDelta = hasCrossMetric ? crossBefore - crossAfter : 0;
+  const crossAffectedBefore = Number(o.cross_board_affected_students_before ?? NaN);
+  const crossAffectedAfter = Number(o.cross_board_affected_students_after ?? NaN);
+  const hasCrossAffectedMetric = Number.isFinite(crossAffectedBefore) && Number.isFinite(crossAffectedAfter);
+  const crossAffectedDelta = hasCrossAffectedMetric ? crossAffectedBefore - crossAffectedAfter : 0;
+  const crossPrimaryBefore = hasCrossAffectedMetric ? crossAffectedBefore : crossBefore;
+  const crossPrimaryAfter = hasCrossAffectedMetric ? crossAffectedAfter : crossAfter;
+  const crossPrimaryDelta = hasCrossAffectedMetric ? crossAffectedDelta : crossDelta;
+  const persistAction = o.persist_result && o.persist_result.action;
+  const safetyBlocked = Boolean(
+    o.safety_blocked
+    || persistAction === 'rolled_back_safety_regression'
+    || persistAction === 'blocked_safety_regression'
+  );
+  const safetyRegressions = (o.safety_regression && Array.isArray(o.safety_regression.regressions))
+    ? o.safety_regression.regressions
+    : [];
   const candList = (o.all_scores && o.all_scores.length > 1) ? `
     <div class="section-title">${IS_AR ? 'مقارنة المرشحين' : 'Candidate comparison'} (${o.candidates_evaluated || o.all_scores.length})</div>
     <table style="width:100%;border-collapse:collapse;font-family:'JetBrains Mono',monospace;font-size:11px">
@@ -4283,6 +7774,7 @@ function showOptimiseResults(o, mode) {
         <th style="text-align:right;padding:4px 6px;font-size:9.5px;text-transform:uppercase">Unres.</th>
         <th style="text-align:right;padding:4px 6px;font-size:9.5px;text-transform:uppercase">Clash</th>
         <th style="text-align:right;padding:4px 6px;font-size:9.5px;text-transform:uppercase">Gaps</th>
+        <th style="text-align:right;padding:4px 6px;font-size:9.5px;text-transform:uppercase">Quality</th>
       </tr></thead>
       <tbody>
         ${o.all_scores.map(s => {
@@ -4295,6 +7787,7 @@ function showOptimiseResults(o, mode) {
             <td style="text-align:right;padding:4px 6px">${s.score[1]}</td>
             <td style="text-align:right;padding:4px 6px;color:${clashClr}">${s.score[3]}</td>
             <td style="text-align:right;padding:4px 6px">${(s.score[4] || 0).toLocaleString()}</td>
+            <td style="text-align:right;padding:4px 6px">${Number(s.quality_penalty || 0).toLocaleString()}</td>
           </tr>`;
         }).join('')}
       </tbody>
@@ -4316,21 +7809,65 @@ function showOptimiseResults(o, mode) {
     const clr = (i === 3 && v > 0) ? '#F06060' : (i === 3 ? 'var(--teal)' : 'var(--ink)');
     return `<tr style="border-bottom:1px solid var(--line)"><td style="padding:4px 0;color:var(--t3)">${scoreLabels[i]}</td><td style="text-align:right;font-family:'JetBrains Mono',monospace;color:${clr};font-weight:700">${display}</td></tr>`;
   }).join('');
+  const quality = o.quality_score || {};
+  const qualityComponents = quality.components || {};
+  const qualityRows = Object.entries(qualityComponents)
+    .filter(([, value]) => Number(value || 0) > 0)
+    .sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0))
+    .map(([name, value]) => `<span class="tws-repair-chip">${esc(String(name).replace(/_/g, ' '))}: ${Number(value || 0).toLocaleString()}</span>`)
+    .join('');
+  const qualityBlock = quality.penalty != null ? `
+    <div style="margin-bottom:10px">
+      <span class="section-title">${IS_AR ? 'Ø¬ÙˆØ¯Ø© Ø§Ù„Ø¬Ø¯ÙˆÙ„' : 'Timetable quality'}</span>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+        <span class="tws-repair-chip good">${IS_AR ? 'Ø§Ù„Ø¹Ù‚ÙˆØ¨Ø©' : 'Penalty'}: ${Number(quality.penalty || 0).toLocaleString()}</span>
+        ${qualityRows || `<span class="tws-repair-chip">${IS_AR ? 'Ù„Ø§ Ø¶ØºØ· Ù†Ø§Ø¹Ù…' : 'No soft pressure'}</span>`}
+      </div>
+    </div>` : '';
+  const safetyBlock = safetyBlocked ? `
+    <div style="padding:10px 12px;border-radius:6px;background:rgba(240,96,96,0.1);border:1px solid rgba(240,96,96,0.3);margin:10px 0">
+      <div style="font-weight:800;color:#F06060;margin-bottom:5px">Result not applied</div>
+      <div style="font-size:11px;color:var(--t3)">The optimiser candidate was rejected because it worsened unresolved students, solver clashes, or hard operational constraints.</div>
+      ${safetyRegressions.length ? `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:7px">${safetyRegressions.map(r =>
+        `<span class="tws-repair-chip" style="border-color:rgba(240,96,96,0.35);color:#F06060">${esc(r.label || r.metric)}: ${Number(r.before || 0).toLocaleString()} -> ${Number(r.after || 0).toLocaleString()}</span>`
+      ).join('')}</div>` : ''}
+    </div>` : '';
+  const crossTradeoffBlock = (!safetyBlocked && hasCrossMetric && crossPrimaryDelta < 0) ? `
+    <div style="padding:8px 12px;border-radius:6px;background:rgba(245,183,49,0.08);border:1px solid rgba(245,183,49,.25);margin-top:10px;color:#F5B731;font-weight:600">
+      Tradeoff: ${hasCrossAffectedMetric ? 'affected cross-board students' : 'cross-board overlaps'} increased from ${crossPrimaryBefore} to ${crossPrimaryAfter}.
+      <div style="margin-top:4px;font-size:11px;color:var(--t3);font-weight:500">Student unresolved outcome remains the primary optimisation target.</div>
+    </div>` : '';
   let diffBlock = '';
   if (mode === 'current' && Array.isArray(o.baseline_score) && Array.isArray(o.final_score)
       && o.baseline_score.length >= 5 && o.final_score.length >= 5) {
     const bs = o.baseline_score, fs = o.final_score;
-    const improved = fs[1] < bs[1] || fs[3] < bs[3] || fs[4] < bs[4];
+    const improved = !safetyBlocked && (
+      fs[1] < bs[1] || fs[3] < bs[3] || fs[4] < bs[4] || crossPrimaryDelta > 0
+    );
     const safeToLocale = v => (typeof v === 'number' ? v.toLocaleString() : String(v ?? '—'));
-    diffBlock = improved
+    diffBlock = safetyBlocked
+      ? `<div style="padding:8px 12px;border-radius:6px;background:rgba(240,96,96,0.08);border:1px solid rgba(240,96,96,.24);margin-top:10px;color:#F06060;font-weight:700">
+          No timetable changes were applied.
+        </div>`
+      : improved
       ? `<div style="padding:8px 12px;border-radius:6px;background:rgba(10,142,110,0.1);border:1px solid rgba(10,142,110,0.25);margin-top:10px">
           <div style="font-weight:700;color:var(--teal);margin-bottom:4px">✓ ${IS_AR ? 'تم التحسين' : 'Board improved'}</div>
           <div style="font-size:11px">Unresolved: <b>${bs[1]}</b> → <b style="color:var(--teal)">${fs[1]}</b></div>
           ${bs[3] !== fs[3] ? `<div style="font-size:11px">Clashes: <b>${bs[3]}</b> → <b style="color:var(--teal)">${fs[3]}</b></div>` : ''}
+          ${hasCrossMetric && crossPrimaryBefore !== crossPrimaryAfter ? `<div style="font-size:11px">${hasCrossAffectedMetric ? 'Affected students' : 'Cross-board'}: <b>${crossPrimaryBefore}</b> → <b style="color:${crossPrimaryDelta > 0 ? 'var(--teal)' : '#F06060'}">${crossPrimaryAfter}</b>${hasCrossAffectedMetric ? ` <span style="color:var(--t4)">(${crossAfter} section clashes)</span>` : ''}</div>` : ''}
           <div style="font-size:11px">Gaps: <b>${safeToLocale(bs[4])}</b> → <b>${safeToLocale(fs[4])}</b></div>
         </div>`
-      : `<div style="padding:8px 12px;border-radius:6px;background:rgba(80,104,240,0.08);margin-top:10px;color:#5068F0;font-weight:600">━ ${IS_AR ? 'الجدول الحالي في أفضل حالة' : 'Current board is already optimal'}</div>`;
+      : `<div style="padding:8px 12px;border-radius:6px;background:rgba(80,104,240,0.08);border:1px solid rgba(80,104,240,.22);margin-top:10px;color:#aeb9ff;font-weight:600">
+          ━ ${IS_AR ? 'لم يتم العثور على تحسين تلقائي' : 'No automatic improvement was found'}
+          ${hasCrossMetric && crossPrimaryAfter > 0 ? `<div style="margin-top:5px;font-size:11px;color:var(--t3);font-weight:500">${hasCrossAffectedMetric ? 'Affected cross-board students' : 'Cross-board overlaps'} remain <b style="color:#F06060">${crossPrimaryAfter}</b>. Use guided fixes or Full rebuild to target this metric.</div>` : ''}
+        </div>`;
   }
+  const crossCard = hasCrossMetric ? `
+      <div style="padding:12px;border-radius:8px;background:rgba(240,96,96,0.08);text-align:center">
+        <div style="font-size:9.5px;color:var(--t4);text-transform:uppercase;letter-spacing:0.08em">${IS_AR ? 'عبر اللوحات' : 'Cross'}</div>
+        <div style="font-weight:700;color:${crossPrimaryAfter > 0 ? '#F06060' : 'var(--teal)'};font-size:20px">${crossPrimaryAfter}<span style="color:var(--t4);font-size:12px;font-weight:400">${crossPrimaryBefore !== crossPrimaryAfter ? `/${crossPrimaryBefore}` : ''}</span></div>
+        ${hasCrossAffectedMetric ? `<div style="font-size:10px;color:var(--t4);margin-top:2px">${crossAfter} section clashes</div>` : ''}
+      </div>` : '';
   const hotspots = (o.hotspot_courses || []).length ? `
     <div class="section-title" style="color:#F06060;margin-top:12px">${IS_AR ? 'مقررات مزدحمة' : 'Hotspot courses'}</div>
     <div style="display:flex;flex-wrap:wrap;gap:4px">${o.hotspot_courses.map(c =>
@@ -4344,7 +7881,7 @@ function showOptimiseResults(o, mode) {
     ).join('')}</div>
   ` : '';
   const body = `
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px">
+    <div style="display:grid;grid-template-columns:repeat(${hasCrossMetric ? 4 : 3},1fr);gap:8px;margin-bottom:14px">
       <div style="padding:12px;border-radius:8px;background:rgba(10,142,110,0.08);text-align:center">
         <div style="font-size:9.5px;color:var(--t4);text-transform:uppercase;letter-spacing:0.08em">${IS_AR ? 'تم تعيينهم' : 'Assigned'}</div>
         <div style="font-weight:700;color:var(--teal);font-size:20px">${assigned}<span style="color:var(--t4);font-size:12px;font-weight:400">/${o.total_students || 0}</span></div>
@@ -4357,11 +7894,15 @@ function showOptimiseResults(o, mode) {
         <div style="font-size:9.5px;color:var(--t4);text-transform:uppercase;letter-spacing:0.08em">${IS_AR ? 'الوقت' : 'Time'}</div>
         <div style="font-weight:700;color:#5068F0;font-size:20px">${o.elapsed_seconds || '?'}s</div>
       </div>
+      ${crossCard}
     </div>
     ${candList}
     <div class="section-title" style="color:var(--teal);margin-top:12px">${finalLabel}</div>
     <table style="width:100%;border-collapse:collapse;font-size:12px">${scoreRows}</table>
+    ${qualityBlock}
+    ${safetyBlock}
     ${diffBlock}
+    ${crossTradeoffBlock}
     ${hotspots}
     ${reservePressure}
   `;
@@ -4373,6 +7914,13 @@ function showOptimiseResults(o, mode) {
       { label: IS_AR ? 'تطبيق' : 'Apply & refresh', variant: 'primary' },
     ],
   });
+  if (safetyBlocked) {
+    const footerBtn = $('twsModalFooter')?.querySelector('button');
+    if (footerBtn) {
+      footerBtn.textContent = 'Close';
+      footerBtn.classList.remove('primary');
+    }
+  }
 }
 async function doPublish() {
   if (!S.scenarioId) return;
@@ -4399,10 +7947,63 @@ function doExport() {
   window.open(`/ops/tw/scenarios/${S.scenarioId}/export-per-plan${suffix}`, '_blank');
 }
 
+const DISMISSIBLE_DETAILS = ['twsViewMenu', 'twsMoreMenu'];
+
+function closeOpenDetailsMenus(except = null) {
+  document.querySelectorAll('.tws-presets[open], .tws-shortcuts[open]')
+    .forEach(menu => {
+      if (menu !== except) menu.removeAttribute('open');
+    });
+  DISMISSIBLE_DETAILS
+    .map(id => $(id))
+    .filter(Boolean)
+    .forEach(menu => {
+      if (menu !== except) menu.removeAttribute('open');
+    });
+}
+
+function hasOpenDetailsMenu() {
+  return DISMISSIBLE_DETAILS.some(id => $(id)?.hasAttribute('open'))
+    || !!document.querySelector('.tws-presets[open], .tws-shortcuts[open]');
+}
+
+function initDismissibleDetailsMenus() {
+  const menus = [
+    ...DISMISSIBLE_DETAILS.map(id => $(id)).filter(Boolean),
+    ...document.querySelectorAll('.tws-presets, .tws-shortcuts'),
+  ];
+  menus.forEach(menu => {
+    const summary = menu.querySelector(':scope > summary');
+    summary?.addEventListener('click', (e) => {
+      e.preventDefault();
+      const shouldOpen = !menu.open;
+      closeOpenDetailsMenus(shouldOpen ? menu : null);
+      menu.open = shouldOpen;
+    });
+    summary?.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      e.preventDefault();
+      summary.click();
+    });
+    menu.addEventListener('toggle', () => {
+      if (menu.open) closeOpenDetailsMenus(menu);
+    });
+  });
+  document.addEventListener('click', (e) => {
+    const openMenus = menus.filter(menu => menu.open);
+    if (!openMenus.length) return;
+    if (openMenus.some(menu => menu.contains(e.target))) return;
+    closeOpenDetailsMenus();
+  });
+}
+
 /* ── Init ── */
 (function init() {
   $('twsScenario').addEventListener('change', onScenarioChange);
+  initDismissibleDetailsMenus();
+  initPaneHeaderActionDelegation();
   $('twsOptimise').addEventListener('click', () => doOptimise('current'));
+  $('twsGlobalRepairPlan')?.addEventListener('click', () => openGlobalRepairPlanModal());
   $('twsOptimiseMenu')?.addEventListener('click', (e) => {
     e.stopPropagation();
     const dd = document.getElementById('twsOptimiseDropdown');
@@ -4424,6 +8025,11 @@ function doExport() {
   });
   $('twsPublish').addEventListener('click', doPublish);
   $('twsExport').addEventListener('click', doExport);
+  document.querySelectorAll('.tws-more-menu button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.id !== 'twsOptimiseMenu') $('twsMoreMenu')?.removeAttribute('open');
+    });
+  });
   $('twsUndo')?.addEventListener('click', doUndo);
   $('twsRedo')?.addEventListener('click', doRedo);
   updateUndoRedoButtons();
@@ -4459,11 +8065,18 @@ function doExport() {
   });
 
   // Generic modal close
-  $('twsModalClose')?.addEventListener('click', closeModal);
-  $('twsModalBackdrop')?.addEventListener('click', closeModal);
+  $('twsModalClose')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    closeModal();
+  });
+  $('twsModalBackdrop')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    closeModal();
+  });
 
   // Right panel toggle + tabs
   $('twsRpanelToggle')?.addEventListener('click', () => toggleRpanel());
+  $('twsRpanelClose')?.addEventListener('click', () => closeRpanel({ focusTrigger: true }));
   document.querySelectorAll('.tws-rpanel-tab').forEach(t => {
     t.addEventListener('click', () => setRpanelTab(t.dataset.tab));
     t.addEventListener('keydown', (e) => {
@@ -4483,10 +8096,7 @@ function doExport() {
       setBpanelTab(t.dataset.tab);
     });
   });
-  $('twsClose').addEventListener('click', () => {
-    if (window.history.length > 1) window.history.back();
-    else window.location.href = '/timetable-workspace/';
-  });
+  $('twsClose').addEventListener('click', confirmCloseSplitWorkspace);
   // Matrix layout picker — trigger toggles dropdown, matrix shows
   // hover-preview, click commits.
   initLayoutMatrix();
@@ -4515,9 +8125,12 @@ function doExport() {
     const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target?.isContentEditable;
 
     if (e.key === 'Escape') {
+      if (hasOpenDetailsMenu()) { closeOpenDetailsMenus(); return; }
       if (_modalOpen) { closeModal(); return; }
       if ($('twsDrawer').classList.contains('open')) { closeDrawer(); return; }
-      $('twsClose').click();
+      if (clearPlacementSelection()) return;
+      if (RP.open) { closeRpanel(); return; }
+      confirmCloseSplitWorkspace();
       return;
     }
     // Undo / redo — Ctrl+Z, Ctrl+Shift+Z / Ctrl+Y

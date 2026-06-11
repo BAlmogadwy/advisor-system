@@ -14,6 +14,7 @@
         <button id="elSavePreset" type="button" class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span>Save preset</button>
         <button id="elLoadPreset" type="button" class="fb-dd"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 15v4c0 1.1.9 2 2 2h14a2 2 0 0 0 2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg></span>Load preset</button>
         <div class="fb-spacer"></div>
+        <button id="elCopyIds" type="button" class="fb-dd" title="{% if LANGUAGE_CODE == 'ar' %}نسخ أرقام الطلاب المؤهلين للصقها في صفحة التوافر الجماعي{% else %}Copy eligible IDs to paste into Group Availability{% endif %}"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}نسخ الأرقام{% else %}Copy IDs{% endif %}</button>
         <a id="elCsv" class="fb-dd" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>CSV</a>
       </div>
       <div id="elMeta" class="meta-banner meta-info meta-mono mb-14">No eligibility report loaded.</div>

@@ -7,6 +7,7 @@ from core.models import (
     Course,
     DeliveryBoard,
     ProgrammeRequirement,
+    ScenarioStudentCourseRequest,
     ScenarioStudentMap,
     SectionPlacement,
     Student,
@@ -116,6 +117,16 @@ def _graph_fixture() -> TimetableScenario:
         student_id=student.student_id,
         primary_term=5,
         recommended_courses=["AI331"],
+    )
+    ScenarioStudentCourseRequest.objects.create(
+        scenario=scenario,
+        student_id=student.student_id,
+        course_key="AI331",
+        course_code="AI331",
+        primary_term=5,
+        status=ScenarioStudentCourseRequest.STATUS_REQUESTED,
+        priority=ScenarioStudentCourseRequest.PRIORITY_NORMAL,
+        source="test",
     )
     BoardStudentLink.objects.create(board=board, student_id=student.student_id, link_type="primary")
     return scenario

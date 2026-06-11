@@ -11,6 +11,7 @@ from core.services.timetable_assignment_models import (
     StudentProfile,
     TimetableEvaluationResult,
 )
+from core.services.timetable_quality import evaluate_timetable_quality
 
 
 def evaluate_generated_timetable_candidate(
@@ -29,6 +30,7 @@ def evaluate_generated_timetable_candidate(
         course_rigidity,
     )
     score = ssa.evaluate_assignability_lexicographic(states, student_profiles, sections_by_id)
+    quality_score = evaluate_timetable_quality(working_sections, states)
     return TimetableEvaluationResult(
         candidate_id=candidate_id,
         lexicographic_score=score,
@@ -37,6 +39,7 @@ def evaluate_generated_timetable_candidate(
         hotspot_courses=extract_hotspot_courses(states),
         capacity_pressure_courses=extract_capacity_pressure_courses(states),
         reserve_heavy_sections=extract_reserve_heavy_sections(sections_by_id),
+        quality_score=quality_score,
     )
 
 
@@ -92,5 +95,11 @@ def rank_timetable_candidates(
                 course_rigidity=course_rigidity,
             )
         )
-    results.sort(key=lambda r: (r.lexicographic_score, r.candidate_id))
+    results.sort(
+        key=lambda r: (
+            r.lexicographic_score,
+            int((r.quality_score or {}).get("penalty") or 0),
+            r.candidate_id,
+        )
+    )
     return results

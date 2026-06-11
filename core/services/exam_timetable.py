@@ -230,7 +230,49 @@ def build_enrolled_sets_with_meta(
     )
     source_codes = {str(code) for code, _desc, _sid, _program in rows}
     if not source_codes:
-        return {}, {}
+        latest = (
+            StudentTermSection.objects.order_by("-academic_year", "-term")
+            .values_list("academic_year", "term")
+            .first()
+        )
+        if latest is None:
+            return {}, {}
+
+        ay, tm = latest
+        qs_sts = StudentTermSection.objects.filter(academic_year=ay, term=tm).select_related(
+            "term_section"
+        )
+        if programs:
+            student_ids = set(
+                Student.objects.filter(program__in=programs).values_list("student_id", flat=True)
+            )
+            qs_sts = qs_sts.filter(student_id__in=student_ids)
+        if sections:
+            student_ids_sec = set(
+                Student.objects.filter(section__in=sections).values_list("student_id", flat=True)
+            )
+            qs_sts = qs_sts.filter(student_id__in=student_ids_sec)
+
+        enrolled_sts: dict[str, set[int]] = defaultdict(set)
+        meta_sts: dict[str, dict] = {}
+        for course_key, course_name, student_id in qs_sts.values_list(
+            "term_section__course_key",
+            "term_section__course_name",
+            "student_id",
+        ):
+            source_code = str(course_key or "").strip()
+            if not source_code:
+                continue
+            enrolled_sts[source_code].add(int(student_id))
+            meta_sts.setdefault(
+                source_code,
+                {
+                    "source_course_code": source_code,
+                    "course_name": str(course_name or "").strip(),
+                    "course_identity": planner_course_key(source_code, course_name),
+                },
+            )
+        return dict(enrolled_sts), meta_sts
 
     pr_rows = list(
         ProgrammeRequirement.objects.filter(course_code__in=source_codes).values_list(

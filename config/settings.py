@@ -131,6 +131,25 @@ LOCAL_LLM_TIMEOUT_SECONDS = float(os.getenv("LOCAL_LLM_TIMEOUT_SECONDS", "120"))
 LOCAL_LLM_MAX_TOKENS = int(os.getenv("LOCAL_LLM_MAX_TOKENS", "1400"))
 LOCAL_LLM_ALLOW_REMOTE = os.getenv("LOCAL_LLM_ALLOW_REMOTE", "false").lower() == "true"
 
+# Virtual advisor agent loop (native LLM tool calling over the capability
+# registry). Env-overridable kill-switch: set to "false" to revert to the
+# single-shot regex-planned behaviour with no redeploy.
+VIRTUAL_ADVISOR_AGENT_LOOP_ENABLED = (
+    os.getenv("VIRTUAL_ADVISOR_AGENT_LOOP_ENABLED", "true").lower() == "true"
+)
+VIRTUAL_ADVISOR_MAX_TOOL_ITERATIONS = int(os.getenv("VIRTUAL_ADVISOR_MAX_TOOL_ITERATIONS", "5"))
+VIRTUAL_ADVISOR_MAX_TOOL_CALLS = int(os.getenv("VIRTUAL_ADVISOR_MAX_TOOL_CALLS", "12"))
+# Token budget for tool-enabled turns. Thinking models (Qwen reasoning
+# variants) burn output tokens on hidden reasoning before tool calls or
+# answers, so loop turns need more headroom than plain chat turns.
+VIRTUAL_ADVISOR_LOOP_MAX_TOKENS = int(os.getenv("VIRTUAL_ADVISOR_LOOP_MAX_TOKENS", "3000"))
+# Per-turn HTTP timeout for tool-enabled turns. Thinking models can stall
+# a tool turn for the full LOCAL_LLM_TIMEOUT_SECONDS; a shorter per-turn
+# limit hands control to the fast no-tools rescue path sooner.
+VIRTUAL_ADVISOR_TOOL_TURN_TIMEOUT_SECONDS = float(
+    os.getenv("VIRTUAL_ADVISOR_TOOL_TURN_TIMEOUT_SECONDS", "75")
+)
+
 # WhatsApp Advisor Gateway. Keep credentials out of the repository.
 WHATSAPP_CLOUD_API_VERSION = os.getenv("WHATSAPP_CLOUD_API_VERSION", "v23.0")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "")

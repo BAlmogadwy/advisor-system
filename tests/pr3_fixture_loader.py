@@ -32,6 +32,7 @@ from core.models import (
     TermSection,
     TimetableScenario,
 )
+from core.services.timetable_demand import sync_scenario_student_course_requests
 
 # Fixture dir is resolved relative to the Django project root so the loader
 # keeps working regardless of the test runner's cwd.
@@ -148,6 +149,31 @@ def load_pr3_fixture(
             primary_term=nominal_term,
             recommended_courses=sorted(courses),
         )
+
+    # Canonical per-student demand. As of the demand-table refactor the V2
+    # optimiser's ``build_student_profiles_for_scenario`` and the overlap /
+    # pair-feasibility services read student demand from
+    # ``ScenarioStudentCourseRequest`` — not from ``ScenarioStudentMap``.
+    # Mirror the same student→course assignments into the canonical table
+    # via the production populator so fixture scenarios exercise the real
+    # demand path. (``ScenarioStudentMap`` is still seeded above for the
+    # greedy ``course_students`` map.)
+    sync_scenario_student_course_requests(
+        scenario=scenario,
+        classified_students=[
+            {
+                "student_id": id_to_int[sid_str],
+                "recommended_courses": sorted(courses),
+                "primary_term": nominal_term,
+                "is_cross_term": False,
+            }
+            for sid_str, courses in student_courses.items()
+        ],
+        student_course_keys={
+            id_to_int[sid_str]: sorted(courses) for sid_str, courses in student_courses.items()
+        },
+        source="pr3_fixture_loader",
+    )
 
     for room in scenario_data.get("rooms", []):
         Room.objects.create(

@@ -1,11 +1,68 @@
 # Virtual Advisor Capability Map
 
-Snapshot date: 2026-05-14
+Snapshot date: 2026-05-14 (registry + agent loop landed 2026-06-11)
 
 This map defines what the Virtual Advisor should reuse before anyone adds a new
 function, API, model table, or screen. The advisor should behave like an
 academic decision copilot, but its intelligence must come from verified local
 services first and LLM wording second.
+
+## Agent Loop + Capability Registry (implemented 2026-06-11)
+
+The "Recommended Next Build Slice" below is now built:
+
+- `core/services/virtual_advisor_capabilities.py` — read-only
+  `AdvisorCapabilityRegistry`; each capability wraps an existing service
+  with a JSON schema, allowed roles, and a scope-enforcing executor.
+  Registered today: `find_students`, `get_student_context`,
+  `lookup_course`, `recommend_courses`, `course_eligibility`,
+  `graduation_shortfall`, `portfolio_triage`, `aggregate_demand`.
+- `LocalLLMClient.chat_with_tools(...)` — native OpenAI-style function
+  calling against LM Studio.
+- `answer_virtual_advisor(...)` runs a tool-calling loop (default max 5
+  iterations / 12 calls): the model decides which capabilities to call,
+  observes results, and answers from gathered evidence. The legacy regex
+  planner still runs first as seed evidence, and the single-shot path is
+  the automatic fallback (old clients, flag off, or model without tool
+  support). A student-id grounding check triggers one corrective retry
+  when an answer cites ids absent from the evidence.
+- Kill-switch: `VIRTUAL_ADVISOR_AGENT_LOOP_ENABLED=false` (env) reverts
+  to the pre-loop behaviour with no redeploy. Budgets:
+  `VIRTUAL_ADVISOR_MAX_TOOL_ITERATIONS`, `VIRTUAL_ADVISOR_MAX_TOOL_CALLS`.
+- Identity/scope rules are enforced in executors server-side
+  (`_resolve_scoped_student_id`, `_resolve_scoped_programs`) — never from
+  model-supplied arguments.
+- Tests: `tests/test_virtual_advisor_agent_loop.py` plus the legacy
+  suite which now pins the fallback path.
+
+### Live-tested hardening (cycles 1-3, 2026-06-11)
+
+Four live batteries (28 realistic AR/EN questions against LM Studio
+qwen3.6-35b-a3b across student/advisor/general-advisor scopes) drove
+three fix cycles. Battery 1: 3/8 hard failures; battery 4: 0 failures,
+all answers correct and grounded, latency 19-121s.
+
+- 9th capability: `course_prerequisites` (all roles; per-program prereq
+  codes incl. hour rules + plan term/credits).
+- Loop turn failures (timeout / reasoning-budget) degrade to a forced
+  final answer from gathered evidence instead of HTTP 503.
+- Loop mode skips the regex seed (it dumped 100 unfiltered rows ≈13k
+  prompt tokens and invited sample-based wrong answers); the model
+  queries precisely instead.
+- `find_students`: `name_contains` filter; agent payload capped at 30
+  rows with `summary_stats` (gpa min/avg/max, below-2 count, avg
+  credits) over all matched rows — overview questions answer from
+  stats (230s → 35s, 22k → 5k tokens).
+- Deterministic `answer_language` pin (Arabic-script detection) stops
+  language drift; `programme_totals` in student context stops the
+  model assuming a "standard" 132-hour degree (exact plan totals).
+- Hijri sanity guard: model-supplied `academic_year` outside 1400-1500
+  (it once sent 2024) or `term` outside 1-3 falls back to configured
+  defaults; explicit legitimate terms pass through.
+- Tunables: `VIRTUAL_ADVISOR_LOOP_MAX_TOKENS` (3000),
+  `VIRTUAL_ADVISOR_TOOL_TURN_TIMEOUT_SECONDS` (75),
+  `VIRTUAL_ADVISOR_MAX_TOOL_ITERATIONS` (5),
+  `VIRTUAL_ADVISOR_MAX_TOOL_CALLS` (12).
 
 ## Non-Negotiables
 
@@ -131,11 +188,11 @@ When adding new advisor behavior, follow this order:
 
 | Gap | Why it matters | Best next step |
 |---|---|---|
-| No explicit intent registry in code | Planner logic is still parser-driven and can grow fragile | Add a small internal registry that maps intent to existing service, required scope, and evidence shape |
-| Student vague course names | "project", "AI thing", "data mining" may need course-name matching | Reuse `Course` and `ProgrammeRequirement` lookup before asking the LLM |
+| ~~No explicit intent registry in code~~ | DONE 2026-06-11 | `virtual_advisor_capabilities.py` registry powers the agent loop |
+| ~~Student vague course names~~ | DONE 2026-06-11 | `lookup_course` capability resolves name fragments to codes |
 | Advisor follow-up memory | "only females", "export that", "what about DS?" needs session state | Keep session-scoped history and last tool result metadata, not global memory |
 | Export follow-up from chat | Results can be shown, but "export that" is not a first-class intent | Reuse existing export endpoints where possible; otherwise add adapter that writes the last tool result |
-| Shortfall analysis not wired to chat | Good graduation/low-credit evidence exists but is not routed | Add a read-only advisor tool around `run_shortfall_analysis(...)` |
+| ~~Shortfall analysis not wired to chat~~ | DONE 2026-06-11 | `graduation_shortfall` capability wraps `run_shortfall_analysis(...)` |
 | Timetable evidence is powerful but broad | Chat should not mutate timetable state casually | Start with read-only evidence tools: conflicts, affected students, readiness |
 | Full student web login role | WhatsApp student scope exists; Django staff RBAC is staff-first | Add only if student portal UI is needed, keeping WhatsApp scope separate |
 

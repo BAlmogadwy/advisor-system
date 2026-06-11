@@ -15,6 +15,7 @@ import time
 from collections import defaultdict
 
 from django.conf import settings
+from django.utils import timezone
 
 from core.models import DeliveryBoard, Room, SectionPlacement
 from core.services.timetable_decision_trace import DecisionTrace
@@ -22,6 +23,7 @@ from core.services.timetable_lab_predicate import (
     is_lab_heuristic_unified,
     meeting_requires_lab_room,
 )
+from core.services.timetable_online import OnlineCourseLookup, normalise_course_code
 from core.services.timetable_room_oracle import (
     NO_ROOM_CAPACITY,
     ROOM_BUFFER_REJECT,
@@ -59,6 +61,130 @@ def get_capacity_buffer() -> float:
     if value <= 0:
         return 1.1
     return value
+
+
+def _rooming_identity(value: object | None) -> str:
+    """Return the exact planner identity key used for rooming lookups."""
+    return str(value or "").strip()
+
+
+def _budget_identity(budget: object) -> str:
+    return _rooming_identity(
+        getattr(budget, "course_key", "") or getattr(budget, "course_code", "")
+    )
+
+
+def _placement_identity(placement: SectionPlacement) -> str:
+    term_section = placement.term_section
+    return _rooming_identity(
+        getattr(term_section, "course_key", "") or getattr(term_section, "course_code", "")
+    )
+
+
+def _visible_course_code(obj: object) -> str:
+    return _rooming_identity(getattr(obj, "course_code", ""))
+
+
+def _raw_section_demand(budget: object) -> int:
+    planned_sections = int(getattr(budget, "planned_sections", 0) or 0)
+    total_demand = int(getattr(budget, "total_demand", 0) or 0)
+    max_per_section = int(getattr(budget, "max_per_section", 40) or 40)
+    return -(-total_demand // planned_sections) if planned_sections > 0 else max_per_section
+
+
+def _build_rooming_budget_maps(budgets: list[object], buffer_multiplier: float) -> dict[str, dict]:
+    """Build room-sizing maps keyed by planner course identity.
+
+    Visible ``course_code`` is used only as a legacy fallback when exactly one
+    budget row has that display code. Duplicate display codes are intentionally
+    not guessed because their course keys may carry different demand/credits.
+    """
+    maps: dict[str, dict] = {
+        "raw_by_key": {},
+        "buffered_by_key": {},
+        "credit_by_key": {},
+        "raw_by_code": {},
+        "buffered_by_code": {},
+        "credit_by_code": {},
+    }
+    by_code: dict[str, list[tuple[int, int, int]]] = defaultdict(list)
+    for budget in budgets:
+        raw = _raw_section_demand(budget)
+        buffered = int(raw * buffer_multiplier)
+        credit_hours = int(getattr(budget, "credit_hours", 0) or 0)
+        key = _budget_identity(budget)
+        code = _visible_course_code(budget)
+        if key:
+            maps["raw_by_key"][key] = raw
+            maps["buffered_by_key"][key] = buffered
+            maps["credit_by_key"][key] = credit_hours
+        if code:
+            by_code[code].append((raw, buffered, credit_hours))
+
+    for code, rows in by_code.items():
+        if len(rows) != 1:
+            continue
+        raw, buffered, credit_hours = rows[0]
+        maps["raw_by_code"][code] = raw
+        maps["buffered_by_code"][code] = buffered
+        maps["credit_by_code"][code] = credit_hours
+    return maps
+
+
+def _budget_value_for_placement(
+    placement: SectionPlacement,
+    maps: dict[str, dict],
+    bucket: str,
+    default: int,
+) -> int:
+    key = _placement_identity(placement)
+    by_key = maps.get(f"{bucket}_by_key", {})
+    if key and key in by_key:
+        return int(by_key[key])
+    code = _visible_course_code(placement.term_section)
+    by_code = maps.get(f"{bucket}_by_code", {})
+    if code and code in by_code:
+        return int(by_code[code])
+    return default
+
+
+def _room_type_for_credit_duration(credit_hours: int, duration_minutes: int) -> str:
+    """Return the authoritative rooming room type for a meeting."""
+    # Only 4-credit courses have lab meetings. 2-credit 100-min meetings are
+    # long lectures, not labs. Keep the unified duration predicate as the
+    # duration gate, then additionally gate on credits.
+    if is_lab_heuristic_unified():
+        return (
+            "lab"
+            if (credit_hours == 4 and meeting_requires_lab_room(duration_minutes))
+            else "lecture"
+        )
+    return "lab" if (duration_minutes > 80 and credit_hours == 4) else "lecture"
+
+
+def room_type_for_placement(
+    placement: SectionPlacement,
+    *,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    budget_maps: dict[str, dict] | None = None,
+) -> str:
+    """Classify a placement's required room type using rooming's budget rules."""
+    if budget_maps is None:
+        from core.models import ScenarioSectionBudget
+
+        budget_maps = _build_rooming_budget_maps(
+            list(ScenarioSectionBudget.objects.filter(scenario=placement.board.scenario)),
+            get_capacity_buffer(),
+        )
+    credit_hours = _budget_value_for_placement(placement, budget_maps, "credit", 3)
+    start = str(start_time if start_time is not None else placement.start_time).strip()
+    end = str(end_time if end_time is not None else placement.end_time).strip()
+    try:
+        duration = _to_min(end) - _to_min(start)
+    except (AttributeError, TypeError, ValueError):
+        duration = 0
+    return _room_type_for_credit_duration(credit_hours, duration)
 
 
 def get_programme_rooms(programmes: list[str]) -> list[dict]:
@@ -282,7 +408,34 @@ def assign_rooms_to_board(board_id: int, *, respect_locked: bool = False) -> dic
             "stage_telemetry": empty_stage_telemetry(),
         }
 
+    online_lookup = OnlineCourseLookup()
+    online_codes = online_lookup.codes_for_board(board)
+
+    board_gender = get_board_gender(board_id)
     rooms = get_programme_rooms(programmes)
+
+    def is_online_placement(p: SectionPlacement) -> bool:
+        return normalise_course_code(p.term_section.course_code) in online_codes
+
+    # Load all placements for THIS board
+    placements = list(
+        SectionPlacement.objects.filter(board=board)
+        .select_related("term_section")
+        .order_by("day", "start_time")
+    )
+
+    # Online courses keep their time slots but must not consume physical rooms.
+    # A lock protects the placement/time, not a stale physical room value.
+    online_room_updates: list[SectionPlacement] = []
+    now = timezone.now()
+    for p in placements:
+        if is_online_placement(p) and p.room:
+            p.room = ""
+            p.updated_at = now
+            online_room_updates.append(p)
+    if online_room_updates:
+        SectionPlacement.objects.bulk_update(online_room_updates, ["room", "updated_at"])
+
     if not rooms:
         return {
             "assigned": 0,
@@ -294,52 +447,41 @@ def assign_rooms_to_board(board_id: int, *, respect_locked: bool = False) -> dic
             "stage_telemetry": empty_stage_telemetry(),
         }
 
-    board_gender = get_board_gender(board_id)
     tracker = RoomTracker(rooms)
 
-    # Pre-populate tracker with rooms used by OTHER boards in the same scenario
+    # Pre-populate tracker with rooms used by OTHER boards in the same scenario.
+    # Legacy online rows may still carry room text; they are intentionally not
+    # seeded because online sections do not occupy physical rooms.
     other_placements = (
         SectionPlacement.objects.filter(board__scenario=board.scenario)
         .exclude(board=board)
         .exclude(room="")
         .exclude(room="UNASSIGNED")
-        .values_list("day", "start_time", "room")
+        .select_related("board", "term_section")
     )
-    for day, start, room_code in other_placements:
-        tracker.usage[(day, start)].add(room_code)
-
-    # Load all placements for THIS board
-    placements = list(
-        SectionPlacement.objects.filter(board=board)
-        .select_related("term_section")
-        .order_by("day", "start_time")
-    )
+    for other in other_placements:
+        if online_lookup.is_online_course_for_board(other.board, other.term_section.course_code):
+            continue
+        tracker.usage[(other.day, other.start_time)].add(other.room)
 
     # First pass: mark rooms already assigned (from greedy or previous run).
     # Exclude the sentinel "UNASSIGNED" so placements left unroomed by a
     # prior pass become repair candidates below rather than being treated
     # as if the sentinel occupied a slot.
     for p in placements:
+        if is_online_placement(p):
+            continue
         if p.room and p.room != "UNASSIGNED":
             tracker.usage[(p.day, p.start_time)].add(p.room)
 
     # Get actual students per section and credit hours from budget
     from core.models import ScenarioSectionBudget
 
-    all_budgets = ScenarioSectionBudget.objects.filter(scenario=board.scenario)
-    budget_map = {}
-    raw_budget_map = {}
-    credit_map = {}
     buffer_multiplier = get_capacity_buffer()
-    for b in all_budgets:
-        raw = (
-            -(-b.total_demand // b.planned_sections)
-            if b.planned_sections > 0
-            else b.max_per_section
-        )
-        raw_budget_map[b.course_code] = int(raw)
-        budget_map[b.course_code] = int(raw * buffer_multiplier)
-        credit_map[b.course_code] = b.credit_hours
+    budget_maps = _build_rooming_budget_maps(
+        list(ScenarioSectionBudget.objects.filter(scenario=board.scenario)),
+        buffer_multiplier,
+    )
 
     # Sort unassigned placements by capacity DESC (largest first = best-fit-decreasing).
     # PR5 commit 6: also re-process placements carrying the "UNASSIGNED"
@@ -351,14 +493,25 @@ def assign_rooms_to_board(board_id: int, *, respect_locked: bool = False) -> dic
     locked_unassigned_count = sum(
         1
         for p in placements
-        if respect_locked and p.is_locked and (not p.room or p.room == "UNASSIGNED")
+        if (
+            not is_online_placement(p)
+            and respect_locked
+            and p.is_locked
+            and (not p.room or p.room == "UNASSIGNED")
+        )
     )
     unassigned_placements = [
         p
         for p in placements
-        if (not p.room or p.room == "UNASSIGNED") and not (respect_locked and p.is_locked)
+        if (
+            not is_online_placement(p)
+            and (not p.room or p.room == "UNASSIGNED")
+            and not (respect_locked and p.is_locked)
+        )
     ]
-    unassigned_placements.sort(key=lambda p: -(budget_map.get(p.term_section.course_code, 40)))
+    unassigned_placements.sort(
+        key=lambda p: -_budget_value_for_placement(p, budget_maps, "buffered", 40)
+    )
     previous_room_by_id: dict[int, str] = {p.id: p.room for p in unassigned_placements}
     decision_trace: dict[str, dict] = {}
     emit_trace = is_stage_trace_enabled()
@@ -389,21 +542,9 @@ def assign_rooms_to_board(board_id: int, *, respect_locked: bool = False) -> dic
     room_failures: list[dict] = []
 
     for p in unassigned_placements:
-        cap = budget_map.get(p.term_section.course_code, 40)
-        raw_cap = raw_budget_map.get(p.term_section.course_code, 40)
-        cr = credit_map.get(p.term_section.course_code, 3)
-        duration = _to_min(p.end_time) - _to_min(p.start_time)
-        # Only 4-credit courses have lab meetings. 2-credit 100-min
-        # meetings are long lectures, not labs.
-        # Rule: only 4-credit courses have lab meetings. A long (>=80 min)
-        # meeting of a non-4-credit course is a long lecture, not a lab.
-        # Keep the unified duration predicate as the duration gate; gate
-        # additionally on ``cr == 4`` so non-4-credit meetings never enter
-        # the lab pool regardless of length.
-        if is_lab_heuristic_unified():
-            room_type = "lab" if (cr == 4 and meeting_requires_lab_room(duration)) else "lecture"
-        else:
-            room_type = "lab" if (duration > 80 and cr == 4) else "lecture"
+        cap = _budget_value_for_placement(p, budget_maps, "buffered", 40)
+        raw_cap = _budget_value_for_placement(p, budget_maps, "raw", 40)
+        room_type = room_type_for_placement(p, budget_maps=budget_maps)
 
         # For lab meetings, don't filter by capacity — lab rooms have a
         # fixed physical size (computers/benches).
@@ -574,8 +715,13 @@ def simulate_buffer_impact(board_id: int, buffers: list[float]) -> dict:
 
     programmes = [p.strip() for p in (board.program or "").split(",") if p.strip()]
     rooms = get_programme_rooms(programmes) if programmes else []
+    online_lookup = OnlineCourseLookup()
+    online_codes = online_lookup.codes_for_board(board)
 
     board_gender = get_board_gender(board_id)
+
+    def is_online_placement(p: SectionPlacement) -> bool:
+        return normalise_course_code(p.term_section.course_code) in online_codes
 
     # Stable pre-population: rooms consumed by OTHER boards in this scenario.
     other_usage = list(
@@ -583,19 +729,13 @@ def simulate_buffer_impact(board_id: int, buffers: list[float]) -> dict:
         .exclude(board=board)
         .exclude(room="")
         .exclude(room="UNASSIGNED")
-        .values_list("day", "start_time", "room")
+        .select_related("board", "term_section")
     )
 
-    all_budgets = list(ScenarioSectionBudget.objects.filter(scenario=board.scenario))
-    raw_map = {}
-    credit_map = {}
-    for b in all_budgets:
-        raw_map[b.course_code] = int(
-            -(-b.total_demand // b.planned_sections)
-            if b.planned_sections > 0
-            else b.max_per_section
-        )
-        credit_map[b.course_code] = b.credit_hours
+    budget_maps = _build_rooming_budget_maps(
+        list(ScenarioSectionBudget.objects.filter(scenario=board.scenario)),
+        1.0,
+    )
 
     placements = list(
         SectionPlacement.objects.filter(board=board)
@@ -606,10 +746,16 @@ def simulate_buffer_impact(board_id: int, buffers: list[float]) -> dict:
     results: list[dict] = []
     for buf in buffers:
         tracker = RoomTracker(rooms)
-        for day, start, room_code in other_usage:
-            tracker.usage[(day, start)].add(room_code)
+        for other in other_usage:
+            if online_lookup.is_online_course_for_board(
+                other.board, other.term_section.course_code
+            ):
+                continue
+            tracker.usage[(other.day, other.start_time)].add(other.room)
         # Seed with rooms already permanently assigned on THIS board.
         for p in placements:
+            if is_online_placement(p):
+                continue
             if p.room and p.room != "UNASSIGNED":
                 tracker.usage[(p.day, p.start_time)].add(p.room)
 
@@ -617,21 +763,17 @@ def simulate_buffer_impact(board_id: int, buffers: list[float]) -> dict:
         unassigned = 0
         rejected_by_buffer = 0
 
-        targets = [p for p in placements if not p.room or p.room == "UNASSIGNED"]
-        targets.sort(key=lambda p: -raw_map.get(p.term_section.course_code, 40))
+        targets = [
+            p
+            for p in placements
+            if not is_online_placement(p) and (not p.room or p.room == "UNASSIGNED")
+        ]
+        targets.sort(key=lambda p: -_budget_value_for_placement(p, budget_maps, "raw", 40))
 
         for p in targets:
-            raw_cap = raw_map.get(p.term_section.course_code, 40)
+            raw_cap = _budget_value_for_placement(p, budget_maps, "raw", 40)
             buffered_cap = int(raw_cap * buf)
-            cr = credit_map.get(p.term_section.course_code, 3)
-            duration = _to_min(p.end_time) - _to_min(p.start_time)
-            # Same cr==4 gate as assign_rooms_to_board (see comment there).
-            if is_lab_heuristic_unified():
-                room_type = (
-                    "lab" if (cr == 4 and meeting_requires_lab_room(duration)) else "lecture"
-                )
-            else:
-                room_type = "lab" if (duration > 80 and cr == 4) else "lecture"
+            room_type = room_type_for_placement(p, budget_maps=budget_maps)
             room_cap = 0 if room_type == "lab" else buffered_cap
             gender = _section_gender(p.term_section.section) or board_gender
             room_code = tracker.assign_best_fit(p.day, p.start_time, room_cap, room_type, gender)

@@ -25,7 +25,6 @@ from collections import defaultdict
 
 from core.models import (
     DeliveryBoard,
-    ProgrammeRequirement,
     SectionPlacement,
     TermSection,
     TermSectionMeeting,
@@ -36,6 +35,7 @@ from core.services.timetable_autoplace import (
     WEEKDAYS,
     _time_mask,
 )
+from core.services.timetable_online import OnlineCourseLookup, normalise_course_code
 from core.services.timetable_same_course import (
     has_same_course_overlap as same_course_windows_overlap,
 )
@@ -87,15 +87,8 @@ def _build_schedule_from_db(
         .order_by("term_section__course_code", "term_section__section", "day")
     )
 
-    online_codes: set[str] = set()
     board = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
-    if board.program:
-        programs = [p.strip() for p in board.program.split(",") if p.strip()]
-        online_codes = set(
-            ProgrammeRequirement.objects.filter(program__in=programs, is_online=True).values_list(
-                "course_code", flat=True
-            )
-        )
+    online_codes = OnlineCourseLookup().codes_for_board(board)
 
     def _to_min(t: str) -> int:
         h, m = t.split(":")
@@ -120,7 +113,7 @@ def _build_schedule_from_db(
                     "sec_num": sec_num,
                     "label": sec_label,
                     "term_section_id": p.term_section_id,
-                    "is_online": p.term_section.course_code in online_codes,
+                    "is_online": normalise_course_code(p.term_section.course_code) in online_codes,
                 }
             )
             schedule[idx] = []
@@ -163,7 +156,7 @@ def _daily_load(
     day_count: dict[str, int] = {d: 0 for d in WEEKDAYS}
     for i, meetings in schedule.items():
         sec = sections[i]
-        if sec["code"] in online_codes:
+        if normalise_course_code(sec["code"]) in online_codes:
             continue
         load_w = max(1, _col(overlap_matrix, sec["code"])) if overlap_matrix else 1
         for m in meetings:
@@ -190,7 +183,7 @@ def _compute_balance_score(
     course_day_times: dict[str, dict[str, list[tuple]]] = defaultdict(lambda: defaultdict(list))
     for i, meetings in schedule.items():
         sec = sections[i]
-        if sec["code"] in online_codes:
+        if normalise_course_code(sec["code"]) in online_codes:
             continue
         for m in meetings:
             course_day_times[sec["code"]][m["day"]].append((_to_min(m["start"]), _to_min(m["end"])))

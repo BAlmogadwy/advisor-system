@@ -1,4 +1,4 @@
-const IS_AR = 'LANGUAGE_CODE' === 'ar';
+const IS_AR = document.documentElement.lang === 'ar';
 
 const UI = {
   time: IS_AR ? 'الوقت' : 'Time',
@@ -138,57 +138,31 @@ function renderBaselineWeeklyCompact(baseline){
         ${unmapped.map(r=>`<strong>${courseKey(r)}</strong>`).join(', ')}
       </div>`
     : '';
-  if(!rows.length){ host.innerHTML=`<span class="text-secondary">${T.noMappedSlots}</span>${unmappedHtml}`; return; }
 
-  const dayOrder=['SUN','MON','TUE','WED','THU'];
-  const dayLabel = UI.dayShort;
-
-  const mins=rows.flatMap(r=>[toMins(r.start_time),toMins(r.end_time)]).filter(v=>v!==null);
-  const rawMin=Math.min(...mins), rawMax=Math.max(...mins);
-  const step=30;
-  const startMin=Math.max(0, Math.floor((rawMin-30)/step)*step);
-  const endMin=Math.ceil((rawMax+30)/step)*step;
-
-  const startsByDay={SUN:{},MON:{},TUE:{},WED:{},THU:{}};
-  rows.forEach(r=>{
-    const d=normalizeDay(r.day);
-    const st=toMins(r.start_time), en=toMins(r.end_time);
-    if(st===null||en===null||en<=st) return;
-    const stSlot = Math.floor(st/step)*step;
-    const span=Math.max(1, Math.ceil((en-stSlot)/step));
-    startsByDay[d][stSlot]={label:courseLabel(r), room:r.room||'', start:r.start_time, end:r.end_time, span, source:r.source||''};
+  const blocks=rows.map(r=>({
+    day: normalizeDay(r.day),
+    start: r.start_time,
+    end: r.end_time,
+    label: courseLabel(r),
+    room: r.room||'',
+    source: r.source||'',
+  }));
+  const grid=WeekGrid.renderWeekGrid({
+    mode: 'blocks',
+    blocks,
+    timeLabel: UI.time,
+    dayLabels: UI.dayShort,
+    empty: `<span class="text-secondary">${T.noMappedSlots}</span>`,
+    pick: (cur,inc)=>inc, // last write wins
+    bg: m=>colorForCourse(m.label),
+    accent: m=>colorForCourseBorder(m.label),
+    cellHtml: m=>`<span class="wg-cid">${m.label}</span><span class="wg-meta">${m.start}-${m.end}</span>`,
   });
-
-  let html='<div class="table-responsive"><table class="table table-sm table-bordered align-middle"><thead><tr>';
-  html += `<th style="width:70px">${UI.time}</th>`;
-  dayOrder.forEach(d=> html += `<th>${dayLabel[d]}</th>`);
-  html+='</tr></thead><tbody>';
-
-  const carry={SUN:0,MON:0,TUE:0,WED:0,THU:0};
-  for(let t=startMin;t<endMin;t+=step){
-    const hh=String(Math.floor(t/60)).padStart(2,'0');
-    const mm=String(t%60).padStart(2,'0');
-    html += `<tr><td class="text-secondary">${hh}:${mm}</td>`;
-    dayOrder.forEach(d=>{
-      if(carry[d]>0){ carry[d]-=1; return; }
-      const m=startsByDay[d][t];
-      if(!m){ html+='<td></td>'; return; }
-      carry[d]=Math.max(0,(m.span||1)-1);
-      html += `<td rowspan="${m.span||1}" style="background:${colorForCourse(m.label)}">
-        <div class="fw-semibold">${m.label}</div>
-        <div class="small text-secondary">${m.start}-${m.end}</div>
-      </td>`;
-    });
-    html+='</tr>';
-  }
-  html+='</tbody></table></div>';
-  host.innerHTML=html+unmappedHtml;
+  host.innerHTML=grid+unmappedHtml;
 }
 
 function renderVisualTimetable(source='baseline'){
   const host=q('visualGrid');
-  const dayOrder=['SUN','MON','TUE','WED','THU'];
-  const dayLabel = UI.dayShort;
 
   const baseline=(currentBaseline||[])
     .filter(x=>x.day&&x.start_time&&x.end_time)
@@ -221,90 +195,48 @@ function renderVisualTimetable(source='baseline'){
     );
   }
 
+  /* Keep Registered mode: a builder plan ADDS to the student's current
+     registrations, so builder views must show baseline + planned together.
+     Ignore Registered mode: the plan replaces registrations — planned only. */
+  const keepRegistered=(q('mode')?.value!=='ignore');
   let meetings=[];
   if(source==='baseline') meetings=baseline;
   else if(source==='overlay') meetings=[...baseline,...planned];
-  else meetings=planned;
+  else meetings=keepRegistered?[...baseline,...planned]:planned;
 
-  const step=30;
-  const startsByDay={SUN:{},MON:{},TUE:{},WED:{},THU:{}};
-
-  const enriched=meetings.map(m=>{
-    const st=toMins(m.start), en=toMins(m.end);
-    return {...m, st, en, conflict:false};
-  }).filter(m=>m.st!==null && m.en!==null && m.en>m.st);
-
-  if(!enriched.length){
-    host.innerHTML=`<span class="text-secondary">${IS_AR ? 'لا توجد لقاءات جدول لعرضها.' : 'No timetable meetings to display.'}</span>`;
-    return;
-  }
-
-  const rawMin=Math.min(...enriched.map(m=>m.st));
-  const rawMax=Math.max(...enriched.map(m=>m.en));
-  const startMin=Math.max(0, Math.floor((rawMin-30)/step)*step);
-  const endMin=Math.ceil((rawMax+30)/step)*step;
-
-  // Overlap conflict detection (overlay: baseline vs planned)
+  // Conflict pre-pass (baseline vs planned) — applies to any mixed view.
+  const mixedView=(source==='overlay')||(source!=='baseline'&&keepRegistered);
+  const enriched=meetings
+    .map(m=>({...m, st:toMins(m.start), en:toMins(m.end), conflict:false}))
+    .filter(m=>m.st!==null && m.en!==null && m.en>m.st);
   for(let i=0;i<enriched.length;i++){
     for(let j=i+1;j<enriched.length;j++){
       const a=enriched[i], b=enriched[j];
       if(a.day!==b.day) continue;
-      const overlaps = a.st < b.en && b.st < a.en;
-      if(!overlaps) continue;
-      if(source==='overlay' && a.kind!==b.kind){ a.conflict=true; b.conflict=true; }
+      if(!(a.st < b.en && b.st < a.en)) continue;
+      if(mixedView && a.kind!==b.kind){ a.conflict=true; b.conflict=true; }
     }
   }
 
-  enriched.forEach(m=>{
-    const stSlot = Math.floor((m.st||0)/step)*step;
-    const span=Math.max(1, Math.ceil((m.en-stSlot)/step));
-    if(!startsByDay[m.day]) startsByDay[m.day]={};
-    const key=`${stSlot}`;
-    if(!startsByDay[m.day][key]) startsByDay[m.day][key]={...m, span};
-    else if(m.conflict) startsByDay[m.day][key]={...m, span}; // prefer showing conflicts
+  const conflictBg=(getComputedStyle(document.documentElement).getPropertyValue('--pl-conflict-cell').trim() || '#fecaca');
+  host.innerHTML=WeekGrid.renderWeekGrid({
+    mode: 'blocks',
+    blocks: enriched,
+    timeLabel: UI.time,
+    dayLabels: UI.dayShort,
+    empty: `<span class="text-secondary">${IS_AR ? 'لا توجد لقاءات جدول لعرضها.' : 'No timetable meetings to display.'}</span>`,
+    pick: (cur,inc)=>(inc.conflict?inc:cur), // keep first unless incoming is a conflict
+    bg: m=>(m.conflict?conflictBg:colorForCourse(m.label)),
+    accent: m=>(m.conflict?'#ef4444':colorForCourseBorder(m.label)),
+    cellClass: m=>(m.conflict?'wg-clash':(m.kind==='planned'?'wg-planned':'')),
+    cellHtml: m=>`<span class="wg-cid">${m.label}</span><span class="wg-meta">${m.start}-${m.end}</span>`,
   });
-
-  let html='<div class="table-responsive"><table class="table table-sm table-bordered align-middle"><thead><tr>';
-  html += `<th style="width:70px">${UI.time}</th>`;
-  dayOrder.forEach(d=> html += `<th>${dayLabel[d]}</th>`);
-  html+='</tr></thead><tbody>';
-
-  const carry={SUN:0,MON:0,TUE:0,WED:0,THU:0};
-  for(let t=startMin;t<endMin;t+=step){
-    const hh=String(Math.floor(t/60)).padStart(2,'0');
-    const mm=String(t%60).padStart(2,'0');
-    html += `<tr><td class="text-secondary">${hh}:${mm}</td>`;
-    dayOrder.forEach(d=>{
-      if(carry[d]>0){ carry[d]-=1; return; }
-      const m=startsByDay[d][t];
-      if(!m){ html += '<td></td>'; return; }
-      carry[d]=Math.max(0,(m.span||1)-1);
-
-      const bg = m.conflict
-        ? getComputedStyle(document.documentElement).getPropertyValue('--pl-conflict-cell').trim() || '#fecaca'
-        : colorForCourse(m.label);
-      const badge = m.conflict
-        ? `<span class="badge text-bg-danger">${IS_AR ? 'تعارض' : 'conflict'}</span>`
-        : (m.kind==='planned'
-          ? `<span class="badge text-bg-success">${IS_AR ? 'مخطط' : 'planned'}</span>`
-          : `<span class="badge text-bg-primary">${IS_AR ? 'أساس' : 'baseline'}</span>`);
-
-      html += `<td rowspan="${m.span||1}" style="background:${bg}">
-        <div class="fw-semibold">${m.label}</div>
-        <div class="small text-secondary">${m.start}-${m.end}</div>
-        <div class="mt-1">${badge}</div>
-      </td>`;
-    });
-    html+='</tr>';
-  }
-
-  html+='</tbody></table></div>';
-  host.innerHTML=html;
 }
 
 q('mode').addEventListener('change',()=>{
   q('planningBanner').classList.toggle('d-none', q('mode').value!=='ignore');
   if(currentCtx?.student_id){ renderPlanPalette(currentCtx.student_id); renderAvailableSections(); }
+  renderVisualTimetable(q('visualSource').value || 'baseline');
 });
 
 q('visualSource').addEventListener('change',(e)=>renderVisualTimetable(e.target.value));
@@ -378,7 +310,7 @@ async function renderPlanPalette(studentId){
       const secRes=await fetch('/ops/planner/sections-catalog/',{
         method:'POST',
         headers:{'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
-        body:JSON.stringify({academic_year:currentCtx.academic_year,term:currentCtx.term,course_codes:codes})
+        body:JSON.stringify({student_id:currentCtx.student_id,academic_year:currentCtx.academic_year,term:currentCtx.term,course_codes:codes})
       });
       const secData=await secRes.json();
       sections=secData.sections||[];
@@ -532,7 +464,7 @@ async function renderAvailableSections(){
     const secRes=await fetch('/ops/planner/sections-catalog/',{
       method:'POST',
       headers:{'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
-      body:JSON.stringify({academic_year:currentCtx.academic_year,term:currentCtx.term,course_codes:codes})
+      body:JSON.stringify({student_id:currentCtx.student_id,academic_year:currentCtx.academic_year,term:currentCtx.term,course_codes:codes})
     });
     const secData=await secRes.json();
     const sections=secData.sections||[];
@@ -772,6 +704,7 @@ q('runBuilder').onclick=async()=>{
       method:'POST',
       headers:{'Content-Type':'application/json','X-CSRFToken':getCsrfToken()},
       body:JSON.stringify({
+        student_id:currentCtx.student_id,
         academic_year:currentCtx.academic_year,
         term:currentCtx.term,
         mode:q('mode').value,

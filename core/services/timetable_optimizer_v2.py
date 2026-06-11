@@ -19,7 +19,6 @@ from core.models import (
     DeliveryBoard,
     Room,
     ScenarioSectionBudget,
-    ScenarioStudentMap,
     SectionPlacement,
     StudentCourse,
     TermSection,
@@ -38,6 +37,7 @@ from core.services.timetable_candidate_eval import (
     evaluate_generated_timetable_candidate,
     rank_timetable_candidates,
 )
+from core.services.timetable_demand import load_scenario_course_demands
 from core.services.timetable_stage_telemetry import STAGE_KEYS, empty_stage_telemetry
 from core.services.timetable_workspace import _to_minutes
 
@@ -53,7 +53,7 @@ _DAY_IDX: dict[str, int] = {d: i for i, d in enumerate(WEEKDAYS)}
 def build_student_profiles_for_scenario(
     scenario_id: int,
 ) -> dict[str, StudentProfile]:
-    """Read ScenarioStudentMap + student metadata → StudentProfile dict.
+    """Read canonical scenario demand + student metadata → StudentProfile dict.
 
     Risk tiers:
       A (highest) — student has ≥1 retake course (grade F/D/W in history)
@@ -63,14 +63,14 @@ def build_student_profiles_for_scenario(
     intra_tier_score: lower GPA → higher priority within the tier
                       (students struggling most get first pick).
     """
-    maps = ScenarioStudentMap.objects.filter(scenario_id=scenario_id).values_list(
-        "student_id", "recommended_course_keys", "recommended_courses"
-    )
-    if not maps:
+    demand_rows = load_scenario_course_demands(scenario_id)
+    if not demand_rows:
         return {}
 
-    student_ids = [m[0] for m in maps]
-    rec_courses_by_sid: dict[int, list[str]] = {m[0]: (m[1] or m[2] or []) for m in maps}
+    rec_courses_by_sid: dict[int, list[str]] = defaultdict(list)
+    for demand in demand_rows:
+        rec_courses_by_sid[demand.student_id].append(demand.course_key)
+    student_ids = list(rec_courses_by_sid)
 
     # Bulk-fetch student metadata
     from core.models import Student
@@ -729,13 +729,20 @@ def optimise_scenario_timetable_v2(
         "reserve_heavy_sections": [
             {"section": s, "ratio": round(r, 2)} for s, r in best.reserve_heavy_sections[:10]
         ],
+        "quality_score": best.quality_score,
         "unresolved_students": len(best.unresolved_student_ids),
         "total_students": len(student_profiles),
         "local_search_applied": False,
         "final_score": list(best.lexicographic_score),
         "persist_result": None,
         "all_scores": [
-            {"id": r.candidate_id, "score": list(r.lexicographic_score)} for r in ranked
+            {
+                "id": r.candidate_id,
+                "score": list(r.lexicographic_score),
+                "quality_penalty": int((r.quality_score or {}).get("penalty") or 0),
+                "quality_components": (r.quality_score or {}).get("components", {}),
+            }
+            for r in ranked
         ],
         # PR3 commit 4 — decision_trace preservation across V2 pipeline.
         # Populated from the greedy re-placement at step 5; carried through
@@ -803,6 +810,7 @@ def optimise_scenario_timetable_v2(
             result["final_score"] = list(score_after)
             result["hotspot_courses"] = improved.hotspot_courses[:10]
             result["capacity_pressure_courses"] = improved.capacity_pressure_courses[:10]
+            result["quality_score"] = improved.quality_score
             result["reserve_heavy_sections"] = [
                 {"section": s, "ratio": round(r, 2)}
                 for s, r in improved.reserve_heavy_sections[:10]
@@ -876,6 +884,7 @@ def optimise_scenario_timetable_v2(
                 result["score_before_chain"] = list(current_eval_for_chain.lexicographic_score)
                 result["final_score"] = list(chain_result.lexicographic_score)
                 result["hotspot_courses"] = chain_result.hotspot_courses[:10]
+                result["quality_score"] = chain_result.quality_score
                 result["unresolved_students"] = len(chain_result.unresolved_student_ids)
                 current_eval_for_chain = chain_result
                 # PR5 commit 5: overlay chain trace (last-changer-wins).
@@ -931,6 +940,7 @@ def optimise_scenario_timetable_v2(
                 result["score_before_cpsat"] = list(current_eval_for_chain.lexicographic_score)
                 result["final_score"] = list(cpsat_eval.lexicographic_score)
                 result["hotspot_courses"] = cpsat_eval.hotspot_courses[:10]
+                result["quality_score"] = cpsat_eval.quality_score
                 result["unresolved_students"] = len(cpsat_eval.unresolved_student_ids)
                 # LEAK FIX: overlay improved sections into sections_by_id
                 for improved in cpsat_result["improved_sections"]:
@@ -1173,6 +1183,7 @@ def optimise_current_timetable(
         "reserve_heavy_sections": [
             {"section": s, "ratio": round(r, 2)} for s, r in baseline.reserve_heavy_sections[:10]
         ],
+        "quality_score": baseline.quality_score,
         "unresolved_students": len(baseline.unresolved_student_ids),
         "total_students": len(student_profiles),
         "local_search_applied": False,
@@ -1228,6 +1239,7 @@ def optimise_current_timetable(
         result["score_before_local_search"] = list(score_before)
         result["final_score"] = list(score_after)
         result["hotspot_courses"] = improved.hotspot_courses[:10]
+        result["quality_score"] = improved.quality_score
         result["unresolved_students"] = len(improved.unresolved_student_ids)
 
         t3 = time.time()
@@ -1266,6 +1278,7 @@ def optimise_current_timetable(
             result["chain_search_applied"] = True
             result["final_score"] = list(chain_result.lexicographic_score)
             result["hotspot_courses"] = chain_result.hotspot_courses[:10]
+            result["quality_score"] = chain_result.quality_score
             result["unresolved_students"] = len(chain_result.unresolved_student_ids)
             current_eval = chain_result
             # PR5 commit 5: overlay chain trace (last-changer-wins).
@@ -1297,6 +1310,7 @@ def optimise_current_timetable(
             result["cpsat_polish_applied"] = True
             result["final_score"] = list(cpsat_eval.lexicographic_score)
             result["hotspot_courses"] = cpsat_eval.hotspot_courses[:10]
+            result["quality_score"] = cpsat_eval.quality_score
             result["unresolved_students"] = len(cpsat_eval.unresolved_student_ids)
             # LEAK FIX: overlay improved sections into sections_by_id
             for improved_sec in cpsat_result["improved_sections"]:

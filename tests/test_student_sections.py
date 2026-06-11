@@ -157,3 +157,49 @@ def test_scenario_owned_sections_do_not_become_registered_baseline() -> None:
             "source": "fallback_studying",
         }
     ]
+
+
+def test_gender_section_filter_restricts_to_student_cohort() -> None:
+    """Gender-segregated sections: a student only sees/uses their own cohort.
+
+    Regression: the planner section catalog + build previously returned BOTH
+    M and F sections for every course regardless of the student's gender.
+    """
+    from core.services.student_sections import (
+        gender_section_filter,
+        section_gender,
+        student_gender,
+    )
+
+    male = Student.objects.create(
+        student_id=700001, registration_no="700001", name="M", program="CS", section="M"
+    )
+    female = Student.objects.create(
+        student_id=700002, registration_no="700002", name="F", program="CS", section="F"
+    )
+    for sec in ("M5", "M6", "F1", "F2", "ONLINE1"):
+        TermSection.objects.create(
+            course_code="CS999", course_number="", course_key="CS999", section=sec
+        )
+
+    def secs(gender: str) -> set[str]:
+        return set(
+            TermSection.objects.filter(course_key="CS999")
+            .filter(gender_section_filter(gender))
+            .values_list("section", flat=True)
+        )
+
+    # pure helpers
+    assert section_gender("M5") == "M"
+    assert section_gender("F1") == "F"
+    assert section_gender("ONLINE1") == ""  # ungendered
+    assert student_gender(male.student_id) == "M"
+    assert student_gender(female.student_id) == "F"
+    assert student_gender(999999) == ""  # unknown student
+
+    # a male student sees only M* sections (+ ungendered), never F*
+    assert secs("M") == {"M5", "M6", "ONLINE1"}
+    # a female student sees only F* sections (+ ungendered), never M*
+    assert secs("F") == {"F1", "F2", "ONLINE1"}
+    # unknown/blank gender => no restriction (fail open, never hide everything)
+    assert secs("") == {"M5", "M6", "F1", "F2", "ONLINE1"}

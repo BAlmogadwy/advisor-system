@@ -9,9 +9,14 @@ import pytest
 from core.models import (
     Course,
     ProgrammeRequirement,
+    ScenarioStudentCourseRequest,
     ScenarioStudentMap,
     Student,
     TimetableScenario,
+)
+from core.services.timetable_demand import (
+    compute_scenario_course_demand,
+    load_scenario_course_demands,
 )
 from core.services.timetable_overlap import (
     build_course_students_map,
@@ -59,44 +64,31 @@ def overlap_scenario():
         )
         students.append(s)
 
+    def add_requests(student, courses: list[str]) -> None:
+        for course in courses:
+            ScenarioStudentCourseRequest.objects.create(
+                scenario=scenario,
+                student_id=student.student_id,
+                course_key=course,
+                course_code=course,
+                primary_term=1,
+                status=ScenarioStudentCourseRequest.STATUS_REQUESTED,
+            )
+
     # Students 1-3: OV_A + OV_B
     for s in students[:3]:
-        ScenarioStudentMap.objects.create(
-            scenario=scenario,
-            student_id=s.student_id,
-            primary_term=1,
-            is_cross_term=False,
-            recommended_courses=["OV_A", "OV_B"],
-        )
+        add_requests(s, ["OV_A", "OV_B"])
 
     # Students 4-5: OV_A only
     for s in students[3:5]:
-        ScenarioStudentMap.objects.create(
-            scenario=scenario,
-            student_id=s.student_id,
-            primary_term=1,
-            is_cross_term=False,
-            recommended_courses=["OV_A"],
-        )
+        add_requests(s, ["OV_A"])
 
     # Students 6-7: OV_C only
     for s in students[5:7]:
-        ScenarioStudentMap.objects.create(
-            scenario=scenario,
-            student_id=s.student_id,
-            primary_term=1,
-            is_cross_term=False,
-            recommended_courses=["OV_C"],
-        )
+        add_requests(s, ["OV_C"])
 
     # Student 8: OV_B + OV_C
-    ScenarioStudentMap.objects.create(
-        scenario=scenario,
-        student_id=students[7].student_id,
-        primary_term=1,
-        is_cross_term=False,
-        recommended_courses=["OV_B", "OV_C"],
-    )
+    add_requests(students[7], ["OV_B", "OV_C"])
 
     return scenario
 
@@ -119,6 +111,27 @@ class TestBuildCourseStudentsMap:
         assert len(cs_map["OV_A"]) == 5  # students 1-5
         assert len(cs_map["OV_B"]) == 4  # students 1-3 + 8
         assert len(cs_map["OV_C"]) == 3  # students 6-7 + 8
+
+    def test_ignores_map_only_rows_without_canonical_requests(self, overlap_scenario):
+        student_id = Student.objects.values_list("student_id", flat=True).first()
+        assert student_id is not None
+        ScenarioStudentMap.objects.create(
+            scenario=overlap_scenario,
+            student_id=student_id,
+            primary_term=1,
+            recommended_courses=["NR_A"],
+            recommended_course_keys=["NR_A"],
+        )
+
+        cs_map = build_course_students_map(overlap_scenario.id, {"OV_A", "NR_A"})
+        demand = compute_scenario_course_demand(overlap_scenario.id)
+        rows = load_scenario_course_demands(overlap_scenario.id)
+
+        assert len(cs_map["OV_A"]) == 5
+        assert "NR_A" not in cs_map
+        assert demand["OV_A"] == 5
+        assert "NR_A" not in demand
+        assert "NR_A" not in [row.course_key for row in rows]
 
     def test_scoped_to_course_codes(self, overlap_scenario):
         cs_map = build_course_students_map(overlap_scenario.id, {"OV_A"})

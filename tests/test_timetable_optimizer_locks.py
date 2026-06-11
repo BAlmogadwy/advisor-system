@@ -6,6 +6,7 @@ from core.models import (
     DeliveryBoard,
     Room,
     ScenarioSectionBudget,
+    ScenarioStudentCourseRequest,
     ScenarioStudentMap,
     SectionPlacement,
     TermSection,
@@ -178,6 +179,17 @@ def test_cpsat_polisher_keeps_locked_sections_out_of_solution() -> None:
         primary_term=1,
         recommended_courses=["AI101", "DS201"],
     )
+    for course in ["AI101", "DS201"]:
+        ScenarioStudentCourseRequest.objects.create(
+            scenario=scenario,
+            student_id=990001,
+            course_key=course,
+            course_code=course,
+            primary_term=1,
+            status=ScenarioStudentCourseRequest.STATUS_REQUESTED,
+            priority=ScenarioStudentCourseRequest.PRIORITY_NORMAL,
+            source="test",
+        )
     sections = [
         _section("AI101_S1", "AI101", "p1", 0, 540),
         _section("DS201_S1", "DS201", "p1", 0, 540),

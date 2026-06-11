@@ -529,28 +529,11 @@
         return;
       }
 
-      // Search in loaded student cache
-      const cached = window._advisorStudentsCache || [];
-      const matches = cached.filter(s =>
-        String(s.student_id || '').includes(val) ||
-        String(s.name || '').toLowerCase().includes(val.toLowerCase())
-      ).slice(0, 8);
-
       // Always offer direct navigation by ID if it looks numeric
       const isNum = /^\d+$/.test(val);
       let html = '';
 
-      if (matches.length) {
-        html += `<div class="cmd-section-label">${T.students}</div>`;
-        html += matches.map(s => `
-          <div class="cmd-item" data-action="open-student" data-sid="${s.student_id}">
-            <span class="cmd-item-id">${s.student_id}</span>
-            <span class="cmd-item-name">${s.name || ''} ${s.program ? '· ' + s.program : ''}</span>
-            <span class="cmd-item-badge">${T.openPlan}</span>
-          </div>`).join('');
-      }
-
-      if (isNum && !matches.find(s => String(s.student_id) === val)) {
+      if (isNum) {
         html += `<div class="cmd-section-label">${T.directNav}</div>`;
         html += `<div class="cmd-item" data-action="open-student" data-sid="${val}">
           <span class="cmd-item-id">${val}</span>
@@ -617,13 +600,18 @@
     function updateSidebarBadges() {
       // High priority: from last loaded HP report
       const hpTbody = document.querySelector('#hpTable tbody');
-      const hpFirstCell = hpTbody?.querySelector('td.empty-note, td .empty-state');
-      const hpRows = hpTbody && !hpFirstCell ? hpTbody.querySelectorAll('tr').length : 0;
+      const hpPlaceholder = hpTbody?.querySelector('td[colspan], .empty-note, .empty-state');
+      const hpRows = hpTbody && !hpPlaceholder ? hpTbody.querySelectorAll('tr').length : 0;
       const sbHp = document.querySelector('.sb-badge-hp');
-      if (sbHp && hpRows > 0) {
-        sbHp.textContent = hpRows;
-        sbHp.className = 'nav-badge sidebar-badge warning';
-        sbHp.style.display = '';
+      if (sbHp) {
+        if (hpRows > 0) {
+          sbHp.textContent = hpRows;
+          sbHp.className = 'nav-badge sidebar-badge warning';
+          sbHp.style.display = '';
+        } else {
+          sbHp.textContent = '';
+          sbHp.style.display = 'none';
+        }
       }
 
       // Export: show "Ready" if any export link is set
@@ -636,12 +624,8 @@
       }
     }
 
-    // Re-check badges after any toast (toast fires after data loads)
-    const origToast = window._origToast || toast;
-    window._origToast = origToast;
-    const origToastFn = toast;
-    // Poll every 3 seconds as a lightweight approach
-    setInterval(updateSidebarBadges, 3000);
+    window.updateSidebarBadges = updateSidebarBadges;
+    document.addEventListener('dashboard:badges:update', updateSidebarBadges);
     updateSidebarBadges();
   })();
 

@@ -22,7 +22,6 @@ from ortools.sat.python import cp_model
 
 from core.models import (
     DeliveryBoard,
-    ProgrammeRequirement,
     ScenarioSectionBudget,
     SectionPlacement,
     TermSection,
@@ -35,6 +34,7 @@ from core.services.timetable_autoplace import (
     _time_mask,
     get_meeting_pattern,
 )
+from core.services.timetable_online import OnlineCourseLookup, normalise_course_code
 from core.services.timetable_same_course import (
     SAME_COURSE_DIFFERENT_DAY_PENALTY,
     SAME_COURSE_MISSING_ADJACENT_PAIR_PENALTY,
@@ -132,15 +132,7 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
     if not budgets:
         return {"status": "optimal", "placed": 0, "placements": [], "objective": 0}
 
-    # Online courses
-    online_codes: set[str] = set()
-    if board.program:
-        programs = [p.strip() for p in board.program.split(",") if p.strip()]
-        online_codes = set(
-            ProgrammeRequirement.objects.filter(program__in=programs, is_online=True).values_list(
-                "course_code", flat=True
-            )
-        )
+    online_codes = OnlineCourseLookup().codes_for_board(board)
 
     # Build valid slot options per duration
     slots_75 = []  # (day_idx, slot_idx, day, start, end, mask, start_min)
@@ -182,7 +174,7 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
                     "sec_num": sec_num,
                     "label": f"S{sec_num}",
                     "pattern": pattern,
-                    "is_online": display_code.upper() in online_codes,
+                    "is_online": normalise_course_code(display_code) in online_codes,
                     "capacity": budget.max_per_section,
                 }
             )
@@ -618,14 +610,7 @@ def solve_board_with_hints(
             "improved": False,
         }
 
-    online_codes: set[str] = set()
-    if board.program:
-        programs = [p.strip() for p in board.program.split(",") if p.strip()]
-        online_codes = set(
-            ProgrammeRequirement.objects.filter(program__in=programs, is_online=True).values_list(
-                "course_code", flat=True
-            )
-        )
+    online_codes = OnlineCourseLookup().codes_for_board(board)
 
     slots_75 = []
     slots_lab = []
@@ -664,7 +649,7 @@ def solve_board_with_hints(
                     "sec_num": sec_num,
                     "label": f"S{sec_num}",
                     "pattern": pattern,
-                    "is_online": display_code.upper() in online_codes,
+                    "is_online": normalise_course_code(display_code) in online_codes,
                     "capacity": budget.max_per_section,
                 }
             )

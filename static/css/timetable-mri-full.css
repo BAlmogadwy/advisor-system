@@ -20,7 +20,6 @@ html body.twm-root {
 body.twm-root .page-header,
 body.twm-root .page-intro,
 body.twm-root .back-to-top,
-body.twm-root .ambience,
 body.twm-root .side-decor,
 body.twm-root .color-mesh {
   display: none !important;
@@ -70,7 +69,6 @@ body.twm-root .content-wrap {
   font-size: 0.64rem;
   font-weight: 900;
   letter-spacing: 0.1em;
-  text-transform: uppercase;
 }
 
 .twm-topbar h2,
