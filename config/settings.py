@@ -476,3 +476,33 @@ TIMETABLE_ENFORCE_LOCKS = os.getenv("TIMETABLE_ENFORCE_LOCKS", "true").lower() i
     "yes",
     "on",
 )
+
+# ── V2 full-rebuild chain-search budget (OPT-IN speed/quality lever) ──────────
+# The post-greedy chain search re-evaluates the full student objective per move
+# with no natural cheap bound, so on large multi-board scenarios it dominates
+# the runtime (measured ~471s of an ~874s full rebuild). It is, however,
+# PRODUCTIVE work: a measured 60s cap cut the rebuild to ~447s but left 14
+# unresolved students versus 1 with the chain run in full — so a blunt cap
+# trades student-assignment quality for speed.
+#
+# Therefore this budget defaults to 0 = UNBOUNDED (full quality preserved). It
+# is an opt-in operator lever: set e.g. TIMETABLE_CHAIN_TIME_LIMIT_SECONDS=60 to
+# bound the chain stage when faster turnaround matters more than the last few
+# unresolved students. The stop is safe by construction — chain_local_search
+# only ever advances current_best to a strictly-improving, fully re-evaluated
+# board, so an early stop returns the best-so-far, never a worse board than the
+# chain started from. (0 / negative / unset ⇒ no deadline.)
+TIMETABLE_CHAIN_TIME_LIMIT_SECONDS = float(os.getenv("TIMETABLE_CHAIN_TIME_LIMIT_SECONDS", "0"))
+
+# Per-board solver budget used *inside* V2 candidate generation only (the
+# optimal / adaptive / hybrid / load_balanced strategies). On realistic
+# multi-board scenarios these heavy strategies produce candidates equivalent to
+# plain compact (measured: 6 of 7 strategies tied, a greedy strategy won), yet
+# their CP-SAT/SA solves burn ~150s. Since candidates are only RANKED — the
+# winner is re-placed and fully polished afterwards — a tight budget here saves
+# wall-clock with no effect on the final board. Scoped to the sweep: standalone
+# auto_place_scenario callers are unaffected. Set to 0 to disable (full
+# per-strategy budgets, pre-change behaviour).
+TIMETABLE_CANDIDATE_GEN_BUDGET_SECONDS = float(
+    os.getenv("TIMETABLE_CANDIDATE_GEN_BUDGET_SECONDS", "1.5")
+)
