@@ -68,7 +68,7 @@
       ['GPA', summary.gpa ?? '-'],
       ['Earned credits', summary.total_earned_credits ?? '-'],
       ['Passed courses', summary.passed_count ?? 0],
-      ['Studying now', summary.studying_count ?? 0],
+      ['Registered this term', summary.current_registration_count ?? summary.studying_count ?? 0],
       ['Remaining requirements', summary.remaining_requirement_count ?? '-'],
       ['Recommendations', summary.recommendation_count ?? 0],
     ].forEach(([label, value]) => {
