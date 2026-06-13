@@ -194,7 +194,7 @@ def _build_export_filter(search: object | None, programs: list[str]) -> ExportFi
         token = token.strip()
         if not token:
             continue
-        if token == "SHARED":
+        if token == "SHARED":  # nosec B105 — search-filter sentinel, not a secret
             shared_only = True
         elif token in program_set:
             program_tokens.add(token)
