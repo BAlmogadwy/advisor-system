@@ -3308,6 +3308,8 @@ def check_publish_readiness(scenario_id: int) -> dict:
         - A board has zero placements.
         - A board has any **critical** conflicts (time overlaps or
           instructor double-bookings).
+        - A board has a placement sitting on an institutionally **blocked**
+          slot (legality — the timetable must not occupy a reserved cell).
 
     Warnings (advisory, do not block):
         - A board has room-clash warnings.
@@ -3318,6 +3320,11 @@ def check_publish_readiness(scenario_id: int) -> dict:
     Returns:
         ``{"ready": bool, "blockers": [...], "warnings": [...]}``
     """
+    from django.db.models import Q
+
+    from core.models import TimetableScenario
+    from core.services.timetable_validation import blocked_slot_keys
+
     boards = DeliveryBoard.objects.filter(scenario_id=scenario_id)
     blockers: list[str] = []
     warnings: list[str] = []
@@ -3326,6 +3333,12 @@ def check_publish_readiness(scenario_id: int) -> dict:
     if boards.count() == 0:
         blockers.append("No boards in this scenario")
         return {"ready": False, "blockers": blockers, "warnings": warnings}
+
+    _scenario = TimetableScenario.objects.filter(id=scenario_id).first()
+    blocked_set = blocked_slot_keys(_scenario.blocked_slots) if _scenario else set()
+    blocked_q = Q()
+    for _day, _start in blocked_set:
+        blocked_q |= Q(day=_day, start_time=_start)
 
     for board in boards:
         placed = SectionPlacement.objects.filter(board=board).count()
@@ -3338,6 +3351,14 @@ def check_publish_readiness(scenario_id: int) -> dict:
             blockers.append(
                 f"Board '{board.label}': {conflicts['summary']['critical']} critical conflicts"
             )
+
+        # Legality: no placement may occupy an institutionally blocked slot.
+        if blocked_set:
+            on_blocked = SectionPlacement.objects.filter(board=board).filter(blocked_q).count()
+            if on_blocked:
+                blockers.append(
+                    f"Board '{board.label}': {on_blocked} placement(s) on blocked slots"
+                )
 
         # Room clashes: block publish when rooms are actively assigned
         room_clashes = len(conflicts.get("room_clashes", []))

@@ -747,9 +747,13 @@ class PlannerJob(models.Model):
 
     MODE_OPTIMISE_CURRENT = "optimise_current"
     MODE_FULL_REBUILD = "full_rebuild"
+    MODE_OPTIMISE_V2_FULL = "optimise_v2_full"
+    MODE_OPTIMISE_V2_CURRENT = "optimise_v2_current"
     MODE_CHOICES = (
         (MODE_OPTIMISE_CURRENT, "Optimise current"),
         (MODE_FULL_REBUILD, "Full rebuild"),
+        (MODE_OPTIMISE_V2_FULL, "Optimise V2 (full rebuild)"),
+        (MODE_OPTIMISE_V2_CURRENT, "Optimise V2 (current)"),
     )
 
     STAGE_CHOICES = (
@@ -792,6 +796,9 @@ class PlannerJob(models.Model):
     )
     cancel_requested = models.BooleanField(default=False)
     request_signature = models.CharField(max_length=64, blank=True, default="")
+    # Per-request optimiser tuning (strategies, CP-SAT budget, iteration caps)
+    # so an async V2 job replays the SAME params the synchronous path used.
+    params = models.JSONField(default=dict, blank=True)
 
     class Meta:
         db_table = "planner_jobs"

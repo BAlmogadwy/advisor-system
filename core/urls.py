@@ -117,6 +117,7 @@ from .timetable_workspace_views import (
     timetable_workspace_mri_page,
     timetable_workspace_page,
     timetable_workspace_split_page,
+    tw_blocked_slots_view,
     tw_board_capacity_view,
     tw_board_conflicts_view,
     tw_board_create_view,
@@ -731,6 +732,11 @@ urlpatterns = [
         "ops/tw/placements/<int:placement_id>/lock/",
         tw_placement_lock_view,
         name="tw_placement_lock",
+    ),
+    path(
+        "ops/tw/scenarios/<int:scenario_id>/blocked-slots/",
+        tw_blocked_slots_view,
+        name="tw_blocked_slots",
     ),
     path("ops/tw/slot-templates/", tw_slot_templates_list_view, name="tw_slot_templates_list"),
     path(

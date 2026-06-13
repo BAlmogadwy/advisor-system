@@ -19,7 +19,6 @@ from core.services.timetable_assignment_models import (
     TimetableEvaluationResult,
     TimetableMove,
 )
-from core.services.timetable_autoplace import WEEKDAYS
 from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
 from core.services.timetable_room_repair import (
     PatternNotInCatalog,
@@ -28,17 +27,8 @@ from core.services.timetable_room_repair import (
     try_repair_rooms_locally,
 )
 from core.services.timetable_same_course import has_same_course_overlap, make_meeting_window
-from core.services.timetable_validation import (
-    get_prayer_windows,
-    is_prayer_overlap_rule_enabled,
-    prayer_overlap_rejection,
-)
 
 logger = logging.getLogger(__name__)
-
-
-def _min_to_hhmm(m: int) -> str:
-    return f"{m // 60:02d}:{m % 60:02d}"
 
 
 def _has_same_course_overlap(sections_by_id: dict[str, SectionState]) -> bool:
@@ -61,72 +51,6 @@ def _has_same_course_overlap(sections_by_id: dict[str, SectionState]) -> bool:
         if has_same_course_overlap(meetings):
             return True
     return False
-
-
-def _filter_moves_by_pr1_prayer(
-    moves: list[TimetableMove],
-    pattern_catalog: dict[str, list[CanonicalPattern]],
-) -> list[TimetableMove]:
-    """Drop moves whose target pattern overlaps any configured prayer window.
-
-    Reuses the same helpers as ``auto_place_board`` —
-    ``is_prayer_overlap_rule_enabled``, ``get_prayer_windows``, and
-    ``prayer_overlap_rejection`` — so half-open interval semantics and
-    case-insensitive day matching stay consistent across every PR1
-    enforcement point. No forked copy of the rule.
-
-    When the flag is off or no prayer windows are configured, returns
-    moves unchanged (pure no-op — PR1 parity).
-    """
-    if not is_prayer_overlap_rule_enabled():
-        return moves
-    prayer_windows = get_prayer_windows()
-    if not prayer_windows:
-        return moves
-
-    flat: dict[str, CanonicalPattern] = {}
-    for family_pats in pattern_catalog.values():
-        for pat in family_pats:
-            flat[pat.pattern_id] = pat
-
-    kept: list[TimetableMove] = []
-    dropped = 0
-    for move in moves:
-        target_pattern_ids: list[str] = [move.to_pattern_id_a]
-        if move.to_pattern_id_b:
-            target_pattern_ids.append(move.to_pattern_id_b)
-
-        has_overlap = False
-        for pid in target_pattern_ids:
-            target_pat = flat.get(pid)
-            if target_pat is None:
-                continue
-            for m in target_pat.meetings:
-                if m.day < 0 or m.day >= len(WEEKDAYS):
-                    continue
-                meeting_dict = {
-                    "day": WEEKDAYS[m.day],
-                    "start_time": _min_to_hhmm(m.start_min),
-                    "end_time": _min_to_hhmm(m.end_min),
-                }
-                if prayer_overlap_rejection(meeting_dict, prayer_windows) is not None:
-                    has_overlap = True
-                    break
-            if has_overlap:
-                break
-
-        if has_overlap:
-            dropped += 1
-            continue
-        kept.append(move)
-
-    if dropped:
-        logger.info(
-            "PR1 prayer-overlap filter dropped %d/%d candidate moves",
-            dropped,
-            len(moves),
-        )
-    return kept
 
 
 def generate_all_repattern_moves(
@@ -336,11 +260,6 @@ def diagnostic_driven_local_search(
                     locked_section_ids=locked,
                 )
             )
-
-        # PR1 candidate-gen filter: drop moves whose target pattern
-        # overlaps any configured prayer window. No-op when the flag
-        # is off, so PR1 parity under the default settings is preserved.
-        all_moves = _filter_moves_by_pr1_prayer(all_moves, pattern_catalog)
 
         if not all_moves:
             logger.info("No moves available at iteration %d, stopping", iteration)

@@ -19,8 +19,6 @@ Key concepts
   built from canonical scenario course requests. Drives all conflict scoring.
 * **Meeting pattern** -- how many weekly meetings a course needs, and the
   duration of each, determined by credit hours.
-* **Prayer-break window** -- a hard constraint blocking any meeting from
-  starting between 11:35 and 12:59.
 
 Meeting patterns based on credit hours
 ---------------------------------------
@@ -33,7 +31,13 @@ Hard constraints (violations are never accepted)
 -------------------------------------------------
   - No more than 1 meeting per day per section.
   - Same-course sections must not overlap (instructor double-booking).
-  - No meeting may start during the prayer-break window (11:35-12:59).
+  - Locked placements are honoured (when ``TIMETABLE_ENFORCE_LOCKS`` is on).
+  - Blocked slots (scenario ``blocked_slots``) are never used.
+
+  Prayer compliance is guaranteed at the slot-grid level, not per meeting:
+  the fixed slot grids never start a lecture in 11:30-12:59 or a lab in
+  11:10-12:59 (see ``timetable_validation.assert_slot_grid_prayer_compliant``),
+  so no runtime per-meeting prayer rule is required.
 
 Soft constraints (penalised but not forbidden)
 ----------------------------------------------
@@ -114,12 +118,8 @@ from core.services.timetable_stage_telemetry import (
 )
 from core.services.timetable_validation import (
     LOCK_RESPECT,
-    PRAYER_OVERLAP,
     RejectionReason,
-    get_prayer_windows,
     is_lock_enforcement_enabled,
-    is_prayer_overlap_rule_enabled,
-    prayer_overlap_rejection,
 )
 from core.services.timetable_warm_start import (
     BaselinePlacement,
@@ -127,7 +127,7 @@ from core.services.timetable_warm_start import (
     compute_perturbation_metric,
     is_warm_start_enabled,
 )
-from core.services.timetable_workspace import _time_mask, _to_minutes
+from core.services.timetable_workspace import _time_mask
 
 logger = logging.getLogger(__name__)
 
@@ -188,13 +188,14 @@ def get_meeting_pattern(credit_hours: int) -> list[int]:
 
 # ── Default Slots ────────────────────────────────────────────────
 # Five 75-minute teaching slots spanning the day, with a gap from 11:45 to
-# 13:00 for the midday prayer break.  A scenario may override these via its
-# ``slot_config`` JSON field.
+# 13:00 for the midday break.  A scenario may override these via its
+# ``slot_config`` JSON field.  The grid is prayer-compliant by construction:
+# no lecture slot starts in 11:30-12:59 (see timetable_validation).
 
 DEFAULT_SLOTS = [
     {"label": "09:00-10:15", "start": "09:00", "end": "10:15"},
     {"label": "10:30-11:45", "start": "10:30", "end": "11:45"},
-    # -- prayer break gap: no slot starts between 11:35 and 12:59 --
+    # -- midday break gap: no lecture slot starts in 11:30-12:59 --
     {"label": "13:00-14:15", "start": "13:00", "end": "14:15"},
     {"label": "14:30-15:45", "start": "14:30", "end": "15:45"},
     {"label": "16:00-17:15", "start": "16:00", "end": "17:15"},
@@ -208,25 +209,6 @@ DEFAULT_LAB_SLOTS = [
     {"label": "Lab 4", "start": "14:45", "end": "16:25"},
     {"label": "Lab 5", "start": "16:30", "end": "18:10"},
 ]
-
-# Hard constraint: no course meeting may overlap with the prayer break.
-# The window is inclusive on both ends.
-PRAYER_BREAK_START = "11:35"
-PRAYER_BREAK_END = "12:59"
-
-
-def _meeting_overlaps_prayer(start_time: str, end_time: str) -> bool:
-    """Check whether a meeting interval overlaps the prayer-break window.
-
-    A meeting is blocked if any part of [start, end) intersects
-    [PRAYER_BREAK_START, PRAYER_BREAK_END].  This catches meetings that
-    start before the break but run into it.
-    """
-    s = _to_minutes(start_time)
-    e = _to_minutes(end_time)
-    pb_start = _to_minutes(PRAYER_BREAK_START)
-    pb_end = _to_minutes(PRAYER_BREAK_END)
-    return s <= pb_end and e > pb_start
 
 
 def _get_slots(slot_config: list[dict]) -> list[dict]:
@@ -246,7 +228,7 @@ def _generate_meeting_options(
     """Generate every valid way to schedule a course's weekly meetings.
 
     The function enumerates combinations of (day, slot) assignments that
-    satisfy the hard constraints (one meeting per day, prayer-break
+    satisfy the hard constraints (one meeting per day, blocked-slot
     avoidance) and produces a list of *candidate options* for the scorer
     to rank.
 
@@ -307,10 +289,9 @@ def _generate_meeting_options(
             _blocked_set.add((bs.get("day", ""), bs.get("start", "")))
 
     # For each meeting duration, pre-compute which (slot_idx, start, end)
-    # positions are feasible. Slot-level prayer filtering is now handled
-    # by the configured prayer-windows rule (``prayer_overlap_rejection``)
-    # applied per-candidate in ``auto_place_board``'s scoring loop;
-    # PR4 commit 5 deleted the legacy hardcoded 11:35–12:59 filter.
+    # positions are feasible. Prayer compliance is a property of the slot
+    # grid (see ``timetable_validation.assert_slot_grid_prayer_compliant``),
+    # not a per-candidate runtime filter.
     lecture_positions = [(i, s["start"], s["end"]) for i, s in enumerate(slots)]
     lab_positions = [(i, s["start"], s["end"]) for i, s in enumerate(lab_slots)]
 
@@ -412,14 +393,15 @@ STRATEGIES: dict[str, dict] = {
         "slot_preference": 0,
     },
     "optimal": {
-        "label": "Optimal (CP-SAT Solver)",
-        "description": "OR-Tools constraint solver — finds globally optimal solution (slower)",
+        "label": "CP-SAT (per-board)",
+        "description": "OR-Tools CP-SAT solve per board, time-limited — optimal within "
+        "each board's budget, not a global optimum (slower)",
         "gap_multiplier": 10,
         "slot_preference": 0,
     },
     "hybrid": {
         "label": "Hybrid (Greedy + Annealing)",
-        "description": "Best quality — greedy build + simulated annealing improvement",
+        "description": "Greedy build + simulated-annealing improvement",
         "gap_multiplier": 10,
         "slot_preference": 0,
     },
@@ -430,8 +412,8 @@ STRATEGIES: dict[str, dict] = {
         "slot_preference": 0,
     },
     "adaptive": {
-        "label": "Adaptive (Best Overall)",
-        "description": "Greedy baseline → CP-SAT improvement → local search polish — best quality with guaranteed results",
+        "label": "Adaptive (Greedy + CP-SAT + SA)",
+        "description": "Greedy baseline → per-board CP-SAT improvement → simulated-annealing polish",
         "gap_multiplier": 10,
         "slot_preference": 0,
     },
@@ -516,7 +498,7 @@ def _score_option(
 ) -> tuple[int, int, int, int, int, int]:
     """Score a candidate meeting option.  **Lower is better.**
 
-    The returned 5-tuple is compared lexicographically by the caller, so
+    The returned 6-tuple is compared lexicographically by the caller, so
     earlier elements dominate.  The ordering encodes priority:
 
     1. ``hard_conflict`` -- highest priority.  Direct bitmask overlap with
@@ -535,6 +517,11 @@ def _score_option(
     5. ``time_variance`` -- number of distinct slot indices used minus one.
        Zero means all meetings happen at the same time of day across
        different weekdays, which is easier for students to remember.
+    6. ``student_overlap_penalty`` -- sum of shared-student counts across
+       overlapping course pairs (semi-hard).  Returned last here; the
+       caller (``auto_place_board``) re-weights it and reorders it into
+       final-tuple position 3 so it dominates gap/density but not the
+       same-course constraints.
 
     Parameters
     ----------
@@ -627,24 +614,24 @@ def _score_option(
         for m in option:
             day_intervals[m["day"]].append((_to_min(m["start"]), _to_min(m["end"])))
 
-    # Calculate idle gaps. The prayer break (11:45→13:00 = 75min) is
+    # Calculate idle gaps. The midday break (11:45→13:00 = 75min) is
     # treated as a REAL gap — the algorithm should try to keep all
     # courses either before or after the break on each day.
-    PRAYER_END = 13 * 60  # 13:00
+    MIDDAY_END = 13 * 60  # 13:00
 
     student_gap = 0
     for _day, intervals in day_intervals.items():
         if len(intervals) >= 2:
             intervals.sort()
-            has_morning = any(s < PRAYER_END for s, e in intervals)
-            has_afternoon = any(s >= PRAYER_END for s, e in intervals)
-            crosses_prayer = has_morning and has_afternoon
+            has_morning = any(s < MIDDAY_END for s, e in intervals)
+            has_afternoon = any(s >= MIDDAY_END for s, e in intervals)
+            crosses_midday = has_morning and has_afternoon
 
             for i in range(len(intervals) - 1):
                 idle = intervals[i + 1][0] - intervals[i][1]
                 if idle > 0:
-                    # Extra penalty for crossing the prayer break
-                    if crosses_prayer and idle >= 60:
+                    # Extra penalty for crossing the midday break
+                    if crosses_midday and idle >= 60:
                         student_gap += idle * 2  # double penalty
                     else:
                         student_gap += idle
@@ -773,7 +760,6 @@ def _normalise_baseline_map(
 def _build_pr3_alternatives(
     *,
     scored_options: list[tuple[tuple, tuple[dict, ...]]],
-    prayer_rejected: list[tuple[tuple[dict, ...], str, dict]],
     winning_option: tuple[dict, ...],
     placed_schedule: list[tuple[str, str, str, str]],
     course_students: dict[str, set],
@@ -785,13 +771,8 @@ def _build_pr3_alternatives(
     """Build up to 3 ``Alternative`` entries for a placed section.
 
     Ordering rules (ChatGPT commit-3 ruling F1, extended in PR4 commit 3):
-    - Prayer-rejected options come first (their score was never computed
-      because they were filtered pre-score; surfacing them first
-      matches the greedy's own preference for showing the hardest
-      reasons).
-    - Instructor-clash rejected options come next — same "hard-filter,
-      never scored" bucket as prayer. Kept stable-ordered after prayer
-      so PR3 traces don't shift position when PR4 flag is off.
+    - Instructor-clash rejected options come first — a "hard-filter,
+      never scored" bucket surfaced ahead of scored losers.
     - Scored losers follow, ordered by ascending score (best-rejected
       first) — the option that would have scored next-best after the
       winner appears first.
@@ -800,21 +781,6 @@ def _build_pr3_alternatives(
     that; this is a fixed cap per the DoR (not configurable).
     """
     alternatives: list[Alternative] = []
-    for opt, code, context in prayer_rejected[:3]:
-        first_m = opt[0]
-        alternatives.append(
-            Alternative(
-                day=first_m["day"],
-                start_time=first_m["start"],
-                end_time=first_m["end"],
-                room="",
-                rejection_code=code,
-                rejection_context=context,
-            )
-        )
-        if len(alternatives) >= 3:
-            return alternatives
-
     for opt, code, context in (instructor_rejected or [])[:3]:
         if len(alternatives) >= 3:
             return alternatives
@@ -877,7 +843,7 @@ def auto_place_board(
     2. Build a ``course_students`` map from canonical course requests -- this
        records which students need each course and drives conflict scoring.
     3. Pre-compute feasible meeting options for every course (respecting
-       credit hours, prayer break, etc.).
+       credit hours, blocked slots, etc.).
     4. Place sections in **round-robin by group index**: all S1 sections
        first (round 1), then all S2 sections (round 2), and so on.
        Within each round, courses are sorted by credit hours descending
@@ -918,7 +884,6 @@ def auto_place_board(
             "skipped": 0,
             "placements": [],
             "capacity_buffer": None,
-            "pr1_prayer_rejections": [],
             "pr1_lock_rejections": [],
             "room_failures": [],
             "room_failure_breakdown": {},
@@ -943,18 +908,6 @@ def auto_place_board(
     scenario = board.scenario
     slot_config = scenario.slot_config if scenario.slot_config else DEFAULT_SLOTS
     lab_slot_config = scenario.lab_slot_config if scenario.lab_slot_config else DEFAULT_LAB_SLOTS
-
-    # ── PR1 prayer-overlap enforcement (flag-gated; default OFF) ────
-    # The rule check short-circuits inside ``prayer_overlap_rejection``
-    # when the flag is OFF, so ``prayer_rule_on`` only controls whether
-    # we bother reading windows and filtering options at all. Windows are
-    # empty when the setting is absent, which is also a safe no-op. PR4
-    # commit 5 retired the legacy hardcoded 11:35–12:59 filter, so
-    # ``pr1_prayer_rejections`` now fully observes the configured rule
-    # — the prior under-observation caveat no longer applies.
-    prayer_rule_on = is_prayer_overlap_rule_enabled()
-    prayer_windows = get_prayer_windows() if prayer_rule_on else []
-    pr1_prayer_rejections: list[dict] = []
 
     # ── PR1 lock-respect enforcement (flag-gated; default OFF) ──────
     # Enforcement is structural, not advisory: when the flag is on, the
@@ -1087,7 +1040,6 @@ def auto_place_board(
             "skipped": 0,
             "placements": [],
             "capacity_buffer": capacity_buffer,
-            "pr1_prayer_rejections": pr1_prayer_rejections,
             "pr1_lock_rejections": pr1_lock_rejections,
             "room_failures": [],
             "room_failure_breakdown": {},
@@ -1399,7 +1351,6 @@ def auto_place_board(
             # when the flag is on (cheap early-out keeps the hot scoring
             # loop free of extra work when trace capture is disabled).
             pr3_scored_options: list[tuple[tuple, tuple[dict, ...]]] = []
-            pr3_prayer_rejected: list[tuple[tuple[dict, ...], str, dict]] = []
             # PR4 commit 3 — parallel accumulator for INSTRUCTOR_CLASH
             # rejections. Populated only when the PR4 flag is on (the
             # outer ``instructor_clash_on`` gate elides the filter entirely
@@ -1425,52 +1376,12 @@ def auto_place_board(
             # courses have 100-min meetings that are long lectures, not labs.
             is_lab_course = budget.credit_hours == 4
             for option in all_options:
-                # PR1 prayer-overlap filter (flag-gated). When enabled, any
-                # option that places a meeting overlapping a configured
-                # prayer window is rejected outright (not soft-scored). The
-                # first rejection per option is recorded; a second meeting
-                # in the same option hitting another window is not emitted
-                # separately (the option is already out of the candidate
-                # set, so the extra payload would be noise).
-                if prayer_rule_on and prayer_windows:
-                    prayer_skip = False
-                    prayer_skip_rej: RejectionReason | None = None
-                    for m in option:
-                        rej = prayer_overlap_rejection(
-                            {
-                                "day": m["day"],
-                                "start_time": m["start"],
-                                "end_time": m["end"],
-                                "course_code": display_code,
-                            },
-                            prayer_windows,
-                        )
-                        if rej is not None:
-                            pr1_prayer_rejections.append(rej.to_dict())
-                            prayer_skip = True
-                            prayer_skip_rej = rej
-                            break
-                    if prayer_skip:
-                        # PR3 commit 3 — record this option as a prayer-clash
-                        # alternative so it can appear in the decision trace.
-                        # ``prayer_skip_rej.context`` carries the window label
-                        # populated by ``prayer_overlap_rejection``.
-                        if trace_enabled and prayer_skip_rej is not None:
-                            pr3_prayer_rejected.append(
-                                (
-                                    option,
-                                    PRAYER_OVERLAP,
-                                    dict(prayer_skip_rej.context or {}),
-                                )
-                            )
-                        continue
-
                 # PR4 commit 3 — INSTRUCTOR_CLASH filter (flag-gated).
                 # Reject any option that would double-book the current
                 # section's instructor at a (day, start_time) already
                 # held by a different section with the same normalised
-                # instructor id. Same pre-score position as the prayer
-                # filter: options that fail this check never reach the
+                # instructor id. This is a pre-score hard filter: options
+                # that fail this check never reach the
                 # scoring step. The first clashing meeting per option is
                 # recorded; subsequent clashes in the same option are
                 # noise (the option is already out of the candidate set).
@@ -1614,11 +1525,9 @@ def auto_place_board(
             # PR3 commit 5 — warm-start retention (flag-gated).
             # Priority: PR1 locks (handled by the preload skip above) →
             # PR3 warm-start retention → cold-start scoring. When a
-            # baseline slot is still feasible (it survived prayer/room
+            # baseline slot is still feasible (it survived room/feasibility
             # filtering into ``pr3_scored_options``), swap it in as the
-            # chosen option. When it was filtered out, record the
-            # baseline's failure reason so the trace explains why the
-            # previous placement no longer works.
+            # chosen option.
             section_code_full = f"{code}|{sec_label}"
             baseline_failure_code: str | None = None
             baseline_failure_context: dict = {}
@@ -1629,19 +1538,14 @@ def auto_place_board(
                     section_code_full, normalised_baseline, all_options
                 )
                 if baseline_option_matched is not None:
-                    # Was it feasibility-clean (scored, not prayer-rejected)?
+                    # Was it feasibility-clean (i.e. it was scored)?
                     feasible = any(opt is baseline_option_matched for _s, opt in pr3_scored_options)
                     if feasible:
                         best_option = baseline_option_matched
                         warm_start_retained = True
-                    else:
-                        # Filtered out — look it up in the prayer-reject
-                        # list to surface the real failure code/context.
-                        for opt, rcode, rctx in pr3_prayer_rejected:
-                            if opt is baseline_option_matched:
-                                baseline_failure_code = rcode
-                                baseline_failure_context = rctx
-                                break
+                    # else: the baseline option was filtered out pre-score
+                    # (e.g. instructor clash); no specific failure code is
+                    # surfaced for the trace in that case.
 
             if best_option is None:
                 total_skipped += 1
@@ -1855,7 +1759,6 @@ def auto_place_board(
                 chosen_first = best_option[0]
                 alternatives = _build_pr3_alternatives(
                     scored_options=pr3_scored_options,
-                    prayer_rejected=pr3_prayer_rejected,
                     winning_option=best_option,
                     placed_schedule=placed_schedule,
                     course_students=course_students,
@@ -1869,8 +1772,7 @@ def auto_place_board(
                 # see *why* the previous placement no longer works.
                 # Only applies when warm-start was requested, baseline
                 # matched a real option, but the option was filtered
-                # before scoring (prayer clash today; room filters in a
-                # later commit).
+                # before scoring (e.g. an instructor clash).
                 if (
                     warm_start_on
                     and not warm_start_retained
@@ -1914,13 +1816,10 @@ def auto_place_board(
 
     logger.info(
         "auto_place_board(board=%s): placed=%d skipped=%d "
-        "prayer_rule_on=%s (rejections=%d) lock_rule_on=%s (rejections=%d) "
-        "warm_start_on=%s (baseline_provided=%s)",
+        "lock_rule_on=%s (rejections=%d) warm_start_on=%s (baseline_provided=%s)",
         board_id,
         total_placed,
         total_skipped,
-        prayer_rule_on,
-        len(pr1_prayer_rejections),
         lock_rule_on,
         len(pr1_lock_rejections),
         warm_start_on,
@@ -1933,7 +1832,6 @@ def auto_place_board(
         "skipped": total_skipped,
         "placements": placement_results,
         "capacity_buffer": capacity_buffer,
-        "pr1_prayer_rejections": pr1_prayer_rejections,
         "pr1_lock_rejections": pr1_lock_rejections,
         "room_failures": room_failures,
         "room_failure_breakdown": _rfb,

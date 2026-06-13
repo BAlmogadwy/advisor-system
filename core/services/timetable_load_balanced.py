@@ -50,9 +50,6 @@ def _to_min(t: str) -> int:
     return int(h) * 60 + int(m)
 
 
-PRAYER_BOUNDARY = 13 * 60
-
-
 def _same_course_windows_by_course(schedule: dict[int, list[dict]], sections: list[dict]) -> dict:
     by_course = defaultdict(list)
     for idx, meetings in schedule.items():
@@ -110,15 +107,19 @@ def _build_schedule_from_db(
             sections.append(
                 {
                     "code": p.term_section.course_code,
+                    "course_key": p.term_section.course_key or p.term_section.course_code,
                     "sec_num": sec_num,
                     "label": sec_label,
                     "term_section_id": p.term_section_id,
                     "is_online": normalise_course_code(p.term_section.course_code) in online_codes,
+                    "is_locked": False,
                 }
             )
             schedule[idx] = []
 
         idx = sec_map[key]
+        if p.is_locked:
+            sections[idx]["is_locked"] = True
         # Find slot_idx: check lecture slots, then lab slots
         slot_idx = 0
         duration = _to_min(p.end_time) - _to_min(p.start_time)
@@ -282,6 +283,20 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
     if not sections:
         return {"status": "empty"}
 
+    from core.services.timetable_validation import (
+        blocked_slot_keys,
+        is_lock_enforcement_enabled,
+    )
+
+    # Blocked cells are excluded from the move domain (always on); locked
+    # sections are never chosen as a move target (flag-gated).
+    blocked_set = blocked_slot_keys(board.scenario.blocked_slots)
+    locked_idx: set[int] = (
+        {i for i, sec in enumerate(sections) if sec.get("is_locked")}
+        if is_lock_enforcement_enabled()
+        else set()
+    )
+
     rng = random.Random(seed)
     score_before = _compute_balance_score(schedule, sections, online_codes, overlap_matrix)
     best_score = score_before
@@ -296,6 +311,8 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
             for day in WEEKDAYS:
                 if duration <= 75:
                     for si, s in enumerate(slot_config):
+                        if (day, s["start"]) in blocked_set:
+                            continue
                         opts.append(
                             {
                                 "day": day,
@@ -308,6 +325,8 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
                 else:
                     # Lab (100-min): use dedicated lab slot grid
                     for si, s in enumerate(lab_slot_config):
+                        if (day, s["start"]) in blocked_set:
+                            continue
                         opts.append(
                             {
                                 "day": day,
@@ -330,8 +349,10 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
         iterations += 1
         temperature *= 0.9995
 
-        # Pick random section and meeting
+        # Pick random section and meeting (never a locked section)
         sec_idx = rng.randint(0, len(sections) - 1)
+        if sec_idx in locked_idx:
+            continue
         meetings = schedule[sec_idx]
         if not meetings:
             continue
@@ -396,8 +417,23 @@ def rebalance_and_persist_board(board_id: int, max_seconds: float = 8.0) -> dict
     except DeliveryBoard.DoesNotExist:
         return result
 
-    # Delete and recreate
+    # Delete and recreate. When lock enforcement is on, locked sections are
+    # preserved untouched (never deleted, never re-persisted) so a registrar
+    # lock survives a rebalance.
+    from core.services.timetable_validation import is_lock_enforcement_enabled
+
+    locks_on = is_lock_enforcement_enabled()
+    locked_ts_ids: set[int] = set()
+    if locks_on:
+        locked_ts_ids = set(
+            SectionPlacement.objects.filter(board=board, is_locked=True).values_list(
+                "term_section_id", flat=True
+            )
+        )
+
     auto = SectionPlacement.objects.filter(board=board, term_section__source_tag="tw_auto")
+    if locks_on:
+        auto = auto.exclude(is_locked=True)
     ts_ids = set(auto.values_list("term_section_id", flat=True))
     auto.delete()
     for ts_id in ts_ids:
@@ -405,6 +441,8 @@ def rebalance_and_persist_board(board_id: int, max_seconds: float = 8.0) -> dict
 
     for i, meetings in schedule.items():
         sec = sections[i]
+        if sec["term_section_id"] in locked_ts_ids:
+            continue
         try:
             ts = TermSection.objects.get(id=sec["term_section_id"])
         except TermSection.DoesNotExist:
@@ -428,7 +466,7 @@ def rebalance_and_persist_board(board_id: int, max_seconds: float = 8.0) -> dict
     # Assign rooms after re-persisting
     from core.services.timetable_rooming import assign_rooms_to_board
 
-    assign_rooms_to_board(board_id)
+    assign_rooms_to_board(board_id, respect_locked=locks_on)
 
     return result
 

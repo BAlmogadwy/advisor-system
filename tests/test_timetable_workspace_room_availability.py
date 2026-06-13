@@ -15,6 +15,18 @@ from core.models import (
     TimetableScenario,
 )
 from core.services import timetable_workspace as tws
+from core.services.timetable_v2_runner import (
+    optimiser_safety_regression as _optimiser_safety_regression,
+)
+from core.services.timetable_v2_runner import (
+    optimiser_student_outcome_regression as _optimiser_student_outcome_regression,
+)
+from core.services.timetable_v2_runner import (
+    restore_scenario_placements as _restore_scenario_placements,
+)
+from core.services.timetable_v2_runner import (
+    snapshot_scenario_placements as _snapshot_scenario_placements,
+)
 from core.services.timetable_workspace import (
     apply_bulk_clean_room_assignments,
     apply_bulk_safe_time_moves,
@@ -29,12 +41,6 @@ from core.services.timetable_workspace import (
     preview_placement_student_evidence,
     preview_planned_section_slot_candidates,
     validate_placement,
-)
-from core.timetable_workspace_views import (
-    _optimiser_safety_regression,
-    _optimiser_student_outcome_regression,
-    _restore_scenario_placements,
-    _snapshot_scenario_placements,
 )
 
 pytestmark = pytest.mark.django_db

@@ -7,7 +7,15 @@ from typing import Any
 from django.conf import settings
 from django.db.models import Q, QuerySet
 
-from core.models import Course, Prerequisite, ProgrammeRequirement, Student
+from core.models import (
+    Course,
+    ElectiveCourse,
+    Prerequisite,
+    ProgrammeRequirement,
+    Student,
+    StudentTermSection,
+    TermSection,
+)
 from core.services.local_llm import (
     ChatResult,
     LocalLLMBadRequest,
@@ -21,8 +29,12 @@ from core.services.rbac import (
     ROLE_STUDENT,
     ROLE_SUPER_ADMIN,
 )
-from core.services.recommender import recommend_next_courses
+from core.services.recommender import MAX_CREDITS, recommend_next_courses
 from core.services.student_helpers import get_student_passed_and_studying, normalize_code
+from core.services.student_sections import (
+    append_unmapped_studying_courses,
+    get_student_term_baseline,
+)
 from core.services.virtual_advisor_capabilities import get_default_registry
 
 logger = logging.getLogger(__name__)
@@ -60,6 +72,9 @@ Rules:
 - Use only the verified_context JSON supplied by the university system.
 - When verified_context includes tool_results, treat them as authoritative query results.
 - If a requested fact is missing from verified_context, say that the system data does not show it.
+- current_term_registrations (when present) is the authoritative list of courses the student is registered in this term, with section labels and retake flags; the "studying" list is plan-status only and omits courses the student passed before and is now retaking.
+- Terms are independent: never subtract the current term's registered credits from another term's capacity. current_term_registrations belongs to its own academic_year/term; recommendations target the planning term in term_context.
+- Credit-load limits come only from evidence (recommendation_policy.max_term_credit_hours). The recommendations list is already capped to that limit — present it as the registerable set. If no limit appears in evidence, say the system does not define one; never assume a standard such as 21.
 - Do not invent grades, rules, prerequisites, graduation status, rooms, sections, or approvals.
 - Keep advice practical: what is known, why it matters, and the next safest action.
 - Never expose chain-of-thought; provide concise evidence from the context instead.
@@ -77,6 +92,9 @@ Rules:
 - When evidence is sufficient, STOP calling tools and give the final answer.
 - If the question is ambiguous (which student, which course, which term), ask ONE short clarifying question instead of guessing.
 - Academic years are Hijri (e.g. 1448), never Gregorian. Tools default to the configured current year/term — omit academic_year/term arguments unless the user explicitly names a different term.
+- For what a student is registered in or taking NOW, read course_evidence.current_term_registrations from get_student_context — it is section-level and includes retakes. The plan-status "studying" list omits courses the student passed before and is now retaking; never present it as the registration list.
+- Terms are independent: never subtract the current term's registered credits from another term's capacity or limit. current_term_registrations belongs to its own academic_year/term; recommendations target the planning term.
+- Credit-load limits come only from evidence (credit_policy / recommendation_policy max_term_credit_hours). Recommendation lists are already capped to that limit — present them as the registerable set. If no limit appears in evidence, say the system does not define one; never assume a standard such as 21.
 - Do not invent grades, rules, prerequisites, graduation status, rooms, sections, approvals, or student ids. Every specific fact must appear in the evidence.
 - Keep advice practical: what is known, why it matters, and the next safest action.
 - Never expose chain-of-thought; cite concise evidence instead.
@@ -144,6 +162,25 @@ def _course_names(codes: set[str]) -> dict[str, str]:
         code = normalize_code(req.get("course_code"))
         if code and not names.get(code):
             names[code] = str(req.get("course_name") or "").strip()
+    # Resolved electives may live only in the elective catalogue or as live
+    # section offerings (e.g. a course substituted by the elective resolver
+    # that sits in no programme plan).
+    missing = {code for code in codes if not names.get(code)}
+    if missing:
+        for row in ElectiveCourse.objects.filter(course_code__in=sorted(missing)).values(
+            "course_code", "course_name"
+        ):
+            code = normalize_code(row.get("course_code"))
+            if code and not names.get(code):
+                names[code] = str(row.get("course_name") or "").strip()
+    missing = {code for code in codes if not names.get(code)}
+    if missing:
+        for row in TermSection.objects.filter(course_key__in=sorted(missing)).values(
+            "course_key", "course_name"
+        ):
+            code = normalize_code(row.get("course_key"))
+            if code and not names.get(code):
+                names[code] = str(row.get("course_name") or "").strip()
     return names
 
 
@@ -812,6 +849,64 @@ def run_planned_tools(
     return results
 
 
+def _current_term_registrations(student_id: int, passed: set[str]) -> dict[str, Any]:
+    """Section-level current registrations from the live timetable scrape.
+
+    StudentTermSection is the authoritative "registered this term" source (the
+    Timetable Builder reads the same table via get_student_term_baseline). The
+    plan-status ``studying`` set cannot represent retakes: a course passed in an
+    earlier term and re-registered now keeps status='passed' there, so it would
+    silently vanish from a registration answer. Registrations are read for the
+    student's latest (academic_year, term) — the chat's configured term is the
+    term being planned FOR and may differ from the term being studied.
+    """
+    latest = (
+        StudentTermSection.objects.filter(student_id=student_id)
+        .order_by("-academic_year", "-term")
+        .values_list("academic_year", "term")
+        .first()
+    )
+    if latest is not None:
+        academic_year, term = latest
+        baseline = get_student_term_baseline(student_id, academic_year, term)
+    else:
+        academic_year = term = None
+        baseline = []
+    baseline = append_unmapped_studying_courses(student_id, baseline)
+
+    by_section: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in baseline:
+        code = normalize_code(str(row.get("course_key") or row.get("course_code") or ""))
+        if not code:
+            continue
+        key = (code, str(row.get("section") or "").strip())
+        if key in by_section:
+            continue
+        raw_credits = row.get("credits")
+        by_section[key] = {
+            "course_code": code,
+            "course_name": str(row.get("course_name") or "").strip(),
+            "section": key[1],
+            "credit_hours": raw_credits if isinstance(raw_credits, int) else 0,
+            "retake": code in passed,
+        }
+    registrations = sorted(by_section.values(), key=lambda r: (r["course_code"], r["section"]))
+    # Credits counted once per course even if a course spans several section
+    # rows (e.g. lecture + lab), so the total stays comparable to the student
+    # record's current_registered_credits.
+    credits_by_course: dict[str, int] = {}
+    for reg in registrations:
+        credits_by_course.setdefault(reg["course_code"], reg["credit_hours"])
+    return {
+        "academic_year": academic_year,
+        "term": term,
+        "source": "timetable_sections" if latest is not None else "plan_status_fallback",
+        "registered_course_count": len(credits_by_course),
+        "registered_credit_hours": sum(credits_by_course.values()),
+        "registrations": registrations[:_MAX_CONTEXT_COURSES],
+    }
+
+
 def build_verified_student_context(
     *,
     student_id: int | None,
@@ -852,6 +947,7 @@ def build_verified_student_context(
     program = str(student.get("program") or "").strip().upper()
     passed, studying = get_student_passed_and_studying(student_id)
     completed_or_current = passed | studying
+    current_registrations = _current_term_registrations(int(student_id), passed)
 
     requirement_rows = list(
         ProgrammeRequirement.objects.filter(program=program)
@@ -895,6 +991,27 @@ def build_verified_student_context(
         if code:
             prereq_map.setdefault(code, []).extend(prereq_codes)
 
+    plan_credit_map: dict[str, int] = {}
+    for req_row in requirement_rows:
+        req_code = normalize_code(req_row.get("course_code"))
+        if req_code:
+            plan_credit_map.setdefault(req_code, int(req_row.get("credit_hours") or 0))
+    # Resolved electives can land outside this programme's plan — try any
+    # programme's plan, then the elective catalogue, before declaring the
+    # credit hours unknown.
+    rec_missing_credits = [code for code in recommendations if code not in plan_credit_map]
+    if rec_missing_credits:
+        for raw_code, hours in ProgrammeRequirement.objects.filter(
+            course_code__in=rec_missing_credits
+        ).values_list("course_code", "credit_hours"):
+            plan_credit_map.setdefault(normalize_code(raw_code), int(hours or 0))
+    rec_missing_credits = [code for code in recommendations if code not in plan_credit_map]
+    if rec_missing_credits:
+        for raw_code, hours in ElectiveCourse.objects.filter(
+            course_code__in=rec_missing_credits
+        ).values_list("course_code", "credit_hours"):
+            plan_credit_map.setdefault(normalize_code(raw_code), int(hours or 0))
+
     return {
         "mode": "student",
         "student": {
@@ -909,10 +1026,15 @@ def build_verified_student_context(
             "current_registered_credits": student.get("current_registered_credits"),
             "advisor_id": str(student.get("advisor_id") or "").strip(),
         },
-        "term_context": {"academic_year": academic_year, "term": term},
+        "term_context": {
+            "academic_year": academic_year,
+            "term": term,
+            "role": "planning_term_for_recommendations",
+        },
         "course_evidence": {
             "passed": sorted(passed)[:_MAX_CONTEXT_COURSES],
             "studying": sorted(studying)[:_MAX_CONTEXT_COURSES],
+            "current_term_registrations": current_registrations,
             "remaining_requirements": _compact_course_rows(remaining_rows, names),
             "remaining_requirement_count": len(remaining_rows),
             # Exact plan totals, so the model never has to assume a
@@ -932,10 +1054,25 @@ def build_verified_student_context(
             {
                 "course_code": code,
                 "course_name": names.get(code, ""),
+                "credit_hours": plan_credit_map.get(code),
                 "prerequisites": sorted(set(prereq_map.get(code, []))),
             }
             for code in recommendations
         ],
+        "recommendation_policy": {
+            "max_term_credit_hours": MAX_CREDITS,
+            "recommended_credit_hours": sum(
+                plan_credit_map[code] for code in recommendations if code in plan_credit_map
+            ),
+            "credit_hours_unknown_for": [
+                code for code in recommendations if code not in plan_credit_map
+            ],
+            "note": (
+                "recommendations are already capped to max_term_credit_hours for the "
+                "planning term; the current term's registered credits do not reduce "
+                "this allowance"
+            ),
+        },
         "limits": {
             "passed_courses_truncated": len(passed) > _MAX_CONTEXT_COURSES,
             "studying_courses_truncated": len(studying) > _MAX_CONTEXT_COURSES,
@@ -975,6 +1112,9 @@ def _context_summary(context: dict[str, Any]) -> dict[str, Any]:
         "total_earned_credits": student.get("total_earned_credits"),
         "passed_count": len(evidence.get("passed") or []),
         "studying_count": len(evidence.get("studying") or []),
+        "current_registration_count": (evidence.get("current_term_registrations") or {}).get(
+            "registered_course_count"
+        ),
         "remaining_requirement_count": evidence.get("remaining_requirement_count"),
         "recommendation_count": len(context.get("recommendations") or []),
     }

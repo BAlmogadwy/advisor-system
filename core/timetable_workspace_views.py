@@ -59,7 +59,7 @@ import logging
 import re
 
 from django.contrib.auth.decorators import login_required
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError
 from django.http import FileResponse, HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_http_methods, require_POST
@@ -138,19 +138,10 @@ from core.sidebar_context import get_sidebar_context
 
 logger = logging.getLogger(__name__)
 
-_PLACEMENT_SNAPSHOT_FIELDS = (
-    "id",
-    "board_id",
-    "term_section_id",
-    "day",
-    "start_time",
-    "end_time",
-    "room",
-    "is_locked",
-    "created_at",
-    "updated_at",
-)
-
+# WS-E — the V2 optimiser's safety gate (snapshot/restore + regression checks)
+# lives in ``timetable_v2_runner`` so it runs identically from the request
+# thread and the async planner job runner.
+from core.services.timetable_v2_runner import run_v2_optimisation_guarded  # noqa: E402
 
 # ── Helpers ──────────────────────────────────────────────────────
 
@@ -235,6 +226,7 @@ def _scenario_to_dict(s: TimetableScenario) -> dict[str, object]:
         "status": s.status,
         "slot_config": s.slot_config,
         "lab_slot_config": s.lab_slot_config,
+        "blocked_slots": s.blocked_slots,
         "created_by": s.created_by,
         "created_at": s.created_at.isoformat() if s.created_at else "",
         "updated_at": s.updated_at.isoformat() if s.updated_at else "",
@@ -289,128 +281,6 @@ def _placement_to_dict(p: SectionPlacement) -> dict[str, object]:
 
 
 # ── Page View ────────────────────────────────────────────────────
-
-
-def _snapshot_scenario_placements(scenario_id: int) -> list[dict[str, object]]:
-    """Capture current placements so an unsafe optimiser run can be restored."""
-    return list(
-        SectionPlacement.objects.filter(board__scenario_id=scenario_id)
-        .order_by("id")
-        .values(*_PLACEMENT_SNAPSHOT_FIELDS)
-    )
-
-
-def _restore_scenario_placements(
-    scenario_id: int,
-    snapshot: list[dict[str, object]],
-) -> None:
-    """Restore a placement snapshot inside one transaction."""
-    with transaction.atomic():
-        SectionPlacement.objects.filter(board__scenario_id=scenario_id).delete()
-        SectionPlacement.objects.bulk_create(
-            [SectionPlacement(**row) for row in snapshot],
-            batch_size=500,
-        )
-
-
-def _optimiser_safety_metric(summary: dict[str, object], metric: str) -> int:
-    same_board = summary.get("same_board_conflicts") or {}
-    if metric == "same_board_overlaps" and isinstance(same_board, dict):
-        return int(same_board.get("overlaps") or 0)
-    if metric == "same_board_instructors" and isinstance(same_board, dict):
-        return int(same_board.get("instructors") or 0)
-    if metric == "same_board_rooms" and isinstance(same_board, dict):
-        return int(same_board.get("rooms") or 0)
-    return int(summary.get(metric) or 0)
-
-
-def _score_metric(score: object, index: int) -> int | None:
-    if not isinstance(score, list) or len(score) <= index:
-        return None
-    try:
-        return int(score[index])
-    except (TypeError, ValueError):
-        return None
-
-
-def _optimiser_student_outcome_regression(result: dict[str, object]) -> dict[str, object]:
-    """Block regressions in the actual student solver objective."""
-    checks = [
-        (0, "tier_a_unresolved", "Tier-A unresolved students"),
-        (1, "unresolved_students", "Unresolved students"),
-        (2, "unassigned_courses", "Unassigned courses"),
-        (3, "time_clashes", "Student time clashes"),
-    ]
-    regressions = []
-    before = result.get("baseline_score")
-    after = result.get("final_score")
-    for index, metric, label in checks:
-        before_value = _score_metric(before, index)
-        after_value = _score_metric(after, index)
-        if before_value is None or after_value is None:
-            continue
-        if after_value > before_value:
-            regressions.append(
-                {
-                    "metric": metric,
-                    "label": label,
-                    "before": before_value,
-                    "after": after_value,
-                    "delta": after_value - before_value,
-                }
-            )
-    return {"blocked": bool(regressions), "regressions": regressions}
-
-
-def _optimiser_safety_regression(
-    before: dict[str, object],
-    after: dict[str, object],
-) -> dict[str, object]:
-    """Block hard operational regressions, not board-level tradeoffs."""
-    checks = [
-        ("same_board_overlaps", "Same-board time overlaps"),
-        ("same_board_instructors", "Same-board instructor clashes"),
-        ("same_board_rooms", "Same-board room clashes"),
-    ]
-    regressions = []
-    for metric, label in checks:
-        before_value = _optimiser_safety_metric(before, metric)
-        after_value = _optimiser_safety_metric(after, metric)
-        if after_value > before_value:
-            regressions.append(
-                {
-                    "metric": metric,
-                    "label": label,
-                    "before": before_value,
-                    "after": after_value,
-                    "delta": after_value - before_value,
-                }
-            )
-    return {"blocked": bool(regressions), "regressions": regressions}
-
-
-def _attach_optimiser_safety_metrics(
-    result: dict[str, object],
-    before: dict[str, object],
-    after: dict[str, object],
-) -> None:
-    """Attach secondary board metrics consumed by the split-workspace UI."""
-    before_pairs = _optimiser_safety_metric(before, "cross_board_conflicts")
-    after_pairs = _optimiser_safety_metric(after, "cross_board_conflicts")
-    before_affected = _optimiser_safety_metric(before, "cross_board_affected_students")
-    after_affected = _optimiser_safety_metric(after, "cross_board_affected_students")
-    before_incidences = _optimiser_safety_metric(before, "cross_board_student_conflict_incidences")
-    after_incidences = _optimiser_safety_metric(after, "cross_board_student_conflict_incidences")
-
-    result["cross_board_before"] = before_pairs
-    result["cross_board_after"] = after_pairs
-    result["cross_board_delta"] = before_pairs - after_pairs
-    result["cross_board_affected_students_before"] = before_affected
-    result["cross_board_affected_students_after"] = after_affected
-    result["cross_board_affected_students_delta"] = before_affected - after_affected
-    result["cross_board_student_conflict_incidences_before"] = before_incidences
-    result["cross_board_student_conflict_incidences_after"] = after_incidences
-    result["cross_board_student_conflict_incidences_delta"] = before_incidences - after_incidences
 
 
 @login_required(login_url="login")
@@ -2479,6 +2349,61 @@ def tw_placement_lock_view(request: HttpRequest, placement_id: int) -> JsonRespo
     return _ok({"placement_id": placement_id, "is_locked": placement.is_locked})
 
 
+@login_required(login_url="login")
+@require_POST
+def tw_blocked_slots_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
+    """Toggle a ``(day, start)`` cell in the scenario's blocked-slots list.
+
+    Blocked slots are institutionally reserved cells the planner must never use
+    — enforced by construction across every placement stage, and a publish
+    blocker if a placement still occupies one. POST body: ``{day, start}``.
+    Adds the cell if absent, removes it if present. Returns the updated
+    ``blocked_slots`` list and whether the cell is now blocked.
+    """
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+
+    try:
+        scenario = TimetableScenario.objects.get(pk=scenario_id)
+    except TimetableScenario.DoesNotExist:
+        return _err("Scenario not found", code="NOT_FOUND", status=404)
+
+    if scenario.status == "published":
+        return _err("Cannot modify published scenario", code="SCENARIO_PUBLISHED", status=400)
+
+    payload, err = _safe_json(request)
+    if err:
+        return err
+
+    day = str(payload.get("day", "")).strip()
+    start = str(payload.get("start", "")).strip()
+    if not day or not start:
+        return _err("day and start are required", code="VALIDATION", status=400)
+
+    blocked = list(scenario.blocked_slots or [])
+    key = (day, start)
+    already = any((bs.get("day"), bs.get("start")) == key for bs in blocked)
+    if already:
+        blocked = [bs for bs in blocked if (bs.get("day"), bs.get("start")) != key]
+        now_blocked = False
+    else:
+        blocked.append({"day": day, "start": start})
+        now_blocked = True
+
+    scenario.blocked_slots = blocked
+    scenario.save(update_fields=["blocked_slots", "updated_at"])
+    return _ok(
+        {
+            "scenario_id": scenario_id,
+            "day": day,
+            "start": start,
+            "blocked": now_blocked,
+            "blocked_slots": blocked,
+        }
+    )
+
+
 # ── Slot Template Endpoints ──────────────────────────────────────
 
 
@@ -2586,90 +2511,59 @@ def tw_optimise_v2_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
         return err
 
     mode = payload.get("mode", "current")
-    max_iterations = int(payload.get("max_iterations", 50))
-    run_chain = bool(payload.get("run_chain_search", True))
-    run_cpsat = bool(payload.get("run_cpsat_polish", True))
-    cpsat_limit = float(payload.get("cpsat_time_limit", 60))
-    placement_snapshot = _snapshot_scenario_placements(scenario_id)
-    safety_before = compute_scenario_safety_summary(scenario_id)
 
-    try:
-        if mode == "full":
-            # Full mode: regenerate all candidates from scratch, rank, improve
-            from core.services.timetable_optimizer_v2 import optimise_scenario_timetable_v2
+    # WS-E — opt-in async dispatch. When ``async_run`` is set, the slow V2
+    # pipeline is queued on the planner job runner (off the request thread, so
+    # gunicorn's 120s timeout can't SIGKILL it mid-run) and a 202 + job id is
+    # returned for the existing PR8 job-poll UI. Default stays SYNCHRONOUS so
+    # the current frontend contract is unchanged.
+    if payload.get("async_run"):
+        from core.models import PlannerJob
+        from core.services.planner_job_runner import dispatch_planner_job, submit_planner_job
 
-            strategies = payload.get("strategies") or None
-            result = optimise_scenario_timetable_v2(
-                scenario_id=scenario_id,
-                strategies=strategies,
-                run_local_search=True,
-                max_search_iterations=max_iterations,
-                run_chain_search=run_chain,
-                run_cpsat_polish=run_cpsat,
-                cpsat_time_limit=cpsat_limit,
-            )
-        else:
-            # Current mode: improve the existing board without regenerating
-            from core.services.timetable_optimizer_v2 import optimise_current_timetable
-
-            result = optimise_current_timetable(
-                scenario_id=scenario_id,
-                max_search_iterations=max_iterations,
-                run_chain_search=run_chain,
-                max_chain_iterations=int(payload.get("max_chain_iterations", 10)),
-                run_cpsat_polish=run_cpsat,
-                cpsat_time_limit=cpsat_limit,
-            )
-    except Exception:
-        import logging
-        import traceback
-
-        _restore_scenario_placements(scenario_id, placement_snapshot)
-        logging.getLogger(__name__).exception("V2 optimiser failed")
-        return _err(
-            f"Optimiser error: {traceback.format_exc(limit=3)}",
-            code="OPTIMISER_ERROR",
-            status=500,
+        job_mode = (
+            PlannerJob.MODE_OPTIMISE_V2_FULL
+            if mode == "full"
+            else PlannerJob.MODE_OPTIMISE_V2_CURRENT
         )
+        # Carry the per-request tuning so the async job reproduces the same
+        # rebuild the sync path would have (the runner replays these).
+        job_params = {
+            "strategies": payload.get("strategies") or None,
+            "max_iterations": payload.get("max_iterations", 50),
+            "run_chain_search": payload.get("run_chain_search", True),
+            "run_cpsat_polish": payload.get("run_cpsat_polish", True),
+            "cpsat_time_limit": payload.get("cpsat_time_limit", 60),
+            "max_chain_iterations": payload.get("max_chain_iterations", 10),
+        }
+        job_id = submit_planner_job(
+            scenario_id=scenario_id, mode=job_mode, user=request.user, params=job_params
+        )
+        dispatch_planner_job(job_id)
+        return _ok({"job_id": str(job_id), "mode": mode, "async": True}, status=202)
+
+    # Delegate to the shared, safety-gated runner (WS-E). The same function
+    # runs from the async planner job, so the snapshot → run → regression →
+    # rollback gate is identical on both paths.
+    result = run_v2_optimisation_guarded(
+        scenario_id,
+        mode=mode,
+        max_iterations=int(payload.get("max_iterations", 50)),
+        run_chain=bool(payload.get("run_chain_search", True)),
+        run_cpsat=bool(payload.get("run_cpsat_polish", True)),
+        cpsat_limit=float(payload.get("cpsat_time_limit", 60)),
+        strategies=payload.get("strategies") or None,
+        max_chain_iterations=int(payload.get("max_chain_iterations", 10)),
+    )
 
     if "error" in result:
-        return _err(result["error"], code="OPTIMISER_NO_DATA", status=400)
-
-    safety_after = compute_scenario_safety_summary(scenario_id)
-    student_regression = _optimiser_student_outcome_regression(result)
-    safety_regression = _optimiser_safety_regression(safety_before, safety_after)
-    blocking_regressions = list(student_regression["regressions"]) + list(
-        safety_regression["regressions"]
-    )
-    if blocking_regressions:
-        candidate_final_score = result.get("final_score")
-        _restore_scenario_placements(scenario_id, placement_snapshot)
-        safety_after = compute_scenario_safety_summary(scenario_id)
-        result["safety_blocked"] = True
-        result["safety_regression"] = {
-            "blocked": True,
-            "regressions": blocking_regressions,
-        }
-        result["candidate_final_score"] = candidate_final_score
-        result["persist_result"] = {
-            "action": "rolled_back_safety_regression",
-            "reason": "Optimiser candidate worsened the student outcome or hard operational constraints.",
-            "regressions": blocking_regressions,
-        }
-        baseline_score = result.get("baseline_score")
-        if isinstance(baseline_score, list):
-            result["final_score"] = baseline_score
-            if len(baseline_score) > 1:
-                result["unresolved_students"] = baseline_score[1]
-        logger.warning(
-            "V2 optimiser result rolled back for scenario %d: %s",
-            scenario_id,
-            blocking_regressions,
+        # Internal optimiser exception → 500; no-data (no candidates / no
+        # profiles) → 400 — preserving the prior status-code contract.
+        is_internal = str(result["error"]).startswith("Optimiser error")
+        return _err(
+            result["error"],
+            code="OPTIMISER_ERROR" if is_internal else "OPTIMISER_NO_DATA",
+            status=500 if is_internal else 400,
         )
-    else:
-        result["safety_blocked"] = False
-        result["safety_regression"] = {"blocked": False, "regressions": []}
-
-    _attach_optimiser_safety_metrics(result, safety_before, safety_after)
 
     return _ok({"optimisation": result})

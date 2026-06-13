@@ -460,3 +460,19 @@ TIMETABLE_PR7_ASYNC_PLANNER_ENABLED = os.getenv(
 TIMETABLE_PR8_ASYNC_JOB_UI_ENABLED = os.getenv(
     "TIMETABLE_PR8_ASYNC_JOB_UI_ENABLED", "true"
 ).lower() in ("1", "true", "yes", "on")
+
+# TIMETABLE_ENFORCE_LOCKS: enforce registrar placement locks across every
+# planner stage. When True, locked SectionPlacement rows are preserved through
+# greedy auto-place, per-board CP-SAT, the global polisher, load-balanced and
+# simulated annealing (and their persist paths) — a locked cell is never
+# relocated, re-roomed, or deleted on a re-solve. When False, locks are
+# advisory only (pre-refactor behaviour). Env override
+# ``TIMETABLE_ENFORCE_LOCKS=false`` disables enforcement at runtime — no
+# redeploy. Default ``true``: the workspace exposes a lock toggle, so the
+# planner must honour it. Latent until rows are actually locked.
+TIMETABLE_ENFORCE_LOCKS = os.getenv("TIMETABLE_ENFORCE_LOCKS", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)

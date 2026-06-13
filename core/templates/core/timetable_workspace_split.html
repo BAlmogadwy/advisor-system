@@ -7,7 +7,7 @@
 {% block main_padding %}p-0{% endblock %}
 
 {% block extra_css %}
-<link href="{% static 'css/timetable-workspace-split.css' %}?v=1" rel="stylesheet">
+<link href="{% static 'css/timetable-workspace-split.css' %}?v=2" rel="stylesheet">
 {% endblock %}
 
 {% block page_heading %}{% endblock %}
@@ -112,6 +112,7 @@
                   </div>
                 </div>
               </span>
+              <button class="tws-btn" id="twsBlockMode" type="button" disabled aria-pressed="false" aria-label="{% if LANGUAGE_CODE == 'ar' %}وضع حجب الخانات{% else %}Block-slots mode{% endif %}" title="{% if LANGUAGE_CODE == 'ar' %}فعّل ثم انقر الخانات الفارغة لحجبها من المخطِّط (يُطبّقها المخطِّط ويمنع النشر إن شُغلت){% else %}Toggle on, then click empty cells to reserve them — the planner avoids blocked cells and publish is blocked if one is occupied{% endif %}">⛔ {% if LANGUAGE_CODE == 'ar' %}حجب الخانات{% else %}Block slots{% endif %}</button>
               <button class="tws-btn" id="twsGlobalRepairPlan" type="button" disabled aria-label="{% if LANGUAGE_CODE == 'ar' %}خطة إصلاح الطلاب غير المحلولين{% else %}Global unresolved-student repair plan{% endif %}" title="{% if LANGUAGE_CODE == 'ar' %}خطة إصلاح الطلاب غير المحلولين{% else %}Global unresolved-student repair plan{% endif %}">
                 {% if LANGUAGE_CODE == 'ar' %}إصلاح الطلاب{% else %}Repair unresolved{% endif %}
               </button>
@@ -384,5 +385,5 @@
   const DEFAULT_YEAR = {{ default_year|default:'null' }};
   const DEFAULT_TERM = {{ default_term|default:'null' }};
 </script>
-<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=104"></script>
+<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=106"></script>
 {% endblock %}

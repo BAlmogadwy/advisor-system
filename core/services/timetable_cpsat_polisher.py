@@ -168,17 +168,27 @@ def polish_scenario_with_cpsat(
         time_limit_seconds,
     )
 
-    # Build valid slot options per duration
+    # Build valid slot options per duration. Blocked cells are excluded by
+    # construction (same raw (day,start) semantics as the greedy enumerator);
+    # slot_idx stays the original enumerate index so the soft objective is
+    # unchanged.
+    from core.services.timetable_validation import blocked_slot_keys
+
+    blocked_set = blocked_slot_keys(scenario_obj.blocked_slots)
     slots_75: list[tuple] = []
     slots_lab: list[tuple] = []
     for day_idx, day in enumerate(WEEKDAYS):
         for s_idx, s in enumerate(slot_config):
+            if (day, s["start"]) in blocked_set:
+                continue
             mask = _time_mask(day, s["start"], s["end"])
             start_min = _to_minutes(s["start"])
             end_min = _to_minutes(s["end"])
             slots_75.append((day_idx, s_idx, day, s["start"], s["end"], mask, start_min, end_min))
 
         for s_idx, s in enumerate(lab_slot_config):
+            if (day, s["start"]) in blocked_set:
+                continue
             mask = _time_mask(day, s["start"], s["end"])
             start_min = _to_minutes(s["start"])
             end_min = _to_minutes(s["end"])
@@ -205,6 +215,12 @@ def polish_scenario_with_cpsat(
         sec_opts = []
         for m_idx, duration in enumerate(sec_durations[i]):
             options = get_options(duration)
+            if not options:
+                # A fully-blocked grid for this duration leaves no feasible
+                # slot — abort the polish (keep the current timetable) rather
+                # than build an unsatisfiable model.
+                logger.warning("CP-SAT polisher: empty domain for duration %d; skipping", duration)
+                return None
             m_assign = []
             for o_idx, _opt in enumerate(options):
                 var = model.new_bool_var(f"a_{i}_{m_idx}_{o_idx}")
@@ -251,6 +267,23 @@ def polish_scenario_with_cpsat(
                             for ob, opt_b in enumerate(opts_b):
                                 if opt_a[0] == opt_b[0] and opt_a[5] & opt_b[5]:
                                     model.add(assign[i_a][m_a][oa] + assign[i_b][m_b][ob] <= 1)
+
+    # ── Hard: a movable section must not overlap a SAME-COURSE fixed section.
+    # Fixed sections (locked, and non-hotspot in hotspot mode) get no decision
+    # vars, so the same-course hard loop above can't see them. The cross-course
+    # fixed-overlap term below is only SOFT — without this a movable sibling
+    # could legally land on a locked section's exact slot when their recorded
+    # student overlap is zero. Hard-separate them, matching greedy + the solver.
+    for fixed_sec in fixed_sections:
+        for i_a, sec_a in enumerate(sections_to_polish):
+            if sec_a.course_code != fixed_sec.course_code:
+                continue
+            for m_a in range(len(sec_durations[i_a])):
+                opts_a = sec_options[i_a][m_a]
+                for fixed_meeting in fixed_sec.meetings:
+                    for oa, opt_a in enumerate(opts_a):
+                        if opt_a[0] == fixed_meeting.day and (opt_a[5] & fixed_meeting.mask):
+                            model.add(assign[i_a][m_a][oa] == 0)
 
     # ── Soft: cross-course student overlap penalty ───────────────
     penalties = []

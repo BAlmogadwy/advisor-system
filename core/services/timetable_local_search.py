@@ -21,7 +21,7 @@ Acceptance criterion (simulated annealing):
 Cost function (what we minimize):
   - Overlap-weighted idle gap minutes between courses sharing students
   - Gap weight proportional to shared_student_count (capped at 30)
-  - 1.5x penalty for prayer break crossings
+  - 1.5x penalty for midday break crossings
   - Online courses not counted in gaps
   - Hard constraints (same-course overlap, shared >= HARD_OVERLAP_THRESHOLD)
     = infinite cost (rejected immediately)
@@ -72,7 +72,7 @@ def _to_min(t: str) -> int:
     return int(h) * 60 + int(m)
 
 
-PRAYER_BOUNDARY = 13 * 60  # 13:00
+MIDDAY_BOUNDARY = 13 * 60  # 13:00
 
 
 # ── Cost Function ────────────────────────────────────────────────
@@ -164,7 +164,7 @@ def _compute_cost(
                     gap = times[j + 1][0] - times[j][1]
                     if gap <= 0:
                         continue
-                    if times[j][1] <= PRAYER_BOUNDARY < times[j + 1][0]:
+                    if times[j][1] <= MIDDAY_BOUNDARY < times[j + 1][0]:
                         gap *= 1.5
                     total_cost += gap * w
 
@@ -228,12 +228,17 @@ def _generate_relocate_move(
     sections: list[dict],
     valid_options: dict[int, list[list[dict]]],
     rng: random.Random,
+    locked_idx: set[int] | None = None,
 ) -> tuple[int, int, dict] | None:
     """Generate a random RELOCATE move: move one meeting to a different slot.
 
     Returns (section_idx, meeting_idx, new_option) or None if no valid move.
+    A locked section is never selected as a move target (the draw is burned,
+    matching the LS-v2 skip-set contract).
     """
     sec_idx = rng.randint(0, len(sections) - 1)
+    if locked_idx and sec_idx in locked_idx:
+        return None
     meetings = schedule[sec_idx]
     if not meetings:
         return None
@@ -357,11 +362,14 @@ def optimize_board(
                     "label": sec_label,
                     "term_section_id": p.term_section_id,
                     "is_online": normalise_course_code(p.term_section.course_code) in online_codes,
+                    "is_locked": False,
                 }
             )
             schedule[idx] = []
 
         idx = sec_map[key]
+        if p.is_locked:
+            sections[idx]["is_locked"] = True
         # Find slot_idx for this placement (check lecture slots, then lab slots)
         slot_idx = 0
         duration = _to_min(p.end_time) - _to_min(p.start_time)
@@ -399,6 +407,22 @@ def optimize_board(
         for i, meetings in schedule.items():
             initial_schedule_snapshot[i] = tuple((m["day"], m["start"], m["end"]) for m in meetings)
 
+    from core.services.timetable_validation import (
+        blocked_slot_keys,
+        is_lock_enforcement_enabled,
+    )
+
+    # Blocked cells are excluded from the relocate domain (always on); locked
+    # sections are never offered as a relocate target (flag-gated). Sections are
+    # never dropped — only gated — so dense-index keying stays aligned with the
+    # schedule, snapshot, and PR5 trace diff.
+    blocked_set = blocked_slot_keys(scenario.blocked_slots)
+    locked_idx: set[int] = (
+        {i for i, sec in enumerate(sections) if sec.get("is_locked")}
+        if is_lock_enforcement_enabled()
+        else set()
+    )
+
     # Build valid options per section per meeting
     valid_options: dict[int, list[list[dict]]] = {}
     for i, _sec in enumerate(sections):
@@ -411,6 +435,8 @@ def optimize_board(
             for day in WEEKDAYS:
                 if duration <= 75:
                     for si, s in enumerate(slot_config):
+                        if (day, s["start"]) in blocked_set:
+                            continue
                         mask = _time_mask(day, s["start"], s["end"])
                         options.append(
                             {
@@ -424,6 +450,8 @@ def optimize_board(
                 else:
                     # Lab (100-min): use dedicated lab slot grid
                     for si, s in enumerate(lab_slot_config):
+                        if (day, s["start"]) in blocked_set:
+                            continue
                         mask = _time_mask(day, s["start"], s["end"])
                         options.append(
                             {
@@ -461,8 +489,8 @@ def optimize_board(
         iterations += 1
         temperature *= cooling_rate
 
-        # Generate random move
-        move = _generate_relocate_move(schedule, sections, valid_options, rng)
+        # Generate random move (locked sections are never relocated)
+        move = _generate_relocate_move(schedule, sections, valid_options, rng, locked_idx)
         if move is None:
             continue
 
@@ -562,11 +590,68 @@ def optimize_board(
     }
 
 
+_SA_SNAPSHOT_FIELDS = (
+    "term_section_id",
+    "board_id",
+    "day",
+    "start_time",
+    "end_time",
+    "room",
+    "is_locked",
+)
+
+
+def _snapshot_board_placements(board_id: int) -> list[dict]:
+    """Capture a board's placements so an SA regression can be rolled back."""
+    return list(
+        SectionPlacement.objects.filter(board_id=board_id)
+        .order_by("id")
+        .values(*_SA_SNAPSHOT_FIELDS)
+    )
+
+
+def _restore_board_placements(board_id: int, snapshot: list[dict]) -> None:
+    """Restore a board's placement snapshot inside one transaction."""
+    from django.db import transaction
+
+    with transaction.atomic():
+        SectionPlacement.objects.filter(board_id=board_id).delete()
+        SectionPlacement.objects.bulk_create(
+            [SectionPlacement(**row) for row in snapshot], batch_size=500
+        )
+
+
+def _sa_scenario_score(scenario_id: int, profiles, rigidity, candidate_id: str):
+    """Lexicographic student-assignment score of the scenario's DB placements.
+
+    Returns the score tuple, or ``None`` when there is nothing to evaluate.
+    This is the SAME objective the V2 pipeline ranks candidates by, so the SA
+    gate optimises (or at least never regresses) the canonical objective rather
+    than SA's private gap-cost.
+    """
+    from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
+    from core.services.timetable_optimizer_v2 import build_section_states_for_scenario
+
+    states = build_section_states_for_scenario(scenario_id)
+    if not states:
+        return None
+    evaluation = evaluate_generated_timetable_candidate(
+        candidate_id=candidate_id,
+        generated_sections=states,
+        student_profiles=profiles,
+        course_rigidity=rigidity,
+    )
+    return tuple(evaluation.lexicographic_score)
+
+
 def optimize_and_persist_board(board_id: int, max_seconds: float = 8.0) -> dict:
     """Optimize and update placements in the database.
 
-    Deletes all auto-placed sections for the board, then recreates
-    them from the optimized schedule.
+    Runs simulated annealing in memory, then persists the result — but only if
+    the full student-assignment evaluator confirms SA did not regress the
+    student outcome versus the greedy/CP-SAT baseline (WS-B evaluator gate).
+    On regression the baseline is restored. The gate is inactive when the
+    scenario has no student profiles (nothing to protect).
     """
     result = optimize_board(board_id, max_seconds=max_seconds)
 
@@ -581,10 +666,43 @@ def optimize_and_persist_board(board_id: int, max_seconds: float = 8.0) -> dict:
     except DeliveryBoard.DoesNotExist:
         return result
 
-    # Delete all current placements + meetings for auto sections on this board
+    # ── SA evaluator gate (WS-B) — capture the pre-SA baseline ──────
+    scenario_id = board.scenario_id
+    from core.services.timetable_optimizer_v2 import (
+        build_course_rigidity_for_scenario,
+        build_student_profiles_for_scenario,
+    )
+
+    _gate_profiles = build_student_profiles_for_scenario(scenario_id)
+    _gate_rigidity = build_course_rigidity_for_scenario(scenario_id) if _gate_profiles else {}
+    _baseline_score = None
+    _baseline_snapshot: list[dict] = []
+    if _gate_profiles:
+        _baseline_score = _sa_scenario_score(
+            scenario_id, _gate_profiles, _gate_rigidity, "sa_baseline"
+        )
+        _baseline_snapshot = _snapshot_board_placements(board_id)
+
+    # Delete all current placements + meetings for auto sections on this board.
+    # When lock enforcement is on, locked sections are preserved untouched
+    # (never deleted, never re-persisted) so a registrar lock survives the SA
+    # polish — get_or_create recreates default to is_locked=False.
+    from core.services.timetable_validation import is_lock_enforcement_enabled
+
+    locks_on = is_lock_enforcement_enabled()
+    locked_ts_ids: set[int] = set()
+    if locks_on:
+        locked_ts_ids = set(
+            SectionPlacement.objects.filter(board=board, is_locked=True).values_list(
+                "term_section_id", flat=True
+            )
+        )
+
     auto_placements = SectionPlacement.objects.filter(
         board=board, term_section__source_tag="tw_auto"
     )
+    if locks_on:
+        auto_placements = auto_placements.exclude(is_locked=True)
     ts_ids = set(auto_placements.values_list("term_section_id", flat=True))
     auto_placements.delete()
 
@@ -596,6 +714,8 @@ def optimize_and_persist_board(board_id: int, max_seconds: float = 8.0) -> dict:
     for i, meetings in schedule.items():  # noqa: B007
         sec = sections[i]
         ts_id = sec["term_section_id"]
+        if ts_id in locked_ts_ids:
+            continue
         try:
             ts = TermSection.objects.get(id=ts_id)
         except TermSection.DoesNotExist:
@@ -620,7 +740,22 @@ def optimize_and_persist_board(board_id: int, max_seconds: float = 8.0) -> dict:
     # Assign rooms after re-persisting (annealing may have moved sections)
     from core.services.timetable_rooming import assign_rooms_to_board
 
-    assign_rooms_to_board(board_id)
+    assign_rooms_to_board(board_id, respect_locked=locks_on)
+
+    # ── SA evaluator gate (WS-B) — roll back a regression ───────────
+    # If SA strictly worsened the canonical student-assignment score, restore
+    # the greedy/CP-SAT baseline so SA can never persist a worse student
+    # outcome by chasing its private gap-cost.
+    if _baseline_score is not None:
+        _after_score = _sa_scenario_score(scenario_id, _gate_profiles, _gate_rigidity, "sa_after")
+        if _after_score is not None and _after_score > _baseline_score:
+            _restore_board_placements(board_id, _baseline_snapshot)
+            assign_rooms_to_board(board_id, respect_locked=locks_on)
+            result["sa_evaluator_rolled_back"] = True
+            result["sa_baseline_score"] = list(_baseline_score)
+            result["sa_regressed_score"] = list(_after_score)
+        else:
+            result["sa_evaluator_rolled_back"] = False
 
     return result
 

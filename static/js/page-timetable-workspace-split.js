@@ -68,6 +68,9 @@ const S = {
   selectedPaneIdx: null,
   selectedPlacementId: null,
   search: '',
+  // When on, clicking an empty grid cell toggles it as an institutionally
+  // blocked slot (scenario.blocked_slots) — enforced by the planner + publish.
+  blockMode: false,
   protections: {
     instructors: new Set(),
     rooms: new Set(),
@@ -221,6 +224,44 @@ async function api(url, opts = {}) {
     console.error(e);
     return null;
   }
+}
+
+/* Resolve after `ms` — used by the planner-job poll loop. */
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/* Poll an async planner job until it reaches a terminal status. Calls
+   `onTick(job, elapsedMs)` each poll for progress UI. Returns the terminal job
+   object, or a synthetic { status:'failed' } only when contact is genuinely
+   lost or the safety ceiling is hit.
+
+   A full rebuild (the whole reason this path is async) can legitimately run
+   several minutes — and while it pins the CPU a single status poll can blip.
+   So we do NOT abandon a healthy job on the first failed poll or a tight
+   wall-clock: we tolerate a run of consecutive poll failures, and the ceiling
+   is generous (30 min) purely as a runaway backstop. The server-side job is
+   the source of truth; we follow it to its terminal state. */
+async function pollPlannerJob(jobId, onTick, { intervalMs = 2000, maxMs = 1800000, maxConsecutiveErrors = 8 } = {}) {
+  const start = Date.now();
+  let consecutiveErrors = 0;
+  while (Date.now() - start < maxMs) {
+    await sleep(intervalMs);
+    const job = await api(`/planner-jobs/${jobId}/`);
+    if (!job) {
+      // Transient poll failure (server busy under a CPU-heavy solve, brief
+      // blip). The job itself may be perfectly healthy — tolerate a run of
+      // these before giving up.
+      if (++consecutiveErrors >= maxConsecutiveErrors) {
+        return { status: 'failed', error_message: 'lost contact with the planner job' };
+      }
+      continue;
+    }
+    consecutiveErrors = 0;
+    onTick && onTick(job, Date.now() - start);
+    if (job.status === 'succeeded' || job.status === 'failed' || job.status === 'cancelled') {
+      return job;
+    }
+  }
+  return { status: 'failed', error_message: 'optimisation timed out while polling' };
 }
 
 /* ── Utilities ── */
@@ -2332,6 +2373,8 @@ async function onScenarioChange() {
   $('twsExport').disabled = false;
   $('twsNewBoard') && ($('twsNewBoard').disabled = published);
   $('twsSlots') && ($('twsSlots').disabled = published);
+  $('twsBlockMode') && ($('twsBlockMode').disabled = published);
+  if (published && S.blockMode) setBlockMode(false);
   $('twsElectives') && ($('twsElectives').disabled = false);
 
   updateAggregateMetrics();
@@ -2583,6 +2626,7 @@ function renderGridHTML(slots, placements, issueMap, kind) {
   // pane-ruler: one header row — "SLOT"/"LAB" corner + day labels.
   // slot-row × N: one per slot — slot number + cells for each day.
   const isLab = kind === 'lab';
+  const blockedSet = new Set(((S.scenarioMeta && S.scenarioMeta.blocked_slots) || []).map(b => `${b.day}|${b.start}`));
   let h = `<div class="block-grid ${isLab ? 'lab-grid' : 'lect-grid'}">`;
   h += `<div class="pane-ruler"><div class="cor">${isLab ? 'LAB' : 'SLOT'}</div>`;
   DAYS.forEach((day, di) => h += `<div class="dh">${esc(DAY_LABELS[di])}</div>`);
@@ -2624,7 +2668,9 @@ function renderGridHTML(slots, placements, issueMap, kind) {
         h += planLensBadgesHtml(placement);
         h += `</div>`;
       } else {
-        h += `<div class="cell" ${cellAttrs}></div>`;
+        const isBlocked = blockedSet.has(`${day}|${slot.start}`);
+        const blockTitle = isBlocked ? ` title="${esc(IS_AR ? 'خانة محجوبة' : 'Blocked slot')}"` : '';
+        h += `<div class="cell${isBlocked ? ' blocked' : ''}" ${cellAttrs}${blockTitle}></div>`;
       }
     });
     h += `</div>`;
@@ -2680,6 +2726,12 @@ function bindPaneControls(idx) {
       cell.classList.remove('drop-valid', 'drop-warning', 'drop-critical'));
     cell.addEventListener('drop', (e) => onCellDrop(idx, cell, e));
     cell.addEventListener('click', async (e) => {
+      // Block-slots mode: clicking an empty cell toggles it blocked.
+      if (S.blockMode && !cell.classList.contains('filled')) {
+        e.stopPropagation();
+        await doToggleBlockedSlot(cell.dataset.day, cell.dataset.start);
+        return;
+      }
       if (await applyCreateAssistToCell(idx, cell)) {
         e.stopPropagation();
         return;
@@ -7510,6 +7562,46 @@ async function doToggleLock(placementId, paneIdx) {
   if (DRAWER.placementId === placementId) openDrawer(paneIdx, placementId);
 }
 
+/* ── Block-slots mode ── */
+function setBlockMode(on) {
+  S.blockMode = !!on;
+  const btn = $('twsBlockMode');
+  if (btn) {
+    btn.classList.toggle('active', S.blockMode);
+    btn.setAttribute('aria-pressed', S.blockMode ? 'true' : 'false');
+  }
+  document.body.classList.toggle('tws-block-mode', S.blockMode);
+}
+
+function toggleBlockMode() {
+  if (!S.scenarioMeta) { notify.error(IS_AR ? 'اختر سيناريو أولاً' : 'Select a scenario first'); return; }
+  if (S.scenarioMeta.status === 'published') { notify.error(IS_AR ? 'السيناريو منشور' : 'Published scenarios are read-only'); return; }
+  setBlockMode(!S.blockMode);
+  const hint = $('twsStatusHover');
+  if (hint) {
+    hint.textContent = S.blockMode
+      ? (IS_AR ? 'وضع الحجب مُفعّل — انقر خانة فارغة لحجبها' : 'Block mode on — click an empty cell to reserve it')
+      : (IS_AR ? 'تم إيقاف وضع الحجب' : 'Block mode off');
+  }
+}
+
+/* Toggle a (day,start) cell in scenario.blocked_slots, then repaint panes. */
+async function doToggleBlockedSlot(day, start) {
+  if (!S.scenarioId || !S.scenarioMeta) { notify.error(IS_AR ? 'اختر سيناريو أولاً' : 'Select a scenario first'); return; }
+  if (S.scenarioMeta.status === 'published') { notify.error(IS_AR ? 'السيناريو منشور' : 'Published scenarios are read-only'); return; }
+  if (!day || !start) return;
+  const data = await api(`/ops/tw/scenarios/${S.scenarioId}/blocked-slots/`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ day, start }),
+  });
+  if (!data) return;
+  S.scenarioMeta.blocked_slots = data.blocked_slots || [];
+  notify.success(data.blocked
+    ? (IS_AR ? 'تم حجب الخانة' : 'Slot blocked')
+    : (IS_AR ? 'تم رفع الحجب' : 'Slot unblocked'));
+  // Placements are unchanged — repaint each visible pane to reflect the marker.
+  for (let i = 0; i < paneCount(); i++) await loadAndRenderPane(i);
+}
+
 /* ── Remove + undo ── */
 async function doRemove(placementId, paneIdx) {
   const located = findPlacement(placementId);
@@ -7716,10 +7808,12 @@ async function doOptimise(mode = 'current') {
   const btn = $('twsOptimise');
   const menuBtn = $('twsOptimiseMenu');
   const origText = btn.textContent;
+  const scenarioAtStart = S.scenarioId;
   btn.disabled = true; menuBtn && (menuBtn.disabled = true);
-  btn.textContent = isFull
+  const busyText = isFull
     ? (IS_AR ? 'جاري إعادة البناء…' : 'Rebuilding…')
     : (IS_AR ? 'جاري التحسين…' : 'Optimising…');
+  btn.textContent = busyText;
 
   const payload = { mode };
   if (isFull) {
@@ -7731,13 +7825,56 @@ async function doOptimise(mode = 'current') {
   payload.run_cpsat_polish = true;
   payload.cpsat_time_limit = 60;
 
-  const data = await api(`/ops/tw/scenarios/${S.scenarioId}/optimise-v2/`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-  });
-  btn.disabled = false; menuBtn && (menuBtn.disabled = false);
-  btn.textContent = origText;
-  if (!data || !data.optimisation) { notify.error(IS_AR ? 'فشل التحسين' : 'Optimisation failed'); return; }
-  showOptimiseResults(data.optimisation, mode);
+  const url = `/ops/tw/scenarios/${S.scenarioId}/optimise-v2/`;
+  const postOpts = body => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
+  let optimisation = null;
+  let failMsg = null;
+  try {
+    if (isFull) {
+      // A full rebuild (7 strategies + CP-SAT) can exceed the request timeout,
+      // so run it off the request thread and poll the planner job.
+      const sub = await api(url, postOpts({ ...payload, async_run: true }));
+      if (sub && sub.job_id) {
+        const job = await pollPlannerJob(sub.job_id, (j, elapsedMs) => {
+          // last_stage_seen is only set once the job finishes, so during the
+          // run surface elapsed seconds (with the stage if/when available) to
+          // signal the long rebuild is still alive.
+          const secs = Math.round((elapsedMs || 0) / 1000);
+          const detail = j.last_stage_seen ? ` (${j.last_stage_seen})` : (secs ? ` (${secs}s)` : '');
+          btn.textContent = busyText + detail;
+        });
+        if (job.status === 'succeeded') {
+          const res = await api(`/planner-jobs/${sub.job_id}/result/`);
+          optimisation = res && res.result;
+        } else if (job.status === 'cancelled') {
+          failMsg = IS_AR ? 'أُلغي التحسين' : 'Optimisation cancelled';
+        } else {
+          failMsg = (IS_AR ? 'فشل التحسين: ' : 'Optimisation failed: ') + (job.error_message || '');
+        }
+      } else {
+        // Async unavailable (e.g. async planner flag off → 404 → null);
+        // fall back to a synchronous rebuild.
+        const data = await api(url, postOpts(payload));
+        optimisation = data && data.optimisation;
+      }
+    } else {
+      // Current mode is fast — keep it synchronous.
+      const data = await api(url, postOpts(payload));
+      optimisation = data && data.optimisation;
+    }
+  } finally {
+    btn.disabled = false; menuBtn && (menuBtn.disabled = false);
+    btn.textContent = origText;
+  }
+
+  if (!optimisation) {
+    notify.error(failMsg || (IS_AR ? 'فشل التحسين' : 'Optimisation failed'));
+    return;
+  }
+  // The registrar may have switched scenarios while a long run polled.
+  if (S.scenarioId !== scenarioAtStart) return;
+  showOptimiseResults(optimisation, mode);
   await onScenarioChange();
 }
 
@@ -8050,6 +8187,7 @@ function initDismissibleDetailsMenus() {
   $('twsNewBoard')?.addEventListener('click', openNewBoardModal);
   $('twsSlots')?.addEventListener('click', openSlotEditorModal);
   $('twsElectives')?.addEventListener('click', openElectivesModal);
+  $('twsBlockMode')?.addEventListener('click', toggleBlockMode);
 
   // Sidebar toggle + search
   $('twsSidebarToggle')?.addEventListener('click', () => toggleSidebar());

@@ -776,7 +776,7 @@ def _render_plan_rooms_sheet(
         right=Side(style="thin", color="D5D8DC"),
     )
     section_fill = PatternFill(start_color="D5F5E3", end_color="D5F5E3", fill_type="solid")
-    prayer_fill = PatternFill(start_color="D5D8DC", end_color="D5D8DC", fill_type="solid")
+    midday_fill = PatternFill(start_color="D5D8DC", end_color="D5D8DC", fill_type="solid")
     lab_room_fill = PatternFill(start_color="E8F8F5", end_color="E8F8F5", fill_type="solid")
     room_name_fill = PatternFill(start_color="0A8E6E", end_color="0A8E6E", fill_type="solid")
     room_name_font = Font(name="Calibri", bold=True, color="FFFFFF", size=10)
@@ -833,7 +833,7 @@ def _render_plan_rooms_sheet(
                 cell.border = room_border
                 cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
                 if "11:35" <= slot["start"] <= "12:59":
-                    cell.fill = prayer_fill
+                    cell.fill = midday_fill
                 texts = room_grid.get(room_code, {}).get((day_code, slot["start"]), [])
                 if texts:
                     cell.value = "\n".join(texts)

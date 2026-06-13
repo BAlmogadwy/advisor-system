@@ -205,19 +205,18 @@ class TestSARelocateEmission(TransactionTestCase):
     def test_greedy_to_sa_relocates_same_day_gap(self) -> None:
         """End-to-end greedy→SA handoff. Asserts greedy clumps on SUN
         (per fixture ``blocked_slots``), then SA relocates at least one
-        section off SUN and emits an ``SA_RELOCATE_ACCEPTED`` trace with
-        populated ``from_slot``/``to_slot``.
+        section to a different (still-SUN) slot to collapse the same-day
+        gap, emitting an ``SA_RELOCATE_ACCEPTED`` trace with populated
+        ``from_slot``/``to_slot``.
 
-        Scaffolding note (not a product guarantee): this test exploits
-        a known asymmetry — ``timetable_autoplace`` applies the scenario's
-        ``blocked_slots`` when generating candidate options, while
-        ``timetable_local_search._generate_relocate_move`` currently
-        walks all ``WEEKDAYS × slot_config`` unconditionally and does
-        not consult ``blocked_slots``. That lets greedy be day-constrained
-        onto SUN while SA still has MON/TUE/WED/THU to relocate into.
-        The quirk is test scaffolding only; PR5 makes no product
-        commitment that SA will respect ``blocked_slots``, and this test
-        should not be cited as evidence of such a guarantee.
+        Post-WS-A: SA now applies the scenario's ``blocked_slots`` when
+        building its relocate domain (same source of truth as greedy and
+        the canonical pattern catalog), so it is confined to SUN here. The
+        relocation that closes the gap is therefore SUN→SUN — a legal,
+        soft-penalised move (the three sections' 10 shared students sit
+        below the hard-overlap threshold). This test verifies the
+        greedy→SA stage handoff and trace emission, not a particular
+        destination day.
         """
         from pr5_fixture_loader import load_pr5_fixture
 

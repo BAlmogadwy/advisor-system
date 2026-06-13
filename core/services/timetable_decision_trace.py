@@ -14,11 +14,8 @@ Public symbols:
   rejection-code sentinel so a registrar can see *why* the planner chose
   the slot it did over this one.
 - ``INSTRUCTOR_CLASH`` / ``STUDENT_CONFLICT`` — the two new PR3 rejection
-  sentinels, joining the PR1 (``PRAYER_OVERLAP``, ``LOCK_RESPECT`` — the
-  actual strings emitted by ``timetable_validation``; the DoR alphabet
-  uses the aspirational ``PRAYER_WINDOW_CLASH`` / ``LOCK_VIOLATION``
-  names which never landed in PR1 code — renaming PR1 codes is out of
-  scope for PR3) and PR2 (``NO_ROOM_*``, ``ROOM_*``) sets.
+  sentinels, joining ``LOCK_RESPECT`` (emitted by ``timetable_validation``)
+  and the PR2 (``NO_ROOM_*``, ``ROOM_*``) sets.
   ``STUDENT_CONFLICT`` is
   named *conflict* — not *overlap* — because it captures cohort
   semantics (≥1 shared student enrolled in another section at this slot),
@@ -36,7 +33,6 @@ code and left empty otherwise):
 - ``INSTRUCTOR_CLASH``: ``clashing_section`` (``"<course>|<section>"``),
   ``clashing_instructor_id``.
 - ``STUDENT_CONFLICT``: ``clashing_section``, ``shared_student_count``.
-- ``PRAYER_OVERLAP``: ``prayer_window`` (e.g. ``"dhuhr"``).
 - ``LOCK_RESPECT``: ``locked_section``.
 - ``NO_ROOM_CAPACITY`` / ``NO_ROOM_GENDER`` / ``NO_ROOM_TYPE``: no extra
   keys — the candidate slot itself carries the day/time/room tried.

@@ -186,83 +186,16 @@ def _build_autoplace_fixture(
 # ===========================================================================
 # SITE 1 — core/services/timetable_autoplace.py (best_option is None)
 #
-# Reachable path: every candidate option is filtered out before scoring.
-# The only live filter that produces this in auto_place_board is the
-# prayer-overlap rule — when its windows cover every configured slot,
-# the option loop ``continue``s every iteration, best_option stays None,
-# and the Site 1 emission path runs. Commit 4 wires the refinement chain
-# (type → gender → capacity) against the overall room pool; slot fields
-# stay empty strings because no option survived.
+# Site 1's emission path runs when every candidate option is filtered out
+# *during* scoring (best_option stays None). The forcing mechanism the
+# original tests used — the prayer-overlap rule covering every slot — was
+# removed (prayer compliance is now a fixed-grid property, not a runtime
+# filter). The typed room-failure reasons this site surfaces against the
+# overall pool (NO_ROOM_TYPE / NO_ROOM_GENDER / NO_ROOM_CAPACITY) are
+# identical to, and covered by, the Site 2 cases below (per-meeting room
+# assignment against a mismatched pool), so Site 1 is no longer tested in
+# isolation.
 # ===========================================================================
-
-
-@pytest.mark.django_db
-class TestSiteAutoplaceBestOptionNone:
-    """Site 1 — every option prayer-rejected → best_option None."""
-
-    def test_skipped_sections_carry_reason_in_payload(self) -> None:
-        """Prayer windows cover every weekday; scoring loop yields
-        nothing; Site 1 emits a typed reason into ``room_failures``."""
-        from core.services.timetable_autoplace import auto_place_board
-
-        # slot_config is day-independent (a list of start/end windows); the
-        # generator pairs each slot with every WEEKDAY. To starve the
-        # scoring loop of every option we need the prayer window to cover
-        # the single slot on every weekday (SUN/MON/TUE/WED/THU).
-        _, board = _build_autoplace_fixture(
-            program="PR2S1",
-            course_code="PR2S1_A",
-            slot_config=[{"start": "08:00", "end": "09:15"}],
-            credit_hours=1,
-            total_demand=30,
-        )
-
-        whole_day_window = [
-            {"day": d, "start_time": "00:00", "end_time": "23:59"}
-            for d in ("SUN", "MON", "TUE", "WED", "THU")
-        ]
-        with override_settings(
-            TIMETABLE_ENFORCE_PRAYER_OVERLAP_RULE=True,
-            TIMETABLE_PRAYER_WINDOWS=whole_day_window,
-        ):
-            result = auto_place_board(board.id)
-
-        _assert_pr2_payload_shape(result)
-        assert "room_failure_breakdown" in result
-        assert result["unplaced_count"] >= 1
-        for f in result["room_failures"]:
-            assert f["reason"]
-            assert f["course_code"] == "PR2S1_A"
-
-    @pytest.mark.usefixtures("oracle_on")
-    def test_no_matching_room_type_surfaces_no_room_type(self) -> None:
-        """Flag-on: the overall room pool is lab-only but the 1-credit
-        section needs a lecture room — Site 1's type-feasibility helper
-        fires first and surfaces NO_ROOM_TYPE."""
-        from core.services.timetable_autoplace import auto_place_board
-
-        _, board = _build_autoplace_fixture(
-            program="PR2S1T",
-            course_code="PR2S1T_A",
-            room_type="lab",
-            slot_config=[{"start": "08:00", "end": "09:15"}],
-            credit_hours=1,
-            total_demand=30,
-        )
-
-        whole_day_window = [
-            {"day": d, "start_time": "00:00", "end_time": "23:59"}
-            for d in ("SUN", "MON", "TUE", "WED", "THU")
-        ]
-        with override_settings(
-            TIMETABLE_ENFORCE_PRAYER_OVERLAP_RULE=True,
-            TIMETABLE_PRAYER_WINDOWS=whole_day_window,
-        ):
-            result = auto_place_board(board.id)
-
-        assert result["unplaced_count"] >= 1
-        assert result["room_failures"][0]["reason"] == NO_ROOM_TYPE
-        assert result["room_failure_breakdown"].get(NO_ROOM_TYPE, 0) >= 1
 
 
 # ===========================================================================
