@@ -15,6 +15,8 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 
+from django.conf import settings
+
 from core.models import (
     DeliveryBoard,
     Room,
@@ -546,6 +548,12 @@ def _generate_candidates_for_scenario(
     if strategies is None:
         strategies = list(ALL_STRATEGIES)
 
+    # Candidates are only ranked to pick a winning strategy; the winner is then
+    # re-placed and fully polished. So the heavy strategies' per-board solvers
+    # (which on realistic multi-board scenarios produce compact-equivalent
+    # candidates) run under a tight budget here — set to 0 to disable.
+    _cand_budget = getattr(settings, "TIMETABLE_CANDIDATE_GEN_BUDGET_SECONDS", 0) or None
+
     candidates: list[dict] = []
 
     for idx, strategy in enumerate(strategies):
@@ -558,7 +566,7 @@ def _generate_candidates_for_scenario(
             "Generating candidate %d/%d with strategy=%s", idx + 1, len(strategies), strategy
         )
         try:
-            auto_place_scenario(scenario_id, strategy=strategy)
+            auto_place_scenario(scenario_id, strategy=strategy, candidate_gen_budget=_cand_budget)
         except Exception:
             logger.exception("Strategy %s failed, skipping", strategy)
             continue
@@ -613,6 +621,7 @@ def optimise_scenario_timetable_v2(
     cpsat_time_limit: float = 60.0,
     cpsat_hotspot_only: bool = False,
     baseline_placements: dict | None = None,
+    chain_time_limit_seconds: float | None = None,
 ) -> dict:
     """Full optimisation pipeline: generate → rank → improve → persist.
 
@@ -883,6 +892,11 @@ def optimise_scenario_timetable_v2(
                 decision_trace_out=chain_trace_out,
                 stage_telemetry=result["stage_telemetry"],
                 locked_section_ids=locked_section_ids,
+                chain_time_limit_seconds=(
+                    chain_time_limit_seconds
+                    if chain_time_limit_seconds is not None
+                    else getattr(settings, "TIMETABLE_CHAIN_TIME_LIMIT_SECONDS", 60.0)
+                ),
             )
 
             if chain_result.lexicographic_score < current_eval_for_chain.lexicographic_score:
@@ -1108,6 +1122,7 @@ def optimise_current_timetable(
     run_cpsat_polish: bool = True,
     cpsat_time_limit: float = 60.0,
     cpsat_hotspot_only: bool = False,
+    chain_time_limit_seconds: float | None = None,
 ) -> dict:
     """Improve the CURRENT timetable without regenerating from scratch.
 
@@ -1288,6 +1303,11 @@ def optimise_current_timetable(
             decision_trace_out=chain_trace_out,
             stage_telemetry=result["stage_telemetry"],
             locked_section_ids=locked_section_ids,
+            chain_time_limit_seconds=(
+                chain_time_limit_seconds
+                if chain_time_limit_seconds is not None
+                else getattr(settings, "TIMETABLE_CHAIN_TIME_LIMIT_SECONDS", 60.0)
+            ),
         )
         if chain_result.lexicographic_score < current_eval.lexicographic_score:
             result["chain_search_applied"] = True

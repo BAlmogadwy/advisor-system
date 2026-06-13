@@ -1877,7 +1877,7 @@ def auto_place_board(
     }
 
 
-def _adaptive_scenario(scenario_id: int) -> dict:
+def _adaptive_scenario(scenario_id: int, candidate_gen_budget: float | None = None) -> dict:
     """Adaptive portfolio: greedy → CP-SAT → local search per board.
 
     1. Greedy compact baseline (always produces a feasible solution).
@@ -1919,6 +1919,11 @@ def _adaptive_scenario(scenario_id: int) -> dict:
                 cpsat_budget = 5.0
             else:
                 cpsat_budget = 8.0
+            # Candidate-gen sweep: cap the doomed/redundant CP-SAT solve so it
+            # fails fast instead of burning the full budget on a result that is
+            # re-polished anyway.
+            if candidate_gen_budget and candidate_gen_budget > 0:
+                cpsat_budget = min(cpsat_budget, candidate_gen_budget)
 
             try:
                 cpsat = solve_board_with_hints(
@@ -1953,8 +1958,11 @@ def _adaptive_scenario(scenario_id: int) -> dict:
                 phase_info["cpsat"] = {"status": "error", "placed": 0}
 
         # ── Phase 3: Local search polish ────────────────────────
+        _sa_seconds = 5.0
+        if candidate_gen_budget and candidate_gen_budget > 0:
+            _sa_seconds = min(_sa_seconds, candidate_gen_budget)
         try:
-            sa = optimize_and_persist_board(board.id, max_seconds=5.0)
+            sa = optimize_and_persist_board(board.id, max_seconds=_sa_seconds)
             phase_info["local_search"] = {
                 "status": sa.get("status", "unknown"),
                 "cost_before": sa.get("cost_before", 0),
@@ -2121,6 +2129,7 @@ def auto_place_scenario(
     scenario_id: int,
     strategy: str = DEFAULT_STRATEGY,
     baseline_placements: dict | None = None,
+    candidate_gen_budget: float | None = None,
 ) -> dict:
     """Auto-place sections on every board in a scenario.
 
@@ -2155,9 +2164,21 @@ def auto_place_scenario(
         strategies that cannot observe baseline (CP-SAT solver, SA, load
         balancer) emit an all-zero metric for schema stability.
     """
+
+    # candidate_gen_budget caps the per-board solver budgets of the heavy
+    # strategies when this run is only producing a *candidate* for ranking (the
+    # V2 sweep). Candidates are re-placed and fully polished after the winner is
+    # chosen, so a tight budget here saves wall-clock without affecting the final
+    # board. ``None`` (the default — every standalone caller) leaves budgets at
+    # full strength.
+    def _cap(seconds: float) -> float:
+        if candidate_gen_budget and candidate_gen_budget > 0:
+            return min(seconds, candidate_gen_budget)
+        return seconds
+
     # Adaptive: greedy baseline → CP-SAT improvement → local search polish
     if strategy == "adaptive":
-        result = _adaptive_scenario(scenario_id)
+        result = _adaptive_scenario(scenario_id, candidate_gen_budget=candidate_gen_budget)
         result.setdefault("decision_trace", _merge_board_decision_traces(result.get("boards", {})))
         # PR3 commit 6 — schema stability. Adaptive does not observe the
         # caller's baseline (no warm-start wire-through), so report the
@@ -2174,7 +2195,7 @@ def auto_place_scenario(
         from core.services.timetable_solver import solve_scenario
 
         logger = logging.getLogger(__name__)
-        result = solve_scenario(scenario_id, time_limit_seconds=5.0)
+        result = solve_scenario(scenario_id, time_limit_seconds=_cap(5.0))
         boards_result = result.get("boards", {})
 
         # Per-board fallback: only re-run compact on boards that got 0 placements
@@ -2206,7 +2227,7 @@ def auto_place_scenario(
             auto_place_board(board.id, strategy="compact")
         from core.services.timetable_load_balanced import rebalance_scenario
 
-        rebalance_scenario(scenario_id, max_seconds_per_board=5.0)
+        rebalance_scenario(scenario_id, max_seconds_per_board=_cap(5.0))
         # Re-query actual DB state after rebalancing
         return _build_scenario_result(scenario_id)
 
@@ -2220,7 +2241,7 @@ def auto_place_scenario(
         # Phase 2: simulated annealing improvement
         from core.services.timetable_local_search import optimize_scenario
 
-        sa_result = optimize_scenario(scenario_id, max_seconds_per_board=5.0)
+        sa_result = optimize_scenario(scenario_id, max_seconds_per_board=_cap(5.0))
 
         # Re-query actual DB state after SA optimization
         result = _build_scenario_result(scenario_id)

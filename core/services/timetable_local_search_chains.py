@@ -240,6 +240,7 @@ def chain_local_search(
     decision_trace_out: dict[str, dict] | None = None,
     stage_telemetry: dict[str, dict[str, int]] | None = None,
     locked_section_ids: set[str] | None = None,
+    chain_time_limit_seconds: float | None = None,
 ) -> TimetableEvaluationResult:
     """Chain-2 local search — runs AFTER single-move search exhausts.
 
@@ -261,7 +262,23 @@ def chain_local_search(
     _chain_t0 = time.perf_counter() if _telemetry_on else 0.0
     iterations_attempted = 0
 
+    # Wall-clock budget, independent of telemetry. Each chain move re-evaluates
+    # the full student-assignment objective and the neighbourhood is
+    # combinatorial, so without a deadline a large scenario runs many minutes.
+    # current_best is only ever an accepted, strictly-improving board, so an
+    # early stop always returns the best-so-far — never worse than the pre-chain
+    # input (and the subsequent CP-SAT polish can still recover truncated tail
+    # gains).
+    _chain_deadline = (
+        time.perf_counter() + chain_time_limit_seconds
+        if chain_time_limit_seconds and chain_time_limit_seconds > 0
+        else None
+    )
+
     for iteration in range(max_iterations):
+        if _chain_deadline is not None and time.perf_counter() > _chain_deadline:
+            logger.info("Chain search: time budget reached before iteration %d", iteration)
+            break
         iterations_attempted = iteration + 1
         hotspot_courses = current_best.hotspot_courses
         if not hotspot_courses:
@@ -285,6 +302,7 @@ def chain_local_search(
         best_chain_score = current_score
         best_chain: ChainMove | None = None
         chains_tried = 0
+        _timed_out = False
 
         for chain in chains:
             snap_a, snap_b = _apply_chain(chain, sections_by_id, pattern_catalog)
@@ -305,6 +323,13 @@ def chain_local_search(
 
             # Rollback
             _rollback_chain(snap_a, snap_b, sections_by_id, room_occupancies)
+
+            # Mid-iteration deadline: stop scanning this (possibly large)
+            # neighbourhood, but still let the accept-best-chain block below
+            # bank the best improving chain found in the partial scan.
+            if _chain_deadline is not None and time.perf_counter() > _chain_deadline:
+                _timed_out = True
+                break
 
         if best_chain is not None and best_chain_result is not None:
             # Snapshot pre-apply meeting signatures for trace emission —
@@ -381,6 +406,10 @@ def chain_local_search(
                 iteration,
                 chains_tried,
             )
+            break
+
+        if _timed_out:
+            logger.info("Chain search: time budget reached mid-iteration %d", iteration)
             break
 
     logger.info("Chain search complete: %d improvements", total_improvements)
