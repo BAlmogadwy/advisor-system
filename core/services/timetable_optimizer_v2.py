@@ -769,6 +769,17 @@ def optimise_scenario_timetable_v2(
         "stage_telemetry": empty_stage_telemetry(),
     }
 
+    # The evaluated winner's sections, built once and mutated in place by the
+    # local-search, chain, and CP-SAT stages below. After improvements this
+    # holds the EXACT board that produced ``result["final_score"]``; step 5
+    # persists it verbatim (no re-derivation) so the saved board cannot drift
+    # from the reported score.
+    from core.services import timetable_student_assignment as ssa
+
+    best_sections = next((c["sections"] for c in candidates if c["id"] == best.candidate_id), None)
+    sections_by_id = ssa.build_sections_by_id(best_sections) if best_sections else {}
+    pattern_catalog = _build_pattern_catalog_for_scenario(scenario_id) if best_sections else {}
+
     # ── Step 4: Local search on the best candidate ──
     if run_local_search:
         from core.services import timetable_student_assignment as ssa
@@ -1019,26 +1030,30 @@ def optimise_scenario_timetable_v2(
     _pm["changes_by_stage"] = _compute_cbs(result.get("decision_trace") or {}, _changed_codes)
     result["perturbation_metric"] = _pm
 
-    # Then: if local search improved the timetable, apply those
-    # improvements on top of the baseline placements
+    # ── Persist exactly the evaluated winner ──
+    # The re-placement above rebuilt the row skeleton for the winning
+    # strategy. ``sections_by_id`` holds the best candidate's sections after
+    # greedy → local search → chain → CP-SAT (every stage evaluator-gated),
+    # so it IS the board that produced ``result["final_score"]``. Overlay it
+    # unconditionally and atomically so the saved board can never drift from
+    # the reported score — including the "no improvement" path, which
+    # previously left the re-placed board untouched and could differ from the
+    # evaluated candidate for nondeterministic (CP-SAT) winners.
+    from django.db import transaction
+
     ls_persisted = False
-    cpsat_applied = result.get("cpsat_polish_applied", False)
-    if (run_local_search and "sections_by_id" in dir() and sections_by_id) or (
-        cpsat_applied and "sections_by_id" in dir() and sections_by_id
-    ):
-        score_before = result.get("score_before_local_search") or result.get("score_before_cpsat")
-        score_after = result.get("final_score")
-        if score_before and score_after and tuple(score_after) < tuple(score_before):
+    if sections_by_id:
+        with transaction.atomic():
             persist_result = persist_section_states_to_scenario(scenario_id, sections_by_id)
-            ls_persisted = True
-            logger.info(
-                "Persisted %s improvements: %d placements updated",
-                "local search" if not cpsat_applied else "CP-SAT",
-                persist_result.get("updated", 0),
-            )
+        ls_persisted = True
+        logger.info(
+            "Persisted evaluated winner: %d placements updated, %d unchanged",
+            persist_result.get("updated", 0),
+            persist_result.get("skipped", 0),
+        )
 
     result["persist_result"] = {
-        "action": "placed_with_local_search" if ls_persisted else "placed_winning_strategy",
+        "action": "persisted_evaluated_winner",
         "strategy": winning_strategy,
     }
 

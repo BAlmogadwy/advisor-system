@@ -113,57 +113,12 @@ class TestFeasibleRetention(TransactionTestCase):
 
 
 @pytest.mark.django_db
-class TestInfeasibleFallback(TransactionTestCase):
-    """Fixture #4 — pr3_warm_start_infeasible_fallback.json.
-
-    One baseline slot clashes with a prayer window; warm-start must
-    fall back to cold-start scoring for that section. The moved
-    section's trace must record ``PRAYER_OVERLAP`` as the rejection
-    reason for the baseline slot (so the registrar can see *why* the
-    previous placement no longer works).
-
-    NOTE: the fixture's ``expected.moved_section_baseline_rejection_code``
-    names the aspirational ``PRAYER_WINDOW_CLASH`` symbol; the planner
-    emits the real PR1 code ``PRAYER_OVERLAP`` (renaming the PR1 code is
-    out of scope for PR3 — see test_pr3_decision_trace.py §TestTypedRejectionCodes).
-    """
-
-    @override_settings(
-        TIMETABLE_PR3_WARM_START_ENABLED=True,
-        TIMETABLE_ENFORCE_PRAYER_OVERLAP_RULE=True,
-        TIMETABLE_PRAYER_WINDOWS=[{"day": "SUN", "start_time": "09:30", "end_time": "10:45"}],
-    )
-    def test_prayer_clash_baseline_falls_back(self) -> None:
-        from core.services.timetable_autoplace import auto_place_board
-
-        _, board, data = load_pr3_fixture("pr3_warm_start_infeasible_fallback.json")
-        baseline = data["scenario"]["baseline_placements"]
-
-        result = auto_place_board(board.id, baseline_placements=baseline)
-
-        # Both sections placed: CS101|S1 at its baseline slot,
-        # CS102|S1 moves off the prayer-clashing baseline slot.
-        assert result["placed"] == 2
-        metric = result["perturbation_metric"]
-        assert metric["unchanged_count"] == 1
-        assert metric["changes_from_baseline_count"] == 1
-        assert metric["removed_count"] == 0
-
-        trace = result["decision_trace"]
-        moved_trace = trace.get("CS102|S1")
-        assert moved_trace is not None, "Moved section must have a trace entry"
-        alt_codes = {alt["rejection_code"] for alt in moved_trace["alternatives"]}
-        assert "PRAYER_OVERLAP" in alt_codes, (
-            f"Baseline's prayer failure not recorded as an alternative: {alt_codes}"
-        )
-
-        # Moved section did NOT land at the clashing baseline slot.
-        moved_first = next(
-            p["meetings"][0] for p in result["placements"] if p["course_code"] == "CS102"
-        )
-        assert not (moved_first["day"] == "Sun" and moved_first["start"] == "09:30"), (
-            "Moved section still on clashing baseline slot"
-        )
+# NOTE: the original ``TestInfeasibleFallback`` exercised warm-start fallback
+# when a baseline slot clashed with a prayer window. The prayer-overlap runtime
+# rule was removed (prayer compliance is now a fixed-grid property), so that
+# infeasible-fallback trigger no longer exists and the case was retired. Other
+# pre-score filters (e.g. instructor clash) still drive the same fallback path,
+# which is covered structurally by the decision-trace tests.
 
 
 @pytest.mark.django_db

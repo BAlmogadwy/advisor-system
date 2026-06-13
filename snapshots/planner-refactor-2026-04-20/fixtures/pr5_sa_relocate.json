@@ -1,5 +1,5 @@
 {
-  "description": "PR5 — greedy→SA handoff. Three shared-student sections are funneled onto SUN only (non-SUN days blocked), so greedy is forced to clump them across SUN 08:00/09:30/11:00. That produces a 105-min gap between the first and third (cost≈525). SA's option walker does NOT apply blocked_slots, so it can relocate one section to MON/TUE/WED/THU and drop the total cost by ≥500, which must emit SA_RELOCATE_ACCEPTED with stage_origin='sa'.",
+  "description": "PR5 — greedy→SA handoff. Three shared-student sections are funneled onto SUN only (non-SUN days blocked), so greedy is forced to clump them across SUN 08:00/09:30/11:00. That produces a 105-min gap between the first and third (cost≈525). SA honours blocked_slots (WS-A) so it stays within SUN, but it can still relocate a section to a different SUN slot to collapse the gap — which must emit SA_RELOCATE_ACCEPTED with stage_origin='sa'.",
   "scenario": {
     "sections": [
       {"course_code": "CS101", "section_code": "S1", "enrolment": 10, "instructor_id": "I1", "student_ids": ["ST001", "ST002", "ST003", "ST004", "ST005", "ST006", "ST007", "ST008", "ST009", "ST010"]},
@@ -40,7 +40,7 @@
     "Three sections share 10 students → every pair has shared=10, w=min(10,30)*0.5=5.",
     "blocked_slots removes all 3 start times on MON/TUE/WED/THU, so greedy's option generator yields only SUN placements. With shared students forbidding same-slot collisions, greedy fills SUN 08:00 / 09:30 / 11:00 across the three sections — this is the 'natural' clump path ChatGPT's amendment asked for.",
     "Initial cost ≈ 75 (CS101↔CS102, 15-min gap) + 75 (CS102↔CS103, 15-min gap) + 525 (CS101↔CS103, 105-min gap) = 675.",
-    "SA's valid_options enumerates all WEEKDAYS × slot_config (ignores blocked_slots — see timetable_local_search._generate_relocate_move callers). Moving any one section off SUN drops its shared-day gap contribution to 0.",
+    "SA's valid_options now applies blocked_slots (WS-A), so it is confined to SUN. With 10 shared students below the hard-overlap threshold, relocating a section onto a different SUN slot is a legal (soft-penalised) move that collapses the 105-min gap — enough to trigger SA_RELOCATE_ACCEPTED.",
     "Post-SA target: ≤2 sections per SUN (or all on different days) → total cost ≤150 (back-to-back only). ΔCost ≥525 comfortably triggers relocation acceptance and an SA_RELOCATE_ACCEPTED emission."
   ]
 }

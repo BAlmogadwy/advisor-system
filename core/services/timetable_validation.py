@@ -1,29 +1,21 @@
-"""PR1 — placement-legality validator for prayer/lock enforcement.
+"""Placement-legality validator + slot-grid prayer-compliance guard.
 
-Narrow, pure helpers used by the auto-placer and the V2 candidate-gen
-filter. Each helper returns ``RejectionReason | None``; ``None`` means
+Narrow, pure helpers used by the planner. ``lock_rejection`` /
+``validate_candidate`` return ``RejectionReason | None``; ``None`` means
 "no rejection" (either the rule is disabled by its flag, or the candidate
 is compliant).
 
-Call sites:
-
-- ``core.services.timetable_autoplace.auto_place_board`` — invokes the
-  prayer and lock helpers before finalising a slot.
-- ``core.services.timetable_optimizer_v2.build_section_states_for_scenario``
-  — calls the same helpers as a candidate-gen filter.
-
-Call sites explicitly EXCLUDED:
-
-- ``core.services.timetable_rooming.assign_rooms_to_board`` — rooming runs
-  after placement legality has already been decided; it may carry forward
-  upstream rejection metadata but must not enforce placement-legality
-  rules.
+Prayer compliance is NOT a runtime placement rule — the planner uses fixed
+slot grids, so it is a property of the grid checked once via
+``assert_slot_grid_prayer_compliant`` (no lecture starts 11:30-12:59, no lab
+starts 11:10-12:59). ``blocked_slot_keys`` builds the shared blocked-cell
+exclusion set every placement stage consults.
 
 Interval semantics:
 
-    Meeting and prayer windows are half-open intervals ``[start, end)``.
+    Meeting and locked windows are half-open intervals ``[start, end)``.
     Overlap is ``a.start < b.end AND a.end > b.start``.
-    Exact boundary touch (e.g. meeting ends 12:00 and prayer starts 12:00)
+    Exact boundary touch (e.g. one ends 12:00 and the next starts 12:00)
     is legal.
 """
 
@@ -35,18 +27,17 @@ from dataclasses import dataclass
 from django.conf import settings
 
 # Rejection code sentinels — stable strings for payload consumers.
-PRAYER_OVERLAP = "PRAYER_OVERLAP"
 LOCK_RESPECT = "LOCK_RESPECT"
 
 
 @dataclass(frozen=True)
 class RejectionReason:
-    """A rejection emitted by a PR1 validator.
+    """A rejection emitted by a placement-legality validator.
 
     Stable, JSON-serialisable shape so the planner return payload can
     carry a list of these directly. ``context`` carries optional extra
-    detail (e.g. the prayer window that overlapped, the locked cell that
-    collided) for downstream logging or future dashboard surfaces.
+    detail (e.g. the locked cell that collided) for downstream logging or
+    future dashboard surfaces.
     """
 
     code: str
@@ -74,22 +65,8 @@ class RejectionReason:
 # ---------------------------------------------------------------------------
 
 
-def is_prayer_overlap_rule_enabled() -> bool:
-    return bool(getattr(settings, "TIMETABLE_ENFORCE_PRAYER_OVERLAP_RULE", False))
-
-
 def is_lock_enforcement_enabled() -> bool:
     return bool(getattr(settings, "TIMETABLE_ENFORCE_LOCKS", False))
-
-
-def get_prayer_windows() -> list[dict]:
-    """Return configured prayer windows, or ``[]`` if none are set.
-
-    Centralised accessor so callers do not spread ``getattr(settings, ...)``
-    reads across planner paths. If the source of truth migrates to a model
-    or config table, only this helper changes.
-    """
-    return list(getattr(settings, "TIMETABLE_PRAYER_WINDOWS", []) or [])
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +99,8 @@ def _to_min(t: str) -> int:
 def _overlaps(a_start: str, a_end: str, b_start: str, b_end: str) -> bool:
     """Half-open interval overlap: ``a.start < b.end AND a.end > b.start``.
 
-    Exact boundary touch returns False (legal).
+    Exact boundary touch returns False (legal). Generic time-interval helper
+    reused by the planner (e.g. ``auto_place_board``).
     """
     return _to_min(a_start) < _to_min(b_end) and _to_min(a_end) > _to_min(b_start)
 
@@ -131,51 +109,10 @@ def _same_day(a: str, b: str) -> bool:
     """Day codes compared case-insensitively.
 
     The autoplacer emits uppercase codes (``SUN``, ``MON``, ...) while
-    configured prayer windows and locked cells may come from human input
-    (``Sun``, ``Mon``). Normalise both sides so the rule does not silently
-    miss a match.
+    locked cells may come from human input (``Sun``, ``Mon``). Normalise
+    both sides so the rule does not silently miss a match.
     """
     return (a or "").strip().upper() == (b or "").strip().upper()
-
-
-# ---------------------------------------------------------------------------
-# Prayer-overlap rule
-# ---------------------------------------------------------------------------
-
-
-def prayer_overlap_rejection(
-    meeting: dict, prayer_windows: Iterable[dict]
-) -> RejectionReason | None:
-    """Return a ``PRAYER_OVERLAP`` rejection if ``meeting`` overlaps any
-    same-day prayer window, else ``None``.
-
-    The flag ``TIMETABLE_ENFORCE_PRAYER_OVERLAP_RULE`` gates enforcement —
-    when disabled, this always returns ``None``.
-
-    ``meeting`` shape: ``{day, start_time, end_time, course_code?}``
-    ``prayer_windows`` entry shape: ``{day, start_time, end_time}``
-    """
-    if not is_prayer_overlap_rule_enabled():
-        return None
-    day = meeting["day"]
-    m_start = meeting["start_time"]
-    m_end = meeting["end_time"]
-    for prayer in prayer_windows:
-        if not _same_day(prayer.get("day", ""), day):
-            continue
-        if _overlaps(m_start, m_end, prayer["start_time"], prayer["end_time"]):
-            return RejectionReason(
-                code=PRAYER_OVERLAP,
-                day=day,
-                start_time=m_start,
-                end_time=m_end,
-                course_code=str(meeting.get("course_code", "")),
-                context={
-                    "prayer_start": prayer["start_time"],
-                    "prayer_end": prayer["end_time"],
-                },
-            )
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -233,25 +170,83 @@ def validate_candidate(
     ``context`` shape::
 
         {
-            "prayer_windows": [{day, start_time, end_time}, ...],
-            "locked_cells":   [{day, start_time, room}, ...],
+            "locked_cells": [{day, start_time, room}, ...],
         }
 
     Returns a list of ``RejectionReason`` (empty list if the candidate
-    passes every enabled rule). Rules are evaluated independently — a
-    candidate can accumulate multiple rejection reasons on a single call
-    (e.g. violates both prayer and lock).
+    passes every enabled rule).
     """
     reasons: list[RejectionReason] = []
-    prayers = context.get("prayer_windows", [])
     locked = context.get("locked_cells", [])
-
-    pr = prayer_overlap_rejection(candidate, prayers)
-    if pr is not None:
-        reasons.append(pr)
 
     lr = lock_rejection(candidate, locked)
     if lr is not None:
         reasons.append(lr)
 
     return reasons
+
+
+# ---------------------------------------------------------------------------
+# Slot-grid prayer compliance (source-of-truth guard)
+# ---------------------------------------------------------------------------
+#
+# The planner uses fixed slot grids. Prayer compliance is therefore a property
+# of the GRID, checked once when a grid is resolved, rather than a per-meeting
+# runtime rule re-evaluated by every placement stage. The institutional rule:
+#
+#   - no lecture may START in 11:30-12:59 (inclusive)
+#   - no lab     may START in 11:10-12:59 (inclusive)
+#
+# The default grids satisfy this by construction; this guard only fires if a
+# scenario's ``slot_config`` / ``lab_slot_config`` is hand-edited to a
+# non-compliant grid.
+
+
+def blocked_slot_keys(blocked_slots: Iterable[dict] | None) -> set[tuple[str, str]]:
+    """Return the ``{(day, start)}`` exclusion set for a scenario's blocked slots.
+
+    Single source of truth for the blocked-cell domain exclusion. Built with
+    RAW membership (no case-folding) so every placement stage — the greedy
+    enumerator ``_generate_meeting_options``, the canonical pattern catalog,
+    the per-board CP-SAT solver, the polisher, load-balanced and SA — excludes
+    exactly the same cells. ``blocked_slots`` entries are ``{day, start}`` dicts
+    (``TimetableScenario.blocked_slots``).
+    """
+    return {(bs.get("day", ""), bs.get("start", "")) for bs in (blocked_slots or [])}
+
+
+LECTURE_PRAYER_BLOCK = ("11:30", "12:59")
+LAB_PRAYER_BLOCK = ("11:10", "12:59")
+
+
+class SlotGridPrayerError(ValueError):
+    """Raised when a slot grid would start a class inside a prayer window."""
+
+
+def _starts_in_window(window: tuple[str, str], start: str) -> bool:
+    return _to_min(window[0]) <= _to_min(start) <= _to_min(window[1])
+
+
+def assert_slot_grid_prayer_compliant(
+    slot_config: Iterable[dict] | None,
+    lab_slot_config: Iterable[dict] | None,
+) -> None:
+    """Raise ``SlotGridPrayerError`` if any slot starts inside its prayer window.
+
+    Lectures are checked against ``LECTURE_PRAYER_BLOCK`` and labs against
+    ``LAB_PRAYER_BLOCK``. A ``None``/empty grid is vacuously compliant.
+    """
+    offenders: list[str] = []
+    for slot in slot_config or []:
+        start = slot.get("start", "")
+        if start and _starts_in_window(LECTURE_PRAYER_BLOCK, start):
+            offenders.append(f"lecture slot {slot.get('label', start)!r} starts at {start}")
+    for slot in lab_slot_config or []:
+        start = slot.get("start", "")
+        if start and _starts_in_window(LAB_PRAYER_BLOCK, start):
+            offenders.append(f"lab slot {slot.get('label', start)!r} starts at {start}")
+    if offenders:
+        raise SlotGridPrayerError(
+            "slot grid violates prayer windows (lecture 11:30-12:59, lab 11:10-12:59): "
+            + "; ".join(offenders)
+        )

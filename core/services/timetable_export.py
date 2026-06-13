@@ -800,7 +800,7 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
             ws_room = wb.create_sheet(title="Rooms")
             ws_room.sheet_properties.tabColor = "2E86C1"
 
-            prayer_fill = PatternFill(start_color="D5D8DC", end_color="D5D8DC", fill_type="solid")
+            midday_fill = PatternFill(start_color="D5D8DC", end_color="D5D8DC", fill_type="solid")
             lab_room_fill = PatternFill(start_color="E8F8F5", end_color="E8F8F5", fill_type="solid")
             room_name_fill = PatternFill(
                 start_color="0A8E6E", end_color="0A8E6E", fill_type="solid"
@@ -868,9 +868,9 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
                             horizontal="center", vertical="center", wrap_text=True
                         )
 
-                        # Prayer break column (12:00-13:00 area)
+                        # Midday break column (12:00-13:00 area)
                         if slot["start"] >= "11:35" and slot["start"] <= "12:59":
-                            cell.fill = prayer_fill
+                            cell.fill = midday_fill
 
                         texts = grid_data.get((day_code, slot["start"]), [])
                         if texts:

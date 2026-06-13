@@ -85,8 +85,14 @@ def submit_planner_job(
     mode: str,
     user: Any | None = None,
     board_id: int | None = None,
+    params: dict | None = None,
 ) -> uuid.UUID:
-    """Create a ``PlannerJob`` row in ``queued`` and return its id."""
+    """Create a ``PlannerJob`` row in ``queued`` and return its id.
+
+    ``params`` carries per-request optimiser tuning (strategies, CP-SAT budget,
+    iteration caps) so an async V2 job replays the same configuration the
+    synchronous path would have used.
+    """
     job = PlannerJob.objects.create(
         id=uuid.uuid4(),
         scenario_id=scenario_id,
@@ -95,6 +101,7 @@ def submit_planner_job(
         status=PlannerJob.STATUS_QUEUED,
         submitted_by=user if getattr(user, "is_authenticated", False) else None,
         request_signature=_compute_request_signature(scenario_id, mode),
+        params=params or {},
     )
     return job.id
 
@@ -186,7 +193,32 @@ def run_planner_job(job_id: uuid.UUID | str) -> None:
     job.save(update_fields=["status", "started_at"])
 
     try:
-        if job.mode == PlannerJob.MODE_FULL_REBUILD:
+        if job.mode in (
+            PlannerJob.MODE_OPTIMISE_V2_FULL,
+            PlannerJob.MODE_OPTIMISE_V2_CURRENT,
+        ):
+            # WS-E — run the V2 optimiser off the request thread, behind the
+            # shared snapshot → regression → rollback safety gate. This is the
+            # path that fixes the audit's P1 (a sync V2 run exceeding gunicorn's
+            # 120s timeout was SIGKILLed before the view-level rollback fired).
+            from core.services.timetable_v2_runner import run_v2_optimisation_guarded
+
+            v2_mode = "full" if job.mode == PlannerJob.MODE_OPTIMISE_V2_FULL else "current"
+            # Replay the per-request tuning the synchronous view would have used,
+            # so async 'full' keeps its strategy sweep + CP-SAT budget (same
+            # kwargs/coercions as tw_optimise_v2_view's sync call).
+            p = job.params or {}
+            result = run_v2_optimisation_guarded(
+                job.scenario_id,
+                mode=v2_mode,
+                max_iterations=int(p.get("max_iterations", 50)),
+                run_chain=bool(p.get("run_chain_search", True)),
+                run_cpsat=bool(p.get("run_cpsat_polish", True)),
+                cpsat_limit=float(p.get("cpsat_time_limit", 60)),
+                strategies=p.get("strategies") or None,
+                max_chain_iterations=int(p.get("max_chain_iterations", 10)),
+            )
+        elif job.mode == PlannerJob.MODE_FULL_REBUILD:
             _clear_scenario_placements(job.scenario_id)
             result = auto_place_scenario(job.scenario_id, strategy="adaptive")
         else:

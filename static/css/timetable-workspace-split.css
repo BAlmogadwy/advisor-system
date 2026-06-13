@@ -622,6 +622,29 @@ html body.tws-root .tws-topbar .metric:nth-child(3) { color: var(--t3) !importan
   color: #ffd66f; background: rgba(5,8,14,.46); border-radius: 3px; padding: 1px;
 }
 .tws-pane .block-grid .cell.locked { cursor: not-allowed !important; }
+/* Blocked slot — registrar-reserved cell the planner must never fill. */
+.tws-pane .block-grid .cell.blocked {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(244, 114, 114, 0.16) 0, rgba(244, 114, 114, 0.16) 6px,
+    transparent 6px, transparent 12px
+  );
+  border-color: rgba(244, 114, 114, 0.45);
+}
+.tws-pane .block-grid .cell.blocked::after {
+  content: '⛔'; position: absolute; top: 50%; inset-inline-start: 50%;
+  transform: translate(-50%, -50%); font-size: 13px; line-height: 1;
+  opacity: 0.55; pointer-events: none; z-index: 4;
+}
+/* Block-slots mode affordance: empty cells invite a click. */
+body.tws-block-mode .tws-pane .block-grid .cell:not(.filled) { cursor: cell; }
+body.tws-block-mode .tws-pane .block-grid .cell:not(.filled):hover {
+  outline: 2px dashed rgba(244, 114, 114, 0.7); outline-offset: -2px;
+}
+#twsBlockMode.active, #twsBlockMode[aria-pressed="true"] {
+  background: color-mix(in srgb, #f47272 18%, transparent);
+  border-color: rgba(244, 114, 114, 0.55); color: #ffd9d9;
+}
 .tws-pane .block-grid .cell .cid {
   font-family: var(--font-mono, 'JetBrains Mono'), monospace; font-weight: 700;
   font-size: 10px; line-height: 1; letter-spacing: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: 100%;

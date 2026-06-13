@@ -79,7 +79,7 @@ from core.services.timetable_repair_eligibility import (
     repair_eligibility_summary,
     repair_section_id_ineligibility_reasons,
 )
-from core.services.timetable_validation import get_prayer_windows, validate_candidate
+from core.services.timetable_validation import validate_candidate
 from core.services.timetable_workspace import (
     preview_placement_room_candidates,
     preview_placement_slot_candidates,
@@ -5049,7 +5049,6 @@ def hard_feasibility_rejections(
             "course_code": placement.term_section.course_code,
         },
         {
-            "prayer_windows": get_prayer_windows(),
             "locked_cells": _locked_cells_for_scenario(placement.board.scenario_id, placement.id),
         },
     ):

@@ -49,7 +49,7 @@ def _to_min(t: str) -> int:
     return int(h) * 60 + int(m)
 
 
-PRAYER_BOUNDARY = 13 * 60
+MIDDAY_BOUNDARY = 13 * 60
 
 
 def _option_end_min(option: tuple) -> int:
@@ -112,6 +112,68 @@ def _add_same_course_adjacency_penalties(
             penalties.append((1 - has_required_pair) * SAME_COURSE_MISSING_ADJACENT_PAIR_PENALTY)
 
 
+def _board_fixed_locked_meetings(board) -> list[dict]:
+    """Locked-section meetings on a board, as fixed CP-SAT occupancy.
+
+    Flag-gated by ``TIMETABLE_ENFORCE_LOCKS`` — returns ``[]`` when off so the
+    model is byte-identical to the pre-lock build. Each entry is
+    ``{course_code(key), day_idx, mask}``. Locked sections are excluded from the
+    decision ``sections`` via the already-count, so these records add their
+    occupancy back into the model as constants.
+    """
+    from core.services.timetable_validation import is_lock_enforcement_enabled
+
+    if not is_lock_enforcement_enabled():
+        return []
+    fixed: list[dict] = []
+    rows = SectionPlacement.objects.filter(board=board, is_locked=True).select_related(
+        "term_section"
+    )
+    for lp in rows:
+        try:
+            day_idx = WEEKDAYS.index((lp.day or "").upper())
+        except ValueError:
+            continue
+        fixed.append(
+            {
+                "course_code": lp.term_section.course_key or lp.term_section.course_code,
+                "day_idx": day_idx,
+                "mask": _time_mask(lp.day, lp.start_time, lp.end_time),
+            }
+        )
+    return fixed
+
+
+def _add_locked_reservations(
+    model, sections, sec_options, assign, fixed_meetings, overlap_matrix, penalties
+) -> None:
+    """Reserve locked-section occupancy in a per-board CP-SAT model.
+
+    A regenerated section of the SAME course must not overlap a locked sibling
+    (HARD); cross-course sections are softly pushed off a locked section's slot
+    proportional to shared students (SOFT). No-op when ``fixed_meetings`` empty,
+    so a flag-off build adds neither constraints nor penalty terms.
+    """
+    if not fixed_meetings:
+        return
+    from core.services.timetable_overlap import shared_student_count as _ssc
+
+    for i, sec in enumerate(sections):
+        code = sec["code"]
+        for fm in fixed_meetings:
+            same_course = fm["course_code"] == code
+            shared = 0 if same_course else _ssc(overlap_matrix, code, fm["course_code"])
+            if not same_course and shared <= 0:
+                continue
+            for m_a in range(len(sec["pattern"])):
+                for oa, opt_a in enumerate(sec_options[i][m_a]):
+                    if opt_a[0] == fm["day_idx"] and (opt_a[5] & fm["mask"]):
+                        if same_course:
+                            model.add(assign[i][m_a][oa] == 0)
+                        else:
+                            penalties.append(assign[i][m_a][oa] * (shared * 5))
+
+
 def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
     """Find optimal placement using CP-SAT solver."""
     try:
@@ -134,16 +196,25 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
 
     online_codes = OnlineCourseLookup().codes_for_board(board)
 
-    # Build valid slot options per duration
+    # Build valid slot options per duration. Blocked cells (scenario.blocked_slots)
+    # are excluded from the domain by construction; slot_idx stays the original
+    # enumerate index so the soft objective's slot-position terms are unchanged.
+    from core.services.timetable_validation import blocked_slot_keys
+
+    blocked_set = blocked_slot_keys(scenario.blocked_slots)
     slots_75 = []  # (day_idx, slot_idx, day, start, end, mask, start_min)
     slots_lab = []  # dedicated lab time grid for 100-min meetings
     for day_idx, day in enumerate(WEEKDAYS):
         for s_idx, s in enumerate(slot_config):
+            if (day, s["start"]) in blocked_set:
+                continue
             mask = _time_mask(day, s["start"], s["end"])
             start_min = _to_min(s["start"])
             slots_75.append((day_idx, s_idx, day, s["start"], s["end"], mask, start_min))
 
         for s_idx, s in enumerate(lab_slot_config):
+            if (day, s["start"]) in blocked_set:
+                continue
             mask = _time_mask(day, s["start"], s["end"])
             start_min = _to_min(s["start"])
             slots_lab.append((day_idx, s_idx, day, s["start"], s["end"], mask, start_min))
@@ -197,6 +268,11 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
         sec_opts = []
         for m_idx, duration in enumerate(sec["pattern"]):
             options = get_options(duration)
+            if not options:
+                # A fully-blocked grid for this duration leaves no feasible
+                # slot — report infeasible rather than build an unsatisfiable
+                # add_exactly_one over an empty domain.
+                return {"status": "infeasible", "placed": 0, "placements": [], "objective": 0}
             m_assign = []
             for o_idx, _opt in enumerate(options):
                 var = model.new_bool_var(f"a_{i}_{m_idx}_{o_idx}")
@@ -311,6 +387,20 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
 
     penalties.extend(student_overlap_penalties)
 
+    # Reserve locked-section occupancy (flag-gated). Locked sections are not in
+    # `sections` (excluded by the already-count), so add their occupancy back:
+    # same-course siblings cannot overlap a locked section (HARD); cross-course
+    # sections are softly pushed off its slot (SOFT).
+    _add_locked_reservations(
+        model,
+        sections,
+        sec_options,
+        assign,
+        _board_fixed_locked_meetings(board),
+        overlap_matrix,
+        penalties,
+    )
+
     # (1) REAL GAP PENALTIES between section pairs sharing students
     for a_pos in range(len(sections)):
         for b_pos in range(a_pos + 1, len(sections)):
@@ -348,8 +438,8 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
                                 if gap <= 15:
                                     continue
 
-                                crosses = (end_a <= PRAYER_BOUNDARY < start_b) or (
-                                    end_b <= PRAYER_BOUNDARY < start_a
+                                crosses = (end_a <= MIDDAY_BOUNDARY < start_b) or (
+                                    end_b <= MIDDAY_BOUNDARY < start_a
                                 )
                                 if crosses:
                                     gap = int(gap * 1.5)
@@ -506,10 +596,18 @@ def persist_solver_result(board_id: int, result: dict) -> dict:
     except DeliveryBoard.DoesNotExist:
         return result
 
-    # Clear existing auto-placed sections AND their meetings
+    # Clear existing auto-placed sections AND their meetings. When lock
+    # enforcement is on, locked rows are preserved (never deleted/recreated)
+    # so a registrar lock on an auto-placed section survives a re-solve —
+    # closing the dominant lock-loss path (get_or_create recreates default
+    # to is_locked=False, which would silently drop the lock).
+    from core.services.timetable_validation import is_lock_enforcement_enabled
+
     auto_placements = SectionPlacement.objects.filter(
         board=board, term_section__source_tag="tw_auto"
     )
+    if is_lock_enforcement_enabled():
+        auto_placements = auto_placements.exclude(is_locked=True)
     ts_ids = set(auto_placements.values_list("term_section_id", flat=True))
     auto_placements.delete()
     for ts_id in ts_ids:
@@ -567,10 +665,9 @@ def solve_and_persist_board(board_id: int, time_limit_seconds: float = 10.0) -> 
     result = solve_board(board_id, time_limit_seconds)
     persist_solver_result(board_id, result)
     from core.services.timetable_rooming import assign_rooms_to_board
+    from core.services.timetable_validation import is_lock_enforcement_enabled
 
-    assign_rooms_to_board(board_id)
-    return result
-
+    assign_rooms_to_board(board_id, respect_locked=is_lock_enforcement_enabled())
     return result
 
 
@@ -612,14 +709,21 @@ def solve_board_with_hints(
 
     online_codes = OnlineCourseLookup().codes_for_board(board)
 
+    from core.services.timetable_validation import blocked_slot_keys
+
+    blocked_set = blocked_slot_keys(scenario.blocked_slots)
     slots_75 = []
     slots_lab = []
     for day_idx, day in enumerate(WEEKDAYS):
         for s_idx, s in enumerate(slot_config):
+            if (day, s["start"]) in blocked_set:
+                continue
             mask = _time_mask(day, s["start"], s["end"])
             start_min = _to_min(s["start"])
             slots_75.append((day_idx, s_idx, day, s["start"], s["end"], mask, start_min))
         for s_idx, s in enumerate(lab_slot_config):
+            if (day, s["start"]) in blocked_set:
+                continue
             mask = _time_mask(day, s["start"], s["end"])
             start_min = _to_min(s["start"])
             slots_lab.append((day_idx, s_idx, day, s["start"], s["end"], mask, start_min))
@@ -673,6 +777,14 @@ def solve_board_with_hints(
         sec_opts = []
         for m_idx, duration in enumerate(sec["pattern"]):
             options = get_options(duration)
+            if not options:
+                return {
+                    "status": "infeasible",
+                    "placed": 0,
+                    "placements": [],
+                    "objective": 0,
+                    "improved": False,
+                }
             m_assign = []
             for o_idx, _opt in enumerate(options):
                 var = model.new_bool_var(f"a_{i}_{m_idx}_{o_idx}")
@@ -752,6 +864,17 @@ def solve_board_with_hints(
                                 model.add(both <= assign[b_pos][m_b][ob])
                                 penalties.append(both * w_overlap)
 
+    # Reserve locked-section occupancy (flag-gated) — same as solve_board.
+    _add_locked_reservations(
+        model,
+        sections,
+        sec_options,
+        assign,
+        _board_fixed_locked_meetings(board),
+        overlap_matrix_h,
+        penalties,
+    )
+
     # Soft: gap penalties weighted by real student overlap
     for a_pos in range(len(sections)):
         for b_pos in range(a_pos + 1, len(sections)):
@@ -783,8 +906,8 @@ def solve_board_with_hints(
                                 gap = (start_b - end_a) if start_a < start_b else (start_a - end_b)
                                 if gap <= 15:
                                     continue
-                                crosses = (end_a <= PRAYER_BOUNDARY < start_b) or (
-                                    end_b <= PRAYER_BOUNDARY < start_a
+                                crosses = (end_a <= MIDDAY_BOUNDARY < start_b) or (
+                                    end_b <= MIDDAY_BOUNDARY < start_a
                                 )
                                 if crosses:
                                     gap = int(gap * 1.5)
