@@ -255,8 +255,6 @@ def _placement_to_dict(p: SectionPlacement) -> dict[str, object]:
     Includes the related ``TermSection`` fields (course code, capacity, etc.)
     and all ``TermSectionMeeting`` records for that section.
     """
-    from core.services.instructor_assignment import serialize_section_instructors
-
     ts = p.term_section
     meetings = list(
         TermSectionMeeting.objects.filter(term_section=ts).values(
@@ -279,7 +277,6 @@ def _placement_to_dict(p: SectionPlacement) -> dict[str, object]:
         "room": p.room,
         "is_locked": p.is_locked,
         "meetings": meetings,
-        "instructors": serialize_section_instructors(ts),
     }
 
 
@@ -2350,82 +2347,6 @@ def tw_placement_lock_view(request: HttpRequest, placement_id: int) -> JsonRespo
     placement.is_locked = not placement.is_locked
     placement.save(update_fields=["is_locked", "updated_at"])
     return _ok({"placement_id": placement_id, "is_locked": placement.is_locked})
-
-
-@login_required(login_url="login")
-@require_GET
-def tw_instructors_list_view(request: HttpRequest) -> JsonResponse:
-    """Active instructors for the workspace drawer typeahead. ``?q=`` filters."""
-    deny = _require_general_advisor(request)
-    if deny:
-        return deny
-    from django.db.models import Q
-
-    from core.models import Instructor
-
-    qs = Instructor.objects.filter(is_active=True)
-    q = (request.GET.get("q") or "").strip()
-    if q:
-        qs = qs.filter(Q(full_name__icontains=q) | Q(full_name_ar__icontains=q))
-    qs = qs.order_by("full_name")[:200]
-    return _ok(
-        {
-            "instructors": [
-                {"id": i.pk, "full_name": i.full_name, "full_name_ar": i.full_name_ar} for i in qs
-            ]
-        }
-    )
-
-
-@login_required(login_url="login")
-@require_POST
-def tw_section_instructors_set_view(request: HttpRequest, term_section_id: int) -> JsonResponse:
-    """Replace a section's instructor set from the workspace drawer.
-
-    Body: ``{instructor_ids: [...]}`` and/or ``{instructor_names: [...]}``. An
-    empty set clears all instructors (reverts the meeting display cache to "").
-    Blocked on published scenarios. Links are the source of truth; the primary
-    instructor's name is written through to the meeting rows.
-    """
-    deny = _require_general_advisor(request)
-    if deny:
-        return deny
-
-    try:
-        section = TermSection.objects.select_related("scenario").get(pk=term_section_id)
-    except TermSection.DoesNotExist:
-        return _err("Section not found", code="NOT_FOUND", status=404)
-
-    if section.scenario_id and section.scenario.status == "published":
-        return _err("Cannot modify published scenario", code="SCENARIO_PUBLISHED", status=400)
-
-    payload, err = _safe_json(request)
-    if err:
-        return err
-
-    from core.services.instructor_assignment import set_section_instructors
-
-    instructor_ids = payload.get("instructor_ids") or []
-    instructor_names = payload.get("instructor_names") or []
-    if not isinstance(instructor_ids, list) or not isinstance(instructor_names, list):
-        return _err(
-            "instructor_ids / instructor_names must be lists", code="VALIDATION", status=400
-        )
-
-    try:
-        instructors = set_section_instructors(
-            section, instructor_ids=instructor_ids, instructor_names=instructor_names
-        )
-    except ValueError as exc:
-        return _err(str(exc), code="NOT_FOUND", status=404)
-
-    log_audit_event(
-        request,
-        action="tw_section_instructors_set",
-        status="success",
-        details={"term_section_id": section.id, "count": len(instructors)},
-    )
-    return _ok({"term_section_id": section.id, "instructors": instructors})
 
 
 @login_required(login_url="login")

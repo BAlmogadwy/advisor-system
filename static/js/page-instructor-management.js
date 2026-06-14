@@ -4,10 +4,6 @@
 
 // ── STATE ──
 let allInstructors = [];
-let allSections = [];
-let currentScenario = null;
-let currentReportScenario = null;
-let selectedSections = new Set();
 let isEditMode = false;
 
 const IS_AR = document.documentElement.lang === 'ar';
@@ -17,6 +13,7 @@ const T = {
   loading:              IS_AR ? 'جارٍ التحميل…' : 'Loading…',
   failedLoadInstructors: IS_AR ? 'تعذّر تحميل هيئة التدريس' : 'Failed to load instructors',
   failedLoadSections:   IS_AR ? 'تعذّر تحميل الشعب' : 'Failed to load sections',
+  failedLoadCourses:    IS_AR ? 'تعذّر تحميل المقررات' : 'Failed to load courses',
   failedLoadReport:     IS_AR ? 'تعذّر تحميل التقرير' : 'Failed to load report',
   networkError:         IS_AR ? 'خطأ في الاتصال' : 'Network error',
 
@@ -28,7 +25,11 @@ const T = {
   // ── Empty states ──
   noInstructors:        IS_AR ? 'لا يوجد أعضاء هيئة تدريس' : 'No instructors found',
   noSections:           IS_AR ? 'لا توجد شعب في هذا السيناريو' : 'No sections in this scenario',
+  noCourses:            IS_AR ? 'لا توجد مقررات لهذا البرنامج' : 'No courses for this program',
   noReportData:         IS_AR ? 'لا توجد بيانات للتقرير' : 'No report data available',
+  selectProgram:        IS_AR ? 'اختر برنامج وشعبة' : 'Select a program and section',
+  noMatch:              IS_AR ? 'لا توجد مقررات مطابقة للبحث' : 'No courses match your search',
+  startTyping:          IS_AR ? 'ابدأ بكتابة اسم المدرس…' : 'Start typing instructor name…',
 
   // ── Status labels ──
   active:               IS_AR ? 'نشط' : 'Active',
@@ -53,6 +54,7 @@ const T = {
   nameRequired:         IS_AR ? 'الاسم مطلوب' : 'Name is required',
   selectInstructor:     IS_AR ? 'يرجى اختيار عضو هيئة تدريس' : 'Please select an instructor',
   selectSections:       IS_AR ? 'يرجى اختيار الشعب' : 'Please select sections',
+  selectCourses:        IS_AR ? 'يرجى اختيار المقررات' : 'Please select courses',
 
   // ── Confirmation ──
   confirmDeactivate:    IS_AR ? 'هل تريد تعطيل هذا العضو؟' : 'Deactivate this instructor?',
@@ -61,6 +63,9 @@ const T = {
   // ── Scenario notices ──
   scenarioPublished:    IS_AR ? 'هذا السيناريو منشور - لا يمكن تعديل التوزيعات' : 'This scenario is published - assignments cannot be modified',
   selectScenario:       IS_AR ? 'يرجى اختيار سيناريو' : 'Please select a scenario',
+
+  // ── Course assignment labels ──
+  addAssign:            IS_AR ? '+ توزيع' : '+ Assign',
 
   // ── Report labels ──
   instructor:           IS_AR ? 'عضو هيئة التدريس' : 'Instructor',
@@ -73,6 +78,7 @@ const T = {
   clashes:              IS_AR ? 'التعارضات' : 'Clashes',
   loadStatus:           IS_AR ? 'حالة العبء' : 'Load Status',
   totalRow:             IS_AR ? 'الإجمالي' : 'TOTAL',
+  term:                 (n) => IS_AR ? `ف${n}` : `T${n}`,
 
   // ── Time labels ──
   sunday:               IS_AR ? 'الأحد' : 'Sun',
@@ -102,7 +108,7 @@ const $ = id => document.getElementById(id);
 const $$ = selector => document.querySelectorAll(selector);
 
 // ── Tab Management ──
-let currentTab = 'roster';
+let currentTab = 'assignments';
 
 function imSwitchTab(tab) {
   // Update tab buttons
@@ -121,12 +127,13 @@ function imSwitchTab(tab) {
 
   currentTab = tab;
 
-  // Load scenarios for assignment/report tabs
-  if (tab === 'roster') {
+  // Load data for specific tabs
+  if (tab === 'assignments') {
+    if (typeof ca !== 'undefined' && ca.init) ca.init();
+  } else if (tab === 'roster') {
     imLoadInstructors();
-    imLoadScenarios();
   } else if (tab === 'report') {
-    imLoadReportScenarios();
+    imLoadReport();
   }
 }
 
@@ -175,7 +182,7 @@ async function imLoadInstructors() {
       throw new Error(data.error?.message || 'Failed to load instructors');
     }
   } catch (error) {
-    notify(T.failedLoadInstructors + ': ' + error.message, 'error');
+    notify.error(T.failedLoadInstructors + ': ' + error.message);
     imRenderInstructorTable([]); // Empty table
   }
 }
@@ -333,24 +340,10 @@ function imHideInstructorModal() {
   modal.setAttribute('aria-hidden', 'true');
 }
 
-function imShowBulkModal() {
-  const modal = $('imBulkAssignModal');
-  modal.style.display = 'block';
-  modal.setAttribute('aria-hidden', 'false');
-  // Focus first select
-  setTimeout(() => $('imBulkInstructor').focus(), 100);
-}
-
-function imHideBulkModal() {
-  const modal = $('imBulkAssignModal');
-  modal.style.display = 'none';
-  modal.setAttribute('aria-hidden', 'true');
-}
-
 async function imSaveInstructor() {
   const name = $('imInstructorName').value.trim();
   if (!name) {
-    notify(T.nameRequired, 'error');
+    notify.error(T.nameRequired);
     return;
   }
 
@@ -375,14 +368,14 @@ async function imSaveInstructor() {
     });
 
     if (data.ok) {
-      notify(T.instructorSaved, 'success');
+      notify.success(T.instructorSaved);
       imHideInstructorModal();
       imLoadInstructors();
     } else {
       throw new Error(data.error?.message || 'Failed to save instructor');
     }
   } catch (error) {
-    notify(error.message, 'error');
+    notify.error(error.message);
   }
 }
 
@@ -395,369 +388,28 @@ async function imToggleInstructorActive(instructorId, isActive) {
 
     if (data.ok) {
       const action = isActive ? T.activate : T.deactivate;
-      notify(`${action} ${T.instructor}`, 'success');
+      notify.success(`${action} ${T.instructor}`);
       imLoadInstructors();
     } else {
       throw new Error(data.error?.message || 'Failed to update instructor');
     }
   } catch (error) {
-    notify(error.message, 'error');
+    notify.error(error.message);
   }
 }
 
-// ── Load Scenarios ──
-async function imLoadScenarios() {
-  try {
-    const params = new URLSearchParams({
-      year: default_year,
-      term: default_term
-    });
-
-    const data = await imApiCall(`/ops/tw/scenarios/?${params}`);
-
-    if (data.ok) {
-      const select = $('imScenarioSelect');
-      select.innerHTML = '<option value="">' + T.selectScenario + '</option>' +
-        data.scenarios.map(s =>
-          `<option value="${s.id}">${escapeHtml(s.name)} (${s.status})</option>`
-        ).join('');
-    }
-  } catch (error) {
-    console.error('Failed to load scenarios:', error);
-  }
-}
-
-async function imLoadReportScenarios() {
-  try {
-    const params = new URLSearchParams({
-      year: default_year,
-      term: default_term
-    });
-
-    const data = await imApiCall(`/ops/tw/scenarios/?${params}`);
-
-    if (data.ok) {
-      const select = $('imReportScenarioSelect');
-      select.innerHTML = '<option value="">' + T.selectScenario + '</option>' +
-        data.scenarios.map(s =>
-          `<option value="${s.id}">${escapeHtml(s.name)} (${s.status})</option>`
-        ).join('');
-    }
-  } catch (error) {
-    console.error('Failed to load scenarios:', error);
-  }
-}
-
-// ── Load Sections ──
-async function imLoadSections() {
-  const scenarioId = $('imScenarioSelect').value;
-  if (!scenarioId) {
-    $('imAssignmentContent').innerHTML = `
-      <div class="im-assignment-notice">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="8"/></svg>
-        <span>${T.selectScenario}</span>
-      </div>`;
-    return;
-  }
-
-  currentScenario = scenarioId;
-
-  try {
-    const params = new URLSearchParams({
-      scenario_id: scenarioId,
-      q: ''
-    });
-
-    const data = await imApiCall(`/ops/instructors/sections/?${params}`);
-
-    if (data.ok) {
-      allSections = data.sections;
-      imRenderAssignments(data);
-    } else {
-      throw new Error(data.error?.message || 'Failed to load sections');
-    }
-  } catch (error) {
-    notify(T.failedLoadSections + ': ' + error.message, 'error');
-    $('imAssignmentContent').innerHTML = `
-      <div class="im-assignment-notice">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="8"/></svg>
-        <span>${T.failedLoadSections}</span>
-      </div>`;
-  }
-}
-
-function imRenderAssignments(data) {
-  const isPublished = data.sections.length > 0 &&
-    $$('#imScenarioSelect option:checked')[0]?.textContent.includes('published');
-
-  if (data.sections.length === 0) {
-    $('imAssignmentContent').innerHTML = `
-      <div class="im-assignment-notice">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="8"/></svg>
-        <span>${T.noSections}</span>
-      </div>`;
-    return;
-  }
-
-  let html = '';
-
-  if (isPublished) {
-    html += `<div class="im-publish-notice">
-      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="8"/></svg>
-      <span>${T.scenarioPublished}</span>
-    </div>`;
-  }
-
-  if (!isPublished) {
-    html += `<div class="im-bulk-actions">
-      <button class="btn btn-primary" onclick="imShowBulkAssign()"
-              ${selectedSections.size === 0 ? 'disabled' : ''}>
-        ${T.bulkAssign} <span id="imSelectedCount">(${T.nSelected(selectedSections.size)})</span>
-      </button>
-    </div>`;
-  }
-
-  html += '<div class="table-wrap">';
-  html += '<table class="tbl-card">';
-  html += '<thead><tr>';
-  if (!isPublished) {
-    html += '<th style="width:40px"><input type="checkbox" onchange="imToggleAllSections(this)"></th>';
-  }
-  html += `
-    <th>${T.courses}</th>
-    <th>${IS_AR ? 'الشعبة' : 'Section'}</th>
-    <th>${IS_AR ? 'اسم المقرر' : 'Course Name'}</th>
-    <th>${T.instructor}</th>
-  `;
-  if (!isPublished) {
-    html += `<th>${IS_AR ? 'الإجراءات' : 'Actions'}</th>`;
-  }
-  html += '</tr></thead><tbody>';
-
-  data.sections.forEach(section => {
-    html += '<tr>';
-    if (!isPublished) {
-      html += `<td><input type="checkbox" onchange="imToggleSection(${section.term_section_id}, this)" ${selectedSections.has(section.term_section_id) ? 'checked' : ''}></td>`;
-    }
-    html += `
-      <td><span class="pill-neutral">${escapeHtml(section.course_code)}</span></td>
-      <td class="text-center">${escapeHtml(section.section)}</td>
-      <td class="text-muted">${escapeHtml(section.course_name)}</td>
-      <td>
-        <div class="im-instructor-chips">
-          ${section.instructors.map(inst => `
-            <span class="im-instructor-chip">
-              ${escapeHtml(inst.full_name)}
-              ${!isPublished ? `<button onclick="imUnassignInstructor(${section.term_section_id}, ${inst.id})"
-                              title="${T.unassign}" aria-label="${T.unassign} ${escapeHtml(inst.full_name)}">×</button>` : ''}
-            </span>
-          `).join('')}
-          ${!isPublished && section.instructors.length < 2 ? `
-            <button class="im-add-instructor" onclick="imShowAssignInstructor(${section.term_section_id})"
-                    title="${T.assign}" aria-label="${T.assign}">+</button>
-          ` : ''}
-        </div>
-      </td>
-    `;
-    if (!isPublished) {
-      html += `<td>
-        <button class="im-row-btn" onclick="imShowAssignInstructor(${section.term_section_id})"
-                title="${T.assign}">
-          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
-        </button>
-      </td>`;
-    }
-    html += '</tr>';
-  });
-
-  html += '</tbody></table></div>';
-
-  $('imAssignmentContent').innerHTML = html;
-}
-
-function imToggleSection(termSectionId, checkbox) {
-  if (checkbox.checked) {
-    selectedSections.add(termSectionId);
-  } else {
-    selectedSections.delete(termSectionId);
-  }
-  imUpdateBulkActions();
-}
-
-function imToggleAllSections(checkbox) {
-  const sectionCheckboxes = $$('#imAssignmentContent input[type="checkbox"]:not([onchange*="imToggleAllSections"])');
-  sectionCheckboxes.forEach(cb => {
-    cb.checked = checkbox.checked;
-    const termSectionId = parseInt(cb.getAttribute('onchange').match(/\d+/)[0]);
-    if (checkbox.checked) {
-      selectedSections.add(termSectionId);
-    } else {
-      selectedSections.delete(termSectionId);
-    }
-  });
-  imUpdateBulkActions();
-}
-
-function imUpdateBulkActions() {
-  const count = selectedSections.size;
-  const bulkBtn = document.querySelector('.im-bulk-actions button');
-  const countSpan = $('imSelectedCount');
-
-  if (bulkBtn) {
-    bulkBtn.disabled = count === 0;
-  }
-  if (countSpan) {
-    countSpan.textContent = `(${T.nSelected(count)})`;
-  }
-}
-
-// ── Assignment Actions ──
-function imShowAssignInstructor(termSectionId) {
-  // Simple prompt for now - could be enhanced with a modal
-  const activeInstructors = allInstructors.filter(i => i.is_active);
-  const options = activeInstructors.map((inst, idx) => `${idx + 1}. ${inst.full_name}`).join('\n');
-  const choice = prompt(`${T.selectInstructor}:\n\n${options}\n\n${IS_AR ? 'أدخل الرقم:' : 'Enter number:'}`);
-
-  if (choice && !isNaN(choice)) {
-    const instructor = activeInstructors[parseInt(choice) - 1];
-    if (instructor) {
-      imAssignInstructor(termSectionId, instructor.id);
-    }
-  }
-}
-
-async function imAssignInstructor(termSectionId, instructorId) {
-  try {
-    const data = await imApiCall('/ops/instructors/assign/', {
-      method: 'POST',
-      body: JSON.stringify({
-        term_section_id: termSectionId,
-        instructor_id: instructorId
-      })
-    });
-
-    if (data.ok) {
-      notify(T.assignmentUpdated, 'success');
-      imLoadSections(); // Reload to show updated assignments
-    } else {
-      throw new Error(data.error?.message || 'Failed to assign instructor');
-    }
-  } catch (error) {
-    notify(error.message, 'error');
-  }
-}
-
-async function imUnassignInstructor(termSectionId, instructorId) {
-  const confirmed = await dlg.confirm({
-    title: T.unassign,
-    body: T.confirmUnassign,
-    kind: 'warning'
-  });
-  if (!confirmed) return;
-
-  try {
-    const data = await imApiCall('/ops/instructors/unassign/', {
-      method: 'POST',
-      body: JSON.stringify({
-        term_section_id: termSectionId,
-        instructor_id: instructorId
-      })
-    });
-
-    if (data.ok) {
-      notify(T.assignmentUpdated, 'success');
-      imLoadSections();
-    } else {
-      throw new Error(data.error?.message || 'Failed to unassign instructor');
-    }
-  } catch (error) {
-    notify(error.message, 'error');
-  }
-}
-
-// ── Bulk Assignment ──
-function imShowBulkAssign() {
-  if (selectedSections.size === 0) {
-    notify(T.selectSections, 'error');
-    return;
-  }
-
-  // Populate instructor dropdown
-  const select = $('imBulkInstructor');
-  const activeInstructors = allInstructors.filter(i => i.is_active);
-  select.innerHTML = '<option value="">' + T.selectInstructor + '</option>' +
-    activeInstructors.map(inst =>
-      `<option value="${inst.id}">${escapeHtml(inst.full_name)}</option>`
-    ).join('');
-
-  // Show selected sections
-  const selectedSectionsList = Array.from(selectedSections).map(id => {
-    const section = allSections.find(s => s.term_section_id === id);
-    return section ? `${section.course_code}-${section.section}` : `ID ${id}`;
-  });
-
-  $('imBulkSectionsList').innerHTML = selectedSectionsList.map(s =>
-    `<span class="im-bulk-section-tag">${escapeHtml(s)}</span>`
-  ).join('');
-
-  imShowBulkModal();
-}
-
-async function imExecuteBulkAssign() {
-  const instructorId = $('imBulkInstructor').value;
-  if (!instructorId) {
-    notify(T.selectInstructor, 'error');
-    return;
-  }
-
-  try {
-    const data = await imApiCall('/ops/instructors/assign-bulk/', {
-      method: 'POST',
-      body: JSON.stringify({
-        instructor_id: parseInt(instructorId),
-        term_section_ids: Array.from(selectedSections)
-      })
-    });
-
-    if (data.ok) {
-      const message = `${T.bulkAssignCompleted}: ${T.nAssigned(data.assigned)}, ${T.nSkipped(data.skipped)}`;
-      notify(message, 'success');
-      imHideBulkModal();
-      selectedSections.clear();
-      imLoadSections();
-    } else {
-      throw new Error(data.error?.message || 'Failed to perform bulk assignment');
-    }
-  } catch (error) {
-    notify(error.message, 'error');
-  }
-}
-
-// ── Load Report ──
+// ── Load Report (scenario-independent: per-instructor over course assignments) ──
 async function imLoadReport() {
-  const scenarioId = $('imReportScenarioSelect').value;
-  if (!scenarioId) {
-    $('imReportContent').innerHTML = `
-      <div class="im-assignment-notice">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="8"/></svg>
-        <span>${T.selectScenario}</span>
-      </div>`;
-    return;
-  }
-
-  currentReportScenario = scenarioId;
-
+  $('imReportContent').innerHTML = `<div class="im-assignment-notice"><span>${T.loading || 'Loading…'}</span></div>`;
   try {
-    const params = new URLSearchParams({ scenario_id: scenarioId });
-    const data = await imApiCall(`/ops/instructors/load-report/?${params}`);
-
+    const data = await imApiCall('/ops/instructors/load-report/');
     if (data.ok) {
       imRenderReport(data);
     } else {
       throw new Error(data.error?.message || 'Failed to load report');
     }
   } catch (error) {
-    notify(T.failedLoadReport + ': ' + error.message, 'error');
+    notify.error(T.failedLoadReport + ': ' + error.message);
     $('imReportContent').innerHTML = `
       <div class="im-assignment-notice">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="8"/></svg>
@@ -782,12 +434,10 @@ function imRenderReport(data) {
   html += `
     <th>${T.instructor}</th>
     <th>${T.department}</th>
-    <th>${T.sections}</th>
+    <th>${T.programs || 'Programs'}</th>
     <th>${T.courses}</th>
+    <th>${T.distinctCourses || 'Distinct'}</th>
     <th>${T.creditHours}</th>
-    <th>${T.contactHours}</th>
-    <th>${T.teachingDays}</th>
-    <th>${T.clashes}</th>
     <th>${T.loadStatus}</th>
   `;
   html += '</tr></thead><tbody>';
@@ -808,12 +458,10 @@ function imRenderReport(data) {
         </div>
       </td>
       <td><span class="pill-neutral">${escapeHtml(row.department || '—')}</span></td>
-      <td class="text-center">${row.section_count}</td>
+      <td>${(row.programs || []).map(p => `<span class="cr-id">${escapeHtml(p)}</span>`).join(' ') || '—'}</td>
+      <td class="text-center">${row.course_count}</td>
       <td class="text-center">${row.distinct_courses}</td>
       <td class="text-center">${row.total_credit_hours}</td>
-      <td class="text-center">${row.weekly_contact_hours}</td>
-      <td class="text-center">${row.teaching_days.length}</td>
-      <td class="text-center ${row.clash_count > 0 ? 'text-danger fw-bold' : ''}">${row.clash_count}</td>
       <td><span class="pill-status ${loadStatusClass}">${T[row.load_status] || row.load_status}</span></td>
     </tr>`;
   });
@@ -823,12 +471,10 @@ function imRenderReport(data) {
     html += `<tr class="im-report-totals">
       <td><strong>${T.totalRow}</strong></td>
       <td>—</td>
-      <td class="text-center"><strong>${data.totals.section_count}</strong></td>
+      <td>—</td>
+      <td class="text-center"><strong>${data.totals.course_count}</strong></td>
       <td>—</td>
       <td class="text-center"><strong>${data.totals.total_credit_hours}</strong></td>
-      <td class="text-center"><strong>${data.totals.weekly_contact_hours}</strong></td>
-      <td>—</td>
-      <td>—</td>
       <td>—</td>
     </tr>`;
   }
@@ -850,8 +496,499 @@ function escapeHtml(text) {
 $('imCreateInstructor').onclick = imCreateInstructor;
 if ($('imAdvisorPicker')) $('imAdvisorPicker').addEventListener('input', imOnAdvisorPicked);
 
+// ============================================================
+// COURSE ASSIGNMENT MODULE (ca namespace)
+// ============================================================
+
+const ca = {
+  // ── State ──
+  courses: [],
+  selectedCourses: new Set(),
+  currentProgram: '',
+  currentSection: 'M',
+  popoverVisible: false,
+  activePopoverCourse: null,
+  popoverTrigger: null,   // element to restore focus to on close
+  activeOptIndex: -1,     // keyboard-highlighted result index
+  searchSeq: 0,           // request token: drop stale typeahead responses
+
+  // ── Main loader ──
+  async loadCourses() {
+    const program = $('caProgram').value.trim();
+    const section = this.currentSection;
+
+    if (!program) {
+      this.renderEmptyTable();
+      return;
+    }
+
+    this.currentProgram = program;
+    const tbody = $('caTable').querySelector('tbody');
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-note">' + T.loading + '</td></tr>';
+
+    try {
+      const params = new URLSearchParams({ program, section });
+      const data = await imApiCall(`/ops/instructors/course-assignments/?${params}`);
+
+      if (data.ok) {
+        this.courses = data.courses || [];
+        this.renderTable();
+        this.updateStatusPills();
+      } else {
+        throw new Error(data.error?.message || T.failedLoadCourses);
+      }
+    } catch (error) {
+      notify.error(T.failedLoadCourses + ': ' + error.message);
+      this.renderEmptyTable();
+    }
+  },
+
+  // ── Section toggle ──
+  setSection(section) {
+    // Update buttons
+    $$('.ca-seg-btn').forEach(btn => {
+      const isActive = btn.dataset.sec === section;
+      btn.classList.toggle('ca-seg-active', isActive);
+      btn.setAttribute('aria-checked', isActive);
+    });
+
+    this.currentSection = section;
+    this.selectedCourses.clear();
+    this.updateBulkBar();
+
+    if (this.currentProgram) {
+      this.loadCourses();
+    }
+  },
+
+  // ── Table rendering ──
+  renderTable() {
+    const tbody = $('caTable').querySelector('tbody');
+
+    if (this.courses.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-note">' + T.noCourses + '</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = this.courses.map((course, idx) => {
+      const checked = this.selectedCourses.has(course.course_code) ? 'checked' : '';
+      const assignmentCell = course.instructor
+        ? `<div class="ca-chip" onclick="ca.showAssignPopover('${course.course_code}', event)" title="${T.assign}">
+             ${escapeHtml(course.instructor.full_name)}
+             <button class="ca-chip-x" onclick="ca.clearAssignment('${course.course_code}', event)"
+                     aria-label="${T.unassign} ${escapeHtml(course.instructor.full_name)} — ${course.course_code}">×</button>
+           </div>`
+        : `<button class="ca-assign-add" onclick="ca.showAssignPopover('${course.course_code}', event)"
+                   aria-haspopup="dialog" aria-label="${T.assign} — ${course.course_code}">${T.addAssign}</button>`;
+
+      return `<tr data-course="${course.course_code}">
+        <td><input type="checkbox" ${checked} onchange="ca.toggleCourse('${course.course_code}', this)"></td>
+        <td>${idx + 1}</td>
+        <td><span class="cr-id">${course.course_code}</span></td>
+        <td>${escapeHtml(course.course_name)}</td>
+        <td class="text-center">${T.term(course.programme_term)}</td>
+        <td class="text-center">${course.credit_hours}</td>
+        <td class="ca-assign-cell">${assignmentCell}</td>
+      </tr>`;
+    }).join('');
+  },
+
+  renderEmptyTable() {
+    const tbody = $('caTable').querySelector('tbody');
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-note">' + T.selectProgram + '</td></tr>';
+    this.updateStatusPills(0, 0);
+  },
+
+  // ── Course filtering ──
+  filterCourses() {
+    const query = $('caSearch').value.toLowerCase().trim();
+    let visible = 0;
+    $$('#caTable tbody tr[data-course]').forEach(row => {
+      const courseCode = row.dataset.course;
+      const course = this.courses.find(c => c.course_code === courseCode);
+      if (!course) return;
+
+      const matches = !query ||
+        course.course_code.toLowerCase().includes(query) ||
+        course.course_name.toLowerCase().includes(query);
+
+      row.style.display = matches ? '' : 'none';
+      if (matches) visible++;
+    });
+
+    // Distinguish "search found nothing" from "no courses loaded"
+    const existing = $('caNoMatch');
+    if (visible === 0 && this.courses.length > 0) {
+      if (!existing) {
+        $('caTable').querySelector('tbody').insertAdjacentHTML(
+          'beforeend',
+          `<tr id="caNoMatch"><td colspan="7" class="empty-note">${T.noMatch}</td></tr>`
+        );
+      }
+    } else if (existing) {
+      existing.remove();
+    }
+  },
+
+  // ── Selection management ──
+  toggleCourse(courseCode, checkbox) {
+    if (checkbox.checked) {
+      this.selectedCourses.add(courseCode);
+    } else {
+      this.selectedCourses.delete(courseCode);
+    }
+    this.updateBulkBar();
+  },
+
+  toggleAllCourses(checkbox) {
+    const visibleCheckboxes = $$('#caTable tbody tr[data-course]:not([style*="display: none"]) input[type="checkbox"]');
+    visibleCheckboxes.forEach(cb => {
+      cb.checked = checkbox.checked;
+      const courseCode = cb.closest('tr').dataset.course;
+      if (checkbox.checked) {
+        this.selectedCourses.add(courseCode);
+      } else {
+        this.selectedCourses.delete(courseCode);
+      }
+    });
+    this.updateBulkBar();
+  },
+
+  // ── Bulk assignment bar ──
+  updateBulkBar() {
+    const count = this.selectedCourses.size;
+    const bulkbar = $('caBulkbar');
+    const countSpan = $('caBulkCount');
+
+    if (count > 0) {
+      bulkbar.classList.remove('d-none');
+      if (countSpan) countSpan.textContent = count;
+    } else {
+      bulkbar.classList.add('d-none');
+    }
+  },
+
+  // ── Status pills ──
+  updateStatusPills(assignedCount = null, unassignedCount = null) {
+    if (assignedCount === null) {
+      assignedCount = this.courses.filter(c => c.instructor).length;
+      unassignedCount = this.courses.filter(c => !c.instructor).length;
+    }
+
+    const assignedPill = $('caAssigned');
+    const unassignedPill = $('caUnassigned');
+
+    if (assignedPill) {
+      assignedPill.querySelector('.ca-pill-count').textContent = assignedCount;
+    }
+    if (unassignedPill) {
+      unassignedPill.querySelector('.ca-pill-count').textContent = unassignedCount;
+    }
+  },
+
+  // ── Assignment popover ──
+  showAssignPopover(courseCode, event) {
+    event.stopPropagation();
+    this.hideAssignPopover();
+
+    this.activePopoverCourse = courseCode;
+    this.popoverTrigger = event.currentTarget || event.target;
+    this.activeOptIndex = -1;
+    const popover = $('caPop');
+    const searchInput = $('caPopSearch');
+    const trigger = this.popoverTrigger;
+
+    // `position: fixed` only resolves against the viewport when no ancestor is
+    // transformed. The page wrapper (.content-wrap) carries a transform, which
+    // would otherwise re-anchor the popover to the wrapper and throw it
+    // off-screen. Hoisting to <body> once makes fixed positioning correct.
+    if (popover.parentElement !== document.body) document.body.appendChild(popover);
+
+    const gap = 6;
+    const margin = 8;
+    const isRTL = document.documentElement.dir === 'rtl';
+    const rect = trigger.getBoundingClientRect();
+
+    // Reset results to a deterministic minimal state BEFORE measuring, so a
+    // stale result list from a previous open can't inflate the measured height
+    // (which would otherwise throw the flip-up math off-screen).
+    $('caPopResults').innerHTML = '<div class="ca-pop-hint">' + T.startTyping + '</div>';
+
+    // Render off-screen so we can measure the popover before placing it.
+    popover.style.position = 'fixed';
+    popover.style.visibility = 'hidden';
+    popover.style.display = 'block';
+    // Cap measured dims to the viewport so the clamp below can never produce
+    // a negative coordinate (the failure mode when a box approaches the
+    // viewport size).
+    const pw = Math.min(popover.offsetWidth || 280, window.innerWidth - 2 * margin);
+    const ph = Math.min(popover.offsetHeight || 240, window.innerHeight - 2 * margin);
+
+    // Horizontal: anchor to the trigger's leading edge (right edge in RTL).
+    let left = isRTL ? rect.right - pw : rect.left;
+
+    // Vertical: open below if there's room, otherwise flip above.
+    let top = rect.bottom + gap;
+    const fitsBelow = top + ph <= window.innerHeight - margin;
+    const fitsAbove = rect.top - ph - gap >= margin;
+    if (!fitsBelow && fitsAbove) top = rect.top - ph - gap;
+
+    // Robust clamp (inner Math.min first): always lands fully on-screen, even
+    // when ph/pw are near the viewport size.
+    left = Math.max(margin, Math.min(left, window.innerWidth - pw - margin));
+    top = Math.max(margin, Math.min(top, window.innerHeight - ph - margin));
+
+    popover.style.left = left + 'px';
+    popover.style.top = top + 'px';
+    popover.style.visibility = '';
+    popover.setAttribute('aria-hidden', 'false');
+    if (trigger.setAttribute) trigger.setAttribute('aria-expanded', 'true');
+
+    this.popoverVisible = true;
+
+    // Focus search
+    setTimeout(() => searchInput.focus(), 50);
+
+    // Load initial results
+    this.searchInstructors('');
+  },
+
+  hideAssignPopover() {
+    if (!this.popoverVisible) return;
+
+    const popover = $('caPop');
+    popover.style.display = 'none';
+    popover.setAttribute('aria-hidden', 'true');
+    $('caPopSearch').removeAttribute('aria-activedescendant');
+
+    this.popoverVisible = false;
+    this.activePopoverCourse = null;
+    this.activeOptIndex = -1;
+
+    // Clear search
+    $('caPopSearch').value = '';
+
+    // Return focus to the trigger if it still exists (it won't after a
+    // re-render following a successful assign — guarded to avoid throwing).
+    const trigger = this.popoverTrigger;
+    if (trigger) {
+      if (trigger.setAttribute) trigger.setAttribute('aria-expanded', 'false');
+      if (document.contains(trigger) && trigger.focus) trigger.focus();
+    }
+    this.popoverTrigger = null;
+  },
+
+  // ── Keyboard navigation within the results list ──
+  moveActiveOpt(delta) {
+    const opts = $$('#caPopResults .ca-pop-opt');
+    if (!opts.length) return;
+    let i = this.activeOptIndex + delta;
+    if (i < 0) i = opts.length - 1;
+    if (i >= opts.length) i = 0;
+    this.activeOptIndex = i;
+    opts.forEach((o, idx) => o.classList.toggle('is-active', idx === i));
+    opts[i].scrollIntoView({ block: 'nearest' });
+    $('caPopSearch').setAttribute('aria-activedescendant', opts[i].id);
+  },
+
+  // ── Instructor search ──
+  async searchInstructors(query) {
+    const resultsDiv = $('caPopResults');
+    this.activeOptIndex = -1;
+    $('caPopSearch').removeAttribute('aria-activedescendant');
+
+    if (!query.trim()) {
+      resultsDiv.innerHTML = '<div class="ca-pop-hint">' + T.startTyping + '</div>';
+      return;
+    }
+
+    const seq = ++this.searchSeq;   // request token
+    resultsDiv.innerHTML = '<div class="ca-pop-loading">' + T.loading + '</div>';
+
+    try {
+      const params = new URLSearchParams({ q: query.trim() });
+      const data = await imApiCall(`/ops/instructors/list/?${params}`);
+
+      if (seq !== this.searchSeq) return;   // a newer search superseded this one
+      if (data.ok) {
+        this.renderInstructorResults(data.instructors || []);
+      }
+    } catch (error) {
+      if (seq !== this.searchSeq) return;
+      resultsDiv.innerHTML = '<div class="ca-pop-error">' + T.networkError + '</div>';
+    }
+  },
+
+  renderInstructorResults(instructors) {
+    const resultsDiv = $('caPopResults');
+    this.activeOptIndex = -1;
+
+    if (instructors.length === 0) {
+      resultsDiv.innerHTML = '<div class="ca-pop-hint">' + T.noInstructors + '</div>';
+      return;
+    }
+
+    resultsDiv.innerHTML = instructors.map((inst, idx) =>
+      `<div class="ca-pop-opt" id="caPopOpt${idx}" role="option" aria-selected="false"
+            onclick="ca.assignInstructor(${inst.id})" data-id="${inst.id}">
+         <strong>${escapeHtml(inst.full_name)}</strong>
+         ${inst.department ? `<div class="ca-pop-dept">${escapeHtml(inst.department)}</div>` : ''}
+       </div>`
+    ).join('');
+  },
+
+  // ── Assignment actions ──
+  async assignInstructor(instructorId) {
+    if (!this.activePopoverCourse) return;
+
+    try {
+      const data = await imApiCall('/ops/instructors/course-assignments/set/', {
+        method: 'POST',
+        body: JSON.stringify({
+          program: this.currentProgram,
+          course_code: this.activePopoverCourse,
+          section: this.currentSection,
+          instructor_ids: [instructorId]
+        })
+      });
+
+      if (data.ok) {
+        notify.success(T.assignmentUpdated);
+        this.hideAssignPopover();
+        this.loadCourses(); // Refresh table
+      } else {
+        throw new Error(data.error?.message || 'Failed to assign');
+      }
+    } catch (error) {
+      notify.error(error.message);
+    }
+  },
+
+  async clearAssignment(courseCode, event) {
+    event.stopPropagation();
+
+    try {
+      const data = await imApiCall('/ops/instructors/course-assignments/clear/', {
+        method: 'POST',
+        body: JSON.stringify({
+          program: this.currentProgram,
+          course_code: courseCode,
+          section: this.currentSection
+        })
+      });
+
+      if (data.ok) {
+        notify.success(T.assignmentUpdated);
+        this.loadCourses(); // Refresh table
+      } else {
+        throw new Error(data.error?.message || 'Failed to clear assignment');
+      }
+    } catch (error) {
+      notify.error(error.message);
+    }
+  },
+
+  // ── Bulk assignment ──
+  async executeBulkAssign() {
+    if (this.selectedCourses.size === 0) {
+      notify.error(T.selectCourses);
+      return;
+    }
+
+    const typeahead = $('caBulkTypeahead');
+    const query = typeahead.value.trim();
+
+    if (!query) {
+      notify.error(T.selectInstructor);
+      return;
+    }
+
+    // Simple matching by name - could be enhanced with proper typeahead
+    try {
+      const searchData = await imApiCall(`/ops/instructors/list/?q=${encodeURIComponent(query)}`);
+      if (!searchData.ok || !searchData.instructors.length) {
+        notify.error(T.selectInstructor);
+        return;
+      }
+
+      const instructor = searchData.instructors[0]; // Take first match
+      const courseCodes = Array.from(this.selectedCourses);
+
+      const data = await imApiCall('/ops/instructors/course-assignments/assign-bulk/', {
+        method: 'POST',
+        body: JSON.stringify({
+          program: this.currentProgram,
+          section: this.currentSection,
+          course_codes: courseCodes,
+          instructor_id: instructor.id
+        })
+      });
+
+      if (data.ok) {
+        notify.success(T.bulkAssignCompleted + ': ' + T.nAssigned(data.updated || courseCodes.length));
+        this.selectedCourses.clear();
+        this.updateBulkBar();
+        typeahead.value = '';
+        this.loadCourses();
+      } else {
+        throw new Error(data.error?.message || 'Failed to bulk assign');
+      }
+    } catch (error) {
+      notify.error(error.message);
+    }
+  }
+};
+
+// ── Event handlers for search/keyboard ──
+let caSearchTimeout;
+if ($('caPopSearch')) {
+  $('caPopSearch').addEventListener('input', function() {
+    clearTimeout(caSearchTimeout);
+    caSearchTimeout = setTimeout(() => {
+      ca.searchInstructors(this.value);
+    }, 300);
+  });
+}
+
+// Hide popover on outside click
+document.addEventListener('click', function(event) {
+  if (ca.popoverVisible && !$('caPop').contains(event.target)) {
+    ca.hideAssignPopover();
+  }
+});
+
+// The popover is position:fixed, so it detaches from its row on scroll —
+// close it instead of letting it float disconnected. Capture phase catches
+// scrolls inside any container.
+window.addEventListener('scroll', function() {
+  if (ca.popoverVisible) ca.hideAssignPopover();
+}, true);
+
+// Keyboard navigation for popover: Arrow keys highlight, Enter selects the
+// highlighted result (or the first if none), Escape closes. ArrowDown no
+// longer assigns immediately — that was an accidental irreversible action.
+if ($('caPopSearch')) {
+  $('caPopSearch').addEventListener('keydown', function(event) {
+    const opts = $$('#caPopResults .ca-pop-opt');
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      ca.hideAssignPopover();
+    } else if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      ca.moveActiveOpt(1);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      ca.moveActiveOpt(-1);
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      const target = opts[ca.activeOptIndex] || opts[0];
+      if (target) target.click();
+    }
+  });
+}
+
 // ── Initialization ──
 document.addEventListener('DOMContentLoaded', function() {
-  // Start with roster tab active
-  imSwitchTab('roster');
+  // Start with assignments tab active
+  imSwitchTab('assignments');
 });

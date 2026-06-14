@@ -1121,14 +1121,25 @@ def _section_instructor_policy(
     links_on = is_instructor_links_enabled()
     link_identities: dict[int, dict[str, str]] = defaultdict(dict)
     if links_on:
-        from core.models import SectionInstructor
+        from core.models import CourseInstructor, TimetableScenario
 
-        for ts_id, iid, name in SectionInstructor.objects.filter(
-            term_section__scenario_id=scenario_id, instructor__is_active=True
-        ).values_list("term_section_id", "instructor_id", "instructor__full_name"):
-            sid = int(ts_id)
-            link_identities[sid][f"id:{iid}"] = name
-            instructor_names_by_section[sid].add(name)  # so returned names include links
+        scenario = TimetableScenario.objects.filter(pk=scenario_id).first()
+        gender = getattr(scenario, "gender", "") if scenario else ""
+        if gender:
+            programs = list(getattr(scenario, "programs", []) or [])
+            # (program, normalised course_code) -> {"id:<n>": name}
+            by_course: dict[tuple[str, str], dict[str, str]] = defaultdict(dict)
+            for prog, code, iid, name in CourseInstructor.objects.filter(
+                program__in=programs, section=gender, instructor__is_active=True
+            ).values_list("program", "course_code", "instructor_id", "instructor__full_name"):
+                by_course[(prog, (code or "").strip().upper())][f"id:{iid}"] = name
+            for placement in placements:
+                sid = int(placement.term_section_id)
+                norm = (placement.term_section.course_code or "").strip().upper()
+                for prog in programs:
+                    for key, name in by_course.get((prog, norm), {}).items():
+                        link_identities[sid][key] = name
+                        instructor_names_by_section[sid].add(name)
 
     by_instructor: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for placement in placements:

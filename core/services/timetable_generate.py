@@ -633,6 +633,10 @@ def generate_workspace_scenario(
         slot_config=slot_config,
         lab_slot_config=lab_slot_config,
         created_by=created_by,
+        # Structured cohort identity so the planner resolves course instructors
+        # without parsing the scenario name. Only M/F are valid gender values.
+        gender=(section if section in ("M", "F") else ""),
+        programs=programs,
     )
 
     # Create one DeliveryBoard per active term level.  "Active" means

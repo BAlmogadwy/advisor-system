@@ -52,16 +52,17 @@ from .group_availability_views import (
     group_availability_page,
 )
 from .instructor_views import (
+    course_assignment_bulk_view,
+    course_assignment_clear_view,
+    course_assignment_reconcile_view,
+    course_assignment_set_view,
+    course_assignments_view,
     instructor_advisors_view,
     instructor_load_report_view,
     instructor_management_page,
-    instructor_sections_view,
-    instructors_assign_bulk_view,
-    instructors_assign_view,
     instructors_create_view,
     instructors_list_view,
     instructors_set_active_view,
-    instructors_unassign_view,
     instructors_update_view,
 )
 from .planner_job_views import (
@@ -141,7 +142,6 @@ from .timetable_workspace_views import (
     tw_boards_list_view,
     tw_generate_workspace_view,
     tw_graph_status_view,
-    tw_instructors_list_view,
     tw_optimise_v2_view,
     tw_placement_create_planned_view,
     tw_placement_create_view,
@@ -191,7 +191,6 @@ from .timetable_workspace_views import (
     tw_scenario_slots_update_view,
     tw_scenario_student_blockers_view,
     tw_scenarios_list_view,
-    tw_section_instructors_set_view,
     tw_slot_template_create_view,
     tw_slot_templates_list_view,
 )
@@ -758,23 +757,36 @@ urlpatterns = [
         tw_blocked_slots_view,
         name="tw_blocked_slots",
     ),
-    # ── Instructor assignment ──
-    path("ops/tw/instructors/", tw_instructors_list_view, name="tw_instructors_list"),
-    path(
-        "ops/tw/sections/<int:term_section_id>/instructors/",
-        tw_section_instructors_set_view,
-        name="tw_section_instructors_set",
-    ),
+    # ── Instructor roster + course-level assignment ──
     path("ops/instructors/advisors/", instructor_advisors_view, name="instructor_advisors"),
     path("ops/instructors/list/", instructors_list_view, name="instructors_list"),
     path("ops/instructors/create/", instructors_create_view, name="instructors_create"),
     path("ops/instructors/update/", instructors_update_view, name="instructors_update"),
     path("ops/instructors/set-active/", instructors_set_active_view, name="instructors_set_active"),
-    path("ops/instructors/sections/", instructor_sections_view, name="instructor_sections"),
-    path("ops/instructors/assign/", instructors_assign_view, name="instructors_assign"),
-    path("ops/instructors/unassign/", instructors_unassign_view, name="instructors_unassign"),
     path(
-        "ops/instructors/assign-bulk/", instructors_assign_bulk_view, name="instructors_assign_bulk"
+        "ops/instructors/course-assignments/",
+        course_assignments_view,
+        name="course_assignments",
+    ),
+    path(
+        "ops/instructors/course-assignments/set/",
+        course_assignment_set_view,
+        name="course_assignment_set",
+    ),
+    path(
+        "ops/instructors/course-assignments/clear/",
+        course_assignment_clear_view,
+        name="course_assignment_clear",
+    ),
+    path(
+        "ops/instructors/course-assignments/assign-bulk/",
+        course_assignment_bulk_view,
+        name="course_assignment_bulk",
+    ),
+    path(
+        "ops/instructors/course-assignments/reconcile/",
+        course_assignment_reconcile_view,
+        name="course_assignment_reconcile",
     ),
     path(
         "ops/instructors/load-report/", instructor_load_report_view, name="instructor_load_report"

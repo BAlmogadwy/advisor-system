@@ -1,8 +1,9 @@
-"""Instructor management — page shell + roster/assignment ops endpoints.
+"""Instructor management — page shell, roster CRUD, advisor-seed, course-level
+assignment (program + section M/F → course → instructor), and a load report.
 
-RBAC mirrors section planning (``ROLE_GENERAL_ADVISOR`` admits Super Admin too).
-All writes are audited and blocked on published scenarios. The single write path
-for section ↔ instructor links is ``core.services.instructor_assignment``.
+Assignment is scenario-INDEPENDENT: a ``CourseInstructor`` row ties an instructor
+to ``(program, course_code, section M/F)``. RBAC mirrors section planning
+(``ROLE_GENERAL_ADVISOR`` admits Super Admin); all writes are audited.
 """
 
 from __future__ import annotations
@@ -17,16 +18,18 @@ from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
 from core.authz import role_required
-from core.models import Instructor, SectionInstructor, TermSection
+from core.models import CourseInstructor, Instructor, ProgrammeRequirement
 from core.services.audit import log_audit_event
-from core.services.instructor_assignment import (
-    serialize_section_instructors,
-    set_section_instructors,
-)
+from core.services.course_instructor_assignment import set_course_instructors
 from core.services.rbac import ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_role
+from core.services.timetable_online import normalise_course_code
 from core.services.timetable_pr4_instructor import normalise_instructor
 from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
+
+# The 12 real programmes (DBGPROG is a debug fixture, excluded from the picker).
+KNOWN_PROGRAMS = ("AI", "AI2", "COE", "COE2", "CS", "CS2", "CYP", "CYP2", "DS", "DS2", "IS", "IS2")
+VALID_SECTIONS = ("M", "F")
 
 
 def _ok(data: dict[str, object], status: int = 200) -> JsonResponse:
@@ -68,13 +71,22 @@ def _instructor_to_dict(i: Instructor) -> dict[str, object]:
     }
 
 
+def _parse_int_or_none(value: object) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
 # ── Page ─────────────────────────────────────────────────────────
 
 
 @login_required(login_url="login")
 @require_GET
 def instructor_management_page(request: HttpRequest) -> HttpResponse:
-    """Render the instructor management SPA shell (roster + load report tabs)."""
+    """Render the instructor management page (Assignments / Roster / Load Report)."""
     deny = _require_general_advisor(request)
     if deny:
         return deny
@@ -104,40 +116,6 @@ def instructors_list_view(request: HttpRequest) -> JsonResponse:
         )
     qs = qs.order_by("full_name")[:500]
     return _ok({"instructors": [_instructor_to_dict(i) for i in qs]})
-
-
-@role_required(ROLE_GENERAL_ADVISOR)
-@require_GET
-def instructor_advisors_view(request: HttpRequest) -> JsonResponse:
-    """Existing ``AcademicAdvisor`` people, to seed a new instructor from.
-
-    Teaching staff overlap heavily with advisors, so the create form lets the
-    registrar pick an advisor and pre-fill name/email/department instead of
-    retyping. ``?q=`` filters by name/email. Advisors already promoted to an
-    ``Instructor`` (matched on normalised name) are flagged ``already_instructor``.
-    """
-    from core.models import AcademicAdvisor
-
-    qs = AcademicAdvisor.objects.all()
-    q = (request.GET.get("q") or "").strip()
-    if q:
-        qs = qs.filter(Q(full_name__icontains=q) | Q(email__icontains=q))
-    advisors = list(qs.order_by("full_name")[:500])
-    existing = set(Instructor.objects.values_list("normalised_name", flat=True))
-    return _ok(
-        {
-            "advisors": [
-                {
-                    "advisor_id": a.advisor_id,
-                    "full_name": a.full_name,
-                    "email": a.email,
-                    "department": a.department,
-                    "already_instructor": (normalise_instructor(a.full_name) or "") in existing,
-                }
-                for a in advisors
-            ]
-        }
-    )
 
 
 @role_required(ROLE_GENERAL_ADVISOR)
@@ -205,9 +183,6 @@ def instructors_update_view(request: HttpRequest) -> JsonResponse:
         return _err(
             "Another instructor already has this name or email", code="DUPLICATE", status=409
         )
-    # Rename propagates to the meeting display cache of every linked section.
-    if "full_name" in payload:
-        _propagate_rename(instructor)
     log_audit_event(
         request, action="instructor_update", status="success", details={"id": instructor.pk}
     )
@@ -234,263 +209,286 @@ def instructors_set_active_view(request: HttpRequest) -> JsonResponse:
     return _ok({"instructor": _instructor_to_dict(instructor)})
 
 
-# ── Assignment ───────────────────────────────────────────────────
-
-
 @role_required(ROLE_GENERAL_ADVISOR)
 @require_GET
-def instructor_sections_view(request: HttpRequest) -> JsonResponse:
-    """Assignable sections in a scenario with their current instructors.
+def instructor_advisors_view(request: HttpRequest) -> JsonResponse:
+    """Existing ``AcademicAdvisor`` people, to seed a new instructor from."""
+    from core.models import AcademicAdvisor
 
-    Powers the management page's assignment grid. ``?scenario_id=`` required,
-    ``?q=`` filters by course code/name/section.
-    """
-    scenario_id = request.GET.get("scenario_id")
-    if not scenario_id:
-        return _err("scenario_id is required", code="VALIDATION", status=400)
-    sections = TermSection.objects.filter(scenario_id=scenario_id)
+    qs = AcademicAdvisor.objects.all()
     q = (request.GET.get("q") or "").strip()
     if q:
-        sections = sections.filter(
-            Q(course_code__icontains=q) | Q(course_name__icontains=q) | Q(section__icontains=q)
-        )
-    sections = sections.order_by("course_code", "section")[:1000]
+        qs = qs.filter(Q(full_name__icontains=q) | Q(email__icontains=q))
+    advisors = list(qs.order_by("full_name")[:500])
+    existing = set(Instructor.objects.values_list("normalised_name", flat=True))
     return _ok(
         {
-            "scenario_id": int(scenario_id),
-            "sections": [
+            "advisors": [
                 {
-                    "term_section_id": s.id,
-                    "course_code": s.course_code,
-                    "course_name": s.course_name,
-                    "section": s.section,
-                    "instructors": serialize_section_instructors(s),
+                    "advisor_id": a.advisor_id,
+                    "full_name": a.full_name,
+                    "email": a.email,
+                    "department": a.department,
+                    "already_instructor": (normalise_instructor(a.full_name) or "") in existing,
                 }
-                for s in sections
-            ],
+                for a in advisors
+            ]
         }
     )
 
 
-def _section_or_published_guard(
-    term_section_id: object,
-) -> tuple[TermSection | None, JsonResponse | None]:
-    section = TermSection.objects.select_related("scenario").filter(pk=term_section_id).first()
-    if section is None:
-        return None, _err("Section not found", code="NOT_FOUND", status=404)
-    if section.scenario_id and section.scenario.status == "published":
-        return None, _err(
-            "Cannot modify a published scenario", code="SCENARIO_PUBLISHED", status=400
-        )
-    return section, None
+# ── Course assignment ────────────────────────────────────────────
 
 
-def _current_ids(term_section: TermSection) -> list[int]:
-    return list(
-        SectionInstructor.objects.filter(term_section=term_section)
+def _validate_program_section(program: str, section: str) -> JsonResponse | None:
+    if program not in KNOWN_PROGRAMS:
+        return _err("Unknown program", code="VALIDATION", status=400)
+    if section not in VALID_SECTIONS:
+        return _err("section must be M or F", code="VALIDATION", status=400)
+    return None
+
+
+@role_required(ROLE_GENERAL_ADVISOR)
+@require_GET
+def course_assignments_view(request: HttpRequest) -> JsonResponse:
+    """A program's courses (for one M/F section) with their assigned instructor.
+
+    Every ``ProgrammeRequirement`` course for the program is returned — unassigned
+    ones carry ``instructor: null`` — so the UI can show the full course list and
+    the assignment state in one table.
+    """
+    program = (request.GET.get("program") or "").strip()
+    section = (request.GET.get("section") or "").strip().upper()
+    bad = _validate_program_section(program, section)
+    if bad:
+        return bad
+
+    # course list for the program (dedupe by normalised code, keep first metadata)
+    courses: dict[str, dict[str, object]] = {}
+    for cc, name, term, cr, online in (
+        ProgrammeRequirement.objects.filter(program=program)
+        .order_by("programme_term", "course_code")
+        .values_list("course_code", "course_name", "programme_term", "credit_hours", "is_online")
+    ):
+        key = normalise_course_code(cc)
+        if key and key not in courses:
+            courses[key] = {
+                "course_code": cc,
+                "course_name": name or "",
+                "programme_term": term,
+                "credit_hours": cr,
+                "is_online": online,
+                "instructor": None,
+                "co_instructors": [],
+            }
+
+    # overlay current assignments
+    for link in (
+        CourseInstructor.objects.filter(program=program, section=section)
+        .select_related("instructor")
         .order_by("id")
-        .values_list("instructor_id", flat=True)
-    )
+    ):
+        row = courses.get(normalise_course_code(link.course_code))
+        if row is None:
+            continue
+        entry = {
+            "id": link.instructor_id,
+            "full_name": link.instructor.full_name,
+            "full_name_ar": link.instructor.full_name_ar,
+            "role": link.role,
+        }
+        if link.role == "primary":
+            row["instructor"] = entry
+        else:
+            row["co_instructors"].append(entry)
+
+    return _ok({"program": program, "section": section, "courses": list(courses.values())})
 
 
 @role_required(ROLE_GENERAL_ADVISOR)
 @require_POST
-def instructors_assign_view(request: HttpRequest) -> JsonResponse:
-    """Add one instructor to one section (append to its set)."""
+def course_assignment_set_view(request: HttpRequest) -> JsonResponse:
     payload, err = _safe_json(request)
     if err:
         return err
-    section, guard = _section_or_published_guard(payload.get("term_section_id"))
-    if guard:
-        return guard
-    assert section is not None
-    instructor_id = payload.get("instructor_id")
-    if not Instructor.objects.filter(pk=instructor_id).exists():
-        return _err("Instructor not found", code="NOT_FOUND", status=404)
-    ids = _current_ids(section)
-    if instructor_id not in ids:
-        ids.append(int(instructor_id))
+    program = str(payload.get("program", "")).strip()
+    section = str(payload.get("section", "")).strip().upper()
+    course_code = str(payload.get("course_code", "")).strip()
+    bad = _validate_program_section(program, section)
+    if bad:
+        return bad
+    if not course_code:
+        return _err("course_code is required", code="VALIDATION", status=400)
+    ids = payload.get("instructor_ids")
+    if ids is None and payload.get("instructor_id") is not None:
+        ids = [payload.get("instructor_id")]
+    if not isinstance(ids, list):
+        return _err("instructor_ids must be a list", code="VALIDATION", status=400)
     try:
-        instructors = set_section_instructors(section, instructor_ids=ids)
+        instructors = set_course_instructors(program, course_code, section, ids)
     except ValueError as exc:
         return _err(str(exc), code="NOT_FOUND", status=404)
     log_audit_event(
         request,
-        action="instructor_assign",
+        action="course_instructor_set",
         status="success",
-        details={"term_section_id": section.id, "instructor_id": instructor_id},
+        details={"program": program, "course_code": course_code, "section": section},
     )
-    return _ok({"term_section_id": section.id, "instructors": instructors})
+    return _ok(
+        {
+            "program": program,
+            "section": section,
+            "course_code": course_code,
+            "instructors": instructors,
+        }
+    )
 
 
 @role_required(ROLE_GENERAL_ADVISOR)
 @require_POST
-def instructors_unassign_view(request: HttpRequest) -> JsonResponse:
-    """Remove one instructor from one section."""
+def course_assignment_clear_view(request: HttpRequest) -> JsonResponse:
     payload, err = _safe_json(request)
     if err:
         return err
-    section, guard = _section_or_published_guard(payload.get("term_section_id"))
-    if guard:
-        return guard
-    assert section is not None
-    instructor_id = payload.get("instructor_id")
-    ids = [i for i in _current_ids(section) if i != instructor_id]
-    instructors = set_section_instructors(section, instructor_ids=ids)
+    program = str(payload.get("program", "")).strip()
+    section = str(payload.get("section", "")).strip().upper()
+    course_code = str(payload.get("course_code", "")).strip()
+    bad = _validate_program_section(program, section)
+    if bad:
+        return bad
+    set_course_instructors(program, course_code, section, [])
     log_audit_event(
         request,
-        action="instructor_unassign",
+        action="course_instructor_clear",
         status="success",
-        details={"term_section_id": section.id, "instructor_id": instructor_id},
+        details={"program": program, "course_code": course_code, "section": section},
     )
-    return _ok({"term_section_id": section.id, "instructors": instructors})
+    return _ok({"program": program, "section": section, "course_code": course_code})
 
 
 @role_required(ROLE_GENERAL_ADVISOR)
 @require_POST
-def instructors_assign_bulk_view(request: HttpRequest) -> JsonResponse:
-    """Add one instructor to many sections. Published sections are skipped."""
+def course_assignment_bulk_view(request: HttpRequest) -> JsonResponse:
+    """Assign one instructor as primary to many courses in (program, section)."""
     payload, err = _safe_json(request)
     if err:
         return err
+    program = str(payload.get("program", "")).strip()
+    section = str(payload.get("section", "")).strip().upper()
+    bad = _validate_program_section(program, section)
+    if bad:
+        return bad
     instructor_id = payload.get("instructor_id")
     if not Instructor.objects.filter(pk=instructor_id).exists():
         return _err("Instructor not found", code="NOT_FOUND", status=404)
-    section_ids = payload.get("term_section_ids") or []
-    if not isinstance(section_ids, list):
-        return _err("term_section_ids must be a list", code="VALIDATION", status=400)
-    assigned, skipped = 0, 0
-    for sid in section_ids:
-        section, guard = _section_or_published_guard(sid)
-        if guard:
-            skipped += 1
+    course_codes = payload.get("course_codes") or []
+    if not isinstance(course_codes, list):
+        return _err("course_codes must be a list", code="VALIDATION", status=400)
+    updated = 0
+    for cc in course_codes:
+        try:
+            set_course_instructors(program, str(cc), section, [instructor_id])
+            updated += 1
+        except ValueError:
             continue
-        assert section is not None
-        ids = _current_ids(section)
-        if instructor_id not in ids:
-            ids.append(int(instructor_id))
-        set_section_instructors(section, instructor_ids=ids)
-        assigned += 1
     log_audit_event(
         request,
-        action="instructor_assign_bulk",
+        action="course_instructor_bulk",
         status="success",
-        details={"instructor_id": instructor_id, "assigned": assigned, "skipped": skipped},
+        details={"program": program, "section": section, "updated": updated},
     )
-    return _ok({"assigned": assigned, "skipped": skipped})
+    return _ok({"program": program, "section": section, "updated": updated})
+
+
+@role_required(ROLE_GENERAL_ADVISOR)
+@require_POST
+def course_assignment_reconcile_view(request: HttpRequest) -> JsonResponse:
+    """Re-fan current course-assignment names into an existing scenario's
+    timetable (so edits reach an already-built scenario without a rebuild)."""
+    from core.models import TimetableScenario
+    from core.services.course_instructor_assignment import reconcile_scenario_instructors
+
+    payload, err = _safe_json(request)
+    if err:
+        return err
+    scenario = TimetableScenario.objects.filter(pk=payload.get("scenario_id")).first()
+    if scenario is None:
+        return _err("Scenario not found", code="NOT_FOUND", status=404)
+    updated = reconcile_scenario_instructors(scenario)
+    log_audit_event(
+        request,
+        action="course_instructor_reconcile",
+        status="success",
+        details={"scenario_id": scenario.id, "sections_updated": updated},
+    )
+    return _ok({"scenario_id": scenario.id, "sections_updated": updated})
 
 
 # ── Load report ──────────────────────────────────────────────────
 
 
-def _parse_hhmm(value: object) -> int | None:
-    try:
-        hh, mm = str(value).split(":", 1)
-        return int(hh) * 60 + int(mm)
-    except (ValueError, AttributeError):
-        return None
-
-
 @role_required(ROLE_GENERAL_ADVISOR)
 @require_GET
 def instructor_load_report_view(request: HttpRequest) -> JsonResponse:
-    """Per-instructor teaching-load report for one scenario.
+    """Per-instructor teaching-load report over course assignments.
 
-    One row per instructor with at least one assignment in the scenario:
-    sections taught, distinct courses, total credit hours, weekly contact
-    hours (summed meeting durations), teaching days, time clashes (a day/start
-    occupied by two different of the instructor's sections), and a load-status
-    pill vs ``max_weekly_hours``. Aggregated in a handful of bulk queries.
+    One row per instructor with at least one ``CourseInstructor`` assignment:
+    courses taught (count + list), distinct courses, total credit hours (summed
+    from ``ProgrammeRequirement``), programs, and a load-status vs
+    ``max_weekly_hours``. Optional ``?program=``/``?section=`` filters.
     """
-    scenario_id = request.GET.get("scenario_id")
-    if not scenario_id:
-        return _err("scenario_id is required", code="VALIDATION", status=400)
+    program = (request.GET.get("program") or "").strip()
+    section = (request.GET.get("section") or "").strip().upper()
 
-    from core.models import ProgrammeRequirement, ScenarioSectionBudget, TermSectionMeeting
+    links = CourseInstructor.objects.select_related("instructor")
+    if program:
+        links = links.filter(program=program)
+    if section in VALID_SECTIONS:
+        links = links.filter(section=section)
 
-    # credit-hours lookup: scenario budget (by key then code) → programme req (by code)
-    credit_by_key: dict[str, int] = {}
-    credit_by_code: dict[str, int] = {}
-    for ck, cc, ch in ScenarioSectionBudget.objects.filter(scenario_id=scenario_id).values_list(
-        "course_key", "course_code", "credit_hours"
+    # credit-hours lookup keyed by (program, normalised course_code)
+    credit: dict[tuple[str, str], int] = {}
+    for prog, cc, cr in ProgrammeRequirement.objects.exclude(credit_hours__isnull=True).values_list(
+        "program", "course_code", "credit_hours"
     ):
-        if ck:
-            credit_by_key[ck] = ch
-        if cc and cc not in credit_by_code:
-            credit_by_code[cc] = ch
-    prog_credit: dict[str, int] = {}
-    for cc, ch in ProgrammeRequirement.objects.exclude(credit_hours__isnull=True).values_list(
-        "course_code", "credit_hours"
-    ):
-        prog_credit.setdefault(cc, ch)
+        credit[(prog, normalise_course_code(cc))] = cr
 
-    def _credits(course_key: str, course_code: str) -> int:
-        if course_key in credit_by_key:
-            return credit_by_key[course_key]
-        if course_code in credit_by_code:
-            return credit_by_code[course_code]
-        return prog_credit.get(course_code, 0)
-
-    # section meetings (day, start_minute, duration) grouped by section
-    meetings_by_section: dict[int, list[tuple[str, int, int]]] = {}
-    unparseable = 0
-    for tsid, day, st, en in TermSectionMeeting.objects.filter(
-        term_section__scenario_id=scenario_id
-    ).values_list("term_section_id", "day", "start_time", "end_time"):
-        sm, em = _parse_hhmm(st), _parse_hhmm(en)
-        if sm is None or em is None:
-            unparseable += 1
-            continue
-        meetings_by_section.setdefault(tsid, []).append(((day or "").upper(), sm, max(0, em - sm)))
-
-    # links: instructor → their sections in this scenario
-    links = (
-        SectionInstructor.objects.filter(term_section__scenario_id=scenario_id)
-        .select_related("instructor", "term_section")
-        .order_by("instructor__full_name")
-    )
     per: dict[int, dict] = {}
-    for link in links:
+    for link in links.order_by("instructor__full_name"):
         instr = link.instructor
-        ts = link.term_section
         acc = per.setdefault(
             instr.pk,
             {
                 "instructor": instr,
-                "sections": [],  # {course_code, section}
-                "courses": set(),
+                "courses": [],
+                "course_keys": set(),
+                "programs": set(),
                 "credit": 0,
-                "contact_min": 0,
-                "days": set(),
-                "slots": [],  # (day, start_min)
             },
         )
-        acc["sections"].append({"course_code": ts.course_code, "section": ts.section})
-        acc["courses"].add(ts.course_code)
-        acc["credit"] += _credits(ts.course_key or "", ts.course_code)
-        for day, sm, dur in meetings_by_section.get(ts.id, []):
-            acc["contact_min"] += dur
-            acc["days"].add(day)
-            acc["slots"].append((day, sm))
+        acc["courses"].append(
+            {
+                "program": link.program,
+                "course_code": link.course_code,
+                "section": link.section,
+                "role": link.role,
+            }
+        )
+        acc["course_keys"].add(normalise_course_code(link.course_code))
+        acc["programs"].add(link.program)
+        acc["credit"] += credit.get((link.program, normalise_course_code(link.course_code)), 0)
 
     rows: list[dict[str, object]] = []
-    tot_sections = tot_credits = tot_contact_min = 0
+    tot_courses = tot_credit = 0
     for acc in per.values():
         instr = acc["instructor"]
-        # a clash = a (day, start) occupied by 2+ of this instructor's meetings
-        seen: dict[tuple[str, int], int] = {}
-        clashes = 0
-        for slot in acc["slots"]:
-            seen[slot] = seen.get(slot, 0) + 1
-            if seen[slot] == 2:
-                clashes += 1
-        contact_hours = round(acc["contact_min"] / 60, 1)
         max_h = instr.max_weekly_hours
+        load = acc["credit"]
         if max_h is None:
             load_status = "na"
-        elif contact_hours > max_h:
+        elif load > max_h:
             load_status = "over"
-        elif contact_hours == max_h:
+        elif load == max_h:
             load_status = "at"
         else:
             load_status = "under"
@@ -500,56 +498,25 @@ def instructor_load_report_view(request: HttpRequest) -> JsonResponse:
                 "full_name": instr.full_name,
                 "full_name_ar": instr.full_name_ar,
                 "department": instr.department,
-                "section_count": len(acc["sections"]),
-                "sections": acc["sections"],
-                "distinct_courses": len(acc["courses"]),
+                "course_count": len(acc["courses"]),
+                "courses": acc["courses"],
+                "distinct_courses": len(acc["course_keys"]),
+                "programs": sorted(acc["programs"]),
                 "total_credit_hours": acc["credit"],
-                "weekly_contact_hours": contact_hours,
-                "teaching_days": sorted(acc["days"]),
-                "clash_count": clashes,
                 "max_weekly_hours": max_h,
                 "load_status": load_status,
             }
         )
-        tot_sections += len(acc["sections"])
-        tot_credits += acc["credit"]
-        tot_contact_min += acc["contact_min"]
+        tot_courses += len(acc["courses"])
+        tot_credit += acc["credit"]
 
     return _ok(
         {
-            "scenario_id": int(scenario_id),
             "rows": rows,
             "totals": {
                 "instructors": len(rows),
-                "section_count": tot_sections,
-                "total_credit_hours": tot_credits,
-                "weekly_contact_hours": round(tot_contact_min / 60, 1),
+                "course_count": tot_courses,
+                "total_credit_hours": tot_credit,
             },
-            "unparseable_meetings": unparseable,
         }
-    )
-
-
-# ── helpers ──────────────────────────────────────────────────────
-
-
-def _parse_int_or_none(value: object) -> int | None:
-    if value in (None, ""):
-        return None
-    try:
-        return int(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return None
-
-
-def _propagate_rename(instructor: Instructor) -> None:
-    """After a rename, refresh the display cache on every section where this
-    instructor is primary."""
-    from core.models import TermSectionMeeting
-
-    primary_section_ids = SectionInstructor.objects.filter(
-        instructor=instructor, role="primary"
-    ).values_list("term_section_id", flat=True)
-    TermSectionMeeting.objects.filter(term_section_id__in=list(primary_section_ids)).update(
-        instructor=instructor.full_name
     )
