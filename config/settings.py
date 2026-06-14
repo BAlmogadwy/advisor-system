@@ -406,6 +406,18 @@ TIMETABLE_INSTRUCTOR_LINKS_ENABLED = os.getenv(
     "TIMETABLE_INSTRUCTOR_LINKS_ENABLED", "false"
 ).lower() in ("1", "true", "yes", "on")
 
+# TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED: gates a soft objective that minimises
+# idle time gaps in each instructor's daily schedule. When True, the canonical
+# candidate evaluator appends a lowest-priority term (instructor idle minutes,
+# strictly below every student + reserve term) and the greedy scorer prefers
+# placements that compact an instructor's day. Requires per-section instructor
+# identity, so it is meaningful only alongside TIMETABLE_INSTRUCTOR_LINKS_ENABLED.
+# Default OFF — opt-in after a shadow run; with it off the score tuple is
+# byte-identical to before. Env override ``=false`` is the live kill-switch.
+TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED = os.getenv(
+    "TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED", "false"
+).lower() in ("1", "true", "yes", "on")
+
 TIMETABLE_LAB_HEURISTIC_UNIFIED = os.getenv("TIMETABLE_LAB_HEURISTIC_UNIFIED", "true").lower() in (
     "1",
     "true",

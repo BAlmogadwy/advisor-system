@@ -92,6 +92,7 @@ def polish_scenario_with_cpsat(
     hotspot_only: bool = False,
     stage_telemetry: dict[str, dict[str, int]] | None = None,
     locked_section_ids: set[str] | None = None,
+    section_instructor_ids: dict[str, frozenset[int]] | None = None,
 ) -> dict | None:
     """Run a global CP-SAT pass as a polisher on the current best timetable.
 
@@ -499,6 +500,7 @@ def polish_scenario_with_cpsat(
         generated_sections=all_sections,
         student_profiles=student_profiles,
         course_rigidity=course_rigidity,
+        section_instructor_ids=section_instructor_ids,
     )
 
     if polished_eval.lexicographic_score < current_eval.lexicographic_score:

@@ -171,6 +171,7 @@ def diagnostic_driven_local_search(
     course_room_requirements: dict[str, str] | None = None,
     max_iterations: int = 50,
     locked_section_ids: set[str] | None = None,
+    section_instructor_ids: dict[str, frozenset[int]] | None = None,
 ) -> TimetableEvaluationResult:
     """Multi-pass local search with aggressive move generation.
 
@@ -311,6 +312,7 @@ def diagnostic_driven_local_search(
                 generated_sections=list(sections_by_id.values()),
                 student_profiles=student_profiles,
                 course_rigidity=course_rigidity,
+                section_instructor_ids=section_instructor_ids,
             )
             moves_tried += 1
 

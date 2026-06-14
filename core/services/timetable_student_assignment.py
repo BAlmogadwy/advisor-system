@@ -10,6 +10,7 @@ from core.services.timetable_assignment_models import (
     StudentProfile,
     UnresolvedReason,
 )
+from core.services.timetable_pr4_instructor import is_instructor_gap_penalty_enabled
 from core.services.timetable_same_course import (
     make_meeting_window,
     same_course_section_spread_penalty,
@@ -330,6 +331,36 @@ def _compute_total_state_gap(
     return total
 
 
+def _compute_instructor_idle_minutes(
+    sections_by_id: dict[str, SectionState],
+    section_instructor_ids: dict[str, frozenset[int]],
+) -> int:
+    """Total idle minutes between consecutive on-campus meetings, summed across
+    every instructor and day.
+
+    Mirrors the student day-gap metric (``_compute_total_state_gap``) but keyed
+    by instructor: each instructor's meetings — gathered across all the sections
+    they teach — are grouped by day and scored with ``_compute_day_gap``. Only
+    sections present in ``section_instructor_ids`` contribute, so courses with no
+    assigned instructor are naturally invisible. A section taught by N
+    instructors counts its meetings toward each of those N instructors.
+    """
+    if not section_instructor_ids:
+        return 0
+    meetings_by_instructor_day: dict[tuple[int, int], list[SectionMeeting]] = defaultdict(list)
+    for section_id, instructor_ids in section_instructor_ids.items():
+        section = sections_by_id.get(section_id)
+        if section is None:
+            continue
+        for instr_id in instructor_ids:
+            for m in section.meetings:
+                meetings_by_instructor_day[(instr_id, m.day)].append(m)
+    total = 0
+    for day_meetings in meetings_by_instructor_day.values():
+        total += _compute_day_gap(day_meetings)
+    return total
+
+
 def diagnose_unresolved(
     candidates: list[SectionState],
     state: StudentAssignmentState,
@@ -422,7 +453,8 @@ def evaluate_assignability_lexicographic(
     states: dict[str, StudentAssignmentState],
     profiles: dict[str, StudentProfile],
     sections_by_id: dict[str, SectionState],
-) -> tuple[int, int, int, int, int, int]:
+    section_instructor_ids: dict[str, frozenset[int]] | None = None,
+) -> tuple[int, ...]:
     unresolved_tier_a = 0
     total_unresolved_students = 0
     total_unassigned_courses = 0
@@ -457,7 +489,7 @@ def evaluate_assignability_lexicographic(
     # apples-to-apples with the student day-gap contribution.
     total_gap_minutes += _compute_same_course_section_spread(sections_by_id)
 
-    return (
+    base = (
         unresolved_tier_a,
         total_unresolved_students,
         total_unassigned_courses,
@@ -465,3 +497,13 @@ def evaluate_assignability_lexicographic(
         total_gap_minutes,
         total_reserve_used,
     )
+
+    # Append the instructor idle-gap term as a strictly-lowest-priority 7th
+    # element — only when the flag is ON *and* a section→instructor map is
+    # supplied. Otherwise the tuple stays the canonical 6-element shape, byte
+    # identical to pre-feature behaviour. Position 6 can never override any
+    # student or reserve term, so instructor compaction never harms students;
+    # it is only pursued among otherwise-tied candidates.
+    if section_instructor_ids is not None and is_instructor_gap_penalty_enabled():
+        return (*base, _compute_instructor_idle_minutes(sections_by_id, section_instructor_ids))
+    return base

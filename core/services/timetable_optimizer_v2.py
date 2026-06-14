@@ -18,6 +18,7 @@ from collections import defaultdict
 from django.conf import settings
 
 from core.models import (
+    CourseInstructor,
     DeliveryBoard,
     Room,
     ScenarioSectionBudget,
@@ -40,6 +41,7 @@ from core.services.timetable_candidate_eval import (
     rank_timetable_candidates,
 )
 from core.services.timetable_demand import load_scenario_course_demands
+from core.services.timetable_pr4_instructor import is_instructor_gap_penalty_enabled
 from core.services.timetable_stage_telemetry import STAGE_KEYS, empty_stage_telemetry
 from core.services.timetable_workspace import _to_minutes
 
@@ -266,6 +268,82 @@ def build_section_states_for_scenario(
         scenario_id,
     )
     return sections
+
+
+def build_section_instructor_map_for_scenario(scenario_id: int) -> dict[str, frozenset[int]]:
+    """``{section_id: frozenset[instructor_id]}`` for the instructor idle-gap term.
+
+    Keys use the **same** ``section_id`` convention as
+    ``build_section_states_for_scenario`` (``f"{course_key or course_code}_{section}"``),
+    so the evaluator can resolve a section's instructors by direct lookup — no
+    ``|``-vs-``_`` key reconciliation. Resolution mirrors
+    ``build_section_instructor_ids``: only **active** instructors assigned via
+    ``CourseInstructor`` for the scenario's gender + programs are included, matched
+    on the (normalised) course code. Sections with no assignment are simply absent
+    from the map (they then contribute nothing to the idle-gap metric). Returns
+    ``{}`` when the scenario has no gender — the assignment model is gender-scoped.
+    """
+    scenario = TimetableScenario.objects.filter(id=scenario_id).first()
+    if scenario is None:
+        return {}
+    gender = getattr(scenario, "gender", "") or ""
+    if not gender:
+        return {}
+    programs = list(getattr(scenario, "programs", []) or [])
+    if not programs:
+        return {}
+
+    # (program, normalised course_code) -> {instructor_id}
+    by_course: dict[tuple[str, str], set[int]] = defaultdict(set)
+    for prog, code, instr_id in CourseInstructor.objects.filter(
+        program__in=programs, section=gender, instructor__is_active=True
+    ).values_list("program", "course_code", "instructor_id"):
+        by_course[(prog, (code or "").strip().upper())].add(instr_id)
+
+    out: dict[str, frozenset[int]] = {}
+    for course_key, course_code, section in TermSection.objects.filter(
+        scenario_id=scenario_id
+    ).values_list("course_key", "course_code", "section"):
+        norm = (course_code or "").strip().upper()
+        ids: set[int] = set()
+        for prog in programs:
+            ids |= by_course.get((prog, norm), set())
+        if ids:
+            section_id = f"{course_key or course_code}_{section}"
+            out[section_id] = frozenset(ids)
+    return out
+
+
+def _gap_pos6(score) -> int:
+    """Instructor idle-minutes element of a score tuple (position 6), or 0 when
+    the gap penalty was off (the tuple is the canonical 6-element shape)."""
+    try:
+        return int(score[6]) if score is not None and len(score) >= 7 else 0
+    except (TypeError, IndexError):
+        return 0
+
+
+def instructor_gap_metric(
+    idle_before: int,
+    final_score,
+    section_instructor_ids: dict[str, frozenset[int]] | None,
+) -> dict[str, int]:
+    """Schema-stable instructor idle-gap metric for the optimise result payload.
+
+    All-zero when the gap penalty is OFF (``section_instructor_ids`` is None and
+    the score tuples are 6-element). ``idle_delta`` is positive when the run
+    reduced instructor idle minutes.
+    """
+    idle_after = _gap_pos6(final_score) if final_score is not None else idle_before
+    affected = 0
+    if section_instructor_ids:
+        affected = len({iid for ids in section_instructor_ids.values() for iid in ids})
+    return {
+        "idle_minutes_before": idle_before,
+        "idle_minutes_after": idle_after,
+        "idle_delta": idle_before - idle_after,
+        "affected_instructors": affected,
+    }
 
 
 def build_locked_section_ids_for_scenario(scenario_id: int) -> set[str]:
@@ -709,6 +787,16 @@ def optimise_scenario_timetable_v2(
 
     locked_section_ids = build_locked_section_ids_for_scenario(scenario_id)
 
+    # Built once per run: None when the gap penalty is OFF (every stage scores a
+    # canonical 6-tuple → byte parity), the section→instructor map when ON (every
+    # stage scores a uniform 7-tuple). Threading the SAME value to every evaluator
+    # call below is what guarantees no mixed-length tuple comparison in a run.
+    section_instructor_ids = (
+        build_section_instructor_map_for_scenario(scenario_id)
+        if is_instructor_gap_penalty_enabled()
+        else None
+    )
+
     t2 = time.time()
     logger.info("Generated %d candidates in %.1fs", len(candidates), t2 - t1)
 
@@ -717,8 +805,10 @@ def optimise_scenario_timetable_v2(
         candidate_list=candidates,
         student_profiles=student_profiles,
         course_rigidity=course_rigidity,
+        section_instructor_ids=section_instructor_ids,
     )
     best = ranked[0]
+    _gap_idle_before = _gap_pos6(best.lexicographic_score)
 
     t3 = time.time()
     logger.info(
@@ -821,6 +911,7 @@ def optimise_scenario_timetable_v2(
                 course_room_requirements=None,
                 max_iterations=max_search_iterations,
                 locked_section_ids=locked_section_ids,
+                section_instructor_ids=section_instructor_ids,
             )
 
             score_before = best.lexicographic_score
@@ -874,6 +965,7 @@ def optimise_scenario_timetable_v2(
                 generated_sections=list(sections_by_id.values()),
                 student_profiles=student_profiles,
                 course_rigidity=course_rigidity,
+                section_instructor_ids=section_instructor_ids,
             )
 
             t_chain_start = time.time()
@@ -892,6 +984,7 @@ def optimise_scenario_timetable_v2(
                 decision_trace_out=chain_trace_out,
                 stage_telemetry=result["stage_telemetry"],
                 locked_section_ids=locked_section_ids,
+                section_instructor_ids=section_instructor_ids,
                 chain_time_limit_seconds=(
                     chain_time_limit_seconds
                     if chain_time_limit_seconds is not None
@@ -939,6 +1032,7 @@ def optimise_scenario_timetable_v2(
                     generated_sections=list(sections_by_id.values()),
                     student_profiles=student_profiles,
                     course_rigidity=course_rigidity,
+                    section_instructor_ids=section_instructor_ids,
                 )
 
             t_cpsat_start = time.time()
@@ -957,6 +1051,7 @@ def optimise_scenario_timetable_v2(
                 hotspot_only=cpsat_hotspot_only,
                 stage_telemetry=result["stage_telemetry"],
                 locked_section_ids=locked_section_ids,
+                section_instructor_ids=section_instructor_ids,
             )
 
             if cpsat_result is not None:
@@ -1107,6 +1202,9 @@ def optimise_scenario_timetable_v2(
         best.candidate_id,
         result["final_score"],
     )
+    result["instructor_gap_metric"] = instructor_gap_metric(
+        _gap_idle_before, result.get("final_score"), section_instructor_ids
+    )
     return result
 
 
@@ -1181,6 +1279,15 @@ def optimise_current_timetable(
 
     locked_section_ids = build_locked_section_ids_for_scenario(scenario_id)
 
+    # Built once per run — see optimise_scenario_timetable_v2: None ⇒ uniform
+    # 6-tuples (byte parity), the map ⇒ uniform 7-tuples. Threaded to every
+    # evaluator/engine call below so no run mixes tuple lengths.
+    section_instructor_ids = (
+        build_section_instructor_map_for_scenario(scenario_id)
+        if is_instructor_gap_penalty_enabled()
+        else None
+    )
+
     from core.services import timetable_student_assignment as ssa
 
     sections_by_id = ssa.build_sections_by_id(sections)
@@ -1191,7 +1298,9 @@ def optimise_current_timetable(
         generated_sections=sections,
         student_profiles=student_profiles,
         course_rigidity=course_rigidity,
+        section_instructor_ids=section_instructor_ids,
     )
+    _gap_idle_before = _gap_pos6(baseline.lexicographic_score)
 
     t1 = time.time()
     logger.info(
@@ -1261,6 +1370,7 @@ def optimise_current_timetable(
             course_room_requirements=None,
             max_iterations=max_search_iterations,
             locked_section_ids=locked_section_ids,
+            section_instructor_ids=section_instructor_ids,
         )
 
         score_before = baseline.lexicographic_score
@@ -1303,6 +1413,7 @@ def optimise_current_timetable(
             decision_trace_out=chain_trace_out,
             stage_telemetry=result["stage_telemetry"],
             locked_section_ids=locked_section_ids,
+            section_instructor_ids=section_instructor_ids,
             chain_time_limit_seconds=(
                 chain_time_limit_seconds
                 if chain_time_limit_seconds is not None
@@ -1339,6 +1450,7 @@ def optimise_current_timetable(
             hotspot_only=cpsat_hotspot_only,
             stage_telemetry=result["stage_telemetry"],
             locked_section_ids=locked_section_ids,
+            section_instructor_ids=section_instructor_ids,
         )
         if cpsat_result is not None:
             cpsat_eval = cpsat_result["eval"]
@@ -1405,5 +1517,8 @@ def optimise_current_timetable(
         elapsed,
         list(baseline.lexicographic_score),
         result["final_score"],
+    )
+    result["instructor_gap_metric"] = instructor_gap_metric(
+        _gap_idle_before, result.get("final_score"), section_instructor_ids
     )
     return result
