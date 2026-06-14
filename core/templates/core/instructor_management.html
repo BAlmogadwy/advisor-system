@@ -67,11 +67,11 @@
       <input id="caSearch" class="form-control form-control-compact" placeholder="{% if LANGUAGE_CODE == 'ar' %}رمز أو اسم المقرر…{% else %}Course code or name…{% endif %}" oninput="ca.filterCourses()">
     </div>
     <div class="fb-spacer"></div>
-    <div class="ca-pill is-assigned" id="caAssigned">
+    <div class="ca-pill is-assigned" id="caAssigned" aria-live="polite">
       <span class="ca-pill-count">0</span>
       <span class="ca-pill-label">{% if LANGUAGE_CODE == 'ar' %}مُوزع{% else %}Assigned{% endif %}</span>
     </div>
-    <div class="ca-pill is-unassigned" id="caUnassigned">
+    <div class="ca-pill is-unassigned" id="caUnassigned" aria-live="polite">
       <span class="ca-pill-count">0</span>
       <span class="ca-pill-label">{% if LANGUAGE_CODE == 'ar' %}غير مُوزع{% else %}Unassigned{% endif %}</span>
     </div>
@@ -88,16 +88,16 @@
   </div>
 
   <!-- Course assignments table -->
-  <table class="tbl-card" id="caTable">
+  <table class="tbl-card" id="caTable" aria-label="{% if LANGUAGE_CODE == 'ar' %}جدول توزيع المقررات على المدرسين{% else %}Course-to-instructor assignments{% endif %}">
     <thead>
       <tr>
-        <th style="width:40px"><input type="checkbox" id="caSelectAll" onchange="ca.toggleAllCourses(this)"></th>
-        <th>#</th>
-        <th>{% if LANGUAGE_CODE == 'ar' %}المقرر{% else %}Course{% endif %}</th>
-        <th>{% if LANGUAGE_CODE == 'ar' %}اسم المقرر{% else %}Name{% endif %}</th>
-        <th>{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Term{% endif %}</th>
-        <th>{% if LANGUAGE_CODE == 'ar' %}س.م{% else %}Cr{% endif %}</th>
-        <th>{% if LANGUAGE_CODE == 'ar' %}المدرس{% else %}Instructor{% endif %}</th>
+        <th scope="col" style="width:40px"><input type="checkbox" id="caSelectAll" onchange="ca.toggleAllCourses(this)" aria-label="{% if LANGUAGE_CODE == 'ar' %}تحديد كل المقررات{% else %}Select all courses{% endif %}"></th>
+        <th scope="col">#</th>
+        <th scope="col">{% if LANGUAGE_CODE == 'ar' %}المقرر{% else %}Course{% endif %}</th>
+        <th scope="col">{% if LANGUAGE_CODE == 'ar' %}اسم المقرر{% else %}Name{% endif %}</th>
+        <th scope="col">{% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Term{% endif %}</th>
+        <th scope="col">{% if LANGUAGE_CODE == 'ar' %}س.م{% else %}Cr{% endif %}</th>
+        <th scope="col">{% if LANGUAGE_CODE == 'ar' %}المدرس{% else %}Instructor{% endif %}</th>
       </tr>
     </thead>
     <tbody>
@@ -182,11 +182,16 @@
 </div>
 
 <!-- ─── Instructor Assignment Popover ─── -->
-<div class="ca-pop" id="caPop" style="display:none" aria-hidden="true">
+<div class="ca-pop" id="caPop" style="display:none" aria-hidden="true" role="dialog"
+     aria-label="{% if LANGUAGE_CODE == 'ar' %}إسناد مدرس للمقرر{% else %}Assign an instructor to the course{% endif %}">
   <div class="ca-pop-search">
-    <input type="text" id="caPopSearch" class="ca-pop-input" placeholder="{% if LANGUAGE_CODE == 'ar' %}ابحث عن مدرس…{% else %}Search instructor…{% endif %}" autocomplete="off">
+    <input type="text" id="caPopSearch" class="ca-pop-input" autocomplete="off"
+           role="combobox" aria-expanded="true" aria-controls="caPopResults" aria-autocomplete="list"
+           aria-label="{% if LANGUAGE_CODE == 'ar' %}ابحث عن مدرس{% else %}Search for an instructor{% endif %}"
+           placeholder="{% if LANGUAGE_CODE == 'ar' %}ابحث عن مدرس…{% else %}Search instructor…{% endif %}">
   </div>
-  <div class="ca-pop-results" id="caPopResults">
+  <div class="ca-pop-results" id="caPopResults" role="listbox"
+       aria-label="{% if LANGUAGE_CODE == 'ar' %}نتائج البحث عن المدرسين{% else %}Instructor search results{% endif %}">
     <div class="ca-pop-loading">{% if LANGUAGE_CODE == 'ar' %}جارٍ البحث…{% else %}Searching…{% endif %}</div>
   </div>
 </div>
@@ -319,5 +324,5 @@
   const default_year = {{ default_year }};
   const default_term = {{ default_term }};
 </script>
-<script src="{% static 'js/page-instructor-management.js' %}?v=5"></script>
+<script src="{% static 'js/page-instructor-management.js' %}?v=8"></script>
 {% endblock %}

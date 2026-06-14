@@ -32,6 +32,8 @@ const T = {
   noCourses:            IS_AR ? 'لا توجد مقررات لهذا البرنامج' : 'No courses for this program',
   noReportData:         IS_AR ? 'لا توجد بيانات للتقرير' : 'No report data available',
   selectProgram:        IS_AR ? 'اختر برنامج وشعبة' : 'Select a program and section',
+  noMatch:              IS_AR ? 'لا توجد مقررات مطابقة للبحث' : 'No courses match your search',
+  startTyping:          IS_AR ? 'ابدأ بكتابة اسم المدرس…' : 'Start typing instructor name…',
 
   // ── Status labels ──
   active:               IS_AR ? 'نشط' : 'Active',
@@ -852,6 +854,9 @@ const ca = {
   currentSection: 'M',
   popoverVisible: false,
   activePopoverCourse: null,
+  popoverTrigger: null,   // element to restore focus to on close
+  activeOptIndex: -1,     // keyboard-highlighted result index
+  searchSeq: 0,           // request token: drop stale typeahead responses
 
   // ── Main loader ──
   async loadCourses() {
@@ -914,11 +919,13 @@ const ca = {
     tbody.innerHTML = this.courses.map((course, idx) => {
       const checked = this.selectedCourses.has(course.course_code) ? 'checked' : '';
       const assignmentCell = course.instructor
-        ? `<div class="ca-chip" onclick="ca.showAssignPopover('${course.course_code}', event)">
+        ? `<div class="ca-chip" onclick="ca.showAssignPopover('${course.course_code}', event)" title="${T.assign}">
              ${escapeHtml(course.instructor.full_name)}
-             <button class="ca-chip-x" onclick="ca.clearAssignment('${course.course_code}', event)" title="${T.unassign}">×</button>
+             <button class="ca-chip-x" onclick="ca.clearAssignment('${course.course_code}', event)"
+                     aria-label="${T.unassign} ${escapeHtml(course.instructor.full_name)} — ${course.course_code}">×</button>
            </div>`
-        : `<button class="ca-assign-add" onclick="ca.showAssignPopover('${course.course_code}', event)" title="${T.assign}">${T.addAssign}</button>`;
+        : `<button class="ca-assign-add" onclick="ca.showAssignPopover('${course.course_code}', event)"
+                   aria-haspopup="dialog" aria-label="${T.assign} — ${course.course_code}">${T.addAssign}</button>`;
 
       return `<tr data-course="${course.course_code}">
         <td><input type="checkbox" ${checked} onchange="ca.toggleCourse('${course.course_code}', this)"></td>
@@ -941,6 +948,7 @@ const ca = {
   // ── Course filtering ──
   filterCourses() {
     const query = $('caSearch').value.toLowerCase().trim();
+    let visible = 0;
     $$('#caTable tbody tr[data-course]').forEach(row => {
       const courseCode = row.dataset.course;
       const course = this.courses.find(c => c.course_code === courseCode);
@@ -951,7 +959,21 @@ const ca = {
         course.course_name.toLowerCase().includes(query);
 
       row.style.display = matches ? '' : 'none';
+      if (matches) visible++;
     });
+
+    // Distinguish "search found nothing" from "no courses loaded"
+    const existing = $('caNoMatch');
+    if (visible === 0 && this.courses.length > 0) {
+      if (!existing) {
+        $('caTable').querySelector('tbody').insertAdjacentHTML(
+          'beforeend',
+          `<tr id="caNoMatch"><td colspan="7" class="empty-note">${T.noMatch}</td></tr>`
+        );
+      }
+    } else if (existing) {
+      existing.remove();
+    }
   },
 
   // ── Selection management ──
@@ -1016,16 +1038,57 @@ const ca = {
     this.hideAssignPopover();
 
     this.activePopoverCourse = courseCode;
+    this.popoverTrigger = event.currentTarget || event.target;
+    this.activeOptIndex = -1;
     const popover = $('caPop');
     const searchInput = $('caPopSearch');
+    const trigger = this.popoverTrigger;
 
-    // Position popover
-    const rect = event.target.getBoundingClientRect();
+    // `position: fixed` only resolves against the viewport when no ancestor is
+    // transformed. The page wrapper (.content-wrap) carries a transform, which
+    // would otherwise re-anchor the popover to the wrapper and throw it
+    // off-screen. Hoisting to <body> once makes fixed positioning correct.
+    if (popover.parentElement !== document.body) document.body.appendChild(popover);
+
+    const gap = 6;
+    const margin = 8;
+    const isRTL = document.documentElement.dir === 'rtl';
+    const rect = trigger.getBoundingClientRect();
+
+    // Reset results to a deterministic minimal state BEFORE measuring, so a
+    // stale result list from a previous open can't inflate the measured height
+    // (which would otherwise throw the flip-up math off-screen).
+    $('caPopResults').innerHTML = '<div class="ca-pop-hint">' + T.startTyping + '</div>';
+
+    // Render off-screen so we can measure the popover before placing it.
     popover.style.position = 'fixed';
-    popover.style.left = rect.left + 'px';
-    popover.style.top = (rect.bottom + 5) + 'px';
+    popover.style.visibility = 'hidden';
     popover.style.display = 'block';
+    // Cap measured dims to the viewport so the clamp below can never produce
+    // a negative coordinate (the failure mode when a box approaches the
+    // viewport size).
+    const pw = Math.min(popover.offsetWidth || 280, window.innerWidth - 2 * margin);
+    const ph = Math.min(popover.offsetHeight || 240, window.innerHeight - 2 * margin);
+
+    // Horizontal: anchor to the trigger's leading edge (right edge in RTL).
+    let left = isRTL ? rect.right - pw : rect.left;
+
+    // Vertical: open below if there's room, otherwise flip above.
+    let top = rect.bottom + gap;
+    const fitsBelow = top + ph <= window.innerHeight - margin;
+    const fitsAbove = rect.top - ph - gap >= margin;
+    if (!fitsBelow && fitsAbove) top = rect.top - ph - gap;
+
+    // Robust clamp (inner Math.min first): always lands fully on-screen, even
+    // when ph/pw are near the viewport size.
+    left = Math.max(margin, Math.min(left, window.innerWidth - pw - margin));
+    top = Math.max(margin, Math.min(top, window.innerHeight - ph - margin));
+
+    popover.style.left = left + 'px';
+    popover.style.top = top + 'px';
+    popover.style.visibility = '';
     popover.setAttribute('aria-hidden', 'false');
+    if (trigger.setAttribute) trigger.setAttribute('aria-expanded', 'true');
 
     this.popoverVisible = true;
 
@@ -1042,48 +1105,78 @@ const ca = {
     const popover = $('caPop');
     popover.style.display = 'none';
     popover.setAttribute('aria-hidden', 'true');
+    $('caPopSearch').removeAttribute('aria-activedescendant');
 
     this.popoverVisible = false;
     this.activePopoverCourse = null;
+    this.activeOptIndex = -1;
 
     // Clear search
     $('caPopSearch').value = '';
+
+    // Return focus to the trigger if it still exists (it won't after a
+    // re-render following a successful assign — guarded to avoid throwing).
+    const trigger = this.popoverTrigger;
+    if (trigger) {
+      if (trigger.setAttribute) trigger.setAttribute('aria-expanded', 'false');
+      if (document.contains(trigger) && trigger.focus) trigger.focus();
+    }
+    this.popoverTrigger = null;
+  },
+
+  // ── Keyboard navigation within the results list ──
+  moveActiveOpt(delta) {
+    const opts = $$('#caPopResults .ca-pop-opt');
+    if (!opts.length) return;
+    let i = this.activeOptIndex + delta;
+    if (i < 0) i = opts.length - 1;
+    if (i >= opts.length) i = 0;
+    this.activeOptIndex = i;
+    opts.forEach((o, idx) => o.classList.toggle('is-active', idx === i));
+    opts[i].scrollIntoView({ block: 'nearest' });
+    $('caPopSearch').setAttribute('aria-activedescendant', opts[i].id);
   },
 
   // ── Instructor search ──
   async searchInstructors(query) {
     const resultsDiv = $('caPopResults');
+    this.activeOptIndex = -1;
+    $('caPopSearch').removeAttribute('aria-activedescendant');
 
     if (!query.trim()) {
-      resultsDiv.innerHTML = '<div class="ca-pop-hint">' +
-        (IS_AR ? 'ابدأ بكتابة اسم المدرس…' : 'Start typing instructor name…') + '</div>';
+      resultsDiv.innerHTML = '<div class="ca-pop-hint">' + T.startTyping + '</div>';
       return;
     }
 
+    const seq = ++this.searchSeq;   // request token
     resultsDiv.innerHTML = '<div class="ca-pop-loading">' + T.loading + '</div>';
 
     try {
       const params = new URLSearchParams({ q: query.trim() });
       const data = await imApiCall(`/ops/instructors/list/?${params}`);
 
+      if (seq !== this.searchSeq) return;   // a newer search superseded this one
       if (data.ok) {
         this.renderInstructorResults(data.instructors || []);
       }
     } catch (error) {
+      if (seq !== this.searchSeq) return;
       resultsDiv.innerHTML = '<div class="ca-pop-error">' + T.networkError + '</div>';
     }
   },
 
   renderInstructorResults(instructors) {
     const resultsDiv = $('caPopResults');
+    this.activeOptIndex = -1;
 
     if (instructors.length === 0) {
       resultsDiv.innerHTML = '<div class="ca-pop-hint">' + T.noInstructors + '</div>';
       return;
     }
 
-    resultsDiv.innerHTML = instructors.map(inst =>
-      `<div class="ca-pop-opt" onclick="ca.assignInstructor(${inst.id})" data-id="${inst.id}">
+    resultsDiv.innerHTML = instructors.map((inst, idx) =>
+      `<div class="ca-pop-opt" id="caPopOpt${idx}" role="option" aria-selected="false"
+            onclick="ca.assignInstructor(${inst.id})" data-id="${inst.id}">
          <strong>${escapeHtml(inst.full_name)}</strong>
          ${inst.department ? `<div class="ca-pop-dept">${escapeHtml(inst.department)}</div>` : ''}
        </div>`
@@ -1210,15 +1303,32 @@ document.addEventListener('click', function(event) {
   }
 });
 
-// Keyboard navigation for popover
+// The popover is position:fixed, so it detaches from its row on scroll —
+// close it instead of letting it float disconnected. Capture phase catches
+// scrolls inside any container.
+window.addEventListener('scroll', function() {
+  if (ca.popoverVisible) ca.hideAssignPopover();
+}, true);
+
+// Keyboard navigation for popover: Arrow keys highlight, Enter selects the
+// highlighted result (or the first if none), Escape closes. ArrowDown no
+// longer assigns immediately — that was an accidental irreversible action.
 if ($('caPopSearch')) {
   $('caPopSearch').addEventListener('keydown', function(event) {
+    const opts = $$('#caPopResults .ca-pop-opt');
     if (event.key === 'Escape') {
+      event.preventDefault();
       ca.hideAssignPopover();
     } else if (event.key === 'ArrowDown') {
       event.preventDefault();
-      const firstOpt = $('caPopResults').querySelector('.ca-pop-opt');
-      if (firstOpt) firstOpt.click();
+      ca.moveActiveOpt(1);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      ca.moveActiveOpt(-1);
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      const target = opts[ca.activeOptIndex] || opts[0];
+      if (target) target.click();
     }
   });
 }
