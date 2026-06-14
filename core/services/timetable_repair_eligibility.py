@@ -27,7 +27,10 @@ from core.models import (
 from core.services.student_helpers import normalize_code
 from core.services.timetable_demand import load_student_course_demand_map
 from core.services.timetable_online import OnlineCourseLookup
-from core.services.timetable_pr4_instructor import normalise_instructor
+from core.services.timetable_pr4_instructor import (
+    is_instructor_links_enabled,
+    normalise_instructor,
+)
 from core.services.timetable_rooming import room_type_for_placement
 
 SECTION_GENDERS = {"M", "F"}
@@ -1111,10 +1114,32 @@ def _section_instructor_policy(
             instructor_names_by_section[section_id].add(name)
             instructor_norms_by_section[section_id].setdefault(norm, name)
 
+    # Structured links (per-person, multi-instructor) when the flag is on — kept
+    # in lock-step with the planner clash. Per section: links if it has any, else
+    # the free-text name. Keys are "id:<n>" for links, the normalised name for
+    # free-text; both map to a display name.
+    links_on = is_instructor_links_enabled()
+    link_identities: dict[int, dict[str, str]] = defaultdict(dict)
+    if links_on:
+        from core.models import SectionInstructor
+
+        for ts_id, iid, name in SectionInstructor.objects.filter(
+            term_section__scenario_id=scenario_id, instructor__is_active=True
+        ).values_list("term_section_id", "instructor_id", "instructor__full_name"):
+            sid = int(ts_id)
+            link_identities[sid][f"id:{iid}"] = name
+            instructor_names_by_section[sid].add(name)  # so returned names include links
+
     by_instructor: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for placement in placements:
-        for norm, name in instructor_norms_by_section.get(placement.term_section_id, {}).items():
-            by_instructor[norm].append(
+        sid = int(placement.term_section_id)
+        identities = (
+            link_identities[sid]
+            if (links_on and sid in link_identities)
+            else instructor_norms_by_section.get(sid, {})
+        )
+        for _key, name in identities.items():
+            by_instructor[_key].append(
                 {
                     "placement_id": placement.id,
                     "section_id": int(placement.term_section_id),

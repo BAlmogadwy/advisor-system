@@ -252,6 +252,32 @@ def test_build_section_instructor_ids_active_only() -> None:
 
 
 @pytest.mark.django_db
+def test_section_instructor_policy_reads_links_under_flag(settings) -> None:
+    """The repair-eligibility reader groups by linked instructor under the flag:
+    two sections sharing one instructor at the same slot clash via the link
+    (even with blank free-text meeting names)."""
+    settings.TIMETABLE_INSTRUCTOR_LINKS_ENABLED = True
+    from core.models import DeliveryBoard, SectionPlacement
+    from core.services.timetable_repair_eligibility import _section_instructor_policy
+
+    sc = _scenario()
+    board = DeliveryBoard.objects.create(scenario=sc, label="T1", nominal_term=1)
+    instr = Instructor.objects.create(full_name="Dr. Shared", normalised_name="dr. shared")
+    ids = []
+    for ck in ("AAA101", "BBB101"):
+        ts = _section(sc, course_key=ck, section="F1", course_code=ck)
+        SectionPlacement.objects.create(
+            board=board, term_section=ts, day="SUN", start_time="09:00", end_time="10:15", room="R1"
+        )
+        SectionInstructor.objects.create(term_section=ts, instructor=instr)
+        ids.append(ts.id)
+
+    _names, conflicts = _section_instructor_policy(scenario_id=sc.id, target_section_ids=set(ids))
+    assert all(ts_id in conflicts for ts_id in ids)
+    assert any(c["instructor"] == "Dr. Shared" for c in conflicts[ids[0]])
+
+
+@pytest.mark.django_db
 def test_links_flag_clash_rejects_double_booking(settings) -> None:
     """With the links flag ON, two sections sharing an instructor cannot both
     sit at the same slot — the greedy planner rejects the overlapping option."""

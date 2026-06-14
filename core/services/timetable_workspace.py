@@ -393,17 +393,33 @@ def detect_board_conflicts(board_id: int) -> dict:
 
     from core.services.timetable_overlap import build_overlap_matrix
 
+    # Instructor identity for the clash grouping: structured links (per-person,
+    # multi-instructor) when TIMETABLE_INSTRUCTOR_LINKS_ENABLED is on and the
+    # section has links, else the free-text name — kept in lock-step with the
+    # planner's clash so the UI badge matches what the solver enforces.
+    from core.services.timetable_pr4_instructor import (
+        build_section_instructor_ids,
+        is_instructor_links_enabled,
+    )
+
+    link_map: dict[str, set] = {}
     try:
         board = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
         board_courses = {item.course_code for item in items}
         overlap_matrix = build_overlap_matrix(board.scenario_id, board_courses)
+        if is_instructor_links_enabled():
+            link_map = build_section_instructor_ids(board.scenario_id)
     except DeliveryBoard.DoesNotExist:
         overlap_matrix = {}
 
-    by_instructor: dict[str, list] = defaultdict(list)
+    by_instructor: dict[object, list] = defaultdict(list)
     by_room: dict[str, list] = defaultdict(list)
     for item in items:
-        if item.instructor:
+        ids = link_map.get(f"{item.course_key}|{item.section}")
+        if ids:
+            for iid in ids:
+                by_instructor[iid].append(item)
+        elif item.instructor:
             by_instructor[item.instructor.strip().upper()].append(item)
         if not item.is_online and item.room and item.room.strip().upper() != "UNASSIGNED":
             by_room[item.room.strip().upper()].append(item)

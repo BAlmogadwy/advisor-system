@@ -70,13 +70,7 @@ suite green.
 
 ## Deferred (clearly-scoped follow-ups)
 
-1. **Parity readers behind the links flag** — `detect_board_conflicts`
-   (`timetable_workspace.py`) and `_section_instructor_policy`
-   (`timetable_repair_eligibility.py`) still group by the single free-text instructor. They
-   read correctly today via the write-through cache; migrate them to the links source under
-   `TIMETABLE_INSTRUCTOR_LINKS_ENABLED` when that flag is flipped, so they stay consistent with
-   the solver.
-2. **`seed_instructors` backfill command** — a manual one-off to resolve any future imported
+1. **`seed_instructors` backfill command** — a manual one-off to resolve any future imported
    free-text instructor strings to `Instructor` rows. No-op today (all rows blank); not wired
    into `preDeployCommand`.
 
@@ -86,3 +80,8 @@ suite green.
 - **Editable workspace-drawer control** — the split-workspace placement drawer shows instructor
   chips and an inline add/remove editor (`drawerSetInstructors` → `tw_section_instructors_set_view`),
   reloading panes so clash badges recompute. Disabled on published scenarios.
+- **Parity readers migrated** — `detect_board_conflicts` (`timetable_workspace.py`) and
+  `_section_instructor_policy` (`timetable_repair_eligibility.py`) now group by the linked
+  instructor ids when `TIMETABLE_INSTRUCTOR_LINKS_ENABLED` is on (per section: links-or-free-text,
+  matching the planner). Flag OFF = byte-identical; both have the existing pair-dedupe so a
+  multi-instructor section never double-reports.
