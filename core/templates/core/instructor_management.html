@@ -280,49 +280,12 @@
   </div>
 </div>
 
-<!-- Bulk Assignment Modal -->
-<div class="im-modal" id="imBulkAssignModal" style="display:none" aria-hidden="true">
-  <div class="im-modal-backdrop" onclick="imHideBulkModal()"></div>
-  <div class="im-modal-content im-modal-lg">
-    <div class="im-modal-header">
-      <h3>{% if LANGUAGE_CODE == 'ar' %}توزيع مجمع{% else %}Bulk Assignment{% endif %}</h3>
-      <button class="im-modal-close" onclick="imHideBulkModal()" aria-label="Close">
-        <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
-    </div>
-    <div class="im-modal-body">
-      <div class="im-form-group">
-        <label for="imBulkInstructor">
-          {% if LANGUAGE_CODE == 'ar' %}عضو هيئة التدريس{% else %}Instructor{% endif %}
-        </label>
-        <select id="imBulkInstructor" class="form-control">
-          <option value="">{% if LANGUAGE_CODE == 'ar' %}اختر…{% else %}Select…{% endif %}</option>
-        </select>
-      </div>
-      <div class="im-form-group">
-        <label>{% if LANGUAGE_CODE == 'ar' %}الشعب المحددة{% else %}Selected Sections{% endif %}</label>
-        <div id="imBulkSectionsList" class="im-bulk-sections"></div>
-      </div>
-    </div>
-    <div class="im-modal-footer">
-      <button class="btn btn-secondary" onclick="imHideBulkModal()">
-        {% if LANGUAGE_CODE == 'ar' %}إلغاء{% else %}Cancel{% endif %}
-      </button>
-      <button class="btn btn-primary" onclick="imExecuteBulkAssign()">
-        {% if LANGUAGE_CODE == 'ar' %}تطبيق التوزيع{% else %}Apply Assignment{% endif %}
-      </button>
-    </div>
-  </div>
-</div>
-
 {% endblock %}
 
 {% block extra_js %}
 <script>
   const LANGUAGE_CODE = "{{ LANGUAGE_CODE|default:'en' }}";
   const djCsrfToken = "{{ csrf_token }}";
-  const default_year = {{ default_year }};
-  const default_term = {{ default_term }};
 </script>
-<script src="{% static 'js/page-instructor-management.js' %}?v=8"></script>
+<script src="{% static 'js/page-instructor-management.js' %}?v=9"></script>
 {% endblock %}

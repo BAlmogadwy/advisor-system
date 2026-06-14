@@ -10374,34 +10374,6 @@ html[data-theme="dark"] .va-tool-meta span {
   accent-color: var(--teal);
 }
 
-/* ── Scenario Selector ── */
-.im-scenario-selector {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-.im-scenario-selector label {
-  font-size: var(--text-sm);
-  color: var(--t2);
-  margin: 0;
-}
-
-.im-scenario-selector select {
-  min-width: 200px;
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--card);
-  font-size: var(--text-sm);
-}
-
-.im-scenario-selector select:focus {
-  outline: none;
-  border-color: var(--teal);
-  box-shadow: 0 0 0 3px var(--teal-dim);
-}
-
 /* ── Instructor Names ── */
 .im-instructor-name {
   display: flex;
@@ -10466,128 +10438,6 @@ html[data-theme="dark"] .va-tool-meta span {
   stroke-width: 1.5;
 }
 
-.im-publish-notice {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-4) var(--space-6);
-  background: var(--amber-dim);
-  border: 1px solid color-mix(in srgb, var(--amber) 20%, transparent);
-  border-radius: var(--radius-sm);
-  color: var(--amber);
-  font-size: var(--text-sm);
-  margin: var(--space-6) var(--space-8);
-}
-
-.im-publish-notice svg {
-  width: 16px;
-  height: 16px;
-  stroke: currentColor;
-  fill: none;
-  stroke-width: 1.5;
-}
-
-/* ── Instructor Chips ── */
-.im-instructor-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  align-items: center;
-}
-
-.im-instructor-chip {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  background: var(--teal-dim);
-  color: var(--teal-deep);
-  border: 1px solid var(--teal-border);
-  border-radius: var(--radius-sm);
-  font-size: var(--text-xs);
-  font-weight: 500;
-}
-
-.im-instructor-chip button {
-  background: none;
-  border: none;
-  color: var(--teal);
-  cursor: pointer;
-  font-weight: 700;
-  padding: 0;
-  margin: 0;
-  width: 16px;
-  height: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  transition: all var(--dur-fast);
-}
-
-.im-instructor-chip button:hover {
-  background: var(--teal);
-  color: white;
-}
-
-.im-add-instructor {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: var(--line);
-  border: 1px solid var(--line-strong);
-  color: var(--t3);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  font-weight: 700;
-  transition: all var(--dur-fast);
-}
-
-.im-add-instructor:hover {
-  background: var(--teal-dim);
-  border-color: var(--teal-border);
-  color: var(--teal);
-}
-
-/* ── Bulk Actions ── */
-.im-bulk-actions {
-  padding: var(--space-6) var(--space-8);
-  border-bottom: 1px solid var(--line);
-  background: var(--surface);
-}
-
-.im-bulk-actions button {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-}
-
-/* ── Bulk Assignment Modal ── */
-.im-bulk-sections {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  max-height: 200px;
-  overflow-y: auto;
-  padding: var(--space-4);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-}
-
-.im-bulk-section-tag {
-  padding: var(--space-2) var(--space-3);
-  background: var(--teal-dim);
-  color: var(--teal-deep);
-  border: 1px solid var(--teal-border);
-  border-radius: var(--radius-sm);
-  font-size: var(--text-xs);
-  font-weight: 500;
-}
-
 /* ── Report Table ── */
 .im-report-table {
   font-size: var(--text-sm);
@@ -10613,14 +10463,6 @@ html[data-theme="dark"] .va-tool-meta span {
   flex-direction: row-reverse;
 }
 
-[dir="rtl"] .im-scenario-selector {
-  flex-direction: row-reverse;
-}
-
-[dir="rtl"] .im-instructor-chips {
-  flex-direction: row-reverse;
-}
-
 /* ── Dark Theme ── */
 html[data-theme="dark"] .im-panel,
 html[data-theme="dark"] .im-toolbar,
@@ -10629,15 +10471,13 @@ html[data-theme="dark"] .im-panel-header {
   border-color: rgba(255,255,255,0.08);
 }
 
-html[data-theme="dark"] .im-search input,
-html[data-theme="dark"] .im-scenario-selector select {
+html[data-theme="dark"] .im-search input {
   background: rgba(255,255,255,0.035);
   border-color: rgba(255,255,255,0.08);
   color: var(--t1);
 }
 
-html[data-theme="dark"] .im-assignment-notice,
-html[data-theme="dark"] .im-bulk-sections {
+html[data-theme="dark"] .im-assignment-notice {
   background: rgba(255,255,255,0.035);
   border-color: rgba(255,255,255,0.08);
 }
