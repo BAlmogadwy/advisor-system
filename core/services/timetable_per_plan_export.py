@@ -714,6 +714,12 @@ def _build_program_workbook(
         course_fill=_course_fill,
     )
 
+    # Instructor timetables (each assigned instructor's full weekly grid),
+    # mirroring the Rooms sheet. Reuses the single-workbook renderer.
+    from core.services.timetable_export import _render_instructors_sheet
+
+    _render_instructors_sheet(wb, scenario, _course_fill)
+
     # Save
     tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
     wb.save(tmp.name)

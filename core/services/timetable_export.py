@@ -934,11 +934,150 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
             for si in range(num_slot_cols):
                 ws_room.column_dimensions[_gcl(2 + si)].width = 15
 
+    # ── Instructors sheet (one weekly grid per assigned instructor) ──
+    _render_instructors_sheet(wb, scenario, lambda cc: _course_fill(cc, course_color_map))
+
     # ── Save ─────────────────────────────────────────────────────
     tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
     wb.save(tmp.name)
     tmp.close()
     return Path(tmp.name)
+
+
+def _render_instructors_sheet(wb, scenario, fill_for) -> None:
+    """Add an "Instructors" sheet: one weekly grid (days × slots) per instructor,
+    mirroring the Rooms sheet, showing the courses each instructor teaches.
+
+    Only instructors actually assigned in the current timetable appear — the
+    instructor name is read from ``TermSectionMeeting.instructor`` (the planner
+    write-through fans the primary's name into every meeting of a section).
+    ``fill_for(course_code)`` supplies the per-course cell colour so the palette
+    matches the Rooms/Courses sheets. No-op when nothing is assigned.
+    """
+    from collections import defaultdict
+
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    from core.models import SectionPlacement, TermSectionMeeting
+
+    # Instructor name per section (first non-empty; same name across a section's
+    # meetings after write-through).
+    ts_instructor: dict[int, str] = {}
+    for ts_id, instr in (
+        TermSectionMeeting.objects.filter(term_section__scenario=scenario)
+        .exclude(instructor="")
+        .values_list("term_section_id", "instructor")
+    ):
+        name = (instr or "").strip()
+        if name and ts_id not in ts_instructor:
+            ts_instructor[ts_id] = name
+    if not ts_instructor:
+        return
+
+    # instructor → {(day, start) → [course texts]}. Room-unassigned classes still
+    # belong on the instructor's timetable, so (unlike the Rooms sheet) we do not
+    # exclude on room.
+    grid: dict[str, dict[tuple[str, str], list[str]]] = defaultdict(lambda: defaultdict(list))
+    for p in (
+        SectionPlacement.objects.filter(board__scenario=scenario)
+        .exclude(day="")
+        .select_related("term_section")
+    ):
+        name = ts_instructor.get(p.term_section_id)
+        if not name:
+            continue
+        grid[name][(p.day, p.start_time)].append(
+            f"{p.term_section.course_code} {p.term_section.section}"
+        )
+    if not grid:
+        return
+
+    # Combined unique slot starts (lecture + lab) — an instructor may teach both.
+    combined: list[dict] = [
+        {"start": s["start"], "end": s["end"]} for s in (scenario.slot_config or DEFAULT_SLOTS)
+    ]
+    combined += [{"start": s["start"], "end": s["end"]} for s in (scenario.lab_slot_config or [])]
+    seen: set[str] = set()
+    slots: list[dict] = []
+    for s in sorted(combined, key=lambda x: x["start"]):
+        if s["start"] not in seen:
+            seen.add(s["start"])
+            slots.append(s)
+    n = len(slots)
+
+    ws = wb.create_sheet(title="Instructors")
+    ws.sheet_properties.tabColor = "8E44AD"
+
+    hdr_fill = PatternFill(start_color="2E4053", end_color="2E4053", fill_type="solid")
+    hdr_font = Font(name="Calibri", bold=True, color="FFFFFF", size=9)
+    cell_font = Font(name="Consolas", size=8.5, bold=True)
+    name_fill = PatternFill(start_color="6C3483", end_color="6C3483", fill_type="solid")
+    name_font = Font(name="Calibri", bold=True, color="FFFFFF", size=10)
+    midday_fill = PatternFill(start_color="D5D8DC", end_color="D5D8DC", fill_type="solid")
+    conflict_fill = PatternFill(start_color="FADBD8", end_color="FADBD8", fill_type="solid")
+    title_fill = PatternFill(start_color="E8DAEF", end_color="E8DAEF", fill_type="solid")
+    _side = Side(style="thin", color="AEB6BF")
+    border = Border(left=_side, right=_side, top=_side, bottom=_side)
+
+    # Title banner
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=1 + n)
+    tc = ws.cell(row=1, column=1, value="Instructor Timetables")
+    tc.font = Font(bold=True, size=14)
+    tc.fill = title_fill
+    tc.alignment = Alignment(horizontal="center", vertical="center")
+    for c in range(2, 2 + n):
+        ws.cell(row=1, column=c).fill = title_fill
+
+    days = ["SUN", "MON", "TUE", "WED", "THU"]
+    day_names = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday"]
+
+    row = 3
+    for name in sorted(grid.keys()):
+        gdata = grid[name]
+        # Instructor header
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=1 + n)
+        hc = ws.cell(row=row, column=1, value=name)
+        hc.font = name_font
+        hc.fill = name_fill
+        hc.alignment = Alignment(horizontal="left", vertical="center")
+        for c in range(2, 2 + n):
+            ws.cell(row=row, column=c).fill = name_fill
+        row += 1
+
+        # Slot header
+        ws.cell(row=row, column=1).border = border
+        for si, slot in enumerate(slots):
+            c = ws.cell(row=row, column=2 + si, value=f"{slot['start']}-{slot['end']}")
+            c.font = hdr_font
+            c.fill = hdr_fill
+            c.alignment = Alignment(horizontal="center")
+            c.border = border
+        row += 1
+
+        # Day rows
+        for day_code, day_name in zip(days, day_names, strict=False):
+            dc = ws.cell(row=row, column=1, value=day_name)
+            dc.font = Font(bold=True, size=9)
+            dc.border = border
+            for si, slot in enumerate(slots):
+                cell = ws.cell(row=row, column=2 + si)
+                cell.border = border
+                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                if "11:35" <= slot["start"] <= "12:59":
+                    cell.fill = midday_fill
+                texts = gdata.get((day_code, slot["start"]), [])
+                if texts:
+                    cell.value = "\n".join(texts)
+                    cell.font = cell_font
+                    # >1 course in the same slot = a clash for this instructor.
+                    cell.fill = conflict_fill if len(texts) > 1 else fill_for(texts[0].split()[0])
+            row += 1
+        row += 1  # gap between instructor tables
+
+    ws.column_dimensions["A"].width = 24  # room for full instructor names (Arabic)
+    for si in range(n):
+        ws.column_dimensions[get_column_letter(2 + si)].width = 15
 
 
 def _write_mini_conflict_matrix(
