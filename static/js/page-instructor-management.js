@@ -255,7 +255,6 @@ function imFilterInstructors() {
 }
 
 // ── Instructor CRUD ──
-let imAdvisorMap = {};
 
 function imCreateInstructor() {
   isEditMode = false;
@@ -268,32 +267,78 @@ function imCreateInstructor() {
   imShowInstructorModal();
 }
 
+// ── Advisor seed typeahead (custom dropdown — replaces the native datalist,
+// which rendered an unstyleable list that overflowed the modal) ──
+let imAdvisors = [];
+let imAdvisorActiveIdx = -1;
+
 async function imLoadAdvisors() {
-  const dl = $('imAdvisorList');
-  if (!dl) return;
   try {
     const data = await imApiCall('/ops/instructors/advisors/');
-    if (!data || !data.ok) return;
-    imAdvisorMap = {};
-    dl.innerHTML = '';
-    (data.advisors || []).forEach(a => {
-      const label = a.email ? `${a.full_name} · ${a.email}` : a.full_name;
-      imAdvisorMap[label] = a;
-      const opt = document.createElement('option');
-      opt.value = label;
-      if (a.already_instructor) opt.label = IS_AR ? 'مُضاف مسبقاً' : 'already an instructor';
-      else if (a.department) opt.label = a.department;
-      dl.appendChild(opt);
-    });
+    if (data && data.ok) imAdvisors = data.advisors || [];
   } catch (e) { /* advisor seeding is optional — fail silent */ }
 }
 
-function imOnAdvisorPicked() {
-  const a = imAdvisorMap[$('imAdvisorPicker').value];
-  if (!a) return;  // free typing of a new name — leave the form for manual entry
+function imRenderAdvisorResults(query) {
+  const panel = $('imAdvisorResults');
+  if (!panel) return;
+  const raw = (query || '').trim();
+  const q = raw.toLowerCase();
+  const matches = imAdvisors.filter(a =>
+    imField(a.full_name) &&  // skip junk advisors with no usable name ("null"/empty)
+    (!q ||
+      a.full_name.toLowerCase().includes(q) ||
+      (a.email && a.email.toLowerCase().includes(q)) ||
+      (a.full_name_ar && a.full_name_ar.includes(raw)))
+  ).slice(0, 50);
+
+  imAdvisorActiveIdx = -1;
+  if (matches.length === 0) {
+    panel.innerHTML = '<div class="im-ac-empty">' +
+      (IS_AR ? 'لا يوجد مرشد مطابق' : 'No advisor matches') + '</div>';
+  } else {
+    panel.innerHTML = matches.map(a => {
+      const idx = imAdvisors.indexOf(a);
+      const sub = imField(a.department) || imField(a.email) || '';
+      const badge = a.already_instructor
+        ? `<span class="im-ac-badge">${IS_AR ? 'مُضاف' : 'added'}</span>` : '';
+      return `<div class="im-ac-opt" role="option" data-idx="${idx}" onclick="imPickAdvisor(${idx})">
+        <div class="im-ac-main"><strong>${escapeHtml(a.full_name)}</strong>${badge}</div>
+        ${sub ? `<div class="im-ac-sub">${escapeHtml(sub)}</div>` : ''}
+      </div>`;
+    }).join('');
+  }
+  panel.style.display = 'block';
+  $('imAdvisorPicker').setAttribute('aria-expanded', 'true');
+}
+
+function imHideAdvisorResults() {
+  const panel = $('imAdvisorResults');
+  if (panel) panel.style.display = 'none';
+  const inp = $('imAdvisorPicker');
+  if (inp) inp.setAttribute('aria-expanded', 'false');
+  imAdvisorActiveIdx = -1;
+}
+
+function imMoveAdvisor(delta, opts) {
+  if (!opts.length) return;
+  let i = imAdvisorActiveIdx + delta;
+  if (i < 0) i = opts.length - 1;
+  if (i >= opts.length) i = 0;
+  imAdvisorActiveIdx = i;
+  opts.forEach((o, idx) => o.classList.toggle('is-active', idx === i));
+  opts[i].scrollIntoView({ block: 'nearest' });
+}
+
+function imPickAdvisor(idx) {
+  const a = imAdvisors[idx];
+  if (!a) return;
   $('imInstructorName').value = a.full_name || '';
-  if (a.email) $('imInstructorEmail').value = a.email;
-  if (a.department) $('imInstructorDepartment').value = a.department;
+  if (imField(a.email)) $('imInstructorEmail').value = a.email;
+  if (imField(a.department)) $('imInstructorDepartment').value = a.department;
+  if (imField(a.full_name_ar)) $('imInstructorNameAr').value = a.full_name_ar;
+  $('imAdvisorPicker').value = a.full_name || '';
+  imHideAdvisorResults();
   $('imInstructorName').focus();
 }
 
@@ -321,6 +366,7 @@ function imEditInstructor(instructorId) {
 function imClearInstructorForm() {
   $('imInstructorId').value = '';
   if ($('imAdvisorPicker')) $('imAdvisorPicker').value = '';
+  imHideAdvisorResults();
   $('imInstructorName').value = '';
   $('imInstructorNameAr').value = '';
   $('imInstructorEmail').value = '';
@@ -508,7 +554,26 @@ function imField(value) {
 
 // ── Event Handlers ──
 $('imCreateInstructor').onclick = imCreateInstructor;
-if ($('imAdvisorPicker')) $('imAdvisorPicker').addEventListener('input', imOnAdvisorPicked);
+if ($('imAdvisorPicker')) {
+  const _picker = $('imAdvisorPicker');
+  _picker.addEventListener('input', function () { imRenderAdvisorResults(this.value); });
+  _picker.addEventListener('focus', function () { imRenderAdvisorResults(this.value); });
+  _picker.addEventListener('keydown', function (e) {
+    const opts = $$('#imAdvisorResults .im-ac-opt');
+    if (e.key === 'Escape') { imHideAdvisorResults(); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); imMoveAdvisor(1, opts); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); imMoveAdvisor(-1, opts); }
+    else if (e.key === 'Enter') {
+      e.preventDefault();
+      const t = opts[imAdvisorActiveIdx] || opts[0];
+      if (t) t.click();
+    }
+  });
+  // Close on click outside the seed group.
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest('#imAdvisorSeedGroup')) imHideAdvisorResults();
+  });
+}
 
 // ============================================================
 // COURSE ASSIGNMENT MODULE (ca namespace)

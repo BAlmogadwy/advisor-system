@@ -10591,6 +10591,77 @@ html[data-theme="dark"] .im-assignment-notice {
   color: var(--t2);
 }
 
+/* ── Advisor-seed typeahead (custom dropdown, replaces native datalist) ── */
+.im-ac {
+  position: relative;
+}
+
+.im-ac-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lift);
+  max-height: 240px;
+  overflow-y: auto;
+  z-index: 20;
+}
+
+.im-ac-opt {
+  padding: var(--space-3) var(--space-4);
+  cursor: pointer;
+  border-bottom: 1px solid var(--line);
+  transition: background var(--dur-fast);
+}
+
+.im-ac-opt:last-child {
+  border-bottom: none;
+}
+
+.im-ac-opt:hover,
+.im-ac-opt.is-active {
+  background: var(--teal-dim);
+}
+
+.im-ac-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.im-ac-main strong {
+  color: var(--ink);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.im-ac-sub {
+  font-size: var(--text-xs);
+  color: var(--t3);
+  margin-top: 2px;
+}
+
+.im-ac-badge {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--amber-dim);
+  color: var(--warning);
+}
+
+.im-ac-empty {
+  padding: var(--space-4);
+  text-align: center;
+  color: var(--t4);
+  font-size: var(--text-xs);
+}
+
 .im-form-check {
   display: flex;
   align-items: center;
