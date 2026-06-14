@@ -1941,3 +1941,23 @@ html body.tws-root { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothin
   .tws-fallback-action:hover { border-color: var(--teal); color: var(--teal); }
   .tws-fallback-action.primary { background: var(--teal); border-color: var(--teal); color: #04130f; }
 }
+
+/* Drawer instructor chips + inline editor (instructor-assignment feature) */
+.tws-instr-chip {
+  display: inline-flex; align-items: center; gap: 3px;
+  background: color-mix(in srgb, var(--teal) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--teal) 40%, transparent);
+  border-radius: 999px; padding: 1px 4px 1px 8px; margin: 2px 2px 0 0; font-size: 11px;
+}
+.tws-instr-chip.primary { font-weight: 700; }
+.tws-instr-x {
+  background: none; border: none; color: var(--t3); cursor: pointer;
+  font-size: 14px; line-height: 1; padding: 0 2px;
+}
+.tws-instr-x:hover { color: #f47272; }
+.tws-instr-none { color: var(--t4); }
+.tws-drawer-instr-edit { display: flex; gap: 4px; margin: 4px 0 8px; }
+.tws-drawer-instr-edit input {
+  flex: 1; min-width: 0; background: var(--card); border: 1px solid var(--line);
+  border-radius: 6px; padding: 4px 8px; color: var(--t1); font-size: 12px;
+}

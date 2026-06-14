@@ -76,10 +76,13 @@ suite green.
    read correctly today via the write-through cache; migrate them to the links source under
    `TIMETABLE_INSTRUCTOR_LINKS_ENABLED` when that flag is flipped, so they stay consistent with
    the solver.
-2. **Editable workspace-drawer control** — the backend (`tw_section_instructors_set_view`) and
-   the serialised `instructors` on each placement are in place; the split-workspace drawer
-   still shows instructors read-only. Wiring the chip multi-select + assign is the remaining
-   presentation step.
-3. **`seed_instructors` backfill command** — a manual one-off to resolve any future imported
+2. **`seed_instructors` backfill command** — a manual one-off to resolve any future imported
    free-text instructor strings to `Instructor` rows. No-op today (all rows blank); not wired
    into `preDeployCommand`.
+
+### Done since first cut
+- **Seed-from-advisor** — the create form pre-fills name/email/department from an existing
+  `AcademicAdvisor` (`GET /ops/instructors/advisors/`).
+- **Editable workspace-drawer control** — the split-workspace placement drawer shows instructor
+  chips and an inline add/remove editor (`drawerSetInstructors` → `tw_section_instructors_set_view`),
+  reloading panes so clash badges recompute. Disabled on published scenarios.
