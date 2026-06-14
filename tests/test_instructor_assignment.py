@@ -188,6 +188,29 @@ def test_rbac_denies_non_advisor() -> None:
 
 
 @pytest.mark.django_db
+def test_advisors_seed_list_flags_existing() -> None:
+    """The create form's advisor picker lists advisors and flags those already
+    promoted to an instructor (matched on normalised name)."""
+    from core.models import AcademicAdvisor
+
+    AcademicAdvisor.objects.create(
+        advisor_id="A1", full_name="Dr. Reuse Me", email="r@x.io", department="CS"
+    )
+    AcademicAdvisor.objects.create(
+        advisor_id="A2", full_name="Dr. Fresh", email="f@x.io", department="IS"
+    )
+    Instructor.objects.create(full_name="dr. reuse me", normalised_name="dr. reuse me")
+
+    http, _ = _admin_client()
+    resp = http.get("/ops/instructors/advisors/")
+    assert resp.status_code == 200
+    advisors = {a["full_name"]: a for a in resp.json()["advisors"]}
+    assert advisors["Dr. Reuse Me"]["already_instructor"] is True
+    assert advisors["Dr. Reuse Me"]["department"] == "CS"
+    assert advisors["Dr. Fresh"]["already_instructor"] is False
+
+
+@pytest.mark.django_db
 def test_load_report_aggregates() -> None:
     http, _ = _admin_client()
     sc = _scenario()

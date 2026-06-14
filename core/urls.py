@@ -52,6 +52,7 @@ from .group_availability_views import (
     group_availability_page,
 )
 from .instructor_views import (
+    instructor_advisors_view,
     instructor_load_report_view,
     instructor_management_page,
     instructor_sections_view,
@@ -764,6 +765,7 @@ urlpatterns = [
         tw_section_instructors_set_view,
         name="tw_section_instructors_set",
     ),
+    path("ops/instructors/advisors/", instructor_advisors_view, name="instructor_advisors"),
     path("ops/instructors/list/", instructors_list_view, name="instructors_list"),
     path("ops/instructors/create/", instructors_create_view, name="instructors_create"),
     path("ops/instructors/update/", instructors_update_view, name="instructors_update"),

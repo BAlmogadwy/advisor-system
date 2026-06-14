@@ -107,6 +107,40 @@ def instructors_list_view(request: HttpRequest) -> JsonResponse:
 
 
 @role_required(ROLE_GENERAL_ADVISOR)
+@require_GET
+def instructor_advisors_view(request: HttpRequest) -> JsonResponse:
+    """Existing ``AcademicAdvisor`` people, to seed a new instructor from.
+
+    Teaching staff overlap heavily with advisors, so the create form lets the
+    registrar pick an advisor and pre-fill name/email/department instead of
+    retyping. ``?q=`` filters by name/email. Advisors already promoted to an
+    ``Instructor`` (matched on normalised name) are flagged ``already_instructor``.
+    """
+    from core.models import AcademicAdvisor
+
+    qs = AcademicAdvisor.objects.all()
+    q = (request.GET.get("q") or "").strip()
+    if q:
+        qs = qs.filter(Q(full_name__icontains=q) | Q(email__icontains=q))
+    advisors = list(qs.order_by("full_name")[:500])
+    existing = set(Instructor.objects.values_list("normalised_name", flat=True))
+    return _ok(
+        {
+            "advisors": [
+                {
+                    "advisor_id": a.advisor_id,
+                    "full_name": a.full_name,
+                    "email": a.email,
+                    "department": a.department,
+                    "already_instructor": (normalise_instructor(a.full_name) or "") in existing,
+                }
+                for a in advisors
+            ]
+        }
+    )
+
+
+@role_required(ROLE_GENERAL_ADVISOR)
 @require_POST
 def instructors_create_view(request: HttpRequest) -> JsonResponse:
     payload, err = _safe_json(request)

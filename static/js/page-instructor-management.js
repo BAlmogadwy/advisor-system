@@ -244,11 +244,46 @@ function imFilterInstructors() {
 }
 
 // ── Instructor CRUD ──
+let imAdvisorMap = {};
+
 function imCreateInstructor() {
   isEditMode = false;
   $('imInstructorModalLabel').textContent = IS_AR ? 'إضافة عضو هيئة تدريس' : 'Add Instructor';
   imClearInstructorForm();
+  // The "seed from advisor" picker is only meaningful when creating.
+  const seed = $('imAdvisorSeedGroup');
+  if (seed) seed.style.display = '';
+  imLoadAdvisors();
   imShowInstructorModal();
+}
+
+async function imLoadAdvisors() {
+  const dl = $('imAdvisorList');
+  if (!dl) return;
+  try {
+    const data = await imApiCall('/ops/instructors/advisors/');
+    if (!data || !data.ok) return;
+    imAdvisorMap = {};
+    dl.innerHTML = '';
+    (data.advisors || []).forEach(a => {
+      const label = a.email ? `${a.full_name} · ${a.email}` : a.full_name;
+      imAdvisorMap[label] = a;
+      const opt = document.createElement('option');
+      opt.value = label;
+      if (a.already_instructor) opt.label = IS_AR ? 'مُضاف مسبقاً' : 'already an instructor';
+      else if (a.department) opt.label = a.department;
+      dl.appendChild(opt);
+    });
+  } catch (e) { /* advisor seeding is optional — fail silent */ }
+}
+
+function imOnAdvisorPicked() {
+  const a = imAdvisorMap[$('imAdvisorPicker').value];
+  if (!a) return;  // free typing of a new name — leave the form for manual entry
+  $('imInstructorName').value = a.full_name || '';
+  if (a.email) $('imInstructorEmail').value = a.email;
+  if (a.department) $('imInstructorDepartment').value = a.department;
+  $('imInstructorName').focus();
 }
 
 function imEditInstructor(instructorId) {
@@ -257,6 +292,8 @@ function imEditInstructor(instructorId) {
 
   isEditMode = true;
   $('imInstructorModalLabel').textContent = IS_AR ? 'تعديل عضو هيئة تدريس' : 'Edit Instructor';
+  const seed = $('imAdvisorSeedGroup');
+  if (seed) seed.style.display = 'none';
 
   $('imInstructorId').value = instructor.id;
   $('imInstructorName').value = instructor.full_name;
@@ -272,6 +309,7 @@ function imEditInstructor(instructorId) {
 
 function imClearInstructorForm() {
   $('imInstructorId').value = '';
+  if ($('imAdvisorPicker')) $('imAdvisorPicker').value = '';
   $('imInstructorName').value = '';
   $('imInstructorNameAr').value = '';
   $('imInstructorEmail').value = '';
@@ -810,6 +848,7 @@ function escapeHtml(text) {
 
 // ── Event Handlers ──
 $('imCreateInstructor').onclick = imCreateInstructor;
+if ($('imAdvisorPicker')) $('imAdvisorPicker').addEventListener('input', imOnAdvisorPicked);
 
 // ── Initialization ──
 document.addEventListener('DOMContentLoaded', function() {

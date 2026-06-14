@@ -147,6 +147,18 @@
     <div class="im-modal-body">
       <form id="imInstructorForm">
         <input type="hidden" id="imInstructorId">
+        <div class="im-form-group" id="imAdvisorSeedGroup">
+          <label for="imAdvisorPicker">
+            {% if LANGUAGE_CODE == 'ar' %}تعبئة من مرشد أكاديمي (اختياري){% else %}Seed from existing advisor (optional){% endif %}
+          </label>
+          <input type="text" id="imAdvisorPicker" list="imAdvisorList" class="form-control"
+            placeholder="{% if LANGUAGE_CODE == 'ar' %}ابحث عن مرشد بالاسم أو البريد…{% else %}Search an advisor by name or email…{% endif %}"
+            autocomplete="off">
+          <datalist id="imAdvisorList"></datalist>
+          <small class="im-hint">
+            {% if LANGUAGE_CODE == 'ar' %}اختر مرشداً لتعبئة الاسم والبريد والقسم تلقائياً، ثم أكمل باقي الحقول — أو أدخل عضو هيئة تدريس جديداً يدوياً بالأسفل.{% else %}Pick an advisor to auto-fill name, email &amp; department, then complete the rest — or just enter a new instructor manually below.{% endif %}
+          </small>
+        </div>
         <div class="im-form-group">
           <label for="imInstructorName">
             {% if LANGUAGE_CODE == 'ar' %}الاسم (إنجليزي) *{% else %}Full Name *{% endif %}
@@ -246,5 +258,5 @@
   const default_year = {{ default_year }};
   const default_term = {{ default_term }};
 </script>
-<script src="{% static 'js/page-instructor-management.js' %}?v=1"></script>
+<script src="{% static 'js/page-instructor-management.js' %}?v=2"></script>
 {% endblock %}
