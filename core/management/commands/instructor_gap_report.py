@@ -69,11 +69,11 @@ class Command(BaseCommand):
         if options["format"] == "json":
             self.stdout.write(json.dumps(report, indent=2))
         else:
-            self.stdout.write(f"Scenario {scenario_id} — instructor gap shadow A/B")
+            self.stdout.write(f"Scenario {scenario_id} - instructor gap shadow A/B")
             self.stdout.write(f"  Affected instructors : {report['affected_instructors']}")
             self.stdout.write(f"  Idle minutes before  : {report['instructor_idle_before']}")
             self.stdout.write(f"  Idle minutes after   : {report['instructor_idle_after']}")
-            self.stdout.write(f"  Idle reduction (Δ)    : {report['instructor_idle_delta']}")
+            self.stdout.write(f"  Idle reduction (delta): {report['instructor_idle_delta']}")
             self.stdout.write(f"  Student score (OFF)   : {student_off}")
             self.stdout.write(f"  Student score (ON)    : {student_on}")
             verdict = "OK" if students_held else "REGRESSION"
