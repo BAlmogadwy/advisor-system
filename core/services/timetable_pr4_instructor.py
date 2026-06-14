@@ -68,28 +68,47 @@ def is_instructor_links_enabled() -> bool:
     """Reads ``TIMETABLE_INSTRUCTOR_LINKS_ENABLED``. Default ``False``.
 
     Gates whether the planner clash sources instructor identity from structured
-    ``SectionInstructor`` links (per-person, multi-instructor) instead of the
+    ``CourseInstructor`` assignments (per-person, multi-instructor) instead of the
     legacy single opaque free-text string. Independent of the PR4 clash flag:
     PR4 gates *whether the filter runs*; this gates *where ids come from*.
     """
     return bool(getattr(settings, INSTRUCTOR_LINKS_FLAG_SETTING, False))
 
 
-def build_section_instructor_ids(scenario_id: int) -> dict[str, set[int]]:
-    """``{"course_key|section" -> {instructor_id, ...}}`` from active links.
+def build_section_instructor_ids(scenario) -> dict[str, set[int]]:
+    """``{"course_key|section" -> {instructor_id, ...}}`` resolved from the
+    scenario-independent ``CourseInstructor`` assignments.
 
-    Only active instructors are included (a deactivated person drops out of the
-    clash, matching the pickers). Sections with no links are simply absent — the
-    caller falls back to the opaque free-text string for those.
+    Each of the scenario's ``TermSection``s is matched to the course's
+    instructors for the scenario's gender + program(s). Only active instructors
+    are included (a deactivated person drops out of the clash, matching the
+    pickers). Sections with no course assignment are absent — the caller falls
+    back to the opaque free-text string for those.
     """
-    from core.models import SectionInstructor
+    from core.models import CourseInstructor, TermSection
 
     out: dict[str, set[int]] = {}
-    rows = SectionInstructor.objects.filter(
-        term_section__scenario_id=scenario_id, instructor__is_active=True
-    ).values_list("term_section__course_key", "term_section__section", "instructor_id")
-    for course_key, section, instructor_id in rows:
-        out.setdefault(f"{course_key}|{section}", set()).add(instructor_id)
+    gender = getattr(scenario, "gender", "")
+    if not gender:
+        return out
+    programs = list(getattr(scenario, "programs", []) or [])
+
+    # (program, normalised course_code) -> {instructor_id}
+    by_course: dict[tuple[str, str], set[int]] = {}
+    for prog, code, instructor_id in CourseInstructor.objects.filter(
+        program__in=programs, section=gender, instructor__is_active=True
+    ).values_list("program", "course_code", "instructor_id"):
+        by_course.setdefault((prog, (code or "").strip().upper()), set()).add(instructor_id)
+
+    for course_key, course_code, section in TermSection.objects.filter(
+        scenario=scenario
+    ).values_list("course_key", "course_code", "section"):
+        norm = (course_code or "").strip().upper()
+        ids: set[int] = set()
+        for prog in programs:
+            ids |= by_course.get((prog, norm), set())
+        if ids:
+            out[f"{course_key}|{section}"] = ids
     return out
 
 

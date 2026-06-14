@@ -408,7 +408,7 @@ def detect_board_conflicts(board_id: int) -> dict:
         board_courses = {item.course_code for item in items}
         overlap_matrix = build_overlap_matrix(board.scenario_id, board_courses)
         if is_instructor_links_enabled():
-            link_map = build_section_instructor_ids(board.scenario_id)
+            link_map = build_section_instructor_ids(board.scenario)
     except DeliveryBoard.DoesNotExist:
         overlap_matrix = {}
 

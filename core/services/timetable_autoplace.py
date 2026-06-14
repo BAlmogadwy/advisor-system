@@ -435,6 +435,47 @@ def _to_min(t: str) -> int:
     return int(h) * 60 + int(m)
 
 
+def _apply_course_instructor(ts, scenario, board, display_code: str) -> None:
+    """Write the primary ``CourseInstructor`` name into a section's meeting rows.
+
+    Scenario-independent: resolves by the scenario's gender + program (preferring
+    the board's own programme order), then fans the name into the display/clash
+    cache. No-op when the scenario has no gender or the course is unassigned.
+    """
+    gender = getattr(scenario, "gender", "")
+    if not gender:
+        return
+    from core.models import CourseInstructor
+
+    norm = (display_code or "").strip().upper()
+    programs: list[str] = []
+    for prog in str(getattr(board, "program", "") or "").split(","):
+        prog = prog.strip()
+        if prog and prog not in programs:
+            programs.append(prog)
+    for prog in getattr(scenario, "programs", []) or []:
+        if prog not in programs:
+            programs.append(prog)
+
+    for prog in programs:
+        primary = (
+            CourseInstructor.objects.filter(
+                program=prog,
+                course_code=norm,
+                section=gender,
+                role="primary",
+                instructor__is_active=True,
+            )
+            .select_related("instructor")
+            .first()
+        )
+        if primary:
+            TermSectionMeeting.objects.filter(term_section=ts).update(
+                instructor=primary.instructor.full_name
+            )
+            return
+
+
 def _placed_same_course_windows(
     placed_schedule: list[tuple[str, str, str, str]],
     my_code: str,
@@ -1118,7 +1159,7 @@ def auto_place_board(
     #   ``section_instructors`` — ``{section_code_full: {instructor_id, ...}}``
     #       (a SET — a section may have several instructors).
     #
-    # ``instructor_id`` is an int from structured ``SectionInstructor`` links
+    # ``instructor_id`` is an int from structured ``CourseInstructor`` assignments
     # when ``TIMETABLE_INSTRUCTOR_LINKS_ENABLED`` is on AND the section has
     # links (true multi-instructor: any assigned person clashing rejects the
     # option); otherwise it is the legacy normalised opaque free-text string
@@ -1747,6 +1788,12 @@ def auto_place_board(
                         "room": assigned_room,
                     }
                 )
+
+            # Course-level instructor → legacy free-text clash key. Resolve the
+            # primary CourseInstructor for this scenario's gender + program and
+            # fan its name into the section's meeting rows, so the default
+            # INSTRUCTOR_CLASH path works with zero scenario coupling.
+            _apply_course_instructor(ts, scenario, board, display_code)
 
             total_placed += 1
             placement_results.append(

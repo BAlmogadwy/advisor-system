@@ -254,10 +254,10 @@ class Instructor(models.Model):
     """A global teaching staff member, reused across scenarios and terms.
 
     Identity is global (a person is the same human everywhere); the
-    *assignment* of who teaches what is scenario-scoped and lives on the
-    ``SectionInstructor`` link. ``normalised_name`` is the strip+casefold of
-    ``full_name`` (via ``normalise_instructor``) — the dedupe target and the
-    join key against the legacy free-text ``TermSectionMeeting.instructor``.
+    *assignment* of who teaches what is scenario-independent and lives on the
+    ``CourseInstructor`` link (program + course + section M/F). ``normalised_name``
+    is the strip+casefold of ``full_name`` (via ``normalise_instructor``) — the
+    dedupe target and the join key against the legacy free-text instructor name.
     """
 
     full_name = models.TextField()
@@ -292,6 +292,52 @@ class Instructor(models.Model):
 
     def __str__(self) -> str:
         return f"Instructor({self.pk}/{self.full_name})"
+
+
+class CourseInstructor(models.Model):
+    """Scenario-INDEPENDENT assignment of a global ``Instructor`` to a course,
+    keyed by ``(program, course_code, section M/F)``.
+
+    This is the source of truth for "who teaches this course for this cohort".
+    The planner resolves the primary at section-generation time and writes the
+    name into ``TermSectionMeeting.instructor`` (the legacy clash key), so an
+    assignment made here is independent of any scenario.
+    """
+
+    program = models.TextField()
+    course_code = models.TextField()  # normalised on write (normalize_course_code)
+    section = models.CharField(max_length=1, choices=[("M", "Male"), ("F", "Female")])
+    instructor = models.ForeignKey(
+        Instructor,
+        on_delete=models.PROTECT,
+        related_name="course_links",
+    )
+    role = models.TextField(default="primary")  # primary | co | lab
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "course_instructors"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["program", "course_code", "section", "instructor"],
+                name="ux_course_instructor_unique",
+            ),
+            # Exactly one primary per (program, course, section) so the
+            # section-generation write-through has a deterministic display name.
+            models.UniqueConstraint(
+                fields=["program", "course_code", "section"],
+                condition=models.Q(role="primary"),
+                name="ux_course_instructor_one_primary",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["program", "course_code", "section"], name="idx_ci_lookup"),
+            models.Index(fields=["instructor"], name="idx_ci_instructor"),
+        ]
+
+    def __str__(self) -> str:
+        return f"CourseInstructor({self.program}/{self.course_code}/{self.section}->{self.instructor_id})"
 
 
 class TermSection(models.Model):
@@ -375,47 +421,6 @@ class TermSectionMeeting(models.Model):
 
     def __str__(self) -> str:
         return f"Meeting({self.term_section_id}/{self.day})"
-
-
-class SectionInstructor(models.Model):
-    """Scenario-scoped link of a global ``Instructor`` to a ``TermSection``.
-
-    The link is at section level (a person teaches a section that owns many
-    meetings); the clash engine fans it out to every meeting at read time.
-    Scenario scope is derived from ``term_section.scenario_id`` — there is no
-    scenario FK here, so the link can never disagree with its section's
-    scenario. ``role`` is report-only metadata in v1.
-    """
-
-    term_section = models.ForeignKey(
-        TermSection,
-        on_delete=models.CASCADE,
-        related_name="instructor_links",
-    )
-    instructor = models.ForeignKey(
-        Instructor,
-        on_delete=models.PROTECT,
-        related_name="section_links",
-    )
-    role = models.TextField(default="primary")  # primary | co | lab
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = "section_instructors"
-        constraints = [
-            models.UniqueConstraint(
-                fields=["term_section", "instructor"],
-                name="ux_section_instructor_unique",
-            ),
-        ]
-        indexes = [
-            models.Index(fields=["term_section"], name="idx_si_term_section"),
-            models.Index(fields=["instructor"], name="idx_si_instructor"),
-        ]
-
-    def __str__(self) -> str:
-        return f"SectionInstructor({self.term_section_id}->{self.instructor_id}:{self.role})"
 
 
 class StudentTermSection(models.Model):
@@ -518,6 +523,12 @@ class TimetableScenario(models.Model):
     slot_config = models.JSONField(default=list)
     lab_slot_config = models.JSONField(default=list)
     blocked_slots = models.JSONField(default=list)  # [{day, start}] protected institutional blocks
+    # Structured cohort identity (populated at generation) so consumers never
+    # parse the scenario name. gender = "M"/"F"; programs = ["AI", "DS", ...].
+    gender = models.CharField(
+        max_length=1, choices=[("M", "Male"), ("F", "Female")], blank=True, default=""
+    )
+    programs = models.JSONField(default=list)
     created_by = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
