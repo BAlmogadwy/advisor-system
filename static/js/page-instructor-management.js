@@ -111,6 +111,10 @@ const $$ = selector => document.querySelectorAll(selector);
 let currentTab = 'assignments';
 
 function imSwitchTab(tab) {
+  // Close the assign popover if it's open — it's a body-level element, so
+  // switching tabs would otherwise leave it floating over the new tab.
+  if (typeof ca !== 'undefined' && ca.hideAssignPopover) ca.hideAssignPopover();
+
   // Update tab buttons
   $$('.im-tab').forEach(btn => {
     btn.classList.remove('im-tab-active');
@@ -201,12 +205,12 @@ function imRenderInstructorTable(instructors = null) {
       <td>
         <div class="im-instructor-name">
           <strong>${escapeHtml(instructor.full_name)}</strong>
-          ${instructor.full_name_ar ? `<div class="text-muted fs-sm">${escapeHtml(instructor.full_name_ar)}</div>` : ''}
+          ${imField(instructor.full_name_ar) ? `<div class="text-muted fs-sm">${escapeHtml(imField(instructor.full_name_ar))}</div>` : ''}
         </div>
       </td>
-      <td><span class="pill-neutral">${escapeHtml(instructor.department || '—')}</span></td>
-      <td class="text-muted fs-sm">${escapeHtml(instructor.email || '—')}</td>
-      <td class="text-muted fs-sm">${escapeHtml(instructor.employee_no || '—')}</td>
+      <td><span class="pill-neutral">${escapeHtml(imField(instructor.department) || '—')}</span></td>
+      <td class="text-muted fs-sm">${escapeHtml(imField(instructor.email) || '—')}</td>
+      <td class="text-muted fs-sm">${escapeHtml(imField(instructor.employee_no) || '—')}</td>
       <td class="text-center">${instructor.max_weekly_hours || '—'}</td>
       <td>
         <button class="pill-status ${instructor.is_active ? 'pill-status-success' : 'pill-status-muted'}"
@@ -454,10 +458,10 @@ function imRenderReport(data) {
       <td>
         <div class="im-instructor-name">
           <strong>${escapeHtml(row.full_name)}</strong>
-          ${row.full_name_ar ? `<div class="text-muted fs-sm">${escapeHtml(row.full_name_ar)}</div>` : ''}
+          ${imField(row.full_name_ar) ? `<div class="text-muted fs-sm">${escapeHtml(imField(row.full_name_ar))}</div>` : ''}
         </div>
       </td>
-      <td><span class="pill-neutral">${escapeHtml(row.department || '—')}</span></td>
+      <td><span class="pill-neutral">${escapeHtml(imField(row.department) || '—')}</span></td>
       <td>${(row.programs || []).map(p => `<span class="cr-id">${escapeHtml(p)}</span>`).join(' ') || '—'}</td>
       <td class="text-center">${row.course_count}</td>
       <td class="text-center">${row.distinct_courses}</td>
@@ -490,6 +494,16 @@ function escapeHtml(text) {
   const div = document.createElement('div');
   div.textContent = text;
   return div.innerHTML;
+}
+
+// Normalise placeholder-ish values to a blank string. Messy imports/seeds can
+// store the literal strings "None"/"null", which would otherwise render as text
+// in the roster/report instead of an em-dash.
+function imField(value) {
+  if (value === null || value === undefined) return '';
+  const s = String(value).trim();
+  const low = s.toLowerCase();
+  return s === '' || low === 'none' || low === 'null' ? '' : s;
 }
 
 // ── Event Handlers ──
@@ -832,7 +846,7 @@ const ca = {
       `<div class="ca-pop-opt" id="caPopOpt${idx}" role="option" aria-selected="false"
             onclick="ca.assignInstructor(${inst.id})" data-id="${inst.id}">
          <strong>${escapeHtml(inst.full_name)}</strong>
-         ${inst.department ? `<div class="ca-pop-dept">${escapeHtml(inst.department)}</div>` : ''}
+         ${imField(inst.department) ? `<div class="ca-pop-dept">${escapeHtml(imField(inst.department))}</div>` : ''}
        </div>`
     ).join('');
   },
