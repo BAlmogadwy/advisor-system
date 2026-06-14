@@ -217,10 +217,12 @@
           <label for="imAdvisorPicker">
             {% if LANGUAGE_CODE == 'ar' %}تعبئة من مرشد أكاديمي (اختياري){% else %}Seed from existing advisor (optional){% endif %}
           </label>
-          <input type="text" id="imAdvisorPicker" list="imAdvisorList" class="form-control"
-            placeholder="{% if LANGUAGE_CODE == 'ar' %}ابحث عن مرشد بالاسم أو البريد…{% else %}Search an advisor by name or email…{% endif %}"
-            autocomplete="off">
-          <datalist id="imAdvisorList"></datalist>
+          <div class="im-ac">
+            <input type="text" id="imAdvisorPicker" class="form-control" autocomplete="off"
+              role="combobox" aria-expanded="false" aria-controls="imAdvisorResults" aria-autocomplete="list"
+              placeholder="{% if LANGUAGE_CODE == 'ar' %}ابحث عن مرشد بالاسم أو البريد…{% else %}Search an advisor by name or email…{% endif %}">
+            <div class="im-ac-panel" id="imAdvisorResults" role="listbox" style="display:none"></div>
+          </div>
           <small class="im-hint">
             {% if LANGUAGE_CODE == 'ar' %}اختر مرشداً لتعبئة الاسم والبريد والقسم تلقائياً، ثم أكمل باقي الحقول — أو أدخل عضو هيئة تدريس جديداً يدوياً بالأسفل.{% else %}Pick an advisor to auto-fill name, email &amp; department, then complete the rest — or just enter a new instructor manually below.{% endif %}
           </small>
@@ -287,5 +289,5 @@
   const LANGUAGE_CODE = "{{ LANGUAGE_CODE|default:'en' }}";
   const djCsrfToken = "{{ csrf_token }}";
 </script>
-<script src="{% static 'js/page-instructor-management.js' %}?v=9"></script>
+<script src="{% static 'js/page-instructor-management.js' %}?v=12"></script>
 {% endblock %}
