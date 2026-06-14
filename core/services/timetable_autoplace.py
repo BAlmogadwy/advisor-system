@@ -91,6 +91,7 @@ from core.services.timetable_online import OnlineCourseLookup, normalise_course_
 from core.services.timetable_pr4_instructor import (
     build_section_instructor_ids,
     is_instructor_clash_enabled,
+    is_instructor_gap_penalty_enabled,
     is_instructor_links_enabled,
     normalise_instructor,
 )
@@ -514,6 +515,60 @@ def _same_course_overlap_context(
             "existing_end": f"{existing.end_min // 60:02d}:{existing.end_min % 60:02d}",
         }
     return None
+
+
+def _hhmm_to_min(value: str) -> int:
+    """``"09:00"`` → 540. Returns -1 on malformed input."""
+    try:
+        hh, mm = value.split(":", 1)
+        return int(hh) * 60 + int(mm)
+    except (ValueError, AttributeError):
+        return -1
+
+
+def _day_gap_min(meetings: list[tuple[int, int]]) -> int:
+    """Idle minutes between consecutive (start_min, end_min) meetings on one day.
+    Mirrors ``_compute_day_gap`` in the student-assignment evaluator."""
+    if len(meetings) <= 1:
+        return 0
+    ordered = sorted(meetings)
+    return sum(max(0, ordered[i + 1][0] - ordered[i][1]) for i in range(len(ordered) - 1))
+
+
+def _option_instructor_gap_delta(
+    option: list[dict],
+    instructor_ids: set,
+    instr_placed: dict[object, list[tuple[str, int, int]]],
+) -> int:
+    """Extra instructor idle minutes that placing ``option`` would introduce,
+    summed over the section's instructors.
+
+    For each instructor, on each day the option touches, the delta is
+    ``gap(existing_day + option_day) − gap(existing_day)`` — i.e. only the idle
+    time this placement *adds* to that instructor's day, mirroring how the
+    greedy student-gap term scores against ``placed_schedule``. ``instr_placed``
+    maps instructor id → list of (day, start_min, end_min) already committed.
+    """
+    if not instructor_ids:
+        return 0
+    opt_by_day: dict[str, list[tuple[int, int]]] = defaultdict(list)
+    for m in option:
+        s = _hhmm_to_min(m["start"])
+        e = _hhmm_to_min(m["end"])
+        if s >= 0 and e >= 0:
+            opt_by_day[m["day"]].append((s, e))
+    if not opt_by_day:
+        return 0
+
+    total = 0
+    for iid in instructor_ids:
+        existing_by_day: dict[str, list[tuple[int, int]]] = defaultdict(list)
+        for day, s, e in instr_placed.get(iid, ()):  # type: ignore[union-attr]
+            existing_by_day[day].append((s, e))
+        for day, opt_meetings in opt_by_day.items():
+            base = existing_by_day.get(day, [])
+            total += _day_gap_min(base + opt_meetings) - _day_gap_min(base)
+    return total
 
 
 def _same_course_back_to_back_penalty(
@@ -1174,8 +1229,16 @@ def auto_place_board(
     # any, else the free-text string — never both.
     instructor_schedule_full: dict[object, set[tuple[str, str, int]]] = {}
     section_instructors: dict[str, set] = {}
+    # Per-instructor committed meetings (id → [(day, start_min, end_min)]),
+    # maintained as sections are placed so the greedy scorer can prefer options
+    # that compact an instructor's day. Only used when the gap-penalty flag is on.
+    instr_placed: dict[object, list[tuple[str, int, int]]] = {}
+    gap_penalty_on = instructor_clash_on and is_instructor_gap_penalty_enabled()
     if instructor_clash_on:
-        link_map = build_section_instructor_ids(scenario.id) if links_on else {}
+        # NB: build_section_instructor_ids reads scenario.gender/.programs, so it
+        # must receive the scenario OBJECT — passing scenario.id (an int) silently
+        # returns {} and disables the links-keyed clash.
+        link_map = build_section_instructor_ids(scenario) if links_on else {}
         meeting_rows = TermSectionMeeting.objects.filter(
             term_section__scenario_id=scenario.id
         ).values_list(
@@ -1234,6 +1297,12 @@ def auto_place_board(
             mask = _time_mask(lp.day, lp.start_time, lp.end_time)
             placed_masks.append((cc, mask))
             placed_schedule.append((lp.day, lp.start_time, lp.end_time, cc))
+            if gap_penalty_on:
+                _lp_s = _hhmm_to_min(lp.start_time)
+                _lp_e = _hhmm_to_min(lp.end_time)
+                if _lp_s >= 0 and _lp_e >= 0:
+                    for _iid in section_instructors.get(f"{cc}|{lp.term_section.section}", ()):
+                        instr_placed.setdefault(_iid, []).append((lp.day, _lp_s, _lp_e))
             all_placed_masks.append((cc, mask))
             slot_density[lp.start_time] += 1
             if (
@@ -1559,6 +1628,19 @@ def auto_place_board(
                 # than any gap arrangement, but a course pair with 2 shared
                 # students can be overlapped if the alternative requires
                 # overlapping a pair with 5 shared students.
+                # Instructor compaction (flag-gated): prefer options that add no
+                # idle gap to this section's instructors' day. Folded into the
+                # same soft bucket as student gaps and weighted 1× (≤ student
+                # gap_weight) so it never outweighs student concerns; the
+                # canonical evaluator (position 6) remains the strict gate.
+                instructor_gap_penalty = 0
+                if gap_penalty_on:
+                    _sec_ids = section_instructors.get(f"{code}|{sec_label}")
+                    if _sec_ids:
+                        instructor_gap_penalty = _option_instructor_gap_delta(
+                            option, _sec_ids, instr_placed
+                        )
+
                 score = (
                     raw_score[0],
                     raw_score[1],
@@ -1567,7 +1649,8 @@ def auto_place_board(
                     + slot_penalty
                     + time_var_penalty
                     + room_penalty
-                    + density_penalty,
+                    + density_penalty
+                    + instructor_gap_penalty,
                     raw_score[3],
                     raw_score[4],
                 )
@@ -1778,6 +1861,12 @@ def auto_place_board(
                 mask = _time_mask(m["day"], m["start"], m["end"])
                 placed_masks.append((code, mask))
                 placed_schedule.append((m["day"], m["start"], m["end"], code))
+                if gap_penalty_on:
+                    _ms = _hhmm_to_min(m["start"])
+                    _me = _hhmm_to_min(m["end"])
+                    if _ms >= 0 and _me >= 0:
+                        for _iid in section_instructors.get(f"{code}|{sec_label}", ()):
+                            instr_placed.setdefault(_iid, []).append((m["day"], _ms, _me))
                 all_placed_masks.append((code, mask))
                 slot_density[m["start"]] += 1
                 meeting_results.append(

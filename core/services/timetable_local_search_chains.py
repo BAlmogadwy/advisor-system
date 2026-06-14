@@ -241,6 +241,7 @@ def chain_local_search(
     stage_telemetry: dict[str, dict[str, int]] | None = None,
     locked_section_ids: set[str] | None = None,
     chain_time_limit_seconds: float | None = None,
+    section_instructor_ids: dict[str, frozenset[int]] | None = None,
 ) -> TimetableEvaluationResult:
     """Chain-2 local search — runs AFTER single-move search exhausts.
 
@@ -313,6 +314,7 @@ def chain_local_search(
                 generated_sections=list(sections_by_id.values()),
                 student_profiles=student_profiles,
                 course_rigidity=course_rigidity,
+                section_instructor_ids=section_instructor_ids,
             )
             chains_tried += 1
 

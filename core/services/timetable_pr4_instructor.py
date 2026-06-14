@@ -75,6 +75,22 @@ def is_instructor_links_enabled() -> bool:
     return bool(getattr(settings, INSTRUCTOR_LINKS_FLAG_SETTING, False))
 
 
+INSTRUCTOR_GAP_PENALTY_FLAG_SETTING = "TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED"
+
+
+def is_instructor_gap_penalty_enabled() -> bool:
+    """Reads ``TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED``. Default ``False``.
+
+    Gates the soft objective that minimises idle gaps in each instructor's daily
+    schedule. When True, the canonical evaluator appends a lowest-priority
+    ``instructor_idle_minutes`` term (strictly below every student + reserve term,
+    so it never trades away a student outcome) and the greedy scorer prefers
+    placements that compact an instructor's day. Off → the score tuple is the
+    unchanged 6-element shape (byte-identical to pre-feature behaviour).
+    """
+    return bool(getattr(settings, INSTRUCTOR_GAP_PENALTY_FLAG_SETTING, False))
+
+
 def build_section_instructor_ids(scenario) -> dict[str, set[int]]:
     """``{"course_key|section" -> {instructor_id, ...}}`` resolved from the
     scenario-independent ``CourseInstructor`` assignments.

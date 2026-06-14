@@ -35,6 +35,7 @@ in different rooms with disjoint students, so locks are enforced as
 |---|---|---|
 | Cross-course student overlap | greedy 6-tuple (semi-hard, pos. 3), CP-SAT/polisher penalty | weighted by shared-student count |
 | Idle-gap minutes between on-campus meetings | greedy gap term; CP-SAT gap penalty | extra penalty for ≥60-min gaps crossing the 13:00 midday boundary |
+| **Instructor daily idle gap** (per-instructor span) | greedy gap term (pos. 3, weight 1×); evaluator **position 6** (a 7th score element, strictly below every student + reserve term) | minimise idle minutes between an instructor's consecutive same-day classes; only counts courses with an assigned instructor; can never trade away a student outcome. Gated `TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED` (default OFF). Result payload carries `instructor_gap_metric` |
 | Same-course back-to-back preference | `timetable_same_course.py` | miss = 5000; different-day = 1000; overlap = 10000 |
 | Online-courses-late, time-consistency, day-spacing, slot-density | greedy 6-tuple + CP-SAT | scheduling-quality preferences |
 | Quality policy v1 (`weak_slot`, `day_balance`, `spare_capacity`, `section_balance`, `room_change`, `student_day_overload`) | `timetable_quality.py` | ranks equal hard outcomes |
@@ -76,6 +77,8 @@ the 13:00 midday boundary are scheduling-quality, unrelated to a prayer rule.)
 | `TIMETABLE_CAPACITY_BUFFER` | 1.1 | room-sizing multiplier |
 | `TIMETABLE_PR2_ROOM_ORACLE_ENABLED` | true | typed room-feasibility reasons |
 | `TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED` | true | real instructor-clash hard filter |
+| `TIMETABLE_INSTRUCTOR_LINKS_ENABLED` | false | source instructor identity from structured `CourseInstructor` links (per-person clash) instead of free-text |
+| `TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED` | **false** | soft objective minimising instructor daily idle gaps; needs `TIMETABLE_INSTRUCTOR_LINKS_ENABLED`; off → 6-element score (byte parity) |
 | `TIMETABLE_LAB_HEURISTIC_UNIFIED` | true | unified lab-room predicate |
 | `TIMETABLE_PR3_WARM_START_ENABLED` / decision-trace / stage-telemetry / async (PR6/7/8) | true | observability + async shims |
 
