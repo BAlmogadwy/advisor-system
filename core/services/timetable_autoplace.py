@@ -89,7 +89,9 @@ from core.services.timetable_lab_predicate import (
 )
 from core.services.timetable_online import OnlineCourseLookup, normalise_course_code
 from core.services.timetable_pr4_instructor import (
+    build_section_instructor_ids,
     is_instructor_clash_enabled,
+    is_instructor_links_enabled,
     normalise_instructor,
 )
 from core.services.timetable_room_oracle import (
@@ -1105,44 +1107,44 @@ def auto_place_board(
     trace_enabled = is_decision_trace_enabled()
     decision_trace: dict[str, dict] = {}
 
-    # ── PR4 commit 3 — instructor-clash plumbing (flag-gated) ────────
+    # ── Instructor-clash plumbing (flag-gated) ──────────────────────
     # When ``TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED`` is on we build two
-    # per-run lookup tables from the scenario's ``TermSectionMeeting``
-    # rows (opaque-string discipline per A6 — no delimiter parsing):
+    # per-run lookup tables so the candidate loop can reject any option that
+    # double-books one of the section's instructors:
     #
-    #   ``instructor_schedule_full`` — ``{normalised_instructor:
+    #   ``instructor_schedule_full`` — ``{instructor_id:
     #       {(section_code_full, day_upper, start_minute), ...}}``.
-    #       Richer than the public ``build_instructor_schedule`` helper
-    #       (commit 2) because the emission loop must distinguish
-    #       "another section already booked this instructor here" from
-    #       "this is the current section's own pre-existing booking".
     #
-    #   ``section_instructor`` — ``{section_code_full: normalised_id}``
-    #       so the candidate loop can look up the current section's
-    #       instructor without a second DB round-trip.
+    #   ``section_instructors`` — ``{section_code_full: {instructor_id, ...}}``
+    #       (a SET — a section may have several instructors).
     #
-    # Both maps stay empty when the flag is off, which keeps the
-    # candidate loop's fast-path free of any extra work. Commit 8 flips
-    # the flag default; env override remains the kill-switch.
+    # ``instructor_id`` is an int from structured ``SectionInstructor`` links
+    # when ``TIMETABLE_INSTRUCTOR_LINKS_ENABLED`` is on AND the section has
+    # links (true multi-instructor: any assigned person clashing rejects the
+    # option); otherwise it is the legacy normalised opaque free-text string
+    # (single instructor, A6 discipline). Per section it is one source or the
+    # other, never both. Both maps stay empty when the clash flag is off, so the
+    # candidate loop's fast-path is untouched. Env overrides are the kill-switch.
     instructor_clash_on = is_instructor_clash_enabled()
-    instructor_schedule_full: dict[str, set[tuple[str, str, int]]] = {}
-    section_instructor: dict[str, str | None] = {}
+    links_on = instructor_clash_on and is_instructor_links_enabled()
+    # Keys are instructor ids: ints (structured links) or normalised opaque
+    # strings (legacy free-text fallback). Membership tests are type-agnostic so
+    # the consuming filter is identical for both. Per section: links if it has
+    # any, else the free-text string — never both.
+    instructor_schedule_full: dict[object, set[tuple[str, str, int]]] = {}
+    section_instructors: dict[str, set] = {}
     if instructor_clash_on:
-        meeting_rows = (
-            TermSectionMeeting.objects.filter(term_section__scenario_id=scenario.id)
-            .exclude(instructor="")
-            .values_list(
-                "term_section__course_key",
-                "term_section__section",
-                "day",
-                "start_time",
-                "instructor",
-            )
+        link_map = build_section_instructor_ids(scenario.id) if links_on else {}
+        meeting_rows = TermSectionMeeting.objects.filter(
+            term_section__scenario_id=scenario.id
+        ).values_list(
+            "term_section__course_key",
+            "term_section__section",
+            "day",
+            "start_time",
+            "instructor",
         )
         for cc, sec, day, start_time, instructor in meeting_rows:
-            normalised = normalise_instructor(instructor)
-            if normalised is None:
-                continue
             section_full = f"{cc}|{sec}"
             try:
                 hh_str, mm_str = start_time.split(":", 1)
@@ -1150,10 +1152,18 @@ def auto_place_board(
             except (ValueError, AttributeError):
                 continue
             day_upper = (day or "").upper()
-            instructor_schedule_full.setdefault(normalised, set()).add(
-                (section_full, day_upper, start_minute)
-            )
-            section_instructor[section_full] = normalised
+            if section_full in link_map:
+                ids: set = link_map[section_full]
+            else:
+                normalised = normalise_instructor(instructor)
+                ids = {normalised} if normalised is not None else set()
+            if not ids:
+                continue
+            for iid in ids:
+                instructor_schedule_full.setdefault(iid, set()).add(
+                    (section_full, day_upper, start_minute)
+                )
+            section_instructors.setdefault(section_full, set()).update(ids)
 
     # ── 2b. PR1 lock preload ─────────────────────────────────────────
     # When TIMETABLE_ENFORCE_LOCKS is on, locked SectionPlacement rows
@@ -1387,21 +1397,25 @@ def auto_place_board(
                 # noise (the option is already out of the candidate set).
                 if instructor_clash_on:
                     section_full_cur = f"{code}|{sec_label}"
-                    my_instr = section_instructor.get(section_full_cur)
-                    if my_instr is not None:
-                        bookings = instructor_schedule_full.get(my_instr, set())
+                    my_instrs = section_instructors.get(section_full_cur, set())
+                    if my_instrs:
                         clash_ctx: dict | None = None
                         for m in option:
                             m_day_up = m["day"].upper()
                             m_start_min = _to_min(m["start"])
-                            for other_section, bd, bs in bookings:
-                                if other_section == section_full_cur:
-                                    continue
-                                if bd == m_day_up and bs == m_start_min:
-                                    clash_ctx = {
-                                        "clashing_section": other_section,
-                                        "clashing_instructor_id": my_instr,
-                                    }
+                            for my_instr in my_instrs:
+                                for other_section, bd, bs in instructor_schedule_full.get(
+                                    my_instr, set()
+                                ):
+                                    if other_section == section_full_cur:
+                                        continue
+                                    if bd == m_day_up and bs == m_start_min:
+                                        clash_ctx = {
+                                            "clashing_section": other_section,
+                                            "clashing_instructor_id": my_instr,
+                                        }
+                                        break
+                                if clash_ctx is not None:
                                     break
                             if clash_ctx is not None:
                                 break

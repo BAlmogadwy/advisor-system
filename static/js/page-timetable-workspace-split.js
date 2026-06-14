@@ -7498,7 +7498,6 @@ function openDrawer(paneIdx, placementId) {
       ? '<span class="pill clash">⚠ Conflict</span>'
       : '<span class="pill ok">● Clean</span>';
 
-  const instructor = (p.meetings && p.meetings[0]) ? p.meetings[0].instructor : null;
   const meetings = (p.meetings || []).map(m =>
     `<div class="meeting-row"><span class="d">${esc(m.day)}</span><span class="t">${esc(m.start_time)}–${esc(m.end_time)}</span><span class="r">${esc(m.room || '—')} · ${esc(m.instructor || '—')}</span></div>`
   ).join('') || '<div class="meeting-row"><span class="r">—</span></div>';
@@ -7511,13 +7510,32 @@ function openDrawer(paneIdx, placementId) {
     <div class="field"><span class="label">${IS_AR ? 'اليوم' : 'Day'}</span><span class="value mono">${esc(p.day)}</span></div>
     <div class="field"><span class="label">${IS_AR ? 'الوقت' : 'Time'}</span><span class="value mono">${esc(p.start_time)}–${esc(p.end_time)}</span></div>
     <div class="field"><span class="label">${IS_AR ? 'القاعة' : 'Room'}</span><span class="value mono">${esc(p.room || '—')}</span></div>
-    <div class="field"><span class="label">${IS_AR ? 'المدرس' : 'Instructor'}</span><span class="value">${esc(instructor || '—')}</span></div>
+    <div class="field"><span class="label">${IS_AR ? 'المدرسون' : 'Instructors'}</span><span class="value" id="twsDrawerInstrChips"></span></div>
+    ${(S.scenarioMeta && S.scenarioMeta.status === 'published') ? '' : `
+    <div class="tws-drawer-instr-edit">
+      <input id="twsDrawerInstrInput" list="twsDrawerInstrList" autocomplete="off" placeholder="${IS_AR ? 'أضف مدرساً بالاسم…' : 'Add instructor by name…'}">
+      <datalist id="twsDrawerInstrList"></datalist>
+      <button class="tws-btn" id="twsDrawerInstrAdd" type="button">${IS_AR ? 'إضافة' : 'Add'}</button>
+    </div>`}
     <div class="field"><span class="label">${IS_AR ? 'السعة' : 'Capacity'}</span><span class="value mono">${p.available_capacity || '—'}</span></div>
     <div class="field"><span class="label">${IS_AR ? 'المسجلون' : 'Registered'}</span><span class="value mono">${p.registered_count || '—'}</span></div>
     <div class="field"><span class="label">${IS_AR ? 'الحالة' : 'Status'}</span><span class="value">${statusPill}</span></div>
     <div class="section-title">${IS_AR ? 'جميع اللقاءات' : 'All meetings'}</div>
     ${meetings}
   `;
+
+  // Instructor editor — links are the source of truth; the backend writes the
+  // primary name through to the meeting rows so clash badges recompute on reload.
+  drawerRenderInstructorChips(p);
+  if (!(S.scenarioMeta && S.scenarioMeta.status === 'published')) {
+    drawerLoadInstructorOptions();
+    const instrAdd = $('twsDrawerInstrAdd');
+    const instrInput = $('twsDrawerInstrInput');
+    if (instrAdd) instrAdd.addEventListener('click', () => drawerAddInstructor(p));
+    if (instrInput) instrInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); drawerAddInstructor(p); }
+    });
+  }
 
   // Lock-button label mirrors current state (only update the label span)
   const lockBtn = $('twsDrawerLock');
@@ -7541,6 +7559,75 @@ function closeDrawer() {
   $('twsDrawer').setAttribute('aria-hidden', 'true');
   $('twsDrawer').setAttribute('inert', '');
   $('twsDrawerBackdrop').classList.remove('open');
+}
+
+/* ── Drawer instructor assignment ── */
+let drawerInstrOptions = [];
+
+function drawerInstrName(i) {
+  return (IS_AR && i.full_name_ar) ? i.full_name_ar : i.full_name;
+}
+
+function drawerRenderInstructorChips(p) {
+  const host = $('twsDrawerInstrChips');
+  if (!host) return;
+  const list = p.instructors || [];
+  const published = S.scenarioMeta && S.scenarioMeta.status === 'published';
+  if (!list.length) {
+    host.innerHTML = `<span class="tws-instr-none">${IS_AR ? 'لا يوجد' : 'None'}</span>`;
+    return;
+  }
+  host.innerHTML = list.map(i =>
+    `<span class="tws-instr-chip${i.role === 'primary' ? ' primary' : ''}">${esc(drawerInstrName(i))}` +
+    (published ? '' : `<button type="button" class="tws-instr-x" data-instr-id="${i.id}" aria-label="${IS_AR ? 'إزالة' : 'remove'}">×</button>`) +
+    `</span>`
+  ).join('');
+  if (!published) {
+    host.querySelectorAll('.tws-instr-x').forEach(btn =>
+      btn.addEventListener('click', () => drawerRemoveInstructor(p, parseInt(btn.dataset.instrId)))
+    );
+  }
+}
+
+async function drawerLoadInstructorOptions() {
+  const dl = $('twsDrawerInstrList');
+  if (!dl) return;
+  const data = await api('/ops/tw/instructors/');
+  if (!data || !data.instructors) return;
+  drawerInstrOptions = data.instructors;
+  dl.innerHTML = drawerInstrOptions.map(i => `<option value="${esc(i.full_name)}"></option>`).join('');
+}
+
+async function drawerSetInstructors(p, ids, names) {
+  const data = await api(`/ops/tw/sections/${p.term_section_id}/instructors/`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ instructor_ids: ids || [], instructor_names: names || [] }),
+  });
+  if (!data) return;
+  notify.success(IS_AR ? 'تم تحديث المدرسين' : 'Instructors updated');
+  // Reload panes so p.instructors + instructor-clash badges recompute, then
+  // reopen the drawer on the same placement (mirrors the lock-toggle pattern).
+  for (let i = 0; i < paneCount(); i++) await loadAndRenderPane(i);
+  if (DRAWER.placementId === p.id) openDrawer(DRAWER.paneIdx, p.id);
+}
+
+async function drawerAddInstructor(p) {
+  const input = $('twsDrawerInstrInput');
+  const val = ((input && input.value) || '').trim();
+  if (!val) return;
+  const ids = (p.instructors || []).map(i => i.id);
+  const match = drawerInstrOptions.find(i => i.full_name === val);
+  if (match) {
+    if (!ids.includes(match.id)) ids.push(match.id);
+    await drawerSetInstructors(p, ids, []);
+  } else {
+    await drawerSetInstructors(p, ids, [val]);  // new instructor by name
+  }
+}
+
+async function drawerRemoveInstructor(p, instructorId) {
+  const ids = (p.instructors || []).map(i => i.id).filter(id => id !== instructorId);
+  await drawerSetInstructors(p, ids, []);
 }
 
 /* ── Lock / unlock ── */

@@ -7,7 +7,7 @@
 {% block main_padding %}p-0{% endblock %}
 
 {% block extra_css %}
-<link href="{% static 'css/timetable-workspace-split.css' %}?v=2" rel="stylesheet">
+<link href="{% static 'css/timetable-workspace-split.css' %}?v=3" rel="stylesheet">
 {% endblock %}
 
 {% block page_heading %}{% endblock %}
@@ -385,5 +385,5 @@
   const DEFAULT_YEAR = {{ default_year|default:'null' }};
   const DEFAULT_TERM = {{ default_term|default:'null' }};
 </script>
-<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=106"></script>
+<script src="{% static 'js/page-timetable-workspace-split.js' %}?v=107"></script>
 {% endblock %}

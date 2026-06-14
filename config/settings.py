@@ -396,6 +396,16 @@ TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED = os.getenv(
     "TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED", "true"
 ).lower() in ("1", "true", "yes", "on")
 
+# When on, the planner's instructor-clash filter sources per-person identity
+# from structured SectionInstructor links (true multi-instructor: a section's
+# meeting clashes if ANY assigned instructor is double-booked) instead of the
+# single opaque free-text name. Default OFF — opt-in after a shadow run; with it
+# off the clash reads the free-text field exactly as before. Sections without
+# links always fall back to the free-text path regardless of this flag.
+TIMETABLE_INSTRUCTOR_LINKS_ENABLED = os.getenv(
+    "TIMETABLE_INSTRUCTOR_LINKS_ENABLED", "false"
+).lower() in ("1", "true", "yes", "on")
+
 TIMETABLE_LAB_HEURISTIC_UNIFIED = os.getenv("TIMETABLE_LAB_HEURISTIC_UNIFIED", "true").lower() in (
     "1",
     "true",
