@@ -250,6 +250,50 @@ class AcademicAdvisor(models.Model):
         return f"Advisor({self.advisor_id})"
 
 
+class Instructor(models.Model):
+    """A global teaching staff member, reused across scenarios and terms.
+
+    Identity is global (a person is the same human everywhere); the
+    *assignment* of who teaches what is scenario-scoped and lives on the
+    ``SectionInstructor`` link. ``normalised_name`` is the strip+casefold of
+    ``full_name`` (via ``normalise_instructor``) — the dedupe target and the
+    join key against the legacy free-text ``TermSectionMeeting.instructor``.
+    """
+
+    full_name = models.TextField()
+    normalised_name = models.TextField()
+    full_name_ar = models.TextField(blank=True, default="")
+    email = models.TextField(blank=True, default="")
+    employee_no = models.TextField(blank=True, default="")
+    department = models.TextField(blank=True, default="")
+    # Advisory only — surfaced in the load report, NOT a clash/solver input.
+    max_weekly_hours = models.IntegerField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "instructors"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["normalised_name"],
+                name="ux_instructors_normalised_name",
+            ),
+            models.UniqueConstraint(
+                fields=["email"],
+                condition=models.Q(email__gt=""),
+                name="ux_instructors_email_present",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["department"], name="idx_instructors_dept"),
+            models.Index(fields=["is_active"], name="idx_instructors_active"),
+        ]
+
+    def __str__(self) -> str:
+        return f"Instructor({self.pk}/{self.full_name})"
+
+
 class TermSection(models.Model):
     # Scenario FK: scopes auto-generated sections to a specific scenario
     # so two scenarios can both have CS211/S1 independently.
@@ -331,6 +375,47 @@ class TermSectionMeeting(models.Model):
 
     def __str__(self) -> str:
         return f"Meeting({self.term_section_id}/{self.day})"
+
+
+class SectionInstructor(models.Model):
+    """Scenario-scoped link of a global ``Instructor`` to a ``TermSection``.
+
+    The link is at section level (a person teaches a section that owns many
+    meetings); the clash engine fans it out to every meeting at read time.
+    Scenario scope is derived from ``term_section.scenario_id`` — there is no
+    scenario FK here, so the link can never disagree with its section's
+    scenario. ``role`` is report-only metadata in v1.
+    """
+
+    term_section = models.ForeignKey(
+        TermSection,
+        on_delete=models.CASCADE,
+        related_name="instructor_links",
+    )
+    instructor = models.ForeignKey(
+        Instructor,
+        on_delete=models.PROTECT,
+        related_name="section_links",
+    )
+    role = models.TextField(default="primary")  # primary | co | lab
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "section_instructors"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["term_section", "instructor"],
+                name="ux_section_instructor_unique",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["term_section"], name="idx_si_term_section"),
+            models.Index(fields=["instructor"], name="idx_si_instructor"),
+        ]
+
+    def __str__(self) -> str:
+        return f"SectionInstructor({self.term_section_id}->{self.instructor_id}:{self.role})"
 
 
 class StudentTermSection(models.Model):

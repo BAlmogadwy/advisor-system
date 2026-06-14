@@ -61,6 +61,38 @@ def is_instructor_clash_enabled() -> bool:
     return bool(getattr(settings, INSTRUCTOR_CLASH_FLAG_SETTING, False))
 
 
+INSTRUCTOR_LINKS_FLAG_SETTING = "TIMETABLE_INSTRUCTOR_LINKS_ENABLED"
+
+
+def is_instructor_links_enabled() -> bool:
+    """Reads ``TIMETABLE_INSTRUCTOR_LINKS_ENABLED``. Default ``False``.
+
+    Gates whether the planner clash sources instructor identity from structured
+    ``SectionInstructor`` links (per-person, multi-instructor) instead of the
+    legacy single opaque free-text string. Independent of the PR4 clash flag:
+    PR4 gates *whether the filter runs*; this gates *where ids come from*.
+    """
+    return bool(getattr(settings, INSTRUCTOR_LINKS_FLAG_SETTING, False))
+
+
+def build_section_instructor_ids(scenario_id: int) -> dict[str, set[int]]:
+    """``{"course_key|section" -> {instructor_id, ...}}`` from active links.
+
+    Only active instructors are included (a deactivated person drops out of the
+    clash, matching the pickers). Sections with no links are simply absent — the
+    caller falls back to the opaque free-text string for those.
+    """
+    from core.models import SectionInstructor
+
+    out: dict[str, set[int]] = {}
+    rows = SectionInstructor.objects.filter(
+        term_section__scenario_id=scenario_id, instructor__is_active=True
+    ).values_list("term_section__course_key", "term_section__section", "instructor_id")
+    for course_key, section, instructor_id in rows:
+        out.setdefault(f"{course_key}|{section}", set()).add(instructor_id)
+    return out
+
+
 def build_instructor_schedule(board_id: int) -> dict[str, set[tuple[str, int]]]:
     """Build the per-run instructor → slot-set roll-up.
 
