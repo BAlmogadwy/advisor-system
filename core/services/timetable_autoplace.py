@@ -71,6 +71,9 @@ from core.models import (
     TermSection,
     TermSectionMeeting,
 )
+from core.services.course_instructor_assignment import (
+    apply_primary_instructor as _apply_course_instructor,
+)
 from core.services.timetable_decision_trace import (
     INSTRUCTOR_CLASH,
     SAME_COURSE_INSTRUCTOR_CLASH,
@@ -434,47 +437,6 @@ def _to_min(t: str) -> int:
     """
     h, m = t.split(":")
     return int(h) * 60 + int(m)
-
-
-def _apply_course_instructor(ts, scenario, board, display_code: str) -> None:
-    """Write the primary ``CourseInstructor`` name into a section's meeting rows.
-
-    Scenario-independent: resolves by the scenario's gender + program (preferring
-    the board's own programme order), then fans the name into the display/clash
-    cache. No-op when the scenario has no gender or the course is unassigned.
-    """
-    gender = getattr(scenario, "gender", "")
-    if not gender:
-        return
-    from core.models import CourseInstructor
-
-    norm = (display_code or "").strip().upper()
-    programs: list[str] = []
-    for prog in str(getattr(board, "program", "") or "").split(","):
-        prog = prog.strip()
-        if prog and prog not in programs:
-            programs.append(prog)
-    for prog in getattr(scenario, "programs", []) or []:
-        if prog not in programs:
-            programs.append(prog)
-
-    for prog in programs:
-        primary = (
-            CourseInstructor.objects.filter(
-                program=prog,
-                course_code=norm,
-                section=gender,
-                role="primary",
-                instructor__is_active=True,
-            )
-            .select_related("instructor")
-            .first()
-        )
-        if primary:
-            TermSectionMeeting.objects.filter(term_section=ts).update(
-                instructor=primary.instructor.full_name
-            )
-            return
 
 
 def _placed_same_course_windows(
@@ -1630,9 +1592,11 @@ def auto_place_board(
                 # overlapping a pair with 5 shared students.
                 # Instructor compaction (flag-gated): prefer options that add no
                 # idle gap to this section's instructors' day. Folded into the
-                # same soft bucket as student gaps and weighted 1× (≤ student
-                # gap_weight) so it never outweighs student concerns; the
-                # canonical evaluator (position 6) remains the strict gate.
+                # same soft bucket as student gaps and given the SAME gap_weight,
+                # so an instructor's idle minute weighs like a student's during
+                # construction. Students-first is still guaranteed structurally:
+                # the canonical evaluator ranks instructor gap at position 6,
+                # strictly below every student term.
                 instructor_gap_penalty = 0
                 if gap_penalty_on:
                     _sec_ids = section_instructors.get(f"{code}|{sec_label}")
@@ -1650,7 +1614,7 @@ def auto_place_board(
                     + time_var_penalty
                     + room_penalty
                     + density_penalty
-                    + instructor_gap_penalty,
+                    + instructor_gap_penalty * gap_weight,
                     raw_score[3],
                     raw_score[4],
                 )

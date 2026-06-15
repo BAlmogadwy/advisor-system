@@ -622,6 +622,8 @@ def persist_solver_result(board_id: int, result: dict) -> dict:
         )
     }
 
+    from core.services.course_instructor_assignment import apply_primary_instructor
+
     for p in result["placements"]:
         code = p["course_code"]
         display_code = p.get("display_code", code)
@@ -656,6 +658,12 @@ def persist_solver_result(board_id: int, result: dict) -> dict:
                 start_time=m["start"],
                 defaults={"end_time": m["end"]},
             )
+
+        # Re-fan the primary instructor onto the freshly recreated meeting rows
+        # (recreated above with a blank instructor). Without this, a CP-SAT-backed
+        # build drops the greedy write-through and the Instructors export sheet
+        # goes blank.
+        apply_primary_instructor(ts, scenario, board, display_code)
 
     return result
 
