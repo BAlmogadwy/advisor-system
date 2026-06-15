@@ -711,6 +711,8 @@ def optimize_and_persist_board(board_id: int, max_seconds: float = 8.0) -> dict:
         TermSectionMeeting.objects.filter(term_section_id=ts_id).delete()
 
     # Recreate from optimized schedule
+    from core.services.course_instructor_assignment import apply_primary_instructor
+
     for i, meetings in schedule.items():  # noqa: B007
         sec = sections[i]
         ts_id = sec["term_section_id"]
@@ -736,6 +738,12 @@ def optimize_and_persist_board(board_id: int, max_seconds: float = 8.0) -> dict:
                 start_time=m["start"],
                 defaults={"end_time": m["end"]},
             )
+
+        # Re-fan the primary instructor onto the recreated meeting rows so the
+        # SA polish does not drop the greedy write-through (blank Instructors
+        # export sheet otherwise). Survives the evaluator-gate rollback below,
+        # which restores placements only — the instructor rides on the meetings.
+        apply_primary_instructor(ts, board.scenario, board, ts.course_code)
 
     # Assign rooms after re-persisting (annealing may have moved sections)
     from core.services.timetable_rooming import assign_rooms_to_board

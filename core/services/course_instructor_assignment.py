@@ -73,6 +73,59 @@ def set_course_instructors(
     return serialize_course_instructors(program, code, section)
 
 
+def apply_primary_instructor(ts, scenario, board, display_code: str) -> bool:
+    """Fan the primary ``CourseInstructor`` name into a section's meeting rows.
+
+    The single source of the meeting-level instructor write-through. Resolves
+    by the scenario's gender + program (preferring the board's own programme
+    order, then the scenario's), then writes the primary's name into every
+    ``TermSectionMeeting`` of the section (the legacy display/clash cache).
+    Returns ``True`` when a name is applied; ``False`` (no-op) when the
+    scenario has no gender or the course has no active primary assignment.
+
+    The greedy placer applies this as each section is placed. Every solver /
+    local-search / load-balancer persist MUST re-apply it after recreating
+    meeting rows: those recreate the meetings with a blank ``instructor``, so
+    without this re-fan the name is lost — which silently suppresses the
+    Instructors export sheet (it no-ops when no meeting carries a name) after
+    a full rebuild, CP-SAT polish, or rebalance.
+    """
+    from core.models import TermSectionMeeting
+
+    gender = getattr(scenario, "gender", "")
+    if not gender:
+        return False
+
+    norm = (display_code or "").strip().upper()
+    programs: list[str] = []
+    for prog in str(getattr(board, "program", "") or "").split(","):
+        prog = prog.strip()
+        if prog and prog not in programs:
+            programs.append(prog)
+    for prog in getattr(scenario, "programs", []) or []:
+        if prog not in programs:
+            programs.append(prog)
+
+    for prog in programs:
+        primary = (
+            CourseInstructor.objects.filter(
+                program=prog,
+                course_code=norm,
+                section=gender,
+                role="primary",
+                instructor__is_active=True,
+            )
+            .select_related("instructor")
+            .first()
+        )
+        if primary:
+            TermSectionMeeting.objects.filter(term_section=ts).update(
+                instructor=primary.instructor.full_name
+            )
+            return True
+    return False
+
+
 def reconcile_scenario_instructors(scenario) -> int:
     """Re-fan the current primary ``CourseInstructor`` names into an existing
     scenario's ``TermSectionMeeting.instructor`` rows (the display/clash cache).

@@ -18,8 +18,10 @@ from django.test import Client
 
 from core.models import (
     CourseInstructor,
+    DeliveryBoard,
     Instructor,
     ProgrammeRequirement,
+    SectionPlacement,
     TermSection,
     TermSectionMeeting,
     TimetableScenario,
@@ -232,3 +234,91 @@ def test_build_section_instructor_ids_empty_without_gender() -> None:
         academic_year="1448", term="1", name="x", gender="", programs=["AI"]
     )
     assert build_section_instructor_ids(sc) == {}
+
+
+@pytest.mark.django_db
+def test_solver_persist_refans_instructor() -> None:
+    """A solver persist deletes + recreates meeting rows with a blank instructor.
+    It MUST re-fan the primary CourseInstructor name, or a CP-SAT-backed build
+    (full rebuild / optimal / V2 polish) silently drops the greedy write-through
+    and the Instructors export sheet goes blank — the bug this guards against.
+    """
+    from core.services.timetable_solver import persist_solver_result
+
+    sc = TimetableScenario.objects.create(
+        academic_year="1448", term="1", name="AI M T1", gender="M", programs=["AI"]
+    )
+    board = DeliveryBoard.objects.create(scenario=sc, label="T1", nominal_term=1, program="AI")
+    instr = _instructor("Dr Solver")
+    set_course_instructors("AI", "AI113", "M", [instr.pk])
+
+    # Greedy already placed the section and wrote the primary's name on it.
+    ts = TermSection.objects.create(
+        scenario=sc,
+        course_key="AI113",
+        course_code="AI113",
+        course_number="113",
+        section="S1",
+        source_tag="tw_auto",
+    )
+    TermSectionMeeting.objects.create(
+        term_section=ts, day="SUN", start_time="09:00", end_time="10:15", instructor="Dr Solver"
+    )
+    SectionPlacement.objects.create(
+        board=board, term_section=ts, day="SUN", start_time="09:00", end_time="10:15", room="R1"
+    )
+
+    # CP-SAT relocates the section; persist wipes the old meeting and recreates it.
+    persist_solver_result(
+        board.id,
+        {
+            "status": "feasible",
+            "placements": [
+                {
+                    "course_code": "AI113",
+                    "display_code": "AI113",
+                    "section": "S1",
+                    "course_name": "AI113",
+                    "meetings": [{"day": "MON", "start": "11:00", "end": "12:15"}],
+                }
+            ],
+        },
+    )
+
+    meeting = TermSectionMeeting.objects.get(term_section=ts)
+    assert meeting.day == "MON"  # the relocation persisted...
+    assert meeting.instructor == "Dr Solver"  # ...and the write-through survived it
+
+
+@pytest.mark.django_db
+def test_solver_persist_leaves_unassigned_course_blank() -> None:
+    """Re-fan is a no-op for a course with no active primary link — the meeting
+    stays blank rather than borrowing some other course's instructor.
+    """
+    from core.services.timetable_solver import persist_solver_result
+
+    sc = TimetableScenario.objects.create(
+        academic_year="1448", term="1", name="AI M T1", gender="M", programs=["AI"]
+    )
+    board = DeliveryBoard.objects.create(scenario=sc, label="T1", nominal_term=1, program="AI")
+    # AI113 has an instructor; AI999 (the one we persist) does not.
+    set_course_instructors("AI", "AI113", "M", [_instructor("Dr Solver").pk])
+
+    persist_solver_result(
+        board.id,
+        {
+            "status": "feasible",
+            "placements": [
+                {
+                    "course_code": "AI999",
+                    "display_code": "AI999",
+                    "section": "S1",
+                    "course_name": "AI999",
+                    "meetings": [{"day": "MON", "start": "11:00", "end": "12:15"}],
+                }
+            ],
+        },
+    )
+
+    meeting = TermSectionMeeting.objects.get(term_section__course_key="AI999")
+    assert meeting.instructor == ""

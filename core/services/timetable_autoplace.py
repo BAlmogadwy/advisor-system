@@ -71,6 +71,9 @@ from core.models import (
     TermSection,
     TermSectionMeeting,
 )
+from core.services.course_instructor_assignment import (
+    apply_primary_instructor as _apply_course_instructor,
+)
 from core.services.timetable_decision_trace import (
     INSTRUCTOR_CLASH,
     SAME_COURSE_INSTRUCTOR_CLASH,
@@ -434,47 +437,6 @@ def _to_min(t: str) -> int:
     """
     h, m = t.split(":")
     return int(h) * 60 + int(m)
-
-
-def _apply_course_instructor(ts, scenario, board, display_code: str) -> None:
-    """Write the primary ``CourseInstructor`` name into a section's meeting rows.
-
-    Scenario-independent: resolves by the scenario's gender + program (preferring
-    the board's own programme order), then fans the name into the display/clash
-    cache. No-op when the scenario has no gender or the course is unassigned.
-    """
-    gender = getattr(scenario, "gender", "")
-    if not gender:
-        return
-    from core.models import CourseInstructor
-
-    norm = (display_code or "").strip().upper()
-    programs: list[str] = []
-    for prog in str(getattr(board, "program", "") or "").split(","):
-        prog = prog.strip()
-        if prog and prog not in programs:
-            programs.append(prog)
-    for prog in getattr(scenario, "programs", []) or []:
-        if prog not in programs:
-            programs.append(prog)
-
-    for prog in programs:
-        primary = (
-            CourseInstructor.objects.filter(
-                program=prog,
-                course_code=norm,
-                section=gender,
-                role="primary",
-                instructor__is_active=True,
-            )
-            .select_related("instructor")
-            .first()
-        )
-        if primary:
-            TermSectionMeeting.objects.filter(term_section=ts).update(
-                instructor=primary.instructor.full_name
-            )
-            return
 
 
 def _placed_same_course_windows(
