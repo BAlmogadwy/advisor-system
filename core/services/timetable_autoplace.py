@@ -1630,9 +1630,11 @@ def auto_place_board(
                 # overlapping a pair with 5 shared students.
                 # Instructor compaction (flag-gated): prefer options that add no
                 # idle gap to this section's instructors' day. Folded into the
-                # same soft bucket as student gaps and weighted 1× (≤ student
-                # gap_weight) so it never outweighs student concerns; the
-                # canonical evaluator (position 6) remains the strict gate.
+                # same soft bucket as student gaps and given the SAME gap_weight,
+                # so an instructor's idle minute weighs like a student's during
+                # construction. Students-first is still guaranteed structurally:
+                # the canonical evaluator ranks instructor gap at position 6,
+                # strictly below every student term.
                 instructor_gap_penalty = 0
                 if gap_penalty_on:
                     _sec_ids = section_instructors.get(f"{code}|{sec_label}")
@@ -1650,7 +1652,7 @@ def auto_place_board(
                     + time_var_penalty
                     + room_penalty
                     + density_penalty
-                    + instructor_gap_penalty,
+                    + instructor_gap_penalty * gap_weight,
                     raw_score[3],
                     raw_score[4],
                 )
