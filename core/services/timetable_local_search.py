@@ -51,6 +51,7 @@ from core.services.timetable_online import OnlineCourseLookup, normalise_course_
 from core.services.timetable_pr4_instructor import (
     build_section_instructor_ids,
     get_instructor_daily_cap,
+    is_instructor_clash_enabled,
     is_instructor_daily_cap_enabled,
 )
 from core.services.timetable_same_course import (
@@ -242,6 +243,22 @@ def _check_hard_constraints(
                         return False
                     day_instr_count[key] = nxt
 
+    # 5. Instructor clash — an instructor can't teach two sections at the same
+    #    (day, start). Reject any schedule that double-books a resolved
+    #    instructor. No-op (byte-identical) when the clash flag is off / no ids.
+    if is_instructor_clash_enabled():
+        instr_slot: set[tuple[object, str, str]] = set()
+        for i, meetings in schedule.items():  # noqa: B007
+            instr_ids = sections[i].get("instructor_ids")
+            if not instr_ids:
+                continue
+            for m in meetings:
+                for iid in instr_ids:
+                    key = (iid, m["day"], m["start"])
+                    if key in instr_slot:
+                        return False
+                    instr_slot.add(key)
+
     return True
 
 
@@ -424,8 +441,8 @@ def optimize_board(
     # Resolve per-section instructor identity for the daily-session cap (hard
     # constraint). Uses the same CourseInstructor link source as the greedy /
     # evaluator, keyed by "course_key|section". No-op (and zero overhead) when
-    # the cap flag is off, so flag-off SA runs are byte-identical.
-    if is_instructor_daily_cap_enabled():
+    # both the cap and clash flags are off, so those SA runs are byte-identical.
+    if is_instructor_daily_cap_enabled() or is_instructor_clash_enabled():
         _cap_link_map = build_section_instructor_ids(scenario)
         for _sec in sections:
             _sec["instructor_ids"] = _cap_link_map.get(

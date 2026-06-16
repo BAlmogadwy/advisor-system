@@ -31,6 +31,8 @@ from core.services.timetable_decision_trace import DecisionTrace
 from core.services.timetable_pr4_instructor import (
     exceeds_instructor_daily_cap,
     get_instructor_daily_cap,
+    has_instructor_clash,
+    is_instructor_clash_enabled,
     is_instructor_daily_cap_enabled,
 )
 from core.services.timetable_room_repair import apply_move_to_grid, rollback_move
@@ -323,6 +325,16 @@ def chain_local_search(
                 and exceeds_instructor_daily_cap(
                     sections_by_id, section_instructor_ids, get_instructor_daily_cap()
                 )
+            ):
+                _rollback_chain(snap_a, snap_b, sections_by_id, room_occupancies)
+                continue
+
+            # Instructor-clash hard-reject: neither leg may double-book an
+            # instructor at the same (day, slot). The evaluator doesn't catch it.
+            if (
+                section_instructor_ids
+                and is_instructor_clash_enabled()
+                and has_instructor_clash(sections_by_id, section_instructor_ids)
             ):
                 _rollback_chain(snap_a, snap_b, sections_by_id, room_occupancies)
                 continue

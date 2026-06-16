@@ -23,6 +23,8 @@ from core.services.timetable_candidate_eval import evaluate_generated_timetable_
 from core.services.timetable_pr4_instructor import (
     exceeds_instructor_daily_cap,
     get_instructor_daily_cap,
+    has_instructor_clash,
+    is_instructor_clash_enabled,
     is_instructor_daily_cap_enabled,
 )
 from core.services.timetable_room_repair import (
@@ -308,6 +310,18 @@ def diagnostic_driven_local_search(
                 and exceeds_instructor_daily_cap(
                     sections_by_id, section_instructor_ids, get_instructor_daily_cap()
                 )
+            ):
+                _rollback(snapshot, sections_by_id, room_occupancies)
+                continue
+
+            # Instructor-clash hard-reject: an instructor can't teach two sections
+            # at the same (day, slot). The greedy enforces this at construction but
+            # the evaluator doesn't, so a student-improving move could double-book
+            # an instructor — reject it here, like the same-course/cap gates.
+            if (
+                section_instructor_ids
+                and is_instructor_clash_enabled()
+                and has_instructor_clash(sections_by_id, section_instructor_ids)
             ):
                 _rollback(snapshot, sections_by_id, room_occupancies)
                 continue

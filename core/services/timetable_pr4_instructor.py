@@ -189,6 +189,46 @@ def count_instructor_daily_overloads(sections_by_id, section_instructor_ids, cap
     return sum(max(0, c - cap) for c in counts.values())
 
 
+def has_instructor_clash(sections_by_id, section_instructor_ids) -> bool:
+    """True if any instructor is double-booked — two sessions occupying the same
+    ``(day, start_min)``. Distinct from the daily cap (which limits sessions/day):
+    a clash is two-at-the-same-TIME, physically impossible. Early-exits on the
+    first clash so it is cheap inside a move-evaluation loop. Cross-course (an
+    instructor teaching two different courses at once) is exactly what this
+    catches — the same-course rule does not, since the courses differ."""
+    if not section_instructor_ids:
+        return False
+    seen: set[tuple[object, int, int]] = set()
+    for section_id, instr_ids in section_instructor_ids.items():
+        sec = sections_by_id.get(section_id)
+        if sec is None:
+            continue
+        for iid in instr_ids:
+            for meeting in sec.meetings:
+                key = (iid, meeting.day, meeting.start_min)
+                if key in seen:
+                    return True
+                seen.add(key)
+    return False
+
+
+def count_instructor_clashes(sections_by_id, section_instructor_ids) -> int:
+    """Number of extra sessions stacked on an already-occupied (instructor, day,
+    start) slot — 0 means clash-free. Side-band diagnostic / repair signal."""
+    if not section_instructor_ids:
+        return 0
+    counts: dict[tuple[object, int, int], int] = {}
+    for section_id, instr_ids in section_instructor_ids.items():
+        sec = sections_by_id.get(section_id)
+        if sec is None:
+            continue
+        for iid in instr_ids:
+            for meeting in sec.meetings:
+                key = (iid, meeting.day, meeting.start_min)
+                counts[key] = counts.get(key, 0) + 1
+    return sum(c - 1 for c in counts.values() if c > 1)
+
+
 def build_section_instructor_ids(scenario) -> dict[str, set[int]]:
     """``{"course_key|section" -> {instructor_id, ...}}`` resolved from the
     scenario-independent ``CourseInstructor`` assignments.

@@ -42,6 +42,7 @@ from core.services.timetable_candidate_eval import (
 )
 from core.services.timetable_demand import load_scenario_course_demands
 from core.services.timetable_pr4_instructor import (
+    is_instructor_clash_enabled,
     is_instructor_compaction_enabled,
     is_instructor_daily_cap_enabled,
     is_instructor_gap_penalty_enabled,
@@ -797,7 +798,11 @@ def optimise_scenario_timetable_v2(
     # call below is what guarantees no mixed-length tuple comparison in a run.
     section_instructor_ids = (
         build_section_instructor_map_for_scenario(scenario_id)
-        if (is_instructor_gap_penalty_enabled() or is_instructor_daily_cap_enabled())
+        if (
+            is_instructor_gap_penalty_enabled()
+            or is_instructor_daily_cap_enabled()
+            or is_instructor_clash_enabled()
+        )
         else None
     )
 
@@ -1208,8 +1213,16 @@ def optimise_scenario_timetable_v2(
 
         result["instructor_cap_repair"] = repair_instructor_daily_overloads(scenario_id)
 
-    # Instructor-day compaction — runs AFTER the cap repair (which it treats as a
-    # hard gate) to shrink each instructor's within-day idle gaps. Flag-gated.
+    # Instructor-clash repair — the optimise stages now reject clash-creating
+    # moves, but an already-built board can hold a legacy double-booking; clear
+    # any here. Flag-gated → no-op when off.
+    if is_instructor_clash_enabled():
+        from core.services.timetable_instructor_cap_repair import repair_instructor_clashes
+
+        result["instructor_clash_repair"] = repair_instructor_clashes(scenario_id)
+
+    # Instructor-day compaction — runs AFTER the cap + clash repairs (which it
+    # treats as hard gates) to shrink each instructor's within-day idle gaps.
     if is_instructor_compaction_enabled():
         from core.services.timetable_instructor_compaction import compact_instructor_schedules
 
@@ -1225,7 +1238,11 @@ def optimise_scenario_timetable_v2(
         result["final_score"],
     )
     result["instructor_gap_metric"] = instructor_gap_metric(
-        _gap_idle_before, result.get("final_score"), section_instructor_ids
+        _gap_idle_before,
+        result.get("final_score"),
+        # The map is now also built for the cap/clash gates; the gap metric must
+        # stay zeroed unless the gap penalty itself is on (byte-parity contract).
+        section_instructor_ids if is_instructor_gap_penalty_enabled() else None,
     )
     return result
 
@@ -1306,7 +1323,11 @@ def optimise_current_timetable(
     # evaluator/engine call below so no run mixes tuple lengths.
     section_instructor_ids = (
         build_section_instructor_map_for_scenario(scenario_id)
-        if (is_instructor_gap_penalty_enabled() or is_instructor_daily_cap_enabled())
+        if (
+            is_instructor_gap_penalty_enabled()
+            or is_instructor_daily_cap_enabled()
+            or is_instructor_clash_enabled()
+        )
         else None
     )
 
@@ -1539,7 +1560,15 @@ def optimise_current_timetable(
 
             result["instructor_cap_repair"] = repair_instructor_daily_overloads(scenario_id)
 
-        # Instructor-day compaction — after the cap repair, flag-gated.
+        # Instructor-clash repair — clear any legacy double-bookings. Flag-gated.
+        if is_instructor_clash_enabled():
+            from core.services.timetable_instructor_cap_repair import (
+                repair_instructor_clashes,
+            )
+
+            result["instructor_clash_repair"] = repair_instructor_clashes(scenario_id)
+
+        # Instructor-day compaction — after the cap + clash repairs, flag-gated.
         if is_instructor_compaction_enabled():
             from core.services.timetable_instructor_compaction import (
                 compact_instructor_schedules,
@@ -1560,6 +1589,10 @@ def optimise_current_timetable(
         result["final_score"],
     )
     result["instructor_gap_metric"] = instructor_gap_metric(
-        _gap_idle_before, result.get("final_score"), section_instructor_ids
+        _gap_idle_before,
+        result.get("final_score"),
+        # The map is now also built for the cap/clash gates; the gap metric must
+        # stay zeroed unless the gap penalty itself is on (byte-parity contract).
+        section_instructor_ids if is_instructor_gap_penalty_enabled() else None,
     )
     return result
