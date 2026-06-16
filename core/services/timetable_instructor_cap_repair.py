@@ -64,6 +64,35 @@ def _day_idx(day_str: str) -> int:
     return WEEKDAYS.index(up) if up in WEEKDAYS else -1
 
 
+def _creates_board_interval_overlap(p, day2, s2_min, e2_min, iid_set, placements, instr_ids_fn):
+    """True if relocating ``p`` to ``[s2_min, e2_min)`` on ``day2`` would create a
+    same-course-same-board OR same-instructor INTERVAL overlap.
+
+    The candidate generators key occupancy on the exact START time ``(day, start)``,
+    but the board conflict metric (``detect_board_conflicts``) counts INTERVAL
+    overlap. The lecture grid (e.g. 10:30-11:45) and the lab grid (09:00-10:40)
+    interleave, so a sibling/instructor session at a *different* start can still
+    overlap a candidate slot in time — an exact-start guard misses it and the
+    relocation manufactures a ``same_board_overlaps`` the safety gate then rolls
+    back. This checks the LIVE placement objects (mutated in place by ``_relocate``),
+    so it already reflects every move applied so far this pass.
+    """
+    day2u = (day2 or "").upper()
+    course = p.term_section.course_code
+    bid = p.board_id
+    for q in placements:
+        if q is p or (q.day or "").upper() != day2u:
+            continue
+        qs, qe = _to_min(q.start_time), _to_min(q.end_time)
+        if s2_min >= qe or e2_min <= qs:
+            continue  # disjoint in time
+        if q.board_id == bid and q.term_section.course_code == course:
+            return True  # sibling section of the same course overlaps on this board
+        if iid_set and (instr_ids_fn(q) & iid_set):
+            return True  # the instructor is double-booked across the overlap
+    return False
+
+
 def repair_instructor_daily_overloads(scenario_id: int) -> dict:
     """Detect and repair instructor daily-session-cap violations across a whole
     scenario (every board). Returns a report dict."""
@@ -185,6 +214,10 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
                 if any((day2, s2) in instr_slots.get(iid, set()) for iid in iid_set):
                     continue
                 if (day2, s2) in course_slots.get(course, set()):
+                    continue
+                if _creates_board_interval_overlap(
+                    p, day2, _to_min(s2), _to_min(e2), iid_set, placements, _instr_ids
+                ):
                     continue
                 yield day2, s2, e2
 
@@ -416,6 +449,10 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
                 if any(slot_count.get((iid, day2, s2), 0) > 0 for iid in iid_set):
                     continue  # clash-free target
                 if (day2, s2) in course_slots.get(course, set()):
+                    continue
+                if _creates_board_interval_overlap(
+                    p, day2, _to_min(s2), _to_min(e2), iid_set, placements, _instr_ids
+                ):
                     continue
                 yield day2, s2, e2
 

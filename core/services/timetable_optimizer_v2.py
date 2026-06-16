@@ -616,6 +616,34 @@ ALL_STRATEGIES = [
 ]
 
 
+def _reset_unlocked_placements(scenario_id: int) -> None:
+    """Delete unlocked placements AND their meeting rows for a fresh placement run.
+
+    ``auto_place_board`` re-creates ``TermSectionMeeting`` via ``get_or_create``
+    keyed on ``(term_section, day, start, end)``. Deleting only ``SectionPlacement``
+    (the prior behaviour) let a section that lands on a DIFFERENT slot in a later
+    strategy keep its earlier meeting rows, so ``len(placements) != len(meetings)``.
+    ``persist_section_states_to_scenario`` then SKIPS every such section (it cannot
+    align N placements to M meetings), dropping the evaluated winner's improvements
+    and leaving stale/duplicate meetings in the exported board — the "2 placements
+    vs 1 meeting" drift seen on multi-program scenarios where strategies place a
+    section on different slots. Clearing the meetings alongside the placements keeps
+    each placement run starting from a clean slate. Locked placements are the user's
+    hard constraints and survive, so their meetings are preserved too.
+    """
+    from core.models import TermSectionMeeting
+
+    locked_ts_ids = set(
+        SectionPlacement.objects.filter(board__scenario_id=scenario_id, is_locked=True).values_list(
+            "term_section_id", flat=True
+        )
+    )
+    SectionPlacement.objects.filter(board__scenario_id=scenario_id, is_locked=False).delete()
+    TermSectionMeeting.objects.filter(term_section__scenario_id=scenario_id).exclude(
+        term_section_id__in=locked_ts_ids
+    ).delete()
+
+
 def _generate_candidates_for_scenario(
     scenario_id: int,
     strategies: list[str] | None = None,
@@ -640,10 +668,12 @@ def _generate_candidates_for_scenario(
     candidates: list[dict] = []
 
     for idx, strategy in enumerate(strategies):
-        # Clear existing unlocked placements for a fresh run. Locked
-        # placements are the user's hard constraints and must survive a full
-        # rebuild so the auto-placer can reserve those cells.
-        SectionPlacement.objects.filter(board__scenario_id=scenario_id, is_locked=False).delete()
+        # Clear existing unlocked placements AND their meetings for a fresh run
+        # (see _reset_unlocked_placements — leaving stale meetings causes a
+        # placements != meetings drift that makes the persist step skip sections).
+        # Locked placements are the user's hard constraints and must survive a
+        # full rebuild so the auto-placer can reserve those cells.
+        _reset_unlocked_placements(scenario_id)
 
         logger.info(
             "Generating candidate %d/%d with strategy=%s", idx + 1, len(strategies), strategy
@@ -1095,9 +1125,13 @@ def optimise_scenario_timetable_v2(
     # generation deletes all placements). Then overlay local search /
     # chain / CP-SAT improvements on top — these are stored as deltas
     # in sections_by_id, not as full placements.
-    # First: re-place using the winning strategy (baseline placement)
+    # First: re-place using the winning strategy (baseline placement). Clear the
+    # winner's stale meetings too (see _reset_unlocked_placements): the re-placement
+    # below otherwise inherits meeting rows accumulated across the candidate
+    # strategies, so persist_section_states_to_scenario would skip the drifted
+    # sections instead of saving the evaluated winner's improvements.
     winning_strategy = best.candidate_id.rsplit("_", 1)[0]
-    SectionPlacement.objects.filter(board__scenario_id=scenario_id, is_locked=False).delete()
+    _reset_unlocked_placements(scenario_id)
     from core.services.timetable_autoplace import auto_place_scenario
 
     scenario_place_result = auto_place_scenario(

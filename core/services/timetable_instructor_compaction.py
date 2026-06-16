@@ -59,6 +59,18 @@ def _hhmm(m: int) -> str:
     return f"{m // 60:02d}:{m % 60:02d}"
 
 
+def _interval_busy(slotset, day2: int, s2: int, e2: int) -> bool:
+    """True if ``[s2, e2)`` on ``day2`` overlaps any interval in ``slotset``.
+
+    Occupancy is stored as ``(day, start_min, end_min)`` so the guard tests true
+    INTERVAL overlap, not start-time equality. The lecture grid (e.g. 10:30-11:45)
+    and lab grid (09:00-10:40) interleave, so two sessions can overlap in time at
+    different start minutes — a start-only guard misses that and lets a relocation
+    create a ``same_board_overlaps`` the safety gate rolls back wholesale.
+    """
+    return any(d == day2 and s2 < oe and e2 > os for (d, os, oe) in slotset)
+
+
 def compact_instructor_schedules(scenario_id: int) -> dict:
     """Compact instructor days for a scenario. Persists accepted relocations.
     Returns a full before/after audit report. No-op when the flag is off."""
@@ -179,9 +191,9 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
     for sid, s in sbi.items():
         for m in s.meetings:
             section_days[sid].add(m.day)
-            course_slots[code_of[sid]].add((m.day, m.start_min))
+            course_slots[code_of[sid]].add((m.day, m.start_min, m.end_min))
             for iid in cap_map.get(sid, frozenset()):
-                instr_slots[iid].add((m.day, m.start_min))
+                instr_slots[iid].add((m.day, m.start_min, m.end_min))
 
     def _relocation_moves(sid, midx, iids):
         """Neighbourhood generator: feasible (day2, s2, e2) targets for one
@@ -197,7 +209,7 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
             if not same_day and day2 in others:
                 continue
             if not same_day and any(
-                sum(1 for (d, _s) in instr_slots[iid] if d == day2) >= cap for iid in iids
+                sum(1 for (d, _s, _e) in instr_slots[iid] if d == day2) >= cap for iid in iids
             ):
                 continue
             for s2, e2 in slots:
@@ -205,9 +217,9 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
                     continue
                 if (WEEKDAYS[day2], s2) in blocked:
                     continue
-                if any((day2, s2) in instr_slots[iid] for iid in iids):
+                if any(_interval_busy(instr_slots[iid], day2, s2, e2) for iid in iids):
                     continue
-                if (day2, s2) in course_slots[course]:
+                if _interval_busy(course_slots[course], day2, s2, e2):
                     continue
                 yield day2, s2, e2
 
@@ -218,21 +230,21 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
         sbi[sid].meetings[midx] = SectionMeeting(day2, s2, e2)
         section_days[sid].discard(old.day)
         section_days[sid].add(day2)
-        course_slots[code_of[sid]].discard((old.day, old.start_min))
-        course_slots[code_of[sid]].add((day2, s2))
+        course_slots[code_of[sid]].discard((old.day, old.start_min, old.end_min))
+        course_slots[code_of[sid]].add((day2, s2, e2))
         for iid in iids:
-            instr_slots[iid].discard((old.day, old.start_min))
-            instr_slots[iid].add((day2, s2))
+            instr_slots[iid].discard((old.day, old.start_min, old.end_min))
+            instr_slots[iid].add((day2, s2, e2))
         return old
 
-    def _revert(sid, midx, old, day2, s2, iids):
-        course_slots[code_of[sid]].discard((day2, s2))
-        course_slots[code_of[sid]].add((old.day, old.start_min))
+    def _revert(sid, midx, old, day2, s2, e2, iids):
+        course_slots[code_of[sid]].discard((day2, s2, e2))
+        course_slots[code_of[sid]].add((old.day, old.start_min, old.end_min))
         section_days[sid].discard(day2)
         section_days[sid].add(old.day)
         for iid in iids:
-            instr_slots[iid].discard((day2, s2))
-            instr_slots[iid].add((old.day, old.start_min))
+            instr_slots[iid].discard((day2, s2, e2))
+            instr_slots[iid].add((old.day, old.start_min, old.end_min))
         sbi[sid].meetings[midx] = old
 
     # ── Baseline ──
@@ -325,7 +337,7 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
                             it = ituple(im, tg - base_total_gap)
                             if it < cur_tuple and (best is None or it < best[0]):
                                 best = (it, sid, midx, day2, s2, e2, res, im, sig)
-                    _revert(sid, midx, old, day2, s2, iids)
+                    _revert(sid, midx, old, day2, s2, e2, iids)
                     if _over_budget():
                         timed_out = True
                         break
