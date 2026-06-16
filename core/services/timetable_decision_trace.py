@@ -70,6 +70,12 @@ STUDENT_CONFLICT = "STUDENT_CONFLICT"
 # such a collision.
 SAME_COURSE_INSTRUCTOR_CLASH = "SAME_COURSE_INSTRUCTOR_CLASH"
 
+# Hard cap: an instructor may teach at most TIMETABLE_INSTRUCTOR_DAILY_CAP
+# sessions (lectures AND labs) on any single day. Emitted when a greedy
+# candidate option is rejected because it would push one of the section's
+# instructors past that daily limit.
+INSTRUCTOR_DAILY_CAP = "INSTRUCTOR_DAILY_CAP"
+
 
 @dataclass(frozen=True)
 class Alternative:

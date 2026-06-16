@@ -189,3 +189,7 @@ class TimetableEvaluationResult:
     capacity_pressure_courses: list[str]
     reserve_heavy_sections: list[tuple[str, float]]
     quality_score: dict[str, Any] = field(default_factory=dict)
+    # Side-band diagnostic for the instructor daily-session cap (hard constraint
+    # enforced structurally in the generators, NOT via the lexicographic tuple).
+    # 0 = every instructor-day within cap. Default keeps the tuple/parity intact.
+    instructor_overload_count: int = 0
