@@ -41,7 +41,10 @@ from core.services.timetable_candidate_eval import (
     rank_timetable_candidates,
 )
 from core.services.timetable_demand import load_scenario_course_demands
-from core.services.timetable_pr4_instructor import is_instructor_gap_penalty_enabled
+from core.services.timetable_pr4_instructor import (
+    is_instructor_daily_cap_enabled,
+    is_instructor_gap_penalty_enabled,
+)
 from core.services.timetable_stage_telemetry import STAGE_KEYS, empty_stage_telemetry
 from core.services.timetable_workspace import _to_minutes
 
@@ -793,7 +796,7 @@ def optimise_scenario_timetable_v2(
     # call below is what guarantees no mixed-length tuple comparison in a run.
     section_instructor_ids = (
         build_section_instructor_map_for_scenario(scenario_id)
-        if is_instructor_gap_penalty_enabled()
+        if (is_instructor_gap_penalty_enabled() or is_instructor_daily_cap_enabled())
         else None
     )
 
@@ -1193,6 +1196,17 @@ def optimise_scenario_timetable_v2(
             result["stage_telemetry"]["stage_ms"]["rooming_repair"] += int(_board_ms)
             result["stage_telemetry"]["stage_iterations"]["rooming_repair"] += int(_board_it)
 
+    # Hard instructor daily-session cap — scenario-wide backstop. The structural
+    # gates keep greedy/local/chain/CP-SAT compliant; this also catches any
+    # residual overload (e.g. from the per-board SA polish) and pre-existing ones.
+    # Flag-gated → no-op when off.
+    if is_instructor_daily_cap_enabled():
+        from core.services.timetable_instructor_cap_repair import (
+            repair_instructor_daily_overloads,
+        )
+
+        result["instructor_cap_repair"] = repair_instructor_daily_overloads(scenario_id)
+
     elapsed = time.time() - t0
     result["elapsed_seconds"] = round(elapsed, 1)
 
@@ -1284,7 +1298,7 @@ def optimise_current_timetable(
     # evaluator/engine call below so no run mixes tuple lengths.
     section_instructor_ids = (
         build_section_instructor_map_for_scenario(scenario_id)
-        if is_instructor_gap_penalty_enabled()
+        if (is_instructor_gap_penalty_enabled() or is_instructor_daily_cap_enabled())
         else None
     )
 
@@ -1505,6 +1519,17 @@ def optimise_current_timetable(
             _board_it = _board_tel.get("stage_iterations", {}).get("rooming_repair", 0)
             result["stage_telemetry"]["stage_ms"]["rooming_repair"] += int(_board_ms)
             result["stage_telemetry"]["stage_iterations"]["rooming_repair"] += int(_board_it)
+
+        # Hard instructor daily-session cap: repair any pre-existing overloads on
+        # the persisted board (the structural gates prevent NEW ones; an
+        # already-built board can still hold a legacy 4th). Flag-gated → no-op
+        # when off. See timetable_instructor_cap_repair.
+        if is_instructor_daily_cap_enabled():
+            from core.services.timetable_instructor_cap_repair import (
+                repair_instructor_daily_overloads,
+            )
+
+            result["instructor_cap_repair"] = repair_instructor_daily_overloads(scenario_id)
     else:
         result["persist_result"] = {"action": "no_change"}
         logger.info("No improvement found — board unchanged")

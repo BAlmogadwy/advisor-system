@@ -36,6 +36,10 @@ from core.services.timetable_autoplace import (
 from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
 from core.services.timetable_decision_trace import DecisionTrace
 from core.services.timetable_demand import load_scenario_course_demands
+from core.services.timetable_pr4_instructor import (
+    get_instructor_daily_cap,
+    is_instructor_daily_cap_enabled,
+)
 from core.services.timetable_solver_codes import CPSAT_IMPROVED, is_stage_trace_enabled
 from core.services.timetable_stage_telemetry import (
     is_stage_telemetry_enabled,
@@ -285,6 +289,42 @@ def polish_scenario_with_cpsat(
                     for oa, opt_a in enumerate(opts_a):
                         if opt_a[0] == fixed_meeting.day and (opt_a[5] & fixed_meeting.mask):
                             model.add(assign[i_a][m_a][oa] == 0)
+
+    # ── Hard: instructor daily-session cap (lectures + labs) ─────
+    # An instructor may hold at most ``cap`` sessions per day. Movable sections
+    # contribute decision vars; fixed/locked sections (no vars) contribute a
+    # constant baseline that is subtracted from the bound — exactly like the
+    # same-course fixed-separation above. A day already saturated by fixed
+    # sessions forces the movable vars to 0 (keeps the model feasible vs UNSAT).
+    if section_instructor_ids and is_instructor_daily_cap_enabled():
+        _cap = get_instructor_daily_cap()
+        _sec_instrs = [
+            section_instructor_ids.get(sec.section_id, frozenset()) for sec in sections_to_polish
+        ]
+        movable_vars: dict[tuple[int, int], list] = defaultdict(list)
+        for i, instrs in enumerate(_sec_instrs):
+            if not instrs:
+                continue
+            for m_idx in range(len(sec_durations[i])):
+                for o_idx, opt in enumerate(sec_options[i][m_idx]):
+                    day_idx = opt[0]
+                    for iid in instrs:
+                        movable_vars[(iid, day_idx)].append(assign[i][m_idx][o_idx])
+        fixed_day_counts: dict[tuple[int, int], int] = defaultdict(int)
+        for fixed_sec in fixed_sections:
+            f_instrs = section_instructor_ids.get(fixed_sec.section_id, frozenset())
+            if not f_instrs:
+                continue
+            for fm in fixed_sec.meetings:
+                for iid in f_instrs:
+                    fixed_day_counts[(iid, fm.day)] += 1
+        for (iid, day_idx), var_list in movable_vars.items():
+            remaining = _cap - fixed_day_counts.get((iid, day_idx), 0)
+            if remaining <= 0:
+                for v in var_list:
+                    model.add(v == 0)
+            else:
+                model.add(sum(var_list) <= remaining)
 
     # ── Soft: cross-course student overlap penalty ───────────────
     penalties = []

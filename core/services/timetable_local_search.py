@@ -48,6 +48,11 @@ from core.services.timetable_autoplace import (
 )
 from core.services.timetable_decision_trace import DecisionTrace
 from core.services.timetable_online import OnlineCourseLookup, normalise_course_code
+from core.services.timetable_pr4_instructor import (
+    build_section_instructor_ids,
+    get_instructor_daily_cap,
+    is_instructor_daily_cap_enabled,
+)
 from core.services.timetable_same_course import (
     has_same_course_overlap as same_course_windows_overlap,
 )
@@ -217,6 +222,26 @@ def _check_hard_constraints(
         if len(days) != len(set(days)):
             return False
 
+    # 4. Instructor daily-session cap (lectures + labs). Sections may carry a
+    #    resolved 'instructor_ids' set; count sessions per (instructor, day) and
+    #    reject if any exceeds the cap. SA days are strings ('SUN'..'THU'),
+    #    counted natively. No-op (byte-identical) when the cap flag is off or no
+    #    identities were resolved.
+    if is_instructor_daily_cap_enabled():
+        cap = get_instructor_daily_cap()
+        day_instr_count: dict[tuple[object, str], int] = {}
+        for i, meetings in schedule.items():  # noqa: B007
+            instr_ids = sections[i].get("instructor_ids")
+            if not instr_ids:
+                continue
+            for m in meetings:
+                for iid in instr_ids:
+                    key = (iid, m["day"])
+                    nxt = day_instr_count.get(key, 0) + 1
+                    if nxt > cap:
+                        return False
+                    day_instr_count[key] = nxt
+
     return True
 
 
@@ -361,6 +386,7 @@ def optimize_board(
                     "sec_num": sec_num,
                     "label": sec_label,
                     "term_section_id": p.term_section_id,
+                    "course_key": p.term_section.course_key,
                     "is_online": normalise_course_code(p.term_section.course_code) in online_codes,
                     "is_locked": False,
                 }
@@ -394,6 +420,17 @@ def optimize_board(
                 "placement_id": p.id,
             }
         )
+
+    # Resolve per-section instructor identity for the daily-session cap (hard
+    # constraint). Uses the same CourseInstructor link source as the greedy /
+    # evaluator, keyed by "course_key|section". No-op (and zero overhead) when
+    # the cap flag is off, so flag-off SA runs are byte-identical.
+    if is_instructor_daily_cap_enabled():
+        _cap_link_map = build_section_instructor_ids(scenario)
+        for _sec in sections:
+            _sec["instructor_ids"] = _cap_link_map.get(
+                f"{_sec['course_key']}|{_sec['label']}", set()
+            )
 
     # PR5 commit 3 — snapshot the initial (greedy) schedule before any
     # SA mutation so we can emit an SA_RELOCATE_ACCEPTED trace entry for

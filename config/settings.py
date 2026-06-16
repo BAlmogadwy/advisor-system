@@ -418,6 +418,22 @@ TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED = os.getenv(
     "TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED", "false"
 ).lower() in ("1", "true", "yes", "on")
 
+# TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED: gates a HARD constraint capping the
+# number of scheduled sessions (lectures AND labs both count) an instructor may
+# teach on any single day at TIMETABLE_INSTRUCTOR_DAILY_CAP (default 3). A 4th
+# same-day session is forbidden outright — the cap wins against students (a
+# section may go unplaced rather than create an over-cap day). It is enforced
+# STRUCTURALLY at candidate generation in every solver stage (greedy, V2
+# local/chain, CP-SAT, SA), mirroring the instructor-clash filter, and is NEVER
+# added to the lexicographic score tuple — so with it OFF the optimiser output is
+# byte-identical to before. Meaningful only alongside TIMETABLE_INSTRUCTOR_LINKS_
+# ENABLED (per-section instructor identity). Env override ``=false`` is the live
+# kill-switch.
+TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED = os.getenv(
+    "TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED", "false"
+).lower() in ("1", "true", "yes", "on")
+TIMETABLE_INSTRUCTOR_DAILY_CAP = int(os.getenv("TIMETABLE_INSTRUCTOR_DAILY_CAP", "3"))
+
 TIMETABLE_LAB_HEURISTIC_UNIFIED = os.getenv("TIMETABLE_LAB_HEURISTIC_UNIFIED", "true").lower() in (
     "1",
     "true",

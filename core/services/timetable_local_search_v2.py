@@ -20,6 +20,11 @@ from core.services.timetable_assignment_models import (
     TimetableMove,
 )
 from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
+from core.services.timetable_pr4_instructor import (
+    exceeds_instructor_daily_cap,
+    get_instructor_daily_cap,
+    is_instructor_daily_cap_enabled,
+)
 from core.services.timetable_room_repair import (
     PatternNotInCatalog,
     apply_move_to_grid,
@@ -290,6 +295,20 @@ def diagnostic_driven_local_search(
             # typically teaches all sections. Scan after the move has been
             # applied; rollback + skip if violated.
             if _has_same_course_overlap(sections_by_id):
+                _rollback(snapshot, sections_by_id, room_occupancies)
+                continue
+
+            # Instructor daily-session cap hard-reject (lectures + labs). The
+            # evaluator only scores; the cap is a structural constraint, so any
+            # move that would push an instructor past the cap on any day is
+            # rolled back here exactly like the same-course overlap above.
+            if (
+                section_instructor_ids
+                and is_instructor_daily_cap_enabled()
+                and exceeds_instructor_daily_cap(
+                    sections_by_id, section_instructor_ids, get_instructor_daily_cap()
+                )
+            ):
                 _rollback(snapshot, sections_by_id, room_occupancies)
                 continue
 
