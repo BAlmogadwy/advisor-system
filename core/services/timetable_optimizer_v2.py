@@ -42,6 +42,7 @@ from core.services.timetable_candidate_eval import (
 )
 from core.services.timetable_demand import load_scenario_course_demands
 from core.services.timetable_pr4_instructor import (
+    is_instructor_compaction_enabled,
     is_instructor_daily_cap_enabled,
     is_instructor_gap_penalty_enabled,
 )
@@ -1207,6 +1208,13 @@ def optimise_scenario_timetable_v2(
 
         result["instructor_cap_repair"] = repair_instructor_daily_overloads(scenario_id)
 
+    # Instructor-day compaction — runs AFTER the cap repair (which it treats as a
+    # hard gate) to shrink each instructor's within-day idle gaps. Flag-gated.
+    if is_instructor_compaction_enabled():
+        from core.services.timetable_instructor_compaction import compact_instructor_schedules
+
+        result["instructor_compaction"] = compact_instructor_schedules(scenario_id)
+
     elapsed = time.time() - t0
     result["elapsed_seconds"] = round(elapsed, 1)
 
@@ -1530,6 +1538,14 @@ def optimise_current_timetable(
             )
 
             result["instructor_cap_repair"] = repair_instructor_daily_overloads(scenario_id)
+
+        # Instructor-day compaction — after the cap repair, flag-gated.
+        if is_instructor_compaction_enabled():
+            from core.services.timetable_instructor_compaction import (
+                compact_instructor_schedules,
+            )
+
+            result["instructor_compaction"] = compact_instructor_schedules(scenario_id)
     else:
         result["persist_result"] = {"action": "no_change"}
         logger.info("No improvement found — board unchanged")

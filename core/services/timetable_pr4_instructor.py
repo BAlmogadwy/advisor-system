@@ -113,6 +113,30 @@ def get_instructor_daily_cap() -> int:
     return int(getattr(settings, INSTRUCTOR_DAILY_CAP_SETTING, 3))
 
 
+INSTRUCTOR_COMPACTION_FLAG_SETTING = "TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED"
+
+
+def is_instructor_compaction_enabled() -> bool:
+    """Reads ``TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED``. Default ``False``.
+
+    Gates the post-build instructor-day compaction pass (shrinks within-day idle
+    gaps by relocating an instructor's sessions in time). Default OFF → no-op.
+    """
+    return bool(getattr(settings, INSTRUCTOR_COMPACTION_FLAG_SETTING, False))
+
+
+def get_instructor_compaction_config() -> dict:
+    """Tunables for the compaction pass (env-overridable, validated defaults)."""
+    return {
+        "gap_budget": float(getattr(settings, "TIMETABLE_INSTRUCTOR_COMPACTION_GAP_BUDGET", 0.03)),
+        "per_student_cap": int(
+            getattr(settings, "TIMETABLE_INSTRUCTOR_COMPACTION_PER_STUDENT_CAP", 75)
+        ),
+        "trade_ratio": float(getattr(settings, "TIMETABLE_INSTRUCTOR_COMPACTION_TRADE_RATIO", 2.0)),
+        "max_rounds": int(getattr(settings, "TIMETABLE_INSTRUCTOR_COMPACTION_MAX_ROUNDS", 40)),
+    }
+
+
 def exceeds_instructor_daily_cap(sections_by_id, section_instructor_ids, cap: int) -> bool:
     """True if any (instructor, day) would hold more than ``cap`` sessions.
 

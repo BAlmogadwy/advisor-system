@@ -434,6 +434,32 @@ TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED = os.getenv(
 ).lower() in ("1", "true", "yes", "on")
 TIMETABLE_INSTRUCTOR_DAILY_CAP = int(os.getenv("TIMETABLE_INSTRUCTOR_DAILY_CAP", "3"))
 
+# TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED: gates a post-build pass that compacts
+# each instructor's day (shrinks within-day idle gaps) by relocating their
+# sessions in TIME — never changing who teaches what. It runs AFTER the daily-cap
+# repair and treats the cap as a hard gate. Strictly guarded: feasibility
+# (unresolved/unassigned/clashes) and reserve never worsen; student schedule
+# spread may rise only within a small budget, with tier-A + graduating students
+# protected and a per-student ceiling; an unfavourable instructor/student trade
+# is rejected. Default OFF — opt-in after scenario replays; meaningful only with
+# TIMETABLE_INSTRUCTOR_LINKS_ENABLED. Env override ``=false`` is the kill-switch.
+TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED = os.getenv(
+    "TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED", "false"
+).lower() in ("1", "true", "yes", "on")
+# Tunables (env-overridable). Defaults match the validated scenario-627 replay.
+TIMETABLE_INSTRUCTOR_COMPACTION_GAP_BUDGET = float(
+    os.getenv("TIMETABLE_INSTRUCTOR_COMPACTION_GAP_BUDGET", "0.03")
+)  # max fractional rise in TOTAL student gap-minutes
+TIMETABLE_INSTRUCTOR_COMPACTION_PER_STUDENT_CAP = int(
+    os.getenv("TIMETABLE_INSTRUCTOR_COMPACTION_PER_STUDENT_CAP", "75")
+)  # max added gap minutes for any single student (~one slot/week)
+TIMETABLE_INSTRUCTOR_COMPACTION_TRADE_RATIO = float(
+    os.getenv("TIMETABLE_INSTRUCTOR_COMPACTION_TRADE_RATIO", "2.0")
+)  # require >= this many instructor idle-min saved per student gap-min added
+TIMETABLE_INSTRUCTOR_COMPACTION_MAX_ROUNDS = int(
+    os.getenv("TIMETABLE_INSTRUCTOR_COMPACTION_MAX_ROUNDS", "40")
+)
+
 TIMETABLE_LAB_HEURISTIC_UNIFIED = os.getenv("TIMETABLE_LAB_HEURISTIC_UNIFIED", "true").lower() in (
     "1",
     "true",
