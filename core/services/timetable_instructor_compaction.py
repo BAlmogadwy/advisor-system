@@ -33,6 +33,7 @@ Flag-gated (``is_instructor_compaction_enabled``); no-op when off.
 from __future__ import annotations
 
 import logging
+import time
 from collections import defaultdict
 
 from django.db import transaction
@@ -285,8 +286,18 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
 
     visited.add(_signature())
 
+    # Wall-clock budget — worst-day-first front-loads the biggest wins, so when
+    # time runs out we stop and keep what we found (safe for a sync UI rebuild).
+    t0 = time.monotonic()
+    budget = cfg["time_budget"]
+
+    def _over_budget() -> bool:
+        return budget > 0 and (time.monotonic() - t0) > budget
+
+    timed_out = False
+    _round = 0
     for _round in range(cfg["max_rounds"]):
-        if moves_accepted >= max_moves:
+        if moves_accepted >= max_moves or _over_budget():
             break
         worst_days = sorted(cur_instr["holes"].items(), key=lambda kv: -kv[1][0])
         target_iids = list(dict.fromkeys(iid for (iid, _d), (h, _di) in worst_days if h > 0))[:3]
@@ -315,6 +326,13 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
                             if it < cur_tuple and (best is None or it < best[0]):
                                 best = (it, sid, midx, day2, s2, e2, res, im, sig)
                     _revert(sid, midx, old, day2, s2, iids)
+                    if _over_budget():
+                        timed_out = True
+                        break
+                if timed_out:
+                    break
+            if timed_out:
+                break
         if best is None:
             break
         _, sid, midx, day2, s2, e2, res, im, sig = best
@@ -406,6 +424,8 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
                 "moves_accepted": moves_accepted,
                 "rounds_used": _round + 1,
                 "residual_largest_hole": cur_instr["largest"],
+                "timed_out": timed_out,
+                "elapsed_seconds": round(time.monotonic() - t0, 1),
             },
             "relocations": relocations,
         }

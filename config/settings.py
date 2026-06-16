@@ -459,6 +459,13 @@ TIMETABLE_INSTRUCTOR_COMPACTION_TRADE_RATIO = float(
 TIMETABLE_INSTRUCTOR_COMPACTION_MAX_ROUNDS = int(
     os.getenv("TIMETABLE_INSTRUCTOR_COMPACTION_MAX_ROUNDS", "40")
 )
+# Wall-clock budget (seconds) for the compaction search. It is worst-day-first,
+# so the biggest idle wins land early; when the budget is hit it stops and
+# persists what it found. Keeps a synchronous UI rebuild from overrunning the
+# request thread. 0/negative disables the limit.
+TIMETABLE_INSTRUCTOR_COMPACTION_TIME_BUDGET_SECONDS = float(
+    os.getenv("TIMETABLE_INSTRUCTOR_COMPACTION_TIME_BUDGET_SECONDS", "20")
+)
 
 TIMETABLE_LAB_HEURISTIC_UNIFIED = os.getenv("TIMETABLE_LAB_HEURISTIC_UNIFIED", "true").lower() in (
     "1",

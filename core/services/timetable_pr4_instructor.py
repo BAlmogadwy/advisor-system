@@ -134,6 +134,9 @@ def get_instructor_compaction_config() -> dict:
         ),
         "trade_ratio": float(getattr(settings, "TIMETABLE_INSTRUCTOR_COMPACTION_TRADE_RATIO", 2.0)),
         "max_rounds": int(getattr(settings, "TIMETABLE_INSTRUCTOR_COMPACTION_MAX_ROUNDS", 40)),
+        "time_budget": float(
+            getattr(settings, "TIMETABLE_INSTRUCTOR_COMPACTION_TIME_BUDGET_SECONDS", 20.0)
+        ),
     }
 
 
