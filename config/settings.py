@@ -520,6 +520,14 @@ TIMETABLE_PR7_ASYNC_PLANNER_ENABLED = os.getenv(
     "TIMETABLE_PR7_ASYNC_PLANNER_ENABLED", "true"
 ).lower() in ("1", "true", "yes", "on")
 
+# Planner jobs are process-local (not durable across restarts), so a server
+# stop/reap can leave a PlannerJob stranded in RUNNING forever. A job still
+# RUNNING (or QUEUED-but-never-dispatched) past this many minutes is treated as
+# orphaned and reconciled to FAILED — on submit, on poll, and via the
+# ``reconcile_planner_jobs`` management command. Generous default so a genuinely
+# long build is never swept by mistake.
+TIMETABLE_PLANNER_JOB_STALE_MINUTES = int(os.getenv("TIMETABLE_PLANNER_JOB_STALE_MINUTES", "45"))
+
 # TIMETABLE_PR8_ASYNC_JOB_UI_ENABLED: single flag gating the PR8 async-job
 # UX card on the Timetable Workspace page. When True, renders a status
 # card with pill/submit/cancel/view-result/rerun controls that drives the
