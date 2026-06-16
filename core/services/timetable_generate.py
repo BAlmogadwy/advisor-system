@@ -253,6 +253,7 @@ def generate_workspace_scenario(
     max_external: int = DEFAULT_MAX_EXTERNAL,
     course_overrides: dict[str, int] | None = None,
     created_by: str = "",
+    run_autoplace: bool = True,
 ) -> dict:
     """Create a fully scaffolded timetable workspace scenario end-to-end.
 
@@ -772,7 +773,14 @@ def generate_workspace_scenario(
 
     from core.services.timetable_autoplace import auto_place_scenario, get_meeting_pattern
 
-    auto_result = auto_place_scenario(scenario.id, strategy=strategy)
+    if run_autoplace:
+        auto_result = auto_place_scenario(scenario.id, strategy=strategy)
+    else:
+        # Deferred build — the scenario scaffold (boards, students, budget) is
+        # created now and returned fast; the heavy placement runs off the request
+        # thread as an async planner job (see tw_generate_workspace_view), so the
+        # request can't overrun a gunicorn/dev-server timeout. No placements yet.
+        auto_result = {"boards": {}}
 
     # ── Build response ───────────────────────────────────────────
     # Assemble a comprehensive response dict that the frontend and API

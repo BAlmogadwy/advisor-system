@@ -252,6 +252,7 @@ async function runGenerate() {
       program: program,
       section: section,
       strategy: strategy,
+      defer_build: true,  // place sections via an async job (won't block the request)
     }),
   });
 
@@ -297,6 +298,28 @@ async function runGenerate() {
   // Auto-select first board
   if (TW.boards.length > 0) {
     await selectBoard(TW.boards[0].id);
+  }
+
+  // Deferred build: the heavy section placement (+ optimise + compaction) runs
+  // as an async planner job so the request never blocks on a long multi-program
+  // build. Poll it and refresh the board when it lands. (No build_job_id → the
+  // build already ran synchronously, e.g. async planner disabled.)
+  if (data.build_job_id) {
+    const building = IS_AR ? 'جاري بناء الجدول...' : 'Building timetable...';
+    $('twGenStatus').textContent = building;
+    const job = await pollPlannerJob(data.build_job_id, (j, ms) => {
+      const secs = Math.round((ms || 0) / 1000);
+      const detail = j.last_stage_seen ? ` (${j.last_stage_seen})` : (secs ? ` (${secs}s)` : '');
+      $('twGenStatus').textContent = building + detail;
+    });
+    if (job.status === 'succeeded') {
+      await onScenarioChange();
+      $('twGenStatus').textContent = '';
+      notify.success(IS_AR ? 'تم التوليد والبناء' : 'Generated + built');
+    } else {
+      notify.error((IS_AR ? 'فشل البناء: ' : 'Build failed: ') + (job.error_message || job.status));
+    }
+    return;
   }
 
   notify.success(IS_AR ? 'تم التوليد' : `Generated: ${TW.boards.length} boards`);
