@@ -11,6 +11,11 @@ from core.services.timetable_assignment_models import (
     StudentProfile,
     TimetableEvaluationResult,
 )
+from core.services.timetable_pr4_instructor import (
+    count_instructor_daily_overloads,
+    get_instructor_daily_cap,
+    is_instructor_daily_cap_enabled,
+)
 from core.services.timetable_quality import evaluate_timetable_quality
 
 
@@ -34,6 +39,14 @@ def evaluate_generated_timetable_candidate(
         states, student_profiles, sections_by_id, section_instructor_ids
     )
     quality_score = evaluate_timetable_quality(working_sections, states)
+    # Side-band only — never part of ``score``. Reports how many instructor-day
+    # sessions exceed the cap (0 when compliant / flag off / no instructor map),
+    # so the structural cap can be observed without disturbing the tuple.
+    overload_count = 0
+    if section_instructor_ids and is_instructor_daily_cap_enabled():
+        overload_count = count_instructor_daily_overloads(
+            sections_by_id, section_instructor_ids, get_instructor_daily_cap()
+        )
     return TimetableEvaluationResult(
         candidate_id=candidate_id,
         lexicographic_score=score,
@@ -43,6 +56,7 @@ def evaluate_generated_timetable_candidate(
         capacity_pressure_courses=extract_capacity_pressure_courses(states),
         reserve_heavy_sections=extract_reserve_heavy_sections(sections_by_id),
         quality_score=quality_score,
+        instructor_overload_count=overload_count,
     )
 
 

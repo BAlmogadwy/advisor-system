@@ -27,6 +27,7 @@ from core.services.planner_job_runner import (
     dispatch_planner_job,
     get_planner_job,
     is_async_planner_enabled,
+    reconcile_stale_planner_jobs,
     submit_planner_job,
 )
 
@@ -58,6 +59,9 @@ def planner_job_submit(request: HttpRequest) -> HttpResponse:
 def planner_job_poll(request: HttpRequest, job_id: str) -> HttpResponse:
     if not is_async_planner_enabled():
         return _flag_off_404()
+    # Sweep ghost RUNNING jobs from a dead server so a spinning UI sees the
+    # orphaned job flip to failed instead of polling forever.
+    reconcile_stale_planner_jobs()
     job = get_planner_job(job_id)
     if job is None:
         return JsonResponse({"detail": "not found"}, status=404)

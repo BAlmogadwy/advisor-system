@@ -437,6 +437,16 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
     max_external = int(payload.get("max_external", 50))
     course_overrides = payload.get("course_overrides") or None
 
+    # WS-E follow-up — defer the heavy section placement off the request thread.
+    # When ``defer_build`` is set and the async planner is available, build only
+    # the scenario scaffold synchronously (fast) and run the placement + optimise
+    # + compaction as an async planner job, so a multi-program build can't overrun
+    # the request timeout (the failure mode that SIGKILLed sync generate). Falls
+    # back to the synchronous build when async is unavailable.
+    from core.services.planner_job_runner import is_async_planner_enabled
+
+    use_async_build = bool(payload.get("defer_build")) and is_async_planner_enabled()
+
     try:
         result = generate_workspace_scenario(
             year=year_int,
@@ -450,10 +460,30 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
             max_external=max_external,
             course_overrides=course_overrides,
             created_by=request.user.username,
+            run_autoplace=not use_async_build,
         )
     except Exception as exc:
         logger.exception("Generate workspace failed")
         return _err(str(exc), code="GENERATE_FAILED", status=500)
+
+    if use_async_build:
+        from core.models import PlannerJob
+        from core.services.planner_job_runner import dispatch_planner_job, submit_planner_job
+
+        try:
+            build_job_id = submit_planner_job(
+                scenario_id=result["scenario"]["id"],
+                mode=PlannerJob.MODE_OPTIMISE_V2_FULL,
+                user=request.user,
+                params={"cpsat_time_limit": 60},
+            )
+            dispatch_planner_job(build_job_id)
+            result["build_job_id"] = str(build_job_id)
+        except Exception:
+            logger.exception(
+                "Deferred build dispatch failed for scenario %s", result["scenario"]["id"]
+            )
+            result["build_job_id"] = None  # frontend falls back to a manual rebuild
 
     log_audit_event(
         request,

@@ -3207,6 +3207,13 @@ pre, .pre-output {
   width:         100%;
   max-width:     440px;
   overflow:      hidden;
+  /* Cap to the viewport and lay out as a column so a tall body scrolls
+     internally while the header and footer (action buttons) stay pinned and
+     on-screen. Without this, content taller than the screen pushed the footer
+     buttons out of view. */
+  display:        flex;
+  flex-direction: column;
+  max-height:     calc(100vh - 2rem);
   animation:     dlg-slide-up 0.22s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
@@ -3220,6 +3227,7 @@ pre, .pre-output {
   display:       flex;
   align-items:   flex-start;
   gap:           0.875rem;
+  flex-shrink:   0;
 }
 
 .dlg-close {
@@ -3268,6 +3276,11 @@ pre, .pre-output {
   font-size:      clamp(0.8rem, 0.78rem + 0.09vw, 0.875rem); /* ~12.8px → 14px */
   color:          var(--ink-2);
   line-height:    1.55;
+  /* The scroll region: takes the slack and scrolls when content is tall, so the
+     pinned footer buttons remain on-screen. */
+  flex:           1 1 auto;
+  min-height:     0;
+  overflow-y:     auto;
 }
 
 .dlg-body p { margin-bottom: 0.5rem; }
@@ -3288,6 +3301,7 @@ pre, .pre-output {
   padding-block:        0 1rem;
   padding-inline-start: calc(1.5rem + 40px + 0.875rem);
   padding-inline-end:   1.5rem;
+  flex-shrink:          0;
 }
 
 .dlg-input-row label {
@@ -3339,6 +3353,8 @@ pre, .pre-output {
   gap:           0.5rem;
   border-top:    none;
   background:    transparent;
+  /* Pinned below the scrollable body so the action buttons are always visible. */
+  flex-shrink:   0;
 }
 
 .dlg-footer .btn-cancel {

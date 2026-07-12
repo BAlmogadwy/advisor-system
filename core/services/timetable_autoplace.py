@@ -76,6 +76,7 @@ from core.services.course_instructor_assignment import (
 )
 from core.services.timetable_decision_trace import (
     INSTRUCTOR_CLASH,
+    INSTRUCTOR_DAILY_CAP,
     SAME_COURSE_INSTRUCTOR_CLASH,
     STUDENT_CONFLICT,
     Alternative,
@@ -93,7 +94,9 @@ from core.services.timetable_lab_predicate import (
 from core.services.timetable_online import OnlineCourseLookup, normalise_course_code
 from core.services.timetable_pr4_instructor import (
     build_section_instructor_ids,
+    get_instructor_daily_cap,
     is_instructor_clash_enabled,
+    is_instructor_daily_cap_enabled,
     is_instructor_gap_penalty_enabled,
     is_instructor_links_enabled,
     normalise_instructor,
@@ -1196,6 +1199,12 @@ def auto_place_board(
     # that compact an instructor's day. Only used when the gap-penalty flag is on.
     instr_placed: dict[object, list[tuple[str, int, int]]] = {}
     gap_penalty_on = instructor_clash_on and is_instructor_gap_penalty_enabled()
+    # Hard daily-session cap. Coupled to instructor_clash_on because the cap reads
+    # the same section_instructors / instructor_schedule_full occupancy structures
+    # the clash filter builds; with the cap OFF none of the new branches below run,
+    # so output is byte-identical to before.
+    daily_cap_on = instructor_clash_on and is_instructor_daily_cap_enabled()
+    daily_cap = get_instructor_daily_cap()
     if instructor_clash_on:
         # NB: build_section_instructor_ids reads scenario.gender/.programs, so it
         # must receive the scenario OBJECT — passing scenario.id (an int) silently
@@ -1495,6 +1504,51 @@ def auto_place_board(
                             if trace_enabled:
                                 pr4_instructor_rejected.append(
                                     (option, INSTRUCTOR_CLASH, clash_ctx)
+                                )
+                            continue
+
+                # INSTRUCTOR_DAILY_CAP filter (flag-gated, hard): reject any
+                # option that would give one of this section's instructors more
+                # than ``daily_cap`` sessions on a single day. Counts EXISTING
+                # same-day sessions for that instructor (from other sections, via
+                # instructor_schedule_full — which is updated within-run at the
+                # commit site below) PLUS this option's own meetings that day.
+                # Lectures and labs both count. Pre-score hard filter, like the
+                # clash above.
+                if daily_cap_on:
+                    section_full_cap = f"{code}|{sec_label}"
+                    my_instrs_cap = section_instructors.get(section_full_cap, set())
+                    if my_instrs_cap:
+                        cap_ctx: dict | None = None
+                        opt_day_counts: dict[str, int] = {}
+                        for m in option:
+                            opt_day_counts[m["day"].upper()] = (
+                                opt_day_counts.get(m["day"].upper(), 0) + 1
+                            )
+                        for my_instr in my_instrs_cap:
+                            existing_by_day: dict[str, int] = {}
+                            for other_section, bd, _bs in instructor_schedule_full.get(
+                                my_instr, set()
+                            ):
+                                if other_section == section_full_cap:
+                                    continue
+                                existing_by_day[bd] = existing_by_day.get(bd, 0) + 1
+                            for day_up, add_cnt in opt_day_counts.items():
+                                if existing_by_day.get(day_up, 0) + add_cnt > daily_cap:
+                                    cap_ctx = {
+                                        "instructor_id": my_instr,
+                                        "day": day_up,
+                                        "existing": existing_by_day.get(day_up, 0),
+                                        "adding": add_cnt,
+                                        "cap": daily_cap,
+                                    }
+                                    break
+                            if cap_ctx is not None:
+                                break
+                        if cap_ctx is not None:
+                            if trace_enabled:
+                                pr4_instructor_rejected.append(
+                                    (option, INSTRUCTOR_DAILY_CAP, cap_ctx)
                                 )
                             continue
 
@@ -1831,6 +1885,16 @@ def auto_place_board(
                     if _ms >= 0 and _me >= 0:
                         for _iid in section_instructors.get(f"{code}|{sec_label}", ()):
                             instr_placed.setdefault(_iid, []).append((m["day"], _ms, _me))
+                if daily_cap_on:
+                    # Record this just-placed session so the daily-cap (and clash)
+                    # filter counts same-run siblings — instructor_schedule_full is
+                    # otherwise frozen at DB state and would undercount within a run.
+                    _section_full_cap = f"{code}|{sec_label}"
+                    _start_min = _to_min(m["start"])
+                    for _iid in section_instructors.get(_section_full_cap, ()):
+                        instructor_schedule_full.setdefault(_iid, set()).add(
+                            (_section_full_cap, m["day"].upper(), _start_min)
+                        )
                 all_placed_masks.append((code, mask))
                 slot_density[m["start"]] += 1
                 meeting_results.append(

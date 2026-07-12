@@ -12,17 +12,54 @@ This is an **async UX shim**, not a distributed job system. See
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import traceback
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
+from datetime import timedelta
 from typing import Any
 
 from django.conf import settings
 from django.db import close_old_connections
+from django.db.models import Q
 from django.utils import timezone
 
 from core.models import PlannerJob
+
+logger = logging.getLogger(__name__)
+
+# A planner job stuck in RUNNING/QUEUED past this window almost certainly belongs
+# to a server process that died mid-run (the in-process worker can't update its
+# own row once the process is gone). Generous default — the slowest observed real
+# build is ~12-15 min — so a legitimately long job is never swept by mistake.
+PLANNER_JOB_STALE_SETTING = "TIMETABLE_PLANNER_JOB_STALE_MINUTES"
+PLANNER_JOB_STALE_DEFAULT_MIN = 45
+
+
+def reconcile_stale_planner_jobs(stale_minutes: int | None = None) -> int:
+    """Mark orphaned planner jobs (RUNNING past the stale window, or QUEUED but
+    never dispatched) as FAILED. PR7 jobs are process-local and not durable
+    across restarts, so a server stop/reap leaves rows stranded in RUNNING
+    forever — a polling UI would spin indefinitely. Idempotent; returns the count
+    reconciled."""
+    if stale_minutes is None:
+        stale_minutes = int(
+            getattr(settings, PLANNER_JOB_STALE_SETTING, PLANNER_JOB_STALE_DEFAULT_MIN)
+        )
+    cutoff = timezone.now() - timedelta(minutes=max(1, stale_minutes))
+    stale = PlannerJob.objects.filter(
+        status__in=[PlannerJob.STATUS_RUNNING, PlannerJob.STATUS_QUEUED],
+    ).filter(Q(started_at__lt=cutoff) | Q(started_at__isnull=True, submitted_at__lt=cutoff))
+    updated = stale.update(
+        status=PlannerJob.STATUS_FAILED,
+        error_message="reconciled: the server stopped before the job finished (stale job swept)",
+        finished_at=timezone.now(),
+    )
+    if updated:
+        logger.warning("Reconciled %d stale planner job(s) -> failed", updated)
+    return updated
+
 
 _EXECUTOR: ThreadPoolExecutor | None = None
 
@@ -93,6 +130,9 @@ def submit_planner_job(
     iteration caps) so an async V2 job replays the same configuration the
     synchronous path would have used.
     """
+    # Self-heal: sweep any jobs stranded RUNNING by a prior server death before
+    # queueing a new one, so the table never accumulates ghost "running" rows.
+    reconcile_stale_planner_jobs()
     job = PlannerJob.objects.create(
         id=uuid.uuid4(),
         scenario_id=scenario_id,
@@ -247,6 +287,7 @@ __all__ = [
     "dispatch_planner_job",
     "get_planner_job",
     "is_async_planner_enabled",
+    "reconcile_stale_planner_jobs",
     "run_planner_job",
     "submit_planner_job",
 ]

@@ -418,6 +418,55 @@ TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED = os.getenv(
     "TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED", "false"
 ).lower() in ("1", "true", "yes", "on")
 
+# TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED: gates a HARD constraint capping the
+# number of scheduled sessions (lectures AND labs both count) an instructor may
+# teach on any single day at TIMETABLE_INSTRUCTOR_DAILY_CAP (default 3). A 4th
+# same-day session is forbidden outright — the cap wins against students (a
+# section may go unplaced rather than create an over-cap day). It is enforced
+# STRUCTURALLY at candidate generation in every solver stage (greedy, V2
+# local/chain, CP-SAT, SA), mirroring the instructor-clash filter, and is NEVER
+# added to the lexicographic score tuple — so with it OFF the optimiser output is
+# byte-identical to before. Meaningful only alongside TIMETABLE_INSTRUCTOR_LINKS_
+# ENABLED (per-section instructor identity). Env override ``=false`` is the live
+# kill-switch.
+TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED = os.getenv(
+    "TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED", "false"
+).lower() in ("1", "true", "yes", "on")
+TIMETABLE_INSTRUCTOR_DAILY_CAP = int(os.getenv("TIMETABLE_INSTRUCTOR_DAILY_CAP", "3"))
+
+# TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED: gates a post-build pass that compacts
+# each instructor's day (shrinks within-day idle gaps) by relocating their
+# sessions in TIME — never changing who teaches what. It runs AFTER the daily-cap
+# repair and treats the cap as a hard gate. Strictly guarded: feasibility
+# (unresolved/unassigned/clashes) and reserve never worsen; student schedule
+# spread may rise only within a small budget, with tier-A + graduating students
+# protected and a per-student ceiling; an unfavourable instructor/student trade
+# is rejected. Default OFF — opt-in after scenario replays; meaningful only with
+# TIMETABLE_INSTRUCTOR_LINKS_ENABLED. Env override ``=false`` is the kill-switch.
+TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED = os.getenv(
+    "TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED", "false"
+).lower() in ("1", "true", "yes", "on")
+# Tunables (env-overridable). Defaults match the validated scenario-627 replay.
+TIMETABLE_INSTRUCTOR_COMPACTION_GAP_BUDGET = float(
+    os.getenv("TIMETABLE_INSTRUCTOR_COMPACTION_GAP_BUDGET", "0.03")
+)  # max fractional rise in TOTAL student gap-minutes
+TIMETABLE_INSTRUCTOR_COMPACTION_PER_STUDENT_CAP = int(
+    os.getenv("TIMETABLE_INSTRUCTOR_COMPACTION_PER_STUDENT_CAP", "75")
+)  # max added gap minutes for any single student (~one slot/week)
+TIMETABLE_INSTRUCTOR_COMPACTION_TRADE_RATIO = float(
+    os.getenv("TIMETABLE_INSTRUCTOR_COMPACTION_TRADE_RATIO", "2.0")
+)  # require >= this many instructor idle-min saved per student gap-min added
+TIMETABLE_INSTRUCTOR_COMPACTION_MAX_ROUNDS = int(
+    os.getenv("TIMETABLE_INSTRUCTOR_COMPACTION_MAX_ROUNDS", "40")
+)
+# Wall-clock budget (seconds) for the compaction search. It is worst-day-first,
+# so the biggest idle wins land early; when the budget is hit it stops and
+# persists what it found. Keeps a synchronous UI rebuild from overrunning the
+# request thread. 0/negative disables the limit.
+TIMETABLE_INSTRUCTOR_COMPACTION_TIME_BUDGET_SECONDS = float(
+    os.getenv("TIMETABLE_INSTRUCTOR_COMPACTION_TIME_BUDGET_SECONDS", "20")
+)
+
 TIMETABLE_LAB_HEURISTIC_UNIFIED = os.getenv("TIMETABLE_LAB_HEURISTIC_UNIFIED", "true").lower() in (
     "1",
     "true",
@@ -470,6 +519,14 @@ TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED = os.getenv(
 TIMETABLE_PR7_ASYNC_PLANNER_ENABLED = os.getenv(
     "TIMETABLE_PR7_ASYNC_PLANNER_ENABLED", "true"
 ).lower() in ("1", "true", "yes", "on")
+
+# Planner jobs are process-local (not durable across restarts), so a server
+# stop/reap can leave a PlannerJob stranded in RUNNING forever. A job still
+# RUNNING (or QUEUED-but-never-dispatched) past this many minutes is treated as
+# orphaned and reconciled to FAILED — on submit, on poll, and via the
+# ``reconcile_planner_jobs`` management command. Generous default so a genuinely
+# long build is never swept by mistake.
+TIMETABLE_PLANNER_JOB_STALE_MINUTES = int(os.getenv("TIMETABLE_PLANNER_JOB_STALE_MINUTES", "45"))
 
 # TIMETABLE_PR8_ASYNC_JOB_UI_ENABLED: single flag gating the PR8 async-job
 # UX card on the Timetable Workspace page. When True, renders a status

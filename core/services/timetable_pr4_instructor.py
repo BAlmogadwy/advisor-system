@@ -91,6 +91,144 @@ def is_instructor_gap_penalty_enabled() -> bool:
     return bool(getattr(settings, INSTRUCTOR_GAP_PENALTY_FLAG_SETTING, False))
 
 
+INSTRUCTOR_DAILY_CAP_FLAG_SETTING = "TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED"
+INSTRUCTOR_DAILY_CAP_SETTING = "TIMETABLE_INSTRUCTOR_DAILY_CAP"
+
+
+def is_instructor_daily_cap_enabled() -> bool:
+    """Reads ``TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED``. Default ``False``.
+
+    Gates the HARD constraint capping the number of scheduled sessions (lectures
+    AND labs both count) an instructor may teach on any single day. Unlike the
+    gap penalty this is NOT a soft score term — it is enforced structurally at
+    candidate generation in every solver stage (a 4th same-day session is never
+    offered) and never touches the lexicographic tuple, so flag-off output is
+    byte-identical to before.
+    """
+    return bool(getattr(settings, INSTRUCTOR_DAILY_CAP_FLAG_SETTING, False))
+
+
+def get_instructor_daily_cap() -> int:
+    """Reads ``TIMETABLE_INSTRUCTOR_DAILY_CAP``. Default ``3``."""
+    return int(getattr(settings, INSTRUCTOR_DAILY_CAP_SETTING, 3))
+
+
+INSTRUCTOR_COMPACTION_FLAG_SETTING = "TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED"
+
+
+def is_instructor_compaction_enabled() -> bool:
+    """Reads ``TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED``. Default ``False``.
+
+    Gates the post-build instructor-day compaction pass (shrinks within-day idle
+    gaps by relocating an instructor's sessions in time). Default OFF → no-op.
+    """
+    return bool(getattr(settings, INSTRUCTOR_COMPACTION_FLAG_SETTING, False))
+
+
+def get_instructor_compaction_config() -> dict:
+    """Tunables for the compaction pass (env-overridable, validated defaults)."""
+    return {
+        "gap_budget": float(getattr(settings, "TIMETABLE_INSTRUCTOR_COMPACTION_GAP_BUDGET", 0.03)),
+        "per_student_cap": int(
+            getattr(settings, "TIMETABLE_INSTRUCTOR_COMPACTION_PER_STUDENT_CAP", 75)
+        ),
+        "trade_ratio": float(getattr(settings, "TIMETABLE_INSTRUCTOR_COMPACTION_TRADE_RATIO", 2.0)),
+        "max_rounds": int(getattr(settings, "TIMETABLE_INSTRUCTOR_COMPACTION_MAX_ROUNDS", 40)),
+        "time_budget": float(
+            getattr(settings, "TIMETABLE_INSTRUCTOR_COMPACTION_TIME_BUDGET_SECONDS", 20.0)
+        ),
+    }
+
+
+def exceeds_instructor_daily_cap(sections_by_id, section_instructor_ids, cap: int) -> bool:
+    """True if any (instructor, day) would hold more than ``cap`` sessions.
+
+    Pure/duck-typed over the in-memory section states: ``sections_by_id`` maps
+    ``section_id -> SectionState`` and ``section_instructor_ids`` maps the SAME
+    ``section_id -> {instructor_id}``. Each section's ``meetings`` contribute one
+    session per ``(instructor_id, meeting.day)`` (``day`` is the stage's native
+    representation — int 0-4 for SectionState). Early-exits on the first breach,
+    so it is cheap enough to call inside a move-evaluation loop. A section taught
+    by N instructors counts toward each of those N.
+    """
+    if not section_instructor_ids:
+        return False
+    counts: dict[tuple[int, object], int] = {}
+    for section_id, instr_ids in section_instructor_ids.items():
+        sec = sections_by_id.get(section_id)
+        if sec is None:
+            continue
+        for iid in instr_ids:
+            for meeting in sec.meetings:
+                key = (iid, meeting.day)
+                nxt = counts.get(key, 0) + 1
+                if nxt > cap:
+                    return True
+                counts[key] = nxt
+    return False
+
+
+def count_instructor_daily_overloads(sections_by_id, section_instructor_ids, cap: int) -> int:
+    """Total over-cap sessions = Σ over (instructor, day) of ``max(0, count-cap)``.
+
+    A side-band diagnostic (not part of the lexicographic score): 0 means every
+    instructor-day is within the cap. Used for the evaluator's
+    ``instructor_overload_count`` attribute and the repair pass's accept gate.
+    """
+    if not section_instructor_ids:
+        return 0
+    counts: dict[tuple[int, object], int] = {}
+    for section_id, instr_ids in section_instructor_ids.items():
+        sec = sections_by_id.get(section_id)
+        if sec is None:
+            continue
+        for iid in instr_ids:
+            for meeting in sec.meetings:
+                key = (iid, meeting.day)
+                counts[key] = counts.get(key, 0) + 1
+    return sum(max(0, c - cap) for c in counts.values())
+
+
+def has_instructor_clash(sections_by_id, section_instructor_ids) -> bool:
+    """True if any instructor is double-booked — two sessions occupying the same
+    ``(day, start_min)``. Distinct from the daily cap (which limits sessions/day):
+    a clash is two-at-the-same-TIME, physically impossible. Early-exits on the
+    first clash so it is cheap inside a move-evaluation loop. Cross-course (an
+    instructor teaching two different courses at once) is exactly what this
+    catches — the same-course rule does not, since the courses differ."""
+    if not section_instructor_ids:
+        return False
+    seen: set[tuple[object, int, int]] = set()
+    for section_id, instr_ids in section_instructor_ids.items():
+        sec = sections_by_id.get(section_id)
+        if sec is None:
+            continue
+        for iid in instr_ids:
+            for meeting in sec.meetings:
+                key = (iid, meeting.day, meeting.start_min)
+                if key in seen:
+                    return True
+                seen.add(key)
+    return False
+
+
+def count_instructor_clashes(sections_by_id, section_instructor_ids) -> int:
+    """Number of extra sessions stacked on an already-occupied (instructor, day,
+    start) slot — 0 means clash-free. Side-band diagnostic / repair signal."""
+    if not section_instructor_ids:
+        return 0
+    counts: dict[tuple[object, int, int], int] = {}
+    for section_id, instr_ids in section_instructor_ids.items():
+        sec = sections_by_id.get(section_id)
+        if sec is None:
+            continue
+        for iid in instr_ids:
+            for meeting in sec.meetings:
+                key = (iid, meeting.day, meeting.start_min)
+                counts[key] = counts.get(key, 0) + 1
+    return sum(c - 1 for c in counts.values() if c > 1)
+
+
 def build_section_instructor_ids(scenario) -> dict[str, set[int]]:
     """``{"course_key|section" -> {instructor_id, ...}}`` resolved from the
     scenario-independent ``CourseInstructor`` assignments.

@@ -219,7 +219,12 @@ def run_v2_optimisation_guarded(
     blocking_regressions = list(student_regression["regressions"]) + list(
         safety_regression["regressions"]
     )
-    if blocking_regressions:
+    # A from-scratch build (the scenario had no placements before this run, e.g.
+    # the deferred-generate path) cannot "regress" — there was nothing to
+    # protect, and any board is strictly better than an empty one. Only the
+    # rollback gate, designed to protect an EXISTING board, applies when a prior
+    # board existed; otherwise discarding the build leaves the scenario empty.
+    if blocking_regressions and placement_snapshot:
         candidate_final_score = result.get("final_score")
         restore_scenario_placements(scenario_id, placement_snapshot)
         safety_after = compute_scenario_safety_summary(scenario_id)

@@ -83,6 +83,68 @@ async function twFetch(url, opts = {}) {
   }
 }
 
+const _sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/* Poll an async planner job until it reaches a terminal status. Uses a raw
+   fetch (not twFetch) so transient poll blips don't spam error toasts during a
+   long solve. Calls onTick(job, elapsedMs) each poll for progress UI. */
+async function pollPlannerJob(jobId, onTick, { intervalMs = 2000, maxMs = 1800000, maxConsecutiveErrors = 8 } = {}) {
+  const start = Date.now();
+  let consecutiveErrors = 0;
+  while (Date.now() - start < maxMs) {
+    await _sleep(intervalMs);
+    let job = null;
+    try {
+      const r = await fetch(`/planner-jobs/${jobId}/`, { credentials: 'same-origin' });
+      if (r.ok) job = await r.json();
+    } catch { /* transient — tolerate below */ }
+    if (!job) {
+      if (++consecutiveErrors >= maxConsecutiveErrors) {
+        return { status: 'failed', error_message: 'lost contact with the planner job' };
+      }
+      continue;
+    }
+    consecutiveErrors = 0;
+    onTick && onTick(job, Date.now() - start);
+    if (job.status === 'succeeded' || job.status === 'failed' || job.status === 'cancelled') {
+      return job;
+    }
+  }
+  return { status: 'failed', error_message: 'optimisation timed out while polling' };
+}
+
+/* Single optimise request, standardised on the SPLIT workspace's behaviour: a
+   full rebuild (7 strategies + CP-SAT + compaction) can far exceed the request
+   timeout, so it runs off the request thread as a planner job and we poll it;
+   "current" stays synchronous. Returns the same {ok, optimisation} envelope the
+   sync path returns, so the results dialog below is identical for both. */
+async function runOptimiseRequest(mode, payload, btn, modeLabel) {
+  const url = `/ops/tw/scenarios/${TW.scenarioId}/optimise-v2/`;
+  const post = b => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+  if (mode === 'full') {
+    const sub = await twFetch(url, post({ ...payload, async_run: true }));
+    if (sub && sub.job_id) {
+      const job = await pollPlannerJob(sub.job_id, (j, ms) => {
+        const secs = Math.round((ms || 0) / 1000);
+        const detail = j.last_stage_seen ? ` (${j.last_stage_seen})` : (secs ? ` (${secs}s)` : '');
+        btn.innerHTML = `&#x23F3; ${modeLabel}${detail}`;
+      });
+      if (job.status === 'succeeded') {
+        const res = await twFetch(`/planner-jobs/${sub.job_id}/result/`);
+        return (res && res.result)
+          ? { ok: true, optimisation: res.result }
+          : { ok: false, error: { code: 'NO_RESULT', message: 'job finished but result was missing' } };
+      }
+      const code = job.status === 'cancelled' ? 'CANCELLED' : 'FAILED';
+      return { ok: false, error: { code, message: job.error_message || job.status } };
+    }
+    if (sub === null) return null;  // HTTP error — twFetch already toasted
+    // Async unavailable (no job_id, e.g. async planner flag off) → sync fallback.
+    return await twFetch(url, post(payload));
+  }
+  return await twFetch(url, post(payload));
+}
+
 /* ── Init ── */
 (function init() {
   // Events — Generate bar
@@ -190,6 +252,7 @@ async function runGenerate() {
       program: program,
       section: section,
       strategy: strategy,
+      defer_build: true,  // place sections via an async job (won't block the request)
     }),
   });
 
@@ -235,6 +298,28 @@ async function runGenerate() {
   // Auto-select first board
   if (TW.boards.length > 0) {
     await selectBoard(TW.boards[0].id);
+  }
+
+  // Deferred build: the heavy section placement (+ optimise + compaction) runs
+  // as an async planner job so the request never blocks on a long multi-program
+  // build. Poll it and refresh the board when it lands. (No build_job_id → the
+  // build already ran synchronously, e.g. async planner disabled.)
+  if (data.build_job_id) {
+    const building = IS_AR ? 'جاري بناء الجدول...' : 'Building timetable...';
+    $('twGenStatus').textContent = building;
+    const job = await pollPlannerJob(data.build_job_id, (j, ms) => {
+      const secs = Math.round((ms || 0) / 1000);
+      const detail = j.last_stage_seen ? ` (${j.last_stage_seen})` : (secs ? ` (${secs}s)` : '');
+      $('twGenStatus').textContent = building + detail;
+    });
+    if (job.status === 'succeeded') {
+      await onScenarioChange();
+      $('twGenStatus').textContent = '';
+      notify.success(IS_AR ? 'تم التوليد والبناء' : 'Generated + built');
+    } else {
+      notify.error((IS_AR ? 'فشل البناء: ' : 'Build failed: ') + (job.error_message || job.status));
+    }
+    return;
   }
 
   notify.success(IS_AR ? 'تم التوليد' : `Generated: ${TW.boards.length} boards`);
@@ -2019,11 +2104,7 @@ async function runOptimiseV2(mode = 'current') {
   payload.cpsat_time_limit = 60;
 
   try {
-    const data = await twFetch(`/ops/tw/scenarios/${TW.scenarioId}/optimise-v2/`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payload),
-    });
+    const data = await runOptimiseRequest(mode, payload, btn, modeLabel);
 
     if (!data || !data.ok) {
       // Surface the real error code + message from the backend envelope
