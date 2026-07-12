@@ -209,9 +209,23 @@ def _apply_chain(
     sections_by_id: dict[str, SectionState],
     pattern_catalog: dict[str, list[CanonicalPattern]],
 ):
-    """Apply both moves of a chain. Returns (snapshot_a, snapshot_b)."""
+    """Apply both moves of a chain. Returns (snapshot_a, snapshot_b).
+
+    If move_b raises (e.g. ``PatternNotInCatalog`` for a generator-proposed
+    pattern missing from the catalog, or any ``KeyError``), we first roll
+    back move_a's in-place mutation of ``sections_by_id`` before
+    re-raising, so the caller never sees a half-applied chain.
+    """
     snap_a = apply_move_to_grid(chain.move_a, sections_by_id, pattern_catalog)
-    snap_b = apply_move_to_grid(chain.move_b, sections_by_id, pattern_catalog)
+    try:
+        snap_b = apply_move_to_grid(chain.move_b, sections_by_id, pattern_catalog)
+    except Exception:
+        for s in snap_a.snapshots:
+            sec = sections_by_id[s.section_id]
+            sec.pattern_id = s.old_pattern_id
+            sec.meetings = list(s.old_meetings)
+            sec.assigned_room_id = s.old_room_id
+        raise
     return snap_a, snap_b
 
 
@@ -313,7 +327,21 @@ def chain_local_search(
         _timed_out = False
 
         for chain in chains:
-            snap_a, snap_b = _apply_chain(chain, sections_by_id, pattern_catalog)
+            try:
+                snap_a, snap_b = _apply_chain(chain, sections_by_id, pattern_catalog)
+            except Exception:
+                continue
+
+            # Hard-reject: two sections of the same course must never overlap
+            # in time (interval overlap, not just identical start) — registrar
+            # convention (one instructor per course). Mirrors the check in
+            # diagnostic_driven_local_search.
+            from core.services.timetable_local_search_v2 import _has_same_course_overlap
+
+            if _has_same_course_overlap(sections_by_id):
+                _rollback_chain(snap_a, snap_b, sections_by_id, room_occupancies)
+                chains_tried += 1
+                continue
 
             # Instructor daily-session cap hard-reject (lectures + labs): a chain
             # moves two sections at once, so either leg could push an instructor

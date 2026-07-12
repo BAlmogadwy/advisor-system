@@ -573,6 +573,17 @@ def polish_scenario_with_cpsat(
         section_instructor_ids=section_instructor_ids,
     )
 
+    # Hard-reject if the CP-SAT result violates the same-course
+    # instructor-clash rule — two sections of the same course whose times
+    # overlap (interval overlap, not just identical start) are never valid
+    # regardless of score.
+    polished_sections_by_id = {s.section_id: s for s in all_sections}
+    from core.services.timetable_local_search_v2 import _has_same_course_overlap
+
+    if _has_same_course_overlap(polished_sections_by_id):
+        logger.info("CP-SAT polisher rejected: same-course instructor clash in polished result")
+        return None
+
     if polished_eval.lexicographic_score < current_eval.lexicographic_score:
         logger.info(
             "CP-SAT polisher IMPROVED: %s -> %s",

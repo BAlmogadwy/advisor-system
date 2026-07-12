@@ -32,6 +32,9 @@ code and left empty otherwise):
 
 - ``INSTRUCTOR_CLASH``: ``clashing_section`` (``"<course>|<section>"``),
   ``clashing_instructor_id``.
+- ``SAME_COURSE_INSTRUCTOR_CLASH``: ``clashing_section`` (the offending
+  course code), ``same_course``, and the overlapped booking's
+  ``existing_day`` / ``existing_start`` / ``existing_end``.
 - ``STUDENT_CONFLICT``: ``clashing_section``, ``shared_student_count``.
 - ``LOCK_RESPECT``: ``locked_section``.
 - ``NO_ROOM_CAPACITY`` / ``NO_ROOM_GENDER`` / ``NO_ROOM_TYPE``: no extra

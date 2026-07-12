@@ -163,7 +163,9 @@ def test_auto_detects_current_term_without_explicit_term():
     result = compute_group_availability([9501])  # no year/term passed
     assert result["academic_year"] == YEAR
     assert result["term"] == TERM
-    assert _cell(result, "lecture", "TUE", 2)["busy_count"] == 1
+    # 13:00-14:15 is lecture index 3: the 10:50-12:05 post-lab slot sits at
+    # index 2 in the default grid, so the afternoon slots shift down by one.
+    assert _cell(result, "lecture", "TUE", 3)["busy_count"] == 1
 
 
 def test_occupants_carry_course_identity():
@@ -171,7 +173,8 @@ def test_occupants_carry_course_identity():
     _enrol(5001, sec)
 
     result = compute_group_availability([5001], YEAR, TERM)
-    cell = _cell(result, "lecture", "SUN", 2)
+    # 13:00-14:15 is lecture index 3 (10:50-12:05 post-lab slot is index 2).
+    cell = _cell(result, "lecture", "SUN", 3)
     assert cell["busy_count"] == 1
     occ = cell["occupants"]
     assert len(occ) == 1
@@ -200,7 +203,9 @@ def test_normalise_student_ids_dedupes_and_drops_nonnumeric():
 def test_empty_group_returns_all_free():
     result = compute_group_availability([], YEAR, TERM)
     assert result["requested_count"] == 0
-    assert result["grids"]["lecture"]["free_for_all_count"] == 25
+    # 6 lecture slots × 5 weekdays = 30 (the 10:50-12:05 post-lab slot added
+    # a sixth lecture slot); labs are unchanged at 5 slots × 5 days = 25.
+    assert result["grids"]["lecture"]["free_for_all_count"] == 30
     assert result["grids"]["lab"]["free_for_all_count"] == 25
 
 

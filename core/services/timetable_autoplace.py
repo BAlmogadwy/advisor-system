@@ -204,6 +204,11 @@ def get_meeting_pattern(credit_hours: int) -> list[int]:
 DEFAULT_SLOTS = [
     {"label": "09:00-10:15", "start": "09:00", "end": "10:15"},
     {"label": "10:30-11:45", "start": "10:30", "end": "11:45"},
+    # Post-lab variant: lets students with a 09:00-10:40 lab catch the next
+    # morning lecture (5-min turnaround). Starts at 10:50 — before the
+    # 11:30-12:59 lecture prayer block — so the grid stays compliant. The
+    # planner treats it as a distinct candidate; sections pick what fits.
+    {"label": "10:50-12:05", "start": "10:50", "end": "12:05"},
     # -- midday break gap: no lecture slot starts in 11:30-12:59 --
     {"label": "13:00-14:15", "start": "13:00", "end": "14:15"},
     {"label": "14:30-15:45", "start": "14:30", "end": "15:45"},
@@ -276,17 +281,21 @@ def _generate_meeting_options(
     _DAY_IDX = {d: i for i, d in enumerate(WEEKDAYS)}
 
     def _day_spacing_score(combo: tuple[str, ...]) -> int:
-        """Lower = better spacing. 0 = all gaps ≥ 2 days. Penalise consecutive."""
-        indices = [_DAY_IDX[d] for d in combo]
-        indices.sort()
+        """Mild preference for non-consecutive days — easily overridden.
+
+        Previously +10 per consecutive-day pair, which dominated the
+        ordering and drove every 3-meeting course onto SUN+TUE+THU,
+        leaving MON/WED labs empty. Dropped to +1 so SUN+TUE+THU still
+        ranks marginally above MON+TUE+WED as a first try, but any
+        stronger signal (room availability, student conflicts, same-
+        course spread, slot-density load balance) comfortably overrides
+        it — so MON/WED labs can be filled when SUN/TUE/THU is full.
+        """
+        indices = sorted(_DAY_IDX[d] for d in combo)
         penalty = 0
         for j in range(len(indices) - 1):
-            gap = indices[j + 1] - indices[j]
-            if gap == 1:
-                penalty += 10  # consecutive days — heavy penalty
-            elif gap == 2:
-                penalty += 0  # 1 day gap — ideal
-            # gap >= 3 is also fine
+            if indices[j + 1] - indices[j] == 1:
+                penalty += 1
         return penalty
 
     day_combos = sorted(combinations(WEEKDAYS, num_meetings), key=_day_spacing_score)
@@ -558,6 +567,7 @@ def _score_option(
     is_online: bool = False,
     online_codes_in_group: set[str] | None = None,
     overlap_matrix: dict | None = None,
+    slot_density: dict[str, int] | None = None,
 ) -> tuple[int, int, int, int, int, int]:
     """Score a candidate meeting option.  **Lower is better.**
 
@@ -646,12 +656,33 @@ def _score_option(
                 student_overlap_penalty += shared
 
     # ── (2) Same-course overlap across ALL groups ─────────────────────
-    # Prevents the same instructor from being double-booked.
+    # Prevents the same instructor from being double-booked, and pushes
+    # sibling sections (S1/S2/S3 of the same course) onto the same day
+    # so the instructor isn't scattered across the week.
     same_course_overlap = 0
     if other_sections_masks:
         for other_code, other_mask in other_sections_masks:
             if other_code == my_code and (total_mask & other_mask):
                 same_course_overlap += 1
+    # Different-day penalty: for every already-placed section of the
+    # same course code NOT sharing a day with this candidate, add a
+    # large penalty. Weight 1000 per pair — large enough to dominate
+    # instructor_spread/time_variance but below hard overlap (+1 would
+    # be counted hundreds-of-times in overlap).
+    if placed_schedule:
+        option_days = {m["day"] for m in option}
+        same_course_days: dict[str, bool] = {}
+        for entry in placed_schedule:
+            entry_code = entry[3] if len(entry) > 3 else ""
+            if entry_code != my_code:
+                continue
+            entry_day = entry[0]
+            same_course_days.setdefault(entry_day, False)
+            if entry_day in option_days:
+                same_course_days[entry_day] = True
+        for shared in same_course_days.values():
+            if not shared:
+                same_course_overlap += 1000
 
     # ── (3) Student gap: idle minutes between on-campus classes ───────
     # Online courses are excluded because students do not need to be
@@ -699,18 +730,42 @@ def _score_option(
                     else:
                         student_gap += idle
 
-    # ── (4) Slot position preference ───────────────────────────────────
+    # ── (4) Slot position preference + load balancing ─────────────────
     # Online courses: penalise early slots (push to late).
-    # Non-online courses: penalise slot 5 (16:00-17:15) — students
-    # prefer earlier classes.
+    # Non-online courses:
+    #   - Gradient morning preference: 09:00 ideal, latest slot worst.
+    #     This tiles mornings first when student-conflicts don't block,
+    #     relieving peak mid-day saturation.
+    #   - Slot-density load balancing: already-busy slots cost more, so
+    #     the optimiser spreads horizontally rather than stacking every
+    #     section at one peak slot (e.g. MON 14:30).
+    # Keyed by ``m["start"]`` directly to avoid a slot-grid divergence: a
+    # lab meeting's ``slot_idx`` indexes into DEFAULT_LAB_SLOTS (09:00,
+    # 10:45, 13:00, 14:45, 16:30), not DEFAULT_SLOTS, so an index-based
+    # gradient would silently mis-price labs (e.g. Lab 5 at 16:30 would
+    # receive the lecture-slot-5 weight of 4 instead of the 8 it deserves
+    # as the latest slot of its grid). Looking up by start time covers
+    # both grids consistently.
+    _SLOT_PENALTY_BY_START = {
+        "09:00": 0,
+        "10:30": 1,
+        "10:45": 1,
+        "10:50": 1,
+        "13:00": 2,
+        "14:30": 4,
+        "14:45": 4,
+        "16:00": 8,
+        "16:30": 8,
+    }
     instructor_spread = 0
     if is_online:
         for m in option:
             instructor_spread += 10 - m["slot_idx"]
     else:
         for m in option:
-            if m["slot_idx"] == 4:  # slot 5 (0-indexed as 4)
-                instructor_spread += 5
+            instructor_spread += _SLOT_PENALTY_BY_START.get(m["start"], 8)
+            if slot_density is not None:
+                instructor_spread += slot_density.get(m["start"], 0) * 2
 
     # ── (5) Time consistency across days ──────────────────────────────
     # Zero if all meetings share the same slot index; +1 for each
@@ -1022,7 +1077,15 @@ def auto_place_board(
                 other.board, other.term_section.course_code
             ):
                 continue
-            room_tracker.usage[(other.day, other.start_time)].add(other.room)
+            # Register in both indexes so overlap detection catches e.g.
+            # 10:30-11:45 vs 10:50-12:05 collisions. Online sections are
+            # skipped above — they occupy no physical room.
+            _s = str(other.start_time)[:5]
+            if other.end_time:
+                _e = str(other.end_time)[:5]
+                room_tracker.mark_used(other.day, _s, _e, other.room)
+            else:
+                room_tracker.usage[(other.day, _s)].add(other.room)
 
     # ── 1. Load section budgets for this board's term level ───────────
     # Ordered by descending demand so the most popular courses are placed
@@ -1148,6 +1211,10 @@ def auto_place_board(
     # Slot density: count how many sections use each start_time.
     # Used to break ties by pushing courses to less-populated slots.
     slot_density: dict[str, int] = defaultdict(int)
+    # Day-density parallel to slot_density so the scorer can distinguish
+    # between "SUN 13:00" and "MON 13:00" — without this the tie was
+    # always broken by sort order, which picks SUN+TUE+THU.
+    day_density: dict[str, int] = defaultdict(int)
     placement_results: list[dict] = []
     total_placed = 0
     total_skipped = 0
@@ -1155,6 +1222,25 @@ def auto_place_board(
     # inside auto_place_board (scoring best_option=None, and tracker None
     # fallback). Surfaced on the return dict as ``room_failures``.
     room_failures: list[dict] = []
+    # Post-greedy rooming-repair pass: record every UNASSIGNED meeting
+    # together with its demand / type / gender so a second pass can try
+    # a direct fit or a 1-swap to recover room capacity the capacity-
+    # ascending greedy left idle (e.g. large room empty at a slot where
+    # a small section failed because its preferred small rooms were
+    # already booked).
+    unassigned_for_repair: list[dict] = []
+    # Repair-pass safety net: per-course raw demand keyed by course_code,
+    # used by ``repair_unassigned_after_greedy`` when a swap candidate's
+    # ``available_capacity`` is NULL/0 so the capacity filter doesn't
+    # collapse to "any smallest room fits". Same ceil(total_demand /
+    # planned_sections) formula used everywhere else for raw_cap.
+    repair_budget_map: dict[str, int] = {}
+    for _b in budgets:
+        if _b.planned_sections and _b.planned_sections > 0:
+            repair_budget_map[_b.course_code] = -(-_b.total_demand // _b.planned_sections)
+        else:
+            repair_budget_map[_b.course_code] = int(_b.max_per_section or 0)
+    meeting_result_refs: dict[tuple[int, str, str], dict] = {}
     # PR3 commit 3 — decision-trace capture (observational, flag-gated).
     # When ``trace_enabled`` is True we record one ``DecisionTrace`` per
     # placed section: the chosen slot plus up to 3 alternatives ordered
@@ -1276,13 +1362,16 @@ def auto_place_board(
                         instr_placed.setdefault(_iid, []).append((lp.day, _lp_s, _lp_e))
             all_placed_masks.append((cc, mask))
             slot_density[lp.start_time] += 1
+            day_density[lp.day] += 1
             if (
                 room_tracker
                 and lp.room
                 and lp.room != "UNASSIGNED"
                 and normalise_course_code(lp.term_section.course_code) not in online_codes
             ):
-                room_tracker.usage[(lp.day, lp.start_time)].add(lp.room)
+                room_tracker.mark_used(
+                    lp.day, str(lp.start_time)[:5], str(lp.end_time)[:5], lp.room
+                )
             pr1_lock_rejections.append(
                 RejectionReason(
                     code=LOCK_RESPECT,
@@ -1560,6 +1649,8 @@ def auto_place_board(
                 # here we rely on the registrar's convention that course
                 # code → instructor. Rejected options are logged to the
                 # same trace bucket as INSTRUCTOR_CLASH.
+                # Interval-overlap detection (catches e.g. 10:30-11:45 vs
+                # 10:50-12:05) via the shared same-course window helper.
                 same_course_ctx = _same_course_overlap_context(option, placed_schedule, code)
                 if same_course_ctx is not None:
                     if trace_enabled:
@@ -1600,6 +1691,7 @@ def auto_place_board(
                     other_sections_masks=all_placed_masks,
                     is_online=is_online,
                     overlap_matrix=overlap_matrix,
+                    slot_density=slot_density,
                 )
                 # Apply the group-dependent gap weight (element [2] is
                 # student_gap).  This makes S1 gap-averse and S2+ tolerant.
@@ -1625,6 +1717,14 @@ def auto_place_board(
                 density_penalty = 0
                 for m in option:
                     density_penalty += slot_density[m["start"]] * 3
+                    # Day-density: heavier weight so MON/WED get filled instead
+                    # of stacking every lab on SUN/TUE/THU. Time-only slot_density
+                    # above doesn't distinguish days, so the scorer used to tie
+                    # on "SUN 13:00" vs "MON 13:00" and the sort order (which
+                    # prefers non-consecutive days) always picked SUN. This
+                    # term pushes overused days up and forces MON to win when
+                    # SUN/TUE/THU are crowded.
+                    density_penalty += day_density[m["day"]] * 5
 
                 # Same-course section adjacency: create the back-to-back
                 # section pair during generation, not as a later optimiser
@@ -1782,10 +1882,17 @@ def auto_place_board(
                         rtype = "lab" if (duration > 80 and is_lab_course) else "lecture"
                     # Try preferred room first (same room as previous meetings)
                     if preferred_room and room_tracker.is_feasible(
-                        m["day"], m["start"], section_cap, rtype, board_gender
+                        m["day"], m["start"], section_cap, rtype, board_gender, end=m["end"]
                     ):
-                        used = room_tracker.usage.get((m["day"], m["start"]), set())
-                        if preferred_room not in used:
+                        # Overlap-aware check: does any interval on this day
+                        # that intersects [m.start, m.end] already hold
+                        # preferred_room? Catches e.g. 10:30-11:45 vs 10:50-12:05.
+                        busy_here = room_tracker._overlapping_rooms(
+                            m["day"],
+                            room_tracker._mins(m["start"]),
+                            room_tracker._mins(m["end"]),
+                        )
+                        if preferred_room not in busy_here:
                             from core.models import Room as _RoomModel
 
                             pr_obj = _RoomModel.objects.filter(room_code=preferred_room).first()
@@ -1798,7 +1905,9 @@ def auto_place_board(
                                     or (pr_obj.section or "").upper() == board_gender
                                 )
                             ):
-                                room_tracker.usage[(m["day"], m["start"])].add(preferred_room)
+                                room_tracker.mark_used(
+                                    m["day"], m["start"], m["end"], preferred_room
+                                )
                                 assigned_room = preferred_room
 
                     if not assigned_room:
@@ -1807,7 +1916,12 @@ def auto_place_board(
                         # capacity because students rotate through lab slots.
                         room_cap = 0 if rtype == "lab" else section_cap
                         best_fit = room_tracker.assign_best_fit(
-                            m["day"], m["start"], room_cap, rtype, board_gender
+                            m["day"],
+                            m["start"],
+                            room_cap,
+                            rtype,
+                            board_gender,
+                            end=m["end"],
                         )
                         if best_fit:
                             assigned_room = best_fit
@@ -1846,7 +1960,11 @@ def auto_place_board(
                                     or check_occupancy(
                                         m_section_dict,
                                         room_tracker.rooms,
-                                        room_tracker.usage.get((m["day"], m["start"]), set()),
+                                        room_tracker._overlapping_rooms(
+                                            m["day"],
+                                            room_tracker._mins(m["start"]),
+                                            room_tracker._mins(m["end"]),
+                                        ),
                                     )
                                 )
                             if m_refined is None:
@@ -1859,6 +1977,21 @@ def auto_place_board(
                                     section_code=sec_label,
                                 )
                             room_failures.append(m_refined.to_dict())
+                            # Queue this meeting for the post-greedy repair pass.
+                            unassigned_for_repair.append(
+                                {
+                                    "ts_id": ts.id,
+                                    "day": m["day"],
+                                    "start": m["start"],
+                                    "end": m["end"],
+                                    "demand": 0 if rtype == "lab" else raw_cap,
+                                    "room_type": rtype,
+                                    "gender": board_gender,
+                                    "course_code": code,
+                                    "section_code": sec_label,
+                                    "budget_map": repair_budget_map,
+                                }
+                            )
                     if not preferred_room and assigned_room and assigned_room != "UNASSIGNED":
                         preferred_room = assigned_room
 
@@ -1897,14 +2030,15 @@ def auto_place_board(
                         )
                 all_placed_masks.append((code, mask))
                 slot_density[m["start"]] += 1
-                meeting_results.append(
-                    {
-                        "day": m["day"],
-                        "start": m["start"],
-                        "end": m["end"],
-                        "room": assigned_room,
-                    }
-                )
+                day_density[m["day"]] += 1
+                _meeting_entry = {
+                    "day": m["day"],
+                    "start": m["start"],
+                    "end": m["end"],
+                    "room": assigned_room,
+                }
+                meeting_results.append(_meeting_entry)
+                meeting_result_refs[(ts.id, m["day"], m["start"])] = _meeting_entry
 
             # Course-level instructor → legacy free-text clash key. Resolve the
             # primary CourseInstructor for this scenario's gender + program and
@@ -1985,6 +2119,33 @@ def auto_place_board(
                     chosen_room=meeting_results[0].get("room", "") if meeting_results else "",
                     alternatives=tuple(alternatives),
                 ).to_dict()
+
+    # Post-greedy rooming-repair — try to rescue UNASSIGNED meetings by
+    # re-fitting or 1-swapping against already-placed rooms. No-op when
+    # the repair list is empty (all meetings got a room first try).
+    if room_tracker and unassigned_for_repair:
+        from core.services.timetable_rooming import repair_unassigned_after_greedy
+
+        try:
+            _repaired = repair_unassigned_after_greedy(
+                board=board,
+                tracker=room_tracker,
+                unassigned_records=unassigned_for_repair,
+                meeting_result_refs=meeting_result_refs,
+                room_failures=room_failures,
+            )
+            if _repaired:
+                logger.info(
+                    "auto_place_board(board=%s): rooming-repair rescued %d meeting(s)",
+                    board_id,
+                    _repaired,
+                )
+        except Exception:
+            logger.exception(
+                "auto_place_board(board=%s): rooming-repair pass failed; "
+                "leaving UNASSIGNED placements as-is",
+                board_id,
+            )
 
     # PR6 commit 3 — stop the greedy clock. Flag-off path stays at zeros.
     _stage_telemetry = empty_stage_telemetry()

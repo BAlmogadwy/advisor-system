@@ -119,6 +119,33 @@
     return null;
   }
 
+  function resolveScenarioLabel(scenarioId) {
+    // Look up the human-readable name from the workspace dropdown if
+    // present, else fall back to "#<id>".
+    if (scenarioId == null) return "-";
+    var sel = document.getElementById("twScenario");
+    if (sel) {
+      for (var i = 0; i < sel.options.length; i++) {
+        var opt = sel.options[i];
+        if (String(opt.value) === String(scenarioId)) {
+          return opt.text + " (#" + scenarioId + ")";
+        }
+      }
+    }
+    return "#" + scenarioId;
+  }
+
+  function paintScenario(card, scenarioId) {
+    var label = resolveScenarioLabel(scenarioId);
+    setField(card, "scenario", label);
+    // Planner always writes back to the same scenario it read from.
+    setField(
+      card,
+      "output_scenario",
+      scenarioId == null ? "-" : label + " (placements updated in-place)"
+    );
+  }
+
   function onSubmit(state) {
     if (state.inFlight) return;
     var scenarioId = resolveScenarioId(state);
@@ -127,6 +154,8 @@
       return;
     }
     state.inFlight = true;
+    state.scenarioId = scenarioId;
+    paintScenario(state.card, scenarioId);
     var body = JSON.stringify({
       scenario_id: scenarioId,
       mode: state.cfg.mode || "full_rebuild",
@@ -140,6 +169,7 @@
         state.jobId = resp.job_id;
         state.currentJob = { status: resp.status || "queued", job_id: resp.job_id };
         paint(state.card, state.currentJob);
+        paintScenario(state.card, scenarioId);
         startPolling(state);
       })
       .catch(function () {
