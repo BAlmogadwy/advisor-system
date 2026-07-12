@@ -141,8 +141,9 @@ class TestRunnerHappyPath(TransactionTestCase):
 
 
 class TestFullRebuildModeClearsPlacements(TransactionTestCase):
-    """mode=full_rebuild must delete every existing placement on the
-    scenario's boards before the planner runs (fix/pr7-honor-job-mode)."""
+    """mode=full_rebuild resets the board for a clean rebuild but must keep the
+    user's LOCKED placements and their meetings — matching the split-workspace
+    rebuild (fix/pr7-honor-job-mode + PR-1 board-persistence)."""
 
     @override_settings(TIMETABLE_PR7_ASYNC_PLANNER_ENABLED=True)
     def test_full_rebuild_deletes_existing_placements(self) -> None:
@@ -166,6 +167,58 @@ class TestFullRebuildModeClearsPlacements(TransactionTestCase):
         job = PlannerJob.objects.get(id=job_id)
         self.assertEqual(job.status, "succeeded")
         self.assertEqual(job.mode, "full_rebuild")
+
+    @override_settings(TIMETABLE_PR7_ASYNC_PLANNER_ENABLED=True)
+    def test_full_rebuild_reset_preserves_locked_placements(self) -> None:
+        """Regression (defect b): the reset must NOT delete locked placements
+        or strand their meetings — previously it deleted every placement and
+        left TSM rows behind."""
+        from pr7_fixture_loader import load_pr7_fixture
+
+        from core.models import SectionPlacement, TermSection, TermSectionMeeting
+        from core.services.planner_job_runner import _clear_scenario_placements
+
+        scenario, board, _ = load_pr7_fixture("pr7_async_happy_path.json")
+
+        def _seed(course: str, sec: str, day: str, start: str, end: str, locked: bool):
+            ts = TermSection.objects.create(
+                scenario=scenario,
+                course_code=course,
+                course_number=course,
+                course_key=course,
+                course_name=course,
+                section=sec,
+                source_tag="test",
+            )
+            SectionPlacement.objects.create(
+                board=board,
+                term_section=ts,
+                day=day,
+                start_time=start,
+                end_time=end,
+                room="R1",
+                is_locked=locked,
+            )
+            TermSectionMeeting.objects.create(
+                term_section=ts,
+                day=day,
+                start_time=start,
+                end_time=end,
+                room="R1",
+                instructor="Dr Lock",
+            )
+            return ts
+
+        locked_ts = _seed("AI101", "S1", "SUN", "09:00", "10:15", True)
+        unlocked_ts = _seed("DS201", "S1", "MON", "10:30", "11:45", False)
+
+        removed = _clear_scenario_placements(scenario.id)
+
+        self.assertEqual(removed, 1)  # only the unlocked placement
+        self.assertEqual(SectionPlacement.objects.filter(term_section=locked_ts).count(), 1)
+        self.assertEqual(TermSectionMeeting.objects.filter(term_section=locked_ts).count(), 1)
+        self.assertEqual(SectionPlacement.objects.filter(term_section=unlocked_ts).count(), 0)
+        self.assertEqual(TermSectionMeeting.objects.filter(term_section=unlocked_ts).count(), 0)
 
 
 class TestFailureCapture(TransactionTestCase):
@@ -198,6 +251,33 @@ class TestFailureCapture(TransactionTestCase):
         self.assertEqual(job.status, "failed")
         self.assertTrue(job.error_message and "synthetic fault" in job.error_message)
         self.assertIsNone(job.result_json)
+
+    @override_settings(TIMETABLE_PR7_ASYNC_PLANNER_ENABLED=True)
+    def test_error_result_dict_marks_job_failed_not_succeeded(self) -> None:
+        """Regression (defect d): the V2 guarded runner catches optimiser
+        failures and returns ``{"error": ...}`` instead of raising; such a run
+        must end FAILED (with the message), not SUCCEEDED."""
+        from unittest.mock import patch
+
+        from pr7_fixture_loader import load_pr7_fixture
+
+        from core.models import PlannerJob
+        from core.services.planner_job_runner import run_planner_job, submit_planner_job
+
+        scenario, _, _ = load_pr7_fixture("pr7_failure_capture.json")
+        job_id = submit_planner_job(
+            scenario_id=scenario.id, mode=PlannerJob.MODE_OPTIMISE_V2_FULL, user=None
+        )
+
+        with patch(
+            "core.services.timetable_v2_runner.run_v2_optimisation_guarded",
+            return_value={"error": "synthetic optimiser error"},
+        ):
+            run_planner_job(job_id)
+
+        job = PlannerJob.objects.get(id=job_id)
+        self.assertEqual(job.status, "failed")
+        self.assertIn("synthetic optimiser error", job.error_message or "")
 
 
 class TestCooperativeCancel(TransactionTestCase):

@@ -177,20 +177,19 @@ def cancel_planner_job(
 
 
 def _clear_scenario_placements(scenario_id: int) -> int:
-    """Delete every ``SectionPlacement`` attached to any board of the
-    given scenario. Returns the number of rows removed.
+    """Reset a scenario's board(s) for a ``mode=full_rebuild`` run.
 
-    Used when ``mode=full_rebuild`` — PR7 commits 2-5 ignored mode
-    entirely and always ran fill-unplaced. Calling this before
-    ``auto_place_scenario`` restores the expected "rebuild from
-    scratch" semantic.
+    Delegates to ``timetable_board_persistence.reset_scenario`` so the rebuild
+    starts from the same clean slate the split-workspace rebuild uses: unlocked
+    placements **and their meeting rows** are cleared, while locked placements
+    (the user's hard constraints) survive. Previously this deleted every
+    placement — including locked ones — and left ``TermSectionMeeting`` rows
+    stranded, so the adaptive rebuild inherited stale meetings and silently
+    dropped the user's locks. Returns the number of placements removed.
     """
-    from core.models import SectionPlacement
+    from core.services.timetable_board_persistence import reset_scenario
 
-    deleted, _ = SectionPlacement.objects.filter(
-        board__scenario_id=scenario_id,
-    ).delete()
-    return deleted
+    return reset_scenario(scenario_id, keep_locked=True).placements_deleted
 
 
 def _derive_last_stage(result: dict | None) -> str | None:
@@ -272,10 +271,24 @@ def run_planner_job(job_id: uuid.UUID | str) -> None:
         job.save(update_fields=["status", "error_message", "finished_at"])
         return
 
-    job.status = PlannerJob.STATUS_SUCCEEDED
+    # The V2 guarded runner catches optimiser failures internally and returns
+    # ``{"error": ...}`` after rolling back, rather than raising — so a non-empty
+    # ``error`` here is a real failure and must NOT be reported as succeeded (the
+    # sync view maps the same dict to HTTP 500). Persist the result either way so
+    # the payload/telemetry is inspectable.
     job.result_json = result
-    job.last_stage_seen = _derive_last_stage(result)
     job.finished_at = timezone.now()
+    error = result.get("error") if isinstance(result, dict) else None
+    if error:
+        job.status = PlannerJob.STATUS_FAILED
+        job.error_message = str(error)[:4000]
+        job.save(
+            update_fields=["status", "result_json", "error_message", "finished_at"],
+        )
+        return
+
+    job.status = PlannerJob.STATUS_SUCCEEDED
+    job.last_stage_seen = _derive_last_stage(result)
     job.save(
         update_fields=["status", "result_json", "last_stage_seen", "finished_at"],
     )
