@@ -35,7 +35,11 @@ from core.services.timetable_pr4_instructor import (
     is_instructor_clash_enabled,
     is_instructor_daily_cap_enabled,
 )
-from core.services.timetable_room_repair import apply_move_to_grid, rollback_move
+from core.services.timetable_room_repair import (
+    PatternNotInCatalog,
+    apply_move_to_grid,
+    rollback_move,
+)
 from core.services.timetable_solver_codes import CHAIN_ROTATED, is_stage_trace_enabled
 from core.services.timetable_stage_telemetry import (
     is_stage_telemetry_enabled,
@@ -329,7 +333,14 @@ def chain_local_search(
         for chain in chains:
             try:
                 snap_a, snap_b = _apply_chain(chain, sections_by_id, pattern_catalog)
+            except (PatternNotInCatalog, KeyError):
+                # Expected skip path: generator-proposed pattern missing from
+                # this board's catalog (see _apply_chain docstring).
+                continue
             except Exception:
+                # Anything else is a real bug — skip the chain to protect the
+                # search loop, but never silently.
+                logger.warning("chain apply failed unexpectedly; skipping", exc_info=True)
                 continue
 
             # Hard-reject: two sections of the same course must never overlap

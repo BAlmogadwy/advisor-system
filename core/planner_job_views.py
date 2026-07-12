@@ -19,7 +19,6 @@ from __future__ import annotations
 import json
 
 from django.http import HttpRequest, HttpResponse, JsonResponse
-from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from core.services.planner_job_runner import (
@@ -30,17 +29,36 @@ from core.services.planner_job_runner import (
     reconcile_stale_planner_jobs,
     submit_planner_job,
 )
+from core.services.rbac import ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_role
 
 
 def _flag_off_404() -> HttpResponse:
     return JsonResponse({"detail": "PR7 async planner disabled"}, status=404)
 
 
-@csrf_exempt
+def _deny_unless_general_advisor(request: HttpRequest) -> HttpResponse | None:
+    """Guard: 401 for anonymous callers, 403 below General Advisor.
+
+    Mirrors ``timetable_workspace_views._require_general_advisor`` — these
+    endpoints mutate scenario placements, so they carry the same role floor
+    as every ``tw_*`` view. JSON statuses (not a login redirect) because the
+    only legitimate callers are ``fetch()`` clients that send X-CSRFToken.
+    """
+    user = getattr(request, "user", None)
+    if user is None or not user.is_authenticated:
+        return JsonResponse({"detail": "authentication required"}, status=401)
+    if get_user_role(user) not in {ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN}:
+        return JsonResponse({"detail": "General Advisor access required"}, status=403)
+    return None
+
+
 @require_http_methods(["POST"])
 def planner_job_submit(request: HttpRequest) -> HttpResponse:
     if not is_async_planner_enabled():
         return _flag_off_404()
+    deny = _deny_unless_general_advisor(request)
+    if deny is not None:
+        return deny
     try:
         payload = json.loads(request.body or b"{}")
     except json.JSONDecodeError:
@@ -49,8 +67,7 @@ def planner_job_submit(request: HttpRequest) -> HttpResponse:
     mode = payload.get("mode")
     if not isinstance(scenario_id, int) or mode not in {"optimise_current", "full_rebuild"}:
         return JsonResponse({"detail": "bad scenario_id/mode"}, status=400)
-    user = request.user if getattr(request, "user", None) else None
-    job_id = submit_planner_job(scenario_id=scenario_id, mode=mode, user=user)
+    job_id = submit_planner_job(scenario_id=scenario_id, mode=mode, user=request.user)
     dispatch_planner_job(job_id)
     return JsonResponse({"job_id": str(job_id), "status": "queued"}, status=201)
 
@@ -59,6 +76,9 @@ def planner_job_submit(request: HttpRequest) -> HttpResponse:
 def planner_job_poll(request: HttpRequest, job_id: str) -> HttpResponse:
     if not is_async_planner_enabled():
         return _flag_off_404()
+    deny = _deny_unless_general_advisor(request)
+    if deny is not None:
+        return deny
     # Sweep ghost RUNNING jobs from a dead server so a spinning UI sees the
     # orphaned job flip to failed instead of polling forever.
     reconcile_stale_planner_jobs()
@@ -84,17 +104,22 @@ def planner_job_poll(request: HttpRequest, job_id: str) -> HttpResponse:
 def planner_job_result(request: HttpRequest, job_id: str) -> HttpResponse:
     if not is_async_planner_enabled():
         return _flag_off_404()
+    deny = _deny_unless_general_advisor(request)
+    if deny is not None:
+        return deny
     job = get_planner_job(job_id)
     if job is None or job.status != "succeeded":
         return JsonResponse({"detail": "result not ready"}, status=404)
     return JsonResponse({"job_id": str(job.id), "result": job.result_json})
 
 
-@csrf_exempt
 @require_http_methods(["POST"])
 def planner_job_cancel(request: HttpRequest, job_id: str) -> HttpResponse:
     if not is_async_planner_enabled():
         return _flag_off_404()
+    deny = _deny_unless_general_advisor(request)
+    if deny is not None:
+        return deny
     ok = cancel_planner_job(job_id)
     if not ok:
         return JsonResponse({"detail": "cannot cancel"}, status=404)

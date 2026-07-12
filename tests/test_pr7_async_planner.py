@@ -34,6 +34,20 @@ from django.test.utils import override_settings
 PR7_FLAG = "TIMETABLE_PR7_ASYNC_PLANNER_ENABLED"
 
 
+def _advisor_client(username: str = "pr7-advisor"):
+    """A logged-in super-admin test client (the endpoints require the role)."""
+    from django.contrib.auth import get_user_model
+    from django.test import Client
+
+    # No password: force_login bypasses authentication entirely.
+    user = get_user_model().objects.create_superuser(
+        username=username, email=f"{username}@test.local", password=None
+    )
+    client = Client()
+    client.force_login(user)
+    return client
+
+
 class TestPR7Tripwire(SimpleTestCase):
     """Tripwire — fails at commit 1, green at commit 2 when the model
     and runner skeleton land. The parity-helper import is exercised by
@@ -218,11 +232,10 @@ class TestAPISubmit(TransactionTestCase):
     def test_submit_returns_job_id(self) -> None:
         import json
 
-        from django.test import Client
         from pr7_fixture_loader import load_pr7_fixture
 
         scenario, _, _ = load_pr7_fixture("pr7_async_happy_path.json")
-        client = Client()
+        client = _advisor_client()
         response = client.post(
             "/planner-jobs/",
             data=json.dumps({"scenario_id": scenario.id, "mode": "full_rebuild"}),
@@ -239,14 +252,13 @@ class TestAPIPoll(TransactionTestCase):
 
     @override_settings(TIMETABLE_PR7_ASYNC_PLANNER_ENABLED=True)
     def test_poll_does_not_echo_result(self) -> None:
-        from django.test import Client
         from pr7_fixture_loader import load_pr7_fixture
 
         from core.services.planner_job_runner import submit_planner_job
 
         scenario, _, _ = load_pr7_fixture("pr7_async_happy_path.json")
         job_id = submit_planner_job(scenario_id=scenario.id, mode="full_rebuild", user=None)
-        client = Client()
+        client = _advisor_client()
         response = client.get(f"/planner-jobs/{job_id}/")
         self.assertEqual(response.status_code, 200)
         body = response.json()
@@ -259,14 +271,13 @@ class TestAPIResult(TransactionTestCase):
 
     @override_settings(TIMETABLE_PR7_ASYNC_PLANNER_ENABLED=True)
     def test_result_404_when_queued(self) -> None:
-        from django.test import Client
         from pr7_fixture_loader import load_pr7_fixture
 
         from core.services.planner_job_runner import submit_planner_job
 
         scenario, _, _ = load_pr7_fixture("pr7_async_happy_path.json")
         job_id = submit_planner_job(scenario_id=scenario.id, mode="full_rebuild", user=None)
-        response = Client().get(f"/planner-jobs/{job_id}/result/")
+        response = _advisor_client().get(f"/planner-jobs/{job_id}/result/")
         self.assertEqual(response.status_code, 404)
 
 
@@ -275,7 +286,6 @@ class TestAPICancel(TransactionTestCase):
 
     @override_settings(TIMETABLE_PR7_ASYNC_PLANNER_ENABLED=True)
     def test_cancel_endpoint_sets_flag(self) -> None:
-        from django.test import Client
         from pr7_fixture_loader import load_pr7_fixture
 
         from core.models import PlannerJob
@@ -283,7 +293,7 @@ class TestAPICancel(TransactionTestCase):
 
         scenario, _, _ = load_pr7_fixture("pr7_cancel_boundary.json")
         job_id = submit_planner_job(scenario_id=scenario.id, mode="full_rebuild", user=None)
-        response = Client().post(f"/planner-jobs/{job_id}/cancel/")
+        response = _advisor_client().post(f"/planner-jobs/{job_id}/cancel/")
         self.assertIn(response.status_code, (200, 202))
         job = PlannerJob.objects.get(id=job_id)
         self.assertTrue(job.cancel_requested)
@@ -365,3 +375,55 @@ class TestFlagDefaultPostPromotion(SimpleTestCase):
         from django.conf import settings
 
         self.assertTrue(getattr(settings, PR7_FLAG, False))
+
+
+class TestEndpointAuth(TransactionTestCase):
+    """The four endpoints mutate/expose scenario state and therefore carry
+    the same role floor as the ``tw_*`` workspace views: anonymous → 401,
+    authenticated-but-plain-advisor → 403. Pins the 2026-07 security fix
+    (the endpoints previously had no auth at all)."""
+
+    @override_settings(TIMETABLE_PR7_ASYNC_PLANNER_ENABLED=True)
+    def test_anonymous_rejected_on_all_endpoints(self) -> None:
+        import json
+
+        from django.test import Client
+
+        from core.models import PlannerJob
+
+        anon = Client()
+        response = anon.post(
+            "/planner-jobs/",
+            data=json.dumps({"scenario_id": 1, "mode": "full_rebuild"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(PlannerJob.objects.count(), 0)
+
+        fake_id = "00000000-0000-0000-0000-000000000000"
+        self.assertEqual(anon.get(f"/planner-jobs/{fake_id}/").status_code, 401)
+        self.assertEqual(anon.get(f"/planner-jobs/{fake_id}/result/").status_code, 401)
+        self.assertEqual(anon.post(f"/planner-jobs/{fake_id}/cancel/").status_code, 401)
+
+    @override_settings(TIMETABLE_PR7_ASYNC_PLANNER_ENABLED=True)
+    def test_plain_advisor_rejected_with_403(self) -> None:
+        import json
+
+        from django.contrib.auth import get_user_model
+        from django.test import Client
+
+        from core.models import PlannerJob
+
+        # No password: force_login bypasses authentication entirely.
+        user = get_user_model().objects.create_user(
+            username="pr7-plain", email="pr7-plain@test.local"
+        )
+        client = Client()
+        client.force_login(user)
+        response = client.post(
+            "/planner-jobs/",
+            data=json.dumps({"scenario_id": 1, "mode": "full_rebuild"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(PlannerJob.objects.count(), 0)
