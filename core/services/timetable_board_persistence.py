@@ -29,9 +29,11 @@ from django.db import transaction
 
 from core.models import SectionPlacement, TermSectionMeeting
 
-# Placement fields captured for a lossless snapshot. Mirrors the historical
-# ``timetable_v2_runner._PLACEMENT_SNAPSHOT_FIELDS`` (id + audit columns
-# included) so restore is byte-identical to the pre-existing placement restore.
+# Placement fields captured for restore. ``id`` is kept so identity is preserved
+# across a snapshot/restore. ``created_at``/``updated_at`` are deliberately
+# omitted: they are ``auto_now_add``/``auto_now`` columns that ``bulk_create``
+# re-stamps regardless of any value we pass, and nothing reads them — carrying
+# them would only imply a fidelity the DB does not honour.
 _PLACEMENT_FIELDS = (
     "id",
     "board_id",
@@ -41,8 +43,6 @@ _PLACEMENT_FIELDS = (
     "end_time",
     "room",
     "is_locked",
-    "created_at",
-    "updated_at",
 )
 
 # Meeting fields captured for a lossless snapshot. ``instructor`` is included
@@ -108,20 +108,28 @@ def reset_scenario(scenario_id: int, *, keep_locked: bool = True) -> ResetResult
     ``persist_section_states_to_scenario`` skip sections).
 
     When ``keep_locked`` (the default), locked placements are the user's hard
-    constraints: those rows and the meetings of their sections survive. This is
-    the behaviour the split-workspace rebuild already relied on; passing
-    ``keep_locked=False`` performs a hard wipe of the whole scenario board.
+    constraints: each surviving locked placement keeps the meeting that backs it.
+    Locking is per-placement (the UI toggles ``is_locked`` on a single placement),
+    so a section may have a mix of locked and unlocked placements — meetings are
+    preserved per ``(section, day, start)`` to match the *surviving placements*,
+    never per whole section, so a partially-locked section stays
+    placement == meeting consistent. Passing ``keep_locked=False`` performs a
+    hard wipe of the whole scenario board.
 
     Runs in a single transaction. Returns the row counts removed.
     """
     with transaction.atomic():
+        # (section, day, start) of each locked placement that will survive.
+        # Meetings are preserved to match these exact slots — not by section —
+        # so an unlocked meeting on a partially-locked section is still cleared.
+        locked_slot_keys: set[tuple[int, str, str]] = set()
         locked_ts_ids: set[int] = set()
         if keep_locked:
-            locked_ts_ids = set(
-                SectionPlacement.objects.filter(
-                    board__scenario_id=scenario_id, is_locked=True
-                ).values_list("term_section_id", flat=True)
-            )
+            for ts_id, day, start in SectionPlacement.objects.filter(
+                board__scenario_id=scenario_id, is_locked=True
+            ).values_list("term_section_id", "day", "start_time"):
+                locked_slot_keys.add((ts_id, day, start))
+                locked_ts_ids.add(ts_id)
 
         placements_qs = SectionPlacement.objects.filter(board__scenario_id=scenario_id)
         if keep_locked:
@@ -129,9 +137,19 @@ def reset_scenario(scenario_id: int, *, keep_locked: bool = True) -> ResetResult
         placements_deleted, _ = placements_qs.delete()
 
         meetings_qs = TermSectionMeeting.objects.filter(term_section__scenario_id=scenario_id)
-        if keep_locked and locked_ts_ids:
-            meetings_qs = meetings_qs.exclude(term_section_id__in=locked_ts_ids)
-        meetings_deleted, _ = meetings_qs.delete()
+        if keep_locked:
+            stale_meeting_ids = [
+                mid
+                for mid, ts_id, day, start in meetings_qs.values_list(
+                    "id", "term_section_id", "day", "start_time"
+                )
+                if (ts_id, day, start) not in locked_slot_keys
+            ]
+            meetings_deleted, _ = TermSectionMeeting.objects.filter(
+                id__in=stale_meeting_ids
+            ).delete()
+        else:
+            meetings_deleted, _ = meetings_qs.delete()
 
     return ResetResult(
         placements_deleted=placements_deleted,
@@ -141,11 +159,12 @@ def reset_scenario(scenario_id: int, *, keep_locked: bool = True) -> ResetResult
 
 
 def snapshot_scenario(scenario_id: int) -> ScenarioSnapshot:
-    """Capture both board tables so an unsafe run can be restored exactly.
+    """Capture both board tables so an unsafe run can be restored.
 
     Captures ``SectionPlacement`` (board-scoped) and ``TermSectionMeeting``
-    (section-scoped) including ``instructor`` — everything needed for a lossless
-    :func:`restore_scenario`.
+    (section-scoped) including ``instructor`` — everything needed to restore the
+    schedule. The placements' ``created_at``/``updated_at`` audit columns are not
+    captured (see ``_PLACEMENT_FIELDS``); every other field round-trips exactly.
     """
     placements = list(
         SectionPlacement.objects.filter(board__scenario_id=scenario_id)

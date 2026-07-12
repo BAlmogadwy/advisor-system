@@ -105,6 +105,51 @@ def test_reset_keep_locked_preserves_locked_placement_and_meeting() -> None:
 
 
 @pytest.mark.django_db
+def test_reset_keeps_only_locked_meetings_of_a_partially_locked_section() -> None:
+    """A section can have a mix of locked and unlocked placements (locking is
+    per-placement). Reset must keep only the meeting that backs the surviving
+    locked placement — not both — or the preserved section itself drifts."""
+    scenario, board = _scenario_with_board("reset-mixed-lock")
+    ts = TermSection.objects.create(
+        scenario=scenario,
+        course_code="AI101",
+        course_number="AI101",
+        course_key="AI101",
+        course_name="AI101",
+        section="S1",
+        source_tag="test",
+    )
+    # Two sessions of one section: Monday locked (pinned), Wednesday not.
+    for day, start, end, locked in (
+        ("MON", "09:00", "10:15", True),
+        ("WED", "09:00", "10:15", False),
+    ):
+        SectionPlacement.objects.create(
+            board=board,
+            term_section=ts,
+            day=day,
+            start_time=start,
+            end_time=end,
+            room="R1",
+            is_locked=locked,
+        )
+        TermSectionMeeting.objects.create(
+            term_section=ts, day=day, start_time=start, end_time=end, room="R1"
+        )
+
+    reset_scenario(scenario.id, keep_locked=True)
+
+    placements = SectionPlacement.objects.filter(term_section=ts)
+    meetings = TermSectionMeeting.objects.filter(term_section=ts)
+    # Exactly the locked Monday survives in BOTH tables — no stranded Wednesday
+    # meeting (which would be placement != meeting drift on a preserved section).
+    assert placements.count() == 1
+    assert meetings.count() == 1
+    assert placements.first().day == "MON"
+    assert meetings.first().day == "MON"
+
+
+@pytest.mark.django_db
 def test_reset_hard_wipe_clears_everything() -> None:
     scenario, board = _scenario_with_board("reset-hard")
     _make_section(scenario, board, "AI101", "S1", "SUN", "09:00", "10:15", locked=True)
