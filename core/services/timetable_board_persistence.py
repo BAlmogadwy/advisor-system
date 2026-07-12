@@ -73,6 +73,15 @@ class ResetResult:
 
 
 @dataclass(frozen=True)
+class MeetingSyncResult:
+    """Outcome of :func:`sync_meetings_from_placements`."""
+
+    sections_synced: int
+    meetings_written: int
+    meetings_deleted: int
+
+
+@dataclass(frozen=True)
 class ScenarioSnapshot:
     """A restorable capture of both board tables for one scenario."""
 
@@ -198,10 +207,107 @@ def restore_scenario(scenario_id: int, snapshot: ScenarioSnapshot) -> None:
             )
 
 
+def sync_meetings_from_placements(scenario_id: int) -> MeetingSyncResult:
+    """Project the finalised placements back onto each section's meeting rows.
+
+    The optimiser's ``persist_section_states_to_scenario`` moves placements and
+    ``assign_rooms_to_board`` assigns their rooms — **neither writes TSM** — so
+    after an optimise run the meeting rows are stale (wrong day/time/room, and
+    the Instructors export / conflict masks read TSM). This rewrites each
+    scenario-owned section's meetings to the distinct ``(day, start, end, room)``
+    tuples of its placements, then re-fans the primary ``CourseInstructor`` name.
+
+    - **Dedup** collapses a cross-board shared session (one section placed on
+      several boards at the same slot) into the single row the TSM unique
+      constraint ``(term_section, day, start, end, room, instructor)`` allows —
+      which also clears the duplicate-meeting drift behind phantom clashes.
+    - **Instructor** is carried forward from the section's existing meetings so
+      free-text (non-link) instructors survive, then ``reconcile_scenario_instructors``
+      overrides with the link primary where one exists (the display/clash cache
+      + Instructors-export invariant). This applies one instructor per section
+      (matching ``apply_primary_instructor``'s uniform write); a section with
+      per-meeting-distinct free-text instructors would be flattened to the
+      first — acceptable under the system's one-instructor-per-section model.
+    - Global (scenario-null) sections are not owned by the scenario and are left
+      untouched, matching the rest of this module.
+
+    Call once after rooming and before the instructor cap/clash/compaction
+    repairs, so those passes relocate on a board whose meetings already match
+    its placements. Runs in one transaction.
+    """
+    from core.models import TimetableScenario
+    from core.services.course_instructor_assignment import reconcile_scenario_instructors
+
+    placement_rows = SectionPlacement.objects.filter(
+        board__scenario_id=scenario_id,
+        term_section__scenario_id=scenario_id,
+    ).values("term_section_id", "day", "start_time", "end_time", "room")
+
+    by_section: dict[int, list[dict]] = {}
+    for row in placement_rows:
+        by_section.setdefault(row["term_section_id"], []).append(row)
+
+    sections_synced = 0
+    meetings_written = 0
+    meetings_deleted = 0
+
+    with transaction.atomic():
+        for ts_id, rows in by_section.items():
+            # Carry forward the section's instructor / location metadata (the
+            # placement carries none of these); reconcile re-fans link primaries.
+            existing = list(
+                TermSectionMeeting.objects.filter(term_section_id=ts_id).values(
+                    "instructor", "building", "floor_wing"
+                )
+            )
+            instructor = next((e["instructor"] for e in existing if e["instructor"]), "")
+            building = next((e["building"] for e in existing if e["building"]), "")
+            floor_wing = next((e["floor_wing"] for e in existing if e["floor_wing"]), "")
+
+            seen: set[tuple[str, str, str, str]] = set()
+            new_rows: list[TermSectionMeeting] = []
+            for row in rows:
+                key = (row["day"], row["start_time"], row["end_time"], row["room"] or "")
+                if key in seen:
+                    continue
+                seen.add(key)
+                new_rows.append(
+                    TermSectionMeeting(
+                        term_section_id=ts_id,
+                        day=row["day"],
+                        start_time=row["start_time"],
+                        end_time=row["end_time"],
+                        room=row["room"] or "",
+                        instructor=instructor,
+                        building=building,
+                        floor_wing=floor_wing,
+                    )
+                )
+
+            deleted, _ = TermSectionMeeting.objects.filter(term_section_id=ts_id).delete()
+            meetings_deleted += deleted
+            if new_rows:
+                TermSectionMeeting.objects.bulk_create(new_rows, batch_size=500)
+                meetings_written += len(new_rows)
+            sections_synced += 1
+
+        scenario = TimetableScenario.objects.filter(id=scenario_id).first()
+        if scenario is not None:
+            reconcile_scenario_instructors(scenario)
+
+    return MeetingSyncResult(
+        sections_synced=sections_synced,
+        meetings_written=meetings_written,
+        meetings_deleted=meetings_deleted,
+    )
+
+
 __all__ = [
+    "MeetingSyncResult",
     "ResetResult",
     "ScenarioSnapshot",
     "reset_scenario",
     "restore_scenario",
     "snapshot_scenario",
+    "sync_meetings_from_placements",
 ]

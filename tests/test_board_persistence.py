@@ -23,6 +23,7 @@ from core.services.timetable_board_persistence import (
     reset_scenario,
     restore_scenario,
     snapshot_scenario,
+    sync_meetings_from_placements,
 )
 
 
@@ -221,3 +222,130 @@ def test_global_section_meetings_untouched_by_reset_and_restore() -> None:
     assert all(m["term_section_id"] != global_ts.id for m in snapshot.meetings)
     restore_scenario(scenario.id, snapshot)
     assert TermSectionMeeting.objects.filter(term_section=global_ts).count() == 1
+
+
+@pytest.mark.django_db
+def test_sync_rewrites_stale_meeting_to_match_placement() -> None:
+    scenario, board = _scenario_with_board("sync-basic")
+    ts = _make_section(scenario, board, "AI101", "S1", "SUN", "09:00", "10:15", instructor="Dr X")
+
+    # Simulate the success-path drift: placement moved (persist), meeting stale.
+    SectionPlacement.objects.filter(term_section=ts).update(
+        day="WED", start_time="14:30", end_time="15:45", room="R9"
+    )
+
+    result = sync_meetings_from_placements(scenario.id)
+
+    meetings = TermSectionMeeting.objects.filter(term_section=ts)
+    assert meetings.count() == 1
+    m = meetings.first()
+    assert (m.day, m.start_time, m.end_time, m.room) == ("WED", "14:30", "15:45", "R9")
+    assert result.sections_synced == 1
+
+
+@pytest.mark.django_db
+def test_sync_preserves_free_text_instructor() -> None:
+    scenario, board = _scenario_with_board("sync-instructor")
+    ts = _make_section(
+        scenario, board, "AI101", "S1", "SUN", "09:00", "10:15", instructor="Prof Freetext"
+    )
+    SectionPlacement.objects.filter(term_section=ts).update(day="MON")
+
+    sync_meetings_from_placements(scenario.id)
+
+    # No CourseInstructor link exists, so reconcile is a no-op and the
+    # carried-forward free-text instructor must survive the rebuild.
+    assert TermSectionMeeting.objects.get(term_section=ts).instructor == "Prof Freetext"
+
+
+@pytest.mark.django_db
+def test_sync_dedups_cross_board_shared_session() -> None:
+    scenario, board_a = _scenario_with_board("sync-dedup")
+    board_b = DeliveryBoard.objects.create(scenario=scenario, label="Term 3", nominal_term=3)
+    ts = TermSection.objects.create(
+        scenario=scenario,
+        course_code="GSE1",
+        course_number="GSE1",
+        course_key="GSE1",
+        course_name="GSE1",
+        section="S1",
+        source_tag="test",
+    )
+    # Same section, same slot, on two boards (a cross-board shared session) —
+    # two placements but the section meets once.
+    for bd in (board_a, board_b):
+        SectionPlacement.objects.create(
+            board=bd,
+            term_section=ts,
+            day="MON",
+            start_time="13:00",
+            end_time="14:15",
+            room="R1",
+        )
+    TermSectionMeeting.objects.create(
+        term_section=ts, day="MON", start_time="13:00", end_time="14:15", room="R1"
+    )
+
+    result = sync_meetings_from_placements(scenario.id)
+
+    # Collapses to the single meeting the unique constraint allows.
+    assert TermSectionMeeting.objects.filter(term_section=ts).count() == 1
+    assert result.meetings_written == 1
+
+
+@pytest.mark.django_db
+def test_sync_keeps_distinct_meetings_of_a_multi_session_section() -> None:
+    """Dedup must only collapse IDENTICAL (day,start,end,room) tuples — a
+    section that legitimately meets twice on different days keeps both."""
+    scenario, board = _scenario_with_board("sync-distinct")
+    ts = TermSection.objects.create(
+        scenario=scenario,
+        course_code="AI101",
+        course_number="AI101",
+        course_key="AI101",
+        course_name="AI101",
+        section="S1",
+        source_tag="test",
+    )
+    for day in ("MON", "WED"):
+        SectionPlacement.objects.create(
+            board=board, term_section=ts, day=day, start_time="09:00", end_time="10:15", room="R1"
+        )
+
+    result = sync_meetings_from_placements(scenario.id)
+
+    days = set(TermSectionMeeting.objects.filter(term_section=ts).values_list("day", flat=True))
+    assert days == {"MON", "WED"}
+    assert result.meetings_written == 2
+
+
+@pytest.mark.django_db
+def test_sync_drops_stale_extra_meeting() -> None:
+    scenario, board = _scenario_with_board("sync-shrink")
+    ts = _make_section(scenario, board, "AI101", "S1", "SUN", "09:00", "10:15")
+    # A stale second meeting with no matching placement (the drift class).
+    TermSectionMeeting.objects.create(
+        term_section=ts, day="THU", start_time="16:00", end_time="17:15", room="R2"
+    )
+    assert TermSectionMeeting.objects.filter(term_section=ts).count() == 2
+
+    sync_meetings_from_placements(scenario.id)
+
+    meetings = TermSectionMeeting.objects.filter(term_section=ts)
+    assert meetings.count() == 1
+    assert meetings.first().day == "SUN"
+
+
+@pytest.mark.django_db
+def test_sync_leaves_global_section_untouched() -> None:
+    scenario, board = _scenario_with_board("sync-global")
+    global_ts = _make_section(
+        scenario, board, "GEN100", "S1", "THU", "08:00", "09:15", global_section=True
+    )
+    _make_section(scenario, board, "AI101", "S1", "SUN", "09:00", "10:15")
+
+    sync_meetings_from_placements(scenario.id)
+
+    # Global section's meeting is unchanged (not scenario-owned).
+    gm = TermSectionMeeting.objects.get(term_section=global_ts)
+    assert (gm.day, gm.start_time) == ("THU", "08:00")

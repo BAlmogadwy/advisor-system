@@ -56,15 +56,37 @@ class, and the source of the "70 clashes" the evaluator reports on real runs.
    (single reset implementation; behaviour identical).
 
 **Out (explicitly deferred, next PR):**
-- The success-path TSM drift in `persist_section_states_to_scenario`
-  (`timetable_optimizer_v2.py:506-602` never writes TSM) and migrating the
-  greedy/solver/SA/rebalance/cap-repair/compaction persists onto one shared
-  write-through. These are the hottest paths and get their own parity-tested
-  PR-1b. PR-1's snapshot/reset already make that drift *recoverable* (rollback
-  restores TSM) and *transient* (reset clears TSM before each rebuild), so
-  deferring is safe.
 - Defect (c) (greedy clash/cap map inert on rebuild) is a constraint-plumbing
   bug, addressed by the ConstraintEngine PR-2, not persistence.
+
+## PR-1b — success-path meeting sync (stacked on PR-1)
+
+`persist_section_states_to_scenario` (`timetable_optimizer_v2.py:506-602`)
+moves placements and `assign_rooms_to_board` assigns their rooms — verified that
+**neither writes `TermSectionMeeting`** (rooming.py has zero TSM references). So
+after a successful optimise every changed section's meeting rows are stale. A
+live check on scenario 638 found **69 of 70 sections drifted** (166 meeting-slots
+vs 168 placement-slots).
+
+Rather than thread TSM writes through the hot per-section persist (which runs
+*before* rooms are assigned), PR-1b adds one **projection** step:
+`sync_meetings_from_placements(scenario_id)` — called once after the rooming loop
+and *before* the instructor cap/clash/compaction repairs, in both optimise flows.
+It rewrites each scenario-owned section's meetings to the distinct
+`(day, start, end, room)` tuples of its placements, carrying the instructor
+forward then re-fanning the link primary via `reconcile_scenario_instructors`.
+
+- Runs before the repairs so their `_relocate` (matches TSM by
+  `(term_section, day, start)`) sees meetings that already match placements.
+- Dedup collapses a cross-board shared session into the single row the TSM
+  unique constraint allows — clearing the duplicate-meeting drift behind the
+  phantom clashes (e.g. GSE1).
+- Global sections untouched (same scope rule as the rest of the module).
+
+Still deferred (PR-2+): migrating the greedy/solver/SA/rebalance persists onto
+this projection (they already maintain TSM via delete-recreate + re-fan, so they
+don't drift — consolidation, not a bug) and the `tw_planned` `instructor=""`
+manual-placement gap.
 
 ## Invariant (the module's contract)
 
