@@ -224,7 +224,10 @@ def sync_meetings_from_placements(scenario_id: int) -> MeetingSyncResult:
     - **Instructor** is carried forward from the section's existing meetings so
       free-text (non-link) instructors survive, then ``reconcile_scenario_instructors``
       overrides with the link primary where one exists (the display/clash cache
-      + Instructors-export invariant).
+      + Instructors-export invariant). This applies one instructor per section
+      (matching ``apply_primary_instructor``'s uniform write); a section with
+      per-meeting-distinct free-text instructors would be flattened to the
+      first — acceptable under the system's one-instructor-per-section model.
     - Global (scenario-null) sections are not owned by the scenario and are left
       untouched, matching the rest of this module.
 

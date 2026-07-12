@@ -294,6 +294,32 @@ def test_sync_dedups_cross_board_shared_session() -> None:
 
 
 @pytest.mark.django_db
+def test_sync_keeps_distinct_meetings_of_a_multi_session_section() -> None:
+    """Dedup must only collapse IDENTICAL (day,start,end,room) tuples — a
+    section that legitimately meets twice on different days keeps both."""
+    scenario, board = _scenario_with_board("sync-distinct")
+    ts = TermSection.objects.create(
+        scenario=scenario,
+        course_code="AI101",
+        course_number="AI101",
+        course_key="AI101",
+        course_name="AI101",
+        section="S1",
+        source_tag="test",
+    )
+    for day in ("MON", "WED"):
+        SectionPlacement.objects.create(
+            board=board, term_section=ts, day=day, start_time="09:00", end_time="10:15", room="R1"
+        )
+
+    result = sync_meetings_from_placements(scenario.id)
+
+    days = set(TermSectionMeeting.objects.filter(term_section=ts).values_list("day", flat=True))
+    assert days == {"MON", "WED"}
+    assert result.meetings_written == 2
+
+
+@pytest.mark.django_db
 def test_sync_drops_stale_extra_meeting() -> None:
     scenario, board = _scenario_with_board("sync-shrink")
     ts = _make_section(scenario, board, "AI101", "S1", "SUN", "09:00", "10:15")
