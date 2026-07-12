@@ -1224,6 +1224,17 @@ def optimise_scenario_timetable_v2(
             result["stage_telemetry"]["stage_ms"]["rooming_repair"] += int(_board_ms)
             result["stage_telemetry"]["stage_iterations"]["rooming_repair"] += int(_board_it)
 
+        # Persist + rooming moved placements only; project them back onto the
+        # meeting rows so the two board representations match before the
+        # instructor repairs relocate on a (day, start)-matched basis.
+        from core.services.timetable_board_persistence import sync_meetings_from_placements
+
+        _sync = sync_meetings_from_placements(scenario_id)
+        result["meeting_sync"] = {
+            "sections": _sync.sections_synced,
+            "written": _sync.meetings_written,
+        }
+
     # Hard instructor daily-session cap — scenario-wide backstop. The structural
     # gates keep greedy/local/chain/CP-SAT compliant; this also catches any
     # residual overload (e.g. from the per-board SA polish) and pre-existing ones.
@@ -1570,6 +1581,17 @@ def optimise_current_timetable(
             _board_it = _board_tel.get("stage_iterations", {}).get("rooming_repair", 0)
             result["stage_telemetry"]["stage_ms"]["rooming_repair"] += int(_board_ms)
             result["stage_telemetry"]["stage_iterations"]["rooming_repair"] += int(_board_it)
+
+        # Persist + rooming moved placements only; project them back onto the
+        # meeting rows so the two board representations match before the
+        # instructor repairs relocate on a (day, start)-matched basis.
+        from core.services.timetable_board_persistence import sync_meetings_from_placements
+
+        _sync = sync_meetings_from_placements(scenario_id)
+        result["meeting_sync"] = {
+            "sections": _sync.sections_synced,
+            "written": _sync.meetings_written,
+        }
 
         # Hard instructor daily-session cap: repair any pre-existing overloads on
         # the persisted board (the structural gates prevent NEW ones; an
