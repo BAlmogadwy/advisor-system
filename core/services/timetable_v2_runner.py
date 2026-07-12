@@ -14,47 +14,10 @@ from __future__ import annotations
 import logging
 import traceback
 
-from django.db import transaction
-
-from core.models import SectionPlacement
+from core.services.timetable_board_persistence import restore_scenario, snapshot_scenario
 from core.services.timetable_workspace import compute_scenario_safety_summary
 
 logger = logging.getLogger(__name__)
-
-_PLACEMENT_SNAPSHOT_FIELDS = (
-    "id",
-    "board_id",
-    "term_section_id",
-    "day",
-    "start_time",
-    "end_time",
-    "room",
-    "is_locked",
-    "created_at",
-    "updated_at",
-)
-
-
-def snapshot_scenario_placements(scenario_id: int) -> list[dict[str, object]]:
-    """Capture current placements so an unsafe optimiser run can be restored."""
-    return list(
-        SectionPlacement.objects.filter(board__scenario_id=scenario_id)
-        .order_by("id")
-        .values(*_PLACEMENT_SNAPSHOT_FIELDS)
-    )
-
-
-def restore_scenario_placements(
-    scenario_id: int,
-    snapshot: list[dict[str, object]],
-) -> None:
-    """Restore a placement snapshot inside one transaction."""
-    with transaction.atomic():
-        SectionPlacement.objects.filter(board__scenario_id=scenario_id).delete()
-        SectionPlacement.objects.bulk_create(
-            [SectionPlacement(**row) for row in snapshot],
-            batch_size=500,
-        )
 
 
 def _optimiser_safety_metric(summary: dict[str, object], metric: str) -> int:
@@ -178,7 +141,7 @@ def run_v2_optimisation_guarded(
     thread or async worker — so a worker SIGKILL can no longer leave the DB in a
     half-optimised state without a rollback path.
     """
-    placement_snapshot = snapshot_scenario_placements(scenario_id)
+    board_snapshot = snapshot_scenario(scenario_id)
     safety_before = compute_scenario_safety_summary(scenario_id)
 
     try:
@@ -206,7 +169,7 @@ def run_v2_optimisation_guarded(
                 cpsat_time_limit=cpsat_limit,
             )
     except Exception:
-        restore_scenario_placements(scenario_id, placement_snapshot)
+        restore_scenario(scenario_id, board_snapshot)
         logger.exception("V2 optimiser failed for scenario %d", scenario_id)
         return {"error": f"Optimiser error: {traceback.format_exc(limit=3)}"}
 
@@ -224,9 +187,9 @@ def run_v2_optimisation_guarded(
     # protect, and any board is strictly better than an empty one. Only the
     # rollback gate, designed to protect an EXISTING board, applies when a prior
     # board existed; otherwise discarding the build leaves the scenario empty.
-    if blocking_regressions and placement_snapshot:
+    if blocking_regressions and not board_snapshot.is_empty:
         candidate_final_score = result.get("final_score")
-        restore_scenario_placements(scenario_id, placement_snapshot)
+        restore_scenario(scenario_id, board_snapshot)
         safety_after = compute_scenario_safety_summary(scenario_id)
         result["safety_blocked"] = True
         result["safety_regression"] = {

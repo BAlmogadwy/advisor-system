@@ -15,17 +15,17 @@ from core.models import (
     TimetableScenario,
 )
 from core.services import timetable_workspace as tws
+from core.services.timetable_board_persistence import (
+    restore_scenario as _restore_scenario_placements,
+)
+from core.services.timetable_board_persistence import (
+    snapshot_scenario as _snapshot_scenario_placements,
+)
 from core.services.timetable_v2_runner import (
     optimiser_safety_regression as _optimiser_safety_regression,
 )
 from core.services.timetable_v2_runner import (
     optimiser_student_outcome_regression as _optimiser_student_outcome_regression,
-)
-from core.services.timetable_v2_runner import (
-    restore_scenario_placements as _restore_scenario_placements,
-)
-from core.services.timetable_v2_runner import (
-    snapshot_scenario_placements as _snapshot_scenario_placements,
 )
 from core.services.timetable_workspace import (
     apply_bulk_clean_room_assignments,

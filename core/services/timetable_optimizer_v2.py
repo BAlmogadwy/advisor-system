@@ -619,29 +619,17 @@ ALL_STRATEGIES = [
 def _reset_unlocked_placements(scenario_id: int) -> None:
     """Delete unlocked placements AND their meeting rows for a fresh placement run.
 
-    ``auto_place_board`` re-creates ``TermSectionMeeting`` via ``get_or_create``
-    keyed on ``(term_section, day, start, end)``. Deleting only ``SectionPlacement``
-    (the prior behaviour) let a section that lands on a DIFFERENT slot in a later
-    strategy keep its earlier meeting rows, so ``len(placements) != len(meetings)``.
-    ``persist_section_states_to_scenario`` then SKIPS every such section (it cannot
-    align N placements to M meetings), dropping the evaluated winner's improvements
-    and leaving stale/duplicate meetings in the exported board — the "2 placements
-    vs 1 meeting" drift seen on multi-program scenarios where strategies place a
-    section on different slots. Clearing the meetings alongside the placements keeps
-    each placement run starting from a clean slate. Locked placements are the user's
-    hard constraints and survive, so their meetings are preserved too.
+    Thin wrapper over ``timetable_board_persistence.reset_scenario`` (the single
+    reset implementation). Clearing meetings alongside placements keeps each run
+    starting from a clean slate: otherwise a section that lands on a DIFFERENT
+    slot in a later strategy keeps its earlier meeting rows, so
+    ``len(placements) != len(meetings)`` and ``persist_section_states_to_scenario``
+    SKIPS it. Locked placements are the user's hard constraints and survive
+    (their meetings too).
     """
-    from core.models import TermSectionMeeting
+    from core.services.timetable_board_persistence import reset_scenario
 
-    locked_ts_ids = set(
-        SectionPlacement.objects.filter(board__scenario_id=scenario_id, is_locked=True).values_list(
-            "term_section_id", flat=True
-        )
-    )
-    SectionPlacement.objects.filter(board__scenario_id=scenario_id, is_locked=False).delete()
-    TermSectionMeeting.objects.filter(term_section__scenario_id=scenario_id).exclude(
-        term_section_id__in=locked_ts_ids
-    ).delete()
+    reset_scenario(scenario_id, keep_locked=True)
 
 
 def _generate_candidates_for_scenario(
