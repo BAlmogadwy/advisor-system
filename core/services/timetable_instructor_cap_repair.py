@@ -394,13 +394,51 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
             slot_count[(iid, day, p.start_time)] = slot_count.get((iid, day, p.start_time), 0) + 1
             daily_count[(iid, day)] = daily_count.get((iid, day), 0) + 1
 
-    detected = [
-        {"instructor_id": iid, "day": day, "start": start, "sessions": n}
-        for (iid, day, start), n in sorted(slot_count.items(), key=lambda kv: -kv[1])
-        if n > 1
-    ]
+    # Interval-based clash detection: an instructor is double-booked when two of
+    # their sessions OVERLAP in time on the same day — not merely share a start
+    # (a 10:30-11:45 lecture vs a 10:45-12:25 lab is a clash the old exact-start
+    # detection missed, and now matches the interval-aware optimise-stage gates).
+    # Greedily keep a non-overlapping set per (instructor, day), preferring locked
+    # sessions (which cannot move), and mark the overlapping rest as movers.
+    by_instr_day: dict[tuple[object, str], list] = {}
+    for p in placements:
+        day = (p.day or "").upper()
+        for iid in _instr_ids(p):
+            by_instr_day.setdefault((iid, day), []).append(p)
+
+    detected: list[dict] = []
+    mover_pids: list[int] = []
+    _seen_mover: set[int] = set()
+    for (iid, day), ps in sorted(by_instr_day.items(), key=lambda kv: -len(kv[1])):
+        if len(ps) < 2:
+            continue
+        ordered = sorted(
+            ps, key=lambda pp: (not pp.is_locked, _to_min(pp.start_time), _to_min(pp.end_time))
+        )
+        kept: list[tuple[int, int]] = []
+        for pp in ordered:
+            s, e = _to_min(pp.start_time), _to_min(pp.end_time)
+            if any(s < ke and ks < e for ks, ke in kept):
+                detected.append(
+                    {"instructor_id": iid, "day": day, "start": pp.start_time, "end": pp.end_time}
+                )
+                if pp.is_locked:
+                    # A locked session can't be relocated — it stays and remains
+                    # a clash the pass cannot fix.
+                    report["locked_blocked"].append(
+                        {"instructor_id": iid, "day": day, "start": pp.start_time, "excess": 1}
+                    )
+                elif pp.id not in _seen_mover:
+                    _seen_mover.add(pp.id)
+                    mover_pids.append(pp.id)
+            else:
+                kept.append((s, e))
     report["detected"] = detected
     if not detected:
+        return report
+    if not mover_pids:
+        # Every overlap is between locked sessions — nothing to relocate.
+        report["remaining_clashes"] = sum(e["excess"] for e in report["locked_blocked"])
         return report
 
     states = build_section_states_for_scenario(scenario_id)
@@ -456,66 +494,61 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
                     continue
                 yield day2, s2, e2
 
+    placements_by_id = {p.id: p for p in placements}
     with transaction.atomic():
-        for entry in detected:
-            iid, day, start = entry["instructor_id"], entry["day"], entry["start"]
-            to_move = slot_count.get((iid, day, start), 0) - 1
-            movers = [
-                p
-                for p in placements
-                if (p.day or "").upper() == day
-                and p.start_time == start
-                and iid in _instr_ids(p)
-                and not p.is_locked
-            ]
-            for p in movers:
-                if to_move <= 0:
-                    break
-                iid_set = _instr_ids(p)
-                s, midx = _meeting_idx(p)
-                orig = s.meetings[midx] if (s is not None and midx is not None) else None
-                best = None
-                for day2, s2, e2 in _candidates(p, iid_set):
-                    if orig is not None:
-                        s.meetings[midx] = SectionMeeting(_day_idx(day2), _to_min(s2), _to_min(e2))
-                        sc = _score()
-                        s.meetings[midx] = orig
-                    else:
-                        sc = _score()
-                    if best is None or sc < best[0]:
-                        best = (sc, day2, s2, e2)
-                    if baseline and sc <= baseline:
-                        break
-                if best is None:
-                    continue  # no clash-free slot found; leave it (reported as remaining)
-                _, day2, s2, e2 = best
+        for pid in mover_pids:
+            p = placements_by_id[pid]
+            day, start = (p.day or "").upper(), p.start_time
+            iid_set = _instr_ids(p)
+            s, midx = _meeting_idx(p)
+            orig = s.meetings[midx] if (s is not None and midx is not None) else None
+            best = None
+            for day2, s2, e2 in _candidates(p, iid_set):
                 if orig is not None:
                     s.meetings[midx] = SectionMeeting(_day_idx(day2), _to_min(s2), _to_min(e2))
-                _relocate(p, day2, s2, e2)
-                course_slots.get(p.term_section.course_code, set()).discard((day, start))
-                section_days.get(p.term_section_id, set()).discard(day)
-                section_days.setdefault(p.term_section_id, set()).add(day2)
-                course_slots.setdefault(p.term_section.course_code, set()).add((day2, s2))
-                for _iid in iid_set:
-                    slot_count[(_iid, day, start)] = slot_count.get((_iid, day, start), 0) - 1
-                    slot_count[(_iid, day2, s2)] = slot_count.get((_iid, day2, s2), 0) + 1
-                    daily_count[(_iid, day)] = daily_count.get((_iid, day), 0) - 1
-                    daily_count[(_iid, day2)] = daily_count.get((_iid, day2), 0) + 1
-                report["repaired"].append(
+                    sc = _score()
+                    s.meetings[midx] = orig
+                else:
+                    sc = _score()
+                if best is None or sc < best[0]:
+                    best = (sc, day2, s2, e2)
+                if baseline and sc <= baseline:
+                    break
+            if best is None:
+                # No clash-free slot — leave it; counted as a remaining clash.
+                report["locked_blocked"].append(
                     {
-                        "section": f"{p.term_section.course_code} {p.term_section.section}",
-                        "from": f"{day} {start}",
-                        "to": f"{day2} {s2}",
-                        "instructor_id": iid,
+                        "instructor_id": next(iter(sorted(iid_set)), None),
+                        "day": day,
+                        "start": start,
+                        "excess": 1,
+                        "reason": "no_clash_free_slot",
                     }
                 )
-                touched[p.term_section_id] = p.board
-                touched_boards.add(p.board_id)
-                to_move -= 1
-            if to_move > 0:
-                report["locked_blocked"].append(
-                    {"instructor_id": iid, "day": day, "start": start, "excess": to_move}
-                )
+                continue
+            _, day2, s2, e2 = best
+            if orig is not None:
+                s.meetings[midx] = SectionMeeting(_day_idx(day2), _to_min(s2), _to_min(e2))
+            _relocate(p, day2, s2, e2)
+            course_slots.get(p.term_section.course_code, set()).discard((day, start))
+            section_days.get(p.term_section_id, set()).discard(day)
+            section_days.setdefault(p.term_section_id, set()).add(day2)
+            course_slots.setdefault(p.term_section.course_code, set()).add((day2, s2))
+            for _iid in iid_set:
+                slot_count[(_iid, day, start)] = slot_count.get((_iid, day, start), 0) - 1
+                slot_count[(_iid, day2, s2)] = slot_count.get((_iid, day2, s2), 0) + 1
+                daily_count[(_iid, day)] = daily_count.get((_iid, day), 0) - 1
+                daily_count[(_iid, day2)] = daily_count.get((_iid, day2), 0) + 1
+            report["repaired"].append(
+                {
+                    "section": f"{p.term_section.course_code} {p.term_section.section}",
+                    "from": f"{day} {start}",
+                    "to": f"{day2} {s2}",
+                    "instructor_id": next(iter(sorted(iid_set)), None),
+                }
+            )
+            touched[p.term_section_id] = p.board
+            touched_boards.add(p.board_id)
 
         ts_by_id = {ts.id: ts for ts in TermSection.objects.filter(id__in=touched.keys())}
         for ts_id, board in touched.items():
