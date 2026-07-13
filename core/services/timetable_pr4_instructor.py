@@ -34,6 +34,8 @@ from __future__ import annotations
 
 from django.conf import settings
 
+from core.services import timetable_constraints as _constraints
+
 INSTRUCTOR_CLASH_FLAG_SETTING = "TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED"
 
 
@@ -190,43 +192,22 @@ def count_instructor_daily_overloads(sections_by_id, section_instructor_ids, cap
 
 
 def has_instructor_clash(sections_by_id, section_instructor_ids) -> bool:
-    """True if any instructor is double-booked — two sessions occupying the same
-    ``(day, start_min)``. Distinct from the daily cap (which limits sessions/day):
-    a clash is two-at-the-same-TIME, physically impossible. Early-exits on the
-    first clash so it is cheap inside a move-evaluation loop. Cross-course (an
-    instructor teaching two different courses at once) is exactly what this
-    catches — the same-course rule does not, since the courses differ."""
-    if not section_instructor_ids:
-        return False
-    seen: set[tuple[object, int, int]] = set()
-    for section_id, instr_ids in section_instructor_ids.items():
-        sec = sections_by_id.get(section_id)
-        if sec is None:
-            continue
-        for iid in instr_ids:
-            for meeting in sec.meetings:
-                key = (iid, meeting.day, meeting.start_min)
-                if key in seen:
-                    return True
-                seen.add(key)
-    return False
+    """True if any instructor is double-booked — two sessions of different
+    sections whose times OVERLAP on the same day. Distinct from the daily cap
+    (which limits sessions/day): a clash is two-at-the-same-TIME.
+
+    Delegates to the interval-aware engine (``timetable_constraints``) — a
+    10:30-11:45 lecture and a 10:45-12:25 lab are a clash even though their
+    start minutes differ. Re-exported here under its historical name for the
+    existing call sites."""
+    return _constraints.has_instructor_clash(sections_by_id, section_instructor_ids)
 
 
 def count_instructor_clashes(sections_by_id, section_instructor_ids) -> int:
-    """Number of extra sessions stacked on an already-occupied (instructor, day,
-    start) slot — 0 means clash-free. Side-band diagnostic / repair signal."""
-    if not section_instructor_ids:
-        return 0
-    counts: dict[tuple[object, int, int], int] = {}
-    for section_id, instr_ids in section_instructor_ids.items():
-        sec = sections_by_id.get(section_id)
-        if sec is None:
-            continue
-        for iid in instr_ids:
-            for meeting in sec.meetings:
-                key = (iid, meeting.day, meeting.start_min)
-                counts[key] = counts.get(key, 0) + 1
-    return sum(c - 1 for c in counts.values() if c > 1)
+    """Number of overlapping cross-section window pairs across all instructors —
+    0 means clash-free. Interval-aware (see ``timetable_constraints``). A
+    monotonic repair signal (fewer is better)."""
+    return _constraints.count_instructor_clashes(sections_by_id, section_instructor_ids)
 
 
 def build_section_instructor_ids(scenario) -> dict[str, set[int]]:

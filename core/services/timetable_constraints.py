@@ -1,0 +1,167 @@
+"""One interval-aware home for the hard scheduling rules.
+
+Historically each optimise stage (greedy, local search, chain search, CP-SAT,
+SA) re-implemented the same hard rules, and the copies drifted — most sharply,
+instructor-clash keyed on exact ``start_min`` while same-course overlap already
+used true interval overlap. So an instructor teaching a 10:30–11:45 lecture and
+a 10:45–12:25 lab (overlapping intervals, different starts — the lecture/lab
+grids interleave by design) was genuinely double-booked yet invisible to every
+clash gate.
+
+This module is the single interval-aware implementation. It is pure — no DB, no
+Django models — and operates on the in-memory ``SectionState`` map and the
+``{section_id: frozenset[instructor_id]}`` mapping the stages already build.
+Each rule offers two forms:
+
+- **whole-board** (``has_*`` / ``count_*``) — for evaluation and repair signals.
+- **delta** (``move_introduces_*``) — checks only the *moved* sections against
+  the rest, so a pre-existing unrelated violation never blocks an unrelated
+  improving move (the whole-board-absolute gates used to paralyse local/chain
+  search on any already-imperfect board).
+
+See ``docs/CONSTRAINT-ENGINE-DOR.md``. PR-2a covers instructor clash; the daily
+cap, same-course, room, and prayer/grid rules migrate onto this module in
+PR-2b–d.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable, Mapping
+from typing import Any
+
+# An instructor time window: (day, start_min, end_min, section_id).
+_Window = tuple[int, int, int, str]
+
+
+def _intervals_overlap(a_start: int, a_end: int, b_start: int, b_end: int) -> bool:
+    """True iff [a_start, a_end) and [b_start, b_end) overlap.
+
+    The half-open interval test same-course already relies on
+    (``timetable_same_course.meeting_gap_or_overlap``): touching end-to-start
+    (a_end == b_start) is *not* an overlap.
+    """
+    return a_start < b_end and b_start < a_end
+
+
+def _instructor_windows(
+    sections_by_id: Mapping[str, Any],
+    section_instructor_ids: Mapping[str, Iterable[int]],
+) -> dict[int, list[_Window]]:
+    """Group every instructor's meeting windows across all their sections."""
+    windows: dict[int, list[_Window]] = {}
+    for section_id, instr_ids in section_instructor_ids.items():
+        sec = sections_by_id.get(section_id)
+        if sec is None:
+            continue
+        for iid in instr_ids:
+            bucket = windows.setdefault(iid, [])
+            for meeting in sec.meetings:
+                bucket.append((meeting.day, meeting.start_min, meeting.end_min, section_id))
+    return windows
+
+
+def _overlapping_pairs(windows: list[_Window]) -> int:
+    """Count window pairs on the same day whose intervals overlap.
+
+    Windows belonging to the *same* section are ignored — a section's own
+    meetings are its schedule, not a double-booking of the instructor. Only
+    cross-section overlaps are an instructor clash.
+    """
+    ordered = sorted(windows)
+    count = 0
+    for i in range(len(ordered)):
+        day_i, start_i, end_i, sec_i = ordered[i]
+        for j in range(i + 1, len(ordered)):
+            day_j, start_j, end_j, sec_j = ordered[j]
+            if day_j != day_i:
+                break  # sorted by day → no further same-day windows
+            if sec_i == sec_j:
+                continue
+            if _intervals_overlap(start_i, end_i, start_j, end_j):
+                count += 1
+    return count
+
+
+def has_instructor_clash(
+    sections_by_id: Mapping[str, Any],
+    section_instructor_ids: Mapping[str, Iterable[int]] | None,
+) -> bool:
+    """True if any instructor is double-booked — two sessions of *different*
+    sections whose times overlap on the same day (interval overlap, not just an
+    identical start). Early-exits on the first clash, so it is cheap inside a
+    move-evaluation loop. Cross-course double-booking (an instructor teaching two
+    different courses at once) is exactly what this catches.
+    """
+    if not section_instructor_ids:
+        return False
+    for windows in _instructor_windows(sections_by_id, section_instructor_ids).values():
+        ordered = sorted(windows)
+        for i in range(len(ordered)):
+            day_i, start_i, end_i, sec_i = ordered[i]
+            for j in range(i + 1, len(ordered)):
+                day_j, start_j, end_j, sec_j = ordered[j]
+                if day_j != day_i:
+                    break
+                if sec_i == sec_j:
+                    continue
+                if _intervals_overlap(start_i, end_i, start_j, end_j):
+                    return True
+    return False
+
+
+def count_instructor_clashes(
+    sections_by_id: Mapping[str, Any],
+    section_instructor_ids: Mapping[str, Iterable[int]] | None,
+) -> int:
+    """Number of overlapping cross-section window pairs across all instructors —
+    0 means clash-free. A monotonic repair signal (fewer is better)."""
+    if not section_instructor_ids:
+        return 0
+    return sum(
+        _overlapping_pairs(windows)
+        for windows in _instructor_windows(sections_by_id, section_instructor_ids).values()
+    )
+
+
+def move_introduces_instructor_clash(
+    sections_by_id: Mapping[str, Any],
+    section_instructor_ids: Mapping[str, Iterable[int]] | None,
+    moved_section_ids: Iterable[str],
+) -> bool:
+    """Delta form: True iff a *moved* section now overlaps another of its
+    instructor's sessions.
+
+    Only overlaps that involve at least one moved section are considered, so a
+    pre-existing clash elsewhere on the board does not reject an unrelated
+    improving move. Use this in local/chain search instead of the whole-board
+    ``has_instructor_clash`` (which rejects every move while any violation
+    exists anywhere).
+    """
+    if not section_instructor_ids:
+        return False
+    moved = set(moved_section_ids)
+    if not moved:
+        return False
+    windows_by_instr = _instructor_windows(sections_by_id, section_instructor_ids)
+    for windows in windows_by_instr.values():
+        ordered = sorted(windows)
+        for i in range(len(ordered)):
+            day_i, start_i, end_i, sec_i = ordered[i]
+            for j in range(i + 1, len(ordered)):
+                day_j, start_j, end_j, sec_j = ordered[j]
+                if day_j != day_i:
+                    break
+                if sec_i == sec_j:
+                    continue
+                if (sec_i in moved or sec_j in moved) and _intervals_overlap(
+                    start_i, end_i, start_j, end_j
+                ):
+                    return True
+    return False
+
+
+__all__ = [
+    "count_instructor_clashes",
+    "has_instructor_clash",
+    "move_introduces_instructor_clash",
+]

@@ -21,7 +21,9 @@ from core.services.timetable_assignment_models import (
     SectionState,
     StudentProfile,
 )
+from core.services.timetable_autoplace import DEFAULT_SLOTS, WEEKDAYS
 from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
+from core.services.timetable_constraints import count_instructor_clashes
 from core.services.timetable_cpsat_polisher import polish_scenario_with_cpsat
 from core.services.timetable_local_search_v2 import (
     generate_all_repattern_moves,
@@ -225,6 +227,94 @@ def test_cpsat_polisher_keeps_locked_sections_out_of_solution() -> None:
     assert result is not None
     improved_ids = {section.section_id for section in result["improved_sections"]}
     assert "AI101_S1" not in improved_ids
+
+
+@pytest.mark.django_db
+def test_cpsat_polisher_forbids_movable_overlapping_fixed_instructor_on_monday() -> None:
+    """Regression (PR-2a review): the CP-SAT movable-vs-fixed instructor-clash
+    guard must fire on ALL days, not just Sunday. A movable section whose only
+    open slot is a MON cell held by a LOCKED same-instructor section must not be
+    placed there. The buggy guard AND-ed a week-level option mask against a
+    day-independent meeting mask, so it was inert Mon-Thu and the movable section
+    landed on top of the fixed one (instructor double-booked)."""
+    scenario = TimetableScenario.objects.create(
+        academic_year="1448",
+        term="1",
+        name="cpsat clash mon",
+        # Block every default lecture slot EXCEPT (MON, 09:00), so the movable
+        # section's only feasible cell is the one the fixed section occupies.
+        blocked_slots=[
+            {"day": d, "start": s["start"]}
+            for d in WEEKDAYS
+            for s in DEFAULT_SLOTS
+            if not (d == "MON" and s["start"] in ("09:00", "13:00"))
+        ],
+    )
+    DeliveryBoard.objects.create(scenario=scenario, label="Term 1", nominal_term=1)
+    # MON = day_idx 1. Open cells (all else blocked): 09:00 (540) and 13:00 (780).
+    # Fixed PHYS locked at MON 09:00. Fixed BIO locked at MON 13:00. Movable AI101
+    # currently at MON 13:00 → it OVERLAPS BIO, and 20 students take both AI101 and
+    # BIO, so the CP-SAT objective strongly wants AI101 off 13:00. Its only other
+    # open cell is MON 09:00 — which the same instructor (7) already teaches (PHYS).
+    # With the clash guard working, 09:00 is forbidden → AI101 can't improve → stays
+    # at 13:00 (no clash). With the guard inert (the bug), AI101 moves to 09:00 to
+    # shed the student overlap → instructor 7 double-booked.
+    for sid in range(990100, 990120):  # 20 shared AI101+BIO students
+        ScenarioStudentMap.objects.create(
+            scenario=scenario,
+            student_id=sid,
+            primary_term=1,
+            recommended_courses=["AI101", "BIO"],
+        )
+        for course in ("AI101", "BIO"):
+            ScenarioStudentCourseRequest.objects.create(
+                scenario=scenario,
+                student_id=sid,
+                course_key=course,
+                course_code=course,
+                primary_term=1,
+                status=ScenarioStudentCourseRequest.STATUS_REQUESTED,
+                priority=ScenarioStudentCourseRequest.PRIORITY_NORMAL,
+                source="test",
+            )
+    fixed_phys = _section("PHYS_S1", "PHYS", "pf", 1, 540)
+    fixed_bio = _section("BIO_S1", "BIO", "pb", 1, 780)
+    movable_ai = _section("AI101_S1", "AI101", "pm", 1, 780)
+    sections = [fixed_phys, fixed_bio, movable_ai]
+    instr = {"PHYS_S1": frozenset({7}), "BIO_S1": frozenset({9}), "AI101_S1": frozenset({7})}
+    profiles = {
+        str(sid): StudentProfile(
+            student_id=str(sid),
+            department="AI",
+            recommended_courses=["AI101", "BIO"],
+            risk_tier=RiskTier.C,
+            intra_tier_score=0,
+        )
+        for sid in range(990100, 990120)
+    }
+    current_eval = evaluate_generated_timetable_candidate(
+        candidate_id="current",
+        generated_sections=sections,
+        student_profiles=profiles,
+        course_rigidity={"AI101": 0.5, "PHYS": 0.5, "BIO": 0.5},
+        section_instructor_ids=instr,
+    )
+    result = polish_scenario_with_cpsat(
+        scenario_id=scenario.id,
+        current_sections=sections,
+        student_profiles=profiles,
+        course_rigidity={"AI101": 0.5, "PHYS": 0.5, "BIO": 0.5},
+        current_eval=current_eval,
+        time_limit_seconds=5,
+        locked_section_ids={"PHYS_S1", "BIO_S1"},
+        section_instructor_ids=instr,
+    )
+    # Reconstruct the post-polish board — no instructor may be double-booked.
+    post = {s.section_id: s for s in sections}
+    if result is not None:
+        for s in result["improved_sections"]:
+            post[s.section_id] = s
+    assert count_instructor_clashes(post, instr) == 0
 
 
 @pytest.mark.django_db

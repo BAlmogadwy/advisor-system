@@ -27,11 +27,11 @@ from core.services.timetable_assignment_models import (
 )
 from core.services.timetable_autoplace import WEEKDAYS
 from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
+from core.services.timetable_constraints import move_introduces_instructor_clash
 from core.services.timetable_decision_trace import DecisionTrace
 from core.services.timetable_pr4_instructor import (
     exceeds_instructor_daily_cap,
     get_instructor_daily_cap,
-    has_instructor_clash,
     is_instructor_clash_enabled,
     is_instructor_daily_cap_enabled,
 )
@@ -369,14 +369,17 @@ def chain_local_search(
                 continue
 
             # Instructor-clash hard-reject: neither leg may double-book an
-            # instructor at the same (day, slot). The evaluator doesn't catch it.
-            if (
-                section_instructor_ids
-                and is_instructor_clash_enabled()
-                and has_instructor_clash(sections_by_id, section_instructor_ids)
-            ):
-                _rollback_chain(snap_a, snap_b, sections_by_id, room_occupancies)
-                continue
+            # instructor (interval overlap). Delta-scoped to the chain's two
+            # moved sections so a pre-existing unrelated clash doesn't block the
+            # chain; the evaluator doesn't catch clashes.
+            if section_instructor_ids and is_instructor_clash_enabled():
+                _moved = {chain.move_a.section_id_a, chain.move_b.section_id_a}
+                for _leg in (chain.move_a, chain.move_b):
+                    if _leg.section_id_b:
+                        _moved.add(_leg.section_id_b)
+                if move_introduces_instructor_clash(sections_by_id, section_instructor_ids, _moved):
+                    _rollback_chain(snap_a, snap_b, sections_by_id, room_occupancies)
+                    continue
 
             # Evaluate
             test_result = evaluate_generated_timetable_candidate(
