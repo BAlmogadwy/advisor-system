@@ -180,3 +180,115 @@ def test_clash_repair_noop_when_flag_off() -> None:
         "student_score_after": None,
     }
     assert _clash_count(scenario) == 1  # untouched when off
+
+
+def _interval_clashed_board():
+    """Board where one instructor teaches two OVERLAPPING sessions at DIFFERENT
+    starts (MON 10:30-11:45 and MON 10:50-12:05) — an interval clash the old
+    exact-start detection missed. Mirrors ``_clashed_board`` otherwise."""
+    from core.models import (
+        CourseInstructor,
+        DeliveryBoard,
+        Instructor,
+        SectionPlacement,
+        TermSection,
+        TermSectionMeeting,
+        TimetableScenario,
+    )
+    from core.services.course_instructor_assignment import apply_primary_instructor
+    from core.services.timetable_pr4_instructor import normalise_instructor
+
+    scenario = TimetableScenario.objects.create(
+        academic_year="1448",
+        term="1",
+        name="AI M interval clash",
+        gender="M",
+        programs=["AI"],
+        slot_config=_SLOTS,
+        lab_slot_config=[],
+    )
+    board = DeliveryBoard.objects.create(
+        scenario=scenario, label="T1", nominal_term=1, program="AI"
+    )
+    instr = Instructor.objects.create(
+        full_name="Dr Overlap", normalised_name=normalise_instructor("Dr Overlap")
+    )
+    for code, start, end in (("C1", "10:30", "11:45"), ("C2", "10:50", "12:05")):
+        CourseInstructor.objects.create(
+            program="AI", course_code=code, section="M", instructor=instr, role="primary"
+        )
+        ts = TermSection.objects.create(
+            scenario=scenario,
+            course_key=code,
+            section="S1",
+            course_code=code,
+            course_number=code,
+            course_name=code,
+            available_capacity=30,
+            source_tag="clash_test",
+        )
+        TermSectionMeeting.objects.create(
+            term_section=ts, day="MON", start_time=start, end_time=end, room="", instructor=""
+        )
+        SectionPlacement.objects.create(
+            board=board,
+            term_section=ts,
+            day="MON",
+            start_time=start,
+            end_time=end,
+            room="R1",
+            is_locked=False,
+        )
+        apply_primary_instructor(ts, scenario, board, ts.course_code)
+    return scenario
+
+
+def _interval_clash_count(scenario):
+    from collections import defaultdict
+
+    from core.models import SectionPlacement, TermSectionMeeting
+
+    instr = {
+        ts: nm
+        for ts, nm in TermSectionMeeting.objects.filter(term_section__scenario=scenario)
+        .exclude(instructor="")
+        .values_list("term_section_id", "instructor")
+    }
+
+    def _mins(t: str) -> int:
+        h, m = str(t)[:5].split(":")
+        return int(h) * 60 + int(m)
+
+    by_day: dict[tuple[str, str], list[tuple[int, int]]] = defaultdict(list)
+    for p in SectionPlacement.objects.filter(board__scenario=scenario).exclude(day=""):
+        nm = instr.get(p.term_section_id)
+        if nm:
+            by_day[(nm, p.day)].append((_mins(p.start_time), _mins(p.end_time)))
+    count = 0
+    for pairs in by_day.values():
+        for i in range(len(pairs)):
+            for j in range(i + 1, len(pairs)):
+                if pairs[i][0] < pairs[j][1] and pairs[j][0] < pairs[i][1]:
+                    count += 1
+    return count
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(
+    TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED=True, TIMETABLE_INSTRUCTOR_LINKS_ENABLED=True
+)
+def test_clash_repair_clears_interval_overlap() -> None:
+    """Regression (task_30448fa9): the repair pass must DETECT and clear an
+    interval-overlap clash at different starts — not only exact-start collisions."""
+    from core.services.timetable_instructor_cap_repair import repair_instructor_clashes
+
+    scenario = _interval_clashed_board()
+    assert _interval_clash_count(scenario) == 1  # overlapping, different starts
+    assert _clash_count(scenario) == 0  # the OLD exact-start detector misses it
+
+    report = repair_instructor_clashes(scenario.id)
+
+    assert report["detected"]  # interval clash detected
+    assert report["repaired"]  # one session relocated
+    assert _interval_clash_count(scenario) == 0  # interval clash cleared on the board
+    assert report["remaining_clashes"] == 0
