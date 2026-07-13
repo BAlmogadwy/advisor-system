@@ -243,21 +243,32 @@ def _check_hard_constraints(
                         return False
                     day_instr_count[key] = nxt
 
-    # 5. Instructor clash — an instructor can't teach two sections at the same
-    #    (day, start). Reject any schedule that double-books a resolved
-    #    instructor. No-op (byte-identical) when the clash flag is off / no ids.
+    # 5. Instructor clash — an instructor can't teach two sections whose times
+    #    OVERLAP on the same day (interval overlap, not just an identical start:
+    #    a 10:30-11:45 vs 10:45-12:25 clash counts). Reject any schedule that
+    #    double-books a resolved instructor. No-op when the flag is off / no ids.
     if is_instructor_clash_enabled():
-        instr_slot: set[tuple[object, str, str]] = set()
+        # iid -> [(day, start_min, end_min, section_idx)]
+        instr_windows: dict[object, list[tuple[str, int, int, int]]] = {}
         for i, meetings in schedule.items():  # noqa: B007
             instr_ids = sections[i].get("instructor_ids")
             if not instr_ids:
                 continue
             for m in meetings:
+                s_min = _to_min(m["start"])
+                e_min = _to_min(m["end"])
                 for iid in instr_ids:
-                    key = (iid, m["day"], m["start"])
-                    if key in instr_slot:
+                    instr_windows.setdefault(iid, []).append((m["day"], s_min, e_min, i))
+        for wins in instr_windows.values():
+            wins.sort()
+            for a in range(len(wins)):
+                day_a, s_a, e_a, sec_a = wins[a]
+                for b in range(a + 1, len(wins)):
+                    day_b, s_b, e_b, sec_b = wins[b]
+                    if day_b != day_a:
+                        break
+                    if sec_a != sec_b and s_a < e_b and s_b < e_a:
                         return False
-                    instr_slot.add(key)
 
     return True
 

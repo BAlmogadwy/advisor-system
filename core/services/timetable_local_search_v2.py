@@ -20,10 +20,10 @@ from core.services.timetable_assignment_models import (
     TimetableMove,
 )
 from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
+from core.services.timetable_constraints import move_introduces_instructor_clash
 from core.services.timetable_pr4_instructor import (
     exceeds_instructor_daily_cap,
     get_instructor_daily_cap,
-    has_instructor_clash,
     is_instructor_clash_enabled,
     is_instructor_daily_cap_enabled,
 )
@@ -315,16 +315,16 @@ def diagnostic_driven_local_search(
                 continue
 
             # Instructor-clash hard-reject: an instructor can't teach two sections
-            # at the same (day, slot). The greedy enforces this at construction but
-            # the evaluator doesn't, so a student-improving move could double-book
-            # an instructor — reject it here, like the same-course/cap gates.
-            if (
-                section_instructor_ids
-                and is_instructor_clash_enabled()
-                and has_instructor_clash(sections_by_id, section_instructor_ids)
-            ):
-                _rollback(snapshot, sections_by_id, room_occupancies)
-                continue
+            # whose times overlap. Delta-scoped — only reject when THIS move
+            # creates a clash involving a moved section, so a pre-existing clash
+            # elsewhere on the board doesn't block every unrelated improving move.
+            if section_instructor_ids and is_instructor_clash_enabled():
+                _moved = {move.section_id_a}
+                if move.section_id_b:
+                    _moved.add(move.section_id_b)
+                if move_introduces_instructor_clash(sections_by_id, section_instructor_ids, _moved):
+                    _rollback(snapshot, sections_by_id, room_occupancies)
+                    continue
 
             # Room feasibility check
             if rooms_by_id is not None and room_occupancies is not None:

@@ -1278,7 +1278,10 @@ def auto_place_board(
     # strings (legacy free-text fallback). Membership tests are type-agnostic so
     # the consuming filter is identical for both. Per section: links if it has
     # any, else the free-text string — never both.
-    instructor_schedule_full: dict[object, set[tuple[str, str, int]]] = {}
+    # id -> {(section_full, day_upper, start_min, end_min)}. end_min is carried
+    # so the clash filter can test interval OVERLAP (a 10:30-11:45 lecture vs a
+    # 10:45-12:25 lab), not just an identical start minute.
+    instructor_schedule_full: dict[object, set[tuple[str, str, int, int]]] = {}
     section_instructors: dict[str, set] = {}
     # Per-instructor committed meetings (id → [(day, start_min, end_min)]),
     # maintained as sections are placed so the greedy scorer can prefer options
@@ -1303,13 +1306,14 @@ def auto_place_board(
             "term_section__section",
             "day",
             "start_time",
+            "end_time",
             "instructor",
         )
-        for cc, sec, day, start_time, instructor in meeting_rows:
+        for cc, sec, day, start_time, end_time, instructor in meeting_rows:
             section_full = f"{cc}|{sec}"
             try:
-                hh_str, mm_str = start_time.split(":", 1)
-                start_minute = int(hh_str) * 60 + int(mm_str)
+                start_minute = _to_min(start_time)
+                end_minute = _to_min(end_time)
             except (ValueError, AttributeError):
                 continue
             day_upper = (day or "").upper()
@@ -1322,7 +1326,7 @@ def auto_place_board(
                 continue
             for iid in ids:
                 instructor_schedule_full.setdefault(iid, set()).add(
-                    (section_full, day_upper, start_minute)
+                    (section_full, day_upper, start_minute, end_minute)
                 )
             section_instructors.setdefault(section_full, set()).update(ids)
 
@@ -1573,13 +1577,20 @@ def auto_place_board(
                         for m in option:
                             m_day_up = m["day"].upper()
                             m_start_min = _to_min(m["start"])
+                            m_end_min = _to_min(m["end"])
                             for my_instr in my_instrs:
-                                for other_section, bd, bs in instructor_schedule_full.get(
-                                    my_instr, set()
-                                ):
+                                for (
+                                    other_section,
+                                    bd,
+                                    bs,
+                                    be,
+                                ) in instructor_schedule_full.get(my_instr, set()):
                                     if other_section == section_full_cur:
                                         continue
-                                    if bd == m_day_up and bs == m_start_min:
+                                    # Interval overlap on the same day (half-open):
+                                    # catches a 10:30-11:45 vs 10:45-12:25 clash the
+                                    # old start-equality (bs == m_start_min) missed.
+                                    if bd == m_day_up and bs < m_end_min and m_start_min < be:
                                         clash_ctx = {
                                             "clashing_section": other_section,
                                             "clashing_instructor_id": my_instr,
@@ -1616,7 +1627,7 @@ def auto_place_board(
                             )
                         for my_instr in my_instrs_cap:
                             existing_by_day: dict[str, int] = {}
-                            for other_section, bd, _bs in instructor_schedule_full.get(
+                            for other_section, bd, _bs, _be in instructor_schedule_full.get(
                                 my_instr, set()
                             ):
                                 if other_section == section_full_cap:
@@ -2024,9 +2035,10 @@ def auto_place_board(
                     # otherwise frozen at DB state and would undercount within a run.
                     _section_full_cap = f"{code}|{sec_label}"
                     _start_min = _to_min(m["start"])
+                    _end_min = _to_min(m["end"])
                     for _iid in section_instructors.get(_section_full_cap, ()):
                         instructor_schedule_full.setdefault(_iid, set()).add(
-                            (_section_full_cap, m["day"].upper(), _start_min)
+                            (_section_full_cap, m["day"].upper(), _start_min, _end_min)
                         )
                 all_placed_masks.append((code, mask))
                 slot_density[m["start"]] += 1

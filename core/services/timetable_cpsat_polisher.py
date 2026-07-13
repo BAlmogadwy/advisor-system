@@ -327,34 +327,51 @@ def polish_scenario_with_cpsat(
             else:
                 model.add(sum(var_list) <= remaining)
 
-    # ── Hard: instructor clash — at most one session per (instructor, day, slot) ─
-    # An instructor can't teach two sections at the same start. Movable sessions
-    # contribute vars; a fixed/locked session occupying that slot forces the
-    # movable vars there to 0. opt[6] is the option's start_min.
+    # ── Hard: instructor clash — no two overlapping sessions per instructor ─
+    # An instructor can't teach two sections whose times OVERLAP (interval, via
+    # the time bitmask opt[5] — same mechanism the same-course constraint above
+    # uses), not merely share a start minute. Two movable options of one
+    # instructor that overlap on the same day are mutually exclusive; a movable
+    # option overlapping one of that instructor's fixed/locked sessions is forced
+    # to 0. Same-section option pairs are skipped — the all-different-days
+    # constraint already keeps a section's own meetings apart.
     if section_instructor_ids and is_instructor_clash_enabled():
         clash_instrs = [
             section_instructor_ids.get(sec.section_id, frozenset()) for sec in sections_to_polish
         ]
-        slot_vars: dict[tuple[object, int, int], list] = defaultdict(list)
+        # Compare in explicit (day_idx, start_min, end_min) — NOT masks. The
+        # movable option's mask (opt[5]) is a week-level mask (day baked in via
+        # _time_mask) while a fixed meeting's mask is day-independent
+        # (SectionMeeting.mask = start_min//slot), so AND-ing them is 0 on every
+        # non-SUN day. opt[6]/opt[7] are the option's start/end minutes; day_idx
+        # gates the comparison so time-of-day minutes are compared within a day.
+        # instructor -> [(var, day_idx, start_min, end_min, section_idx)] movable
+        movable_by_instr: dict[object, list[tuple]] = defaultdict(list)
         for i, instrs in enumerate(clash_instrs):
             if not instrs:
                 continue
             for m_idx in range(len(sec_durations[i])):
                 for o_idx, opt in enumerate(sec_options[i][m_idx]):
-                    key0 = (opt[0], opt[6])  # (day_idx, start_min)
+                    entry = (assign[i][m_idx][o_idx], opt[0], opt[6], opt[7], i)
                     for iid in instrs:
-                        slot_vars[(iid, *key0)].append(assign[i][m_idx][o_idx])
-        fixed_slots: set[tuple[object, int, int]] = set()
+                        movable_by_instr[iid].append(entry)
+        # instructor -> [(day_idx, start_min, end_min)] fixed/locked sessions
+        fixed_by_instr: dict[object, list[tuple[int, int, int]]] = defaultdict(list)
         for fixed_sec in fixed_sections:
             for iid in section_instructor_ids.get(fixed_sec.section_id, frozenset()):
                 for fm in fixed_sec.meetings:
-                    fixed_slots.add((iid, fm.day, fm.start_min))
-        for key, var_list in slot_vars.items():
-            if key in fixed_slots:
-                for v in var_list:
-                    model.add(v == 0)
-            elif len(var_list) > 1:
-                model.add(sum(var_list) <= 1)
+                    fixed_by_instr[iid].append((fm.day, fm.start_min, fm.end_min))
+        for iid, opts in movable_by_instr.items():
+            for a in range(len(opts)):
+                var_a, day_a, s_a, e_a, sec_a = opts[a]
+                for b in range(a + 1, len(opts)):
+                    var_b, day_b, s_b, e_b, sec_b = opts[b]
+                    if sec_a != sec_b and day_a == day_b and s_a < e_b and s_b < e_a:
+                        model.add(var_a + var_b <= 1)
+            for f_day, f_s, f_e in fixed_by_instr.get(iid, ()):
+                for var_a, day_a, s_a, e_a, _sec_a in opts:
+                    if day_a == f_day and s_a < f_e and f_s < e_a:
+                        model.add(var_a == 0)
 
     # ── Soft: cross-course student overlap penalty ───────────────
     penalties = []
