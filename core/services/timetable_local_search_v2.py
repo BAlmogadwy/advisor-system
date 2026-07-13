@@ -20,9 +20,11 @@ from core.services.timetable_assignment_models import (
     TimetableMove,
 )
 from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
-from core.services.timetable_constraints import move_introduces_instructor_clash
+from core.services.timetable_constraints import (
+    move_exceeds_instructor_daily_cap,
+    move_introduces_instructor_clash,
+)
 from core.services.timetable_pr4_instructor import (
-    exceeds_instructor_daily_cap,
     get_instructor_daily_cap,
     is_instructor_clash_enabled,
     is_instructor_daily_cap_enabled,
@@ -300,31 +302,35 @@ def diagnostic_driven_local_search(
                 _rollback(snapshot, sections_by_id, room_occupancies)
                 continue
 
-            # Instructor daily-session cap hard-reject (lectures + labs). The
-            # evaluator only scores; the cap is a structural constraint, so any
-            # move that would push an instructor past the cap on any day is
-            # rolled back here exactly like the same-course overlap above.
+            # Moved section id(s) — the delta-scoped structural gates below only
+            # reject violations THIS move introduces, so a pre-existing violation
+            # elsewhere on the board can't block an unrelated improving move.
+            _moved = {move.section_id_a}
+            if move.section_id_b:
+                _moved.add(move.section_id_b)
+
+            # Instructor daily-session cap hard-reject (lectures + labs): reject
+            # only when a moved section lands on an (instructor, day) cell that
+            # now exceeds the cap.
             if (
                 section_instructor_ids
                 and is_instructor_daily_cap_enabled()
-                and exceeds_instructor_daily_cap(
-                    sections_by_id, section_instructor_ids, get_instructor_daily_cap()
+                and move_exceeds_instructor_daily_cap(
+                    sections_by_id, section_instructor_ids, get_instructor_daily_cap(), _moved
                 )
             ):
                 _rollback(snapshot, sections_by_id, room_occupancies)
                 continue
 
             # Instructor-clash hard-reject: an instructor can't teach two sections
-            # whose times overlap. Delta-scoped — only reject when THIS move
-            # creates a clash involving a moved section, so a pre-existing clash
-            # elsewhere on the board doesn't block every unrelated improving move.
-            if section_instructor_ids and is_instructor_clash_enabled():
-                _moved = {move.section_id_a}
-                if move.section_id_b:
-                    _moved.add(move.section_id_b)
-                if move_introduces_instructor_clash(sections_by_id, section_instructor_ids, _moved):
-                    _rollback(snapshot, sections_by_id, room_occupancies)
-                    continue
+            # whose times overlap (interval), for a clash this move introduces.
+            if (
+                section_instructor_ids
+                and is_instructor_clash_enabled()
+                and move_introduces_instructor_clash(sections_by_id, section_instructor_ids, _moved)
+            ):
+                _rollback(snapshot, sections_by_id, room_occupancies)
+                continue
 
             # Room feasibility check
             if rooms_by_id is not None and room_occupancies is not None:
