@@ -29,6 +29,13 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from core.services.timetable_same_course import (
+    has_same_course_overlap as _windows_have_overlap,
+)
+from core.services.timetable_same_course import (
+    make_meeting_window,
+)
+
 # An instructor time window: (day, start_min, end_min, section_id).
 _Window = tuple[int, int, int, str]
 
@@ -247,11 +254,74 @@ def move_exceeds_instructor_daily_cap(
     return any(counts.get(cell, 0) > cap for cell in touched)
 
 
+# ── Same-course overlap ───────────────────────────────────────────────────
+# Sibling sections of one course must not overlap in time. Registrar convention:
+# one instructor teaches all sections of a course, so overlapping siblings are an
+# instructor clash even when the instructor_id field is blank. Already
+# interval-aware via the timetable_same_course window primitives; the engine owns
+# the board-level + delta forms so every stage shares one home.
+
+
+def _same_course_windows_by_course(sections_by_id: Mapping[str, Any]) -> dict[str, list]:
+    """Group every section's meeting windows by course_code."""
+    by_course: dict[str, list] = {}
+    for sec in sections_by_id.values():
+        bucket = by_course.setdefault(sec.course_code, [])
+        for meeting in sec.meetings:
+            bucket.append(
+                make_meeting_window(
+                    sec.course_code, meeting.day, meeting.start_min, meeting.end_min, sec.section_id
+                )
+            )
+    return by_course
+
+
+def has_same_course_overlap(sections_by_id: Mapping[str, Any]) -> bool:
+    """True iff two sections of the same course overlap in time (interval)."""
+    return any(
+        _windows_have_overlap(windows)
+        for windows in _same_course_windows_by_course(sections_by_id).values()
+    )
+
+
+def move_introduces_same_course_overlap(
+    sections_by_id: Mapping[str, Any],
+    moved_section_ids: Iterable[str],
+) -> bool:
+    """Delta form: True iff a *moved* section now overlaps a same-course sibling.
+
+    Only overlaps involving a moved section (within the courses those sections
+    belong to) are considered, so a pre-existing same-course overlap elsewhere on
+    the board does not reject an unrelated improving move.
+    """
+    moved = set(moved_section_ids)
+    if not moved:
+        return False
+    by_course = _same_course_windows_by_course(sections_by_id)
+    moved_courses = {sections_by_id[sid].course_code for sid in moved if sid in sections_by_id}
+    for course in moved_courses:
+        windows = by_course.get(course, [])
+        for i in range(len(windows)):
+            wa = windows[i]
+            for j in range(i + 1, len(windows)):
+                wb = windows[j]
+                if wa.section_key == wb.section_key:
+                    continue
+                if (wa.section_key in moved or wb.section_key in moved) and (
+                    wa.day == wb.day
+                    and _intervals_overlap(wa.start_min, wa.end_min, wb.start_min, wb.end_min)
+                ):
+                    return True
+    return False
+
+
 __all__ = [
     "count_instructor_clashes",
     "count_instructor_daily_overloads",
     "exceeds_instructor_daily_cap",
     "has_instructor_clash",
+    "has_same_course_overlap",
     "move_exceeds_instructor_daily_cap",
     "move_introduces_instructor_clash",
+    "move_introduces_same_course_overlap",
 ]

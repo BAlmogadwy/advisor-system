@@ -288,7 +288,16 @@ def polish_scenario_with_cpsat(
                 opts_a = sec_options[i_a][m_a]
                 for fixed_meeting in fixed_sec.meetings:
                     for oa, opt_a in enumerate(opts_a):
-                        if opt_a[0] == fixed_meeting.day and (opt_a[5] & fixed_meeting.mask):
+                        # Explicit (day, start, end) interval — NOT masks. opt_a[5]
+                        # is a week-level mask (day baked in) while fixed_meeting.mask
+                        # is day-independent, so AND-ing them was inert on every
+                        # non-SUN day (the movable-vs-movable pair above is fine —
+                        # both operands are opt[5]). opt_a[6]/[7] are start/end min.
+                        if (
+                            opt_a[0] == fixed_meeting.day
+                            and opt_a[6] < fixed_meeting.end_min
+                            and fixed_meeting.start_min < opt_a[7]
+                        ):
                             model.add(assign[i_a][m_a][oa] == 0)
 
     # ── Hard: instructor daily-session cap (lectures + labs) ─────
@@ -595,9 +604,9 @@ def polish_scenario_with_cpsat(
     # overlap (interval overlap, not just identical start) are never valid
     # regardless of score.
     polished_sections_by_id = {s.section_id: s for s in all_sections}
-    from core.services.timetable_local_search_v2 import _has_same_course_overlap
+    from core.services.timetable_constraints import has_same_course_overlap
 
-    if _has_same_course_overlap(polished_sections_by_id):
+    if has_same_course_overlap(polished_sections_by_id):
         logger.info("CP-SAT polisher rejected: same-course instructor clash in polished result")
         return None
 

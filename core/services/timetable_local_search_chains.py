@@ -30,6 +30,7 @@ from core.services.timetable_candidate_eval import evaluate_generated_timetable_
 from core.services.timetable_constraints import (
     move_exceeds_instructor_daily_cap,
     move_introduces_instructor_clash,
+    move_introduces_same_course_overlap,
 )
 from core.services.timetable_decision_trace import DecisionTrace
 from core.services.timetable_pr4_instructor import (
@@ -345,23 +346,20 @@ def chain_local_search(
                 logger.warning("chain apply failed unexpectedly; skipping", exc_info=True)
                 continue
 
-            # Hard-reject: two sections of the same course must never overlap
-            # in time (interval overlap, not just identical start) — registrar
-            # convention (one instructor per course). Mirrors the check in
-            # diagnostic_driven_local_search.
-            from core.services.timetable_local_search_v2 import _has_same_course_overlap
-
-            if _has_same_course_overlap(sections_by_id):
-                _rollback_chain(snap_a, snap_b, sections_by_id, room_occupancies)
-                chains_tried += 1
-                continue
-
             # Moved section id(s) — the chain's two legs. The delta-scoped
             # structural gates below reject only violations THIS chain introduces.
             _moved = {chain.move_a.section_id_a, chain.move_b.section_id_a}
             for _leg in (chain.move_a, chain.move_b):
                 if _leg.section_id_b:
                     _moved.add(_leg.section_id_b)
+
+            # Same-course hard-reject: two sections of the same course must never
+            # overlap in time (registrar convention: one instructor per course).
+            # Delta-scoped to the chain's moved sections.
+            if move_introduces_same_course_overlap(sections_by_id, _moved):
+                _rollback_chain(snap_a, snap_b, sections_by_id, room_occupancies)
+                chains_tried += 1
+                continue
 
             # Instructor daily-session cap hard-reject (lectures + labs): reject
             # only when a moved leg lands on an (instructor, day) cell now over cap.
