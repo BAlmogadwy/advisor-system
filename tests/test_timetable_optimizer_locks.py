@@ -23,7 +23,7 @@ from core.services.timetable_assignment_models import (
 )
 from core.services.timetable_autoplace import DEFAULT_SLOTS, WEEKDAYS
 from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
-from core.services.timetable_constraints import count_instructor_clashes
+from core.services.timetable_constraints import count_instructor_clashes, has_same_course_overlap
 from core.services.timetable_cpsat_polisher import polish_scenario_with_cpsat
 from core.services.timetable_local_search_v2 import (
     generate_all_repattern_moves,
@@ -315,6 +315,81 @@ def test_cpsat_polisher_forbids_movable_overlapping_fixed_instructor_on_monday()
         for s in result["improved_sections"]:
             post[s.section_id] = s
     assert count_instructor_clashes(post, instr) == 0
+
+
+@pytest.mark.django_db
+def test_cpsat_polisher_output_never_has_same_course_overlap() -> None:
+    """The polisher's post-solve verify (interval-aware ``has_same_course_overlap``)
+    is the output guarantee against same-course overlap — including movable-vs-
+    fixed. A movable section is pulled toward a MON cell held by a locked same-
+    course sibling; the polished board must never contain a same-course overlap.
+
+    NB: the CP-SAT movable-vs-fixed same-course model constraint (fixed in PR-2c
+    to use explicit intervals, matching the instructor guard) is a redundant
+    efficiency layer — this verify is what makes the OUTPUT safe on all days, so
+    the model-constraint fix is not separately output-observable."""
+    scenario = TimetableScenario.objects.create(
+        academic_year="1448",
+        term="1",
+        name="cpsat same-course verify",
+        blocked_slots=[
+            {"day": d, "start": s["start"]}
+            for d in WEEKDAYS
+            for s in DEFAULT_SLOTS
+            if not (d == "MON" and s["start"] in ("09:00", "13:00"))
+        ],
+    )
+    DeliveryBoard.objects.create(scenario=scenario, label="Term 1", nominal_term=1)
+    for sid in range(990200, 990220):
+        ScenarioStudentMap.objects.create(
+            scenario=scenario, student_id=sid, primary_term=1, recommended_courses=["AI101", "BIO"]
+        )
+        for course in ("AI101", "BIO"):
+            ScenarioStudentCourseRequest.objects.create(
+                scenario=scenario,
+                student_id=sid,
+                course_key=course,
+                course_code=course,
+                primary_term=1,
+                status=ScenarioStudentCourseRequest.STATUS_REQUESTED,
+                priority=ScenarioStudentCourseRequest.PRIORITY_NORMAL,
+                source="test",
+            )
+    sections = [
+        _section("AI101_S1", "AI101", "pf", 1, 540),  # MON 09:00, locked sibling
+        _section("AI101_S2", "AI101", "pm", 1, 780),  # MON 13:00, movable
+        _section("BIO_S1", "BIO", "pb", 1, 780),  # MON 13:00, locked
+    ]
+    profiles = {
+        str(sid): StudentProfile(
+            student_id=str(sid),
+            department="AI",
+            recommended_courses=["AI101", "BIO"],
+            risk_tier=RiskTier.C,
+            intra_tier_score=0,
+        )
+        for sid in range(990200, 990220)
+    }
+    current_eval = evaluate_generated_timetable_candidate(
+        candidate_id="current",
+        generated_sections=sections,
+        student_profiles=profiles,
+        course_rigidity={"AI101": 0.5, "BIO": 0.5},
+    )
+    result = polish_scenario_with_cpsat(
+        scenario_id=scenario.id,
+        current_sections=sections,
+        student_profiles=profiles,
+        course_rigidity={"AI101": 0.5, "BIO": 0.5},
+        current_eval=current_eval,
+        time_limit_seconds=5,
+        locked_section_ids={"AI101_S1", "BIO_S1"},
+    )
+    post = {s.section_id: s for s in sections}
+    if result is not None:
+        for s in result["improved_sections"]:
+            post[s.section_id] = s
+    assert has_same_course_overlap(post) is False
 
 
 @pytest.mark.django_db

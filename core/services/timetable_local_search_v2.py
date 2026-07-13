@@ -23,6 +23,7 @@ from core.services.timetable_candidate_eval import evaluate_generated_timetable_
 from core.services.timetable_constraints import (
     move_exceeds_instructor_daily_cap,
     move_introduces_instructor_clash,
+    move_introduces_same_course_overlap,
 )
 from core.services.timetable_pr4_instructor import (
     get_instructor_daily_cap,
@@ -35,31 +36,8 @@ from core.services.timetable_room_repair import (
     rollback_move,
     try_repair_rooms_locally,
 )
-from core.services.timetable_same_course import has_same_course_overlap, make_meeting_window
 
 logger = logging.getLogger(__name__)
-
-
-def _has_same_course_overlap(sections_by_id: dict[str, SectionState]) -> bool:
-    """True iff two sections of the same course overlap in time.
-
-    Registrar convention: course code implies a single instructor across
-    all sections, so overlapping same-course sections would be an
-    instructor clash even when the ``instructor_id`` field is empty.
-    """
-    by_course: dict[str, list] = {}
-    for sec in sections_by_id.values():
-        by_course.setdefault(sec.course_code, []).extend(
-            [
-                make_meeting_window(sec.course_code, m.day, m.start_min, m.end_min, sec.section_id)
-                for m in sec.meetings
-            ]
-        )
-
-    for meetings in by_course.values():
-        if has_same_course_overlap(meetings):
-            return True
-    return False
 
 
 def generate_all_repattern_moves(
@@ -294,20 +272,18 @@ def diagnostic_driven_local_search(
                 # whole optimiser run.
                 continue
 
-            # Same-course instructor-clash hard-reject: two sections of
-            # the same course cannot overlap because the same instructor
-            # typically teaches all sections. Scan after the move has been
-            # applied; rollback + skip if violated.
-            if _has_same_course_overlap(sections_by_id):
-                _rollback(snapshot, sections_by_id, room_occupancies)
-                continue
-
             # Moved section id(s) — the delta-scoped structural gates below only
             # reject violations THIS move introduces, so a pre-existing violation
             # elsewhere on the board can't block an unrelated improving move.
             _moved = {move.section_id_a}
             if move.section_id_b:
                 _moved.add(move.section_id_b)
+
+            # Same-course hard-reject: two sections of the same course cannot
+            # overlap (the same instructor teaches all sections). Delta-scoped.
+            if move_introduces_same_course_overlap(sections_by_id, _moved):
+                _rollback(snapshot, sections_by_id, room_occupancies)
+                continue
 
             # Instructor daily-session cap hard-reject (lectures + labs): reject
             # only when a moved section lands on an (instructor, day) cell that
