@@ -27,10 +27,12 @@ from core.services.timetable_assignment_models import (
 )
 from core.services.timetable_autoplace import WEEKDAYS
 from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
-from core.services.timetable_constraints import move_introduces_instructor_clash
+from core.services.timetable_constraints import (
+    move_exceeds_instructor_daily_cap,
+    move_introduces_instructor_clash,
+)
 from core.services.timetable_decision_trace import DecisionTrace
 from core.services.timetable_pr4_instructor import (
-    exceeds_instructor_daily_cap,
     get_instructor_daily_cap,
     is_instructor_clash_enabled,
     is_instructor_daily_cap_enabled,
@@ -354,32 +356,34 @@ def chain_local_search(
                 chains_tried += 1
                 continue
 
-            # Instructor daily-session cap hard-reject (lectures + labs): a chain
-            # moves two sections at once, so either leg could push an instructor
-            # past the cap on some day. Structural constraint — reject + rollback
-            # before scoring, mirroring the V2 local-search gate.
+            # Moved section id(s) — the chain's two legs. The delta-scoped
+            # structural gates below reject only violations THIS chain introduces.
+            _moved = {chain.move_a.section_id_a, chain.move_b.section_id_a}
+            for _leg in (chain.move_a, chain.move_b):
+                if _leg.section_id_b:
+                    _moved.add(_leg.section_id_b)
+
+            # Instructor daily-session cap hard-reject (lectures + labs): reject
+            # only when a moved leg lands on an (instructor, day) cell now over cap.
             if (
                 section_instructor_ids
                 and is_instructor_daily_cap_enabled()
-                and exceeds_instructor_daily_cap(
-                    sections_by_id, section_instructor_ids, get_instructor_daily_cap()
+                and move_exceeds_instructor_daily_cap(
+                    sections_by_id, section_instructor_ids, get_instructor_daily_cap(), _moved
                 )
             ):
                 _rollback_chain(snap_a, snap_b, sections_by_id, room_occupancies)
                 continue
 
             # Instructor-clash hard-reject: neither leg may double-book an
-            # instructor (interval overlap). Delta-scoped to the chain's two
-            # moved sections so a pre-existing unrelated clash doesn't block the
-            # chain; the evaluator doesn't catch clashes.
-            if section_instructor_ids and is_instructor_clash_enabled():
-                _moved = {chain.move_a.section_id_a, chain.move_b.section_id_a}
-                for _leg in (chain.move_a, chain.move_b):
-                    if _leg.section_id_b:
-                        _moved.add(_leg.section_id_b)
-                if move_introduces_instructor_clash(sections_by_id, section_instructor_ids, _moved):
-                    _rollback_chain(snap_a, snap_b, sections_by_id, room_occupancies)
-                    continue
+            # instructor (interval overlap); delta-scoped to the chain's sections.
+            if (
+                section_instructor_ids
+                and is_instructor_clash_enabled()
+                and move_introduces_instructor_clash(sections_by_id, section_instructor_ids, _moved)
+            ):
+                _rollback_chain(snap_a, snap_b, sections_by_id, room_occupancies)
+                continue
 
             # Evaluate
             test_result = evaluate_generated_timetable_candidate(

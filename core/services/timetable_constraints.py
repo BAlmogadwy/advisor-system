@@ -160,8 +160,98 @@ def move_introduces_instructor_clash(
     return False
 
 
+# ── Instructor daily-session cap ──────────────────────────────────────────
+# A cap on sessions per (instructor, day) — labs + lectures. Unlike clash this
+# is a per-day COUNT, so no interval logic is involved; the engine owns it for a
+# single source + a delta form (below) that mirrors the clash rule.
+
+
+def _instructor_day_counts(
+    sections_by_id: Mapping[str, Any],
+    section_instructor_ids: Mapping[str, Iterable[int]],
+) -> dict[tuple[int, int], int]:
+    """Sessions per (instructor_id, day) across all sections."""
+    counts: dict[tuple[int, int], int] = {}
+    for section_id, instr_ids in section_instructor_ids.items():
+        sec = sections_by_id.get(section_id)
+        if sec is None:
+            continue
+        for iid in instr_ids:
+            for meeting in sec.meetings:
+                key = (iid, meeting.day)
+                counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def exceeds_instructor_daily_cap(
+    sections_by_id: Mapping[str, Any],
+    section_instructor_ids: Mapping[str, Iterable[int]] | None,
+    cap: int,
+) -> bool:
+    """True if any (instructor, day) would hold more than ``cap`` sessions.
+
+    A section taught by N instructors counts toward each of those N. Duck-typed
+    over the in-memory section states, cheap enough for a move-evaluation loop.
+    """
+    if not section_instructor_ids:
+        return False
+    return any(
+        c > cap for c in _instructor_day_counts(sections_by_id, section_instructor_ids).values()
+    )
+
+
+def count_instructor_daily_overloads(
+    sections_by_id: Mapping[str, Any],
+    section_instructor_ids: Mapping[str, Iterable[int]] | None,
+    cap: int,
+) -> int:
+    """Total over-cap sessions = Σ over (instructor, day) of ``max(0, count-cap)``.
+
+    A side-band diagnostic (not part of the lexicographic score); 0 means every
+    instructor-day is within the cap.
+    """
+    if not section_instructor_ids:
+        return 0
+    return sum(
+        max(0, c - cap)
+        for c in _instructor_day_counts(sections_by_id, section_instructor_ids).values()
+    )
+
+
+def move_exceeds_instructor_daily_cap(
+    sections_by_id: Mapping[str, Any],
+    section_instructor_ids: Mapping[str, Iterable[int]] | None,
+    cap: int,
+    moved_section_ids: Iterable[str],
+) -> bool:
+    """Delta form: True iff a *moved* section now lands on an (instructor, day)
+    cell whose total session count exceeds ``cap``.
+
+    Only (instructor, day) cells a moved section actually occupies are checked,
+    so a pre-existing over-cap on a cell this move doesn't touch never rejects an
+    unrelated improving move (mirrors ``move_introduces_instructor_clash``).
+    """
+    if not section_instructor_ids:
+        return False
+    touched: set[tuple[int, int]] = set()
+    for sid in moved_section_ids:
+        sec = sections_by_id.get(sid)
+        if sec is None:
+            continue
+        for iid in section_instructor_ids.get(sid, ()):  # type: ignore[union-attr]
+            for meeting in sec.meetings:
+                touched.add((iid, meeting.day))
+    if not touched:
+        return False
+    counts = _instructor_day_counts(sections_by_id, section_instructor_ids)
+    return any(counts.get(cell, 0) > cap for cell in touched)
+
+
 __all__ = [
     "count_instructor_clashes",
+    "count_instructor_daily_overloads",
+    "exceeds_instructor_daily_cap",
     "has_instructor_clash",
+    "move_exceeds_instructor_daily_cap",
     "move_introduces_instructor_clash",
 ]
