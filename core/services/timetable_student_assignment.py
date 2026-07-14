@@ -10,6 +10,11 @@ from core.services.timetable_assignment_models import (
     StudentProfile,
     UnresolvedReason,
 )
+from core.services.timetable_flags import (
+    get_tiered_soft_gap_budget,
+    get_tiered_t2_tolerance,
+    is_tiered_objective_enabled,
+)
 from core.services.timetable_pr4_instructor import is_instructor_gap_penalty_enabled
 from core.services.timetable_same_course import (
     make_meeting_window,
@@ -449,18 +454,137 @@ def _compute_same_course_section_spread(
     return same_course_section_spread_penalty(by_course)
 
 
+# ── Objective tuple layouts ──────────────────────────────────────────────
+# Legacy (tiered flag OFF): the canonical 6-tuple, or a 7-tuple when the
+# instructor-gap flag adds a trailing idle term:
+#   (tier_a, unres_students, unassigned_courses, clashes,
+#    gap_minutes[+spread fold], reserve) [, instr_idle]
+# Tiered (tiered flag ON): a fixed-length 9-tuple whose positions rank
+# resolution by course tier. Real student gap-minutes sits *between* the tiers
+# so the optimiser stops wrecking schedules for low-value (T3 / over-tolerance)
+# enrolments. Smaller is better at every position, most-significant first.
+TIERED_LEN = 9
+TI_HIGHRISK = 0  # HARD: high-risk (RiskTier.A) students with an unresolved T1|T2 course
+TI_CLASH = 1  # HARD: student double-booking (retained; ~always 0)
+TI_T1 = 2  # HARD -> 0: unresolved (student, T1-course) pairs
+TI_T2_OVER = 3  # near-hard: sum over T2 courses of max(0, unresolved - tolerance)
+# Bounded student-cost: real_gap_minutes + soft_gap_budget * soft_unresolved.
+# This is the position gaps and soft-tier enrolment TRADE against each other:
+# the optimiser seats a soft course when it adds fewer than the budget in gap
+# minutes. Pure real gap is recoverable as score[4] - budget * score[5].
+TI_STUDENT_COST = 4
+TI_SOFT = 5  # soft: T3 unresolved + T2 within-tolerance unresolved (pure count)
+TI_RESERVE = 6  # reserve used
+TI_SPREAD = 7  # same-course section spread, now its own quality term
+TI_INSTR_IDLE = 8  # lowest priority; 0 unless the instructor-gap flag is on
+
+# Legacy positions (flag OFF) for the shared accessors below.
+_LEGACY_RESERVE = 5
+
+
+def is_tiered_score(score: tuple[int, ...] | None) -> bool:
+    """True when ``score`` is a tiered 9-tuple. Legacy is 6 or 7 — no collision.
+
+    Tolerates ``None`` (returns False) so reporting-path accessors stay
+    defensive, matching the guards the legacy decoders carried.
+    """
+    return score is not None and len(score) == TIERED_LEN
+
+
+def reserve_used_of(score: tuple[int, ...] | None) -> int:
+    """Reserve-used term, correct for either layout (idx 6 tiered / 5 legacy)."""
+    if score is None:
+        return 0
+    if is_tiered_score(score):
+        return int(score[TI_RESERVE])
+    return int(score[_LEGACY_RESERVE]) if len(score) > _LEGACY_RESERVE else 0
+
+
+def instructor_idle_of(score: tuple[int, ...] | None) -> int:
+    """Instructor idle-minutes term: idx 8 tiered, trailing idx 6 legacy, else 0."""
+    if score is None:
+        return 0
+    if is_tiered_score(score):
+        return int(score[TI_INSTR_IDLE])
+    return int(score[6]) if len(score) >= 7 else 0
+
+
+def strip_instructor_idle(score: tuple[int, ...]) -> tuple[int, ...]:
+    """Student + quality portion, dropping the trailing instructor-idle term.
+
+    Lets an OFF-vs-ON comparison line up the substantive terms regardless of
+    whether the instructor-gap term is present (8-slice tiered / 6-slice legacy).
+    """
+    return tuple(score[:8]) if is_tiered_score(score) else tuple(score[:6])
+
+
+def decode_score(score: tuple[int, ...]) -> dict[str, int | str]:
+    """Named view of an objective tuple, correct for either layout.
+
+    A legacy (6/7) tuple returns exactly today's keys and values, so UI decoders
+    stay byte-identical when the flag is off. A tiered (9) tuple returns the
+    tier breakdown plus legacy-compatible aliases so existing keys still render.
+    """
+    if is_tiered_score(score):
+        soft = int(score[TI_SOFT])
+        student_cost = int(score[TI_STUDENT_COST])
+        # Pure real student gap recovered from the blended student-cost term:
+        # student_cost = real_gap + budget * soft  =>  real_gap = cost - budget*soft.
+        real_gap = student_cost - get_tiered_soft_gap_budget() * soft
+        return {
+            "layout": "tiered",
+            "highrisk_unresolved": int(score[TI_HIGHRISK]),
+            "actual_assigned_clashes": int(score[TI_CLASH]),
+            "t1_unresolved": int(score[TI_T1]),
+            "t2_unresolved_over_tol": int(score[TI_T2_OVER]),
+            "student_cost": student_cost,
+            "gap_minutes": real_gap,
+            "soft_unresolved": soft,
+            "reserve_used": int(score[TI_RESERVE]),
+            "same_course_spread": int(score[TI_SPREAD]),
+            "instructor_idle": int(score[TI_INSTR_IDLE]),
+            # legacy-compatible aliases so existing UI keys still render sensibly:
+            "unresolved_tier_a": int(score[TI_HIGHRISK]),
+            "unresolved_courses": int(score[TI_T1] + score[TI_T2_OVER] + soft),
+        }
+    return {
+        "layout": "legacy",
+        "unresolved_tier_a": int(score[0]),
+        "blocked_students": int(score[1]),
+        "unresolved_courses": int(score[2]),
+        "actual_assigned_clashes": int(score[3]),
+        "gap_minutes": int(score[4]),
+        "reserve_used": int(score[5]),
+    }
+
+
 def evaluate_assignability_lexicographic(
     states: dict[str, StudentAssignmentState],
     profiles: dict[str, StudentProfile],
     sections_by_id: dict[str, SectionState],
     section_instructor_ids: dict[str, frozenset[int]] | None = None,
+    course_tiers: dict[str, str] | None = None,
 ) -> tuple[int, ...]:
+    # The tiered objective engages only when a per-run tier map is supplied AND
+    # the flag is on. A missing map (course_tiers is None) forces the legacy
+    # path even under the flag, so any un-threaded caller stays safe.
+    tiered = course_tiers is not None and is_tiered_objective_enabled()
+    tolerance = get_tiered_t2_tolerance() if tiered else 0
+    soft_gap_budget = get_tiered_soft_gap_budget() if tiered else 0
+
+    # Legacy accumulators (unchanged names/values; drive the OFF path).
     unresolved_tier_a = 0
     total_unresolved_students = 0
     total_unassigned_courses = 0
     total_clashes = 0
-    total_gap_minutes = 0
+    real_gap_minutes = 0  # was total_gap_minutes; spread is NOT folded in here
     total_reserve_used = 0
+
+    # Tiered accumulators.
+    hr_unresolved = 0
+    t1_unresolved = 0
+    t2_unresolved_by_course: dict[str, int] = defaultdict(int)
+    t3_unresolved = 0
 
     for sid, state in states.items():
         profile = profiles[sid]
@@ -469,7 +593,22 @@ def evaluate_assignability_lexicographic(
             total_unassigned_courses += len(state.unresolved_courses)
             if profile.risk_tier == RiskTier.A:
                 unresolved_tier_a += 1
-        total_gap_minutes += state.total_gap_minutes
+            if tiered:
+                is_high = profile.risk_tier == RiskTier.A
+                hr_hit = False
+                for course in state.unresolved_courses:  # key == SectionState.course_code
+                    tier = course_tiers.get(course, "T1")
+                    if tier == "T1":
+                        t1_unresolved += 1
+                    elif tier == "T2":
+                        t2_unresolved_by_course[course] += 1
+                    else:
+                        t3_unresolved += 1
+                    if is_high and tier in ("T1", "T2"):
+                        hr_hit = True
+                if hr_hit:
+                    hr_unresolved += 1
+        real_gap_minutes += state.total_gap_minutes
 
         meetings: list[SectionMeeting] = []
         for sec_id in state.section_ids:
@@ -482,13 +621,43 @@ def evaluate_assignability_lexicographic(
     for section in sections_by_id.values():
         total_reserve_used += section.reserve_used()
 
-    # Fold the same-course section-spread penalty into total_gap_minutes
-    # so the tuple shape stays stable for downstream consumers (the
-    # final_score array has been 6-element forever). The spread penalty
-    # is already expressed in minutes-equivalent so the sum is
-    # apples-to-apples with the student day-gap contribution.
-    total_gap_minutes += _compute_same_course_section_spread(sections_by_id)
+    # The same-course section-spread penalty (minutes-equivalent). Computed once
+    # in every path — the legacy tuple folds it into gap-minutes; the tiered
+    # tuple carries it as its own quality term so real student gaps are visible.
+    spread = _compute_same_course_section_spread(sections_by_id)
 
+    instr_idle = 0
+    if section_instructor_ids is not None and is_instructor_gap_penalty_enabled():
+        instr_idle = _compute_instructor_idle_minutes(sections_by_id, section_instructor_ids)
+
+    if tiered:
+        t2_over = 0
+        t2_within = 0
+        for unresolved in t2_unresolved_by_course.values():
+            over = max(0, unresolved - tolerance)
+            t2_over += over
+            t2_within += unresolved - over  # == min(unresolved, tolerance)
+        soft_unresolved = t3_unresolved + t2_within
+        # Bounded trade: gaps and soft-tier enrolment compete on one axis. Each
+        # unresolved soft seat is worth `soft_gap_budget` gap-minutes, so the
+        # optimiser seats it iff doing so adds less than the budget in gaps.
+        student_cost = real_gap_minutes + soft_gap_budget * soft_unresolved
+        return (
+            hr_unresolved,  # 0  A HARD
+            total_clashes,  # 1    HARD
+            t1_unresolved,  # 2  B HARD -> 0
+            t2_over,  # 3  C near-hard
+            student_cost,  # 4  D real_gap + budget * soft (bounded trade)
+            soft_unresolved,  # 5  E soft count (tie-break; recovers real gap)
+            total_reserve_used,  # 6  F
+            spread,  # 7  F
+            instr_idle,  # 8    lowest (0 unless instr-gap flag on)
+        )
+
+    # ── OFF path: byte-identical to pre-feature behaviour ──
+    # real_gap_minutes + spread reproduces the old in-loop total_gap_minutes
+    # plus the line-490 fold, exactly (deterministic integer add).
+    total_gap_minutes = real_gap_minutes + spread
     base = (
         unresolved_tier_a,
         total_unresolved_students,
@@ -497,13 +666,9 @@ def evaluate_assignability_lexicographic(
         total_gap_minutes,
         total_reserve_used,
     )
-
     # Append the instructor idle-gap term as a strictly-lowest-priority 7th
     # element — only when the flag is ON *and* a section→instructor map is
-    # supplied. Otherwise the tuple stays the canonical 6-element shape, byte
-    # identical to pre-feature behaviour. Position 6 can never override any
-    # student or reserve term, so instructor compaction never harms students;
-    # it is only pursued among otherwise-tied candidates.
+    # supplied. Otherwise the tuple stays the canonical 6-element shape.
     if section_instructor_ids is not None and is_instructor_gap_penalty_enabled():
-        return (*base, _compute_instructor_idle_minutes(sections_by_id, section_instructor_ids))
+        return (*base, instr_idle)
     return base

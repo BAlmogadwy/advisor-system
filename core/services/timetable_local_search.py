@@ -695,16 +695,28 @@ def _sa_scenario_score(scenario_id: int, profiles, rigidity, candidate_id: str):
     than SA's private gap-cost.
     """
     from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
-    from core.services.timetable_optimizer_v2 import build_section_states_for_scenario
+    from core.services.timetable_flags import is_tiered_objective_enabled
+    from core.services.timetable_optimizer_v2 import (
+        build_course_tier_map_for_scenario,
+        build_section_states_for_scenario,
+    )
 
     states = build_section_states_for_scenario(scenario_id)
     if not states:
         return None
+    # Thread the tier map so the SA accept/reject gate scores the SAME tiered
+    # objective the V2 pipeline uses. Without this, SA would gate on the legacy
+    # tuple and could accept a move that seats a T3 elective while dropping a T1
+    # core and believe it improved.
+    course_tiers = (
+        build_course_tier_map_for_scenario(scenario_id) if is_tiered_objective_enabled() else None
+    )
     evaluation = evaluate_generated_timetable_candidate(
         candidate_id=candidate_id,
         generated_sections=states,
         student_profiles=profiles,
         course_rigidity=rigidity,
+        course_tiers=course_tiers,
     )
     return tuple(evaluation.lexicographic_score)
 

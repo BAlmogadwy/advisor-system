@@ -111,8 +111,10 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
     report["enabled"] = True
 
     from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
+    from core.services.timetable_flags import is_tiered_objective_enabled
     from core.services.timetable_optimizer_v2 import (
         build_course_rigidity_for_scenario,
+        build_course_tier_map_for_scenario,
         build_section_instructor_map_for_scenario,
         build_section_states_for_scenario,
         build_student_profiles_for_scenario,
@@ -120,6 +122,9 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
 
     scenario = TimetableScenario.objects.get(id=scenario_id)
     cap = get_instructor_daily_cap()
+    course_tiers = (
+        build_course_tier_map_for_scenario(scenario_id) if is_tiered_objective_enabled() else None
+    )
     cap_map = build_section_instructor_map_for_scenario(scenario_id)  # section_id -> frozenset[int]
 
     lecture_slots = [(s["start"], s["end"]) for s in (scenario.slot_config or DEFAULT_SLOTS)]
@@ -176,6 +181,7 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
                 generated_sections=states,
                 student_profiles=profiles,
                 course_rigidity=rigidity,
+                course_tiers=course_tiers,
             ).lexicographic_score
         )
 
@@ -353,8 +359,10 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
 
     from core.services.timetable_assignment_models import SectionMeeting
     from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
+    from core.services.timetable_flags import is_tiered_objective_enabled
     from core.services.timetable_optimizer_v2 import (
         build_course_rigidity_for_scenario,
+        build_course_tier_map_for_scenario,
         build_section_instructor_map_for_scenario,
         build_section_states_for_scenario,
         build_student_profiles_for_scenario,
@@ -445,13 +453,21 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
     sections_by_id = {s.section_id: s for s in states}
     profiles = build_student_profiles_for_scenario(scenario_id)
     rigidity = build_course_rigidity_for_scenario(scenario_id) if profiles else {}
+    course_tiers = (
+        build_course_tier_map_for_scenario(scenario_id) if is_tiered_objective_enabled() else None
+    )
 
     def _score():
         if not profiles:
             return ()
         return tuple(
             evaluate_generated_timetable_candidate(
-                "clash_repair", states, profiles, rigidity, section_instructor_ids=cap_map
+                "clash_repair",
+                states,
+                profiles,
+                rigidity,
+                section_instructor_ids=cap_map,
+                course_tiers=course_tiers,
             ).lexicographic_score
         )
 

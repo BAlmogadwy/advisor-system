@@ -98,6 +98,7 @@ def polish_scenario_with_cpsat(
     stage_telemetry: dict[str, dict[str, int]] | None = None,
     locked_section_ids: set[str] | None = None,
     section_instructor_ids: dict[str, frozenset[int]] | None = None,
+    course_tiers: dict[str, str] | None = None,
 ) -> dict | None:
     """Run a global CP-SAT pass as a polisher on the current best timetable.
 
@@ -597,6 +598,7 @@ def polish_scenario_with_cpsat(
         student_profiles=student_profiles,
         course_rigidity=course_rigidity,
         section_instructor_ids=section_instructor_ids,
+        course_tiers=course_tiers,
     )
 
     # Hard-reject if the CP-SAT result violates the same-course

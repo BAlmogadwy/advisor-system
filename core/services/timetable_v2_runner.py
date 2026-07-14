@@ -41,16 +41,35 @@ def _score_metric(score: object, index: int) -> int | None:
 
 
 def optimiser_student_outcome_regression(result: dict[str, object]) -> dict[str, object]:
-    """Block regressions in the actual student solver objective."""
-    checks = [
-        (0, "tier_a_unresolved", "Tier-A unresolved students"),
-        (1, "unresolved_students", "Unresolved students"),
-        (2, "unassigned_courses", "Unassigned courses"),
-        (3, "time_clashes", "Student time clashes"),
-    ]
-    regressions = []
+    """Block regressions in the actual student solver objective.
+
+    The hard block occupies positions 0-3 in BOTH objective layouts, so the gate
+    guards the same feasibility terms either way — but the position *meanings*
+    (hence the labels shown on a rollback) differ, so the check table is chosen
+    by layout. Under the tiered objective the soft tier (T3 / Tier-2 within
+    tolerance, position 5) is intentionally NOT gated: the policy deprioritises
+    those enrolments, so trading them for T1/T2/gap gains must not be rolled back.
+    """
+    from core.services.timetable_student_assignment import is_tiered_score
+
     before = result.get("baseline_score")
     after = result.get("final_score")
+    tiered = is_tiered_score(tuple(after)) if isinstance(after, list) else False
+    if tiered:
+        checks = [
+            (0, "highrisk_unresolved", "High-risk unresolved (T1/T2)"),
+            (1, "time_clashes", "Student time clashes"),
+            (2, "t1_unresolved", "Tier-1 unassigned (core)"),
+            (3, "t2_over_tolerance", "Tier-2 over tolerance"),
+        ]
+    else:
+        checks = [
+            (0, "tier_a_unresolved", "Tier-A unresolved students"),
+            (1, "unresolved_students", "Unresolved students"),
+            (2, "unassigned_courses", "Unassigned courses"),
+            (3, "time_clashes", "Student time clashes"),
+        ]
+    regressions = []
     for index, metric, label in checks:
         before_value = _score_metric(before, index)
         after_value = _score_metric(after, index)
@@ -204,8 +223,16 @@ def run_v2_optimisation_guarded(
         }
         baseline_score = result.get("baseline_score")
         if isinstance(baseline_score, list):
+            from core.services.timetable_student_assignment import is_tiered_score
+
             result["final_score"] = baseline_score
-            if len(baseline_score) > 1:
+            if is_tiered_score(tuple(baseline_score)):
+                # The tiered tuple carries no total-unresolved-students headcount
+                # (its position 1 is the clash count). Restore the baseline count
+                # captured at optimise time instead of misreading the tuple.
+                if "baseline_unresolved_students" in result:
+                    result["unresolved_students"] = result["baseline_unresolved_students"]
+            elif len(baseline_score) > 1:
                 result["unresolved_students"] = baseline_score[1]
         logger.warning(
             "V2 optimiser result rolled back for scenario %d: %s",
