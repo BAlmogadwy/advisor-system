@@ -27,6 +27,7 @@ from core.models import (
     TermSection,
     TimetableScenario,
 )
+from core.services.student_helpers import normalize_code
 from core.services.timetable_assignment_models import (
     RiskTier,
     RoomOccupancy,
@@ -40,7 +41,12 @@ from core.services.timetable_candidate_eval import (
     evaluate_generated_timetable_candidate,
     rank_timetable_candidates,
 )
+from core.services.timetable_course_tier import (
+    classify_course_tier,
+    program_count_by_code,
+)
 from core.services.timetable_demand import load_scenario_course_demands
+from core.services.timetable_flags import is_tiered_objective_enabled
 from core.services.timetable_pr4_instructor import (
     is_instructor_clash_enabled,
     is_instructor_compaction_enabled,
@@ -48,6 +54,7 @@ from core.services.timetable_pr4_instructor import (
     is_instructor_gap_penalty_enabled,
 )
 from core.services.timetable_stage_telemetry import STAGE_KEYS, empty_stage_telemetry
+from core.services.timetable_student_assignment import instructor_idle_of
 from core.services.timetable_workspace import _to_minutes
 
 logger = logging.getLogger(__name__)
@@ -319,13 +326,39 @@ def build_section_instructor_map_for_scenario(scenario_id: int) -> dict[str, fro
     return out
 
 
+def build_course_tier_map_for_scenario(scenario_id: int) -> dict[str, str]:
+    """``{SectionState.course_code: 'T1'|'T2'|'T3'}`` for the tiered objective.
+
+    Keyed by the ``course_key or course_code`` identity the evaluator sees on
+    ``SectionState.course_code`` (planner ``CODE::NAME`` form), so the hot loop
+    resolves a course's tier by O(1) dict lookup — no DB, no string work per
+    eval. One cached global plan-count read + one ~40-row in-memory build per
+    run. The bare code (for prefix rules + the plan-count lookup) is derived at
+    build time via ``split("::", 1)[0]``. Codes absent from the map default to
+    T1 at the lookup site.
+    """
+    counts = program_count_by_code()
+    out: dict[str, str] = {}
+    for course_key, course_code in TermSection.objects.filter(scenario_id=scenario_id).values_list(
+        "course_key", "course_code"
+    ):
+        key = course_key or course_code
+        if not key:
+            continue
+        bare = key.split("::", 1)[0]
+        tier = classify_course_tier(bare, counts.get(normalize_code(bare), 0))
+        out[key] = tier
+        # Belt-and-suspenders: also index by the bare normalised code so a caller
+        # that passes a bare code (no ::NAME) still resolves.
+        out.setdefault(normalize_code(bare), tier)
+    return out
+
+
 def _gap_pos6(score) -> int:
-    """Instructor idle-minutes element of a score tuple (position 6), or 0 when
-    the gap penalty was off (the tuple is the canonical 6-element shape)."""
-    try:
-        return int(score[6]) if score is not None and len(score) >= 7 else 0
-    except (TypeError, IndexError):
-        return 0
+    """Instructor idle-minutes element of a score tuple, or 0 when the gap
+    penalty was off. Layout-aware: index 8 for the tiered 9-tuple, trailing
+    index 6 for a legacy 7-tuple, 0 for the canonical 6-tuple."""
+    return instructor_idle_of(score)
 
 
 def instructor_gap_metric(
@@ -824,6 +857,14 @@ def optimise_scenario_timetable_v2(
         else None
     )
 
+    # Built once per run and threaded (same object) to every evaluator call:
+    # None when the tiered objective is OFF (every stage scores the legacy tuple
+    # → byte parity), the course→tier map when ON (every stage scores a uniform
+    # 9-tuple). Uniform threading is what guarantees no mixed-length comparison.
+    course_tiers = (
+        build_course_tier_map_for_scenario(scenario_id) if is_tiered_objective_enabled() else None
+    )
+
     t2 = time.time()
     logger.info("Generated %d candidates in %.1fs", len(candidates), t2 - t1)
 
@@ -833,6 +874,7 @@ def optimise_scenario_timetable_v2(
         student_profiles=student_profiles,
         course_rigidity=course_rigidity,
         section_instructor_ids=section_instructor_ids,
+        course_tiers=course_tiers,
     )
     best = ranked[0]
     _gap_idle_before = _gap_pos6(best.lexicographic_score)
@@ -939,6 +981,7 @@ def optimise_scenario_timetable_v2(
                 max_iterations=max_search_iterations,
                 locked_section_ids=locked_section_ids,
                 section_instructor_ids=section_instructor_ids,
+                course_tiers=course_tiers,
             )
 
             score_before = best.lexicographic_score
@@ -993,6 +1036,7 @@ def optimise_scenario_timetable_v2(
                 student_profiles=student_profiles,
                 course_rigidity=course_rigidity,
                 section_instructor_ids=section_instructor_ids,
+                course_tiers=course_tiers,
             )
 
             t_chain_start = time.time()
@@ -1012,6 +1056,7 @@ def optimise_scenario_timetable_v2(
                 stage_telemetry=result["stage_telemetry"],
                 locked_section_ids=locked_section_ids,
                 section_instructor_ids=section_instructor_ids,
+                course_tiers=course_tiers,
                 chain_time_limit_seconds=(
                     chain_time_limit_seconds
                     if chain_time_limit_seconds is not None
@@ -1060,6 +1105,7 @@ def optimise_scenario_timetable_v2(
                     student_profiles=student_profiles,
                     course_rigidity=course_rigidity,
                     section_instructor_ids=section_instructor_ids,
+                    course_tiers=course_tiers,
                 )
 
             t_cpsat_start = time.time()
@@ -1079,6 +1125,7 @@ def optimise_scenario_timetable_v2(
                 stage_telemetry=result["stage_telemetry"],
                 locked_section_ids=locked_section_ids,
                 section_instructor_ids=section_instructor_ids,
+                course_tiers=course_tiers,
             )
 
             if cpsat_result is not None:
@@ -1364,6 +1411,12 @@ def optimise_current_timetable(
         else None
     )
 
+    # See optimise_scenario_timetable_v2: None ⇒ legacy tuples (byte parity),
+    # the course→tier map ⇒ uniform 9-tuples, threaded to every call below.
+    course_tiers = (
+        build_course_tier_map_for_scenario(scenario_id) if is_tiered_objective_enabled() else None
+    )
+
     from core.services import timetable_student_assignment as ssa
 
     sections_by_id = ssa.build_sections_by_id(sections)
@@ -1375,6 +1428,7 @@ def optimise_current_timetable(
         student_profiles=student_profiles,
         course_rigidity=course_rigidity,
         section_instructor_ids=section_instructor_ids,
+        course_tiers=course_tiers,
     )
     _gap_idle_before = _gap_pos6(baseline.lexicographic_score)
 
@@ -1400,6 +1454,11 @@ def optimise_current_timetable(
         ],
         "quality_score": baseline.quality_score,
         "unresolved_students": len(baseline.unresolved_student_ids),
+        # Baseline student headcount kept separately so a safety rollback can
+        # restore it without decoding the score tuple (the tiered tuple carries
+        # no total-unresolved-students term). unresolved_students above gets
+        # overwritten by later stages; this stays pinned to the baseline board.
+        "baseline_unresolved_students": len(baseline.unresolved_student_ids),
         "total_students": len(student_profiles),
         "local_search_applied": False,
         "persist_result": None,
@@ -1447,6 +1506,7 @@ def optimise_current_timetable(
             max_iterations=max_search_iterations,
             locked_section_ids=locked_section_ids,
             section_instructor_ids=section_instructor_ids,
+            course_tiers=course_tiers,
         )
 
         score_before = baseline.lexicographic_score
@@ -1490,6 +1550,7 @@ def optimise_current_timetable(
             stage_telemetry=result["stage_telemetry"],
             locked_section_ids=locked_section_ids,
             section_instructor_ids=section_instructor_ids,
+            course_tiers=course_tiers,
             chain_time_limit_seconds=(
                 chain_time_limit_seconds
                 if chain_time_limit_seconds is not None
@@ -1527,6 +1588,7 @@ def optimise_current_timetable(
             stage_telemetry=result["stage_telemetry"],
             locked_section_ids=locked_section_ids,
             section_instructor_ids=section_instructor_ids,
+            course_tiers=course_tiers,
         )
         if cpsat_result is not None:
             cpsat_eval = cpsat_result["eval"]

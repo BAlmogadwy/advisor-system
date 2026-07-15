@@ -41,16 +41,35 @@ def _score_metric(score: object, index: int) -> int | None:
 
 
 def optimiser_student_outcome_regression(result: dict[str, object]) -> dict[str, object]:
-    """Block regressions in the actual student solver objective."""
-    checks = [
-        (0, "tier_a_unresolved", "Tier-A unresolved students"),
-        (1, "unresolved_students", "Unresolved students"),
-        (2, "unassigned_courses", "Unassigned courses"),
-        (3, "time_clashes", "Student time clashes"),
-    ]
-    regressions = []
+    """Block regressions in the actual student solver objective.
+
+    The hard block occupies positions 0-3 in BOTH objective layouts, so the gate
+    guards the same feasibility terms either way — but the position *meanings*
+    (hence the labels shown on a rollback) differ, so the check table is chosen
+    by layout. Under the tiered objective the soft tier (T3 / Tier-2 within
+    tolerance, position 5) is intentionally NOT gated: the policy deprioritises
+    those enrolments, so trading them for T1/T2/gap gains must not be rolled back.
+    """
+    from core.services.timetable_student_assignment import is_tiered_score
+
     before = result.get("baseline_score")
     after = result.get("final_score")
+    tiered = is_tiered_score(tuple(after)) if isinstance(after, list) else False
+    if tiered:
+        checks = [
+            (0, "highrisk_unresolved", "High-risk unresolved (T1/T2)"),
+            (1, "time_clashes", "Student time clashes"),
+            (2, "t1_unresolved", "Tier-1 unassigned (core)"),
+            (3, "t2_over_tolerance", "Tier-2 over tolerance"),
+        ]
+    else:
+        checks = [
+            (0, "tier_a_unresolved", "Tier-A unresolved students"),
+            (1, "unresolved_students", "Unresolved students"),
+            (2, "unassigned_courses", "Unassigned courses"),
+            (3, "time_clashes", "Student time clashes"),
+        ]
+    regressions = []
     for index, metric, label in checks:
         before_value = _score_metric(before, index)
         after_value = _score_metric(after, index)
@@ -176,6 +195,18 @@ def run_v2_optimisation_guarded(
     if "error" in result:
         return result
 
+    # Surface the soft-gap budget so the frontend can recover the pure student
+    # gap from the blended tiered student-cost term (score[4] = real_gap +
+    # budget * soft). 0 when the tiered objective is off (score[4] is pure gap).
+    from core.services.timetable_flags import (
+        get_tiered_soft_gap_budget,
+        is_tiered_objective_enabled,
+    )
+
+    result["tiered_soft_gap_budget"] = (
+        get_tiered_soft_gap_budget() if is_tiered_objective_enabled() else 0
+    )
+
     safety_after = compute_scenario_safety_summary(scenario_id)
     student_regression = optimiser_student_outcome_regression(result)
     safety_regression = optimiser_safety_regression(safety_before, safety_after)
@@ -204,8 +235,16 @@ def run_v2_optimisation_guarded(
         }
         baseline_score = result.get("baseline_score")
         if isinstance(baseline_score, list):
+            from core.services.timetable_student_assignment import is_tiered_score
+
             result["final_score"] = baseline_score
-            if len(baseline_score) > 1:
+            if is_tiered_score(tuple(baseline_score)):
+                # The tiered tuple carries no total-unresolved-students headcount
+                # (its position 1 is the clash count). Restore the baseline count
+                # captured at optimise time instead of misreading the tuple.
+                if "baseline_unresolved_students" in result:
+                    result["unresolved_students"] = result["baseline_unresolved_students"]
+            elif len(baseline_score) > 1:
                 result["unresolved_students"] = baseline_score[1]
         logger.warning(
             "V2 optimiser result rolled back for scenario %d: %s",

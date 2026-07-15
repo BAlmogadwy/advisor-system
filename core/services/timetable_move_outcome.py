@@ -21,11 +21,14 @@ from core.services.timetable_assignment_models import (
 )
 from core.services.timetable_autoplace import WEEKDAYS
 from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
+from core.services.timetable_flags import is_tiered_objective_enabled
 from core.services.timetable_optimizer_v2 import (
     build_course_rigidity_for_scenario,
+    build_course_tier_map_for_scenario,
     build_section_states_for_scenario,
     build_student_profiles_for_scenario,
 )
+from core.services.timetable_student_assignment import decode_score
 from core.services.timetable_workspace import _to_minutes, preview_placement_slot_candidates
 
 DAY_INDEX = {day: idx for idx, day in enumerate(WEEKDAYS)}
@@ -53,6 +56,9 @@ def preview_placement_student_outcome_candidates(
     profiles = build_student_profiles_for_scenario(scenario_id)
     sections = build_section_states_for_scenario(scenario_id)
     rigidity = build_course_rigidity_for_scenario(scenario_id)
+    course_tiers = (
+        build_course_tier_map_for_scenario(scenario_id) if is_tiered_objective_enabled() else None
+    )
     if not profiles or not sections:
         return {
             **quick_preview,
@@ -65,6 +71,7 @@ def preview_placement_student_outcome_candidates(
         generated_sections=sections,
         student_profiles=profiles,
         course_rigidity=rigidity,
+        course_tiers=course_tiers,
     )
     baseline_summary = summarise_evaluation(baseline, sections)
     baseline_quality = baseline.quality_score or {}
@@ -130,6 +137,7 @@ def preview_placement_student_outcome_candidates(
             generated_sections=candidate_sections,
             student_profiles=profiles,
             course_rigidity=rigidity,
+            course_tiers=course_tiers,
         )
         outcome = compare_evaluations(
             baseline=baseline,
@@ -295,19 +303,32 @@ def summarise_evaluation(
     """Return the stable outcome fields the UI needs."""
 
     score = list(result.lexicographic_score)
+    # Layout-aware decode: a legacy 6/7-tuple yields exactly the historical keys
+    # and values (byte-parity for the UI); a tiered 9-tuple yields the tier
+    # breakdown plus legacy-compatible aliases. score_breakdown carries the full
+    # named view so a tier-aware frontend never reads the raw array positionally.
+    decoded = decode_score(tuple(score))
     reason_counts = unresolved_reason_counts(result)
     sections_by_id = ssa.build_sections_by_id(sections)
     per_student = student_statuses(result, sections_by_id)
     return {
         "score": score,
+        "score_breakdown": decoded,
         "quality_penalty": int((result.quality_score or {}).get("penalty") or 0),
         "quality_components": (result.quality_score or {}).get("components", {}),
-        "unresolved_tier_a": score[0],
-        "blocked_students": score[1],
-        "unresolved_courses": score[2],
-        "actual_assigned_clashes": score[3],
-        "gap_minutes": score[4],
-        "reserve_used": score[5],
+        "unresolved_tier_a": decoded.get("unresolved_tier_a", 0),
+        # The tiered tuple carries no total-unresolved-students term, so decode
+        # exposes no 'blocked_students'; use the eval's own unresolved list there.
+        # Legacy keeps its exact score[1] value for display byte-parity.
+        "blocked_students": (
+            decoded["blocked_students"]
+            if decoded["layout"] == "legacy"
+            else len(result.unresolved_student_ids)
+        ),
+        "unresolved_courses": decoded.get("unresolved_courses", 0),
+        "actual_assigned_clashes": decoded.get("actual_assigned_clashes", 0),
+        "gap_minutes": decoded.get("gap_minutes", 0),
+        "reserve_used": decoded.get("reserve_used", 0),
         "all_clash": reason_counts.get("all_clash", 0),
         "mixed_blockers": reason_counts.get("mixed_blockers", 0),
         "reason_counts": dict(reason_counts),

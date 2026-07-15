@@ -15,9 +15,11 @@ from core.models import ScenarioSectionBudget, SectionPlacement
 from core.services import timetable_student_assignment as ssa
 from core.services.timetable_assignment_models import SectionState, StudentAssignmentState
 from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
+from core.services.timetable_flags import is_tiered_objective_enabled
 from core.services.timetable_move_outcome import summarise_evaluation
 from core.services.timetable_optimizer_v2 import (
     build_course_rigidity_for_scenario,
+    build_course_tier_map_for_scenario,
     build_section_states_for_scenario,
     build_student_profiles_for_scenario,
 )
@@ -42,11 +44,17 @@ def build_scenario_student_blockers(
             "courses": [],
         }
 
+    # Thread the tier map (when the flag is on) so this diagnostic reports the
+    # same objective layout the optimiser built under, not the legacy fallback.
+    course_tiers = (
+        build_course_tier_map_for_scenario(scenario_id) if is_tiered_objective_enabled() else None
+    )
     result = evaluate_generated_timetable_candidate(
         candidate_id=f"scenario_{scenario_id}",
         generated_sections=sections,
         student_profiles=profiles,
         course_rigidity=rigidity,
+        course_tiers=course_tiers,
     )
     sections_by_id = ssa.build_sections_by_id(sections)
     base_summary = summarise_evaluation(result, sections)

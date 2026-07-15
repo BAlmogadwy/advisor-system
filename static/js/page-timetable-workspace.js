@@ -2144,6 +2144,31 @@ async function runOptimiseV2(mode = 'current') {
     const score = o.final_score;
     const assigned = o.total_students - o.unresolved_students;
 
+    // Layout-aware score decode — mirrors timetable_student_assignment.decode_score.
+    // Legacy 6/7-tuple keeps today's meaning; the tiered 9-tuple ranks by course
+    // tier. `unresolved`/`clashes`/`gap` are the cross-layout fields the summary
+    // rows and before/after deltas read, so both layouts render correct numbers.
+    // For the tiered layout, position 4 is the BLENDED student-cost
+    // (real_gap + budget*soft); recover the pure gap using the server-sent budget.
+    const softBudget = Number(o.tiered_soft_gap_budget) || 0;
+    const decodeScore = (sc) => {
+      const s = Array.isArray(sc) ? sc : [];
+      if (s.length === 9) {
+        return {
+          tiered: true,
+          highrisk: s[0], clashes: s[1], t1: s[2], t2Over: s[3],
+          cost: s[4], gap: (s[4] || 0) - softBudget * (s[5] || 0),
+          soft: s[5], reserve: s[6], spread: s[7], instrIdle: s[8],
+          unresolved: (s[2] || 0) + (s[3] || 0) + (s[5] || 0),
+        };
+      }
+      return {
+        tiered: false,
+        highrisk: s[0] || 0, unresolved: s[1] || 0, unassigned: s[2] || 0,
+        clashes: s[3] || 0, gap: s[4] || 0, reserve: s[5] || 0,
+      };
+    };
+
     // Build results dialog
     let body = `<div style="font-size:.82rem;line-height:1.6">`;
 
@@ -2166,14 +2191,15 @@ async function runOptimiseV2(mode = 'current') {
       body += `<table class="w-100 fs-sm" style="border-collapse:collapse; margin-top:4px">`;
       body += `<tr class="text-t4" style="border-bottom:1px solid var(--line)"><th style="text-align:start;padding:3px 4px">Strategy</th><th class="text-end" style="padding:3px 4px">Tier-A</th><th class="text-end" style="padding:3px 4px">Unresolved</th><th class="text-end" style="padding:3px 4px">Clashes</th><th class="text-end" style="padding:3px 4px">Gaps</th><th class="text-end" style="padding:3px 4px">Quality</th></tr>`;
       o.all_scores.forEach(s => {
+        const d = decodeScore(s.score);
         const isBest = s.id === o.best_candidate_id;
         const style = isBest ? 'background:rgba(10,142,110,.06);font-weight:600' : '';
         body += `<tr style="border-bottom:1px solid var(--line);${style}">`;
         body += `<td style="padding:3px 4px">${s.id.replace(/_\d+$/, '')}${isBest ? ' ★' : ''}</td>`;
-        body += `<td class="font-mono" style="text-align:end; padding:3px 4px">${s.score[0]}</td>`;
-        body += `<td class="font-mono" style="text-align:end; padding:3px 4px">${s.score[1]}</td>`;
-        body += `<td class="font-mono" style="text-align:end; padding:3px 4px; color:${s.score[3]>0?'var(--danger)':'var(--teal)'}">${s.score[3]}</td>`;
-        body += `<td class="font-mono" style="text-align:end; padding:3px 4px">${s.score[4].toLocaleString()}</td>`;
+        body += `<td class="font-mono" style="text-align:end; padding:3px 4px">${d.highrisk}</td>`;
+        body += `<td class="font-mono" style="text-align:end; padding:3px 4px">${d.unresolved}</td>`;
+        body += `<td class="font-mono" style="text-align:end; padding:3px 4px; color:${d.clashes>0?'var(--danger)':'var(--teal)'}">${d.clashes}</td>`;
+        body += `<td class="font-mono" style="text-align:end; padding:3px 4px">${d.gap.toLocaleString()}</td>`;
         body += `<td class="font-mono" style="text-align:end; padding:3px 4px">${Number(s.quality_penalty || 0).toLocaleString()}</td>`;
         body += `</tr>`;
       });
@@ -2186,18 +2212,34 @@ async function runOptimiseV2(mode = 'current') {
       : `${IS_AR ? 'النتيجة النهائية' : 'Final Score'} (${o.best_candidate_id.replace(/_\d+$/, '')}${o.local_search_applied ? ' + local search' : ''})`;
     body += `<div style="margin-bottom:10px"><span class="fs-sm fw-bold text-caps text-teal">${scoreLabel}</span>`;
     body += `<table class="w-100 fs-md" style="border-collapse:collapse; margin-top:4px">`;
-    const labels = [
-      IS_AR ? 'طلاب الخطر A' : 'Tier-A unresolved',
-      IS_AR ? 'طلاب غير محلولين' : 'Unresolved students',
-      IS_AR ? 'مقررات غير معينة' : 'Unassigned courses',
-      IS_AR ? 'تعارضات زمنية' : 'Time clashes',
-      IS_AR ? 'دقائق فراغ' : 'Gap minutes',
-      IS_AR ? 'احتياط مستخدم' : 'Reserve used',
-    ];
-    for (let i = 0; i < 6; i++) {
-      const val = i === 4 ? score[i].toLocaleString() : score[i];
-      const clr = (i === 3 && score[i] > 0) ? 'color:var(--danger)' : (i === 3 ? 'color:var(--teal)' : '');
-      body += `<tr style="border-bottom:1px solid var(--line)"><td class="text-t3" style="padding:3px 0">${labels[i]}</td><td class="fw-semibold font-mono" style="text-align:end; ${clr}">${val}</td></tr>`;
+    if (score && score.length === 9) {
+      // Tiered objective breakdown (course-tier-aware).
+      const trow = (label, val, danger) => {
+        const clr = danger && val > 0 ? 'color:var(--danger)' : (danger ? 'color:var(--teal)' : '');
+        body += `<tr style="border-bottom:1px solid var(--line)"><td class="text-t3" style="padding:3px 0">${label}</td><td class="fw-semibold font-mono" style="text-align:end; ${clr}">${val.toLocaleString()}</td></tr>`;
+      };
+      trow(IS_AR ? 'طلاب الخطر (Tier-1/2)' : 'High-risk unresolved (T1/T2)', score[0], true);
+      trow(IS_AR ? 'تعارضات زمنية' : 'Time clashes', score[1], true);
+      trow(IS_AR ? 'مقررات أساسية غير معينة (Tier-1)' : 'Tier-1 unassigned (core)', score[2], true);
+      trow(IS_AR ? 'Tier-2 فوق الحد المسموح' : 'Tier-2 over tolerance', score[3], true);
+      trow(IS_AR ? 'تكلفة الطالب (فراغ + عام)' : 'Student cost (gap + gen-ed)', score[4], false);
+      trow(IS_AR ? 'غير محلول (اختياري/ضمن الحد)' : 'Soft unresolved (T3 / within-tol)', score[5], false);
+      trow(IS_AR ? 'احتياط مستخدم' : 'Reserve used', score[6], false);
+      trow(IS_AR ? 'تشتّت أقسام المقرر' : 'Same-course spread', score[7], false);
+    } else {
+      const labels = [
+        IS_AR ? 'طلاب الخطر A' : 'Tier-A unresolved',
+        IS_AR ? 'طلاب غير محلولين' : 'Unresolved students',
+        IS_AR ? 'مقررات غير معينة' : 'Unassigned courses',
+        IS_AR ? 'تعارضات زمنية' : 'Time clashes',
+        IS_AR ? 'دقائق فراغ' : 'Gap minutes',
+        IS_AR ? 'احتياط مستخدم' : 'Reserve used',
+      ];
+      for (let i = 0; i < 6; i++) {
+        const val = i === 4 ? score[i].toLocaleString() : score[i];
+        const clr = (i === 3 && score[i] > 0) ? 'color:var(--danger)' : (i === 3 ? 'color:var(--teal)' : '');
+        body += `<tr style="border-bottom:1px solid var(--line)"><td class="text-t3" style="padding:3px 0">${labels[i]}</td><td class="fw-semibold font-mono" style="text-align:end; ${clr}">${val}</td></tr>`;
+      }
     }
     body += `</table></div>`;
 
@@ -2214,15 +2256,15 @@ async function runOptimiseV2(mode = 'current') {
     }
 
     if (o.mode === 'current' && o.baseline_score) {
-      const bs = o.baseline_score;
-      const fs = o.final_score;
-      const gotBetter = fs[1] < bs[1] || fs[3] < bs[3] || fs[4] < bs[4];
+      const bs = decodeScore(o.baseline_score);
+      const fs = decodeScore(o.final_score);
+      const gotBetter = fs.unresolved < bs.unresolved || fs.clashes < bs.clashes || fs.gap < bs.gap;
       if (gotBetter) {
         body += `<div class="fs-md mb-2" style="padding:8px 10px; border-radius:var(--radius-sm); background:rgba(10,142,110,.1); border:1px solid rgba(10,142,110,.2)">`;
         body += `<div class="fw-bold text-teal" style="margin-bottom:4px">&#x2714; ${IS_AR ? 'تم التحسين' : 'Board Improved'}</div>`;
-        body += `<div>Unresolved: <b>${bs[1]}</b> &rarr; <b class="text-teal">${fs[1]}</b></div>`;
-        if (bs[3] !== fs[3]) body += `<div>Clashes: <b>${bs[3]}</b> &rarr; <b class="text-teal">${fs[3]}</b></div>`;
-        body += `<div>Gap minutes: <b>${bs[4].toLocaleString()}</b> &rarr; <b>${fs[4].toLocaleString()}</b></div>`;
+        body += `<div>Unresolved: <b>${bs.unresolved}</b> &rarr; <b class="text-teal">${fs.unresolved}</b></div>`;
+        if (bs.clashes !== fs.clashes) body += `<div>Clashes: <b>${bs.clashes}</b> &rarr; <b class="text-teal">${fs.clashes}</b></div>`;
+        body += `<div>Gap minutes: <b>${bs.gap.toLocaleString()}</b> &rarr; <b>${fs.gap.toLocaleString()}</b></div>`;
         body += `</div>`;
       } else {
         body += `<div class="fs-md mb-2" style="padding:8px 10px; border-radius:var(--radius-sm); background:rgba(99,102,241,.06)">`;
@@ -2233,13 +2275,13 @@ async function runOptimiseV2(mode = 'current') {
 
     // Local search improvement indicator
     if (o.local_search_applied && o.score_before_local_search) {
-      const before = o.score_before_local_search;
-      const after = o.final_score;
-      const improved = before[1] !== after[1] || before[4] !== after[4];
+      const before = decodeScore(o.score_before_local_search);
+      const after = decodeScore(o.final_score);
+      const improved = before.unresolved !== after.unresolved || before.gap !== after.gap;
       if (improved) {
         body += `<div class="fs-12 mb-2" style="padding:6px 10px; border-radius:var(--radius-sm); background:rgba(10,142,110,.08)">`;
         body += `<span class="text-teal fw-semibold">&#x2714; ${IS_AR ? 'تحسين محلي' : 'Local search improved'}:</span> `;
-        body += `unresolved ${before[1]} → ${after[1]}, gaps ${before[4].toLocaleString()} → ${after[4].toLocaleString()}`;
+        body += `unresolved ${before.unresolved} → ${after.unresolved}, gaps ${before.gap.toLocaleString()} → ${after.gap.toLocaleString()}`;
         body += `</div>`;
       } else {
         body += `<div class="fs-12 mb-2" style="padding:6px 10px; border-radius:var(--radius-sm); background:rgba(99,102,241,.06)">`;

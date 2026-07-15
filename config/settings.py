@@ -467,6 +467,30 @@ TIMETABLE_INSTRUCTOR_COMPACTION_TIME_BUDGET_SECONDS = float(
     os.getenv("TIMETABLE_INSTRUCTOR_COMPACTION_TIME_BUDGET_SECONDS", "20")
 )
 
+# TIMETABLE_TIERED_OBJECTIVE_ENABLED: gates the course-tier-aware lexicographic
+# objective in the candidate evaluator. When True the evaluator returns a
+# 9-element tuple that ranks resolution by course tier — Tier-1 (specialised
+# major courses) is hard, Tier-2 (shared foundations, e.g. MATH/STAT/CS-service)
+# tolerates a small unresolved count before turning near-hard, and Tier-3
+# (ENGL/GS/GSE/FE gen-ed & free electives) is soft and never worsens student
+# gaps. When False the score keeps its current 6-tuple shape and values, so
+# optimiser output is byte-identical to before. Default OFF — opt-in after a
+# shadow run. Env override ``=false`` is the live kill-switch.
+TIMETABLE_TIERED_OBJECTIVE_ENABLED = os.getenv(
+    "TIMETABLE_TIERED_OBJECTIVE_ENABLED", "false"
+).lower() in ("1", "true", "yes", "on")
+# Per-Tier-2-course unresolved-seat tolerance: up to this many unresolved seats
+# in a single Tier-2 course are "soft" (objective position E); the excess is
+# "near-hard" (position C). Default 3. Read via get_tiered_t2_tolerance(), which
+# floors it at 0.
+TIMETABLE_TIERED_T2_TOLERANCE = int(os.getenv("TIMETABLE_TIERED_T2_TOLERANCE", "3"))
+# Bounded trade: gap-minutes a single soft-tier unresolved seat is "worth". The
+# tiered student-cost position is real_gap + this * soft_unresolved, so the
+# optimiser seats a gen-ed/elective (soft) course when it adds fewer than this
+# many gap-minutes and declines when it costs more. Default 120 (~two class
+# slots). 0 = strict quality-first (gaps always beat gen-ed).
+TIMETABLE_TIERED_SOFT_GAP_BUDGET = int(os.getenv("TIMETABLE_TIERED_SOFT_GAP_BUDGET", "120"))
+
 TIMETABLE_LAB_HEURISTIC_UNIFIED = os.getenv("TIMETABLE_LAB_HEURISTIC_UNIFIED", "true").lower() in (
     "1",
     "true",

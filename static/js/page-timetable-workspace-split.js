@@ -7969,6 +7969,28 @@ async function doOptimise(mode = 'current') {
 function showOptimiseResults(o, mode) {
   const isFull = mode === 'full';
   const score = o.final_score || [];
+  // Layout-aware score decode — mirrors timetable_student_assignment.decode_score.
+  // Legacy 6/7-tuple keeps today's meaning; tiered 9-tuple ranks by course tier.
+  // Tiered position 4 is the BLENDED student-cost (real_gap + budget*soft);
+  // recover the pure gap using the server-sent budget.
+  const softBudget = Number(o.tiered_soft_gap_budget) || 0;
+  const decodeScore = (sc) => {
+    const s = Array.isArray(sc) ? sc : [];
+    if (s.length === 9) {
+      return {
+        tiered: true,
+        highrisk: s[0], clashes: s[1], t1: s[2], t2Over: s[3],
+        cost: s[4], gap: (s[4] || 0) - softBudget * (s[5] || 0),
+        soft: s[5], reserve: s[6], spread: s[7], instrIdle: s[8],
+        unresolved: (s[2] || 0) + (s[3] || 0) + (s[5] || 0),
+      };
+    }
+    return {
+      tiered: false,
+      highrisk: s[0] || 0, unresolved: s[1] || 0, unassigned: s[2] || 0,
+      clashes: s[3] || 0, gap: s[4] || 0, reserve: s[5] || 0,
+    };
+  };
   const assigned = (o.total_students || 0) - (o.unresolved_students || 0);
   const crossBefore = Number(o.cross_board_before ?? NaN);
   const crossAfter = Number(o.cross_board_after ?? NaN);
@@ -8003,15 +8025,16 @@ function showOptimiseResults(o, mode) {
       </tr></thead>
       <tbody>
         ${o.all_scores.map(s => {
+          const d = decodeScore(s.score);
           const isBest = s.id === o.best_candidate_id;
           const row = isBest ? 'background:rgba(10,142,110,0.08);font-weight:700' : '';
-          const clashClr = s.score[3] > 0 ? '#F06060' : 'var(--teal)';
+          const clashClr = d.clashes > 0 ? '#F06060' : 'var(--teal)';
           return `<tr style="border-bottom:1px solid var(--line);${row}">
             <td style="padding:4px 6px">${esc(String(s.id).replace(/_\d+$/, ''))}${isBest ? ' ★' : ''}</td>
-            <td style="text-align:right;padding:4px 6px">${s.score[0]}</td>
-            <td style="text-align:right;padding:4px 6px">${s.score[1]}</td>
-            <td style="text-align:right;padding:4px 6px;color:${clashClr}">${s.score[3]}</td>
-            <td style="text-align:right;padding:4px 6px">${(s.score[4] || 0).toLocaleString()}</td>
+            <td style="text-align:right;padding:4px 6px">${d.highrisk}</td>
+            <td style="text-align:right;padding:4px 6px">${d.unresolved}</td>
+            <td style="text-align:right;padding:4px 6px;color:${clashClr}">${d.clashes}</td>
+            <td style="text-align:right;padding:4px 6px">${(d.gap || 0).toLocaleString()}</td>
             <td style="text-align:right;padding:4px 6px">${Number(s.quality_penalty || 0).toLocaleString()}</td>
           </tr>`;
         }).join('')}
@@ -8029,11 +8052,30 @@ function showOptimiseResults(o, mode) {
     IS_AR ? 'دقائق فراغ' : 'Gap minutes',
     IS_AR ? 'احتياط مستخدم' : 'Reserve used',
   ];
-  const scoreRows = score.slice(0, 6).map((v, i) => {
-    const display = i === 4 ? Number(v).toLocaleString() : v;
-    const clr = (i === 3 && v > 0) ? '#F06060' : (i === 3 ? 'var(--teal)' : 'var(--ink)');
-    return `<tr style="border-bottom:1px solid var(--line)"><td style="padding:4px 0;color:var(--t3)">${scoreLabels[i]}</td><td style="text-align:right;font-family:'JetBrains Mono',monospace;color:${clr};font-weight:700">${display}</td></tr>`;
-  }).join('');
+  let scoreRows;
+  if (score.length === 9) {
+    // Tiered objective breakdown (course-tier-aware).
+    const tieredRows = [
+      [IS_AR ? 'طلاب الخطر (Tier-1/2)' : 'High-risk unresolved (T1/T2)', score[0], true],
+      [IS_AR ? 'تعارضات زمنية' : 'Time clashes', score[1], true],
+      [IS_AR ? 'مقررات أساسية غير معينة (Tier-1)' : 'Tier-1 unassigned (core)', score[2], true],
+      [IS_AR ? 'Tier-2 فوق الحد المسموح' : 'Tier-2 over tolerance', score[3], true],
+      [IS_AR ? 'تكلفة الطالب (فراغ + عام)' : 'Student cost (gap + gen-ed)', score[4], false],
+      [IS_AR ? 'غير محلول (اختياري/ضمن الحد)' : 'Soft unresolved (T3 / within-tol)', score[5], false],
+      [IS_AR ? 'احتياط مستخدم' : 'Reserve used', score[6], false],
+      [IS_AR ? 'تشتّت أقسام المقرر' : 'Same-course spread', score[7], false],
+    ];
+    scoreRows = tieredRows.map(([label, v, danger]) => {
+      const clr = danger && v > 0 ? '#F06060' : (danger ? 'var(--teal)' : 'var(--ink)');
+      return `<tr style="border-bottom:1px solid var(--line)"><td style="padding:4px 0;color:var(--t3)">${label}</td><td style="text-align:right;font-family:'JetBrains Mono',monospace;color:${clr};font-weight:700">${Number(v).toLocaleString()}</td></tr>`;
+    }).join('');
+  } else {
+    scoreRows = score.slice(0, 6).map((v, i) => {
+      const display = i === 4 ? Number(v).toLocaleString() : v;
+      const clr = (i === 3 && v > 0) ? '#F06060' : (i === 3 ? 'var(--teal)' : 'var(--ink)');
+      return `<tr style="border-bottom:1px solid var(--line)"><td style="padding:4px 0;color:var(--t3)">${scoreLabels[i]}</td><td style="text-align:right;font-family:'JetBrains Mono',monospace;color:${clr};font-weight:700">${display}</td></tr>`;
+    }).join('');
+  }
   const quality = o.quality_score || {};
   const qualityComponents = quality.components || {};
   const qualityRows = Object.entries(qualityComponents)
@@ -8065,9 +8107,9 @@ function showOptimiseResults(o, mode) {
   let diffBlock = '';
   if (mode === 'current' && Array.isArray(o.baseline_score) && Array.isArray(o.final_score)
       && o.baseline_score.length >= 5 && o.final_score.length >= 5) {
-    const bs = o.baseline_score, fs = o.final_score;
+    const bs = decodeScore(o.baseline_score), fs = decodeScore(o.final_score);
     const improved = !safetyBlocked && (
-      fs[1] < bs[1] || fs[3] < bs[3] || fs[4] < bs[4] || crossPrimaryDelta > 0
+      fs.unresolved < bs.unresolved || fs.clashes < bs.clashes || fs.gap < bs.gap || crossPrimaryDelta > 0
     );
     const safeToLocale = v => (typeof v === 'number' ? v.toLocaleString() : String(v ?? '—'));
     diffBlock = safetyBlocked
@@ -8077,10 +8119,10 @@ function showOptimiseResults(o, mode) {
       : improved
       ? `<div style="padding:8px 12px;border-radius:6px;background:rgba(10,142,110,0.1);border:1px solid rgba(10,142,110,0.25);margin-top:10px">
           <div style="font-weight:700;color:var(--teal);margin-bottom:4px">✓ ${IS_AR ? 'تم التحسين' : 'Board improved'}</div>
-          <div style="font-size:11px">Unresolved: <b>${bs[1]}</b> → <b style="color:var(--teal)">${fs[1]}</b></div>
-          ${bs[3] !== fs[3] ? `<div style="font-size:11px">Clashes: <b>${bs[3]}</b> → <b style="color:var(--teal)">${fs[3]}</b></div>` : ''}
+          <div style="font-size:11px">Unresolved: <b>${bs.unresolved}</b> → <b style="color:var(--teal)">${fs.unresolved}</b></div>
+          ${bs.clashes !== fs.clashes ? `<div style="font-size:11px">Clashes: <b>${bs.clashes}</b> → <b style="color:var(--teal)">${fs.clashes}</b></div>` : ''}
           ${hasCrossMetric && crossPrimaryBefore !== crossPrimaryAfter ? `<div style="font-size:11px">${hasCrossAffectedMetric ? 'Affected students' : 'Cross-board'}: <b>${crossPrimaryBefore}</b> → <b style="color:${crossPrimaryDelta > 0 ? 'var(--teal)' : '#F06060'}">${crossPrimaryAfter}</b>${hasCrossAffectedMetric ? ` <span style="color:var(--t4)">(${crossAfter} section clashes)</span>` : ''}</div>` : ''}
-          <div style="font-size:11px">Gaps: <b>${safeToLocale(bs[4])}</b> → <b>${safeToLocale(fs[4])}</b></div>
+          <div style="font-size:11px">Gaps: <b>${safeToLocale(bs.gap)}</b> → <b>${safeToLocale(fs.gap)}</b></div>
         </div>`
       : `<div style="padding:8px 12px;border-radius:6px;background:rgba(80,104,240,0.08);border:1px solid rgba(80,104,240,.22);margin-top:10px;color:#aeb9ff;font-weight:600">
           ━ ${IS_AR ? 'لم يتم العثور على تحسين تلقائي' : 'No automatic improvement was found'}

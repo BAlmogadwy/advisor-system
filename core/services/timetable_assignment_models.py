@@ -182,7 +182,10 @@ class RoomOccupancy:
 @dataclass
 class TimetableEvaluationResult:
     candidate_id: str
-    lexicographic_score: tuple[int, int, int, int, int, int]
+    # Variable-length: legacy 6-tuple (or 7 under the instructor-gap flag), or the
+    # tiered 9-tuple under TIMETABLE_TIERED_OBJECTIVE_ENABLED. Decode via
+    # timetable_student_assignment.decode_score rather than fixed indices.
+    lexicographic_score: tuple[int, ...]
     assignment_states: dict[str, StudentAssignmentState]
     unresolved_student_ids: list[str]
     hotspot_courses: list[str]

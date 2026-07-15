@@ -25,6 +25,7 @@ def evaluate_generated_timetable_candidate(
     student_profiles: dict[str, StudentProfile],
     course_rigidity: dict[str, float],
     section_instructor_ids: dict[str, frozenset[int]] | None = None,
+    course_tiers: dict[str, str] | None = None,
 ) -> TimetableEvaluationResult:
     working_sections = deepcopy(generated_sections)
     sections_by_id = ssa.build_sections_by_id(working_sections)
@@ -36,7 +37,7 @@ def evaluate_generated_timetable_candidate(
         course_rigidity,
     )
     score = ssa.evaluate_assignability_lexicographic(
-        states, student_profiles, sections_by_id, section_instructor_ids
+        states, student_profiles, sections_by_id, section_instructor_ids, course_tiers
     )
     quality_score = evaluate_timetable_quality(working_sections, states)
     # Side-band only — never part of ``score``. Reports how many instructor-day
@@ -102,6 +103,7 @@ def rank_timetable_candidates(
     student_profiles: dict[str, StudentProfile],
     course_rigidity: dict[str, float],
     section_instructor_ids: dict[str, frozenset[int]] | None = None,
+    course_tiers: dict[str, str] | None = None,
 ) -> list[TimetableEvaluationResult]:
     results: list[TimetableEvaluationResult] = []
     for candidate in candidate_list:
@@ -112,6 +114,7 @@ def rank_timetable_candidates(
                 student_profiles=student_profiles,
                 course_rigidity=course_rigidity,
                 section_instructor_ids=section_instructor_ids,
+                course_tiers=course_tiers,
             )
         )
     results.sort(

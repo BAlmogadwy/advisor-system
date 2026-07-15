@@ -49,9 +49,13 @@ class Command(BaseCommand):
         if on.get("error"):
             raise CommandError(f"ON run failed: {on['error']}")
 
-        # Student-facing positions (0–5) must match exactly.
-        student_off = list(off.get("final_score") or [])[:6]
-        student_on = list(on.get("final_score") or [])[:6]
+        # Student + quality portion (everything but the trailing instructor-idle
+        # term) must match exactly. strip_instructor_idle is layout-aware: [:6]
+        # for a legacy tuple, [:8] for the tiered tuple.
+        from core.services.timetable_student_assignment import strip_instructor_idle
+
+        student_off = list(strip_instructor_idle(tuple(off.get("final_score") or [])))
+        student_on = list(strip_instructor_idle(tuple(on.get("final_score") or [])))
         students_held = student_off == student_on
 
         metric = on.get("instructor_gap_metric") or {}

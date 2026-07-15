@@ -82,14 +82,21 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
     from core.models import SectionPlacement, TermSectionMeeting, TimetableScenario
     from core.services.course_instructor_assignment import apply_primary_instructor
     from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
+    from core.services.timetable_flags import is_tiered_objective_enabled
     from core.services.timetable_optimizer_v2 import (
         build_course_rigidity_for_scenario,
+        build_course_tier_map_for_scenario,
         build_locked_section_ids_for_scenario,
         build_section_instructor_map_for_scenario,
         build_section_states_for_scenario,
         build_student_profiles_for_scenario,
     )
     from core.services.timetable_rooming import assign_rooms_to_board
+    from core.services.timetable_student_assignment import (
+        TI_SOFT,
+        is_tiered_score,
+        reserve_used_of,
+    )
     from core.services.timetable_validation import blocked_slot_keys
 
     cfg = get_instructor_compaction_config()
@@ -106,6 +113,9 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
     profiles = build_student_profiles_for_scenario(scenario_id)
     rigidity = build_course_rigidity_for_scenario(scenario_id) if profiles else {}
     cap_map = build_section_instructor_map_for_scenario(scenario_id)
+    course_tiers = (
+        build_course_tier_map_for_scenario(scenario_id) if is_tiered_objective_enabled() else None
+    )
     if not cap_map:
         report["note"] = "no instructor assignments (links off?)"
         return report
@@ -141,7 +151,12 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
     # ── Metrics ──
     def evaluate():
         return evaluate_generated_timetable_candidate(
-            "compaction", states, profiles, rigidity, section_instructor_ids=cap_map
+            "compaction",
+            states,
+            profiles,
+            rigidity,
+            section_instructor_ids=cap_map,
+            course_tiers=course_tiers,
         )
 
     def student_metrics(res):
@@ -260,7 +275,16 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
 
     def gates_ok(res, idle_saved, gap_added):
         sc = tuple(res.lexicographic_score)
-        if sc[0:4] > base_score[0:4] or sc[5] > base_score[5]:
+        # Positions 0-3 are the hard feasibility block in BOTH layouts (legacy:
+        # tier_a/unres/unassigned/clash; tiered: high-risk/clash/T1/T2-over), so
+        # this slice guards feasibility either way. Reserve is idx 5 legacy /
+        # idx 6 tiered — reserve_used_of resolves it. In the tiered layout idx 5
+        # is soft_unresolved (T3 + T2-within-tolerance): guard it too so
+        # relocating instructor sessions can never strand a soft-tier student
+        # that the legacy [5] slot used to protect via reserve.
+        if sc[0:4] > base_score[0:4] or reserve_used_of(sc) > reserve_used_of(base_score):
+            return False
+        if is_tiered_score(sc) and sc[TI_SOFT] > base_score[TI_SOFT]:
             return False
         per, total, by_tier = student_metrics(res)
         if total > gap_ceiling:
@@ -403,8 +427,8 @@ def compact_instructor_schedules(scenario_id: int) -> dict:
             "protected": {
                 "feasibility_before": list(base_score[0:4]),
                 "feasibility_after": list(tuple(cur_eval.lexicographic_score)[0:4]),
-                "reserve_before": base_score[5],
-                "reserve_after": tuple(cur_eval.lexicographic_score)[5],
+                "reserve_before": reserve_used_of(base_score),
+                "reserve_after": reserve_used_of(tuple(cur_eval.lexicographic_score)),
             },
             "student_impact": {
                 "total_gap_before": base_total_gap,
