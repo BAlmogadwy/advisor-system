@@ -195,6 +195,18 @@ def run_v2_optimisation_guarded(
     if "error" in result:
         return result
 
+    # Surface the soft-gap budget so the frontend can recover the pure student
+    # gap from the blended tiered student-cost term (score[4] = real_gap +
+    # budget * soft). 0 when the tiered objective is off (score[4] is pure gap).
+    from core.services.timetable_flags import (
+        get_tiered_soft_gap_budget,
+        is_tiered_objective_enabled,
+    )
+
+    result["tiered_soft_gap_budget"] = (
+        get_tiered_soft_gap_budget() if is_tiered_objective_enabled() else 0
+    )
+
     safety_after = compute_scenario_safety_summary(scenario_id)
     student_regression = optimiser_student_outcome_regression(result)
     safety_regression = optimiser_safety_regression(safety_before, safety_after)

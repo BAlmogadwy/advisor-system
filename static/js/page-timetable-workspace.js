@@ -2148,13 +2148,17 @@ async function runOptimiseV2(mode = 'current') {
     // Legacy 6/7-tuple keeps today's meaning; the tiered 9-tuple ranks by course
     // tier. `unresolved`/`clashes`/`gap` are the cross-layout fields the summary
     // rows and before/after deltas read, so both layouts render correct numbers.
+    // For the tiered layout, position 4 is the BLENDED student-cost
+    // (real_gap + budget*soft); recover the pure gap using the server-sent budget.
+    const softBudget = Number(o.tiered_soft_gap_budget) || 0;
     const decodeScore = (sc) => {
       const s = Array.isArray(sc) ? sc : [];
       if (s.length === 9) {
         return {
           tiered: true,
           highrisk: s[0], clashes: s[1], t1: s[2], t2Over: s[3],
-          gap: s[4], soft: s[5], reserve: s[6], spread: s[7], instrIdle: s[8],
+          cost: s[4], gap: (s[4] || 0) - softBudget * (s[5] || 0),
+          soft: s[5], reserve: s[6], spread: s[7], instrIdle: s[8],
           unresolved: (s[2] || 0) + (s[3] || 0) + (s[5] || 0),
         };
       }
