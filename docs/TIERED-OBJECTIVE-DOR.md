@@ -2,7 +2,7 @@
 
 > **Status: MERGED.** Objective — PR #40 (merge `6299ea8`). Tier-aware seating —
 > PR #41 (merge `0940576`). Flag `TIMETABLE_TIERED_OBJECTIVE_ENABLED` is still
-> **default OFF**; enable per-environment after a shadow run. See
+> **default ON as of 2026-07-16** (`=false` is the kill-switch). See
 > [§ Tier-aware seating](#tier-aware-seating-pr-41) for the second half of the
 > policy and the two traps it documents.
 
@@ -54,8 +54,8 @@ the raw-plan-count vs major-family-collapsed threshold only moves one course
 
 ## Design
 
-**Flag** `TIMETABLE_TIERED_OBJECTIVE_ENABLED` (default OFF ⇒ byte-identical to
-today). `TIMETABLE_TIERED_T2_TOLERANCE` (default 3, floored at 0).
+**Flag** `TIMETABLE_TIERED_OBJECTIVE_ENABLED` (**default ON** as of 2026-07-16;
+`=false` ⇒ byte-identical to pre-feature). `TIMETABLE_TIERED_T2_TOLERANCE` (default 3, floored at 0).
 `TIMETABLE_TIERED_SOFT_GAP_BUDGET` (default 120, floored at 0). Readers in
 `timetable_flags.py`: `is_tiered_objective_enabled`, `get_tiered_t2_tolerance`,
 `get_tiered_soft_gap_budget`.

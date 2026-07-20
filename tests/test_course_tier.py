@@ -6,20 +6,8 @@ import pytest
 
 from core.services.timetable_course_tier import (
     classify_course_tier,
-    clear_program_count_cache,
     program_count_by_code,
 )
-
-
-@pytest.fixture(autouse=True)
-def _clear_tier_cache():
-    # program_count_by_code is a process-lifetime lru_cache; the test DB rolls
-    # back per test but the Python cache does not. Clear before AND after so no
-    # test poisons another's count map.
-    clear_program_count_cache()
-    yield
-    clear_program_count_cache()
-
 
 # ── Pure classifier ──────────────────────────────────────────────────────
 
@@ -67,7 +55,6 @@ def test_program_count_by_code_counts_distinct_programmes() -> None:
     ProgrammeRequirement.objects.create(program="AI2", course_code="CS111")
     ProgrammeRequirement.objects.create(program="DS", course_code="CS111")
     ProgrammeRequirement.objects.create(program="AI", course_code="AI300")
-    clear_program_count_cache()
 
     counts = program_count_by_code()
     assert counts["CS111"] == 3
@@ -75,32 +62,31 @@ def test_program_count_by_code_counts_distinct_programmes() -> None:
 
 
 @pytest.mark.django_db
-def test_manual_cache_clear_refreshes() -> None:
+def test_counts_are_read_fresh_not_memoised() -> None:
+    """No process-local cache: every call must reflect the current table.
+
+    A cache here would be a correctness bug — it cannot be invalidated across
+    gunicorn workers, so two workers would compute different course tiers and
+    reconstruct the same board differently. bulk_create (which fires no
+    signals) is the sharpest probe: it must still be picked up immediately.
+    """
     from core.models import ProgrammeRequirement
-    from core.services import timetable_course_tier as tct
 
     ProgrammeRequirement.objects.create(program="AI", course_code="CS111")
-    clear_program_count_cache()
     assert program_count_by_code()["CS111"] == 1
 
-    # Simulate a bulk_create (which does NOT fire post_save signals) by inserting
-    # then confirming a manual clear picks up the new row.
-    ProgrammeRequirement.objects.bulk_create(
-        [ProgrammeRequirement(program="DS", course_code="CS111")]
-    )
-    assert program_count_by_code()["CS111"] == 1  # bulk_create bypassed the signal
-    tct.clear_program_count_cache()
+    # .create() -> visible with no explicit invalidation
+    ProgrammeRequirement.objects.create(program="DS", course_code="CS111")
     assert program_count_by_code()["CS111"] == 2
 
+    # bulk_create bypasses signals entirely -> must STILL be visible
+    ProgrammeRequirement.objects.bulk_create(
+        [ProgrammeRequirement(program="CS", course_code="CS111")]
+    )
+    assert program_count_by_code()["CS111"] == 3
 
-@pytest.mark.django_db
-def test_post_save_signal_auto_invalidates_cache() -> None:
-    from core.models import ProgrammeRequirement
-
-    ProgrammeRequirement.objects.create(program="AI", course_code="CS111")
-    assert program_count_by_code()["CS111"] == 1
-    # A plain .create() fires post_save -> cache cleared automatically.
-    ProgrammeRequirement.objects.create(program="DS", course_code="CS111")
+    # deletion likewise
+    ProgrammeRequirement.objects.filter(program="CS", course_code="CS111").delete()
     assert program_count_by_code()["CS111"] == 2
 
 
@@ -116,7 +102,6 @@ def test_build_course_tier_map_keys_by_course_identity() -> None:
         ProgrammeRequirement.objects.create(program=prog, course_code="CS111")
     ProgrammeRequirement.objects.create(program="AI", course_code="AI300")
     ProgrammeRequirement.objects.create(program="AI", course_code="GSE1")
-    clear_program_count_cache()
 
     TermSection.objects.create(
         scenario=scenario, course_code="CS111", course_key="CS111::INTRO_PROGRAMMING", section="M"

@@ -1,11 +1,20 @@
 """WS-4: uniform tuple-length invariant across the live pipeline.
 
-The instructor-gap term appends a 7th score element only when the flag is ON.
-The #1 correctness risk is a single optimise run mixing 6- and 7-element tuples
-(Python compares them without error, silently corrupting accept/reject). This
-test runs the real ``optimise_current_timetable`` pipeline (baseline → local
-search → chain) under both flag states and asserts every emitted stage score has
-the same length: 6 when OFF (byte parity), 7 when ON.
+The #1 correctness risk is a single optimise run mixing tuple lengths: Python
+compares a 6- and a 9-tuple without error (shared prefix, then longer wins),
+silently corrupting accept/reject. These tests run the real
+``optimise_current_timetable`` pipeline and assert every emitted stage score has
+the SAME length.
+
+Current contract — the **tiered objective is the default**, so a run emits
+9-tuples with instructor idle absorbed at position 8 (hence 9 whether or not
+``TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED`` is set). The legacy path is still
+reachable by pinning ``TIMETABLE_TIERED_OBJECTIVE_ENABLED=False``, and keeps its
+original contract: 6 elements with the gap flag off (byte parity), 7 with it on.
+
+Coverage caveat: ``_stage_score_lengths`` can only observe the stage scores the
+result dict actually carries, so these tests assert uniformity over the stages
+that ran, not proof that every stage was threaded.
 """
 
 from __future__ import annotations
@@ -14,7 +23,16 @@ from django.test import TransactionTestCase, override_settings
 
 from core.services.timetable_optimizer_v2 import optimise_current_timetable
 
-_SCORE_KEYS = ("final_score", "score_before_local_search", "score_before_chain")
+# Include baseline_score/best_score: baseline_score is the tuple the safety-gate
+# rollback compares final_score against, so a length mismatch THERE is exactly the
+# mixed-comparison bug this module exists to catch.
+_SCORE_KEYS = (
+    "baseline_score",
+    "best_score",
+    "final_score",
+    "score_before_local_search",
+    "score_before_chain",
+)
 
 
 def _stage_score_lengths(result: dict) -> list[int]:
@@ -64,17 +82,50 @@ class TestUniformTupleLength(TransactionTestCase):
             run_cpsat_polish=False,
         )
 
-    @override_settings(TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED=False)
+    # The tiered objective is now ON by default and independently sets the tuple
+    # length (9), so these two pin it OFF to test the instructor-gap flag's own
+    # legacy contract in isolation. The property under test is *uniformity*
+    # across stages — a run must never mix tuple lengths, or a longer tuple
+    # would win a prefix-tie comparison against a shorter one.
+    @override_settings(
+        TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED=False,
+        TIMETABLE_TIERED_OBJECTIVE_ENABLED=False,
+    )
     def test_flag_off_every_stage_is_six_tuple(self) -> None:
         lengths = _stage_score_lengths(self._run())
         assert lengths, "expected at least one stage score in the result"
         assert all(n == 6 for n in lengths), f"flag OFF must keep 6-tuples: {lengths}"
 
-    @override_settings(TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED=True)
+    @override_settings(
+        TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED=True,
+        TIMETABLE_TIERED_OBJECTIVE_ENABLED=False,
+    )
     def test_flag_on_every_stage_is_seven_tuple(self) -> None:
         lengths = _stage_score_lengths(self._run())
         assert lengths, "expected at least one stage score in the result"
         assert all(n == 7 for n in lengths), f"flag ON must make all stages 7-tuples: {lengths}"
+
+    # Same uniformity contract under the tiered objective (now the default). The
+    # instructor-gap term is absorbed as the tiered tuple's last position, so the
+    # length is 9 whichever way that flag is set — one test each, because _run()
+    # loads a fixture scenario and cannot be called twice in a single test.
+    @override_settings(
+        TIMETABLE_TIERED_OBJECTIVE_ENABLED=True,
+        TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED=False,
+    )
+    def test_tiered_every_stage_is_nine_tuple_gap_off(self) -> None:
+        lengths = _stage_score_lengths(self._run())
+        assert lengths, "expected at least one stage score in the result"
+        assert all(n == 9 for n in lengths), f"tiered must make all stages 9-tuples: {lengths}"
+
+    @override_settings(
+        TIMETABLE_TIERED_OBJECTIVE_ENABLED=True,
+        TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED=True,
+    )
+    def test_tiered_every_stage_is_nine_tuple_gap_on(self) -> None:
+        lengths = _stage_score_lengths(self._run())
+        assert lengths, "expected at least one stage score in the result"
+        assert all(n == 9 for n in lengths), f"tiered must make all stages 9-tuples: {lengths}"
 
 
 class TestInstructorGapTelemetry(TransactionTestCase):

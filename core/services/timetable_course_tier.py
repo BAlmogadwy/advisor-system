@@ -23,7 +23,6 @@ that the evaluator consumes is built once by
 from __future__ import annotations
 
 from collections import defaultdict
-from functools import lru_cache
 
 from core.models import ProgrammeRequirement
 from core.services.student_helpers import normalize_code
@@ -60,32 +59,31 @@ def classify_course_tier(
     return "T2" if distinct_program_count > SHARED_PLAN_THRESHOLD else "T1"
 
 
-@lru_cache(maxsize=1)
 def program_count_by_code() -> dict[str, int]:
     """Distinct programme plans requiring each course, keyed by normalised code.
 
     GLOBAL, not scenario-scoped — the "service course" signal counts across
     all programmes (CS111 is shared by 11 plans regardless of which scenario
-    is being solved). One read of the small ``ProgrammeRequirement`` table,
-    cached for the process lifetime. Counting distinct programmes per
-    *normalised* code in Python (rather than a SQL ``GROUP BY`` on the raw
-    string) keeps dirty case/spacing imports from splitting a course into two
-    under-counted buckets.
+    is being solved). Counting distinct programmes per *normalised* code in
+    Python (rather than a SQL ``GROUP BY`` on the raw string) keeps dirty
+    case/spacing imports from splitting a course into two under-counted
+    buckets.
 
-    Cache is cleared by :func:`clear_program_count_cache` from every
-    ``ProgrammeRequirement`` write path.
+    **Deliberately NOT memoised.** This reads the small ``ProgrammeRequirement``
+    table once per :func:`~core.services.timetable_optimizer_v2.build_course_tier_map_for_scenario`
+    call — i.e. once per optimise run, NOT per evaluation (the hot loop reads
+    the returned dict), so the query is negligible. A previous ``lru_cache``
+    here was a correctness bug: the cache is process-local while production
+    runs multiple gunicorn workers, so after a curriculum write only the
+    worker that served the write invalidated. The other worker kept stale plan
+    counts for its whole lifetime and therefore computed a DIFFERENT tier map
+    — two workers disagreeing on whether a course is T1 or T2 makes the board
+    reconstruct differently depending on which process answers the request,
+    which is exactly the invariant the tiered objective depends on. Read it
+    fresh; if this ever becomes hot, use a shared (cross-worker) cache keyed by
+    a stamp the write paths bump, never a per-process one.
     """
     by: dict[str, set[str]] = defaultdict(set)
     for prog, code in ProgrammeRequirement.objects.values_list("program", "course_code"):
         by[normalize_code(code)].add(str(prog).strip())
     return {c: len(p) for c, p in by.items()}
-
-
-def clear_program_count_cache() -> None:
-    """Invalidate the cached global plan-count map.
-
-    Call after any write to ``ProgrammeRequirement`` (import, update, delete)
-    so a long-lived worker does not serve a stale tier for a re-imported
-    curriculum.
-    """
-    program_count_by_code.cache_clear()
