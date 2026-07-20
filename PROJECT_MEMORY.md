@@ -5,20 +5,50 @@ as the first local reference when continuing timetable optimisation work.
 
 ## Current Product North Star
 
-The timetable builder is being optimised for actual student outcomes.
+The timetable builder is optimised for actual student outcomes, but **not all
+enrolments are worth the same**. The flat "register every student where
+feasible" goal was replaced by a **course-tier-aware** policy (merged PR #40 /
+#41), because chasing the last few low-value enrolments inflated student
+schedule gaps by up to +233%.
 
-Primary metric:
+Resolution priority depends on the course's tier, derived from the curriculum
+(`ProgrammeRequirement` plan counts + code prefixes):
 
-- Minimise the number of unresolved students.
-- The goal is to register all scenario students where feasible.
+- **Tier 1 — specialised major courses** (in <= 2 programme plans). Enrolment is
+  hard. Never traded for schedule quality.
+- **Tier 2 — shared foundations** (`MATH`/`STAT` by prefix, plus any course
+  required by **> 2** plans, e.g. CS111/PHYS103 service courses). Up to
+  `TIMETABLE_TIERED_T2_TOLERANCE` (default 3) unresolved seats **per course** are
+  acceptable; the excess is near-hard.
+- **Tier 3 — general education & free electives** (`ENGL`/`GS`/`GSE`/`FE`). Soft:
+  a student can take these in another section university-wide, so they are only
+  seated when cheap.
 
-Secondary metrics:
+Gaps and gen-ed enrolment trade on **one** axis (a bounded trade), not strict
+priority: the objective's student-cost term is
+`real_gap_minutes + TIMETABLE_TIERED_SOFT_GAP_BUDGET * soft_unresolved`
+(budget default 120), so a soft course is seated exactly when doing so adds
+fewer than `budget` gap-minutes. `budget = 0` reproduces strict quality-first.
+
+Also true of the objective now:
+
+- Real student gap-minutes are **unbundled** from the same-course *spread*
+  pseudo-penalty (they used to be summed into one number, which is why old "gap"
+  figures were inflated).
+- A high-risk (`RiskTier.A`) student with an unresolved **T1/T2** course
+  overrides everything; a high-risk student with only a T3 course does not.
+
+Still true:
 
 - Protect already registered students from losing courses.
 - Minimise moved students and section changes.
 - Keep hard timetable constraints valid.
 - Treat cross-board conflict counts as diagnostic/safety signals, not the main
   optimisation target.
+
+**The policy lives in BOTH the scoring and the seating.** See
+[docs/TIERED-OBJECTIVE-DOR.md](docs/TIERED-OBJECTIVE-DOR.md) before changing
+either — it documents two traps that have already been fallen into once.
 
 ## Timetable Repair / Move Optimisation Direction
 
@@ -77,6 +107,44 @@ Important implementation detail:
   is still active infrastructure.
 
 ## Recently Completed
+
+### Tiered objective (PR #40, merge `6299ea8`) + tier-aware seating (PR #41, merge `0940576`)
+
+- Replaced the flat lexicographic objective with a **course-tier-aware** one.
+  New module `core/services/timetable_course_tier.py` classifies each course
+  (pure `classify_course_tier` + an `lru_cache`d global plan-count read that is
+  invalidated by a `post_save`/`post_delete` signal on `ProgrammeRequirement`).
+  `build_course_tier_map_for_scenario` builds a per-run map keyed by the
+  `course_key or course_code` identity the evaluator sees, so the hot loop is one
+  `dict.get` — no DB per eval.
+- Objective is a fixed **9-tuple** when the flag is on (smaller = better):
+  `(high-risk, clashes, T1-unresolved, T2-over-tolerance, student-cost,
+  soft-count, reserve, spread, instructor-idle)`. Position 4 is the bounded
+  trade; pure real gap is recoverable as `score[4] - budget * score[5]`, which
+  `decode_score` does.
+- Threaded through **every** stage: V2 rank/local/chain/CP-SAT, the SA rebuild
+  gate, cap/clash repair, compaction, and the interactive move-preview. Every
+  positional score consumer was made layout-aware via shared accessors
+  (`is_tiered_score`, `reserve_used_of`, `instructor_idle_of`,
+  `strip_instructor_idle`, `decode_score`), including the v2 safety gate and the
+  two workspace JS decoders.
+- **PR #41 — the seating half.** The objective *scored* by tier while
+  `assign_courses_for_student` ordered a student's courses purely by scarcity, so
+  a scarce Tier-2 service course could take the slot a Tier-1 core course needed.
+  Fixed by leading the sort key with the tier rank (scarcity stays the
+  within-tier tiebreak) and repairing unresolved courses core-first.
+- **Invariant introduced by #41:** `course_tiers` is now load-bearing on the
+  *assignment*, so **any caller that reconstructs seating must thread the tier
+  map** or it models a board that was never built. Threaded into
+  `timetable_plan_lens`, `timetable_repair`, and `timetable_repair_domain`.
+- Both flag-gated by `TIMETABLE_TIERED_OBJECTIVE_ENABLED` (**default OFF** =>
+  byte-identical output). Validation command:
+  `python manage.py tiered_objective_report [scn...] [--fast] [--soft-budget N]`
+  runs the pipeline OFF vs ON inside a rolled-back transaction (no persist).
+- Measured on real scenarios: core unresolved -> 0, clashes 69 -> 0, real gaps
+  -13%..-32%, and far fewer gen-ed dropped than strict quality-first.
+
+### Earlier
 
 - Refactored the selected-section repair flow into blueprint-shaped component
   boundaries in `core/services/section_move_optimisation_components.py`.

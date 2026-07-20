@@ -1,3 +1,60 @@
+"""Student→section assignment and the timetable objective.
+
+This module owns two things that must agree with each other:
+
+1. **The seating** — ``assign_students_to_sections`` walks students in
+   risk-tier order and, per student, seats each recommended course via
+   ``assign_courses_for_student``; ``repair_unresolved_assignments_shallow``
+   then makes a second pass that may swap a blocking course to a different
+   section to rescue an unresolved one.
+2. **The objective** — ``evaluate_assignability_lexicographic`` scores the
+   resulting board as a lexicographic tuple (smaller = better, most-significant
+   position first). It is produced here in ONE place and consumed positionally
+   in several others, so decode it with :func:`decode_score` / the accessors
+   rather than fixed indices.
+
+Objective layouts
+-----------------
+*Legacy* (``TIMETABLE_TIERED_OBJECTIVE_ENABLED`` off) — the canonical 6-tuple,
+or 7 when the instructor-gap flag appends an idle term::
+
+    (tier_a, unresolved_students, unassigned_courses, clashes,
+     gap_minutes[+spread folded in], reserve) [, instructor_idle]
+
+*Tiered* (flag on **and** a ``course_tiers`` map threaded in) — a fixed 9-tuple
+that ranks resolution by course tier (T1 specialised major / T2 shared
+foundation / T3 gen-ed, see ``timetable_course_tier``)::
+
+    0 high-risk unresolved (RiskTier.A student with an unresolved T1|T2 course)
+    1 student clashes
+    2 Tier-1 unresolved (student, course) pairs        -> hard, drive to 0
+    3 Tier-2 unresolved beyond the per-course tolerance
+    4 student cost = real_gap_minutes + budget * soft_unresolved
+    5 soft count (Tier-3 + Tier-2 within tolerance)
+    6 reserve used
+    7 same-course section spread (its own quality term)
+    8 instructor idle minutes
+
+Position 4 is a **bounded trade**, not strict priority: gaps and soft-tier
+enrolment share one axis, so a soft course is seated exactly when doing so adds
+fewer than ``TIMETABLE_TIERED_SOFT_GAP_BUDGET`` gap-minutes. Real gap is
+recoverable as ``score[4] - budget * score[5]``. Setting the budget to 0
+reproduces strict quality-first. Note real gap is **unbundled** from the
+same-course spread pseudo-penalty (position 7); the legacy tuple sums them.
+
+Tier-awareness in the seating
+-----------------------------
+``course_tiers`` is load-bearing on the *assignment*, not only the score: the
+per-student course order leads with the tier rank so core courses are seated
+before foundation/gen-ed (scarcity remains the within-tier tiebreak), and the
+repair pass rescues core first. **Any caller that reconstructs seating must
+thread the same tier map**, otherwise it models a board that was never built.
+
+Byte-parity: with ``course_tiers`` absent every course ranks 0, so the sort keys
+collapse to the original ordering and the legacy tuple is returned verbatim —
+flag-off output is identical to pre-feature.
+"""
+
 from __future__ import annotations
 
 from collections import defaultdict

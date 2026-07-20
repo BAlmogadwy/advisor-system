@@ -1,5 +1,11 @@
 # PR-3 — Tiered Lexicographic Objective: Definition of Ready
 
+> **Status: MERGED.** Objective — PR #40 (merge `6299ea8`). Tier-aware seating —
+> PR #41 (merge `0940576`). Flag `TIMETABLE_TIERED_OBJECTIVE_ENABLED` is still
+> **default OFF**; enable per-environment after a shadow run. See
+> [§ Tier-aware seating](#tier-aware-seating-pr-41) for the second half of the
+> policy and the two traps it documents.
+
 Third structural PR of the 2026-07 engine-strengthening plan. PR-1 made the two
 board *representations* consistent; PR-2 made the hard-*rule* implementations
 consistent. PR-3 fixes the *objective*: what the optimiser is trying to
@@ -158,6 +164,54 @@ unresolved, real gap, spread, and students-moved deltas. Promote to default-ON
 only after the report shows ON drives T1 unresolved → 0 and high-risk ≤ OFF at
 every scenario, with gap/churn deltas the product owner signs off on. `=false`
 env override is the live kill-switch.
+
+## Tier-aware seating (PR #41)
+
+The objective above **scores** by tier, but the assignment that *produces* those
+outcomes was tier-blind — so only half the policy shipped in PR #40.
+`assign_courses_for_student` ordered a student's courses purely by scarcity
+(`feasible_count, -rigidity, course_code`), letting a scarce **Tier-2** service
+course claim the slot a **Tier-1 core** course needed.
+
+**How it surfaced.** On a live IS,IS2 build (scn 642), adding a 3rd STAT305
+section fixed the Tier-2 shortfall (20 → 1 unresolved) but pushed core
+unresolved **3 → 5/6/9** at every candidate slot. *Adding capacity making core
+worse* is the diagnostic signature of tier-blind seating.
+
+**The fix.** Lead the sort key with the tier rank (`T1=0 < T2=1 < T3=2`), keeping
+scarcity as the within-tier tiebreak; repair unresolved courses core-first.
+Measured: core unresolved **3 → 1** from the ordering alone, and adding the
+STAT305 section then cut Tier-2 over-tolerance **53 → 31** at **zero** core cost.
+
+### Invariant: reconstructions must thread the tier map
+
+`course_tiers` is now load-bearing on the **assignment**, not just the score.
+Before PR #41 a caller could omit it safely because `assignment_states` were
+identical either way. That is no longer true — **any caller that reconstructs
+seating must thread the same map or it models a board that was never built.**
+Threaded in `timetable_plan_lens._section_assignment_evidence` (drives plan
+owner/`filter_plans`, which scope plan-filtered repairs and per-plan export),
+`timetable_repair._actual_unresolved_students_by_course`, and the
+`timetable_repair_domain` baseline.
+
+### Two traps — do not re-enter
+
+1. **Do not add a course-code tiebreak to the repair tier-sort.**
+   `state.unresolved_courses` is insertion-ordered by the scarcity key, so
+   `sort(key=(tier_rank, course_code))` silently replaces the deliberate
+   hardest-first ordering with alphabetical. Key on the tier alone and rely on
+   Python's stable sort.
+2. **Do not add a tier guard to the repair eviction swap.** The swap only
+   commits when the displaced course finds an alternative section (else it rolls
+   back), so a higher-tier course never loses its seat — it merely *moves*.
+   Guarding it forfeits real unresolved seats to protect a section choice:
+   measured on scn 642 it pushed Tier-2 over-tolerance **53 → 73** and soft
+   **59 → 93** for **zero** core gain. The reasoning is exact for T1 (position 2)
+   and T2-over (position 3), which outrank the gap-minutes (position 4) a
+   relocation costs; a *soft* seat sits at position 5 — **below** gap — so soft
+   swaps are only worth it inside the soft-gap budget (measured ~116 gap-min per
+   soft seat against a 120 budget, i.e. break-even). A budget-aware gate there is
+   a possible future refinement.
 
 ## Out of scope
 
