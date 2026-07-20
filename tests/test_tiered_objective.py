@@ -314,6 +314,60 @@ def test_bounded_trade_seats_cheap_genered_drops_expensive() -> None:
     assert a < c_expensive  # leave it unresolved when seating is expensive (200 > 120)
 
 
+# ── tier-aware seating order ─────────────────────────────────────────────
+
+
+def _one_slot_pair():
+    """Two single-section courses at the SAME slot — only one can be seated.
+
+    Named so the legacy alphabetical tiebreak puts the Tier-2 course first.
+    """
+    from core.services.timetable_student_assignment import (
+        build_sections_by_course,
+        build_sections_by_id,
+    )
+
+    secs = [
+        _section("AAA100-A", "AAA100", [(0, 540, 615)]),  # Tier-2 service course
+        _section("ZZZ900-A", "ZZZ900", [(0, 540, 615)]),  # Tier-1 core course
+    ]
+    sbi = build_sections_by_id(secs)
+    return sbi, build_sections_by_course(sbi)
+
+
+def _one_student():
+    return {
+        "S1": StudentProfile(
+            student_id="S1",
+            department="X",
+            recommended_courses=["AAA100", "ZZZ900"],
+            risk_tier=RiskTier.C,
+            intra_tier_score=1.0,
+        )
+    }
+
+
+def test_assignment_without_tier_map_keeps_legacy_order() -> None:
+    from core.services.timetable_student_assignment import assign_students_to_sections
+
+    sbi, sbc = _one_slot_pair()
+    states, _ = assign_students_to_sections(_one_student(), sbi, sbc, {})
+    # legacy: alphabetical tiebreak seats AAA100 and strands the core course
+    assert "ZZZ900" in states["S1"].unresolved_courses
+    assert "AAA100" not in states["S1"].unresolved_courses
+
+
+def test_assignment_seats_tier1_before_tier2() -> None:
+    from core.services.timetable_student_assignment import assign_students_to_sections
+
+    sbi, sbc = _one_slot_pair()
+    tiers = {"AAA100": "T2", "ZZZ900": "T1"}
+    states, _ = assign_students_to_sections(_one_student(), sbi, sbc, {}, course_tiers=tiers)
+    # tier-aware: the core course wins the slot; the service course yields
+    assert "ZZZ900" not in states["S1"].unresolved_courses
+    assert "AAA100" in states["S1"].unresolved_courses
+
+
 @override_settings(TIMETABLE_TIERED_OBJECTIVE_ENABLED=True, TIMETABLE_TIERED_SOFT_GAP_BUDGET=0)
 def test_zero_budget_is_strict_quality_first() -> None:
     # Budget 0 => soft never justifies any gap; position 4 == pure real gap.

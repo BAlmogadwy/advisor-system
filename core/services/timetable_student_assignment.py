@@ -56,11 +56,16 @@ def reserve_allowed_for_tier(
     return False
 
 
+# Order a student's courses by tier when a tier map is supplied: core first.
+COURSE_TIER_RANK = {"T1": 0, "T2": 1, "T3": 2}
+
+
 def assign_students_to_sections(
     profiles: dict[str, StudentProfile],
     sections_by_id: dict[str, SectionState],
     sections_by_course: dict[str, list[SectionState]],
     course_rigidity: dict[str, float],
+    course_tiers: dict[str, str] | None = None,
 ) -> tuple[dict[str, StudentAssignmentState], list[str]]:
     states = {sid: StudentAssignmentState(student_id=sid) for sid in profiles}
 
@@ -81,6 +86,7 @@ def assign_students_to_sections(
             sections_by_id,
             course_rigidity,
             reserves_released=False,
+            course_tiers=course_tiers,
         )
 
     for student in tier_c:
@@ -91,6 +97,7 @@ def assign_students_to_sections(
             sections_by_id,
             course_rigidity,
             reserves_released=True,
+            course_tiers=course_tiers,
         )
 
     repair_unresolved_assignments_shallow(states, profiles, sections_by_course, sections_by_id)
@@ -106,6 +113,7 @@ def assign_courses_for_student(
     sections_by_id: dict[str, SectionState],
     course_rigidity: dict[str, float],
     reserves_released: bool,
+    course_tiers: dict[str, str] | None = None,
 ) -> None:
     allow_reserve = reserve_allowed_for_tier(student.risk_tier, reserves_released)
 
@@ -115,12 +123,18 @@ def assign_courses_for_student(
 
     unassigned = set(student.recommended_courses) - set(state.assigned_sections.keys())
 
-    def scarcity_key(course_code: str) -> tuple[int, float, str]:
+    def scarcity_key(course_code: str) -> tuple[int, int, float, str]:
         candidates = sections_by_course.get(course_code, [])
         feasible_count = sum(
             1 for s in candidates if s.can_enroll(allow_reserve) and not state.has_clash(s.meetings)
         )
-        return (feasible_count, -course_rigidity.get(course_code, 0.0), course_code)
+        # Tier rank leads the key so a student's Tier-1 (core) courses are seated
+        # BEFORE Tier-2/Tier-3 — otherwise the scarcity heuristic can hand a
+        # scarce foundation/gen-ed course a slot that a core course needed, and
+        # the core seat is lost. Without a tier map every course ranks 0, so the
+        # ordering collapses to the original (feasible_count, -rigidity, code).
+        rank = COURSE_TIER_RANK.get(course_tiers.get(course_code, "T1"), 0) if course_tiers else 0
+        return (rank, feasible_count, -course_rigidity.get(course_code, 0.0), course_code)
 
     sorted_courses = sorted(list(unassigned), key=scarcity_key)
 

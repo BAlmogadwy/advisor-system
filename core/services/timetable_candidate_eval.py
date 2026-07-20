@@ -11,6 +11,7 @@ from core.services.timetable_assignment_models import (
     StudentProfile,
     TimetableEvaluationResult,
 )
+from core.services.timetable_flags import is_tiered_objective_enabled
 from core.services.timetable_pr4_instructor import (
     count_instructor_daily_overloads,
     get_instructor_daily_cap,
@@ -35,6 +36,7 @@ def evaluate_generated_timetable_candidate(
         sections_by_id,
         sections_by_course,
         course_rigidity,
+        course_tiers=course_tiers if is_tiered_objective_enabled() else None,
     )
     score = ssa.evaluate_assignability_lexicographic(
         states, student_profiles, sections_by_id, section_instructor_ids, course_tiers
