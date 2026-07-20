@@ -36,6 +36,18 @@ enforcement — it only removes the pairs the instructor map cannot speak to
 truthfully. Cross-course clashes, the ones this backstop exists for, are
 unaffected.
 
+That justification was checked against each path this module guards, since a
+sibling exclusion resting on a rule some path does not apply would be a real
+blind spot:
+
+- board CP-SAT (``timetable_solver``) — models "no same-course overlap" as a
+  HARD constraint;
+- rebalancer (``timetable_load_balanced``) — ``_has_same_course_overlap``
+  rejects the schedule outright;
+- manual placement — ``validate_placement`` scores a same-course overlap as
+  *critical* (``SAME_COURSE_SENTINEL``), so the registrar is warned through the
+  existing conflict channel rather than this one.
+
 **Delta, not absolute.** Where a caller gates, the question is "did this write
 make it worse". An absolute-zero gate would refuse every persist onto a board
 carrying a legacy clash — precisely the paralysis the delta-form predicates in
