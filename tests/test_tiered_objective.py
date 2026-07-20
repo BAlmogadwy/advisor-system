@@ -368,6 +368,55 @@ def test_assignment_seats_tier1_before_tier2() -> None:
     assert "AAA100" in states["S1"].unresolved_courses
 
 
+def _evict_fixture():
+    """Core course has ONE section; gen-ed has one section clashing with it, plus
+    the core course has an alternative section elsewhere. The repair swap would
+    evict core to seat gen-ed unless the tier guard blocks it."""
+    from core.services.timetable_student_assignment import (
+        build_sections_by_course,
+        build_sections_by_id,
+    )
+
+    secs = [
+        _section("CORE-A", "CORE", [(0, 540, 615)]),  # T1, clashes with GENED-A
+        _section("CORE-B", "CORE", [(1, 540, 615)]),  # T1 alternative
+        _section("GENED-A", "GENED", [(0, 540, 615)]),  # T3, only option
+    ]
+    sbi = build_sections_by_id(secs)
+    return sbi, build_sections_by_course(sbi)
+
+
+def _evict_student():
+    return {
+        "S1": StudentProfile(
+            student_id="S1",
+            department="X",
+            recommended_courses=["CORE", "GENED"],
+            risk_tier=RiskTier.C,
+            intra_tier_score=1.0,
+        )
+    }
+
+
+def test_repair_never_costs_core_its_seat() -> None:
+    """Repair may MOVE a Tier-1 course to another section to seat a lower tier,
+    but must never leave it unresolved.
+
+    The swap only commits when the displaced course finds an alternative, so
+    core keeps a seat either way. (A hard tier guard on eviction was tried and
+    reverted: it forfeited ~20 Tier-2 seats on scn 642 to protect a mere section
+    choice, which costs only gap-minutes — a strictly worse trade.)
+    """
+    from core.services.timetable_student_assignment import assign_students_to_sections
+
+    sbi, sbc = _evict_fixture()
+    tiers = {"CORE": "T1", "GENED": "T3"}
+    states, _ = assign_students_to_sections(_evict_student(), sbi, sbc, {}, course_tiers=tiers)
+    st = states["S1"]
+    assert "CORE" not in st.unresolved_courses
+    assert "CORE" in st.assigned_sections
+
+
 @override_settings(TIMETABLE_TIERED_OBJECTIVE_ENABLED=True, TIMETABLE_TIERED_SOFT_GAP_BUDGET=0)
 def test_zero_budget_is_strict_quality_first() -> None:
     # Budget 0 => soft never justifies any gap; position 4 == pure real gap.

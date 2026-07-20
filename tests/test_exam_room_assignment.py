@@ -506,7 +506,10 @@ def _make_rebalance_fixture() -> tuple[list[str], list[str]]:
     for cc in course_codes:
         for label in ("M1", "M2"):
             ts = TermSection.objects.create(
-                course_code=cc, course_number=cc[-3:], course_key=cc, section=label,
+                course_code=cc,
+                course_number=cc[-3:],
+                course_key=cc,
+                section=label,
             )
             for _ in range(40):
                 s, _ = Student.objects.get_or_create(
@@ -522,7 +525,10 @@ def _make_rebalance_fixture() -> tuple[list[str], list[str]]:
                 student_id += 1
         for label in ("F1", "F2"):
             ts = TermSection.objects.create(
-                course_code=cc, course_number=cc[-3:], course_key=cc, section=label,
+                course_code=cc,
+                course_number=cc[-3:],
+                course_key=cc,
+                section=label,
             )
             for _ in range(40):
                 s, _ = Student.objects.get_or_create(
@@ -591,9 +597,8 @@ def test_rebalance_pass_reduces_invigilator_stddev() -> None:
         )
     # No new conflicts and no new unassigned introduced
     assert after["qa"]["conflict_count"] == before["qa"]["conflict_count"]
-    assert (
-        len(after["qa"]["rooms"]["unassigned_room_sections"])
-        == len(before["qa"]["rooms"]["unassigned_room_sections"])
+    assert len(after["qa"]["rooms"]["unassigned_room_sections"]) == len(
+        before["qa"]["rooms"]["unassigned_room_sections"]
     )
 
 

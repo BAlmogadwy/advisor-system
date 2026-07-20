@@ -57,7 +57,15 @@ def reserve_allowed_for_tier(
 
 
 # Order a student's courses by tier when a tier map is supplied: core first.
+# Lower rank = higher priority, so a rank comparison reads as "more important".
 COURSE_TIER_RANK = {"T1": 0, "T2": 1, "T3": 2}
+
+
+def _tier_rank(course_tiers: dict[str, str] | None, course_code: str) -> int:
+    """Priority rank of a course (0=T1 core .. 2=T3 gen-ed); 0 with no map."""
+    if not course_tiers:
+        return 0
+    return COURSE_TIER_RANK.get(course_tiers.get(course_code, "T1"), 0)
 
 
 def assign_students_to_sections(
@@ -100,7 +108,9 @@ def assign_students_to_sections(
             course_tiers=course_tiers,
         )
 
-    repair_unresolved_assignments_shallow(states, profiles, sections_by_course, sections_by_id)
+    repair_unresolved_assignments_shallow(
+        states, profiles, sections_by_course, sections_by_id, course_tiers=course_tiers
+    )
 
     unresolved_ids = [sid for sid, st in states.items() if st.unresolved_courses]
     return states, unresolved_ids
@@ -133,7 +143,7 @@ def assign_courses_for_student(
         # scarce foundation/gen-ed course a slot that a core course needed, and
         # the core seat is lost. Without a tier map every course ranks 0, so the
         # ordering collapses to the original (feasible_count, -rigidity, code).
-        rank = COURSE_TIER_RANK.get(course_tiers.get(course_code, "T1"), 0) if course_tiers else 0
+        rank = _tier_rank(course_tiers, course_code)
         return (rank, feasible_count, -course_rigidity.get(course_code, 0.0), course_code)
 
     sorted_courses = sorted(list(unassigned), key=scarcity_key)
@@ -236,6 +246,7 @@ def repair_unresolved_assignments_shallow(
     profiles: dict[str, StudentProfile],
     sections_by_course: dict[str, list[SectionState]],
     sections_by_id: dict[str, SectionState],
+    course_tiers: dict[str, str] | None = None,
 ) -> None:
     ordered_students = sorted(
         states.keys(),
@@ -250,6 +261,10 @@ def repair_unresolved_assignments_shallow(
         student = profiles[student_id]
         allow_reserve = reserve_allowed_for_tier(student.risk_tier, reserves_released=True)
         unresolved_list = list(state.unresolved_courses.keys())
+        if course_tiers:
+            # Repair core first: a Tier-1 course gets first claim on the limited
+            # swap budget, so it is not spent rescuing a gen-ed course instead.
+            unresolved_list.sort(key=lambda c: (_tier_rank(course_tiers, c), c))
 
         for unres_course in unresolved_list:
             if unres_course in state.assigned_sections:
@@ -276,6 +291,15 @@ def repair_unresolved_assignments_shallow(
                 if len(blocking_courses) != 1:
                     continue
                 blocking_course = blocking_courses[0]
+                # NOTE: deliberately NO tier guard on eviction. The swap below
+                # only commits if the displaced course finds an alternative
+                # section (else it rolls back), so a higher-tier course never
+                # loses its seat — it merely moves. Blocking the swap would
+                # forfeit a real unresolved seat (objective position 3) to
+                # protect a section choice, which costs only gap-minutes
+                # (position 4) — a strictly worse trade. Measured on scn 642:
+                # guarding here pushed Tier-2 over-tolerance 53 -> 73 for no
+                # core gain.
                 blocking_section_id = state.assigned_sections.get(blocking_course)
                 if not blocking_section_id:
                     continue
