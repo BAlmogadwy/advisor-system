@@ -669,13 +669,36 @@ def persist_solver_result(board_id: int, result: dict) -> dict:
 
 
 def solve_and_persist_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
-    """Solve and persist placements, then assign rooms."""
+    """Solve and persist placements, then assign rooms.
+
+    The CP-SAT model here constrains rooms and student overlap but has NO
+    instructor variable, so it can seat an instructor in two places at once. The
+    backstop below cannot prevent that (the model would have to change), but it
+    ensures such a board is never persisted *silently*.
+    """
+    from core.services.timetable_instructor_backstop import (
+        scenario_instructor_clash_count,
+        verify_persisted_scenario,
+    )
+
+    scenario_id = (
+        DeliveryBoard.objects.filter(id=board_id).values_list("scenario_id", flat=True).first()
+    )
+    clashes_before = scenario_instructor_clash_count(scenario_id) if scenario_id else 0
+
     result = solve_board(board_id, time_limit_seconds)
     persist_solver_result(board_id, result)
     from core.services.timetable_rooming import assign_rooms_to_board
     from core.services.timetable_validation import is_lock_enforcement_enabled
 
     assign_rooms_to_board(board_id, respect_locked=is_lock_enforcement_enabled())
+
+    if scenario_id:
+        result["instructor_clash_backstop"] = verify_persisted_scenario(
+            scenario_id,
+            context="board_cpsat_solver",
+            before=clashes_before,
+        )
     return result
 
 

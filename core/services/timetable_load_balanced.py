@@ -417,6 +417,16 @@ def rebalance_and_persist_board(board_id: int, max_seconds: float = 8.0) -> dict
     except DeliveryBoard.DoesNotExist:
         return result
 
+    # The rebalancer models rooms and student overlap but carries no instructor
+    # constraint, so it can move a section onto a slot where its instructor is
+    # already teaching. Capture the pre-write count for the backstop's delta.
+    from core.services.timetable_instructor_backstop import (
+        scenario_instructor_clash_count,
+        verify_persisted_scenario,
+    )
+
+    clashes_before = scenario_instructor_clash_count(board.scenario_id)
+
     # Delete and recreate. When lock enforcement is on, locked sections are
     # preserved untouched (never deleted, never re-persisted) so a registrar
     # lock survives a rebalance.
@@ -474,6 +484,12 @@ def rebalance_and_persist_board(board_id: int, max_seconds: float = 8.0) -> dict
     from core.services.timetable_rooming import assign_rooms_to_board
 
     assign_rooms_to_board(board_id, respect_locked=locks_on)
+
+    result["instructor_clash_backstop"] = verify_persisted_scenario(
+        board.scenario_id,
+        context="load_balanced_rebalance",
+        before=clashes_before,
+    )
 
     return result
 

@@ -3102,6 +3102,21 @@ def compute_scenario_safety_summary(
 ) -> dict:
     """Return the backend truth contract used by the split workspace UI."""
 
+    def _scenario_instructor_clash_count(sid: int) -> int:
+        import logging
+
+        from core.services.timetable_instructor_backstop import (
+            scenario_instructor_clash_count,
+        )
+
+        try:
+            return scenario_instructor_clash_count(sid)
+        except Exception:  # pragma: no cover - never break the summary
+            logging.getLogger(__name__).exception(
+                "Scenario instructor clash count failed for scenario %s", sid
+            )
+            return 0
+
     if boards is None:
         boards = list(
             DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order")
@@ -3156,6 +3171,11 @@ def compute_scenario_safety_summary(
         "physical_unassigned_rooms": physical_unassigned,
         "online_without_room": online_without_room,
         "same_board_conflicts": same_board,
+        # Scenario-wide instructor double-bookings. Deliberately separate from
+        # same_board_conflicts["instructors"]: that one is summed PER BOARD, so an
+        # instructor teaching on two boards in the same slot is invisible to it,
+        # and instructors routinely span boards. This is the whole truth.
+        "instructor_clashes_scenario": _scenario_instructor_clash_count(scenario_id),
         "cross_board_conflicts": cross_impact["conflict_pairs"],
         "cross_board_affected_students": cross_impact["affected_students"],
         "cross_board_student_conflict_incidences": cross_impact["student_conflict_incidences"],

@@ -67,15 +67,19 @@ def _instructor_windows(
     return windows
 
 
-def _overlapping_pairs(windows: list[_Window]) -> int:
-    """Count window pairs on the same day whose intervals overlap.
+def _overlapping_pair_list(windows: list[_Window]) -> list[tuple[_Window, _Window]]:
+    """The window pairs on the same day whose intervals overlap.
 
     Windows belonging to the *same* section are ignored — a section's own
     meetings are its schedule, not a double-booking of the instructor. Only
     cross-section overlaps are an instructor clash.
+
+    This is the primitive: ``_overlapping_pairs`` is ``len()`` of it, so the
+    count and the detail can never disagree about what a clash is. (The whole
+    point of this module is that the copies used to drift.)
     """
     ordered = sorted(windows)
-    count = 0
+    pairs: list[tuple[_Window, _Window]] = []
     for i in range(len(ordered)):
         day_i, start_i, end_i, sec_i = ordered[i]
         for j in range(i + 1, len(ordered)):
@@ -85,8 +89,13 @@ def _overlapping_pairs(windows: list[_Window]) -> int:
             if sec_i == sec_j:
                 continue
             if _intervals_overlap(start_i, end_i, start_j, end_j):
-                count += 1
-    return count
+                pairs.append((ordered[i], ordered[j]))
+    return pairs
+
+
+def _overlapping_pairs(windows: list[_Window]) -> int:
+    """Count of overlapping cross-section window pairs."""
+    return len(_overlapping_pair_list(windows))
 
 
 def has_instructor_clash(
@@ -128,6 +137,36 @@ def count_instructor_clashes(
         _overlapping_pairs(windows)
         for windows in _instructor_windows(sections_by_id, section_instructor_ids).values()
     )
+
+
+def list_instructor_clashes(
+    sections_by_id: Mapping[str, Any],
+    section_instructor_ids: Mapping[str, Iterable[int]] | None,
+) -> list[dict[str, Any]]:
+    """Detail form of :func:`count_instructor_clashes` — one row per clashing pair.
+
+    ``len(list_instructor_clashes(...)) == count_instructor_clashes(...)`` always
+    (both derive from ``_overlapping_pair_list``). Used by the persist-time
+    backstop to report *which* instructor is double-booked where, so a violation
+    is actionable rather than just a number.
+    """
+    if not section_instructor_ids:
+        return []
+    rows: list[dict[str, Any]] = []
+    windows_by_instr = _instructor_windows(sections_by_id, section_instructor_ids)
+    for instructor_id in sorted(windows_by_instr):
+        for (day, start_a, end_a, sec_a), (_d, start_b, end_b, sec_b) in _overlapping_pair_list(
+            windows_by_instr[instructor_id]
+        ):
+            rows.append(
+                {
+                    "instructor_id": instructor_id,
+                    "day": day,
+                    "sections": [sec_a, sec_b],
+                    "windows": [[start_a, end_a], [start_b, end_b]],
+                }
+            )
+    return rows
 
 
 def move_introduces_instructor_clash(
@@ -321,6 +360,7 @@ __all__ = [
     "exceeds_instructor_daily_cap",
     "has_instructor_clash",
     "has_same_course_overlap",
+    "list_instructor_clashes",
     "move_exceeds_instructor_daily_cap",
     "move_introduces_instructor_clash",
     "move_introduces_same_course_overlap",

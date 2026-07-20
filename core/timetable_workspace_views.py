@@ -1515,7 +1515,10 @@ def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
     if OnlineCourseLookup().is_online_course_for_board(board, ts.course_code):
         room = ""
 
-    # Validate before persisting
+    # Validate before persisting. NOTE: validate_placement is BOARD-scoped and
+    # keys on the free-text meeting.instructor, so it cannot see an instructor
+    # double-booked across two boards. The scenario-wide backstop below reports
+    # that class of clash, which this validation structurally misses.
     validation = validate_placement(
         board_id=board.id,
         day=day,
@@ -1524,6 +1527,13 @@ def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
         room=room,
         term_section_id=ts.id,
     )
+
+    from core.services.timetable_instructor_backstop import (
+        scenario_instructor_clash_count,
+        verify_persisted_scenario,
+    )
+
+    clashes_before = scenario_instructor_clash_count(board.scenario_id)
 
     try:
         placement = SectionPlacement.objects.create(
@@ -1557,6 +1567,11 @@ def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
         {
             "placement": _placement_to_dict(placement),
             "validation": validation,
+            "instructor_clash_backstop": verify_persisted_scenario(
+                board.scenario_id,
+                context="manual_placement_create",
+                before=clashes_before,
+            ),
         },
         status=201,
     )
@@ -2279,7 +2294,8 @@ def tw_placement_move_view(request: HttpRequest, placement_id: int) -> JsonRespo
 
     old_day, old_start, old_end = placement.day, placement.start_time, placement.end_time
 
-    # Validate before persisting
+    # Validate before persisting. Board-scoped and free-text-instructor keyed —
+    # see the note in tw_placement_create_view; the backstop covers what it misses.
     validation = validate_placement(
         board_id=placement.board_id,
         day=new_day,
@@ -2289,6 +2305,14 @@ def tw_placement_move_view(request: HttpRequest, placement_id: int) -> JsonRespo
         term_section_id=placement.term_section_id,
         exclude_placement_id=placement.id,
     )
+
+    from core.services.timetable_instructor_backstop import (
+        scenario_instructor_clash_count,
+        verify_persisted_scenario,
+    )
+
+    scenario_id = placement.board.scenario_id
+    clashes_before = scenario_instructor_clash_count(scenario_id)
 
     placement.day = new_day
     placement.start_time = new_start
@@ -2310,7 +2334,17 @@ def tw_placement_move_view(request: HttpRequest, placement_id: int) -> JsonRespo
             "to": f"{new_day} {new_start}-{new_end}",
         },
     )
-    return _ok({"placement": _placement_to_dict(placement), "validation": validation})
+    return _ok(
+        {
+            "placement": _placement_to_dict(placement),
+            "validation": validation,
+            "instructor_clash_backstop": verify_persisted_scenario(
+                scenario_id,
+                context="manual_placement_move",
+                before=clashes_before,
+            ),
+        }
+    )
 
 
 @login_required(login_url="login")
