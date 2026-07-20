@@ -314,6 +314,115 @@ def test_bounded_trade_seats_cheap_genered_drops_expensive() -> None:
     assert a < c_expensive  # leave it unresolved when seating is expensive (200 > 120)
 
 
+# ── tier-aware seating order ─────────────────────────────────────────────
+
+
+def _one_slot_pair():
+    """Two single-section courses at the SAME slot — only one can be seated.
+
+    Named so the legacy alphabetical tiebreak puts the Tier-2 course first.
+    """
+    from core.services.timetable_student_assignment import (
+        build_sections_by_course,
+        build_sections_by_id,
+    )
+
+    secs = [
+        _section("AAA100-A", "AAA100", [(0, 540, 615)]),  # Tier-2 service course
+        _section("ZZZ900-A", "ZZZ900", [(0, 540, 615)]),  # Tier-1 core course
+    ]
+    sbi = build_sections_by_id(secs)
+    return sbi, build_sections_by_course(sbi)
+
+
+def _one_student():
+    return {
+        "S1": StudentProfile(
+            student_id="S1",
+            department="X",
+            recommended_courses=["AAA100", "ZZZ900"],
+            risk_tier=RiskTier.C,
+            intra_tier_score=1.0,
+        )
+    }
+
+
+def test_assignment_without_tier_map_keeps_legacy_order() -> None:
+    from core.services.timetable_student_assignment import assign_students_to_sections
+
+    sbi, sbc = _one_slot_pair()
+    states, _ = assign_students_to_sections(_one_student(), sbi, sbc, {})
+    # legacy: alphabetical tiebreak seats AAA100 and strands the core course
+    assert "ZZZ900" in states["S1"].unresolved_courses
+    assert "AAA100" not in states["S1"].unresolved_courses
+
+
+def test_assignment_seats_tier1_before_tier2() -> None:
+    from core.services.timetable_student_assignment import assign_students_to_sections
+
+    sbi, sbc = _one_slot_pair()
+    tiers = {"AAA100": "T2", "ZZZ900": "T1"}
+    states, _ = assign_students_to_sections(_one_student(), sbi, sbc, {}, course_tiers=tiers)
+    # tier-aware: the core course wins the slot; the service course yields
+    assert "ZZZ900" not in states["S1"].unresolved_courses
+    assert "AAA100" in states["S1"].unresolved_courses
+
+
+def _evict_fixture():
+    """Core course has ONE section; gen-ed has one section clashing with it, plus
+    the core course has an alternative section elsewhere. The repair swap would
+    evict core to seat gen-ed unless the tier guard blocks it."""
+    from core.services.timetable_student_assignment import (
+        build_sections_by_course,
+        build_sections_by_id,
+    )
+
+    secs = [
+        _section("CORE-A", "CORE", [(0, 540, 615)]),  # T1, clashes with GENED-A
+        _section("CORE-B", "CORE", [(1, 540, 615)]),  # T1 alternative
+        _section("GENED-A", "GENED", [(0, 540, 615)]),  # T3, only option
+    ]
+    sbi = build_sections_by_id(secs)
+    return sbi, build_sections_by_course(sbi)
+
+
+def _evict_student():
+    return {
+        "S1": StudentProfile(
+            student_id="S1",
+            department="X",
+            recommended_courses=["CORE", "GENED"],
+            risk_tier=RiskTier.C,
+            intra_tier_score=1.0,
+        )
+    }
+
+
+def test_repair_never_costs_core_its_seat() -> None:
+    """Repair may MOVE a Tier-1 course to another section to seat a lower tier,
+    but must never leave it unresolved.
+
+    The swap only commits when the displaced course finds an alternative, so
+    core keeps a seat either way. (A hard tier guard on eviction was tried and
+    reverted: it forfeited ~20 Tier-2 seats on scn 642 to protect a mere section
+    choice, which costs only gap-minutes — a strictly worse trade.)
+    """
+    from core.services.timetable_student_assignment import assign_students_to_sections
+
+    sbi, sbc = _evict_fixture()
+    tiers = {"CORE": "T1", "GENED": "T3"}
+    states, _ = assign_students_to_sections(_evict_student(), sbi, sbc, {}, course_tiers=tiers)
+    st = states["S1"]
+    # core keeps a seat...
+    assert "CORE" not in st.unresolved_courses
+    assert "CORE" in st.assigned_sections
+    # ...and these two assertions are what actually guard the "no eviction tier
+    # guard" decision: the swap must still fire, seating the lower tier and
+    # MOVING core to its alternative. Re-adding a tier guard breaks both.
+    assert "GENED" not in st.unresolved_courses
+    assert st.assigned_sections["CORE"] == "CORE-B"
+
+
 @override_settings(TIMETABLE_TIERED_OBJECTIVE_ENABLED=True, TIMETABLE_TIERED_SOFT_GAP_BUDGET=0)
 def test_zero_budget_is_strict_quality_first() -> None:
     # Budget 0 => soft never justifies any gap; position 4 == pure real gap.

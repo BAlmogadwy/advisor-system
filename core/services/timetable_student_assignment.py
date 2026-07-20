@@ -56,11 +56,24 @@ def reserve_allowed_for_tier(
     return False
 
 
+# Order a student's courses by tier when a tier map is supplied: core first.
+# Lower rank = higher priority, so a rank comparison reads as "more important".
+COURSE_TIER_RANK = {"T1": 0, "T2": 1, "T3": 2}
+
+
+def _tier_rank(course_tiers: dict[str, str] | None, course_code: str) -> int:
+    """Priority rank of a course (0=T1 core .. 2=T3 gen-ed); 0 with no map."""
+    if not course_tiers:
+        return 0
+    return COURSE_TIER_RANK.get(course_tiers.get(course_code, "T1"), 0)
+
+
 def assign_students_to_sections(
     profiles: dict[str, StudentProfile],
     sections_by_id: dict[str, SectionState],
     sections_by_course: dict[str, list[SectionState]],
     course_rigidity: dict[str, float],
+    course_tiers: dict[str, str] | None = None,
 ) -> tuple[dict[str, StudentAssignmentState], list[str]]:
     states = {sid: StudentAssignmentState(student_id=sid) for sid in profiles}
 
@@ -81,6 +94,7 @@ def assign_students_to_sections(
             sections_by_id,
             course_rigidity,
             reserves_released=False,
+            course_tiers=course_tiers,
         )
 
     for student in tier_c:
@@ -91,9 +105,12 @@ def assign_students_to_sections(
             sections_by_id,
             course_rigidity,
             reserves_released=True,
+            course_tiers=course_tiers,
         )
 
-    repair_unresolved_assignments_shallow(states, profiles, sections_by_course, sections_by_id)
+    repair_unresolved_assignments_shallow(
+        states, profiles, sections_by_course, sections_by_id, course_tiers=course_tiers
+    )
 
     unresolved_ids = [sid for sid, st in states.items() if st.unresolved_courses]
     return states, unresolved_ids
@@ -106,6 +123,7 @@ def assign_courses_for_student(
     sections_by_id: dict[str, SectionState],
     course_rigidity: dict[str, float],
     reserves_released: bool,
+    course_tiers: dict[str, str] | None = None,
 ) -> None:
     allow_reserve = reserve_allowed_for_tier(student.risk_tier, reserves_released)
 
@@ -115,12 +133,18 @@ def assign_courses_for_student(
 
     unassigned = set(student.recommended_courses) - set(state.assigned_sections.keys())
 
-    def scarcity_key(course_code: str) -> tuple[int, float, str]:
+    def scarcity_key(course_code: str) -> tuple[int, int, float, str]:
         candidates = sections_by_course.get(course_code, [])
         feasible_count = sum(
             1 for s in candidates if s.can_enroll(allow_reserve) and not state.has_clash(s.meetings)
         )
-        return (feasible_count, -course_rigidity.get(course_code, 0.0), course_code)
+        # Tier rank leads the key so a student's Tier-1 (core) courses are seated
+        # BEFORE Tier-2/Tier-3 — otherwise the scarcity heuristic can hand a
+        # scarce foundation/gen-ed course a slot that a core course needed, and
+        # the core seat is lost. Without a tier map every course ranks 0, so the
+        # ordering collapses to the original (feasible_count, -rigidity, code).
+        rank = _tier_rank(course_tiers, course_code)
+        return (rank, feasible_count, -course_rigidity.get(course_code, 0.0), course_code)
 
     sorted_courses = sorted(list(unassigned), key=scarcity_key)
 
@@ -222,6 +246,7 @@ def repair_unresolved_assignments_shallow(
     profiles: dict[str, StudentProfile],
     sections_by_course: dict[str, list[SectionState]],
     sections_by_id: dict[str, SectionState],
+    course_tiers: dict[str, str] | None = None,
 ) -> None:
     ordered_students = sorted(
         states.keys(),
@@ -236,6 +261,15 @@ def repair_unresolved_assignments_shallow(
         student = profiles[student_id]
         allow_reserve = reserve_allowed_for_tier(student.risk_tier, reserves_released=True)
         unresolved_list = list(state.unresolved_courses.keys())
+        if course_tiers:
+            # Repair core first: a Tier-1 course gets first claim on the limited
+            # swap budget, so it is not spent rescuing a gen-ed course instead.
+            # Key on the tier ALONE — Python's sort is stable, so the existing
+            # order (unresolved_courses is insertion-ordered by the scarcity key
+            # from assign_courses_for_student) is preserved *within* each tier.
+            # Adding a course-code tiebreak here would silently replace that
+            # deliberate hardest-first ordering with alphabetical.
+            unresolved_list.sort(key=lambda c: _tier_rank(course_tiers, c))
 
         for unres_course in unresolved_list:
             if unres_course in state.assigned_sections:
@@ -262,6 +296,23 @@ def repair_unresolved_assignments_shallow(
                 if len(blocking_courses) != 1:
                     continue
                 blocking_course = blocking_courses[0]
+                # NOTE: deliberately NO tier guard on eviction. The swap below
+                # only commits if the displaced course finds an alternative
+                # section (else it rolls back), so a higher-tier course never
+                # loses its seat — it merely moves. Blocking the swap would
+                # forfeit an unresolved seat to protect a section choice.
+                #
+                # That trade is clearly right when the course being repaired is
+                # T1 (objective position 2) or T2-over-tolerance (position 3),
+                # since both outrank the gap-minutes (position 4) the relocation
+                # costs. For a SOFT repair (T3 / T2-within-tolerance) the seat
+                # lives at position 5, *below* gap — so it is only worth it while
+                # the added gap stays under the soft-gap budget. Measured on scn
+                # 642 the swaps came in at ~116 gap-min per soft seat against a
+                # 120 budget, i.e. roughly break-even, so it is left ungated;
+                # a budget-aware gate here is a possible future refinement.
+                # Guarding it outright pushed Tier-2 over-tolerance 53 -> 73 and
+                # soft 59 -> 93 for zero core gain.
                 blocking_section_id = state.assigned_sections.get(blocking_course)
                 if not blocking_section_id:
                     continue
