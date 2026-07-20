@@ -1205,6 +1205,19 @@ function onDragLeave(e) {
   e.currentTarget.classList.remove('drop-valid', 'drop-warning', 'drop-critical');
 }
 
+// See page-timetable-workspace-split.js for the rationale: `validation` is
+// board-scoped and free-text-instructor keyed, so a cross-board instructor
+// double-booking is invisible to it. Scoped to the section just touched.
+function notifyInstructorClashBackstop(data) {
+  const b = (data && data.instructor_clash_backstop) || {};
+  if (!b.checked) return;
+  const rows = b.involving_this_section || [];
+  if (!rows.length) return;
+  notify.warning(IS_AR
+    ? `تعارض للمحاضر: ${rows.length} حصة متداخلة عبر اللوحات`
+    : `Instructor double-booked — ${rows.length} overlapping session(s) across boards`);
+}
+
 async function onDrop(e) {
   e.preventDefault();
   const cell = e.currentTarget;
@@ -1244,6 +1257,7 @@ async function onDrop(e) {
     } else {
       notify.success(IS_AR ? 'تم الوضع' : 'Placed');
     }
+    notifyInstructorClashBackstop(data);
   } else if (payload.type === 'create') {
     const data = await twFetch('/ops/tw/placements/create/', {
       method: 'POST',
@@ -1268,6 +1282,7 @@ async function onDrop(e) {
     } else {
       notify.success(IS_AR ? 'تم الوضع' : 'Placed');
     }
+    notifyInstructorClashBackstop(data);
   } else if (payload.type === 'move') {
     // Find old position before move
     const oldP = TW.placements.find(x => x.id === payload.placement_id);
@@ -1291,6 +1306,7 @@ async function onDrop(e) {
     } else {
       notify.success(IS_AR ? 'تم النقل' : 'Moved');
     }
+    notifyInstructorClashBackstop(data);
   }
 
   // Refresh board

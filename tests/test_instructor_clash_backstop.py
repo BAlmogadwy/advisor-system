@@ -206,6 +206,88 @@ class TestEndToEndAgainstTheDatabase:
         assert report["count"] == 0
 
 
+class TestSiblingSectionsAreNotPhantomClashes:
+    """build_section_instructor_map_for_scenario attributes instructors at COURSE
+    granularity (a set-union handed to every section of the course), so two
+    instructors on two overlapping sections of one course report two clashes
+    where the real assignment has none. That count now vetoes an optimise run,
+    so a phantom would discard an entire good run. Sibling overlap is already
+    forbidden by the same-course rule, so excluding these pairs costs no
+    enforcement.
+    """
+
+    @staticmethod
+    def _report_with(sections, links, monkeypatch):
+        from core.services import timetable_instructor_backstop as backstop
+
+        monkeypatch.setattr(
+            "core.services.timetable_pr4_instructor.is_instructor_links_enabled", lambda: True
+        )
+        monkeypatch.setattr(
+            "core.services.timetable_optimizer_v2.build_section_instructor_map_for_scenario",
+            lambda _sid: links,
+        )
+        monkeypatch.setattr(
+            "core.services.timetable_optimizer_v2.build_section_states_for_scenario",
+            lambda _sid: list(sections.values()),
+        )
+        return backstop.scenario_instructor_clash_report(1)
+
+    def test_two_overlapping_siblings_report_no_instructor_clash(self, monkeypatch):
+        s1 = _state("STAT305_S1", [(0, 600, 675)])
+        s2 = _state("STAT305_S2", [(0, 600, 675)])
+        s1.course_code = s2.course_code = "STAT305"
+        sections = {s1.section_id: s1, s2.section_id: s2}
+        # Course-granular attribution: BOTH instructors on BOTH sections.
+        links = {sid: frozenset({1, 2}) for sid in sections}
+
+        report = self._report_with(sections, links, monkeypatch)
+        assert report["checked"] is True
+        assert report["count"] == 0, "phantom clash would roll back a whole optimise run"
+
+    def test_a_genuine_cross_course_clash_still_reports(self, monkeypatch):
+        a = _state("AI101_S1", [(0, 600, 675)])
+        b = _state("DS201_S1", [(0, 600, 675)])
+        a.course_code, b.course_code = "AI101", "DS201"
+        sections = {a.section_id: a, b.section_id: b}
+        links = {a.section_id: frozenset({1}), b.section_id: frozenset({1})}
+
+        report = self._report_with(sections, links, monkeypatch)
+        assert report["count"] == 1, "the clash the backstop exists to catch"
+
+
+class TestClashesInvolving:
+    """The manual-placement signal: 'is the section I just touched clashing',
+    not the scenario-wide count (which would warn on every drag while any
+    unrelated legacy clash existed) and not a delta (a second full scan)."""
+
+    REPORT = {
+        "checked": True,
+        "count": 2,
+        "clashes": [
+            {"instructor_id": 1, "day": 0, "sections": ["AI101_S1", "DS201_S1"]},
+            {"instructor_id": 2, "day": 1, "sections": ["CS300_S1", "IS400_S1"]},
+        ],
+    }
+
+    def test_returns_only_rows_touching_the_section(self):
+        from core.services.timetable_instructor_backstop import clashes_involving
+
+        rows = clashes_involving(self.REPORT, "DS201_S1")
+        assert len(rows) == 1
+        assert rows[0]["instructor_id"] == 1
+
+    def test_unrelated_legacy_clash_does_not_warn_on_this_placement(self):
+        from core.services.timetable_instructor_backstop import clashes_involving
+
+        assert clashes_involving(self.REPORT, "ENGL101_S1") == []
+
+    def test_an_unchecked_report_yields_nothing(self):
+        from core.services.timetable_instructor_backstop import clashes_involving
+
+        assert clashes_involving({"checked": False, "clashes": []}, "AI101_S1") == []
+
+
 @pytest.mark.django_db
 class TestReportContract:
     def test_checked_is_false_when_links_are_disabled(self, settings, monkeypatch):
@@ -220,17 +302,41 @@ class TestReportContract:
         assert report["reason"] == "links_disabled"
         assert report["count"] == 0
 
-    def test_verify_never_raises(self, monkeypatch):
-        """A backstop that can break the persist it guards is worse than the hole."""
+    @pytest.mark.parametrize(
+        "entrypoint",
+        [
+            "scenario_instructor_clash_report",
+            "scenario_instructor_clash_count",
+            "verify_persisted_scenario",
+        ],
+    )
+    def test_no_entrypoint_can_break_the_persist_it_guards(self, entrypoint, monkeypatch):
+        """EVERY entrypoint must swallow, not just verify_persisted_scenario.
+
+        The count-only helper runs at write sites too; an unguarded twin ahead of
+        the guarded one would 500 a drag-drop that worked fine before this module
+        existed — turning a safety net into an outage. A reviewer caught exactly
+        that asymmetry in the first cut of this change.
+        """
         from core.services import timetable_instructor_backstop as backstop
 
         def _boom(_sid):
             raise RuntimeError("db exploded")
 
-        monkeypatch.setattr(backstop, "scenario_instructor_clash_report", _boom)
-        report = backstop.verify_persisted_scenario(1, context="test")
-        assert report["checked"] is False
-        assert report["reason"] == "backstop_error"
+        monkeypatch.setattr(
+            "core.services.timetable_pr4_instructor.is_instructor_links_enabled", lambda: True
+        )
+        monkeypatch.setattr(
+            "core.services.timetable_optimizer_v2.build_section_instructor_map_for_scenario",
+            _boom,
+        )
+        fn = getattr(backstop, entrypoint)
+        result = fn(1, context="test") if entrypoint == "verify_persisted_scenario" else fn(1)
+        if isinstance(result, dict):
+            assert result["checked"] is False
+            assert result["reason"] == "backstop_error"
+        else:
+            assert result == 0
 
     def test_introduced_is_the_delta_not_the_absolute(self, monkeypatch):
         """A pre-existing clash must not be blamed on this write."""

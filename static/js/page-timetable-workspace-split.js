@@ -2799,6 +2799,23 @@ function findPlacement(placementId) {
   return null;
 }
 
+// The `validation` block above is BOARD-scoped and keyed on the free-text
+// instructor name, so it cannot see an instructor double-booked across two
+// boards — and instructors routinely span boards. The backend's scenario-wide
+// backstop reports that class of clash; without this the registrar would place a
+// section on top of its own instructor and be told "Moved" with no conflict.
+// Scoped to the section just touched, so an unrelated legacy clash elsewhere in
+// the scenario does not warn on every drag.
+function notifyInstructorClashBackstop(data) {
+  const b = (data && data.instructor_clash_backstop) || {};
+  if (!b.checked) return;
+  const rows = b.involving_this_section || [];
+  if (!rows.length) return;
+  notify.warning(IS_AR
+    ? `تعارض للمحاضر: ${rows.length} حصة متداخلة عبر اللوحات`
+    : `Instructor double-booked — ${rows.length} overlapping session(s) across boards`);
+}
+
 async function movePlacementToSlot({
   placementId,
   targetPaneIdx,
@@ -2858,6 +2875,7 @@ async function movePlacementToSlot({
     } else {
       notify.success(T.moveOk);
     }
+    notifyInstructorClashBackstop(data);
   }
 
   if (clearAssist) clearSlotAssist();
@@ -3158,6 +3176,7 @@ async function createPlannedPlacementFromMeetings(boardId, payload, meetings) {
     const count = Array.isArray(data.placements) ? data.placements.length : 1;
     notify.success(count > 1 ? `Placed full ${count}-meeting pattern` : (IS_AR ? 'Placed' : 'Placed'));
   }
+  notifyInstructorClashBackstop(data);
   return data;
 }
 

@@ -1607,6 +1607,11 @@ def create_planned_section_placements(
     if required_meetings <= 1 and len(meeting_rows) != 1:
         raise ValueError(f"{code} only needs one planned meeting target.")
 
+    # Same shape as the drag-drop path: validate_placement below is board-scoped
+    # and free-text-instructor keyed, so it cannot see a cross-board instructor
+    # clash. The scenario-wide backstop after the write covers what it misses.
+    from core.services.timetable_instructor_backstop import verify_persisted_scenario
+
     with transaction.atomic():
         term_section, _created = TermSection.objects.get_or_create(
             scenario=board.scenario,
@@ -1657,6 +1662,9 @@ def create_planned_section_placements(
         "term_section": term_section,
         "placements": placements,
         "validations": validations,
+        "instructor_clash_backstop": verify_persisted_scenario(
+            board.scenario_id, context="planned_section_create"
+        ),
         "required_meetings": required_meetings,
     }
 

@@ -1529,11 +1529,10 @@ def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
     )
 
     from core.services.timetable_instructor_backstop import (
-        scenario_instructor_clash_count,
+        clashes_involving,
+        section_id_for,
         verify_persisted_scenario,
     )
-
-    clashes_before = scenario_instructor_clash_count(board.scenario_id)
 
     try:
         placement = SectionPlacement.objects.create(
@@ -1563,15 +1562,13 @@ def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
             "start_time": start_time,
         },
     )
+    backstop = verify_persisted_scenario(board.scenario_id, context="manual_placement_create")
+    backstop["involving_this_section"] = clashes_involving(backstop, section_id_for(ts))
     return _ok(
         {
             "placement": _placement_to_dict(placement),
             "validation": validation,
-            "instructor_clash_backstop": verify_persisted_scenario(
-                board.scenario_id,
-                context="manual_placement_create",
-                before=clashes_before,
-            ),
+            "instructor_clash_backstop": backstop,
         },
         status=201,
     )
@@ -2307,12 +2304,12 @@ def tw_placement_move_view(request: HttpRequest, placement_id: int) -> JsonRespo
     )
 
     from core.services.timetable_instructor_backstop import (
-        scenario_instructor_clash_count,
+        clashes_involving,
+        section_id_for,
         verify_persisted_scenario,
     )
 
     scenario_id = placement.board.scenario_id
-    clashes_before = scenario_instructor_clash_count(scenario_id)
 
     placement.day = new_day
     placement.start_time = new_start
@@ -2334,15 +2331,15 @@ def tw_placement_move_view(request: HttpRequest, placement_id: int) -> JsonRespo
             "to": f"{new_day} {new_start}-{new_end}",
         },
     )
+    backstop = verify_persisted_scenario(scenario_id, context="manual_placement_move")
+    backstop["involving_this_section"] = clashes_involving(
+        backstop, section_id_for(placement.term_section)
+    )
     return _ok(
         {
             "placement": _placement_to_dict(placement),
             "validation": validation,
-            "instructor_clash_backstop": verify_persisted_scenario(
-                scenario_id,
-                context="manual_placement_move",
-                before=clashes_before,
-            ),
+            "instructor_clash_backstop": backstop,
         }
     )
 

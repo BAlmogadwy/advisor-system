@@ -273,7 +273,10 @@ def build_section_states_for_scenario(
             )
         )
 
-    logger.info(
+    # DEBUG, not INFO: this helper used to run once per optimise run, but the
+    # instructor-clash backstop now calls it from interactive placement endpoints,
+    # where an INFO line per drag would bury the backstop's own warnings.
+    logger.debug(
         "Built %d section states from %d placements for scenario %d",
         len(sections),
         sum(len(v) for v in grouped.values()),
