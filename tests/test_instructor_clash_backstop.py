@@ -277,6 +277,14 @@ class TestEveryWritePathIsWired:
             ("core.services.timetable_load_balanced", "rebalance_and_persist_board"),
             ("core.services.timetable_load_balanced", "rebalance_scenario"),
             ("core.services.timetable_workspace", "create_planned_section_placements"),
+            # Round 3 additions — both user-reachable, both previously silent.
+            # apply_bulk_safe_time_moves is the sharpest: it draws candidates from
+            # builder actions of kind "instructor_clash", so it relocates exactly
+            # the instructors most likely to hold sessions on another board, and
+            # the registrar never sees the target slot.
+            ("core.services.timetable_workspace", "apply_bulk_safe_time_moves"),
+            ("core.services.timetable_repair", "apply_approved_repair_candidate"),
+            ("core.services.timetable_repair", "apply_global_repair_plan"),
         ],
     )
     def test_writer_calls_the_backstop(self, module, func):
@@ -293,6 +301,7 @@ class TestEveryWritePathIsWired:
         [
             ("core.services.timetable_local_search", "optimize_scenario"),
             ("core.services.timetable_load_balanced", "rebalance_scenario"),
+            ("core.services.timetable_repair", "apply_global_repair_plan"),
         ],
     )
     def test_scenario_loops_do_not_scan_per_board(self, module, func):

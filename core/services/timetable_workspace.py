@@ -2638,6 +2638,15 @@ def apply_bulk_safe_time_moves(
                 }
             )
 
+    # This path re-validates with preview_placement_slot_candidates /
+    # validate_placement, both board-scoped and keyed on the free-text
+    # meeting.instructor — structurally unable to see a cross-board clash. That
+    # matters more here than on a deliberate drag: the candidates are drawn from
+    # builder actions of kind "instructor_clash", so this bulk fixer relocates
+    # precisely the instructors most likely to hold sessions on another board,
+    # and the registrar never sees the target slot.
+    from core.services.timetable_instructor_backstop import verify_persisted_scenario
+
     return {
         "scenario_id": scenario.id,
         "board_id": board_id,
@@ -2646,6 +2655,9 @@ def apply_bulk_safe_time_moves(
         "skipped_count": len(skipped),
         "applied": applied,
         "skipped": skipped[:80],
+        "instructor_clash_backstop": verify_persisted_scenario(
+            scenario.id, context="bulk_safe_time_moves"
+        ),
     }
 
 

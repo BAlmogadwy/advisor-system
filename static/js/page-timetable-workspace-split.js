@@ -7760,7 +7760,14 @@ function updateUndoRedoButtons() {
   if (r) r.disabled = S.redoStack.length === 0;
 }
 
-async function doMove(placementId, day, start, end, room) {
+// The move endpoint returns instructor_clash_backstop, but this cluster is a
+// parallel path to movePlacementToSlot and predates that flag — so undo/redo,
+// bundle replay and applyRoomCandidate all reported nothing. applyRoomCandidate
+// matters most: it passes slot.day/start/end, so it changes TIME as well as room,
+// and it is a first-time registrar action with no prior warning. Surfacing here
+// covers every caller at once. reportBackstop=false is for restore legs, which
+// put a section back where it was and already report their own failure.
+async function doMove(placementId, day, start, end, room, reportBackstop = true) {
   const payload = { day, start_time: start, end_time: end };
   if (room !== undefined) payload.room = room;
   const data = await api(`/ops/tw/placements/${placementId}/move/`, {
@@ -7768,6 +7775,7 @@ async function doMove(placementId, day, start, end, room) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
+  if (reportBackstop) notifyInstructorClashBackstop(data);
   return data;
 }
 
@@ -7782,9 +7790,9 @@ async function applyMoveList(moves, direction) {
       const rollbackDirection = direction === 'undo' ? 'redo' : 'undo';
       for (const done of applied.reverse()) {
         if (rollbackDirection === 'undo') {
-          await doMove(done.placement_id, done.old_day, done.old_start, done.old_end, done.old_room);
+          await doMove(done.placement_id, done.old_day, done.old_start, done.old_end, done.old_room, false);
         } else {
-          await doMove(done.placement_id, done.new_day, done.new_start, done.new_end, done.new_room);
+          await doMove(done.placement_id, done.new_day, done.new_start, done.new_end, done.new_room, false);
         }
       }
       return false;
