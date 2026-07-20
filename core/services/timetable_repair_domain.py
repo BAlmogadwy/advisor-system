@@ -560,11 +560,22 @@ def _build_current_evaluator_assignment_baseline(
             },
         }
 
+    # Tier map threaded so this baseline reconstructs the SAME seating the
+    # optimiser produced (seating is tier-aware under the flag); a tier-blind
+    # rerun would make the repair baseline a counterfactual board.
+    from core.services.timetable_flags import is_tiered_objective_enabled
+    from core.services.timetable_optimizer_v2 import build_course_tier_map_for_scenario
+
     evaluation = evaluate_generated_timetable_candidate(
         candidate_id="current_repair_baseline",
         generated_sections=sections,
         student_profiles=profiles,
         course_rigidity=rigidity,
+        course_tiers=(
+            build_course_tier_map_for_scenario(scenario_id)
+            if is_tiered_objective_enabled()
+            else None
+        ),
     )
     section_id_to_term_section_id = _evaluator_section_id_to_term_section_id(scenario_id)
     current_by_student_course: dict[int, dict[str, int]] = defaultdict(dict)

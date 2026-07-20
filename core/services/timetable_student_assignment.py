@@ -264,7 +264,12 @@ def repair_unresolved_assignments_shallow(
         if course_tiers:
             # Repair core first: a Tier-1 course gets first claim on the limited
             # swap budget, so it is not spent rescuing a gen-ed course instead.
-            unresolved_list.sort(key=lambda c: (_tier_rank(course_tiers, c), c))
+            # Key on the tier ALONE — Python's sort is stable, so the existing
+            # order (unresolved_courses is insertion-ordered by the scarcity key
+            # from assign_courses_for_student) is preserved *within* each tier.
+            # Adding a course-code tiebreak here would silently replace that
+            # deliberate hardest-first ordering with alphabetical.
+            unresolved_list.sort(key=lambda c: _tier_rank(course_tiers, c))
 
         for unres_course in unresolved_list:
             if unres_course in state.assigned_sections:
@@ -295,11 +300,19 @@ def repair_unresolved_assignments_shallow(
                 # only commits if the displaced course finds an alternative
                 # section (else it rolls back), so a higher-tier course never
                 # loses its seat — it merely moves. Blocking the swap would
-                # forfeit a real unresolved seat (objective position 3) to
-                # protect a section choice, which costs only gap-minutes
-                # (position 4) — a strictly worse trade. Measured on scn 642:
-                # guarding here pushed Tier-2 over-tolerance 53 -> 73 for no
-                # core gain.
+                # forfeit an unresolved seat to protect a section choice.
+                #
+                # That trade is clearly right when the course being repaired is
+                # T1 (objective position 2) or T2-over-tolerance (position 3),
+                # since both outrank the gap-minutes (position 4) the relocation
+                # costs. For a SOFT repair (T3 / T2-within-tolerance) the seat
+                # lives at position 5, *below* gap — so it is only worth it while
+                # the added gap stays under the soft-gap budget. Measured on scn
+                # 642 the swaps came in at ~116 gap-min per soft seat against a
+                # 120 budget, i.e. roughly break-even, so it is left ungated;
+                # a budget-aware gate here is a possible future refinement.
+                # Guarding it outright pushed Tier-2 over-tolerance 53 -> 73 and
+                # soft 59 -> 93 for zero core gain.
                 blocking_section_id = state.assigned_sections.get(blocking_course)
                 if not blocking_section_id:
                     continue

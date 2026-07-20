@@ -75,7 +75,20 @@ def _section_assignment_evidence(scenario_id: int) -> dict[tuple[str, str], Coun
         sections_by_id = ssa.build_sections_by_id(sections)
         sections_by_course = ssa.build_sections_by_course(sections_by_id)
         rigidity = build_course_rigidity_for_scenario(scenario_id)
-        ssa.assign_students_to_sections(profiles, sections_by_id, sections_by_course, rigidity)
+        # Thread the tier map so this reconstruction seats students the SAME way
+        # the optimiser did. Seating is tier-aware under the flag, so a
+        # tier-blind rerun here would model a board that was never built.
+        from core.services.timetable_flags import is_tiered_objective_enabled
+        from core.services.timetable_optimizer_v2 import build_course_tier_map_for_scenario
+
+        course_tiers = (
+            build_course_tier_map_for_scenario(scenario_id)
+            if is_tiered_objective_enabled()
+            else None
+        )
+        ssa.assign_students_to_sections(
+            profiles, sections_by_id, sections_by_course, rigidity, course_tiers=course_tiers
+        )
     except Exception:
         return {}
 

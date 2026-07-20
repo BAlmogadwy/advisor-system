@@ -413,8 +413,14 @@ def test_repair_never_costs_core_its_seat() -> None:
     tiers = {"CORE": "T1", "GENED": "T3"}
     states, _ = assign_students_to_sections(_evict_student(), sbi, sbc, {}, course_tiers=tiers)
     st = states["S1"]
+    # core keeps a seat...
     assert "CORE" not in st.unresolved_courses
     assert "CORE" in st.assigned_sections
+    # ...and these two assertions are what actually guard the "no eviction tier
+    # guard" decision: the swap must still fire, seating the lower tier and
+    # MOVING core to its alternative. Re-adding a tier guard breaks both.
+    assert "GENED" not in st.unresolved_courses
+    assert st.assigned_sections["CORE"] == "CORE-B"
 
 
 @override_settings(TIMETABLE_TIERED_OBJECTIVE_ENABLED=True, TIMETABLE_TIERED_SOFT_GAP_BUDGET=0)

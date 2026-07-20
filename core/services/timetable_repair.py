@@ -2038,11 +2038,22 @@ def _actual_unresolved_students_by_course(
             ]
             return {}, summary
 
+        # Tier map threaded so this baseline reconstructs the SAME seating the
+        # optimiser produced (seating is tier-aware under the flag); otherwise
+        # repair would pick targets from a board that was never built.
+        from core.services.timetable_flags import is_tiered_objective_enabled
+        from core.services.timetable_optimizer_v2 import build_course_tier_map_for_scenario
+
         evaluation = evaluate_generated_timetable_candidate(
             candidate_id="current_global_repair_scope",
             generated_sections=sections,
             student_profiles=student_profiles,
             course_rigidity=build_course_rigidity_for_scenario(scenario_id),
+            course_tiers=(
+                build_course_tier_map_for_scenario(scenario_id)
+                if is_tiered_objective_enabled()
+                else None
+            ),
         )
     except Exception as exc:
         summary["error"] = str(exc)[:500]
