@@ -2581,9 +2581,18 @@ def tw_optimise_v2_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
     # WS-E — opt-in async dispatch. When ``async_run`` is set, the slow V2
     # pipeline is queued on the planner job runner (off the request thread, so
     # gunicorn's 120s timeout can't SIGKILL it mid-run) and a 202 + job id is
-    # returned for the existing PR8 job-poll UI. Default stays SYNCHRONOUS so
-    # the current frontend contract is unchanged.
-    if payload.get("async_run"):
+    # returned for the existing PR8 job-poll UI.
+    #
+    # The flag check is NOT belt-and-braces. Every /planner-jobs/ endpoint
+    # (status, result, cancel) returns 404 when the flag is off, so accepting
+    # async_run in that state would hand the client a job_id it can never poll
+    # — while the job still runs and still PERSISTS. The client would report a
+    # failure for a run that actually mutated the board. Falling through to the
+    # sync path instead means no job_id comes back, which is exactly the signal
+    # both front-ends already treat as "async unavailable → run synchronously".
+    from core.services.planner_job_runner import is_async_planner_enabled
+
+    if payload.get("async_run") and is_async_planner_enabled():
         from core.models import PlannerJob
         from core.services.planner_job_runner import dispatch_planner_job, submit_planner_job
 

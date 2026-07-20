@@ -16,7 +16,7 @@ const T = {
   selectScenario: IS_AR ? 'اختر سيناريو' : 'Select scenario',
   selectBoard: IS_AR ? 'اختر لوحة' : 'Select a board',
   publishConfirm: IS_AR ? 'نشر هذا السيناريو؟' : 'Publish this scenario?',
-  optimiseConfirm: IS_AR ? 'تشغيل التحسين (بدون إعادة توليد)؟' : 'Run Optimise Current (no regenerate)?',
+  optimiseConfirm: IS_AR ? 'تشغيل التحسين (بدون إعادة توليد)؟ قد يستغرق عدة دقائق.' : 'Run Optimise Current (no regenerate)? This can take several minutes.',
   noScenario: IS_AR ? 'لا يوجد سيناريو' : 'No scenario selected',
   group: IS_AR ? 'مج' : 'G',
   courses: IS_AR ? 'مقررات' : 'courses',
@@ -241,27 +241,41 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
    wall-clock: we tolerate a run of consecutive poll failures, and the ceiling
    is generous (30 min) purely as a runaway backstop. The server-side job is
    the source of truth; we follow it to its terminal state. */
+/* Abandoning a poll does NOT stop the job — it keeps running and keeps
+   PERSISTING to the scenario. So whenever we give up (timeout or lost contact)
+   ask the server to cancel, otherwise the registrar sees a failure while the
+   board silently changes underneath them minutes later. Best-effort. */
+async function cancelPlannerJob(jobId) {
+  try {
+    await api(`/planner-jobs/${jobId}/cancel/`, { method: 'POST' });
+  } catch { /* best-effort */ }
+}
+
 async function pollPlannerJob(jobId, onTick, { intervalMs = 2000, maxMs = 1800000, maxConsecutiveErrors = 8 } = {}) {
   const start = Date.now();
   let consecutiveErrors = 0;
   while (Date.now() - start < maxMs) {
-    await sleep(intervalMs);
     const job = await api(`/planner-jobs/${jobId}/`);
     if (!job) {
       // Transient poll failure (server busy under a CPU-heavy solve, brief
       // blip). The job itself may be perfectly healthy — tolerate a run of
       // these before giving up.
       if (++consecutiveErrors >= maxConsecutiveErrors) {
+        await cancelPlannerJob(jobId);
         return { status: 'failed', error_message: 'lost contact with the planner job' };
       }
-      continue;
+    } else {
+      consecutiveErrors = 0;
+      onTick && onTick(job, Date.now() - start);
+      if (job.status === 'succeeded' || job.status === 'failed' || job.status === 'cancelled') {
+        return job;
+      }
     }
-    consecutiveErrors = 0;
-    onTick && onTick(job, Date.now() - start);
-    if (job.status === 'succeeded' || job.status === 'failed' || job.status === 'cancelled') {
-      return job;
-    }
+    // Sleep AFTER checking, so an already-finished job returns without paying a
+    // full interval of latency.
+    await sleep(intervalMs);
   }
+  await cancelPlannerJob(jobId);
   return { status: 'failed', error_message: 'optimisation timed out while polling' };
 }
 
@@ -7802,8 +7816,22 @@ async function applyMoveList(moves, direction) {
   return true;
 }
 
+async function apiCreateWithBackstop(url, opts) {
+  const data = await api(url, opts);
+  notifyInstructorClashBackstop(data);
+  return data;
+}
+
+// Wired at the DEFINITION, not at each call site — doCreate has two callers
+// (doUndo of a 'remove', doRedo of a 'create') and doCreatePlanned has one
+// (doRedo of a 'bundle_create'), all in the undo/redo cluster that predates the
+// notification. These are genuine writes that re-insert a placement into a board
+// that may have changed since, not rollback legs of a failed operation, so the
+// reportBackstop=false rationale does not apply. Note redo-of-a-bundle-create
+// would otherwise silently lose a warning that the identical first-time action
+// (createPlannedPlacementFromMeetings) does surface.
 async function doCreate(action) {
-  return api('/ops/tw/placements/create/', {
+  return apiCreateWithBackstop('/ops/tw/placements/create/', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       board_id: action.board_id,
@@ -7817,7 +7845,7 @@ async function doCreate(action) {
 }
 async function doCreatePlanned(action) {
   const payload = action.payload || {};
-  return api('/ops/tw/placements/create-planned/', {
+  return apiCreateWithBackstop('/ops/tw/placements/create-planned/', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       board_id: action.board_id,
@@ -7958,9 +7986,13 @@ async function doOptimise(mode = 'current') {
   let optimisation = null;
   let failMsg = null;
   try {
-    if (isFull) {
-      // A full rebuild (7 strategies + CP-SAT) can exceed the request timeout,
-      // so run it off the request thread and poll the planner job.
+    {
+      // BOTH modes run off the request thread. "Current" was assumed fast and
+      // kept synchronous; it is not — measured ~7 min on a 400-student scenario
+      // against gunicorn's `--timeout 120`. The worker is SIGKILLed first, and
+      // because optimise_current_timetable persists INSIDE the run, the kill
+      // lands after the board is written but before run_v2_optimisation_guarded
+      // can apply its regression gate — leaving a persisted, ungated board.
       const sub = await api(url, postOpts({ ...payload, async_run: true }));
       if (sub && sub.job_id) {
         const job = await pollPlannerJob(sub.job_id, (j, elapsedMs) => {
@@ -7980,19 +8012,29 @@ async function doOptimise(mode = 'current') {
           failMsg = (IS_AR ? 'فشل التحسين: ' : 'Optimisation failed: ') + (job.error_message || '');
         }
       } else {
-        // Async unavailable (e.g. async planner flag off → 404 → null);
-        // fall back to a synchronous rebuild.
+        // No job_id means the server declined async (PR7 flag off) and expects
+        // a synchronous run. The backend gates async_run on that same flag so
+        // this signal is truthful — it never hands back an unpollable job id.
         const data = await api(url, postOpts(payload));
         optimisation = data && data.optimisation;
       }
-    } else {
-      // Current mode is fast — keep it synchronous.
-      const data = await api(url, postOpts(payload));
-      optimisation = data && data.optimisation;
     }
   } finally {
     btn.disabled = false; menuBtn && (menuBtn.disabled = false);
     btn.textContent = origText;
+
+    // Refresh unconditionally, not only on success. An optimise persists BEFORE
+    // its regression gate decides whether to keep the result, so a failed or
+    // rolled-back run can still have rewritten placement rows — and a rollback
+    // restores different primary keys than the ones now in the panes. A stale
+    // grid means the next drag targets a placement id that no longer exists.
+    // The undo/redo stacks hold those same dead ids, so they are cleared too.
+    if (S.scenarioId === scenarioAtStart) {
+      S.undoStack = [];
+      S.redoStack = [];
+      updateUndoRedoButtons();
+      try { await onScenarioChange(); } catch (_) { /* best-effort */ }
+    }
   }
 
   if (!optimisation) {
@@ -8002,7 +8044,6 @@ async function doOptimise(mode = 'current') {
   // The registrar may have switched scenarios while a long run polled.
   if (S.scenarioId !== scenarioAtStart) return;
   showOptimiseResults(optimisation, mode);
-  await onScenarioChange();
 }
 
 function showOptimiseResults(o, mode) {
