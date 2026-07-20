@@ -906,10 +906,12 @@ def apply_global_repair_plan(
                     status=409,
                 )
             for item in items:
+                # One scenario-wide scan after the whole plan, not per candidate.
                 apply_approved_repair_candidate(
                     item.repair_run_id,
                     item.candidate.candidate_id,
                     decided_by=decided_by,
+                    verify_instructor_clashes=False,
                 )
                 item.status = TimetableRepairGlobalPlanItem.STATUS_APPLIED
                 item.notes = "Applied through global repair plan."
@@ -919,9 +921,15 @@ def apply_global_repair_plan(
             plan.applied_at = timezone.now()
             plan.summary_json = _global_plan_summary(plan=plan)
             plan.save(update_fields=["status", "decided_by", "applied_at", "summary_json"])
+            _scenario_id = plan.scenario_id
     except TimetableRepairOperationError:
         _mark_global_plan_failed(plan_id)
         raise
+
+    from core.services.timetable_instructor_backstop import verify_persisted_scenario
+
+    verify_persisted_scenario(_scenario_id, context="repair_global_plan_apply")
+
     return global_repair_plan_detail(plan_id)
 
 
@@ -3137,8 +3145,21 @@ def apply_approved_repair_candidate(
     candidate_identifier: int | str,
     *,
     decided_by=None,
+    verify_instructor_clashes: bool = True,
 ) -> dict[str, Any]:
-    """Apply one approved repair candidate in a guarded transaction."""
+    """Apply one approved repair candidate in a guarded transaction.
+
+    **Instructor-clash backstop.** Feasibility here is re-checked at apply time
+    against live DB state (``_validate_candidate_write_preconditions`` →
+    ``_hard_feasibility_rejections_for_move_set``), so the check is fresh — but it
+    runs through ``validate_placement``, which loads one board and whose
+    cross-board pass filters on ``room_key`` and appends only to
+    ``room_clashes``. A cross-board instructor double-booking is therefore
+    undetectable here no matter how fresh the validation is, and that is the class
+    PR #44 established as the one occurring in practice. Same-board clashes ARE
+    caught by name. ``apply_global_repair_plan`` passes False and scans once after
+    its loop rather than per candidate.
+    """
 
     with transaction.atomic():
         run = (
@@ -3253,6 +3274,13 @@ def apply_approved_repair_candidate(
             summary["application"],
             candidate=candidate,
         )
+        _scenario_id = run.scenario_id
+
+    if verify_instructor_clashes:
+        from core.services.timetable_instructor_backstop import verify_persisted_scenario
+
+        verify_persisted_scenario(_scenario_id, context="repair_candidate_apply")
+
     return repair_run_detail(run_id)
 
 

@@ -88,11 +88,25 @@ const _sleep = ms => new Promise(r => setTimeout(r, ms));
 /* Poll an async planner job until it reaches a terminal status. Uses a raw
    fetch (not twFetch) so transient poll blips don't spam error toasts during a
    long solve. Calls onTick(job, elapsedMs) each poll for progress UI. */
+/* Abandoning a poll does NOT stop the job — it keeps running and keeps
+   PERSISTING to the scenario. So whenever we give up (timeout or lost contact)
+   we ask the server to cancel, otherwise the registrar sees a failure while the
+   board silently changes underneath them minutes later. Best-effort: if the
+   cancel itself fails there is nothing further we can do from here. */
+async function cancelPlannerJob(jobId) {
+  try {
+    await fetch(`/planner-jobs/${jobId}/cancel/`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'X-CSRFToken': CSRF },
+    });
+  } catch { /* best-effort */ }
+}
+
 async function pollPlannerJob(jobId, onTick, { intervalMs = 2000, maxMs = 1800000, maxConsecutiveErrors = 8 } = {}) {
   const start = Date.now();
   let consecutiveErrors = 0;
   while (Date.now() - start < maxMs) {
-    await _sleep(intervalMs);
     let job = null;
     try {
       const r = await fetch(`/planner-jobs/${jobId}/`, { credentials: 'same-origin' });
@@ -100,49 +114,67 @@ async function pollPlannerJob(jobId, onTick, { intervalMs = 2000, maxMs = 180000
     } catch { /* transient — tolerate below */ }
     if (!job) {
       if (++consecutiveErrors >= maxConsecutiveErrors) {
+        await cancelPlannerJob(jobId);
         return { status: 'failed', error_message: 'lost contact with the planner job' };
       }
-      continue;
+    } else {
+      consecutiveErrors = 0;
+      onTick && onTick(job, Date.now() - start);
+      if (job.status === 'succeeded' || job.status === 'failed' || job.status === 'cancelled') {
+        return job;
+      }
     }
-    consecutiveErrors = 0;
-    onTick && onTick(job, Date.now() - start);
-    if (job.status === 'succeeded' || job.status === 'failed' || job.status === 'cancelled') {
-      return job;
-    }
+    // Sleep AFTER checking, so a job that is already finished (the sync-dispatch
+    // path under tests, or a fast "current" run) returns without paying a full
+    // interval of latency.
+    await _sleep(intervalMs);
   }
+  await cancelPlannerJob(jobId);
   return { status: 'failed', error_message: 'optimisation timed out while polling' };
 }
 
-/* Single optimise request, standardised on the SPLIT workspace's behaviour: a
-   full rebuild (7 strategies + CP-SAT + compaction) can far exceed the request
-   timeout, so it runs off the request thread as a planner job and we poll it;
-   "current" stays synchronous. Returns the same {ok, optimisation} envelope the
-   sync path returns, so the results dialog below is identical for both. */
+/* Single optimise request. BOTH modes run off the request thread as a planner
+   job and are polled.
+
+   "current" used to run synchronously on the assumption it was fast. It is not:
+   measured at ~7 minutes on a 400-student scenario, against gunicorn's
+   `--timeout 120`. The worker is SIGKILLed long before it returns — and because
+   optimise_current_timetable persists INSIDE the run, the kill lands after the
+   board is written but before run_v2_optimisation_guarded can evaluate its
+   regression gate and roll back. So the sync path could leave a persisted,
+   ungated board with the registrar seeing only a dead request. This is the main
+   Optimise button, so that was the most-used path in the workspace.
+
+   Returns the same {ok, optimisation} envelope the sync path returns, so the
+   results dialog is identical either way. */
 async function runOptimiseRequest(mode, payload, btn, modeLabel) {
   const url = `/ops/tw/scenarios/${TW.scenarioId}/optimise-v2/`;
   const post = b => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
-  if (mode === 'full') {
-    const sub = await twFetch(url, post({ ...payload, async_run: true }));
-    if (sub && sub.job_id) {
-      const job = await pollPlannerJob(sub.job_id, (j, ms) => {
-        const secs = Math.round((ms || 0) / 1000);
-        const detail = j.last_stage_seen ? ` (${j.last_stage_seen})` : (secs ? ` (${secs}s)` : '');
-        btn.innerHTML = `&#x23F3; ${modeLabel}${detail}`;
-      });
-      if (job.status === 'succeeded') {
-        const res = await twFetch(`/planner-jobs/${sub.job_id}/result/`);
-        return (res && res.result)
-          ? { ok: true, optimisation: res.result }
-          : { ok: false, error: { code: 'NO_RESULT', message: 'job finished but result was missing' } };
-      }
-      const code = job.status === 'cancelled' ? 'CANCELLED' : 'FAILED';
-      return { ok: false, error: { code, message: job.error_message || job.status } };
+  const sub = await twFetch(url, post({ ...payload, async_run: true }));
+  if (sub === null) return null;  // HTTP error — twFetch already toasted
+  if (sub.job_id) {
+    const job = await pollPlannerJob(sub.job_id, (j, ms) => {
+      const secs = Math.round((ms || 0) / 1000);
+      const detail = j.last_stage_seen ? ` (${j.last_stage_seen})` : (secs ? ` (${secs}s)` : '');
+      btn.innerHTML = `&#x23F3; ${modeLabel}${detail}`;
+    });
+    if (job.status === 'succeeded') {
+      const res = await twFetch(`/planner-jobs/${sub.job_id}/result/`);
+      return (res && res.result)
+        ? { ok: true, optimisation: res.result }
+        : { ok: false, error: { code: 'NO_RESULT', message: 'job finished but result was missing' } };
     }
-    if (sub === null) return null;  // HTTP error — twFetch already toasted
-    // Async unavailable (no job_id, e.g. async planner flag off) → sync fallback.
-    return await twFetch(url, post(payload));
+    const code = job.status === 'cancelled' ? 'CANCELLED' : 'FAILED';
+    return { ok: false, error: { code, message: job.error_message || job.status } };
   }
-  return await twFetch(url, post(payload));
+  // No job_id: the PR7 flag is off, so the view IGNORED async_run and ran the
+  // pipeline synchronously in THIS request — `sub` already is the completed
+  // {ok, optimisation} envelope. Re-POSTing here (as an earlier cut did) would
+  // run the whole ~7-minute optimisation a SECOND time and discard the first
+  // result, in precisely the state settings.py documents as the runtime revert
+  // lever. The server does the work either way; the only question is whether we
+  // throw it away.
+  return sub;
 }
 
 /* ── Init ── */
@@ -1205,6 +1237,19 @@ function onDragLeave(e) {
   e.currentTarget.classList.remove('drop-valid', 'drop-warning', 'drop-critical');
 }
 
+// See page-timetable-workspace-split.js for the rationale: `validation` is
+// board-scoped and free-text-instructor keyed, so a cross-board instructor
+// double-booking is invisible to it. Scoped to the section just touched.
+function notifyInstructorClashBackstop(data) {
+  const b = (data && data.instructor_clash_backstop) || {};
+  if (!b.checked) return;
+  const rows = b.involving_this_section || [];
+  if (!rows.length) return;
+  notify.warning(IS_AR
+    ? `تعارض للمحاضر: ${rows.length} حصة متداخلة عبر اللوحات`
+    : `Instructor double-booked — ${rows.length} overlapping session(s) across boards`);
+}
+
 async function onDrop(e) {
   e.preventDefault();
   const cell = e.currentTarget;
@@ -1244,6 +1289,7 @@ async function onDrop(e) {
     } else {
       notify.success(IS_AR ? 'تم الوضع' : 'Placed');
     }
+    notifyInstructorClashBackstop(data);
   } else if (payload.type === 'create') {
     const data = await twFetch('/ops/tw/placements/create/', {
       method: 'POST',
@@ -1268,6 +1314,7 @@ async function onDrop(e) {
     } else {
       notify.success(IS_AR ? 'تم الوضع' : 'Placed');
     }
+    notifyInstructorClashBackstop(data);
   } else if (payload.type === 'move') {
     // Find old position before move
     const oldP = TW.placements.find(x => x.id === payload.placement_id);
@@ -1291,6 +1338,7 @@ async function onDrop(e) {
     } else {
       notify.success(IS_AR ? 'تم النقل' : 'Moved');
     }
+    notifyInstructorClashBackstop(data);
   }
 
   // Refresh board
@@ -2085,6 +2133,11 @@ $('twMapElectives').addEventListener('click', async () => {
 async function runOptimiseV2(mode = 'current') {
   if (!TW.scenarioId) { notify.error(IS_AR ? 'اختر سيناريو' : 'No scenario selected'); return; }
 
+  // Both modes now poll for minutes, during which the registrar can switch
+  // scenario. Capture the target up front and refuse to apply results to a
+  // different one — the results dialog and refresh below both read TW.scenarioId,
+  // so without this they would describe scenario A while showing scenario B.
+  const scenarioAtStart = TW.scenarioId;
   const btn = $('twOptimise');
   const menuBtn = $('twOptimiseMenu');
   btn.disabled = true;
@@ -2106,6 +2159,13 @@ async function runOptimiseV2(mode = 'current') {
 
   try {
     const data = await runOptimiseRequest(mode, payload, btn, modeLabel);
+
+    if (TW.scenarioId !== scenarioAtStart) {
+      notify.warning(IS_AR
+        ? 'تغيّر السيناريو أثناء التحسين؛ لم يتم عرض النتائج.'
+        : 'Scenario changed while optimising — results not applied to the current view.');
+      return;
+    }
 
     if (!data || !data.ok) {
       // Surface the real error code + message from the backend envelope
@@ -2323,11 +2383,8 @@ async function runOptimiseV2(mode = 'current') {
       kind: 'info',
     });
 
-    // Refresh the workspace grid to show the improved timetable
-    await onScenarioChange();
-    // Ensure command bar stays visible after refresh
-    $('twCmdBar').style.display = 'flex';
-
+    // The grid refresh now happens in `finally` so it also covers the failure
+    // and rollback paths, which mutate placement ids just the same.
     const modeMsg = mode === 'full'
       ? `Rebuilt: ${o.best_candidate_id.replace(/_\d+$/, '')} won`
       : 'Optimised current board';
@@ -2336,9 +2393,33 @@ async function runOptimiseV2(mode = 'current') {
   } catch (e) {
     notify.error(e.message || String(e));
   } finally {
+    btn.innerHTML = origHtml;
+
+    // Refresh unconditionally, not just on the success path. An optimise run
+    // persists BEFORE its regression gate decides whether to keep the result, so
+    // a failed or rolled-back run can still have changed placement rows — and a
+    // rollback restores different primary keys than the ones now in the DOM.
+    // Leaving the stale grid up means the next drag targets a placement id that
+    // no longer exists. The undo/redo stacks hold those same dead ids, so they
+    // are cleared too: an undo across an optimise boundary was never coherent.
+    if (TW.scenarioId === scenarioAtStart) {
+      TW.undoStack = [];
+      TW.redoStack = [];
+      updateUndoRedoButtons();
+      try {
+        await onScenarioChange();
+        $('twCmdBar').style.display = 'flex';
+      } catch (_) { /* refresh is best-effort */ }
+    }
+
+    // Re-enable LAST. onScenarioChange is several seconds of board / conflict /
+    // capacity / budget loads on a large scenario; re-enabling before it settles
+    // hands the registrar a live button over a half-loaded grid, and one more
+    // click dispatches a second ~7-minute run. Previously the refresh sat inside
+    // `try` with the button still disabled, so moving it here reopened that
+    // window — this closes it again.
     btn.disabled = false;
     menuBtn.disabled = false;
-    btn.innerHTML = origHtml;
   }
 }
 

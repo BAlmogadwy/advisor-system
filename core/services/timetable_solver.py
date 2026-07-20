@@ -587,6 +587,14 @@ def persist_solver_result(board_id: int, result: dict) -> dict:
     that has ``placements`` in the standard solver format.
 
     Returns the result dict unchanged (pass-through for chaining).
+
+    The instructor-clash backstop lives HERE rather than in
+    ``solve_and_persist_board`` because this function is the actual writer, and
+    ``timetable_autoplace`` calls it directly — wiring only the wrapper would
+    leave the primary build path unguarded. The CP-SAT model above constrains
+    rooms and student overlap but has no instructor variable, so it can seat one
+    instructor in two places at once; the backstop cannot prevent that (the model
+    would have to change) but it ensures such a board is never written silently.
     """
     if result["status"] in ("infeasible", "timeout", "error"):
         return result
@@ -595,6 +603,8 @@ def persist_solver_result(board_id: int, result: dict) -> dict:
         board = DeliveryBoard.objects.select_related("scenario").get(id=board_id)
     except DeliveryBoard.DoesNotExist:
         return result
+
+    from core.services.timetable_instructor_backstop import verify_persisted_scenario
 
     # Clear existing auto-placed sections AND their meetings. When lock
     # enforcement is on, locked rows are preserved (never deleted/recreated)
@@ -665,11 +675,20 @@ def persist_solver_result(board_id: int, result: dict) -> dict:
         # goes blank.
         apply_primary_instructor(ts, scenario, board, display_code)
 
+    result["instructor_clash_backstop"] = verify_persisted_scenario(
+        board.scenario_id, context="board_cpsat_solver"
+    )
+
     return result
 
 
 def solve_and_persist_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
-    """Solve and persist placements, then assign rooms."""
+    """Solve and persist placements, then assign rooms.
+
+    The instructor-clash backstop runs inside ``persist_solver_result`` (the
+    writer), so it covers this wrapper and the direct callers in
+    ``timetable_autoplace`` alike.
+    """
     result = solve_board(board_id, time_limit_seconds)
     persist_solver_result(board_id, result)
     from core.services.timetable_rooming import assign_rooms_to_board

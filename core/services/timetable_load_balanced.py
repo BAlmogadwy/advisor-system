@@ -403,8 +403,19 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
     }
 
 
-def rebalance_and_persist_board(board_id: int, max_seconds: float = 8.0) -> dict:
-    """Rebalance and persist to database."""
+def rebalance_and_persist_board(
+    board_id: int,
+    max_seconds: float = 8.0,
+    verify_instructor_clashes: bool = True,
+) -> dict:
+    """Rebalance and persist to database.
+
+    The instructor-clash backstop is a whole-SCENARIO scan, so
+    ``rebalance_scenario`` — which loops every board — passes
+    ``verify_instructor_clashes=False`` and runs it once at the end instead of
+    once per board. Otherwise a per-board operation would do O(boards x scenario)
+    work to re-derive a number that only settles after the last board is written.
+    """
     result = rebalance_board(board_id, max_seconds=max_seconds)
     if result["status"] != "optimized":
         return result
@@ -416,6 +427,11 @@ def rebalance_and_persist_board(board_id: int, max_seconds: float = 8.0) -> dict
         board = DeliveryBoard.objects.get(id=board_id)
     except DeliveryBoard.DoesNotExist:
         return result
+
+    # The rebalancer models rooms and student overlap but carries no instructor
+    # constraint, so it can move a section onto a slot where its instructor is
+    # already teaching.
+    from core.services.timetable_instructor_backstop import verify_persisted_scenario
 
     # Delete and recreate. When lock enforcement is on, locked sections are
     # preserved untouched (never deleted, never re-persisted) so a registrar
@@ -475,6 +491,11 @@ def rebalance_and_persist_board(board_id: int, max_seconds: float = 8.0) -> dict
 
     assign_rooms_to_board(board_id, respect_locked=locks_on)
 
+    if verify_instructor_clashes:
+        result["instructor_clash_backstop"] = verify_persisted_scenario(
+            board.scenario_id, context="load_balanced_rebalance"
+        )
+
     return result
 
 
@@ -483,6 +504,19 @@ def rebalance_scenario(scenario_id: int, max_seconds_per_board: float = 5.0) -> 
     boards = DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order")
     results = {}
     for board in boards:
-        r = rebalance_and_persist_board(board.id, max_seconds=max_seconds_per_board)
+        r = rebalance_and_persist_board(
+            board.id,
+            max_seconds=max_seconds_per_board,
+            verify_instructor_clashes=False,
+        )
         results[board.label] = r
-    return {"boards": results}
+
+    from core.services.timetable_instructor_backstop import verify_persisted_scenario
+
+    return {
+        "boards": results,
+        # One scan over the finished scenario rather than one per board.
+        "instructor_clash_backstop": verify_persisted_scenario(
+            scenario_id, context="load_balanced_rebalance_scenario"
+        ),
+    }

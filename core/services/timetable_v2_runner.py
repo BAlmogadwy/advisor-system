@@ -106,6 +106,11 @@ def optimiser_safety_regression(
         ("same_board_overlaps", "Same-board time overlaps"),
         ("same_board_instructors", "Same-board instructor clashes"),
         ("same_board_rooms", "Same-board room clashes"),
+        # Scenario-wide, so it also catches an instructor double-booked ACROSS
+        # boards — which the same_board_* row above cannot see (it is summed per
+        # board). Instructor clash is a hard rule, so introducing one vetoes the
+        # run even when student outcomes improved.
+        ("instructor_clashes_scenario", "Instructor double-bookings (all boards)"),
     ]
     regressions = []
     for metric, label in checks:

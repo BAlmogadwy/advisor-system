@@ -16,7 +16,7 @@ const T = {
   selectScenario: IS_AR ? 'اختر سيناريو' : 'Select scenario',
   selectBoard: IS_AR ? 'اختر لوحة' : 'Select a board',
   publishConfirm: IS_AR ? 'نشر هذا السيناريو؟' : 'Publish this scenario?',
-  optimiseConfirm: IS_AR ? 'تشغيل التحسين (بدون إعادة توليد)؟' : 'Run Optimise Current (no regenerate)?',
+  optimiseConfirm: IS_AR ? 'تشغيل التحسين (بدون إعادة توليد)؟ قد يستغرق عدة دقائق.' : 'Run Optimise Current (no regenerate)? This can take several minutes.',
   noScenario: IS_AR ? 'لا يوجد سيناريو' : 'No scenario selected',
   group: IS_AR ? 'مج' : 'G',
   courses: IS_AR ? 'مقررات' : 'courses',
@@ -241,27 +241,41 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
    wall-clock: we tolerate a run of consecutive poll failures, and the ceiling
    is generous (30 min) purely as a runaway backstop. The server-side job is
    the source of truth; we follow it to its terminal state. */
+/* Abandoning a poll does NOT stop the job — it keeps running and keeps
+   PERSISTING to the scenario. So whenever we give up (timeout or lost contact)
+   ask the server to cancel, otherwise the registrar sees a failure while the
+   board silently changes underneath them minutes later. Best-effort. */
+async function cancelPlannerJob(jobId) {
+  try {
+    await api(`/planner-jobs/${jobId}/cancel/`, { method: 'POST' });
+  } catch { /* best-effort */ }
+}
+
 async function pollPlannerJob(jobId, onTick, { intervalMs = 2000, maxMs = 1800000, maxConsecutiveErrors = 8 } = {}) {
   const start = Date.now();
   let consecutiveErrors = 0;
   while (Date.now() - start < maxMs) {
-    await sleep(intervalMs);
     const job = await api(`/planner-jobs/${jobId}/`);
     if (!job) {
       // Transient poll failure (server busy under a CPU-heavy solve, brief
       // blip). The job itself may be perfectly healthy — tolerate a run of
       // these before giving up.
       if (++consecutiveErrors >= maxConsecutiveErrors) {
+        await cancelPlannerJob(jobId);
         return { status: 'failed', error_message: 'lost contact with the planner job' };
       }
-      continue;
+    } else {
+      consecutiveErrors = 0;
+      onTick && onTick(job, Date.now() - start);
+      if (job.status === 'succeeded' || job.status === 'failed' || job.status === 'cancelled') {
+        return job;
+      }
     }
-    consecutiveErrors = 0;
-    onTick && onTick(job, Date.now() - start);
-    if (job.status === 'succeeded' || job.status === 'failed' || job.status === 'cancelled') {
-      return job;
-    }
+    // Sleep AFTER checking, so an already-finished job returns without paying a
+    // full interval of latency.
+    await sleep(intervalMs);
   }
+  await cancelPlannerJob(jobId);
   return { status: 'failed', error_message: 'optimisation timed out while polling' };
 }
 
@@ -2799,6 +2813,23 @@ function findPlacement(placementId) {
   return null;
 }
 
+// The `validation` block above is BOARD-scoped and keyed on the free-text
+// instructor name, so it cannot see an instructor double-booked across two
+// boards — and instructors routinely span boards. The backend's scenario-wide
+// backstop reports that class of clash; without this the registrar would place a
+// section on top of its own instructor and be told "Moved" with no conflict.
+// Scoped to the section just touched, so an unrelated legacy clash elsewhere in
+// the scenario does not warn on every drag.
+function notifyInstructorClashBackstop(data) {
+  const b = (data && data.instructor_clash_backstop) || {};
+  if (!b.checked) return;
+  const rows = b.involving_this_section || [];
+  if (!rows.length) return;
+  notify.warning(IS_AR
+    ? `تعارض للمحاضر: ${rows.length} حصة متداخلة عبر اللوحات`
+    : `Instructor double-booked — ${rows.length} overlapping session(s) across boards`);
+}
+
 async function movePlacementToSlot({
   placementId,
   targetPaneIdx,
@@ -2813,6 +2844,10 @@ async function movePlacementToSlot({
   notifyResult = true,
   recordUndo = true,
   force = false,
+  // Separate from notifyResult: a hard-rule violation must survive the
+  // suppression applied to routine success toasts. Only a rollback leg sets
+  // this false, since it restores the prior position and already reports an error.
+  reportBackstop = true,
 }) {
   const located = findPlacement(placementId);
   if (!located) { notify.error(IS_AR ? 'تعذر تحديد الموقع' : 'Source placement not found'); return null; }
@@ -2859,6 +2894,14 @@ async function movePlacementToSlot({
       notify.success(T.moveOk);
     }
   }
+  // OUTSIDE the notifyResult gate on purpose. That gate suppresses the routine
+  // success toast for bundled legs (notifyResult is `!auto && !pair`, so in a
+  // pair NEITHER leg reports) and for every automated/bulk move. A hard-rule
+  // violation is not a routine result — and there is no secondary surface for
+  // it, since the split workspace never renders instructor_clashes_scenario. If
+  // this were gated, a bundled move that double-books an instructor would reach
+  // the registrar completely silently.
+  if (reportBackstop) notifyInstructorClashBackstop(data);
 
   if (clearAssist) clearSlotAssist();
   const sourceIdx = Number.isFinite(sourcePaneIdx) ? sourcePaneIdx : located.paneIdx;
@@ -2957,6 +3000,7 @@ async function applyCandidateMove({ placementId, targetPaneIdx, sourcePaneIdx, c
         notifyResult: false,
         recordUndo: false,
         force: true,
+        reportBackstop: false,
       });
       notify.error(IS_AR ? 'تعذر نقل الحزمة؛ تمت استعادة الشعبة الأولى.' : 'Bundle move failed; first section was restored.');
       return null;
@@ -3158,6 +3202,7 @@ async function createPlannedPlacementFromMeetings(boardId, payload, meetings) {
     const count = Array.isArray(data.placements) ? data.placements.length : 1;
     notify.success(count > 1 ? `Placed full ${count}-meeting pattern` : (IS_AR ? 'Placed' : 'Placed'));
   }
+  notifyInstructorClashBackstop(data);
   return data;
 }
 
@@ -7729,7 +7774,14 @@ function updateUndoRedoButtons() {
   if (r) r.disabled = S.redoStack.length === 0;
 }
 
-async function doMove(placementId, day, start, end, room) {
+// The move endpoint returns instructor_clash_backstop, but this cluster is a
+// parallel path to movePlacementToSlot and predates that flag — so undo/redo,
+// bundle replay and applyRoomCandidate all reported nothing. applyRoomCandidate
+// matters most: it passes slot.day/start/end, so it changes TIME as well as room,
+// and it is a first-time registrar action with no prior warning. Surfacing here
+// covers every caller at once. reportBackstop=false is for restore legs, which
+// put a section back where it was and already report their own failure.
+async function doMove(placementId, day, start, end, room, reportBackstop = true) {
   const payload = { day, start_time: start, end_time: end };
   if (room !== undefined) payload.room = room;
   const data = await api(`/ops/tw/placements/${placementId}/move/`, {
@@ -7737,6 +7789,7 @@ async function doMove(placementId, day, start, end, room) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
+  if (reportBackstop) notifyInstructorClashBackstop(data);
   return data;
 }
 
@@ -7751,9 +7804,9 @@ async function applyMoveList(moves, direction) {
       const rollbackDirection = direction === 'undo' ? 'redo' : 'undo';
       for (const done of applied.reverse()) {
         if (rollbackDirection === 'undo') {
-          await doMove(done.placement_id, done.old_day, done.old_start, done.old_end, done.old_room);
+          await doMove(done.placement_id, done.old_day, done.old_start, done.old_end, done.old_room, false);
         } else {
-          await doMove(done.placement_id, done.new_day, done.new_start, done.new_end, done.new_room);
+          await doMove(done.placement_id, done.new_day, done.new_start, done.new_end, done.new_room, false);
         }
       }
       return false;
@@ -7763,8 +7816,22 @@ async function applyMoveList(moves, direction) {
   return true;
 }
 
+async function apiCreateWithBackstop(url, opts) {
+  const data = await api(url, opts);
+  notifyInstructorClashBackstop(data);
+  return data;
+}
+
+// Wired at the DEFINITION, not at each call site — doCreate has two callers
+// (doUndo of a 'remove', doRedo of a 'create') and doCreatePlanned has one
+// (doRedo of a 'bundle_create'), all in the undo/redo cluster that predates the
+// notification. These are genuine writes that re-insert a placement into a board
+// that may have changed since, not rollback legs of a failed operation, so the
+// reportBackstop=false rationale does not apply. Note redo-of-a-bundle-create
+// would otherwise silently lose a warning that the identical first-time action
+// (createPlannedPlacementFromMeetings) does surface.
 async function doCreate(action) {
-  return api('/ops/tw/placements/create/', {
+  return apiCreateWithBackstop('/ops/tw/placements/create/', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       board_id: action.board_id,
@@ -7778,7 +7845,7 @@ async function doCreate(action) {
 }
 async function doCreatePlanned(action) {
   const payload = action.payload || {};
-  return api('/ops/tw/placements/create-planned/', {
+  return apiCreateWithBackstop('/ops/tw/placements/create-planned/', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       board_id: action.board_id,
@@ -7919,9 +7986,13 @@ async function doOptimise(mode = 'current') {
   let optimisation = null;
   let failMsg = null;
   try {
-    if (isFull) {
-      // A full rebuild (7 strategies + CP-SAT) can exceed the request timeout,
-      // so run it off the request thread and poll the planner job.
+    {
+      // BOTH modes run off the request thread. "Current" was assumed fast and
+      // kept synchronous; it is not — measured ~7 min on a 400-student scenario
+      // against gunicorn's `--timeout 120`. The worker is SIGKILLed first, and
+      // because optimise_current_timetable persists INSIDE the run, the kill
+      // lands after the board is written but before run_v2_optimisation_guarded
+      // can apply its regression gate — leaving a persisted, ungated board.
       const sub = await api(url, postOpts({ ...payload, async_run: true }));
       if (sub && sub.job_id) {
         const job = await pollPlannerJob(sub.job_id, (j, elapsedMs) => {
@@ -7940,20 +8011,37 @@ async function doOptimise(mode = 'current') {
         } else {
           failMsg = (IS_AR ? 'فشل التحسين: ' : 'Optimisation failed: ') + (job.error_message || '');
         }
-      } else {
-        // Async unavailable (e.g. async planner flag off → 404 → null);
-        // fall back to a synchronous rebuild.
-        const data = await api(url, postOpts(payload));
-        optimisation = data && data.optimisation;
+      } else if (sub && sub.optimisation) {
+        // No job_id: the PR7 flag is off, so the view IGNORED async_run and ran
+        // the pipeline synchronously in THIS request — `sub` already carries the
+        // result. Re-POSTing (as an earlier cut did) would run the whole
+        // optimisation a SECOND time and discard the first. That old else-branch
+        // also swallowed the HTTP-error case, where `sub` is null, and re-issued
+        // the request after one had already been killed; falling through to
+        // failMsg below is the correct handling for that.
+        optimisation = sub.optimisation;
       }
-    } else {
-      // Current mode is fast — keep it synchronous.
-      const data = await api(url, postOpts(payload));
-      optimisation = data && data.optimisation;
     }
   } finally {
-    btn.disabled = false; menuBtn && (menuBtn.disabled = false);
     btn.textContent = origText;
+
+    // Refresh unconditionally, not only on success. An optimise persists BEFORE
+    // its regression gate decides whether to keep the result, so a failed or
+    // rolled-back run can still have rewritten placement rows — and a rollback
+    // restores different primary keys than the ones now in the panes. A stale
+    // grid means the next drag targets a placement id that no longer exists.
+    // The undo/redo stacks hold those same dead ids, so they are cleared too.
+    if (S.scenarioId === scenarioAtStart) {
+      S.undoStack = [];
+      S.redoStack = [];
+      updateUndoRedoButtons();
+      try { await onScenarioChange(); } catch (_) { /* best-effort */ }
+    }
+
+    // Re-enable LAST, after the panes have settled. This ordering predates the
+    // async change here, but "current" now runs for minutes, which makes a
+    // second click on a half-loaded grid far more likely than it was.
+    btn.disabled = false; menuBtn && (menuBtn.disabled = false);
   }
 
   if (!optimisation) {
@@ -7963,7 +8051,6 @@ async function doOptimise(mode = 'current') {
   // The registrar may have switched scenarios while a long run polled.
   if (S.scenarioId !== scenarioAtStart) return;
   showOptimiseResults(optimisation, mode);
-  await onScenarioChange();
 }
 
 function showOptimiseResults(o, mode) {

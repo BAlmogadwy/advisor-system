@@ -1607,6 +1607,15 @@ def create_planned_section_placements(
     if required_meetings <= 1 and len(meeting_rows) != 1:
         raise ValueError(f"{code} only needs one planned meeting target.")
 
+    # Same shape as the drag-drop path: validate_placement below is board-scoped
+    # and free-text-instructor keyed, so it cannot see a cross-board instructor
+    # clash. The scenario-wide backstop after the write covers what it misses.
+    from core.services.timetable_instructor_backstop import (
+        clashes_involving,
+        section_id_for,
+        verify_persisted_scenario,
+    )
+
     with transaction.atomic():
         term_section, _created = TermSection.objects.get_or_create(
             scenario=board.scenario,
@@ -1652,11 +1661,19 @@ def create_planned_section_placements(
                 )
             )
 
+    # Populate involving_this_section HERE rather than at the view, so every
+    # caller gets the actionable field without re-deriving the section_id
+    # convention (the two drag-drop views each do it themselves; this is the
+    # form to copy).
+    backstop = verify_persisted_scenario(board.scenario_id, context="planned_section_create")
+    backstop["involving_this_section"] = clashes_involving(backstop, section_id_for(term_section))
+
     return {
         "board": board,
         "term_section": term_section,
         "placements": placements,
         "validations": validations,
+        "instructor_clash_backstop": backstop,
         "required_meetings": required_meetings,
     }
 
@@ -2621,6 +2638,15 @@ def apply_bulk_safe_time_moves(
                 }
             )
 
+    # This path re-validates with preview_placement_slot_candidates /
+    # validate_placement, both board-scoped and keyed on the free-text
+    # meeting.instructor — structurally unable to see a cross-board clash. That
+    # matters more here than on a deliberate drag: the candidates are drawn from
+    # builder actions of kind "instructor_clash", so this bulk fixer relocates
+    # precisely the instructors most likely to hold sessions on another board,
+    # and the registrar never sees the target slot.
+    from core.services.timetable_instructor_backstop import verify_persisted_scenario
+
     return {
         "scenario_id": scenario.id,
         "board_id": board_id,
@@ -2629,6 +2655,9 @@ def apply_bulk_safe_time_moves(
         "skipped_count": len(skipped),
         "applied": applied,
         "skipped": skipped[:80],
+        "instructor_clash_backstop": verify_persisted_scenario(
+            scenario.id, context="bulk_safe_time_moves"
+        ),
     }
 
 
@@ -3102,6 +3131,21 @@ def compute_scenario_safety_summary(
 ) -> dict:
     """Return the backend truth contract used by the split workspace UI."""
 
+    def _scenario_instructor_clash_count(sid: int) -> int:
+        import logging
+
+        from core.services.timetable_instructor_backstop import (
+            scenario_instructor_clash_count,
+        )
+
+        try:
+            return scenario_instructor_clash_count(sid)
+        except Exception:  # pragma: no cover - never break the summary
+            logging.getLogger(__name__).exception(
+                "Scenario instructor clash count failed for scenario %s", sid
+            )
+            return 0
+
     if boards is None:
         boards = list(
             DeliveryBoard.objects.filter(scenario_id=scenario_id).order_by("display_order")
@@ -3156,6 +3200,11 @@ def compute_scenario_safety_summary(
         "physical_unassigned_rooms": physical_unassigned,
         "online_without_room": online_without_room,
         "same_board_conflicts": same_board,
+        # Scenario-wide instructor double-bookings. Deliberately separate from
+        # same_board_conflicts["instructors"]: that one is summed PER BOARD, so an
+        # instructor teaching on two boards in the same slot is invisible to it,
+        # and instructors routinely span boards. This is the whole truth.
+        "instructor_clashes_scenario": _scenario_instructor_clash_count(scenario_id),
         "cross_board_conflicts": cross_impact["conflict_pairs"],
         "cross_board_affected_students": cross_impact["affected_students"],
         "cross_board_student_conflict_incidences": cross_impact["student_conflict_incidences"],

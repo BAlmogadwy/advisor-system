@@ -1464,6 +1464,11 @@ def tw_placement_create_planned_view(request: HttpRequest) -> JsonResponse:
             "placements": [_placement_to_dict(item) for item in placements],
             "validation": validation,
             "validations": validations,
+            # Forwarded from the service, which already populated
+            # involving_this_section. Without this key the JS
+            # notifyInstructorClashBackstop call on this path is dead code and
+            # the scenario-wide scan the service paid for is thrown away.
+            "instructor_clash_backstop": result["instructor_clash_backstop"],
             "required_meetings": result["required_meetings"],
         },
         status=201,
@@ -1515,7 +1520,10 @@ def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
     if OnlineCourseLookup().is_online_course_for_board(board, ts.course_code):
         room = ""
 
-    # Validate before persisting
+    # Validate before persisting. NOTE: validate_placement is BOARD-scoped and
+    # keys on the free-text meeting.instructor, so it cannot see an instructor
+    # double-booked across two boards. The scenario-wide backstop below reports
+    # that class of clash, which this validation structurally misses.
     validation = validate_placement(
         board_id=board.id,
         day=day,
@@ -1523,6 +1531,12 @@ def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
         end_time=end_time,
         room=room,
         term_section_id=ts.id,
+    )
+
+    from core.services.timetable_instructor_backstop import (
+        clashes_involving,
+        section_id_for,
+        verify_persisted_scenario,
     )
 
     try:
@@ -1553,10 +1567,13 @@ def tw_placement_create_view(request: HttpRequest) -> JsonResponse:
             "start_time": start_time,
         },
     )
+    backstop = verify_persisted_scenario(board.scenario_id, context="manual_placement_create")
+    backstop["involving_this_section"] = clashes_involving(backstop, section_id_for(ts))
     return _ok(
         {
             "placement": _placement_to_dict(placement),
             "validation": validation,
+            "instructor_clash_backstop": backstop,
         },
         status=201,
     )
@@ -2279,7 +2296,8 @@ def tw_placement_move_view(request: HttpRequest, placement_id: int) -> JsonRespo
 
     old_day, old_start, old_end = placement.day, placement.start_time, placement.end_time
 
-    # Validate before persisting
+    # Validate before persisting. Board-scoped and free-text-instructor keyed —
+    # see the note in tw_placement_create_view; the backstop covers what it misses.
     validation = validate_placement(
         board_id=placement.board_id,
         day=new_day,
@@ -2289,6 +2307,14 @@ def tw_placement_move_view(request: HttpRequest, placement_id: int) -> JsonRespo
         term_section_id=placement.term_section_id,
         exclude_placement_id=placement.id,
     )
+
+    from core.services.timetable_instructor_backstop import (
+        clashes_involving,
+        section_id_for,
+        verify_persisted_scenario,
+    )
+
+    scenario_id = placement.board.scenario_id
 
     placement.day = new_day
     placement.start_time = new_start
@@ -2310,7 +2336,17 @@ def tw_placement_move_view(request: HttpRequest, placement_id: int) -> JsonRespo
             "to": f"{new_day} {new_start}-{new_end}",
         },
     )
-    return _ok({"placement": _placement_to_dict(placement), "validation": validation})
+    backstop = verify_persisted_scenario(scenario_id, context="manual_placement_move")
+    backstop["involving_this_section"] = clashes_involving(
+        backstop, section_id_for(placement.term_section)
+    )
+    return _ok(
+        {
+            "placement": _placement_to_dict(placement),
+            "validation": validation,
+            "instructor_clash_backstop": backstop,
+        }
+    )
 
 
 @login_required(login_url="login")
@@ -2545,9 +2581,18 @@ def tw_optimise_v2_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
     # WS-E — opt-in async dispatch. When ``async_run`` is set, the slow V2
     # pipeline is queued on the planner job runner (off the request thread, so
     # gunicorn's 120s timeout can't SIGKILL it mid-run) and a 202 + job id is
-    # returned for the existing PR8 job-poll UI. Default stays SYNCHRONOUS so
-    # the current frontend contract is unchanged.
-    if payload.get("async_run"):
+    # returned for the existing PR8 job-poll UI.
+    #
+    # The flag check is NOT belt-and-braces. Every /planner-jobs/ endpoint
+    # (status, result, cancel) returns 404 when the flag is off, so accepting
+    # async_run in that state would hand the client a job_id it can never poll
+    # — while the job still runs and still PERSISTS. The client would report a
+    # failure for a run that actually mutated the board. Falling through to the
+    # sync path instead means no job_id comes back, which is exactly the signal
+    # both front-ends already treat as "async unavailable → run synchronously".
+    from core.services.planner_job_runner import is_async_planner_enabled
+
+    if payload.get("async_run") and is_async_planner_enabled():
         from core.models import PlannerJob
         from core.services.planner_job_runner import dispatch_planner_job, submit_planner_job
 

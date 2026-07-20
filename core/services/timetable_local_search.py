@@ -721,7 +721,11 @@ def _sa_scenario_score(scenario_id: int, profiles, rigidity, candidate_id: str):
     return tuple(evaluation.lexicographic_score)
 
 
-def optimize_and_persist_board(board_id: int, max_seconds: float = 8.0) -> dict:
+def optimize_and_persist_board(
+    board_id: int,
+    max_seconds: float = 8.0,
+    verify_instructor_clashes: bool = True,
+) -> dict:
     """Optimize and update placements in the database.
 
     Runs simulated annealing in memory, then persists the result — but only if
@@ -729,6 +733,20 @@ def optimize_and_persist_board(board_id: int, max_seconds: float = 8.0) -> dict:
     student outcome versus the greedy/CP-SAT baseline (WS-B evaluator gate).
     On regression the baseline is restored. The gate is inactive when the
     scenario has no student profiles (nothing to protect).
+
+    **Instructor-clash backstop.** This is the LAST writer on the adaptive Full
+    Rebuild: SA runs as phase 3, *after* ``persist_solver_result``, so it
+    overwrites the very board the solver's backstop verified. Worse, SA's own
+    feasibility check loads ``SectionPlacement.objects.filter(board=board)`` —
+    one board — so an instructor's sessions on OTHER boards are invisible to it
+    and it can relocate a section onto a slot where that instructor already
+    teaches elsewhere. The adaptive path carries no snapshot/rollback gate
+    either, so without the scan below a cross-board double-booking introduced
+    here reaches the registrar with nothing logged at all.
+
+    ``optimize_scenario`` passes ``verify_instructor_clashes=False`` and scans
+    once at the end, since the scan is whole-scenario and only settles after the
+    last board is written.
     """
     result = optimize_board(board_id, max_seconds=max_seconds)
 
@@ -842,6 +860,13 @@ def optimize_and_persist_board(board_id: int, max_seconds: float = 8.0) -> dict:
         else:
             result["sa_evaluator_rolled_back"] = False
 
+    if verify_instructor_clashes:
+        from core.services.timetable_instructor_backstop import verify_persisted_scenario
+
+        result["instructor_clash_backstop"] = verify_persisted_scenario(
+            scenario_id, context="sa_polish"
+        )
+
     return result
 
 
@@ -853,15 +878,23 @@ def optimize_scenario(scenario_id: int, max_seconds_per_board: float = 5.0) -> d
     total_after = 0
 
     for board in boards:
-        r = optimize_and_persist_board(board.id, max_seconds=max_seconds_per_board)
+        # One scenario-wide scan after the last board, not one per board.
+        r = optimize_and_persist_board(
+            board.id, max_seconds=max_seconds_per_board, verify_instructor_clashes=False
+        )
         results[board.label] = r
         if r.get("cost_before") is not None:
             total_before += r["cost_before"]
             total_after += r["cost_after"]
+
+    from core.services.timetable_instructor_backstop import verify_persisted_scenario
 
     return {
         "boards": results,
         "total_cost_before": total_before,
         "total_cost_after": total_after,
         "improvement_pct": ((total_before - total_after) / max(total_before, 1)) * 100,
+        "instructor_clash_backstop": verify_persisted_scenario(
+            scenario_id, context="sa_polish_scenario"
+        ),
     }
