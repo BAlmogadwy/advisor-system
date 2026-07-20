@@ -256,6 +256,56 @@ class TestSiblingSectionsAreNotPhantomClashes:
         assert report["count"] == 1, "the clash the backstop exists to catch"
 
 
+class TestEveryWritePathIsWired:
+    """The claim this module makes is 'no persist path writes a clash silently'.
+
+    That claim was FALSE twice: ``timetable_autoplace`` calls
+    ``persist_solver_result`` directly (so wiring only the
+    ``solve_and_persist_board`` wrapper left the primary build path unguarded),
+    and the SA polish in ``timetable_local_search`` is the LAST writer on the
+    adaptive Full Rebuild — it overwrites the board the solver's backstop just
+    verified, and its own feasibility check is board-scoped so it cannot even see
+    a cross-board clash. This test fails if a writer loses its hook.
+    """
+
+    @pytest.mark.parametrize(
+        ("module", "func"),
+        [
+            ("core.services.timetable_solver", "persist_solver_result"),
+            ("core.services.timetable_local_search", "optimize_and_persist_board"),
+            ("core.services.timetable_local_search", "optimize_scenario"),
+            ("core.services.timetable_load_balanced", "rebalance_and_persist_board"),
+            ("core.services.timetable_load_balanced", "rebalance_scenario"),
+            ("core.services.timetable_workspace", "create_planned_section_placements"),
+        ],
+    )
+    def test_writer_calls_the_backstop(self, module, func):
+        import importlib
+        import inspect
+
+        source = inspect.getsource(getattr(importlib.import_module(module), func))
+        assert "verify_persisted_scenario" in source, (
+            f"{module}.{func} writes placements without the instructor-clash backstop"
+        )
+
+    @pytest.mark.parametrize(
+        ("module", "func"),
+        [
+            ("core.services.timetable_local_search", "optimize_scenario"),
+            ("core.services.timetable_load_balanced", "rebalance_scenario"),
+        ],
+    )
+    def test_scenario_loops_do_not_scan_per_board(self, module, func):
+        """The scan is whole-scenario and only settles after the last board."""
+        import importlib
+        import inspect
+
+        source = inspect.getsource(getattr(importlib.import_module(module), func))
+        assert "verify_instructor_clashes=False" in source, (
+            f"{module}.{func} would do O(boards x scenario) work"
+        )
+
+
 class TestClashesInvolving:
     """The manual-placement signal: 'is the section I just touched clashing',
     not the scenario-wide count (which would warn on every drag while any

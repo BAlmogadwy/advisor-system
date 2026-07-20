@@ -2830,6 +2830,10 @@ async function movePlacementToSlot({
   notifyResult = true,
   recordUndo = true,
   force = false,
+  // Separate from notifyResult: a hard-rule violation must survive the
+  // suppression applied to routine success toasts. Only a rollback leg sets
+  // this false, since it restores the prior position and already reports an error.
+  reportBackstop = true,
 }) {
   const located = findPlacement(placementId);
   if (!located) { notify.error(IS_AR ? 'تعذر تحديد الموقع' : 'Source placement not found'); return null; }
@@ -2875,8 +2879,15 @@ async function movePlacementToSlot({
     } else {
       notify.success(T.moveOk);
     }
-    notifyInstructorClashBackstop(data);
   }
+  // OUTSIDE the notifyResult gate on purpose. That gate suppresses the routine
+  // success toast for bundled legs (notifyResult is `!auto && !pair`, so in a
+  // pair NEITHER leg reports) and for every automated/bulk move. A hard-rule
+  // violation is not a routine result — and there is no secondary surface for
+  // it, since the split workspace never renders instructor_clashes_scenario. If
+  // this were gated, a bundled move that double-books an instructor would reach
+  // the registrar completely silently.
+  if (reportBackstop) notifyInstructorClashBackstop(data);
 
   if (clearAssist) clearSlotAssist();
   const sourceIdx = Number.isFinite(sourcePaneIdx) ? sourcePaneIdx : located.paneIdx;
@@ -2975,6 +2986,7 @@ async function applyCandidateMove({ placementId, targetPaneIdx, sourcePaneIdx, c
         notifyResult: false,
         recordUndo: false,
         force: true,
+        reportBackstop: false,
       });
       notify.error(IS_AR ? 'تعذر نقل الحزمة؛ تمت استعادة الشعبة الأولى.' : 'Bundle move failed; first section was restored.');
       return null;

@@ -1610,7 +1610,11 @@ def create_planned_section_placements(
     # Same shape as the drag-drop path: validate_placement below is board-scoped
     # and free-text-instructor keyed, so it cannot see a cross-board instructor
     # clash. The scenario-wide backstop after the write covers what it misses.
-    from core.services.timetable_instructor_backstop import verify_persisted_scenario
+    from core.services.timetable_instructor_backstop import (
+        clashes_involving,
+        section_id_for,
+        verify_persisted_scenario,
+    )
 
     with transaction.atomic():
         term_section, _created = TermSection.objects.get_or_create(
@@ -1657,14 +1661,19 @@ def create_planned_section_placements(
                 )
             )
 
+    # Populate involving_this_section HERE rather than at the view, so every
+    # caller gets the actionable field without re-deriving the section_id
+    # convention (the two drag-drop views each do it themselves; this is the
+    # form to copy).
+    backstop = verify_persisted_scenario(board.scenario_id, context="planned_section_create")
+    backstop["involving_this_section"] = clashes_involving(backstop, section_id_for(term_section))
+
     return {
         "board": board,
         "term_section": term_section,
         "placements": placements,
         "validations": validations,
-        "instructor_clash_backstop": verify_persisted_scenario(
-            board.scenario_id, context="planned_section_create"
-        ),
+        "instructor_clash_backstop": backstop,
         "required_meetings": required_meetings,
     }
 

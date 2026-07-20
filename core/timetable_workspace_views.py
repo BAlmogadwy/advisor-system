@@ -1464,6 +1464,11 @@ def tw_placement_create_planned_view(request: HttpRequest) -> JsonResponse:
             "placements": [_placement_to_dict(item) for item in placements],
             "validation": validation,
             "validations": validations,
+            # Forwarded from the service, which already populated
+            # involving_this_section. Without this key the JS
+            # notifyInstructorClashBackstop call on this path is dead code and
+            # the scenario-wide scan the service paid for is thrown away.
+            "instructor_clash_backstop": result["instructor_clash_backstop"],
             "required_meetings": result["required_meetings"],
         },
         status=201,
