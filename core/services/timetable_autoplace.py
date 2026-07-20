@@ -1299,6 +1299,25 @@ def auto_place_board(
         # must receive the scenario OBJECT — passing scenario.id (an int) silently
         # returns {} and disables the links-keyed clash.
         link_map = build_section_instructor_ids(scenario) if links_on else {}
+        # Seed section->instructor IDENTITY from the link map BEFORE reading
+        # meeting rows. Instructor clash is a HARD constraint, but the loop below
+        # was the only writer of ``section_instructors`` and it iterates
+        # ``TermSectionMeeting`` — which the V2 full rebuild has already deleted
+        # via ``_reset_unlocked_placements``. So on every from-scratch build the
+        # loop found nothing, ``section_instructors`` stayed empty, and the clash
+        # (and cap) guards below read an empty set for every section: the builder
+        # was effectively instructor-blind and baked in double-bookings that a
+        # post-pass repair then had to undo at real student cost.
+        # ``build_section_instructor_ids`` reads TermSection, not meetings, so it
+        # is unaffected by that reset.
+        # This seeds IDENTITY only. OCCUPANCY (``instructor_schedule_full``) is
+        # the other half: it starts empty on a fresh build and is filled
+        # within-run at the commit site below — which must be gated on
+        # ``instructor_clash_on``, not the default-OFF daily-cap flag, or the
+        # clash filter goes blind to same-board same-run placements.
+        for _link_section, _link_ids in link_map.items():
+            if _link_ids:
+                section_instructors.setdefault(_link_section, set()).update(_link_ids)
         meeting_rows = TermSectionMeeting.objects.filter(
             term_section__scenario_id=scenario.id
         ).values_list(
@@ -2029,10 +2048,18 @@ def auto_place_board(
                     if _ms >= 0 and _me >= 0:
                         for _iid in section_instructors.get(f"{code}|{sec_label}", ()):
                             instr_placed.setdefault(_iid, []).append((m["day"], _ms, _me))
-                if daily_cap_on:
-                    # Record this just-placed session so the daily-cap (and clash)
-                    # filter counts same-run siblings — instructor_schedule_full is
-                    # otherwise frozen at DB state and would undercount within a run.
+                if instructor_clash_on:
+                    # Record this just-placed session so the CLASH filter (and the
+                    # daily cap, when on) sees same-run siblings. Gated on
+                    # instructor_clash_on, NOT daily_cap_on: the cap flag defaults
+                    # OFF, so gating here left instructor_schedule_full frozen at
+                    # DB state for the whole run. On a from-scratch rebuild that
+                    # state is empty (_reset_unlocked_placements deletes the
+                    # meeting rows), so two sections of DIFFERENT courses sharing
+                    # an instructor could both be placed into overlapping slots on
+                    # the SAME board within one call and neither could see the
+                    # other. Cross-board clashes were caught only because each
+                    # later board re-reads the meeting rows earlier boards wrote.
                     _section_full_cap = f"{code}|{sec_label}"
                     _start_min = _to_min(m["start"])
                     _end_min = _to_min(m["end"])

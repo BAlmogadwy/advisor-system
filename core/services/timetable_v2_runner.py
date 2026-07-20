@@ -49,11 +49,20 @@ def optimiser_student_outcome_regression(result: dict[str, object]) -> dict[str,
     by layout. Under the tiered objective the soft tier (T3 / Tier-2 within
     tolerance, position 5) is intentionally NOT gated: the policy deprioritises
     those enrolments, so trading them for T1/T2/gap gains must not be rolled back.
+
+    LIKE-FOR-LIKE: the gate judges the OPTIMISER's own decision, so it compares
+    the pre-instructor-pass score against ``baseline_score`` (also pre-pass).
+    ``final_score`` now describes the PERSISTED board — it includes the cost of
+    the mandatory cap/clash repairs, which the optimiser did not choose and must
+    not be vetoed for. Gating on it would let a required clash repair roll the
+    whole run back and REINSTATE the very double-booking it just cleared, which
+    inverts the documented "the cap WINS against students" rule. When no
+    instructor pass ran the two are identical, so this is a no-op.
     """
     from core.services.timetable_student_assignment import is_tiered_score
 
     before = result.get("baseline_score")
-    after = result.get("final_score")
+    after = result.get("score_before_instructor_passes") or result.get("final_score")
     tiered = is_tiered_score(tuple(after)) if isinstance(after, list) else False
     if tiered:
         checks = [

@@ -354,6 +354,82 @@ def build_course_tier_map_for_scenario(scenario_id: int) -> dict[str, str]:
     return out
 
 
+def refresh_final_score_after_instructor_passes(
+    result: dict,
+    scenario_id: int,
+    student_profiles: dict,
+    course_rigidity: dict,
+    section_instructor_ids: dict | None,
+    course_tiers: dict | None,
+) -> None:
+    """Re-score the PERSISTED board after the instructor passes have run.
+
+    ``result["final_score"]`` is written by the optimise stages, but the
+    cap-repair / clash-repair / compaction passes mutate the board afterwards.
+    Without this the reported score describes a board that no longer exists —
+    the registrar is shown numbers that do not match what was persisted, and the
+    runner's student-outcome rollback gate judges the pre-pass board.
+
+    Verified on scenario 643: clash repair relocated two of one instructor's
+    sections to clear real double-bookings, costing 8 soft-tier seats and 775
+    gap-minutes that the reported score never reflected (reported soft=48 /
+    gap=104835 vs persisted soft=56 / gap=105610).
+
+    No-ops when no instructor pass ran, so the extra evaluation is only paid
+    when the board could actually have changed.
+    """
+    # Guard on whether a pass actually MOVED anything, not merely on the flag
+    # being on: the callers set these keys unconditionally inside their
+    # ``if ..._enabled()`` blocks, so a no-op repair would otherwise cost a full
+    # evaluation on every build.
+    _changed_keys = (
+        ("instructor_cap_repair", ("repaired", "unplaced")),
+        ("instructor_clash_repair", ("repaired", "unplaced")),
+        ("instructor_compaction", ("relocations",)),
+    )
+    changed = False
+    for key, change_fields in _changed_keys:
+        report = result.get(key)
+        if isinstance(report, dict) and any(report.get(f) for f in change_fields):
+            changed = True
+            break
+    if not changed:
+        return
+    if not student_profiles:
+        return
+    sections = build_section_states_for_scenario(scenario_id)
+    if not sections:
+        return
+    post = evaluate_generated_timetable_candidate(
+        candidate_id="post_instructor_passes",
+        generated_sections=sections,
+        student_profiles=student_profiles,
+        course_rigidity=course_rigidity,
+        section_instructor_ids=section_instructor_ids,
+        course_tiers=course_tiers,
+    )
+    before = list(result.get("final_score") or [])
+    after = list(post.lexicographic_score)
+    if before == after:
+        return
+    # Preserved for the rollback gate, which must judge the optimiser's own
+    # decision (pre-pass) rather than the mandatory repair cost. See
+    # timetable_v2_runner.optimiser_student_outcome_regression.
+    result["score_before_instructor_passes"] = before
+    logger.info("instructor passes changed the board: final_score %s -> %s", before, after)
+    result["final_score"] = after
+    # Update every board-derived field in lockstep, as all the other final_score
+    # write sites do — otherwise the dialog mixes a post-pass score with pre-pass
+    # hotspots/quality and misattributes them.
+    result["unresolved_students"] = len(post.unresolved_student_ids)
+    result["quality_score"] = post.quality_score
+    result["hotspot_courses"] = post.hotspot_courses[:10]
+    result["capacity_pressure_courses"] = post.capacity_pressure_courses[:10]
+    result["reserve_heavy_sections"] = [
+        {"section": s, "ratio": round(r, 2)} for s, r in post.reserve_heavy_sections[:10]
+    ]
+
+
 def _gap_pos6(score) -> int:
     """Instructor idle-minutes element of a score tuple, or 0 when the gap
     penalty was off. Layout-aware: index 8 for the tiered 9-tuple, trailing
@@ -1308,6 +1384,18 @@ def optimise_scenario_timetable_v2(
 
         result["instructor_compaction"] = compact_instructor_schedules(scenario_id)
 
+    # The three passes above mutate the board AFTER final_score was written, so
+    # re-score the persisted board or the reported numbers describe a board that
+    # no longer exists (and the rollback gate judges the wrong one).
+    refresh_final_score_after_instructor_passes(
+        result,
+        scenario_id,
+        student_profiles,
+        course_rigidity,
+        section_instructor_ids,
+        course_tiers,
+    )
+
     elapsed = time.time() - t0
     result["elapsed_seconds"] = round(elapsed, 1)
 
@@ -1681,6 +1769,17 @@ def optimise_current_timetable(
             )
 
             result["instructor_compaction"] = compact_instructor_schedules(scenario_id)
+
+        # See refresh_final_score_after_instructor_passes: the passes above mutate
+        # the persisted board after final_score was written, so re-score it.
+        refresh_final_score_after_instructor_passes(
+            result,
+            scenario_id,
+            student_profiles,
+            course_rigidity,
+            section_instructor_ids,
+            course_tiers,
+        )
     else:
         result["persist_result"] = {"action": "no_change"}
         logger.info("No improvement found — board unchanged")
