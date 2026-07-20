@@ -531,11 +531,16 @@ def test_repair_analysis_creates_readonly_audit_run() -> None:
     assert run.solver_version == "repair-solver-cpsat-flow-adaptive-lns-v3"
     assert run.constraint_version == "repair-constraints-eligibility-capacity-conflict-v2"
     assert run.objective_version == "repair-objective-requested-quality-v3"
+    from core.services.timetable_repair import REPAIR_CACHE_VERSION
+
     assert run.summary_json["versions"] == {
         "solver": run.solver_version,
         "constraints": run.constraint_version,
         "objective": run.objective_version,
-        "cache": "repair-cache-evaluator-baseline-v9",
+        # Reference the constant rather than a literal: the cache version is
+        # bumped deliberately whenever cached analyses must be invalidated, and
+        # that should not require editing this assertion each time.
+        "cache": REPAIR_CACHE_VERSION,
     }
     assert run.summary_json["student_solver"]["exact_cp_sat_reallocation"] == "enabled_readonly"
     assert run.summary_json["candidate_evaluation"]["mode"] == "in_memory_then_audited_bulk_persist"

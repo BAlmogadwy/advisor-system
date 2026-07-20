@@ -39,7 +39,7 @@ strategies from scratch). Entry: `/timetable-workspace/` (JSON API under
 `/ops/tw/`).
 
 **Course-tier-aware objective** (flag `TIMETABLE_TIERED_OBJECTIVE_ENABLED`,
-default **off**). Not all enrolments rank equally — the optimiser ranks
+default **on** as of 2026-07-16). Not all enrolments rank equally — the optimiser ranks
 resolution by course tier, derived from the curriculum:
 
 | Tier | Courses | Policy |
@@ -112,8 +112,9 @@ python -m pytest tests/test_exam_room_assignment.py  # exam room packer
 python -m pytest tests/test_exam_timetable.py        # exam scheduler core
 ```
 
-The tiered-objective flag defaults **off**, and the suite asserts flag-off
-**byte-parity** — optimiser output must be identical to pre-feature.
+The tiered objective is **on by default**. The legacy path stays reachable with
+`TIMETABLE_TIERED_OBJECTIVE_ENABLED=false`, and the suite still asserts flag-off
+**byte-parity** — that path must be identical to pre-feature.
 
 ## Stack
 

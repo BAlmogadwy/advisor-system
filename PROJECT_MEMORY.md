@@ -137,8 +137,9 @@ Important implementation detail:
   *assignment*, so **any caller that reconstructs seating must thread the tier
   map** or it models a board that was never built. Threaded into
   `timetable_plan_lens`, `timetable_repair`, and `timetable_repair_domain`.
-- Both flag-gated by `TIMETABLE_TIERED_OBJECTIVE_ENABLED` (**default OFF** =>
-  byte-identical output). Validation command:
+- Both flag-gated by `TIMETABLE_TIERED_OBJECTIVE_ENABLED`, **default ON as of
+  2026-07-16**; `=false` restores the legacy objective byte-identically.
+  Validation command:
   `python manage.py tiered_objective_report [scn...] [--fast] [--soft-budget N]`
   runs the pipeline OFF vs ON inside a rolled-back transaction (no persist).
 - Measured on real scenarios: core unresolved -> 0, clashes 69 -> 0, real gaps

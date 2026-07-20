@@ -105,7 +105,11 @@ DEFAULT_LIMITS = {
 }
 
 EVALUATOR_BASELINE_SOURCE = "repair_evaluator_baseline"
-REPAIR_CACHE_VERSION = "repair-cache-evaluator-baseline-v9"
+# v10 (2026-07-16): the tiered objective became the default, which changes the
+# per-student SEATING (not just the score), so cached analyses computed under the
+# legacy tier-blind assignment describe a board that is no longer built that way.
+# Bumping the version invalidates them rather than serving a stale reconstruction.
+REPAIR_CACHE_VERSION = "repair-cache-evaluator-baseline-v10-tiered-default"
 REPAIR_SOLVER_VERSION = "repair-solver-cpsat-flow-adaptive-lns-v3"
 REPAIR_CONSTRAINT_VERSION = "repair-constraints-eligibility-capacity-conflict-v2"
 REPAIR_OBJECTIVE_VERSION = "repair-objective-requested-quality-v3"

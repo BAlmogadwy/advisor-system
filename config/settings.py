@@ -399,11 +399,11 @@ TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED = os.getenv(
 # When on, the planner's instructor-clash filter sources per-person identity
 # from structured SectionInstructor links (true multi-instructor: a section's
 # meeting clashes if ANY assigned instructor is double-booked) instead of the
-# single opaque free-text name. Default OFF — opt-in after a shadow run; with it
-# off the clash reads the free-text field exactly as before. Sections without
-# links always fall back to the free-text path regardless of this flag.
+# single opaque free-text name. Default ON as of 2026-07-16; set ``=false`` and
+# the clash reads the free-text field exactly as before. Sections without links
+# always fall back to the free-text path regardless of this flag.
 TIMETABLE_INSTRUCTOR_LINKS_ENABLED = os.getenv(
-    "TIMETABLE_INSTRUCTOR_LINKS_ENABLED", "false"
+    "TIMETABLE_INSTRUCTOR_LINKS_ENABLED", "true"
 ).lower() in ("1", "true", "yes", "on")
 
 # TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED: gates a soft objective that minimises
@@ -476,8 +476,12 @@ TIMETABLE_INSTRUCTOR_COMPACTION_TIME_BUDGET_SECONDS = float(
 # gaps. When False the score keeps its current 6-tuple shape and values, so
 # optimiser output is byte-identical to before. Default OFF — opt-in after a
 # shadow run. Env override ``=false`` is the live kill-switch.
+# Default ON as of 2026-07-16: validated by shadow A/B across scn 620/625/632/635
+# (core unresolved -> 0, clashes 69 -> 0, real gaps -13%..-32%) plus two rounds of
+# multi-agent review. Set ``=false`` to fall back to the legacy flat objective —
+# that path is byte-identical to pre-feature and the suite asserts it.
 TIMETABLE_TIERED_OBJECTIVE_ENABLED = os.getenv(
-    "TIMETABLE_TIERED_OBJECTIVE_ENABLED", "false"
+    "TIMETABLE_TIERED_OBJECTIVE_ENABLED", "true"
 ).lower() in ("1", "true", "yes", "on")
 # Per-Tier-2-course unresolved-seat tolerance: up to this many unresolved seats
 # in a single Tier-2 course are "soft" (objective position E); the excess is
