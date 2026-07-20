@@ -204,6 +204,17 @@ def test_async_run_is_ignored_when_the_planner_flag_is_off(settings) -> None:
         )
 
     assert resp.status_code != 202, "handed back an unpollable job id"
-    assert "job_id" not in resp.json()
+    body = resp.json()
+    assert "job_id" not in body
     assert PlannerJob.objects.count() == 0
     assert guarded.called, "should have fallen through to the synchronous runner"
+
+    # The flag-off response MUST carry the finished result. The view does not
+    # decline cheaply — it runs the whole pipeline — so a client that treats
+    # "no job_id" as "async unavailable, now run it synchronously" would execute
+    # the ~7-minute optimisation a SECOND time and discard this one. Both
+    # front-ends therefore read `optimisation` off this very body; this assert is
+    # what stops that contract drifting.
+    assert "optimisation" in body, "flag-off body must be usable as the result"
+    assert body["ok"] is True
+    assert guarded.call_count == 1

@@ -8011,16 +8011,18 @@ async function doOptimise(mode = 'current') {
         } else {
           failMsg = (IS_AR ? 'فشل التحسين: ' : 'Optimisation failed: ') + (job.error_message || '');
         }
-      } else {
-        // No job_id means the server declined async (PR7 flag off) and expects
-        // a synchronous run. The backend gates async_run on that same flag so
-        // this signal is truthful — it never hands back an unpollable job id.
-        const data = await api(url, postOpts(payload));
-        optimisation = data && data.optimisation;
+      } else if (sub && sub.optimisation) {
+        // No job_id: the PR7 flag is off, so the view IGNORED async_run and ran
+        // the pipeline synchronously in THIS request — `sub` already carries the
+        // result. Re-POSTing (as an earlier cut did) would run the whole
+        // optimisation a SECOND time and discard the first. That old else-branch
+        // also swallowed the HTTP-error case, where `sub` is null, and re-issued
+        // the request after one had already been killed; falling through to
+        // failMsg below is the correct handling for that.
+        optimisation = sub.optimisation;
       }
     }
   } finally {
-    btn.disabled = false; menuBtn && (menuBtn.disabled = false);
     btn.textContent = origText;
 
     // Refresh unconditionally, not only on success. An optimise persists BEFORE
@@ -8035,6 +8037,11 @@ async function doOptimise(mode = 'current') {
       updateUndoRedoButtons();
       try { await onScenarioChange(); } catch (_) { /* best-effort */ }
     }
+
+    // Re-enable LAST, after the panes have settled. This ordering predates the
+    // async change here, but "current" now runs for minutes, which makes a
+    // second click on a half-loaded grid far more likely than it was.
+    btn.disabled = false; menuBtn && (menuBtn.disabled = false);
   }
 
   if (!optimisation) {

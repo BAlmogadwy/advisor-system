@@ -151,7 +151,8 @@ async function runOptimiseRequest(mode, payload, btn, modeLabel) {
   const url = `/ops/tw/scenarios/${TW.scenarioId}/optimise-v2/`;
   const post = b => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
   const sub = await twFetch(url, post({ ...payload, async_run: true }));
-  if (sub && sub.job_id) {
+  if (sub === null) return null;  // HTTP error — twFetch already toasted
+  if (sub.job_id) {
     const job = await pollPlannerJob(sub.job_id, (j, ms) => {
       const secs = Math.round((ms || 0) / 1000);
       const detail = j.last_stage_seen ? ` (${j.last_stage_seen})` : (secs ? ` (${secs}s)` : '');
@@ -166,11 +167,14 @@ async function runOptimiseRequest(mode, payload, btn, modeLabel) {
     const code = job.status === 'cancelled' ? 'CANCELLED' : 'FAILED';
     return { ok: false, error: { code, message: job.error_message || job.status } };
   }
-  if (sub === null) return null;  // HTTP error — twFetch already toasted
-  // No job_id means the server declined async (PR7 flag off) and expects a
-  // synchronous run. The backend gates async_run on that same flag precisely so
-  // this signal is truthful — it never returns a job id we could not poll.
-  return await twFetch(url, post(payload));
+  // No job_id: the PR7 flag is off, so the view IGNORED async_run and ran the
+  // pipeline synchronously in THIS request — `sub` already is the completed
+  // {ok, optimisation} envelope. Re-POSTing here (as an earlier cut did) would
+  // run the whole ~7-minute optimisation a SECOND time and discard the first
+  // result, in precisely the state settings.py documents as the runtime revert
+  // lever. The server does the work either way; the only question is whether we
+  // throw it away.
+  return sub;
 }
 
 /* ── Init ── */
@@ -2389,8 +2393,6 @@ async function runOptimiseV2(mode = 'current') {
   } catch (e) {
     notify.error(e.message || String(e));
   } finally {
-    btn.disabled = false;
-    menuBtn.disabled = false;
     btn.innerHTML = origHtml;
 
     // Refresh unconditionally, not just on the success path. An optimise run
@@ -2407,8 +2409,17 @@ async function runOptimiseV2(mode = 'current') {
       try {
         await onScenarioChange();
         $('twCmdBar').style.display = 'flex';
-      } catch (_) { /* refresh is best-effort; the button is already restored */ }
+      } catch (_) { /* refresh is best-effort */ }
     }
+
+    // Re-enable LAST. onScenarioChange is several seconds of board / conflict /
+    // capacity / budget loads on a large scenario; re-enabling before it settles
+    // hands the registrar a live button over a half-loaded grid, and one more
+    // click dispatches a second ~7-minute run. Previously the refresh sat inside
+    // `try` with the button still disabled, so moving it here reopened that
+    // window — this closes it again.
+    btn.disabled = false;
+    menuBtn.disabled = false;
   }
 }
 
