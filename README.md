@@ -12,8 +12,9 @@ cd C:\Users\user\myUniproject
 python manage.py runserver 8001
 ```
 
-Login: `superadmin` / `test123`. Set `DJANGO_DEBUG=true` for the looser
-build-throttle and verbose error pages.
+Log in as the `superadmin` superuser (credentials are not stored in the repo —
+reset with `python manage.py changepassword superadmin` if needed). Set
+`DJANGO_DEBUG=true` for the looser build-throttle and verbose error pages.
 
 ## Feature areas
 
@@ -34,7 +35,32 @@ and credit-shortfall priority. CLI: `python manage.py recommend_student`,
 Section-planning, board-balance, room assignment, and a 5-stage optimiser
 (generate → rank → local search → chain search → CP-SAT polish). Two UI
 modes: **Optimise Current** (in-place improvements) and **Full Rebuild** (7
-strategies from scratch). Entry: `/ops/tw/`
+strategies from scratch). Entry: `/timetable-workspace/` (JSON API under
+`/ops/tw/`).
+
+**Course-tier-aware objective** (flag `TIMETABLE_TIERED_OBJECTIVE_ENABLED`,
+default **off**). Not all enrolments rank equally — the optimiser ranks
+resolution by course tier, derived from the curriculum:
+
+| Tier | Courses | Policy |
+|------|---------|--------|
+| **T1** | specialised major courses (in ≤ 2 programme plans) | hard — always seated |
+| **T2** | shared foundations (`MATH`/`STAT`, or required by > 2 plans) | tolerate ~3 unresolved per course |
+| **T3** | gen-ed & free electives (`ENGL`/`GS`/`GSE`/`FE`) | soft — bounded trade vs schedule quality |
+
+Gaps and gen-ed enrolment trade on one axis rather than strict priority:
+`student_cost = real_gap_minutes + TIMETABLE_TIERED_SOFT_GAP_BUDGET *
+soft_unresolved` (default 120), so a gen-ed course is seated exactly when it
+adds fewer than the budget in gap-minutes. Real student gaps are unbundled from
+the same-course spread penalty. The policy applies to **both** the scoring and
+the per-student seating order. See
+[docs/TIERED-OBJECTIVE-DOR.md](docs/TIERED-OBJECTIVE-DOR.md).
+
+Shadow-test it without persisting anything:
+
+```powershell
+python manage.py tiered_objective_report 632 --fast --soft-budget 120
+```
 
 ### 4. Exam timetable
 Day×period scheduler with bucket-day rule, gender-separated room packer,
@@ -54,7 +80,7 @@ blocked-course breakdowns.
 |--------|------|---------|
 | GET | `/` | Advisor portfolio dashboard |
 | GET | `/exam-timetable/` | Exam timetable builder |
-| GET | `/ops/tw/` | Timetable workspace |
+| GET | `/timetable-workspace/` | Timetable workspace (split view: `/split/`) |
 | GET | `/health/` | Liveness probe |
 | GET | `/recommend/<student_id>/?year=1448&semester=0` | Course recs |
 | POST | `/parse-and-classify/` | Parse plan + timetable HTML |
@@ -65,19 +91,33 @@ blocked-course breakdowns.
 python manage.py recommend_student 123456 --year 1448 --semester 0
 python manage.py recommend_batch --year 1448 --semester 0 --program CS --section M
 python manage.py build_exam_timetable --label "demo" --days W1-Sun ...
+
+# Shadow A/B the tiered objective (read-only — runs inside a rolled-back
+# transaction, so no placement is persisted). --soft-budget tunes the
+# gen-ed-vs-gap trade.
+python manage.py tiered_objective_report 632 635 --fast --format json
+python manage.py tiered_objective_report 632 --soft-budget 120
+
+# Instructor idle-gap A/B (asserts the student-facing score is unchanged)
+python manage.py instructor_gap_report 632
 ```
 
 ## Tests
 
 ```powershell
-python -m pytest -q                                  # full suite (162 tests)
-python -m pytest tests/test_exam_room_assignment.py  # exam room packer (39 tests)
+python -m pytest -q                                  # full suite (951 passed, 2 skipped)
+python -m pytest tests/test_tiered_objective.py      # tiered objective + tier-aware seating
+python -m pytest tests/test_course_tier.py           # course-tier classifier
+python -m pytest tests/test_exam_room_assignment.py  # exam room packer
 python -m pytest tests/test_exam_timetable.py        # exam scheduler core
 ```
 
+The tiered-objective flag defaults **off**, and the suite asserts flag-off
+**byte-parity** — optimiser output must be identical to pre-feature.
+
 ## Stack
 
-- Django 5.2.x, Bootstrap 5, vanilla JS (no framework)
+- Django 5.2.16, Bootstrap 5, vanilla JS (no framework)
 - OR-Tools (CP-SAT) for the V2 timetable polisher
 - openpyxl for styled multi-sheet XLSX exports (with rich-text colouring)
 - PostgreSQL on Render via `dj-database-url`
