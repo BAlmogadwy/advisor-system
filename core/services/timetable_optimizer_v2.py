@@ -1361,6 +1361,22 @@ def optimise_scenario_timetable_v2(
             "written": _sync.meetings_written,
         }
 
+    # Snapshot the safety state the OPTIMISER produced, BEFORE the mandatory
+    # instructor repairs run. The runner's safety gate compares against this
+    # (not the post-repair board) so a repair that accepts a warning-level
+    # cross-course student overlap as the least-harm way to satisfy the hard cap
+    # cannot trip a rollback that would reinstate the violation — mirroring the
+    # student gate's score_before_instructor_passes. Only captured when a pass
+    # will run, so flag-off leaves the runner falling back to the post-run state.
+    if (
+        is_instructor_daily_cap_enabled()
+        or is_instructor_clash_enabled()
+        or is_instructor_compaction_enabled()
+    ):
+        from core.services.timetable_workspace import compute_scenario_safety_summary
+
+        result["safety_before_instructor_passes"] = compute_scenario_safety_summary(scenario_id)
+
     # Hard instructor daily-session cap — scenario-wide backstop. The structural
     # gates keep greedy/local/chain/CP-SAT compliant; this also catches any
     # residual overload (e.g. from the per-board SA polish) and pre-existing ones.
@@ -1770,6 +1786,21 @@ def optimise_current_timetable(
             )
 
             sync_meetings_from_placements(scenario_id)
+
+    # Snapshot the safety state the OPTIMISER produced, BEFORE the mandatory
+    # instructor repairs run, so the runner's safety gate judges the optimiser's
+    # board and not a repair's accepted least-harm overlap (see
+    # timetable_v2_runner: otherwise a hard-cap relocation onto a cross-course
+    # student overlap could trigger a rollback that reinstates the violation).
+    # Mirrors safety_before_instructor_passes in optimise_scenario_timetable_v2.
+    if (
+        is_instructor_daily_cap_enabled()
+        or is_instructor_clash_enabled()
+        or is_instructor_compaction_enabled()
+    ):
+        from core.services.timetable_workspace import compute_scenario_safety_summary
+
+        result["safety_before_instructor_passes"] = compute_scenario_safety_summary(scenario_id)
 
     # Instructor cap / clash / compaction repairs run REGARDLESS of whether the
     # optimiser improved the student score. The daily cap is a HARD rule: an

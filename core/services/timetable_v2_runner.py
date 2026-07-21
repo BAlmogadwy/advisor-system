@@ -223,7 +223,18 @@ def run_v2_optimisation_guarded(
 
     safety_after = compute_scenario_safety_summary(scenario_id)
     student_regression = optimiser_student_outcome_regression(result)
-    safety_regression = optimiser_safety_regression(safety_before, safety_after)
+    # LIKE-FOR-LIKE, mirroring the student gate above: judge the OPTIMISER's own
+    # board, captured BEFORE the mandatory instructor cap/clash repairs mutated it.
+    # Those repairs enforce hard rules and "the cap WINS against students", so they
+    # may accept a warning-level cross-course student overlap as the least-harm way
+    # to relocate an over-cap session. Gating on the POST-repair safety summary
+    # would let that accepted overlap trip a full rollback — which would REINSTATE
+    # the cap violation the repair just cleared (and, on the improve branch, also
+    # discard the optimiser's real gains). ``safety_before_instructor_passes`` is
+    # set by the optimiser only when a pass ran; absent ⇒ no pass ⇒ fall back to
+    # safety_after, so flag-off behaviour is unchanged.
+    safety_after_for_gate = result.get("safety_before_instructor_passes") or safety_after
+    safety_regression = optimiser_safety_regression(safety_before, safety_after_for_gate)
     blocking_regressions = list(student_regression["regressions"]) + list(
         safety_regression["regressions"]
     )

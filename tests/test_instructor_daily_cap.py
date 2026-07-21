@@ -580,3 +580,93 @@ def test_optimise_current_reconciles_meetings_on_the_no_improve_branch(monkeypat
         assert TermSectionMeeting.objects.filter(
             term_section_id=p.term_section_id, day=p.day, start_time=p.start_time
         ).exists(), "a TermSectionMeeting row drifted from its placement"
+
+
+# ── Safety-gate exemption for the mandatory cap repair ───────────────────────
+
+
+class _FakeSnapshot:
+    is_empty = False
+
+
+_CLEAN_SAFETY = {
+    "same_board_conflicts": {"overlaps": 0, "instructors": 0, "rooms": 0},
+    "instructor_clashes_scenario": 0,
+}
+_OVERLAP_SAFETY = {
+    "same_board_conflicts": {"overlaps": 1, "instructors": 0, "rooms": 0},
+    "instructor_clashes_scenario": 0,
+}
+
+
+def _wire_runner(monkeypatch, summaries, opt_result):
+    """Patch run_v2_optimisation_guarded's collaborators so the gate can be tested
+    without a real board. ``summaries`` is consumed in call order (before, after,
+    and again inside the rollback branch)."""
+    from core.services import timetable_optimizer_v2 as opt
+    from core.services import timetable_v2_runner as runner
+
+    restored = {"n": 0}
+    it = iter(summaries)
+    monkeypatch.setattr(runner, "snapshot_scenario", lambda _sid: _FakeSnapshot())
+    monkeypatch.setattr(
+        runner, "restore_scenario", lambda _sid, _snap: restored.__setitem__("n", restored["n"] + 1)
+    )
+    monkeypatch.setattr(runner, "compute_scenario_safety_summary", lambda _sid, *a, **k: next(it))
+    monkeypatch.setattr(opt, "optimise_current_timetable", lambda **_kw: dict(opt_result))
+    return restored
+
+
+@pytest.mark.django_db
+def test_safety_gate_exempts_a_mandatory_repair_overlap(monkeypatch) -> None:
+    """The cap is a hard rule that WINS against students, so a repair which accepts
+    a warning-level cross-course overlap as the least-harm way to relocate an
+    over-cap session must NOT be rolled back by the safety gate — rolling back
+    would reinstate the very violation the repair cleared. The gate judges the
+    board the OPTIMISER produced (safety_before_instructor_passes), not the
+    post-repair board.
+    """
+    from core.services.timetable_v2_runner import run_v2_optimisation_guarded
+
+    # before = clean; after = the repair added one warning overlap. A third copy
+    # covers the pre-fix code path (which would roll back and re-read the summary),
+    # so this guard fails on the clean assertion rather than a StopIteration.
+    restored = _wire_runner(
+        monkeypatch,
+        summaries=[_CLEAN_SAFETY, _OVERLAP_SAFETY, _OVERLAP_SAFETY],
+        opt_result={
+            "final_score": [0, 0, 0, 0, 0, 0],
+            "baseline_score": [0, 0, 0, 0, 0, 0],
+            "safety_before_instructor_passes": _CLEAN_SAFETY,  # optimiser's board was clean
+        },
+    )
+
+    result = run_v2_optimisation_guarded(123, mode="current")
+
+    assert result["safety_blocked"] is False, "mandatory repair overlap wrongly rolled back"
+    assert restored["n"] == 0
+
+
+@pytest.mark.django_db
+def test_safety_gate_still_blocks_an_optimiser_introduced_overlap(monkeypatch) -> None:
+    """The exemption must not blind the gate to a real regression: when the overlap
+    is present in the optimiser's OWN board (no safety_before_instructor_passes, or
+    it already shows the overlap), the gate still blocks and rolls back."""
+    from core.services.timetable_v2_runner import run_v2_optimisation_guarded
+
+    # before = clean; after = overlap; rollback branch reads the summary once more.
+    restored = _wire_runner(
+        monkeypatch,
+        summaries=[_CLEAN_SAFETY, _OVERLAP_SAFETY, _OVERLAP_SAFETY],
+        opt_result={
+            "final_score": [0, 0, 0, 0, 0, 0],
+            "baseline_score": [0, 0, 0, 0, 0, 0],
+            # no safety_before_instructor_passes → gate falls back to the real
+            # post-run summary, which carries the optimiser's own overlap.
+        },
+    )
+
+    result = run_v2_optimisation_guarded(123, mode="current")
+
+    assert result["safety_blocked"] is True, "a genuine optimiser regression slipped past the gate"
+    assert restored["n"] == 1
