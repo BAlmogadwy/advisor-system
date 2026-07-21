@@ -456,3 +456,127 @@ def test_repair_relocates_rather_than_unplaces_when_a_free_day_exists(monkeypatc
         placed_by_section[p.term_section_id] += 1
     for ts_id in before_sections:
         assert placed_by_section[ts_id] >= 1, f"section {ts_id} lost all meetings"
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(
+    TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED=True,
+    TIMETABLE_INSTRUCTOR_LINKS_ENABLED=True,
+    TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED=True,
+)
+def test_optimise_current_reconciles_meetings_on_the_no_improve_branch(monkeypatch) -> None:
+    """When "Improve current board" finds no student-score improvement, the cap
+    repair still runs (hoisted out of the improvement branch) — and it must first
+    reconcile TermSectionMeeting rows to placements, exactly as the improve branch
+    does. The repair's _relocate/_unplace key TSM by the placement's current
+    (day, start_time); on a board with pre-existing placement/TSM drift (e.g. a
+    prior manual bulk time-move that wrote SectionPlacement but not TSM), skipping
+    that reconciliation would move the placement while the meeting row stayed
+    stale, so the cap fix would be invisible to the Instructors export and
+    validate_placement. Regression guard for the hoist that initially left the
+    sync inside the improve branch only.
+    """
+    from core.models import (
+        CourseInstructor,
+        DeliveryBoard,
+        Instructor,
+        ScenarioStudentCourseRequest,
+        ScenarioStudentMap,
+        SectionPlacement,
+        TermSection,
+        TermSectionMeeting,
+    )
+    from core.services import timetable_board_persistence as bp
+    from core.services.course_instructor_assignment import apply_primary_instructor
+    from core.services.timetable_optimizer_v2 import optimise_current_timetable
+    from core.services.timetable_pr4_instructor import normalise_instructor
+
+    scenario = _overload_board_multimeeting()
+    board = DeliveryBoard.objects.get(scenario=scenario)
+
+    # A separate, already-optimal course with one enrolled student. This makes
+    # student profiles non-empty (so optimise-current does NOT early-return) while
+    # leaving no student-score improvement to find — the overload sections carry
+    # no demand, so relocating them is score-neutral. Result: the NO-IMPROVE
+    # branch is taken, which is exactly the path the reconciliation fix is about.
+    solo = Instructor.objects.create(
+        full_name="Dr Solo", normalised_name=normalise_instructor("Dr Solo")
+    )
+    CourseInstructor.objects.create(
+        program="AI", course_code="C9", section="M", instructor=solo, role="primary"
+    )
+    ts9 = TermSection.objects.create(
+        scenario=scenario,
+        course_key="C9",
+        section="S1",
+        course_code="C9",
+        course_number="C9",
+        course_name="C9",
+        available_capacity=30,
+        source_tag="cap_test",
+    )
+    TermSectionMeeting.objects.create(
+        term_section=ts9, day="WED", start_time="08:00", end_time="09:15", room="", instructor=""
+    )
+    SectionPlacement.objects.create(
+        board=board,
+        term_section=ts9,
+        day="WED",
+        start_time="08:00",
+        end_time="09:15",
+        room="R9",
+        is_locked=False,
+    )
+    apply_primary_instructor(ts9, scenario, board, "C9")
+    ScenarioStudentMap.objects.create(
+        scenario=scenario, student_id=990001, primary_term=1, recommended_courses=["C9"]
+    )
+    ScenarioStudentCourseRequest.objects.create(
+        scenario=scenario,
+        student_id=990001,
+        course_key="C9",
+        course_code="C9",
+        primary_term=1,
+        status=ScenarioStudentCourseRequest.STATUS_REQUESTED,
+        priority=ScenarioStudentCourseRequest.PRIORITY_NORMAL,
+        source="test",
+    )
+
+    # Simulate placement/TSM drift on a NON-overloaded section: move its meeting
+    # row off where its placement sits, as a stray manual edit would.
+    drift_p = SectionPlacement.objects.filter(board__scenario=scenario, day="MON").first()
+    assert drift_p is not None
+    drift_tsm = TermSectionMeeting.objects.filter(
+        term_section_id=drift_p.term_section_id, day="MON"
+    ).first()
+    drift_tsm.day = "SAT"
+    drift_tsm.start_time = "08:00"
+    drift_tsm.end_time = "09:15"
+    drift_tsm.save()
+
+    calls = {"sync": 0}
+    _orig = bp.sync_meetings_from_placements
+
+    def _spy(sid):
+        calls["sync"] += 1
+        return _orig(sid)
+
+    monkeypatch.setattr(bp, "sync_meetings_from_placements", _spy)
+
+    result = optimise_current_timetable(
+        scenario_id=scenario.id,
+        max_search_iterations=3,
+        run_chain_search=False,
+        run_cpsat_polish=False,
+    )
+
+    # Confirm we exercised the no-improve branch (the one the fix is about).
+    assert result["persist_result"]["action"] == "no_change"
+    # The reconciliation ran before the repair despite no persist happening.
+    assert calls["sync"] >= 1, "no-improve branch did not reconcile meetings before repair"
+    # Cap satisfied, and NO placement/TSM drift remains anywhere on the board.
+    assert _max_sessions_per_instructor_day(scenario) <= 3
+    for p in SectionPlacement.objects.filter(board__scenario=scenario).exclude(day=""):
+        assert TermSectionMeeting.objects.filter(
+            term_section_id=p.term_section_id, day=p.day, start_time=p.start_time
+        ).exists(), "a TermSectionMeeting row drifted from its placement"

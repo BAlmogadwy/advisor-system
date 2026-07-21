@@ -1750,6 +1750,27 @@ def optimise_current_timetable(
         result["persist_result"] = {"action": "no_change"}
         logger.info("No improvement found — board unchanged")
 
+        # The improve branch above reconciles meeting rows to placements
+        # (sync_meetings_from_placements) as a PRECONDITION for the instructor
+        # repairs: _relocate / _unplace key TermSectionMeeting by the placement's
+        # current (day, start_time), so on a board with pre-existing placement/TSM
+        # drift they would move the placement while the meeting row stays stale.
+        # The no-improve branch persisted nothing, so it must reconcile here too
+        # before the hoisted repairs run — otherwise the cap fix is invisible to
+        # the TSM-derived views (Instructors export, validate_placement). Guarded
+        # by the instructor flags so a flag-off no-improve run stays the exact
+        # no-op it was before this change (byte-parity).
+        if (
+            is_instructor_daily_cap_enabled()
+            or is_instructor_clash_enabled()
+            or is_instructor_compaction_enabled()
+        ):
+            from core.services.timetable_board_persistence import (
+                sync_meetings_from_placements,
+            )
+
+            sync_meetings_from_placements(scenario_id)
+
     # Instructor cap / clash / compaction repairs run REGARDLESS of whether the
     # optimiser improved the student score. The daily cap is a HARD rule: an
     # already-built board can carry a legacy 4th session the optimiser has no
