@@ -310,3 +310,463 @@ def test_repair_noop_when_flag_off() -> None:
     report = repair_instructor_daily_overloads(scenario.id)
     assert report["enabled"] is False
     assert _max_sessions_per_instructor_day(scenario) == 4  # untouched when off
+
+
+def _overload_board_multimeeting():
+    """One instructor teaches TWO courses, two sections each (4 sections), and
+    every section has a meeting on THU plus a second meeting on its own quieter
+    day — so THU carries 4 sessions (an overload) while MON/TUE/WED/SUN sit light.
+
+    This is the shape that exposed the delete-bias in the wild (Nawaf, scn 644):
+    because each section is MULTI-meeting, dropping its THU meeting leaves the
+    section otherwise placed and barely moves the student score, whereas
+    RELOCATING that meeting to a free day perturbs student day-patterns and costs
+    more. A repair that picks the cheaper student score therefore UNPLACES —
+    silently dropping a class — when a free day was right there. The single-meeting
+    ``_overload_board`` never surfaced this, since dropping its only meeting makes
+    a student unresolved (expensive), so relocation always won there.
+    """
+    from core.models import (
+        CourseInstructor,
+        DeliveryBoard,
+        Instructor,
+        SectionPlacement,
+        TermSection,
+        TermSectionMeeting,
+        TimetableScenario,
+    )
+    from core.services.course_instructor_assignment import apply_primary_instructor
+    from core.services.timetable_pr4_instructor import normalise_instructor
+
+    scenario = TimetableScenario.objects.create(
+        academic_year="1448", term="1", name="AI M T1 cap mm", gender="M", programs=["AI"]
+    )
+    board = DeliveryBoard.objects.create(scenario=scenario, label="T1", nominal_term=1)
+    instr = Instructor.objects.create(
+        full_name="Dr Load", normalised_name=normalise_instructor("Dr Load")
+    )
+    # 4 sections, each: a THU meeting (the overload) + a second meeting on a light day.
+    plan = [
+        ("C1", "S1", "09:00", "10:15", "MON"),
+        ("C1", "S2", "10:30", "11:45", "TUE"),
+        ("C2", "S1", "13:00", "14:15", "WED"),
+        ("C2", "S2", "14:30", "15:45", "SUN"),
+    ]
+    for code, sec, thu_start, thu_end, other_day in plan:
+        CourseInstructor.objects.get_or_create(
+            program="AI", course_code=code, section="M", instructor=instr, role="primary"
+        )
+        ts = TermSection.objects.create(
+            scenario=scenario,
+            course_key=f"{code}{sec}",
+            section=sec,
+            course_code=code,
+            course_number=code,
+            course_name=code,
+            available_capacity=30,
+            source_tag="cap_test",
+        )
+        for day, start, end in [("THU", thu_start, thu_end), (other_day, thu_start, thu_end)]:
+            TermSectionMeeting.objects.create(
+                term_section=ts, day=day, start_time=start, end_time=end, room="", instructor=""
+            )
+            SectionPlacement.objects.create(
+                board=board,
+                term_section=ts,
+                day=day,
+                start_time=start,
+                end_time=end,
+                room="R1",
+                is_locked=False,
+            )
+        apply_primary_instructor(ts, scenario, board, ts.course_code)
+    return scenario
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(
+    TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED=True,
+    TIMETABLE_INSTRUCTOR_LINKS_ENABLED=True,
+    TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED=True,
+)
+def test_repair_relocates_rather_than_unplaces_when_a_free_day_exists(monkeypatch) -> None:
+    """The registrar rule: an over-cap day is fixed by MOVING a session to a free
+    day, never by dropping the class.
+
+    Regression guard for the delete-bias. The bias only appears when relocation
+    scores WORSE than unplacement, which needs student demand — so we drive the
+    evaluator directly to reproduce exactly that condition (as the real evaluator
+    did on scn 644): score = number of the instructor's meetings NOT on the
+    overloaded day. Relocating a session off that day raises the count (costlier);
+    dropping the meeting leaves it unchanged (cheaper). Under the OLD code, which
+    let relocation and unplacement compete on score, unplace wins here and drops a
+    class. The fix must relocate regardless, because a free day exists. Verified
+    to FAIL against the pre-fix repair.
+    """
+    from collections import defaultdict
+
+    from core.models import SectionPlacement, TermSection
+    from core.services.timetable_instructor_cap_repair import (
+        _day_idx,
+        repair_instructor_daily_overloads,
+    )
+
+    scenario = _overload_board_multimeeting()
+    assert _max_sessions_per_instructor_day(scenario) == 4  # 4 on THU before
+
+    thu = _day_idx("THU")
+
+    class _Result:
+        def __init__(self, score):
+            self.lexicographic_score = score
+
+    def _fake_eval(*, generated_sections, **_kw):
+        # Cheaper to DROP a THU meeting (off-THU count unchanged) than to MOVE it
+        # to another day (off-THU count rises) — the delete-bias trigger.
+        off_thu = sum(1 for s in generated_sections for m in s.meetings if m.day != thu)
+        return _Result((0, 0, 0, 0, off_thu, 0))
+
+    monkeypatch.setattr(
+        "core.services.timetable_candidate_eval.evaluate_generated_timetable_candidate",
+        _fake_eval,
+    )
+    # profiles must be non-empty for the repair to score candidates at all.
+    monkeypatch.setattr(
+        "core.services.timetable_optimizer_v2.build_student_profiles_for_scenario",
+        lambda _sid: {"1": object()},
+    )
+
+    before_sections = set(
+        TermSection.objects.filter(scenario=scenario).values_list("id", flat=True)
+    )
+
+    report = repair_instructor_daily_overloads(scenario.id)
+
+    assert report["enabled"] is True
+    assert report["detected"], "should detect the THU overload"
+    # The core assertion: nothing was dropped even though unplace scored cheaper.
+    assert report["unplaced"] == [], "repair unplaced a class when a free day existed"
+    assert report["repaired"], "repair should have relocated at least one session"
+    assert _max_sessions_per_instructor_day(scenario) <= 3
+    assert report["remaining_violations"] == 0
+
+    # Every section still has at least one placed meeting (none lost entirely).
+    placed_by_section: dict[int, int] = defaultdict(int)
+    for p in SectionPlacement.objects.filter(board__scenario=scenario).exclude(day=""):
+        placed_by_section[p.term_section_id] += 1
+    for ts_id in before_sections:
+        assert placed_by_section[ts_id] >= 1, f"section {ts_id} lost all meetings"
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(
+    TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED=True,
+    TIMETABLE_INSTRUCTOR_LINKS_ENABLED=True,
+    TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED=True,
+)
+def test_optimise_current_reconciles_meetings_on_the_no_improve_branch(monkeypatch) -> None:
+    """When "Improve current board" finds no student-score improvement, the cap
+    repair still runs (hoisted out of the improvement branch) — and it must first
+    reconcile TermSectionMeeting rows to placements, exactly as the improve branch
+    does. The repair's _relocate/_unplace key TSM by the placement's current
+    (day, start_time); on a board with pre-existing placement/TSM drift (e.g. a
+    prior manual bulk time-move that wrote SectionPlacement but not TSM), skipping
+    that reconciliation would move the placement while the meeting row stayed
+    stale, so the cap fix would be invisible to the Instructors export and
+    validate_placement. Regression guard for the hoist that initially left the
+    sync inside the improve branch only.
+    """
+    from core.models import (
+        CourseInstructor,
+        DeliveryBoard,
+        Instructor,
+        ScenarioStudentCourseRequest,
+        ScenarioStudentMap,
+        SectionPlacement,
+        TermSection,
+        TermSectionMeeting,
+    )
+    from core.services import timetable_board_persistence as bp
+    from core.services.course_instructor_assignment import apply_primary_instructor
+    from core.services.timetable_optimizer_v2 import optimise_current_timetable
+    from core.services.timetable_pr4_instructor import normalise_instructor
+
+    scenario = _overload_board_multimeeting()
+    board = DeliveryBoard.objects.get(scenario=scenario)
+
+    # A separate, already-optimal course with one enrolled student. This makes
+    # student profiles non-empty (so optimise-current does NOT early-return) while
+    # leaving no student-score improvement to find — the overload sections carry
+    # no demand, so relocating them is score-neutral. Result: the NO-IMPROVE
+    # branch is taken, which is exactly the path the reconciliation fix is about.
+    solo = Instructor.objects.create(
+        full_name="Dr Solo", normalised_name=normalise_instructor("Dr Solo")
+    )
+    CourseInstructor.objects.create(
+        program="AI", course_code="C9", section="M", instructor=solo, role="primary"
+    )
+    ts9 = TermSection.objects.create(
+        scenario=scenario,
+        course_key="C9",
+        section="S1",
+        course_code="C9",
+        course_number="C9",
+        course_name="C9",
+        available_capacity=30,
+        source_tag="cap_test",
+    )
+    TermSectionMeeting.objects.create(
+        term_section=ts9, day="WED", start_time="08:00", end_time="09:15", room="", instructor=""
+    )
+    SectionPlacement.objects.create(
+        board=board,
+        term_section=ts9,
+        day="WED",
+        start_time="08:00",
+        end_time="09:15",
+        room="R9",
+        is_locked=False,
+    )
+    apply_primary_instructor(ts9, scenario, board, "C9")
+    ScenarioStudentMap.objects.create(
+        scenario=scenario, student_id=990001, primary_term=1, recommended_courses=["C9"]
+    )
+    ScenarioStudentCourseRequest.objects.create(
+        scenario=scenario,
+        student_id=990001,
+        course_key="C9",
+        course_code="C9",
+        primary_term=1,
+        status=ScenarioStudentCourseRequest.STATUS_REQUESTED,
+        priority=ScenarioStudentCourseRequest.PRIORITY_NORMAL,
+        source="test",
+    )
+
+    # Simulate placement/TSM drift on a NON-overloaded section: move its meeting
+    # row off where its placement sits, as a stray manual edit would.
+    drift_p = SectionPlacement.objects.filter(board__scenario=scenario, day="MON").first()
+    assert drift_p is not None
+    drift_tsm = TermSectionMeeting.objects.filter(
+        term_section_id=drift_p.term_section_id, day="MON"
+    ).first()
+    drift_tsm.day = "SAT"
+    drift_tsm.start_time = "08:00"
+    drift_tsm.end_time = "09:15"
+    drift_tsm.save()
+
+    calls = {"sync": 0}
+    _orig = bp.sync_meetings_from_placements
+
+    def _spy(sid):
+        calls["sync"] += 1
+        return _orig(sid)
+
+    monkeypatch.setattr(bp, "sync_meetings_from_placements", _spy)
+
+    result = optimise_current_timetable(
+        scenario_id=scenario.id,
+        max_search_iterations=3,
+        run_chain_search=False,
+        run_cpsat_polish=False,
+    )
+
+    # Confirm we exercised the no-improve branch (the one the fix is about).
+    assert result["persist_result"]["action"] == "no_change"
+    # The reconciliation ran before the repair despite no persist happening.
+    assert calls["sync"] >= 1, "no-improve branch did not reconcile meetings before repair"
+    # Cap satisfied, and NO placement/TSM drift remains anywhere on the board.
+    assert _max_sessions_per_instructor_day(scenario) <= 3
+    for p in SectionPlacement.objects.filter(board__scenario=scenario).exclude(day=""):
+        assert TermSectionMeeting.objects.filter(
+            term_section_id=p.term_section_id, day=p.day, start_time=p.start_time
+        ).exists(), "a TermSectionMeeting row drifted from its placement"
+
+
+# ── Safety-gate exemption for the mandatory cap repair ───────────────────────
+
+
+class _FakeSnapshot:
+    is_empty = False
+
+
+_CLEAN_SAFETY = {
+    "same_board_conflicts": {"overlaps": 0, "instructors": 0, "rooms": 0},
+    "instructor_clashes_scenario": 0,
+}
+_OVERLAP_SAFETY = {
+    "same_board_conflicts": {"overlaps": 1, "instructors": 0, "rooms": 0},
+    "instructor_clashes_scenario": 0,
+}
+
+
+def _wire_runner(monkeypatch, summaries, opt_result):
+    """Patch run_v2_optimisation_guarded's collaborators so the gate can be tested
+    without a real board. ``summaries`` is consumed in call order (before, after,
+    and again inside the rollback branch)."""
+    from core.services import timetable_optimizer_v2 as opt
+    from core.services import timetable_v2_runner as runner
+
+    restored = {"n": 0}
+    it = iter(summaries)
+    monkeypatch.setattr(runner, "snapshot_scenario", lambda _sid: _FakeSnapshot())
+    monkeypatch.setattr(
+        runner, "restore_scenario", lambda _sid, _snap: restored.__setitem__("n", restored["n"] + 1)
+    )
+    monkeypatch.setattr(runner, "compute_scenario_safety_summary", lambda _sid, *a, **k: next(it))
+    monkeypatch.setattr(opt, "optimise_current_timetable", lambda **_kw: dict(opt_result))
+    return restored
+
+
+@pytest.mark.django_db
+def test_safety_gate_exempts_a_mandatory_repair_overlap(monkeypatch) -> None:
+    """The cap is a hard rule that WINS against students, so a repair which accepts
+    a warning-level cross-course overlap as the least-harm way to relocate an
+    over-cap session must NOT be rolled back by the safety gate — rolling back
+    would reinstate the very violation the repair cleared. The gate judges the
+    board the OPTIMISER produced (safety_before_instructor_passes), not the
+    post-repair board.
+    """
+    from core.services.timetable_v2_runner import run_v2_optimisation_guarded
+
+    # before = clean; after = the repair added one warning overlap. A third copy
+    # covers the pre-fix code path (which would roll back and re-read the summary),
+    # so this guard fails on the clean assertion rather than a StopIteration.
+    restored = _wire_runner(
+        monkeypatch,
+        summaries=[_CLEAN_SAFETY, _OVERLAP_SAFETY, _OVERLAP_SAFETY],
+        opt_result={
+            "final_score": [0, 0, 0, 0, 0, 0],
+            "baseline_score": [0, 0, 0, 0, 0, 0],
+            "safety_before_instructor_passes": _CLEAN_SAFETY,  # optimiser's board was clean
+        },
+    )
+
+    result = run_v2_optimisation_guarded(123, mode="current")
+
+    assert result["safety_blocked"] is False, "mandatory repair overlap wrongly rolled back"
+    assert restored["n"] == 0
+
+
+@pytest.mark.django_db
+def test_safety_gate_still_blocks_an_optimiser_introduced_overlap(monkeypatch) -> None:
+    """The exemption must not blind the gate to a real regression: when the overlap
+    is present in the optimiser's OWN board (no safety_before_instructor_passes, or
+    it already shows the overlap), the gate still blocks and rolls back."""
+    from core.services.timetable_v2_runner import run_v2_optimisation_guarded
+
+    # before = clean; after = overlap; rollback branch reads the summary once more.
+    restored = _wire_runner(
+        monkeypatch,
+        summaries=[_CLEAN_SAFETY, _OVERLAP_SAFETY, _OVERLAP_SAFETY],
+        opt_result={
+            "final_score": [0, 0, 0, 0, 0, 0],
+            "baseline_score": [0, 0, 0, 0, 0, 0],
+            # no safety_before_instructor_passes → gate falls back to the real
+            # post-run summary, which carries the optimiser's own overlap.
+        },
+    )
+
+    result = run_v2_optimisation_guarded(123, mode="current")
+
+    assert result["safety_blocked"] is True, "a genuine optimiser regression slipped past the gate"
+    assert restored["n"] == 1
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(
+    TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED=True,
+    TIMETABLE_INSTRUCTOR_DAILY_CAP=1,
+    TIMETABLE_INSTRUCTOR_LINKS_ENABLED=True,
+    TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED=True,
+)
+def test_repair_does_not_crash_on_a_ghost_after_unplacing_a_shared_section() -> None:
+    """Ghost-placement guard. When a session must be UNPLACED (no cap-satisfying
+    slot on any other day) and its section is CO-TAUGHT, union attribution puts
+    both instructors on that section. Processing the first instructor's overload
+    unplaces the shared session; the SECOND instructor's overload then rebuilds
+    its candidate list from the in-memory placements. If the deleted (pk=None)
+    placement is still in that list it gets re-selected and a save()/delete() on
+    it raises ValueError, aborting the whole optimise run. The repair must drop
+    the ghost from the working list.
+
+    cap=1 with each instructor at 3 (two exclusive + the shared C) is what makes
+    this bite: unplacing the shared C decrements BOTH instructors, but each is
+    over by 2, so whichever is processed first clears C + one exclusive and the
+    second is STILL over by 1 — and (pre-fix) re-selects the now-deleted C. The
+    setup is symmetric, so the crash does not depend on processing order.
+    """
+    from core.models import (
+        CourseInstructor,
+        DeliveryBoard,
+        Instructor,
+        SectionPlacement,
+        TermSection,
+        TermSectionMeeting,
+        TimetableScenario,
+    )
+    from core.services.course_instructor_assignment import apply_primary_instructor
+    from core.services.timetable_autoplace import DEFAULT_LAB_SLOTS, DEFAULT_SLOTS
+    from core.services.timetable_instructor_cap_repair import repair_instructor_daily_overloads
+    from core.services.timetable_pr4_instructor import normalise_instructor
+
+    # Block every slot on all non-MON weekdays → no relocation is possible, so the
+    # excess sessions are forced to UNPLACE (creating the ghosts).
+    starts = sorted({s["start"] for s in DEFAULT_SLOTS} | {s["start"] for s in DEFAULT_LAB_SLOTS})
+    blocked = [{"day": d, "start": st} for d in ("SUN", "TUE", "WED", "THU") for st in starts]
+    scenario = TimetableScenario.objects.create(
+        academic_year="1448",
+        term="1",
+        name="ghost",
+        gender="M",
+        programs=["AI"],
+        blocked_slots=blocked,
+    )
+    board = DeliveryBoard.objects.create(scenario=scenario, label="T1", nominal_term=1)
+    x = Instructor.objects.create(full_name="Dr X", normalised_name=normalise_instructor("Dr X"))
+    y = Instructor.objects.create(full_name="Dr Y", normalised_name=normalise_instructor("Dr Y"))
+
+    def _place(course, start, end, instrs):
+        for inst, role in instrs:
+            CourseInstructor.objects.create(
+                program="AI", course_code=course, section="M", instructor=inst, role=role
+            )
+        ts = TermSection.objects.create(
+            scenario=scenario,
+            course_key=course,
+            section="S1",
+            course_code=course,
+            course_number=course,
+            course_name=course,
+            available_capacity=30,
+            source_tag="cap_test",
+        )
+        TermSectionMeeting.objects.create(
+            term_section=ts, day="MON", start_time=start, end_time=end, room="", instructor=""
+        )
+        SectionPlacement.objects.create(
+            board=board,
+            term_section=ts,
+            day="MON",
+            start_time=start,
+            end_time=end,
+            room=f"R_{course}",
+            is_locked=False,
+        )
+        apply_primary_instructor(ts, scenario, board, course)
+
+    # cap=1. X: E1,E2 (+ shared C) = 3; Y: D1,D2 (+ shared C) = 3. C is latest, so
+    # it sorts first in each instructor's reverse-by-start day_ps → unplaced first.
+    _place("E1", "09:00", "10:15", [(x, "primary")])
+    _place("E2", "10:30", "11:45", [(x, "primary")])
+    _place("D1", "09:00", "10:15", [(y, "primary")])
+    _place("D2", "10:30", "11:45", [(y, "primary")])
+    _place("C", "13:00", "14:15", [(x, "co"), (y, "primary")])  # union {X, Y}, latest
+
+    # Must NOT raise (pre-fix: ValueError on the re-selected ghost aborts the run).
+    report = repair_instructor_daily_overloads(scenario.id)
+
+    assert report["enabled"] is True
+    assert report["remaining_violations"] == 0
+    # No pk=None ghost survives.
+    for p in SectionPlacement.objects.filter(board__scenario=scenario):
+        assert p.pk is not None

@@ -235,7 +235,10 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
                 (
                     p
                     for p in placements
-                    if (p.day or "").upper() == day and iid in _instr_ids(p) and not p.is_locked
+                    if p.pk is not None  # skip ghosts left by an earlier _unplace
+                    and (p.day or "").upper() == day
+                    and iid in _instr_ids(p)
+                    and not p.is_locked
                 ),
                 key=lambda p: p.start_time,
                 reverse=True,
@@ -250,7 +253,16 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
                 orig_meeting = s.meetings[midx] if (s is not None and midx is not None) else None
                 old = (day, p.start_time)
 
-                # Evaluate every cap-satisfying option; keep the best-scoring one.
+                # Prefer RELOCATION over unplacement, ALWAYS. A relocation keeps
+                # the session on the board — every student keeps the class — while
+                # still satisfying the cap; unplacing drops a class outright. The
+                # two must NOT compete on student score: removing one meeting
+                # perturbs student day-patterns *less* than moving it, so a score
+                # contest is delete-biased and picks unplace even when free days
+                # exist. That is the exact failure the registrar flagged — Nawaf's
+                # 4th Thursday session dropped rather than moved to an empty Sun/
+                # Mon/Wed. Among relocations we still choose the least-student-harm
+                # slot (and short-circuit on the first zero-harm one).
                 best = None  # (score, kind, day2, s2, e2)
                 for day2, s2, e2 in _candidate_slots(p, iid_set):
                     if orig_meeting is not None:
@@ -263,16 +275,11 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
                         best = (sc, "relocate", day2, s2, e2)
                     if baseline and sc <= baseline:  # no student harm — take it
                         break
-                # The unplace option (always available as a last resort).
-                if orig_meeting is not None and (best is None or best[0] > baseline):
-                    removed = s.meetings.pop(midx)
-                    sc = _score()
-                    s.meetings.insert(midx, removed)
-                    if best is None or sc < best[0]:
-                        best = (sc, "unplace", None, None, None)
 
                 if best is None:
-                    # No relocation and no in-memory section to unplace → unplace DB only.
+                    # No cap-satisfying, clash-free slot exists on ANY other day
+                    # (all at cap, blocked, or overlapping). Only now unplace, as
+                    # the documented last resort, so the hard cap still holds.
                     best = (None, "unplace", None, None, None)
 
                 _, kind, day2, s2, e2 = best
@@ -296,6 +303,14 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
                         s.meetings.pop(midx)
                     _unplace(p)
                     _drop_state(p, old, iid_set, count, section_days, instr_slots, course_slots)
+                    # _unplace deleted the row (p.pk is now None). Drop it from the
+                    # working list so a LATER over-cap entry on the same day — which
+                    # rebuilds day_ps from `placements` and whose instructor can
+                    # share this section via union attribution — never re-selects
+                    # this ghost (a .save()/.delete() on a pk=None instance raises
+                    # ValueError and aborts the whole run), and so the interval
+                    # guard stops treating its freed slot as occupied.
+                    placements.remove(p)
                     report["unplaced"].append(
                         {
                             "section": f"{p.term_section.course_code} {p.term_section.section}",
