@@ -670,3 +670,103 @@ def test_safety_gate_still_blocks_an_optimiser_introduced_overlap(monkeypatch) -
 
     assert result["safety_blocked"] is True, "a genuine optimiser regression slipped past the gate"
     assert restored["n"] == 1
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(
+    TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED=True,
+    TIMETABLE_INSTRUCTOR_DAILY_CAP=1,
+    TIMETABLE_INSTRUCTOR_LINKS_ENABLED=True,
+    TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED=True,
+)
+def test_repair_does_not_crash_on_a_ghost_after_unplacing_a_shared_section() -> None:
+    """Ghost-placement guard. When a session must be UNPLACED (no cap-satisfying
+    slot on any other day) and its section is CO-TAUGHT, union attribution puts
+    both instructors on that section. Processing the first instructor's overload
+    unplaces the shared session; the SECOND instructor's overload then rebuilds
+    its candidate list from the in-memory placements. If the deleted (pk=None)
+    placement is still in that list it gets re-selected and a save()/delete() on
+    it raises ValueError, aborting the whole optimise run. The repair must drop
+    the ghost from the working list.
+
+    cap=1 with each instructor at 3 (two exclusive + the shared C) is what makes
+    this bite: unplacing the shared C decrements BOTH instructors, but each is
+    over by 2, so whichever is processed first clears C + one exclusive and the
+    second is STILL over by 1 — and (pre-fix) re-selects the now-deleted C. The
+    setup is symmetric, so the crash does not depend on processing order.
+    """
+    from core.models import (
+        CourseInstructor,
+        DeliveryBoard,
+        Instructor,
+        SectionPlacement,
+        TermSection,
+        TermSectionMeeting,
+        TimetableScenario,
+    )
+    from core.services.course_instructor_assignment import apply_primary_instructor
+    from core.services.timetable_autoplace import DEFAULT_LAB_SLOTS, DEFAULT_SLOTS
+    from core.services.timetable_instructor_cap_repair import repair_instructor_daily_overloads
+    from core.services.timetable_pr4_instructor import normalise_instructor
+
+    # Block every slot on all non-MON weekdays → no relocation is possible, so the
+    # excess sessions are forced to UNPLACE (creating the ghosts).
+    starts = sorted({s["start"] for s in DEFAULT_SLOTS} | {s["start"] for s in DEFAULT_LAB_SLOTS})
+    blocked = [{"day": d, "start": st} for d in ("SUN", "TUE", "WED", "THU") for st in starts]
+    scenario = TimetableScenario.objects.create(
+        academic_year="1448",
+        term="1",
+        name="ghost",
+        gender="M",
+        programs=["AI"],
+        blocked_slots=blocked,
+    )
+    board = DeliveryBoard.objects.create(scenario=scenario, label="T1", nominal_term=1)
+    x = Instructor.objects.create(full_name="Dr X", normalised_name=normalise_instructor("Dr X"))
+    y = Instructor.objects.create(full_name="Dr Y", normalised_name=normalise_instructor("Dr Y"))
+
+    def _place(course, start, end, instrs):
+        for inst, role in instrs:
+            CourseInstructor.objects.create(
+                program="AI", course_code=course, section="M", instructor=inst, role=role
+            )
+        ts = TermSection.objects.create(
+            scenario=scenario,
+            course_key=course,
+            section="S1",
+            course_code=course,
+            course_number=course,
+            course_name=course,
+            available_capacity=30,
+            source_tag="cap_test",
+        )
+        TermSectionMeeting.objects.create(
+            term_section=ts, day="MON", start_time=start, end_time=end, room="", instructor=""
+        )
+        SectionPlacement.objects.create(
+            board=board,
+            term_section=ts,
+            day="MON",
+            start_time=start,
+            end_time=end,
+            room=f"R_{course}",
+            is_locked=False,
+        )
+        apply_primary_instructor(ts, scenario, board, course)
+
+    # cap=1. X: E1,E2 (+ shared C) = 3; Y: D1,D2 (+ shared C) = 3. C is latest, so
+    # it sorts first in each instructor's reverse-by-start day_ps → unplaced first.
+    _place("E1", "09:00", "10:15", [(x, "primary")])
+    _place("E2", "10:30", "11:45", [(x, "primary")])
+    _place("D1", "09:00", "10:15", [(y, "primary")])
+    _place("D2", "10:30", "11:45", [(y, "primary")])
+    _place("C", "13:00", "14:15", [(x, "co"), (y, "primary")])  # union {X, Y}, latest
+
+    # Must NOT raise (pre-fix: ValueError on the re-selected ghost aborts the run).
+    report = repair_instructor_daily_overloads(scenario.id)
+
+    assert report["enabled"] is True
+    assert report["remaining_violations"] == 0
+    # No pk=None ghost survives.
+    for p in SectionPlacement.objects.filter(board__scenario=scenario):
+        assert p.pk is not None

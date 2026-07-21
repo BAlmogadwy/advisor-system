@@ -235,7 +235,10 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
                 (
                     p
                     for p in placements
-                    if (p.day or "").upper() == day and iid in _instr_ids(p) and not p.is_locked
+                    if p.pk is not None  # skip ghosts left by an earlier _unplace
+                    and (p.day or "").upper() == day
+                    and iid in _instr_ids(p)
+                    and not p.is_locked
                 ),
                 key=lambda p: p.start_time,
                 reverse=True,
@@ -300,6 +303,14 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
                         s.meetings.pop(midx)
                     _unplace(p)
                     _drop_state(p, old, iid_set, count, section_days, instr_slots, course_slots)
+                    # _unplace deleted the row (p.pk is now None). Drop it from the
+                    # working list so a LATER over-cap entry on the same day — which
+                    # rebuilds day_ps from `placements` and whose instructor can
+                    # share this section via union attribution — never re-selects
+                    # this ghost (a .save()/.delete() on a pk=None instance raises
+                    # ValueError and aborts the whole run), and so the interval
+                    # guard stops treating its freed slot as occupied.
+                    placements.remove(p)
                     report["unplaced"].append(
                         {
                             "section": f"{p.term_section.course_code} {p.term_section.section}",
