@@ -429,8 +429,17 @@ TIMETABLE_INSTRUCTOR_GAP_PENALTY_ENABLED = os.getenv(
 # byte-identical to before. Meaningful only alongside TIMETABLE_INSTRUCTOR_LINKS_
 # ENABLED (per-section instructor identity). Env override ``=false`` is the live
 # kill-switch.
+#
+# DEFAULT ON since 2026-07-21: the registrar confirmed the 3/day limit is a hard
+# rule an instructor must never break, and a build can always be arranged to
+# honour it (an over-cap day is fixed by MOVING a session to a lighter day, not by
+# dropping a class). Enabling was previously blocked by the repair pass's
+# delete-bias — it dropped the 4th session instead of relocating it — now fixed,
+# and the repair was hoisted to run whether or not the optimiser improved the
+# student score. Compaction (below) stays OFF: it is a separate, still-room-blind
+# pass.
 TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED = os.getenv(
-    "TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED", "false"
+    "TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED", "true"
 ).lower() in ("1", "true", "yes", "on")
 TIMETABLE_INSTRUCTOR_DAILY_CAP = int(os.getenv("TIMETABLE_INSTRUCTOR_DAILY_CAP", "3"))
 

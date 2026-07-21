@@ -1746,46 +1746,48 @@ def optimise_current_timetable(
             "written": _sync.meetings_written,
         }
 
-        # Hard instructor daily-session cap: repair any pre-existing overloads on
-        # the persisted board (the structural gates prevent NEW ones; an
-        # already-built board can still hold a legacy 4th). Flag-gated → no-op
-        # when off. See timetable_instructor_cap_repair.
-        if is_instructor_daily_cap_enabled():
-            from core.services.timetable_instructor_cap_repair import (
-                repair_instructor_daily_overloads,
-            )
-
-            result["instructor_cap_repair"] = repair_instructor_daily_overloads(scenario_id)
-
-        # Instructor-clash repair — clear any legacy double-bookings. Flag-gated.
-        if is_instructor_clash_enabled():
-            from core.services.timetable_instructor_cap_repair import (
-                repair_instructor_clashes,
-            )
-
-            result["instructor_clash_repair"] = repair_instructor_clashes(scenario_id)
-
-        # Instructor-day compaction — after the cap + clash repairs, flag-gated.
-        if is_instructor_compaction_enabled():
-            from core.services.timetable_instructor_compaction import (
-                compact_instructor_schedules,
-            )
-
-            result["instructor_compaction"] = compact_instructor_schedules(scenario_id)
-
-        # See refresh_final_score_after_instructor_passes: the passes above mutate
-        # the persisted board after final_score was written, so re-score it.
-        refresh_final_score_after_instructor_passes(
-            result,
-            scenario_id,
-            student_profiles,
-            course_rigidity,
-            section_instructor_ids,
-            course_tiers,
-        )
     else:
         result["persist_result"] = {"action": "no_change"}
         logger.info("No improvement found — board unchanged")
+
+    # Instructor cap / clash / compaction repairs run REGARDLESS of whether the
+    # optimiser improved the student score. The daily cap is a HARD rule: an
+    # already-built board can carry a legacy 4th session the optimiser has no
+    # student-score reason to touch, so nesting these under "improved" (as this
+    # path used to) let a violation persist whenever the board was already
+    # student-optimal — the "Optimise Current does nothing, so the overload
+    # stays" hole. optimise_scenario_timetable_v2 already runs them
+    # unconditionally; this mirrors it. Flag-gated → no-op (and byte-parity) when
+    # off. The repairs read and persist the live DB board directly, so they work
+    # on either the just-persisted improvement or the untouched original.
+    if is_instructor_daily_cap_enabled():
+        from core.services.timetable_instructor_cap_repair import (
+            repair_instructor_daily_overloads,
+        )
+
+        result["instructor_cap_repair"] = repair_instructor_daily_overloads(scenario_id)
+
+    if is_instructor_clash_enabled():
+        from core.services.timetable_instructor_cap_repair import repair_instructor_clashes
+
+        result["instructor_clash_repair"] = repair_instructor_clashes(scenario_id)
+
+    if is_instructor_compaction_enabled():
+        from core.services.timetable_instructor_compaction import compact_instructor_schedules
+
+        result["instructor_compaction"] = compact_instructor_schedules(scenario_id)
+
+    # The passes above mutate the persisted board after final_score was written,
+    # so re-score it. No-op when no pass actually relocated/unplaced anything →
+    # byte-parity preserved when the flags are off.
+    refresh_final_score_after_instructor_passes(
+        result,
+        scenario_id,
+        student_profiles,
+        course_rigidity,
+        section_instructor_ids,
+        course_tiers,
+    )
 
     elapsed = time.time() - t0
     result["elapsed_seconds"] = round(elapsed, 1)

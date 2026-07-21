@@ -310,3 +310,149 @@ def test_repair_noop_when_flag_off() -> None:
     report = repair_instructor_daily_overloads(scenario.id)
     assert report["enabled"] is False
     assert _max_sessions_per_instructor_day(scenario) == 4  # untouched when off
+
+
+def _overload_board_multimeeting():
+    """One instructor teaches TWO courses, two sections each (4 sections), and
+    every section has a meeting on THU plus a second meeting on its own quieter
+    day — so THU carries 4 sessions (an overload) while MON/TUE/WED/SUN sit light.
+
+    This is the shape that exposed the delete-bias in the wild (Nawaf, scn 644):
+    because each section is MULTI-meeting, dropping its THU meeting leaves the
+    section otherwise placed and barely moves the student score, whereas
+    RELOCATING that meeting to a free day perturbs student day-patterns and costs
+    more. A repair that picks the cheaper student score therefore UNPLACES —
+    silently dropping a class — when a free day was right there. The single-meeting
+    ``_overload_board`` never surfaced this, since dropping its only meeting makes
+    a student unresolved (expensive), so relocation always won there.
+    """
+    from core.models import (
+        CourseInstructor,
+        DeliveryBoard,
+        Instructor,
+        SectionPlacement,
+        TermSection,
+        TermSectionMeeting,
+        TimetableScenario,
+    )
+    from core.services.course_instructor_assignment import apply_primary_instructor
+    from core.services.timetable_pr4_instructor import normalise_instructor
+
+    scenario = TimetableScenario.objects.create(
+        academic_year="1448", term="1", name="AI M T1 cap mm", gender="M", programs=["AI"]
+    )
+    board = DeliveryBoard.objects.create(scenario=scenario, label="T1", nominal_term=1)
+    instr = Instructor.objects.create(
+        full_name="Dr Load", normalised_name=normalise_instructor("Dr Load")
+    )
+    # 4 sections, each: a THU meeting (the overload) + a second meeting on a light day.
+    plan = [
+        ("C1", "S1", "09:00", "10:15", "MON"),
+        ("C1", "S2", "10:30", "11:45", "TUE"),
+        ("C2", "S1", "13:00", "14:15", "WED"),
+        ("C2", "S2", "14:30", "15:45", "SUN"),
+    ]
+    for code, sec, thu_start, thu_end, other_day in plan:
+        CourseInstructor.objects.get_or_create(
+            program="AI", course_code=code, section="M", instructor=instr, role="primary"
+        )
+        ts = TermSection.objects.create(
+            scenario=scenario,
+            course_key=f"{code}{sec}",
+            section=sec,
+            course_code=code,
+            course_number=code,
+            course_name=code,
+            available_capacity=30,
+            source_tag="cap_test",
+        )
+        for day, start, end in [("THU", thu_start, thu_end), (other_day, thu_start, thu_end)]:
+            TermSectionMeeting.objects.create(
+                term_section=ts, day=day, start_time=start, end_time=end, room="", instructor=""
+            )
+            SectionPlacement.objects.create(
+                board=board,
+                term_section=ts,
+                day=day,
+                start_time=start,
+                end_time=end,
+                room="R1",
+                is_locked=False,
+            )
+        apply_primary_instructor(ts, scenario, board, ts.course_code)
+    return scenario
+
+
+@pytest.mark.django_db(transaction=True)
+@override_settings(
+    TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED=True,
+    TIMETABLE_INSTRUCTOR_LINKS_ENABLED=True,
+    TIMETABLE_PR4_INSTRUCTOR_CLASH_ENABLED=True,
+)
+def test_repair_relocates_rather_than_unplaces_when_a_free_day_exists(monkeypatch) -> None:
+    """The registrar rule: an over-cap day is fixed by MOVING a session to a free
+    day, never by dropping the class.
+
+    Regression guard for the delete-bias. The bias only appears when relocation
+    scores WORSE than unplacement, which needs student demand — so we drive the
+    evaluator directly to reproduce exactly that condition (as the real evaluator
+    did on scn 644): score = number of the instructor's meetings NOT on the
+    overloaded day. Relocating a session off that day raises the count (costlier);
+    dropping the meeting leaves it unchanged (cheaper). Under the OLD code, which
+    let relocation and unplacement compete on score, unplace wins here and drops a
+    class. The fix must relocate regardless, because a free day exists. Verified
+    to FAIL against the pre-fix repair.
+    """
+    from collections import defaultdict
+
+    from core.models import SectionPlacement, TermSection
+    from core.services.timetable_instructor_cap_repair import (
+        _day_idx,
+        repair_instructor_daily_overloads,
+    )
+
+    scenario = _overload_board_multimeeting()
+    assert _max_sessions_per_instructor_day(scenario) == 4  # 4 on THU before
+
+    thu = _day_idx("THU")
+
+    class _Result:
+        def __init__(self, score):
+            self.lexicographic_score = score
+
+    def _fake_eval(*, generated_sections, **_kw):
+        # Cheaper to DROP a THU meeting (off-THU count unchanged) than to MOVE it
+        # to another day (off-THU count rises) — the delete-bias trigger.
+        off_thu = sum(1 for s in generated_sections for m in s.meetings if m.day != thu)
+        return _Result((0, 0, 0, 0, off_thu, 0))
+
+    monkeypatch.setattr(
+        "core.services.timetable_candidate_eval.evaluate_generated_timetable_candidate",
+        _fake_eval,
+    )
+    # profiles must be non-empty for the repair to score candidates at all.
+    monkeypatch.setattr(
+        "core.services.timetable_optimizer_v2.build_student_profiles_for_scenario",
+        lambda _sid: {"1": object()},
+    )
+
+    before_sections = set(
+        TermSection.objects.filter(scenario=scenario).values_list("id", flat=True)
+    )
+
+    report = repair_instructor_daily_overloads(scenario.id)
+
+    assert report["enabled"] is True
+    assert report["detected"], "should detect the THU overload"
+    # The core assertion: nothing was dropped even though unplace scored cheaper.
+    assert report["unplaced"] == [], "repair unplaced a class when a free day existed"
+    assert report["repaired"], "repair should have relocated at least one session"
+    assert _max_sessions_per_instructor_day(scenario) <= 3
+    assert report["remaining_violations"] == 0
+
+    # Every section still has at least one placed meeting (none lost entirely).
+    placed_by_section: dict[int, int] = defaultdict(int)
+    for p in SectionPlacement.objects.filter(board__scenario=scenario).exclude(day=""):
+        placed_by_section[p.term_section_id] += 1
+    for ts_id in before_sections:
+        assert placed_by_section[ts_id] >= 1, f"section {ts_id} lost all meetings"
