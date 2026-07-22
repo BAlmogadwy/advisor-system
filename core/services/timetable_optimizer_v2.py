@@ -50,6 +50,7 @@ from core.services.timetable_flags import (
     is_online_gap_exclusion_enabled,
     is_tiered_objective_enabled,
 )
+from core.services.timetable_online import OnlineCourseLookup
 from core.services.timetable_pr4_instructor import (
     is_instructor_clash_enabled,
     is_instructor_compaction_enabled,
@@ -214,31 +215,27 @@ def build_section_states_for_scenario(
     # instructor gap chain (see timetable_student_assignment._campus_meetings).
     # Resolved here rather than in the gap hot loop, and only when the flag is on
     # — with it off nothing is marked online, so scoring is byte-identical.
-    online_ts_ids: set[int] = set()
-    if is_online_gap_exclusion_enabled():
-        from core.services.timetable_online import OnlineCourseLookup, normalise_course_code
-
-        scenario_obj = TimetableScenario.objects.filter(id=scenario_id).first()
-        if scenario_obj is not None:
-            online_codes = OnlineCourseLookup().codes_for_programmes(
-                getattr(scenario_obj, "programs", None) or []
-            )
-            # Online-ness is a COURSE property keyed by the BARE code, while the
-            # SectionState identity is the planner ``CODE::NAME`` form — resolve
-            # against ts.course_code, not course_key. Precomputed per section so
-            # the build loop is a set lookup.
-            online_ts_ids = {
-                ts_id
-                for ts_id, ts in ts_lookup.items()
-                if normalise_course_code(ts.course_code) in online_codes
-            }
+    # Online sessions are attended remotely, so they must not appear in any
+    # student or instructor gap chain (see timetable_student_assignment
+    # ``_campus_meetings``). Resolved PER BOARD via ``is_online_course_for_board``
+    # — the same convention every other online consumer uses (rooming, workspace,
+    # repair, solver, autoplace, ...). Keying off ``scenario.programs`` instead
+    # would silently no-op on any scenario whose ``programs`` is empty (real
+    # today: scn 615/616/617/620, and 620 has 168 placements), because
+    # ``codes_for_programmes([])`` returns an empty set. The lookup caches by
+    # programme set, so the per-section calls are cheap.
+    online_lookup = OnlineCourseLookup() if is_online_gap_exclusion_enabled() else None
 
     sections: list[SectionState] = []
     for ts_id, pls in grouped.items():
         ts = ts_lookup[ts_id]
         course_code = ts.course_key or ts.course_code
         budget = budgets.get(course_code)
-        is_online = ts_id in online_ts_ids
+        # Online-ness is a COURSE property keyed by the BARE code; course_code
+        # above is the planner ``CODE::NAME`` identity, so pass ts.course_code.
+        is_online = online_lookup is not None and online_lookup.is_online_course_for_board(
+            pls[0].board, ts.course_code
+        )
 
         meetings: list[SectionMeeting] = []
         for pl in pls:
@@ -300,6 +297,16 @@ def build_section_states_for_scenario(
                 pattern_id=pattern_id,
                 is_online=is_online,
             )
+        )
+
+    # Make a silent no-op visible: if the exclusion is on but nothing resolved as
+    # online, the gap chain is still counting every session as on-campus and the
+    # cause is almost always missing programme metadata on the boards.
+    if online_lookup is not None and not any(s.is_online for s in sections):
+        logger.info(
+            "Online gap exclusion is ON but no section resolved as online for "
+            "scenario %d — gap minutes still include any online sessions.",
+            scenario_id,
         )
 
     # DEBUG, not INFO: this helper used to run once per optimise run, but the

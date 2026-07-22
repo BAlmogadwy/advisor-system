@@ -206,6 +206,75 @@ def test_build_section_states_marks_online_courses() -> None:
 
 
 @pytest.mark.django_db
+@override_settings(TIMETABLE_ONLINE_GAP_EXCLUSION_ENABLED=True)
+def test_online_resolves_from_the_board_when_scenario_programs_is_empty() -> None:
+    """``scenario.programs`` is only populated by the generate path — scenarios
+    created by import/clone/manual can have it empty (live: 615/616/617/620, and
+    620 carries 168 placements). Keying the marker off it made the whole feature
+    silently no-op there. Online-ness must resolve from the BOARD, matching the
+    convention every other online consumer uses.
+    """
+    from core.models import (
+        DeliveryBoard,
+        ProgrammeRequirement,
+        ScenarioSectionBudget,
+        SectionPlacement,
+        TermSection,
+        TimetableScenario,
+    )
+    from core.services.timetable_optimizer_v2 import build_section_states_for_scenario
+
+    scenario = TimetableScenario.objects.create(
+        academic_year="1448",
+        term="1",
+        name="no programs",
+        gender="M",
+        programs=[],  # the hole
+    )
+    board = DeliveryBoard.objects.create(
+        scenario=scenario, label="T1", nominal_term=1, program="AI"
+    )
+    ProgrammeRequirement.objects.create(
+        program="AI",
+        course_code="GS111",
+        course_name="ONLINE GEN-ED",
+        type="core",
+        programme_term=1,
+        credit_hours=3,
+        is_online=True,
+    )
+    ScenarioSectionBudget.objects.create(
+        scenario=scenario,
+        course_code="GS111",
+        course_key="GS111::X",
+        department="GS",
+        credit_hours=3,
+        planned_sections=1,
+        max_per_section=30,
+        total_demand=10,
+    )
+    ts = TermSection.objects.create(
+        scenario=scenario,
+        course_code="GS111",
+        course_key="GS111::X",
+        course_number="GS111",
+        course_name="GS111",
+        section="S1",
+        source_tag="test",
+    )
+    SectionPlacement.objects.create(
+        board=board, term_section=ts, day="SUN", start_time="09:00", end_time="10:15", room="R1"
+    )
+
+    states = build_section_states_for_scenario(scenario.id)
+    assert states, "expected the section to build"
+    assert all(s.is_online for s in states), (
+        "online course not detected because scenario.programs is empty — "
+        "resolution must come from the board"
+    )
+
+
+@pytest.mark.django_db
 @override_settings(TIMETABLE_ONLINE_GAP_EXCLUSION_ENABLED=False)
 def test_flag_off_marks_nothing_online() -> None:
     """Byte-parity: with the flag off no section carries the marker, so every gap

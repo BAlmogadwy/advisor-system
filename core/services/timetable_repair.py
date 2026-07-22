@@ -109,7 +109,15 @@ EVALUATOR_BASELINE_SOURCE = "repair_evaluator_baseline"
 # per-student SEATING (not just the score), so cached analyses computed under the
 # legacy tier-blind assignment describe a board that is no longer built that way.
 # Bumping the version invalidates them rather than serving a stale reconstruction.
-REPAIR_CACHE_VERSION = "repair-cache-evaluator-baseline-v10-tiered-default"
+# v11 (2026-07-22): same reasoning for the online gap exclusion, now default ON.
+# ``calculate_added_gap`` is the pricing term in ``rank_and_select_best_section``,
+# so excluding online sessions changes which section a student is SEATED into,
+# not merely the reported gap. Cached analyses built under online-blind seating
+# would otherwise stay cache-valid (the state fingerprint hashes placements /
+# sections / assignments / requests only — no scoring config) and remain
+# approvable, letting a registrar apply a student-move computed for a seating the
+# evaluator no longer produces.
+REPAIR_CACHE_VERSION = "repair-cache-evaluator-baseline-v11-online-gap-exclusion"
 REPAIR_SOLVER_VERSION = "repair-solver-cpsat-flow-adaptive-lns-v3"
 REPAIR_CONSTRAINT_VERSION = "repair-constraints-eligibility-capacity-conflict-v2"
 REPAIR_OBJECTIVE_VERSION = "repair-objective-requested-quality-v3"
