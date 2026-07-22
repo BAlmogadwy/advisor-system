@@ -210,11 +210,6 @@ def build_section_states_for_scenario(
         grouped[pl.term_section_id].append(pl)
         ts_lookup[pl.term_section_id] = pl.term_section
 
-    # Online course codes for this scenario's programmes, resolved ONCE. Online
-    # sessions are attended remotely, so they must not appear in any student or
-    # instructor gap chain (see timetable_student_assignment._campus_meetings).
-    # Resolved here rather than in the gap hot loop, and only when the flag is on
-    # — with it off nothing is marked online, so scoring is byte-identical.
     # Online sessions are attended remotely, so they must not appear in any
     # student or instructor gap chain (see timetable_student_assignment
     # ``_campus_meetings``). Resolved PER BOARD via ``is_online_course_for_board``
