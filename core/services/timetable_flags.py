@@ -19,6 +19,7 @@ STAGE_TELEMETRY_SETTING = "TIMETABLE_PR6_STAGE_TELEMETRY_ENABLED"
 ASYNC_PLANNER_SETTING = "TIMETABLE_PR7_ASYNC_PLANNER_ENABLED"
 ASYNC_JOB_UI_SETTING = "TIMETABLE_PR8_ASYNC_JOB_UI_ENABLED"
 TIERED_OBJECTIVE_SETTING = "TIMETABLE_TIERED_OBJECTIVE_ENABLED"
+ONLINE_GAP_EXCLUSION_SETTING = "TIMETABLE_ONLINE_GAP_EXCLUSION_ENABLED"
 TIERED_T2_TOLERANCE_SETTING = "TIMETABLE_TIERED_T2_TOLERANCE"
 TIERED_SOFT_GAP_BUDGET_SETTING = "TIMETABLE_TIERED_SOFT_GAP_BUDGET"
 
@@ -37,6 +38,17 @@ def is_tiered_objective_enabled() -> bool:
     values, so optimiser output is byte-identical to pre-feature.
     """
     return bool(getattr(settings, TIERED_OBJECTIVE_SETTING, False))
+
+
+def is_online_gap_exclusion_enabled() -> bool:
+    """Gate excluding ONLINE sessions from the student/instructor gap chains.
+
+    An online class is attended remotely, so it neither creates nor bridges an
+    on-campus gap. Read ONCE where ``SectionState``s are built (not in the gap
+    hot loop): with this off no section is ever flagged online, so the previous
+    online-blind numbers are reproduced byte-for-byte.
+    """
+    return bool(getattr(settings, ONLINE_GAP_EXCLUSION_SETTING, False))
 
 
 def get_tiered_t2_tolerance() -> int:

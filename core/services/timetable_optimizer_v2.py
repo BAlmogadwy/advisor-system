@@ -46,7 +46,10 @@ from core.services.timetable_course_tier import (
     program_count_by_code,
 )
 from core.services.timetable_demand import load_scenario_course_demands
-from core.services.timetable_flags import is_tiered_objective_enabled
+from core.services.timetable_flags import (
+    is_online_gap_exclusion_enabled,
+    is_tiered_objective_enabled,
+)
 from core.services.timetable_pr4_instructor import (
     is_instructor_clash_enabled,
     is_instructor_compaction_enabled,
@@ -206,11 +209,36 @@ def build_section_states_for_scenario(
         grouped[pl.term_section_id].append(pl)
         ts_lookup[pl.term_section_id] = pl.term_section
 
+    # Online course codes for this scenario's programmes, resolved ONCE. Online
+    # sessions are attended remotely, so they must not appear in any student or
+    # instructor gap chain (see timetable_student_assignment._campus_meetings).
+    # Resolved here rather than in the gap hot loop, and only when the flag is on
+    # — with it off nothing is marked online, so scoring is byte-identical.
+    online_ts_ids: set[int] = set()
+    if is_online_gap_exclusion_enabled():
+        from core.services.timetable_online import OnlineCourseLookup, normalise_course_code
+
+        scenario_obj = TimetableScenario.objects.filter(id=scenario_id).first()
+        if scenario_obj is not None:
+            online_codes = OnlineCourseLookup().codes_for_programmes(
+                getattr(scenario_obj, "programs", None) or []
+            )
+            # Online-ness is a COURSE property keyed by the BARE code, while the
+            # SectionState identity is the planner ``CODE::NAME`` form — resolve
+            # against ts.course_code, not course_key. Precomputed per section so
+            # the build loop is a set lookup.
+            online_ts_ids = {
+                ts_id
+                for ts_id, ts in ts_lookup.items()
+                if normalise_course_code(ts.course_code) in online_codes
+            }
+
     sections: list[SectionState] = []
     for ts_id, pls in grouped.items():
         ts = ts_lookup[ts_id]
         course_code = ts.course_key or ts.course_code
         budget = budgets.get(course_code)
+        is_online = ts_id in online_ts_ids
 
         meetings: list[SectionMeeting] = []
         for pl in pls:
@@ -270,6 +298,7 @@ def build_section_states_for_scenario(
                 assigned_room_id=pls[0].room if pls[0].room else None,
                 pattern_family=pattern_family,
                 pattern_id=pattern_id,
+                is_online=is_online,
             )
         )
 
