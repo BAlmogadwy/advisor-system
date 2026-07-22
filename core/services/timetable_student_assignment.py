@@ -401,20 +401,43 @@ def repair_unresolved_assignments_shallow(
                 state.unresolved_courses[unres_course] = UnresolvedReason(unres_course, reason)
 
 
+def _campus_meetings(section: SectionState) -> list[SectionMeeting]:
+    """The section's meetings that actually occupy a student's day ON CAMPUS.
+
+    An ONLINE section is attended remotely, so it neither creates nor bridges a
+    campus gap — its sessions must not appear in any gap chain. Counting them
+    overstates ``gap_minutes`` for every student holding an online course, and
+    worse, lets the optimiser "close" a gap by moving an in-person class next to
+    an online one, which changes nothing for the student.
+
+    ``is_online`` is resolved once when the states are built and is only ever set
+    when ``TIMETABLE_ONLINE_GAP_EXCLUSION_ENABLED`` is on, so with the flag off
+    this is the identity function and the legacy numbers are reproduced exactly.
+    """
+    return [] if section.is_online else section.meetings
+
+
 def calculate_added_gap(
     state: StudentAssignmentState,
     candidate: SectionState,
     sections_by_id: dict[str, SectionState],
 ) -> int:
+    # An online candidate adds no campus gap at all, and online sections already
+    # seated must not anchor the chain either.
+    candidate_meetings = _campus_meetings(candidate)
+    if not candidate_meetings:
+        return 0
     added_gap = 0
-    candidate_days = {m.day for m in candidate.meetings}
+    candidate_days = {m.day for m in candidate_meetings}
     for day in candidate_days:
         existing_meetings: list[SectionMeeting] = []
         for sec_id in state.section_ids:
-            existing_meetings.extend([m for m in sections_by_id[sec_id].meetings if m.day == day])
+            existing_meetings.extend(
+                [m for m in _campus_meetings(sections_by_id[sec_id]) if m.day == day]
+            )
         old_day_gap = _compute_day_gap(existing_meetings)
         new_day_gap = _compute_day_gap(
-            existing_meetings + [m for m in candidate.meetings if m.day == day]
+            existing_meetings + [m for m in candidate_meetings if m.day == day]
         )
         added_gap += new_day_gap - old_day_gap
     return added_gap
@@ -437,7 +460,8 @@ def _compute_total_state_gap(
     total = 0
     meetings_by_day: dict[int, list[SectionMeeting]] = defaultdict(list)
     for sec_id in state.section_ids:
-        for m in sections_by_id[sec_id].meetings:
+        # Online sessions are attended remotely — they never form a campus gap.
+        for m in _campus_meetings(sections_by_id[sec_id]):
             meetings_by_day[m.day].append(m)
     for day_meetings in meetings_by_day.values():
         total += _compute_day_gap(day_meetings)
@@ -457,6 +481,10 @@ def _compute_instructor_idle_minutes(
     sections present in ``section_instructor_ids`` contribute, so courses with no
     assigned instructor are naturally invisible. A section taught by N
     instructors counts its meetings toward each of those N instructors.
+
+    "On-campus" is now enforced, not just documented: ONLINE sections are
+    excluded, since teaching a session remotely does not strand the instructor
+    on campus either side of it.
     """
     if not section_instructor_ids:
         return 0
@@ -466,7 +494,7 @@ def _compute_instructor_idle_minutes(
         if section is None:
             continue
         for instr_id in instructor_ids:
-            for m in section.meetings:
+            for m in _campus_meetings(section):
                 meetings_by_instructor_day[(instr_id, m.day)].append(m)
     total = 0
     for day_meetings in meetings_by_instructor_day.values():

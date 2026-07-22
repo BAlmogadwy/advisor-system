@@ -504,6 +504,18 @@ TIMETABLE_TIERED_T2_TOLERANCE = int(os.getenv("TIMETABLE_TIERED_T2_TOLERANCE", "
 # slots). 0 = strict quality-first (gaps always beat gen-ed).
 TIMETABLE_TIERED_SOFT_GAP_BUDGET = int(os.getenv("TIMETABLE_TIERED_SOFT_GAP_BUDGET", "120"))
 
+# TIMETABLE_ONLINE_GAP_EXCLUSION_ENABLED: exclude ONLINE sessions from the
+# student and instructor gap chains. An online class is attended remotely, so the
+# minutes around it are not on-campus idle time — charging them overstates
+# gap_minutes for every student holding an online course and can make the
+# optimiser pay real on-campus quality (or move an in-person class "next to" an
+# online one) to close a gap that does not exist. Correctness fix, so DEFAULT ON;
+# ``=false`` restores the previous online-blind scoring, which is byte-identical
+# because with the flag off no SectionState is ever marked online.
+TIMETABLE_ONLINE_GAP_EXCLUSION_ENABLED = os.getenv(
+    "TIMETABLE_ONLINE_GAP_EXCLUSION_ENABLED", "true"
+).lower() in ("1", "true", "yes", "on")
+
 TIMETABLE_LAB_HEURISTIC_UNIFIED = os.getenv("TIMETABLE_LAB_HEURISTIC_UNIFIED", "true").lower() in (
     "1",
     "true",

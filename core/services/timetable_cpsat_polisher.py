@@ -515,6 +515,9 @@ def polish_scenario_with_cpsat(
                 assigned_room_id=sec.assigned_room_id,
                 pattern_family=sec.pattern_family,
                 pattern_id=sec.pattern_id,
+                # Carry the online marker through, or the polished board would be
+                # rescored as if every online session were on campus.
+                is_online=sec.is_online,
             )
         )
 

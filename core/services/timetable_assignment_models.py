@@ -56,6 +56,13 @@ class SectionState:
     assigned_room_id: str | None = None
     room_type_required: str = "lecture"
     demand_capacity: int | None = None
+    # True when the course is delivered ONLINE. An online session is attended
+    # remotely, so it neither creates nor bridges an on-campus gap: it is excluded
+    # from every student/instructor gap chain (see timetable_student_assignment
+    # ``_campus_meetings``). Resolved once when states are built, so the hot gap
+    # loops only read a bool — and with the exclusion flag off nothing is ever
+    # marked online, which is what makes flag-off byte-identical.
+    is_online: bool = False
 
     def __post_init__(self) -> None:
         if self.max_capacity < 0:
