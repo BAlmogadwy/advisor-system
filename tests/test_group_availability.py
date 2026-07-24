@@ -32,7 +32,7 @@ YEAR = "1448"
 TERM = "1"
 
 # Lecture slot indices (DEFAULT_SLOTS): 0=09:00-10:15, 1=10:30-11:45,
-# 2=13:00-14:15, 3=14:30-15:45, 4=16:00-17:15.
+# 2=10:50-12:05, 3=13:00-14:15, 4=14:30-15:45, 5=14:45-16:00, 6=16:00-17:15.
 
 
 def _make_global_section(
@@ -203,9 +203,10 @@ def test_normalise_student_ids_dedupes_and_drops_nonnumeric():
 def test_empty_group_returns_all_free():
     result = compute_group_availability([], YEAR, TERM)
     assert result["requested_count"] == 0
-    # 6 lecture slots × 5 weekdays = 30 (the 10:50-12:05 post-lab slot added
-    # a sixth lecture slot); labs are unchanged at 5 slots × 5 days = 25.
-    assert result["grids"]["lecture"]["free_for_all_count"] == 30
+    # 7 lecture slots × 5 weekdays = 35 (the 10:50-12:05 post-lab slot and the
+    # 14:45-16:00 afternoon post-lab slot each add a lecture slot beyond the
+    # base 5); labs are unchanged at 5 slots × 5 days = 25.
+    assert result["grids"]["lecture"]["free_for_all_count"] == 35
     assert result["grids"]["lab"]["free_for_all_count"] == 25
 
 

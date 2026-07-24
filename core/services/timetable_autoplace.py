@@ -212,6 +212,13 @@ DEFAULT_SLOTS = [
     # -- midday break gap: no lecture slot starts in 11:30-12:59 --
     {"label": "13:00-14:15", "start": "13:00", "end": "14:15"},
     {"label": "14:30-15:45", "start": "14:30", "end": "15:45"},
+    # Afternoon post-lab variant, mirroring the 10:50 morning slot: a student in
+    # Lab 3 (13:00-14:40) overlaps the 14:30 lecture by 10 min and would otherwise
+    # idle until 16:00. Starting at 14:45 (5-min turnaround after the lab) ends
+    # exactly at 16:00, so it TOUCHES — does not overlap — the 16:00 slot. It does
+    # overlap the 14:30 slot (a deliberate parallel option; interval-aware clash
+    # handles it) and shares a start with Lab 4 (14:45), across grids.
+    {"label": "14:45-16:00", "start": "14:45", "end": "16:00"},
     {"label": "16:00-17:15", "start": "16:00", "end": "17:15"},
 ]
 

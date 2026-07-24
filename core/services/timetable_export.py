@@ -185,12 +185,18 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
 
         row = 1
 
+        # The board-header banner must span the day column + every lecture-slot
+        # column so the navy bar covers the full grid width for any slot count.
+        # (Was hardcoded to 6 = the original 5-slot-era width, so it fell short
+        # once the 10:50 and 14:45 slots were added.)
+        banner_end_col = 1 + len(scenario.slot_config or DEFAULT_SLOTS)
+
         for board_idx, board in enumerate(term_boards):
             if board_idx > 0:
                 row += 2
 
             # Board header
-            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=6)
+            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=banner_end_col)
             cell = ws.cell(row=row, column=1)
             primary_count = BoardStudentLink.objects.filter(
                 board=board, link_type="primary"
@@ -202,7 +208,7 @@ def export_scenario_xlsx(scenario_id: int) -> Path:
             cell.fill = board_hdr_fill
             cell.font = board_hdr_font
             cell.alignment = center_align
-            for c in range(1, 7):
+            for c in range(1, banner_end_col + 1):
                 ws.cell(row=row, column=c).fill = board_hdr_fill
             row += 1
 
