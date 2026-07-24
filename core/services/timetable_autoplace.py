@@ -34,10 +34,9 @@ Hard constraints (violations are never accepted)
   - Locked placements are honoured (when ``TIMETABLE_ENFORCE_LOCKS`` is on).
   - Blocked slots (scenario ``blocked_slots``) are never used.
 
-  Prayer compliance is guaranteed at the slot-grid level, not per meeting:
-  the fixed slot grids never start a lecture in 11:30-12:59 or a lab in
-  11:10-12:59 (see ``timetable_validation.assert_slot_grid_prayer_compliant``),
-  so no runtime per-meeting prayer rule is required.
+  There is no runtime prayer rule: the fixed slot grids are curated so no
+  lecture or lab starts inside the midday prayer window, so compliance holds
+  by grid construction rather than being checked per meeting.
 
 Soft constraints (penalised but not forbidden)
 ----------------------------------------------
@@ -199,7 +198,8 @@ def get_meeting_pattern(credit_hours: int) -> list[int]:
 # Five 75-minute teaching slots spanning the day, with a gap from 11:45 to
 # 13:00 for the midday break.  A scenario may override these via its
 # ``slot_config`` JSON field.  The grid is prayer-compliant by construction:
-# no lecture slot starts in 11:30-12:59 (see timetable_validation).
+# no lecture slot starts in 11:30-12:59. This holds only by the curated start
+# times below — it is not enforced by any check.
 
 DEFAULT_SLOTS = [
     {"label": "09:00-10:15", "start": "09:00", "end": "10:15"},
@@ -314,9 +314,8 @@ def _generate_meeting_options(
             _blocked_set.add((bs.get("day", ""), bs.get("start", "")))
 
     # For each meeting duration, pre-compute which (slot_idx, start, end)
-    # positions are feasible. Prayer compliance is a property of the slot
-    # grid (see ``timetable_validation.assert_slot_grid_prayer_compliant``),
-    # not a per-candidate runtime filter.
+    # positions are feasible. Every slot in the grid is a feasible cell; the
+    # only exclusions applied here are the user's blocked_slots.
     lecture_positions = [(i, s["start"], s["end"]) for i, s in enumerate(slots)]
     lab_positions = [(i, s["start"], s["end"]) for i, s in enumerate(lab_slots)]
 

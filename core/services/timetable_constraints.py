@@ -20,8 +20,7 @@ Each rule offers two forms:
   search on any already-imperfect board).
 
 See ``docs/CONSTRAINT-ENGINE-DOR.md``. PR-2a covers instructor clash; the daily
-cap, same-course, room, and prayer/grid rules migrate onto this module in
-PR-2b–d.
+cap, same-course, and room rules migrate onto this module in PR-2b–d.
 """
 
 from __future__ import annotations

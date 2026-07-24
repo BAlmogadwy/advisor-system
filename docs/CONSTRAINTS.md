@@ -48,16 +48,17 @@ Checked in order, most-specific reason wins (`timetable_room_oracle.py`): **type
 1.1) → **occupancy**. Gated by `TIMETABLE_PR2_ROOM_ORACLE_ENABLED` (true). Soft
 room-stability preference keeps a section in the same room across its meetings.
 
-## Prayer — grid-compliant by construction, NO runtime rule
+## Prayer — grid-compliant by construction, NOT enforced in code
 
-The planner uses **fixed slot grids**, and no slot's start time falls inside a
-prayer window, so a per-meeting prayer rule can never fire. Rather than a
-dormant runtime rule, compliance is guaranteed at the **source**:
-`assert_slot_grid_prayer_compliant()` (`timetable_validation.py`) rejects any
-grid that starts a **lecture in 11:30–12:59** or a **lab in 11:10–12:59**. The
-default `DEFAULT_SLOTS` / `DEFAULT_LAB_SLOTS` pass by construction; the guard
-only fires on a hand-edited non-compliant grid. (Soft idle-gap penalties around
-the 13:00 midday boundary are scheduling-quality, unrelated to a prayer rule.)
+The planner uses **fixed slot grids** whose curated start times never fall
+inside a prayer window, so prayer compliance holds by grid construction. There
+is **no code that checks or enforces it** — the default `DEFAULT_SLOTS` /
+`DEFAULT_LAB_SLOTS` simply omit those start times. (An earlier
+`assert_slot_grid_prayer_compliant()` grid validator was never wired into the
+pipeline and has been removed.) A hand-edited non-compliant `slot_config` is
+therefore not caught by anything — grid curation is the sole safeguard. (Soft
+idle-gap penalties around the 13:00 midday boundary are scheduling-quality,
+unrelated to prayer.)
 
 ## Pipeline acceptance gates (meta-constraints)
 
