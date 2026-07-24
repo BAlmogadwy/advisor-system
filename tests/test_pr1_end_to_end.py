@@ -5,9 +5,8 @@ field is empty and the baseline return surface is preserved. Behaviour: with
 the flag ON, a pre-existing locked row is respected and a ``LOCK_RESPECT``
 telemetry row is emitted.
 
-(The companion prayer-overlap rule was removed — prayer compliance is now a
-property of the fixed slot grid, guarded by
-``timetable_validation.assert_slot_grid_prayer_compliant`` — so these tests
+(The companion prayer-overlap rule was removed — prayer compliance holds by
+fixed-slot-grid construction and is not enforced in code — so these tests
 cover locks only.)
 """
 

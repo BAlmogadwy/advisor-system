@@ -1,15 +1,12 @@
-"""Placement-legality validator + slot-grid prayer-compliance guard.
+"""Placement-legality validator + blocked-cell exclusion helper.
 
 Narrow, pure helpers used by the planner. ``lock_rejection`` /
 ``validate_candidate`` return ``RejectionReason | None``; ``None`` means
 "no rejection" (either the rule is disabled by its flag, or the candidate
 is compliant).
 
-Prayer compliance is NOT a runtime placement rule — the planner uses fixed
-slot grids, so it is a property of the grid checked once via
-``assert_slot_grid_prayer_compliant`` (no lecture starts 11:30-12:59, no lab
-starts 11:10-12:59). ``blocked_slot_keys`` builds the shared blocked-cell
-exclusion set every placement stage consults.
+``blocked_slot_keys`` builds the shared blocked-cell exclusion set every
+placement stage consults.
 
 Interval semantics:
 
@@ -187,19 +184,8 @@ def validate_candidate(
 
 
 # ---------------------------------------------------------------------------
-# Slot-grid prayer compliance (source-of-truth guard)
+# Blocked-cell domain exclusion
 # ---------------------------------------------------------------------------
-#
-# The planner uses fixed slot grids. Prayer compliance is therefore a property
-# of the GRID, checked once when a grid is resolved, rather than a per-meeting
-# runtime rule re-evaluated by every placement stage. The institutional rule:
-#
-#   - no lecture may START in 11:30-12:59 (inclusive)
-#   - no lab     may START in 11:10-12:59 (inclusive)
-#
-# The default grids satisfy this by construction; this guard only fires if a
-# scenario's ``slot_config`` / ``lab_slot_config`` is hand-edited to a
-# non-compliant grid.
 
 
 def blocked_slot_keys(blocked_slots: Iterable[dict] | None) -> set[tuple[str, str]]:
@@ -213,40 +199,3 @@ def blocked_slot_keys(blocked_slots: Iterable[dict] | None) -> set[tuple[str, st
     (``TimetableScenario.blocked_slots``).
     """
     return {(bs.get("day", ""), bs.get("start", "")) for bs in (blocked_slots or [])}
-
-
-LECTURE_PRAYER_BLOCK = ("11:30", "12:59")
-LAB_PRAYER_BLOCK = ("11:10", "12:59")
-
-
-class SlotGridPrayerError(ValueError):
-    """Raised when a slot grid would start a class inside a prayer window."""
-
-
-def _starts_in_window(window: tuple[str, str], start: str) -> bool:
-    return _to_min(window[0]) <= _to_min(start) <= _to_min(window[1])
-
-
-def assert_slot_grid_prayer_compliant(
-    slot_config: Iterable[dict] | None,
-    lab_slot_config: Iterable[dict] | None,
-) -> None:
-    """Raise ``SlotGridPrayerError`` if any slot starts inside its prayer window.
-
-    Lectures are checked against ``LECTURE_PRAYER_BLOCK`` and labs against
-    ``LAB_PRAYER_BLOCK``. A ``None``/empty grid is vacuously compliant.
-    """
-    offenders: list[str] = []
-    for slot in slot_config or []:
-        start = slot.get("start", "")
-        if start and _starts_in_window(LECTURE_PRAYER_BLOCK, start):
-            offenders.append(f"lecture slot {slot.get('label', start)!r} starts at {start}")
-    for slot in lab_slot_config or []:
-        start = slot.get("start", "")
-        if start and _starts_in_window(LAB_PRAYER_BLOCK, start):
-            offenders.append(f"lab slot {slot.get('label', start)!r} starts at {start}")
-    if offenders:
-        raise SlotGridPrayerError(
-            "slot grid violates prayer windows (lecture 11:30-12:59, lab 11:10-12:59): "
-            + "; ".join(offenders)
-        )

@@ -757,7 +757,7 @@ function renderGrid() {
   const labSlots = (TW.scenario && TW.scenario.lab_slot_config) || [];
 
   if (slots.length === 0) {
-    // Default slots (75min lectures, prayer break 11:35-12:59)
+    // Default lecture slots (75 min each)
     const defaults = [
       {label:'09:00-10:15', start:'09:00', end:'10:15'},
       {label:'10:30-11:45', start:'10:30', end:'11:45'},
