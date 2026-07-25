@@ -66,6 +66,13 @@ const T = {
 
   // ── Course assignment labels ──
   addAssign:            IS_AR ? '+ توزيع' : '+ Assign',
+  elective:             IS_AR ? 'اختياري' : 'Elective',
+  offeredThisTerm:      IS_AR ? 'مطروح هذا الفصل' : 'Offered this term',
+  notOfferedThisTerm:   IS_AR ? 'في الدليل — غير مطروح هذا الفصل' : 'In catalogue — not offered this term',
+  electiveSlot:         IS_AR ? 'خانة اختياري' : 'Elective slot',
+  slotHint:             IS_AR ? 'لا يوجد مقرر مرتبط بهذه الخانة هذا الفصل — اربط مقرراً أولاً' : 'No course is mapped to this elective slot this term — map one first',
+  legacy:               IS_AR ? 'قديم' : 'Legacy',
+  orphanHint:           IS_AR ? 'مُسند إلى رمز لم يعد يُجدول — يمكن إزالته' : 'Assigned to a code that is no longer scheduled — you can clear it',
 
   // ── Report labels ──
   instructor:           IS_AR ? 'عضو هيئة التدريس' : 'Instructor',
@@ -78,7 +85,7 @@ const T = {
   clashes:              IS_AR ? 'التعارضات' : 'Clashes',
   loadStatus:           IS_AR ? 'حالة العبء' : 'Load Status',
   totalRow:             IS_AR ? 'الإجمالي' : 'TOTAL',
-  term:                 (n) => IS_AR ? `ف${n}` : `T${n}`,
+  term:                 (n) => (n === null || n === undefined || n === '') ? '—' : (IS_AR ? `ف${n}` : `T${n}`),
 
   // ── Time labels ──
   sunday:               IS_AR ? 'الأحد' : 'Sun',
@@ -651,22 +658,52 @@ const ca = {
 
     tbody.innerHTML = this.courses.map((course, idx) => {
       const checked = this.selectedCourses.has(course.course_code) ? 'checked' : '';
-      const assignmentCell = course.instructor
-        ? `<div class="ca-chip" onclick="ca.showAssignPopover('${course.course_code}', event)" title="${T.assign}">
+      // A kept placeholder (unmapped elective slot) or an orphan (a code no longer
+      // scheduled) can never fan onto a section, so new assignment to it is
+      // disabled — assigning there would recreate the very orphan this fix
+      // removes. Existing assignments stay clearable via the chip's × button.
+      const unschedulable = course.is_placeholder || course.is_orphan;
+      const unschedulableHint = course.is_placeholder ? T.slotHint : T.orphanHint;
+      let assignmentCell;
+      if (course.instructor) {
+        assignmentCell = `<div class="ca-chip" onclick="ca.showAssignPopover('${course.course_code}', event)" title="${T.assign}">
              ${escapeHtml(course.instructor.full_name)}
              <button class="ca-chip-x" onclick="ca.clearAssignment('${course.course_code}', event)"
                      aria-label="${T.unassign} ${escapeHtml(course.instructor.full_name)} — ${course.course_code}">×</button>
-           </div>`
-        : `<button class="ca-assign-add" onclick="ca.showAssignPopover('${course.course_code}', event)"
+           </div>`;
+      } else if (unschedulable) {
+        assignmentCell = `<button class="ca-assign-add" disabled aria-disabled="true"
+                   title="${escapeHtml(unschedulableHint)}" aria-label="${escapeHtml(unschedulableHint)}">${T.addAssign}</button>`;
+      } else {
+        assignmentCell = `<button class="ca-assign-add" onclick="ca.showAssignPopover('${course.course_code}', event)"
                    aria-haspopup="dialog" aria-label="${T.assign} — ${course.course_code}">${T.addAssign}</button>`;
+      }
+
+      // Course-code badge: real elective (offered/not-offered), an unmapped
+      // elective slot, or a legacy orphaned assignment. The distinction is also
+      // exposed as visually-hidden text so it isn't colour/tooltip-only (a11y).
+      let tag = '';
+      if (course.is_elective) {
+        const lbl = course.offered_this_term ? T.offeredThisTerm : T.notOfferedThisTerm;
+        tag = `<span class="ca-elective-tag${course.offered_this_term ? ' is-offered' : ''}" title="${escapeHtml(lbl)}">${T.elective}<span class="sr-only"> — ${escapeHtml(lbl)}</span></span>`;
+      } else if (course.is_placeholder) {
+        tag = `<span class="ca-elective-tag" title="${escapeHtml(T.slotHint)}">${T.electiveSlot}<span class="sr-only"> — ${escapeHtml(T.slotHint)}</span></span>`;
+      } else if (course.is_orphan) {
+        tag = `<span class="ca-elective-tag ca-tag-warn" title="${escapeHtml(T.orphanHint)}">${T.legacy}<span class="sr-only"> — ${escapeHtml(T.orphanHint)}</span></span>`;
+      }
+
+      const cr = (course.credit_hours === null || course.credit_hours === undefined) ? '—' : course.credit_hours;
+
+      // Un-schedulable rows can't be assigned, so they can't be bulk-selected either.
+      const cbDisabled = unschedulable ? 'disabled aria-disabled="true"' : '';
 
       return `<tr data-course="${course.course_code}">
-        <td><input type="checkbox" ${checked} onchange="ca.toggleCourse('${course.course_code}', this)"></td>
+        <td><input type="checkbox" ${checked} ${cbDisabled} onchange="ca.toggleCourse('${course.course_code}', this)"></td>
         <td>${idx + 1}</td>
-        <td><span class="cr-id">${course.course_code}</span></td>
+        <td><span class="cr-id">${course.course_code}</span>${tag}</td>
         <td>${escapeHtml(course.course_name)}</td>
         <td class="text-center">${T.term(course.programme_term)}</td>
-        <td class="text-center">${course.credit_hours}</td>
+        <td class="text-center">${cr}</td>
         <td class="ca-assign-cell">${assignmentCell}</td>
       </tr>`;
     }).join('');
@@ -720,7 +757,7 @@ const ca = {
   },
 
   toggleAllCourses(checkbox) {
-    const visibleCheckboxes = $$('#caTable tbody tr[data-course]:not([style*="display: none"]) input[type="checkbox"]');
+    const visibleCheckboxes = $$('#caTable tbody tr[data-course]:not([style*="display: none"]) input[type="checkbox"]:not([disabled])');
     visibleCheckboxes.forEach(cb => {
       cb.checked = checkbox.checked;
       const courseCode = cb.closest('tr').dataset.course;

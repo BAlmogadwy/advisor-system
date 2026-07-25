@@ -10110,6 +10110,50 @@ html[data-theme="dark"] .va-tool-meta span {
   background: var(--teal-dim);
 }
 
+/* ── Elective tag (real course resolved from a placeholder slot) ── */
+.ca-elective-tag {
+  display: inline-block;
+  margin-inline-start: var(--space-2);
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  line-height: 1.6;
+  vertical-align: middle;
+  white-space: nowrap;
+  background: transparent;
+  color: var(--t3);
+  border: 1px solid var(--line-strong);
+}
+
+/* Offered this term — the placeholder is actually mapped to this course now. */
+.ca-elective-tag.is-offered {
+  background: var(--teal-dim);
+  color: var(--teal);
+  border-color: var(--teal-border);
+}
+
+/* Legacy/orphaned assignment — a code no longer scheduled; clear it. */
+.ca-elective-tag.ca-tag-warn {
+  background: var(--amber-dim);
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 35%, transparent);
+}
+
+/* Unmapped elective slot — its assign control is disabled. */
+.ca-assign-add[disabled],
+.ca-assign-add[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ca-assign-add[disabled]:hover,
+.ca-assign-add[aria-disabled="true"]:hover {
+  border-color: var(--line-strong);
+  color: var(--t3);
+  background: transparent;
+}
+
 /* ── Assignment Popover ── */
 .ca-pop {
   position: fixed;
