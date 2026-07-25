@@ -19,6 +19,8 @@ from django.test import Client
 from core.models import (
     CourseInstructor,
     DeliveryBoard,
+    ElectiveCourse,
+    ElectiveTermMapping,
     Instructor,
     ProgrammeRequirement,
     SectionPlacement,
@@ -27,6 +29,7 @@ from core.models import (
     TimetableScenario,
 )
 from core.services.course_instructor_assignment import (
+    build_assignable_course_list,
     reconcile_scenario_instructors,
     set_course_instructors,
 )
@@ -49,6 +52,24 @@ def _req(program: str, code: str, term: int = 1, credit: int = 3) -> None:
         course_name=f"{code} name",
         programme_term=term,
         credit_hours=credit,
+    )
+
+
+def _elective(programme: str, code: str, credit: int = 3) -> ElectiveCourse:
+    return ElectiveCourse.objects.create(
+        programme=programme, course_code=code, course_name=f"{code} name", credit_hours=credit
+    )
+
+
+def _map(
+    programme: str, placeholder: str, elective: ElectiveCourse, year: str = "1448", term: int = 1
+) -> None:
+    ElectiveTermMapping.objects.create(
+        academic_year=year,
+        term=term,
+        programme=programme,
+        placeholder_code=placeholder,
+        elective=elective,
     )
 
 
@@ -134,6 +155,195 @@ def test_course_assignments_lists_all_courses_with_state() -> None:
     courses = {c["course_code"]: c for c in r.json()["courses"]}
     assert courses["AI113"]["instructor"]["full_name"] == "Dr A"
     assert courses["AI212"]["instructor"] is None  # unassigned still listed
+
+
+# ── Elective placeholder resolution ──────────────────────────────
+
+
+@pytest.mark.django_db
+def test_program_electives_expand_from_catalogue() -> None:
+    """A program-elective placeholder (AI1) is replaced by the department's real
+    ElectiveCourse catalogue; the abstract placeholder is never listed."""
+    _req("AI", "AI201", term=5)  # mandatory
+    _req("AI", "AI1", term=9)  # program-elective placeholder
+    _elective("AI", "AI461")
+    _elective("AI", "AI462")
+
+    rows = build_assignable_course_list("AI", "1448", 1)
+    by_code = {r["course_code"]: r for r in rows}
+    assert "AI201" in by_code  # mandatory kept
+    assert "AI1" not in by_code  # placeholder replaced, never assignable
+    assert by_code["AI461"]["is_elective"] is True
+    assert by_code["AI461"]["offered_this_term"] is False  # in catalogue, not mapped
+    assert by_code["AI461"]["programme_term"] == 9  # inherits the slot's term
+
+
+@pytest.mark.django_db
+def test_program_electives_from_mapping_when_catalogue_empty() -> None:
+    """IS has no departmental catalogue — its electives live only in the term
+    mapping (elective.programme is blank). They must still surface, flagged as
+    offered this term."""
+    _req("IS", "IS1", term=8)
+    ec = _elective("", "IS481")  # blank programme, mirrors real IS data
+    _map("IS", "IS1", ec, term=1)
+
+    by_code = {r["course_code"]: r for r in build_assignable_course_list("IS", "1448", 1)}
+    assert "IS1" not in by_code
+    assert by_code["IS481"]["is_elective"] is True
+    assert by_code["IS481"]["offered_this_term"] is True
+
+
+@pytest.mark.django_db
+def test_offered_flag_is_term_scoped() -> None:
+    """offered_this_term reflects the requested term, not any term."""
+    _req("AI", "AI1", term=9)
+    ec = _elective("AI", "AI463")
+    _map("AI", "AI1", ec, term=1)
+
+    t1 = {r["course_code"]: r for r in build_assignable_course_list("AI", "1448", 1)}
+    t2 = {r["course_code"]: r for r in build_assignable_course_list("AI", "1448", 2)}
+    assert t1["AI463"]["offered_this_term"] is True
+    assert t2["AI463"]["offered_this_term"] is False  # same catalogue course, not mapped in T2
+
+
+@pytest.mark.django_db
+def test_unresolvable_program_elective_kept_visible() -> None:
+    """A program-elective slot with neither catalogue nor mapping stays visible
+    (a data gap the registrar should see) rather than silently vanishing."""
+    _req("COE", "COE1", term=9)
+    by_code = {r["course_code"]: r for r in build_assignable_course_list("COE", "1448", 1)}
+    assert "COE1" in by_code
+    assert by_code["COE1"]["is_elective"] is False
+
+
+@pytest.mark.django_db
+def test_free_and_university_placeholders_kept_when_unmapped() -> None:
+    """Free/university electives are other-faculty courses with no departmental
+    catalogue; their slots remain visible until a term mapping fills them."""
+    _req("AI", "FE1", term=6)
+    _req("AI", "GSE1", term=7)
+    by_code = {r["course_code"]: r for r in build_assignable_course_list("AI", "1448", 1)}
+    assert "FE1" in by_code
+    assert "GSE1" in by_code
+
+
+@pytest.mark.django_db
+def test_assignment_overlays_on_resolved_elective_code() -> None:
+    """An instructor assigned to the real elective code shows against the
+    resolved row — the whole point of resolving placeholders here."""
+    http = _admin_client()
+    _req("AI", "AI1", term=9)
+    _elective("AI", "AI461")
+    a = _instructor("Dr Elec")
+    set_course_instructors("AI", "AI461", "M", [a.pk])
+
+    r = http.get("/ops/instructors/course-assignments/", {"program": "AI", "section": "M"})
+    courses = {c["course_code"]: c for c in r.json()["courses"]}
+    assert courses["AI461"]["instructor"]["full_name"] == "Dr Elec"
+
+
+@pytest.mark.django_db
+def test_secondary_cohort_shares_base_catalogue_and_mappings() -> None:
+    """Secondary cohorts (AI2) reuse the base cohort's catalogue + mappings, which
+    are keyed only under the base code 'AI'. They must still resolve, not fall
+    back to listing the un-schedulable placeholder."""
+    _req("AI2", "AI1", term=9)  # AI2 plan uses the same placeholder codes as AI
+    _elective("AI", "AI461")  # catalogue lives under the base cohort 'AI'
+    ec = _elective("AI", "AI463")
+    _map("AI", "AI1", ec, term=1)  # mapping also under base 'AI'
+
+    by_code = {r["course_code"]: r for r in build_assignable_course_list("AI2", "1448", 1)}
+    assert "AI1" not in by_code  # placeholder resolved, not re-listed
+    assert by_code["AI461"]["is_elective"] is True
+    assert by_code["AI463"]["offered_this_term"] is True
+
+
+@pytest.mark.django_db
+def test_mandatory_course_wins_over_same_code_elective_regardless_of_order() -> None:
+    """A real ProgrammeRequirement course keeps its own term/credits/flags even
+    when a same-code catalogue elective exists and the program-elective slot sorts
+    before it (the 'mandatory wins' invariant must be order-independent)."""
+    _req("AI", "AI1", term=3)  # program-elective placeholder — sorts first
+    _req("AI", "AI461", term=9, credit=4)  # mandatory, higher term
+    _elective("AI", "AI461")  # same code also in the catalogue
+
+    by_code = {r["course_code"]: r for r in build_assignable_course_list("AI", "1448", 1)}
+    row = by_code["AI461"]
+    assert row["is_elective"] is False  # mandatory wins
+    assert row["programme_term"] == 9  # its own term, not the block's min
+    assert row["credit_hours"] == 4
+
+
+@pytest.mark.django_db
+def test_unmapped_slots_are_flagged_placeholder() -> None:
+    """Slots with no resolvable real course stay visible but flagged so the UI can
+    disable assignment (assigning to them would create a dead, unschedulable row)."""
+    coe = {r["course_code"]: r for r in build_assignable_course_list("COE", "1448", 1)}
+    # COE has no catalogue/mapping under COE or its base — placeholder kept.
+    _req("COE", "COE1", term=9)
+    coe = {r["course_code"]: r for r in build_assignable_course_list("COE", "1448", 1)}
+    assert coe["COE1"]["is_placeholder"] is True
+
+    _req("AI", "FE1", term=6)  # free-elective slot, unmapped
+    ai = {r["course_code"]: r for r in build_assignable_course_list("AI", "1448", 1)}
+    assert ai["FE1"]["is_placeholder"] is True
+
+
+@pytest.mark.django_db
+def test_orphan_placeholder_assignment_surfaced_and_clearable() -> None:
+    """A legacy CourseInstructor keyed to a now-resolved placeholder code is
+    surfaced as an is_orphan row so it stays visible and clearable rather than
+    stranded invisibly in the DB."""
+    http = _admin_client()
+    _req("AI", "AI1", term=9)
+    _elective("AI", "AI463")  # AI1 resolves -> 'AI1' is not in the resolved list
+    a = _instructor("Dr Legacy")
+    CourseInstructor.objects.create(
+        program="AI", course_code="AI1", section="M", instructor=a, role="primary"
+    )
+
+    r = http.get("/ops/instructors/course-assignments/", {"program": "AI", "section": "M"})
+    courses = {c["course_code"]: c for c in r.json()["courses"]}
+    assert courses["AI1"]["is_orphan"] is True
+    assert courses["AI1"]["instructor"]["full_name"] == "Dr Legacy"
+
+
+@pytest.mark.django_db
+def test_mapped_electives_visible_across_terms_not_falsely_orphaned() -> None:
+    """A real elective is listed (assignment is term-independent) whatever term is
+    viewed; ``offered_this_term`` tracks the viewed term. Guards against IS-style
+    electives (mapped in T1, catalogue under a blank programme) being mislabeled
+    as clearable orphans when a later term is viewed."""
+    _req("IS", "IS1", term=8)
+    ec = _elective("", "IS481")  # blank-programme catalogue, reachable only via mapping
+    _map("IS", "IS1", ec, term=1)
+
+    t1 = {r["course_code"]: r for r in build_assignable_course_list("IS", "1448", 1)}
+    t2 = {r["course_code"]: r for r in build_assignable_course_list("IS", "1448", 2)}
+    assert t1["IS481"]["is_elective"] is True and t1["IS481"]["offered_this_term"] is True
+    # Still a real elective in T2 (assignable), just not offered — NOT an orphan.
+    assert t2["IS481"]["is_elective"] is True
+    assert t2["IS481"]["offered_this_term"] is False
+    assert t2["IS481"].get("is_orphan", False) is False
+
+
+@pytest.mark.django_db
+def test_assignment_to_mapped_elective_not_orphaned_in_other_term() -> None:
+    """End-to-end: an instructor assigned to a mapped elective shows against the
+    real row (never an orphan) even when the viewed term isn't the mapped term."""
+    http = _admin_client()
+    _req("IS", "IS1", term=8)
+    ec = _elective("", "IS481")
+    _map("IS", "IS1", ec, term=1)
+    a = _instructor("Dr IS")
+    set_course_instructors("IS", "IS481", "M", [a.pk])
+
+    r = http.get(
+        "/ops/instructors/course-assignments/", {"program": "IS", "section": "M", "term": 2}
+    )
+    courses = {c["course_code"]: c for c in r.json()["courses"]}
+    assert courses["IS481"]["instructor"]["full_name"] == "Dr IS"
+    assert courses["IS481"].get("is_orphan", False) is False
 
 
 @pytest.mark.django_db

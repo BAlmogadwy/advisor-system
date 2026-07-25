@@ -20,7 +20,10 @@ from django.views.decorators.http import require_GET, require_POST
 from core.authz import role_required
 from core.models import CourseInstructor, Instructor, ProgrammeRequirement
 from core.services.audit import log_audit_event
-from core.services.course_instructor_assignment import set_course_instructors
+from core.services.course_instructor_assignment import (
+    build_assignable_course_list,
+    set_course_instructors,
+)
 from core.services.rbac import ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_role
 from core.services.timetable_online import normalise_course_code
 from core.services.timetable_pr4_instructor import normalise_instructor
@@ -251,11 +254,13 @@ def _validate_program_section(program: str, section: str) -> JsonResponse | None
 @role_required(ROLE_GENERAL_ADVISOR)
 @require_GET
 def course_assignments_view(request: HttpRequest) -> JsonResponse:
-    """A program's courses (for one M/F section) with their assigned instructor.
+    """A program's teachable courses (for one M/F section) with their instructor.
 
-    Every ``ProgrammeRequirement`` course for the program is returned — unassigned
-    ones carry ``instructor: null`` — so the UI can show the full course list and
-    the assignment state in one table.
+    Elective placeholders (AI1, IS1, GSE1 …) are resolved to the real courses
+    the planner actually schedules for the term — assigning to a placeholder can
+    never reach a section (see ``build_assignable_course_list``). Every course is
+    returned; unassigned ones carry ``instructor: null`` so the UI can show the
+    full list and the assignment state in one table.
     """
     program = (request.GET.get("program") or "").strip()
     section = (request.GET.get("section") or "").strip().upper()
@@ -263,34 +268,43 @@ def course_assignments_view(request: HttpRequest) -> JsonResponse:
     if bad:
         return bad
 
-    # course list for the program (dedupe by normalised code, keep first metadata)
-    courses: dict[str, dict[str, object]] = {}
-    for cc, name, term, cr, online in (
-        ProgrammeRequirement.objects.filter(program=program)
-        .order_by("programme_term", "course_code")
-        .values_list("course_code", "course_name", "programme_term", "credit_hours", "is_online")
-    ):
-        key = normalise_course_code(cc)
-        if key and key not in courses:
-            courses[key] = {
-                "course_code": cc,
-                "course_name": name or "",
-                "programme_term": term,
-                "credit_hours": cr,
-                "is_online": online,
-                "instructor": None,
-                "co_instructors": [],
-            }
+    # Term drives which electives are "offered this term"; default to the
+    # configured planning term, with optional query overrides.
+    defaults = load_defaults()
+    year = (request.GET.get("year") or "").strip() or defaults["academic_year"]
+    term = _parse_int_or_none(request.GET.get("term"))
+    if term is None:
+        term = defaults["term"]
 
-    # overlay current assignments
+    courses = build_assignable_course_list(program, year, term)
+    by_code = {normalise_course_code(c["course_code"]): c for c in courses}
+
+    # overlay current assignments (keyed by the real/resolved course code). An
+    # assignment whose code isn't in the resolved list (e.g. a legacy row keyed
+    # to a now-resolved placeholder) is surfaced as an ``is_orphan`` row so it
+    # stays visible and clearable rather than being silently stranded in the DB.
+    orphans: dict[str, dict[str, object]] = {}
     for link in (
         CourseInstructor.objects.filter(program=program, section=section)
         .select_related("instructor")
         .order_by("id")
     ):
-        row = courses.get(normalise_course_code(link.course_code))
+        code = normalise_course_code(link.course_code)
+        row = by_code.get(code) or orphans.get(code)
         if row is None:
-            continue
+            row = {
+                "course_code": link.course_code,
+                "course_name": "",
+                "programme_term": None,
+                "credit_hours": None,
+                "is_online": False,
+                "is_elective": False,
+                "is_placeholder": False,
+                "is_orphan": True,
+                "instructor": None,
+                "co_instructors": [],
+            }
+            orphans[code] = row
         entry = {
             "id": link.instructor_id,
             "full_name": link.instructor.full_name,
@@ -300,9 +314,19 @@ def course_assignments_view(request: HttpRequest) -> JsonResponse:
         if link.role == "primary":
             row["instructor"] = entry
         else:
-            row["co_instructors"].append(entry)
+            row["co_instructors"].append(entry)  # type: ignore[union-attr]
 
-    return _ok({"program": program, "section": section, "courses": list(courses.values())})
+    courses.extend(orphans.values())
+
+    return _ok(
+        {
+            "program": program,
+            "section": section,
+            "year": year,
+            "term": term,
+            "courses": courses,
+        }
+    )
 
 
 @role_required(ROLE_GENERAL_ADVISOR)
