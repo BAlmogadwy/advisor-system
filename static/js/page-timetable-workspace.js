@@ -1,4 +1,3 @@
-const TW_ENGINE = 'classic';
 /* ══════════════════════════════════════════════════════════════════
    Timetable Workspace — Client-Side Logic
    ══════════════════════════════════════════════════════════════════ */
@@ -177,6 +176,10 @@ async function runOptimiseRequest(mode, payload, btn, modeLabel) {
   // throw it away.
   return sub;
 }
+
+/* Which placement engine the plain Generate button uses. The dropdown beside it
+   picks explicitly; this is what a bare click means. */
+const TW_ENGINE = 'classic';
 
 /* ── Init ── */
 (function init() {
