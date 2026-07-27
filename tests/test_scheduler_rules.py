@@ -1770,3 +1770,46 @@ def test_student_waiting_time_is_measured():
     # 09:00-10:15 then 13:00-14:15: a span of 315 minutes containing 150 of
     # teaching, so 165 minutes of waiting.
     assert result.idle_minutes == 165
+
+
+def test_the_student_gap_term_is_off_by_default_in_both_layers():
+    """It helps students by hurting instructors, and the instructor timetable is
+    the stated priority.
+
+    Measured by seating real students: weight 1 saves students ~19% of their
+    waiting and costs instructors ~21% of theirs. They pull on the same lever in
+    opposite directions — packing a student's day spreads an instructor's. That
+    is a trade for the owner to opt into, not a default.
+    """
+    import inspect
+
+    assert inspect.signature(solve).parameters["student_adjacency_weight"].default == 0
+    assert inspect.signature(plan).parameters["student_adjacency_weight"].default == 0
+
+
+def test_the_student_gap_term_pulls_co_demanded_courses_together():
+    """Two courses everyone takes, three slots: 09:00 and 10:30 are consecutive,
+    13:00 is an afternoon away. With the term on, the pair must be adjacent."""
+    grid = Grid.from_spec(
+        lecture_starts={"09:00": 75, "10:30": 75, "13:00": 75},
+        lab_starts={"09:00": 100},
+        days=(Day.SUN,),
+    )
+    offerings = [_offering("offa", reqs=_lecture(1)), _offering("offb", reqs=_lecture(1))]
+    sections = [Section("offa#S1", "offa", 1, 30), Section("offb#S1", "offb", 1, 30)]
+    demand = [
+        StudentDemand(student_id=n, program="AI", offering_ids=frozenset({"offa", "offb"}))
+        for n in range(1, 21)  # well above the shared-student threshold
+    ]
+    snap = _grid_snapshot(grid, offerings, sections, demand=demand)
+    r = solve(snap, time_limit_seconds=15, alpha=1.0, student_adjacency_weight=5 * _SCALE)
+    starts = sorted(p.window.start for p in r.board.placements)
+    assert starts == [540, 630], f"co-demanded courses left far apart: {starts}"
+
+
+def test_a_thinly_shared_pair_is_not_worth_a_variable():
+    """The term is quadratic in sections, so it is spent on the pairs that
+    actually shape a student's week — not on one shared by two people."""
+    from scheduler.solve import _MIN_SHARED_FOR_GAP_TERM
+
+    assert _MIN_SHARED_FOR_GAP_TERM >= 2

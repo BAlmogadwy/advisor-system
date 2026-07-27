@@ -52,6 +52,11 @@ _SCALE = 1000
 #: grid happens to cut the day rather than on anything about rooms.
 _REFERENCE_MEETING_MINUTES = 75
 
+#: A course pair shared by fewer students than this is not worth a variable.
+#: The gap term is quadratic in sections, so it is spent on the pairs that
+#: actually shape a student's week.
+_MIN_SHARED_FOR_GAP_TERM = 5
+
 #: How long a break still counts as "back to back". This grid runs 09:00-10:15
 #: then 10:30, so consecutive teaching slots carry a 15-minute changeover; the
 #: next real gap is 55 minutes, to the afternoon.
@@ -131,6 +136,7 @@ def solve(
     max_clash_score: int | None = None,
     max_room_shortfall: int | None = None,
     sibling_adjacency_weight: int = 0,
+    student_adjacency_weight: int = 0,
 ) -> SolveResult:
     """Choose a day/time for every meeting, minimising expected student clashes."""
     from ortools.sat.python import cp_model
@@ -340,6 +346,62 @@ def solve(
             for flags in paired_with.values():
                 if len(flags) > 1:
                     model.add_at_most_one(flags)
+
+    # ── student waiting time: pull co-demanded courses together ───────────
+    #
+    # Found by actually seating students, which nothing had ever done. The board
+    # is essentially clash-free — 0 to 1 student affected per cohort — but every
+    # student loses around 600 minutes a week to gaps BETWEEN classes, and no
+    # objective anywhere was looking at it. Killing clashes spreads sections
+    # apart, and students pay for the space.
+    #
+    # The clash term already knows which courses share students; it uses that to
+    # keep their sections from OVERLAPPING. This points the same weight at the
+    # next question — having avoided a collision, are the two classes close
+    # together or four hours apart? Adjacent is rewarded, on the identical
+    # `shared / (na * nb)` currency, so a pair a hundred students share counts
+    # for a hundred times more than one that two students share.
+    #
+    # It complements the clash term rather than fighting it: adjacent means
+    # non-overlapping. Only strong pairs are modelled, because a pair shared by
+    # one student is not worth a variable.
+    student_gap_terms: list[tuple[object, int]] = []
+    if student_adjacency_weight:
+        cells_by_section: dict[str, list] = {}
+        for (section_id, _index, day, window), var in x.items():
+            cells_by_section.setdefault(section_id, []).append((day, window, var))
+
+        for a, b in combinations(sorted(offerings.values(), key=lambda o: o.id), 2):
+            shared = demand.shared_students(a.id, b.id)
+            if shared < _MIN_SHARED_FOR_GAP_TERM:
+                continue
+            if a.is_fully_online or b.is_fully_online:
+                continue  # online has its own late family and no campus gap
+            sa_list = sections_by_offering.get(a.id, ())
+            sb_list = sections_by_offering.get(b.id, ())
+            if not sa_list or not sb_list:
+                continue
+            weight = max(1, round(_SCALE * shared / (len(sa_list) * len(sb_list))))
+            for sa in sa_list:
+                for sb in sb_list:
+                    near = []
+                    for day_a, window_a, var_a in cells_by_section.get(sa.id, ()):
+                        for day_b, window_b, var_b in cells_by_section.get(sb.id, ()):
+                            if day_b is not day_a:
+                                continue
+                            gap = max(
+                                window_b.start - window_a.end,
+                                window_a.start - window_b.end,
+                            )
+                            if not 0 <= gap <= _ADJACENT_GAP_MINUTES:
+                                continue
+                            flag = model.new_bool_var("")
+                            model.add_bool_and([var_a, var_b]).only_enforce_if(flag)
+                            near.append(flag)
+                    if near:
+                        together = model.new_bool_var("")
+                        model.add_max_equality(together, near)
+                        student_gap_terms.append((together, weight))
 
     # ── occupancy atoms, per delivery family ──────────────────────────────
     all_windows = [s.window for s in snapshot.grid.slots]
@@ -690,6 +752,10 @@ def solve(
             objective += [span * max(1, round(span_weight * ratio)) for span in spans]
     # Negative: CP-SAT minimises, so a reward is a cost avoided.
     objective += [flag * -sibling_adjacency_weight for flag in adjacency_terms]
+    objective += [
+        flag * -max(1, round(weight * student_adjacency_weight / _SCALE))
+        for flag, weight in student_gap_terms
+    ]
     if objective:
         model.minimize(sum(objective))
 
@@ -961,6 +1027,22 @@ def plan(
     # It is close to free, so it is on. At 10 the pairing keeps improving but
     # clashes start to move, and that is a trade for the owner to opt into.
     sibling_adjacency_weight: int = 3 * _SCALE,
+    # Default OFF, and it stays off until the owner says otherwise. Measured on
+    # the live male cohort, seating real students (two seeds, medians):
+    #
+    #   weight   student waiting   instructor idle   clash-free   days
+    #      0        573 min            1262            100%       19 = floor
+    #      1        465 min (-19%)     1532 (+21%)     100%       19 = floor
+    #      3        498 min            2100 (+66%)     100%       19 = floor
+    #     10        474 min            2078            100%       19 = floor
+    #
+    # Students and instructors are pulling on the SAME lever in opposite
+    # directions — packing a student's day means spreading an instructor's, and
+    # the reverse. The owner's stated priority is the instructor timetable with
+    # the minimum gap possible, so buying students 19% at the instructors'
+    # expense is not this system's call to make by default. Weight 1 is the only
+    # setting worth offering: 3 and 10 are worse for BOTH parties.
+    student_adjacency_weight: int = 0,
     **kwargs,
 ) -> SolveResult:
     """Plan in two passes: settle the working days, then attack the gaps.
@@ -1040,6 +1122,7 @@ def plan(
         max_clash_score=ceiling,
         max_room_shortfall=first.room_shortfall_score,
         sibling_adjacency_weight=sibling_adjacency_weight,
+        student_adjacency_weight=student_adjacency_weight,
         hint=first.board,
         **kwargs,
     )

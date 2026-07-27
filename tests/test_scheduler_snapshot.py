@@ -648,3 +648,143 @@ def test_staffing_for_a_real_elective_counts_towards_its_placeholder():
     # A union, never a replacement: resolution must not discard the approval
     # held against the slot itself.
     assert {slot.id, target.id} <= eligible
+
+
+# ── saved plans ───────────────────────────────────────────────────────────
+#
+# Until these existed, the planner computed a timetable and printed it. Nothing
+# survived closing the terminal — which is exactly how the two previous
+# greenfield attempts in this project died: layers built beside the product with
+# nothing to show for a run.
+#
+# Fingerprints carry more weight here than they normally would. N8 originally
+# promised byte-identical reproducibility and that promise was retracted, since
+# the only configurations delivering it produce timetables three to four times
+# worse. With reproducibility gone, the stamps are the ONLY way to know two
+# plans answered the same question.
+
+from scheduler.domain.board import Board, Placement  # noqa: E402
+from scheduler.models import SchedulerPlacement, SchedulerPlan  # noqa: E402
+from scheduler.persist import config_fingerprint, save_plan  # noqa: E402
+
+
+def _tiny_plan_inputs():
+    _plan("AI", "AI101")
+    for sid in range(4001, 4011):
+        _student(sid, "AI", "M")
+    _room("M-1", "M")
+    snap = build_snapshot(
+        academic_year="1448", term=1, gender="M", programs=["AI"], default_capacity=25
+    )
+    offering = next(o for o in snap.offerings if o.course_code == "AI101")
+    section = snap.sections_by_offering[offering.id][0]
+    window = snap.grid.day_windows_for(75, DeliveryMode.IN_PERSON)[0]
+    board = Board(
+        (
+            Placement(
+                section_id=section.id,
+                offering_id=offering.id,
+                meeting_index=1,
+                kind=MeetingKind.LECTURE,
+                delivery=DeliveryMode.IN_PERSON,
+                day=window.day,
+                window=window.window,
+                room_id="M-1",
+                instructor_id=None,
+            ),
+        )
+    )
+    return snap, board
+
+
+def _save(snap, board, **overrides):
+    kwargs = dict(
+        config={"seconds": 10, "alpha": 0.9},
+        solver_status="FEASIBLE",
+        wall_time_seconds=1.5,
+        certification="UNCERTIFIED",
+        violation_count=0,
+        expected_clashes=12.5,
+        naive_baseline=100.0,
+        instructors={
+            "working_days": 3,
+            "floor_days": 3,
+            "idle_minutes": 45,
+            "coverage": {"sections_assigned": 1, "sections_staffable": 1},
+        },
+        rooms={"unroomed": 4, "impossible": 3, "saturated": 1},
+        pairing={"pairs_back_to_back": 2, "pairs_achievable": 3},
+    )
+    kwargs.update(overrides)
+    return save_plan(snap, board, **kwargs)
+
+
+def test_a_saved_plan_keeps_its_placements():
+    snap, board = _tiny_plan_inputs()
+    plan = _save(snap, board)
+    assert SchedulerPlan.objects.count() == 1
+    stored = SchedulerPlacement.objects.filter(plan=plan)
+    assert stored.count() == len(board.placements)
+    row = stored.first()
+    assert row.course_code == "AI101"
+    assert row.room_id == "M-1"
+
+
+def test_every_metric_is_stored_beside_the_floor_it_should_be_read_against():
+    """ "19 working days" means nothing without "and 19 was the minimum". Storing
+    a figure without its floor invites a reader to imagine headroom that is not
+    there."""
+    snap, board = _tiny_plan_inputs()
+    plan = _save(snap, board)
+    assert plan.instructor_days == 3 and plan.instructor_days_floor == 3
+    assert plan.instructor_days_at_floor
+    # unroomed floor is impossible + saturated: neither can be rescheduled away
+    assert plan.unroomed == 4 and plan.unroomed_floor == 4
+    assert plan.unroomed_at_floor
+
+
+def test_a_plan_is_stamped_with_all_three_fingerprints():
+    snap, board = _tiny_plan_inputs()
+    plan = _save(snap, board)
+    assert plan.snapshot_fingerprint == snap.source_fingerprint
+    for stamp in (plan.snapshot_fingerprint, plan.rulebook_fingerprint, plan.config_fingerprint):
+        assert len(stamp) == 64, "full SHA-256; a comparability stamp is not a cache key"
+
+
+def test_plans_of_the_same_question_are_comparable_and_others_are_not():
+    """The guard against the mistake that produced two retracted conclusions
+    while this was being built: reading a difference between runs of DIFFERENT
+    configurations as though it were quality."""
+    snap, board = _tiny_plan_inputs()
+    a = _save(snap, board)
+    b = _save(snap, board)  # same everything: a re-run, which will differ
+    assert a.comparable_to(b)
+
+    other = _save(snap, board, config={"seconds": 10, "alpha": 0.5})
+    assert not a.comparable_to(other), "different settings are a different question"
+
+
+def test_the_config_fingerprint_ignores_key_order_but_not_values():
+    assert config_fingerprint({"a": 1, "b": 2}) == config_fingerprint({"b": 2, "a": 1})
+    assert config_fingerprint({"a": 1}) != config_fingerprint({"a": 2})
+
+
+def test_seating_is_optional_and_absent_rather_than_zero():
+    """Seating is a slower, separate confirmation. A plan without it must say so,
+    not report 0% clash-free as though every student had a broken timetable."""
+    snap, board = _tiny_plan_inputs()
+    plan = _save(snap, board)
+    assert plan.students_seated is None
+    assert plan.students_clash_free_percent is None
+
+    with_seating = _save(
+        snap,
+        board,
+        seating={
+            "students": 10,
+            "clash_free_percent": 100.0,
+            "average_idle_minutes": 30.0,
+        },
+    )
+    assert with_seating.students_seated == 10
+    assert with_seating.students_clash_free_percent == 100.0

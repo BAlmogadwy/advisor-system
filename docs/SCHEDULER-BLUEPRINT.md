@@ -664,6 +664,37 @@ Scope: 29 courses run more than one section (75 sections), and **20 of those are
 service courses** (57 sections) — `ENG101` x4, `GS101` x4, `MATH105` x4,
 `PHYS103` x4, `CS111` x3.
 
+### D13 — Students and instructors compete for the same lever
+
+Seating real students (the confirmation N3 always specified and which had never
+been run) showed the board is essentially clash-free — 1 student of 390 on the
+male cohort, 0 of 612 on the female — but that every student loses roughly ten
+hours a week to gaps between classes, and **nothing was optimising it**.
+
+A term was built for it: co-demanded courses are rewarded for being *adjacent*
+rather than merely non-overlapping, on the same `shared / (na x nb)` currency the
+clash term already uses. Measured by seating, two seeds, medians:
+
+| weight | student waiting | instructor idle | clash-free | working days |
+|---|---|---|---|---|
+| **0 (default)** | 573 min | **1262** | 100% | 19 = floor |
+| 1 | **465 min** (-19%) | 1532 (+21%) | 100% | 19 = floor |
+| 3 | 498 min | 2100 (+66%) | 100% | 19 = floor |
+| 10 | 474 min | 2078 | 100% | 19 = floor |
+
+**Packing a student's day spreads an instructor's, and the reverse.** They are
+the same lever pulled from opposite ends. Buying students 19% of their waiting
+at a 21% cost to instructors is not a trade this system should make silently
+when the owner's stated priority is *"the instructor timetable with the minimum
+gap possible"*.
+
+**Decision: off by default, offered as `--student-gaps`.** Weight 1 is the only
+setting worth using — 3 and 10 are worse for **both** parties, which is a useful
+reminder that pushing harder on a soft term is not the same as doing better.
+
+Two seeds is a thin sample and the differences between 465, 474 and 498 are
+inside the noise; the instructor cost is the part that looks consistent.
+
 ---
 
 ## 7. Still open

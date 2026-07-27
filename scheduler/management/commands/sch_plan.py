@@ -16,6 +16,7 @@ from django.core.management.base import BaseCommand, CommandError
 
 from scheduler.instructors import assign_instructors
 from scheduler.intake import IntakeError, build_snapshot, elective_placeholder_report
+from scheduler.persist import save_plan
 from scheduler.placement import place_naively
 from scheduler.rooms import assign_rooms_exact, room_shortfall
 from scheduler.seating import seat_students
@@ -98,6 +99,26 @@ class Command(BaseCommand):
             "in sections at random; this is the confirmation, and it is the "
             "only number that describes a student's week.",
         )
+        parser.add_argument(
+            "--save",
+            action="store_true",
+            help="store the plan in the scheduler's own tables, stamped with the "
+            "snapshot, rulebook and config fingerprints. Reproducibility was "
+            "retracted (see the blueprint), so those stamps are the only way "
+            "to know two plans answered the same question.",
+        )
+        parser.add_argument("--label", default="", help="a name for a saved plan")
+        parser.add_argument(
+            "--student-gaps",
+            type=float,
+            default=0.0,
+            help="pull courses that share students closer together, to shorten "
+            "student waiting. OFF by default: measured at weight 1 it saves "
+            "students about 19%% of their waiting and costs instructors "
+            "about 21%% more of theirs — the two compete for the same lever, "
+            "and the instructor timetable is the stated priority. Weight 1 "
+            "is the only setting worth using; 3 and 10 are worse for both.",
+        )
         parser.add_argument("--format", choices=("text", "json"), default="text")
 
     def handle(self, *args, **options) -> None:
@@ -119,6 +140,8 @@ class Command(BaseCommand):
             plan_kwargs["gap_weight"] = int(options["span_weight"] * _SCALE)
         if options["back_to_back"] is not None:
             plan_kwargs["sibling_adjacency_weight"] = int(options["back_to_back"] * _SCALE)
+        if options["student_gaps"]:
+            plan_kwargs["student_adjacency_weight"] = int(options["student_gaps"] * _SCALE)
         runs = max(1, int(options["runs"]))
         planner = plan if runs == 1 else plan_portfolio
         if runs > 1:
@@ -145,6 +168,35 @@ class Command(BaseCommand):
             else None
         )
 
+        saved = None
+        if options["save"]:
+            saved = save_plan(
+                snapshot,
+                board,
+                config={
+                    "seconds": options["seconds"],
+                    "runs": runs,
+                    "alpha": options["alpha"],
+                    "clash_tolerance": options["clash_tolerance"],
+                    "span_weight": options["span_weight"],
+                    "back_to_back": options["back_to_back"],
+                    "student_gaps": options["student_gaps"],
+                    "default_capacity": options["default_capacity"],
+                },
+                solver_status=result.status,
+                wall_time_seconds=result.wall_time_seconds,
+                certification=report.certification.value,
+                violation_count=report.violation_count,
+                expected_clashes=clashes,
+                naive_baseline=baseline,
+                instructors=instructors,
+                rooms=rooms,
+                pairing=pairing,
+                seating=seating,
+                notes=list(result.notes),
+                label=options["label"],
+            )
+
         if options["format"] == "json":
             self.stdout.write(
                 json.dumps(
@@ -159,6 +211,7 @@ class Command(BaseCommand):
                         "room_shortfall": rooms,
                         "sibling_pairing": pairing,
                         "student_seating": seating,
+                        "saved_plan_id": saved.id if saved else None,
                     },
                     indent=2,
                     default=str,
@@ -279,6 +332,15 @@ class Command(BaseCommand):
                 )
         w("")
         w("")
+        if saved:
+            w("")
+            w(f"  SAVED as plan #{saved.id}" + (f" ({saved.label})" if saved.label else ""))
+            w(
+                f"    snapshot {saved.snapshot_fingerprint[:16]}  "
+                f"rules {saved.rulebook_fingerprint[:16]}  "
+                f"config {saved.config_fingerprint[:16]}"
+            )
+            w("    only plans sharing all three fingerprints are comparable")
         w(f"  solver: {result.status}  {result.wall_time_seconds:.0f}s")
         for note in result.notes:
             if "portfolio" in note or "two-pass" in note or "discarded" in note:
