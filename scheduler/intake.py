@@ -21,7 +21,7 @@ import hashlib
 import json
 import math
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import UTC, datetime
 
 from core.models import CourseInstructor, ElectiveTermMapping, ProgrammeRequirement, Student
@@ -111,8 +111,21 @@ def is_placeholder_code(course_code: str) -> bool:
 # Matched against the course NAME, anchored, because a substring match on
 # "PROJECT" would wrongly catch real taught courses — IS357 / IS362
 # "INFORMATION SYSTEMS PROJECT MANAGEMENT" are ordinary classroom courses.
+#: Matched as prefixes on the plan's free-text course name.
+#:
+#: "GRADUATION" rather than "GRADUATION PROJECT", because the two are the same
+#: thing spelled differently and the narrower rule cost a whole cohort: CS491 is
+#: recorded as "GRADUATION I" while AI491 is "GRADUATION PROJECT I". The
+#: narrower prefix missed CS491, so a graduation project was scheduled with 31
+#: sections, and since sections of one course may never overlap while the week
+#: holds 25 non-overlapping cells, the entire female CS build came back
+#: INFEASIBLE with no explanation.
+#:
+#: Free-text names are a fragile thing to depend on, which is why the readiness
+#: report now also proves this class of failure arithmetically rather than
+#: trusting this list to be complete.
 UNSCHEDULED_NAME_PREFIXES: tuple[str, ...] = (
-    "GRADUATION PROJECT",
+    "GRADUATION",
     "COOPERATIVE TRAINING",
 )
 UNSCHEDULED_NAME_EXACT: frozenset[str] = frozenset({"TRAINING"})
@@ -190,6 +203,59 @@ def elective_placeholder_report(snapshot: Snapshot, academic_year: str, term: in
     return sorted(rows, key=lambda r: (r["status"], r["placeholder"]))
 
 
+def _one_elective_per_slot(
+    recommended: dict[int, list[str]],
+    academic_year: str,
+    term: int,
+    program_set: frozenset[str],
+) -> dict[int, list[str]]:
+    """Give each student ONE elective per placeholder slot, spread across the options.
+
+    After placeholders are expanded, a student eligible for all three of CS403,
+    CS468 and CS487 is recommended all three — but they will register for one.
+    Counting all three triples that course's demand and therefore its section
+    count, and sections are the scarce resource that decides whether a cohort can
+    be scheduled at all.
+
+    **This duplicates a rule that already exists** in the project, as
+    `_limit_electives_per_placeholder`. It is reimplemented rather than imported
+    because that function lives in `core.services.timetable_generate`, and this
+    subsystem is forbidden — by a test, not merely by convention — from importing
+    the old timetable engine. That isolation is the entire basis on which this
+    subsystem was allowed to exist, so it is not worth spending to save twenty
+    lines. The behaviour is pinned by tests; if the institution's rule changes,
+    both places must change, and this comment is the pointer.
+    """
+    mappings: dict[str, set[str]] = defaultdict(set)
+    for mapping in ElectiveTermMapping.objects.filter(
+        academic_year=str(academic_year), term=int(term), programme__in=program_set
+    ).select_related("elective"):
+        mappings[str(mapping.elective.course_code).strip().upper()].add(
+            str(mapping.placeholder_code).strip().upper()
+        )
+    if not mappings:
+        return recommended
+
+    taken: Counter[str] = Counter()
+    out: dict[int, list[str]] = {}
+    for student_id in sorted(recommended):
+        codes = [str(c).strip().upper() for c in recommended[student_id]]
+        regular = [c for c in codes if c not in mappings]
+        electives = [c for c in codes if c in mappings]
+
+        kept: list[str] = []
+        filled: set[str] = set()
+        for code in sorted(electives, key=lambda c: (taken[c], c)):
+            slots = mappings[code] - filled
+            if not slots:
+                continue  # this student already has a course for every slot it fills
+            filled |= slots
+            kept.append(code)
+            taken[code] += 1
+        out[student_id] = regular + kept
+    return out
+
+
 def compile_requirements(credit_hours: int, *, is_online: bool) -> tuple[MeetingRequirement, ...]:
     """Compile an offering's exact weekly meeting multiset (N5).
 
@@ -250,17 +316,37 @@ def build_snapshot(
     policy = CapacityPolicy(default_capacity=default_capacity, buffer=buffer)
 
     # ── students (single gender, D1) ──
-    students = list(
+    #
+    # Withdrawn students are excluded. They will not attend, so counting them
+    # inflates demand, which inflates the section count, which is the pressure
+    # that makes a cohort infeasible: sections of one course may never overlap,
+    # so every extra section consumes one of the week's 25 non-overlapping cells.
+    #
+    # Nothing else in the project filters on status -- `recommender_batch` and
+    # `timetable_workspace` both take whatever student set the caller hands them
+    # -- so this is not an established rule being followed but an absent one
+    # being written down. It is therefore narrow on purpose: only statuses that
+    # explicitly say WITHDRAWN are dropped. "Visitor" is kept, because whether a
+    # visiting student needs a seat is a policy question, not a technical one,
+    # and the count is reported rather than silently applied.
+    student_rows = list(
         Student.objects.filter(program__in=program_set, section__iexact=gender).values_list(
-            "student_id", "program"
+            "student_id", "program", "status"
         )
     )
+    students = [
+        (sid, prog)
+        for sid, prog, status in student_rows
+        if "WITHDRAWN" not in str(status or "").upper()
+    ]
+    excluded_withdrawn = len(student_rows) - len(students)
     if not students:
         raise IntakeError(f"no {gender} students in {sorted(program_set)} — nothing to schedule")
     program_by_student = {int(sid): str(prog).upper() for sid, prog in students}
 
     # ── demand, from the UPSTREAM recommender (never reimplemented) ──
     from core.services.recommender_batch import batch_recommend
+    from core.services.reporting import resolve_elective_recommendations
 
     recommended: dict[int, list[str]] = {}
     by_program: dict[str, list[int]] = defaultdict(list)
@@ -268,6 +354,15 @@ def build_snapshot(
         by_program[prog].append(sid)
     for prog, sids in sorted(by_program.items()):
         recommended.update(batch_recommend(sids, prog, int(academic_year), int(term)) or {})
+
+    # The recommender deliberately emits plan PLACEHOLDERS (CS1, DS2). Timetabling
+    # a placeholder schedules a course nobody can enrol in, so they are expanded
+    # into the real electives the term mapping assigns to them — using the
+    # project's own resolver, not a second opinion about it.
+    recommended = resolve_elective_recommendations(
+        recommended, year=int(academic_year), semester=int(term), program=sorted(program_set)
+    )
+    recommended = _one_elective_per_slot(recommended, academic_year, term, program_set)
 
     # ── offerings, from the programme plan ──
     plan_rows = list(
@@ -332,26 +427,70 @@ def build_snapshot(
                 )
             )
 
-    # ── section plan: ceil(demand / capacity), at least 1 where demanded (D3) ──
+    # ── section plan: the PROJECT's planner, not a second opinion ──────────
+    #
+    # This used to be `ceil(demand / default_capacity)` with one capacity for
+    # everything, and it was wrong in a way that mattered. The institution sizes
+    # sections by course type — 25 seats for a local four-credit course, 40 for
+    # other local courses, **50 for external/service courses** — with declared
+    # per-programme capacities overriding both. A flat 25 split every service
+    # course into twice as many sections as the institution would run: 88 against
+    # 77 on the male AI/DS cohort, and 142 against 100 on female CS.
+    #
+    # That is not merely untidy. Sections of one course may never overlap, and the
+    # week holds 25 non-overlapping slots, so every invented section consumes a
+    # scarce resource — enough of them and the cohort becomes unschedulable
+    # outright, which is exactly what happened to female CS.
+    #
+    # So `compute_section_plan` decides section counts and seat limits. It is
+    # planning policy, in the same category as the recommender: an upstream
+    # service this subsystem CONSUMES rather than rewrites. Two answers to "how
+    # many sections should this course run" would be a worse defect than any
+    # scheduling bug.
+    from core.services.section_planning import compute_section_plan
+
     head_count: dict[str, int] = defaultdict(int)
     for d in demand:
         for oid in d.offering_ids:
             head_count[oid] += 1
+
+    aggregate: Counter[str] = Counter()
+    for offering in offerings:
+        if offering.is_scheduled and head_count.get(offering.id):
+            aggregate[offering.course_code] = head_count[offering.id]
+
+    declared_caps = {
+        offering.course_code: offering.capacity
+        for offering in offerings
+        if offering.capacity_is_declared
+    }
+    planned = {
+        str(row["course_code"]).strip().upper(): row
+        for row in compute_section_plan(aggregate, programme_capacities=declared_caps)
+    }
+
     sections: list[Section] = []
     for offering in offerings:
         if not offering.is_scheduled:
             continue  # graduation project / training — carries credit, has no meeting
-        needed = head_count.get(offering.id, 0)
-        if needed <= 0:
+        if not head_count.get(offering.id):
             continue  # no demand this term -> no sections; not an error
-        count = max(1, math.ceil(needed / offering.capacity))
+        row = planned.get(offering.course_code)
+        if row is None:
+            # The planner had nothing to say; fall back rather than drop a course
+            # somebody is waiting for.
+            count = max(1, math.ceil(head_count[offering.id] / offering.capacity))
+            seats = offering.capacity
+        else:
+            count = max(1, int(row["num_sections"]))
+            seats = max(1, int(row["max_per_section"]))
         for index in range(1, count + 1):
             sections.append(
                 Section(
                     id=f"{offering.id}#S{index}",
                     offering_id=offering.id,
                     index=index,
-                    capacity=offering.capacity,
+                    capacity=seats,
                     instructor_id=None,  # optional by design, permanently (D5)
                 )
             )
@@ -464,5 +603,6 @@ def build_snapshot(
         demand=tuple(demand),
         policy=policy,
         source_fingerprint=source_fingerprint,
+        excluded_withdrawn=excluded_withdrawn,
         created_at=datetime.now(UTC).isoformat(timespec="seconds"),
     )

@@ -137,6 +137,7 @@ def solve(
     max_room_shortfall: int | None = None,
     sibling_adjacency_weight: int = 0,
     student_adjacency_weight: int = 0,
+    same_offering_penalty: int | None = None,
 ) -> SolveResult:
     """Choose a day/time for every meeting, minimising expected student clashes."""
     from ortools.sat.python import cp_model
@@ -425,14 +426,36 @@ def solve(
         busy[key] = flag
         model.add_max_equality(flag, vars_)
 
-    # ── H10: sibling sections of one offering never overlap (hard) ────────
+    same_offering_terms: list[object] = []
+    # ── H10: sibling sections of one offering never overlap ───────────────
+    #
+    # HARD by default, but it is worth knowing what it costs. Two sections of one
+    # course CAN physically run at once — different rooms, different instructors,
+    # different students — and the reasons usually given are already covered
+    # elsewhere: an instructor teaching both is H7, the rooms are H9, and a
+    # student takes only one section. What the rule really buys is CHOICE: if
+    # every section sits at the same hour, a student who clashes with one clashes
+    # with all of them, and the expected-clash objective already rewards spreading
+    # siblings for exactly that reason.
+    #
+    # As a hard rule it is not free. It separates every meeting of every sibling,
+    # so a course with 17 sections meeting three times a week needs 51 mutually
+    # free cells against a week that holds 25 — and four of the twelve programme
+    # groups here become unbuildable at any budget. `same_offering_penalty`
+    # exists so that trade can be measured rather than argued about.
     for siblings in sections_by_offering.values():
         for sa, sb in combinations(sorted(s.id for s in siblings), 2):
             for day, start, end in {(k[1], k[2], k[3]) for k in busy if k[0] in (sa, sb)}:
                 a = busy.get((sa, day, start, end))
                 b = busy.get((sb, day, start, end))
-                if a is not None and b is not None:
+                if a is None or b is None:
+                    continue
+                if same_offering_penalty is None:
                     model.add(a + b <= 1)
+                else:
+                    together = model.new_bool_var("")
+                    model.add(together >= a + b - 1)
+                    same_offering_terms.append(together)
 
     # ── room capacity, as Hall's condition ────────────────────────────────
     #
@@ -743,6 +766,7 @@ def solve(
     # precisely to isolate the working-day question — was quietly optimising gaps
     # the whole time. Zero is off; anything else keeps the floor.
     objective = [var * w for var, w in overflow_terms]
+    objective += [v * (same_offering_penalty or 0) for v in same_offering_terms]
     if use_students:
         objective += [var * w for var, w in penalties]
     if use_instructors:

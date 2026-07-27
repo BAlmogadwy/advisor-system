@@ -62,6 +62,11 @@ class Snapshot:
     source_fingerprint: str
     created_at: str
 
+    #: Students dropped at intake because their status says WITHDRAWN. Carried on
+    #: the snapshot so the readiness report can say so out loud: a filter nobody
+    #: can see is indistinguishable from a filter that is wrong.
+    excluded_withdrawn: int = 0
+
     def __post_init__(self) -> None:
         if self.gender not in ("M", "F"):
             raise ValueError(f"snapshot gender must be M or F, got {self.gender!r}")

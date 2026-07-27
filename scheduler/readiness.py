@@ -78,6 +78,76 @@ def assess(snapshot: Snapshot) -> ReadinessReport:
     add = report.findings.append
     grid = snapshot.grid
 
+    # ── 0a. Students excluded at intake ────────────────────────────────────
+    if snapshot.excluded_withdrawn:
+        add(
+            Finding(
+                Severity.INFO,
+                "WITHDRAWN_STUDENTS_EXCLUDED",
+                f"{snapshot.excluded_withdrawn} student(s) were left out of demand "
+                f"because their status says WITHDRAWN. They will not attend, and "
+                f"counting them would inflate the section count.",
+                {"excluded": snapshot.excluded_withdrawn},
+            )
+        )
+
+    # ── 0. A course with more sections than the week has room for ──────────
+    #
+    # H10 forbids two sections of one course from ever overlapping, so N sections
+    # need N mutually non-overlapping cells. The week supplies a fixed number of
+    # those, and once a course exceeds it the model is INFEASIBLE — no timetable
+    # exists, at any budget.
+    #
+    # This is checked here, before solving, because the failure is otherwise
+    # mute: the female CS cohort came back INFEASIBLE with the single note "no
+    # assignment found within 60s", which reads like a solver that needed longer.
+    # It did not. CS491 is recorded as "GRADUATION I" while its AI counterpart is
+    # "GRADUATION PROJECT I", so the name-matching rule that excludes graduation
+    # projects missed it, and a project nobody timetables was planned with 31
+    # sections against 25 available cells.
+    #
+    # The arithmetic is checked rather than the spelling, so the next variant
+    # spelling — and every other cause of the same shape — is caught too.
+    for offering in snapshot.offerings:
+        siblings = len(snapshot.sections_by_offering.get(offering.id, ()))
+        if siblings < 2:
+            continue
+        durations = frozenset(
+            r.duration for r in offering.requirements if r.needs_room
+        ) or frozenset(r.duration for r in offering.requirements)
+        if not durations:
+            continue
+        capacity = grid.max_nonoverlapping_per_day(durations) * len(grid.days())
+        # It is MEETINGS that must not overlap, not sections. H10 separates every
+        # meeting of every sibling from every other, so a course with 17 sections
+        # meeting three times a week needs 51 mutually free cells, not 17. Getting
+        # this wrong is what let the female CS cohort stay infeasible after the
+        # first fix: the section count looked comfortable at 17 against 25.
+        meetings_per_section = sum(r.count_per_week for r in offering.requirements)
+        needed = siblings * meetings_per_section
+        if needed > capacity:
+            add(
+                Finding(
+                    Severity.BLOCKING,
+                    "MORE_SECTIONS_THAN_THE_WEEK_HOLDS",
+                    f"{offering.course_code} plans {siblings} sections meeting "
+                    f"{meetings_per_section} times a week = {needed} meetings, and "
+                    f"no two of them may overlap, but the week holds only "
+                    f"{capacity} non-overlapping slots of that length. No timetable "
+                    f"exists until the section count drops, the course meets less "
+                    f"often, or the grid grows.",
+                    {
+                        "course": offering.course_code,
+                        "course_name": offering.course_name,
+                        "sections": siblings,
+                        "meetings_per_section": meetings_per_section,
+                        "meetings_needed": needed,
+                        "weekly_capacity": capacity,
+                        "excess": needed - capacity,
+                    },
+                )
+            )
+
     # ── 1. Meeting lengths the grid declares no window for ─────────────────
     # Timing family is decided by DURATION, room family by KIND — so a 100-minute
     # lecture legitimately runs at the 100-minute (lab-timing) windows while

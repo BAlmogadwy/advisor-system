@@ -156,6 +156,22 @@ class Command(BaseCommand):
         # Exact, not first-fit: greedy strands a class whose only legal room was
         # already spent on one that had alternatives (see tests).
         board = assign_rooms_exact(snapshot, result.board)
+
+        # A board with nothing in it scores PERFECTLY on every metric here: no
+        # meetings means no clashes, no unroomed rooms and every student free.
+        # That is exactly what happened on the female CS cohort — an INFEASIBLE
+        # solve was reported as "0 clashes, 100% clash-free". Refuse to describe
+        # a failure as a result.
+        if not board.placements:
+            raise CommandError(
+                f"the solver produced NO timetable ({result.status}). "
+                + " ".join(result.notes)
+                + "  Run sch_validate for the readiness report: an infeasible "
+                "model is almost always a data fact rather than a budget problem "
+                "-- most often a course planning more sections than the week has "
+                "non-overlapping slots to hold them."
+            )
+
         report = validate(snapshot, board)
         clashes = expected_clashes(snapshot, board)
         instructors = instructor_metrics(snapshot, board)
