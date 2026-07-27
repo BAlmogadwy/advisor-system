@@ -104,11 +104,50 @@ Each one is a direct answer to a measured defect in the current engine.
 | N5 | **Compiled meeting requirements.** An offering declares its exact weekly multiset (kind, delivery mode, duration, count); credit hours are a default, not truth. | Meeting shape is currently guessed from credit hours + duration heuristics that disagree across surfaces (three different lab-duration literals). |
 | N6 | **One rulebook.** Each constraint is defined once, with adapters for check / delta / native-CP-SAT. | The same rule had up to 8 divergent implementations; that drift is what the current engine spent two PR cycles undoing. |
 | N7 | **Honest multi-objective.** Lexicographic only over *hard-feasibility* tiers; quality is an explicit weighted trade with published weights, and the engine can emit **alternatives** rather than one take-it-or-leave-it board. | The current 9-tuple collapses in practice — measured `(0,0,0,0,87060,56,32,52465,0)`: positions 0–3 and 8 never differentiate, so search is driven by one weighted sum. |
-| N8 | **Reproducibility + provenance.** Same snapshot + same config + same seed ⇒ byte-identical board. Every run stamped with input/rules/config/code/seed fingerprints; runs with different fingerprints are not comparable. | Optimiser runs are routinely compared across code changes with no record of what produced them. |
+| N8 | **Provenance, and an honest account of variance.** Every run stamped with input/rules/config/code/seed fingerprints; runs with different fingerprints are not comparable. Byte-identical reproducibility is **NOT** claimed — see the correction below. | Optimiser runs are routinely compared across code changes with no record of what produced them. |
 | N9 | **Independent validation.** The checker shares the *specification* with the solver but none of its fast occupancy/delta code. | A solver that grades its own homework cannot detect its own modelling errors. |
 | N10 | **Certificates, not verdicts.** "Infeasible" always carries the reason and a number — which resource, which bound, which witness. | Today a blocked board says "blocked"; the registrar cannot tell an unavoidable inventory shortage from a solver that gave up. Already proven valuable: the exact-rooming pass showed 8 meetings unroomable at fixed times, and a female cohort short **53 lecture-periods** — facts no solver can fix. |
 | N11 | **Incremental evaluation.** Re-score only what a move changed. | One candidate evaluation currently costs **22 ms** (deepcopy + re-seat all 390 students + full rescore + a second quality pass); at ~10⁴ evaluations that is 3.7 minutes of pure scoring per click. |
 | N12 | **Bounded everything.** Every search stage has a mandatory deadline; no unbounded default. | `TIMETABLE_CHAIN_TIME_LIMIT_SECONDS` still defaults to `0` = unbounded — the setting behind an 8.7-hour runaway job. |
+
+
+### N8 corrected (2026-07-27): reproducibility was promised and cannot be delivered
+
+The original wording was *"same snapshot + same config + same seed ⇒ byte-identical
+board"*. **It does not hold, and buying it costs more than it is worth.**
+
+Measured: three runs of an identical pass 1, same seed, gave expected clashes
+**95.8 / 86.3 / 106.4** and three different objective values. The cause is
+structural — eight search workers racing a **wall-clock** deadline stop wherever
+the machine happened to be, so the incumbent depends on load rather than on the
+model.
+
+Both reproducible configurations were tested, and both are far worse:
+
+| configuration | reproducible | expected clashes |
+|---|---|---|
+| 8 workers, wall clock (shipped) | no | **96.7** |
+| 1 worker, wall clock | yes | 391.0 |
+| 8 workers, deterministic time | no | 104.4 |
+| 8 workers, interleaved + deterministic time | yes | 313.4 |
+
+**Decision: keep the quality, drop the promise, and manage the variance
+explicitly.** A timetable three to four times worse, delivered identically every
+time, serves nobody.
+
+What replaces it:
+
+* `plan_portfolio` runs several independent attempts and keeps the best, and
+  **records the spread it chose from** in the run notes, so a lucky board is
+  distinguishable from a reliable one;
+* **no decision is ever taken from a single run.** Every tuning figure in this
+  document is a median over seeds with its range shown. One sweep that ignored
+  this produced a "weight 10" row showing *worse* back-to-back pairing than the
+  feature switched off, and a lost working day — pure noise, read at the time as
+  a real effect.
+
+Provenance is unaffected and still required: a run without its fingerprints is
+not comparable to anything.
 
 ---
 
@@ -562,6 +601,68 @@ every session is placed somewhere.
 was 2250 minutes against a 400-minute lower bound. Weights now live in one
 currency (1000 points = one expected clash) and are only ever scaled on the
 instructor side.
+
+### D12 — Instructors are linked to the department's OWN courses only
+> *"in reality we set only the instructors for the courses of the same programme
+> like courses of AI or DS only; for other courses what we try to keep only
+> sections back to back if they were of the same course"*
+
+Staffing data exists for `AI*` and `DS*` courses. Everything else — `CS`, `MATH`,
+`GS`, `ENG`, `PHYS`, `STAT`, `COE`, `ENGL`, `CHEM`, `GSE`, `FE` — is a service
+course run by another department, and this system will never learn who teaches
+it.
+
+**Measured on the male cohort: own courses are 24 of 88 sections (27%), and 23
+are already assigned.** Coverage is therefore at **96% of everything staffable**.
+
+**This retracts a claim made repeatedly in earlier notes** — that "the biggest
+remaining lever is instructor coverage at 26%". It is not a lever; it is a
+ceiling, and the data is essentially complete against it. The synthetic sweep
+that pushed coverage to 66% was measuring a department that will not exist.
+
+**For the other 73%, the rule is different: keep the sections of one course back
+to back.** Whoever teaches them should be called in once rather than three
+times — the same care the instructor objective gives named staff, extended to
+staff the data cannot name.
+
+It is a **matching, not a chain**: a section pairs with at most one sibling, so
+three sections give one pair and a leftover — exactly as described. Rewarding
+every adjacent combination instead would pay twice for a three-section block and
+drag four sections into one long run, which is not what was asked and costs the
+student objective far more.
+
+It is a **reward**, not a constraint, because it opposes the student objective
+directly: that one wins by *spreading* sibling sections (a colliding pair costs
+`shared / (na x nb)`), and this pulls them together.
+
+**Measured over three seeds per weight, medians with ranges** — single runs of
+this solver are not comparable (see the N8 correction):
+
+| weight | service-course pairs back to back | expected clashes | working days |
+|---|---|---|---|
+| 0 (off) | **15%** [9-19] | 101.6 [93-104] | 19 = floor |
+| 1 | 54% [54-67] | 106.0 [99-113] | 19 = floor |
+| **3 (default)** | **70%** [65-80] | **101.5** [99-109] | 19 = floor |
+| 10 | 83% [70-93] | 115.6 [96-117] | 19 = floor |
+
+**Default 3, and on.** The pairing gain at that weight is unambiguous — the
+ranges do not overlap — while the clash medians are indistinguishable from
+having it switched off. An earlier single-run sweep put the cost at +23 clashes;
+that was noise, and re-measuring properly removed it.
+
+**The reward runs in the second pass only.** Letting it act in pass 1 — whose
+sole job is to settle how few days instructors work — pushed the day count off
+its proven floor from weight 3 upward (19 to 20 to 21). Worse, pass 2's day
+budget is derived from pass 1, so the loss was locked in and unrecoverable.
+Preferences do not belong in the pass that establishes a guarantee.
+
+"Back to back" means the next teaching slot, not literally touching: this grid
+runs 09:00-10:15 then 10:30, so consecutive slots carry a 15-minute changeover
+while the next real gap is 55 minutes. The threshold sits between them.
+
+Scope: 29 courses run more than one section (75 sections), and **20 of those are
+service courses** (57 sections) — `ENG101` x4, `GS101` x4, `MATH105` x4,
+`PHYS103` x4, `CS111` x3.
 
 ---
 

@@ -52,6 +52,11 @@ _SCALE = 1000
 #: grid happens to cut the day rather than on anything about rooms.
 _REFERENCE_MEETING_MINUTES = 75
 
+#: How long a break still counts as "back to back". This grid runs 09:00-10:15
+#: then 10:30, so consecutive teaching slots carry a 15-minute changeover; the
+#: next real gap is 55 minutes, to the afternoon.
+_ADJACENT_GAP_MINUTES = 20
+
 #: Ceiling on the union-closure of room-compatibility families. The closure is
 #: what makes Hall's condition bind on unions; the cap keeps a pathological
 #: estate from generating 2^n sets. Exceeding it only weakens the pressure — the
@@ -125,6 +130,7 @@ def solve(
     max_working_days: int | dict[int, int] | None = None,
     max_clash_score: int | None = None,
     max_room_shortfall: int | None = None,
+    sibling_adjacency_weight: int = 0,
 ) -> SolveResult:
     """Choose a day/time for every meeting, minimising expected student clashes."""
     from ortools.sat.python import cp_model
@@ -255,6 +261,85 @@ def solve(
                 ]
                 if lhs and rhs:
                     model.add(sum(lhs) <= sum(rhs))
+
+    # ── sibling sections of one course, taught back to back ───────────────
+    #
+    # Owner rule: instructors are only ever linked to the department's OWN
+    # courses (AI*, DS*) — 24 of 88 sections here. The other 73% are service
+    # courses run by other departments, and nobody in this system knows who
+    # teaches them. For those, the request is that the several sections of one
+    # course sit back to back, so that whoever does teach them teaches them in
+    # one stretch rather than being called in three times.
+    #
+    # This is the same care the instructor objective gives named staff, extended
+    # to the staff the data cannot name. It is a REWARD rather than a
+    # constraint, because it directly opposes the student-clash term: that term
+    # wins by SPREADING sibling sections across the week, which is exactly what
+    # this pulls against. The weight is therefore a declared exchange rate, and
+    # its cost in student clashes is measured rather than assumed.
+    #
+    # "Back to back" means the next teaching slot, not literally touching: this
+    # grid runs 09:00-10:15 then 10:30, so consecutive slots carry a 15-minute
+    # changeover. Anything up to `_ADJACENT_GAP_MINUTES` counts as consecutive;
+    # a 75-minute wait to the afternoon does not.
+    adjacency_terms: list[object] = []
+    if sibling_adjacency_weight:
+        cells_of: dict[tuple[str, int], list] = {}
+        for (section_id, index, day, window), var in x.items():
+            cells_of.setdefault((section_id, index), []).append((day, window, var))
+
+        for offering_id in sorted(sections_by_offering):
+            siblings = sorted(s.id for s in sections_by_offering[offering_id])
+            if len(siblings) < 2:
+                continue
+            # Scoped to this offering: sections belong to exactly one course, so
+            # a shared dict would only ever be re-scanned and filtered.
+            paired_with: dict[tuple[str, int], list] = {}
+            indexes = {i for (sid, i) in cells_of if sid in siblings}
+            for index in sorted(indexes):
+                for first, second in combinations(siblings, 2):
+                    consecutive = []
+                    for day_a, window_a, var_a in cells_of.get((first, index), ()):
+                        for day_b, window_b, var_b in cells_of.get((second, index), ()):
+                            if day_b is not day_a:
+                                continue
+                            # max(), not min(): whichever meeting is later
+                            # gives the positive value, and the other ordering
+                            # is a large negative. Taking the minimum picked
+                            # that negative every time, so nothing was ever
+                            # counted adjacent and the whole term was inert.
+                            # Both negative means they overlap, which H10
+                            # forbids anyway, and the bound below rejects it.
+                            gap = max(
+                                window_b.start - window_a.end,
+                                window_a.start - window_b.end,
+                            )
+                            if not 0 <= gap <= _ADJACENT_GAP_MINUTES:
+                                continue
+                            flag = model.new_bool_var(f"adj_{first}_{second}_{index}_{day_a.value}")
+                            model.add_bool_and([var_a, var_b]).only_enforce_if(flag)
+                            consecutive.append(flag)
+                    if consecutive:
+                        together = model.new_bool_var(f"btb_{first}_{second}_{index}")
+                        model.add_max_equality(together, consecutive)
+                        paired_with.setdefault((first, index), []).append(together)
+                        paired_with.setdefault((second, index), []).append(together)
+                        adjacency_terms.append(together)
+
+            # Owner rule: "if the course has more than 2 sections, try to keep
+            # each 2 sections back to back — not all must be back to back; with
+            # 3 sections, make 2 back to back and the last can be separated."
+            #
+            # So this is a MATCHING, not a chain: a section pairs with at most
+            # one sibling. Rewarding every adjacent combination instead would
+            # push four sections into one long consecutive block (three pairs
+            # rather than two), which is not what was asked and costs the
+            # student objective far more — that objective wins by spreading
+            # siblings apart. Three sections therefore yield one pair and a
+            # leftover, exactly as described.
+            for flags in paired_with.values():
+                if len(flags) > 1:
+                    model.add_at_most_one(flags)
 
     # ── occupancy atoms, per delivery family ──────────────────────────────
     all_windows = [s.window for s in snapshot.grid.slots]
@@ -603,6 +688,8 @@ def solve(
             objective += [flag * max(1, round(day_weight * ratio)) for flag in works.values()]
         if span_weight:
             objective += [span * max(1, round(span_weight * ratio)) for span in spans]
+    # Negative: CP-SAT minimises, so a reward is a cost avoided.
+    objective += [flag * -sibling_adjacency_weight for flag in adjacency_terms]
     if objective:
         model.minimize(sum(objective))
 
@@ -821,6 +908,19 @@ def instructor_metrics(snapshot: Snapshot, board: Board) -> dict:
         total_idle += idle
 
     assigned = sum(1 for s in snapshot.sections if s.instructor_id is not None)
+
+    # Coverage against ALL sections is a misleading headline. The department
+    # staffs only its OWN courses (D12) — everything else is a service course
+    # run elsewhere, and no instructor for it will ever exist in this data. So
+    # "26% of 88" reads as three quarters of the data missing when the true
+    # picture is 23 of 24 staffable sections filled. Both numbers are published:
+    # the first is the scope of the instructor figures, the second is the only
+    # one that says whether anything is actually absent.
+    staffable_offerings = {o for i in snapshot.instructors for o in i.eligible_offerings}
+    staffable = sum(
+        len(snapshot.sections_by_offering.get(offering_id, ()))
+        for offering_id in staffable_offerings
+    )
     return {
         "instructors": len(rows),
         "working_days": total_days,
@@ -831,9 +931,11 @@ def instructor_metrics(snapshot: Snapshot, board: Board) -> dict:
         "coverage": {
             "sections_assigned": assigned,
             "sections_total": len(snapshot.sections),
+            "sections_staffable": staffable,
             "percent": round(100.0 * assigned / len(snapshot.sections), 1)
             if snapshot.sections
             else 0.0,
+            "percent_of_staffable": round(100.0 * assigned / staffable, 1) if staffable else 0.0,
         },
         "per_instructor": rows,
     }
@@ -845,6 +947,20 @@ def plan(
     time_limit_seconds: float = 90.0,
     gap_weight: int = 3 * _SCALE,
     clash_tolerance: float = 0.05,
+    # Default ON. Measured over three seeds per weight on the live male cohort,
+    # reporting medians because a single run of this solver is a lottery:
+    #
+    #   weight   service pairs back to back   expected clashes   days
+    #      0            15%  [9-19]            101.6 [93-104]    19 = floor
+    #      1            54%  [54-67]           106.0 [99-113]    19 = floor
+    #      3            70%  [65-80]           101.5 [99-109]    19 = floor
+    #     10            83%  [70-93]           115.6 [96-117]    19 = floor
+    #
+    # At 3 the pairing gain is unambiguous — the ranges do not overlap at all —
+    # while the clash medians are indistinguishable from having it switched off.
+    # It is close to free, so it is on. At 10 the pairing keeps improving but
+    # clashes start to move, and that is a trade for the owner to opt into.
+    sibling_adjacency_weight: int = 3 * _SCALE,
     **kwargs,
 ) -> SolveResult:
     """Plan in two passes: settle the working days, then attack the gaps.
@@ -883,7 +999,19 @@ def plan(
     makes the second pass worth running at all.
     """
     half = max(1.0, time_limit_seconds / 2)
-    first = solve(snapshot, time_limit_seconds=half, span_weight=0, **kwargs)
+    # Pass 1 answers ONE question — how few days can these instructors work —
+    # so nothing else may pull on it. Measured: with the back-to-back reward
+    # active here, the day count left the proven floor from weight 3 upward
+    # (19 -> 20 -> 21), and because pass 2's budget is derived from pass 1, the
+    # loss was then locked in and no later pass could recover it. Preferences
+    # belong in pass 2, where days are already a hard budget and cannot be spent.
+    first = solve(
+        snapshot,
+        time_limit_seconds=half,
+        span_weight=0,
+        sibling_adjacency_weight=0,
+        **kwargs,
+    )
     if not first.board.placements:
         return first
 
@@ -911,6 +1039,7 @@ def plan(
         max_working_days=per_instructor,
         max_clash_score=ceiling,
         max_room_shortfall=first.room_shortfall_score,
+        sibling_adjacency_weight=sibling_adjacency_weight,
         hint=first.board,
         **kwargs,
     )
@@ -1070,3 +1199,73 @@ def plan_portfolio(
         f"{min(r['clashes'] for r in runs):.0f}-{max(r['clashes'] for r in runs):.0f})"
     )
     return chosen
+
+
+def _max_matching(pairs: list[tuple[str, str]]) -> int:
+    """Largest set of adjacent pairs that share no section.
+
+    The owner's rule pairs sections two at a time, so a course with three
+    sections can only ever achieve ONE pair however its adjacencies fall.
+    Counting raw adjacencies instead would report 3 sections in one consecutive
+    block as two successes when the rule asks for one.
+
+    Exhaustive: sibling counts here are 2-4, so there is nothing to gain from a
+    cleverer algorithm and plenty to lose from getting one subtly wrong.
+    """
+    if not pairs:
+        return 0
+    best = 0
+    for index, (a, b) in enumerate(pairs):
+        rest = [p for p in pairs[index + 1 :] if a not in p and b not in p]
+        best = max(best, 1 + _max_matching(rest))
+    return best
+
+
+def sibling_adjacency(snapshot: Snapshot, board: Board) -> dict:
+    """How many sibling sections were paired back to back, against how many could be.
+
+    The denominator is the achievable maximum -- floor(n/2) pairs per course per
+    weekly meeting -- not every combination of siblings. A course with three
+    sections can reach one pair and no more, so scoring it out of three would
+    make a perfect timetable look like a third of one.
+    """
+    by_offering = snapshot.sections_by_offering
+    placed: dict[tuple[str, int], list] = {}
+    for p in board.placements:
+        placed.setdefault((p.section_id, p.meeting_index), []).append(p)
+
+    achieved = achievable = 0
+    per_course: dict[str, tuple[int, int]] = {}
+    for offering_id, siblings in sorted(by_offering.items()):
+        ids = sorted(s.id for s in siblings)
+        if len(ids) < 2:
+            continue
+        code = snapshot.offerings_by_id[offering_id].course_code
+        hits = target = 0
+        indexes = {i for (sid, i) in placed if sid in ids}
+        for index in sorted(indexes):
+            present = [sid for sid in ids if placed.get((sid, index))]
+            target += len(present) // 2
+            adjacent = []
+            for first, second in combinations(present, 2):
+                pa, pb = placed[(first, index)][0], placed[(second, index)][0]
+                if pa.day is not pb.day:
+                    continue
+                gap = max(
+                    pb.window.start - pa.window.end,
+                    pa.window.start - pb.window.end,
+                )
+                if 0 <= gap <= _ADJACENT_GAP_MINUTES:
+                    adjacent.append((first, second))
+            hits += _max_matching(adjacent)
+        if target:
+            per_course[code] = (hits, target)
+            achieved += hits
+            achievable += target
+
+    return {
+        "pairs_back_to_back": achieved,
+        "pairs_achievable": achievable,
+        "percent": round(100.0 * achieved / achievable, 1) if achievable else 0.0,
+        "per_course": per_course,
+    }

@@ -24,6 +24,7 @@ from scheduler.solve import (
     instructor_metrics,
     plan,
     plan_portfolio,
+    sibling_adjacency,
 )
 from scheduler.validate import validate
 
@@ -78,6 +79,16 @@ class Command(BaseCommand):
             "re-running is the cheapest quality available. Each run costs "
             "the full --seconds budget.",
         )
+        parser.add_argument(
+            "--back-to-back",
+            type=float,
+            default=None,
+            help="how hard to pair the sections of one course back to back, for "
+            "the service courses this department does not staff. Sections "
+            "pair TWO at a time, so three sections give one pair and a "
+            "leftover. Default 3, measured as close to free; 10 pairs more "
+            "but starts costing student clashes.",
+        )
         parser.add_argument("--format", choices=("text", "json"), default="text")
 
     def handle(self, *args, **options) -> None:
@@ -97,6 +108,8 @@ class Command(BaseCommand):
         plan_kwargs = {}
         if options["span_weight"] is not None:
             plan_kwargs["gap_weight"] = int(options["span_weight"] * _SCALE)
+        if options["back_to_back"] is not None:
+            plan_kwargs["sibling_adjacency_weight"] = int(options["back_to_back"] * _SCALE)
         runs = max(1, int(options["runs"]))
         planner = plan if runs == 1 else plan_portfolio
         if runs > 1:
@@ -116,6 +129,7 @@ class Command(BaseCommand):
         instructors = instructor_metrics(snapshot, board)
         placeholders = elective_placeholder_report(snapshot, options["year"], options["term"])
         rooms = room_shortfall(snapshot, board)
+        pairing = sibling_adjacency(snapshot, board)
 
         if options["format"] == "json":
             self.stdout.write(
@@ -129,6 +143,7 @@ class Command(BaseCommand):
                         "instructors": instructors,
                         "elective_placeholders": placeholders,
                         "room_shortfall": rooms,
+                        "sibling_pairing": pairing,
                     },
                     indent=2,
                     default=str,
@@ -157,7 +172,10 @@ class Command(BaseCommand):
                 "no instructor data for this cohort — nothing to optimise"
                 if not instructors["instructors"]
                 else f"scope: {cov['sections_assigned']}/{cov['sections_total']} sections "
-                f"({cov['percent']}%) — partial linkage is expected"
+                f"({cov['percent']}%) — but {cov['sections_assigned']}"
+                f"/{cov['sections_staffable']} of the sections this department "
+                f"staffs at all ({cov['percent_of_staffable']}%); the rest are "
+                f"service courses run elsewhere"
             )
         )
         if instructors["instructors"]:
@@ -196,6 +214,17 @@ class Command(BaseCommand):
                     f"      {f['reason']:<10} {f['course']:<9} {f['meetings']} meeting(s)  "
                     f"{f['detail']}"
                 )
+        if pairing["pairs_achievable"]:
+            w("")
+            w(
+                f"  SECTIONS OF ONE COURSE, BACK TO BACK   "
+                f"{pairing['pairs_back_to_back']}/{pairing['pairs_achievable']} pairs "
+                f"({pairing['percent']}%)"
+            )
+            w(
+                "    sections pair two at a time, so a course with three makes one "
+                "pair and one is left over"
+            )
         if placeholders:
             w("")
             unresolved = [p for p in placeholders if p["status"] != "RESOLVED"]

@@ -1409,3 +1409,222 @@ def test_a_room_budget_equal_to_what_was_achieved_is_always_satisfiable():
     )
     assert again.board.placements
     assert again.room_shortfall_score <= first.room_shortfall_score
+
+
+# ── sibling sections back to back ─────────────────────────────────────────
+#
+# Owner rule, in two parts:
+#   (a) instructors are only linked to the department's own courses, so ~73% of
+#       sections are service courses whose teacher this system never learns;
+#   (b) for those, "if the course has more than 2 sections, try to keep each 2
+#       sections back to back -- not all must be back to back; with 3 sections,
+#       make 2 back to back and the last can be separated."
+#
+# So it is a MATCHING: a section pairs with at most one sibling. That
+# distinction is the whole point of these tests -- rewarding every adjacent
+# combination instead would push four sections into one long consecutive block,
+# which is not what was asked and costs the student objective more, since that
+# objective wins by spreading siblings apart.
+
+from scheduler.solve import (  # noqa: E402
+    _ADJACENT_GAP_MINUTES,
+    _max_matching,
+    sibling_adjacency,
+)
+
+#: Four consecutive teaching slots on one day: 09:00-10:15, 10:30-11:45,
+#: 12:00-13:15, 13:30-14:45. Every neighbouring pair has the grid's 15-minute
+#: changeover, so the whole day is one adjacency chain.
+CHAIN = Grid.from_spec(
+    lecture_starts={"09:00": 75, "10:30": 75, "12:00": 75, "13:30": 75},
+    lab_starts={"09:00": 100},
+    days=(Day.SUN,),
+)
+
+
+def _siblings(grid, n):
+    offering = _offering("off1", reqs=_lecture(1))
+    return _grid_snapshot(
+        grid,
+        [offering],
+        [Section(f"off1#S{i}", "off1", i, 10) for i in range(1, n + 1)],
+    )
+
+
+def test_two_siblings_are_put_back_to_back_when_rewarded():
+    """09:00 + 10:30 are consecutive; 13:00 is an afternoon away."""
+    grid = Grid.from_spec(
+        lecture_starts={"09:00": 75, "10:30": 75, "13:00": 75},
+        lab_starts={"09:00": 100},
+        days=(Day.SUN,),
+    )
+    snap = _siblings(grid, 2)
+    r = solve(snap, time_limit_seconds=10, alpha=1.0, sibling_adjacency_weight=5 * _SCALE)
+    assert sorted(p.window.start for p in r.board.placements) == [540, 630]
+    assert sibling_adjacency(snap, r.board)["percent"] == 100.0
+
+
+def test_three_siblings_yield_one_pair_and_a_leftover():
+    """The owner's own example. Three sections can reach exactly ONE pair, so a
+    perfect result is 1/1 -- not 1 out of the three combinations."""
+    snap = _siblings(CHAIN, 3)
+    r = solve(snap, time_limit_seconds=15, alpha=1.0, sibling_adjacency_weight=5 * _SCALE)
+    report = sibling_adjacency(snap, r.board)
+    assert report["pairs_achievable"] == 1, "3 sections can only ever make 1 pair"
+    assert report["pairs_back_to_back"] == 1
+    assert report["percent"] == 100.0
+
+
+def test_four_siblings_yield_two_disjoint_pairs():
+    snap = _siblings(CHAIN, 4)
+    r = solve(snap, time_limit_seconds=20, alpha=1.0, sibling_adjacency_weight=5 * _SCALE)
+    report = sibling_adjacency(snap, r.board)
+    assert report["pairs_achievable"] == 2
+    assert report["pairs_back_to_back"] == 2
+
+
+def test_a_section_is_never_counted_in_two_pairs():
+    """Three sections in one consecutive run give TWO adjacencies (1-2 and 2-3)
+    but only ONE pair, because the middle section cannot be in both. Counting
+    raw adjacencies would score this 2 and overstate the result."""
+    snap = _siblings(CHAIN, 3)
+    board = Board(
+        tuple(
+            _p(section=f"off1#S{i}", offering="off1", day=Day.SUN, window=w)
+            for i, w in enumerate(
+                [TimeWindow(540, 615), TimeWindow(630, 705), TimeWindow(720, 795)], start=1
+            )
+        )
+    )
+    report = sibling_adjacency(snap, board)
+    assert report["pairs_back_to_back"] == 1, "the middle section was double-counted"
+
+
+def test_max_matching_picks_disjoint_pairs():
+    assert _max_matching([]) == 0
+    assert _max_matching([("a", "b")]) == 1
+    assert _max_matching([("a", "b"), ("b", "c")]) == 1  # share b
+    assert _max_matching([("a", "b"), ("c", "d")]) == 2  # disjoint
+    # Greedy from the left would take (b,c) and then stall at 1; the maximum is 2.
+    assert _max_matching([("b", "c"), ("a", "b"), ("c", "d")]) == 2
+
+
+def test_a_long_wait_does_not_count_as_back_to_back():
+    """Only the NEXT teaching slot counts. 11:45 to 13:00 is 75 minutes -- a
+    break, not a changeover, and rewarding it would make the measure useless."""
+    grid = Grid.from_spec(
+        lecture_starts={"09:00": 75, "13:00": 75},
+        lab_starts={"09:00": 100},
+        days=(Day.SUN,),
+    )
+    snap = _siblings(grid, 2)
+    r = solve(snap, time_limit_seconds=10, alpha=1.0, sibling_adjacency_weight=5 * _SCALE)
+    assert sibling_adjacency(snap, r.board)["percent"] == 0.0
+
+
+def test_adjacency_is_never_credited_across_different_days():
+    snap = _siblings(ROOMY, 2)
+    board = Board(
+        (
+            _p(section="off1#S1", offering="off1", day=Day.SUN, window=TimeWindow(540, 615)),
+            _p(section="off1#S2", offering="off1", day=Day.MON, window=TimeWindow(630, 705)),
+        )
+    )
+    assert sibling_adjacency(snap, board)["percent"] == 0.0
+
+
+def test_the_reward_is_off_by_default():
+    """It opposes the student objective, so it may not switch itself on."""
+    import inspect
+
+    assert inspect.signature(solve).parameters["sibling_adjacency_weight"].default == 0
+
+
+def test_the_changeover_threshold_matches_the_real_grid():
+    """15 minutes is the live grid's changeover (09:00-10:15 then 10:30); the
+    next real gap is 55 minutes. The threshold has to sit between them."""
+    assert 15 <= _ADJACENT_GAP_MINUTES < 55
+
+
+def test_the_model_rewards_at_most_one_pair_per_section():
+    """Pins the matching rule INSIDE the objective, not just in the report.
+
+    Three sections in one consecutive run contain two adjacencies (1-2 and 2-3).
+    Without the at-most-one-pair constraint the solver collects both and is paid
+    twice for a single leftover-free block — so it will chain sections together
+    wherever it can, which is exactly what the owner said not to do. With it,
+    three sections are worth exactly one pair.
+
+    Checked on objective_value because the matching METRIC cannot see the
+    difference: it scores a 3-chain as one pair either way, so a metric-based
+    test passes with the constraint deleted (mutation testing showed precisely
+    that).
+    """
+    weight = 5 * _SCALE
+    snap = _siblings(CHAIN, 3)
+    r = solve(snap, time_limit_seconds=15, alpha=1.0, sibling_adjacency_weight=weight)
+    assert r.board.placements
+    assert r.objective_value == -weight, (
+        f"expected exactly one rewarded pair ({-weight}), got {r.objective_value} "
+        "— a section is being counted in two pairs"
+    )
+
+
+def test_four_sections_are_worth_exactly_two_pairs_in_the_objective():
+    weight = 5 * _SCALE
+    snap = _siblings(CHAIN, 4)
+    r = solve(snap, time_limit_seconds=20, alpha=1.0, sibling_adjacency_weight=weight)
+    assert r.board.placements
+    assert r.objective_value == -2 * weight, r.objective_value
+
+
+def test_the_back_to_back_reward_cannot_cost_a_working_day():
+    """Pass 1 answers one question — how few days can these instructors work.
+
+    Measured on the live cohort, letting the back-to-back reward act in pass 1
+    pushed the day count off its proven floor from weight 3 upward (19 -> 20 ->
+    21). Worse, pass 2's day budget is DERIVED from pass 1, so the loss was
+    locked in and no later pass could recover it. The reward therefore belongs
+    only to pass 2, where days are a hard budget and cannot be spent.
+    """
+    import inspect
+
+    source = inspect.getsource(plan)
+    first_pass = source[source.index("first = solve(") : source.index("per_instructor =")]
+    assert "sibling_adjacency_weight=0" in first_pass, (
+        "pass 1 must pin the back-to-back reward off, or it can spend a "
+        "working day and fix the loss into pass 2's budget"
+    )
+
+
+def test_the_planner_holds_the_day_floor_with_the_reward_on():
+    """The behavioural half of the guarantee above."""
+    offerings, sections = [], []
+    for i in range(1, 4):  # one course, three sections, one instructor
+        offerings.append(_offering(f"off{i}", reqs=_lecture(1)))
+        sections.append(Section(f"off{i}#S1", f"off{i}", 1, 10, instructor_id=1))
+    snap = _grid_snapshot(ROOMY, offerings, sections)
+
+    without = plan(snap, time_limit_seconds=12)
+    with_reward = plan(snap, time_limit_seconds=12, sibling_adjacency_weight=30 * _SCALE)
+    before = _days_by_instructor(snap, without.board)
+    after = _days_by_instructor(snap, with_reward.board)
+    assert all(after[i] <= before.get(i, 0) for i in after), (
+        f"the reward bought extra working days: {before} -> {after}"
+    )
+
+
+def test_the_planner_switches_the_pairing_on_but_the_raw_solver_does_not():
+    """Policy belongs to the planner, not the primitive.
+
+    `solve()` is the neutral engine — a caller asking it for a board should not
+    silently get an objective they did not request. `plan()` is where the
+    owner's rules live, and the pairing is one of them, measured close to free
+    at its default weight.
+    """
+    import inspect
+
+    assert inspect.signature(solve).parameters["sibling_adjacency_weight"].default == 0
+    planner_default = inspect.signature(plan).parameters["sibling_adjacency_weight"].default
+    assert planner_default > 0, "the owner asked for this; it should be on"
+    assert planner_default == 3 * _SCALE, "weight changed without re-measuring the trade"
