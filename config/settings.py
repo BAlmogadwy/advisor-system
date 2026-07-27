@@ -59,6 +59,10 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "core",
     "whatsapp_gateway",
+    # New timetabling subsystem. Deliberately isolated from core's timetable
+    # engine: shares no code, no tables and no state, so it cannot regress the
+    # timetable in production use today. See docs/SCHEDULER-BLUEPRINT.md.
+    "scheduler",
 ]
 
 MIDDLEWARE = [

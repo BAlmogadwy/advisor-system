@@ -1,0 +1,468 @@
+"""Build a `Snapshot` from institutional data — the only Django-facing input code.
+
+Boundaries (blueprint §0):
+
+* reads **institutional facts** — students, programme requirements, rooms,
+  instructor eligibility — and the upstream *advising* recommender;
+* never reads a `TimetableScenario`, `DeliveryBoard`, `SectionPlacement` or
+  `TermSectionMeeting`. No saved scenario is ever a baseline or a warm start;
+* never imports `core.services.timetable_*`.
+
+Demand comes from `recommender_batch.batch_recommend`, which already encodes
+academic policy (real-term computation, parity, prerequisites, unlock ranking,
+credit cap). `scheduler` **consumes** it and does not reimplement it — two
+implementations of "what should this student take" would be a worse defect than
+anything in the timetable builder.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+import re
+from collections import defaultdict
+from datetime import UTC, datetime
+
+from core.models import CourseInstructor, ElectiveTermMapping, ProgrammeRequirement, Student
+from core.models import Instructor as InstructorRow
+from core.models import Room as RoomRow
+from scheduler.domain import (
+    CapacityPolicy,
+    DeliveryMode,
+    Grid,
+    Instructor,
+    MeetingKind,
+    MeetingRequirement,
+    Offering,
+    Room,
+    Section,
+    Snapshot,
+    StudentDemand,
+)
+
+# The declared slot grid (owner decision D2: the grid is the sole time authority).
+DEFAULT_LECTURE_STARTS: dict[str, int] = {
+    "09:00": 75,
+    "10:30": 75,
+    "10:50": 75,
+    "13:00": 75,
+    "14:30": 75,
+    "14:45": 75,
+    "16:00": 75,
+}
+DEFAULT_LAB_STARTS: dict[str, int] = {
+    "09:00": 100,
+    "10:45": 100,
+    "13:00": 100,
+    "14:45": 100,
+    "16:30": 100,
+}
+# Online teaching has its own late-day family: three 100-minute slots from 15:00,
+# placed after the on-campus day so it never competes with it. Online sessions
+# consume no room and do not create a student clash (owner decision D9).
+DEFAULT_ONLINE_STARTS: dict[str, int] = {
+    "15:00": 100,
+    "16:45": 100,
+    "18:30": 100,
+}
+
+
+class IntakeError(Exception):
+    """The input cannot produce a coherent snapshot (fail closed)."""
+
+
+def default_grid() -> Grid:
+    return Grid.from_spec(
+        lecture_starts=DEFAULT_LECTURE_STARTS,
+        lab_starts=DEFAULT_LAB_STARTS,
+        online_starts=DEFAULT_ONLINE_STARTS,
+    )
+
+
+# ── Course-category policy (owner rules, 2026-07-26) ──────────────────────
+#
+# 1. Every GS / GSE course is delivered ONLINE: it needs no room and never
+#    contributes to a student's on-campus gap.
+# 2. Graduation projects and cooperative training are NOT timetabled at all —
+#    no slot, no room. They carry credit but have no weekly meeting.
+# 3. Everything else needs a room.
+
+ONLINE_CODE_PREFIXES: tuple[str, ...] = ("GSE", "GS")
+
+#: A real catalogue code carries a three-digit number (AI463, MATH105). Elective
+#: placeholders never do (AI1, FE2, GSE1), which is what makes them detectable
+#: without a hand-maintained list.
+_REAL_COURSE_CODE = re.compile(r"^[A-Z]{2,4}\d{3}$")
+
+
+def is_placeholder_code(course_code: str) -> bool:
+    """Is this an elective *slot* rather than a teachable course?
+
+    The single answer to that question. There used to be a second one — a
+    hand-listed set in ``readiness.py`` — and it had already drifted: it knew
+    about ``AI1`` and ``GSE1`` but not ``AI2``, ``AI3``, ``DS3``, ``GSE2`` or
+    ``GSE3``, all of which exist in the live plan. Two sources of truth for one
+    question means one of them is wrong and nothing says which.
+    """
+    return not _REAL_COURSE_CODE.match(str(course_code or "").strip().upper())
+
+
+# Matched against the course NAME, anchored, because a substring match on
+# "PROJECT" would wrongly catch real taught courses — IS357 / IS362
+# "INFORMATION SYSTEMS PROJECT MANAGEMENT" are ordinary classroom courses.
+UNSCHEDULED_NAME_PREFIXES: tuple[str, ...] = (
+    "GRADUATION PROJECT",
+    "COOPERATIVE TRAINING",
+)
+UNSCHEDULED_NAME_EXACT: frozenset[str] = frozenset({"TRAINING"})
+
+
+def is_online_course(course_code: str) -> bool:
+    """GS/GSE courses are online by policy — deliberately *not* read from the
+    ``is_online`` column.
+
+    The column disagrees with itself: GS112 is flagged online in one programme
+    and not in another. A categorical rule corrects that inconsistency instead of
+    propagating it into the timetable.
+    """
+    code = str(course_code or "").strip().upper()
+    return any(code.startswith(p) for p in ONLINE_CODE_PREFIXES)
+
+
+def is_unscheduled_course(course_name: str) -> bool:
+    """Graduation projects and cooperative training are never timetabled."""
+    name = " ".join(str(course_name or "").strip().upper().split())
+    return name in UNSCHEDULED_NAME_EXACT or any(
+        name.startswith(p) for p in UNSCHEDULED_NAME_PREFIXES
+    )
+
+
+def elective_placeholder_report(snapshot: Snapshot, academic_year: str, term: int) -> list[dict]:
+    """Which scheduled offerings are elective *placeholders*, and can they be named?
+
+    A placeholder such as ``AI1 "PROGRAM ELECTIVE I"`` is a slot, not a course.
+    The timetable can schedule it perfectly and still be unpublishable, because
+    no student can enrol in "PROGRAM ELECTIVE I". Three outcomes, kept distinct
+    rather than collapsed into a pass/fail:
+
+    * ``RESOLVED``   — exactly one catalogue course fills the slot, so the
+      placement can be published under a real name with no assumption;
+    * ``AMBIGUOUS``  — several courses fill it, so students split across them by
+      a registration choice this stage cannot see. Naming one would be a guess;
+    * ``UNMAPPED``   — nobody has said what fills it. An evidence gap, reported
+      as such and never guessed at.
+
+    Timetable *quality* is unaffected either way — measured on the live M cohort,
+    resolution moves no metric — so this reports and does not rewrite.
+    """
+    from core.models import ElectiveTermMapping
+
+    targets: dict[str, set[str]] = defaultdict(set)
+    for mapping in ElectiveTermMapping.objects.filter(
+        academic_year=str(academic_year),
+        term=int(term),
+        programme__in={p for o in snapshot.offerings for p in o.programs},
+    ).select_related("elective"):
+        targets[str(mapping.placeholder_code).strip().upper()].add(
+            str(mapping.elective.course_code).strip().upper()
+        )
+
+    rows = []
+    for offering in snapshot.offerings:
+        code = offering.course_code.strip().upper()
+        if _REAL_COURSE_CODE.match(code):
+            continue
+        sections = len(snapshot.sections_by_offering.get(offering.id, ()))
+        if not sections:
+            continue  # not planned this term — nothing to publish
+        options = sorted(targets.get(code, ()))
+        status = "UNMAPPED" if not options else ("RESOLVED" if len(options) == 1 else "AMBIGUOUS")
+        rows.append(
+            {
+                "placeholder": code,
+                "name": offering.course_name,
+                "sections": sections,
+                "status": status,
+                "options": options,
+            }
+        )
+    return sorted(rows, key=lambda r: (r["status"], r["placeholder"]))
+
+
+def compile_requirements(credit_hours: int, *, is_online: bool) -> tuple[MeetingRequirement, ...]:
+    """Compile an offering's exact weekly meeting multiset (N5).
+
+    Credit hours are the *default input* to this compilation, not a runtime
+    substitute for it — the old engine re-derived meeting shape at several call
+    sites with three different lab-duration literals between them.
+
+    The shape follows the institution's documented rule:
+    4cr -> 2x75 lecture + 1x100 lab; 3cr -> 2x75; 2cr -> 1x100; 1cr -> 1x75.
+
+    Online offerings need no room, so their meetings carry ``DeliveryMode.ONLINE``
+    and are exempt from room supply entirely.
+    """
+    delivery = DeliveryMode.ONLINE if is_online else DeliveryMode.IN_PERSON
+    credits = int(credit_hours or 0)
+    if credits >= 4:
+        return (
+            MeetingRequirement(MeetingKind.LECTURE, delivery, 75, 2),
+            MeetingRequirement(MeetingKind.LAB, delivery, 100, 1),
+        )
+    if credits == 3:
+        return (MeetingRequirement(MeetingKind.LECTURE, delivery, 75, 2),)
+    if credits == 2:
+        return (MeetingRequirement(MeetingKind.LECTURE, delivery, 100, 1),)
+    return (MeetingRequirement(MeetingKind.LECTURE, delivery, 75, 1),)
+
+
+def _offering_id(course_code: str, programs: frozenset[str]) -> str:
+    """Stable, opaque offering identity (N1).
+
+    Keyed on the course plus the programme set that shares it, so one display
+    code offered to two different cohorts yields two distinct offerings — the
+    `FE1`/`CS111` ambiguity that silently merged demand in the old engine.
+    """
+    seed = f"{course_code.strip().upper()}|{'+'.join(sorted(programs))}"
+    return f"off_{hashlib.sha256(seed.encode()).hexdigest()[:12]}"
+
+
+def build_snapshot(
+    *,
+    academic_year: str,
+    term: int,
+    gender: str,
+    programs: list[str],
+    default_capacity: int,
+    buffer: float = 1.0,
+    grid: Grid | None = None,
+) -> Snapshot:
+    """Assemble an immutable, fingerprinted snapshot for one gender cohort."""
+    gender = gender.strip().upper()
+    if gender not in ("M", "F"):
+        raise IntakeError("gender must be M or F — a snapshot is single-gender (D1)")
+    program_set = {p.strip().upper() for p in programs if p.strip()}
+    if not program_set:
+        raise IntakeError("at least one programme is required")
+
+    grid = grid or default_grid()
+    policy = CapacityPolicy(default_capacity=default_capacity, buffer=buffer)
+
+    # ── students (single gender, D1) ──
+    students = list(
+        Student.objects.filter(program__in=program_set, section__iexact=gender).values_list(
+            "student_id", "program"
+        )
+    )
+    if not students:
+        raise IntakeError(f"no {gender} students in {sorted(program_set)} — nothing to schedule")
+    program_by_student = {int(sid): str(prog).upper() for sid, prog in students}
+
+    # ── demand, from the UPSTREAM recommender (never reimplemented) ──
+    from core.services.recommender_batch import batch_recommend
+
+    recommended: dict[int, list[str]] = {}
+    by_program: dict[str, list[int]] = defaultdict(list)
+    for sid, prog in program_by_student.items():
+        by_program[prog].append(sid)
+    for prog, sids in sorted(by_program.items()):
+        recommended.update(batch_recommend(sids, prog, int(academic_year), int(term)) or {})
+
+    # ── offerings, from the programme plan ──
+    plan_rows = list(
+        ProgrammeRequirement.objects.filter(program__in=program_set).values(
+            "program",
+            "course_code",
+            "course_name",
+            "credit_hours",
+            "is_online",
+            "max_capacity",
+            "programme_term",
+        )
+    )
+    # Group by course code: one offering per (code, sharing programme set).
+    grouped: dict[str, list[dict]] = defaultdict(list)
+    for row in plan_rows:
+        grouped[str(row["course_code"]).strip().upper()].append(row)
+
+    offerings: list[Offering] = []
+    offering_by_code: dict[str, Offering] = {}
+    for code, rows in sorted(grouped.items()):
+        progs = frozenset(str(r["program"]).upper() for r in rows)
+        credits = max(int(r["credit_hours"] or 0) for r in rows)
+        name = str(rows[0].get("course_name") or code)
+        declared = [int(r["max_capacity"]) for r in rows if r["max_capacity"]]
+        capacity = min(declared) if declared else policy.default_capacity
+
+        # Course-category policy: GS/GSE are online (no room, no campus gap);
+        # graduation projects and cooperative training are not timetabled at all.
+        unscheduled = any(is_unscheduled_course(r.get("course_name") or "") for r in rows)
+        online = is_online_course(code)
+
+        offering = Offering(
+            id=_offering_id(code, progs),
+            course_code=code,
+            course_name=name,
+            credit_hours=credits,
+            programs=progs,
+            terms=frozenset(int(r["programme_term"] or 0) for r in rows),
+            requirements=() if unscheduled else compile_requirements(credits, is_online=online),
+            capacity=capacity,
+            capacity_is_declared=bool(declared),
+            is_scheduled=not unscheduled,
+        )
+        offerings.append(offering)
+        offering_by_code[code] = offering
+
+    # ── student demand, mapped onto offerings ──
+    demand: list[StudentDemand] = []
+    for sid, codes in sorted(recommended.items()):
+        ids = {
+            offering_by_code[str(c).strip().upper()].id
+            for c in codes
+            if str(c).strip().upper() in offering_by_code
+        }
+        if ids:
+            demand.append(
+                StudentDemand(
+                    student_id=int(sid),
+                    program=program_by_student.get(int(sid), ""),
+                    offering_ids=frozenset(ids),
+                )
+            )
+
+    # ── section plan: ceil(demand / capacity), at least 1 where demanded (D3) ──
+    head_count: dict[str, int] = defaultdict(int)
+    for d in demand:
+        for oid in d.offering_ids:
+            head_count[oid] += 1
+    sections: list[Section] = []
+    for offering in offerings:
+        if not offering.is_scheduled:
+            continue  # graduation project / training — carries credit, has no meeting
+        needed = head_count.get(offering.id, 0)
+        if needed <= 0:
+            continue  # no demand this term -> no sections; not an error
+        count = max(1, math.ceil(needed / offering.capacity))
+        for index in range(1, count + 1):
+            sections.append(
+                Section(
+                    id=f"{offering.id}#S{index}",
+                    offering_id=offering.id,
+                    index=index,
+                    capacity=offering.capacity,
+                    instructor_id=None,  # optional by design, permanently (D5)
+                )
+            )
+
+    # ── rooms, filtered once to this gender and these programmes (D1) ──
+    rooms: list[Room] = []
+    for row in RoomRow.objects.filter(section__iexact=gender).order_by("id"):
+        room_programs = frozenset(
+            p.strip().upper() for p in str(row.department or "").split(",") if p.strip()
+        )
+        if not (room_programs & program_set):
+            continue
+        kind = (
+            MeetingKind.LAB
+            if str(row.room_type or "").strip().lower() == "lab"
+            else MeetingKind.LECTURE
+        )
+        rooms.append(
+            Room(
+                id=str(row.room_code).strip().upper(),
+                code=str(row.room_code).strip(),
+                capacity=int(row.capacity or 0),
+                kind=kind,
+                programs=room_programs,
+            )
+        )
+
+    # ── instructor ELIGIBILITY (not assignment — they are different things) ──
+    # Filtered to this snapshot's gender like everything else (D1). CourseInstructor
+    # carries the gender in ``section``; ignoring it would let a male-cohort
+    # eligibility row appear as staffing for the female cohort.
+    #
+    # A staffing row may name a *real* elective (AI463) while the timetable only
+    # knows the placeholder that stands in for it (AI1 "PROGRAM ELECTIVE I").
+    # Matching on code alone throws that row away silently. Someone approved to
+    # teach whichever course fills the slot is approved to teach the slot, so
+    # eligibility for a target is folded into its placeholder — a union, never a
+    # replacement, because the placeholder may carry approvals of its own that
+    # resolution would otherwise discard.
+    #
+    # The mapping is keyed on **(programme, target)**, not on the target alone.
+    # An approval is granted for one programme's elective slot, and both the
+    # mapping and the staffing row carry a programme; dropping either would let
+    # an approval to teach CS403 for CS be counted as staffing for an AI slot
+    # that happens to draw on the same catalogue course. Widening who may teach
+    # what is not a rounding error, so the two programmes must agree, and the
+    # placeholder offering must actually serve that programme.
+    placeholder_of: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for mapping in ElectiveTermMapping.objects.filter(
+        academic_year=str(academic_year), term=int(term), programme__in=program_set
+    ).select_related("elective"):
+        target = str(mapping.elective.course_code).strip().upper()
+        programme = str(mapping.programme).strip().upper()
+        placeholder_of[(programme, target)].add(str(mapping.placeholder_code).strip().upper())
+
+    eligible: dict[int, set[str]] = defaultdict(set)
+    for link in CourseInstructor.objects.filter(
+        program__in=program_set, section__iexact=gender
+    ).select_related("instructor"):
+        code = str(link.course_code).strip().upper()
+        if not link.instructor_id:
+            continue
+        programme = str(link.program).strip().upper()
+        if code in offering_by_code:
+            resolved_codes = [code]
+        else:
+            resolved_codes = sorted(placeholder_of.get((programme, code), ()))
+        for resolved in resolved_codes:
+            offering = offering_by_code.get(resolved)
+            if offering is None:
+                continue
+            if resolved != code and programme not in offering.programs:
+                continue  # the slot does not belong to the programme that approved them
+            eligible[int(link.instructor_id)].add(offering.id)
+    instructor_names = {
+        row.id: row.full_name for row in InstructorRow.objects.filter(id__in=list(eligible) or [0])
+    }
+    instructors = tuple(
+        Instructor(
+            id=iid,
+            name=instructor_names.get(iid, f"instructor:{iid}"),
+            eligible_offerings=frozenset(oids),
+        )
+        for iid, oids in sorted(eligible.items())
+    )
+
+    source_fingerprint = hashlib.sha256(
+        json.dumps(
+            {
+                "students": sorted(program_by_student),
+                "plan_rows": len(plan_rows),
+                "rooms": sorted(r.id for r in rooms),
+                "recommended": sorted((k, sorted(v)) for k, v in recommended.items()),
+            },
+            separators=(",", ":"),
+            default=str,
+        ).encode()
+    ).hexdigest()
+
+    return Snapshot(
+        academic_year=str(academic_year),
+        term=int(term),
+        gender=gender,
+        programs=tuple(sorted(program_set)),
+        grid=grid,
+        offerings=tuple(offerings),
+        sections=tuple(sections),
+        rooms=tuple(rooms),
+        instructors=instructors,
+        demand=tuple(demand),
+        policy=policy,
+        source_fingerprint=source_fingerprint,
+        created_at=datetime.now(UTC).isoformat(timespec="seconds"),
+    )
