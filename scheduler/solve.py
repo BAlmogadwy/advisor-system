@@ -3,11 +3,20 @@
 Measured on the live cohorts, this is what a solver here actually has to fix:
 
 * hard constraints are **trivial** — naive first-fit satisfies all eight;
-* rooms are **saturated** — first-fit already hits 100% of the theoretical
-  lecture-room maximum, so the unroomed count is a proven floor;
 * students are **catastrophically broken** — 96–100% of them clash.
 
 So the objective is student conflict, and everything else is a side condition.
+
+**A correction to an earlier reading of the data.** This file used to claim rooms
+were saturated, that first-fit hit 100% of the theoretical maximum, and that the
+unroomed count was therefore a proven floor. That was wrong on every cohort
+measured since. The male estate runs at **53% utilisation** while still leaving
+meetings unroomed, because "how many rooms exist" was never the binding question:
+a room must also be **big enough** and **open to the programme**. Ten of its
+unroomed meetings can never be roomed at any time by any timetable (four CS
+courses need labs seating 26–35; both lab rooms seat 25), and the rest were the
+model's own doing — see the Hall-condition constraint below, and
+`scheduler.rooms` for the decomposition that separates the two.
 
 **Why this is fast where the old engine was not.** The old evaluator re-seated all
 390 students to score a single candidate move: 22 ms, times ~10⁴ moves, is 3.7
@@ -38,6 +47,17 @@ from scheduler.domain.calendar import Day, TimeWindow
 #: Expected-clash weights are fractional; CP-SAT is integral. Scale, then round.
 _SCALE = 1000
 
+#: A room shortfall is priced by the room-TIME it leaves uncovered, normalised to
+#: one ordinary lecture. Without a normaliser the price would depend on where the
+#: grid happens to cut the day rather than on anything about rooms.
+_REFERENCE_MEETING_MINUTES = 75
+
+#: Ceiling on the union-closure of room-compatibility families. The closure is
+#: what makes Hall's condition bind on unions; the cap keeps a pathological
+#: estate from generating 2^n sets. Exceeding it only weakens the pressure — the
+#: constraint is soft, so an incomplete family set can never reject a legal board.
+_MAX_ROOM_FAMILIES = 96
+
 
 @dataclass
 class SolveResult:
@@ -53,6 +73,10 @@ class SolveResult:
     #: wherever a weight was rounded. Budgets must be expressed in *this* one, or
     #: a zero-tolerance ceiling can reject the very board it was derived from.
     clash_score: int = 0
+    #: Total room-shortfall in solver units, the same currency the budget uses.
+    #: Not a meeting count — it is the summed per-instant deficiency — so it is
+    #: only ever compared against itself between passes.
+    room_shortfall_score: int = 0
     #: The minimised objective in solver units — a blend of every enabled term.
     #: Never report this as a clash count; it exists so a caller (or a test) can
     #: tell which terms were actually in the objective at all.
@@ -85,7 +109,12 @@ def solve(
     time_limit_seconds: float = 60.0,
     workers: int = 8,
     seed: int = 0,
-    unroomed_penalty: int = 5 * _SCALE,
+    # A class with nowhere to meet cannot be taught; a student clash is a
+    # timetable somebody can still work around. The original 5 was a guess that
+    # nobody tested, and it left meetings unroomed that the estate could hold.
+    # Swept on the live cohorts: at 5 the male board leaves 11 unroomed against a
+    # floor of 10; from 20 upward it reaches the floor exactly and stays there.
+    unroomed_penalty: int = 20 * _SCALE,
     fix: Board | None = None,
     free_sections: frozenset[str] | None = None,
     break_symmetry: bool = True,
@@ -95,6 +124,7 @@ def solve(
     span_weight: int = 300,  # 0.3 expected clashes per idle minute — see D11
     max_working_days: int | dict[int, int] | None = None,
     max_clash_score: int | None = None,
+    max_room_shortfall: int | None = None,
 ) -> SolveResult:
     """Choose a day/time for every meeting, minimising expected student clashes."""
     from ortools.sat.python import cp_model
@@ -257,41 +287,132 @@ def solve(
                 if a is not None and b is not None:
                     model.add(a + b <= 1)
 
-    # ── room-count capacity: never schedule more concurrent in-person meetings
-    # of a kind than there are rooms of that kind ────────────────────────────
+    # ── room capacity, as Hall's condition ────────────────────────────────
     #
-    # Without this the solver is *room-blind* — the exact defect measured in the
-    # old engine, where `rooms_by_id` was None at every search site and the
-    # optimiser happily created boards that could not be roomed. Minimising
-    # student clash alone pushes meetings into the same few good windows, which
-    # is precisely where rooms run out.
-    room_counts = {
-        kind: len(snapshot.rooms_of_kind(kind)) for kind in {r.kind for r in snapshot.rooms}
-    }
-    kind_of_section: dict[tuple[str, int], object] = {
-        (sid, i): r.kind for (sid, i, r, _o) in meetings if r.delivery is DeliveryMode.IN_PERSON
-    }
-    concurrent: dict[tuple[object, Day, int, int], list] = {}
+    # Without any such constraint the solver is *room-blind* — the exact defect
+    # measured in the old engine, where `rooms_by_id` was None at every search
+    # site and the optimiser happily created boards that could not be roomed.
+    # Minimising student clash alone pushes meetings into the same few good
+    # windows, which is precisely where rooms run out.
+    #
+    # Counting rooms per KIND is not enough, and the difference is not academic.
+    # A section needing 42 seats can use exactly one room here; a DS-only class
+    # cannot use the AI-only rooms. Counting all eight lecture rooms told the
+    # solver it had room when it did not, and the shortfall then surfaced as
+    # "congestion" the report promised a reschedule could fix.
+    #
+    # The right condition is Hall's: for ANY set R of rooms, the meetings whose
+    # compatible rooms all lie inside R can never outnumber R at one instant.
+    # Every subset is exponential, but only the sets that actually arise matter
+    # — compatibility is decided by (kind, capacity threshold, programmes), so a
+    # handful of distinct sets covers the real structure, and the per-kind rule
+    # is simply the largest of them.
+    sections_by_id = {s.id: s for s in snapshot.sections}
+    compatible_rooms: dict[tuple[str, int], frozenset[str]] = {}
+    for section_id, index, requirement, offering in meetings:
+        if requirement.delivery is not DeliveryMode.IN_PERSON:
+            continue
+        section = sections_by_id.get(section_id)
+        need = snapshot.policy.required_room_capacity(section.capacity) if section else 0
+        compatible_rooms[(section_id, index)] = frozenset(
+            room.id
+            for room in snapshot.rooms
+            if room.kind is requirement.kind
+            and room.capacity >= need
+            and (offering.programs & room.programs)
+        )
+
+    # Hall's condition binds on UNIONS too, so the distinct compatible sets are
+    # not enough on their own. With rooms L1{AI}, L2{AI,DS}, L3{DS} and two
+    # AI-only plus two DS-only meetings at one instant, {L1,L2} holds 2<=2 and
+    # {L2,L3} holds 2<=2, yet four meetings need three rooms and one must go
+    # unroomed. Only {L1,L2,L3} — a union of the two — reveals it. The closure is
+    # capped: beyond the cap the family set is merely incomplete, which weakens
+    # the pressure but can never make a legal board illegal, since every
+    # constraint here is soft anyway.
+    families: set[frozenset[str]] = {s for s in compatible_rooms.values() if s}
+    for kind in {r.kind for r in snapshot.rooms}:  # the per-kind rule, still enforced
+        whole = frozenset(r.id for r in snapshot.rooms_of_kind(kind))
+        if whole:
+            families.add(whole)
+    frontier = sorted(families, key=lambda f: (len(f), sorted(f)))
+    while frontier and len(families) < _MAX_ROOM_FAMILIES:
+        left = frontier.pop()
+        for right in sorted(families, key=lambda f: (len(f), sorted(f))):
+            union = left | right
+            if union not in families:
+                families.add(union)
+                frontier.append(union)
+                if len(families) >= _MAX_ROOM_FAMILIES:
+                    break
+
+    concurrent: dict[tuple[frozenset[str], Day, int, int], list] = {}
     for (section_id, index, day, window), var in x.items():
-        kind = kind_of_section.get((section_id, index))
-        if kind is None:
-            continue  # online consumes no room
-        for _d, start, end in covering(day, window):
-            concurrent.setdefault((kind, day, start, end), []).append(var)
-    # SOFT, never hard (D7): a room shortage must not block the build. On the
-    # female cohort 79 lecture meetings provably cannot be roomed, so a hard
-    # bound makes the whole model INFEASIBLE and produces no timetable at all.
+        mine = compatible_rooms.get((section_id, index))
+        if not mine:
+            continue  # online, or provably unroomable — no room is ever consumed
+        for family in families:
+            if mine <= family:
+                for _d, start, end in covering(day, window):
+                    concurrent.setdefault((family, day, start, end), []).append(var)
+
+    # SOFT, never hard (D7): a room shortage must not block the build. The female
+    # cohort is short 29 lecture room-periods for the whole week, so a hard bound
+    # makes the model INFEASIBLE and produces no timetable at all.
     # Instead, exceeding the room count is permitted and penalised, so the
     # solver packs to the rooms it has and the overflow surfaces as unroomed
     # meetings rather than as failure.
+    #
+    # ONE shortfall variable per (day, atom), lower-bounded by every family's
+    # deficiency and paid for once. Two earlier mistakes are both avoided here:
+    #
+    #  * charging each family separately double-billed a single overflow, because
+    #    families nest — a meeting that only fits R1 is inside {R1} and inside
+    #    {R1,R2}. Summing deficiencies over nested sets can exceed the true
+    #    number of stranded meetings, and the solver would then prefer a board
+    #    that strands MORE of them but spreads them out. Hall's deficiency is a
+    #    MAXIMUM over sets, not a sum, which is what the shared variable encodes;
+    #
+    #  * charging a flat price per atom made the cost depend on where the grid
+    #    happened to cut. A 09:00-10:15 lecture covers one atom; an identical
+    #    10:30-11:45 lecture covers four, because a lab ends at 10:40, another
+    #    starts at 10:45 and an alternative lecture starts at 10:50 — none of
+    #    which is a fact about rooms. That priced the same stranded meeting at
+    #    20 or 80. Pricing by atom LENGTH instead makes the total depend on how
+    #    much room-time is missing, which is the thing actually in short supply.
     overflow_terms: list[tuple[object, int]] = []
-    for (kind, _day, _s, _e), vars_ in concurrent.items():
-        limit = room_counts.get(kind, 0)
+    shortfall: dict[tuple[Day, int, int], object] = {}
+    for (family, day, start, end), vars_ in sorted(
+        concurrent.items(), key=lambda kv: (kv[0][1].index, kv[0][2], kv[0][3], sorted(kv[0][0]))
+    ):
+        limit = len(family)
         if not limit or len(vars_) <= limit:
             continue
-        excess = model.new_int_var(0, len(vars_) - limit, "")
-        model.add(sum(vars_) <= limit + excess)
-        overflow_terms.append((excess, unroomed_penalty))
+        key = (day, start, end)
+        var = shortfall.get(key)
+        if var is None:
+            var = model.new_int_var(0, len(meetings), f"short_{day.value}_{start}_{end}")
+            shortfall[key] = var
+        model.add(sum(vars_) - limit <= var)
+
+    for (_day, start, end), var in sorted(
+        shortfall.items(), key=lambda kv: (kv[0][0].index, kv[0][1])
+    ):
+        minutes = max(1, end - start)
+        overflow_terms.append(
+            (var, max(1, round(unroomed_penalty * minutes / _REFERENCE_MEETING_MINUTES)))
+        )
+
+    # The third epsilon-constraint. Rooms get the same treatment as working days
+    # and student clashes because they lose the same way: a later pass told to
+    # push hard on one objective will pay for it out of whichever quantity is
+    # only *priced* rather than *bounded*. Measured — with rooms merely priced,
+    # the gap pass raised the unroomed count on every run, so the guard that
+    # rejects such boards fired every time and the entire gap improvement was
+    # thrown away (idle 645 -> 3255). Bounded instead, the gap term is free to
+    # work inside a board that stays roomable.
+    if max_room_shortfall is not None and shortfall:
+        model.add(sum(shortfall.values()) <= max_room_shortfall)
 
     # ── H7/H8: instructor clash and daily cap, over assigned sections only ─
     by_instructor: dict[int, list[str]] = {}
@@ -552,6 +673,7 @@ def solve(
             else 0
         ),
         objective_value=solver.objective_value if objective else 0.0,
+        room_shortfall_score=sum(int(solver.value(v)) for v in shortfall.values()),
     )
 
 
@@ -752,6 +874,13 @@ def plan(
     ``clash_tolerance`` above what pass 1 achieved. Gaps are then minimised
     inside both ceilings, and what the students give up is a declared number
     rather than a side effect.
+
+    Rooms are bounded the same way, and for the same reason. Left merely priced,
+    they were the next thing the gap term spent: every run raised the unroomed
+    count, the guard below rejected every one of those boards, and the whole gap
+    improvement was discarded (idle 645 -> 3255). Three budgets — days, clashes,
+    rooms — leave gaps as the only quantity still free to move, which is what
+    makes the second pass worth running at all.
     """
     half = max(1.0, time_limit_seconds / 2)
     first = solve(snapshot, time_limit_seconds=half, span_weight=0, **kwargs)
@@ -781,6 +910,7 @@ def plan(
         span_weight=gap_weight,
         max_working_days=per_instructor,
         max_clash_score=ceiling,
+        max_room_shortfall=first.room_shortfall_score,
         hint=first.board,
         **kwargs,
     )
@@ -802,6 +932,18 @@ def plan(
         first.wall_time_seconds = total
         return first
 
+    # Rooms before gaps: pass 2 is pushed hard on idle time, and one unroomed
+    # meeting was measured to be worth about 60 idle minutes to it, so without
+    # this check it will quietly sell a classroom for a shorter wait.
+    rooms_before = unroomed_count(snapshot, first.board)
+    rooms_after = unroomed_count(snapshot, second.board)
+    if rooms_after > rooms_before:
+        first.notes.append(
+            f"gap pass left {rooms_after} meetings unroomed vs {rooms_before}; discarded"
+        )
+        first.wall_time_seconds = total
+        return first
+
     before = instructor_metrics(snapshot, first.board)["idle_minutes"]
     after = instructor_metrics(snapshot, second.board)["idle_minutes"]
     if after > before:
@@ -812,6 +954,25 @@ def plan(
     second.wall_time_seconds = total
     second.notes.append(f"two-pass: {budget} working days held; idle {before} -> {after} min")
     return second
+
+
+def unroomed_count(snapshot: Snapshot, board: Board) -> int:
+    """Meetings this board leaves with nowhere to meet.
+
+    Every stage that chooses between boards has to look at this. A class with no
+    room cannot be taught, so trading rooms for shorter instructor gaps or fewer
+    student clashes is not a trade any of these stages is entitled to make
+    silently — and until this existed, both the second planning pass and the
+    portfolio selector could do exactly that without anything noticing.
+    """
+    # Uses the SAME assigner the caller will ultimately publish with. Selecting
+    # on the greedy count while delivering the exact one made the two disagree
+    # (a portfolio note claiming 11 unroomed beside a board with 10), and a
+    # comparison against a number nobody ships is not a comparison at all.
+    from scheduler.rooms import assign_rooms_exact
+
+    roomed = assign_rooms_exact(snapshot, board, time_limit_seconds=5.0)
+    return sum(1 for p in roomed.placements if p.needs_room and p.room_id is None)
 
 
 def _days_by_instructor(snapshot: Snapshot, board: Board) -> dict[int, int]:
@@ -827,3 +988,85 @@ def _working_days(snapshot: Snapshot, board: Board) -> int | None:
     """Total instructor working days on a board, or None if nobody is assigned."""
     per = _days_by_instructor(snapshot, board)
     return sum(per.values()) if per else None
+
+
+def plan_portfolio(
+    snapshot: Snapshot,
+    *,
+    seeds: tuple[int, ...] = (1, 2, 3),
+    time_limit_seconds: float = 120.0,
+    idle_band: float = 0.10,
+    **kwargs,
+) -> SolveResult:
+    """Run the planner from several starting points and keep the best board.
+
+    CP-SAT gives no useful lower bound on this objective — the clash-indicator
+    relaxation is 0, so optimality can never be proven and the only honest
+    comparison is empirical. What the measurements *do* show is a wide spread
+    between runs that differ solely by random seed: on the live cohort, expected
+    clashes ranged 78 to 110 and idle time 645 to 1935. A single run is therefore
+    a lottery ticket, and re-running is the cheapest quality available.
+
+    **Choosing between boards is itself a policy decision**, so it is made
+    explicitly rather than by a scalar nobody can interpret:
+
+    1. never lengthen anyone's week — compared per instructor, not on the
+       total, so a day moved from one person to another is not mistaken for
+       neutral;
+    2. then fewest meetings left without a room, because a class with nowhere to
+       meet cannot be taught at all;
+    3. then the shortest total waiting, since that is the owner's stated
+       priority;
+    4. but treat idle times within ``idle_band`` of the best as equivalent, and
+       break that tie on student clashes. Without the band, a board saving one
+       minute of waiting would be preferred to one saving thirty student
+       clashes, which no one would choose on purpose.
+    """
+    runs: list[dict] = []
+    for seed in seeds:
+        result = plan(snapshot, time_limit_seconds=time_limit_seconds, seed=seed, **kwargs)
+        if not result.board.placements:
+            continue
+        runs.append(
+            {
+                "result": result,
+                "metrics": instructor_metrics(snapshot, result.board),
+                "clashes": expected_clashes(snapshot, result.board),
+                "unroomed": unroomed_count(snapshot, result.board),
+            }
+        )
+    if not runs:
+        return plan(snapshot, time_limit_seconds=time_limit_seconds, **kwargs)
+
+    # Working days first: nobody should commute more so that somebody else waits
+    # less. Compared PER INSTRUCTOR, not on the total, for the same reason the
+    # day budget inside plan() is per instructor — a total hides one person's
+    # week getting longer while another's shortens.
+    def day_profile(run):
+        return sorted(_days_by_instructor(snapshot, run["result"].board).values(), reverse=True)
+
+    best_days = min(day_profile(r) for r in runs)
+    contenders = [r for r in runs if day_profile(r) == best_days]
+
+    # Then rooms. A class with nowhere to meet cannot be taught at all, so it
+    # outranks both waiting and clashes; without this the selector would happily
+    # take a board stranding five more classes to save a minute of idle time.
+    fewest_unroomed = min(r["unroomed"] for r in contenders)
+    contenders = [r for r in contenders if r["unroomed"] == fewest_unroomed]
+
+    best_idle = min(r["metrics"]["idle_minutes"] for r in contenders)
+    cutoff = best_idle * (1.0 + idle_band) + 1e-9
+    within = [r for r in contenders if r["metrics"]["idle_minutes"] <= cutoff] or contenders
+
+    best = min(within, key=lambda r: (r["clashes"], r["metrics"]["idle_minutes"]))
+    chosen = best["result"]
+    chosen.notes.append(
+        f"portfolio of {len(runs)}: kept days {best['metrics']['working_days']}, "
+        f"unroomed {best['unroomed']}, idle {best['metrics']['idle_minutes']}, "
+        f"clashes {best['clashes']:.1f} (spread across runs: unroomed "
+        f"{min(r['unroomed'] for r in runs)}-{max(r['unroomed'] for r in runs)}, idle "
+        f"{min(r['metrics']['idle_minutes'] for r in runs)}-"
+        f"{max(r['metrics']['idle_minutes'] for r in runs)}, clashes "
+        f"{min(r['clashes'] for r in runs):.0f}-{max(r['clashes'] for r in runs):.0f})"
+    )
+    return chosen

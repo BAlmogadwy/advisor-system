@@ -479,7 +479,14 @@ def test_metrics_report_excess_against_the_proven_floor():
 # constraining it, and several would have passed with the term switched off.
 # The rule here: change the production behaviour, and one of these must go red.
 
-from scheduler.solve import _SCALE, _days_by_instructor, plan, solve  # noqa: E402
+from scheduler.solve import (  # noqa: E402
+    _SCALE,
+    _days_by_instructor,
+    plan,
+    plan_portfolio,
+    solve,
+    unroomed_count,
+)
 
 #: One day, three widely spaced windows — so a two-session day has a unique
 #: minimum-gap arrangement and the span term has something to prove.
@@ -886,3 +893,519 @@ def test_unroomable_meetings_is_computable_before_any_board_exists():
         [offering],
     )
     assert unroomable_meetings(snap) == 2  # both weekly meetings, no board needed
+
+
+# ── exact room assignment ─────────────────────────────────────────────────
+#
+# Greedy first-fit ("largest section first, smallest sufficient room") is
+# genuinely good on the capacity dimension — process the biggest demand first
+# and it never wastes a large room. It is *programme* restrictions that break
+# it: a room can be large enough and still be closed to the course that needs
+# it, and once greedy has spent the only shared room on a class that had
+# alternatives, the class with no alternatives has nowhere to go.
+
+from scheduler.rooms import assign_rooms_exact  # noqa: E402
+
+
+def test_exact_rooming_beats_greedy_when_a_room_is_programme_restricted():
+    """The failure greedy cannot see. Two rooms, both big enough; one is open to
+    both programmes, the other only to AI. The AI class has a choice, the DS
+    class does not. Greedy reaches for the shared room first (it sorts rooms by
+    capacity then id) and strands the class that had no alternative."""
+    shared = Room(
+        id="A-SHARED",
+        code="A-SHARED",
+        capacity=40,
+        kind=MeetingKind.LECTURE,
+        programs=frozenset({"AI", "DS"}),
+    )
+    ai_only = Room(
+        id="Z-AI", code="Z-AI", capacity=40, kind=MeetingKind.LECTURE, programs=frozenset({"AI"})
+    )
+    ai = _offering("offai", reqs=_lecture(1), programs=("AI",))
+    ds = _offering("offds", reqs=_lecture(1), programs=("DS",))
+    snap = _roomed_snapshot(
+        [shared, ai_only],
+        [Section("offai#S1", "offai", 1, 30), Section("offds#S1", "offds", 1, 30)],
+        [ai, ds],
+    )
+    board = Board(
+        (
+            _p(section="offai#S1", offering="offai", day=Day.SUN, window=W9),
+            _p(section="offds#S1", offering="offds", day=Day.SUN, window=W9),
+        )
+    )
+    greedy_roomed = sum(1 for p in assign_rooms(snap, board).placements if p.room_id)
+    exact = assign_rooms_exact(snap, board, time_limit_seconds=10)
+    exact_roomed = sum(1 for p in exact.placements if p.room_id)
+
+    assert greedy_roomed == 1, "fixture no longer reproduces the greedy failure"
+    assert exact_roomed == 2, "exact assignment failed to room both"
+    # And the DS class must be in the only room open to it.
+    ds_place = next(p for p in exact.placements if p.section_id == "offds#S1")
+    assert ds_place.room_id == "A-SHARED"
+
+
+def test_exact_rooming_maximises_the_number_of_rooms_actually_used():
+    """Pinned against a known optimum, not against greedy — a test that only
+    says "no worse than greedy" is satisfied by returning greedy."""
+    offerings = [_offering(f"off{i}", reqs=_lecture(1)) for i in range(1, 4)]
+    sections = [Section(f"off{i}#S1", f"off{i}", 1, 10) for i in range(1, 4)]
+    snap = _roomed_snapshot([_room("ONLY", 40)], sections, offerings)
+    board = Board(
+        tuple(
+            _p(section=f"off{i}#S1", offering=f"off{i}", day=Day.SUN, window=W9)
+            for i in range(1, 4)
+        )
+    )
+    exact = assign_rooms_exact(snap, board, time_limit_seconds=10)
+    assert sum(1 for p in exact.placements if p.room_id) == 1
+
+
+def test_roomed_count_outranks_the_capacity_tie_break():
+    """The tie-break must never outvote the thing it breaks ties for.
+
+    Built so the choice is genuinely two-versus-three. One room. Two 100-minute
+    classes at 09:00-10:40 and 10:45-12:25 block three 75-minute classes at
+    09:00, 10:30 and 12:00 — the three do not overlap each other, so the room can
+    host all three, but each of the two long ones straddles two of them.
+
+    With a base of 1000 plus capacity, the two large classes scored 1999 each
+    (3998) against three small ones at 1005 each (3015), so the solver rooms TWO
+    classes where three could have been roomed — the exact failure the exact pass
+    exists to remove. The base must therefore exceed every possible sum of
+    tie-breaks, not merely a single one.
+    """
+    room = Room(
+        id="R1", code="R1", capacity=5000, kind=MeetingKind.LECTURE, programs=frozenset({"AI"})
+    )
+    long_lecture = (MeetingRequirement(MeetingKind.LECTURE, DeliveryMode.IN_PERSON, 100, 1),)
+    offerings, sections, places = [], [], []
+
+    # two big classes, each straddling two of the small slots
+    for i, window in enumerate([TimeWindow(540, 640), TimeWindow(645, 745)], start=1):
+        offerings.append(_offering(f"big{i}", reqs=long_lecture))
+        sections.append(Section(f"big{i}#S1", f"big{i}", 1, 999))
+        places.append(_p(section=f"big{i}#S1", offering=f"big{i}", day=Day.SUN, window=window))
+
+    # three small classes that do not overlap one another
+    for i, window in enumerate(
+        [TimeWindow(540, 615), TimeWindow(630, 705), TimeWindow(720, 795)], start=1
+    ):
+        offerings.append(_offering(f"small{i}", reqs=_lecture(1)))
+        sections.append(Section(f"small{i}#S1", f"small{i}", 1, 5))
+        places.append(_p(section=f"small{i}#S1", offering=f"small{i}", day=Day.SUN, window=window))
+
+    snap = _roomed_snapshot([room], sections, offerings)
+    exact = assign_rooms_exact(snap, Board(tuple(places)), time_limit_seconds=15)
+    roomed = sum(1 for p in exact.placements if p.room_id)
+    assert roomed == 3, (
+        f"roomed {roomed}; the capacity tie-break outvoted the count and took "
+        "the two large classes instead of the three small ones"
+    )
+
+
+def test_exact_rooming_never_double_books_a_room():
+    """The property that makes the result usable at all.
+
+    Uses windows that OVERLAP WITHOUT SHARING A START. An earlier version
+    compared only (room, day, start), which cannot detect that clash — and its
+    fixture contained no overlapping windows for it to detect anyway.
+    """
+    lab = (MeetingRequirement(MeetingKind.LAB, DeliveryMode.IN_PERSON, 100, 1),)
+    offerings = [_offering("offa", reqs=lab), _offering("offb", reqs=lab)]
+    sections = [Section("offa#S1", "offa", 1, 10), Section("offb#S1", "offb", 1, 10)]
+    snap = _roomed_snapshot([_room("R1", 40, kind=MeetingKind.LAB)], sections, offerings)
+    board = Board(
+        (
+            _p(
+                section="offa#S1",
+                offering="offa",
+                day=Day.SUN,
+                window=TimeWindow(540, 640),
+                kind=MeetingKind.LAB,
+            ),  # 09:00-10:40
+            _p(
+                section="offb#S1",
+                offering="offb",
+                day=Day.SUN,
+                window=TimeWindow(630, 730),
+                kind=MeetingKind.LAB,
+            ),  # 10:30-12:10
+        )
+    )
+    exact = assign_rooms_exact(snap, board, time_limit_seconds=10)
+    roomed = [p for p in exact.placements if p.room_id is not None]
+    assert len(roomed) == 1, (
+        "both overlapping meetings were given the only room: "
+        f"{[(p.room_id, p.window.start, p.window.end) for p in roomed]}"
+    )
+
+
+def test_exact_rooming_allows_back_to_back_in_one_room():
+    """D8: no turnover time, so meetings that merely touch may share a room."""
+    offerings = [_offering("offa", reqs=_lecture(1)), _offering("offb", reqs=_lecture(1))]
+    sections = [Section("offa#S1", "offa", 1, 10), Section("offb#S1", "offb", 1, 10)]
+    snap = _roomed_snapshot([_room("R1", 40)], sections, offerings)
+    board = Board(
+        (
+            _p(section="offa#S1", offering="offa", day=Day.SUN, window=TimeWindow(540, 615)),
+            _p(section="offb#S1", offering="offb", day=Day.SUN, window=TimeWindow(615, 690)),
+        )
+    )
+    exact = assign_rooms_exact(snap, board, time_limit_seconds=10)
+    assert all(p.room_id == "R1" for p in exact.placements)
+
+
+def test_exact_rooming_will_not_overfill_a_room():
+    """Capacity alone must exclude a room. Split from the programme case below:
+    a fixture where BOTH rules exclude every room cannot tell you which one did
+    the work, so it tests neither."""
+    snap = _roomed_snapshot(
+        [_room("SMALL", 5)],
+        [Section("off1#S1", "off1", 1, 50)],
+        [_offering("off1", reqs=_lecture(1))],  # same programme as the room
+    )
+    board = Board((_p(section="off1#S1", offering="off1"),))
+    exact = assign_rooms_exact(snap, board, time_limit_seconds=10)
+    assert exact.placements[0].room_id is None
+
+
+def test_exact_rooming_will_not_use_a_room_closed_to_the_programme():
+    """Programme alone must exclude a room, even one comfortably large enough."""
+    snap = _roomed_snapshot(
+        [_room("AI-ONLY", 500, programs=("AI",))],
+        [Section("off1#S1", "off1", 1, 10)],
+        [_offering("off1", reqs=_lecture(1), programs=("DS",))],
+    )
+    board = Board((_p(section="off1#S1", offering="off1"),))
+    exact = assign_rooms_exact(snap, board, time_limit_seconds=10)
+    assert exact.placements[0].room_id is None
+
+
+def test_a_meeting_keeps_one_room_for_its_whole_duration():
+    """Rooms are chosen per meeting, not per instant — a class cannot be split
+    across two rooms halfway through because the model happened to allow it."""
+    long_lab = (MeetingRequirement(MeetingKind.LAB, DeliveryMode.IN_PERSON, 100, 1),)
+    snap = _roomed_snapshot(
+        [_room("L1", 40, kind=MeetingKind.LAB), _room("L2", 40, kind=MeetingKind.LAB)],
+        [Section("off1#S1", "off1", 1, 10), Section("off2#S1", "off2", 1, 10)],
+        [_offering("off1", reqs=long_lab), _offering("off2", reqs=long_lab)],
+    )
+    board = Board(
+        (
+            _p(section="off1#S1", offering="off1", window=W100, kind=MeetingKind.LAB),
+            _p(section="off2#S1", offering="off2", window=W100, kind=MeetingKind.LAB),
+        )
+    )
+    exact = assign_rooms_exact(snap, board, time_limit_seconds=10)
+    rooms_used = [p.room_id for p in exact.placements]
+    assert len(rooms_used) == 2
+    # Both must actually GET a room. An earlier version of this assertion was
+    # satisfied by {"L2", None}, i.e. by one class being stranded entirely.
+    assert all(r is not None for r in rooms_used), rooms_used
+    assert set(rooms_used) == {"L1", "L2"}
+
+
+# ── room supply is throughput, not declared cells ─────────────────────────
+#
+# The bug this pins cost a wrong diagnosis, not just a wrong number. Counting
+# declared grid cells credited the female cohort with 175 lecture-periods when
+# one room can only host 5 a day, so 50 unroomable meetings were reported as
+# recoverable congestion — telling a registrar to reschedule a shortage that
+# rescheduling cannot touch. Overlapping cells are alternatives, not capacity.
+
+from scheduler.rooms import _saturated_kinds  # noqa: E402
+
+
+def test_supply_counts_what_a_room_can_host_not_how_many_cells_exist():
+    """Two overlapping starts are one opportunity offered twice. A grid with
+    three declared lecture cells per day, of which only two can ever be used
+    together, must be credited with two."""
+    overlapping = Grid.from_spec(
+        # 09:00-10:15 and 09:20-10:35 overlap each other; 13:00 is independent.
+        lecture_starts={"09:00": 75, "09:20": 75, "13:00": 75},
+        lab_starts={"09:00": 100},
+        days=(Day.SUN,),
+    )
+    assert len(overlapping.day_windows_for(75, DeliveryMode.IN_PERSON)) == 3
+    # ... but one room can host at most two of them in the day.
+    assert overlapping.max_nonoverlapping_per_day(frozenset({75})) == 2
+
+    offerings, sections = [], []
+    for i in range(1, 4):  # 3 meetings against a supply of 2
+        offerings.append(_offering(f"off{i}", reqs=_lecture(1)))
+        sections.append(Section(f"off{i}#S1", f"off{i}", 1, 10))
+    snap = _roomed_snapshot([_room("ONLY", 40)], sections, offerings, grid=overlapping)
+
+    saturated = _saturated_kinds(snap)
+    assert "LECTURE" in saturated, "a genuine shortage was not detected"
+    supply, demand = saturated["LECTURE"]
+    assert supply == 2, f"credited {supply} periods; a room can only host 2"
+    assert demand == 3
+
+
+def test_no_shortage_is_reported_when_the_estate_genuinely_suffices():
+    """The other direction — over-reporting an unfixable shortage would send
+    somebody to buy a room they do not need."""
+    roomy = Grid.from_spec(
+        lecture_starts={"09:00": 75, "10:30": 75, "13:00": 75},
+        lab_starts={"09:00": 100},
+        days=(Day.SUN, Day.MON),
+    )
+    offerings, sections = [], []
+    for i in range(1, 4):
+        offerings.append(_offering(f"off{i}", reqs=_lecture(1)))
+        sections.append(Section(f"off{i}#S1", f"off{i}", 1, 10))
+    snap = _roomed_snapshot([_room("ONLY", 40)], sections, offerings, grid=roomy)
+    # one room x 2 days x 3 non-overlapping cells = 6 periods for 3 meetings
+    assert _saturated_kinds(snap) == {}
+
+
+# ── the room constraint INSIDE the solver ─────────────────────────────────
+#
+# Review found this whole block was dead under test: every solve()/plan() test
+# built a snapshot with no rooms at all, so the constraint that decides whether a
+# board can be roomed was never exercised once. These drive it directly, and each
+# reads the objective value, because with students and instructors switched off
+# the objective IS the room shortfall and can be predicted exactly.
+
+W1015 = TimeWindow(540, 615)  # 09:00-10:15, the reference 75-minute lecture
+
+
+def _estate_snapshot(rooms, n_meetings, *, programs=("AI",), grid=ONE_CELL, capacity=10):
+    offerings, sections = [], []
+    for i in range(1, n_meetings + 1):
+        offerings.append(_offering(f"off{i}", reqs=_lecture(1), programs=programs))
+        sections.append(Section(f"off{i}#S1", f"off{i}", 1, capacity))
+    return Snapshot(
+        academic_year="1448",
+        term=1,
+        gender="M",
+        programs=("AI",),
+        grid=grid,
+        offerings=tuple(offerings),
+        sections=tuple(sections),
+        rooms=tuple(rooms),
+        instructors=(),
+        demand=(),
+        policy=CapacityPolicy(default_capacity=25),
+        source_fingerprint="test",
+        created_at="2026-07-26T00:00:00+00:00",
+    )
+
+
+def test_the_room_shortfall_is_charged_once_not_once_per_nested_family():
+    """Families nest: a meeting that only fits the big room is inside {BIG} and
+    inside {BIG,SMALL}. Charging each family separately bills one overflow twice
+    and makes the solver prefer boards that strand MORE classes but spread them.
+    Hall's deficiency is a MAXIMUM over sets, never a sum.
+
+    Four meetings share one cell. Three need the big room, one fits either.
+      {BIG}        : 3 against 1  -> deficiency 2
+      {BIG, SMALL} : 4 against 2  -> deficiency 2
+    Two meetings genuinely cannot be roomed, so the price must be 2, not 4.
+    """
+    big = Room(
+        id="BIG", code="BIG", capacity=50, kind=MeetingKind.LECTURE, programs=frozenset({"AI"})
+    )
+    small = Room(
+        id="SMALL", code="SMALL", capacity=20, kind=MeetingKind.LECTURE, programs=frozenset({"AI"})
+    )
+    offerings, sections = [], []
+    for i, cap in enumerate([40, 40, 40, 10], start=1):  # 40 needs BIG, 10 fits either
+        offerings.append(_offering(f"off{i}", reqs=_lecture(1)))
+        sections.append(Section(f"off{i}#S1", f"off{i}", 1, cap))
+    snap = Snapshot(
+        academic_year="1448",
+        term=1,
+        gender="M",
+        programs=("AI",),
+        grid=ONE_CELL,
+        offerings=tuple(offerings),
+        sections=tuple(sections),
+        rooms=(big, small),
+        instructors=(),
+        demand=(),
+        policy=CapacityPolicy(default_capacity=25),
+        source_fingerprint="t",
+        created_at="2026-07-26T00:00:00+00:00",
+    )
+    price = 7 * _SCALE
+    # alpha=1.0 removes the instructor terms and there is no demand, so the
+    # objective is exactly the room shortfall.
+    r = solve(snap, time_limit_seconds=10, alpha=1.0, unroomed_penalty=price)
+    assert r.board.placements
+    assert r.objective_value == 2 * price, (
+        f"expected a deficiency of 2 priced once ({2 * price}), got {r.objective_value}"
+    )
+
+
+def test_the_shortfall_price_does_not_depend_on_where_the_grid_cuts():
+    """A 75-minute lecture costs the same wherever it sits.
+
+    The atoms of a day are cut by every window boundary, including boundaries
+    that belong to lab timings and to alternative lecture starts. An identical
+    meeting covered one atom at 09:00 and four at 10:30, so a flat per-atom price
+    billed the same stranded class 20 or 80 depending on nothing but grid
+    geometry. Pricing by atom LENGTH makes the total depend on missing room-time.
+    """
+    cut_up = Grid.from_spec(
+        # A lab ending at 10:40 and another starting at 10:45 slice the 10:30
+        # lecture into several atoms; the 09:00 lecture is left whole.
+        lecture_starts={"09:00": 75, "10:30": 75},
+        lab_starts={"09:00": 100, "10:45": 100},
+        days=(Day.SUN,),
+    )
+    price = 9 * _SCALE
+    costs = {}
+    for start_hhmm, window in (("09:00", TimeWindow(540, 615)), ("10:30", TimeWindow(630, 705))):
+        only_this = Grid.from_spec(
+            lecture_starts={start_hhmm: 75},
+            lab_starts={"09:00": 100, "10:45": 100},
+            days=(Day.SUN,),
+        )
+        snap = _estate_snapshot([_room("ONLY", 40)], 2, grid=only_this)
+        r = solve(snap, time_limit_seconds=10, alpha=1.0, unroomed_penalty=price)
+        assert r.board.placements
+        assert all(p.window == window for p in r.board.placements)
+        costs[start_hhmm] = r.objective_value
+
+    assert costs["09:00"] == costs["10:30"], (
+        f"identical shortage priced differently by slot: {costs}"
+    )
+    assert costs["09:00"] == price  # exactly one meeting too many, one lecture long
+    assert cut_up.max_nonoverlapping_per_day(frozenset({75})) == 2  # fixture sanity
+
+
+def test_hall_condition_binds_on_a_union_of_room_sets():
+    """The reason the family set is closed under union.
+
+    L1 serves AI, L3 serves DS, L2 serves both, and L4 serves neither. Two AI
+    meetings and two DS meetings at one instant need three rooms between them,
+    so one must go unroomed — but no single compatible set shows it: {L1,L2}
+    holds its two, {L2,L3} holds its two, and the whole four-room set holds all
+    four. Only {L1,L2,L3}, a union, reveals the shortage.
+    """
+    rooms = [
+        Room(id="L1", code="L1", capacity=40, kind=MeetingKind.LECTURE, programs=frozenset({"AI"})),
+        Room(
+            id="L2",
+            code="L2",
+            capacity=40,
+            kind=MeetingKind.LECTURE,
+            programs=frozenset({"AI", "DS"}),
+        ),
+        Room(id="L3", code="L3", capacity=40, kind=MeetingKind.LECTURE, programs=frozenset({"DS"})),
+        Room(id="L4", code="L4", capacity=40, kind=MeetingKind.LECTURE, programs=frozenset({"CS"})),
+    ]
+    offerings, sections = [], []
+    for i, program in enumerate(["AI", "AI", "DS", "DS"], start=1):
+        offerings.append(_offering(f"off{i}", reqs=_lecture(1), programs=(program,)))
+        sections.append(Section(f"off{i}#S1", f"off{i}", 1, 10))
+    snap = Snapshot(
+        academic_year="1448",
+        term=1,
+        gender="M",
+        programs=("AI", "DS"),
+        grid=ONE_CELL,
+        offerings=tuple(offerings),
+        sections=tuple(sections),
+        rooms=tuple(rooms),
+        instructors=(),
+        demand=(),
+        policy=CapacityPolicy(default_capacity=25),
+        source_fingerprint="t",
+        created_at="2026-07-26T00:00:00+00:00",
+    )
+    price = 11 * _SCALE
+    r = solve(snap, time_limit_seconds=10, alpha=1.0, unroomed_penalty=price)
+    assert r.board.placements
+    assert r.objective_value == price, (
+        "the union {L1,L2,L3} was not enumerated, so a real shortage was priced "
+        f"at {r.objective_value} instead of {price}"
+    )
+    # And the shortage is genuine: exact assignment can only room three of four.
+    roomed = sum(1 for p in assign_rooms_exact(snap, r.board).placements if p.room_id)
+    assert roomed == 3
+
+
+def test_the_solver_spreads_meetings_to_the_rooms_it_actually_has():
+    """End to end: given one room and three usable hours, the timing solver must
+    not stack three classes into one of them."""
+    grid = Grid.from_spec(
+        lecture_starts={"09:00": 75, "10:30": 75, "13:00": 75},
+        lab_starts={"09:00": 100},
+        days=(Day.SUN,),
+    )
+    snap = _estate_snapshot([_room("ONLY", 40)], 3, grid=grid)
+    r = solve(snap, time_limit_seconds=15, alpha=1.0)
+    starts = sorted(p.window.start for p in r.board.placements)
+    assert len(set(starts)) == 3, f"stacked into the same hour: {starts}"
+    assert unroomed_count(snap, r.board) == 0
+
+
+def test_the_portfolio_never_returns_a_board_worse_roomed_than_its_own_runs():
+    """The selection rule ranks rooms above waiting, so the board it keeps must
+    strand no more classes than the best run it saw.
+
+    Shipped dark otherwise: review found plan_portfolio had no caller and no
+    test, and its comparator would happily take five more unroomed classes to
+    save a minute of idle time.
+    """
+    grid = Grid.from_spec(
+        lecture_starts={"09:00": 75, "10:30": 75, "13:00": 75},
+        lab_starts={"09:00": 100},
+        days=(Day.SUN, Day.MON),
+    )
+    snap = _estate_snapshot([_room("ONLY", 40)], 4, grid=grid)
+    seeds = (1, 2, 3)
+    singles = [solve(snap, time_limit_seconds=8, seed=s, alpha=1.0) for s in seeds]
+    best_single = min(unroomed_count(snap, r.board) for r in singles)
+
+    chosen = plan_portfolio(snap, seeds=seeds, time_limit_seconds=10, alpha=1.0)
+    assert chosen.board.placements
+    assert unroomed_count(snap, chosen.board) <= best_single
+    assert any("portfolio of" in n for n in chosen.notes)
+
+
+def test_the_portfolio_reports_the_spread_it_chose_from():
+    """A single run of this solver is a lottery ticket — the note has to say so,
+    or nobody can tell a lucky board from a reliable one."""
+    grid = Grid.from_spec(
+        lecture_starts={"09:00": 75, "10:30": 75},
+        lab_starts={"09:00": 100},
+        days=(Day.SUN,),
+    )
+    snap = _estate_snapshot([_room("ONLY", 40)], 3, grid=grid)
+    chosen = plan_portfolio(snap, seeds=(1, 2), time_limit_seconds=8, alpha=1.0)
+    note = next(n for n in chosen.notes if "portfolio of" in n)
+    assert "unroomed" in note and "clashes" in note and "spread across runs" in note
+
+
+def test_the_room_shortfall_budget_binds():
+    """The third epsilon-constraint. Without it, the gap pass spends rooms.
+
+    Four classes, one room, one hour: three must go unroomed. A budget of zero
+    is therefore impossible to meet and the model must say so rather than
+    quietly exceed it.
+    """
+    snap = _estate_snapshot([_room("ONLY", 40)], 4)
+    loose = solve(snap, time_limit_seconds=10, alpha=1.0)
+    assert loose.room_shortfall_score > 0, "fixture does not create a shortfall"
+
+    tight = solve(snap, time_limit_seconds=10, alpha=1.0, max_room_shortfall=0)
+    assert not tight.board.placements, "a zero room budget was not enforced"
+
+
+def test_a_room_budget_equal_to_what_was_achieved_is_always_satisfiable():
+    """Same guarantee the day and clash budgets give: the board that produced
+    the budget still meets it, so a later pass can never be made infeasible by
+    being handed its predecessor's own numbers."""
+    snap = _estate_snapshot([_room("ONLY", 40)], 4)
+    first = solve(snap, time_limit_seconds=10, alpha=1.0)
+    again = solve(
+        snap, time_limit_seconds=10, alpha=1.0, max_room_shortfall=first.room_shortfall_score
+    )
+    assert again.board.placements
+    assert again.room_shortfall_score <= first.room_shortfall_score

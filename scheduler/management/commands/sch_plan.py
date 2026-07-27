@@ -17,13 +17,13 @@ from django.core.management.base import BaseCommand, CommandError
 from scheduler.instructors import assign_instructors
 from scheduler.intake import IntakeError, build_snapshot, elective_placeholder_report
 from scheduler.placement import place_naively
-from scheduler.rooms import room_shortfall
+from scheduler.rooms import assign_rooms_exact, room_shortfall
 from scheduler.solve import (
     _SCALE,
-    assign_rooms,
     expected_clashes,
     instructor_metrics,
     plan,
+    plan_portfolio,
 )
 from scheduler.validate import validate
 
@@ -61,6 +61,23 @@ class Command(BaseCommand):
             "already frozen by then, so this only trades gaps against "
             "student clashes — it cannot cost anyone an extra day.",
         )
+        parser.add_argument(
+            "--show-instructors",
+            action="store_true",
+            help="print each instructor's actual weekly timetable, with every gap "
+            "named. The aggregate idle figure says how much waiting there is; "
+            "only the timetable says where it falls.",
+        )
+        parser.add_argument(
+            "--runs",
+            type=int,
+            default=1,
+            help="how many independent attempts to make, keeping the best. This "
+            "solver's objective has no usable lower bound, so optimality "
+            "can never be proven and identical inputs give a wide spread — "
+            "re-running is the cheapest quality available. Each run costs "
+            "the full --seconds budget.",
+        )
         parser.add_argument("--format", choices=("text", "json"), default="text")
 
     def handle(self, *args, **options) -> None:
@@ -80,14 +97,20 @@ class Command(BaseCommand):
         plan_kwargs = {}
         if options["span_weight"] is not None:
             plan_kwargs["gap_weight"] = int(options["span_weight"] * _SCALE)
-        result = plan(
+        runs = max(1, int(options["runs"]))
+        planner = plan if runs == 1 else plan_portfolio
+        if runs > 1:
+            plan_kwargs["seeds"] = tuple(range(1, runs + 1))
+        result = planner(
             snapshot,
             time_limit_seconds=options["seconds"],
             alpha=options["alpha"],
             clash_tolerance=options["clash_tolerance"],
             **plan_kwargs,
         )
-        board = assign_rooms(snapshot, result.board)
+        # Exact, not first-fit: greedy strands a class whose only legal room was
+        # already spent on one that had alternatives (see tests).
+        board = assign_rooms_exact(snapshot, result.board)
         report = validate(snapshot, board)
         clashes = expected_clashes(snapshot, board)
         instructors = instructor_metrics(snapshot, board)
@@ -150,6 +173,9 @@ class Command(BaseCommand):
                     f"{row['working_days']} days (floor {row['floor_days']})  "
                     f"{row['idle_minutes']:>4} min idle"
                 )
+        if options["show_instructors"] and instructors["instructors"]:
+            self._instructor_timetables(w, snapshot, board, instructors)
+
         w("")
         w("  ROOMS")
         w(
@@ -190,4 +216,70 @@ class Command(BaseCommand):
                     f"{p['sections']} section(s)  {detail}"
                 )
         w("")
+        w("")
         w(f"  solver: {result.status}  {result.wall_time_seconds:.0f}s")
+        for note in result.notes:
+            if "portfolio" in note or "two-pass" in note or "discarded" in note:
+                w(f"    {note}")
+
+    @staticmethod
+    def _hhmm(minutes: int) -> str:
+        return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+    def _instructor_timetables(self, w, snapshot, board, instructors) -> None:
+        """One instructor, one week, every gap named.
+
+        The aggregate idle figure says how much waiting there is; only the
+        timetable says *where* it falls, which is what somebody actually lives
+        with. Gaps are printed as their own lines so a bad day is visible at a
+        glance rather than inferred from two timestamps.
+        """
+        offerings = snapshot.offerings_by_id
+        sections = {s.id: s for s in snapshot.sections}
+        names = {i.id: i.name for i in snapshot.instructors}
+        rows = {r["instructor_id"]: r for r in instructors["per_instructor"]}
+
+        by_instructor: dict[int, list] = {}
+        for p in board.placements:
+            if p.instructor_id is not None:
+                by_instructor.setdefault(p.instructor_id, []).append(p)
+
+        w("")
+        w("  INSTRUCTOR TIMETABLES")
+        for instructor_id, placements in sorted(by_instructor.items()):
+            row = rows.get(instructor_id, {})
+            at_floor = row.get("excess_days", 0) == 0
+            w("")
+            w(
+                f"    {names.get(instructor_id, f'instructor {instructor_id}')}"
+                f"  (id {instructor_id})  —  {row.get('sessions', 0)} sessions, "
+                f"{row.get('working_days', 0)} days"
+                f" (floor {row.get('floor_days', 0)}{', at floor' if at_floor else ''}), "
+                f"{row.get('idle_minutes', 0)} min idle"
+            )
+            by_day: dict = {}
+            for p in placements:
+                by_day.setdefault(p.day, []).append(p)
+
+            for day in snapshot.grid.days():
+                items = sorted(by_day.get(day, []), key=lambda x: x.window.start)
+                if not items:
+                    continue
+                previous_end = None
+                for index, p in enumerate(items):
+                    if previous_end is not None and p.window.start > previous_end:
+                        w(
+                            f"      {'':<4} {'':<13}  {'':<9} "
+                            f"... {p.window.start - previous_end} min gap"
+                        )
+                    offering = offerings.get(p.offering_id)
+                    section = sections.get(p.section_id)
+                    w(
+                        f"      {day.value if index == 0 else '':<4} "
+                        f"{self._hhmm(p.window.start)}-{self._hhmm(p.window.end)}  "
+                        f"{offering.course_code if offering else '?':<9} "
+                        f"{section.label if section else '':<3} "
+                        f"{p.kind.name[:3]:<4} "
+                        f"{p.room_id or ('online' if not p.needs_room else 'NO ROOM')}"
+                    )
+                    previous_end = p.window.end

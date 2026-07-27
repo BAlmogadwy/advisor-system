@@ -25,6 +25,7 @@ and "10 unroomed" is not.
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import replace
 
 from scheduler.domain import Snapshot
 from scheduler.domain.board import Board, Placement
@@ -204,20 +205,35 @@ def _saturated_kinds(snapshot: Snapshot) -> dict[str, tuple[int, int]]:
     wrong would over-report an unfixable shortage. This under-reports instead,
     which keeps every SATURATED claim provable.
     """
-    supply: dict[str, int] = defaultdict(int)
-    periods: dict[str, int] = defaultdict(int)
-    for slot in snapshot.grid.slots:
-        if slot.delivery.name == "IN_PERSON":
-            periods[slot.kind.name] += 1
-    for room in snapshot.rooms:
-        supply[room.kind.name] += periods.get(room.kind.name, 0)
-
     demand: dict[str, int] = defaultdict(int)
+    durations: dict[str, set[int]] = defaultdict(set)
     for section in snapshot.sections:
         offering = snapshot.offerings_by_id[section.offering_id]
         for requirement in offering.requirements:
             if requirement.needs_room:
                 demand[requirement.kind.name] += requirement.count_per_week
+                durations[requirement.kind.name].add(requirement.duration)
+
+    rooms_of: dict[str, int] = defaultdict(int)
+    for room in snapshot.rooms:
+        rooms_of[room.kind.name] += 1
+
+    # Supply is what one room can actually HOST in a day, not how many cells the
+    # grid declares. Several declared cells are alternatives rather than extra
+    # capacity — 10:30-11:45 and 10:50-12:05 are one lecture opportunity offered
+    # two ways — so counting cells overstates the estate.
+    #
+    # This was got wrong here once: counting cells gave the female cohort 175
+    # lecture-periods and reported 50 meetings as recoverable congestion. The
+    # true throughput is 5 per room per day, so 125, and the shortfall is 79 —
+    # exactly the number the solver leaves unroomed no matter how the price of an
+    # unroomed meeting is set. Those 50 were never recoverable; the arithmetic
+    # was.
+    supply: dict[str, int] = {}
+    for kind, lengths in durations.items():
+        supply[kind] = snapshot.grid.room_periods_per_week(
+            frozenset(lengths), rooms_of.get(kind, 0)
+        )
 
     return {
         kind: (supply.get(kind, 0), count)
@@ -248,3 +264,127 @@ def unroomable_meetings(snapshot: Snapshot) -> int:
             ):
                 total += requirement.count_per_week
     return total
+
+
+def assign_rooms_exact(
+    snapshot: Snapshot, board: Board, *, time_limit_seconds: float = 20.0
+) -> Board:
+    """Room a time-fixed board optimally, instead of greedily.
+
+    Once every meeting has a time, choosing rooms is a self-contained assignment
+    problem, and first-fit is not optimal at it.
+
+    Greedy is actually strong on *capacity*: taking the largest section first and
+    giving it the smallest sufficient room never wastes a big room. What it
+    cannot see is **programme restriction**. A room may be large enough and still
+    be closed to the course that needs it, so once greedy has spent the only
+    shared room on a class that had alternatives, the class with no alternatives
+    is stranded — demonstrated by a test that reproduces exactly that and shows
+    greedy rooming one of two meetings where both can be roomed.
+
+    (The "55 recoverable" figure the shortfall report gives for the female cohort
+    is *not* evidence for this. That bucket means a different **time** would fit,
+    which is a statement about the timing solver, not about this stage.)
+
+    Solved exactly here: a meeting takes at most one room from those that fit it,
+    a room holds at most one meeting at any instant, and the number of roomed
+    meetings is maximised. Larger sections are worth marginally more, so when a
+    tie must be broken the room goes to the class that is hardest to place
+    elsewhere.
+
+    Falls back to the greedy result if the solver finds nothing in time — a
+    slower answer is never worth no answer.
+    """
+    from ortools.sat.python import cp_model
+
+    from scheduler.solve import assign_rooms
+
+    greedy = assign_rooms(snapshot, board)
+    sections = {s.id: s for s in snapshot.sections}
+
+    needs = [p for p in greedy.placements if p.needs_room]
+    if not needs:
+        return greedy
+
+    options: dict[str, list] = {}
+    for p in needs:
+        section = sections.get(p.section_id)
+        need = snapshot.policy.required_room_capacity(section.capacity) if section else 0
+        options[p.id] = [r.id for r in _compatible(snapshot, p, need)]
+    if not any(options.values()):
+        return greedy
+
+    model = cp_model.CpModel()
+    y: dict[tuple[str, str], object] = {}
+    for p in needs:
+        choices = [
+            y.setdefault((p.id, room_id), model.new_bool_var(f"y_{p.id}_{room_id}"))
+            for room_id in options[p.id]
+        ]
+        if choices:
+            model.add_at_most_one(choices)
+
+    # A room holds one meeting per instant. Boundaries are taken from the board
+    # itself, so the atoms are exactly as fine as this timetable requires.
+    by_day: dict[object, list] = {}
+    for p in needs:
+        by_day.setdefault(p.day, []).append(p)
+    for _day, items in by_day.items():
+        marks = sorted({m for p in items for m in (p.window.start, p.window.end)})
+        for start, end in zip(marks, marks[1:], strict=False):
+            covering = [p for p in items if p.window.start < end and p.window.end > start]
+            if len(covering) < 2:
+                continue
+            for room_id in sorted({r for p in covering for r in options[p.id]}):
+                here = [y[(p.id, room_id)] for p in covering if (p.id, room_id) in y]
+                if len(here) > 1:
+                    model.add_at_most_one(here)
+
+    # Every roomed meeting is worth far more than any tie-break, so the count is
+    # maximised first; capacity only decides which meeting wins a contested room,
+    # sending it to the class that is hardest to place anywhere else. Section
+    # capacity is looked up per placement rather than parsed out of its id --
+    # a placement id is "<section_id>#M<n>" and section ids themselves contain
+    # "#", so splitting on it silently yields the wrong section.
+    # The count must dominate ABSOLUTELY, not merely usually. With 1000 + capacity
+    # the tie-break could outvote the count itself: two meetings worth 1999 each
+    # beat three worth 1000 each, so the "exact" pass would room fewer classes
+    # than greedy — the precise failure it exists to remove. The base is
+    # therefore larger than every possible sum of tie-breaks.
+    tie_break_ceiling = 1000
+    base = tie_break_ceiling * (len(needs) + 1)
+    weight_of = {}
+    for p in needs:
+        section = sections.get(p.section_id)
+        weight_of[p.id] = base + min(tie_break_ceiling - 1, section.capacity if section else 0)
+    model.maximize(sum(var * weight_of[p_id] for (p_id, _room), var in y.items()))
+
+    solver = cp_model.CpSolver()
+    solver.parameters.max_time_in_seconds = time_limit_seconds
+    # One worker and a fixed seed: this stage is small, and a reproducible room
+    # allocation matters more here than a marginally faster one. With eight
+    # workers racing a wall clock, the same board could be roomed differently on
+    # two runs of the same data, which makes any comparison between runs
+    # meaningless.
+    solver.parameters.num_search_workers = 1
+    solver.parameters.random_seed = 0
+    status = solver.solve(model)
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        return greedy
+
+    chosen: dict[str, str] = {}
+    for (p_id, room_id), var in y.items():
+        if solver.value(var):
+            chosen[p_id] = room_id
+
+    exact = Board(
+        tuple(
+            replace(p, room_id=chosen.get(p.id)) if p.needs_room else p for p in greedy.placements
+        )
+    )
+    # Never return a worse board than the cheap one it replaces.
+    if sum(1 for p in exact.placements if p.needs_room and p.room_id) < sum(
+        1 for p in greedy.placements if p.needs_room and p.room_id
+    ):
+        return greedy
+    return exact
