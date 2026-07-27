@@ -1628,3 +1628,145 @@ def test_the_planner_switches_the_pairing_on_but_the_raw_solver_does_not():
     planner_default = inspect.signature(plan).parameters["sibling_adjacency_weight"].default
     assert planner_default > 0, "the owner asked for this; it should be on"
     assert planner_default == 3 * _SCALE, "weight changed without re-measuring the trade"
+
+
+# ── seating real students (the confirmation the objective never faced) ────
+#
+# The planner optimises a PROXY: expected clashes = sum shared/(na*nb), which
+# assumes students land in sections at random. These tests pin the confirmation
+# that turns that into a statement about actual students — including the part
+# the proxy cannot see, which is that sections have capacity.
+
+from scheduler.seating import seat_students  # noqa: E402
+
+
+def _two_course_snapshot(grid, *, capacity=30, students=10, sections_each=1):
+    offerings, sections = [], []
+    for code in ("offa", "offb"):
+        offerings.append(_offering(code, reqs=_lecture(1)))
+        for i in range(1, sections_each + 1):
+            sections.append(Section(f"{code}#S{i}", code, i, capacity))
+    demand = [
+        StudentDemand(student_id=n, program="AI", offering_ids=frozenset({"offa", "offb"}))
+        for n in range(1, students + 1)
+    ]
+    return _grid_snapshot(grid, offerings, sections, demand=demand)
+
+
+def test_a_genuine_collision_is_reported_as_a_real_clash():
+    """One cell, two courses everyone needs: nobody can escape it."""
+    snap = _two_course_snapshot(ONE_CELL)
+    board = Board(
+        (
+            _p(section="offa#S1", offering="offa", day=Day.SUN, window=TimeWindow(540, 615)),
+            _p(section="offb#S1", offering="offb", day=Day.SUN, window=TimeWindow(540, 615)),
+        )
+    )
+    result = seat_students(snap, board, time_limit_seconds=20)
+    assert result.students == 10
+    assert result.students_with_a_clash == 10
+    assert result.clash_free_percent == 0.0
+    assert result.unseated_demands == 0
+
+
+def test_a_separated_board_leaves_every_student_clash_free():
+    snap = _two_course_snapshot(ROOMY)
+    board = Board(
+        (
+            _p(section="offa#S1", offering="offa", day=Day.SUN, window=TimeWindow(540, 615)),
+            _p(section="offb#S1", offering="offb", day=Day.SUN, window=TimeWindow(630, 705)),
+        )
+    )
+    result = seat_students(snap, board, time_limit_seconds=20)
+    assert result.students_with_a_clash == 0
+    assert result.clash_free_percent == 100.0
+
+
+def test_seating_respects_section_capacity():
+    """The thing the proxy structurally cannot see.
+
+    Two sections of each course, but each holds only 5 of the 10 students, so
+    the seating cannot simply put everyone in the clash-free one. This is why
+    seating is solved rather than counted: capacity is what makes it an
+    assignment problem.
+    """
+    snap = _two_course_snapshot(ROOMY, capacity=5, students=10, sections_each=2)
+    board = Board(
+        (
+            # offa S1 collides with offb S1; the S2 pair is clear.
+            _p(section="offa#S1", offering="offa", day=Day.SUN, window=TimeWindow(540, 615)),
+            _p(section="offb#S1", offering="offb", day=Day.SUN, window=TimeWindow(540, 615)),
+            _p(section="offa#S2", offering="offa", day=Day.MON, window=TimeWindow(540, 615)),
+            _p(section="offb#S2", offering="offb", day=Day.MON, window=TimeWindow(630, 705)),
+        )
+    )
+    result = seat_students(snap, board, time_limit_seconds=20)
+    assert result.unseated_demands == 0, "capacity was sufficient; nobody should be turned away"
+    # Only 5 seats in the clash-free offa#S2, so at least 5 students must take
+    # offa#S1 -- and every one of those collides with whichever offb they get
+    # only if they also take offb#S1. The optimum puts those 5 into offb#S2.
+    assert result.students_with_a_clash == 0
+
+
+def test_students_who_cannot_be_seated_are_reported_not_hidden():
+    """Ten students, five seats. The five without a place must be visible."""
+    snap = _two_course_snapshot(ROOMY, capacity=5, students=10)
+    board = Board(
+        (
+            _p(section="offa#S1", offering="offa", day=Day.SUN, window=TimeWindow(540, 615)),
+            _p(section="offb#S1", offering="offb", day=Day.MON, window=TimeWindow(540, 615)),
+        )
+    )
+    result = seat_students(snap, board, time_limit_seconds=20)
+    assert result.unseated_demands == 10, (
+        f"expected 10 unmet demands (2 courses x 5 students over capacity), "
+        f"got {result.unseated_demands}"
+    )
+
+
+def test_online_sessions_never_clash_for_a_student():
+    """D9: online has its own late family and cannot collide."""
+    online = (MeetingRequirement(MeetingKind.LECTURE, DeliveryMode.ONLINE, 100, 1),)
+    offerings = [_offering("offa", reqs=online), _offering("offb", reqs=online)]
+    sections = [Section("offa#S1", "offa", 1, 30), Section("offb#S1", "offb", 1, 30)]
+    demand = [
+        StudentDemand(student_id=n, program="AI", offering_ids=frozenset({"offa", "offb"}))
+        for n in range(1, 6)
+    ]
+    snap = _grid_snapshot(ROOMY, offerings, sections, demand=demand)
+    board = Board(
+        (
+            _p(
+                section="offa#S1",
+                offering="offa",
+                day=Day.SUN,
+                window=TimeWindow(900, 1000),
+                delivery=DeliveryMode.ONLINE,
+            ),
+            _p(
+                section="offb#S1",
+                offering="offb",
+                day=Day.SUN,
+                window=TimeWindow(900, 1000),
+                delivery=DeliveryMode.ONLINE,
+            ),
+        )
+    )
+    result = seat_students(snap, board, time_limit_seconds=20)
+    assert result.students_with_a_clash == 0
+
+
+def test_student_waiting_time_is_measured():
+    """The figure that turned out to matter: killing clashes lengthens student
+    days, and nothing in the planner was watching it."""
+    snap = _two_course_snapshot(ROOMY, students=1)
+    board = Board(
+        (
+            _p(section="offa#S1", offering="offa", day=Day.SUN, window=TimeWindow(540, 615)),
+            _p(section="offb#S1", offering="offb", day=Day.SUN, window=TimeWindow(780, 855)),
+        )
+    )
+    result = seat_students(snap, board, time_limit_seconds=20)
+    # 09:00-10:15 then 13:00-14:15: a span of 315 minutes containing 150 of
+    # teaching, so 165 minutes of waiting.
+    assert result.idle_minutes == 165

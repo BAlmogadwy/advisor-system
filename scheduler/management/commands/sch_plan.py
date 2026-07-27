@@ -18,6 +18,7 @@ from scheduler.instructors import assign_instructors
 from scheduler.intake import IntakeError, build_snapshot, elective_placeholder_report
 from scheduler.placement import place_naively
 from scheduler.rooms import assign_rooms_exact, room_shortfall
+from scheduler.seating import seat_students
 from scheduler.solve import (
     _SCALE,
     expected_clashes,
@@ -89,6 +90,14 @@ class Command(BaseCommand):
             "leftover. Default 3, measured as close to free; 10 pairs more "
             "but starts costing student clashes.",
         )
+        parser.add_argument(
+            "--seat-students",
+            action="store_true",
+            help="seat every student into sections and report what they ACTUALLY "
+            "get. The optimised figure is a proxy that assumes students land "
+            "in sections at random; this is the confirmation, and it is the "
+            "only number that describes a student's week.",
+        )
         parser.add_argument("--format", choices=("text", "json"), default="text")
 
     def handle(self, *args, **options) -> None:
@@ -130,6 +139,11 @@ class Command(BaseCommand):
         placeholders = elective_placeholder_report(snapshot, options["year"], options["term"])
         rooms = room_shortfall(snapshot, board)
         pairing = sibling_adjacency(snapshot, board)
+        seating = (
+            seat_students(snapshot, board, time_limit_seconds=120).summary()
+            if options["seat_students"]
+            else None
+        )
 
         if options["format"] == "json":
             self.stdout.write(
@@ -144,6 +158,7 @@ class Command(BaseCommand):
                         "elective_placeholders": placeholders,
                         "room_shortfall": rooms,
                         "sibling_pairing": pairing,
+                        "student_seating": seating,
                     },
                     indent=2,
                     default=str,
@@ -163,8 +178,26 @@ class Command(BaseCommand):
         w("  STUDENTS")
         w(
             f"    expected clashes : {clashes:.1f}   (naive baseline {baseline:.0f} "
-            f"-> -{100 * (baseline - clashes) / baseline:.0f}%)"
+            f"-> -{100 * (baseline - clashes) / baseline:.0f}%)   "
+            f"— a PROXY: it assumes students land in sections at random"
         )
+        if seating:
+            w(
+                f"    actually seated  : {seating['clash_free_percent']}% of "
+                f"{seating['students']} students get a clash-free week "
+                f"({seating['students_with_a_clash']} affected, "
+                f"{seating['total_clashes']} clashes"
+                + (
+                    f", {seating['unseated_demands']} with no seat at all"
+                    if seating["unseated_demands"]
+                    else ""
+                )
+                + ")"
+            )
+            w(
+                f"    student waiting  : {seating['average_idle_minutes']:.0f} min per "
+                f"student per week — nothing optimises this yet"
+            )
         w("")
         w(
             "  INSTRUCTORS   "
