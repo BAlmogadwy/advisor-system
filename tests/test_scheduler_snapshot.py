@@ -843,3 +843,18 @@ def test_seating_is_optional_and_absent_rather_than_zero():
     )
     assert with_seating.students_seated == 10
     assert with_seating.students_clash_free_percent == 100.0
+
+
+def test_online_meetings_are_long_enough_to_land_in_the_lab_grid():
+    """Both surfaces split lecture from lab by DURATION — over 80 minutes reads
+    as a lab. Online sessions are 100 minutes, so they are placed in the lab
+    columns. That is the existing convention, not a choice made here; this pins
+    the assumption so a change to either side is noticed.
+    """
+    from scheduler.intake import DEFAULT_ONLINE_STARTS
+
+    assert DEFAULT_ONLINE_STARTS, "online family must exist (D9)"
+    assert all(minutes > 80 for minutes in DEFAULT_ONLINE_STARTS.values()), (
+        "an online session under 80 minutes would be routed to the lecture grid, "
+        "whose columns it does not share"
+    )

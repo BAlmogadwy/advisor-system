@@ -1813,3 +1813,92 @@ def test_a_thinly_shared_pair_is_not_worth_a_variable():
     from scheduler.solve import _MIN_SHARED_FOR_GAP_TERM
 
     assert _MIN_SHARED_FOR_GAP_TERM >= 2
+
+
+# ── every placement must have a column to be drawn in ─────────────────────
+#
+# Both the workbook export and the on-screen grid build their columns from the
+# scenario's slot config and match a placement by its exact start time. A start
+# with no column is simply not drawn — no error, no warning, just missing
+# classes, which is the worst way for data to be wrong.
+#
+# It happened: online classes sit in their own late family (15:00, 16:45, 18:30)
+# that the original engine has no notion of, so 30 of 644 placements had nowhere
+# to go and the export dropped them silently.
+
+from scheduler.bridge import LAB_DURATION_MINUTES, grid_columns_for  # noqa: E402
+
+
+def _board_at(*windows):
+    return Board(
+        tuple(
+            _p(section=f"off{i}#S1", offering=f"off{i}", day=Day.SUN, window=w)
+            for i, w in enumerate(windows, start=1)
+        )
+    )
+
+
+def test_a_time_the_existing_grid_never_heard_of_still_gets_a_column():
+    """The actual failure: an 18:30 online session against a grid that stops at
+    16:00."""
+    existing = [{"label": "09:00-10:15", "start": "09:00", "end": "10:15"}]
+    board = _board_at(TimeWindow(540, 615), TimeWindow(1110, 1210))  # 09:00, 18:30
+    lecture, lab, added_lecture, added_lab = grid_columns_for(board, existing, [])
+
+    starts = {row["start"] for row in lecture} | {row["start"] for row in lab}
+    assert "18:30" in starts, "a placement was left with no column to be drawn in"
+    assert added_lab == 1
+
+
+def test_every_placement_on_the_board_ends_up_with_a_column():
+    """The property that matters, stated directly."""
+    board = _board_at(
+        TimeWindow(540, 615),  # 09:00 lecture
+        TimeWindow(630, 705),  # 10:30 lecture
+        TimeWindow(645, 745),  # 10:45 lab
+        TimeWindow(900, 1000),  # 15:00 online
+        TimeWindow(1110, 1210),  # 18:30 online
+    )
+    lecture, lab, _, _ = grid_columns_for(board, [], [])
+    covered = {row["start"] for row in lecture} | {row["start"] for row in lab}
+    for placement in board.placements:
+        start = f"{placement.window.start // 60:02d}:{placement.window.start % 60:02d}"
+        assert start in covered, f"{start} has no column"
+
+
+def test_existing_columns_are_never_removed():
+    """Only ever adds. A scenario must not lose a column something else relies
+    on just because this engine did not happen to use it."""
+    existing_lecture = [
+        {"label": "09:00-10:15", "start": "09:00", "end": "10:15"},
+        {"label": "13:00-14:15", "start": "13:00", "end": "14:15"},
+    ]
+    existing_lab = [{"label": "Lab 1", "start": "09:00", "end": "10:40"}]
+    board = _board_at(TimeWindow(540, 615))  # uses only the 09:00 lecture
+
+    lecture, lab, added_lecture, added_lab = grid_columns_for(board, existing_lecture, existing_lab)
+    assert added_lecture == 0 and added_lab == 0
+    assert {row["start"] for row in lecture} == {"09:00", "13:00"}
+    assert {row["start"] for row in lab} == {"09:00"}
+    # labels of pre-existing columns survive untouched
+    assert any(row["label"] == "Lab 1" for row in lab)
+
+
+def test_a_column_is_not_added_twice():
+    existing = [{"label": "09:00-10:15", "start": "09:00", "end": "10:15"}]
+    board = _board_at(TimeWindow(540, 615), TimeWindow(540, 615))
+    lecture, _lab, added, _ = grid_columns_for(board, existing, [])
+    assert added == 0
+    assert len(lecture) == 1
+
+
+def test_long_meetings_go_to_the_lab_columns_and_short_ones_to_lectures():
+    """Both surfaces split by duration, so the seam must split the same way or a
+    meeting is filed under a table that will never look for it."""
+    board = _board_at(TimeWindow(540, 615), TimeWindow(540, 640))  # 75 min, 100 min
+    lecture, lab, _, _ = grid_columns_for(board, [], [])
+    assert {row["start"] for row in lecture} == {"09:00"}
+    assert {row["start"] for row in lab} == {"09:00"}
+    assert lecture[0]["end"] == "10:15"
+    assert lab[0]["end"] == "10:40"
+    assert 75 <= LAB_DURATION_MINUTES < 100

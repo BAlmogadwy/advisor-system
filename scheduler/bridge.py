@@ -50,6 +50,51 @@ def _hhmm(minutes: int) -> str:
     return f"{minutes // 60:02d}:{minutes % 60:02d}"
 
 
+#: Over this many minutes, both the workbook export and the on-screen grid read a
+#: meeting as a lab and look for it in the lab columns. Not a choice made here —
+#: it is the existing convention on both surfaces, named so the dependency is
+#: visible rather than implied.
+LAB_DURATION_MINUTES = 80
+
+
+def grid_columns_for(
+    board, lecture_config: list | None, lab_config: list | None
+) -> tuple[list, list, int, int]:
+    """Column definitions wide enough to hold every placement on this board.
+
+    Returns ``(lecture_columns, lab_columns, lecture_added, lab_added)``.
+
+    Derived from the finished board rather than from any grid definition, so
+    every placement has a column **by construction** — including times a grid
+    written for a different engine never anticipated. Existing columns are always
+    kept: this only ever adds, so a scenario never loses a column something else
+    was relying on.
+    """
+    short_windows: set[tuple[str, str]] = set()
+    long_windows: set[tuple[str, str]] = set()
+    for placement in board.placements:
+        pair = (_hhmm(placement.window.start), _hhmm(placement.window.end))
+        if placement.window.duration > LAB_DURATION_MINUTES:
+            long_windows.add(pair)
+        else:
+            short_windows.add(pair)
+
+    def merge(existing: list | None, needed: set[tuple[str, str]]) -> tuple[list, int]:
+        have = {(row.get("start"), row.get("end")) for row in (existing or [])}
+        missing = sorted(needed - have)
+        if not missing:
+            return list(existing or []), 0
+        merged = list(existing or []) + [
+            {"label": f"{start}-{end}", "start": start, "end": end} for start, end in missing
+        ]
+        merged.sort(key=lambda row: str(row.get("start")))
+        return merged, len(missing)
+
+    lecture_columns, lecture_added = merge(lecture_config, short_windows)
+    lab_columns, lab_added = merge(lab_config, long_windows)
+    return lecture_columns, lab_columns, lecture_added, lab_added
+
+
 def build_into_scenario(
     scenario_id: int,
     *,
@@ -142,6 +187,34 @@ def build_into_scenario(
     for placement in board.placements:
         by_section[placement.section_id].append(placement)
 
+    # ── make the scenario declare the grid this board actually uses ────────
+    #
+    # The workbook export and the on-screen grid both build their columns from
+    # `scenario.slot_config` / `lab_slot_config` and match a placement by its
+    # exact start time. A meeting whose start has no column is simply not drawn:
+    # it vanishes from the export without an error, which is the worst way for
+    # data to be wrong.
+    #
+    # That is what happened. Online classes sit in their own late family — 15:00,
+    # 16:45 and 18:30 (D9) — which the original engine has no notion of, so 30 of
+    # 644 placements had nowhere to go. Rather than teach the scheduler to avoid
+    # times the old grid happens to list, the scenario is told what its own
+    # timetable uses. `slot_config` is per-scenario precisely so it can differ.
+    #
+    # Derived from the finished board rather than from the grid definition, so it
+    # stays correct if the grid ever changes: every placement gets a column by
+    # construction. Existing columns are kept — this only ever adds.
+    #
+    # The split is by DURATION, because that is how both the export and the grid
+    # decide which table a meeting belongs to (over 80 minutes reads as a lab).
+    new_lecture, new_lab, added_lecture, added_lab = grid_columns_for(
+        board, scenario.slot_config, scenario.lab_slot_config
+    )
+    if added_lecture or added_lab:
+        scenario.slot_config = new_lecture
+        scenario.lab_slot_config = new_lab
+        scenario.save(update_fields=["slot_config", "lab_slot_config"])
+
     if progress:
         progress("persist")
     written = orphaned = 0
@@ -215,5 +288,6 @@ def build_into_scenario(
         "unroomed_floor": rooms["impossible"] + rooms["saturated"],
         "sibling_pairs_back_to_back": pairing["pairs_back_to_back"],
         "sibling_pairs_achievable": pairing["pairs_achievable"],
+        "slot_columns_added": added_lecture + added_lab,
         "notes": list(result.notes),
     }
