@@ -81,12 +81,67 @@ def _referenced_names(path: Path) -> set[str]:
     return names
 
 
-def test_scheduler_never_reads_saved_scenarios():
-    """No saved scenario/board/placement is ever a baseline or warm start."""
+#: The single file allowed to touch the workspace's scenario tables. Everything
+#: else in the subsystem plans in ignorance of them.
+SCENARIO_SEAM = "bridge.py"
+
+
+def test_the_planner_never_reads_a_saved_scenario():
+    """No saved scenario, board or placement is ever an INPUT to planning.
+
+    The original rule said the subsystem must not reference those models at all,
+    which was right while it had nowhere to put its results. It now writes a
+    finished board into a scenario the caller created, so the rule is sharpened
+    rather than dropped: the part that DECIDES a timetable still may not see a
+    previous one.
+
+    That is the property worth protecting. A planner that reads an existing board
+    can inherit its mistakes, warm-start from them, or quietly reproduce them and
+    call it agreement — which is exactly how the previous engine's results became
+    impossible to trust.
+    """
     forbidden = {"TimetableScenario", "DeliveryBoard", "SectionPlacement", "TermSectionMeeting"}
     for path in SCHEDULER_DIR.rglob("*.py"):
+        if path.name == SCENARIO_SEAM:
+            continue
         offenders = _referenced_names(path) & forbidden
-        assert not offenders, f"{path} references scenario artifacts {offenders}"
+        assert not offenders, (
+            f"{path.name} references scenario artifacts {offenders}. Only "
+            f"{SCENARIO_SEAM} may — planning must stay ignorant of saved boards."
+        )
+
+
+def test_the_seam_is_exactly_one_file():
+    """A seam that spreads is not a seam.
+
+    The exemption above is what lets the new engine deliver a board into the
+    existing screen. Naming one file keeps that from becoming a general licence:
+    if a second module starts reaching for scenario tables, this fails and the
+    decision gets made deliberately instead of by accident.
+    """
+    forbidden = {"TimetableScenario", "DeliveryBoard", "SectionPlacement", "TermSectionMeeting"}
+    touching = {
+        path.name for path in SCHEDULER_DIR.rglob("*.py") if _referenced_names(path) & forbidden
+    }
+    assert touching <= {SCENARIO_SEAM}, (
+        f"scenario tables are now touched by {sorted(touching)}; the seam is "
+        f"meant to be {SCENARIO_SEAM} alone"
+    )
+
+
+def test_the_seam_writes_only_rows_it_can_identify_as_its_own():
+    """Its rows must be distinguishable from the existing engine's, or a rebuild
+    cannot clean up after itself without destroying somebody else's work."""
+    from scheduler.bridge import SOURCE_TAG
+
+    source = (SCHEDULER_DIR / SCENARIO_SEAM).read_text(encoding="utf-8")
+    assert SOURCE_TAG != "tw_auto", "must not masquerade as the old engine's rows"
+    assert "source_tag=SOURCE_TAG" in source
+    # and it deletes only its own before rewriting
+    assert (
+        "source_tag=SOURCE_TAG"
+        in source.split("delete()")[0].split("TermSection.objects.filter")[-1]
+    )
 
 
 # ── domain: calendar ──────────────────────────────────────────────────────

@@ -845,11 +845,16 @@ class PlannerJob(models.Model):
     MODE_FULL_REBUILD = "full_rebuild"
     MODE_OPTIMISE_V2_FULL = "optimise_v2_full"
     MODE_OPTIMISE_V2_CURRENT = "optimise_v2_current"
+    #: Build with the `scheduler` subsystem instead of the original placer. Same
+    #: scenario scaffold, same students, same section budgets — a different
+    #: engine for the one question of where the classes go.
+    MODE_SCHEDULER_BUILD = "scheduler_build"
     MODE_CHOICES = (
         (MODE_OPTIMISE_CURRENT, "Optimise current"),
         (MODE_FULL_REBUILD, "Full rebuild"),
         (MODE_OPTIMISE_V2_FULL, "Optimise V2 (full rebuild)"),
         (MODE_OPTIMISE_V2_CURRENT, "Optimise V2 (current)"),
+        (MODE_SCHEDULER_BUILD, "New scheduler engine"),
     )
 
     STAGE_CHOICES = (
@@ -858,6 +863,11 @@ class PlannerJob(models.Model):
         ("cpsat", "cpsat"),
         ("chain", "chain"),
         ("rooming_repair", "rooming_repair"),
+        # Stages reported by the alternative engine (MODE_SCHEDULER_BUILD).
+        ("snapshot", "snapshot"),
+        ("solve", "solve"),
+        ("rooming", "rooming"),
+        ("persist", "persist"),
     )
 
     id = models.UUIDField(primary_key=True, editable=False)

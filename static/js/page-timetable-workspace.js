@@ -1,3 +1,4 @@
+const TW_ENGINE = 'classic';
 /* ══════════════════════════════════════════════════════════════════
    Timetable Workspace — Client-Side Logic
    ══════════════════════════════════════════════════════════════════ */
@@ -180,7 +181,26 @@ async function runOptimiseRequest(mode, payload, btn, modeLabel) {
 /* ── Init ── */
 (function init() {
   // Events — Generate bar
-  $('twGenerate').addEventListener('click', runGenerate);
+  $('twGenerate').addEventListener('click', () => runGenerate(TW_ENGINE));
+
+  // Engine picker. The two engines share the whole pipeline except placement:
+  // both build the same scenario scaffold, same students, same section budgets.
+  const genMenu = $('twGenerateMenu');
+  const genDrop = $('twGenerateDropdown');
+  if (genMenu && genDrop) {
+    genMenu.addEventListener('click', (e) => {
+      e.stopPropagation();
+      genDrop.style.display = genDrop.style.display === 'none' ? 'block' : 'none';
+    });
+    document.addEventListener('click', () => { genDrop.style.display = 'none'; });
+    genDrop.querySelectorAll('.tw-gen-item').forEach((item) => {
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        genDrop.style.display = 'none';
+        runGenerate(item.dataset.engine || 'classic');
+      });
+    });
+  }
 
   // Events — Workspace command bar
   $('twScenario').addEventListener('change', onScenarioChange);
@@ -260,7 +280,7 @@ async function runOptimiseRequest(mode, payload, btn, modeLabel) {
 })();
 
 /* ── Generate Workspace ── */
-async function runGenerate() {
+async function runGenerate(engine = 'classic') {
   const year = $('twYear').value.trim();
   const term = $('twTerm').value.trim();
   const program = $('twProgram').value.trim().toUpperCase();
@@ -273,7 +293,9 @@ async function runGenerate() {
   }
 
   $('twGenerate').disabled = true;
-  $('twGenStatus').textContent = IS_AR ? 'جاري التوليد...' : 'Generating...';
+  $('twGenStatus').textContent = engine === 'scheduler'
+    ? (IS_AR ? 'جاري التوليد بالمحرك الجديد...' : 'Generating with the new engine...')
+    : (IS_AR ? 'جاري التوليد...' : 'Generating...');
 
   const data = await twFetch('/ops/tw/generate-workspace/', {
     method: 'POST',
@@ -284,6 +306,7 @@ async function runGenerate() {
       program: program,
       section: section,
       strategy: strategy,
+      engine: engine,     // 'classic' = the original placer, 'scheduler' = the new engine
       defer_build: true,  // place sections via an async job (won't block the request)
     }),
   });
