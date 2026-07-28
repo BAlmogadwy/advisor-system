@@ -168,6 +168,11 @@ def build_into_scenario(
     runs: int = 3,
     clash_tolerance: float = 0.20,
     default_capacity: int = 25,
+    #: Owner rule (D18): a course fewer than this many students want is withheld
+    #: from the board and taken elsewhere in the college. The policy default
+    #: lives here, at the caller, exactly as `default_capacity` does — intake
+    #: itself defaults to 1 (rule off) so no test silently inherits a filter.
+    min_demand: int = 5,
     progress=None,
 ) -> dict:
     """Plan this scenario with the new engine and persist the result.
@@ -236,6 +241,7 @@ def build_into_scenario(
             gender=str(gender),
             programs=list(programs),
             default_capacity=int(default_capacity),
+            min_demand=int(min_demand),
         )
     )
 

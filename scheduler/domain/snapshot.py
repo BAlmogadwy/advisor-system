@@ -74,6 +74,20 @@ class Snapshot:
     #: wrong.
     unmatched_demand: tuple[tuple[str, int], ...] = ()
 
+    #: Courses withheld from the board because too few students wanted them
+    #: (owner rule, D18): `(course_code, course_name, students, tier)` each.
+    #:
+    #: This is the one filter in the subsystem that makes every metric look
+    #: BETTER — fewer sections to place, fewer pairs to collide, fewer rooms to
+    #: find. It is therefore reported wherever results are reported, never as a
+    #: footnote: an empty board scores perfectly on all of them.
+    low_demand_dropped: tuple[tuple[str, str, int, str], ...] = ()
+
+    #: How many students were left with NO courses at all by that rule. Counted
+    #: separately because they silently leave `demand` altogether, and would
+    #: otherwise improve every per-student average by disappearing from it.
+    students_left_unserved: int = 0
+
     def __post_init__(self) -> None:
         if self.gender not in ("M", "F"):
             raise ValueError(f"snapshot gender must be M or F, got {self.gender!r}")

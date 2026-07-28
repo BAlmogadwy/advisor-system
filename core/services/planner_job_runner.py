@@ -280,6 +280,7 @@ def run_planner_job(job_id: uuid.UUID | str) -> None:
                 runs=int(p.get("runs", 3)),
                 clash_tolerance=float(p.get("clash_tolerance", 0.20)),
                 default_capacity=int(p.get("default_capacity", 25)),
+                min_demand=int(p.get("min_demand", 5)),
                 progress=_stage,
             )
         elif job.mode == PlannerJob.MODE_FULL_REBUILD:

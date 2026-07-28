@@ -35,6 +35,12 @@ class Command(BaseCommand):
             help="section size assumed where programme_requirements.max_capacity is NULL "
             "(mode of the declared data is 25). Its blast radius is always reported.",
         )
+        parser.add_argument(
+            "--min-demand",
+            type=int,
+            default=5,
+            help="withhold any course fewer than this many students want (1 = off)",
+        )
         parser.add_argument("--buffer", type=float, default=1.0)
         parser.add_argument("--format", choices=("text", "json"), default="text")
 
@@ -46,6 +52,7 @@ class Command(BaseCommand):
                 gender=options["gender"],
                 programs=str(options["programs"]).split(","),
                 default_capacity=options["default_capacity"],
+                min_demand=options["min_demand"],
                 buffer=options["buffer"],
             )
         except IntakeError as exc:

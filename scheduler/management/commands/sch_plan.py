@@ -42,6 +42,12 @@ class Command(BaseCommand):
         parser.add_argument("--gender", required=True, choices=["M", "F", "m", "f"])
         parser.add_argument("--default-capacity", type=int, default=25)
         parser.add_argument(
+            "--min-demand",
+            type=int,
+            default=5,
+            help="withhold any course fewer than this many students want (1 = off)",
+        )
+        parser.add_argument(
             "--seconds", type=float, default=90.0, help="total budget, split across the two passes"
         )
         parser.add_argument(
@@ -154,6 +160,7 @@ class Command(BaseCommand):
                 gender=options["gender"],
                 programs=str(options["programs"]).split(","),
                 default_capacity=options["default_capacity"],
+                min_demand=options["min_demand"],
             )
         except IntakeError as exc:
             raise CommandError(str(exc)) from exc
@@ -234,6 +241,7 @@ class Command(BaseCommand):
                     "same_time_slots": options["same_time_slots"],
                     "same_time_minutes": options["same_time_minutes"],
                     "default_capacity": options["default_capacity"],
+                    "min_demand": options["min_demand"],
                 },
                 solver_status=result.status,
                 wall_time_seconds=result.wall_time_seconds,

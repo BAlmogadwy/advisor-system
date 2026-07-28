@@ -39,6 +39,12 @@ class Command(BaseCommand):
         parser.add_argument("--programs", required=True)
         parser.add_argument("--gender", required=True, choices=["M", "F", "m", "f"])
         parser.add_argument("--default-capacity", type=int, default=25)
+        parser.add_argument(
+            "--min-demand",
+            type=int,
+            default=5,
+            help="withhold any course fewer than this many students want (1 = off)",
+        )
         parser.add_argument("--format", choices=("text", "json"), default="text")
         parser.add_argument("--show", type=int, default=5, help="violations to list per rule")
 
@@ -50,6 +56,7 @@ class Command(BaseCommand):
                 gender=options["gender"],
                 programs=str(options["programs"]).split(","),
                 default_capacity=options["default_capacity"],
+                min_demand=options["min_demand"],
             )
         except IntakeError as exc:
             raise CommandError(str(exc)) from exc

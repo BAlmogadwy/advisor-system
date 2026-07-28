@@ -91,6 +91,47 @@ def assess(snapshot: Snapshot) -> ReadinessReport:
             )
         )
 
+    # ── 0b. Courses withheld for being too small (D18) ─────────────────────
+    #
+    # WARNING, not INFO, and unconditionally: this is the one filter that makes
+    # every other number on the report look better, so it must never read as a
+    # footnote. Somebody comparing two runs has to be able to see that one of
+    # them was handed a smaller problem.
+    if snapshot.low_demand_dropped:
+        students = sum(n for _code, _name, n, _tier in snapshot.low_demand_dropped)
+        add(
+            Finding(
+                Severity.WARNING,
+                "LOW_DEMAND_WITHHELD",
+                f"{len(snapshot.low_demand_dropped)} course(s) were withheld from "
+                f"the board because fewer than {snapshot.policy.min_demand} students "
+                f"wanted them, affecting {students} student-course demand(s). They "
+                f"must be picked up in another section elsewhere in the college.",
+                {
+                    "min_demand": snapshot.policy.min_demand,
+                    "courses": [
+                        {"code": c, "name": n, "students": k, "tier": t}
+                        for c, n, k, t in snapshot.low_demand_dropped
+                    ],
+                    "students_left_unserved": snapshot.students_left_unserved,
+                },
+            )
+        )
+    if snapshot.students_left_unserved:
+        add(
+            Finding(
+                # WARNING rather than BLOCKING: BLOCKING means no valid board
+                # exists, and one does — these students simply are not in it.
+                # Blocking here would refuse to build a buildable timetable.
+                Severity.WARNING,
+                "STUDENTS_LEFT_UNSERVED",
+                f"{snapshot.students_left_unserved} student(s) wanted ONLY withheld "
+                f"courses and now have no timetable at all. They leave the demand "
+                f"set entirely, so no per-student metric counts them.",
+                {"students": snapshot.students_left_unserved},
+            )
+        )
+
     # ── 0. A course with more sections than the week has room for ──────────
     #
     # H10 forbids two sections of one course from ever overlapping, so N sections

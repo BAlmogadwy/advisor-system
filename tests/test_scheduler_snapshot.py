@@ -334,11 +334,11 @@ def test_capacity_policy_rejects_nonsense():
 pytestmark = pytest.mark.django_db
 
 
-def _plan(program, code, credits=3, capacity=None, online=False, term=1):
+def _plan(program, code, credits=3, capacity=None, online=False, term=1, name=None):
     ProgrammeRequirement.objects.create(
         program=program,
         course_code=code,
-        course_name=code,
+        course_name=name or code,
         type="mandatory",
         programme_term=term,
         credit_hours=credits,
@@ -1191,3 +1191,244 @@ def test_no_automatic_placer_may_use_an_online_only_window():
     assert ONLINE & starts == set(), (
         "an automatic placer was offered a window reserved for online courses"
     )
+
+
+# ── a display code is not a course identity (N1) ──────────────────────────
+#
+# Found by the owner on the live data, 2026-07-28. The AI and AI2 plans are
+# OFFSET BY ONE, so the same code names two different courses:
+#
+#     CS111  FUNDAMENTALS OF PROGRAMMING   AI2, DS2   plan term 1
+#     CS111  PROGRAMMING I                 AI,  DS    plan term 3
+#     CS112  PROGRAMMING I                 AI2, DS2   plan term 2
+#     CS112  PROGRAMMING II                AI,  DS    plan term 4
+#
+# Intake grouped offerings by the bare code, so the two became one offering
+# carrying the pooled demand of both, printed under whichever name sorted first.
+# The project itself does not do this: `compute_section_plan` and
+# `ScenarioSectionBudget` key on `planner_course_key` (CODE::NORMALISED_NAME)
+# and plan CS111::FUNDAMENTALS_OF_PROGRAMMING at 3 sections and
+# CS111::PROGRAMMING_I at 1 — four in total, where this subsystem produced three.
+#
+# AI492 is the same defect with a louder name: "Cooperative Training" in AI2 and
+# "Graduation Project II" in AI.
+
+
+def _both_cs111():
+    """The live shape, shrunk: one code, two courses, one cohort each."""
+    _plan("AI2", "CS111", capacity=10, name="FUNDAMENTALS OF PROGRAMMING")
+    _plan("AI", "CS111", capacity=10, name="PROGRAMMING I")
+    # IDs must start "44": the recommender reads the Hijri join year from the
+    # first two digits, and a student who has not joined yet is eligible for
+    # nothing at all.
+    for sid in range(440001, 440025):  # 24 in the AI2 course
+        _student(sid, "AI2", "M")
+    for sid in range(441001, 441005):  # 4 in the AI course
+        _student(sid, "AI", "M")
+    _room("M-1", "M")
+    return build_snapshot(
+        academic_year="1448", term=1, gender="M", programs=["AI", "AI2"], default_capacity=25
+    )
+
+
+def _cs111_by_name(snap):
+    found = {o.course_name: o for o in snap.offerings if o.course_code == "CS111"}
+    assert len(found) == 2, f"one code, two courses — got {sorted(found)}"
+    return found["FUNDAMENTALS OF PROGRAMMING"], found["PROGRAMMING I"]
+
+
+def test_one_code_naming_two_courses_yields_two_offerings():
+    """MUTATION: group by `row["course_code"]` instead of the course key. One
+    offering comes back and this fails on the count."""
+    fundamentals, programming = _cs111_by_name(_both_cs111())
+    assert fundamentals.id != programming.id
+    assert fundamentals.programs == frozenset({"AI2"})
+    assert programming.programs == frozenset({"AI"})
+
+
+def test_a_student_is_counted_against_their_own_programme_s_course():
+    """The merge did not only mislabel: it pooled the demand of two different
+    courses, so a first-term AI2 student was seated in a third-term AI course."""
+    snap = _both_cs111()
+    fundamentals, programming = _cs111_by_name(snap)
+    program_of = {d.student_id: d.program for d in snap.demand}
+    for d in snap.demand:
+        if fundamentals.id in d.offering_ids:
+            assert program_of[d.student_id] == "AI2", "an AI student joined the AI2 course"
+        if programming.id in d.offering_ids:
+            assert program_of[d.student_id] == "AI", "an AI2 student joined the AI course"
+    takers = {
+        fundamentals.id: sum(1 for d in snap.demand if fundamentals.id in d.offering_ids),
+        programming.id: sum(1 for d in snap.demand if programming.id in d.offering_ids),
+    }
+    # Asserted exactly, so the test cannot pass by finding no demand at all: an
+    # empty result satisfies "nobody is in the wrong course" perfectly.
+    assert takers == {fundamentals.id: 24, programming.id: 4}, takers
+    assert snap.unmatched_demand == (), f"demand was dropped, not split: {snap.unmatched_demand}"
+
+
+def test_each_course_gets_its_own_section_budget():
+    """MUTATION: key the section plan on `offering.course_code`. Both offerings
+    then read the SAME planned row — and because the aggregate is built by plain
+    assignment, the row belongs to whichever offering happened to be last. 24
+    students and 4 students at 10 seats need 3 sections and 1, never 3 and 3 or
+    1 and 1."""
+    snap = _both_cs111()
+    fundamentals, programming = _cs111_by_name(snap)
+    counts = {
+        "FUNDAMENTALS OF PROGRAMMING": len(snap.sections_by_offering.get(fundamentals.id, ())),
+        "PROGRAMMING I": len(snap.sections_by_offering.get(programming.id, ())),
+    }
+    assert counts == {"FUNDAMENTALS OF PROGRAMMING": 3, "PROGRAMMING I": 1}, counts
+    # ...and the sections belong to one course each, rather than one pool of four
+    # that students of either course could be seated in.
+    assert not {s.id for s in snap.sections_by_offering[fundamentals.id]} & {
+        s.id for s in snap.sections_by_offering[programming.id]
+    }
+
+
+def test_staffing_approval_does_not_cross_between_two_courses_sharing_a_code():
+    """An approval to teach AI2's CS111 is not an approval to teach AI's CS111.
+    With one offering per code the question could not even be asked."""
+    person = InstructorRow.objects.create(full_name="Dr Split", is_active=True)
+    CourseInstructor.objects.create(
+        program="AI2", course_code="CS111", section="M", instructor=person
+    )
+    snap = _both_cs111()
+    fundamentals, programming = _cs111_by_name(snap)
+    eligible = {i.id: i.eligible_offerings for i in snap.instructors}
+    assert person.id in eligible, "the approval reached neither course"
+    assert fundamentals.id in eligible[person.id]
+    assert programming.id not in eligible[person.id], "staffing widened to the other course"
+
+
+# ── courses too small to be worth a place on the board (D18) ──────────────
+#
+# Owner rule, 2026-07-28: "any course with demand less than 5 students, drop it
+# from the demand before running the planner."
+#
+# A course three people want still costs a full section — a room for every
+# meeting, an instructor's day opened, a slot every other course must avoid, and
+# one of the week's 25 mutually non-overlapping cells (H10). The registrar's
+# answer for those three is the tier argument: seat them in a section that
+# already runs elsewhere in the college.
+#
+# The danger is the opposite of the usual one. Every other filter in this
+# subsystem makes the numbers worse when it fires; this one makes them BETTER —
+# fewer sections, fewer colliding pairs, less idle time. So the tests below pin
+# the reporting as hard as the filtering: a drop nobody can see is
+# indistinguishable from a board that was simply easier.
+
+
+def _tiered_cohort():
+    """Courses with controlled head-counts.
+
+    Demand comes from the real recommender, which offers a student only the plan
+    terms they have reached — and derives that from the Hijri join year in the
+    first two digits of their ID. So the ID prefix, not a fixture switch, is what
+    puts a different number of students in each course:
+
+        44xxxx -> joined 1444, next term 9  -> reaches terms 1, 3 AND 9
+        47xxxx -> joined 1447, next term 3  -> reaches terms 1 and 3 only
+    """
+    for term, code in ((1, "AI101"), (3, "AI301"), (9, "AI901")):
+        _plan("AI", code, term=term, capacity=40)
+    _plan("AI2", "AI201", term=1, capacity=40)
+    _plan("AI2", "AI209", term=9, capacity=40)
+    _plan("DS", "DS901", term=9, capacity=40)  # the only course its cohort has
+
+    for sid in range(470001, 470007):  # 6 -> AI101, AI301
+        _student(sid, "AI", "M")
+    for sid in range(440001, 440003):  # 2 -> AI101, AI301, AI901
+        _student(sid, "AI", "M")
+    for sid in range(440101, 440106):  # 5 -> AI201, AI209
+        _student(sid, "AI2", "M")
+    for sid in range(440201, 440203):  # 2 -> DS901 and nothing else
+        _student(sid, "DS", "M")
+    _room("M-1", "M", capacity=60)
+
+
+def _snap(min_demand):
+    _tiered_cohort()
+    return build_snapshot(
+        academic_year="1448",
+        term=1,
+        gender="M",
+        programs=["AI", "AI2", "DS"],
+        default_capacity=25,
+        min_demand=min_demand,
+    )
+
+
+def _counts(snap):
+    by_code = {o.course_code: o.id for o in snap.offerings}
+    return {
+        code: sum(1 for d in snap.demand if oid in d.offering_ids) for code, oid in by_code.items()
+    }
+
+
+def test_the_fixture_really_does_have_courses_on_both_sides_of_the_floor():
+    """Guard, not a feature. Every other test here is meaningless if the
+    recommender hands out different numbers than intended — and a filter test
+    whose input was already empty passes for the wrong reason."""
+    assert _counts(_snap(1)) == {
+        "AI101": 8,
+        "AI301": 8,
+        "AI901": 2,  # below the floor
+        "AI201": 5,  # exactly ON the floor
+        "AI209": 5,  # exactly ON the floor
+        "DS901": 2,  # below it, and its cohort has nothing else
+    }
+
+
+def test_a_course_below_the_floor_is_withheld_and_one_on_it_is_kept():
+    """MUTATION: `<=` instead of `<`. AI201/AI209 sit exactly on the floor, so
+    an off-by-one there withholds two courses that must run."""
+    snap = _snap(5)
+    withheld = {code for code, _name, _n, _tier in snap.low_demand_dropped}
+    assert withheld == {"AI901", "DS901"}
+    kept = {o.course_code for o in snap.offerings if snap.sections_by_offering.get(o.id)}
+    assert {"AI101", "AI301", "AI201", "AI209"} <= kept
+    assert not (withheld & kept), "a withheld course still got sections"
+
+
+def test_withheld_demand_leaves_the_students_other_courses_alone():
+    """MUTATION: drop the whole STUDENT rather than the offering. The two 44xxxx
+    AI students lose AI901 and must keep AI101 and AI301."""
+    counts = _counts(_snap(5))
+    assert counts["AI101"] == 8 and counts["AI301"] == 8
+    assert counts["AI901"] == 0
+
+
+def test_the_drop_is_reported_loudly_never_silently():
+    """This is the one filter that improves every other number on the report, so
+    it is a WARNING and it names each course, its size and its tier."""
+    snap = _snap(5)
+    assert dict((c, (n, t)) for c, _name, n, t in snap.low_demand_dropped) == {
+        "AI901": (2, "T1"),
+        "DS901": (2, "T1"),
+    }
+    finding = next(f for f in assess(snap).findings if f.code == "LOW_DEMAND_WITHHELD")
+    assert finding.severity is Severity.WARNING
+    assert finding.detail["min_demand"] == 5
+    assert {c["code"] for c in finding.detail["courses"]} == {"AI901", "DS901"}
+
+
+def test_a_student_left_with_no_courses_at_all_is_counted():
+    """MUTATION: `students_left_unserved = 0`. The two DS students wanted only
+    DS901; they vanish from `demand` entirely, and every per-student average
+    would otherwise improve by losing them rather than by serving them."""
+    snap = _snap(5)
+    assert snap.students_left_unserved == 2
+    assert not [d for d in snap.demand if d.program == "DS"]
+    finding = next(f for f in assess(snap).findings if f.code == "STUDENTS_LEFT_UNSERVED")
+    assert finding.severity is Severity.WARNING
+
+
+def test_the_rule_is_off_at_one_so_nothing_inherits_it_by_accident():
+    snap = _snap(1)
+    assert snap.low_demand_dropped == ()
+    assert snap.students_left_unserved == 0
+    assert snap.sections_by_offering.get(
+        next(o.id for o in snap.offerings if o.course_code == "DS901")
+    ), "with the rule off, a two-student course still runs"

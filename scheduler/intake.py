@@ -22,6 +22,7 @@ import json
 import math
 import re
 from collections import Counter, defaultdict
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from core.models import (
@@ -317,14 +318,24 @@ def compile_requirements(credit_hours: int, *, is_online: bool) -> tuple[Meeting
     return (MeetingRequirement(MeetingKind.LECTURE, delivery, 75, 1),)
 
 
-def _offering_id(course_code: str, programs: frozenset[str]) -> str:
+def _offering_id(course_key: str, programs: frozenset[str]) -> str:
     """Stable, opaque offering identity (N1).
 
-    Keyed on the course plus the programme set that shares it, so one display
-    code offered to two different cohorts yields two distinct offerings — the
-    `FE1`/`CS111` ambiguity that silently merged demand in the old engine.
+    Keyed on the project's own course identity — `planner_course_key`, which is
+    `CODE::NORMALISED_NAME` — plus the programme set that shares it. A display
+    code is NOT an identifier here, and that is not a hypothetical:
+
+        CS111  FUNDAMENTALS OF PROGRAMMING   AI2, DS2   plan term 1
+        CS111  PROGRAMMING I                 AI,  DS    plan term 3
+        CS112  PROGRAMMING I                 AI2, DS2   plan term 2
+        CS112  PROGRAMMING II                AI,  DS    plan term 4
+
+    The two plans are offset by one, so what AI calls CS111, AI2 calls CS112.
+    Keying on the code alone merges two genuinely different courses into one
+    offering, pools their demand, and seats first-term students in sections
+    printed under a third-term course's name.
     """
-    seed = f"{course_code.strip().upper()}|{'+'.join(sorted(programs))}"
+    seed = f"{course_key}|{'+'.join(sorted(programs))}"
     return f"off_{hashlib.sha256(seed.encode()).hexdigest()[:12]}"
 
 
@@ -336,6 +347,7 @@ def build_snapshot(
     programs: list[str],
     default_capacity: int,
     buffer: float = 1.0,
+    min_demand: int = 1,
     grid: Grid | None = None,
 ) -> Snapshot:
     """Assemble an immutable, fingerprinted snapshot for one gender cohort."""
@@ -347,7 +359,7 @@ def build_snapshot(
         raise IntakeError("at least one programme is required")
 
     grid = grid or default_grid()
-    policy = CapacityPolicy(default_capacity=default_capacity, buffer=buffer)
+    policy = CapacityPolicy(default_capacity=default_capacity, buffer=buffer, min_demand=min_demand)
 
     # ── students (single gender, D1) ──
     #
@@ -379,6 +391,11 @@ def build_snapshot(
     program_by_student = {int(sid): str(prog).upper() for sid, prog in students}
 
     # ── demand, from the UPSTREAM recommender (never reimplemented) ──
+    #
+    # `planner_course_key` is the project's own course identity (N1) and the key
+    # `compute_section_plan` and `ScenarioSectionBudget` are built on. Consumed,
+    # never restated: the display code is not an identifier.
+    from core.services.course_identity import planner_course_key
     from core.services.recommender_batch import batch_recommend
     from core.services.reporting import resolve_elective_recommendations
 
@@ -441,10 +458,18 @@ def build_snapshot(
             "programme_term",
         )
     )
-    # Group by course code: one offering per (code, sharing programme set).
+    # Group by the project's own course identity, NOT by the display code (N1).
+    # `planner_course_key` is `CODE::NORMALISED_NAME`, and it is what
+    # `compute_section_plan` and `ScenarioSectionBudget` already key on — the
+    # project plans CS111::FUNDAMENTALS_OF_PROGRAMMING and CS111::PROGRAMMING_I
+    # as two courses with two section budgets, so grouping by code here made
+    # this subsystem disagree with the institution's own sectioning.
     grouped: dict[str, list[dict]] = defaultdict(list)
     for row in plan_rows:
-        grouped[str(row["course_code"]).strip().upper()].append(row)
+        key = planner_course_key(
+            str(row["course_code"]).strip().upper(), str(row.get("course_name") or "")
+        )
+        grouped[key].append(row)
 
     # Resolution priority per course, from the project's own classifier. This is
     # institutional policy — which courses the registrar must resolve and which
@@ -460,8 +485,13 @@ def build_snapshot(
     plan_counts = program_count_by_code()
 
     offerings: list[Offering] = []
-    offering_by_code: dict[str, Offering] = {}
-    for code, rows in sorted(grouped.items()):
+    #: code -> every offering that prints that code, in a stable order. A list
+    #: rather than a single offering because a code is not an identity: see
+    #: `_offering_id`. Which one a given student means is decided by their
+    #: programme, through `offering_for` below.
+    offerings_by_code: dict[str, list[Offering]] = defaultdict(list)
+    for course_key, rows in sorted(grouped.items()):
+        code = str(rows[0]["course_code"]).strip().upper()
         progs = frozenset(str(r["program"]).upper() for r in rows)
         credits = max(int(r["credit_hours"] or 0) for r in rows)
         name = str(rows[0].get("course_name") or code)
@@ -474,7 +504,7 @@ def build_snapshot(
         online = is_online_course(code)
 
         offering = Offering(
-            id=_offering_id(code, progs),
+            id=_offering_id(course_key, progs),
             course_code=code,
             course_name=name,
             credit_hours=credits,
@@ -487,7 +517,31 @@ def build_snapshot(
             tier=classify_course_tier(code, plan_counts.get(code.upper(), 0)),
         )
         offerings.append(offering)
-        offering_by_code[code] = offering
+        offerings_by_code[code].append(offering)
+
+    def offering_for(code: str, program: str) -> Offering | None:
+        """Which of a code's offerings a given programme means.
+
+        Demand, staffing approvals and elective mappings all arrive keyed by the
+        display CODE, because that is what the source tables hold. A code that
+        names two different courses is disambiguated by the programme asking:
+        AI2 means CS111 "Fundamentals of Programming", AI means CS111
+        "Programming I".
+
+        Returns None when the code genuinely names several courses and the
+        programme picks out none of them — reported as unmatched rather than
+        resolved by guessing, because guessing is what merged them before.
+        """
+        candidates = offerings_by_code.get(str(code).strip().upper(), ())
+        if len(candidates) == 1:
+            return candidates[0]
+        if not candidates:
+            return None
+        wanted = str(program).strip().upper()
+        for offering in candidates:
+            if wanted in offering.programs:
+                return offering
+        return None
 
     # ── the real electives the resolver named, which the plan does not hold ──
     #
@@ -513,12 +567,12 @@ def build_snapshot(
     # target gets an offering of its own, because it is the course a student
     # actually enrols in and the name the timetable has to print.
     wanted_codes = {str(c).strip().upper() for codes in recommended.values() for c in codes}
-    for code in sorted(wanted_codes - set(offering_by_code)):
+    for code in sorted(wanted_codes - set(offerings_by_code)):
         elective = elective_by_code.get(code)
         hosts = [
-            offering_by_code[ph]
+            host
             for ph in sorted(placeholders_of_target.get(code, ()))
-            if ph in offering_by_code
+            for host in offerings_by_code.get(ph, ())
         ]
         if elective is None or not hosts:
             # Either the catalogue does not know this code, or nothing in this
@@ -547,10 +601,11 @@ def build_snapshot(
         progs = frozenset().union(*(h.programs for h in hosts))
         terms = frozenset().union(*(h.terms for h in hosts))
         credits = int(elective.credit_hours or 0) or max(h.credit_hours for h in hosts)
+        name = str(elective.course_name or code)
         offering = Offering(
-            id=_offering_id(code, progs),
+            id=_offering_id(planner_course_key(code, name), progs),
             course_code=code,
-            course_name=str(elective.course_name or code),
+            course_name=name,
             credit_hours=credits,
             programs=progs,
             terms=terms,
@@ -561,7 +616,7 @@ def build_snapshot(
             tier=classify_course_tier(code, plan_counts.get(code, 0)),
         )
         offerings.append(offering)
-        offering_by_code[code] = offering
+        offerings_by_code[code].append(offering)
 
     # ── student demand, mapped onto offerings ──
     # ── which students are "regular" ────────────────────────────────────
@@ -605,7 +660,8 @@ def build_snapshot(
         ids = set()
         for c in codes:
             code = str(c).strip().upper()
-            offering = offering_by_code.get(code)
+            # Their OWN programme decides which course a shared code names.
+            offering = offering_for(code, program_by_student.get(int(sid), ""))
             if offering is None:
                 unmatched_demand[code] += 1
                 continue
@@ -642,24 +698,86 @@ def build_snapshot(
     # scheduling bug.
     from core.services.section_planning import compute_section_plan
 
+    # ── courses too small to be worth a place on the board (D18, owner) ────
+    #
+    # A course three people want still costs a full section: a room for three
+    # meetings a week, an instructor's day opened, a slot every other course
+    # then has to avoid, and — because sections of one course may never overlap
+    # — one of the week's 25 non-overlapping slots. The registrar's answer for
+    # those three is the same as for a tier-3 clash: seat them in another
+    # section that already runs somewhere in the college.
+    #
+    # Applied HERE, between demand and section planning, because that is the
+    # only point where it means what the owner asked for. Later, the sections
+    # already exist; earlier, there is no demand to count.
+    #
+    # It is deliberately NOT a cascade. Dropping course X does not change how
+    # many students want course Y, so one pass is exact and no course can be
+    # dragged under the floor by another's removal.
+    offerings_by_id = {o.id: o for o in offerings}
     head_count: dict[str, int] = defaultdict(int)
     for d in demand:
         for oid in d.offering_ids:
             head_count[oid] += 1
 
+    too_small = {oid for oid, n in head_count.items() if n < policy.min_demand}
+    low_demand_dropped: tuple[tuple[str, str, int, str], ...] = ()
+    students_left_unserved = 0
+    if too_small:
+        low_demand_dropped = tuple(
+            sorted(
+                (
+                    offerings_by_id[oid].course_code,
+                    offerings_by_id[oid].course_name,
+                    head_count[oid],
+                    offerings_by_id[oid].tier,
+                )
+                for oid in too_small
+            )
+        )
+        kept: list[StudentDemand] = []
+        for d in demand:
+            remaining = d.offering_ids - too_small
+            if remaining:
+                kept.append(replace(d, offering_ids=remaining))
+            else:
+                # They wanted nothing but small courses. They vanish from
+                # `demand` entirely, which would quietly improve every
+                # per-student average by removing the student rather than
+                # serving them, so they are counted before they go.
+                students_left_unserved += 1
+        demand = kept
+        for oid in too_small:
+            head_count.pop(oid, None)
+
+    # Keyed on the OFFERING, not on the display code. `compute_section_plan`
+    # takes an opaque key with `course_metadata` supplying the code, name and
+    # credits — the facility the project's own generator uses — precisely
+    # because a code can name two courses. Keyed by code, the two CS111s
+    # overwrote each other's demand here (plain assignment, so the last one
+    # silently won) and then both read the SAME planned row, so each got the
+    # other's section count. An offering id is unique by construction.
     aggregate: Counter[str] = Counter()
+    course_metadata: dict[str, dict[str, object]] = {}
     for offering in offerings:
         if offering.is_scheduled and head_count.get(offering.id):
-            aggregate[offering.course_code] = head_count[offering.id]
+            aggregate[offering.id] = head_count[offering.id]
+            course_metadata[offering.id] = {
+                "course_code": offering.course_code,
+                "course_name": offering.course_name,
+                "credit_hours": offering.credit_hours,
+            }
 
     declared_caps = {
-        offering.course_code: offering.capacity
-        for offering in offerings
-        if offering.capacity_is_declared
+        offering.id: offering.capacity for offering in offerings if offering.capacity_is_declared
     }
     planned = {
-        str(row["course_code"]).strip().upper(): row
-        for row in compute_section_plan(aggregate, programme_capacities=declared_caps)
+        str(row["course_key"]): row
+        for row in compute_section_plan(
+            aggregate,
+            programme_capacities=declared_caps,
+            course_metadata=course_metadata,
+        )
     }
 
     sections: list[Section] = []
@@ -668,7 +786,7 @@ def build_snapshot(
             continue  # graduation project / training — carries credit, has no meeting
         if not head_count.get(offering.id):
             continue  # no demand this term -> no sections; not an error
-        row = planned.get(offering.course_code)
+        row = planned.get(offering.id)
         if row is None:
             # The planner had nothing to say; fall back rather than drop a course
             # somebody is waiting for.
@@ -750,22 +868,24 @@ def build_snapshot(
         if not link.instructor_id:
             continue
         programme = str(link.program).strip().upper()
-        reached = {code} if code in offering_by_code else set()
+        reached = {code} if code in offerings_by_code else set()
         reached |= placeholder_of.get((programme, code), set())  # target -> its slot
         reached |= targets_of_placeholder.get((programme, code), set())  # slot -> its courses
         for resolved in sorted(reached):
-            offering = offering_by_code.get(resolved)
-            if offering is None:
-                continue
-            if programme not in offering.programs:
-                # The offering does not belong to the programme that approved
-                # them. Checked on EVERY match, not only on folded ones: a
-                # direct code match used to skip this, so an approval to teach
-                # AI463 for CS counted as staffing for an AI-only AI463 — the
-                # very widening the fold below was written to prevent, walking
-                # in through the front door.
-                continue
-            eligible[int(link.instructor_id)].add(offering.id)
+            # Every course that prints this code, not one of them: the
+            # programme check below is what decides which they may teach, and it
+            # is exact. Picking a single candidate first would silently drop the
+            # staffing row whenever the wrong one was picked.
+            for offering in offerings_by_code.get(resolved, ()):
+                if programme not in offering.programs:
+                    # The offering does not belong to the programme that
+                    # approved them. Checked on EVERY match, not only on folded
+                    # ones: a direct code match used to skip this, so an
+                    # approval to teach AI463 for CS counted as staffing for an
+                    # AI-only AI463 — the very widening the fold below was
+                    # written to prevent, walking in through the front door.
+                    continue
+                eligible[int(link.instructor_id)].add(offering.id)
     instructor_names = {
         row.id: row.full_name for row in InstructorRow.objects.filter(id__in=list(eligible) or [0])
     }
@@ -806,5 +926,7 @@ def build_snapshot(
         source_fingerprint=source_fingerprint,
         excluded_withdrawn=excluded_withdrawn,
         unmatched_demand=tuple(sorted(unmatched_demand.items())),
+        low_demand_dropped=low_demand_dropped,
+        students_left_unserved=students_left_unserved,
         created_at=datetime.now(UTC).isoformat(timespec="seconds"),
     )

@@ -176,11 +176,19 @@ class CapacityPolicy:
     default_capacity: int
     buffer: float = 1.0  # multiplier applied when sizing a room to a section
 
+    #: Fewest students that justify running a course at all (D18, owner rule).
+    #: Below this the course is withheld from the board and the students are
+    #: expected to take it in another section elsewhere in the college — the
+    #: same argument the course tiers rest on. 1 disables the rule.
+    min_demand: int = 1
+
     def __post_init__(self) -> None:
         if self.default_capacity <= 0:
             raise ValueError("default_capacity must be positive")
         if self.buffer < 1.0:
             raise ValueError("buffer must be >= 1.0")
+        if self.min_demand < 1:
+            raise ValueError("min_demand must be >= 1 (1 disables the rule)")
 
     def required_room_capacity(self, section_capacity: int) -> int:
         import math
