@@ -1581,37 +1581,62 @@ def plan(
     # Pass 1 remains the fallback: pass 2 is only an improvement if it actually
     # cut idle time without making anyone's week longer. Checked per instructor,
     # not on the total, so a day moved from one person to another is caught.
-    after_days = _days_by_instructor(snapshot, second.board)
-    worse = [i for i, n in after_days.items() if n > per_instructor.get(i, 0)]
-    if worse:
-        first.notes.append(
-            f"gap pass lengthened the week for instructor(s) {sorted(worse)}; discarded"
-        )
-        first.wall_time_seconds = total
-        return first
-
-    # Rooms before gaps: pass 2 is pushed hard on idle time, and one unroomed
-    # meeting was measured to be worth about 60 idle minutes to it, so without
-    # this check it will quietly sell a classroom for a shorter wait.
-    rooms_before = unroomed_count(snapshot, first.board)
-    rooms_after = unroomed_count(snapshot, second.board)
-    if rooms_after > rooms_before:
-        first.notes.append(
-            f"gap pass left {rooms_after} meetings unroomed vs {rooms_before}; discarded"
-        )
-        first.wall_time_seconds = total
-        return first
-
     before = instructor_metrics(snapshot, first.board)["idle_minutes"]
     after = instructor_metrics(snapshot, second.board)["idle_minutes"]
-    if after > before:
-        first.notes.append(f"gap pass did not improve idle ({after} vs {before}); discarded")
+    discard = reason_to_discard_gap_pass(
+        days_before=per_instructor,
+        days_after=_days_by_instructor(snapshot, second.board),
+        rooms_before=unroomed_count(snapshot, first.board),
+        rooms_after=unroomed_count(snapshot, second.board),
+        idle_before=before,
+        idle_after=after,
+    )
+    if discard:
+        first.notes.append(discard)
         first.wall_time_seconds = total
         return first
 
     second.wall_time_seconds = total
     second.notes.append(f"two-pass: {budget} working days held; idle {before} -> {after} min")
     return second
+
+
+def reason_to_discard_gap_pass(
+    *,
+    days_before: dict[int, int],
+    days_after: dict[int, int],
+    rooms_before: int,
+    rooms_after: int,
+    idle_before: int,
+    idle_after: int,
+) -> str | None:
+    """Why pass 2's board should be thrown away, or None to keep it.
+
+    Separated from `plan()` so the policy can be tested without contriving a
+    pathological board. Every one of these guards only fires when the gap pass
+    returns something WORSE under budgets that should have prevented it, so on
+    any healthy fixture they are unreachable — which is exactly how three of
+    them survived a mutation audit while looking well covered.
+
+    Order matters and is the same order the rest of the engine uses:
+
+    1. **Nobody's week gets longer.** Compared per instructor, never on the
+       total, so a day moved from one person to another is caught rather than
+       cancelling out.
+    2. **Rooms before gaps.** Pass 2 is pushed hard on idle time and one
+       unroomed meeting was measured to be worth about sixty idle minutes to
+       it, so without this it will quietly sell a classroom for a shorter wait.
+    3. **It has to have worked.** An unimproved board is pass 1's with extra
+       wall time spent.
+    """
+    worse = sorted(i for i, n in days_after.items() if n > days_before.get(i, 0))
+    if worse:
+        return f"gap pass lengthened the week for instructor(s) {worse}; discarded"
+    if rooms_after > rooms_before:
+        return f"gap pass left {rooms_after} meetings unroomed vs {rooms_before}; discarded"
+    if idle_after > idle_before:
+        return f"gap pass did not improve idle ({idle_after} vs {idle_before}); discarded"
+    return None
 
 
 def unroomed_count(snapshot: Snapshot, board: Board) -> int:
