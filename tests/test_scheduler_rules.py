@@ -3817,3 +3817,191 @@ def test_the_greedy_placer_places_every_meeting_of_a_fixed_block_course():
         assert len(placed) == len(want), f"{section.id} got {len(placed)} of {len(want)} meetings"
         assert {(p.day, p.window.start) for p in placed} == want
     assert not validate(snapshot, board).violated
+
+
+# ── D19: the parts the first fixture could not see ────────────────────────
+#
+# A test audit found the original `_eng()` fixture had no rooms, no instructors
+# and no students, so every claim about what D19 does NOT suspend was untested.
+# Two real defects were hiding behind that blind spot.
+
+OVERLAPPING = Grid.from_spec(
+    # The LIVE grid's shape: 10:30 and 10:50 are both declared, 75 minutes each,
+    # so they overlap by 55 minutes. The first fixture used only disjoint starts
+    # and therefore could not express the failure at all.
+    lecture_starts={"09:00": 75, "10:30": 75, "10:50": 75, "13:00": 75},
+    lab_starts={"09:00": 100},
+    days=(Day.SUN, Day.MON),
+)
+
+
+def test_the_checker_catches_two_meetings_that_overlap_without_sharing_a_start():
+    """MUTATION (and the shipped bug): grade the refinement on `window.start`
+    equality instead of on interval overlap. 10:30 and 10:50 are different
+    starts and overlap for 55 minutes, so the board passes every rule in the
+    book — H7 and H9 cannot help, because a D19 section has neither an
+    instructor nor a room."""
+    offering = replace(
+        _offering(
+            "eng101",
+            reqs=(
+                MeetingRequirement(
+                    MeetingKind.LECTURE,
+                    DeliveryMode.IN_PERSON,
+                    75,
+                    2,
+                    allowed_starts=frozenset({9 * 60, 10 * 60 + 30}),
+                    uses_shared_room=False,
+                ),
+            ),
+        ),
+        occupies_fixed_block=True,
+    )
+    sections = [Section("eng101#S1", "eng101", 1, 25)]
+    snapshot = replace(_grid_snapshot(OVERLAPPING, [offering], sections), grid=OVERLAPPING)
+    overlapping = Board(
+        (
+            _p(
+                section="eng101#S1",
+                offering="eng101",
+                idx=1,
+                day=Day.SUN,
+                window=TimeWindow(10 * 60 + 30, 10 * 60 + 30 + 75),
+            ),
+            _p(
+                section="eng101#S1",
+                offering="eng101",
+                idx=2,
+                day=Day.SUN,
+                window=TimeWindow(10 * 60 + 50, 10 * 60 + 50 + 75),
+            ),
+        )
+    )
+    assert any(r.rule_id == "H2" for r in validate(snapshot, overlapping).violated), (
+        "a section in two overlapping windows on one day was accepted"
+    )
+
+
+def _eng_with_people():
+    """A fixed-block course that actually has an instructor and a room, plus an
+    ordinary course to prove the blast radius of a failure."""
+    eng = replace(
+        _offering(
+            "eng101",
+            reqs=(
+                MeetingRequirement(
+                    MeetingKind.LECTURE,
+                    DeliveryMode.IN_PERSON,
+                    75,
+                    len(MORNING_STARTS) * len(MORNING.days()),
+                    allowed_starts=MORNING_STARTS,
+                    uses_shared_room=False,
+                ),
+            ),
+        ),
+        occupies_fixed_block=True,
+    )
+    other = _offering("ord1", reqs=_lecture(2))
+    sections = [
+        Section("eng101#S1", "eng101", 1, 25, instructor_id=1),
+        Section("eng101#S2", "eng101", 2, 25, instructor_id=1),
+        Section("ord1#S1", "ord1", 1, 25),
+    ]
+    snapshot = replace(_grid_snapshot(MORNING, [eng, other], sections), grid=MORNING)
+    return replace(
+        snapshot,
+        instructors=(Instructor(id=1, name="Dr Eng", eligible_offerings=frozenset({"eng101"})),),
+    )
+
+
+def test_one_person_cannot_hold_two_sections_of_a_fixed_block_course():
+    """MUTATION: let `assign_instructors` apply the ordinary per-course cap of 2.
+
+    D19 puts every section in the SAME cells, so one person holding two of them
+    is not a heavy week, it is physically impossible — and H7 is right to refuse.
+    `solve()` cannot drop the assignment, so the model goes INFEASIBLE and the
+    WHOLE cohort returns empty, not just the course at fault. Asserted on the
+    ordinary course too, because the blast radius is the point."""
+    snapshot = assign_instructors(_eng_with_people())
+    holders = [s.instructor_id for s in snapshot.sections if s.offering_id == "eng101"]
+    assert holders.count(1) <= 1, f"one person got two fixed-block sections: {holders}"
+
+    result = solve(snapshot, time_limit_seconds=25.0)
+    assert result.board.placements, f"the whole cohort went {result.status}"
+    assert [p for p in result.board.placements if p.offering_id == "ord1"], (
+        "an unrelated course was lost with it"
+    )
+
+
+def test_instructor_clash_is_never_waived_for_a_fixed_block_section():
+    """D19 suspends rules about CHOICE. H7 is physical and must still bite.
+
+    MUTATION: apply the H10 fixed-block exemption to every key rather than to
+    the offering key alone — which is easy to do, because `exempt_fixed_blocks`
+    is a field on `NoOverlapByKey` and H7 and H9 both carry it True."""
+    snapshot = _eng_with_people()
+    day, start = Day.SUN, 9 * 60
+    both_at_once = Board(
+        (
+            _p(
+                section="eng101#S1",
+                offering="eng101",
+                idx=1,
+                day=day,
+                window=TimeWindow(start, start + 75),
+                instructor=1,
+            ),
+            _p(
+                section="eng101#S2",
+                offering="eng101",
+                idx=1,
+                day=day,
+                window=TimeWindow(start, start + 75),
+                instructor=1,
+            ),
+        )
+    )
+    assert any(r.rule_id == "H7" for r in validate(snapshot, both_at_once).violated), (
+        "one instructor was allowed to teach two sections at the same hour"
+    )
+
+
+def test_room_exclusivity_is_never_waived_for_a_fixed_block_section():
+    """The other half of the same mutation: two sections cannot share a room."""
+    snapshot = _eng_with_people()
+    day, start = Day.SUN, 9 * 60
+    same_room = Board(
+        (
+            _p(
+                section="eng101#S1",
+                offering="eng101",
+                idx=1,
+                day=day,
+                window=TimeWindow(start, start + 75),
+                room="R1",
+            ),
+            _p(
+                section="eng101#S2",
+                offering="eng101",
+                idx=1,
+                day=day,
+                window=TimeWindow(start, start + 75),
+                room="R1",
+            ),
+        )
+    )
+    assert any(r.rule_id == "H9" for r in validate(snapshot, same_room).violated), (
+        "two sections were allowed to share one room at one hour"
+    )
+
+
+def test_the_fixed_block_flag_changes_the_fingerprint():
+    """N8. The flag suspends H2, H10, D14, D17 and symmetry breaking and changes
+    how the CHECKER grades, so two runs differing in it are judged under
+    different rulebooks. Leaving it out of the hash declared them comparable."""
+    snapshot, offering, _sections = _eng()
+    without = replace(
+        snapshot,
+        offerings=tuple(replace(o, occupies_fixed_block=False) for o in snapshot.offerings),
+    )
+    assert snapshot.fingerprint() != without.fingerprint()

@@ -353,25 +353,47 @@ def _check_distinct_days(spec: DistinctDays, snap: Snapshot, board: Board) -> tu
     out: list[Violation] = []
     refined = _fixed_block_sections(snap) if spec.refine_for_fixed_blocks else frozenset()
     for section_id, items in sorted(board.by_section.items()):
-        fixed = section_id in refined
+        ordered = sorted(items, key=lambda x: (x.day.index, x.window.start))
+        if section_id in refined:
+            # A fixed-block section is MEANT to meet more than once a day, so
+            # the graded property is the physical one: no two of its meetings
+            # overlap.
+            #
+            # Compared as INTERVALS, never as equal start times. Start equality
+            # was the first attempt and it was unsound: this grid declares 10:30
+            # and 10:50 for the same 75 minutes, so a section booked at both on
+            # one day has two different starts, overlaps for 55 minutes, and
+            # passed every rule in the book. H7 and H9 could not catch it either
+            # — a D19 section has no instructor and no room, so both return no
+            # key. This module's own docstring names that failure: the old
+            # engine had eight implementations of instructor clash, "one of
+            # which compared start times while the others compared intervals".
+            per_day: dict[str, list[Placement]] = {}
+            for p in ordered:
+                for earlier in per_day.get(p.day.value, ()):
+                    if p.window.overlaps(earlier.window):
+                        out.append(
+                            Violation(
+                                spec.rule_id,
+                                f"section {section_id} meets at {p.day.value} "
+                                f"{p.window}, overlapping {earlier.window}",
+                                (earlier.id, p.id),
+                            )
+                        )
+                per_day.setdefault(p.day.value, []).append(p)
+            continue
         seen: dict[object, Placement] = {}
-        for p in sorted(items, key=lambda x: (x.day.index, x.window.start)):
-            # For a fixed-block section the key is the CELL, not the day: it is
-            # meant to meet twice a morning, and what would be wrong is meeting
-            # twice in the SAME hour.
-            key = (p.day.value, p.window.start) if fixed else p.day.value
-            if key in seen:
+        for p in ordered:
+            if p.day.value in seen:
                 out.append(
                     Violation(
                         spec.rule_id,
-                        f"section {section_id} meets twice at {p.day.value} {p.window}"
-                        if fixed
-                        else f"section {section_id} meets twice on {p.day.value}",
-                        (seen[key].id, p.id),
+                        f"section {section_id} meets twice on {p.day.value}",
+                        (seen[p.day.value].id, p.id),
                     )
                 )
             else:
-                seen[key] = p
+                seen[p.day.value] = p
     return tuple(out)
 
 

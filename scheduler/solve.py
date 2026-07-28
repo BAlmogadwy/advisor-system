@@ -346,6 +346,13 @@ def solve(
             siblings = sorted(s.id for s in sections_by_offering[offering_id])
             if len(siblings) < 2:
                 continue
+            if offerings[offering_id].occupies_fixed_block:
+                # D19: every section occupies every cell of the block, so which
+                # cell holds "meeting #3" of S1 versus of S2 is an artefact of
+                # the solver's own numbering — the board is identical either
+                # way. Left in, this spends hundreds of booleans and a matching
+                # per index steering a decision that changes nothing.
+                continue
             # Scoped to this offering: sections belong to exactly one course, so
             # a shared dict would only ever be re-scanned and filtered.
             paired_with: dict[tuple[str, int], list] = {}
@@ -1131,13 +1138,26 @@ def solve(
     elapsed = time.perf_counter() - started
 
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        # A PROVEN infeasibility and a timeout are different facts and must not
+        # share a sentence. "No assignment found within 120s" reads as "give it
+        # longer", and for INFEASIBLE no budget will ever help — the answer is
+        # that some rule cannot be satisfied at all, which is a decision for a
+        # human. This is N10: infeasible always carries the reason.
+        if status == cp_model.INFEASIBLE:
+            note = (
+                "INFEASIBLE: no timetable satisfies these rules, at any time "
+                "budget. Longer solving cannot help; a constraint or the input "
+                "has to change."
+            )
+        else:
+            note = f"no assignment found within {time_limit_seconds:.0f}s"
         return SolveResult(
             Board(()),
             solver.status_name(status),
             False,
             float("inf"),
             elapsed,
-            notes=[f"no assignment found within {time_limit_seconds:.0f}s"],
+            notes=[note],
         )
 
     placements: list[Placement] = []
@@ -1291,7 +1311,7 @@ def instructor_metrics(snapshot: Snapshot, board: Board) -> dict:
     is not a statement about the timetable. Every figure here carries the
     denominator it was computed over.
     """
-    from scheduler.instructors import instructor_floor_days
+    from scheduler.instructors import instructor_floor_days, section_min_days
 
     offerings = snapshot.offerings_by_id
     by_instructor: dict[int, list[Placement]] = {}
@@ -1317,9 +1337,13 @@ def instructor_metrics(snapshot: Snapshot, board: Board) -> dict:
         for _day, items in by_day.items():
             span = max(i.window.end for i in items) - min(i.window.start for i in items)
             idle += span - sum(i.window.duration for i in items)
+        # DAYS the biggest section needs, not its meeting count: a fixed-block
+        # section (D19) meets twice a morning, so counting meetings gave a
+        # "proven floor" of 10 days in a 5-day week. `section_min_days` is the
+        # single definition, shared with `instructors.py`.
         largest = max(
             (
-                sum(r.count_per_week for r in offerings[s.offering_id].requirements)
+                section_min_days(offerings[s.offering_id])
                 for s in snapshot.sections
                 if s.id in sections_of.get(instructor_id, set())
             ),
@@ -1888,7 +1912,14 @@ def sibling_adjacency(snapshot: Snapshot, board: Board) -> dict:
         ids = sorted(s.id for s in siblings)
         if len(ids) < 2:
             continue
-        code = snapshot.offerings_by_id[offering_id].course_code
+        offering = snapshot.offerings_by_id[offering_id]
+        if offering.occupies_fixed_block:
+            # Same reason as the objective: pairing siblings by meeting index is
+            # meaningless when every section holds every cell. ENG101 alone
+            # contributed 20 "achievable" pairs against a typical course's 2-3,
+            # which is published as the back-to-back percentage.
+            continue
+        code = offering.course_code
         hits = target = 0
         indexes = {i for (sid, i) in placed if sid in ids}
         for index in sorted(indexes):
@@ -1938,8 +1969,19 @@ def time_of_day_drift(snapshot: Snapshot, board: Board) -> dict:
     13:00, 14:30, 14:45, 16:00, and no number of minutes separates "the next
     slot" from "after lunch".
     """
+    # D19 sections are excluded outright: a course that owns a whole block of
+    # the day uses every slot in it by definition, so "wander" is 90 minutes for
+    # every one of them and they drag the same-hour percentage down for keeping
+    # exactly the rule they were given.
+    fixed = {
+        section.id
+        for section in snapshot.sections
+        if snapshot.offerings_by_id[section.offering_id].occupies_fixed_block
+    }
     families: dict[tuple[str, int, object], list[int]] = {}
     for placement in board.placements:
+        if placement.section_id in fixed:
+            continue
         families.setdefault(
             (placement.section_id, placement.window.duration, placement.delivery), []
         ).append(placement.window.start)

@@ -1484,3 +1484,92 @@ def test_eng101_is_compiled_as_a_fixed_block_and_ordinary_english_is_not():
     ordinary = by_code["ENGL103"]
     assert not ordinary.occupies_fixed_block
     assert all(not r.allowed_starts and r.uses_shared_room for r in ordinary.requirements)
+
+
+# ── the parts a test audit proved were never exercised ────────────────────
+
+
+def test_section_sizing_uses_the_institution_s_rules_when_no_capacity_is_declared():
+    """MUTATION: drop `course_metadata=` from the `compute_section_plan` call.
+
+    Every other fixture in this suite declares `max_capacity`, and a declared
+    capacity outranks institutional sizing — so the metadata was dead weight in
+    all of them and the mutation stayed green across the whole suite. It is not
+    dead on live data: without it the planner sees an opaque `off_...` id,
+    cannot extract a department, and classes everything as an external service
+    course at 50 seats. Measured on this fixture: 2 sections of 50 instead of 4
+    of 25."""
+    _plan("AI", "AI401", credits=4, capacity=None, term=1)
+    for sid in range(440001, 440101):  # 100 students, no declared capacity
+        _student(sid, "AI", "M")
+    _room("M-1", "M", capacity=60)
+    snap = build_snapshot(
+        academic_year="1448", term=1, gender="M", programs=["AI"], default_capacity=25
+    )
+    offering = next(o for o in snap.offerings if o.course_code == "AI401")
+    demanded = sum(1 for d in snap.demand if offering.id in d.offering_ids)
+    assert demanded == 100, f"the fixture must produce real demand, got {demanded}"
+    sections = snap.sections_by_offering[offering.id]
+    seats = {s.capacity for s in sections}
+    assert seats == {25}, (
+        f"a 4-credit local course seats 25 by institutional rule; got {seats}. "
+        f"The planner was not told the course code."
+    )
+    assert len(sections) == 4, f"100 students / 25 seats = 4 sections, got {len(sections)}"
+
+
+def test_the_generate_button_withholds_small_courses_by_default():
+    """MUTATION: `min_demand: int = 5` -> 1 in `bridge.py`. Every test passes
+    `min_demand` explicitly, so nothing pinned the value the workspace actually
+    uses and the rule could ship switched off."""
+    import inspect
+
+    from scheduler.bridge import build_into_scenario
+
+    assert inspect.signature(build_into_scenario).parameters["min_demand"].default == 5
+
+    from core.services import planner_job_runner
+
+    source = inspect.getsource(planner_job_runner.run_planner_job)
+    assert 'p.get("min_demand", 5)' in source, "the async job path lost the default"
+
+
+def test_a_shared_code_no_programme_claims_is_reported_not_guessed():
+    """MUTATION: `return None` -> `return candidates[0]` in `offering_for`.
+
+    The docstring promises it never guesses "because guessing is what merged
+    them before", and no test reached the branch. A CS student asking for a
+    CS111 that exists only in the AI and AI2 plans must be counted as unmatched,
+    not silently enrolled in whichever sorted first."""
+    from scheduler.intake import build_snapshot as build
+
+    _plan("AI", "CS111", capacity=10, name="PROGRAMMING I")
+    _plan("AI2", "CS111", capacity=10, name="FUNDAMENTALS OF PROGRAMMING")
+    _plan("DS", "DS101", capacity=10, name="DATA SCIENCE I")
+    # A DS student whose own plan holds DS101; DS has no CS111 at all.
+    for sid in range(440001, 440007):
+        _student(sid, "DS", "M")
+    for sid in range(441001, 441007):
+        _student(sid, "AI", "M")
+    _room("M-1", "M", capacity=40)
+    snap = build(
+        academic_year="1448",
+        term=1,
+        gender="M",
+        programs=["AI", "AI2", "DS"],
+        default_capacity=25,
+    )
+    by_prog = {o.id: o.programs for o in snap.offerings}
+    for d in snap.demand:
+        for oid in d.offering_ids:
+            assert d.program in by_prog[oid], (
+                f"a {d.program} student was enrolled in an offering for {by_prog[oid]}"
+            )
+
+
+def test_capacity_policy_rejects_a_nonsense_min_demand():
+    """MUTATION: delete the `raise`. `test_capacity_policy_rejects_nonsense` was
+    not extended when the field was added."""
+    with pytest.raises(ValueError):
+        CapacityPolicy(default_capacity=25, min_demand=0)
+    assert CapacityPolicy(default_capacity=25, min_demand=1).min_demand == 1

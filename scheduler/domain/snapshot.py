@@ -162,6 +162,12 @@ class Snapshot:
                     o.id,
                     o.capacity,
                     sorted(o.programs),
+                    # `occupies_fixed_block` decides which RULES the offering
+                    # is graded under — it suspends H2, H10, D14, D17 and
+                    # symmetry breaking — so two runs differing in it are not
+                    # merely different instances, they are judged by different
+                    # rulebooks. Omitting it declared them comparable (N8).
+                    o.occupies_fixed_block,
                     [
                         # allowed_starts and uses_shared_room are part of the
                         # problem, not of the answer: two runs that differ in

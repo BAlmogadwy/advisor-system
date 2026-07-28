@@ -565,6 +565,28 @@ def build_snapshot(
                     f"{code} must occupy the morning, but the grid declares no "
                     f"morning lecture window"
                 )
+            # The rule works by pigeonhole: as many meetings as cells, one
+            # meeting per cell, so every cell is filled. That is only a proof if
+            # the two numbers agree, and they are computed from different parts
+            # of the grid — `days()` is the union across the lecture, lab and
+            # online families, while the cells come from the 75-minute in-person
+            # family alone. A grid whose lab family covers a day the lecture
+            # family does not would give more meetings than cells, and the model
+            # would come back INFEASIBLE with the same unhelpful note a timeout
+            # produces. Checked here, where both numbers are built.
+            cells = [
+                s
+                for s in grid.day_windows_for(75, DeliveryMode.IN_PERSON)
+                if s.window.start in set(block)
+            ]
+            wanted = len(block) * len(grid.days())
+            if len(cells) != wanted:
+                raise IntakeError(
+                    f"{code} must fill the morning every day, which needs {wanted} "
+                    f"cells ({len(block)} morning start(s) x {len(grid.days())} day(s)), "
+                    f"but the grid declares {len(cells)}. The 75-minute in-person "
+                    f"family does not cover every day the grid does."
+                )
             requirements = (
                 MeetingRequirement(
                     MeetingKind.LECTURE,
@@ -812,7 +834,22 @@ def build_snapshot(
         for oid in d.offering_ids:
             head_count[oid] += 1
 
-    too_small = {oid for oid, n in head_count.items() if n < policy.min_demand}
+    # `is_scheduled` is load-bearing, not defensive. Graduation projects and
+    # cooperative training carry demand but have NO requirements: no room, no
+    # slot, no instructor day, no non-overlapping cell. Every clause of the
+    # argument for withholding a small course is false for them, and they are
+    # single-programme final-term courses, so a `< 5` test selects for them
+    # precisely. Two consequences without this guard: the warning fills with
+    # courses that were never on the board and no action can address, and — the
+    # worse one — a final-term student whose only remaining requirement is their
+    # graduation project is counted as "left with no timetable at all", when
+    # that is their correct and normal state. The figure built so that vanishing
+    # students could not flatter the averages would itself have been inflated.
+    too_small = {
+        oid
+        for oid, n in head_count.items()
+        if n < policy.min_demand and offerings_by_id[oid].is_scheduled
+    }
     low_demand_dropped: tuple[tuple[str, str, int, str], ...] = ()
     students_left_unserved = 0
     if too_small:

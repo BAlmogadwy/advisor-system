@@ -261,6 +261,25 @@ def build_into_scenario(
     else:
         result = plan(snapshot, time_limit_seconds=seconds, clash_tolerance=clash_tolerance)
 
+    if snapshot.low_demand_dropped:
+        # Said in the WARNINGS channel, not only in the summary dict, because
+        # this is the one filter that improves every number the run reports.
+        # Somebody comparing two runs has to be able to see that one of them was
+        # handed a smaller problem.
+        withheld = ", ".join(
+            f"{code} ({students})" for code, _name, students, _tier in snapshot.low_demand_dropped
+        )
+        result.warnings.append(
+            f"{len(snapshot.low_demand_dropped)} course(s) were withheld from the "
+            f"board because fewer than {snapshot.policy.min_demand} students wanted "
+            f"them, and must be taken in another section elsewhere in the college: "
+            f"{withheld}. Every figure below is computed without them."
+        )
+    if snapshot.students_left_unserved:
+        result.warnings.append(
+            f"{snapshot.students_left_unserved} student(s) wanted ONLY withheld "
+            f"courses and have no timetable at all; no per-student figure counts them"
+        )
     if result.unplaced:
         # Not fatal — a short board still beats none, and D7 says a shortage
         # reports rather than blocks. But it must not arrive looking complete:
@@ -483,6 +502,20 @@ def build_into_scenario(
             1 for p in board.placements if p.instructor_id is not None
         ),
         "notes": list(result.notes),
+        # ── what was NOT asked of the solver (D18) ────────────────────────
+        #
+        # Every figure above is computed over the problem that was actually
+        # solved, and D18 makes that problem smaller: withhold enough courses
+        # and the board scores perfectly on all of them. It is reported HERE,
+        # beside the results it flatters, because this dict is the Generate
+        # button's entire answer — `assess()` is never called on this path, so a
+        # readiness finding alone would have said it to nobody.
+        "courses_withheld_low_demand": [
+            {"code": c, "name": n, "students": k, "tier": t}
+            for c, n, k, t in snapshot.low_demand_dropped
+        ],
+        "students_left_unserved": snapshot.students_left_unserved,
+        "min_demand": snapshot.policy.min_demand,
         # Separate from `notes`, which every successful run also fills. A screen
         # that shows both as warnings teaches the reader to ignore warnings.
         "warnings": list(result.warnings),

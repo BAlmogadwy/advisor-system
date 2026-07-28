@@ -39,14 +39,40 @@ _CAP_APPLIES_ABOVE = 3
 DERIVED_WEEKLY_SESSION_CAP = 15
 
 
-def instructor_floor_days(sessions: int, largest_section_meetings: int, daily_cap: int = 3) -> int:
+def section_min_days(offering) -> int:
+    """Fewest distinct days one section's weekly meetings can occupy.
+
+    For an ordinary section this is its meeting count, because H2 puts each
+    meeting on a different day. A **fixed-block** section (D19) is exempt from
+    H2 and meets once in every cell of its block, so it needs
+    `meetings / cells-per-day` days instead.
+
+    Getting this wrong is not cosmetic: an ENG101 section has ten meetings, and
+    feeding ten to the floor below produced a "proven minimum" of **10 working
+    days in a 5-day week** and a board reported as 5 days *below* its own floor.
+    That figure is published as `instructor_days_floor` and is what
+    `at_proven_floor` is computed from — the number every result in this
+    subsystem is quoted against.
+    """
+    meetings = sum(r.count_per_week for r in offering.requirements)
+    if not offering.occupies_fixed_block:
+        return meetings
+    per_day = max(
+        (len(r.allowed_starts) for r in offering.requirements if r.allowed_starts),
+        default=1,
+    )
+    return math.ceil(meetings / max(1, per_day))
+
+
+def instructor_floor_days(sessions: int, largest_section_days: int, daily_cap: int = 3) -> int:
     """Fewest days an instructor can possibly work — a proof, not a target.
 
-    Two independent rules force it: the daily cap bounds sessions per day, and
-    H2 puts a section's meetings on distinct days. Reporting excess *against
-    this floor* means a heavy load is never mistaken for bad scheduling.
+    Two independent rules force it: the daily cap bounds sessions per day, and a
+    section's own meetings cannot be compressed below `section_min_days`.
+    Reporting excess *against this floor* means a heavy load is never mistaken
+    for bad scheduling.
     """
-    return max(math.ceil(sessions / daily_cap) if sessions else 0, largest_section_meetings)
+    return max(math.ceil(sessions / daily_cap) if sessions else 0, largest_section_days)
 
 
 def assign_instructors(snapshot: Snapshot, *, daily_cap: int = 3) -> Snapshot:
@@ -72,6 +98,18 @@ def assign_instructors(snapshot: Snapshot, *, daily_cap: int = 3) -> Snapshot:
             course_cap = (
                 MAX_SECTIONS_PER_COURSE if len(siblings) > _CAP_APPLIES_ABOVE else len(siblings)
             )
+            if offerings[offering_id].occupies_fixed_block:
+                # D19: every section of a fixed-block course sits in the SAME
+                # cells, so one person holding two of them is not a heavy week —
+                # it is a physical impossibility, and H7 is right to refuse it.
+                #
+                # This is not a small failure. `solve()` has no way to drop the
+                # assignment, so the whole model goes INFEASIBLE and the ENTIRE
+                # cohort comes back with zero placements, not just the course at
+                # fault. Dormant on live data today only because ENG101 has no
+                # `course_instructors` rows; one data entry away from a total
+                # build failure.
+                course_cap = 1
             weekly = sessions_of.get(offering_id, 0)
             for section in sorted(siblings, key=lambda s: s.index):
                 if section.id in assigned:
@@ -104,9 +142,9 @@ def instructor_report(snapshot: Snapshot, *, daily_cap: int = 3) -> list[dict]:
         sessions = 0
         largest = 0
         for section in sections:
-            meetings = sum(r.count_per_week for r in offerings[section.offering_id].requirements)
-            sessions += meetings
-            largest = max(largest, meetings)
+            offering = offerings[section.offering_id]
+            sessions += sum(r.count_per_week for r in offering.requirements)
+            largest = max(largest, section_min_days(offering))
         rows.append(
             {
                 "instructor_id": instructor_id,
