@@ -1268,7 +1268,18 @@ def instructor_metrics(snapshot: Snapshot, board: Board) -> dict:
             ),
             default=0,
         )
-        floor = instructor_floor_days(len(placements), largest)
+        # Sessions counted from the SNAPSHOT, not from the board. Taking them
+        # from the board lets a partial timetable re-benchmark itself against
+        # its own contents: lose a class and the floor drops with it, so the
+        # board still reads "at the proven floor" while teaching less than it
+        # should. Measured: dropping one of four sessions halved the reported
+        # idle and left `at_proven_floor` True.
+        owed = sum(
+            sum(r.count_per_week for r in offerings[s.offering_id].requirements)
+            for s in snapshot.sections
+            if s.id in sections_of.get(instructor_id, set())
+        )
+        floor = instructor_floor_days(owed, largest)
         rows.append(
             {
                 "instructor_id": instructor_id,
@@ -1547,6 +1558,20 @@ def plan(
         hint=first.board,
         **kwargs,
     )
+    # A meeting whose (duration, delivery) has no declared window gets no
+    # variables at all: it lands in `unplaced` and vanishes from the board. The
+    # fully-empty case is guarded in three places; the PARTIAL case was guarded
+    # nowhere, and it is the dangerous one — every metric here is computed over
+    # the board, so a timetable missing classes scores BETTER than one teaching
+    # them. Warn rather than fail: the board is still the best available answer,
+    # and the caller needs to know it is short.
+    for outcome in (first, second):
+        if outcome.unplaced and not any("could not be placed" in w for w in outcome.warnings):
+            outcome.warnings.append(
+                f"{len(outcome.unplaced)} meeting(s) could not be placed at all — "
+                "every figure below is measured over what WAS placed, so it "
+                f"flatters this board: {', '.join(sorted(outcome.unplaced)[:5])}"
+            )
     total = first.wall_time_seconds + second.wall_time_seconds
     if not second.board.placements:
         first.notes.append("gap pass found nothing; kept the working-day board")

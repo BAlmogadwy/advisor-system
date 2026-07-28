@@ -3405,3 +3405,68 @@ def test_an_online_course_is_exempt_from_the_block_rule():
         free_sections=frozenset(),
     )
     assert result.board.placements, "an online course was subjected to the block rule"
+
+
+# ── a board that lost classes must not score better for it ────────────────
+#
+# A meeting whose (duration, delivery) has no declared window gets no variables
+# at all: it lands in `unplaced` and vanishes from the board. The fully-empty
+# case is guarded in three places; the PARTIAL case was guarded nowhere, and it
+# is the dangerous one, because every metric here is computed over the board.
+# Lose a class and the reported idle falls, the proven floor falls with it, and
+# the board still reads "at the proven floor".
+
+
+def _one_unschedulable_meeting():
+    """One instructor owing FOUR single-meeting courses, one of which needs a
+    100-minute window the grid never declares. That lab can never be placed.
+
+    Four sessions against a cap of three a day makes the floor TWO days, and it
+    is the session count that sets it -- not the "a section's meetings fall on
+    distinct days" rule, which would be 1 here. That matters: with the floor
+    driven by the other rule, dropping a session leaves the floor unchanged and
+    the defect is invisible."""
+    grid = Grid.from_spec(lecture_starts={"09:00": 75, "10:30": 75, "13:00": 75}, lab_starts={})
+    offerings = [_offering(f"off{i}", reqs=_lecture(1)) for i in (1, 2, 3)]
+    offerings.append(
+        _offering(
+            "off4",
+            reqs=(MeetingRequirement(MeetingKind.LAB, DeliveryMode.IN_PERSON, 100, 1),),
+        )
+    )
+    sections = [Section(f"off{i}#S1", f"off{i}", 1, 10, instructor_id=1) for i in (1, 2, 3, 4)]
+    snapshot = _grid_snapshot(grid, offerings, sections)
+    return replace(
+        snapshot,
+        grid=grid,
+        instructors=(Instructor(id=1, name="Dr A", eligible_offerings=frozenset()),),
+    )
+
+
+def test_a_partial_board_says_it_is_partial():
+    snapshot = _one_unschedulable_meeting()
+    result = plan(snapshot, time_limit_seconds=15.0)
+    assert result.board.placements, "the lecture is placeable, so a board must come back"
+    assert result.unplaced, "this fixture must strand a meeting to mean anything"
+    assert any("could not be placed" in w for w in result.warnings), (
+        f"a board short of a class arrived looking complete: {result.warnings}"
+    )
+
+
+def test_the_proven_floor_is_what_the_instructor_OWES_not_what_landed():
+    """The floor is a claim about the person's load, not about this board. Taking
+    the session count from the placements lets a partial timetable re-benchmark
+    itself: lose a class and the floor drops with it, so a board teaching less
+    than it should still reads 'at the proven floor'."""
+    snapshot = _one_unschedulable_meeting()
+    board = plan(snapshot, time_limit_seconds=15.0).board
+    metrics = instructor_metrics(snapshot, board)
+    row = next(r for r in metrics["per_instructor"] if r["instructor_id"] == 1)
+    # Owed 4 sessions against a cap of 3 a day => floor 2. Only 3 landed, and
+    # counting those instead gives ceil(3/3) = 1.
+    assert row["sessions"] == 3, "three of the four sessions were placed"
+    assert row["floor_days"] == 2, (
+        f"the floor followed the board down to {row['floor_days']} instead of "
+        "staying at what this instructor is owed"
+    )
+    assert not metrics["at_proven_floor"], "a board short of a class claimed the floor"

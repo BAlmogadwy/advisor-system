@@ -239,6 +239,15 @@ def build_into_scenario(
     else:
         result = plan(snapshot, time_limit_seconds=seconds, clash_tolerance=clash_tolerance)
 
+    if result.unplaced:
+        # Not fatal — a short board still beats none, and D7 says a shortage
+        # reports rather than blocks. But it must not arrive looking complete:
+        # every metric in the summary is computed over the placements that
+        # exist, so a board missing classes scores better than a full one.
+        result.warnings.append(
+            f"{len(result.unplaced)} meeting(s) have no legal slot and were not "
+            "placed; the figures below cover only what was placed"
+        )
     if not result.board.placements:
         # An empty board scores perfectly on every metric — no meetings means no
         # clashes and nothing unroomed — so it must never be written or reported
@@ -430,6 +439,7 @@ def build_into_scenario(
         "scenario_id": scenario.id,
         "sections": len(snapshot.sections),
         "meetings_written": written,
+        "meetings_unplaced": len(result.unplaced),
         "meetings_without_a_board": orphaned,
         "solver_status": result.status,
         "wall_time_seconds": round(result.wall_time_seconds, 1),
