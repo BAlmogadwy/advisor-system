@@ -33,6 +33,10 @@ class _Occupancy:
         self.by_instructor: dict[tuple[int, Day], list[TimeWindow]] = {}
         self.by_offering: dict[tuple[str, Day], list[TimeWindow]] = {}
         self.by_section_day: set[tuple[str, Day]] = set()
+        #: (section, day) -> the windows it already occupies. Needed by D19,
+        #: where a section legitimately meets more than once a day and the rule
+        #: is "not twice in the same cell" rather than "not twice in a day".
+        self.by_section: dict[tuple[str, Day], list[TimeWindow]] = {}
         self.instructor_day_count: dict[tuple[int, Day], int] = {}
 
     @staticmethod
@@ -59,6 +63,7 @@ class _Occupancy:
             self.instructor_day_count[key] = self.instructor_day_count.get(key, 0) + 1
         self.by_offering.setdefault((p.offering_id, p.day), []).append(p.window)
         self.by_section_day.add((p.section_id, p.day))
+        self.by_section.setdefault((p.section_id, p.day), []).append(p.window)
 
 
 def place_naively(snapshot: Snapshot, *, instructor_cap: int = 3) -> Board:
@@ -95,6 +100,11 @@ def place_naively(snapshot: Snapshot, *, instructor_cap: int = 3) -> Board:
 
 def _place_one(snapshot, occupancy, section, offering, requirement, index, cap):
     needs_room = requirement.needs_shared_room
+    # D19: a course whose hours are given meets more than once a day, and its
+    # sections are REQUIRED to share hours. Enforcing H2 and H10 here left five
+    # of ENG101's ten weekly meetings unplaced on every board this placer built
+    # — including the naive baseline the whole search is measured against.
+    fixed_block = offering.occupies_fixed_block
     candidate_rooms = (
         [
             r
@@ -110,10 +120,19 @@ def _place_one(snapshot, occupancy, section, offering, requirement, index, cap):
 
     for slot in snapshot.grid.day_windows_for(requirement.duration, requirement.delivery):
         day, window = slot.day, slot.window
-        if (section.id, day) in occupancy.by_section_day:
-            continue  # H2: one meeting per section per day
-        if not occupancy.offering_free(offering.id, day, window):
-            continue  # H10: sibling sections must not collide
+        if requirement.allowed_starts and window.start not in requirement.allowed_starts:
+            continue  # D19: confined to a subset of its family's windows
+        if fixed_block:
+            # The finer rule H2 stands in for: not twice in the same CELL.
+            if any(
+                w.start == window.start for w in occupancy.by_section.get((section.id, day), ())
+            ):
+                continue
+        else:
+            if (section.id, day) in occupancy.by_section_day:
+                continue  # H2: one meeting per section per day
+            if not occupancy.offering_free(offering.id, day, window):
+                continue  # H10: sibling sections must not collide
         if section.instructor_id is not None and not occupancy.instructor_free(
             section.instructor_id, day, window, cap
         ):
@@ -128,10 +147,18 @@ def _place_one(snapshot, occupancy, section, offering, requirement, index, cap):
     # No window had a free room. Place it in time anyway, unroomed (D7).
     for slot in snapshot.grid.day_windows_for(requirement.duration, requirement.delivery):
         day, window = slot.day, slot.window
-        if (section.id, day) in occupancy.by_section_day:
+        if requirement.allowed_starts and window.start not in requirement.allowed_starts:
             continue
-        if not occupancy.offering_free(offering.id, day, window):
-            continue
+        if fixed_block:
+            if any(
+                w.start == window.start for w in occupancy.by_section.get((section.id, day), ())
+            ):
+                continue
+        else:
+            if (section.id, day) in occupancy.by_section_day:
+                continue
+            if not occupancy.offering_free(offering.id, day, window):
+                continue
         if section.instructor_id is not None and not occupancy.instructor_free(
             section.instructor_id, day, window, cap
         ):

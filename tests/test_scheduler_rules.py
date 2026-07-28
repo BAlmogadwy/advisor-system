@@ -3730,3 +3730,90 @@ def test_an_ordinary_course_is_untouched_by_any_of_this():
     days = [p.day for p in result.board.placements]
     assert len(days) == len(set(days)), "H2 stopped applying to an ordinary course"
     assert all(p.needs_room for p in result.board.placements), "it stopped needing a room"
+
+
+# ── D19 and the independent checker ───────────────────────────────────────
+#
+# The validator exists to disagree with the solver. Teaching it to wave the new
+# rule through would defeat the point, so the exemptions are DECLARED on the
+# rule specs (and therefore fingerprinted and printed in the certification)
+# rather than buried in the checkers — and H2 is REFINED rather than removed.
+#
+# All of this was found by a live run, not by these tests: the first version
+# exempted the solver alone and produced boards the checker graded INVALID with
+# 80 violations (20 H2 + 60 H10), and the greedy placer silently placed five of
+# ENG101's ten weekly meetings.
+
+
+def test_the_checker_accepts_a_correct_fixed_block_board():
+    snapshot, _offering_, _sections = _eng()
+    result = solve(snapshot, time_limit_seconds=25.0)
+    report = validate(snapshot, result.board)
+    assert not report.violated, [r.rule_id for r in report.violated]
+
+
+def test_the_refined_h2_still_catches_a_section_booked_twice_in_one_cell():
+    """The whole risk of the exemption. MUTATION: skip H2 for fixed-block
+    sections instead of refining its key — this board then passes, and a section
+    booked twice at the same hour goes unreported."""
+    snapshot, offering, sections = _eng()
+    day, start = Day.SUN, 9 * 60
+    doubled = Board(
+        (
+            _p(
+                section=sections[0].id,
+                offering=offering.id,
+                idx=1,
+                day=day,
+                window=TimeWindow(start, start + 75),
+            ),
+            _p(
+                section=sections[0].id,
+                offering=offering.id,
+                idx=2,
+                day=day,
+                window=TimeWindow(start, start + 75),
+            ),
+        )
+    )
+    report = validate(snapshot, doubled)
+    assert any(r.rule_id == "H2" for r in report.violated), (
+        f"a section booked twice in one cell was accepted: {[r.rule_id for r in report.violated]}"
+    )
+
+
+def test_the_exemptions_are_declared_not_hidden():
+    """A checker that quietly stops checking is how a checker starts lying, so
+    both exemptions appear in the rule declarations that get fingerprinted."""
+    declarations = {spec.rule_id: spec.declaration() for spec in RULEBOOK}
+    assert declarations["H2"]["refine_for_fixed_blocks"] is True
+    assert declarations["H10"]["exempt_fixed_blocks"] is True
+    # ...and never for the physical rules: an instructor cannot be in two rooms
+    # at once whatever the course, and neither can a room.
+    assert "exempt_fixed_blocks" not in declarations["H7"]
+    assert "exempt_fixed_blocks" not in declarations["H9"]
+
+
+def test_the_greedy_placer_places_every_meeting_of_a_fixed_block_course():
+    """MUTATION: leave `place_naively` enforcing H2. It then places one meeting
+    a day — five of ten — and every board built by this placer, including the
+    naive baseline the search is measured against, is short half the course.
+
+    On the live cohort that was five of ten; here it is one cell per day of
+    whatever the fixture grid declares, which is the same defect scaled down.
+
+    COVERAGE NOTE, measured rather than assumed: `_place_one` has two paths —
+    the roomed search and the unroomed fallback — and either alone can place a
+    fixed-block course, so mutating just one leaves this test green. Mutating
+    BOTH (the real defect: a placer that does not know about fixed blocks) drops
+    it to one meeting per day and this fails. The assertion is on the outcome
+    for exactly that reason: which internal path did the work is not a promise
+    worth pinning."""
+    snapshot, offering, sections = _eng()
+    board = place_naively(snapshot)
+    want = {(d, s) for d in MORNING.days() for s in MORNING_STARTS}
+    for section in sections:
+        placed = [p for p in board.placements if p.section_id == section.id]
+        assert len(placed) == len(want), f"{section.id} got {len(placed)} of {len(want)} meetings"
+        assert {(p.day, p.window.start) for p in placed} == want
+    assert not validate(snapshot, board).violated

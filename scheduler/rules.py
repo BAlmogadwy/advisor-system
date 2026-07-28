@@ -112,6 +112,16 @@ class NoOverlapByKey(RuleSpec):
 
     key: str = ""  # "instructor" | "room" | "offering"
     scope: str = "scenario"
+    #: Offerings whose sections are REQUIRED to share hours are exempt from the
+    #: same-offering separation (D19: ENG101/ENG102, where the owner's rule is
+    #: that every section sits at the same time). Declared here rather than
+    #: buried in the checker, so the exemption is fingerprinted with the rule and
+    #: appears in the certification, instead of being a silent kindness the
+    #: grader extends to the solver that produced the board.
+    #:
+    #: Applies to the "offering" key only. Instructor clash and room exclusivity
+    #: are physical and are never exempted for anybody.
+    exempt_fixed_blocks: bool = True
 
     def keys_of(self, p: Placement) -> tuple[str, ...]:
         if self.key == "instructor":
@@ -123,17 +133,35 @@ class NoOverlapByKey(RuleSpec):
         raise ValueError(f"unknown key {self.key!r}")
 
     def declaration(self) -> dict:
-        return {**super().declaration(), "key": self.key, "scope": self.scope}
+        out = {**super().declaration(), "key": self.key, "scope": self.scope}
+        if self.key == "offering":
+            out["exempt_fixed_blocks"] = self.exempt_fixed_blocks
+        return out
 
 
 @dataclass(frozen=True)
 class DistinctDays(RuleSpec):
-    """All meetings of one group fall on different days."""
+    """All meetings of one group fall on different days.
+
+    A course whose hours are GIVEN rather than chosen (D19 — ENG101/ENG102 own
+    the whole morning) meets more than once a day by design. For those sections
+    the rule is not dropped, it is REFINED to the finer key it was always
+    standing in for: no two meetings in the same CELL. Dropping it outright
+    would let a section be booked twice at 09:00 on Sunday with nothing to say
+    so, and a checker that stops checking is how a checker starts lying.
+    """
 
     group: str = "section"
+    #: When True, sections of a fixed-block offering are graded on (day, start)
+    #: instead of on day alone.
+    refine_for_fixed_blocks: bool = True
 
     def declaration(self) -> dict:
-        return {**super().declaration(), "group": self.group}
+        return {
+            **super().declaration(),
+            "group": self.group,
+            "refine_for_fixed_blocks": self.refine_for_fixed_blocks,
+        }
 
 
 @dataclass(frozen=True)
@@ -281,9 +309,20 @@ def _pairs(items: Iterable[Placement]) -> Iterable[tuple[Placement, Placement]]:
 
 
 def _check_no_overlap(spec: NoOverlapByKey, snap: Snapshot, board: Board) -> tuple[Violation, ...]:
+    # D19: sections of a fixed-block course are REQUIRED to share their hours,
+    # so grading them for overlapping each other reports the rule being obeyed
+    # as a failure. Scoped to the offering key alone — an instructor cannot be
+    # in two rooms at once no matter what the course is, and neither can a room.
+    exempt: frozenset[str] = frozenset()
+    if spec.key == "offering" and spec.exempt_fixed_blocks:
+        exempt = frozenset(
+            offering.id for offering in snap.offerings if offering.occupies_fixed_block
+        )
     grouped: dict[str, list[Placement]] = {}
     for p in board.placements:
         for key in spec.keys_of(p):
+            if key in exempt:
+                continue
             grouped.setdefault(key, []).append(p)
     out: list[Violation] = []
     for key, items in sorted(grouped.items()):
@@ -300,21 +339,39 @@ def _check_no_overlap(spec: NoOverlapByKey, snap: Snapshot, board: Board) -> tup
     return tuple(out)
 
 
+def _fixed_block_sections(snap: Snapshot) -> frozenset[str]:
+    """Sections whose hours are given, not chosen (D19)."""
+    offerings = snap.offerings_by_id
+    return frozenset(
+        section.id
+        for section in snap.sections
+        if offerings[section.offering_id].occupies_fixed_block
+    )
+
+
 def _check_distinct_days(spec: DistinctDays, snap: Snapshot, board: Board) -> tuple[Violation, ...]:
     out: list[Violation] = []
+    refined = _fixed_block_sections(snap) if spec.refine_for_fixed_blocks else frozenset()
     for section_id, items in sorted(board.by_section.items()):
-        seen: dict[str, Placement] = {}
+        fixed = section_id in refined
+        seen: dict[object, Placement] = {}
         for p in sorted(items, key=lambda x: (x.day.index, x.window.start)):
-            if p.day.value in seen:
+            # For a fixed-block section the key is the CELL, not the day: it is
+            # meant to meet twice a morning, and what would be wrong is meeting
+            # twice in the SAME hour.
+            key = (p.day.value, p.window.start) if fixed else p.day.value
+            if key in seen:
                 out.append(
                     Violation(
                         spec.rule_id,
-                        f"section {section_id} meets twice on {p.day.value}",
-                        (seen[p.day.value].id, p.id),
+                        f"section {section_id} meets twice at {p.day.value} {p.window}"
+                        if fixed
+                        else f"section {section_id} meets twice on {p.day.value}",
+                        (seen[key].id, p.id),
                     )
                 )
             else:
-                seen[p.day.value] = p
+                seen[key] = p
     return tuple(out)
 
 
