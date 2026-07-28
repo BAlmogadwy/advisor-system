@@ -1573,3 +1573,75 @@ def test_capacity_policy_rejects_a_nonsense_min_demand():
     with pytest.raises(ValueError):
         CapacityPolicy(default_capacity=25, min_demand=0)
     assert CapacityPolicy(default_capacity=25, min_demand=1).min_demand == 1
+
+
+# ── the evening windows must never reach an automatic placer ──────────────
+#
+# The three online windows (15:50 / 17:40 / 19:30) live in the SHARED slot
+# config so an online class can be drawn on the workspace grid. They consume no
+# room. `placeable_slots()` is what keeps them out of every automatic placer —
+# and a four-agent review found FIVE placers in the classic engine reading the
+# raw list instead, each of which builds candidate placements and then assigns a
+# room. All three windows are exactly 100 minutes, so no `duration > 75` branch
+# rejects them, and the evening is empty, so an annealer minimising overlap is
+# actively BIASED toward moving a lab there.
+#
+# This is a regression of the EXISTING engine, which is the one thing the
+# scheduler work must never cause. Enforced structurally rather than by reading:
+# any new automatic placer that takes the raw list fails this.
+
+#: Modules that legitimately read the raw slot list.
+#:
+#: Exports and the availability grid must DRAW the evening windows — a timetable
+#: that hides a class is worse than one that shows it. Manual placement is
+#: allowed to use them by design (the owner may place an online class by hand).
+#: `timetable_autoplace` defines the filter.
+_RAW_SLOT_READERS_ALLOWED = {
+    "timetable_autoplace.py",  # defines placeable_slots
+    "timetable_export.py",  # draws, never places
+    "timetable_per_plan_export.py",  # draws, never places
+    "group_availability.py",  # already filters at its one call site
+    "timetable_cpsat_polisher.py",  # already filters
+    "timetable_instructor_compaction.py",  # see note below
+}
+
+
+def test_no_automatic_placer_reads_the_unfiltered_slot_grid():
+    """Every `... or DEFAULT_SLOTS` in a placing module must be wrapped.
+
+    NOTE on `timetable_instructor_compaction.py`: it reads the raw list at two
+    sites and is NOT exempt on merit — it is exempt because a large uncommitted
+    rewrite of that file is in flight from another author, and editing inside it
+    would collide. It must be fixed there, and this list is where that debt is
+    recorded rather than forgotten.
+    """
+    import re
+    from pathlib import Path
+
+    services = Path(__file__).resolve().parent.parent / "core" / "services"
+    pattern = re.compile(r"(?<!placeable_slots\()\b\w*slot_config or DEFAULT_(?:LAB_)?SLOTS")
+    offenders: dict[str, list[str]] = {}
+    for path in sorted(services.glob("timetable_*.py")) + [services / "group_availability.py"]:
+        if path.name in _RAW_SLOT_READERS_ALLOWED:
+            continue
+        hits = [
+            line.strip()
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if pattern.search(line) and "placeable_slots" not in line
+        ]
+        if hits:
+            offenders[path.name] = hits[:3]
+    assert not offenders, (
+        "these modules place classes from the RAW slot grid and can book a room "
+        f"in an online-only evening window: {offenders}"
+    )
+
+
+def test_the_evening_windows_are_actually_excluded_from_what_a_placer_sees():
+    """The filter has to remove something, or the test above guards nothing."""
+    from core.services.timetable_autoplace import DEFAULT_LAB_SLOTS, placeable_slots
+
+    raw = {s["start"] for s in DEFAULT_LAB_SLOTS}
+    kept = {s["start"] for s in placeable_slots(DEFAULT_LAB_SLOTS)}
+    assert {"15:50", "17:40", "19:30"} <= raw, "the online windows left the shared config"
+    assert kept == raw - {"15:50", "17:40", "19:30"}

@@ -40,7 +40,12 @@ from core.models import TermSectionMeeting as _TSM
 from core.services.course_instructor_assignment import (
     apply_primary_instructor as _apply_course_instructor,
 )
-from core.services.timetable_autoplace import DEFAULT_LAB_SLOTS, DEFAULT_SLOTS, WEEKDAYS
+from core.services.timetable_autoplace import (
+    DEFAULT_LAB_SLOTS,
+    DEFAULT_SLOTS,
+    WEEKDAYS,
+    placeable_slots,
+)
 from core.services.timetable_pr4_instructor import (
     get_instructor_daily_cap,
     is_instructor_clash_enabled,
@@ -127,8 +132,13 @@ def repair_instructor_daily_overloads(scenario_id: int) -> dict:
     )
     cap_map = build_section_instructor_map_for_scenario(scenario_id)  # section_id -> frozenset[int]
 
-    lecture_slots = [(s["start"], s["end"]) for s in (scenario.slot_config or DEFAULT_SLOTS)]
-    lab_slots = [(s["start"], s["end"]) for s in (scenario.lab_slot_config or DEFAULT_LAB_SLOTS)]
+    lecture_slots = [
+        (s["start"], s["end"]) for s in placeable_slots(scenario.slot_config or DEFAULT_SLOTS)
+    ]
+    lab_slots = [
+        (s["start"], s["end"])
+        for s in placeable_slots(scenario.lab_slot_config or DEFAULT_LAB_SLOTS)
+    ]
     blocked = {(d.upper(), st) for (d, st) in _blocked_keys(scenario)}
 
     placements = list(
@@ -387,8 +397,13 @@ def repair_instructor_clashes(scenario_id: int) -> dict:
     cap_map = build_section_instructor_map_for_scenario(scenario_id)
     cap_on = is_instructor_daily_cap_enabled()
     cap = get_instructor_daily_cap() if cap_on else 10**9
-    lecture_slots = [(s["start"], s["end"]) for s in (scenario.slot_config or DEFAULT_SLOTS)]
-    lab_slots = [(s["start"], s["end"]) for s in (scenario.lab_slot_config or DEFAULT_LAB_SLOTS)]
+    lecture_slots = [
+        (s["start"], s["end"]) for s in placeable_slots(scenario.slot_config or DEFAULT_SLOTS)
+    ]
+    lab_slots = [
+        (s["start"], s["end"])
+        for s in placeable_slots(scenario.lab_slot_config or DEFAULT_LAB_SLOTS)
+    ]
     blocked = {(d.upper(), st) for (d, st) in _blocked_keys(scenario)}
 
     placements = list(

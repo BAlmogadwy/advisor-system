@@ -729,7 +729,11 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
     visitor/cross-group students are included.  The response also includes the
     placement's current impact so the UI can show before/after improvement.
     """
-    from core.services.timetable_autoplace import DEFAULT_LAB_SLOTS, DEFAULT_SLOTS
+    from core.services.timetable_autoplace import (
+        DEFAULT_LAB_SLOTS,
+        DEFAULT_SLOTS,
+        placeable_slots,
+    )
     from core.services.timetable_overlap import (
         HARD_OVERLAP_THRESHOLD,
         build_course_students_map,
@@ -750,7 +754,7 @@ def preview_placement_slot_candidates(placement_id: int) -> dict:
     duration = _to_minutes(placement.end_time) - _to_minutes(placement.start_time)
     is_lab = duration > 80
     slot_config = scenario.lab_slot_config if is_lab else scenario.slot_config
-    slots = slot_config or (DEFAULT_LAB_SLOTS if is_lab else DEFAULT_SLOTS)
+    slots = placeable_slots(slot_config or (DEFAULT_LAB_SLOTS if is_lab else DEFAULT_SLOTS))
     kind = "lab" if is_lab else "lect"
 
     board_items = _load_board_placements(placement.board_id)
@@ -1065,6 +1069,7 @@ def preview_planned_section_slot_candidates(
         DEFAULT_SLOTS,
         generate_meeting_options,
         get_meeting_pattern,
+        placeable_slots,
     )
     from core.services.timetable_overlap import (
         HARD_OVERLAP_THRESHOLD,
@@ -1096,9 +1101,9 @@ def preview_planned_section_slot_candidates(
     include_lecture = requested_kind not in {"LAB", "LABS"}
     slot_sets: list[tuple[str, list[dict]]] = []
     if include_lecture:
-        slot_sets.append(("lect", scenario.slot_config or DEFAULT_SLOTS))
+        slot_sets.append(("lect", placeable_slots(scenario.slot_config or DEFAULT_SLOTS)))
     if include_lab or not requested_kind:
-        slot_sets.append(("lab", scenario.lab_slot_config or DEFAULT_LAB_SLOTS))
+        slot_sets.append(("lab", placeable_slots(scenario.lab_slot_config or DEFAULT_LAB_SLOTS)))
 
     existing_section = (
         TermSection.objects.filter(scenario=scenario, course_key=key, section=section)
@@ -1430,8 +1435,8 @@ def preview_planned_section_slot_candidates(
         pattern = meeting_pattern_for_request()
         options = generate_meeting_options(
             pattern,
-            scenario.slot_config or DEFAULT_SLOTS,
-            scenario.lab_slot_config or DEFAULT_LAB_SLOTS,
+            placeable_slots(scenario.slot_config or DEFAULT_SLOTS),
+            placeable_slots(scenario.lab_slot_config or DEFAULT_LAB_SLOTS),
         )
         candidates = [score_pattern(option, idx) for idx, option in enumerate(options, start=1)]
         candidates.sort(
