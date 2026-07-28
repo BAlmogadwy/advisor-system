@@ -13,10 +13,14 @@ import json
 
 from django.core.management.base import BaseCommand, CommandError
 
+from scheduler.instructors import assign_instructors
 from scheduler.intake import IntakeError, build_snapshot
 from scheduler.placement import place_naively
 from scheduler.rules import Enforcement, Severity
 from scheduler.validate import validate
+
+#: Rules that can only be broken by a placement carrying an instructor.
+_INSTRUCTOR_RULES = frozenset({"H7", "H8"})
 
 _MARK = {
     Enforcement.CHECK: "pass ",
@@ -50,11 +54,24 @@ class Command(BaseCommand):
         except IntakeError as exc:
             raise CommandError(str(exc)) from exc
 
+        # Instructors must be assigned before grading, or H7 and H8 are graded
+        # over NOBODY and print "pass". `build_snapshot` leaves every section's
+        # instructor_id as None by design (D5), so without this the checker walks
+        # 168 placements, finds no instructor on any of them, and reports two
+        # clean instructor rules -- which is exactly the "no violation found"
+        # versus "not looked for" confusion this module exists to abolish.
+        snapshot = assign_instructors(snapshot)
         board = place_naively(snapshot)
         report = validate(snapshot, board)
+        covered = sum(1 for p in board.placements if p.instructor_id is not None)
 
         if options["format"] == "json":
-            self.stdout.write(json.dumps(report.as_dict(), indent=2, default=str))
+            payload = report.as_dict()
+            payload["instructor_coverage"] = {
+                "placements_with_an_instructor": covered,
+                "placements": len(board.placements),
+            }
+            self.stdout.write(json.dumps(payload, indent=2, default=str))
             return
 
         w = self.stdout.write
@@ -82,6 +99,15 @@ class Command(BaseCommand):
                 if result.violations
                 else (result.note or "ok")
             )
+            # An instructor rule graded over placements that carry no instructor
+            # is not a pass, it is a rule nobody looked at -- so say what it was
+            # measured over. D5 makes partial linkage permanent and normal, and
+            # requires every instructor figure to be published with its coverage.
+            if result.rule_id in _INSTRUCTOR_RULES and not result.violations:
+                detail = (
+                    f"{detail}  (over {covered}/{len(board.placements)} placements "
+                    "that carry an instructor)"
+                )
             w(f"  [{mark}] {result.rule_id:<14} {result.title:<34} {detail}")
             for violation in result.violations[: options["show"]]:
                 w(f"            - {violation.message}")

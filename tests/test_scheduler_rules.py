@@ -3186,3 +3186,222 @@ def test_an_online_class_still_collides_with_a_lecture_it_overlaps():
     assert result.students_with_a_clash == 5, (
         "an online class was allowed to sit on top of a lecture for free"
     )
+
+
+# ── a course's sections own a fixed block of slots ────────────────────────
+#
+# Owner rule, 2026-07-28. The same-hour ceiling is per SECTION, which is right
+# for this department's own courses (T1) where we control the instructor. For
+# everything else the instructors come from other departments and teach
+# elsewhere in the week, so a course whose slots move about is unmanageable:
+#
+#   * one section  -> that section keeps ONE slot, every day it runs;
+#   * a back-to-back pair -> the pair owns an exact PAIR of slots, the same two
+#     every day, and the two sections may SWAP which of them they sit in.
+#
+# Online is exempt: GS/GSE already run in their own evening windows, consume no
+# room and create no campus travel, so pinning them buys nobody anything.
+
+BLOCKS = frozenset({"T2", "T3"})
+
+
+def _starts_by_day(board, section_ids, duration):
+    per_day = {}
+    for p in board.placements:
+        if p.section_id in section_ids and p.window.duration == duration:
+            per_day.setdefault(p.day, set()).add(p.window.start)
+    return per_day
+
+
+def _tiered(code, tier, *, reqs=None, sections=2, capacity=30):
+    offering = replace(_offering(code, reqs=reqs or _lecture(2)), tier=tier)
+    secs = [Section(f"{code}#S{i}", code, i, capacity) for i in range(1, sections + 1)]
+    return offering, secs
+
+
+def test_a_pair_of_sections_owns_the_same_two_slots_every_day():
+    offering, sections = _tiered("t2c", "T2")
+    snapshot = _grid_snapshot(ROOMY, [offering], sections)
+    result = solve(snapshot, time_limit_seconds=20.0, exact_block_tiers=BLOCKS)
+    assert result.board.placements, "the block rule must not cost the timetable"
+
+    per_day = _starts_by_day(result.board, {"t2c#S1", "t2c#S2"}, 75)
+    blocks = {frozenset(v) for v in per_day.values()}
+    assert len(blocks) == 1, f"the pair's block moved between days: {per_day}"
+    assert len(next(iter(blocks))) == 2, "a pair of sections must own exactly two slots"
+    # ...and on every day it runs, BOTH slots are filled — that is what makes the
+    # block identical rather than merely a subset.
+    assert all(len(v) == 2 for v in per_day.values()), per_day
+
+
+def test_a_lone_section_keeps_one_slot_every_day():
+    offering, sections = _tiered("t3c", "T3", sections=1)
+    snapshot = _grid_snapshot(ROOMY, [offering], sections)
+    result = solve(snapshot, time_limit_seconds=20.0, exact_block_tiers=BLOCKS)
+    assert result.board.placements
+    per_day = _starts_by_day(result.board, {"t3c#S1"}, 75)
+    assert len(per_day) == 2, "two weekly meetings on two days"
+    assert len({frozenset(v) for v in per_day.values()}) == 1, per_day
+
+
+def test_the_two_sections_of_a_pair_may_swap_places_between_days():
+    """The point of the rule: the BLOCK is fixed, the occupants are not. A
+    per-section drift ceiling would forbid this, which is why the block rule
+    replaces it rather than joining it."""
+    offering, sections = _tiered("t2c", "T2")
+    snapshot = _grid_snapshot(ROOMY, [offering], sections)
+    result = solve(snapshot, time_limit_seconds=20.0, exact_block_tiers=BLOCKS)
+    assert result.board.placements
+    # Whatever the solver picked, a swapped board must also be legal — so assert
+    # the rule permits it rather than that this run happened to produce it.
+    per_day = _starts_by_day(result.board, {"t2c#S1", "t2c#S2"}, 75)
+    block = next(iter({frozenset(v) for v in per_day.values()}))
+    s1 = _starts_by_day(result.board, {"t2c#S1"}, 75)
+    assert all(v <= block for v in s1.values()), "a section left its pair's block"
+
+
+def test_lectures_and_labs_get_separate_blocks():
+    """MUTATION: key the block on (section, day, start) without the DURATION. A
+    100-minute lab at 09:00 and a 75-minute lecture at 09:00 then share a bucket,
+    and the rule polices a mixture of two families with different legal times and
+    different block widths. Measured consequence on the live cohort: CS113's pair
+    filled one slot on Sunday and two on Thursday."""
+    offering, sections = _tiered(
+        "mix",
+        "T2",
+        reqs=(
+            MeetingRequirement(MeetingKind.LECTURE, DeliveryMode.IN_PERSON, 75, 2),
+            MeetingRequirement(MeetingKind.LAB, DeliveryMode.IN_PERSON, 100, 1),
+        ),
+    )
+    grid = Grid.from_spec(
+        lecture_starts={"09:00": 75, "10:30": 75, "13:00": 75, "14:30": 75},
+        lab_starts={"09:00": 100, "10:45": 100, "13:00": 100},
+    )
+    snapshot = replace(_grid_snapshot(grid, [offering], sections), grid=grid)
+    result = solve(snapshot, time_limit_seconds=20.0, exact_block_tiers=BLOCKS)
+    assert result.board.placements
+    ids = {"mix#S1", "mix#S2"}
+    for duration, width in ((75, 2), (100, 2)):
+        per_day = _starts_by_day(result.board, ids, duration)
+        blocks = {frozenset(v) for v in per_day.values()}
+        assert len(blocks) == 1, f"{duration}-minute block moved: {per_day}"
+        assert len(next(iter(blocks))) == width, f"{duration}: {per_day}"
+
+
+def test_a_t1_course_is_not_blocked_and_keeps_the_looser_rule():
+    """This department's own courses keep 'same slot or one either side', per
+    section — we control those instructors, and the extra freedom is worth
+    having."""
+    offering, sections = _tiered("t1c", "T1")
+    snapshot = _grid_snapshot(ROOMY, [offering], sections)
+    built = solve(
+        snapshot, time_limit_seconds=20.0, exact_block_tiers=BLOCKS, max_time_of_day_slots=1
+    )
+    assert built.board.placements
+    # The block rule must not have been applied: T1 is free to use a block of a
+    # width other than the section count, so assert the CONSTRAINT is absent by
+    # checking the model accepts a board the block rule would forbid.
+    legal = sorted({w.start for w in ROOMY.windows_for(75, DeliveryMode.IN_PERSON)})
+    pinned = Board(
+        (
+            _p(
+                section="t1c#S1",
+                offering="t1c",
+                day=Day.SUN,
+                window=TimeWindow(legal[0], legal[0] + 75),
+            ),
+            _p(
+                section="t1c#S1",
+                offering="t1c",
+                idx=2,
+                day=Day.MON,
+                window=TimeWindow(legal[1], legal[1] + 75),
+            ),
+            _p(
+                section="t1c#S2",
+                offering="t1c",
+                day=Day.TUE,
+                window=TimeWindow(legal[0], legal[0] + 75),
+            ),
+            _p(
+                section="t1c#S2",
+                offering="t1c",
+                idx=2,
+                day=Day.WED,
+                window=TimeWindow(legal[1], legal[1] + 75),
+            ),
+        )
+    )
+    # S1 and S2 run on different days entirely — impossible under the block rule,
+    # fine for T1.
+    kept = solve(
+        snapshot,
+        time_limit_seconds=20.0,
+        exact_block_tiers=BLOCKS,
+        max_time_of_day_slots=1,
+        fix=pinned,
+        free_sections=frozenset(),
+    )
+    assert kept.board.placements, "T1 was wrongly subjected to the block rule"
+
+
+def test_an_online_course_is_exempt_from_the_block_rule():
+    """GS and GSE already run in their own evening windows, consume no room and
+    create no campus travel. Pinning them buys nobody anything and spends the
+    freedom in the one family that has slack."""
+    offering, sections = _tiered(
+        "gs1",
+        "T3",
+        reqs=(MeetingRequirement(MeetingKind.LECTURE, DeliveryMode.ONLINE, 100, 2),),
+    )
+    grid = Grid.from_spec(
+        lecture_starts={"09:00": 75},
+        lab_starts={"09:00": 100},
+        online_starts={"15:50": 100, "17:40": 100, "19:30": 100},
+    )
+    snapshot = replace(_grid_snapshot(grid, [offering], sections), grid=grid)
+    pinned = Board(
+        (
+            _p(
+                section="gs1#S1",
+                offering="gs1",
+                day=Day.SUN,
+                window=TimeWindow(950, 1050),
+                delivery=DeliveryMode.ONLINE,
+            ),
+            _p(
+                section="gs1#S1",
+                offering="gs1",
+                idx=2,
+                day=Day.MON,
+                window=TimeWindow(1060, 1160),
+                delivery=DeliveryMode.ONLINE,
+            ),
+            _p(
+                section="gs1#S2",
+                offering="gs1",
+                day=Day.TUE,
+                window=TimeWindow(1170, 1270),
+                delivery=DeliveryMode.ONLINE,
+            ),
+            _p(
+                section="gs1#S2",
+                offering="gs1",
+                idx=2,
+                day=Day.WED,
+                window=TimeWindow(950, 1050),
+                delivery=DeliveryMode.ONLINE,
+            ),
+        )
+    )
+    # Every section on a different slot on a different day — flatly illegal under
+    # the block rule, and legal here because online is exempt.
+    result = solve(
+        snapshot,
+        time_limit_seconds=20.0,
+        exact_block_tiers=BLOCKS,
+        fix=pinned,
+        free_sections=frozenset(),
+    )
+    assert result.board.placements, "an online course was subjected to the block rule"

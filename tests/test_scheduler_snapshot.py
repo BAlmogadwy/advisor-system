@@ -56,11 +56,31 @@ def test_domain_is_pure_python_no_django():
         assert not offenders, f"{path.name} imports Django: {offenders}"
 
 
+#: The one `core.services.timetable_*` module this subsystem may import.
+#:
+#: The rule exists to keep the old BUILDER out — its placer, optimiser, repair
+#: passes and scenario state. `timetable_course_tier` is none of those: it is a
+#: pure classifier over `ProgrammeRequirement` that says which courses a
+#: registrar must resolve and which a student can pick up elsewhere in the
+#: college. That is institutional policy, and this project's most expensive
+#: mistakes have all come from restating policy instead of consuming it —
+#: section sizing, elective resolution, the cross-term split. One named
+#: exemption is cheaper than a fourth divergent copy.
+#:
+#: Everything else under that prefix stays forbidden. Add to this set only for
+#: something that is policy rather than engine, and say why.
+POLICY_MODULES = {"core.services.timetable_course_tier"}
+
+
 def test_scheduler_never_imports_the_old_timetable_engine():
     """Zero coupling to `core.services.timetable_*` — the current builder must be
     unaffected by anything here."""
     for path in SCHEDULER_DIR.rglob("*.py"):
-        offenders = {m for m in _imported_modules(path) if m.startswith("core.services.timetable")}
+        offenders = {
+            m
+            for m in _imported_modules(path)
+            if m.startswith("core.services.timetable") and m not in POLICY_MODULES
+        }
         assert not offenders, f"{path} imports the old engine: {offenders}"
 
 

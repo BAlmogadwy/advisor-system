@@ -52,6 +52,12 @@ class SeatingResult:
     idle_minutes: int
     proven_optimal: bool
     notes: list[str] = field(default_factory=list)
+    #: Waiting time split by whether the student's load sits in one curriculum
+    #: term. Reported separately because only the first group's week can be made
+    #: tidy — a student picking up leftovers from three terms has a scattered
+    #: set by construction, and averaging the two hides both.
+    regular_students: int = 0
+    regular_idle_minutes: int = 0
     #: Students who got every class they asked for. A student left with no seat
     #: has no clash, so they must not be counted as clash-free.
     students_fully_seated: int = 0
@@ -90,6 +96,10 @@ class SeatingResult:
             "unseated_demands": self.unseated_demands,
             "average_idle_minutes": round(self.idle_minutes / self.students, 1)
             if self.students
+            else 0.0,
+            "regular_students": self.regular_students,
+            "regular_idle_minutes_avg": round(self.regular_idle_minutes / self.regular_students, 1)
+            if self.regular_students
             else 0.0,
             "proven_optimal": self.proven_optimal,
             "notes": list(self.notes),
@@ -242,17 +252,22 @@ def seat_students(
 
     # Waiting time is measured the same way it is for instructors: the day's
     # span minus the time actually spent in class.
-    idle = 0
-    for _student_id, section_ids in chosen.items():
+    regular_ids = {int(d.student_id) for d in snapshot.demand if not d.is_cross_term}
+    idle = regular_idle = 0
+    for student_id, section_ids in chosen.items():
         by_day: dict = defaultdict(list)
         for section_id in section_ids:
             for day, window in campus_windows(section_id):
                 by_day[day].append(window)
+        theirs = 0
         for windows in by_day.values():
             if len(windows) < 2:
                 continue
             span = max(w.end for w in windows) - min(w.start for w in windows)
-            idle += max(0, span - sum(w.duration for w in windows))
+            theirs += max(0, span - sum(w.duration for w in windows))
+        idle += theirs
+        if int(student_id) in regular_ids:
+            regular_idle += theirs
 
     return SeatingResult(
         students=len(wanted),
@@ -263,4 +278,6 @@ def seat_students(
         idle_minutes=idle,
         proven_optimal=status == cp_model.OPTIMAL,
         students_fully_seated=len(wanted) - len(short),
+        regular_students=len(regular_ids & set(wanted)),
+        regular_idle_minutes=regular_idle,
     )

@@ -69,6 +69,14 @@ class Offering:
     capacity: int  # seats per section
     capacity_is_declared: bool  # False => policy default was used (D3, reported)
     is_scheduled: bool = True  # False => graduation project / training
+    #: Resolution priority, from the project's own classifier: "T1" specialised
+    #: major, "T2" shared foundation, "T3" general education / free elective.
+    #:
+    #: Owner rule: T2 and T3 courses are taught in other sections right across
+    #: the college, so a student who cannot fit one here will find a seat
+    #: elsewhere. A collision involving one is therefore not worth distorting
+    #: everybody's week to avoid.
+    tier: str = "T1"
 
     @property
     def meetings_per_week(self) -> int:
@@ -151,6 +159,14 @@ class StudentDemand:
     student_id: StudentId
     program: str
     offering_ids: frozenset[OfferingId]
+    #: True when this student's courses span more than one curriculum term.
+    #:
+    #: A student taking a coherent term-N block has a week that CAN be compact;
+    #: somebody picking up leftovers from terms 3, 5 and 7 has a scattered set by
+    #: construction, and no timetable makes it tidy. Owner rule 2026-07-28:
+    #: optimise waiting time for the regular students, and for the rest simply
+    #: guarantee they can register without a clash.
+    is_cross_term: bool = False
 
 
 @dataclass(frozen=True)
@@ -178,20 +194,37 @@ class DemandIndex:
 
     by_offering: dict[OfferingId, int] = field(default_factory=dict)
     students_by_offering: dict[OfferingId, frozenset[StudentId]] = field(default_factory=dict)
+    #: The same index over REGULAR students only — those whose whole load sits in
+    #: one curriculum term. Kept beside the full one rather than replacing it,
+    #: because the two answer different questions: a CLASH must be counted for
+    #: everybody, and waiting time is only worth optimising for the students
+    #: whose week can actually be made tidy.
+    regular_by_offering: dict[OfferingId, frozenset[StudentId]] = field(default_factory=dict)
 
     @classmethod
     def build(cls, demands: tuple[StudentDemand, ...]) -> DemandIndex:
         students: dict[OfferingId, set[StudentId]] = {}
+        regular: dict[OfferingId, set[StudentId]] = {}
         for demand in demands:
             for offering_id in demand.offering_ids:
                 students.setdefault(offering_id, set()).add(demand.student_id)
+                if not demand.is_cross_term:
+                    regular.setdefault(offering_id, set()).add(demand.student_id)
         return cls(
             by_offering={k: len(v) for k, v in students.items()},
             students_by_offering={k: frozenset(v) for k, v in students.items()},
+            regular_by_offering={k: frozenset(v) for k, v in regular.items()},
         )
 
     def shared_students(self, a: OfferingId, b: OfferingId) -> int:
         return len(
             self.students_by_offering.get(a, frozenset())
             & self.students_by_offering.get(b, frozenset())
+        )
+
+    def shared_regular_students(self, a: OfferingId, b: OfferingId) -> int:
+        """Shared students whose whole load sits in one curriculum term."""
+        return len(
+            self.regular_by_offering.get(a, frozenset())
+            & self.regular_by_offering.get(b, frozenset())
         )

@@ -446,6 +446,19 @@ def build_snapshot(
     for row in plan_rows:
         grouped[str(row["course_code"]).strip().upper()].append(row)
 
+    # Resolution priority per course, from the project's own classifier. This is
+    # institutional policy — which courses the registrar must resolve and which
+    # a student can pick up in another section across the college — so it is
+    # CONSUMED, not restated. `classify_course_tier` is pure and
+    # `program_count_by_code` is one small cached read; neither touches the old
+    # engine's scheduling code, which is what the isolation rule is about.
+    from core.services.timetable_course_tier import (
+        classify_course_tier,
+        program_count_by_code,
+    )
+
+    plan_counts = program_count_by_code()
+
     offerings: list[Offering] = []
     offering_by_code: dict[str, Offering] = {}
     for code, rows in sorted(grouped.items()):
@@ -471,6 +484,7 @@ def build_snapshot(
             capacity=capacity,
             capacity_is_declared=bool(declared),
             is_scheduled=not unscheduled,
+            tier=classify_course_tier(code, plan_counts.get(code.upper(), 0)),
         )
         offerings.append(offering)
         offering_by_code[code] = offering
@@ -544,11 +558,48 @@ def build_snapshot(
             capacity=policy.default_capacity,
             capacity_is_declared=False,
             is_scheduled=True,
+            tier=classify_course_tier(code, plan_counts.get(code, 0)),
         )
         offerings.append(offering)
         offering_by_code[code] = offering
 
     # ── student demand, mapped onto offerings ──
+    # ── which students are "regular" ────────────────────────────────────
+    #
+    # The project's own rule, from `generate_workspace_scenario`: map each
+    # recommended course to its `programme_term` using **the student's own
+    # programme's** term map, and call the student cross-term when their courses
+    # land in more than one. The per-programme scoping is load-bearing — IS has
+    # FE1 at term 7 and IS2 has it at term 8, and a merged map would file half
+    # the cohort on the wrong board.
+    #
+    # DUPLICATED, deliberately and narrowly. The canonical implementation is
+    # inline in `core.services.timetable_generate.generate_workspace_scenario`,
+    # which cannot be imported here without also creating a scenario, and the
+    # materialised answer lives on scenario rows this subsystem may not read.
+    # Both ends carry this note. If the rule changes, it changes in two places.
+    term_of_course_by_program: dict[str, dict[str, int]] = defaultdict(dict)
+    for prog, code, plan_term in ProgrammeRequirement.objects.filter(
+        program__in=program_set
+    ).values_list("program", "course_code", "programme_term"):
+        if plan_term is not None:
+            term_of_course_by_program[str(prog).strip().upper()][str(code).strip().upper()] = int(
+                plan_term
+            )
+    merged_terms: dict[str, int] = {}
+    for mapping in term_of_course_by_program.values():
+        merged_terms.update(mapping)
+
+    def is_cross_term(student_id: int, codes) -> bool:
+        table = (
+            term_of_course_by_program.get(program_by_student.get(int(student_id), ""), merged_terms)
+            or merged_terms
+        )
+        terms = {table[str(c).strip().upper()] for c in codes if str(c).strip().upper() in table}
+        # No classifiable course at all is not evidence of a mixed load, so such
+        # a student counts as regular rather than being quietly excluded.
+        return len(terms) > 1
+
     demand: list[StudentDemand] = []
     for sid, codes in sorted(recommended.items()):
         ids = set()
@@ -565,6 +616,7 @@ def build_snapshot(
                     student_id=int(sid),
                     program=program_by_student.get(int(sid), ""),
                     offering_ids=frozenset(ids),
+                    is_cross_term=is_cross_term(sid, codes),
                 )
             )
 

@@ -145,6 +145,8 @@ def solve(
     student_adjacency_weight: int = 0,
     max_time_of_day_slots: int | None = None,
     max_time_of_day_minutes: int | None = None,
+    exact_block_tiers: frozenset[str] = frozenset(),
+    tier_weights: dict[str, float] | None = None,
     same_offering_penalty: int | None = None,
 ) -> SolveResult:
     """Choose a day/time for every meeting, minimising expected student clashes."""
@@ -381,7 +383,16 @@ def solve(
             cells_by_section.setdefault(section_id, []).append((day, window, var))
 
         for a, b in combinations(sorted(offerings.values(), key=lambda o: o.id), 2):
-            shared = demand.shared_students(a.id, b.id)
+            # REGULAR students only (owner rule, 2026-07-28). A student taking a
+            # coherent term-N block has a week that can be made compact; one
+            # picking up leftovers from terms 3, 5 and 7 has a scattered set by
+            # construction, and pulling their courses together drags the board
+            # around for a tidiness that is not achievable. 238 of 390 on the
+            # live male cohort are regular by the project's own rule.
+            #
+            # CLASHES are still counted for everybody — the guarantee that a
+            # student can register at all is not restricted to anybody.
+            shared = demand.shared_regular_students(a.id, b.id)
             if shared < _MIN_SHARED_FOR_GAP_TERM:
                 continue
             if a.is_fully_online and b.is_fully_online:
@@ -474,9 +485,22 @@ def solve(
         for (section_id, index, _day, window), var in x.items():
             starts_by_section.setdefault((section_id, index), []).append((window.start, var))
 
+        blocked_sections = {
+            section.id
+            for section in snapshot.sections
+            if offerings[section.offering_id].tier in exact_block_tiers
+            and not offerings[section.offering_id].is_fully_online
+        }
         for (section_id, duration, delivery), indexes in sorted(
             by_family.items(), key=lambda kv: (kv[0][0], kv[0][1], str(kv[0][2]))
         ):
+            if section_id in blocked_sections:
+                # The block rule below is stricter and differently shaped: it
+                # pins the slots the whole PAIR occupies while letting the two
+                # sections swap between them, which a per-section drift ceiling
+                # would forbid outright. Applying both would ban the alternation
+                # the owner explicitly asked for.
+                continue
             if len(indexes) < 2:
                 continue  # one meeting a week cannot drift
             starts = sorted({w.start for w in snapshot.grid.windows_for(duration, delivery)})
@@ -530,6 +554,109 @@ def solve(
                 model.add_min_equality(first, chosen_ranks)
                 model.add_max_equality(last, chosen_ranks)
                 model.add(last - first <= max_time_of_day_slots)
+
+    # ── a course's sections own a fixed block of slots ────────────────────
+    #
+    # Owner rule, 2026-07-28. The same-hour ceiling above is per SECTION, and
+    # that is right for this department's own courses (T1), where we control the
+    # instructor. For everything else the instructors come from other
+    # departments and teach elsewhere in the week, so a course whose slots move
+    # about is unmanageable for them:
+    #
+    #   * a course with ONE section keeps that section on one slot, every day;
+    #   * two sections kept back to back own an exact PAIR of slots, the same
+    #     two every day — and may SWAP which of them each section sits in.
+    #
+    #         Monday      13:00  S1     14:30  S2
+    #         Wednesday   13:00  S2     14:30  S1     <- same block, swapped
+    #
+    # The other department sees 13:00 and 14:30 occupied every week without
+    # exception. Which section is in which is our business, not theirs, and the
+    # swap costs nothing while giving the search somewhere to move.
+    #
+    # Note this is a rule about the PAIR, not the whole course: a third section
+    # stands alone with its own single slot and is not tied to the pair's days.
+    # Scoping it to the course would force every section of a four-section course
+    # onto the same days, which is a far heavier constraint than was asked for.
+    #
+    # ONLINE IS EXEMPT (owner). GS and GSE already run in their own three evening
+    # windows, consume no room and create no campus travel, so pinning them buys
+    # nobody anything and only spends the freedom in the one family with slack.
+    if exact_block_tiers:
+        # Keyed on DURATION as well as time. A 100-minute lab and a 75-minute
+        # lecture both start at 09:00, so keying on the start alone put them in
+        # one bucket and the block constraint then policed a mixture of two
+        # families that have different legal times and different block widths.
+        # Measured consequence: CS113's pair filled one slot on Sunday and two on
+        # Thursday, which the constraint is supposed to make impossible.
+        cells_at: dict[tuple[str, int, object, int], list] = {}
+        for (section_id, _index, day, window), var in x.items():
+            cells_at.setdefault((section_id, window.duration, day, window.start), []).append(var)
+
+        for offering_id in sorted(sections_by_offering):
+            offering = offerings[offering_id]
+            if offering.tier not in exact_block_tiers or offering.is_fully_online:
+                continue
+            siblings = sorted(sections_by_offering[offering_id], key=lambda s: s.index)
+            # Pairs by section order — S1+S2, S3+S4, leftover last. Structural
+            # rather than chosen by the solver, so the other department can rely
+            # on it and so the answer does not move between runs.
+            groups = [siblings[i : i + 2] for i in range(0, len(siblings), 2)]
+
+            for requirement in offering.requirements:
+                starts = sorted(
+                    {
+                        w.start
+                        for w in snapshot.grid.windows_for(
+                            requirement.duration, requirement.delivery
+                        )
+                    }
+                )
+                if len(starts) < 2:
+                    continue  # one legal time: the block is forced anyway
+                for group_index, group in enumerate(groups):
+                    ids = [section.id for section in group]
+                    tag = f"{offering_id}_{group_index}_{requirement.duration}"
+                    uses = {start: model.new_bool_var(f"blk_{tag}_{start}") for start in starts}
+                    # The block is exactly as wide as the group: one slot for a
+                    # lone section, two for a pair.
+                    model.add(sum(uses.values()) == len(ids))
+
+                    for day in snapshot.grid.days():
+                        here = {
+                            start: [
+                                var
+                                for section_id in ids
+                                for var in cells_at.get(
+                                    (section_id, requirement.duration, day, start), ()
+                                )
+                            ]
+                            for start in starts
+                        }
+                        runs = model.new_bool_var(f"blkday_{tag}_{day.value}")
+                        for start in starts:
+                            occupied = sum(here[start]) if here[start] else 0
+                            # Never outside the block. REDUNDANT, kept for
+                            # propagation: a meeting at an unblocked slot sets
+                            # `runs`, which forces every blocked slot filled
+                            # too, so the day would need more meetings than H2
+                            # allows this group. Deleting it therefore changes
+                            # no feasible board and no test can see it — said
+                            # here so nobody later reads the missing test as an
+                            # oversight and removes the line.
+                            model.add(occupied <= uses[start])
+                            # ...and `runs` is 1 iff the group meets that day
+                            if here[start]:
+                                model.add(runs >= occupied)
+                            # ...and on a day it runs, EVERY slot of the block is
+                            # filled. This is what makes the block identical
+                            # every day, and what lets the two sections swap.
+                            model.add(occupied >= uses[start] + runs - 1)
+                        any_here = [v for start in starts for v in here[start]]
+                        if any_here:
+                            model.add(runs <= sum(any_here))
+                        else:
+                            model.add(runs == 0)
 
     # ── occupancy atoms, per delivery family ──────────────────────────────
     all_windows = [s.window for s in snapshot.grid.slots]
@@ -809,6 +936,9 @@ def solve(
     # ── objective: expected student clashes ───────────────────────────────
     penalties: list[tuple[object, int]] = []
     pair_count = 0
+    #: Default 1.0 everywhere: every collision counts fully unless a caller says
+    #: otherwise, so this cannot quietly discount anything by accident.
+    tiers = tier_weights or {}
     for a, b in combinations(sorted(offerings.values(), key=lambda o: o.id), 2):
         shared = demand.shared_students(a.id, b.id)
         if not shared:
@@ -817,8 +947,23 @@ def solve(
         sb_list = [s.id for s in sections_by_offering.get(b.id, ())]
         if not sa_list or not sb_list:
             continue
-        # Expected students lost per colliding section pair.
-        weight = max(1, round(_SCALE * shared / (len(sa_list) * len(sb_list))))
+        # Expected students lost per colliding section pair, scaled by how much
+        # the collision actually costs the student.
+        #
+        # Owner rule, 2026-07-28: T2 and T3 courses are taught in other sections
+        # right across the college, so a student who cannot fit one here will
+        # find a seat elsewhere. Protecting those collisions at full price
+        # spends the whole board's quality on a problem the registrar can solve
+        # by other means — and on the live male cohort it is 47% of the entire
+        # clash objective for T3 alone, against 16% for T1 against T1.
+        #
+        # The pair takes the LOWER of the two tiers' weights: if either course
+        # can be picked up elsewhere, the clash is resolvable, so the pair is
+        # only as serious as its most relocatable member.
+        severity = min(tiers.get(a.tier, 1.0), tiers.get(b.tier, 1.0))
+        if severity <= 0.0:
+            continue
+        weight = max(1, round(_SCALE * severity * shared / (len(sa_list) * len(sb_list))))
         for sa in sa_list:
             for sb in sb_list:
                 shared_atoms = {(k[1], k[2], k[3]) for k in busy if k[0] == sa} & {
@@ -1209,6 +1354,15 @@ def plan(
     # setting worth offering: 3 and 10 are worse for BOTH parties.
     student_adjacency_weight: int = 0,
     max_time_of_day_slots: int | None = 1,
+    exact_block_tiers: frozenset[str] = frozenset({"T2", "T3"}),
+    # Owner rule: T2 and T3 courses run in other sections right across the
+    # college, so a student who cannot fit one here finds a seat elsewhere.
+    # Measured on the M cohort: discounting them leaves instructor idle and
+    # student waiting unchanged, and COLLAPSES the seed-to-seed spread on the
+    # collisions that matter — T1-against-T1 went from 1.8-16.0 undiscounted to
+    # 3.0-3.8. A number nobody can predict is worse than a slightly higher one
+    # they can.
+    tier_weights: dict[str, float] | None = None,
     # OFF by default, and that is a measured decision rather than caution. It
     # does what it claims -- the worst wander goes 130 -> 90 minutes and the one
     # noon-crossing pair on this grid disappears -- and it also takes instructor
@@ -1253,6 +1407,7 @@ def plan(
     rooms — leave gaps as the only quantity still free to move, which is what
     makes the second pass worth running at all.
     """
+    tier_weights = tier_weights or {"T1": 1.0, "T2": 0.5, "T3": 0.2}
     half = max(1.0, time_limit_seconds / 2)
     # Pass 1 answers ONE question — how few days can these instructors work —
     # so nothing else may pull on it. Measured: with the back-to-back reward
@@ -1267,6 +1422,8 @@ def plan(
         sibling_adjacency_weight=0,
         max_time_of_day_slots=max_time_of_day_slots,
         max_time_of_day_minutes=max_time_of_day_minutes,
+        exact_block_tiers=exact_block_tiers,
+        tier_weights=tier_weights,
         **kwargs,
     )
     # Unlike every other preference, the time-of-day ceiling belongs in BOTH
@@ -1280,7 +1437,9 @@ def plan(
     # hand. A cohort that cannot meet it should still get a timetable, with the
     # compromise stated rather than discovered later on screen.
     if not first.board.placements and (
-        max_time_of_day_slots is not None or max_time_of_day_minutes is not None
+        max_time_of_day_slots is not None
+        or max_time_of_day_minutes is not None
+        or exact_block_tiers
     ):
         relaxed = solve(
             snapshot,
@@ -1289,6 +1448,8 @@ def plan(
             sibling_adjacency_weight=0,
             max_time_of_day_slots=None,
             max_time_of_day_minutes=None,
+            exact_block_tiers=frozenset(),
+            tier_weights=tier_weights,
             **kwargs,
         )
         if relaxed.board.placements:
@@ -1311,6 +1472,7 @@ def plan(
             # the entire reason plan() runs twice — silently never executes.
             max_time_of_day_slots = None
             max_time_of_day_minutes = None
+            exact_block_tiers = frozenset()
             first = relaxed
         else:
             # Says which suspect has been ruled out. Without it the caller reads
@@ -1380,6 +1542,8 @@ def plan(
         student_adjacency_weight=student_adjacency_weight,
         max_time_of_day_slots=max_time_of_day_slots,
         max_time_of_day_minutes=max_time_of_day_minutes,
+        exact_block_tiers=exact_block_tiers,
+        tier_weights=tier_weights,
         hint=first.board,
         **kwargs,
     )
