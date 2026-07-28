@@ -67,6 +67,13 @@ class Snapshot:
     #: can see is indistinguishable from a filter that is wrong.
     excluded_withdrawn: int = 0
 
+    #: Course codes the recommender asked for that no offering could hold,
+    #: with how many student-demands each cost. Carried rather than dropped:
+    #: resolved electives (AI1 -> AI463) once vanished here in silence, and
+    #: a filter nobody can see is indistinguishable from a filter that is
+    #: wrong.
+    unmatched_demand: tuple[tuple[str, int], ...] = ()
+
     def __post_init__(self) -> None:
         if self.gender not in ("M", "F"):
             raise ValueError(f"snapshot gender must be M or F, got {self.gender!r}")

@@ -24,7 +24,13 @@ import re
 from collections import Counter, defaultdict
 from datetime import UTC, datetime
 
-from core.models import CourseInstructor, ElectiveTermMapping, ProgrammeRequirement, Student
+from core.models import (
+    CourseInstructor,
+    ElectiveCourse,
+    ElectiveTermMapping,
+    ProgrammeRequirement,
+    Student,
+)
 from core.models import Instructor as InstructorRow
 from core.models import Room as RoomRow
 from scheduler.domain import (
@@ -364,6 +370,37 @@ def build_snapshot(
     )
     recommended = _one_elective_per_slot(recommended, academic_year, term, program_set)
 
+    # Which placeholder(s) each catalogue elective stands in for, and the
+    # catalogue rows themselves. Built once: the demand side needs it to give a
+    # resolved elective an offering, and the staffing side needs it to fold a
+    # target's approvals back onto its placeholder.
+    #
+    # Keyed on **(programme, target)**, never on the target alone. An approval is
+    # granted for one programme's elective slot, and both the mapping and the
+    # staffing row carry a programme; dropping either would let an approval to
+    # teach CS403 for CS count as staffing for an AI slot that happens to draw on
+    # the same catalogue course.
+    placeholder_of: dict[tuple[str, str], set[str]] = defaultdict(set)
+    placeholders_of_target: dict[str, set[str]] = defaultdict(set)
+    for mapping in ElectiveTermMapping.objects.filter(
+        academic_year=str(academic_year), term=int(term), programme__in=program_set
+    ).select_related("elective"):
+        target = str(mapping.elective.course_code).strip().upper()
+        programme = str(mapping.programme).strip().upper()
+        placeholder = str(mapping.placeholder_code).strip().upper()
+        placeholder_of[(programme, target)].add(placeholder)
+        placeholders_of_target[target].add(placeholder)
+    elective_by_code = {
+        str(row.course_code).strip().upper(): row
+        for row in ElectiveCourse.objects.filter(
+            course_code__in=sorted(placeholders_of_target) or [""]
+        )
+    }
+    #: Demand the snapshot could not place against any offering, by course code.
+    #: Reported rather than discarded — dropping it silently is exactly how the
+    #: resolved electives went missing.
+    unmatched_demand: Counter[str] = Counter()
+
     # ── offerings, from the programme plan ──
     plan_rows = list(
         ProgrammeRequirement.objects.filter(program__in=program_set).values(
@@ -410,14 +447,90 @@ def build_snapshot(
         offerings.append(offering)
         offering_by_code[code] = offering
 
+    # ── the real electives the resolver named, which the plan does not hold ──
+    #
+    # `resolve_elective_recommendations` turns the plan's PLACEHOLDER (AI1,
+    # "PROGRAM ELECTIVE I") into the catalogue course that fills it this term
+    # (AI463, "Information Retrieval"). The plan table only ever holds the
+    # placeholder — the real course lives in `ElectiveCourse` — so building
+    # offerings from the plan alone and then dropping unrecognised codes threw
+    # every resolved elective on the floor.
+    #
+    # Measured before this existed, male AI/DS cohort 1448 T1: **65 student
+    # demands discarded** (AI463 50, DS487 15), AI1/AI2/AI3/DS1/DS2/DS3 all
+    # reporting `demand=0, sections=0`, and readiness announcing them under
+    # NO_DEMAND — true only because the demand had been thrown away. The
+    # project's own scenario budget plans AI463 at 2 sections and DS487 at 1, so
+    # the engine was three sections short and the students who need an elective
+    # got none. The perverse part: the placeholders that CAN be resolved got
+    # nothing, while the ones that cannot (FE1, FE2, GSE1) were the only ones
+    # scheduled — under names that cannot be published.
+    #
+    # This is the mirror of the eligibility fold further down, which maps a
+    # target BACK to its placeholder so a staffing approval is not lost. Here the
+    # target gets an offering of its own, because it is the course a student
+    # actually enrols in and the name the timetable has to print.
+    wanted_codes = {str(c).strip().upper() for codes in recommended.values() for c in codes}
+    for code in sorted(wanted_codes - set(offering_by_code)):
+        elective = elective_by_code.get(code)
+        hosts = [
+            offering_by_code[ph]
+            for ph in sorted(placeholders_of_target.get(code, ()))
+            if ph in offering_by_code
+        ]
+        if elective is None or not hosts:
+            # Either the catalogue does not know this code, or nothing in this
+            # run's plan stands in for it. Reported rather than dropped in
+            # silence — a filter nobody can see is indistinguishable from a
+            # filter that is wrong, which is precisely how the resolved
+            # electives went missing in the first place.
+            #
+            # DEFENSIVE, not a live path: both `placeholders_of_target` and the
+            # resolver read the same term mappings filtered to the same
+            # programmes, and a placeholder can only be recommended if the plan
+            # holds it — so `hosts` is non-empty whenever the resolver fired.
+            # It is deliberately not covered by a test, because every fixture
+            # that appears to reach it actually reaches something else. It
+            # exists so that a future change to either side surfaces the loss
+            # instead of hiding it.
+            unmatched_demand[code] += sum(
+                1
+                for codes in recommended.values()
+                if code in {str(c).strip().upper() for c in codes}
+            )
+            continue
+        # Programmes and plan terms come from the placeholder(s) this course
+        # fills: that is where a student meets it, which decides both the room
+        # pool it may use and the board it lands on.
+        progs = frozenset().union(*(h.programs for h in hosts))
+        terms = frozenset().union(*(h.terms for h in hosts))
+        credits = int(elective.credit_hours or 0) or max(h.credit_hours for h in hosts)
+        offering = Offering(
+            id=_offering_id(code, progs),
+            course_code=code,
+            course_name=str(elective.course_name or code),
+            credit_hours=credits,
+            programs=progs,
+            terms=terms,
+            requirements=compile_requirements(credits, is_online=is_online_course(code)),
+            capacity=policy.default_capacity,
+            capacity_is_declared=False,
+            is_scheduled=True,
+        )
+        offerings.append(offering)
+        offering_by_code[code] = offering
+
     # ── student demand, mapped onto offerings ──
     demand: list[StudentDemand] = []
     for sid, codes in sorted(recommended.items()):
-        ids = {
-            offering_by_code[str(c).strip().upper()].id
-            for c in codes
-            if str(c).strip().upper() in offering_by_code
-        }
+        ids = set()
+        for c in codes:
+            code = str(c).strip().upper()
+            offering = offering_by_code.get(code)
+            if offering is None:
+                unmatched_demand[code] += 1
+                continue
+            ids.add(offering.id)
         if ids:
             demand.append(
                 StudentDemand(
@@ -523,28 +636,31 @@ def build_snapshot(
     # carries the gender in ``section``; ignoring it would let a male-cohort
     # eligibility row appear as staffing for the female cohort.
     #
-    # A staffing row may name a *real* elective (AI463) while the timetable only
-    # knows the placeholder that stands in for it (AI1 "PROGRAM ELECTIVE I").
-    # Matching on code alone throws that row away silently. Someone approved to
-    # teach whichever course fills the slot is approved to teach the slot, so
-    # eligibility for a target is folded into its placeholder — a union, never a
-    # replacement, because the placeholder may carry approvals of its own that
-    # resolution would otherwise discard.
+    # A staffing row and the timetable can name the elective differently: the row
+    # may say AI463 ("Information Retrieval") while the plan says AI1 ("PROGRAM
+    # ELECTIVE I"), or the other way round. Matching on the code alone throws one
+    # of them away in silence, so an approval reaches BOTH the placeholder and
+    # every catalogue course that fills it — a union, never a replacement.
     #
-    # The mapping is keyed on **(programme, target)**, not on the target alone.
+    # Both directions are needed, and which one does the work depends on the
+    # data. Now that a resolved elective gets an offering of its own, AI463 is
+    # where the sections are and AI1 usually has none; an approval to teach "the
+    # AI1 slot" is an approval to teach whatever fills it, so it must reach
+    # AI463. Where no mapping exists (FE1, FE2, GSE1) the placeholder is still
+    # the only offering there is, and an approval naming a catalogue course must
+    # fold back onto it.
+    #
+    # Both maps are keyed on **(programme, target)**, never on the target alone.
     # An approval is granted for one programme's elective slot, and both the
     # mapping and the staffing row carry a programme; dropping either would let
-    # an approval to teach CS403 for CS be counted as staffing for an AI slot
-    # that happens to draw on the same catalogue course. Widening who may teach
-    # what is not a rounding error, so the two programmes must agree, and the
-    # placeholder offering must actually serve that programme.
-    placeholder_of: dict[tuple[str, str], set[str]] = defaultdict(set)
-    for mapping in ElectiveTermMapping.objects.filter(
-        academic_year=str(academic_year), term=int(term), programme__in=program_set
-    ).select_related("elective"):
-        target = str(mapping.elective.course_code).strip().upper()
-        programme = str(mapping.programme).strip().upper()
-        placeholder_of[(programme, target)].add(str(mapping.placeholder_code).strip().upper())
+    # an approval to teach CS403 for CS count as staffing for an AI slot that
+    # happens to draw on the same catalogue course. Widening who may teach what
+    # is not a rounding error, so the two programmes must agree, and the offering
+    # reached must actually serve that programme.
+    targets_of_placeholder: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for (programme, target), placeholders in placeholder_of.items():
+        for placeholder in placeholders:
+            targets_of_placeholder[(programme, placeholder)].add(target)
 
     eligible: dict[int, set[str]] = defaultdict(set)
     for link in CourseInstructor.objects.filter(
@@ -554,16 +670,21 @@ def build_snapshot(
         if not link.instructor_id:
             continue
         programme = str(link.program).strip().upper()
-        if code in offering_by_code:
-            resolved_codes = [code]
-        else:
-            resolved_codes = sorted(placeholder_of.get((programme, code), ()))
-        for resolved in resolved_codes:
+        reached = {code} if code in offering_by_code else set()
+        reached |= placeholder_of.get((programme, code), set())  # target -> its slot
+        reached |= targets_of_placeholder.get((programme, code), set())  # slot -> its courses
+        for resolved in sorted(reached):
             offering = offering_by_code.get(resolved)
             if offering is None:
                 continue
-            if resolved != code and programme not in offering.programs:
-                continue  # the slot does not belong to the programme that approved them
+            if programme not in offering.programs:
+                # The offering does not belong to the programme that approved
+                # them. Checked on EVERY match, not only on folded ones: a
+                # direct code match used to skip this, so an approval to teach
+                # AI463 for CS counted as staffing for an AI-only AI463 — the
+                # very widening the fold below was written to prevent, walking
+                # in through the front door.
+                continue
             eligible[int(link.instructor_id)].add(offering.id)
     instructor_names = {
         row.id: row.full_name for row in InstructorRow.objects.filter(id__in=list(eligible) or [0])
@@ -604,5 +725,6 @@ def build_snapshot(
         policy=policy,
         source_fingerprint=source_fingerprint,
         excluded_withdrawn=excluded_withdrawn,
+        unmatched_demand=tuple(sorted(unmatched_demand.items())),
         created_at=datetime.now(UTC).isoformat(timespec="seconds"),
     )

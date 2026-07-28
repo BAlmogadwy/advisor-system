@@ -918,3 +918,137 @@ def test_the_seam_writes_instructor_names_into_every_meeting():
     for ts_id, name in named:
         per_section.setdefault(ts_id, set()).add(name)
     assert all(len(names) == 1 for names in per_section.values())
+
+
+# ── the elective a student actually enrols in ─────────────────────────────
+#
+# The recommender emits the plan's PLACEHOLDER (AI1, "PROGRAM ELECTIVE I") and
+# the project's resolver turns it into the catalogue course that fills it this
+# term (AI463, "Information Retrieval"). The plan table holds only the
+# placeholder; the real course lives in ElectiveCourse. Building offerings from
+# the plan alone and then dropping unrecognised codes discarded every resolved
+# elective: 65 student demands on the live male cohort, and with them the two
+# AI463 sections and one DS487 section the project's OWN scenario budget plans.
+
+
+def test_a_resolved_elective_is_an_offering_students_can_be_counted_against():
+    _plan("AI", "AI1")
+    _map("AI463", "AI1")
+    for sid in range(4001, 4011):
+        _student(sid, "AI", "M")
+    _room("M-1", "M")
+    snap = build_snapshot(
+        academic_year="1448", term=1, gender="M", programs=["AI"], default_capacity=25
+    )
+    codes = {o.course_code for o in snap.offerings}
+    assert "AI463" in codes, "the course the student actually enrols in is not schedulable"
+
+    target = next(o for o in snap.offerings if o.course_code == "AI463")
+    takers = sum(1 for d in snap.demand if target.id in d.offering_ids)
+    assert takers == 10, f"the resolved demand was dropped: {takers} of 10 students counted"
+    assert [s for s in snap.sections if s.offering_id == target.id], "no sections were planned"
+
+
+def test_a_resolved_elective_inherits_the_slot_it_fills():
+    """Programmes and plan terms come from the placeholder, because that is where
+    a student meets the course — and they decide both the room pool it may use
+    and the board it is drawn on."""
+    _plan("AI", "AI1", term=7)
+    _map("AI463", "AI1")
+    for sid in range(4101, 4106):
+        _student(sid, "AI", "M")
+    _room("M-1", "M")
+    snap = build_snapshot(
+        academic_year="1448", term=1, gender="M", programs=["AI"], default_capacity=25
+    )
+    target = next(o for o in snap.offerings if o.course_code == "AI463")
+    assert target.programs == frozenset({"AI"})
+    assert target.terms == frozenset({7}), "it must land where the plan puts the slot"
+    assert target.course_name == "Real AI463", "the timetable must print the real course name"
+
+
+def test_an_unmappable_placeholder_is_still_scheduled_under_its_own_name():
+    """FE1, FE2 and GSE1 have no term mapping. They are the only elective slots
+    that stay as placeholders, and dropping them would leave those students with
+    nothing at all."""
+    _plan("AI", "FE1")
+    for sid in range(4201, 4206):
+        _student(sid, "AI", "M")
+    _room("M-1", "M")
+    snap = build_snapshot(
+        academic_year="1448", term=1, gender="M", programs=["AI"], default_capacity=25
+    )
+    placeholder = next(o for o in snap.offerings if o.course_code == "FE1")
+    assert sum(1 for d in snap.demand if placeholder.id in d.offering_ids) == 5
+
+
+def test_a_clean_run_reports_nothing_unmatched():
+    """The other half — the report has to stay empty when nothing is lost, or it
+    is noise nobody will read."""
+    _plan("AI", "AI1")
+    _map("AI463", "AI1")
+    for sid in range(4401, 4404):
+        _student(sid, "AI", "M")
+    _room("M-1", "M")
+    snap = build_snapshot(
+        academic_year="1448", term=1, gender="M", programs=["AI"], default_capacity=25
+    )
+    assert snap.unmatched_demand == ()
+
+
+def test_an_approval_reaches_both_the_slot_and_the_course_that_fills_it():
+    """Now that the resolved elective has an offering of its own, the fold has to
+    run BOTH ways: someone approved for the AI1 slot may teach whatever fills it,
+    and someone approved for AI463 may teach the slot it stands in.
+
+    Before, only target->placeholder existed, so an approval naming the slot
+    never reached the course that actually has the sections."""
+    _plan("AI", "AI1")
+    _map("AI463", "AI1")
+    for sid in range(4501, 4506):
+        _student(sid, "AI", "M")
+    _room("M-1", "M")
+    slot = InstructorRow.objects.create(full_name="Dr Slot", normalised_name="dr slot")
+    target = InstructorRow.objects.create(full_name="Dr Target", normalised_name="dr target")
+    CourseInstructor.objects.create(program="AI", course_code="AI1", section="M", instructor=slot)
+    CourseInstructor.objects.create(
+        program="AI", course_code="AI463", section="M", instructor=target
+    )
+    snap = build_snapshot(
+        academic_year="1448", term=1, gender="M", programs=["AI"], default_capacity=25
+    )
+    real = next(o for o in snap.offerings if o.course_code == "AI463")
+    eligible = {i.id for i in snap.instructors if real.id in i.eligible_offerings}
+    assert {slot.id, target.id} <= eligible, (
+        f"the course with the sections must be teachable by both — got {sorted(eligible)}"
+    )
+
+
+def test_an_approval_for_one_programme_does_not_staff_another_programmes_course():
+    """Widening who may teach what is not a rounding error. An approval is
+    granted for one programme's course; the offering it reaches must serve that
+    programme.
+
+    The direct-code path used to skip this check entirely, so an approval to
+    teach AI463 for CS counted as staffing for an AI-only AI463 offering -- the
+    exact widening the placeholder fold was written to prevent, arriving through
+    the front door instead."""
+    _plan("AI", "AI1")
+    _plan("CS", "CS101")
+    _map("AI463", "AI1", programme="AI")
+    for sid in range(4601, 4606):
+        _student(sid, "AI", "M")
+    _room("M-1", "M")
+    outsider = InstructorRow.objects.create(full_name="Dr CS", normalised_name="dr cs")
+    CourseInstructor.objects.create(
+        program="CS", course_code="AI463", section="M", instructor=outsider
+    )
+    snap = build_snapshot(
+        academic_year="1448", term=1, gender="M", programs=["AI", "CS"], default_capacity=25
+    )
+    real = next(o for o in snap.offerings if o.course_code == "AI463")
+    assert "CS" not in real.programs, "this fixture needs an AI-only offering to mean anything"
+    eligible = {i.id for i in snap.instructors if real.id in i.eligible_offerings}
+    assert outsider.id not in eligible, (
+        "a CS approval was counted as staffing for an AI-only course"
+    )
