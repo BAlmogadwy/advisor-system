@@ -3120,3 +3120,69 @@ def test_saturation_reports_the_family_that_proves_the_most_and_no_more():
     assert report["unroomed"] == 8
     assert report["saturated"] == 5, f"three rooms, one period, eight meetings: {report}"
     assert report["recoverable"] == 3
+
+
+# ── an evening online class is not time spent waiting on campus ───────────
+#
+# Owner rule, 2026-07-28: GS and GSE run at 15:50, 17:40 and 19:30, and they are
+# NOT counted in student waiting time. They still clash -- a student cannot
+# attend an online class at 15:50 and a lecture at 16:00 -- but the hours
+# between an afternoon lecture and an evening online session are not a student
+# hanging about between classes, and counting them would swamp the figure.
+
+
+def _campus_plus_online():
+    campus = _offering("camp", reqs=_lecture(1))
+    online = _offering(
+        "onl", reqs=(MeetingRequirement(MeetingKind.LECTURE, DeliveryMode.ONLINE, 100, 1),)
+    )
+    sections = [Section("camp#S1", "camp", 1, 30), Section("onl#S1", "onl", 1, 30)]
+    demand = [
+        StudentDemand(student_id=n, program="AI", offering_ids=frozenset({"camp", "onl"}))
+        for n in range(1, 6)
+    ]
+    return _grid_snapshot(ROOMY, [campus, online], sections, demand=demand)
+
+
+def test_an_evening_online_class_does_not_count_as_student_waiting():
+    snapshot = _campus_plus_online()
+    board = Board(
+        (
+            _p(section="camp#S1", offering="camp", day=Day.SUN, window=TimeWindow(540, 615)),
+            _p(
+                section="onl#S1",
+                offering="onl",
+                day=Day.SUN,
+                window=TimeWindow(950, 1050),  # 15:50-17:30
+                delivery=DeliveryMode.ONLINE,
+            ),
+        )
+    )
+    result = seat_students(snapshot, board, time_limit_seconds=20)
+    assert result.students_fully_seated == 5
+    assert result.idle_minutes == 0, (
+        "the gap between a 09:00 lecture and an evening online class was billed "
+        f"as waiting: {result.idle_minutes} min"
+    )
+
+
+def test_an_online_class_still_collides_with_a_lecture_it_overlaps():
+    """The half that stays. 15:50-17:30 runs straight through a 16:00 lecture,
+    and being online does not give the student a second afternoon."""
+    snapshot = _campus_plus_online()
+    board = Board(
+        (
+            _p(section="camp#S1", offering="camp", day=Day.SUN, window=TimeWindow(960, 1035)),
+            _p(
+                section="onl#S1",
+                offering="onl",
+                day=Day.SUN,
+                window=TimeWindow(950, 1050),
+                delivery=DeliveryMode.ONLINE,
+            ),
+        )
+    )
+    result = seat_students(snapshot, board, time_limit_seconds=20)
+    assert result.students_with_a_clash == 5, (
+        "an online class was allowed to sit on top of a lecture for free"
+    )

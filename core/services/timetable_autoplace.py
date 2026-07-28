@@ -229,12 +229,16 @@ DEFAULT_LAB_SLOTS = [
     {"label": "Lab 3", "start": "13:00", "end": "14:40"},
     {"label": "Lab 4", "start": "14:45", "end": "16:25"},
     {"label": "Lab 5", "start": "16:30", "end": "18:10"},
-    # Owner decision, 2026-07-28: one further 100-minute window at the end of
-    # the day, declared for ONLINE teaching only. It is a column so an online
-    # class placed there can be drawn, and `online_only` keeps it out of the
-    # automatic placer's options so no room-consuming lab is ever put in it.
-    # Nothing in the estate is open at 18:30, which is the point.
-    {"label": "Online 1", "start": "18:30", "end": "20:10", "online_only": True},
+    # Owner rule, 2026-07-28: GS and GSE are online, and they run in these three
+    # windows and nowhere else. No other course may use them.
+    #
+    # They are columns so an online class placed in one can be drawn, and
+    # `online_only` keeps them out of every automatic placer's options -- nothing
+    # in the estate is open in the evening, so a room-consuming class must never
+    # be put here.
+    {"label": "Online 1", "start": "15:50", "end": "17:30", "online_only": True},
+    {"label": "Online 2", "start": "17:40", "end": "19:20", "online_only": True},
+    {"label": "Online 3", "start": "19:30", "end": "21:10", "online_only": True},
 ]
 
 

@@ -31,7 +31,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from scheduler.domain import Snapshot
+from scheduler.domain import DeliveryMode, Snapshot
 from scheduler.domain.board import Board
 
 #: Leaving a student without a seat is far worse than giving them a clash: they
@@ -120,11 +120,22 @@ def seat_students(
     for p in board.placements:
         placements[p.section_id].append(p)
 
-    # Every meeting, online included. A class at 13:00 occupies a student's
-    # 13:00 whether they attend it in a room or at home, and online now runs at
-    # the same declared hours as everything else of its length (D9, revised).
+    # CLASH counts every meeting, online included: an online class at 15:50 and
+    # an on-campus one at 16:00 collide in real time, and a student cannot
+    # attend both however either is delivered.
     def busy_windows(section_id: str):
         return [(p.day, p.window) for p in placements.get(section_id, ())]
+
+    # WAITING counts only what puts a student on campus (owner rule): an evening
+    # online class is not time spent hanging about between lectures, so it must
+    # not inflate the figure -- and it would inflate it badly, since the online
+    # family sits hours after the on-campus day ends.
+    def campus_windows(section_id: str):
+        return [
+            (p.day, p.window)
+            for p in placements.get(section_id, ())
+            if p.delivery is DeliveryMode.IN_PERSON
+        ]
 
     model = cp_model.CpModel()
     y: dict[tuple[int, str, str], object] = {}
@@ -235,7 +246,7 @@ def seat_students(
     for _student_id, section_ids in chosen.items():
         by_day: dict = defaultdict(list)
         for section_id in section_ids:
-            for day, window in busy_windows(section_id):
+            for day, window in campus_windows(section_id):
                 by_day[day].append(window)
         for windows in by_day.values():
             if len(windows) < 2:

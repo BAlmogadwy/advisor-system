@@ -505,12 +505,25 @@ is stated as absolute.
    `instructor_metrics` had to be corrected for this — they were counting online
    as time spent at the university, which would have had the gap objective
    dragging online sessions around to close gaps that do not exist.)
-4. **Online keeps ONE window of its own**, at the end of the day: `18:30-20:10`,
-   declared in the shared slot config so nothing needs widening, and flagged
-   `online_only` so no automatic placer offers it. `placeable_slots()` is the
-   single filter, applied by the option generator, the CP-SAT polisher and the
-   availability grid alike; **manual** placement is deliberately unaffected,
-   because a human putting an online course there is making a decision.
+4. **Online has three windows of its own and no others** — `15:50-17:30`,
+   `17:40-19:20`, `19:30-21:10` — and **no other course may use them.** The
+   exclusivity runs both ways and both directions are enforced: the grid gives
+   online meetings only these three (families are keyed on duration *and*
+   delivery), and the same three are flagged `online_only` in the shared slot
+   config, which every automatic placer filters through `placeable_slots()` —
+   the option generator, the CP-SAT polisher and the lab availability grid
+   alike. **Manual** placement is deliberately unaffected, because a human
+   putting an online course in one is making a decision.
+
+   They are declared in the shared config rather than invented by the new
+   engine, so a scenario grid never has to be widened to draw them.
+
+5. **Online is not student waiting time** (owner rule). It still CLASHES — an
+   online class at 15:50 runs straight through a 16:00 lecture and a student
+   cannot attend both — but the hours between an afternoon lecture and an
+   evening online session are not a student hanging about between classes, and
+   counting them would swamp the figure. Clash over every meeting; waiting over
+   in-person meetings only. The instructor side already worked this way.
 
 **What (1) and (2) cost** — M cohort, 74 sections, same section set both arms,
 120 s, seeds 0/7/21, students actually seated:

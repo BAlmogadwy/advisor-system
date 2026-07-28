@@ -82,14 +82,24 @@ DEFAULT_LAB_STARTS: dict[str, int] = {
 # and creates no campus travel — so it is out of the room model and out of the
 # instructor's campus span, but in the clash model and in the daily cap.
 #
-# Online then keeps ONE window of its own, at the end of the day: 18:30-20:10,
-# declared alongside the others so no grid ever has to be widened to draw it,
-# and flagged `online_only` in the shared slot config so the existing engine's
-# automatic placer skips it. Nothing in the estate is open at 18:30, which is
-# exactly why it is safe to give away — it costs the room model nothing and
-# hands the clash term somewhere to put an online class that would otherwise
-# sit on top of a lecture.
-DEFAULT_ONLINE_STARTS: dict[str, int] = {**DEFAULT_LAB_STARTS, "18:30": 100}
+# Owner rule, 2026-07-28: GS and GSE — every online course — run in a family of
+# THREE windows of their own and nowhere else, and no other course may use them.
+# The exclusivity runs both ways, and both directions are enforced:
+#
+#   * online meetings only ever see these windows, because the grid families are
+#     keyed on (duration, delivery);
+#   * no other course reaches them, because the same windows are flagged
+#     `online_only` in the shared slot config, which every automatic placer
+#     filters through `placeable_slots()`.
+#
+# They are declared in that shared config rather than invented here, so a grid
+# never has to be widened to draw an online class — widening it is what let a
+# scheduler build leave the EXISTING engine free to book a room in the evening.
+DEFAULT_ONLINE_STARTS: dict[str, int] = {
+    "15:50": 100,
+    "17:40": 100,
+    "19:30": 100,
+}
 
 
 class IntakeError(Exception):
