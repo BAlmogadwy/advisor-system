@@ -273,6 +273,15 @@ class Command(BaseCommand):
                         "sibling_pairing": pairing,
                         "time_of_day": drift,
                         "warnings": list(result.warnings),
+                        # D18: every figure above is computed over the problem
+                        # that was actually SOLVED, and this rule makes it
+                        # smaller. Reported beside the results it flatters.
+                        "courses_withheld_low_demand": [
+                            {"code": c, "name": n, "students": k, "tier": t}
+                            for c, n, k, t in snapshot.low_demand_dropped
+                        ],
+                        "students_left_unserved": snapshot.students_left_unserved,
+                        "min_demand": snapshot.policy.min_demand,
                         "student_seating": seating,
                         "saved_plan_id": saved.id if saved else None,
                     },
@@ -285,6 +294,20 @@ class Command(BaseCommand):
         w = self.stdout.write
         b = board.summary()
         cov = instructors["coverage"]
+        if snapshot.low_demand_dropped:
+            w("")
+            w(
+                f"  COURSES WITHHELD   {len(snapshot.low_demand_dropped)} course(s) had fewer "
+                f"than {snapshot.policy.min_demand} students and were kept off the board;"
+            )
+            w("                     every figure below is computed without them.")
+            for code, name, students, tier in snapshot.low_demand_dropped:
+                w(f"    {code:<9} {str(name)[:38]:<38} {students} student(s)  {tier}")
+            if snapshot.students_left_unserved:
+                w(
+                    f"    {snapshot.students_left_unserved} student(s) wanted ONLY withheld "
+                    f"courses and have no timetable at all"
+                )
         w(
             f"Plan {snapshot.academic_year} T{snapshot.term} {snapshot.gender} — "
             f"{', '.join(snapshot.programs)}   (alpha={options['alpha']})"
