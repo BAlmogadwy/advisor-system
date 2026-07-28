@@ -2831,3 +2831,163 @@ def test_an_instructors_only_run_still_gets_its_second_pass():
     # Making it fire would need a fixture where those arbitrary values come out
     # exactly zero, which is a property of the solver's search rather than of
     # the data, and a test that depends on that is a test that will flake.
+
+
+# ── the checker must grade what the solver actually builds ────────────────
+#
+# The whole premise of `scheduler/rules.py` is that one declaration is projected
+# into both whole-board checking and CP-SAT compilation, "with no second chance
+# to disagree". Nothing tested that. `validate()` was only ever called on
+# hand-built `Board(...)` literals and on `place_naively`, so a mutation audit
+# could delete H10 from the CP-SAT model outright -- `model.add(a + b <= 1)`
+# becomes `<= 2` -- and the suite stayed green, because the checker's own H10
+# test passes either way. H8 is literally duplicated as a bare
+# `model.add(sum(same_day) <= 3)` with no reference to `DailyCardinality.cap`.
+#
+# These assert the join: solve it, then grade it with the independent checker.
+
+
+def _crowded_snapshot():
+    """Tight enough that every hard rule is under pressure at once.
+
+    Four sections of one offering (H10 wants them apart), all taught by one
+    person (H7 clash, and H8's cap of three a day forces them across days), on a
+    four-slot grid with two rooms (H9 exclusivity, H11/H12 capacity), and
+    students who need both courses."""
+    siblings = _offering("offa", reqs=_lecture(1))
+    other = _offering("offb", reqs=_lecture(1))
+    sections = [Section(f"offa#S{i}", "offa", i, 10, instructor_id=1) for i in range(1, 4)] + [
+        Section("offb#S1", "offb", 1, 10, instructor_id=1)
+    ]
+    demand = [
+        StudentDemand(student_id=n, program="AI", offering_ids=frozenset({"offa", "offb"}))
+        for n in range(1, 11)
+    ]
+    snapshot = _grid_snapshot(ROOMY, [siblings, other], sections, demand=demand)
+    rooms = (
+        Room("R1", "R1", 30, MeetingKind.LECTURE, frozenset({"AI"})),
+        Room("R2", "R2", 30, MeetingKind.LECTURE, frozenset({"AI"})),
+    )
+    return replace(
+        snapshot,
+        rooms=rooms,
+        instructors=(Instructor(id=1, name="Dr A", eligible_offerings=frozenset()),),
+    )
+
+
+def test_the_checker_passes_a_board_the_solver_built():
+    """If the two ever disagree, this is where it shows -- and it is the failure
+    this whole subsystem was built to prevent."""
+    snapshot = _crowded_snapshot()
+    result = solve(snapshot, time_limit_seconds=20.0)
+    assert result.board.placements, "the fixture must produce a board to grade"
+    board = assign_rooms_exact(snapshot, result.board)
+    report = validate(snapshot, board)
+    assert report.violation_count == 0, (
+        "the solver produced a board its own checker rejects: "
+        f"{[(r.rule_id, len(r.violations)) for r in report.results if r.violations]}"
+    )
+
+
+def test_the_checker_passes_a_board_the_planner_built():
+    """The two-pass path, which carries budgets the single solve does not."""
+    snapshot = _crowded_snapshot()
+    result = plan(snapshot, time_limit_seconds=20.0)
+    assert result.board.placements
+    board = assign_rooms_exact(snapshot, result.board)
+    report = validate(snapshot, board)
+    assert report.violation_count == 0, (
+        f"{[(r.rule_id, len(r.violations)) for r in report.results if r.violations]}"
+    )
+
+
+def test_the_grading_actually_ran_over_this_board():
+    """A checker that graded nothing also reports zero violations. `sch_plan`
+    has an explicit empty-board guard because a female CS build once reported
+    '0 clashes, 100% clash-free' for a board with nothing in it; the same trap
+    is one line away here."""
+    snapshot = _crowded_snapshot()
+    board = assign_rooms_exact(snapshot, solve(snapshot, time_limit_seconds=20.0).board)
+    report = validate(snapshot, board)
+    graded = [r for r in report.results if r.graded]
+    assert len(graded) >= 8, f"only {len(graded)} rules were graded at all"
+    assert report.board_summary["placements"] == 4, "every section must be on the board"
+
+
+# ── constraints with nothing pulling against them ─────────────────────────
+#
+# H10 (siblings never overlap) and H7 (an instructor is in one place at a time)
+# can both be deleted from the CP-SAT model without changing a single board the
+# solver returns -- because no term in the objective WANTS an overlap. The clash
+# term already prefers siblings apart, and the back-to-back reward asks for
+# adjacent, not stacked. So an outcome test cannot see them.
+#
+# What can: make the constraint the thing that binds. On a grid with one cell,
+# a rule that forbids two meetings sharing it is the difference between a
+# timetable and no timetable.
+
+
+def test_two_sections_of_one_course_cannot_share_the_only_cell():
+    """MUTATION: `model.add(a + b <= 1)` -> `<= 2` for the same-offering pair.
+    It survives every board-shaped test in this file."""
+    offering = _offering("offa", reqs=_lecture(1))
+    sections = [Section(f"offa#S{i}", "offa", i, 10) for i in (1, 2)]
+    snapshot = _grid_snapshot(ONE_CELL, [offering], sections)
+    result = solve(snapshot, time_limit_seconds=10.0)
+    assert not result.board.placements, (
+        "two sections of one course were placed in the same slot at the same time"
+    )
+    # ...and the same fixture with one more cell is perfectly feasible, so the
+    # infeasibility above is H10 and not something else about the fixture.
+    roomier = replace(snapshot, grid=ROOMY)
+    assert solve(roomier, time_limit_seconds=10.0).board.placements
+
+
+def test_one_instructor_cannot_be_in_two_places_in_the_only_cell():
+    """MUTATION: drop `model.add(a + b <= 1)` from the instructor-clash loop.
+    Same story -- nothing in the objective objects to a person teaching two
+    classes at once, so only feasibility can catch it."""
+    offerings = [_offering(f"off{i}", reqs=_lecture(1)) for i in (1, 2)]
+    sections = [Section(f"off{i}#S1", f"off{i}", 1, 10, instructor_id=1) for i in (1, 2)]
+    snapshot = replace(
+        _grid_snapshot(ONE_CELL, offerings, sections),
+        instructors=(Instructor(id=1, name="Dr A", eligible_offerings=frozenset()),),
+    )
+    result = solve(snapshot, time_limit_seconds=10.0)
+    assert not result.board.placements, "one person was scheduled to teach two classes at once"
+    # The same two courses taught by DIFFERENT people share the cell happily,
+    # which proves the cell itself is not the obstacle.
+    free = replace(
+        snapshot,
+        sections=(
+            Section("off1#S1", "off1", 1, 10, instructor_id=1),
+            Section("off2#S1", "off2", 1, 10, instructor_id=2),
+        ),
+        instructors=(
+            Instructor(id=1, name="Dr A", eligible_offerings=frozenset()),
+            Instructor(id=2, name="Dr B", eligible_offerings=frozenset()),
+        ),
+    )
+    assert solve(free, time_limit_seconds=10.0).board.placements
+
+
+def test_a_section_cannot_meet_twice_on_the_same_day():
+    """MUTATION: drop `add_at_most_one` from the per-(section, day) group.
+    Nothing in the objective objects to a course meeting itself twice on Sunday
+    -- it is free of clashes and free of instructor gaps -- so again only
+    feasibility can see it.
+
+    One day, one cell, one section needing two weekly meetings: H2 makes that
+    impossible, and without H2 the solver would stack both meetings in the same
+    slot and call it a timetable."""
+    offering = _offering("offa", reqs=_lecture(2))
+    snapshot = _grid_snapshot(ONE_CELL, [offering], [Section("offa#S1", "offa", 1, 10)])
+    assert not solve(snapshot, time_limit_seconds=10.0).board.placements, (
+        "a section was given two meetings on the one day it has"
+    )
+    # Two days is all it needs, so the infeasibility above is H2 and not the
+    # requirement itself being unschedulable.
+    two_days = Grid.from_spec(
+        lecture_starts={"09:00": 75}, lab_starts={"09:00": 100}, days=(Day.SUN, Day.MON)
+    )
+    assert solve(replace(snapshot, grid=two_days), time_limit_seconds=10.0).board.placements
