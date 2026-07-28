@@ -1902,3 +1902,96 @@ def test_long_meetings_go_to_the_lab_columns_and_short_ones_to_lectures():
     assert lecture[0]["end"] == "10:15"
     assert lab[0]["end"] == "10:40"
     assert 75 <= LAB_DURATION_MINUTES < 100
+
+
+# ── one board per course ──────────────────────────────────────────────────
+#
+# Boards are how the workbook and the screen SEGMENT the timetable, and both
+# render one cell per placement row. A section written to every board whose
+# students needed it was therefore drawn once per board in the SAME cell — five
+# copies of "DS321 S2" in one square — and every course read "(on T1)" because
+# it genuinely sat on Term 1 as well as its own. The export was unreadable.
+#
+# The section still has one schedule; that was never the part boards duplicated.
+
+from scheduler.bridge import choose_board  # noqa: E402
+
+
+def _offering_in_terms(*terms, code="AI101", name="INTRO"):
+    return Offering(
+        id=f"off:{code}",
+        course_code=code,
+        course_name=name,
+        credit_hours=3,
+        programs=frozenset({"AI"}),
+        terms=frozenset(terms),
+        requirements=(MeetingRequirement(MeetingKind.LECTURE, DeliveryMode.IN_PERSON, 75, 1),),
+        capacity=25,
+        capacity_is_declared=True,
+    )
+
+
+def test_the_budget_plan_term_decides_where_a_course_goes():
+    """The scenario's own answer, and where a registrar looks for it."""
+    offering = _offering_in_terms(1, 3)
+    board = choose_board(
+        offering,
+        plan_term_of_key={"AI101::INTRO": 3},
+        board_of_term={1: 111, 3: 333},
+        headcount={111: 500},  # far more students on board 111 — must not win
+    )
+    assert board == 333
+
+
+def test_the_plan_is_used_when_the_budget_has_no_term():
+    """The real case: CHEM101's budget row carries a null plan term, and guessing
+    from headcount put a first-term course on the Term 7 board."""
+    offering = _offering_in_terms(1, code="CHEM101", name="CHEMISTRY")
+    board = choose_board(
+        offering,
+        plan_term_of_key={},  # budget says nothing
+        board_of_term={1: 111, 7: 777},
+        headcount={777: 40, 111: 2},  # headcount alone would say Term 7
+    )
+    assert board == 111, "a Term 1 course was filed under Term 7"
+
+
+def test_headcount_is_the_last_resort_not_the_first():
+    offering = _offering_in_terms()  # no plan terms at all
+    board = choose_board(
+        offering,
+        plan_term_of_key={},
+        board_of_term={1: 111, 3: 333},
+        headcount={333: 9, 111: 4},
+    )
+    assert board == 333
+
+
+def test_the_earliest_plan_term_wins_when_a_course_spans_several():
+    """A course named in several plan terms is met first at the earliest one."""
+    offering = _offering_in_terms(5, 1, 3)
+    board = choose_board(
+        offering,
+        plan_term_of_key={},
+        board_of_term={1: 111, 3: 333, 5: 555},
+    )
+    assert board == 111
+
+
+def test_a_course_with_nowhere_to_go_is_reported_not_guessed():
+    offering = _offering_in_terms(9)
+    assert (
+        choose_board(offering, plan_term_of_key={}, board_of_term={1: 111}, headcount=None) is None
+    )
+
+
+def test_the_choice_is_a_single_board_not_a_set():
+    """The whole point: one board, so one cell, so one copy."""
+    offering = _offering_in_terms(1, 3, 5)
+    board = choose_board(
+        offering,
+        plan_term_of_key={"AI101::INTRO": 1},
+        board_of_term={1: 111, 3: 333, 5: 555},
+        headcount={333: 7, 555: 7},
+    )
+    assert isinstance(board, int)

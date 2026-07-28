@@ -27,7 +27,7 @@ and drifting into two different times at once.
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 from django.db import transaction
 
@@ -95,6 +95,50 @@ def grid_columns_for(
     return lecture_columns, lab_columns, lecture_added, lab_added
 
 
+def choose_board(
+    offering,
+    *,
+    plan_term_of_key: dict[str, int],
+    board_of_term: dict[int, int],
+    headcount: dict[int, int] | None = None,
+) -> int | None:
+    """The ONE board a course belongs on, and why.
+
+    Boards are how the workbook and the screen segment the timetable, and both
+    render a cell per placement row — so a course written to several boards is
+    drawn several times in the same cell. Exactly one, therefore, in preference
+    order:
+
+    1. **the section budget's plan term** — the scenario's own answer, and where
+       a registrar expects to find the course;
+    2. **the programme plan itself.** Some budget rows carry no plan term at all
+       (CHEM101's is null), and guessing from headcount then put a first-term
+       course on the Term 7 board, where the coverage sheet rightly called it
+       misplaced. The offering already knows which terms its plan rows name;
+       the earliest is where a student meets it first;
+    3. **the board with the most students who need it** — the same tie-break the
+       existing engine uses for genuinely cross-term courses, with a stable id
+       so two runs of the same data agree.
+
+    Returns ``None`` when no board can hold it, which the caller reports rather
+    than silently dropping.
+    """
+    from core.services.course_identity import planner_course_key
+
+    key = planner_course_key(offering.course_code, offering.course_name)
+    term = plan_term_of_key.get(key.upper())
+    if term is not None and term in board_of_term:
+        return board_of_term[term]
+
+    candidates = sorted(t for t in offering.terms if t and t in board_of_term)
+    if candidates:
+        return board_of_term[candidates[0]]
+
+    if headcount:
+        return min(headcount.items(), key=lambda kv: (-kv[1], kv[0]))[0]
+    return None
+
+
 def build_into_scenario(
     scenario_id: int,
     *,
@@ -117,6 +161,7 @@ def build_into_scenario(
     from core.models import (
         BoardStudentLink,
         DeliveryBoard,
+        ScenarioSectionBudget,
         SectionPlacement,
         TermSection,
         TermSectionMeeting,
@@ -163,24 +208,63 @@ def build_into_scenario(
         progress("rooming")
     board = assign_rooms_exact(snapshot, result.board)
 
-    # Which boards need which course: a board needs it when one of its own
-    # students does. Using the students rather than the term budgets keeps
-    # cross-term courses working without duplicating the old engine's heuristic
-    # for choosing a single "best" board.
-    students_of_board: dict[int, set[int]] = {}
-    for board_row in DeliveryBoard.objects.filter(scenario=scenario):
-        students_of_board[board_row.id] = set(
+    # ONE board per course. This is the rule the existing engine follows, and
+    # departing from it was a real mistake.
+    #
+    # A section was previously placed on every board whose students needed it —
+    # reasoning that a section has one schedule and simply appears in several
+    # places. But the boards are how the workbook and the screen SEGMENT the
+    # timetable: they render one cell per placement row, so a course wanted by
+    # students on all five boards was drawn five times in the same cell, and
+    # every course showed "(on T1)" because it genuinely sat on Term 1 as well
+    # as its own. The output was unreadable.
+    #
+    # The existing engine picks a single board and explicitly refuses to place a
+    # course twice ("already placed on another board -> skip"). Matching it:
+    #
+    #   1. the board whose nominal term IS the course's plan term — where the
+    #      registrar expects to find it;
+    #   2. otherwise the board with the most students who need it, which is the
+    #      same tie-break the existing engine uses for cross-term courses.
+    #
+    # The section itself still has ONE schedule; that was never the part boards
+    # were duplicating.
+    boards = list(DeliveryBoard.objects.filter(scenario=scenario).order_by("display_order"))
+    board_of_term: dict[int, int] = {}
+    for board_row in boards:
+        if board_row.nominal_term is not None:
+            board_of_term.setdefault(int(board_row.nominal_term), board_row.id)
+
+    plan_term_of_key: dict[str, int] = {}
+    for budget in ScenarioSectionBudget.objects.filter(scenario=scenario):
+        if budget.programme_term is not None:
+            key = str(budget.course_key or budget.course_code or "").strip().upper()
+            if key:
+                plan_term_of_key[key] = int(budget.programme_term)
+
+    students_of_board: dict[int, set[int]] = {
+        board_row.id: set(
             BoardStudentLink.objects.filter(board=board_row).values_list("student_id", flat=True)
         )
+        for board_row in boards
+    }
     wanted_by_student: dict[int, set[str]] = defaultdict(set)
     for demand in snapshot.demand:
         wanted_by_student[int(demand.student_id)] |= set(demand.offering_ids)
 
-    boards_for_offering: dict[str, set[int]] = defaultdict(set)
+    headcount: dict[str, Counter] = defaultdict(Counter)
     for board_id, student_ids in students_of_board.items():
         for student_id in student_ids:
             for offering_id in wanted_by_student.get(int(student_id), ()):
-                boards_for_offering[offering_id].add(board_id)
+                headcount[offering_id][board_id] += 1
+
+    def board_for(offering):
+        return choose_board(
+            offering,
+            plan_term_of_key=plan_term_of_key,
+            board_of_term=board_of_term,
+            headcount=headcount.get(offering.id),
+        )
 
     offerings = snapshot.offerings_by_id
     sections = {s.id: s for s in snapshot.sections}
@@ -238,8 +322,8 @@ def build_into_scenario(
             offering = offerings.get(section.offering_id) if section else None
             if section is None or offering is None:
                 continue
-            target_boards = boards_for_offering.get(offering.id) or set()
-            if not target_boards:
+            target_board = board_for(offering)
+            if target_board is None:
                 orphaned += 1
                 continue
 
@@ -279,17 +363,16 @@ def build_into_scenario(
                         "instructor": instructor_names.get(placement.instructor_id, ""),
                     },
                 )
-                for board_id in sorted(target_boards):
-                    SectionPlacement.objects.get_or_create(
-                        board_id=board_id,
-                        term_section=term_section,
-                        day=placement.day.value,
-                        start_time=start,
-                        defaults={
-                            "end_time": end,
-                            "room": placement.room_id or "UNASSIGNED",
-                        },
-                    )
+                SectionPlacement.objects.get_or_create(
+                    board_id=target_board,
+                    term_section=term_section,
+                    day=placement.day.value,
+                    start_time=start,
+                    defaults={
+                        "end_time": end,
+                        "room": placement.room_id or "UNASSIGNED",
+                    },
+                )
                 written += 1
 
     report = validate(snapshot, board)
