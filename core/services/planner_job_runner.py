@@ -277,7 +277,7 @@ def run_planner_job(job_id: uuid.UUID | str) -> None:
                 programs=list(p.get("programs") or []),
                 gender=str(p.get("gender", "M")),
                 seconds=float(p.get("seconds", 120)),
-                runs=int(p.get("runs", 1)),
+                runs=int(p.get("runs", 3)),
                 clash_tolerance=float(p.get("clash_tolerance", 0.20)),
                 default_capacity=int(p.get("default_capacity", 25)),
                 progress=_stage,

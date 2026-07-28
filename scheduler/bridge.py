@@ -149,7 +149,23 @@ def build_into_scenario(
     programs: list[str],
     gender: str,
     seconds: float = 120.0,
-    runs: int = 1,
+    # THREE, not one. Measured at equal total compute on the male cohort --
+    # 3 x 200s against 1 x 600s, two repetitions each:
+    #
+    #                     instructor idle   T1 clashes   students clash-free
+    #   one long run        1540 / 2570     3.5 / 4.2       98.7 / 98.7 %
+    #   three, keep best    1420 / 1900     3.2 / 4.0       99.5 / 99.5 %
+    #
+    # The clash-free figures do not overlap: two students affected instead of
+    # five, on both repetitions. Instructor idle is better and tighter, and the
+    # single-run arm shows why -- 1540 and 2570 from nothing but the seed.
+    #
+    # This objective has no usable lower bound (N8), so optimality is
+    # unprovable and a single run is a lottery ticket. Variance is the
+    # phenomenon; harvesting it beats hoping for a good draw. More time alone
+    # does NOT do this -- measured at 120/300/600s it widened the spread rather
+    # than improving the median.
+    runs: int = 3,
     clash_tolerance: float = 0.20,
     default_capacity: int = 25,
     progress=None,
