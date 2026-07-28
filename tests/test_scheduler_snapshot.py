@@ -219,18 +219,38 @@ def test_overlapping_alternatives_do_not_add_room_capacity():
     assert grid.room_periods_per_week(frozenset({75, 100}), room_count=5) == 125
 
 
-def test_online_has_its_own_late_day_family_that_needs_no_room():
-    """D9: online teaching is a separate declared family from 15:00, so it never
-    competes with the on-campus grid — and it consumes no room."""
+def test_online_runs_at_the_declared_hours_and_still_needs_no_room():
+    """D9 as revised, 2026-07-28. Online teaching used to have a private late-day
+    family (15:00, 16:45, 18:30) so that it competed with nothing — which is what
+    licensed the claim that it can never clash for a student.
+
+    It was also the only thing this engine scheduled at times the scenario's own
+    grid does not declare, and the workspace must widen that grid to draw them —
+    a grid the EXISTING engine reads as its legal placement times. So online now
+    runs at the same declared hours as anything else of its length, and clashes
+    like anything else. What stays true is the physical part: no room."""
     grid = default_grid()
     online = grid.windows_for(100, DeliveryMode.ONLINE)
-    assert [str(w) for w in online] == ["15:00-16:40", "16:45-18:25", "18:30-20:10"]
-    # The in-person 100-minute family is the lab timing set, and is disjoint from it.
     in_person = grid.windows_for(100, DeliveryMode.IN_PERSON)
-    assert len(in_person) == 5
-    assert not set(online) & set(in_person)
-    # Online windows never enter the room-capacity bound.
-    assert grid.max_nonoverlapping_per_day(frozenset({100}), DeliveryMode.ONLINE) == 3
+    assert set(in_person) < set(online), (
+        "online must cover every declared hour, plus its own end-of-day window"
+    )
+    assert [str(w) for w in online] == [
+        "09:00-10:40",
+        "10:45-12:25",
+        "13:00-14:40",
+        "14:45-16:25",
+        "16:30-18:10",
+        "18:30-20:10",
+    ]
+    # The one window labs may never use. It is declared in the shared slot
+    # config so nothing has to widen a grid to draw a class in it, and flagged
+    # `online_only` so no automatic placer offers it -- nothing in the estate is
+    # open at 18:30.
+    assert str(online[-1]) == "18:30-20:10"
+    assert TimeWindow(1110, 1210) not in set(in_person)
+    # Still out of the room model: delivery decides that, not the hour.
+    assert grid.max_nonoverlapping_per_day(frozenset({100}), DeliveryMode.ONLINE) == 6
 
 
 def test_a_room_period_bound_is_a_real_upper_bound():
@@ -1119,3 +1139,35 @@ def test_a_build_refuses_to_delete_a_locked_placement():
     assert SectionPlacement.objects.filter(is_locked=True).count() == 1, (
         "the locked placement was destroyed anyway"
     )
+
+
+def test_no_automatic_placer_may_use_an_online_only_window():
+    """Owner decision, 2026-07-28: the day gets one more 100-minute window at the
+    end, 18:30-20:10, and *labs will not use it at all*.
+
+    It has to be a real column in the shared slot config, or an online class
+    placed there could not be drawn and the seam would have to widen the grid --
+    which is what let a scheduler build leave the EXISTING engine free to put a
+    room-consuming lab at 18:30. So it is declared, and flagged, and every
+    automatic path filters the flag. Nothing in the estate is open at 18:30,
+    which is exactly why it is safe to give to online and not to anyone else."""
+    from core.services.timetable_autoplace import (
+        DEFAULT_LAB_SLOTS,
+        _generate_meeting_options,
+        placeable_slots,
+    )
+
+    declared = [s for s in DEFAULT_LAB_SLOTS if s["start"] == "18:30"]
+    assert declared, "the window must be declared, or a class there cannot be drawn"
+    assert declared[0].get("online_only") is True
+
+    offered = placeable_slots(DEFAULT_LAB_SLOTS)
+    assert "18:30" not in {s["start"] for s in offered}
+    assert len(offered) == len(DEFAULT_LAB_SLOTS) - 1, "only the flagged one is withheld"
+
+    # ...and it really does not reach the option generator, which is what the
+    # classic placer and the CP-SAT polisher both build their moves from.
+    options = _generate_meeting_options([100], [], DEFAULT_LAB_SLOTS)
+    starts = {slot["start"] for option in options for slot in option}
+    assert starts, "this fixture must produce options to mean anything"
+    assert "18:30" not in starts, "the automatic placer was offered an online-only window"

@@ -384,8 +384,8 @@ def solve(
             shared = demand.shared_students(a.id, b.id)
             if shared < _MIN_SHARED_FOR_GAP_TERM:
                 continue
-            if a.is_fully_online or b.is_fully_online:
-                continue  # online has its own late family and no campus gap
+            if a.is_fully_online and b.is_fully_online:
+                continue  # neither is on campus, so there is no walk to shorten
             sa_list = sections_by_offering.get(a.id, ())
             sb_list = sections_by_offering.get(b.id, ())
             if not sa_list or not sb_list:
@@ -742,6 +742,11 @@ def solve(
     # minimising idle time, with fewer variables than modelling idle directly.
     works: dict[tuple[int, Day], object] = {}
     spans: list[object] = []
+    delivery_of = {
+        section.id: offerings[section.offering_id].requirements[0].delivery
+        for section in snapshot.sections
+        if offerings[section.offering_id].requirements
+    }
     by_instructor_sections: dict[int, list[str]] = {}
     for section in snapshot.sections:
         if section.instructor_id is not None:
@@ -749,10 +754,19 @@ def solve(
 
     for instructor_id, section_ids in sorted(by_instructor_sections.items()):
         for day in snapshot.grid.days():
+            # Campus presence only. `works` is a commute proxy and `span` is
+            # time spent waiting AT the university, and an online session is
+            # neither — teaching it from home does not turn a free day into a
+            # travelled one, and it cannot fill a gap between two campus
+            # classes. Instructor CLASH and the daily cap are enforced over
+            # every meeting further up, because a person still cannot be in two
+            # places at once and still teaches the session either way.
             same_day = [
                 (var, window)
                 for (sid, _i, d, window), var in x.items()
-                if sid in section_ids and d is day
+                if sid in section_ids
+                and d is day
+                and delivery_of.get(sid) is DeliveryMode.IN_PERSON
             ]
             if not same_day:
                 continue
@@ -799,8 +813,6 @@ def solve(
         shared = demand.shared_students(a.id, b.id)
         if not shared:
             continue
-        if a.is_fully_online or b.is_fully_online:
-            continue  # online cannot clash for a student (D9)
         sa_list = [s.id for s in sections_by_offering.get(a.id, ())]
         sb_list = [s.id for s in sections_by_offering.get(b.id, ())]
         if not sa_list or not sb_list:
@@ -992,8 +1004,8 @@ def expected_clashes(snapshot: Snapshot, board: Board) -> float:
     sections_by_offering = snapshot.sections_by_offering
     by_section: dict[str, list[Placement]] = {}
     for p in board.placements:
-        if p.delivery is not DeliveryMode.IN_PERSON:
-            continue
+        # Online included: it occupies the student's time even though it
+        # occupies no room, and it now runs at the same declared hours.
         by_section.setdefault(p.section_id, []).append(p)
 
     total = 0.0
@@ -1002,8 +1014,6 @@ def expected_clashes(snapshot: Snapshot, board: Board) -> float:
         shared = demand.shared_students(a.id, b.id)
         if not shared:
             continue
-        if a.is_fully_online or b.is_fully_online:
-            continue  # online cannot clash for a student (D9)
         sa_list = [s.id for s in sections_by_offering.get(a.id, ())]
         sb_list = [s.id for s in sections_by_offering.get(b.id, ())]
         if not sa_list or not sb_list:
@@ -1094,8 +1104,12 @@ def instructor_metrics(snapshot: Snapshot, board: Board) -> dict:
 
     rows, total_days, total_floor, total_idle = [], 0, 0, 0
     for instructor_id, placements in sorted(by_instructor.items()):
+        # Campus presence only, matching what the model minimises: an online
+        # session is neither a commute nor time spent waiting at the university.
         by_day: dict[Day, list[Placement]] = {}
         for p in placements:
+            if p.delivery is not DeliveryMode.IN_PERSON:
+                continue
             by_day.setdefault(p.day, []).append(p)
         idle = 0
         for _day, items in by_day.items():

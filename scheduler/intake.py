@@ -64,14 +64,32 @@ DEFAULT_LAB_STARTS: dict[str, int] = {
     "14:45": 100,
     "16:30": 100,
 }
-# Online teaching has its own late-day family: three 100-minute slots from 15:00,
-# placed after the on-campus day so it never competes with it. Online sessions
-# consume no room and do not create a student clash (owner decision D9).
-DEFAULT_ONLINE_STARTS: dict[str, int] = {
-    "15:00": 100,
-    "16:45": 100,
-    "18:30": 100,
-}
+# Online teaching runs at the SAME declared times as everything else of its
+# length. It used to have a private late-day family (15:00, 16:45, 18:30) on the
+# reasoning that a session after the campus day competes with nothing — which is
+# what licensed the second half of D9, that online never clashes for a student.
+#
+# Owner decision, 2026-07-28: drop the private family. It was the one thing this
+# engine scheduled at times the scenario's own grid does not declare, and the
+# workspace has to widen that grid to draw them — a grid the EXISTING engine
+# reads as its legal placement times, so a scheduler build could leave the old
+# engine free to put a room-consuming lab at 18:30. Nothing else in the
+# subsystem could regress the engine it was built beside.
+#
+# The exemption goes with it. A class at 13:00 occupies a student's 13:00
+# whether they attend it in a room or at home, so online now clashes like
+# anything else. What stays true is the physical part: online consumes NO ROOM,
+# and creates no campus travel — so it is out of the room model and out of the
+# instructor's campus span, but in the clash model and in the daily cap.
+#
+# Online then keeps ONE window of its own, at the end of the day: 18:30-20:10,
+# declared alongside the others so no grid ever has to be widened to draw it,
+# and flagged `online_only` in the shared slot config so the existing engine's
+# automatic placer skips it. Nothing in the estate is open at 18:30, which is
+# exactly why it is safe to give away — it costs the room model nothing and
+# hands the clash term somewhere to put an online class that would otherwise
+# sit on top of a lecture.
+DEFAULT_ONLINE_STARTS: dict[str, int] = {**DEFAULT_LAB_STARTS, "18:30": 100}
 
 
 class IntakeError(Exception):

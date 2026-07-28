@@ -229,12 +229,35 @@ DEFAULT_LAB_SLOTS = [
     {"label": "Lab 3", "start": "13:00", "end": "14:40"},
     {"label": "Lab 4", "start": "14:45", "end": "16:25"},
     {"label": "Lab 5", "start": "16:30", "end": "18:10"},
+    # Owner decision, 2026-07-28: one further 100-minute window at the end of
+    # the day, declared for ONLINE teaching only. It is a column so an online
+    # class placed there can be drawn, and `online_only` keeps it out of the
+    # automatic placer's options so no room-consuming lab is ever put in it.
+    # Nothing in the estate is open at 18:30, which is the point.
+    {"label": "Online 1", "start": "18:30", "end": "20:10", "online_only": True},
 ]
+
+
+def placeable_slots(slots: list[dict] | None) -> list[dict]:
+    """The windows an automatic placer may use, from a declared slot list.
+
+    Drops anything flagged ``online_only``. Those windows exist so an online
+    class scheduled there has a column to be drawn in; they are not places a
+    placer may put a class, because no engine here carries delivery mode
+    through to placement and one would otherwise book a room at 18:30, when
+    nothing in the estate is open.
+
+    Every automatic path must go through this — the option generator, the
+    CP-SAT polisher, and the availability grid all read the same declared list.
+    Manual placement deliberately does not: a human choosing an online-only
+    window for an online course is making a decision, not an error.
+    """
+    return [s for s in (slots or []) if not s.get("online_only")]
 
 
 def _get_slots(slot_config: list[dict]) -> list[dict]:
     """Return *slot_config* if non-empty, otherwise fall back to DEFAULT_SLOTS."""
-    return slot_config if slot_config else DEFAULT_SLOTS
+    return placeable_slots(slot_config if slot_config else DEFAULT_SLOTS)
 
 
 # ── Auto-Placement ───────────────────────────────────────────────
@@ -279,7 +302,9 @@ def _generate_meeting_options(
     * Labs must be on a different day than lectures of the same course.
     """
     slots = _get_slots(slot_config)
-    lab_slots = _get_slots(lab_slot_config) if lab_slot_config else DEFAULT_LAB_SLOTS
+    lab_slots = (
+        _get_slots(lab_slot_config) if lab_slot_config else placeable_slots(DEFAULT_LAB_SLOTS)
+    )
     num_meetings = len(pattern)
 
     # All ways to pick *num_meetings* distinct days from the 5-day week.

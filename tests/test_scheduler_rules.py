@@ -1726,10 +1726,22 @@ def test_students_who_cannot_be_seated_are_reported_not_hidden():
     )
 
 
-def test_online_sessions_never_clash_for_a_student():
-    """D9: online has its own late family and cannot collide."""
-    online = (MeetingRequirement(MeetingKind.LECTURE, DeliveryMode.ONLINE, 100, 1),)
-    offerings = [_offering("offa", reqs=online), _offering("offb", reqs=online)]
+def test_two_online_sessions_at_the_same_hour_do_clash_for_a_student():
+    """D9 as revised, 2026-07-28. Online used to be exempt from student conflict,
+    licensed by its private late-day family: a session after the campus day
+    competes with nothing.
+
+    That family is gone -- it was the only thing this engine scheduled at hours
+    the scenario's grid does not declare, and drawing them means widening a grid
+    the EXISTING engine treats as legal placement times. Online now runs at the
+    declared hours, so the exemption would be a lie: a class at 13:00 occupies a
+    student's 13:00 whether they attend it in a room or at home."""
+    offerings = [
+        _offering(
+            code, reqs=(MeetingRequirement(MeetingKind.LECTURE, DeliveryMode.ONLINE, 100, 1),)
+        )
+        for code in ("offa", "offb")
+    ]
     sections = [Section("offa#S1", "offa", 1, 30), Section("offb#S1", "offb", 1, 30)]
     demand = [
         StudentDemand(student_id=n, program="AI", offering_ids=frozenset({"offa", "offb"}))
@@ -1755,7 +1767,28 @@ def test_online_sessions_never_clash_for_a_student():
         )
     )
     result = seat_students(snap, board, time_limit_seconds=20)
-    assert result.students_with_a_clash == 0
+    assert result.students_with_a_clash == 5, (
+        "two classes at the same hour collide for every student who needs both, "
+        "and being online does not give anyone a second afternoon"
+    )
+
+
+def test_an_online_session_still_consumes_no_room():
+    """The half of D9 that survives, and the reason it is a delivery mode rather
+    than a time of day: no room is needed at any hour."""
+    board = Board(
+        (
+            _p(
+                section="offa#S1",
+                offering="offa",
+                day=Day.SUN,
+                window=TimeWindow(540, 640),
+                delivery=DeliveryMode.ONLINE,
+            ),
+        )
+    )
+    assert board.unroomed == (), "an online session was counted as needing a room"
+    assert not board.placements[0].needs_room
 
 
 def test_student_waiting_time_is_measured():

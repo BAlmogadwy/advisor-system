@@ -469,6 +469,64 @@ acceptable in exchange for utilisation and shorter gaps.
 earlier concern that it needed turnover protection does not apply, because
 turnover is not a rule here.
 
+### D9 — Online teaching: no room, no commute, one window of its own
+
+Online courses (GS/GSE, 2 credits, one 100-minute session a week) consume **no
+room** and create **no campus travel**. That much has never changed.
+
+What did change, on 2026-07-28, is where they run and whether they can clash.
+
+**Originally:** a private late-day family — 15:00, 16:45, 18:30 — placed after
+the on-campus day so it competed with nothing, which is what licensed the second
+half of the rule: *online never clashes for a student*.
+
+**The problem that forced a revision.** That family was the only thing this
+engine scheduled at times the workspace scenario's own grid does not declare. To
+draw such a class the seam has to widen `lab_slot_config` — and that field is not
+a display list, it is the **legal placement set the existing engine reads**
+(`timetable_autoplace._generate_meeting_options`,
+`timetable_workspace` and the CP-SAT polisher all build their moves from it).
+Measured: a scheduler build on an AI/M scenario added `18:30-20:10` to the lab
+columns, after which running "Optimise Current" could put a **room-consuming lab
+at 18:30**, a time nothing in the estate is open. That is the only place in the
+subsystem that could regress the engine it was built beside, and that constraint
+is stated as absolute.
+
+**Decision.**
+
+1. **Online runs at the declared hours** — the same 100-minute family as
+   everything else of that length. Nothing has to be widened, ever.
+2. **The clash exemption goes with it.** A class at 13:00 occupies a student's
+   13:00 whether they attend it in a room or at home, so online now clashes like
+   anything else and counts toward an instructor's daily cap.
+3. **It is still not campus presence.** Working days and campus idle exclude it:
+   teaching a session from home does not turn a free day into a commute, and it
+   cannot fill a gap between two on-campus classes. (Both the model and
+   `instructor_metrics` had to be corrected for this — they were counting online
+   as time spent at the university, which would have had the gap objective
+   dragging online sessions around to close gaps that do not exist.)
+4. **Online keeps ONE window of its own**, at the end of the day: `18:30-20:10`,
+   declared in the shared slot config so nothing needs widening, and flagged
+   `online_only` so no automatic placer offers it. `placeable_slots()` is the
+   single filter, applied by the option generator, the CP-SAT polisher and the
+   availability grid alike; **manual** placement is deliberately unaffected,
+   because a human putting an online course there is making a decision.
+
+**What (1) and (2) cost** — M cohort, 74 sections, same section set both arms,
+120 s, seeds 0/7/21, students actually seated:
+
+| | working days | seated clash-free | expected clashes *(proxy)* |
+|---|---|---|---|
+| private late family | 19 / 19 / 19 = floor | 99.5 / 97.7 / 99.7 % | 75 / 77 / 90 |
+| declared hours | 19 / 19 / 19 = floor | 99.5 / 99.2 / 99.5 % | 99 / 116 / 130 |
+
+The proxy rises about 50%, and **the outcome does not**: the seated median is
+identical, and the new arm's *worst* seed is better than the old arm's worst. The
+proxy assumes students land in sections at random and so counts collisions that
+seating routes around — the same pattern D14 records. Item (4) then hands the
+clash term somewhere to put an online class that would otherwise sit on top of a
+lecture, and the day count returned to the floor on the end-to-end run.
+
 ### D10 — Instructor load: ≤2 sections of one course, and the rest go unlinked
 > *"if an instructor is linked to a course and the course has more than 3
 > sections, the max allowed per instructor for the same course is 2 sections and

@@ -120,14 +120,11 @@ def seat_students(
     for p in board.placements:
         placements[p.section_id].append(p)
 
-    # Only in-person meetings can clash; online sits in its own late family and
-    # is explicitly excluded from student conflict (D9).
+    # Every meeting, online included. A class at 13:00 occupies a student's
+    # 13:00 whether they attend it in a room or at home, and online now runs at
+    # the same declared hours as everything else of its length (D9, revised).
     def busy_windows(section_id: str):
-        return [
-            (p.day, p.window)
-            for p in placements.get(section_id, ())
-            if p.delivery.name == "IN_PERSON"
-        ]
+        return [(p.day, p.window) for p in placements.get(section_id, ())]
 
     model = cp_model.CpModel()
     y: dict[tuple[int, str, str], object] = {}
