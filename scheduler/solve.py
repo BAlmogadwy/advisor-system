@@ -1265,7 +1265,9 @@ def plan(
     # it is the caller's policy, not something derived from a board already in
     # hand. A cohort that cannot meet it should still get a timetable, with the
     # compromise stated rather than discovered later on screen.
-    if not first.board.placements and max_time_of_day_slots is not None:
+    if not first.board.placements and (
+        max_time_of_day_slots is not None or max_time_of_day_minutes is not None
+    ):
         relaxed = solve(
             snapshot,
             time_limit_seconds=half,
@@ -1276,14 +1278,25 @@ def plan(
             **kwargs,
         )
         if relaxed.board.placements:
+            asked = []
+            if max_time_of_day_slots is not None:
+                asked.append(f"{max_time_of_day_slots} slot(s)")
+            if max_time_of_day_minutes is not None:
+                asked.append(f"{max_time_of_day_minutes} minutes")
             relaxed.warnings.append(
                 "no timetable keeps every section within "
-                f"{max_time_of_day_slots} slot(s) of itself; the rule was dropped"
+                + " and ".join(asked)
+                + " of itself; the rule was dropped"
             )
             # The failed attempt spent real time. Carrying it keeps the reported
             # figure a description of the run rather than of the last pass in it.
             relaxed.wall_time_seconds += first.wall_time_seconds
+            # BOTH ceilings, not just the one named in the warning. Leaving the
+            # minute bound on pass 2 measures it against a pass-1 total achieved
+            # without it, so pass 2 is infeasible on arrival and the gap pass —
+            # the entire reason plan() runs twice — silently never executes.
             max_time_of_day_slots = None
+            max_time_of_day_minutes = None
             first = relaxed
         else:
             # Says which suspect has been ruled out. Without it the caller reads
@@ -1323,14 +1336,24 @@ def plan(
     # Derived from the solver's own units, so a zero tolerance still admits pass
     # 1's board rather than rejecting it on a rounding difference.
     #
-    # `clash_score` is reported as 0 when the clash booleans carry no objective
-    # pressure (alpha == 0, "instructors only"), because their values are then
-    # meaningless. A ceiling of 0 is NOT a tolerance — it is "no student may ever
-    # clash", which on a cohort where nearly every student clashes is instantly
-    # infeasible. Pass 2 would return nothing, plan() would fall back, and the
-    # instructors-only mode would silently spend half its budget achieving
-    # exactly nothing. When there is no meaningful score to bound, don't bound.
-    bound_clashes = first.clash_score > 0
+    # A score of zero means one of two completely different things, and reading
+    # them as one was a real defect.
+    #
+    # When `alpha == 0` ("instructors only") the clash booleans carry no
+    # objective pressure, so their values are arbitrary — they are only
+    # lower-bounded — and a ceiling derived from them is meaningless. Worse, a
+    # ceiling of 0 would read as "no student may ever clash", instantly
+    # infeasible on a cohort where nearly everyone does; pass 2 would return
+    # nothing and the mode would spend half its budget achieving exactly that.
+    #
+    # But when students ARE in the objective, a score of zero means pass 1 found
+    # a **clash-free** board, and a ceiling of zero is then exactly right: do not
+    # make it worse. Testing the score instead of the mode dropped the ceiling
+    # precisely when it had the most to protect, and review reproduced the
+    # consequence — a provably clash-free timetable converted into a clashing one
+    # by the gap pass, reported as a clean success with nothing in `warnings`.
+    # Pass 2 cannot become infeasible from it: pass 1's own board scores zero.
+    bound_clashes = float(kwargs.get("alpha", 0.9)) > 0.0
     ceiling = math.floor(first.clash_score * (1.0 + clash_tolerance)) if bound_clashes else None
     second = solve(
         snapshot,

@@ -2708,3 +2708,93 @@ def test_the_denominator_changes_the_answer_not_just_the_wording():
     assert result.clash_free_percent == 0.0, (
         "over everybody this reads 50% -- the student with no offb seat cannot clash"
     )
+
+
+from scheduler.solve import expected_clashes  # noqa: E402
+
+# ── the gap pass may not spend a clash-free board ─────────────────────────
+#
+# `plan()` bounds student harm by a ceiling derived from pass 1. It used to drop
+# that ceiling whenever pass 1 scored zero -- justified for `alpha == 0`, where
+# the clash booleans carry no objective pressure and their values are arbitrary,
+# but zero also means pass 1 found a CLASH-FREE board, and dropping the ceiling
+# then removed it exactly where it had the most to protect.
+
+
+def _clash_free_but_gappy():
+    """A day where keeping the instructor's classes together costs a student
+    their clash-free week.
+
+    Three 75-minute lecture times (09:00, 10:30, 16:00) and ONE 100-minute
+    window (09:00-10:40) which straddles both morning lecture times. B is the
+    100-minute course, so it has nowhere else to go. Twenty students need A and
+    B, and the instructor teaches A and C.
+
+    * clash-free demands A at 16:00, which leaves the instructor a hole between
+      the morning and the late afternoon;
+    * closing that hole means A at 09:00 or 10:30 -- both underneath B.
+
+    So the gap pass can only shorten the instructor's day by clashing every one
+    of those twenty students, and the ceiling is the only thing stopping it.
+    """
+    grid = Grid(
+        slots=(
+            Slot(Day.SUN, TimeWindow(540, 615), MeetingKind.LECTURE, DeliveryMode.IN_PERSON),
+            Slot(Day.SUN, TimeWindow(630, 705), MeetingKind.LECTURE, DeliveryMode.IN_PERSON),
+            Slot(Day.SUN, TimeWindow(960, 1035), MeetingKind.LECTURE, DeliveryMode.IN_PERSON),
+            Slot(Day.SUN, TimeWindow(540, 640), MeetingKind.LECTURE, DeliveryMode.IN_PERSON),
+        )
+    )
+    long_lecture = (MeetingRequirement(MeetingKind.LECTURE, DeliveryMode.IN_PERSON, 100, 1),)
+    offerings = [
+        _offering("offa", reqs=_lecture(1)),
+        _offering("offb", reqs=long_lecture),
+        _offering("offc", reqs=_lecture(1)),
+    ]
+    sections = [
+        Section("offa#S1", "offa", 1, 30, instructor_id=1),
+        Section("offb#S1", "offb", 1, 30),
+        Section("offc#S1", "offc", 1, 30, instructor_id=1),
+    ]
+    demand = [
+        StudentDemand(student_id=n, program="AI", offering_ids=frozenset({"offa", "offb"}))
+        for n in range(1, 21)
+    ]
+    snapshot = _snapshot_with(
+        offerings, sections, [Instructor(id=1, name="Dr A", eligible_offerings=frozenset())]
+    )
+    return replace(snapshot, grid=grid, demand=tuple(demand))
+
+
+def test_a_clash_free_board_is_not_spent_on_instructor_gaps():
+    snapshot = _clash_free_but_gappy()
+    result = plan(snapshot, time_limit_seconds=20.0)
+    assert result.board.placements
+    assert expected_clashes(snapshot, result.board) == 0.0, (
+        "the gap pass turned a clash-free timetable into a clashing one, and "
+        "reported it as a clean success"
+    )
+    # Note there is no "unbounded control" here, and there cannot be: when pass 1
+    # scores zero, no `clash_tolerance` can loosen the ceiling, because any
+    # multiple of zero is zero. The trade is real -- removing the ceiling lets
+    # pass 2 take A down to 10:30 underneath B, buying 240 minutes of instructor
+    # idle for twenty clashing students -- and the only way to observe that is to
+    # remove the ceiling, which is exactly what the mutation test does.
+
+
+def test_an_instructors_only_run_still_gets_its_second_pass():
+    """The other half, and the reason the old condition existed. At alpha=0 the
+    clash booleans carry no objective pressure, so their values are arbitrary and
+    a ceiling built from them would be nonsense -- a ceiling of 0 would read as
+    "no student may ever clash" and pass 2 would return nothing at all."""
+    snapshot = _clash_free_but_gappy()
+    result = plan(snapshot, time_limit_seconds=20.0, alpha=0.0)
+    assert result.board.placements, "instructors-only lost its board to a nonsense ceiling"
+    assert any("two-pass" in note for note in result.notes), f"pass 2 never ran: {result.notes}"
+    # HONEST LIMIT: this does not detect "bound even at alpha=0". With students
+    # out of the objective the clash booleans are only lower-bounded, so they
+    # settle arbitrarily, and the ceiling derived from whatever they happened to
+    # be is usually satisfiable -- pass 2 then runs and this test passes anyway.
+    # Making it fire would need a fixture where those arbitrary values come out
+    # exactly zero, which is a property of the solver's search rather than of
+    # the data, and a test that depends on that is a test that will flake.
