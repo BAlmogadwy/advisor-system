@@ -80,6 +80,12 @@ class SchedulerPlan(models.Model):
     sibling_pairs_back_to_back = models.IntegerField(default=0)
     sibling_pairs_achievable = models.IntegerField(default=0)
 
+    # A section's weekly meetings at the same hour, and within one declared slot
+    # of each other. Stored beside its own floor like everything else here: the
+    # floor is 100%, and a plan that reads 43% is a plan that gave the rule up.
+    sections_same_hour_percent = models.FloatField(default=0.0)
+    sections_within_one_slot_percent = models.FloatField(default=0.0)
+
     # Null until someone asks for it: seating is a separate, slower confirmation.
     students_seated = models.IntegerField(null=True, blank=True)
     students_clash_free_percent = models.FloatField(null=True, blank=True)

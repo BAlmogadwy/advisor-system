@@ -78,6 +78,12 @@ class SolveResult:
     wall_time_seconds: float
     unplaced: tuple[str, ...] = ()
     notes: list[str] = field(default_factory=list)
+    #: Things the planner GAVE UP, as distinct from things it did. Separate from
+    #: `notes` because notes are a mixed channel — every successful two-pass run
+    #: appends one — and a screen that renders all of them as warnings teaches
+    #: the reader to ignore warnings. Anything in here is a compromise the caller
+    #: did not ask for and must be told about.
+    warnings: list[str] = field(default_factory=list)
     #: The clash total in the solver's own integer units. `expected_clashes` is
     #: recomputed from the board in exact arithmetic, so the two differ slightly
     #: wherever a weight was rounded. Budgets must be expressed in *this* one, or
@@ -137,6 +143,8 @@ def solve(
     max_room_shortfall: int | None = None,
     sibling_adjacency_weight: int = 0,
     student_adjacency_weight: int = 0,
+    max_time_of_day_slots: int | None = None,
+    max_time_of_day_minutes: int | None = None,
     same_offering_penalty: int | None = None,
 ) -> SolveResult:
     """Choose a day/time for every meeting, minimising expected student clashes."""
@@ -403,6 +411,125 @@ def solve(
                         together = model.new_bool_var("")
                         model.add_max_equality(together, near)
                         student_gap_terms.append((together, weight))
+
+    # ── a section keeps the same hour all week ────────────────────────────
+    #
+    # Owner rule: "for a section, let's say the first lecture was 9am — the next
+    # lecture for that section is not good after noon, or late like after 15:00.
+    # Preferably keep it at the same time slot if possible; if not, one slot
+    # before or after, not too far."
+    #
+    # Nothing in the model had any opinion about this, and the measurement says
+    # exactly that: with no rule, a section landed on the same hour 16-18% of the
+    # time and within one slot 34-38%, against the 14.3% and 38.8% that INDEPENDENT
+    # placement would give on this seven-start grid. The model was **indifferent**,
+    # not actively scattering — every other term treats a section's two weekly
+    # meetings as unrelated events, since the clash term only cares what sits on
+    # top of a meeting and the instructor terms only care which DAYS are used.
+    # (An earlier comment here claimed the clash term actively wins by scattering.
+    # The chance-level baseline does not support that, and the clash cost of the
+    # ceiling is better explained by losing placement freedom in general.)
+    #
+    # Modelled as the DRIFT of a section within its own week: the spread between
+    # its earliest and its latest start. Same slot every day is zero drift.
+    #
+    # Drift is bounded TWICE, in two different units, because the grid gives
+    # "one slot before or after" and "not too far" genuinely different answers.
+    # The 75-minute lecture family declares
+    #
+    #     09:00  10:30  10:50  13:00  14:30  14:45  16:00
+    #
+    # whose rank-adjacent steps are 90, 20, 130, 90, 15 and 75 minutes. No single
+    # minute threshold expresses "one slot": set to the smallest step (15) it
+    # forbids 09:00->10:30, which the rule permits; set to the largest (130) it
+    # permits 10:50->13:00, which crosses noon and is the move being complained
+    # about. So `max_time_of_day_slots` counts RANK — how many declared starts
+    # apart the meetings are — and `max_time_of_day_minutes` bounds the real gap
+    # alongside it. Rank alone leaves precisely one bad pair on this grid, and it
+    # showed up as the worst case in every measured run at 130 minutes.
+    #
+    # Compared WITHIN a timing family, which the grid defines by DURATION and
+    # delivery (D6: timing follows duration, room follows kind). A 75-minute
+    # lecture and a 100-minute lab are drawn from different declared families with
+    # different start times, and demanding they line up would be a rule the grid
+    # cannot satisfy. Two meetings of equal duration share a family even if one is
+    # declared a lab and the other a lecture — that is the same rule D6 states,
+    # not an oversight.
+    #
+    # Minutes and ranks are built independently, because each is dead weight
+    # without a consumer: with only a rank ceiling asked for, the minute variables
+    # would be ~250 surplus integers and equalities added to PASS 1 — the pass
+    # whose only job is to find the working-day floor inside half the budget, and
+    # whose answer is then frozen as pass 2's hard budget.
+    want_minutes = max_time_of_day_minutes is not None
+    want_ranks = max_time_of_day_slots is not None
+    if want_minutes or want_ranks:
+        by_family: dict[tuple[str, int, object], list[int]] = {}
+        for section_id, index, requirement, _off in meetings:
+            by_family.setdefault(
+                (section_id, requirement.duration, requirement.delivery), []
+            ).append(index)
+
+        starts_by_section: dict[tuple[str, int], list[tuple[int, object]]] = {}
+        for (section_id, index, _day, window), var in x.items():
+            starts_by_section.setdefault((section_id, index), []).append((window.start, var))
+
+        for (section_id, duration, delivery), indexes in sorted(
+            by_family.items(), key=lambda kv: (kv[0][0], kv[0][1], str(kv[0][2]))
+        ):
+            if len(indexes) < 2:
+                continue  # one meeting a week cannot drift
+            starts = sorted({w.start for w in snapshot.grid.windows_for(duration, delivery)})
+            if len(starts) < 2:
+                continue  # a single legal time — drift is structurally zero
+            rank_of = {start: i for i, start in enumerate(starts)}
+            low, high = starts[0], starts[-1]
+
+            counted = 0
+            chosen_starts, chosen_ranks = [], []
+            for index in sorted(indexes):
+                options = starts_by_section.get((section_id, index))
+                if not options:
+                    continue
+                counted += 1
+                if want_minutes:
+                    start_var = model.new_int_var(low, high, f"tod_{section_id}_{index}")
+                    model.add(start_var == sum(var * start for start, var in options))
+                    chosen_starts.append(start_var)
+                if want_ranks:
+                    rank_var = model.new_int_var(0, len(starts) - 1, f"todr_{section_id}_{index}")
+                    model.add(rank_var == sum(var * rank_of[start] for start, var in options))
+                    chosen_ranks.append(rank_var)
+            if counted < 2:
+                continue
+
+            tag = f"{section_id}_{duration}_{delivery.value}"
+            if want_minutes:
+                earliest = model.new_int_var(low, high, f"tod_lo_{tag}")
+                latest = model.new_int_var(low, high, f"tod_hi_{tag}")
+                model.add_min_equality(earliest, chosen_starts)
+                model.add_max_equality(latest, chosen_starts)
+                drift = model.new_int_var(0, high - low, f"tod_drift_{tag}")
+                model.add(drift == latest - earliest)
+                model.add(drift <= max_time_of_day_minutes)
+
+            # The rank ceiling, in the owner's own units: 0 is "the same slot
+            # every day", 1 is "one slot before or after".
+            #
+            # A ceiling rather than a price, because a ceiling is a guarantee and
+            # a price is a preference the search can outbid — and this search is
+            # already competing against a hard clash budget inside a 45-second
+            # half-pass. (A priced version was tried at two seeds and gave 20%
+            # and 36% of sections on a fixed hour. That sample establishes
+            # neither a level nor its variance and the run was not preserved, so
+            # it is not evidence for anything; the argument here is from what the
+            # constraint IS, not from that measurement.)
+            if want_ranks:
+                first = model.new_int_var(0, len(starts) - 1, f"todr_lo_{tag}")
+                last = model.new_int_var(0, len(starts) - 1, f"todr_hi_{tag}")
+                model.add_min_equality(first, chosen_ranks)
+                model.add_max_equality(last, chosen_ranks)
+                model.add(last - first <= max_time_of_day_slots)
 
     # ── occupancy atoms, per delivery family ──────────────────────────────
     all_windows = [s.window for s in snapshot.grid.slots]
@@ -1067,6 +1194,14 @@ def plan(
     # expense is not this system's call to make by default. Weight 1 is the only
     # setting worth offering: 3 and 10 are worse for BOTH parties.
     student_adjacency_weight: int = 0,
+    max_time_of_day_slots: int | None = 1,
+    # OFF by default, and that is a measured decision rather than caution. It
+    # does what it claims -- the worst wander goes 130 -> 90 minutes and the one
+    # noon-crossing pair on this grid disappears -- and it also takes instructor
+    # idle from a median 955 minutes to 2700 and sibling back-to-back pairing
+    # from 42.9% to 4.8%. The owner's stated priority is the instructor
+    # timetable, so switching it on is their call, not this default's. See D14.
+    max_time_of_day_minutes: int | None = None,
     **kwargs,
 ) -> SolveResult:
     """Plan in two passes: settle the working days, then attack the gaps.
@@ -1116,10 +1251,69 @@ def plan(
         time_limit_seconds=half,
         span_weight=0,
         sibling_adjacency_weight=0,
+        max_time_of_day_slots=max_time_of_day_slots,
+        max_time_of_day_minutes=max_time_of_day_minutes,
         **kwargs,
     )
+    # Unlike every other preference, the time-of-day ceiling belongs in BOTH
+    # passes. Pass 2's clash budget is derived from pass 1's score, so a ceiling
+    # applied only later would be measured against a total achieved without it,
+    # and pass 2 would be infeasible on arrival — silently falling back to a
+    # pass-1 board that ignores the rule entirely.
+    #
+    # And unlike the other hard budgets, this one can genuinely have no solution:
+    # it is the caller's policy, not something derived from a board already in
+    # hand. A cohort that cannot meet it should still get a timetable, with the
+    # compromise stated rather than discovered later on screen.
+    if not first.board.placements and max_time_of_day_slots is not None:
+        relaxed = solve(
+            snapshot,
+            time_limit_seconds=half,
+            span_weight=0,
+            sibling_adjacency_weight=0,
+            max_time_of_day_slots=None,
+            max_time_of_day_minutes=None,
+            **kwargs,
+        )
+        if relaxed.board.placements:
+            relaxed.warnings.append(
+                "no timetable keeps every section within "
+                f"{max_time_of_day_slots} slot(s) of itself; the rule was dropped"
+            )
+            # The failed attempt spent real time. Carrying it keeps the reported
+            # figure a description of the run rather than of the last pass in it.
+            relaxed.wall_time_seconds += first.wall_time_seconds
+            max_time_of_day_slots = None
+            first = relaxed
+        else:
+            # Says which suspect has been ruled out. Without it the caller reads
+            # "no assignment found" and reasonably blames the newest rule.
+            #
+            # `solve()` returns an empty board for a TIMEOUT as well as for a
+            # proven INFEASIBLE, so the status has to be consulted before naming
+            # a cause: telling somebody their data is impossible when the solver
+            # merely ran out of seconds sends them to fix the wrong thing.
+            proven = relaxed.status.upper().startswith("INFEASIBLE")
+            first.warnings.append(
+                "dropping the same-hour rule did not help either — this cohort is "
+                + (
+                    "infeasible for another reason; run sch_validate"
+                    if proven
+                    else f"unsolved after {relaxed.wall_time_seconds:.0f}s "
+                    f"({relaxed.status}); try a longer budget before assuming the "
+                    "data is at fault"
+                )
+            )
+            first.wall_time_seconds += relaxed.wall_time_seconds
     if not first.board.placements:
         return first
+
+    # Whatever the passes above actually spent, pass 2 gets the remainder — so
+    # `time_limit_seconds` stays an upper bound on plan(). It stopped being one
+    # the moment the relaxation retry was added: two half-budgets plus a third
+    # made a "120 second" plan a 180 second one, and plan_portfolio multiplies
+    # that by the seed count.
+    remaining = max(1.0, time_limit_seconds - first.wall_time_seconds)
 
     per_instructor = _days_by_instructor(snapshot, first.board)
     if not per_instructor:  # no instructor data — nothing to protect, nothing to gain
@@ -1140,13 +1334,15 @@ def plan(
     ceiling = math.floor(first.clash_score * (1.0 + clash_tolerance)) if bound_clashes else None
     second = solve(
         snapshot,
-        time_limit_seconds=half,
+        time_limit_seconds=remaining,
         span_weight=gap_weight,
         max_working_days=per_instructor,
         max_clash_score=ceiling,
         max_room_shortfall=first.room_shortfall_score,
         sibling_adjacency_weight=sibling_adjacency_weight,
         student_adjacency_weight=student_adjacency_weight,
+        max_time_of_day_slots=max_time_of_day_slots,
+        max_time_of_day_minutes=max_time_of_day_minutes,
         hint=first.board,
         **kwargs,
     )
@@ -1226,6 +1422,70 @@ def _working_days(snapshot: Snapshot, board: Board) -> int | None:
     return sum(per.values()) if per else None
 
 
+def astray_count(drift: dict, ceiling: int | None) -> int:
+    """How many sections broke the same-hour ceiling that was actually asked for.
+
+    Takes the ceiling rather than assuming one, and reads the per-section
+    histogram rather than the headline `within_one_slot`. That headline is
+    measured against a literal 1, which is right for the default and wrong for
+    every other setting: under `--same-time-slots 2` a board that honoured the
+    rule at spread 2 would have scored worse than one that abandoned the rule and
+    happened to land at spread 1, and under `--same-time-slots 0` the two would
+    have been indistinguishable. Ranking boards by a rule nobody chose is worse
+    than not ranking them at all.
+    """
+    if ceiling is None:
+        return 0  # no rule was asked for, so nothing can break it
+    spreads = drift.get("by_rank_spread")
+    if spreads is None:  # a plan stored before the histogram existed
+        if ceiling <= 0:
+            return drift["sections_with_several_meetings"] - drift["same_slot"]
+        if ceiling == 1:
+            return drift["sections_with_several_meetings"] - drift["within_one_slot"]
+        return 0
+    return sum(count for spread, count in spreads.items() if spread > ceiling)
+
+
+def choose_run(runs: list[dict], *, idle_band: float = 0.10) -> dict:
+    """Pick one board out of several, by a stated order of preference.
+
+    Separated from the search so the policy can be read, argued with and tested
+    without spending minutes of solver time to produce two boards to compare.
+    Each run is a dict of already-measured facts: ``days`` (per-instructor
+    counts), ``unroomed``, ``astray``, ``metrics['idle_minutes']``, ``clashes``.
+
+    1. **Never lengthen anyone's week.** Compared per instructor rather than on
+       the total, so a day moved from one person to another is not mistaken for
+       neutral.
+    2. **Then rooms**, because a class with nowhere to meet cannot be taught at
+       all — without this the selector would strand five classes to save a
+       minute of waiting.
+    3. **Then sections that wander off their hour.** Normally every board scores
+       zero here, because the ceiling inside `plan()` is hard — but `plan()`
+       drops that ceiling when it cannot be met, and "cannot be met" is decided
+       under a time limit, so one seed can return having kept the rule and
+       another having abandoned it. Ranking on idle minutes alone could then
+       prefer the one that gave the rule up.
+    4. **Then the shortest total waiting**, the owner's stated priority — but
+       treating idle times within ``idle_band`` of the best as equivalent and
+       breaking that tie on student clashes. Without the band a board saving one
+       minute of waiting would beat one saving thirty clashes.
+    """
+    contenders = list(runs)
+    for rank in (
+        lambda r: sorted(r["days"], reverse=True),
+        lambda r: r["unroomed"],
+        lambda r: r["astray"],
+    ):
+        best = min(rank(r) for r in contenders)
+        contenders = [r for r in contenders if rank(r) == best]
+
+    best_idle = min(r["metrics"]["idle_minutes"] for r in contenders)
+    cutoff = best_idle * (1.0 + idle_band) + 1e-9
+    within = [r for r in contenders if r["metrics"]["idle_minutes"] <= cutoff] or contenders
+    return min(within, key=lambda r: (r["clashes"], r["metrics"]["idle_minutes"]))
+
+
 def plan_portfolio(
     snapshot: Snapshot,
     *,
@@ -1244,57 +1504,30 @@ def plan_portfolio(
     a lottery ticket, and re-running is the cheapest quality available.
 
     **Choosing between boards is itself a policy decision**, so it is made
-    explicitly rather than by a scalar nobody can interpret:
-
-    1. never lengthen anyone's week — compared per instructor, not on the
-       total, so a day moved from one person to another is not mistaken for
-       neutral;
-    2. then fewest meetings left without a room, because a class with nowhere to
-       meet cannot be taught at all;
-    3. then the shortest total waiting, since that is the owner's stated
-       priority;
-    4. but treat idle times within ``idle_band`` of the best as equivalent, and
-       break that tie on student clashes. Without the band, a board saving one
-       minute of waiting would be preferred to one saving thirty student
-       clashes, which no one would choose on purpose.
+    explicitly rather than by a scalar nobody can interpret, and it lives in
+    `choose_run` — separate from the search, so it can be read and tested
+    without spending minutes of solver time to produce two boards to compare.
     """
     runs: list[dict] = []
     for seed in seeds:
         result = plan(snapshot, time_limit_seconds=time_limit_seconds, seed=seed, **kwargs)
         if not result.board.placements:
             continue
+        drift = time_of_day_drift(snapshot, result.board)
         runs.append(
             {
                 "result": result,
                 "metrics": instructor_metrics(snapshot, result.board),
                 "clashes": expected_clashes(snapshot, result.board),
                 "unroomed": unroomed_count(snapshot, result.board),
+                "astray": astray_count(drift, kwargs.get("max_time_of_day_slots", 1)),
+                "days": list(_days_by_instructor(snapshot, result.board).values()),
             }
         )
     if not runs:
         return plan(snapshot, time_limit_seconds=time_limit_seconds, **kwargs)
 
-    # Working days first: nobody should commute more so that somebody else waits
-    # less. Compared PER INSTRUCTOR, not on the total, for the same reason the
-    # day budget inside plan() is per instructor — a total hides one person's
-    # week getting longer while another's shortens.
-    def day_profile(run):
-        return sorted(_days_by_instructor(snapshot, run["result"].board).values(), reverse=True)
-
-    best_days = min(day_profile(r) for r in runs)
-    contenders = [r for r in runs if day_profile(r) == best_days]
-
-    # Then rooms. A class with nowhere to meet cannot be taught at all, so it
-    # outranks both waiting and clashes; without this the selector would happily
-    # take a board stranding five more classes to save a minute of idle time.
-    fewest_unroomed = min(r["unroomed"] for r in contenders)
-    contenders = [r for r in contenders if r["unroomed"] == fewest_unroomed]
-
-    best_idle = min(r["metrics"]["idle_minutes"] for r in contenders)
-    cutoff = best_idle * (1.0 + idle_band) + 1e-9
-    within = [r for r in contenders if r["metrics"]["idle_minutes"] <= cutoff] or contenders
-
-    best = min(within, key=lambda r: (r["clashes"], r["metrics"]["idle_minutes"]))
+    best = choose_run(runs, idle_band=idle_band)
     chosen = best["result"]
     chosen.notes.append(
         f"portfolio of {len(runs)}: kept days {best['metrics']['working_days']}, "
@@ -1375,4 +1608,73 @@ def sibling_adjacency(snapshot: Snapshot, board: Board) -> dict:
         "pairs_achievable": achievable,
         "percent": round(100.0 * achieved / achievable, 1) if achievable else 0.0,
         "per_course": per_course,
+    }
+
+
+def time_of_day_drift(snapshot: Snapshot, board: Board) -> dict:
+    """How far a section's weekly meetings wander across the day.
+
+    Reported from the finished board rather than from the solver, so it says
+    what the timetable actually does and not what the objective was told to
+    want. Drift is measured within a requirement family — the spread between the
+    earliest and latest start of a section's lectures, and separately of its
+    labs — because those are drawn from different declared families and were
+    never expected to line up.
+
+    ``same_slot`` and ``within_one_slot`` are the two outcomes the owner asked
+    for; ``worst_minutes`` is the section that wanders furthest, which is the
+    one worth looking at when the numbers disappoint.
+
+    "Within one slot" is counted in RANK — how many declared starts apart the
+    meetings are — because this grid's lecture family runs 09:00, 10:30, 10:50,
+    13:00, 14:30, 14:45, 16:00, and no number of minutes separates "the next
+    slot" from "after lunch".
+    """
+    families: dict[tuple[str, int, object], list[int]] = {}
+    for placement in board.placements:
+        families.setdefault(
+            (placement.section_id, placement.window.duration, placement.delivery), []
+        ).append(placement.window.start)
+
+    total = same = within = 0
+    drift_minutes = 0
+    worst: tuple[int, str] = (0, "")
+    by_rank_spread: dict[int, int] = {}
+    for (section_id, duration, delivery), starts in sorted(
+        families.items(), key=lambda kv: (kv[0][0], kv[0][1], str(kv[0][2]))
+    ):
+        if len(starts) < 2:
+            continue
+        legal = sorted({w.start for w in snapshot.grid.windows_for(duration, delivery)})
+        if len(legal) < 2:
+            continue
+        rank_of = {start: i for i, start in enumerate(legal)}
+        ranks = [rank_of[s] for s in starts if s in rank_of]
+        spread = max(starts) - min(starts)
+        total += 1
+        drift_minutes += spread
+        if spread == 0:
+            same += 1
+        if ranks:
+            rank_spread = max(ranks) - min(ranks)
+            by_rank_spread[rank_spread] = by_rank_spread.get(rank_spread, 0) + 1
+            if rank_spread <= 1:
+                within += 1
+        if spread > worst[0]:
+            worst = (spread, section_id)
+
+    return {
+        "sections_with_several_meetings": total,
+        "same_slot": same,
+        "within_one_slot": within,
+        # How many sections sit 0, 1, 2 ... declared slots from themselves. Kept
+        # as a histogram so a ceiling other than 1 can still be scored: reporting
+        # only "within one slot" forced `astray_count` to decline to rank a
+        # portfolio whenever the caller asked for anything else.
+        "by_rank_spread": dict(sorted(by_rank_spread.items())),
+        "percent_same_slot": round(100.0 * same / total, 1) if total else 0.0,
+        "percent_within_one_slot": round(100.0 * within / total, 1) if total else 0.0,
+        "mean_drift_minutes": round(drift_minutes / total, 1) if total else 0.0,
+        "worst_minutes": worst[0],
+        "worst_section": worst[1],
     }

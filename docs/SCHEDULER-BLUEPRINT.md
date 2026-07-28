@@ -695,6 +695,171 @@ reminder that pushing harder on a soft term is not the same as doing better.
 Two seeds is a thin sample and the differences between 465, 474 and 498 are
 inside the noise; the instructor cost is the part that looks consistent.
 
+### D14 — A section keeps the same hour all week
+
+> *"for a section, let's say the first lecture was 9am — the next lecture for
+> that section is not good to be after noon, or late like after 15:00.
+> Preferably keep the section at the same time slots if possible; if not, one
+> slot before or after, not too far."*
+
+**Nothing in the model had an opinion about this.** Every other term treats a
+section's two weekly meetings as unrelated events: the clash term only cares what
+sits on top of a meeting, and the instructor terms only care which *days* are
+used.
+
+The baseline says exactly that, and says it precisely. On the seven-start lecture
+family, meetings placed **independently** would land on the same hour 14.3% of the
+time and within one slot 38.8%. Measured with no rule: **16.4–18.0%** and
+**34.4–37.7%**. The model was *indifferent* — not, as an earlier draft of this
+section claimed, actively scattering. The worst section wandered **420 minutes**,
+seven hours, in all three runs.
+
+That distinction matters for reading the cost below: the ceiling costs clashes
+because it removes placement freedom in general, not because far-apart meetings
+specifically collide less.
+
+#### The ceiling is counted in slots, and bounded again in minutes
+
+The 75-minute lecture family declares
+
+    09:00   10:30   10:50   13:00   14:30   14:45   16:00
+
+whose rank-adjacent steps are 90, 20, **130**, 90, 15 and 75 minutes. No single
+minute threshold expresses "one slot":
+
+* at the smallest step (15) it forbids 09:00 → 10:30, which the rule permits;
+* at the largest (130) it permits **10:50 → 13:00**, which crosses noon and is the
+  move the rule exists to stop.
+
+So `max_time_of_day_slots` counts **rank** — how many declared starts apart the
+meetings are. But rank alone leaves precisely that one bad pair legal on this
+grid, and it was the worst case in **all nine** measured runs, at exactly 130
+minutes. `max_time_of_day_minutes` bounds the real gap alongside it. Each unit
+says something the other cannot.
+
+*(An earlier version of this argument used 09:00 → 13:00 as the example of what a
+130-minute ceiling permits. That is 240 minutes and a 130-minute ceiling forbids
+it; the example was simply wrong, and the correct one is 10:50 → 13:00.)*
+
+Compared **within a timing family**, which the grid defines by duration and
+delivery (D6: timing follows duration, room follows kind). A 75-minute lecture and
+a 100-minute lab come from different declared families with different start times,
+and demanding they line up would be a rule the grid cannot satisfy. Two meetings
+of equal duration share a family even if one is declared a lab and the other a
+lecture — that is D6's rule, not an oversight.
+
+#### A ceiling, not a weight
+
+A ceiling is a guarantee; a weight is a preference the search can outbid, and this
+search is already competing against a hard clash budget inside a 45-second
+half-pass. A priced variant existed briefly and was **deleted**: it was never
+exposed by any caller, no test could distinguish it from being absent, and the
+minute ceiling expresses "not too far" as a guarantee rather than a hope.
+
+The ceiling applies in **both** passes of `plan()`. Pass 2's clash budget is
+derived from pass 1's score, so a ceiling applied only in pass 2 would be measured
+against a total achieved without it and would be infeasible on arrival — silently
+falling back to a pass-1 board that ignores the rule entirely.
+
+#### What it costs
+
+> **STALE — being re-measured.** The table below was taken before the priced
+> variant was deleted, and deleting it removed ~250 integer variables and
+> equalities from **pass 1**. A control re-run of the 1-slot arm on the current
+> code, same seeds, produced materially different instructor-idle figures
+> (1145–3895 against 1200–1370). An optimisation of my own therefore invalidated
+> my own measurement, and the numbers here describe code that no longer exists.
+> Do not quote them.
+
+M cohort (male, AI/AI2/DS/DS2), 1448 term 1, `--default-capacity 25`, 120 s,
+**seeds 0/7/21, quiet machine**, median [min–max], students actually seated.
+
+| | rule off | **1 slot (default)** | 0 slots |
+|---|---|---|---|
+| within one slot of itself | 37.7 [34.4–37.7] % | **100 %** | **100 %** |
+| on the exact same hour | 18.0 [16.4–18.0] % | 36.1 [34.4–41.0] % | **100 %** |
+| average wander | 174 [143–182] min | 55 [43–56] min | **0** |
+| worst wander | 420 min ×3 | 130 min ×3 | **0** |
+| students clash-free, seated | 99.7 [99.7–100] % | 99.2 [98.2–99.7] % | **100 % ×3** |
+| — students affected of 390 | 1 [0–1] | 3 [1–7] | **0 ×3** |
+| student waiting, per student | 481 [463–495] min | 476 [444–514] min | 515 [498–523] min |
+| instructor working days | 18 ×3 | 18 ×3 | 18 ×3 |
+| instructor idle | 2195 [1670–2405] min | **1220 [1200–1370] min** | 2095 [1375–2505] min |
+| sibling sections back to back | 6.3 [4.8–33.3] % | 44.4 [31.7–44.4] % | 9.5 [7.9–50.8] % |
+| unroomed | 16 [14–18] | 18 [18–19] | 17 [15–20] |
+| expected clashes *(proxy)* | 60.2 [53.3–60.2] | 86.3 [72.8–92.6] | 82.5 [80.8–93.0] |
+| hard violations | 0 ×3 | 0 ×3 | 0 ×3 |
+
+Reading it honestly, claim by claim:
+
+* **The rule is delivered.** 100% within one slot is structural, not statistical —
+  it is a hard constraint, and the three runs merely confirm the model is feasible.
+* **Instructor idle improves, and this is the one result with clean separation.**
+  1200–1370 against 1670–2405: the ranges do not overlap. Not quoted as a
+  percentage, because the seed-to-seed ratio admits anything from 18% to 50%.
+* **Students pay a little, and every order statistic moved the wrong way.** Not
+  "unchanged": clash-free went 99.7/99.7/100 → 98.2/99.2/99.7, which is 1, 3 and 7
+  students of 390 rather than 0, 1 and 1. Small, real, and worth stating as a
+  distribution rather than as a median. Note too that clash-free is itself the
+  output of a 120-second CP-SAT seating solve, so it carries its own noise.
+* **Rooms get slightly worse and this is the least comfortable number here.**
+  18 [18–19] against 16 [14–18] — worse at every rank. `choose_run` ranks rooms
+  above everything but working days, precisely because a class with nowhere to meet
+  cannot be taught at all, so this is not a rounding error even at two meetings.
+* **Student waiting is unchanged.** 476 against 481 is a 1% median gap with almost
+  fully overlapping ranges and two of three seeds worse. It is not a gain.
+* **Sibling back-to-back is suggestive, not established.** 44.4 [31.7–44.4]
+  against 6.3 [4.8–33.3]: the medians are far apart but the ranges **overlap** —
+  one seed with the rule off reached 33.3%, above the worst seed with it on. Three
+  seeds cannot settle this.
+* **The proxy is not the outcome.** Expected clashes rise about 43%, and the real
+  seated cost is the two-to-six students above. The proxy assumes students land in
+  sections at random; seating dodges collisions it assumes unavoidable.
+* **No mechanism is claimed.** An earlier draft said the gains came from the week
+  becoming "more regular". The 0-slot column refutes that: it pins every section
+  to exactly one hour — maximum regularity — and returns idle 2095 and back-to-back
+  9.5%, both indistinguishable from having no rule at all. The response is
+  **non-monotone** in the tightening, and that is a reason to treat the 1-slot
+  result as unexplained rather than understood. It may yet be a search artefact.
+* **Nothing here says a tighter ceiling searches better.** The proxy at 0 slots
+  (80.8/82.5/93.0) and at 1 slot (72.8/86.3/92.6) are indistinguishable, and 0 is
+  worse in two of the three seeds; only the medians reverse. An earlier draft read
+  a story into that. It is noise.
+
+#### Decision
+
+**`--same-time-slots 1` with `--same-time-minutes 100`, on by default.** One slot
+either side is the rule as stated; the minute bound closes the one gap rank cannot
+see, the 10:50 → 13:00 step that is one slot wide and still crosses noon. `0`
+demands the identical hour every day; a negative number switches either off.
+
+`0` is the best setting for **clash-free seating** — 100% on all three seeds — and
+the **worst** of the three for student waiting (515 min, worse than no rule at
+all). It is offered, not defaulted, because the owner's stated priority is the
+instructor timetable and that is where the 1-slot setting is unambiguously ahead.
+
+Unlike the other hard budgets in `plan()`, this one is the caller's policy rather
+than something derived from a board already in hand, so it can genuinely have no
+solution. A cohort that cannot meet it still gets a timetable, and the compromise
+goes into `SolveResult.warnings` — a channel separate from `notes`, because every
+successful two-pass run writes a note, and a screen that renders both as warnings
+teaches the reader to ignore warnings. `plan_portfolio` ranks on the rule too,
+between rooms and waiting, against **the ceiling that was actually asked for**
+rather than a hardcoded one, so a seed that kept the rule is never beaten by one
+that abandoned it.
+
+#### What this measurement does not cover
+
+* **One cohort.** Male, AI/AI2/DS/DS2, one term, one machine, three seeds. The
+  **female cohort was not measured at all** — and F has no `course_instructors`
+  rows, so the headline instructor-idle result is not even defined there.
+* **"18 = floor" is observed here, not proven in this experiment** — 18 on all
+  nine runs. It is also **not comparable with the 19 in D11–D13**: the section plan
+  changed when sectioning moved to the project's own planner, so those sections'
+  absolute numbers should not be read against these.
+* **Row "student waiting" is minutes per student per week**, an average, not a
+  total.
+
 ---
 
 ## 7. Still open

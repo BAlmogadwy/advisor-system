@@ -8,6 +8,8 @@ input is indistinguishable from a rule that does nothing.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from scheduler.domain import (
     CapacityPolicy,
     DeliveryMode,
@@ -1995,3 +1997,618 @@ def test_the_choice_is_a_single_board_not_a_set():
         headcount={333: 7, 555: 7},
     )
     assert isinstance(board, int)
+
+
+# ── a section keeps the same hour all week ────────────────────────────────
+#
+# Owner rule: "for a section, let's say the first lecture was 9am — the next
+# lecture for that section is not good after noon, or late like after 15:00.
+# Preferably keep it at the same time slot; if not, one slot before or after,
+# not too far."
+#
+# Measured on the live male cohort before this existed: 14% of sections kept
+# their slot, the average wandered 156 minutes, and the worst wandered SEVEN
+# HOURS. Nothing in the model had an opinion — the clash term only cares what
+# sits on top of a meeting, and the instructor terms only care which days are
+# used — so scattering was free, and scattering is how the clash term wins.
+
+from scheduler.domain.calendar import Slot  # noqa: E402
+from scheduler.solve import time_of_day_drift  # noqa: E402
+
+#: 09:00 on Sunday, 10:30 on Monday, 13:00 on Tuesday -- one lecture time per
+#: day, so a section's two weekly lectures CANNOT share a start and the amount
+#: of drift is decided entirely by which days it picks. Monday also carries the
+#: only lab slot, which is what gives the solver a reason to avoid Monday.
+_SUN9 = TimeWindow(540, 615)
+_MON1030 = TimeWindow(630, 705)
+_TUE13 = TimeWindow(780, 855)
+_MON_LAB = TimeWindow(645, 745)  # 10:45-12:25, overlaps the Monday lecture
+
+DRIFT_GRID = Grid(
+    slots=(
+        Slot(Day.SUN, _SUN9, MeetingKind.LECTURE, DeliveryMode.IN_PERSON),
+        Slot(Day.MON, _MON1030, MeetingKind.LECTURE, DeliveryMode.IN_PERSON),
+        Slot(Day.TUE, _TUE13, MeetingKind.LECTURE, DeliveryMode.IN_PERSON),
+        Slot(Day.MON, _MON_LAB, MeetingKind.LAB, DeliveryMode.IN_PERSON),
+    )
+)
+
+
+def _drift_snapshot():
+    """One lecture course against one Monday-only lab that its students share.
+
+    Left alone the solver puts the lectures on Sunday and Tuesday: that dodges
+    a hundred-student clash with the lab and costs nothing it can see. It is
+    also 09:00 one day and 13:00 the next — exactly the complaint.
+    """
+    lectures = Offering(
+        id="lec",
+        course_code="LEC",
+        course_name="lecture course",
+        credit_hours=3,
+        programs=frozenset({"AI"}),
+        terms=frozenset({1}),
+        requirements=(MeetingRequirement(MeetingKind.LECTURE, DeliveryMode.IN_PERSON, 75, 2),),
+        capacity=200,
+        capacity_is_declared=True,
+    )
+    lab = Offering(
+        id="lab",
+        course_code="LAB",
+        course_name="lab course",
+        credit_hours=1,
+        programs=frozenset({"AI"}),
+        terms=frozenset({1}),
+        requirements=(MeetingRequirement(MeetingKind.LAB, DeliveryMode.IN_PERSON, 100, 1),),
+        capacity=200,
+        capacity_is_declared=True,
+    )
+    both = frozenset({"lec", "lab"})
+    snapshot = _snapshot(
+        [lectures, lab],
+        [Section("lec#S1", "lec", 1, 200), Section("lab#S1", "lab", 1, 200)],
+        demand=[StudentDemand(f"s{i}", "AI", both) for i in range(100)],
+    )
+    # Rooms are deliberately absent: with none at all every meeting is unroomed
+    # wherever it goes, so the room term is a constant offset and the test is
+    # about time and nothing else.
+    return replace(snapshot, grid=DRIFT_GRID)
+
+
+def _rank_drift(snapshot, board, section_id):
+    starts = sorted(p.window.start for p in board.placements if p.section_id == section_id)
+    legal = sorted({w.start for w in snapshot.grid.windows_for(75, DeliveryMode.IN_PERSON)})
+    ranks = [legal.index(s) for s in starts]
+    return max(ranks) - min(ranks)
+
+
+def test_without_the_rule_a_section_is_taught_at_09_00_and_then_at_13_00():
+    """The control. If this ever stops drifting the two tests below prove
+    nothing, so it is asserted rather than assumed."""
+    snapshot = _drift_snapshot()
+    result = solve(snapshot, time_limit_seconds=20.0, max_time_of_day_slots=None)
+    assert result.board.placements
+    assert _rank_drift(snapshot, result.board, "lec#S1") == 2, (
+        "the solver no longer prefers to scatter this section"
+    )
+
+
+def test_the_rule_keeps_a_section_within_one_slot_of_itself():
+    snapshot = _drift_snapshot()
+    result = solve(snapshot, time_limit_seconds=20.0, max_time_of_day_slots=1)
+    assert result.board.placements, "a satisfiable ceiling must still yield a board"
+    # {SUN,MON} and {MON,TUE} are both drift-1 and both cost the same clash, so
+    # which one comes back is the solver's business. Asserting the drift rather
+    # than the days keeps this insensitive to that tie -- do not "tighten" it to
+    # name specific days, which would make it seed- and version-dependent.
+    assert _rank_drift(snapshot, result.board, "lec#S1") <= 1
+
+
+def test_a_rule_that_cannot_be_met_yields_no_board_rather_than_a_quiet_breach():
+    """Every lecture time here exists on exactly one day, and a section may not
+    meet twice in a day, so "the same slot every day" is impossible. The solver
+    must say so rather than return a board that breaks the rule."""
+    snapshot = _drift_snapshot()
+    result = solve(snapshot, time_limit_seconds=20.0, max_time_of_day_slots=0)
+    assert not result.board.placements
+
+
+def test_the_ceiling_counts_slots_not_minutes():
+    """The grid's lecture family runs 09:00, 10:30, 10:50, 13:00, 14:30, 14:45,
+    16:00. Its smallest step is 15 minutes and its largest is 130, so a ceiling
+    expressed in minutes cannot mean "one slot": set to the smallest it forbids
+    09:00 -> 10:30, and set to the largest it permits 09:00 -> 13:00, which is
+    the move being complained about."""
+    grid = Grid.from_spec(
+        lecture_starts={"09:00": 75, "10:30": 75, "10:50": 75, "13:00": 75},
+        lab_starts={"09:00": 100},
+    )
+    snapshot = replace(_snapshot([_offering()], [Section("off1#S1", "off1", 1, 30)]), grid=grid)
+    # 09:00 and 10:30 are neighbours in the declared list, 90 minutes apart.
+    adjacent = Board(
+        (
+            _p(day=Day.SUN, window=TimeWindow(540, 615)),
+            _p(idx=2, day=Day.MON, window=TimeWindow(630, 705)),
+        )
+    )
+    assert time_of_day_drift(snapshot, adjacent)["within_one_slot"] == 1
+
+    # 10:50 and 13:00 are also neighbours -- but 130 minutes apart, and across
+    # lunch. Counted as within one slot, and the minute figures say why it is
+    # still worth reporting separately.
+    across_lunch = Board(
+        (
+            _p(day=Day.SUN, window=TimeWindow(650, 725)),
+            _p(idx=2, day=Day.MON, window=TimeWindow(780, 855)),
+        )
+    )
+    measured = time_of_day_drift(snapshot, across_lunch)
+    assert measured["within_one_slot"] == 1
+    assert measured["mean_drift_minutes"] == 130.0
+
+    # 09:00 and 13:00 are three apart. No minute ceiling could separate this
+    # from the 130-minute case above without also banning 09:00 -> 10:30.
+    far = Board(
+        (
+            _p(day=Day.SUN, window=TimeWindow(540, 615)),
+            _p(idx=2, day=Day.MON, window=TimeWindow(780, 855)),
+        )
+    )
+    assert time_of_day_drift(snapshot, far)["within_one_slot"] == 0
+
+
+def test_lectures_and_labs_are_not_required_to_match_each_other():
+    """They are drawn from different declared families with different start
+    times; demanding they line up would be a rule the grid cannot satisfy.
+
+    This section is PERFECT on the rule as asked -- both its lectures are at
+    13:00 -- and its lab is at 09:00 because 13:00 is not a lab time here.
+    Comparing the two families would report it as wandering four hours.
+    """
+    offering = _offering(
+        reqs=(
+            MeetingRequirement(MeetingKind.LECTURE, DeliveryMode.IN_PERSON, 75, 2),
+            MeetingRequirement(MeetingKind.LAB, DeliveryMode.IN_PERSON, 100, 1),
+        )
+    )
+    snapshot = _snapshot([offering], [Section("off1#S1", "off1", 1, 30)])
+    board = Board(
+        (
+            _p(day=Day.SUN, window=W13),
+            _p(idx=2, day=Day.MON, window=W13),
+            _p(idx=3, day=Day.TUE, window=W100, kind=MeetingKind.LAB),
+        )
+    )
+    measured = time_of_day_drift(snapshot, board)
+    assert measured["sections_with_several_meetings"] == 1, "the lab was counted as a lecture"
+    assert measured["same_slot"] == 1
+    assert measured["mean_drift_minutes"] == 0.0
+
+
+#: As DRIFT_GRID, plus a Wednesday lecture at 10:50 -- twenty minutes after the
+#: Monday one. The lecture family's declared starts are then 09:00, 10:30,
+#: 10:50, so its SMALLEST step is 20 minutes while "the next slot" from 09:00 is
+#: 90 minutes away. The clashing lab moves to Wednesday, which makes Sunday +
+#: Monday the right answer and Monday + Wednesday the wrong one.
+_WED1050 = TimeWindow(650, 725)
+_WED_LAB = TimeWindow(645, 745)
+
+MINUTE_TRAP_GRID = Grid(
+    slots=(
+        Slot(Day.SUN, _SUN9, MeetingKind.LECTURE, DeliveryMode.IN_PERSON),
+        Slot(Day.MON, _MON1030, MeetingKind.LECTURE, DeliveryMode.IN_PERSON),
+        Slot(Day.WED, _WED1050, MeetingKind.LECTURE, DeliveryMode.IN_PERSON),
+        Slot(Day.WED, _WED_LAB, MeetingKind.LAB, DeliveryMode.IN_PERSON),
+    )
+)
+
+
+def test_the_solver_reads_one_slot_as_the_next_slot_not_as_twenty_minutes():
+    """A ceiling in minutes has to be set to the family's smallest step, and on
+    an irregular grid that is not "one slot" -- it is whichever two starts
+    happen to sit closest together.
+
+    Here the only pair within twenty minutes is Monday + Wednesday, and
+    Wednesday is where the hundred-student lab is. A minute-based ceiling would
+    force the section into that clash while calling itself satisfied; counting
+    slots leaves Sunday + Monday available, which is both one slot apart and
+    clash-free.
+    """
+    snapshot = replace(_drift_snapshot(), grid=MINUTE_TRAP_GRID)
+    result = solve(snapshot, time_limit_seconds=20.0, max_time_of_day_slots=1)
+    assert result.board.placements
+    starts = sorted(p.window.start for p in result.board.placements if p.section_id == "lec#S1")
+    assert starts == [540, 630], "the section was pushed onto Wednesday, into the lab"
+
+
+# ── choosing between boards ───────────────────────────────────────────────
+#
+# The planner runs several times from different seeds and keeps one board. That
+# choice is a policy, not an optimisation, so it is stated as an order of
+# preference and tested here directly rather than by producing real boards --
+# which would cost minutes of solver time per comparison and still not let a
+# test control what the two boards differ by.
+
+from scheduler.solve import choose_run  # noqa: E402
+
+
+def _run(name, *, days=(3, 3), unroomed=0, astray=0, idle=100, clashes=50.0):
+    return {
+        "result": name,
+        "days": list(days),
+        "unroomed": unroomed,
+        "astray": astray,
+        "metrics": {"idle_minutes": idle},
+        "clashes": clashes,
+    }
+
+
+def test_nobody_works_a_longer_week_so_that_somebody_else_waits_less():
+    chosen = choose_run(
+        [
+            _run("shorter weeks", days=(3, 3), idle=900),
+            _run("one more day", days=(4, 3), idle=100),
+        ]
+    )
+    assert chosen["result"] == "shorter weeks"
+
+
+def test_a_day_moved_between_two_people_is_not_mistaken_for_neutral():
+    """Both boards total six days. One of them makes somebody work five."""
+    chosen = choose_run(
+        [
+            _run("even", days=(3, 3), idle=900),
+            _run("lopsided", days=(5, 1), idle=100),
+        ]
+    )
+    assert chosen["result"] == "even"
+
+
+def test_a_class_with_nowhere_to_meet_outranks_everyone_s_waiting():
+    chosen = choose_run(
+        [
+            _run("roomed", unroomed=0, idle=900, clashes=90.0),
+            _run("five classes stranded", unroomed=5, idle=100, clashes=10.0),
+        ]
+    )
+    assert chosen["result"] == "roomed"
+
+
+def test_a_board_that_kept_the_same_hour_rule_beats_one_that_gave_it_up():
+    """plan() drops the time-of-day ceiling when it cannot be met inside the time
+    limit, so one seed can come back having kept the rule and another having
+    abandoned it. Ranking those two on waiting alone would take the wrong one."""
+    chosen = choose_run(
+        [
+            _run("rule kept", astray=0, idle=900),
+            _run("rule dropped", astray=12, idle=100),
+        ]
+    )
+    assert chosen["result"] == "rule kept"
+
+
+def test_a_minute_of_waiting_does_not_outweigh_thirty_student_clashes():
+    """Idle times within the band count as equal, and the tie goes to students."""
+    chosen = choose_run(
+        [
+            _run("one minute better", idle=100, clashes=90.0),
+            _run("thirty clashes better", idle=105, clashes=60.0),
+        ]
+    )
+    assert chosen["result"] == "thirty clashes better"
+
+
+def test_a_waiting_gap_wider_than_the_band_still_wins():
+    """The band is a tolerance, not an excuse to stop caring about waiting."""
+    chosen = choose_run(
+        [
+            _run("much less waiting", idle=100, clashes=90.0),
+            _run("far more waiting", idle=400, clashes=60.0),
+        ]
+    )
+    assert chosen["result"] == "much less waiting"
+
+
+def test_the_earlier_preferences_are_not_overridden_by_the_later_ones():
+    """Days first, then rooms, then the hour rule, then waiting -- each only
+    breaks ties left by the one before."""
+    chosen = choose_run(
+        [
+            _run("best on everything later", days=(4, 3), unroomed=0, astray=0, idle=10),
+            _run("wins on days alone", days=(3, 3), unroomed=9, astray=9, idle=999),
+        ]
+    )
+    assert chosen["result"] == "wins on days alone"
+
+
+# ── the same-hour rule, the parts the first round of tests missed ─────────
+#
+# A mutation audit of the tests above found 17 of 18 mutations surviving. What
+# follows kills the ones that got through. Each test names the mutation it
+# exists for, because a test whose purpose is not written down gets weakened by
+# the next person who finds it inconvenient.
+
+from scheduler.solve import astray_count  # noqa: E402
+
+
+def test_a_section_with_both_a_lecture_and_a_lab_is_planned_without_crashing():
+    """MUTATION: group meetings by the offering's FIRST requirement rather than by
+    each meeting's own. That crashes with `KeyError: 645` on any section holding
+    two requirement families -- a 100-minute lab start looked up in the 75-minute
+    lecture family's rank table -- and every test above stayed green, because not
+    one of them gave a section more than one kind of meeting."""
+    offering = _offering(
+        reqs=(
+            MeetingRequirement(MeetingKind.LECTURE, DeliveryMode.IN_PERSON, 75, 2),
+            MeetingRequirement(MeetingKind.LAB, DeliveryMode.IN_PERSON, 100, 2),
+        )
+    )
+    snapshot = _snapshot([offering], [Section("off1#S1", "off1", 1, 30)])
+    result = solve(snapshot, time_limit_seconds=20.0, max_time_of_day_slots=1)
+    assert result.board.placements, "a lecture-plus-lab section produced no board"
+
+    lectures = sorted(p.window.start for p in result.board.placements if p.window.duration == 75)
+    labs = sorted(p.window.start for p in result.board.placements if p.window.duration == 100)
+    assert len(lectures) == 2 and len(labs) == 2
+
+    def spread(starts, duration):
+        legal = sorted({w.start for w in GRID.windows_for(duration, DeliveryMode.IN_PERSON)})
+        ranks = [legal.index(s) for s in starts]
+        return max(ranks) - min(ranks)
+
+    assert spread(lectures, 75) <= 1
+    assert spread(labs, 100) <= 1
+
+
+def test_two_starts_apart_is_outside_one_slot_however_few_minutes_it_is():
+    """MUTATION: measure `within_one_slot` in minutes at any threshold from 130 to
+    239. The boards the earlier test used sit 90, 130 and 240 minutes apart at
+    ranks 1, 1 and 3, so every one of those thresholds reproduces all three of its
+    assertions. The discriminating case is 09:00 and 10:50 -- only 110 minutes,
+    but two declared starts apart -- and it was missing."""
+    grid = Grid.from_spec(
+        lecture_starts={"09:00": 75, "10:30": 75, "10:50": 75, "13:00": 75},
+        lab_starts={"09:00": 100},
+    )
+    snapshot = replace(_snapshot([_offering()], [Section("off1#S1", "off1", 1, 30)]), grid=grid)
+    board = Board(
+        (
+            _p(day=Day.SUN, window=TimeWindow(540, 615)),  # 09:00, rank 0
+            _p(idx=2, day=Day.MON, window=TimeWindow(650, 725)),  # 10:50, rank 2
+        )
+    )
+    measured = time_of_day_drift(snapshot, board)
+    assert measured["mean_drift_minutes"] == 110.0, "these are 110 minutes apart"
+    assert measured["within_one_slot"] == 0, "two declared starts apart is not one slot"
+
+
+def test_the_reported_percentages_are_not_swapped_and_the_worst_is_the_worst():
+    """MUTATION: swap `percent_same_slot` and `percent_within_one_slot` in the
+    returned dict, or report the LAST section rather than the worst. Both survived
+    everything above, and both are written to the saved plan and printed for an
+    operator to act on."""
+    reqs = _offering().requirements
+    snapshot = _snapshot(
+        [_offering(f"off{i}", reqs=reqs) for i in range(1, 5)],
+        [Section(f"off{i}#S1", f"off{i}", 1, 30) for i in range(1, 5)],
+    )
+    # Deliberately four sections with THREE different outcomes, so the two
+    # percentages come out different (equal ones cannot detect a swap) and the
+    # worst wanderer is not also the last one seen (which cannot detect "report
+    # whatever came last"). Sections are visited in id order.
+    board = Board(
+        (
+            _p(day=Day.SUN, window=W9),  # off1: 09:00 / 09:00
+            _p(idx=2, day=Day.MON, window=W9),  #   same hour, rank 0
+            _p(section="off2#S1", offering="off2", day=Day.SUN, window=W9),
+            _p(section="off2#S1", offering="off2", idx=2, day=Day.MON, window=W1030),
+            _p(section="off3#S1", offering="off3", day=Day.SUN, window=W9),
+            _p(section="off3#S1", offering="off3", idx=2, day=Day.MON, window=W13),
+            _p(section="off4#S1", offering="off4", day=Day.SUN, window=W9),
+            _p(section="off4#S1", offering="off4", idx=2, day=Day.MON, window=W1030),
+        )
+    )
+    measured = time_of_day_drift(snapshot, board)
+    assert measured["sections_with_several_meetings"] == 4
+    assert measured["percent_same_slot"] == 25.0, "only off1 holds its exact hour"
+    assert measured["percent_within_one_slot"] == 75.0, (
+        "off3 spans ranks 0 and 2; the other three are within one slot"
+    )
+    assert measured["worst_minutes"] == 240
+    assert measured["worst_section"] == "off3#S1", "off4 was seen last, but off3 wandered furthest"
+
+
+# ── the ceiling as the planner actually ships it ──────────────────────────
+#
+# MUTATION: change `plan()`'s default from 1 to None. It survived the whole file,
+# because every existing plan() test builds sections that meet ONCE a week -- so
+# `if len(indexes) < 2: continue` skipped the block entirely, and the default that
+# governs the bridge and the Generate button was never reached by any test.
+
+
+def _twice_weekly_snapshot(grid=None):
+    offerings = [_offering(f"off{i}") for i in range(1, 4)]  # each 2 x 75-min lectures
+    sections = [Section(f"off{i}#S1", f"off{i}", 1, 30) for i in range(1, 4)]
+    snapshot = _snapshot(offerings, sections)
+    return replace(snapshot, grid=grid) if grid else snapshot
+
+
+def test_the_planner_keeps_a_section_on_its_hour_without_being_asked():
+    """The same fixture the solver-level test uses: left alone this section goes
+    to 09:00 and 13:00 to dodge a hundred-student clash. A snapshot with no such
+    pressure cannot detect the default being switched off, because the solver is
+    then free to align the sections anyway and usually does."""
+    snapshot = _drift_snapshot()
+    result = plan(snapshot, time_limit_seconds=20.0)
+    assert result.board.placements
+    assert _rank_drift(snapshot, result.board, "lec#S1") <= 1, (
+        "the default ceiling did not reach the planner"
+    )
+
+
+def test_the_planner_says_so_when_it_has_to_give_the_rule_up():
+    """A grid where every lecture time exists on exactly one day, so "the same slot
+    every day" is impossible. The planner must still return a timetable AND say
+    what it abandoned -- as a warning, not buried among the routine notes that
+    every successful run also writes."""
+    snapshot = _twice_weekly_snapshot(DRIFT_GRID)
+    result = plan(snapshot, time_limit_seconds=20.0, max_time_of_day_slots=0)
+    assert result.board.placements, "an impossible preference must not cost the timetable"
+    assert any("the rule was dropped" in warning for warning in result.warnings), (
+        f"the compromise was not reported: warnings={result.warnings}"
+    )
+    assert not any("the rule was dropped" in note for note in result.notes), (
+        "a compromise belongs in warnings, not competing with routine notes"
+    )
+
+
+def test_a_rule_that_can_be_met_produces_no_warning():
+    """The other half: warnings have to stay rare enough to be worth reading."""
+    result = plan(_twice_weekly_snapshot(), time_limit_seconds=20.0)
+    assert result.board.placements
+    assert result.warnings == []
+
+
+# ── one slot apart can still be two hours apart ───────────────────────────
+
+
+def test_the_minute_ceiling_forbids_the_one_slot_step_that_crosses_noon():
+    """The rank ceiling alone leaves exactly one bad pair on the live grid:
+    10:50 -> 13:00 is one declared slot, and 130 minutes across lunch. It was the
+    worst case in all nine measured runs. `max_time_of_day_minutes` closes it, and
+    no rank ceiling can."""
+    # Each lecture time on ONE day only, so the days a section picks decide its
+    # gap outright: Sunday+Monday is 10:30 and 10:50 (one slot, 20 minutes),
+    # Monday+Tuesday is 10:50 and 13:00 (one slot, 130 minutes, across lunch).
+    # The lab sits on Sunday and shares a hundred students, which is what makes
+    # the solver prefer the noon-crossing pair when only rank is bounded.
+    grid = Grid(
+        slots=(
+            Slot(Day.SUN, TimeWindow(630, 705), MeetingKind.LECTURE, DeliveryMode.IN_PERSON),
+            Slot(Day.MON, TimeWindow(650, 725), MeetingKind.LECTURE, DeliveryMode.IN_PERSON),
+            Slot(Day.TUE, TimeWindow(780, 855), MeetingKind.LECTURE, DeliveryMode.IN_PERSON),
+            Slot(Day.SUN, TimeWindow(645, 745), MeetingKind.LAB, DeliveryMode.IN_PERSON),
+        )
+    )
+    snapshot = replace(_drift_snapshot(), grid=grid)
+
+    loose = solve(snapshot, time_limit_seconds=20.0, max_time_of_day_slots=1)
+    assert loose.board.placements
+    assert time_of_day_drift(snapshot, loose.board)["worst_minutes"] == 130, (
+        "this fixture exists to tempt the solver across noon; it did not, so the "
+        "tightening below would prove nothing"
+    )
+
+    tight = solve(
+        snapshot,
+        time_limit_seconds=20.0,
+        max_time_of_day_slots=1,
+        max_time_of_day_minutes=100,
+    )
+    assert tight.board.placements, "100 minutes still leaves every ordinary step legal"
+    assert time_of_day_drift(snapshot, tight.board)["worst_minutes"] <= 100
+
+
+# ── ranking boards on the rule that was actually asked for ────────────────
+
+
+def test_a_board_is_never_judged_against_a_ceiling_nobody_chose():
+    """MUTATION: hardcode the comparison at one slot, as the first cut did. Under
+    `--same-time-slots 2` a board that honoured the rule at spread 2 would then
+    score WORSE than one that abandoned the rule and happened to land at spread 1;
+    under `--same-time-slots 0` the two would be indistinguishable."""
+    drift = {
+        "sections_with_several_meetings": 10,
+        "same_slot": 4,
+        "within_one_slot": 7,
+        "by_rank_spread": {0: 4, 1: 3, 2: 2, 4: 1},
+    }
+    assert astray_count(drift, None) == 0, "no rule was asked for, so none can be broken"
+    assert astray_count(drift, 0) == 6, "at 0 the bar is the exact same hour"
+    assert astray_count(drift, 1) == 3
+    assert astray_count(drift, 2) == 1, "only the section four slots out breaks a ceiling of 2"
+    assert astray_count(drift, 4) == 0
+
+    # A plan stored before the histogram existed still ranks, at the two
+    # ceilings the old fields can answer for.
+    legacy = {"sections_with_several_meetings": 10, "same_slot": 4, "within_one_slot": 7}
+    assert astray_count(legacy, 0) == 6
+    assert astray_count(legacy, 1) == 3
+
+
+def test_the_histogram_of_slot_spreads_adds_up_to_the_sections_measured():
+    """It is what the portfolio now ranks on, so it has to agree with the
+    headline figures rather than drift away from them."""
+    reqs = _offering().requirements
+    snapshot = _snapshot(
+        [_offering(f"off{i}", reqs=reqs) for i in range(1, 4)],
+        [Section(f"off{i}#S1", f"off{i}", 1, 30) for i in range(1, 4)],
+    )
+    board = Board(
+        (
+            _p(day=Day.SUN, window=W9),  # off1: spread 0 slots
+            _p(idx=2, day=Day.MON, window=W9),
+            _p(section="off2#S1", offering="off2", day=Day.SUN, window=W9),
+            _p(section="off2#S1", offering="off2", idx=2, day=Day.MON, window=W1030),  # 1
+            _p(section="off3#S1", offering="off3", day=Day.SUN, window=W9),
+            _p(section="off3#S1", offering="off3", idx=2, day=Day.MON, window=W13),  # 2
+        )
+    )
+    measured = time_of_day_drift(snapshot, board)
+    assert measured["by_rank_spread"] == {0: 1, 1: 1, 2: 1}
+    assert sum(measured["by_rank_spread"].values()) == measured["sections_with_several_meetings"]
+    assert measured["by_rank_spread"][0] == measured["same_slot"]
+    assert (
+        measured["by_rank_spread"][0] + measured["by_rank_spread"][1] == measured["within_one_slot"]
+    )
+
+
+def test_rooms_still_outrank_the_same_hour_rule():
+    """MUTATION: swap the rooms and same-hour criteria. It survived, because no
+    test varied the two in one call -- a class with nowhere to meet cannot be
+    taught at all, which outranks a section meeting at an awkward hour."""
+    chosen = choose_run(
+        [
+            _run("roomed, rule broken", unroomed=0, astray=9),
+            _run("rule kept, three stranded", unroomed=3, astray=0),
+        ]
+    )
+    assert chosen["result"] == "roomed, rule broken"
+
+
+def test_the_shortest_week_is_compared_person_by_person_all_the_way_down():
+    """MUTATION: compare only the LONGEST week (`sorted(days)[:1]`). It survived,
+    because no test had two boards whose longest weeks tie. (3,3) against (3,1) is
+    that case, and the second is strictly kinder to the second instructor."""
+    chosen = choose_run(
+        [
+            _run("three and one", days=(3, 1), idle=900),
+            _run("three and three", days=(3, 3), idle=100),
+        ]
+    )
+    assert chosen["result"] == "three and one"
+
+
+def test_the_waiting_tolerance_is_narrow_enough_to_still_mean_something():
+    """MUTATION: widen `idle_band` to 1.0. It survived, because the existing cases
+    are 5% and 300% apart -- any band between those passes both. A board making
+    instructors wait 40% longer is not "about the same"."""
+    chosen = choose_run(
+        [
+            _run("forty percent more waiting", idle=140, clashes=10.0),
+            _run("less waiting", idle=100, clashes=90.0),
+        ]
+    )
+    assert chosen["result"] == "less waiting"
+
+
+def test_waiting_breaks_a_tie_when_two_boards_cost_students_the_same():
+    """MUTATION: drop `idle_minutes` from the final tie-break key. It survived,
+    because no two runs had equal clashes."""
+    chosen = choose_run(
+        [
+            _run("more waiting", idle=105, clashes=50.0),
+            _run("less waiting", idle=100, clashes=50.0),
+        ]
+    )
+    assert chosen["result"] == "less waiting"

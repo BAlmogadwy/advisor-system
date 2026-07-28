@@ -27,6 +27,7 @@ from scheduler.solve import (
     plan,
     plan_portfolio,
     sibling_adjacency,
+    time_of_day_drift,
 )
 from scheduler.validate import validate
 
@@ -119,6 +120,30 @@ class Command(BaseCommand):
             "and the instructor timetable is the stated priority. Weight 1 "
             "is the only setting worth using; 3 and 10 are worse for both.",
         )
+        parser.add_argument(
+            "--same-time-slots",
+            type=int,
+            default=1,
+            help="how many declared slots a section's weekly meetings may be "
+            "apart. 0 demands the identical time every day; 1 (the default) "
+            "allows one slot before or after; a negative number switches the "
+            "rule off. Counted in SLOTS, not minutes: the lecture grid runs "
+            "09:00, 10:30, 10:50, 13:00, 14:30, 14:45, 16:00, so no number "
+            "of minutes distinguishes the next slot from after lunch.",
+        )
+        parser.add_argument(
+            "--same-time-minutes",
+            type=int,
+            default=-1,
+            help="the widest real gap, in minutes, between a section's earliest "
+            "and latest meeting. Works ALONGSIDE --same-time-slots, because "
+            "neither unit says what the other says: one slot either side still "
+            "allows 10:50 -> 13:00 on this grid, which crosses noon. 100 is the "
+            "tightest bound leaving every ordinary one-slot step legal, and it "
+            "works -- worst wander 130 -> 90 min -- but it also took instructor "
+            "idle from 955 to 2700 min and sibling pairing from 43%% to 5%%, so "
+            "it is OFF by default. Negative switches it off.",
+        )
         parser.add_argument("--format", choices=("text", "json"), default="text")
 
     def handle(self, *args, **options) -> None:
@@ -142,6 +167,14 @@ class Command(BaseCommand):
             plan_kwargs["sibling_adjacency_weight"] = int(options["back_to_back"] * _SCALE)
         if options["student_gaps"]:
             plan_kwargs["student_adjacency_weight"] = int(options["student_gaps"] * _SCALE)
+        # Negative means "no rule", which argparse cannot say with None while
+        # still distinguishing it from the default.
+        plan_kwargs["max_time_of_day_slots"] = (
+            options["same_time_slots"] if options["same_time_slots"] >= 0 else None
+        )
+        plan_kwargs["max_time_of_day_minutes"] = (
+            options["same_time_minutes"] if options["same_time_minutes"] >= 0 else None
+        )
         runs = max(1, int(options["runs"]))
         planner = plan if runs == 1 else plan_portfolio
         if runs > 1:
@@ -178,6 +211,7 @@ class Command(BaseCommand):
         placeholders = elective_placeholder_report(snapshot, options["year"], options["term"])
         rooms = room_shortfall(snapshot, board)
         pairing = sibling_adjacency(snapshot, board)
+        drift = time_of_day_drift(snapshot, board)
         seating = (
             seat_students(snapshot, board, time_limit_seconds=120).summary()
             if options["seat_students"]
@@ -197,6 +231,8 @@ class Command(BaseCommand):
                     "span_weight": options["span_weight"],
                     "back_to_back": options["back_to_back"],
                     "student_gaps": options["student_gaps"],
+                    "same_time_slots": options["same_time_slots"],
+                    "same_time_minutes": options["same_time_minutes"],
                     "default_capacity": options["default_capacity"],
                 },
                 solver_status=result.status,
@@ -208,6 +244,7 @@ class Command(BaseCommand):
                 instructors=instructors,
                 rooms=rooms,
                 pairing=pairing,
+                drift=drift,
                 seating=seating,
                 notes=list(result.notes),
                 label=options["label"],
@@ -226,6 +263,8 @@ class Command(BaseCommand):
                         "elective_placeholders": placeholders,
                         "room_shortfall": rooms,
                         "sibling_pairing": pairing,
+                        "time_of_day": drift,
+                        "warnings": list(result.warnings),
                         "student_seating": seating,
                         "saved_plan_id": saved.id if saved else None,
                     },
@@ -327,6 +366,17 @@ class Command(BaseCommand):
                 "    sections pair two at a time, so a course with three makes one "
                 "pair and one is left over"
             )
+        if drift["sections_with_several_meetings"]:
+            w("")
+            w(
+                f"  A SECTION KEEPS ITS HOUR   {drift['percent_same_slot']}% of "
+                f"{drift['sections_with_several_meetings']} sections meet at the SAME "
+                f"time every day, {drift['percent_within_one_slot']}% within one slot"
+            )
+            w(
+                f"    average wander   : {drift['mean_drift_minutes']:.0f} min   "
+                f"worst {drift['worst_minutes']} min ({drift['worst_section'] or '-'})"
+            )
         if placeholders:
             w("")
             unresolved = [p for p in placeholders if p["status"] != "RESOLVED"]
@@ -358,6 +408,8 @@ class Command(BaseCommand):
             )
             w("    only plans sharing all three fingerprints are comparable")
         w(f"  solver: {result.status}  {result.wall_time_seconds:.0f}s")
+        for warning in result.warnings:
+            w(f"  ! {warning}")
         for note in result.notes:
             if "portfolio" in note or "two-pass" in note or "discarded" in note:
                 w(f"    {note}")

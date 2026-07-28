@@ -19,10 +19,11 @@ is therefore a comparison of scheduling rather than of bookkeeping.
 ``source_tag="tw_scheduler"`` so they are always distinguishable from the old
 engine's ``tw_auto``.
 
-**A section is placed on every board whose students need it, at one time.** That
-is the shared-section model this subsystem exists to get right: a section has ONE
-schedule and appears on several boards, rather than being duplicated per board
-and drifting into two different times at once.
+**A section is placed on exactly ONE board**, chosen by `choose_board`. Boards are
+how the workbook and the screen segment the timetable, and both render one cell
+per placement row — so a course written to every board whose students needed it
+was drawn once per board in the same square. The section still has one schedule;
+that was never the part boards duplicated.
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ from scheduler.solve import (
     plan,
     plan_portfolio,
     sibling_adjacency,
+    time_of_day_drift,
 )
 from scheduler.validate import validate
 
@@ -185,6 +187,10 @@ def build_into_scenario(
 
     if progress:
         progress("solve")
+    # The same-hour ceilings (D14) are deliberately NOT restated here. They come
+    # from `plan()`'s own defaults, so the Generate button and `sch_plan` cannot
+    # drift apart on a policy question — a screen and a command line disagreeing
+    # about what the timetable rules are would be worse than either choice.
     if runs > 1:
         result = plan_portfolio(
             snapshot,
@@ -379,6 +385,7 @@ def build_into_scenario(
     rooms = room_shortfall(snapshot, board)
     instructors = instructor_metrics(snapshot, board)
     pairing = sibling_adjacency(snapshot, board)
+    drift = time_of_day_drift(snapshot, board)
 
     return {
         "engine": "scheduler",
@@ -398,9 +405,15 @@ def build_into_scenario(
         "unroomed_floor": rooms["impossible"] + rooms["saturated"],
         "sibling_pairs_back_to_back": pairing["pairs_back_to_back"],
         "sibling_pairs_achievable": pairing["pairs_achievable"],
+        "sections_on_the_same_hour_percent": drift["percent_same_slot"],
+        "sections_within_one_slot_percent": drift["percent_within_one_slot"],
+        "mean_time_of_day_drift_minutes": drift["mean_drift_minutes"],
         "slot_columns_added": added_lecture + added_lab,
         "meetings_with_an_instructor": sum(
             1 for p in board.placements if p.instructor_id is not None
         ),
         "notes": list(result.notes),
+        # Separate from `notes`, which every successful run also fills. A screen
+        # that shows both as warnings teaches the reader to ignore warnings.
+        "warnings": list(result.warnings),
     }
