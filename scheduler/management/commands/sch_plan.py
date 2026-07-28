@@ -42,6 +42,12 @@ class Command(BaseCommand):
         parser.add_argument("--gender", required=True, choices=["M", "F", "m", "f"])
         parser.add_argument("--default-capacity", type=int, default=25)
         parser.add_argument(
+            "--phase-terms",
+            action="store_true",
+            help="give each curriculum term one half of the day (D20), chosen to "
+            "separate the terms that share the most students",
+        )
+        parser.add_argument(
             "--min-demand",
             type=int,
             default=5,
@@ -161,6 +167,7 @@ class Command(BaseCommand):
                 programs=str(options["programs"]).split(","),
                 default_capacity=options["default_capacity"],
                 min_demand=options["min_demand"],
+                phase_terms=options["phase_terms"],
             )
         except IntakeError as exc:
             raise CommandError(str(exc)) from exc
@@ -242,6 +249,7 @@ class Command(BaseCommand):
                     "same_time_minutes": options["same_time_minutes"],
                     "default_capacity": options["default_capacity"],
                     "min_demand": options["min_demand"],
+                    "phase_terms": options["phase_terms"],
                 },
                 solver_status=result.status,
                 wall_time_seconds=result.wall_time_seconds,
@@ -282,6 +290,7 @@ class Command(BaseCommand):
                         ],
                         "students_left_unserved": snapshot.students_left_unserved,
                         "min_demand": snapshot.policy.min_demand,
+                        "term_half_days": dict(snapshot.term_half_days),
                         "student_seating": seating,
                         "saved_plan_id": saved.id if saved else None,
                     },

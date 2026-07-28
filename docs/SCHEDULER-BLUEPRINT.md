@@ -1188,6 +1188,87 @@ every ordinary rule.
 
 ---
 
+### D20 — One half-day per curriculum term: the owner's method, and why it backfires
+
+> *"If term 9 is placed in the morning I will try my best to make term 5
+> afternoon, because an irregular student of 9 might need something from term 5.
+> Then I place term 3 morning and term 1 afternoon. Then I start to modify each
+> within its specified period to avoid the conflicts and reduce the gaps."*
+
+Stated plainly, that is **strict alternation by term** — and it is a
+**MAX-CUT**: terms are nodes, an edge weighs how many students take courses in
+both, and the split cuts as much of that weight as possible. Solved exactly here
+(the graph has five nodes), subject to each half fitting its own room supply.
+
+**The owner's hand rule is optimal.** Computed independently from the live
+demand, the solver returns the owner's partition exactly:
+
+```
+term 1  PM      term 3  AM      term 5  PM      term 7  AM      term 9  PM
+```
+
+218 of 278 shared student-pairs separated (78%) — and no other assignment does
+better. The reason it works is structural: an irregular student is usually one
+or two terms behind, so the heaviest edges are between **neighbouring** terms
+(5+7 = 112 students, 3+5 = 36, 7+9 = 35), and alternation cuts every one.
+
+**And measured on a real build it is clearly worse.** M cohort, 3 runs each:
+
+| | D20 off | **D20 on** |
+|---|---|---|
+| expected clashes | **132.8** (118–166) | **242.2** (238–245) |
+| instructor idle | 960 (715–970) | 950 (850–1305) |
+| a section keeps its hour | 60% | 35% |
+| …within one slot | 100% | 78% |
+| days / unroomed | 19 = floor / 19 | 19 = floor / 19 |
+
+**Student collisions nearly doubled** — by the rule written to prevent them.
+
+**Why.** The clash objective prices every pair of courses one student holds at
+once, and those pairs divide like this:
+
+| | share |
+|---|---|
+| both courses in the **same** term | **74 %** |
+| courses in **different** terms | 26 % |
+
+D20 protects the 26% by crushing the 74%. Confining a term to half the day
+collapses the slots its own courses can spread across:
+
+```
+term 7 (AM)   39 meetings into 10 distinct (day, cell) slots   -> 3.9 deep
+term 3 (AM)   30 meetings into 10 slots                        -> 3.0 deep
+unphased      a term may use all 25 slots
+```
+
+The morning is the worse half — the grid gives it two disjoint 75-minute cells
+against the afternoon's three — so the terms sent there suffer most.
+
+**It also breaks the instructors, and structurally rather than by accident.** An
+instructor teaches courses in *adjacent* terms; alternation exists to put
+adjacent terms in *opposite* halves. On the live data **4 of 5 linked
+instructors** end up straddling noon — Dr Nawaf teaches AI225 (term 5, PM) and
+DS321 (term 7, AM), a forced gap every week. The two goals pull the same lever
+in opposite directions:
+
+* a student spanning adjacent terms wants those terms **apart**;
+* an instructor teaching adjacent terms wants them **together**.
+
+**The deeper reading, and the reason this stays off.** The clash objective
+*already* prices cross-term collisions — it counts every pair of courses sharing
+students, whatever term they sit in. The solver was already doing what D20 tries
+to teach it, and with the freedom of the whole day rather than half of it. The
+owner's heuristic is an excellent way for a *human* to approximate that by hand,
+because a person cannot evaluate three thousand booleans; imposing it on the
+solver removes freedom it was using well. This is the same lesson as the
+hand-written LNS neighbourhoods that lose to generic propagation-guided ones.
+
+Shipped as `--phase-terms`, **default OFF**. The partition logic is kept and
+tested — it is correct, it independently reproduces the owner's own rule, and it
+is the right machinery should a *soft* version ever be worth measuring.
+
+---
+
 ### On making the search better — what was tried, and what it was worth
 
 The pinning experiment behind D17 also produced the clearest evidence we have

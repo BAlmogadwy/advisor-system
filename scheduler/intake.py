@@ -389,6 +389,7 @@ def build_snapshot(
     default_capacity: int,
     buffer: float = 1.0,
     min_demand: int = 1,
+    phase_terms: bool = False,
     grid: Grid | None = None,
 ) -> Snapshot:
     """Assemble an immutable, fingerprinted snapshot for one gender cohort."""
@@ -1040,6 +1041,65 @@ def build_snapshot(
         ).encode()
     ).hexdigest()
 
+    # ── D20: each curriculum term takes one half of the day ───────────────
+    #
+    # The owner's manual method. Applied HERE because it needs both halves of
+    # the picture: the demand (which terms share students) and the sections
+    # (how much room each term will consume). It rewrites the offerings'
+    # requirements rather than adding a solver rule, so the restriction travels
+    # with the problem and every consumer — the solver, the greedy placer, the
+    # validator — sees the same legal windows without being told about terms.
+    term_half_days: dict[int, str] = {}
+    if phase_terms:
+        from scheduler.phasing import partition_terms, starts_for_half, term_of_demand
+
+        staged = Snapshot(
+            academic_year=str(academic_year),
+            term=int(term),
+            gender=gender,
+            programs=tuple(sorted(program_set)),
+            grid=grid,
+            offerings=tuple(offerings),
+            sections=tuple(sections),
+            rooms=tuple(rooms),
+            instructors=instructors,
+            demand=tuple(demand),
+            policy=policy,
+            source_fingerprint="",
+            created_at="",
+        )
+        term_half_days = partition_terms(staged)
+        if term_half_days:
+            # The SAME labelling the partition was computed from — the term each
+            # offering's own students meet it at, never `min(offering.terms)`.
+            labels = term_of_demand(staged)
+            phased: list[Offering] = []
+            for offering in offerings:
+                half = term_half_days.get(labels.get(offering.id, -1))
+                if (
+                    half is None
+                    or not offering.is_scheduled
+                    or offering.occupies_fixed_block  # D19 already owns its hours
+                    or offering.is_fully_online  # D9: its own evening family
+                ):
+                    phased.append(offering)
+                    continue
+                phased.append(
+                    replace(
+                        offering,
+                        requirements=tuple(
+                            replace(
+                                requirement,
+                                allowed_starts=starts_for_half(
+                                    staged, requirement.duration, requirement.delivery, half
+                                ),
+                            )
+                            for requirement in offering.requirements
+                        ),
+                    )
+                )
+            offerings = phased
+
     return Snapshot(
         academic_year=str(academic_year),
         term=int(term),
@@ -1057,5 +1117,6 @@ def build_snapshot(
         unmatched_demand=tuple(sorted(unmatched_demand.items())),
         low_demand_dropped=low_demand_dropped,
         students_left_unserved=students_left_unserved,
+        term_half_days=tuple(sorted(term_half_days.items())),
         created_at=datetime.now(UTC).isoformat(timespec="seconds"),
     )

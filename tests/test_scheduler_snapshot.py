@@ -1645,3 +1645,120 @@ def test_the_evening_windows_are_actually_excluded_from_what_a_placer_sees():
     kept = {s["start"] for s in placeable_slots(DEFAULT_LAB_SLOTS)}
     assert {"15:50", "17:40", "19:30"} <= raw, "the online windows left the shared config"
     assert kept == raw - {"15:50", "17:40", "19:30"}
+
+
+# ── D20: one half-day per curriculum term (owner's manual method) ─────────
+#
+# Kept behind a default-OFF flag with its measurement recorded, because the
+# negative result is the valuable part: see the blueprint. These tests pin the
+# PARTITION logic, which is correct and reusable whatever is decided about
+# shipping the rule.
+
+
+def _alternating_cohort():
+    """Two terms that share students heavily, and one that shares nothing."""
+    for term, code in ((3, "AI301"), (5, "AI501"), (9, "AI901")):
+        _plan("AI", code, term=term, capacity=40)
+    _plan("AI2", "AI301", term=2, capacity=40, name="AI301")  # the offset plan
+    for sid in range(440001, 440021):  # reach terms 1..9
+        _student(sid, "AI", "M")
+    for sid in range(470001, 470011):  # reach terms 1..3 only
+        _student(sid, "AI", "M")
+    _room("M-1", "M", capacity=60)
+    return build_snapshot(
+        academic_year="1448",
+        term=1,
+        gender="M",
+        programs=["AI", "AI2"],
+        default_capacity=25,
+    )
+
+
+def test_a_course_is_labelled_by_the_term_its_own_students_study_it_in():
+    """MUTATION (and the bug this replaced): label by `min(offering.terms)`.
+
+    `Offering.terms` is the UNION across programmes, and the AI/AI2 plans are
+    offset by one term — so a term-3 AI course is term 2 in AI2 and the minimum
+    calls it "term 2". In any one semester every student's next term has the
+    SAME parity, so an even label is always an artefact of the offset, never a
+    real cohort. On the live data that invented three phantom terms (2, 6, 8)
+    carrying 145 demands between them and produced a partition over nodes that
+    do not exist.
+    """
+    from scheduler.phasing import term_of_demand
+
+    snap = _alternating_cohort()
+    labels = term_of_demand(snap)
+    assert labels, "no course could be labelled at all"
+    assert all(term % 2 == 1 for term in labels.values()), (
+        f"an even term label can only come from the offset plan: {labels}"
+    )
+    offering = next(o for o in snap.offerings if o.course_code == "AI301")
+    assert 2 in offering.terms, "the fixture must contain the offset plan row"
+    assert labels[offering.id] == 3, (
+        "labelled from the union of plan terms rather than from the students"
+    )
+
+
+def test_the_partition_is_an_optimal_cut_not_merely_a_reasonable_one():
+    """Checked against every possible split, by brute force.
+
+    Deliberately NOT "the heaviest pair must be separated" — that was the first
+    version of this test and it was wrong. Three terms that all share students
+    equally form a triangle, and no bipartition of a triangle can cut more than
+    two of its three edges, so the heaviest pair legitimately survives. The
+    promise is an optimal TOTAL, not any particular edge.
+    """
+    import itertools as _it
+
+    from scheduler.phasing import partition_terms, shared_students_by_term_pair, term_of_demand
+
+    snap = _alternating_cohort()
+    weights = shared_students_by_term_pair(snap, term_of_demand(snap))
+    assert weights, "the fixture must produce cross-term demand"
+    halves = partition_terms(snap)
+    assert halves, "no partition was produced at all"
+
+    def cut(assignment):
+        return sum(n for (a, b), n in weights.items() if assignment[a] != assignment[b])
+
+    terms = sorted({t for pair in weights for t in pair})
+    best = max(
+        cut(dict(zip(terms, combo, strict=True)))
+        for combo in _it.product(("AM", "PM"), repeat=len(terms))
+    )
+    assert cut(halves) == best, (
+        f"cut {cut(halves)} against a possible {best}: {halves} / {dict(weights)}"
+    )
+
+
+def test_a_load_that_cannot_fit_two_half_days_yields_no_partition_at_all():
+    """MUTATION: drop the capacity constraint from the model.
+
+    The safety property, and the deterministic one: when the teaching load
+    cannot fit into two halves, the answer is NOTHING — an unphased board is a
+    worse timetable but a buildable one, whereas a split the rooms cannot serve
+    is unroomable at any budget. Without the constraint the solver returns a
+    confident, impossible split instead.
+
+    Tested by starving the estate rather than by inspecting the chosen split:
+    with a single room and many small sections the load exceeds both halves
+    together, so no assignment can satisfy it.
+    """
+    from scheduler.phasing import _half_day_capacity, _room_load_by_term, partition_terms
+    from scheduler.phasing import term_of_demand as _labels
+
+    for term, code in ((3, "AI301"), (5, "AI501"), (9, "AI901")):
+        _plan("AI", code, term=term, capacity=2)  # tiny sections => very many
+    for sid in range(440001, 440041):
+        _student(sid, "AI", "M")
+    _room("M-1", "M", capacity=60)  # one room for the whole week
+    snap = build_snapshot(
+        academic_year="1448", term=1, gender="M", programs=["AI"], default_capacity=25
+    )
+    capacity = _half_day_capacity(snap)
+    load = _room_load_by_term(snap, _labels(snap))
+    assert sum(load.values()) > capacity["AM"] + capacity["PM"], (
+        f"this fixture must overload the estate: {sum(load.values())} meetings against {capacity}"
+    )
+    assert partition_terms(snap) == {}, "a split was returned that no room supply can serve"

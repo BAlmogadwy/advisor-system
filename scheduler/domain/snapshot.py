@@ -88,6 +88,14 @@ class Snapshot:
     #: otherwise improve every per-student average by disappearing from it.
     students_left_unserved: int = 0
 
+    #: Which half of the day each curriculum term was given (D20), as
+    #: `(term, "AM" | "PM")`. Empty when phasing is off, or when the teaching
+    #: load does not fit two halves at all.
+    #:
+    #: Carried rather than recomputed: it is a decision the board was built
+    #: under, and a reader comparing two runs has to be able to see it.
+    term_half_days: tuple[tuple[int, str], ...] = ()
+
     def __post_init__(self) -> None:
         if self.gender not in ("M", "F"):
             raise ValueError(f"snapshot gender must be M or F, got {self.gender!r}")
@@ -191,6 +199,11 @@ class Snapshot:
                 [r.id, r.capacity, r.kind.value, sorted(r.programs)] for r in self.rooms
             ),
             "demand": sorted([d.student_id, sorted(d.offering_ids)] for d in self.demand),
+            # D20 restricts which windows a course may use, so two runs that
+            # differ in it are solving different instances (N8). Belt and
+            # braces: the restriction also shows up in each requirement's
+            # `allowed_starts` above, but a reader should not have to derive it.
+            "term_half_days": list(self.term_half_days),
         }
         blob = json.dumps(payload, separators=(",", ":"), sort_keys=True, default=str)
         return hashlib.sha256(blob.encode()).hexdigest()
