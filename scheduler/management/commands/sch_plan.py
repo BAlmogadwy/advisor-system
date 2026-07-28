@@ -289,10 +289,18 @@ class Command(BaseCommand):
             f"-> -{100 * (baseline - clashes) / baseline:.0f}%)   "
             f"— a PROXY: it assumes students land in sections at random"
         )
-        if seating:
+        if seating and seating["clash_free_percent"] is None:
+            w(
+                "    actually seated  : NOT MEASURABLE — the seating solve did not "
+                f"close, or every student is short a seat ({seating['unseated_demands']} "
+                "demands unseated). No percentage is published, because one taken "
+                "over the students who DID get a seat would read as a good week."
+            )
+        elif seating:
             w(
                 f"    actually seated  : {seating['clash_free_percent']}% of "
-                f"{seating['students']} students get a clash-free week "
+                f"{seating['students_fully_seated']} fully-seated students get a "
+                f"clash-free week "
                 f"({seating['students_with_a_clash']} affected, "
                 f"{seating['total_clashes']} clashes"
                 + (

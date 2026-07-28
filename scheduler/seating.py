@@ -52,18 +52,38 @@ class SeatingResult:
     idle_minutes: int
     proven_optimal: bool
     notes: list[str] = field(default_factory=list)
+    #: Students who got every class they asked for. A student left with no seat
+    #: has no clash, so they must not be counted as clash-free.
+    students_fully_seated: int = 0
 
     @property
-    def clash_free_percent(self) -> float:
-        return (
-            round(100.0 * (self.students - self.students_with_a_clash) / self.students, 1)
-            if self.students
-            else 0.0
+    def clash_free_percent(self) -> float | None:
+        """Share of FULLY SEATED students with no collision — or None.
+
+        Two ways this used to read 100% for a board nobody could attend:
+
+        * the failure path returns zeros, so ``students - 0`` was every student;
+        * a student with no seat has no clash, and the numerator counted them.
+
+        Measured by review: fifty students against a single seat reported
+        ``clash_free_percent: 100.0`` beside ``unseated_demands: 49``. Since
+        this is the number the blueprint designates as the confirmation of the
+        clash proxy, it is now **None** whenever there is nothing honest to say,
+        rather than a flattering float. `None` is loud; 100.0 is not.
+        """
+        if not self.proven_optimal or not self.students_fully_seated:
+            return None
+        return round(
+            100.0
+            * (self.students_fully_seated - self.students_with_a_clash)
+            / self.students_fully_seated,
+            1,
         )
 
     def summary(self) -> dict:
         return {
             "students": self.students,
+            "students_fully_seated": self.students_fully_seated,
             "clash_free_percent": self.clash_free_percent,
             "students_with_a_clash": self.students_with_a_clash,
             "total_clashes": self.total_clashes,
@@ -204,6 +224,7 @@ def seat_students(
             chosen[student_id].append(section_id)
 
     missed = sum(1 for v in unseated.values() if solver.value(v))
+    short = {student_id for (student_id, _o), v in unseated.items() if solver.value(v)}
     clashed = sum(
         1
         for student_id, flags in per_student_clashes.items()
@@ -233,4 +254,5 @@ def seat_students(
         total_clashes=total,
         idle_minutes=idle,
         proven_optimal=status == cp_model.OPTIMAL,
+        students_fully_seated=len(wanted) - len(short),
     )

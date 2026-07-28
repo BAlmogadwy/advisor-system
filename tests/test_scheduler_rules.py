@@ -1639,7 +1639,7 @@ def test_the_planner_switches_the_pairing_on_but_the_raw_solver_does_not():
 # that turns that into a statement about actual students — including the part
 # the proxy cannot see, which is that sections have capacity.
 
-from scheduler.seating import seat_students  # noqa: E402
+from scheduler.seating import SeatingResult, seat_students  # noqa: E402
 
 
 def _two_course_snapshot(grid, *, capacity=30, students=10, sections_each=1):
@@ -2612,3 +2612,99 @@ def test_waiting_breaks_a_tie_when_two_boards_cost_students_the_same():
         ]
     )
     assert chosen["result"] == "less waiting"
+
+
+# ── the confirmation metric must not flatter a board nobody can attend ────
+#
+# `clash_free_percent` is what the blueprint designates as the ground truth
+# behind the clash PROXY, and it read 100% in two situations where it should
+# have read nothing at all: a student with no seat has no clash and was counted
+# in the numerator, and the failure path returns zeros, which is every student
+# minus nobody. Review measured fifty students against a single seat reporting
+# `clash_free_percent: 100.0` beside `unseated_demands: 49`.
+
+
+def test_the_percentage_is_taken_over_the_students_who_actually_got_a_seat():
+    """Not over everybody. The denominator is the whole claim."""
+    snap = _two_course_snapshot(ROOMY, capacity=1)
+    board = Board(
+        (
+            _p(section="offa#S1", offering="offa", day=Day.SUN, window=TimeWindow(540, 615)),
+            _p(section="offb#S1", offering="offb", day=Day.SUN, window=TimeWindow(630, 705)),
+        )
+    )
+    result = seat_students(snap, board, time_limit_seconds=20)
+    assert result.students == 10
+    assert result.unseated_demands == 18, "nine of ten students are short both courses"
+    assert result.students_fully_seated == 1, (
+        f"one seat each means one complete week: got {result.students_fully_seated}"
+    )
+    # 100% is the honest answer HERE -- the one student who got a seat really
+    # does have a clash-free week. What makes it readable is the denominator
+    # beside it. Under the old formula this same board read "100% of 10", which
+    # is a board nine students cannot attend described as a perfect week.
+    assert result.clash_free_percent == 100.0
+    summary = result.summary()
+    assert summary["students_fully_seated"] == 1
+    assert summary["students"] == 10, "both numbers must be published, or 100% lies"
+
+
+def test_a_seating_solve_that_did_not_close_publishes_no_percentage_at_all():
+    """`None` is loud; 100.0 is not.
+
+    Deliberately a run that seated MOST students and still did not close --
+    a fixture where nobody was seated cannot tell "we did not finish" apart from
+    "there was nobody to count"."""
+    result = SeatingResult(
+        students=390,
+        seated_demands=1800,
+        unseated_demands=75,
+        students_with_a_clash=0,
+        total_clashes=0,
+        idle_minutes=0,
+        proven_optimal=False,
+        students_fully_seated=350,
+        notes=["no seating found within 1s"],
+    )
+    assert result.clash_free_percent is None, (
+        "an unfinished solve must publish nothing, not the flattering number "
+        "its partial assignment happens to imply"
+    )
+    assert result.summary()["clash_free_percent"] is None
+
+
+def test_the_denominator_changes_the_answer_not_just_the_wording():
+    """The two formulas have to be told apart by a case where they disagree.
+
+    One seat per course and both courses at the SAME hour: exactly one student
+    gets both classes, and that student clashes. Over the seated student that is
+    0% clash-free, which is the truth. Over all ten students -- the old
+    formula -- it reads 90%, because the nine with no seat at all have no clash
+    to report."""
+    # Two students, both needing both courses, both courses at the same hour.
+    # offa holds two, offb holds one -- so three of the four demands can be met,
+    # and whoever gets offb also has offa and therefore clashes. The other
+    # student ends up with offa only, and is not fully seated.
+    snap = _grid_snapshot(
+        ROOMY,
+        [_offering("offa", reqs=_lecture(1)), _offering("offb", reqs=_lecture(1))],
+        [Section("offa#S1", "offa", 1, 2), Section("offb#S1", "offb", 1, 1)],
+        demand=[
+            StudentDemand(student_id=n, program="AI", offering_ids=frozenset({"offa", "offb"}))
+            for n in (1, 2)
+        ],
+    )
+    board = Board(
+        (
+            _p(section="offa#S1", offering="offa", day=Day.SUN, window=TimeWindow(540, 615)),
+            _p(section="offb#S1", offering="offb", day=Day.SUN, window=TimeWindow(540, 615)),
+        )
+    )
+    result = seat_students(snap, board, time_limit_seconds=20)
+    assert result.students == 2
+    assert result.unseated_demands == 1, "one of the four demands cannot be met"
+    assert result.students_fully_seated == 1
+    assert result.students_with_a_clash == 1
+    assert result.clash_free_percent == 0.0, (
+        "over everybody this reads 50% -- the student with no offb seat cannot clash"
+    )
