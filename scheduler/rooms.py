@@ -197,49 +197,106 @@ def room_shortfall(snapshot: Snapshot, board: Board) -> dict:
     }
 
 
+#: Ceiling on how many room families the saturation check will consider. The
+#: closure under union is what makes a shortage confined to a subset provable;
+#: the cap keeps a pathological estate from generating 2^n of them. Exceeding it
+#: only weakens the finding — fewer families means less saturation proved, never
+#: more — so an incomplete set can never turn congestion into a false claim.
+_MAX_ROOM_FAMILIES = 96
+
+
+def _room_families(sets: set[frozenset[str]]) -> list[frozenset[str]]:
+    """The given room sets, closed under union up to the cap.
+
+    Hall's condition binds on unions, not only on the sets themselves. With
+    compatible sets {A}, {A,B} and {B}, no single one shows a shortage that the
+    union {A,B} proves immediately.
+    """
+    families = {f for f in sets if f}
+    frontier = list(families)
+    while frontier and len(families) < _MAX_ROOM_FAMILIES:
+        head = frontier.pop()
+        for other in list(families):
+            merged = head | other
+            if merged not in families:
+                families.add(merged)
+                frontier.append(merged)
+                if len(families) >= _MAX_ROOM_FAMILIES:
+                    break
+    return sorted(families, key=lambda f: (len(f), sorted(f)))
+
+
 def _saturated_kinds(snapshot: Snapshot) -> dict[str, tuple[int, int]]:
     """Room kinds whose whole-week supply cannot meet demand, with the arithmetic.
 
-    Counted over the estate as a whole rather than per programme: a per-programme
-    split would need to decide how shared rooms are apportioned, and getting that
-    wrong would over-report an unfixable shortage. This under-reports instead,
-    which keeps every SATURATED claim provable.
+    Measured over **compatible-room families**, not over the estate as a whole.
+    Counting per kind only sees a shortage when the entire estate of that kind is
+    short, and misses every shortage confined to a capacity tier or a programme:
+    six lecture rooms of which one seats 60, ten sections needing 60 seats, and a
+    week with five lecture periods a day gives five meetings that can never be
+    roomed — while the whole-estate arithmetic sees 6 rooms against 10 meetings
+    and reports comfortable supply. Every one of those five was then published as
+    recoverable CONGESTION, telling a registrar to re-solve when the real answer
+    is a second large room.
+
+    The test is Hall's deficiency: for a set of rooms F, count the meetings whose
+    compatible rooms all lie inside F. If that exceeds what F can host all week,
+    the excess cannot be roomed by any timetable. Taking the maximum deficiency
+    over all families gives the strongest provable claim, and the whole-estate
+    case is simply the largest family, so this can only ever find more than the
+    old arithmetic did — never less, and never anything that is not proved.
+
+    Supply is what a room can actually HOST in a day, not how many cells the grid
+    declares. Several declared cells are alternatives rather than extra capacity
+    — 10:30-11:45 and 10:50-12:05 are one lecture opportunity offered two ways —
+    so counting cells overstates the estate. That was got wrong here once:
+    counting cells gave the female cohort 175 lecture-periods and reported 50
+    meetings as recoverable. True throughput is 5 per room per day, so 125, and
+    the shortfall is 79 — exactly what the solver leaves unroomed however the
+    price of an unroomed meeting is set.
+
+    Returns ``{kind: (supply, demand)}`` for the family that proves the most,
+    expressed so the caller's budget arithmetic (``demand - supply``) is
+    unchanged.
     """
-    demand: dict[str, int] = defaultdict(int)
-    durations: dict[str, set[int]] = defaultdict(set)
+    # Every meeting that needs a room, with the rooms that could ever hold it.
+    by_kind: dict[str, list[tuple[int, frozenset[str]]]] = defaultdict(list)
     for section in snapshot.sections:
         offering = snapshot.offerings_by_id[section.offering_id]
+        need = snapshot.policy.required_room_capacity(section.capacity)
         for requirement in offering.requirements:
-            if requirement.needs_room:
-                demand[requirement.kind.name] += requirement.count_per_week
-                durations[requirement.kind.name].add(requirement.duration)
+            if not requirement.needs_room:
+                continue
+            compatible = frozenset(
+                room.id
+                for room in snapshot.rooms
+                if room.kind is requirement.kind
+                and room.capacity >= need
+                and (offering.programs & room.programs)
+            )
+            for _ in range(requirement.count_per_week):
+                by_kind[requirement.kind.name].append((requirement.duration, compatible))
 
-    rooms_of: dict[str, int] = defaultdict(int)
-    for room in snapshot.rooms:
-        rooms_of[room.kind.name] += 1
-
-    # Supply is what one room can actually HOST in a day, not how many cells the
-    # grid declares. Several declared cells are alternatives rather than extra
-    # capacity — 10:30-11:45 and 10:50-12:05 are one lecture opportunity offered
-    # two ways — so counting cells overstates the estate.
-    #
-    # This was got wrong here once: counting cells gave the female cohort 175
-    # lecture-periods and reported 50 meetings as recoverable congestion. The
-    # true throughput is 5 per room per day, so 125, and the shortfall is 79 —
-    # exactly the number the solver leaves unroomed no matter how the price of an
-    # unroomed meeting is set. Those 50 were never recoverable; the arithmetic
-    # was.
-    supply: dict[str, int] = {}
-    for kind, lengths in durations.items():
-        supply[kind] = snapshot.grid.room_periods_per_week(
-            frozenset(lengths), rooms_of.get(kind, 0)
-        )
-
-    return {
-        kind: (supply.get(kind, 0), count)
-        for kind, count in demand.items()
-        if count > supply.get(kind, 0)
-    }
+    worst: dict[str, tuple[int, int]] = {}
+    for kind, meetings in by_kind.items():
+        # Meetings with no compatible room at all are IMPOSSIBLE, a different
+        # finding entirely, and counting them here would charge one shortage
+        # twice. The caller subtracts them again for the same reason.
+        placeable = [(d, c) for d, c in meetings if c]
+        for family in _room_families({c for _d, c in placeable}):
+            inside = [(d, c) for d, c in placeable if c <= family]
+            if not inside:
+                continue
+            supply = snapshot.grid.room_periods_per_week(
+                frozenset(d for d, _c in inside), len(family)
+            )
+            demand = len(inside)
+            if demand <= supply:
+                continue
+            best = worst.get(kind)
+            if best is None or (demand - supply) > (best[1] - best[0]):
+                worst[kind] = (supply, demand)
+    return worst
 
 
 def unroomable_meetings(snapshot: Snapshot) -> int:

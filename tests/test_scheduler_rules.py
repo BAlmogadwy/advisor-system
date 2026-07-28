@@ -2991,3 +2991,132 @@ def test_a_section_cannot_meet_twice_on_the_same_day():
         lecture_starts={"09:00": 75}, lab_starts={"09:00": 100}, days=(Day.SUN, Day.MON)
     )
     assert solve(replace(snapshot, grid=two_days), time_limit_seconds=10.0).board.placements
+
+
+# ── a shortage inside one capacity tier is still a shortage ───────────────
+#
+# SATURATED used to be counted over the whole estate of a room KIND. That only
+# ever sees a shortage when every room of that kind is short, and misses every
+# shortage confined to a capacity tier or a programme -- which is most of them,
+# because rooms differ in size and in who may use them.
+#
+# Review's case: six lecture rooms of which ONE seats 60, ten sections needing
+# 60 seats, a week with five lecture periods a day. Five meetings can never be
+# roomed. The whole-estate arithmetic sees six rooms against ten meetings,
+# concludes the estate is comfortable, and publishes all five as recoverable
+# CONGESTION -- telling a registrar to re-solve when the answer is a second
+# large room.
+
+
+def _all_on_one_cell(prefix, offering, n):
+    return Board(
+        tuple(
+            _p(
+                section=f"{prefix}#S{i}",
+                offering=offering,
+                day=Day.SUN,
+                window=TimeWindow(540, 615),
+            )
+            for i in range(1, n + 1)
+        )
+    )
+
+
+def test_a_shortage_confined_to_the_big_rooms_is_measured_against_the_big_rooms():
+    """Six lecture rooms, one of which seats 60; ten sections needing 60 seats;
+    one lecture period a week. Only the big room can hold any of them, so it can
+    room ONE and nine cannot be roomed by any timetable.
+
+    Counting over the whole estate sees six rooms against ten meetings and proves
+    a shortfall of four, publishing the other five as reschedulable."""
+    offering = _offering("big", reqs=_lecture(1), capacity=60)
+    sections = [Section(f"big#S{i}", "big", i, 60) for i in range(1, 11)]
+    snapshot = replace(
+        _grid_snapshot(ONE_CELL, [offering], sections),
+        rooms=(Room("BIG", "BIG", 60, MeetingKind.LECTURE, frozenset({"AI"})),)
+        + tuple(
+            Room(f"S{i}", f"S{i}", 30, MeetingKind.LECTURE, frozenset({"AI"})) for i in range(1, 6)
+        ),
+    )
+    report = room_shortfall(snapshot, _all_on_one_cell("big", "big", 10))
+    assert report["unroomed"] == 10
+    assert report["impossible"] == 0, "all ten fit the big room, so none is impossible"
+    assert report["saturated"] == 9, (
+        f"the big room can host one a week; nine are unroomable: {report}"
+    )
+    assert report["recoverable"] == 1
+
+
+def test_a_shortage_only_the_union_of_two_room_sets_can_prove():
+    """Hall's condition binds on unions, and this is a case where NO declared
+    compatible set shows the shortage -- only their union does.
+
+    Room A serves AI, B serves DS, C serves neither cohort. Two AI sections can
+    only use A, two DS sections can only use B, and the week holds one period.
+    {A} is short by one and {B} is short by one; together they are short by TWO,
+    and that is the provable claim. Counting over the whole estate dilutes it
+    with C and proves only one."""
+    ai = _offering("ai", reqs=_lecture(1), capacity=10, programs=("AI",))
+    ds = _offering("ds", reqs=_lecture(1), capacity=10, programs=("DS",))
+    sections = [Section(f"ai#S{i}", "ai", i, 10) for i in (1, 2)] + [
+        Section(f"ds#S{i}", "ds", i, 10) for i in (1, 2)
+    ]
+    snapshot = replace(
+        _grid_snapshot(ONE_CELL, [ai, ds], sections),
+        rooms=(
+            Room("A", "A", 30, MeetingKind.LECTURE, frozenset({"AI"})),
+            Room("B", "B", 30, MeetingKind.LECTURE, frozenset({"DS"})),
+            Room("C", "C", 30, MeetingKind.LECTURE, frozenset({"CS"})),
+        ),
+    )
+    board = Board(
+        tuple(
+            _p(section=f"ai#S{i}", offering="ai", day=Day.SUN, window=TimeWindow(540, 615))
+            for i in (1, 2)
+        )
+        + tuple(
+            _p(section=f"ds#S{i}", offering="ds", day=Day.SUN, window=TimeWindow(540, 615))
+            for i in (1, 2)
+        )
+    )
+    report = room_shortfall(snapshot, board)
+    assert report["unroomed"] == 4
+    assert report["saturated"] == 2, (
+        f"neither room set shows this alone; their union proves two: {report}"
+    )
+    assert report["recoverable"] == 2
+
+
+def test_saturation_reports_the_family_that_proves_the_most_and_no_more():
+    """Two tiers at once. {A} alone proves one meeting unroomable; the whole
+    estate proves five. The strongest PROVABLE claim is five -- and counting
+    meetings that merely touch a family instead of lying wholly inside it would
+    claim seven, which is not proved and would be the same failure in the other
+    direction."""
+    big = _offering("big", reqs=_lecture(1), capacity=60)
+    small = _offering("small", reqs=_lecture(1), capacity=10)
+    sections = [Section(f"big#S{i}", "big", i, 60) for i in (1, 2)] + [
+        Section(f"small#S{i}", "small", i, 10) for i in range(1, 7)
+    ]
+    snapshot = replace(
+        _grid_snapshot(ONE_CELL, [big, small], sections),
+        rooms=(
+            Room("A", "A", 60, MeetingKind.LECTURE, frozenset({"AI"})),
+            Room("B", "B", 30, MeetingKind.LECTURE, frozenset({"AI"})),
+            Room("C", "C", 30, MeetingKind.LECTURE, frozenset({"AI"})),
+        ),
+    )
+    board = Board(
+        tuple(
+            _p(section=f"big#S{i}", offering="big", day=Day.SUN, window=TimeWindow(540, 615))
+            for i in (1, 2)
+        )
+        + tuple(
+            _p(section=f"small#S{i}", offering="small", day=Day.SUN, window=TimeWindow(540, 615))
+            for i in range(1, 7)
+        )
+    )
+    report = room_shortfall(snapshot, board)
+    assert report["unroomed"] == 8
+    assert report["saturated"] == 5, f"three rooms, one period, eight meetings: {report}"
+    assert report["recoverable"] == 3
