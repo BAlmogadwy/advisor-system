@@ -122,6 +122,7 @@ def build_into_scenario(
         TermSectionMeeting,
         TimetableScenario,
     )
+    from core.services.course_identity import planner_course_key
 
     scenario = TimetableScenario.objects.get(id=scenario_id)
 
@@ -215,6 +216,15 @@ def build_into_scenario(
         scenario.lab_slot_config = new_lab
         scenario.save(update_fields=["slot_config", "lab_slot_config"])
 
+    # Instructor names, so the assignment survives into the export.
+    #
+    # This subsystem decides who teaches what, proves each instructor sits on
+    # their own minimum number of working days, and reports their idle time — and
+    # then wrote an empty string here, so the workbook's Instructors sheet had
+    # nothing to render and skipped itself entirely. The most carefully optimised
+    # part of the result was invisible to the only people who read the output.
+    instructor_names = {i.id: i.name for i in snapshot.instructors}
+
     if progress:
         progress("persist")
     written = orphaned = 0
@@ -233,9 +243,20 @@ def build_into_scenario(
                 orphaned += 1
                 continue
 
+            # `course_key` is the planner's IDENTITY, not the display code. The
+            # project's own rule (N1): a course code is never an identifier —
+            # `FE1` and `CS111` are each two different courses with different
+            # demand, so planning keys on `CODE::NORMALISED_NAME` and collapsing
+            # them would merge two courses into one budget.
+            #
+            # Writing the bare code here broke the per-plan export outright: it
+            # joins sections to `ProgrammeRequirement` rows on that identity, so
+            # all 71 sections matched nothing and every course read as missing
+            # from its plan. Same rule the subsystem states in its own blueprint,
+            # violated at the one place it had to cross over.
             term_section = TermSection.objects.create(
                 scenario=scenario,
-                course_key=offering.course_code,
+                course_key=planner_course_key(offering.course_code, offering.course_name),
                 course_code=offering.course_code,
                 course_number=offering.course_code,
                 course_name=offering.course_name,
@@ -250,7 +271,13 @@ def build_into_scenario(
                     day=placement.day.value,
                     start_time=start,
                     end_time=end,
-                    defaults={"room": placement.room_id or "", "instructor": ""},
+                    defaults={
+                        "room": placement.room_id or "",
+                        # Fanned into EVERY meeting of the section, which is what
+                        # the Instructors sheet expects: it reads the first
+                        # non-empty name per section and assumes the rest agree.
+                        "instructor": instructor_names.get(placement.instructor_id, ""),
+                    },
                 )
                 for board_id in sorted(target_boards):
                     SectionPlacement.objects.get_or_create(
@@ -289,5 +316,8 @@ def build_into_scenario(
         "sibling_pairs_back_to_back": pairing["pairs_back_to_back"],
         "sibling_pairs_achievable": pairing["pairs_achievable"],
         "slot_columns_added": added_lecture + added_lab,
+        "meetings_with_an_instructor": sum(
+            1 for p in board.placements if p.instructor_id is not None
+        ),
         "notes": list(result.notes),
     }

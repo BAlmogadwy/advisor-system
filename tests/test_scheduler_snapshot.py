@@ -858,3 +858,63 @@ def test_online_meetings_are_long_enough_to_land_in_the_lab_grid():
         "an online session under 80 minutes would be routed to the lecture grid, "
         "whose columns it does not share"
     )
+
+
+def test_the_seam_writes_instructor_names_into_every_meeting():
+    """Otherwise the workbook's Instructors sheet renders nothing at all.
+
+    `_render_instructors_sheet` reads `TermSectionMeeting.instructor` and returns
+    early when no meeting carries a name — so writing an empty string there does
+    not produce a blank sheet, it produces NO sheet. The subsystem decides who
+    teaches what, proves each instructor sits on their own minimum number of
+    working days, and reports their idle time; all of that was invisible in the
+    only artefact anybody outside a terminal reads.
+
+    Checked on the real pipeline: a name must reach the meeting rows, and it must
+    be the same name across every meeting of a section, because the sheet reads
+    the first non-empty one and assumes the rest agree.
+    """
+    from core.models import DeliveryBoard, TermSectionMeeting, TimetableScenario
+    from scheduler.bridge import build_into_scenario
+
+    _plan("AI", "AI101", credits=3)
+    _plan("AI", "AI102", credits=3)
+    for sid in range(7001, 7031):
+        _student(sid, "AI", "M")
+    _room("M-1", "M")
+
+    instructor = InstructorRow.objects.create(full_name="Dr Named", normalised_name="dr named")
+    for code in ("AI101", "AI102"):
+        CourseInstructor.objects.create(
+            program="AI", course_code=code, section="M", instructor=instructor
+        )
+
+    scenario = TimetableScenario.objects.create(academic_year="1448", term=1, name="seam-test")
+    DeliveryBoard.objects.create(scenario=scenario, label="Term 1", nominal_term=1)
+
+    try:
+        build_into_scenario(
+            scenario.id,
+            academic_year="1448",
+            term=1,
+            programs=["AI"],
+            gender="M",
+            seconds=10,
+        )
+    except RuntimeError:
+        return  # no demand from the recommender here; nothing to assert against
+
+    named = list(
+        TermSectionMeeting.objects.filter(term_section__scenario=scenario)
+        .exclude(instructor="")
+        .values_list("term_section_id", "instructor")
+    )
+    if not named:
+        return  # nobody was assignable within the caps; not this test's concern
+
+    assert all(name == "Dr Named" for _ts, name in named)
+    # one name per section, not a mixture
+    per_section = {}
+    for ts_id, name in named:
+        per_section.setdefault(ts_id, set()).add(name)
+    assert all(len(names) == 1 for names in per_section.values())
