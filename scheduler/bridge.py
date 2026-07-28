@@ -173,6 +173,44 @@ def build_into_scenario(
 
     scenario = TimetableScenario.objects.get(id=scenario_id)
 
+    # ── two things this must refuse to do, rather than do quietly ──────────
+    #
+    # 1. A snapshot is single-gender (D1): students, rooms and instructor links
+    #    are all filtered to one gender at intake. A scenario scaffolded with no
+    #    section is an ALL-gender scenario — its boards, budgets and student
+    #    links cover everybody — so filling it from a single-gender snapshot
+    #    would write a timetable derived from part of its own demand, sized
+    #    against a budget for all of it, and report success. On the live data
+    #    that is 1606 male students planned into a scenario built for 4004.
+    scenario_gender = str(scenario.gender or "").strip().upper()
+    asked = str(gender).strip().upper()
+    if scenario_gender != asked:
+        raise RuntimeError(
+            f"this scenario is for {scenario_gender or 'ALL genders'} but the build "
+            f"was asked for {asked}. A timetable is single-gender by construction "
+            "(D1), so filling it would cover only part of the scenario's own "
+            "students while its section budget counts all of them. Re-generate "
+            f"with the section set to {asked}."
+        )
+
+    # 2. A locked placement is the user's hard constraint — the existing engine's
+    #    rebuild goes out of its way to keep them (`reset_scenario(keep_locked=
+    #    True)`). This engine re-solves the whole week from scratch and deletes
+    #    its own rows to do it, which cascades through locked placements without
+    #    a word. Until locks are carried into the solve (`solve(fix=...,
+    #    free_sections=...)` is the hook), the honest answer is to stop: a lost
+    #    lock is a decision somebody made by hand and cannot get back.
+    locked = SectionPlacement.objects.filter(
+        board__scenario=scenario, term_section__source_tag=SOURCE_TAG, is_locked=True
+    ).count()
+    if locked:
+        raise RuntimeError(
+            f"{locked} placement(s) in this scenario are locked. This engine "
+            "rebuilds the whole week and would delete them; unlock them first, "
+            "or build into a fresh scenario. (The existing engine keeps locks "
+            "because it moves placements rather than replacing them.)"
+        )
+
     if progress:
         progress("snapshot")
     snapshot = assign_instructors(

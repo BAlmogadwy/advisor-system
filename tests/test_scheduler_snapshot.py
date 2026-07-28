@@ -1052,3 +1052,70 @@ def test_an_approval_for_one_programme_does_not_staff_another_programmes_course(
     assert outsider.id not in eligible, (
         "a CS approval was counted as staffing for an AI-only course"
     )
+
+
+# ── two things the seam must refuse to do quietly ─────────────────────────
+
+
+def _scenario_with(gender):
+    from core.models import DeliveryBoard, TimetableScenario
+
+    scenario = TimetableScenario.objects.create(
+        name="guard", academic_year=1448, term=1, gender=gender
+    )
+    DeliveryBoard.objects.create(scenario=scenario, label="T1", nominal_term=1, display_order=1)
+    return scenario
+
+
+def test_a_single_gender_build_refuses_an_all_gender_scenario():
+    """A scenario scaffolded with no section covers everybody -- its boards,
+    budgets and student links are sized for all of them. A snapshot is
+    single-gender by construction (D1), so filling one from the other writes a
+    timetable derived from part of the scenario's own demand and reports success.
+
+    The workspace view defaults a blank Sec box to "M", so on the live data this
+    was 1606 male students planned into a scenario built for 4004."""
+    from scheduler.bridge import build_into_scenario
+
+    scenario = _scenario_with("")  # blank == all genders
+    with pytest.raises(RuntimeError, match="single-gender"):
+        build_into_scenario(
+            scenario.id, academic_year="1448", term=1, programs=["AI"], gender="M", seconds=1
+        )
+
+
+def test_a_build_refuses_to_delete_a_locked_placement():
+    """A lock is a decision somebody made by hand. This engine re-solves the whole
+    week and deletes its own rows to do it, which cascades straight through
+    locked placements -- while the existing engine goes out of its way to keep
+    them (`reset_scenario(keep_locked=True)`)."""
+    from core.models import DeliveryBoard, SectionPlacement, TermSection
+    from scheduler.bridge import SOURCE_TAG, build_into_scenario
+
+    scenario = _scenario_with("M")
+    board = DeliveryBoard.objects.filter(scenario=scenario).first()
+    term_section = TermSection.objects.create(
+        scenario=scenario,
+        course_code="AI101",
+        course_number="101",
+        course_name="X",
+        section="S1",
+        course_key="AI101::X",
+        source_tag=SOURCE_TAG,
+    )
+    SectionPlacement.objects.create(
+        board=board,
+        term_section=term_section,
+        day="SUN",
+        start_time="09:00",
+        end_time="10:15",
+        room="R1",
+        is_locked=True,
+    )
+    with pytest.raises(RuntimeError, match="locked"):
+        build_into_scenario(
+            scenario.id, academic_year="1448", term=1, programs=["AI"], gender="M", seconds=1
+        )
+    assert SectionPlacement.objects.filter(is_locked=True).count() == 1, (
+        "the locked placement was destroyed anyway"
+    )
