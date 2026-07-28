@@ -931,6 +931,181 @@ that abandoned it.
 * **Row "student waiting" is minutes per student per week**, an average, not a
   total.
 
+### D15 — A collision is priced by whether the student can go elsewhere
+
+> *"I introduced the tier system because these courses are available in other
+> sections under our college, all departments — so I am sure they can find seats
+> for them in those sections. I prefer not to sacrifice the idle time for those
+> I am sure I can register elsewhere."*
+
+The project already classifies every course (`core.services.timetable_course_tier`):
+**T1** specialised major, **T2** shared foundation (MATH/STAT, or required by
+more than two plans), **T3** general education and free electives (ENGL, GS,
+GSE, FE). Until now the timetable ignored it and priced every collision the same.
+
+Measured on the male cohort, the clash objective divides like this:
+
+| pairs | share of the objective |
+|---|---|
+| involving a **T3** course | **46.6 %** |
+| involving T2 (not T3) | 37.9 % |
+| **T1 against T1** | **15.5 %** |
+
+**Nearly half the engine's effort was spent defending collisions the registrar
+can resolve by other means.** A pair now takes the **lower** of the two tiers'
+weights — if either course can be picked up elsewhere, the clash is resolvable,
+so the pair is only as serious as its most relocatable member.
+
+**What it costs — M cohort, 3 seeds, students actually seated:**
+
+| | T1↔T1 collisions | instructor idle | seated clash-free |
+|---|---|---|---|
+| undiscounted | 1.8 – **16.0** | 1485 – 1805 | 98.5 – 99.5 % |
+| **T1 1.0 / T2 0.5 / T3 0.2** | **3.0 – 3.8** | 985 – 2305 | 99.0 – 99.5 % |
+
+The medians barely move. What changes is the **spread**: undiscounted, the number
+of collisions in the courses that matter swings between 1.8 and 16.0 on nothing
+but the random seed. Discounted, it is 3.0 to 3.8 every time. *A number nobody
+can predict is worse than a slightly higher one they can*, and that is the whole
+argument for the default.
+
+The classifier is **imported, not restated**, through one named exemption to the
+isolation rule (`POLICY_MODULES` in the boundary test). That rule exists to keep
+the old **builder** out; `timetable_course_tier` is a pure classifier over
+`ProgrammeRequirement`. Every expensive mistake in this subsystem has come from
+restating policy instead of consuming it — section sizing, elective resolution,
+the cross-term split. One exemption is cheaper than a fourth divergent copy.
+
+---
+
+### D16 — Waiting time is optimised for the students whose week can be tidy
+
+> *"It would be better to calculate the student idle time for the full regular
+> timetable — students who take full-term courses, not mixed terms. For the
+> others we just guarantee they can register with no clashes."*
+
+A student taking a coherent term-N block has a week that **can** be made compact.
+One picking up leftovers from terms 3, 5 and 7 has a scattered set by
+construction, and pulling their courses together drags the whole board for a
+tidiness that is not achievable.
+
+Using the project's own rule — a student is cross-term when their recommended
+courses span more than one curriculum term, mapped through **their own
+programme's** plan — the male cohort splits **238 regular / 152 cross-term**.
+(The per-programme scoping is load-bearing: IS has FE1 at term 7 and IS2 has it
+at term 8, so a merged map files half a cohort on the wrong board.)
+
+Waiting is now **reported separately** for the two groups — averaging them hid
+both — and the waiting objective counts regular students only.
+
+**Clashes are still counted for everybody.** The guarantee that a student can
+register at all is not restricted to anyone.
+
+**Default OFF, and that is a measurement rather than caution.** Restricting the
+objective to 61% of students did make it cheaper, but not free: regular waiting
+falls about 13% (538 → 470 median) while instructor idle rises from ~1300 to
+~2450. Students and instructors still pull the same lever from opposite ends
+(D13), and the owner's stated priority is the instructor timetable. Offered as
+`--student-gaps`; weight 1 is the only setting worth using.
+
+`DUPLICATION, DECLARED`: the classification is reimplemented in `intake.py`
+because the canonical version is inline in
+`generate_workspace_scenario`, which cannot be called without also creating a
+scenario, and the materialised answer lives on scenario rows this subsystem may
+not read. Both ends carry the note.
+
+---
+
+### D17 — Non-T1 sections own a fixed block of slots
+
+> *"For the other courses it is mandatory to have the sections on the same time
+> slots only. If we have 2 sections for CS111, S1 and S2, both must be back to
+> back — but we can alternate between them, so one day starts S1 then S2, another
+> day S2 then S1. For the instructor they both occupy the same slots, because
+> those instructors are from other departments and have other courses."*
+
+D14's ceiling is **per section**, and that is right for this department's own
+courses (T1), where we control the instructor. Everything else is taught by
+people who also teach elsewhere in the week, and a course whose slots move about
+is unmanageable for them.
+
+* **one section** → keeps ONE slot, every day it runs;
+* **a back-to-back pair** → owns an exact PAIR of slots, the same two every day,
+  and the two sections may **swap** which of them they sit in:
+
+```
+Monday      13:00  CS111 S1     14:30  CS111 S2
+Wednesday   13:00  CS111 S2     14:30  CS111 S1
+```
+
+The other department sees 13:00 and 14:30 occupied every week without exception.
+Which section is in which is ours to decide, and the swap costs nothing while
+giving the search somewhere to move.
+
+**Scoped to the PAIR, not the course.** Scoping it to the course would force
+every section of a four-section course onto the same days — far heavier than what
+was asked. A third section stands alone with its own single slot and is not tied
+to the pair's days. Pairs are formed by section order (S1+S2, S3+S4, leftover
+last) so the other department can rely on it and the answer does not move between
+runs.
+
+**Online is exempt** (owner). GS and GSE already run in their own evening windows
+(D9), consume no room and create no campus travel, so pinning them buys nobody
+anything and spends the freedom in the one family that has slack.
+
+**What it costs — M cohort, 3 seeds:**
+
+| | groups keeping an identical daily block | T1↔T1 collisions | instructor idle | days |
+|---|---|---|---|---|
+| off | 16–19 of 38 | 2.5 – 3.2 | 1450 – 2615 | 19 = floor |
+| **on** | **38 of 38** | 2.8 – 7.2 | 1160 – 3195 | 19 = floor |
+
+Feasible on every seed, never dropped, zero violations. The cost is T1
+collisions — median 3.0 → 3.8 — and everything else overlaps.
+
+*Note the per-section "within one slot" figure falls to ~94% under this rule, and
+that is correct rather than a regression: a pair's two slots need not be
+adjacent, so a section legitimately moves further than one slot when it swaps.
+The block rule supersedes the per-section ceiling for these courses; applying
+both would forbid the alternation the rule exists to allow.*
+
+---
+
+### On making the search better — what was tried, and what it was worth
+
+The pinning experiment behind D17 also produced the clearest evidence we have
+about where quality actually comes from. Fixing one instructor's eight meetings
+to a hand-designed block and re-solving everything around it took total
+instructor idle from **2715 to 940**, and left every other instructor's week the
+same length or shorter. Nobody paid.
+
+That prompted a wider search for levers. Most of them are worth nothing here, and
+the negative results are recorded so nobody spends the time again:
+
+| lever | verdict |
+|---|---|
+| **more CPU workers** (8 → 16 → 24) | **no effect.** T1 collisions 2.0 / 1.8 / 3.0 and idle 1660 / 1640 / 1260 by median, with fully overlapping ranges. 16 workers produced the single worst idle figure measured. The machine has 20 cores and CP-SAT cannot turn them into a better timetable on an instance this size. |
+| **GPU** (RTX 4060 Ti) | **structurally unavailable.** CP-SAT is a SAT/CP engine — clause learning and propagation over irregular structures — and has no CUDA path. NVIDIA cuOpt now has a beta MIP solver whose strength is exactly ours (good feasible solutions, no optimality proof), but using it means restating every rule in a second formalism, which is the disease this subsystem exists to cure, for an instance of ~3,000 booleans where GPU kernels lose to a CPU. |
+| **more time** (120 / 300 / 600 s) | **widens the spread rather than improving the median.** 600 s produced both the best result measured (895 min idle) and the worst (3330). No trend in collisions. |
+| **hand-written LNS neighbourhoods** | **rejected on the literature.** Perron, Shaw & Furnon's *Propagation Guided Large Neighborhood Search* (CP 2004) reports generic propagation-guided neighbourhoods beating hand-written ones on both performance and stability — and Perron leads OR-Tools, with `use_lns`, `use_rins_lns` and `use_lb_relax_lns` all on by default in our runs. We would be hand-writing the thing that loses. |
+| **portfolio selection** | the one that pays. Variance is the phenomenon, so harvesting it beats hoping for a good draw. |
+
+**The state of the art has not moved.** The ITC 2019 winner — a parallelised
+matheuristic: MIP plus fix-and-optimize, unfixing ~25% of assignments per
+iteration, several searches on separate neighbourhoods resetting to the best
+known solution and diversifying on stall — still stands five years on. PATAT 2024,
+held at the winners' own institution, contains **no ITC 2019 paper at all**; the
+field moved to healthcare timetabling, bus driver scheduling and nurse rostering.
+
+**And a re-reading of our own result.** The Dr Nawaf experiment is better
+understood as a *warm start* than as a neighbourhood: what helped was handing the
+solver a high-quality partial solution designed by a human, not the fact that the
+subset was structured. The ITC winner names "two methods for producing initial
+solutions" as an ingredient in its own right. Which lands somewhere useful —
+**D17 is that structure, made permanent and free.** The owner's policy rule and
+the search improvement are the same thing.
+
+
 ---
 
 ## 7. Still open
