@@ -97,7 +97,7 @@ Each one is a direct answer to a measured defect in the current engine.
 
 | # | Principle | The defect it answers |
 |---|---|---|
-| N1 | **Immutable identity.** `OfferingId`, `SectionId`, `MeetingId` are opaque and stable. Display `course_code` is never an identifier. | `FE1` and `CS111` are each *two* offerings with different demand; joining on the display code silently merges them and corrupted the overlap matrix (250 code-level pairs vs 253 real). |
+| N1 | **Immutable identity.** `OfferingId`, `SectionId`, `MeetingId` are opaque and stable. Display `course_code` is never an identifier. | `FE1` and `CS111` are each *two* offerings with different demand; joining on the display code silently merges them and corrupted the overlap matrix (250 code-level pairs vs 253 real). **This subsystem broke its own rule and had to be fixed on live data (2026-07-28):** offerings were grouped by bare `course_code`, so `CS111` "Fundamentals of Programming" (AI2/DS2, plan term 1) and `CS111` "Programming I" (AI/DS, plan term 3) became one offering with pooled demand — the AI and AI2 plans are offset by one term, so what AI calls CS111, AI2 calls CS112. Identity is now `planner_course_key`, the same key `compute_section_plan` and `ScenarioSectionBudget` already use. |
 | N2 | **Sections are board-independent.** A section has one schedule; board/term membership is an explicit many-to-many, never a duplicated placement. | 22 of 48 shared sections are currently scheduled at *two different times at once* — physically impossible. |
 | N3 | **Snapshot-based solving.** Input is extracted once into an immutable, fingerprinted `Snapshot`. The solver sees only that — no Django, no DB. | Today the 7-strategy generate performs ~8 full scenario builds *against live production tables*, using the DB as scratch space. |
 | N4 | **Rooms and instructors are decision variables**, in the model from the first solve. | The current optimiser is room-blind by construction (`build_room_state_for_scenario` has zero callers; `rooms_by_id=None` at all four search sites; no room term in the objective) — so it *creates* boards that cannot be roomed. |
@@ -1068,6 +1068,123 @@ that is correct rather than a regression: a pair's two slots need not be
 adjacent, so a section legitimately moves further than one slot when it swaps.
 The block rule supersedes the per-section ceiling for these courses; applying
 both would forbid the alternation the rule exists to allow.*
+
+---
+
+### D18 — A course too few students want does not get a place on the board
+
+> *"When we get the demand, any course with demand less than 5 students, drop it
+> from the demand before running the planner. This also will reduce the search
+> space complexity."*
+
+A course three people want costs exactly what a course of forty costs: a room
+for every meeting, a day opened on an instructor's week, a slot every other
+course then has to avoid, and — because sections of one course may never overlap
+(H10) — one of the week's **25 mutually non-overlapping cells**. The registrar's
+answer for those three students is the same as the tier argument in D15: seat
+them in a section that already runs somewhere in the college.
+
+**Where it is applied is the whole design.** Between demand and section planning,
+because that is the only point at which the rule means what was asked. Later, the
+sections already exist and their cost is already paid; earlier, there is no
+demand to count. It is deliberately **not a cascade** — dropping course X cannot
+change how many students want course Y, so one pass is exact and no course can be
+dragged under the floor by another's removal.
+
+**What it removes, male AI/AI2/DS/DS2 1448 T1:**
+
+| course | students | tier |
+|---|---|---|
+| CHEM101 Introduction to Chemistry | 3 | T2 |
+| CS103 Discrete Structures | 2 | T2 |
+| MATH101 Introduction to Mathematics | 1 | T2 |
+
+73 sections rather than 76, 172 weekly meetings rather than 178. **Every one is
+T2** — a shared foundation course taught in other sections right across the
+college, which is precisely the category the tier system says a student can pick
+up elsewhere. No T1 course fell below the floor, so no student lost access to a
+specialised major course they can only take here; and **no student was left
+without a timetable at all.**
+
+**This is the one filter in the subsystem that makes every other number look
+better.** Fewer sections to place, fewer pairs that can collide, fewer rooms to
+find, less instructor idle time. Everything else here fails loudly and makes the
+report worse; this one improves it by handing the solver a smaller problem. So it
+is reported as a **WARNING that names every withheld course, its size and its
+tier**, and students left with nothing are counted on their own line — they leave
+the demand set entirely, and would otherwise flatter every per-student average by
+disappearing from it rather than by being served.
+
+`min_demand=1` disables the rule, and that is what `build_snapshot` itself
+defaults to: the policy value of 5 lives at the callers (the Generate button, the
+job runner, the management commands), exactly as `default_capacity` does, so no
+test silently inherits a filter.
+
+**The two things worth watching.** The floor is applied to *any* course, per the
+owner's rule. If a **T1** course ever falls below it, the tier argument does not
+hold for that course — nobody else in the college teaches it — and the withheld
+students have no route to it at all. The readiness warning reports the tier of
+every drop precisely so that case is visible the day it happens rather than
+discovered by a student. Second, the reduction in search space is real but
+modest: three sections out of 76. The rule earns its place by not spending a
+scarce weekly cell on one student, not by making the solver faster.
+
+---
+
+### D19 — ENG101 and ENG102 own the morning, and their own rooms
+
+> *"ENG101 and ENG102 are different — they always occupy the full morning, all
+> the days of the week, so they are fixed, all sections at the same time, every
+> day, all the morning slots."* … *"Keep them out of the rooming — we have
+> special rooms for ENG101 and ENG102."*
+
+ENG101/ENG102 ("English Language Skills I/II") are the intensive language pair:
+4 credits, plan terms 1 and 2, carried by **all twelve programmes**. Their hours
+are not a preference for the objective to pursue — they are the shape of the
+course, so they are compiled into the requirement instead.
+
+**The arithmetic is what makes it exact.** The meetings are confined to the
+morning starts, and there are precisely as many meetings as there are
+`(day, morning start)` cells: 2 × 5 = 10. One meeting per cell, ten meetings, ten
+cells — the only feasible answer is *every cell filled every day*. **"All sections
+at the same time" is therefore a consequence, not a further constraint.**
+
+The block is **read from the grid, never written down** (D2). Taken greedily from
+the earliest start, the declared grid gives 09:00–10:15 and 10:30–11:45; 10:50 is
+dropped because it overlaps 10:30, and a section cannot be in two places at once.
+
+**Five rules are suspended, each at the point it is imposed:**
+
+| rule | why it cannot apply |
+|---|---|
+| **H2** one meeting per section per day | meeting twice in one morning is the entire point |
+| **H10** siblings never overlap | the owner's rule *is* that every section sits at the same hour |
+| **D14** a section keeps its hour | it uses the whole block by design |
+| **D17** a pair owns a block and alternates | these own every slot of theirs — already stricter |
+| sibling symmetry breaking | orders siblings by first cell; identical siblings cannot strictly increase |
+
+Every one of those is a rule about **choice**. Nothing physical is suspended:
+ENG is **in-person**, so the student's hour is occupied, the class still clashes,
+the instructor is still teaching and still on campus.
+
+**The rooms are the exception, and only the rooms.** The course has its own
+space, so it draws nothing from the shared estate. That is expressed as
+`uses_shared_room=False` on the requirement and deliberately **not** by flipping
+the delivery mode to ONLINE, which would have been the shorter route and would
+have silently removed the course from the clash model and from campus travel.
+`needs_room` and `is_fully_online` keep their meanings.
+
+It matters here more than it sounds: this cohort has **eight lecture rooms**, and
+four ENG101 sections would otherwise have held **half of them in every morning
+cell, five days a week**. Measured on the male AI/AI2/DS/DS2 cohort: the shared
+estate now carries 152 room-consuming meetings rather than 192, and the room
+shortfall is **unchanged at 19** — proving the shortfall was never ENG's doing.
+
+**What it costs the rest of the board.** 80 of 390 students take ENG101, and for
+every one of them the entire morning is spoken for — all their other courses must
+fit the afternoon. The rule is named on **exact codes**, not on an `ENG` prefix:
+ENGL103, ENGL104 and ENGL214 are ordinary three-credit English courses and keep
+every ordinary rule.
 
 ---
 

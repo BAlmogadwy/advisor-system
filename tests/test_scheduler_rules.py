@@ -3615,3 +3615,118 @@ def test_the_guards_are_checked_in_priority_order():
     reason = _ok(days_after={1: 4, 2: 4}, rooms_after=9, idle_after=9999)
     assert reason is not None
     assert "lengthened the week" in reason, reason
+
+
+# ── D19: a course whose hours are given, not chosen ───────────────────────
+#
+# Owner rule, 2026-07-28: "ENG101 and ENG102 are different — they always occupy
+# the full morning, all the days of the week, so they are fixed, all sections at
+# the same time, every day, all the morning slots." And: "keep them out of the
+# rooming, we have special rooms for ENG101 and ENG102."
+#
+# Five rules that assume the solver is choosing an hour are suspended for these
+# sections (H2, H10, D14, D17, sibling symmetry breaking). What is NOT suspended
+# is anything physical: they are in-person, so the student's hour is occupied,
+# the instructor is teaching, and travel counts. Only the SHARED room estate is
+# untouched, because the course has rooms of its own.
+#
+# The arithmetic is what makes it exact: as many meetings as there are (day,
+# morning start) cells, one meeting per cell. "Every section at the same time"
+# is then a consequence, not a further constraint.
+
+MORNING = Grid.from_spec(
+    lecture_starts={"09:00": 75, "10:30": 75, "13:00": 75, "14:30": 75},
+    lab_starts={"09:00": 100},
+    days=(Day.SUN, Day.MON),
+)
+MORNING_STARTS = frozenset({9 * 60, 10 * 60 + 30})
+
+
+def _eng(sections=3):
+    """The live shape, shrunk: every section in every morning cell, every day."""
+    offering = replace(
+        _offering(
+            "eng101",
+            reqs=(
+                MeetingRequirement(
+                    MeetingKind.LECTURE,
+                    DeliveryMode.IN_PERSON,
+                    75,
+                    len(MORNING_STARTS) * len(MORNING.days()),
+                    allowed_starts=MORNING_STARTS,
+                    uses_shared_room=False,
+                ),
+            ),
+        ),
+        occupies_fixed_block=True,
+    )
+    secs = [Section(f"eng101#S{i}", "eng101", i, 25) for i in range(1, sections + 1)]
+    snapshot = replace(_grid_snapshot(MORNING, [offering], secs), grid=MORNING)
+    return snapshot, offering, secs
+
+
+def _cells(board, section_id):
+    return {(p.day, p.window.start) for p in board.placements if p.section_id == section_id}
+
+
+def test_every_section_fills_every_morning_cell_every_day():
+    """MUTATION: ignore `allowed_starts` when enumerating legal cells — the
+    solver then spreads the ten meetings across the afternoon too. MUTATION:
+    restore H2 (one meeting per section per day) — two meetings in one morning
+    become illegal and the model is INFEASIBLE."""
+    snapshot, _offering_, sections = _eng()
+    result = solve(snapshot, time_limit_seconds=25.0)
+    assert result.board.placements, f"no board at all: {result.status}"
+    want = {(day, start) for day in MORNING.days() for start in MORNING_STARTS}
+    for section in sections:
+        assert _cells(result.board, section.id) == want, (
+            f"{section.id} did not own the whole morning: "
+            f"{sorted(_cells(result.board, section.id))}"
+        )
+
+
+def test_all_sections_sit_in_identical_hours():
+    """MUTATION: drop the H10 exemption. Siblings may then not overlap, and a
+    course whose sections all own the same ten cells cannot be built at all.
+
+    Asserted as an EQUALITY between sections rather than by counting placements,
+    so a board that merely placed something still fails."""
+    snapshot, _offering_, sections = _eng()
+    result = solve(snapshot, time_limit_seconds=25.0)
+    assert result.board.placements, f"the H10 exemption is missing: {result.status}"
+    shapes = {frozenset(_cells(result.board, s.id)) for s in sections}
+    assert len(shapes) == 1, f"sections landed in different hours: {shapes}"
+
+
+def test_it_consumes_no_shared_room_but_is_still_in_person():
+    """Both halves matter. Out of the room estate — the owner has rooms of its
+    own — but NOT out of the world: an in-person class occupies the student's
+    hour, so it must keep clashing and keep counting as campus time.
+
+    MUTATION: express 'no room' by flipping the delivery mode to ONLINE. The
+    room half passes and this fails, because the course would silently leave the
+    clash model and the instructor's campus span."""
+    snapshot, offering, _sections = _eng()
+    result = solve(snapshot, time_limit_seconds=25.0)
+    placements = [p for p in result.board.placements if p.offering_id == offering.id]
+    assert placements
+    assert not any(p.needs_room for p in placements), "it drew on the shared estate"
+    assert all(p.delivery is DeliveryMode.IN_PERSON for p in placements)
+    assert not offering.is_fully_online, "an in-person course was classed as online"
+    # ...and the snapshot's room DEMAND does not count it either, or readiness
+    # reports a shortage against rooms nobody was ever going to ask for.
+    assert snapshot.physical_meetings_required().get(MeetingKind.LECTURE, 0) == 0
+
+
+def test_an_ordinary_course_is_untouched_by_any_of_this():
+    """ENGL103 is a normal three-credit English course. The rule is keyed on
+    exact codes for exactly this reason, and the model must still impose H2 on
+    everything that did not opt out."""
+    ordinary = _offering("engl103", reqs=_lecture(2))
+    sections = [Section("engl103#S1", "engl103", 1, 25)]
+    snapshot = replace(_grid_snapshot(MORNING, [ordinary], sections), grid=MORNING)
+    result = solve(snapshot, time_limit_seconds=25.0)
+    assert result.board.placements
+    days = [p.day for p in result.board.placements]
+    assert len(days) == len(set(days)), "H2 stopped applying to an ordinary course"
+    assert all(p.needs_room for p in result.board.placements), "it stopped needing a room"

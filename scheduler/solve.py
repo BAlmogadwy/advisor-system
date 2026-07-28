@@ -174,9 +174,29 @@ def solve(
                     for s in snapshot.grid.day_windows_for(
                         requirement.duration, requirement.delivery
                     )
+                    # A requirement may be confined to a SUBSET of its family's
+                    # starts (D19). It never adds one: the grid remains the sole
+                    # authority on what times exist.
+                    if not requirement.allowed_starts
+                    or s.window.start in requirement.allowed_starts
                 ]
                 meetings.append((section.id, index, requirement, offering))
                 cells[(section.id, index)] = legal
+
+    # ── D19: sections whose hours are given, not chosen ───────────────────
+    #
+    # ENG101/ENG102 occupy the full morning every day, every section in the same
+    # hours. Five rules below assume the solver is CHOOSING an hour, and each is
+    # suspended for these sections at the point it is imposed, with the reason
+    # stated there. They are suspensions of rules about choice, not licence to
+    # break anything physical: rooms (H9), instructor clash (H7) and student
+    # clash all still bind, because those are about the world rather than about
+    # our preferences.
+    fixed_block_sections = {
+        section.id
+        for section in snapshot.sections
+        if offerings[section.offering_id].occupies_fixed_block
+    }
 
     model = cp_model.CpModel()
     x: dict[tuple[str, int, Day, TimeWindow], object] = {}
@@ -218,10 +238,22 @@ def solve(
                 model.add_hint(var, 1)
 
     # ── H2: at most one meeting per section per day ───────────────────────
+    #
+    # EXEMPT for D19 sections: meeting twice in one morning is the entire point
+    # of an intensive language course. They get the weaker rule that is actually
+    # physical — no two meetings of one section in the SAME cell — which, since
+    # their allowed starts are mutually disjoint, is enough to keep a section
+    # from being in two places at once.
     per_section_day: dict[tuple[str, Day], list] = {}
-    for (section_id, _index, day, _w), var in x.items():
-        per_section_day.setdefault((section_id, day), []).append(var)
+    per_section_cell: dict[tuple[str, Day, int], list] = {}
+    for (section_id, _index, day, window), var in x.items():
+        if section_id in fixed_block_sections:
+            per_section_cell.setdefault((section_id, day, window.start), []).append(var)
+        else:
+            per_section_day.setdefault((section_id, day), []).append(var)
     for vars_ in per_section_day.values():
+        model.add_at_most_one(vars_)
+    for vars_ in per_section_cell.values():
         model.add_at_most_one(vars_)
 
     # ── symmetry breaking between interchangeable sibling sections ────────
@@ -259,6 +291,11 @@ def solve(
         }
         interchangeable: list[list[str]] = []
         for siblings in sections_by_offering.values():
+            # EXEMPT for D19: their siblings occupy IDENTICAL cells by design, so
+            # ordering them by the cell of their first meeting demands a strict
+            # increase that no feasible board can supply.
+            if any(sec.id in fixed_block_sections for sec in siblings):
+                continue
             by_owner: dict[object, list[str]] = {}
             for section in siblings:
                 by_owner.setdefault(section.instructor_id, []).append(section.id)
@@ -491,6 +528,10 @@ def solve(
             if offerings[section.offering_id].tier in exact_block_tiers
             and not offerings[section.offering_id].is_fully_online
         }
+        # EXEMPT for D19: a section that fills every morning cell uses the whole
+        # block by design, so a "stay within one slot of your usual hour"
+        # ceiling is both meaningless and unsatisfiable for it.
+        blocked_sections |= fixed_block_sections
         for (section_id, duration, delivery), indexes in sorted(
             by_family.items(), key=lambda kv: (kv[0][0], kv[0][1], str(kv[0][2]))
         ):
@@ -597,6 +638,12 @@ def solve(
             offering = offerings[offering_id]
             if offering.tier not in exact_block_tiers or offering.is_fully_online:
                 continue
+            # EXEMPT for D19. The block rule gives a PAIR of sections a pair of
+            # slots to share and alternate between; these sections each occupy
+            # every slot of their block, which is a different arrangement of the
+            # same idea and already stricter than anything D17 would impose.
+            if offering.occupies_fixed_block:
+                continue
             siblings = sorted(sections_by_offering[offering_id], key=lambda s: s.index)
             # Pairs by section order — S1+S2, S3+S4, leftover last. Structural
             # rather than chosen by the solver, so the other department can rely
@@ -698,6 +745,12 @@ def solve(
     # groups here become unbuildable at any budget. `same_offering_penalty`
     # exists so that trade can be measured rather than argued about.
     for siblings in sections_by_offering.values():
+        # EXEMPT for D19: the owner's rule IS that every section sits at the same
+        # time. H10 buys student choice between sections; a course that owns the
+        # whole morning offers no choice of hour to begin with, and forbidding
+        # the overlap would make it unschedulable rather than more flexible.
+        if any(sec.id in fixed_block_sections for sec in siblings):
+            continue
         for sa, sb in combinations(sorted(s.id for s in siblings), 2):
             for day, start, end in {(k[1], k[2], k[3]) for k in busy if k[0] in (sa, sb)}:
                 a = busy.get((sa, day, start, end))
@@ -734,7 +787,10 @@ def solve(
     sections_by_id = {s.id: s for s in snapshot.sections}
     compatible_rooms: dict[tuple[str, int], frozenset[str]] = {}
     for section_id, index, requirement, offering in meetings:
-        if requirement.delivery is not DeliveryMode.IN_PERSON:
+        # `needs_shared_room`, not the delivery mode: an ENG101 meeting is
+        # in-person but housed in the course's own rooms (D19), so it must not
+        # be counted against a supply it never draws on.
+        if not requirement.needs_shared_room:
             continue
         section = sections_by_id.get(section_id)
         need = snapshot.policy.required_room_capacity(section.capacity) if section else 0
@@ -1110,6 +1166,7 @@ def solve(
                 window=chosen[1],
                 room_id=None,
                 instructor_id=section.instructor_id,
+                uses_shared_room=requirement.uses_shared_room,
             )
         )
 

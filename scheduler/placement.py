@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from scheduler.domain import DeliveryMode, Snapshot, TimeWindow
+from scheduler.domain import Snapshot, TimeWindow
 from scheduler.domain.board import Board, Placement
 from scheduler.domain.calendar import Day
 
@@ -94,7 +94,7 @@ def place_naively(snapshot: Snapshot, *, instructor_cap: int = 3) -> Board:
 
 
 def _place_one(snapshot, occupancy, section, offering, requirement, index, cap):
-    needs_room = requirement.delivery is DeliveryMode.IN_PERSON
+    needs_room = requirement.needs_shared_room
     candidate_rooms = (
         [
             r
@@ -151,4 +151,5 @@ def _make(section, offering, index, requirement, day, window, room_id):
         window=window,
         room_id=room_id,
         instructor_id=section.instructor_id,
+        uses_shared_room=requirement.uses_shared_room,
     )

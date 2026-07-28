@@ -38,6 +38,32 @@ class MeetingRequirement:
     duration: int  # minutes
     count_per_week: int
 
+    #: Restrict this requirement to a SUBSET of its family's legal start times.
+    #: Empty (the default) means every window the grid declares for
+    #: (duration, delivery) — the normal case, where the solver picks the hour.
+    #:
+    #: Used for courses whose hours are given rather than chosen: ENG101/ENG102
+    #: occupy the full morning every day (D19), so their meetings are confined to
+    #: the morning starts. The starts still come from the GRID (D2) — this
+    #: narrows the choice, it never invents a time the grid does not declare.
+    allowed_starts: frozenset[int] = frozenset()
+
+    #: False when the course is housed in rooms OUTSIDE the shared estate and
+    #: must not consume any of it (owner, D19: "we have special rooms for ENG101
+    #: and ENG102").
+    #:
+    #: Deliberately NOT expressed by flipping `needs_room`, which is
+    #: delivery-derived and answers a different question. An ENG meeting is
+    #: in-person: the student is on campus, the hour is occupied, the instructor
+    #: is teaching. Only the SHARED-ROOM supply is unaffected. Folding the two
+    #: together would make `is_fully_online` true for ENG and silently remove it
+    #: from campus travel and the clash model.
+    uses_shared_room: bool = True
+
+    @property
+    def needs_shared_room(self) -> bool:
+        return self.needs_room and self.uses_shared_room
+
     def __post_init__(self) -> None:
         if self.duration <= 0:
             raise ValueError("meeting duration must be positive")
@@ -77,6 +103,13 @@ class Offering:
     #: elsewhere. A collision involving one is therefore not worth distorting
     #: everybody's week to avoid.
     tier: str = "T1"
+
+    #: True for a course whose hours are GIVEN, not chosen: every section meets
+    #: in every cell of a fixed block, every day (D19 — ENG101/ENG102 own the
+    #: whole morning). Such a course is exempt from H2, H10, D14, D17 and
+    #: sibling symmetry breaking, each of which assumes the solver is choosing.
+    #: The exemptions are listed in `solve()` beside the rules they suspend.
+    occupies_fixed_block: bool = False
 
     @property
     def meetings_per_week(self) -> int:

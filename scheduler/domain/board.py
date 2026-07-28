@@ -34,6 +34,9 @@ class Placement:
     window: TimeWindow
     room_id: RoomId | None = None
     instructor_id: InstructorId | None = None
+    #: False when this meeting is housed in the course's OWN rooms and consumes
+    #: none of the shared estate (D19). See `MeetingRequirement.uses_shared_room`.
+    uses_shared_room: bool = True
 
     @property
     def id(self) -> str:
@@ -41,9 +44,15 @@ class Placement:
 
     @property
     def needs_room(self) -> bool:
-        """Whether this meeting *should* consume a room, independent of whether
-        one has been assigned. Online meetings never need one."""
-        return self.delivery is DeliveryMode.IN_PERSON
+        """Whether this meeting should consume a room FROM THE SHARED ESTATE,
+        independent of whether one has been assigned.
+
+        False for online meetings, which need no room at all, and for courses
+        with rooms of their own (D19) — those are in-person and occupy a student
+        and an instructor, but their space is not ours to allocate or to run out
+        of.
+        """
+        return self.delivery is DeliveryMode.IN_PERSON and self.uses_shared_room
 
     @property
     def is_roomed(self) -> bool:

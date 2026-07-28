@@ -128,8 +128,8 @@ class Snapshot:
         for section in self.sections:
             offering = by_offering[section.offering_id]
             for requirement in offering.requirements:
-                if not requirement.needs_room:
-                    continue
+                if not requirement.needs_shared_room:
+                    continue  # housed in its own rooms (D19) — not our supply
                 totals[requirement.kind] = (
                     totals.get(requirement.kind, 0) + requirement.count_per_week
                 )
@@ -163,7 +163,18 @@ class Snapshot:
                     o.capacity,
                     sorted(o.programs),
                     [
-                        [r.kind.value, r.delivery.value, r.duration, r.count_per_week]
+                        # allowed_starts and uses_shared_room are part of the
+                        # problem, not of the answer: two runs that differ in
+                        # them are solving different instances and must not be
+                        # ranked against each other (N8).
+                        [
+                            r.kind.value,
+                            r.delivery.value,
+                            r.duration,
+                            r.count_per_week,
+                            sorted(r.allowed_starts),
+                            r.uses_shared_room,
+                        ]
                         for r in o.requirements
                     ],
                 ]

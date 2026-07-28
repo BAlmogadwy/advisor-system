@@ -154,7 +154,7 @@ def assess(snapshot: Snapshot) -> ReadinessReport:
         if siblings < 2:
             continue
         durations = frozenset(
-            r.duration for r in offering.requirements if r.needs_room
+            r.duration for r in offering.requirements if r.needs_shared_room
         ) or frozenset(r.duration for r in offering.requirements)
         if not durations:
             continue
@@ -236,7 +236,7 @@ def assess(snapshot: Snapshot) -> ReadinessReport:
             r.duration
             for o in snapshot.offerings
             for r in o.requirements
-            if r.needs_room and r.kind is kind
+            if r.needs_shared_room and r.kind is kind
         )
         per_day = grid.max_nonoverlapping_per_day(durations) if durations else 0
         supply = len(rooms) * len(grid.days()) * per_day

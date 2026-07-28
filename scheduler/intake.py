@@ -166,6 +166,47 @@ UNSCHEDULED_NAME_PREFIXES: tuple[str, ...] = (
 UNSCHEDULED_NAME_EXACT: frozenset[str] = frozenset({"TRAINING"})
 
 
+#: Courses whose hours are GIVEN rather than chosen (owner rule, D19).
+#:
+#: ENG101/ENG102 ("English Language Skills I/II") are the intensive language
+#: pair: 4 credits, plan terms 1 and 2, carried by all twelve programmes. They
+#: occupy the FULL MORNING every day of the week, and every section sits in the
+#: same hours — the department teaches them as one timetabled block.
+#:
+#: Named exactly, and deliberately not by prefix: ENGL103, ENGL104 and ENGL214
+#: are ordinary three-credit English courses and must keep the ordinary rules.
+FULL_MORNING_COURSES: frozenset[str] = frozenset({"ENG101", "ENG102"})
+
+
+def is_full_morning_course(course_code: str) -> bool:
+    return str(course_code or "").strip().upper() in FULL_MORNING_COURSES
+
+
+#: Noon, in minutes from midnight — the boundary of "the morning".
+_NOON = 12 * 60
+
+
+def morning_block(grid: Grid) -> tuple[int, ...]:
+    """The widest set of NON-OVERLAPPING morning lecture starts the grid declares.
+
+    Derived from the grid rather than written down, because the grid is the sole
+    time authority (D2) — this rule must never be the thing that invents an hour.
+    Taken greedily from the earliest start, which on the declared grid gives
+    09:00-10:15 and 10:30-11:45; 10:50 is dropped because it overlaps 10:30 and
+    a course cannot be in two places at once.
+    """
+    starts = sorted(
+        {w.start for w in grid.windows_for(75, DeliveryMode.IN_PERSON) if w.start < _NOON}
+    )
+    block: list[int] = []
+    end_of_last = -1
+    for start in starts:
+        if start >= end_of_last:
+            block.append(start)
+            end_of_last = start + 75
+    return tuple(block)
+
+
 def is_online_course(course_code: str) -> bool:
     """GS/GSE courses are online by policy — deliberately *not* read from the
     ``is_online`` column.
@@ -503,6 +544,49 @@ def build_snapshot(
         unscheduled = any(is_unscheduled_course(r.get("course_name") or "") for r in rows)
         online = is_online_course(code)
 
+        # ── D19: a course whose hours are given, not chosen ────────────────
+        #
+        # ENG101/ENG102 occupy the full morning every day of the week, with
+        # every section in the same hours. That is not a preference the solver
+        # weighs — it is the shape of the course, so it is compiled into the
+        # requirement instead of being pursued by the objective.
+        #
+        # The arithmetic makes it exact rather than merely encouraged: the
+        # meetings are confined to the morning starts, and there are precisely
+        # as many meetings as there are (day, morning start) cells. With one
+        # meeting per cell, the only feasible answer is every cell filled every
+        # day — so "all sections at the same time" is not a further constraint,
+        # it is a consequence.
+        fixed_block = is_full_morning_course(code) and not unscheduled
+        if fixed_block:
+            block = morning_block(grid)
+            if not block:
+                raise IntakeError(
+                    f"{code} must occupy the morning, but the grid declares no "
+                    f"morning lecture window"
+                )
+            requirements = (
+                MeetingRequirement(
+                    MeetingKind.LECTURE,
+                    DeliveryMode.IN_PERSON,
+                    75,
+                    len(block) * len(grid.days()),
+                    allowed_starts=frozenset(block),
+                    # Owner, 2026-07-28: "we have special rooms for ENG101 and
+                    # ENG102". They are taught in their own space, so they draw
+                    # nothing from the shared estate — which matters here, where
+                    # this cohort has EIGHT lecture rooms and four ENG sections
+                    # would otherwise hold half of them in every morning cell.
+                    # Still in-person: the student is on campus and the hour is
+                    # occupied, so clash, travel and instructor load all count.
+                    uses_shared_room=False,
+                ),
+            )
+        elif unscheduled:
+            requirements = ()
+        else:
+            requirements = compile_requirements(credits, is_online=online)
+
         offering = Offering(
             id=_offering_id(course_key, progs),
             course_code=code,
@@ -510,11 +594,12 @@ def build_snapshot(
             credit_hours=credits,
             programs=progs,
             terms=frozenset(int(r["programme_term"] or 0) for r in rows),
-            requirements=() if unscheduled else compile_requirements(credits, is_online=online),
+            requirements=requirements,
             capacity=capacity,
             capacity_is_declared=bool(declared),
             is_scheduled=not unscheduled,
             tier=classify_course_tier(code, plan_counts.get(code.upper(), 0)),
+            occupies_fixed_block=fixed_block,
         )
         offerings.append(offering)
         offerings_by_code[code].append(offering)
@@ -527,6 +612,13 @@ def build_snapshot(
         names two different courses is disambiguated by the programme asking:
         AI2 means CS111 "Fundamentals of Programming", AI means CS111
         "Programming I".
+
+        The programme picks out AT MOST ONE candidate, so this is exact rather
+        than a first-match heuristic. Verified against the live plan: of every
+        (programme, course_code) pair in `ProgrammeRequirement`, none carries
+        more than one plan term or more than one course name. A code is
+        ambiguous only ACROSS programmes, which is exactly what the asking
+        programme resolves.
 
         Returns None when the code genuinely names several courses and the
         programme picks out none of them — reported as unmatched rather than

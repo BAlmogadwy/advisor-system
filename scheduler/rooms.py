@@ -265,7 +265,7 @@ def _saturated_kinds(snapshot: Snapshot) -> dict[str, tuple[int, int]]:
         offering = snapshot.offerings_by_id[section.offering_id]
         need = snapshot.policy.required_room_capacity(section.capacity)
         for requirement in offering.requirements:
-            if not requirement.needs_room:
+            if not requirement.needs_shared_room:
                 continue
             compatible = frozenset(
                 room.id
@@ -311,7 +311,7 @@ def unroomable_meetings(snapshot: Snapshot) -> int:
         offering = snapshot.offerings_by_id[section.offering_id]
         need = snapshot.policy.required_room_capacity(section.capacity)
         for requirement in offering.requirements:
-            if not requirement.needs_room:
+            if not requirement.needs_shared_room:
                 continue
             if not any(
                 room.kind is requirement.kind

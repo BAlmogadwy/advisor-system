@@ -28,7 +28,13 @@ from scheduler.domain import (
     TimeWindow,
     parse_hhmm,
 )
-from scheduler.intake import IntakeError, build_snapshot, compile_requirements, default_grid
+from scheduler.intake import (
+    IntakeError,
+    build_snapshot,
+    compile_requirements,
+    default_grid,
+    morning_block,
+)
 from scheduler.readiness import Severity, assess
 
 # ── architectural boundaries ──────────────────────────────────────────────
@@ -1432,3 +1438,49 @@ def test_the_rule_is_off_at_one_so_nothing_inherits_it_by_accident():
     assert snap.sections_by_offering.get(
         next(o.id for o in snap.offerings if o.course_code == "DS901")
     ), "with the rule off, a two-student course still runs"
+
+
+# ── D19: the morning block comes from the grid, never from a literal ──────
+
+
+def test_the_morning_block_is_the_widest_non_overlapping_set_of_morning_starts():
+    """MUTATION: take every start before noon. The declared grid offers 09:00,
+    10:30 AND 10:50 — and 10:30+75 runs to 11:45, so 10:50 overlaps it. A course
+    cannot be in two places at once, so the block is 09:00 and 10:30."""
+    assert morning_block(default_grid()) == (9 * 60, 10 * 60 + 30)
+
+
+def test_the_morning_block_is_read_from_the_grid_it_is_given():
+    """D2: the grid is the sole time authority. This rule narrows a choice; it
+    must never be the thing that invents an hour."""
+    grid = Grid.from_spec(
+        lecture_starts={"08:00": 75, "09:20": 75, "11:00": 75, "13:00": 75},
+        lab_starts={"09:00": 100},
+    )
+    assert morning_block(grid) == (8 * 60, 9 * 60 + 20, 11 * 60)
+
+
+def test_eng101_is_compiled_as_a_fixed_block_and_ordinary_english_is_not():
+    """MUTATION: match the rule by prefix ("ENG") instead of by exact code.
+    ENGL103/104/214 are ordinary three-credit courses and would be dragged into
+    owning the morning."""
+    _plan("AI", "ENG101", credits=4, term=1, name="ENGLISH LANGUAGE SKILLS I")
+    _plan("AI", "ENGL103", credits=3, term=1, name="ENGLISH COMPOSITION")
+    _student(440001, "AI", "M")
+    _room("M-1", "M", capacity=40)
+    snap = build_snapshot(
+        academic_year="1448", term=1, gender="M", programs=["AI"], default_capacity=25
+    )
+    by_code = {o.course_code: o for o in snap.offerings}
+
+    eng = by_code["ENG101"]
+    assert eng.occupies_fixed_block
+    (requirement,) = eng.requirements
+    assert requirement.allowed_starts == frozenset(morning_block(snap.grid))
+    assert requirement.count_per_week == len(morning_block(snap.grid)) * len(snap.grid.days())
+    assert not requirement.uses_shared_room, "ENG has rooms of its own"
+    assert requirement.delivery is DeliveryMode.IN_PERSON, "it is on campus, not online"
+
+    ordinary = by_code["ENGL103"]
+    assert not ordinary.occupies_fixed_block
+    assert all(not r.allowed_starts and r.uses_shared_room for r in ordinary.requirements)
