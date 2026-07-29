@@ -1269,6 +1269,63 @@ is the right machinery should a *soft* version ever be worth measuring.
 
 ---
 
+### D21 — An instructor may buy a compact day with an extra day
+
+The owner's hand-built boards exposed a week this engine could not reach at any
+budget. Days are settled first and frozen (D12), so **three long days with holes
+in them always beat five short clean ones**. Dr Abdullah's own sheet makes the
+opposite choice — 09:00–12:25 across five mornings — and pinning it took his
+idle from ~170 minutes to 65 while the solver, left alone, gave him three days.
+
+`day_slack` opens exactly that trade. Pass 2's per-instructor day budget is
+relaxed by N, and **the guard is relaxed with it** — that second half is the
+whole feature, because `reason_to_discard_gap_pass` previously threw away any
+board where anyone's week grew, and would have silently reverted every result.
+
+**What stays hard.** An extra day has to pay for itself: a longer week is kept
+only if idle is **strictly** better, and rooms still outrank gaps, so pass 2
+cannot sell a classroom for a shorter wait. The allowance is a limit, not a
+licence — N+1 extra days is still rejected.
+
+**Measured, M cohort, 3 runs each:**
+
+| | slack 0 (default) | **slack 1** | slack 2 |
+|---|---|---|---|
+| instructor days (floor 19) | **19** | 22 (21–22) | 23 (19–23) |
+| instructor idle | 1060 (865–1500) | **795 (620–1045)** | 775 (**630–2470**) |
+| expected clashes | 140.7 (122–172) | **128.5 (113–138)** | 137 (134–141) |
+| unroomed / violations | 19 / 0 | 19 / 0 | 19 / 0 |
+
+**Slack 1 is the setting.** Idle falls 25% and — unexpectedly — student clashes
+fall 9% as well, because spreading a heavy day across two lighter ones relieves
+the congested hours everyone was competing for. It costs **3 working days
+across five instructors**.
+
+**Slack 2 is not worth it.** The median barely moves (795 → 775) while the range
+blows out to 630–2470: one run was worse than anything slack 0 produced. More
+freedom widens the spread rather than improving the answer — the same result
+already measured for solver time.
+
+**It reproduces the owner's hand-built boards, and beats them.** At slack 1 the
+engine finds, unprompted:
+
+```
+Dr Abdullah   4 days (floor 3)   idle 40      hand-pinned: 5 days, idle 65
+Dr Nawaf      4 days (floor 3)   idle 35      hand-pinned: 3 days, idle 65
+```
+
+Both better than the weeks drawn by hand, and for every instructor rather than
+the two somebody had time to draw. Against the both-pinned board (21 days / 827
+idle), slack 1 gives 22 days / 795 — one more day, slightly less idle, no
+handwork.
+
+**Default 0, and that is the owner's call to change.** Working days are the
+stated priority, and this spends three of them. What the numbers say is that the
+trade is real and cheap; whether an instructor would rather come in on a fourth
+day for a tighter timetable is a question about people, not about search.
+
+---
+
 ### On making the search better — what was tried, and what it was worth
 
 The pinning experiment behind D17 also produced the clearest evidence we have

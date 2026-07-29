@@ -4005,3 +4005,48 @@ def test_the_fixed_block_flag_changes_the_fingerprint():
         offerings=tuple(replace(o, occupies_fixed_block=False) for o in snapshot.offerings),
     )
     assert snapshot.fingerprint() != without.fingerprint()
+
+
+# ── D21: an instructor may buy a compact day with an extra day ────────────
+#
+# Owner rule, 2026-07-29, from their own hand-built boards. Pass 1 settles the
+# working-day floor and pass 2 was forbidden from ever spending it — which makes
+# one shape of week unreachable: three long days with holes in them always beat
+# five short clean ones. Dr Abdullah's hand-drawn week is the opposite choice
+# (09:00-12:25 across five mornings, idle 170 -> 65), and the engine could not
+# have produced it at any budget.
+#
+# `day_slack` opens that trade and nothing else. The guard below is the half
+# that matters: it used to discard ANY board where someone's week grew, so
+# without changing it the relaxed budget would have been silently reverted every
+# time.
+
+
+def test_by_default_no_week_may_grow_at_all():
+    """The original rule, and the default: day_slack=0 changes nothing."""
+    assert _ok(days_after={1: 4, 2: 4}) is not None
+
+
+def test_an_extra_day_is_allowed_when_it_buys_less_idle():
+    """MUTATION: ignore `day_slack` in the comparison. The relaxed budget then
+    produces boards the guard throws away, and D21 is a no-op that looks wired."""
+    assert _ok(days_after={1: 4, 2: 4}, day_slack=1) is None
+
+
+def test_the_allowance_is_a_limit_not_a_licence():
+    assert _ok(days_after={1: 5, 2: 4}, day_slack=1) is not None
+    assert _ok(days_after={1: 5, 2: 4}, day_slack=2) is None
+
+
+def test_a_longer_week_that_buys_nothing_is_still_discarded():
+    """The guard that keeps this a TRADE. An extra day is permitted only
+    alongside the idle test below it, so a week that grew without paying for
+    itself is rejected exactly as before."""
+    assert _ok(days_after={1: 4, 2: 4}, day_slack=1, idle_after=900, idle_before=900) is not None
+    assert _ok(days_after={1: 4, 2: 4}, day_slack=1, idle_after=901, idle_before=900) is not None
+
+
+def test_the_allowance_never_licenses_selling_a_room():
+    """Rooms outrank gaps whatever the day allowance — pass 2 was measured to
+    trade one unroomed meeting for about sixty idle minutes given the chance."""
+    assert _ok(days_after={1: 4, 2: 4}, day_slack=1, rooms_after=6) is not None

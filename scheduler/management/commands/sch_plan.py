@@ -42,6 +42,13 @@ class Command(BaseCommand):
         parser.add_argument("--gender", required=True, choices=["M", "F", "m", "f"])
         parser.add_argument("--default-capacity", type=int, default=25)
         parser.add_argument(
+            "--day-slack",
+            type=int,
+            default=0,
+            help="D21: days beyond the proven floor an instructor may take if it "
+            "buys a more compact day (0 = days stay first, the old behaviour)",
+        )
+        parser.add_argument(
             "--phase-terms",
             action="store_true",
             help="give each curriculum term one half of the day (D20), chosen to "
@@ -179,6 +186,8 @@ class Command(BaseCommand):
             plan_kwargs["gap_weight"] = int(options["span_weight"] * _SCALE)
         if options["back_to_back"] is not None:
             plan_kwargs["sibling_adjacency_weight"] = int(options["back_to_back"] * _SCALE)
+        if options["day_slack"]:
+            plan_kwargs["day_slack"] = int(options["day_slack"])
         if options["student_gaps"]:
             plan_kwargs["student_adjacency_weight"] = int(options["student_gaps"] * _SCALE)
         # Negative means "no rule", which argparse cannot say with None while
@@ -250,6 +259,7 @@ class Command(BaseCommand):
                     "default_capacity": options["default_capacity"],
                     "min_demand": options["min_demand"],
                     "phase_terms": options["phase_terms"],
+                    "day_slack": options["day_slack"],
                 },
                 solver_status=result.status,
                 wall_time_seconds=result.wall_time_seconds,

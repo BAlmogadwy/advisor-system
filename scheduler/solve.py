@@ -1446,6 +1446,10 @@ def plan(
     # setting worth offering: 3 and 10 are worse for BOTH parties.
     student_adjacency_weight: int = 0,
     max_time_of_day_slots: int | None = 1,
+    #: D21 — how many days beyond the proven floor an instructor may take if it
+    #: buys a more compact day. Default 0: days stay lexicographically first, as
+    #: they have been. See the note at the pass-2 budget below.
+    day_slack: int = 0,
     exact_block_tiers: frozenset[str] = frozenset({"T2", "T3"}),
     # Owner rule: T2 and T3 courses run in other sections right across the
     # college, so a student who cannot fit one here finds a seat elsewhere.
@@ -1627,7 +1631,23 @@ def plan(
         snapshot,
         time_limit_seconds=remaining,
         span_weight=gap_weight,
-        max_working_days=per_instructor,
+        # ── D21: let an instructor buy compactness with a day ──────────
+        #
+        # Pass 1 settles the working-day FLOOR and pass 2 has always been
+        # forbidden from spending it, which is right when days are what matters
+        # most. But it makes one week unreachable: three long days with holes in
+        # them beats five short ones by this ordering, and the owner's own
+        # hand-built boards choose the opposite — Dr Abdullah teaches 09:00-12:25
+        # across five mornings rather than the three days the solver gives him,
+        # and his idle falls from ~170 minutes to 65 for it.
+        #
+        # `day_slack` opens exactly that trade and nothing else. The budget below
+        # is relaxed per instructor, and the guard after pass 2 still discards
+        # any board where the extra day did NOT buy less idle — so a longer week
+        # has to pay for itself.
+        max_working_days=(
+            {i: n + day_slack for i, n in per_instructor.items()} if day_slack else per_instructor
+        ),
         max_clash_score=ceiling,
         max_room_shortfall=first.room_shortfall_score,
         sibling_adjacency_weight=sibling_adjacency_weight,
@@ -1671,6 +1691,7 @@ def plan(
         rooms_after=unroomed_count(snapshot, second.board),
         idle_before=before,
         idle_after=after,
+        day_slack=day_slack,
     )
     if discard:
         first.notes.append(discard)
@@ -1690,6 +1711,7 @@ def reason_to_discard_gap_pass(
     rooms_after: int,
     idle_before: int,
     idle_after: int,
+    day_slack: int = 0,
 ) -> str | None:
     """Why pass 2's board should be thrown away, or None to keep it.
 
@@ -1701,20 +1723,39 @@ def reason_to_discard_gap_pass(
 
     Order matters and is the same order the rest of the engine uses:
 
-    1. **Nobody's week gets longer.** Compared per instructor, never on the
-       total, so a day moved from one person to another is caught rather than
-       cancelling out.
+    1. **Nobody's week gets longer** — by more than `day_slack` days (D21).
+       Compared per instructor, never on the total, so a day moved from one
+       person to another is caught rather than cancelling out.
+
+       `day_slack` is the whole of D21 on this side: at 0 this is the original
+       rule and no week may grow at all. Above 0 an instructor may take that
+       many extra days IF the idle check below still shows a net gain — which is
+       what makes it a trade rather than a licence, since a longer week that
+       does not buy less idle is still discarded on rule 3.
     2. **Rooms before gaps.** Pass 2 is pushed hard on idle time and one
        unroomed meeting was measured to be worth about sixty idle minutes to
        it, so without this it will quietly sell a classroom for a shorter wait.
     3. **It has to have worked.** An unimproved board is pass 1's with extra
        wall time spent.
     """
-    worse = sorted(i for i, n in days_after.items() if n > days_before.get(i, 0))
+    grew = sorted(i for i, n in days_after.items() if n > days_before.get(i, 0))
+    worse = [i for i in grew if days_after[i] > days_before.get(i, 0) + max(0, day_slack)]
     if worse:
-        return f"gap pass lengthened the week for instructor(s) {worse}; discarded"
+        return (
+            f"gap pass lengthened the week for instructor(s) {worse} by more than "
+            f"{day_slack} day(s); discarded"
+        )
     if rooms_after > rooms_before:
         return f"gap pass left {rooms_after} meetings unroomed vs {rooms_before}; discarded"
+    if grew and idle_after >= idle_before:
+        # STRICTLY better, not merely no worse. Equal idle is an acceptable
+        # outcome when nobody's week changed — it is pass 1's board by another
+        # route — but once somebody is being asked to come in on an extra day,
+        # "no worse" means they paid for nothing.
+        return (
+            f"gap pass lengthened the week for instructor(s) {grew} without "
+            f"improving idle ({idle_after} vs {idle_before}); discarded"
+        )
     if idle_after > idle_before:
         return f"gap pass did not improve idle ({idle_after} vs {idle_before}); discarded"
     return None
