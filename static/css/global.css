@@ -1975,6 +1975,37 @@ html body .btn:focus-visible {
 .pg-node.dm{opacity:0.12;transition:opacity .25s}.pg-edge.dm{opacity:0.04;transition:opacity .25s}
 .pg-legend{display:flex;align-items:center;gap:16px;padding:12px 16px 0;font-size:clamp(0.625rem, 0.601rem + 0.09vw, 0.6875rem);/* 10px → 11px */font-weight:600;color:var(--t3);font-family:var(--font-mono);letter-spacing:0.02em}
 .pg-legend-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-inline-end:5px;vertical-align:middle;box-shadow:0 0 4px currentColor}
+.pg-legend-dash{display:inline-block;width:12px;height:0;border-block-start:1.5px dashed var(--t3);margin-inline-end:5px;vertical-align:middle}
+
+/* term bands — the graph's vertical axis is the declared programme term */
+.pg-band{fill:transparent}
+.pg-band-alt{fill:color-mix(in srgb, var(--navy) 3%, transparent)}
+.pg-band-rule{stroke:color-mix(in srgb, var(--navy) 8%, transparent);stroke-width:1}
+.pg-gutter-rule{stroke:color-mix(in srgb, var(--navy) 10%, transparent);stroke-width:1}
+.pg-band-lbl{font-family:var(--font-mono);font-size:10px;font-weight:700;fill:var(--t3);letter-spacing:0.04em;text-transform:uppercase}
+.pg-band-lbl-empty{opacity:0.45}
+.pg-band-note{font-family:var(--font-mono);font-size:9px;font-weight:600;fill:var(--t3);opacity:0.4;letter-spacing:0.02em}
+.pg-node-gate rect{stroke-dasharray:4 3}
+.pg-node-inferred rect{stroke-dasharray:5 3}
+.pg-edge-warn{stroke:#b45309;stroke-opacity:0.55;stroke-dasharray:5 4}
+.pg-edge-warn.hl{stroke:#b45309;stroke-opacity:0.95}
+.pg-warn{
+  display:flex;flex-wrap:wrap;align-items:baseline;gap:8px;margin:10px 16px 0;padding:8px 12px;
+  border-radius:10px;background:rgba(180,83,9,0.07);border:1px solid rgba(180,83,9,0.22);
+  font-size:11px;font-weight:600;color:#b45309;line-height:1.5;
+}
+.pg-warn-detail{font-family:var(--font-mono);font-weight:500;opacity:0.8}
+
+/* layout toggle */
+.pg-modes{display:flex;gap:2px;margin-inline-start:auto;padding:2px;border-radius:999px;background:color-mix(in srgb, var(--navy) 5%, transparent)}
+.pg-mode{
+  border:0;cursor:pointer;padding:4px 11px;border-radius:999px;background:transparent;
+  font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:0.02em;color:var(--t3);
+  transition:all .25s var(--ease);
+}
+.pg-mode:hover{color:var(--t1)}
+.pg-mode.is-on{background:var(--teal-dim);color:var(--teal);box-shadow:0 1px 3px rgba(17,17,68,0.08)}
+.pg-mode:focus-visible{outline:2px solid var(--teal);outline-offset:1px}
 
 /* ── Conflict Matrix ── */
 .cm-table { border-collapse:separate;border-spacing:0;font-family:var(--font-mono);font-size:0.72rem;width:auto }
