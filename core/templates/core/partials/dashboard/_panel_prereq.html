@@ -26,7 +26,12 @@
       <div id="preUpdated" class="small text-secondary mb-3">{% if LANGUAGE_CODE == 'ar' %}آخر تحديث: لا يوجد{% else %}Last update: never{% endif %}</div>
       <!-- Graph full width on top -->
       <div class="cpanel mb-3">
-        <div class="cp-h"><span class="cp-t">Dependency Graph</span><span class="cp-live">VISUAL</span></div>
+        <div class="cp-h"><span class="cp-t">Dependency Graph</span><span class="cp-live">VISUAL</span>
+          <div class="pg-modes" role="group" aria-label="{% if LANGUAGE_CODE == 'ar' %}تخطيط الرسم البياني{% else %}Graph layout{% endif %}">
+            <button type="button" id="pgModeTerm" class="pg-mode is-on" aria-pressed="true">{% if LANGUAGE_CODE == 'ar' %}حسب الفصل{% else %}By term{% endif %}</button>
+            <button type="button" id="pgModeDepth" class="pg-mode" aria-pressed="false">{% if LANGUAGE_CODE == 'ar' %}حسب السلسلة{% else %}By chain{% endif %}</button>
+          </div>
+        </div>
         <div class="cp-b" id="preGraph" style="min-height:320px;overflow:hidden;padding:16px">
           <div class="empty-state"><span class="empty-icon"><span class="i empty-icon-32"><svg viewBox="0 0 24 24"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg></span></span><div class="empty-title">No graph data</div><div class="empty-hint">Load prerequisites to visualize dependency chains</div></div>
         </div>
