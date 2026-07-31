@@ -129,6 +129,7 @@ from .settings_views import defaults_settings_view
 from .student_auth_views import (
     student_advisor_view,
     student_courses_view,
+    student_graduation_view,
     student_home_view,
     student_login_view,
     student_otp_verify_view,
@@ -238,6 +239,11 @@ urlpatterns = [
         "student/courses/",
         login_required(student_courses_view, login_url="student_login"),
         name="student_courses",
+    ),
+    path(
+        "student/graduation/",
+        login_required(student_graduation_view, login_url="student_login"),
+        name="student_graduation",
     ),
     path("", login_required(dashboard, login_url="login"), name="dashboard"),
     path("health/", health, name="health"),

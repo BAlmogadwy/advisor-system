@@ -19,6 +19,7 @@ from core.models import Course, Student
 from core.report_views import _build_student_plan_payload
 from core.services.rbac import ROLE_STUDENT, get_user_scope
 from core.services.recommender import eligible_next_term_courses, recommend_next_courses
+from core.services.student_graduation import build_graduation_report
 from core.services.student_otp import OTPError, issue_otp, provision_student_user, verify_otp
 from core.services.student_sections import get_student_term_baseline, student_gender
 from core.services.student_unlock import build_unlock_report
@@ -227,6 +228,44 @@ def student_courses_view(request: HttpRequest) -> HttpResponse:
             "academic_year": year,
             "term": term,
             "report": report or None,
+        },
+    )
+
+
+@never_cache
+@login_required
+def student_graduation_view(request: HttpRequest) -> HttpResponse:
+    """How far from graduating — plan progress, and how long, honestly split."""
+    scope = get_user_scope(request.user)
+    if scope.get("role") != ROLE_STUDENT:
+        return redirect("dashboard")
+    student_id = scope.get("student_id")
+    if student_id is None:
+        return render(
+            request,
+            "core/student_home.html",
+            {**get_sidebar_context(request), "unlinked": True},
+            status=409,
+        )
+
+    defaults = load_defaults()
+    year, term = int(defaults["academic_year"]), int(defaults["term"])
+    try:
+        grad = build_graduation_report(student_id, year, term)
+    except Exception:  # noqa: BLE001 — degrade, never 500
+        logger.exception("graduation report failed for %s", student_id)
+        grad = None
+
+    return render(
+        request,
+        "core/student_graduation.html",
+        {
+            **get_sidebar_context(request),
+            "student": Student.objects.filter(student_id=student_id).first(),
+            "student_id": student_id,
+            "academic_year": year,
+            "term": term,
+            "grad": grad or None,
         },
     )
 
