@@ -346,3 +346,39 @@ def test_no_fallback_when_two_timetables_are_loaded(plan):
     assert r.context["timetable"] == []
     for ts in made:
         ts.delete()
+
+
+def test_weekly_grid_places_meetings_in_the_right_cells():
+    """Days down, time slots across — the timetable-workspace layout."""
+    from core.student_auth_views import _weekly_grid
+
+    days = [
+        {
+            "code": "MON",
+            "meetings": [
+                {"course_code": "A", "start_time": "09:00", "end_time": "10:15"},
+                {"course_code": "B", "start_time": "13:00", "end_time": "14:15"},
+            ],
+        },
+        {
+            "code": "WED",
+            "meetings": [
+                {"course_code": "C", "start_time": "13:00", "end_time": "14:15"},
+            ],
+        },
+    ]
+    g = _weekly_grid(days)
+    assert g["columns"] == 2  # two distinct slots only
+    assert [(s["start"], s["end"]) for s in g["slots"]] == [("09:00", "10:15"), ("13:00", "14:15")]
+    mon, wed = g["rows"]
+    assert [m["course_code"] for m in mon["cells"][0]] == ["A"]
+    assert [m["course_code"] for m in mon["cells"][1]] == ["B"]
+    assert wed["cells"][0] == []  # nothing at 09:00 on Wed
+    assert [m["course_code"] for m in wed["cells"][1]] == ["C"]
+
+
+def test_weekly_grid_is_empty_for_an_empty_week():
+    from core.student_auth_views import _weekly_grid
+
+    g = _weekly_grid([])
+    assert g == {"slots": [], "rows": [], "columns": 0}
