@@ -294,3 +294,55 @@ def test_graduation_screen_is_session_scoped(plan):
     assert r.status_code == 200
     assert r.context["student_id"] == SID
     assert c.get("/student/graduation/?student_id=4930002").context["student_id"] == SID
+
+
+# ── student home: the timetable fallback, and the guard that makes it safe ──
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+def test_home_shows_the_published_timetable_and_names_its_term(plan):
+    """The configured term has no registrations, so fall back to the one published
+    timetable — but say which term it is."""
+    from core.models import StudentTermSection, TermSection, TermSectionMeeting
+
+    ts = TermSection.objects.create(course_code="TA101", course_name="Alpha", section="M1")
+    TermSectionMeeting.objects.create(
+        term_section=ts, day="MON", start_time="09:00", end_time="10:15", room="R1"
+    )
+    StudentTermSection.objects.create(
+        student_id=SID, academic_year="1447", term="2", term_section=ts
+    )
+    u = student_otp.provision_student_user(SID)
+    c = Client()
+    c.force_login(u)
+    r = c.get("/student/")
+    assert r.context["timetable_is_fallback"] is True
+    assert (r.context["timetable_year"], r.context["timetable_term"]) == ("1447", "2")
+    assert r.context["timetable"], "the fallback must actually render meetings"
+    ts.delete()
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+def test_no_fallback_when_two_timetables_are_loaded(plan):
+    """TermSection carries no term of its own, so with two generations loaded its
+    meetings could belong to either — show nothing rather than the wrong times."""
+    from core.models import StudentTermSection, TermSection, TermSectionMeeting
+
+    made = []
+    for yr, tm_, sect in (("1447", "2", "M1"), ("1448", "2", "M2")):
+        ts = TermSection.objects.create(course_code="TA101", course_name="Alpha", section=sect)
+        TermSectionMeeting.objects.create(
+            term_section=ts, day="MON", start_time="09:00", end_time="10:15", room="R1"
+        )
+        StudentTermSection.objects.create(
+            student_id=SID, academic_year=yr, term=tm_, term_section=ts
+        )
+        made.append(ts)
+    u = student_otp.provision_student_user(SID)
+    c = Client()
+    c.force_login(u)
+    r = c.get("/student/")
+    assert r.context["timetable_is_fallback"] is False  # ambiguous -> refuse to guess
+    assert r.context["timetable"] == []
+    for ts in made:
+        ts.delete()

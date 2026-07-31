@@ -15,7 +15,7 @@ from django.shortcuts import redirect, render
 from django.views.decorators.cache import never_cache
 from django.views.decorators.http import require_http_methods, require_POST
 
-from core.models import Course, Student
+from core.models import Course, Student, StudentTermSection
 from core.report_views import _build_student_plan_payload
 from core.services.rbac import ROLE_STUDENT, get_user_scope
 from core.services.recommender import eligible_next_term_courses, recommend_next_courses
@@ -328,14 +328,35 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
         logger.exception("student plan build failed for %s", student_id)
         plan = None
 
-    # Only the configured term is shown. There is deliberately NO fallback to an
-    # older term: TermSection carries no year/term, so its meetings are always the
-    # latest import — a past term would be rendered with today's times.
+    # Show the configured term. If nothing is registered there, fall back to the
+    # one published timetable in the database — but ONLY when the whole database
+    # holds exactly one (year, term). TermSection carries no year/term of its own,
+    # so with two generations loaded its meetings could belong to either and a past
+    # term would be drawn with another term's times; in that case show nothing
+    # rather than something plausible and wrong. The label always names the term.
     try:
         rows = get_student_term_baseline(student_id, str(year), str(term))
     except Exception:  # noqa: BLE001
         logger.exception("student timetable load failed for %s", student_id)
         rows = []
+    tt_year, tt_term, tt_fallback = year, term, False
+    if not rows:
+        published = list(
+            StudentTermSection.objects.filter(term_section__scenario__isnull=True)
+            .values_list("academic_year", "term")
+            .distinct()[:2]
+        )
+        if len(published) == 1:
+            mine = StudentTermSection.objects.filter(
+                student_id=student_id, term_section__scenario__isnull=True
+            ).exists()
+            if mine:
+                tt_year, tt_term, tt_fallback = published[0][0], published[0][1], True
+                try:
+                    rows = get_student_term_baseline(student_id, str(tt_year), str(tt_term))
+                except Exception:  # noqa: BLE001
+                    logger.exception("student fallback timetable failed for %s", student_id)
+                    rows = []
     # Defence in depth: the institution segregates sections by gender, so never render
     # a section of the other cohort even if a mapping row exists. Mirrors the ORM rule
     # in services.student_sections.gender_section_filter: own-gender sections PLUS any
@@ -378,6 +399,9 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
             "student_id": student_id,
             "academic_year": year,
             "term": term,
+            "timetable_year": tt_year,
+            "timetable_term": tt_term,
+            "timetable_is_fallback": tt_fallback,
             "plan": plan,
             "timetable": timetable,
             "unscheduled": unscheduled,

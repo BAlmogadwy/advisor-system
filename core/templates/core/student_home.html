@@ -58,8 +58,11 @@
 <div class="card p-3 mb-3">
   <h6 class="mb-2">
     {% if LANGUAGE_CODE == 'ar' %}جدولي الأسبوعي{% else %}My weekly timetable{% endif %}
-    <span class="badge text-bg-primary">{{ academic_year }} — {% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Term{% endif %} {{ term }}</span>
+    <span class="badge text-bg-primary">{{ timetable_year }} — {% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Term{% endif %} {{ timetable_term }}</span>
   </h6>
+  {% if timetable_is_fallback %}
+    <p class="small text-secondary">{% if LANGUAGE_CODE == 'ar' %}لا يوجد تسجيل في الفصل الحالي ({{ academic_year }} — الفصل {{ term }})، لذا يُعرض جدولك من آخر جدول منشور.{% else %}Nothing is registered for the current term ({{ academic_year }} — Term {{ term }}), so this is your schedule from the most recently published timetable.{% endif %}</p>
+  {% endif %}
   {% if timetable %}
     {% for d in timetable %}
       <div class="mb-2">
