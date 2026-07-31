@@ -25,6 +25,10 @@
     pgIntermediate: IS_AR ? 'وسيط' : 'intermediate',
     pgTerminal: IS_AR ? 'نهائي' : 'terminal',
     pgHoverHint: IS_AR ? 'مرّر لإبراز السلسلة' : 'hover to highlight a chain',
+    pgPassed: IS_AR ? 'مجتاز' : 'passed',
+    pgStudying: IS_AR ? 'تدرسه الآن' : 'studying now',
+    pgOpen: IS_AR ? 'متاح الآن' : 'open now',
+    pgLocked: IS_AR ? 'محجوب' : 'blocked',
     pgSameTermWarn: n => (IS_AR ? `${n} متطلب في نفس المستوى` : `${n} prerequisite(s) in the same term`),
     pgBackwardWarn: n => (IS_AR ? `${n} متطلب بعد مقرره` : `${n} prerequisite(s) after their course`),
   };
@@ -213,6 +217,7 @@
     const t = o.t || DEFAULT_T;
     const termOf = o.termOf || {}, nameOf = o.nameOf || {};
     const statusOf = o.statusOf || {};
+    const hasStatus = Object.keys(statusOf).length > 0;
     const { prereqs, dependents, all } = pgAdjacency(items);
     /* Nodes come from edge endpoints only, so a course with no prerequisite row
        was invisible (about a third of a programme). extraNodes puts them back. */
@@ -399,10 +404,26 @@
     });
     s += '</svg>';
 
-    /* legend — only advertise the states actually on screen */
-    let leg = `<span><span class="pg-legend-dot text-teal" style="background:var(--teal)"></span>${pgEsc(t.pgFoundation)}</span>`
+    /* legend — only advertise the states actually on screen. When the graph is
+       coloured by a student's own progress the structural roles are not what the
+       colours mean, so the legend must describe the progress instead. */
+    let leg;
+    if (hasStatus) {
+      const seen = new Set(Object.keys(statusOf).filter(c => all.has(c)).map(c => statusOf[c]));
+      const L = [
+        ['passed', 'rgba(10,142,110,0.55)', t.pgPassed],
+        ['studying', 'rgba(64,86,227,0.50)', t.pgStudying],
+        ['open', '#0a8e6e', t.pgOpen],
+        ['locked', 'rgba(120,124,150,0.45)', t.pgLocked],
+      ].filter(x => seen.has(x[0]));
+      leg = L.map(([, col, lab]) =>
+        `<span><span class="pg-legend-dot" style="color:${col};background:${col}"></span>${pgEsc(lab)}</span>`
+      ).join('');
+    } else {
+      leg = `<span><span class="pg-legend-dot text-teal" style="background:var(--teal)"></span>${pgEsc(t.pgFoundation)}</span>`
       + `<span><span class="pg-legend-dot text-royal" style="background:var(--royal)"></span>${pgEsc(t.pgTerminal)}</span>`
       + `<span><span class="pg-legend-dot" style="color:var(--navy);background:var(--navy)"></span>${pgEsc(t.pgIntermediate)}</span>`;
+    }
     if (anyGate) leg += `<span><span class="pg-legend-dot" style="color:#b45309;background:#b45309"></span>${pgEsc(t.pgGate)}</span>`;
     if (anyInferred) leg += `<span><span class="pg-legend-dash"></span>${pgEsc(t.pgInferred)}</span>`;
     leg += `<span style="margin-inline-start:auto;opacity:0.4;font-weight:400">${pgEsc(t.pgHoverHint)}</span>`;
