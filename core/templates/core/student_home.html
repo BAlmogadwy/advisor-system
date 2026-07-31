@@ -1,0 +1,145 @@
+{% extends "core/base.html" %}
+{% load i18n %}{% get_current_language as LANGUAGE_CODE %}
+
+{% block title %}{% if LANGUAGE_CODE == 'ar' %}بوابة الطالب{% else %}Student Portal{% endif %}{% endblock %}
+
+{% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}بوابة الطالب{% else %}Student Portal{% endif %}{% endblock %}
+
+{% block page_chips %}
+  <span class="ph-chip ph-chip-page">{% if LANGUAGE_CODE == 'ar' %}الرقم الجامعي{% else %}University ID{% endif %}: {{ student_id }}</span>
+  {% if student and student.program %}<span class="ph-chip ph-chip-context">{{ student.program }}</span>{% endif %}
+  <span class="ph-chip ph-chip-context">{{ academic_year }} — {% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Term{% endif %} {{ term }}</span>
+{% endblock %}
+
+{% block page_intro %}
+  <p class="mb-0">
+    {% if student %}{{ student.name }} — {% endif %}
+    {% if LANGUAGE_CODE == 'ar' %}سجلك الأكاديمي، جدولك لهذا الفصل، والمقررات المقترحة لك.{% else %}Your academic record, this term's timetable, and your recommended courses.{% endif %}
+  </p>
+{% endblock %}
+
+{% block content %}
+
+{% if unlinked %}
+  {% comment %}STUDENT group account with no student binding: terminal state, never a
+  redirect (bouncing to the login view would loop straight back here).{% endcomment %}
+  <div class="card p-3">
+    <h6 class="mb-2">{% if LANGUAGE_CODE == 'ar' %}الحساب غير مرتبط{% else %}Account not linked{% endif %}</h6>
+    <p class="mb-2">{% if LANGUAGE_CODE == 'ar' %}هذا الحساب غير مرتبط بسجل طالب. يرجى التواصل مع القبول والتسجيل.{% else %}This account is not linked to a student record. Please contact the registrar.{% endif %}</p>
+    <form method="post" action="/logout/">{% csrf_token %}
+      <button type="submit" class="btn btn-sm btn-outline-secondary">{% if LANGUAGE_CODE == 'ar' %}تسجيل الخروج{% else %}Log out{% endif %}</button>
+    </form>
+  </div>
+{% else %}
+
+{# ── Academic summary ── #}
+<div class="card p-3 mb-3">
+  <div class="d-flex justify-content-between align-items-center mb-2">
+    <h6 class="mb-0">{% if LANGUAGE_CODE == 'ar' %}الملخص الأكاديمي{% else %}Academic summary{% endif %}</h6>
+    <a class="btn btn-sm btn-primary" href="{% url 'student_advisor' %}">{% if LANGUAGE_CODE == 'ar' %}اسأل المرشد الذكي{% else %}Ask the AI advisor{% endif %}</a>
+  </div>
+  <div class="row g-2">
+    <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}المعدل التراكمي{% else %}GPA{% endif %}</div><div class="v">{% if student %}{{ student.gpa|default_if_none:"—" }}{% else %}—{% endif %}</div></div></div>
+    <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}الساعات المكتسبة{% else %}Earned credits{% endif %}</div><div class="v">{% if student %}{{ student.total_earned_credits|default_if_none:"—" }}{% else %}—{% endif %}</div></div></div>
+    <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}الساعات المسجّلة{% else %}Registered credits{% endif %}</div><div class="v">{% if student %}{{ student.current_registered_credits|default_if_none:"—" }}{% else %}—{% endif %}</div></div></div>
+    <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}الحالة{% else %}Status{% endif %}</div><div class="v">{% if student %}{{ student.status|default_if_none:"—" }}{% else %}—{% endif %}</div></div></div>
+  </div>
+  {% if plan %}
+  <div class="row g-2 mt-1">
+    <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}مقررات مجتازة{% else %}Passed courses{% endif %}</div><div class="v">{{ plan.summary.passed }}</div></div></div>
+    <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}قيد الدراسة{% else %}Currently studying{% endif %}</div><div class="v">{{ plan.summary.studying }}</div></div></div>
+    <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}متاحة للتسجيل هذا الفصل{% else %}Available to register this term{% endif %}</div><div class="v">{{ eligible_now|default_if_none:"—" }}</div></div></div>
+    <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}محجوبة بمتطلب{% else %}Locked by prerequisite{% endif %}</div><div class="v">{{ plan.summary.not_taken_locked }}</div></div></div>
+  </div>
+  {% endif %}
+</div>
+
+{# ── My timetable ── #}
+<div class="card p-3 mb-3">
+  <h6 class="mb-2">
+    {% if LANGUAGE_CODE == 'ar' %}جدولي الأسبوعي{% else %}My weekly timetable{% endif %}
+    <span class="badge text-bg-primary">{{ academic_year }} — {% if LANGUAGE_CODE == 'ar' %}الفصل{% else %}Term{% endif %} {{ term }}</span>
+  </h6>
+  {% if timetable %}
+    {% for d in timetable %}
+      <div class="mb-2">
+        <div class="card-heading">
+          {% if d.code == 'SUN' %}{% if LANGUAGE_CODE == 'ar' %}الأحد{% else %}Sunday{% endif %}
+          {% elif d.code == 'MON' %}{% if LANGUAGE_CODE == 'ar' %}الاثنين{% else %}Monday{% endif %}
+          {% elif d.code == 'TUE' %}{% if LANGUAGE_CODE == 'ar' %}الثلاثاء{% else %}Tuesday{% endif %}
+          {% elif d.code == 'WED' %}{% if LANGUAGE_CODE == 'ar' %}الأربعاء{% else %}Wednesday{% endif %}
+          {% elif d.code == 'THU' %}{% if LANGUAGE_CODE == 'ar' %}الخميس{% else %}Thursday{% endif %}
+          {% elif d.code == 'FRI' %}{% if LANGUAGE_CODE == 'ar' %}الجمعة{% else %}Friday{% endif %}
+          {% elif d.code == 'SAT' %}{% if LANGUAGE_CODE == 'ar' %}السبت{% else %}Saturday{% endif %}
+          {% else %}{{ d.code }}{% endif %}
+        </div>
+        <div class="table-wrap">
+          <table class="table table-sm mb-0">
+            <thead>
+              <tr>
+                <th scope="col">{% if LANGUAGE_CODE == 'ar' %}الوقت{% else %}Time{% endif %}</th>
+                <th scope="col">{% if LANGUAGE_CODE == 'ar' %}المقرر{% else %}Course{% endif %}</th>
+                <th scope="col">{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}</th>
+                <th scope="col">{% if LANGUAGE_CODE == 'ar' %}القاعة{% else %}Room{% endif %}</th>
+                <th scope="col">{% if LANGUAGE_CODE == 'ar' %}المدرّس{% else %}Instructor{% endif %}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for m in d.meetings %}
+              <tr>
+                <td dir="ltr">{{ m.start_time }}{% if m.end_time %} – {{ m.end_time }}{% endif %}</td>
+                <td><strong>{{ m.course_code }}</strong>{% if m.course_name %} <span class="small text-secondary">{{ m.course_name }}</span>{% endif %}</td>
+                <td>{{ m.section|default:"—" }}</td>
+                <td>{{ m.room|default:"—" }}</td>
+                <td>{{ m.instructor|default:"—" }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% endfor %}
+  {% else %}
+    <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}لا يوجد جدول مسجّل لهذا الفصل.{% else %}No registered timetable for this term.{% endif %}</p>
+  {% endif %}
+
+  {% if unscheduled %}
+    <div class="card-heading mt-2">{% if LANGUAGE_CODE == 'ar' %}مقررات بدون وقت محدد{% else %}Courses without a scheduled time{% endif %}</div>
+    <div>
+      {% for r in unscheduled %}
+        <span class="badge text-bg-secondary">{{ r.course_code }}{% if r.section %} — {{ r.section }}{% endif %}</span>
+      {% endfor %}
+    </div>
+  {% endif %}
+</div>
+
+{# ── Recommended courses ── #}
+<div class="card p-3">
+  <h6 class="mb-2">{% if LANGUAGE_CODE == 'ar' %}المقررات المقترحة للفصل القادم{% else %}Recommended courses for next term{% endif %}</h6>
+  {% if recommendations %}
+    <div class="table-wrap">
+      <table class="table table-sm mb-0">
+        <thead>
+          <tr>
+            <th scope="col">{% if LANGUAGE_CODE == 'ar' %}الرمز{% else %}Code{% endif %}</th>
+            <th scope="col">{% if LANGUAGE_CODE == 'ar' %}اسم المقرر{% else %}Course name{% endif %}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in recommendations %}
+          <tr>
+            <td><strong>{{ r.code }}</strong></td>
+            <td>{{ r.name|default:"—" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="small text-secondary mb-0 mt-2">{% if LANGUAGE_CODE == 'ar' %}هذه توصية إرشادية — راجع مرشدك الأكاديمي قبل التسجيل.{% else %}This is guidance only — check with your academic advisor before registering.{% endif %}</p>
+  {% else %}
+    <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}لا توجد مقررات مقترحة حاليًا.{% else %}No recommended courses at the moment.{% endif %}</p>
+  {% endif %}
+</div>
+
+{% endif %}{# /unlinked #}
+{% endblock %}

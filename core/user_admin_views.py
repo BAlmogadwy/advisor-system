@@ -10,6 +10,7 @@ from core.authz import role_required
 from core.services.audit import log_audit_event
 from core.services.rbac import (
     ROLE_NAMES,
+    ROLE_STUDENT,
     ROLE_SUPER_ADMIN,
     ensure_role_groups,
     ensure_scope_schema,
@@ -18,6 +19,11 @@ from core.services.rbac import (
 )
 from core.sidebar_context import get_sidebar_context
 from core.utils import parse_json_body as _parse_json_body
+
+
+def _is_student_account(user: User) -> bool:
+    """Student accounts are owned by the OTP portal, not the staff admin UI."""
+    return user.groups.filter(name=ROLE_STUDENT).exists()
 
 
 @role_required(ROLE_SUPER_ADMIN)
@@ -127,6 +133,12 @@ def users_update_role_view(request: HttpRequest) -> JsonResponse:
     user = User.objects.filter(username=username).first()
     if user is None:
         return JsonResponse({"error": "user not found"}, status=404)
+    if _is_student_account(user):
+        # Promoting a student account would silently drop its student_id binding and
+        # hand a staff role to an OTP-provisioned identity.
+        return JsonResponse(
+            {"error": "Student accounts are managed by the OTP portal."}, status=409
+        )
 
     with transaction.atomic():
         user.groups.clear()
@@ -162,6 +174,12 @@ def users_set_password_view(request: HttpRequest) -> JsonResponse:
     user = User.objects.filter(username=username).first()
     if user is None:
         return JsonResponse({"error": "user not found"}, status=404)
+    if _is_student_account(user):
+        # Giving a student account a usable password permanently blocks its OTP login
+        # (provision refuses privileged accounts) and hands over that student's portal.
+        return JsonResponse(
+            {"error": "Student accounts are managed by the OTP portal."}, status=409
+        )
 
     try:
         validate_password(new_password, user)

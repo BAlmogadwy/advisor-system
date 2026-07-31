@@ -53,18 +53,21 @@ def _count_unlocks_from_prereqs(
     return sum(1 for p in all_prereq_codes if course_code in p)
 
 
-def recommend_next_courses(
+def _next_term_candidates(
     student_id: int | str,
     current_academic_year: int,
     current_semester: int,
-    *,
-    resolve_electives: bool = True,
-) -> list[str]:
-    program = get_student_program(student_id)
-    if not program:
-        return []
+    program: str,
+    passed: set,
+    studying: set,
+) -> list[dict]:
+    """Courses the student may take in the coming term, ranked, BEFORE the credit cap.
 
-    passed, studying = get_student_passed_and_studying(student_id)
+    A candidate is not already passed/studying, has its prerequisites satisfied, sits
+    on the coming term's odd/even parity, and is not a future-term course (due now or
+    overdue). This is the single definition of "registrable this term" — shared by the
+    recommendation list and by the eligible-count shown to students.
+    """
     all_courses = get_all_department_courses(program)
 
     student_real_term = calculate_real_student_term(
@@ -81,9 +84,6 @@ def recommend_next_courses(
             "prerequisite_course_code", flat=True
         )
     )
-
-    recommendations: list[dict] = []
-    total_credits = 0
 
     def prereqs_ok(course_code: str) -> bool:
         return all(pr in passed or pr in studying for pr in get_prerequisites(course_code, program))
@@ -114,6 +114,47 @@ def recommend_next_courses(
     candidates.sort(
         key=lambda x: (-x["_unlock"], x["_past_rank"], x["term"], x["_gs_rank"], x["code"])
     )
+    return candidates
+
+
+def eligible_next_term_courses(
+    student_id: int | str, current_academic_year: int, current_semester: int
+) -> list[str]:
+    """Codes the student may register in for the coming term (no credit-load cap).
+
+    Same rule as the recommendation list, minus the MAX_CREDITS trim — so it answers
+    "what am I allowed to take this term", not "what should I take".
+    """
+    program = get_student_program(student_id)
+    if not program:
+        return []
+    passed, studying = get_student_passed_and_studying(student_id)
+    return [
+        c["code"]
+        for c in _next_term_candidates(
+            student_id, current_academic_year, current_semester, program, passed, studying
+        )
+    ]
+
+
+def recommend_next_courses(
+    student_id: int | str,
+    current_academic_year: int,
+    current_semester: int,
+    *,
+    resolve_electives: bool = True,
+) -> list[str]:
+    program = get_student_program(student_id)
+    if not program:
+        return []
+
+    passed, studying = get_student_passed_and_studying(student_id)
+    candidates = _next_term_candidates(
+        student_id, current_academic_year, current_semester, program, passed, studying
+    )
+
+    recommendations: list[dict] = []
+    total_credits = 0
 
     for course in candidates:
         if total_credits + course["credits"] <= MAX_CREDITS:

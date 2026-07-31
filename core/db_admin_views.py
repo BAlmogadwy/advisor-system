@@ -24,7 +24,7 @@ from core.services.db_admin_ops import (
     run_integrity_checks,
     set_elective_term_mapping,
 )
-from core.services.rbac import ROLE_SUPER_ADMIN
+from core.services.rbac import ROLE_ADVISOR, ROLE_SUPER_ADMIN
 from core.services.term_sections import (
     import_term_sections_from_csv,
     preview_term_sections_from_csv,
@@ -617,6 +617,7 @@ def elective_catalogue_import_view(request: HttpRequest) -> JsonResponse:
 
 
 @login_required(login_url="login")
+@role_required(ROLE_ADVISOR)  # curriculum config: not for students
 @require_GET
 def elective_catalogue_list_view(request: HttpRequest) -> JsonResponse:
     """List all elective courses for a programme."""
@@ -642,6 +643,7 @@ def elective_catalogue_list_view(request: HttpRequest) -> JsonResponse:
 
 
 @login_required(login_url="login")
+@role_required(ROLE_SUPER_ADMIN)  # destructive: replaces a programme/term's elective mappings
 @require_POST
 def elective_mapping_set_view(request: HttpRequest) -> JsonResponse:
     """Set elective-to-placeholder mappings for a term.
@@ -675,6 +677,7 @@ def elective_mapping_set_view(request: HttpRequest) -> JsonResponse:
 
 
 @login_required(login_url="login")
+@role_required(ROLE_ADVISOR)  # curriculum config: not for students
 @require_GET
 def elective_mapping_list_view(request: HttpRequest) -> JsonResponse:
     """List current elective mappings for a term/programme."""
@@ -710,6 +713,7 @@ def elective_mapping_list_view(request: HttpRequest) -> JsonResponse:
 
 
 @login_required(login_url="login")
+@role_required(ROLE_ADVISOR)  # curriculum config: not for students
 @require_GET
 def elective_placeholders_view(request: HttpRequest) -> JsonResponse:
     """List elective placeholder codes from ProgrammeRequirement for a programme.
