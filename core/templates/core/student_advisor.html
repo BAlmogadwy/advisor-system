@@ -1,0 +1,57 @@
+{% extends "core/base.html" %}
+{% load static i18n %}{% get_current_language as LANGUAGE_CODE %}
+
+{% block title %}{% if LANGUAGE_CODE == 'ar' %}المرشد الذكي{% else %}AI Advisor{% endif %}{% endblock %}
+
+{% block page_heading %}{% if LANGUAGE_CODE == 'ar' %}المرشد الذكي{% else %}AI Advisor{% endif %}{% endblock %}
+
+{% block page_chips %}
+  <span class="ph-chip ph-chip-page">{% if LANGUAGE_CODE == 'ar' %}الرقم الجامعي{% else %}University ID{% endif %}: {{ student_id }}</span>
+  {% if student and student.program %}<span class="ph-chip ph-chip-context">{{ student.program }}</span>{% endif %}
+{% endblock %}
+
+{% block page_intro %}
+  <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}اسأل عن خطتك، متطلبات المقررات، أو ماذا تسجّل — الإجابات مبنية على سجلك أنت.{% else %}Ask about your plan, course prerequisites, or what to register — answers come from your own record.{% endif %}</p>
+{% endblock %}
+
+{% block content %}
+<div class="card p-3">
+  <div class="va-chat">
+    <div class="va-messages" id="saMessages" aria-live="polite">
+      <article class="va-message va-message-assistant">
+        <div class="va-avatar">AI</div>
+        <div class="va-bubble">
+          {% if LANGUAGE_CODE == 'ar' %}مرحبًا {% if student %}{{ student.name }}{% endif %} — كيف أقدر أساعدك في خطتك الدراسية؟{% else %}Hello{% if student %} {{ student.name }}{% endif %} — how can I help with your academic plan?{% endif %}
+        </div>
+      </article>
+    </div>
+
+    <div class="va-examples">
+      {% if LANGUAGE_CODE == 'ar' %}
+        <button type="button" class="btn btn-sm" data-sa-example="ما المقررات التي أستطيع تسجيلها هذا الفصل؟">ما أستطيع تسجيله؟</button>
+        <button type="button" class="btn btn-sm" data-sa-example="كم ساعة تبقّت لي للتخرج؟">كم تبقّى للتخرج؟</button>
+        <button type="button" class="btn btn-sm" data-sa-example="ما متطلبات المقررات التي تنقصني؟">المتطلبات الناقصة</button>
+      {% else %}
+        <button type="button" class="btn btn-sm" data-sa-example="Which courses can I register this term?">What can I register?</button>
+        <button type="button" class="btn btn-sm" data-sa-example="How many credits do I have left to graduate?">Credits to graduate</button>
+        <button type="button" class="btn btn-sm" data-sa-example="Which prerequisites am I missing?">Missing prerequisites</button>
+      {% endif %}
+    </div>
+
+    <form class="va-composer" id="saForm" autocomplete="off">
+      {% csrf_token %}
+      <label class="visually-hidden" for="saQuestion">{% if LANGUAGE_CODE == 'ar' %}سؤالك{% else %}Your question{% endif %}</label>
+      <input class="va-input" id="saQuestion" type="text" maxlength="1000"
+             placeholder="{% if LANGUAGE_CODE == 'ar' %}اكتب سؤالك…{% else %}Type your question…{% endif %}" required>
+      <button class="btn btn-primary" id="saSend" type="submit">{% if LANGUAGE_CODE == 'ar' %}إرسال{% else %}Send{% endif %}</button>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+  window.__STUDENT_ADVISOR__ = { chatUrl: "{% url 'virtual_advisor_chat' %}" };
+</script>
+<script src="{% static 'js/page-student-advisor.js' %}?v=1"></script>
+{% endblock %}

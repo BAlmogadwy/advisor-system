@@ -822,7 +822,7 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                 },
                 "additionalProperties": False,
             },
-            allowed_roles=_ALL_ROLES,
+            allowed_roles=_STAFF_ROLES,  # cohort search: staff only, never students
             executor=_exec_find_students,
         )
     )

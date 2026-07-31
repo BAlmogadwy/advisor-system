@@ -11,7 +11,7 @@ from core.authz import throttle
 from core.services.audit import log_audit_event
 from core.services.local_llm import LocalLLMError, check_local_llm_health
 from core.services.policy import require_student_scope
-from core.services.rbac import get_user_scope
+from core.services.rbac import ROLE_STUDENT, get_user_scope
 from core.services.virtual_advisor import answer_virtual_advisor, run_planned_tools
 from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
@@ -90,9 +90,19 @@ def virtual_advisor_chat_view(request: HttpRequest) -> JsonResponse:
     if len(question) > 4000:
         return JsonResponse({"error": "message is too long"}, status=400)
 
-    student_id, err = _optional_int(payload.get("student_id"), "student_id")
-    if err:
-        return err
+    scope = get_user_scope(request.user)
+    if str(scope.get("role", "")) == ROLE_STUDENT:
+        # A student's identity is never taken from the request: force their own id and
+        # ignore whatever the payload claims, so the chat can only ever read their data.
+        student_id = scope.get("student_id")
+        if student_id is None:
+            return JsonResponse(
+                {"error": "No student identity is linked to this session."}, status=403
+            )
+    else:
+        student_id, err = _optional_int(payload.get("student_id"), "student_id")
+        if err:
+            return err
 
     defaults = load_defaults()
     academic_year, err = _optional_int(
@@ -121,7 +131,7 @@ def virtual_advisor_chat_view(request: HttpRequest) -> JsonResponse:
             term=term,
             history=payload.get("history", []),
             model=model,
-            scope=get_user_scope(request.user),
+            scope=scope,
         )
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=404)
