@@ -214,6 +214,6 @@
   {{ report.graph|json_script:"scGraphData" }}
   <script>window.__STUDENT_GRAPH__ = JSON.parse(document.getElementById('scGraphData').textContent);</script>
   <script src="{% static 'js/prereq-graph.js' %}?v=1"></script>
-  <script src="{% static 'js/page-student-graph.js' %}?v=1"></script>
+  <script src="{% static 'js/page-student-graph.js' %}?v=2"></script>
 {% endif %}
 {% endblock %}

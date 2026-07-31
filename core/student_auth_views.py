@@ -194,6 +194,25 @@ def _weekly_timetable(rows: list[dict]) -> tuple[list[dict], list[dict]]:
     return ordered, unscheduled
 
 
+def _weekly_grid(days: list[dict]) -> dict:
+    """Lay the week out as the timetable workspace does: days down, time slots
+    across, one cell per (day, slot). Slots are the distinct (start, end) pairs
+    this student actually has, so the grid stays as narrow as her real week."""
+    slots = sorted({(m["start_time"], m["end_time"]) for d in days for m in d["meetings"]})
+    index = {s: i for i, s in enumerate(slots)}
+    rows = []
+    for d in days:
+        cells: list[list[dict]] = [[] for _ in slots]
+        for m in d["meetings"]:
+            cells[index[(m["start_time"], m["end_time"])]].append(m)
+        rows.append({"code": d["code"], "cells": cells})
+    return {
+        "slots": [{"start": a, "end": b} for a, b in slots],
+        "rows": rows,
+        "columns": len(slots),
+    }
+
+
 @never_cache
 @login_required
 def student_courses_view(request: HttpRequest) -> HttpResponse:
@@ -370,6 +389,7 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
             or str(r.get("section") or "").upper().startswith(gender)
         ]
     timetable, unscheduled = _weekly_timetable(rows)
+    grid = _weekly_grid(timetable)
 
     try:
         rec_codes = recommend_next_courses(student_id, year, term)
@@ -404,6 +424,7 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
             "timetable_is_fallback": tt_fallback,
             "plan": plan,
             "timetable": timetable,
+            "grid": grid,
             "unscheduled": unscheduled,
             "recommendations": recommendations,
             "eligible_now": eligible_now,

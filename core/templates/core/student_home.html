@@ -64,44 +64,37 @@
     <p class="small text-secondary">{% if LANGUAGE_CODE == 'ar' %}لا يوجد تسجيل في الفصل الحالي ({{ academic_year }} — الفصل {{ term }})، لذا يُعرض جدولك من آخر جدول منشور.{% else %}Nothing is registered for the current term ({{ academic_year }} — Term {{ term }}), so this is your schedule from the most recently published timetable.{% endif %}</p>
   {% endif %}
   {% if timetable %}
-    {% for d in timetable %}
-      <div class="mb-2">
-        <div class="card-heading">
-          {% if d.code == 'SUN' %}{% if LANGUAGE_CODE == 'ar' %}الأحد{% else %}Sunday{% endif %}
-          {% elif d.code == 'MON' %}{% if LANGUAGE_CODE == 'ar' %}الاثنين{% else %}Monday{% endif %}
-          {% elif d.code == 'TUE' %}{% if LANGUAGE_CODE == 'ar' %}الثلاثاء{% else %}Tuesday{% endif %}
-          {% elif d.code == 'WED' %}{% if LANGUAGE_CODE == 'ar' %}الأربعاء{% else %}Wednesday{% endif %}
-          {% elif d.code == 'THU' %}{% if LANGUAGE_CODE == 'ar' %}الخميس{% else %}Thursday{% endif %}
-          {% elif d.code == 'FRI' %}{% if LANGUAGE_CODE == 'ar' %}الجمعة{% else %}Friday{% endif %}
-          {% elif d.code == 'SAT' %}{% if LANGUAGE_CODE == 'ar' %}السبت{% else %}Saturday{% endif %}
-          {% else %}{{ d.code }}{% endif %}
-        </div>
-        <div class="table-wrap">
-          <table class="table table-sm mb-0">
-            <thead>
-              <tr>
-                <th scope="col">{% if LANGUAGE_CODE == 'ar' %}الوقت{% else %}Time{% endif %}</th>
-                <th scope="col">{% if LANGUAGE_CODE == 'ar' %}المقرر{% else %}Course{% endif %}</th>
-                <th scope="col">{% if LANGUAGE_CODE == 'ar' %}الشعبة{% else %}Section{% endif %}</th>
-                <th scope="col">{% if LANGUAGE_CODE == 'ar' %}القاعة{% else %}Room{% endif %}</th>
-                <th scope="col">{% if LANGUAGE_CODE == 'ar' %}المدرّس{% else %}Instructor{% endif %}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for m in d.meetings %}
-              <tr>
-                <td dir="ltr">{{ m.start_time }}{% if m.end_time %} – {{ m.end_time }}{% endif %}</td>
-                <td><strong>{{ m.course_code }}</strong>{% if m.course_name %} <span class="small text-secondary">{{ m.course_name }}</span>{% endif %}</td>
-                <td>{{ m.section|default:"—" }}</td>
-                <td>{{ m.room|default:"—" }}</td>
-                <td>{{ m.instructor|default:"—" }}</td>
-              </tr>
+    {# Same full-grid layout as the timetable workspace: days down, time slots across. #}
+    <div class="overflow-x" dir="ltr">
+      <div class="tw-grid" style="grid-template-columns:88px repeat({{ grid.columns }},minmax(120px,1fr));min-width:max-content">
+        <div class="tw-grid-header"></div>
+        {% for s in grid.slots %}
+          <div class="tw-grid-header" style="font-size:.65rem">{{ s.start }}–{{ s.end }}</div>
+        {% endfor %}
+        {% for row in grid.rows %}
+          <div class="tw-grid-slot-label">
+            {% if row.code == 'SUN' %}{% if LANGUAGE_CODE == 'ar' %}الأحد{% else %}Sunday{% endif %}
+            {% elif row.code == 'MON' %}{% if LANGUAGE_CODE == 'ar' %}الاثنين{% else %}Monday{% endif %}
+            {% elif row.code == 'TUE' %}{% if LANGUAGE_CODE == 'ar' %}الثلاثاء{% else %}Tuesday{% endif %}
+            {% elif row.code == 'WED' %}{% if LANGUAGE_CODE == 'ar' %}الأربعاء{% else %}Wednesday{% endif %}
+            {% elif row.code == 'THU' %}{% if LANGUAGE_CODE == 'ar' %}الخميس{% else %}Thursday{% endif %}
+            {% elif row.code == 'FRI' %}{% if LANGUAGE_CODE == 'ar' %}الجمعة{% else %}Friday{% endif %}
+            {% elif row.code == 'SAT' %}{% if LANGUAGE_CODE == 'ar' %}السبت{% else %}Saturday{% endif %}
+            {% else %}{{ row.code }}{% endif %}
+          </div>
+          {% for cell in row.cells %}
+            <div class="tw-cell">
+              {% for m in cell %}
+                <div class="tw-card" title="{{ m.course_name }}{% if m.instructor %} — {{ m.instructor }}{% endif %}">
+                  <strong>{{ m.course_code }}</strong>{% if m.section %} <span class="small text-secondary">{{ m.section }}</span>{% endif %}
+                  {% if m.room %}<div class="small text-secondary">{{ m.room }}</div>{% endif %}
+                </div>
               {% endfor %}
-            </tbody>
-          </table>
-        </div>
+            </div>
+          {% endfor %}
+        {% endfor %}
       </div>
-    {% endfor %}
+    </div>
   {% else %}
     <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}لا يوجد جدول مسجّل لهذا الفصل.{% else %}No registered timetable for this term.{% endif %}</p>
   {% endif %}
