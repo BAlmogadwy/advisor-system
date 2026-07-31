@@ -220,3 +220,77 @@ def test_graph_terms_feed_the_band_axis(plan):
     g = _report()["graph"]
     assert g["termOf"]["TA101"] == 1 and g["termOf"]["TCAP"] == 9
     assert g["nameOf"]["TB201"] == "Beta"
+
+
+# ── graduation tracker ──
+
+
+def test_graduation_progress_uses_the_plan_not_the_registrar_total(plan):
+    """The registrar's earned credits include courses outside the plan (measured:
+    they disagree for most students, one has 162 earned against a 148 plan), so
+    progress is per-course over the plan and the credit total is a separate fact."""
+    from core.services.student_graduation import build_graduation_report
+
+    Student.objects.filter(student_id=SID).update(total_earned_credits=999)
+    g = build_graduation_report(SID, 1448, 1)
+    assert g["plan_courses_total"] == 4
+    assert g["plan_courses_passed"] == 0
+    assert g["percent_courses"] == 0  # not distorted by the 999
+    assert g["earned_credits_registrar"] == 999  # reported, never divided in
+    assert g["remaining_courses"] == 4
+
+
+def test_graduation_floor_is_the_prerequisite_chain(plan):
+    """A -> B -> C cannot be done in fewer than 3 terms however many she takes."""
+    from core.services.student_graduation import build_graduation_report
+
+    g = build_graduation_report(SID, 1448, 1, courses_per_term=99)
+    assert g["pace_terms"] == 1  # load alone would say one term
+    assert g["chain_floor_terms"] == 3  # but the chain forbids it
+    assert g["terms_estimate"] == 3  # the floor wins
+
+
+def test_graduation_pace_wins_when_there_is_no_chain(plan):
+    from core.services.student_graduation import build_graduation_report
+
+    Prerequisite.objects.filter(program=PROG).delete()  # everything independent
+    g = build_graduation_report(SID, 1448, 1, courses_per_term=2)
+    assert g["chain_floor_terms"] == 1
+    assert g["pace_terms"] == 2  # 4 courses at 2 a term
+    assert g["terms_estimate"] == 2
+
+
+def test_graduation_surfaces_the_credit_hour_gate(plan):
+    from core.services.student_graduation import build_graduation_report
+
+    Student.objects.filter(student_id=SID).update(
+        total_earned_credits=40, current_registered_credits=0
+    )
+    g = build_graduation_report(SID, 1448, 1)
+    assert [x["code"] for x in g["hour_gates"]] == ["TCAP"]
+    assert g["hour_gates"][0]["remaining"] == 60
+
+
+def test_studying_courses_are_not_counted_as_finished(plan):
+    from core.services.student_graduation import build_graduation_report
+
+    StudentCourse.objects.update_or_create(
+        student_id=SID,
+        course=Course.objects.get(course_code="TA101"),
+        defaults={"status": "studying", "programme_term": 1},
+    )
+    g = build_graduation_report(SID, 1448, 1)
+    assert g["plan_courses_passed"] == 0  # still has to pass it
+    assert g["remaining_courses"] == 4
+    assert len(g["in_progress"]) == 1
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+def test_graduation_screen_is_session_scoped(plan):
+    u = student_otp.provision_student_user(SID)
+    c = Client()
+    c.force_login(u)
+    r = c.get("/student/graduation/")
+    assert r.status_code == 200
+    assert r.context["student_id"] == SID
+    assert c.get("/student/graduation/?student_id=4930002").context["student_id"] == SID
