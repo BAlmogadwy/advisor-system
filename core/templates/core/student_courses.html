@@ -1,5 +1,5 @@
 {% extends "core/base.html" %}
-{% load i18n %}{% get_current_language as LANGUAGE_CODE %}
+{% load static i18n %}{% get_current_language as LANGUAGE_CODE %}
 
 {% block title %}{% if LANGUAGE_CODE == 'ar' %}ماذا أستطيع أن أسجّل؟{% else %}What can I take?{% endif %}{% endblock %}
 
@@ -153,7 +153,34 @@
   {% endif %}
 </div>
 
-{# ── 4. Already done / in progress ── #}
+{# ── 4. My plan as a picture (collapsed: heavy to draw, optional to read) ── #}
+{% if report.graph and report.graph.items %}
+<div class="card p-3 mb-3">
+  <details id="scGraphWrap">
+    <summary>{% if LANGUAGE_CODE == 'ar' %}خطتي كرسم بياني{% else %}See my plan as a picture{% endif %}</summary>
+    <div class="p-2">
+      <p class="small text-secondary">
+        {% if LANGUAGE_CODE == 'ar' %}كل مربع مقرر، والأسهم تعني «متطلب سابق». الألوان: مجتاز، تدرسه الآن، متاح الآن، محجوب. يُقرأ الرسم من اليسار إلى اليمين.{% else %}Each box is a course and each arrow means “is a prerequisite for”. Colours: passed, studying now, open now, blocked.{% endif %}
+      </p>
+      <div class="cpanel">
+        <div class="cp-h">
+          <span class="cp-t">{% if LANGUAGE_CODE == 'ar' %}{{ report.program }} — خريطة المتطلبات{% else %}{{ report.program }} — prerequisite map{% endif %}</span>
+          <div class="pg-modes" role="group" aria-label="{% if LANGUAGE_CODE == 'ar' %}نمط العرض{% else %}Layout mode{% endif %}">
+            <button type="button" id="scPgTerm" class="pg-mode is-on" aria-pressed="true">{% if LANGUAGE_CODE == 'ar' %}حسب المستوى{% else %}By term{% endif %}</button>
+            <button type="button" id="scPgChain" class="pg-mode" aria-pressed="false">{% if LANGUAGE_CODE == 'ar' %}حسب السلسلة{% else %}By chain{% endif %}</button>
+          </div>
+        </div>
+        <div class="cp-b overflow-x" id="scGraph" dir="ltr" role="img"
+             aria-label="{% if LANGUAGE_CODE == 'ar' %}خريطة متطلبات برنامجك{% else %}Prerequisite map of your programme{% endif %}: {{ report.counts.passed }} passed, {{ report.counts.studying }} studying, {{ report.counts.open }} open, {{ report.counts.locked }} blocked">
+        </div>
+      </div>
+      <p class="small text-secondary mb-0 mt-1">{% if LANGUAGE_CODE == 'ar' %}يُفضّل عرضه على شاشة أكبر.{% else %}Best viewed on a larger screen.{% endif %}</p>
+    </div>
+  </details>
+</div>
+{% endif %}
+
+{# ── 5. Already done / in progress ── #}
 <div class="card p-3">
   <details>
     <summary>{% if LANGUAGE_CODE == 'ar' %}المقررات المكتملة والجارية{% else %}Already done and in progress{% endif %}
@@ -179,5 +206,14 @@
 <div class="card p-3">
   <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}تعذّر إعداد خطتك الآن. حاول لاحقًا أو راجع مرشدك الأكاديمي.{% else %}We could not build your plan right now. Please try again later or contact your academic advisor.{% endif %}</p>
 </div>
+{% endif %}
+{% endblock %}
+
+{% block extra_js %}
+{% if report.graph and report.graph.items %}
+  {{ report.graph|json_script:"scGraphData" }}
+  <script>window.__STUDENT_GRAPH__ = JSON.parse(document.getElementById('scGraphData').textContent);</script>
+  <script src="{% static 'js/prereq-graph.js' %}?v=1"></script>
+  <script src="{% static 'js/page-student-graph.js' %}?v=1"></script>
 {% endif %}
 {% endblock %}

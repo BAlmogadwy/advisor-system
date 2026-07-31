@@ -215,7 +215,32 @@ def build_unlock_report(student_id: int, year: int, term: int) -> dict:
         key=lambda r: (r["steps"] is None, r["steps"] or 99, -r["frees_eventually"], r["code"])
     )
 
+    # ── payload for the personalised dependency graph ──
+    # Nodes come from prerequisite edges only, so a course with no prerequisite row
+    # would be invisible; extra_nodes puts the whole plan on the map.
+    status_of = {}
+    for code, i in info.items():
+        status_of[code] = (
+            i["status"]
+            if i["status"] in ("passed", "studying")
+            else "open"
+            if i["open"]
+            else "locked"
+        )
+    graph = {
+        "items": [
+            {"course_code": c, "prerequisite_course_code": p}
+            for c, i in info.items()
+            for p in i["course_prereqs"]
+        ],
+        "termOf": {c: i["term"] for c, i in info.items() if i["term"]},
+        "nameOf": {c: i["name"] for c, i in info.items() if i["name"]},
+        "statusOf": status_of,
+        "extraNodes": sorted(info),
+    }
+
     return {
+        "graph": graph,
         "program": program,
         "counts": {
             "open": len(open_courses),

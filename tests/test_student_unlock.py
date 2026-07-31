@@ -187,3 +187,36 @@ def test_screen_survives_a_builder_failure(plan, monkeypatch):
     r = c.get("/student/courses/")
     assert r.status_code == 200  # degrades, never 500s
     assert r.context["report"] is None
+
+
+# ── personalised dependency graph payload ──
+
+
+def test_graph_payload_covers_the_whole_plan_not_just_edges(plan):
+    """Nodes used to come from prerequisite edges only, so a course with no
+    prerequisite row was invisible. extraNodes must carry the whole plan."""
+    g = _report()["graph"]
+    assert set(g["extraNodes"]) == {"TA101", "TB201", "TC301", "TCAP"}
+    # TA101 and TCAP have no incoming course edge, yet must still be drawable
+    edge_endpoints = {e["course_code"] for e in g["items"]} | {
+        e["prerequisite_course_code"] for e in g["items"]
+    }
+    assert "TCAP" not in edge_endpoints  # invisible without extraNodes
+    assert "TCAP" in g["extraNodes"]
+
+
+def test_graph_status_matches_the_report(plan):
+    r = _report()
+    g = r["graph"]
+    assert g["statusOf"]["TA101"] == "open"
+    assert g["statusOf"]["TB201"] == "locked"
+    assert g["statusOf"]["TCAP"] == "open"  # hour gate met
+    # the hour-gate pseudo-prerequisite is never a graph node
+    assert "100(HOURS)" not in g["statusOf"]
+    assert all("HOUR" not in e["prerequisite_course_code"].upper() for e in g["items"])
+
+
+def test_graph_terms_feed_the_band_axis(plan):
+    g = _report()["graph"]
+    assert g["termOf"]["TA101"] == 1 and g["termOf"]["TCAP"] == 9
+    assert g["nameOf"]["TB201"] == "Beta"
