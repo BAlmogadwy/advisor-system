@@ -9,7 +9,11 @@ from core.models import Course, Prerequisite, ProgrammeRequirement, Student
 from core.services.advisors import list_students_by_advisor
 from core.services.conflict_matrix import build_conflict_matrix_report, export_conflict_matrix_xlsx
 from core.services.debug_reporting import build_recommendation_debug_report
-from core.services.eligibility import build_course_eligibility_report
+from core.services.eligibility import (
+    build_course_eligibility_report,
+    hour_gate,
+    split_hour_prereqs,
+)
 from core.services.high_priority_missing import (
     export_missing_high_priority_xlsx,
     run_missing_high_priority_report,
@@ -261,7 +265,13 @@ def _build_student_plan_payload(student_id: int) -> tuple[dict | None, JsonRespo
             status = "not_taken"
 
         prereqs = get_prerequisites(code, program)
-        missing_prereqs = [p for p in prereqs if p not in satisfied_pool]
+        # A "146(HOURS)" prerequisite is a credit-hour gate, not a course. Tested as a
+        # course code it can never be satisfied, which locked every capstone forever.
+        course_prereqs, required_hours = split_hour_prereqs(prereqs)
+        missing_prereqs = [p for p in course_prereqs if p not in satisfied_pool]
+        gate = hour_gate(student_id, required_hours) if required_hours else None
+        if gate is not None and not gate["met"]:
+            missing_prereqs = [*missing_prereqs, f"{required_hours}(HOURS)"]
         prereqs_ok = len(missing_prereqs) == 0
         can_register = status == "not_taken" and prereqs_ok
 
