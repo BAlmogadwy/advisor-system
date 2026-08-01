@@ -47,9 +47,104 @@ BACKGROUND_ONLY = "BACKGROUND_ONLY"
 CONFLICTING = "CONFLICTING"
 IRRELEVANT = "IRRELEVANT"
 
-#: Claim shapes only a governing record may support. A background record may be
-#: mentioned as existing; it may never be the source of one of these.
-RESTRICTED_CLAIM_TYPES = frozenset({"NUMERICAL_LIMIT", "ELIGIBILITY", "DEADLINE"})
+#: A claim is NORMATIVE when it tells the student what the institution requires,
+#: permits, forbids, means, or where to go. Only DIRECT_SUPPORT may ground one.
+#:
+#: The first draft of this boundary listed three types — limit, eligibility,
+#: deadline — and would have stopped q165 while letting q196 straight through: that
+#: failure defined الحرمان and named an appeal route, neither of which is a number.
+#: Restricting by claim SHAPE was the error; the boundary is normative vs not.
+NORMATIVE_CLAIM_TYPES = frozenset(
+    {
+        "NUMERICAL_LIMIT",
+        "ELIGIBILITY",
+        "DEADLINE",
+        "PROHIBITION",
+        "OBLIGATION",
+        "REGULATORY_DEFINITION",
+        "PROCEDURE",
+        "RESPONSIBLE_AUTHORITY",
+        "APPEAL_ROUTE",
+        "PERSONALISED_DECISION",
+    }
+)
+
+#: The record-level vocabulary the scope was authored in maps onto the claim-level
+#: one. Every record type lands somewhere normative — which is the point: a policy
+#: record exists to say what the institution requires, so a BACKGROUND record can
+#: support no substantive claim at all. What it CAN support is the meta-statement
+#: that related material exists and does not answer the question.
+_RECORD_TYPE_TO_CLAIM_TYPES = {
+    "NUMERICAL_LIMIT": {"NUMERICAL_LIMIT"},
+    "DEADLINE": {"DEADLINE"},
+    "ELIGIBILITY": {"ELIGIBILITY", "PROHIBITION"},
+    "PROCEDURE": {"PROCEDURE", "RESPONSIBLE_AUTHORITY", "APPEAL_ROUTE"},
+    "CONSEQUENCE": {"OBLIGATION", "PROHIBITION"},
+    "DEFINITION": {"REGULATORY_DEFINITION"},
+    "ENTITLEMENT": {"ELIGIBILITY", "OBLIGATION"},
+}
+
+#: Retained for callers that imported the narrower name; the boundary is the set
+#: above.
+RESTRICTED_CLAIM_TYPES = NORMATIVE_CLAIM_TYPES
+
+
+def claim_types_a_record_may_support(record_claim_types: list[str] | None) -> set[str]:
+    out: set[str] = set()
+    for t in record_claim_types or []:
+        out |= _RECORD_TYPE_TO_CLAIM_TYPES.get(t, set())
+    return out
+
+
+def validate_claims(claims: list[dict[str, Any]], classification: dict[str, Any]) -> dict[str, Any]:
+    """Reject normative claims that no DIRECT_SUPPORT record backs.
+
+    Runs BEFORE the Arabic answer is composed, which is the whole point: a claim
+    rejected here never reaches a student, whereas the judge catches it after the
+    fact and can only force a retry. Both q165 and q196 fail here.
+    """
+    roles = {
+        p["policy_id"]: p.get("role")
+        for key in (
+            "direct_policy_evidence",
+            "background_policy_evidence",
+            "conflicting_policy_evidence",
+            "irrelevant_policy_evidence",
+        )
+        for p in classification.get(key) or []
+    }
+
+    accepted: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for claim in claims or []:
+        claim_type = str(claim.get("claim_type") or "").upper()
+        supporting = [str(p) for p in (claim.get("supporting_policy_ids") or [])]
+        support_roles = [roles.get(p, "NOT_RETRIEVED") for p in supporting]
+        entry = {**claim, "support_roles": support_roles}
+
+        if claim_type not in NORMATIVE_CLAIM_TYPES:
+            accepted.append(entry)
+            continue
+        if DIRECT_SUPPORT in support_roles:
+            accepted.append(entry)
+            continue
+        entry["rejection"] = (
+            "NORMATIVE_CLAIM_WITHOUT_DIRECT_SUPPORT"
+            if supporting
+            else "NORMATIVE_CLAIM_WITH_NO_SUPPORT"
+        )
+        entry["rejection_detail"] = (
+            f"a {claim_type} claim may only rest on a policy that governs this "
+            f"question; the cited records are {', '.join(sorted(set(support_roles))) or 'absent'}"
+        )
+        rejected.append(entry)
+
+    return {
+        "ok": not rejected,
+        "accepted": accepted,
+        "rejected": rejected,
+        "rejected_count": len(rejected),
+    }
 
 
 def _load(root: Path, name: str) -> dict[str, Any]:

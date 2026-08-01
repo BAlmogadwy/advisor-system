@@ -448,7 +448,10 @@ def test_non_empty_result_gets_the_citation_instruction_not_the_abstention_one(
     )
     assert result["policies"]
     assert "no written rule" not in result["note"]
-    assert "Cite ONLY these policies" in result["note"]
+    # The instruction now depends on whether anything RETRIEVED actually governs the
+    # question, so the synthetic store's withdrawal query gets the direct-evidence
+    # form. What must never appear here is the abstention text.
+    assert "direct_policy_evidence" in result["note"] or "Cite ONLY" in result["note"]
 
 
 def test_prohibited_for_decision_is_surfaced_verbatim():

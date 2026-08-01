@@ -1644,6 +1644,29 @@ def _exec_policy_lookup(
     if not result.get("ok"):
         return result
 
+    # Sort what came back by whether it GOVERNS the question. Retrieval is broad on
+    # purpose; without this the model receives a related record and a governing one
+    # in the same undifferentiated list, which is how a programme-duration rule came
+    # to supply a course-repetition percentage.
+    from core.services.policy_applicability import classify
+
+    roles = classify(
+        result["policies"],
+        question=query or topic or "",
+        topics=result.get("matched_topics") or [],
+        store=store,
+    )
+    result["question_concepts"] = roles["question_concepts"]
+    result["direct_policy_evidence"] = roles["direct_policy_evidence"]
+    result["background_policy_evidence"] = roles["background_policy_evidence"]
+    result["conflicting_policy_evidence"] = roles["conflicting_policy_evidence"]
+    result["irrelevant_policy_evidence"] = roles["irrelevant_policy_evidence"]
+
+    # Citations are offered ONLY for direct evidence. A background record displayed
+    # beside the answer reads as authority for the question whatever the prose says.
+    direct_ids = {p["policy_id"] for p in roles["direct_policy_evidence"]}
+    result["citable"] = [c for c in result["citable"] if c["policy_id"] in direct_ids]
+
     if not result["policies"]:
         result["note"] = (
             "No approved policy matches. Do NOT answer the rule from general "
@@ -1651,9 +1674,27 @@ def _exec_policy_lookup(
             "student to the Deanship of Admission and Registration. Retrying with a "
             "topic from available_topics is worth one attempt."
         )
+    elif not roles["direct_policy_evidence"]:
+        result["note"] = (
+            "NOTHING RETRIEVED GOVERNS THIS QUESTION. Records came back, but none of "
+            "them is about what was asked — they are in background_policy_evidence "
+            "and irrelevant_policy_evidence. You may say that related material exists "
+            "and does not answer the question. You may NOT take a number, a "
+            "percentage, a deadline, a definition, a procedure, an appeal route, a "
+            "responsible authority, or any statement of what is allowed or required "
+            "from them, and you may not cite them. Answer any student-data part of "
+            "the question normally, then say the guide does not state the rule and "
+            "refer the student to عمادة القبول والتسجيل."
+        )
     else:
         result["note"] = (
-            "Cite ONLY these policies, using the entries in `citable` exactly as "
+            "Use direct_policy_evidence for anything the university REQUIRES, "
+            "PERMITS, FORBIDS, DEFINES, or tells the student WHERE TO GO. Those "
+            "records govern this question; nothing else does. "
+            "background_policy_evidence is related material that does NOT answer it "
+            "— you may note that it exists, and you may not draw a limit, deadline, "
+            "definition, procedure or eligibility from it. "
+            "Cite ONLY the entries in `citable`, using them exactly as "
             "given - policy_id, document, edition and page. Never cite a policy that "
             "is not in this list, and never state a page number that is not in its "
             "citation. Where decision_use is PROHIBITED_FOR_DECISION, explain what "
