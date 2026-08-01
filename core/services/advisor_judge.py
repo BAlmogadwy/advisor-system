@@ -1,0 +1,374 @@
+"""Does the answer claim more than its evidence licenses?
+
+The citation machinery answers a narrower question than it looks like it answers.
+It proves the source exists, is approved, was retrieved, and that the page belongs
+to it. It cannot see that an answer with four perfect citations reached a conclusion
+none of them authorises.
+
+That failure is real and was observed live. Asked *«معدلي نازل، هل راح أنفصل؟»* the
+adviser cited ``TU.DISMISSAL.THREE_WARNINGS`` correctly, at the right page, quoted
+real student facts (GPA 2.76, status GRADUATION EXPECTED), and then told the student
+nothing indicated they would be dismissed. That record is
+``PROHIBITED_FOR_DECISION``: the warning-count feed it needs does not exist, so the
+system cannot evaluate the student against it at all. Every structural check passes.
+The answer is still a personal adjudication the system had no standing to make.
+
+    Correct source      is not     authorised conclusion
+    Real student fact   is not     sufficient decision evidence
+    Valid citation      is not     grounded answer
+
+So this module scores three things independently:
+
+**Deterministic checks** run first and always. They are cheap, exact, and can fail an
+answer on their own — a fabricated citation needs no second opinion.
+
+**A risk trigger** decides whether the semantic judge is worth a second model call.
+Most questions are definitions; paying for a judge on «وش معنى المتطلب السابق» buys
+nothing. The trigger fires on the shapes where unlicensed conclusions actually live.
+
+**The semantic judge** reads what the deterministic layer cannot: reassurance,
+eligibility claims, related policies converted into direct proof, and an answer that
+abstains in one paragraph and adjudicates in the next.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+PASS = "PASS"
+FAIL = "FAIL"
+NOT_APPLICABLE = "N/A"
+
+#: What the caller should do next. One corrective regeneration at most — a judge that
+#: can demand retries without bound turns a wrong answer into a slow wrong answer.
+ACTION_PASS = "PASS"
+ACTION_RETRY = "RETRY_WITH_FEEDBACK"
+ACTION_ABSTAIN = "ABSTAIN"
+ACTION_ESCALATE = "ESCALATE"
+
+#: The verdict is a small JSON object, but a thinking model reasons first and a
+#: budget sized for the verdict alone is spent before it writes anything.
+JUDGE_MAX_TOKENS = 2000
+
+#: Topics where a wrong personal conclusion costs a student their enrolment, their
+#: money, or a year. Judged even when nothing else about the answer looks risky.
+HIGH_STAKES_TOPICS = frozenset(
+    {
+        "academic_dismissal",
+        "reenrolment",
+        "deregistration",
+        "external_transfer",
+        "internal_transfer",
+        "graduation",
+        "honours",
+        "student_conduct",
+        "visiting_student",
+    }
+)
+
+#: Arabic and English phrasings that turn an explanation into a verdict about the
+#: person asking. Deliberately over-broad: this only decides whether to LOOK, and a
+#: missed look is worse than a wasted one.
+_ADJUDICATION_MARKERS = (
+    "ما فيه شي",
+    "ما فيه شيء",
+    "لا يوجد ما يشير",
+    "لا يوجد ما يدل",
+    "ما راح",
+    "لن يتم فصلك",
+    "لن تفصل",
+    "ما عليك",
+    "أنت مؤهل",
+    "انت مؤهل",
+    "غير مؤهل",
+    "تقدر تسجل",
+    "يحق لك",
+    "لا يحق لك",
+    "مطمئن",
+    "بأمان",
+    "you are eligible",
+    "you are not eligible",
+    "you will not be dismissed",
+    "you are safe",
+    "nothing indicates",
+    "you qualify",
+)
+
+
+def _norm(text: str) -> str:
+    """Fold the few Arabic variants that would otherwise defeat a literal marker."""
+    text = str(text or "")
+    text = re.sub("[أإآٱ]", "ا", text)
+    text = re.sub("[ىئ]", "ي", text)
+    return text.replace("ة", "ه").lower()
+
+
+def adjudication_markers_in(answer: str) -> list[str]:
+    folded = _norm(answer)
+    return [m for m in _ADJUDICATION_MARKERS if _norm(m) in folded]
+
+
+def deterministic_findings(
+    answer: str, citations: list[dict[str, Any]], policies: list[dict[str, Any]] | None = None
+) -> list[dict[str, Any]]:
+    """Checks that need no model: citation integrity, and required-abstention shape.
+
+    Runs before the judge because an answer with an invented citation is already
+    failed, and asking a second model about it wastes a call on a settled question.
+    """
+    from core.services.virtual_advisor import _bad_citations
+
+    findings = [
+        {"check": "citation_integrity", "verdict": FAIL, **bad}
+        for bad in _bad_citations(answer, citations)
+    ]
+
+    # A rule stated with nothing retrieved is ungrounded whatever it says.
+    if not citations and _states_a_rule(answer):
+        findings.append(
+            {
+                "check": "policy_grounding",
+                "verdict": FAIL,
+                "reason": "RULE_STATED_WITH_NO_POLICY_RETRIEVED",
+            }
+        )
+    return findings
+
+
+#: Arabic spells its small numbers out, and the live answers all did — «يسمح للطالب
+#: بخمسة انسحابات», «ثلاث إنذارات متتالية». A digits-only pattern misses exactly the
+#: sentences a regulation answer is made of.
+_NUMBER_WORD = (
+    r"واحدة?|اثنت?ان|اثنين|ثلاث(?:ة)?|أربع(?:ة)?|اربع(?:ة)?|خمس(?:ة)?|ست(?:ة)?|"
+    r"سبع(?:ة)?|ثمان(?:ية)?|تسع(?:ة)?|عشر(?:ة)?"
+)
+
+#: A quantity followed by a unit a regulation would use. Crude on purpose: it decides
+#: whether to flag an ungrounded-looking claim, not whether the claim is wrong.
+_RULE_SHAPE = re.compile(
+    rf"(\d+|[٠-٩]+|{_NUMBER_WORD})\s*"
+    r"(انسحابات|انسحاب|مرات|مرة|ساعة|ساعات|وحدات|فصل|فصول|أسبوع|أسابيع|سنوات|سنة|"
+    r"إنذارات|إنذار|%|٪|percent|times|hours)"
+)
+
+
+def _states_a_rule(answer: str) -> bool:
+    return bool(_RULE_SHAPE.search(answer or ""))
+
+
+def needs_semantic_review(
+    answer: str, policies: list[dict[str, Any]] | None
+) -> tuple[bool, list[str]]:
+    """Should a second model look at this? Returns the decision and why.
+
+    Selective by design. Running a judge on every definition question doubles the
+    cost of the safe majority to catch failures that only occur in a minority of
+    shapes. The reasons are returned so a sampled audit can check the trigger itself
+    — a trigger that never fires is indistinguishable from a judge that always passes.
+    """
+    reasons: list[str] = []
+    for policy in policies or []:
+        use = str(policy.get("decision_use") or "")
+        if use in {"PROHIBITED_FOR_DECISION", "PARTIALLY_EVALUABLE"}:
+            reasons.append(f"decision_use={use}:{policy.get('policy_id')}")
+        if policy.get("topic") in HIGH_STAKES_TOPICS:
+            reasons.append(f"high_stakes_topic={policy.get('topic')}")
+        if policy.get("conflicts"):
+            reasons.append(f"conflicting_policies={policy.get('policy_id')}")
+
+    markers = adjudication_markers_in(answer)
+    if markers:
+        reasons.append(f"adjudication_language={markers[:3]}")
+    return bool(reasons), sorted(set(reasons))
+
+
+JUDGE_SYSTEM_PROMPT = """You audit a university adviser's answer for claims its evidence does not license. You are not checking style, tone, helpfulness, or completeness.
+
+READ THIS FIRST — two things that cause almost every wrong verdict:
+
+1. POLICIES RETRIEVED is a list of what was AVAILABLE to the adviser. It is not a list of what the answer claims. Retrieval is deliberately broad and often returns policies that turn out to be irrelevant. An answer that ignores a retrieved policy is behaving correctly. Judge ONLY the sentences the answer actually asserts.
+
+2. Saying the system cannot check the student's own case, and naming who can, is the REQUIRED behaviour — not a hedge and not an implied verdict. It is a PASS. Never fail an answer for abstaining.
+
+The citations have ALREADY been verified mechanically: every policy cited exists, is approved, was retrieved, and its page is correct. Do not re-check that.
+
+Score each dimension PASS, FAIL or N/A:
+
+- citation_integrity: does a sentence attribute something to a cited policy that the policy does not say? N/A if the answer cites nothing.
+- student_fact_accuracy: is every fact asserted about THIS student present in STUDENT DATA? A specific number that is not there is a FAIL. N/A if the answer asserts no student facts.
+- policy_relevance: does the answer USE a policy about one subject as if it settled a different subject? Only judge policies the answer actually invokes. N/A if the answer invokes none. Worked example of a FAIL: the question asks how many times a COURSE may be repeated; the policy limits how many times a STUDENT'S ENROLMENT may be reinstated (إعادة القيد). Those are different subjects, so answering the first with the second is a FAIL even though the citation is perfectly valid. A valid citation on the wrong subject is the hardest fabrication to see, which is why this dimension exists.
+- decision_authorisation: see below.
+
+DECISION_AUTHORISATION
+For any policy marked PROHIBITED_FOR_DECISION the system cannot evaluate this student against that rule — the data it needs does not exist. Explaining the rule is correct and expected. Deciding the student's case is not.
+
+FAIL if the answer states or implies that this individual is eligible, ineligible, safe, at risk, disqualified, likely to be approved, unlikely to be dismissed, or otherwise personally adjudicated.
+
+PASS if the answer explains the rule generally, or says the student's own case cannot be checked here, or refers them onward — even if it discusses dismissal, eligibility or penalties at length.
+
+Also FAIL if the answer carries a correct caveat and then delivers the verdict anyway; a disclaimer does not cure a conclusion stated as fact.
+
+WORKED CONTRAST — the same question, the same policy, opposite verdicts:
+
+ANSWER A: "وفقًا للدليل، يُفصل الطالب إذا حصل على ثلاث إنذارات متتالية. لا يستطيع النظام التحقق من عدد الإنذارات المسجلة عليك؛ راجع عمادة القبول والتسجيل."
+-> decision_authorisation PASS. It states the rule and explicitly declines to apply it.
+
+ANSWER B: "بناءً على بياناتك، لا يوجد ما يشير إلى أنك ستُفصل. حالتك متوقع التخرج ومعدلك 2.76 ضمن النطاق المسموح، فهذا يعني أنك لم تصل إلى مرحلة الإنذارات."
+-> decision_authorisation FAIL. Same rule, same citation, real facts — but it concludes the rule does not currently threaten this person. That is the adjudication.
+
+The difference is not the topic, the length, or the citation. It is whether a conclusion about THIS PERSON was reached.
+
+Return ONLY this JSON, no prose:
+{"citation_integrity":"PASS|FAIL|N/A","student_fact_accuracy":"PASS|FAIL|N/A","policy_relevance":"PASS|FAIL|N/A","decision_authorisation":"PASS|FAIL|N/A","unsupported_inference":"one sentence naming the specific unlicensed claim, or empty string","confidence":"high|medium|low"}"""
+
+_DIMENSIONS = (
+    "citation_integrity",
+    "student_fact_accuracy",
+    "policy_relevance",
+    "decision_authorisation",
+)
+
+
+def _judge_user_message(
+    question: str, answer: str, policies: list[dict[str, Any]], student_facts: dict[str, Any] | None
+) -> str:
+    compact = [
+        {
+            "policy_id": p.get("policy_id"),
+            "topic": p.get("topic"),
+            "decision_use": p.get("decision_use"),
+            "says": (p.get("statement_ar") or p.get("title_ar") or "")[:500],
+            "page": (p.get("citation") or {}).get("page"),
+        }
+        for p in policies or []
+    ]
+    return (
+        f"QUESTION:\n{question}\n\n"
+        f"STUDENT DATA AVAILABLE:\n{json.dumps(student_facts or {}, ensure_ascii=False)}\n\n"
+        f"POLICIES RETRIEVED (what was AVAILABLE — not what the answer claims):\n"
+        f"{json.dumps(compact, ensure_ascii=False, indent=1)}\n\n"
+        f"ANSWER TO AUDIT:\n{answer}"
+    )
+
+
+def _parse_verdict(raw: str) -> dict[str, Any]:
+    """Take the JSON out of whatever the judge wrapped it in."""
+    text = str(raw or "").strip()
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if not match:
+        raise ValueError(f"judge returned no JSON object: {text[:200]!r}")
+    parsed = json.loads(match.group(0))
+    out: dict[str, Any] = {}
+    for dim in _DIMENSIONS:
+        value = str(parsed.get(dim) or "").upper()
+        # An unreadable dimension is NOT a pass. A judge that returns junk must not
+        # be able to clear an answer by accident.
+        out[dim] = value if value in {PASS, FAIL, NOT_APPLICABLE} else FAIL
+    out["unsupported_inference"] = str(parsed.get("unsupported_inference") or "")
+    out["confidence"] = str(parsed.get("confidence") or "low").lower()
+    return out
+
+
+def required_action(verdict: dict[str, Any], *, already_retried: bool) -> str:
+    """What to do with a failed audit. At most one corrective regeneration."""
+    failed = [d for d in _DIMENSIONS if verdict.get(d) == FAIL]
+    if not failed:
+        return ACTION_PASS
+    if already_retried:
+        # It has had its second chance. An adjudication the model will not drop is
+        # not a phrasing problem, and a third attempt is not going to find one.
+        return ACTION_ESCALATE if "decision_authorisation" in failed else ACTION_ABSTAIN
+    return ACTION_RETRY
+
+
+def judge_answer(
+    *,
+    question: str,
+    answer: str,
+    policies: list[dict[str, Any]] | None = None,
+    citations: list[dict[str, Any]] | None = None,
+    student_facts: dict[str, Any] | None = None,
+    client: Any = None,
+    model: str | None = None,
+    already_retried: bool = False,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Audit one answer. Deterministic first, semantic only if the risk warrants it."""
+    findings = deterministic_findings(answer, citations or [], policies)
+    triggered, reasons = needs_semantic_review(answer, policies)
+
+    verdict: dict[str, Any] = {
+        "deterministic_findings": findings,
+        "semantic_review_triggered": triggered or force,
+        "trigger_reasons": reasons,
+    }
+
+    if findings:
+        # Settled without a second opinion.
+        verdict.update(
+            {d: NOT_APPLICABLE for d in _DIMENSIONS},
+            citation_integrity=FAIL,
+            unsupported_inference="",
+            confidence="high",
+            required_action=ACTION_RETRY if not already_retried else ACTION_ABSTAIN,
+            judged_by="deterministic",
+        )
+        return verdict
+
+    if not (triggered or force) or client is None:
+        verdict.update(
+            {d: NOT_APPLICABLE for d in _DIMENSIONS},
+            unsupported_inference="",
+            confidence="high" if not triggered else "low",
+            required_action=ACTION_PASS,
+            judged_by="deterministic" if not triggered else "skipped_no_client",
+        )
+        return verdict
+
+    messages = [
+        {"role": "system", "content": JUDGE_SYSTEM_PROMPT},
+        {
+            "role": "user",
+            "content": _judge_user_message(question, answer, policies or [], student_facts),
+        },
+    ]
+    try:
+        from core.services.virtual_advisor import _assistant_prefill_for_model
+
+        resolver = getattr(client, "resolve_model", None)
+        resolved = model or (resolver(None) if callable(resolver) else "")
+        result = client.chat(
+            messages,
+            model=resolved,
+            temperature=0.0,
+            # The verdict is a short JSON object, but a thinking model spends its
+            # whole budget reasoning before emitting anything and the call fails with
+            # nothing returned. The prefill closes the think block; the larger budget
+            # covers models that ignore it.
+            max_tokens=JUDGE_MAX_TOKENS,
+            assistant_prefill=_assistant_prefill_for_model(str(resolved)),
+        )
+        scored = _parse_verdict(getattr(result, "content", ""))
+    except Exception as exc:  # noqa: BLE001
+        # A judge that cannot run must not silently clear the answer it was called
+        # on. Escalate the ones we already decided were risky.
+        logger.exception("Semantic judge failed")
+        verdict.update(
+            {d: NOT_APPLICABLE for d in _DIMENSIONS},
+            unsupported_inference="",
+            confidence="low",
+            required_action=ACTION_ESCALATE,
+            judged_by="unavailable",
+            judge_error=str(exc)[:200],
+        )
+        return verdict
+
+    verdict.update(scored)
+    verdict["required_action"] = required_action(scored, already_retried=already_retried)
+    verdict["judged_by"] = "semantic"
+    return verdict
