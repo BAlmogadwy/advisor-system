@@ -1,0 +1,400 @@
+# PROVISIONAL EXPERT ANNOTATION — NOT GROUND TRUTH.
+#
+# Every proposal here was written by the same agent that built the runtime being
+# evaluated. That is a conflict of interest, not a formality: an annotator who also
+# owns the classifier has an incentive to label its output correct. Nothing in this
+# file may be promoted to ground truth without human confirmation, and none of it
+# carries annotation_status: human_approved.
+#
+# WHAT THIS REVIEWS
+# -----------------
+# The 26 questions where the mechanical derivation reclassified a legacy policy
+# label as FORBIDDEN (25 distinct concept/policy pairs).
+#
+# THE TEST APPLIED
+# ----------------
+# FORBIDDEN only when using the policy for this question would produce a FALSE
+# normative conclusion — the wrong regulatory institution, rule, limit or procedure.
+# NOT merely because the record cannot answer the whole question alone. That weaker
+# reading is what made the mechanical pass call TU.GRADE.SCALE forbidden for a GPA
+# question, when grade weights are what a GPA is computed from.
+#
+#   DIRECT      entails at least one requested normative claim
+#   BACKGROUND  supplies legitimate inputs or context, cannot conclude alone
+#   FORBIDDEN   using it would support the wrong rule
+#   IRRELEVANT  contributes nothing
+#   CONFLICTING bears on the question but loses on authority/version
+#
+# THE HEADLINE FINDING
+# --------------------
+# Only 4 of 25 survive as genuinely FORBIDDEN. 6 are DIRECT and were wrongly
+# forbidden, and THREE OF THOSE EXPOSE A RUNTIME DEFECT RATHER THAN A LABEL ONE:
+# q77, q240 and q271 have their question-concept resolved incorrectly, so the
+# applicability layer would deny direct evidence to a question the store genuinely
+# answers. Those are filed as runtime bugs, not annotation disagreements.
+
+schema_version: "1.0"
+scope_version: semantic_scope_v1
+reviewed_by: developer_agent
+annotation_status: needs_human_confirmation
+conflict_of_interest: >
+  The reviewer authored semantic_scope.yaml, the applicability layer and the
+  runtime under evaluation. Treat every proposal as advocacy requiring
+  independent confirmation, particularly the six that would widen what the
+  system is allowed to cite.
+
+summary:
+  pairs_reviewed: 25
+  proposed_forbidden: 4
+  proposed_direct: 6
+  proposed_background: 15
+  runtime_defects_found: 3
+
+runtime_defects_found:
+  - id: CONCEPT_MISRESOLUTION_INTERNAL_TRANSFER
+    question_id: 77
+    detail: >
+      «أقدر أحول لكلية ثانية داخل الجامعة؟» asks about transfer INSIDE the
+      university and resolves to concept external_transfer. The governing records
+      TU.TRANSFER.INTERNAL_COLLEGE and TU.TRANSFER.DEPARTMENT_OR_MAJOR are
+      therefore denied direct status on a question they exactly answer. The word
+      داخل الجامعة is present and unambiguous; the alias table lacks it.
+    severity: high
+    fix: add an internal-transfer discriminator keyed on داخل الجامعة / بين الكليات
+
+  - id: CONCEPT_SPLIT_STRANDS_DISMISSAL_BY_DURATION
+    question_id: 240
+    detail: >
+      «أقصى شي أقدر أقعد كم فصل قبل ما يفصلوني على المدة؟» asks precisely about
+      dismissal for exceeding the duration, and resolves to university_dismissal,
+      while TU.DISMISSAL.DURATION_EXCEEDED carries concept
+      programme_maximum_duration. The split I introduced to separate them — which
+      is right for q165 — strands the one question that legitimately spans both.
+    severity: high
+    fix: >
+      allow a policy to declare compatible_concepts, so
+      programme_maximum_duration can be direct for a duration-dismissal question
+      without becoming direct for a course-repetition one.
+
+  - id: CONCEPT_SPLIT_STRANDS_GRADUATION_DOCUMENTS
+    question_id: 271
+    detail: >
+      «متى توزيع وثائق التخرج؟» resolves to graduation_requirements while
+      TU.GRADUATION.DOCUMENTS carries academic_documents. Same shape as q240: the
+      graduation topic was split into two concepts and the discriminator aliases
+      do not cover a distribution-timing question.
+    severity: medium
+    fix: extend the graduation concept aliases, or compatible_concepts as above
+
+proposals:
+  # ── genuinely forbidden: using these produces a false rule ────────
+  - question_id: 33
+    question: هل حذف المادة يأثر على معدلي؟
+    concept: course_withdrawal
+    legacy_policy_id: TU.LEAVE.COMPARISON
+    mechanical_role: forbidden
+    reviewer_proposal:
+      proposed_role: forbidden
+      confidence: high
+      reasoning: >
+        The record is a side-by-side table of اعتذار / تأجيل / انسحاب whose
+        course-withdrawal cells are explicitly not_stated. The danger is not that
+        it fails to answer — it is that the neighbouring اعتذار cell DOES carry a
+        transcript mark (ع), and reading across the row yields a confident, wrong
+        answer about what a course withdrawal does to the GPA.
+    evidence:
+      policy_claims_relevant: [the three instruments are distinct]
+      policy_claims_not_relevant: [gpa effect of a course withdrawal — cell is not_stated]
+      scope_rules_triggered: [excluded_concept_match, concept_mismatch]
+
+  - question_id: 65
+    question: أقدر أؤجل الدراسة بعد ما سجلت المواد؟
+    concept: study_deferral
+    legacy_policy_id: TU.EXCUSE.PROCEDURE
+    mechanical_role: forbidden
+    reviewer_proposal:
+      proposed_role: forbidden
+      confidence: high
+      reasoning: >
+        The excuse procedure and the deferral procedure are word-for-word
+        identical apart from the instrument name, and bind DIFFERENT calendar
+        deadlines. Using the excuse record for a deferral question yields a
+        confidently wrong date — the most dangerous shape, because the sentence
+        reads correct and the citation is genuine.
+    evidence:
+      policy_claims_relevant: []
+      policy_claims_not_relevant: [deferral deadline, deferral procedure]
+      scope_rules_triggered: [excluded_concept_match, concept_mismatch]
+
+  - question_id: 68
+    question: هل أحتاج سبب رسمي عشان أعتذر عن الترم؟
+    concept: semester_excuse
+    legacy_policy_id: TU.LEAVE.COMPARISON
+    mechanical_role: forbidden
+    reviewer_proposal:
+      proposed_role: forbidden
+      confidence: medium
+      reasoning: >
+        The question asks whether a formal reason is REQUIRED — an ELIGIBILITY
+        claim. The comparison table states no eligibility condition for اعتذار at
+        all, so any yes/no drawn from it is invented. Medium rather than high
+        because the table legitimately establishes that اعتذار exists as a
+        distinct instrument, which is a background use.
+    evidence:
+      policy_claims_relevant: [اعتذار is a distinct instrument]
+      policy_claims_not_relevant: [whether a documented reason is required]
+      scope_rules_triggered: [excluded_concept_match]
+
+  - question_id: 72
+    question: وش شروط التحويل الداخلي؟
+    concept: internal_transfer
+    legacy_policy_id: TU.TRANSFER.EXTERNAL
+    mechanical_role: forbidden
+    reviewer_proposal:
+      proposed_role: forbidden
+      confidence: high
+      reasoning: >
+        External-transfer conditions (recognised foreign institution, licensing)
+        answered against an internal-transfer question would state requirements
+        that do not apply to the student at all. Different regulatory institution,
+        different conditions, both real and approved.
+    evidence:
+      policy_claims_relevant: []
+      policy_claims_not_relevant: [internal transfer eligibility, credit minimums]
+      scope_rules_triggered: [excluded_concept_match, concept_mismatch]
+
+  # ── wrongly forbidden: these DIRECTLY answer the question ─────────
+  - question_id: 56
+    question: وش الفرق بين محروم وراسب؟
+    concept: course_deprivation
+    legacy_policy_id: TU.GRADE.SPECIAL_SYMBOLS
+    mechanical_role: forbidden
+    reviewer_proposal:
+      proposed_role: direct
+      confidence: medium
+      reasoning: >
+        The question asks what محروم means as against راسب — a
+        REGULATORY_DEFINITION claim about record symbols, which is exactly what
+        this record contains. Forbidding it leaves the question with no way to be
+        answered from the store at all.
+    evidence:
+      policy_claims_relevant: [the (ح) symbol and its meaning on the record]
+      policy_claims_not_relevant: [the absence percentage causing deprivation]
+      scope_rules_triggered: [excluded_concept_match]
+
+  - question_id: 77
+    question: أقدر أحول لكلية ثانية داخل الجامعة؟
+    concept: external_transfer
+    legacy_policy_id: TU.TRANSFER.INTERNAL_COLLEGE
+    mechanical_role: forbidden
+    reviewer_proposal:
+      proposed_role: direct
+      confidence: high
+      reasoning: >
+        The question says داخل الجامعة — inside the university — and this record
+        states the conditions for exactly that. The forbidden verdict follows from
+        the question's concept resolving to external_transfer, which is a RUNTIME
+        defect (see CONCEPT_MISRESOLUTION_INTERNAL_TRANSFER), not a labelling one.
+    evidence:
+      policy_claims_relevant: [internal college transfer conditions, credit minimum]
+      policy_claims_not_relevant: []
+      scope_rules_triggered: [concept_mismatch — arising from mis-resolution]
+
+  - question_id: 240
+    question: خطتي ثمانية فصول. أقصى شي أقدر أقعد كم فصل قبل ما يفصلوني على المدة؟
+    concept: university_dismissal
+    legacy_policy_id: TU.DISMISSAL.DURATION_EXCEEDED
+    mechanical_role: forbidden
+    reviewer_proposal:
+      proposed_role: direct
+      confidence: high
+      reasoning: >
+        This is the one question that legitimately spans both halves of the
+        dismissal split: it asks how long before dismissal ON DURATION. The record
+        is the governing one. The same split correctly forbids this record for
+        q165's repetition question, so the concepts should not be merged — the
+        record needs compatible_concepts instead.
+    evidence:
+      policy_claims_relevant: [half the nominal duration plus the programme duration]
+      policy_claims_not_relevant: [repetition limits, credit percentages]
+      scope_rules_triggered: [concept_mismatch — the split is right, the mapping is too rigid]
+
+  - question_id: 247
+    question: رمز (ح) كم وزنه في المعدل؟
+    concept: [course_deprivation, gpa_calculation]
+    legacy_policy_id: TU.GRADE.SPECIAL_SYMBOLS
+    mechanical_role: forbidden
+    reviewer_proposal:
+      proposed_role: direct
+      confidence: high
+      reasoning: >
+        The question asks what a specific record symbol weighs. This record is the
+        symbol table. Nothing else in the store defines (ح).
+    evidence:
+      policy_claims_relevant: [the (ح) symbol]
+      policy_claims_not_relevant: []
+      scope_rules_triggered: [excluded_concept_match]
+
+  - question_id: 248
+    question: في كشف الدرجات عندي رمز (ع) على ترم كامل — هذا معناه إني منسحب بعذر من مقرر؟
+    concept: [grade_scale, semester_excuse]
+    legacy_policy_id: TU.LEAVE.COMPARISON
+    mechanical_role: forbidden
+    reviewer_proposal:
+      proposed_role: direct
+      confidence: medium
+      reasoning: >
+        Unlike q33 and q68, this question IS the comparison the table makes: does
+        a whole-term (ع) mean the same as a course-level excused withdrawal. The
+        table distinguishing the instruments is the answer. Medium because the
+        store carries an unresolved W/(ع) symbol collision that the answer must
+        surface rather than resolve.
+    evidence:
+      policy_claims_relevant: [اعتذار about a term differs from انسحاب from a course]
+      policy_claims_not_relevant: [the gpa weight of (ع)]
+      scope_rules_triggered: [excluded_concept_match]
+
+  - question_id: 271
+    question: متى توزيع وثائق التخرج؟
+    concept: graduation_requirements
+    legacy_policy_id: TU.GRADUATION.DOCUMENTS
+    mechanical_role: forbidden
+    reviewer_proposal:
+      proposed_role: direct
+      confidence: high
+      reasoning: >
+        The question asks about graduation documents and this is the graduation
+        documents record. Forbidden only because the graduation topic was split
+        and the discriminator aliases do not cover distribution timing — a RUNTIME
+        defect (CONCEPT_SPLIT_STRANDS_GRADUATION_DOCUMENTS).
+    evidence:
+      policy_claims_relevant: [who issues graduation documents and replacements]
+      policy_claims_not_relevant: [the timing of distribution, which the record does not state]
+      scope_rules_triggered: [concept_mismatch — arising from the split]
+
+  # ── legitimate context, not forbidden and not conclusive ──────────
+  - question_ids: [56, 60]
+    legacy_policy_id: TU.WITHDRAWAL.DEPRIVATION_BAR
+    mechanical_role: forbidden
+    reviewer_proposal:
+      proposed_role: background
+      confidence: medium
+      reasoning: >
+        "A deprived student may not withdraw" is a true consequence of
+        deprivation and genuine context for distinguishing محروم from راسب. It
+        cannot state the threshold or the record effect, so it may not conclude
+        alone — but using it produces no false rule.
+
+  - question_ids: [60, 63]
+    legacy_policy_id: TU.GRADE.SPECIAL_SYMBOLS
+    mechanical_role: forbidden
+    reviewer_proposal:
+      proposed_role: background
+      confidence: medium
+      reasoning: >
+        The symbol table is legitimate context for what appears on the record, but
+        for q63 the store's W/(ع) collision is unresolved, so it must not be used
+        to assert a GPA weight for an excused term. Background, with the collision
+        surfaced.
+
+  - question_id: 41
+    question: كيف أحسب معدلي الفصلي؟
+    concept: gpa_calculation
+    legacy_policy_id: TU.GRADE.SCALE
+    mechanical_role: forbidden
+    reviewer_proposal:
+      proposed_role: background
+      confidence: high
+      reasoning: >
+        Grade weights are an INPUT to the GPA calculation; TU.GPA.FORMULA supplies
+        the formula. Using the scale produces no false conclusion, it simply
+        cannot compute the average alone. This is the case that showed the
+        mechanical rule was reading excluded_intents too strongly.
+
+  - question_id: 247
+    legacy_policy_id: TU.GRADE.SCALE
+    mechanical_role: forbidden
+    reviewer_proposal:
+      proposed_role: background
+      confidence: high
+      reasoning: >
+        Supplies the weight scheme the (ح) question is asked against; the symbol
+        record is the direct one.
+
+  - question_id: 77
+    legacy_policy_id: TU.TRANSFER.DEPARTMENT_OR_MAJOR
+    mechanical_role: forbidden
+    reviewer_proposal:
+      proposed_role: direct
+      confidence: medium
+      reasoning: >
+        Transfer between departments inside a college is part of what «داخل
+        الجامعة» covers; same mis-resolution as INTERNAL_COLLEGE above, though a
+        college-to-college question is not strictly a department question.
+
+  - question_id: 77
+    legacy_policy_id: TU.VISITING.NO_TRANSFER_DURING_VISIT
+    mechanical_role: forbidden
+    reviewer_proposal:
+      proposed_role: background
+      confidence: medium
+      reasoning: >
+        A real bar on transferring while a visiting student — relevant context for
+        transfer eligibility, but it governs the visiting period, not the
+        internal-transfer conditions asked about.
+
+  - question_ids: [127, 128, 131]
+    legacy_policy_ids:
+      - TU.CONTACT.ADVISER_CHANNELS
+      - TU.CONTACT.DEANSHIP
+      - TU.ADVISING.CONTINUING_STUDENT_PROGRAMME
+      - TU.REG.ADVISER_DUTIES_AT_REGISTRATION
+    mechanical_role: forbidden
+    reviewer_proposal:
+      proposed_role: background
+      confidence: medium
+      reasoning: >
+        All three questions are "the portal will not let me register — who do I
+        see?". These records legitimately support a RESPONSIBLE_AUTHORITY claim
+        (which office, which adviser, when they meet) and must not be used to
+        explain WHY the permission is missing, which none of them states. Marking
+        them forbidden would strip the only actionable part of the answer.
+
+  - question_id: 177
+    question: وش يصير إذا تجاوزت المدة النظامية؟
+    concept: programme_maximum_duration
+    legacy_policy_id: TU.DEF.PROGRAMME_AND_COURSES
+    mechanical_role: forbidden
+    reviewer_proposal:
+      proposed_role: background
+      confidence: medium
+      reasoning: >
+        A terminology record may define المدة النظامية; it states no consequence,
+        so it cannot answer "what happens". Context, not a false rule.
+
+  - question_id: 189
+    question: متى ينزل الحرمان في النظام؟
+    concept: course_deprivation
+    legacy_policy_id: TU.ATTENDANCE.AUTO_REGISTRATION_TRAP
+    mechanical_role: forbidden
+    reviewer_proposal:
+      proposed_role: background
+      confidence: medium
+      reasoning: >
+        Explains a real route by which students reach deprivation without
+        realising. Genuine context; states no timing, so it cannot answer "when".
+
+  - question_id: 224
+    question: مفكر أأجل AI331 ترم واحد لأنها ثقيلة
+    concept: study_deferral
+    legacy_policy_id: TU.ATTENDANCE.DEFERRING_EARLY_COURSES_TRAP
+    mechanical_role: forbidden
+    reviewer_proposal:
+      proposed_role: background
+      confidence: high
+      reasoning: >
+        The record warns against deferring early-level COURSES, and the question
+        is about deferring one course. Directly pertinent advisory context. It is
+        advice rather than a rule, so it grounds no normative claim — background is
+        the right role, and forbidden would discard the most useful thing the store
+        has to say here.
