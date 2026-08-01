@@ -184,7 +184,13 @@ def test_recommendation_policy_exposes_real_credit_limit():
     context = build_verified_student_context(student_id=SID, academic_year=1448, term=1)
 
     policy = context["recommendation_policy"]
-    assert policy["max_term_credit_hours"] == 18
+    # The suggestion cap and the registration ceiling are DIFFERENT numbers.
+    assert policy["max_recommended_credit_hours"] == 18
+    assert policy["regulatory_max_credit_hours"] == 19
+    assert policy["regulatory_min_credit_hours"] == 12
+    assert "max_term_credit_hours" not in policy, (
+        "the old key conflated the advisory cap with the university limit"
+    )
     assert policy["recommended_credit_hours"] <= 18
     recs = context["recommendations"]
     assert {rec["course_code"] for rec in recs} == {"AI305"}
@@ -208,7 +214,54 @@ def test_recommend_capability_reports_credit_policy():
         ctx={"academic_year": 1448, "term": 1},
     )
     assert result["ok"] is True
-    assert result["credit_policy"]["max_term_credit_hours"] == 18
+    assert result["credit_policy"]["max_recommended_credit_hours"] == 18
+    assert result["credit_policy"]["regulatory_max_credit_hours"] == 19
+    assert "max_term_credit_hours" not in result["credit_policy"]
     assert result["credit_policy"]["recommended_credit_hours"] == 3
     assert result["credit_policy"]["credit_hours_unknown_for"] == []
     assert result["recommendations"][0]["credit_hours"] == 3
+
+
+def test_recommendation_cap_is_below_the_registration_ceiling():
+    """18 is what we SUGGEST; 19 is what the university lets a student register.
+
+    Guarding the distinction itself rather than either number: if someone later
+    "tidies" these into one constant, a student asking how many hours they may
+    register gets told 18 and quietly loses a unit they are entitled to.
+    """
+    from core.services.credit_policy import (
+        RECOMMENDED_MAX_CREDITS,
+        REGULATORY_MAX_CREDITS,
+        REGULATORY_MIN_CREDITS,
+        credit_policy_evidence,
+    )
+
+    assert RECOMMENDED_MAX_CREDITS < REGULATORY_MAX_CREDITS
+    assert REGULATORY_MIN_CREDITS < RECOMMENDED_MAX_CREDITS
+
+    evidence = credit_policy_evidence(recommended_credit_hours=15, unknown_for=[])
+    assert evidence["max_recommended_credit_hours"] == RECOMMENDED_MAX_CREDITS
+    assert evidence["regulatory_max_credit_hours"] == REGULATORY_MAX_CREDITS
+    assert "max_term_credit_hours" not in evidence
+    # The note must tell the model the two differ, or the field names alone will
+    # not stop it presenting the cap as the limit.
+    assert "regulatory_max_credit_hours" in evidence["note"]
+    assert "max_recommended_credit_hours" in evidence["note"]
+
+
+def test_both_recommenders_share_one_cap():
+    """recommender and recommender_batch held the literal 18 independently."""
+    from core.services import recommender, recommender_batch
+    from core.services.credit_policy import RECOMMENDED_MAX_CREDITS
+
+    assert recommender.MAX_CREDITS == RECOMMENDED_MAX_CREDITS
+    assert recommender_batch.MAX_CREDITS == RECOMMENDED_MAX_CREDITS
+
+
+def test_advisor_prompts_teach_the_distinction():
+    from core.services.virtual_advisor import SYSTEM_PROMPT, SYSTEM_PROMPT_AGENT
+
+    for prompt in (SYSTEM_PROMPT, SYSTEM_PROMPT_AGENT):
+        assert "regulatory_max_credit_hours" in prompt
+        assert "max_recommended_credit_hours" in prompt
+        assert "max_term_credit_hours" not in prompt

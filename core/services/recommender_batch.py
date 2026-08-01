@@ -31,10 +31,13 @@ from __future__ import annotations
 from collections import defaultdict
 
 from core.models import Prerequisite, ProgrammeRequirement, Student, StudentCourse
+from core.services.credit_policy import RECOMMENDED_MAX_CREDITS
 from core.services.student_helpers import normalize_code
 
-# Maximum credit hours a student may register for in one semester.
-MAX_CREDITS = 18
+# The ADVISORY cap this system fills up to — NOT the number of hours a student
+# may register, which is higher. Was a duplicated literal; now shared so the two
+# recommenders cannot drift apart. See core/services/credit_policy.py.
+MAX_CREDITS = RECOMMENDED_MAX_CREDITS
 
 
 def calculate_real_student_term(

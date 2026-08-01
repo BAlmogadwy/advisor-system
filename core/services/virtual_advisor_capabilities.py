@@ -540,7 +540,8 @@ def _exec_recommend_courses(
     args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
 ) -> dict[str, Any]:
     from core.models import ElectiveCourse, ProgrammeRequirement, Student
-    from core.services.recommender import MAX_CREDITS, recommend_next_courses
+    from core.services.credit_policy import credit_policy_evidence
+    from core.services.recommender import recommend_next_courses
     from core.services.virtual_advisor import _course_names
 
     student_id, error = _resolve_scoped_student_id(args, scope)
@@ -587,18 +588,10 @@ def _exec_recommend_courses(
             }
             for code in codes
         ],
-        "credit_policy": {
-            "max_term_credit_hours": MAX_CREDITS,
-            "recommended_credit_hours": sum(
-                credit_map[code] for code in codes if code in credit_map
-            ),
-            "credit_hours_unknown_for": [code for code in codes if code not in credit_map],
-            "note": (
-                "recommendations are already capped to max_term_credit_hours for this "
-                "term; the current term's registered credits do not reduce this "
-                "allowance"
-            ),
-        },
+        "credit_policy": credit_policy_evidence(
+            recommended_credit_hours=sum(credit_map[code] for code in codes if code in credit_map),
+            unknown_for=[code for code in codes if code not in credit_map],
+        ),
     }
 
 
@@ -1108,7 +1101,8 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                 "Compute the official next-term course recommendations for one "
                 "student using the verified recommender. The returned list is "
                 "already capped to the university's per-term credit limit "
-                "(credit_policy.max_term_credit_hours) — it IS the registerable "
+                "(credit_policy.regulatory_max_credit_hours; the list itself stops at "
+                "max_recommended_credit_hours, which is LOWER) — it is the suggested "
                 "set for the planning term. Use for 'what can I register next "
                 "term' questions."
             ),
