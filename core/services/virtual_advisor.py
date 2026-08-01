@@ -66,7 +66,7 @@ def _tool_turn_timeout() -> float:
     return max(10.0, float(getattr(settings, "VIRTUAL_ADVISOR_TOOL_TURN_TIMEOUT_SECONDS", 75)))
 
 
-SYSTEM_PROMPT = """You are a private local university virtual academic advisor.
+SYSTEM_PROMPT_TEMPLATE = """You are a private local university virtual academic advisor.
 
 Rules:
 - Answer in the same language as the user's latest question. When the user message carries an answer_language field, write the final answer in that language.
@@ -84,9 +84,11 @@ Rules:
 - Never expose chain-of-thought; provide concise evidence from the context instead.
 - Treat recommendations as advising support, not official approval.
 - For list questions, summarize the count, filters used, and show the most relevant rows instead of repeating every row.
+
+{POLICY_RULES}
 """
 
-SYSTEM_PROMPT_AGENT = """You are a private local university virtual academic advisor with verified data tools.
+SYSTEM_PROMPT_AGENT_TEMPLATE = """You are a private local university virtual academic advisor with verified data tools.
 
 Rules:
 - Write the final answer in the language named by the answer_language field of the user message. Never switch languages on your own.
@@ -108,15 +110,57 @@ Rules:
 - Treat recommendations as advising support, not official approval.
 - For list questions, summarize the count and filters used, then show the most relevant rows.
 
-UNIVERSITY RULES — what is allowed, required, how long, how many, what happens if:
-- Call policy_lookup FIRST for any such question, passing the student's question verbatim as query. Never state a rule, deadline, limit, penalty or entitlement from your own knowledge — not even one you are confident about. Your training contains other universities' regulations, and they are wrong here.
-- Cite only policies policy_lookup returned in THIS conversation, using its `citable` entries. Write every citation in EXACTLY this form, including the square brackets: «الدليل الإرشادي للطالب، ص NN [POLICY_ID]» — take NN from that policy's citation.page and POLICY_ID from its citation.policy_id, both verbatim. The bracketed id is how the system checks your citation; an answer that states a rule without one is treated as uncited. Never cite a policy or a page that did not come back from the tool, and never pair a page with a policy it does not belong to.
-- If policy_lookup returns no policy, say the system holds no written rule on it and refer the student to عمادة القبول والتسجيل. Answer any non-policy part of the question from the data tools as usual, and say which part you could not answer. Silence about the gap is the failure, not the gap.
-- Retrieval returns the NEIGHBOURHOOD of a question, not proof that an answer is in it. Read what came back before relying on it: if the policies are about the right subject but none actually states the rule asked about — how many times a course may be repeated, whether lateness counts as absence — say the guide does not state it. Stretching the nearest policy to cover the gap is a fabrication with a real citation attached, which is worse than an obvious one because it survives checking.
-- decision_use governs how far you may go, and has exactly four values. PROHIBITED_FOR_DECISION: the rule exists but this system cannot check the student against it — explain the rule, say plainly that their own case cannot be verified here, and name who can. Do not rule on their situation, do not estimate, do not say "you are probably fine". PARTIALLY_EVALUABLE: some inputs exist and others do not — say which part you could check and which you could not, and never present the result as a final determination. PERMITTED_WITH_USER_PROVIDED_INPUTS: usable only with figures the student supplies in the conversation; ask for them, and never substitute stored data. EXPLANATORY_ONLY: a statement of fact with no decision in it. A value you do not recognise is to be treated as PROHIBITED_FOR_DECISION.
-- If a returned policy carries `conflicts`, two sources disagree and the resolution names which one governs. Follow it, quote the governing document, and say the other source differs. Never average the two, never pick silently, and never repeat the superseded figure as the operative rule.
-- Rules and the student's own data are different claims. Keep them separate in the answer: what the regulation says (cited), then what the system knows about this student (from the data tools), then what follows. Never present a rule as a verdict about the student.
+{POLICY_RULES}
 """
+
+#: The policy contract, shared verbatim by BOTH answer paths. It used to live only
+#: in the agent prompt, so when the loop was disabled or the model rejected tool
+#: calling, the fallback answered regulation questions from parametric memory with
+#: nothing to check — a complete grounding bypass, and invisible because the
+#: citation check finds nothing to object to when nothing was retrieved.
+_POLICY_RULES_HEADER = (
+    "UNIVERSITY RULES — what is allowed, required, how long, how many, what happens if:"
+)
+
+_NEVER_FROM_MEMORY = (
+    "Never state a rule, deadline, limit, penalty or entitlement from your own "
+    "knowledge — not even one you are confident about. Your training contains other "
+    "universities' regulations, and they are wrong here."
+)
+
+_POLICY_RULES_TAIL = """- Cite only policies retrieved for THIS question. Write every citation in EXACTLY this form, including the square brackets: «الدليل الإرشادي للطالب، ص NN [POLICY_ID]» — take NN from that policy's citation.page and POLICY_ID from its citation.policy_id, both verbatim. The bracketed id is how the system checks your citation; an answer that states a rule without one is treated as uncited. Never cite a policy or a page that was not retrieved, and never pair a page with a policy it does not belong to.
+- If no policy was retrieved, say the system holds no written rule on it and refer the student to عمادة القبول والتسجيل. Answer any non-policy part of the question from the available evidence as usual, and say which part you could not answer. Silence about the gap is the failure, not the gap.
+- Retrieval returns the NEIGHBOURHOOD of a question, not proof that an answer is in it. Read what came back before relying on it: if the policies are about the right subject but none actually states the rule asked about — how many times a course may be repeated, whether lateness counts as absence — say the guide does not state it. Stretching the nearest policy to cover the gap is a fabrication with a real citation attached, which is worse than an obvious one because it survives checking.
+- decision_use governs how far you may go, and has exactly four values. PROHIBITED_FOR_DECISION: the rule exists but this system cannot check the student against it — explain the rule, say plainly that their own case cannot be verified here, and name who can. Do not rule on their situation, do not estimate, do not say "you are probably fine", and do not tell them that dismissal, approval, eligibility or safety is or is not indicated for them. PARTIALLY_EVALUABLE: some inputs exist and others do not — say which part you could check and which you could not, and never present the result as a final determination. PERMITTED_WITH_USER_PROVIDED_INPUTS: usable only with figures the student supplies in the conversation; ask for them, and never substitute stored data. EXPLANATORY_ONLY: a statement of fact with no decision in it. A value you do not recognise is to be treated as PROHIBITED_FOR_DECISION.
+- If a returned policy carries `conflicts`, two sources disagree and the resolution names which one governs. Follow it, quote the governing document, and say the other source differs. Never average the two, never pick silently, and never repeat the superseded figure as the operative rule.
+- Rules and the student's own data are different claims. Keep them separate in the answer: what the regulation says (cited), then what the system knows about this student, then what follows. Never present a rule as a verdict about the student.
+"""
+
+#: Agent path: the model fetches its own policies.
+POLICY_RULES_AGENT = (
+    f"{_POLICY_RULES_HEADER}\n"
+    "- Call policy_lookup FIRST for any such question, passing the student's question "
+    f"verbatim as query. {_NEVER_FROM_MEMORY}\n"
+    f"{_POLICY_RULES_TAIL}"
+)
+
+#: Single-shot path: there are no tools, so retrieval already happened and the result
+#: — including "nothing matched" — is in the context. Without this the fallback had no
+#: policy contract at all and answered regulation questions from parametric memory.
+POLICY_RULES_SEEDED = (
+    f"{_POLICY_RULES_HEADER}\n"
+    "- You have NO tools on this path. The approved policies for this question were "
+    "retrieved for you and are in verified_context.policy_evidence; that is the "
+    "complete set available and there is no way to fetch more. "
+    f"{_NEVER_FROM_MEMORY}\n"
+    "- If policy_evidence.policies is empty, or the key is absent, then NO approved "
+    "policy was retrieved and you must not state a rule at all — say the system holds "
+    "no written rule on this and refer the student to عمادة القبول والتسجيل.\n"
+    f"{_POLICY_RULES_TAIL}"
+)
+
+SYSTEM_PROMPT_AGENT = SYSTEM_PROMPT_AGENT_TEMPLATE.format(POLICY_RULES=POLICY_RULES_AGENT)
+SYSTEM_PROMPT = SYSTEM_PROMPT_TEMPLATE.format(POLICY_RULES=POLICY_RULES_SEEDED)
 
 
 ADVISOR_TOOL_SCHEMAS: list[dict[str, Any]] = [
@@ -1223,6 +1267,52 @@ def _uncheckable_pages(answer: str, allowed: list[dict[str, Any]]) -> list[int]:
     return sorted(cited - known)
 
 
+def _seed_policy_evidence(question: str) -> tuple[dict[str, Any], str]:
+    """Retrieve policies for a path that has no tools of its own.
+
+    Returns the same shape ``policy_lookup`` produces, plus a grounding state for
+    telemetry so an ungrounded answer is distinguishable after the fact:
+
+      ``retrieved``    approved policies came back
+      ``none_matched`` the store was consulted and held nothing applicable
+      ``unavailable``  the store could not be consulted at all
+
+    All three are acceptable answers to "was this grounded?"; what is not acceptable
+    is not knowing. On ``unavailable`` the contract still holds — the prompt tells the
+    model that an absent or empty ``policies`` list means it may not state a rule —
+    so a store outage degrades to abstention rather than to model memory.
+    """
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    try:
+        result = get_default_registry().execute(
+            "policy_lookup", {"query": question}, scope={"role": ROLE_STUDENT}, ctx={}
+        )
+    except Exception:  # pragma: no cover - never fail an answer on a store error
+        logger.exception("Policy store unavailable while seeding the single-shot path")
+        return (
+            {
+                "tool": "policy_lookup",
+                "ok": False,
+                "policies": [],
+                "citable": [],
+                "note": (
+                    "The policy store could not be consulted for this question. State "
+                    "no rule at all; say the system could not check its regulations "
+                    "and refer the student to عمادة القبول والتسجيل."
+                ),
+            },
+            "unavailable",
+        )
+
+    if not isinstance(result, dict) or not result.get("ok"):
+        return (
+            {"tool": "policy_lookup", "ok": False, "policies": [], "citable": []},
+            "unavailable",
+        )
+    return (result, "retrieved" if result.get("policies") else "none_matched")
+
+
 def _retrieved_citations(tool_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Citations the answer is entitled to use: what policy_lookup returned here.
 
@@ -1528,6 +1618,23 @@ def answer_virtual_advisor(
                 telemetry=telemetry,
             )
             telemetry["loop_used"] = True
+            # Whether this answer had a policy basis is recorded on BOTH paths, so an
+            # ungrounded rule answer is distinguishable after the fact instead of
+            # looking exactly like a grounded one. On this path the model chooses
+            # whether to call policy_lookup; "not_consulted" is therefore a real
+            # outcome, and catching a rule stated under it is the judge's job.
+            called = {t.get("name") for t in telemetry.get("tools_called") or []}
+            if "policy_lookup" not in called:
+                telemetry["policy_grounding"] = "not_consulted"
+            else:
+                consulted = [
+                    r
+                    for r in agent_tool_results
+                    if isinstance(r, dict) and r.get("tool") == "policy_lookup"
+                ]
+                telemetry["policy_grounding"] = (
+                    "retrieved" if any(r.get("policies") for r in consulted) else "none_matched"
+                )
             # The UI evidence panel reads ``tool_results``; in loop mode
             # the agent's tool results are that evidence.
             tool_results = agent_tool_results
@@ -1541,6 +1648,26 @@ def answer_virtual_advisor(
         tool_results = run_planned_tools(question, scope=scope)
         if tool_results:
             context["tool_results"] = tool_results
+
+        # ...and the policy store is consulted for EVERY question on this path.
+        #
+        # This path has no tools, so the model cannot fetch a rule itself. Until this
+        # was added it simply answered regulation questions from parametric memory:
+        # no citation, no retrieval, and nothing for the citation check to object to,
+        # because a model that never saw a policy id will not emit one. A complete
+        # grounding bypass that looked identical to a grounded answer.
+        #
+        # Retrieval is attempted unconditionally rather than behind a "does this look
+        # like a policy question" guess: a classifier that says no is exactly how the
+        # bypass comes back, and the lookup is a local deterministic dict scan.
+        policy_evidence, grounding = _seed_policy_evidence(question)
+        telemetry["policy_grounding"] = grounding
+        context["policy_evidence"] = policy_evidence
+        if policy_evidence.get("policies"):
+            # Feed the same structure the agent loop produces, so the citation check
+            # and the response contract work identically on both paths.
+            agent_tool_results = [*agent_tool_results, policy_evidence]
+
         context_json = json.dumps(context, ensure_ascii=False)
         user_message = {
             "role": "user",
