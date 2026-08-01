@@ -1,0 +1,67 @@
+# Concept discriminators for the topics that hold more than one regulatory concept.
+#
+# WHY ONLY FIVE ENTRIES
+# ---------------------
+# 22 of the 27 topics map to exactly one concept, so for those the topic already
+# identifies the concept and nothing more is needed. Five topics hold two concepts
+# each, and those five are where the live failures happened — the split is not a
+# tidying exercise, it is the distinction the adviser got wrong:
+#
+#   q196  asked how to appeal الحرمان (deprivation from a COURSE, by attendance)
+#         and was answered with الفصل من الجامعة (dismissal from ENROLMENT, by
+#         warnings). Both sit under topics a retriever reaches from absence-adjacent
+#         words.
+#
+#   q165  asked how many times a COURSE may be repeated and was answered from
+#         TU.DISMISSAL.DURATION_EXCEEDED, which governs PROGRAMME duration.
+#
+# HOW THESE ARE USED
+# ------------------
+# They only DISCRIMINATE WITHIN a topic the question already resolved to. They
+# never route a question to a topic on their own — that stays with topic_aliases —
+# so a stray word here cannot pull an unrelated topic into play.
+#
+# Matching is the same per-word, variant-expanded comparison the topic aliases use.
+
+schema_version: "1.0"
+
+concepts:
+  - topic: academic_dismissal
+    concept_id: university_dismissal
+    aliases_ar: [إنذار, إنذارات, ثلاث إنذارات, يفصلوني, مفصول, الفصل الأكاديمي, معدلي نازل]
+
+  - topic: academic_dismissal
+    concept_id: programme_maximum_duration
+    aliases_ar: [المدة النظامية, تجاوزت المدة, مدة التخرج, كم سنة أدرس, ضعف المدة, المدة المسموحة للتخرج]
+
+  - topic: attendance
+    concept_id: course_deprivation
+    aliases_ar: [الحرمان, محروم, حرموني, حرمان من الاختبار, منعوني من دخول الاختبار]
+
+  - topic: attendance
+    concept_id: attendance_requirement
+    aliases_ar: [الحضور, نسبة الغياب, كم غياب مسموح, غبت, التزام الحضور]
+
+  - topic: credit_load
+    concept_id: credit_load
+    aliases_ar: [عدد الساعات, كم ساعة أسجل, العبء الدراسي, الحد الأعلى للساعات, الحد الأدنى للساعات]
+
+  - topic: credit_load
+    concept_id: grade_scale
+    aliases_ar: [غير مكتمل, تقدير غير مكتمل, استكمال المقرر, IC]
+
+  - topic: graduation
+    concept_id: graduation_requirements
+    aliases_ar: [شروط التخرج, متى أتخرج, معدل التخرج, متطلبات التخرج]
+
+  - topic: graduation
+    concept_id: academic_documents
+    aliases_ar: [وثيقة التخرج, السجل الأكاديمي, بدل فاقد, إصدار الوثائق, شهادة التخرج]
+
+  - topic: registration_process
+    concept_id: registration_process
+    aliases_ar: [التسجيل, التسجيل المبكر, الحذف والإضافة, تعديل الجدول, الرغبات, متى يقفل التسجيل]
+
+  - topic: registration_process
+    concept_id: advising_relationship
+    aliases_ar: [صلاحية المرشد, المرشد يسجل لي, دور المرشد في التسجيل, واجبات المرشد]
