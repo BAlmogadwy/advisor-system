@@ -16,13 +16,21 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: &v_extracted
-    status: EXTRACTED
+  verification: &v_approved
+    status: AUTHORITY_APPROVED
     extracted_by: agent
     extracted_at: "2026-08-01"
-    source_verified_by: null
-    domain_reviewed_by: null
-    authority_approved_by: null
+    source_verified_by: project_owner
+    source_verified_at: "2026-08-01"
+    domain_reviewed_by: project_owner
+    domain_reviewed_at: "2026-08-01"
+    authority_approved_by: project_owner
+    authority_approved_at: "2026-08-01"
+    approval_basis: >
+      Owner instruction 2026-08-01. The project owner is acting as the authority for this
+      system's own use of these records. This is NOT a statement that the Deanship of
+      Admission and Registration has reviewed them, and it does not resolve any
+      open_question or contested marker — those survive approval unchanged.
   extraction_confidence: high
   answers_questions: [37, 139]
 
@@ -42,7 +50,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   answers_questions: [140]
   notes: >
@@ -68,7 +76,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   calendar_binding:
     document_id: TU_ACADEMIC_CALENDAR_1448_T1
@@ -103,7 +111,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   runtime_use: PROHIBITED_FOR_DECISION
   runtime_use_reason: >
@@ -156,7 +164,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   implementation_note: >
     This is a near-exact description of what the adviser subsystem already does:
@@ -182,7 +190,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   privacy_note: >
     The last right — "تعامل جميع ملفات ومعلومات الطلبة بسرية تامة" — is the
@@ -211,7 +219,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   notes: >
     The second duty independently confirms the source hierarchy: the guide tells
@@ -236,7 +244,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   provenance_significance: >
     THIS is the page that establishes the source hierarchy in sources.yaml — the

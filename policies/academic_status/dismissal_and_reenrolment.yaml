@@ -16,13 +16,21 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: &v_extracted
-    status: EXTRACTED
+  verification: &v_approved
+    status: AUTHORITY_APPROVED
     extracted_by: agent
     extracted_at: "2026-08-01"
-    source_verified_by: null
-    domain_reviewed_by: null
-    authority_approved_by: null
+    source_verified_by: project_owner
+    source_verified_at: "2026-08-01"
+    domain_reviewed_by: project_owner
+    domain_reviewed_at: "2026-08-01"
+    authority_approved_by: project_owner
+    authority_approved_at: "2026-08-01"
+    approval_basis: >
+      Owner instruction 2026-08-01. The project owner is acting as the authority for this
+      system's own use of these records. This is NOT a statement that the Deanship of
+      Admission and Registration has reviewed them, and it does not resolve any
+      open_question or contested marker — those survive approval unchanged.
   extraction_confidence: high
   runtime_use: PROHIBITED_FOR_DECISION
   runtime_use_reason: >
@@ -55,7 +63,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   runtime_use: PROHIBITED_FOR_DECISION
   runtime_use_reason: >
@@ -85,7 +93,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   notes: >
     Distinct from TU.WITHDRAWAL.* (course withdrawal). Conflating the two is the
@@ -109,7 +117,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   open_question: >
     The guide does not state the interruption period — it delegates to مجلس الجامعة.
@@ -129,7 +137,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
 
 - policy_id: TU.REENROLMENT.CONDITIONS
@@ -159,7 +167,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   runtime_use: PROHIBITED_FOR_DECISION
   runtime_use_reason: >
@@ -183,7 +191,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   notes: >
     Materially important and easy to miss: a new university id resets the counters
@@ -212,7 +220,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   emphasis_in_source: underlined
   runtime_use: PROHIBITED_FOR_DECISION
@@ -242,7 +250,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   runtime_use: PROHIBITED_FOR_DECISION
   runtime_use_reason: no withdrawal date and no disciplinary record

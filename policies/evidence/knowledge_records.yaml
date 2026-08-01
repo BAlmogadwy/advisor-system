@@ -16,11 +16,13 @@ records:
     year_gregorian: '2025'
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: الدليل الإرشادي للطالب والطالبة، الإصدار الثالث، 1447هـ - 2025م.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 4029d246c6c0eb1cb0216b9b585b7179c8c3baecd537ac0b66c6b6281c9113ea
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -34,12 +36,14 @@ records:
     المهيأة لخدمة الطالب والطالبة.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: يعرض الدليل كيفية الاستفادة من المرشد الأكاديمي، ونظام الدراسة، وطرق الاختبارات، والتسهيلات
     المهيأة لخدمة الطالب والطالبة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 582ac5b7d920243cc6beba111a8b13dcd6b30a49d92309faf48b4300a91b15f9
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -53,12 +57,14 @@ records:
     الإلكترونية، وتعريفاً بمفهوم الإرشاد الأكاديمي وأهدافه وأهميته ومحاوره وأدوار الطالب والمرشد.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: يقدم الدليل معلومات وقنوات مساعدة للحياة الجامعية، وشرحاً للآليات واللوائح الدراسية
     والأنظمة الإلكترونية، وتعريفاً بمفهوم الإرشاد الأكاديمي وأهدافه وأهميته ومحاوره وأدوار الطالب والمرشد.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 1dce03661ae6ea7fd5c32617d611ed02d65a8deb0725a9ca779cf31032f5916f
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -72,12 +78,14 @@ records:
     التواصل والفئات المستفيدة والحقوق والواجبات وخطوات التسجيل وتعليماته وبرامج ذوي الاحتياجات الخاصة.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: يتناول الفصل الأول المصطلحات، مفهوم الإرشاد، البرامج والأهداف والمحاور والأدوات ووسائل
     التواصل والفئات المستفيدة والحقوق والواجبات وخطوات التسجيل وتعليماته وبرامج ذوي الاحتياجات الخاصة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: f59320927156c7199ed284ae4a61f9fcdfd609560960b134cd47bf57cd7c31e6
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -92,13 +100,15 @@ records:
     والمخالفات.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: يتناول الفصل الثاني نظام الدراسة، الحالات الأكاديمية، الانسحاب والفصل والتحويل والتعثر
     والدرجات والسجل والمعدل والطالب الزائر وإعادة القيد والأعذار وتعديل الدرجات والتخرج ومرتبة الشرف والأخطاء
     والمخالفات.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: c8f84db4dc218760b64e19c1ea94d43ac5b6e3a8c0c6af1b0bb50c41f4ba8a1f
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -114,12 +124,14 @@ records:
   - السنة الأكاديمية
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: فصلان دراسيان أو أكثر وفصل صيفي إن وجد، أو أربع مستويات أو أكثر ومستوى صيفي أو مستويين
     صيفيين إن وجد.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 3d176ab74a2453a9064b97ea90c029b525f44c6f33c7dc2300c26e1e15bb04bf
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -133,12 +145,14 @@ records:
     الدراسية أو السنة الدراسية الكاملة.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: أسلوب الدراسة المتبع في كليات ومعاهد الجامعة، سواء بنظام المستويات الدراسية أو الفصول
     الدراسية أو السنة الدراسية الكاملة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 3f0dee33a05b3dbda4cc2051d851b1400f0e65bc3f319823a2db3aa50919860b
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -154,12 +168,14 @@ records:
   - الترم
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: مدة زمنية لا تقل عن خمسة عشر أسبوعاً في نظام الفصلين، ولا تقل عن اثني عشر أسبوعاً في
     نظام الفصول الثلاثة، ولا تدخل ضمنها فترات التسجيل والحذف والإضافة والاختبارات النهائية.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: a185915a52f05a916eb8f9265477c64cfbe522e569c38e3a0c84b9e3df334e87
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -173,12 +189,14 @@ records:
     أسابيع، ولا يقل إجمالي الأسابيع الدراسية عن أربعين أسبوعاً في العام.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: أسلوب دراسي تكون مدته أقل من الفصل الدراسي، بحيث لا تقل عن أربعة أسابيع ولا تزيد على
     ثمانية أسابيع، ولا يقل إجمالي الأسابيع الدراسية عن أربعين أسبوعاً في العام.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: c41606e4ed76fe3046e5f7383d595005506da966fb9825547357637185d663de
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -191,11 +209,13 @@ records:
   statement_ar: مدة زمنية لا تقل عن أربعين أسبوعاً في العام.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: مدة زمنية لا تقل عن أربعين أسبوعاً في العام.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 449336dc4e701acc319a18a04a4b4dcfc09a9543dafa637bcb114336a0ca3ad3
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -211,12 +231,14 @@ records:
   - الصيفي
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: مدة زمنية لا تقل عن ثمانية أسابيع لنظام الفصلين، ولا تقل عن ستة أسابيع لنظام الفصول
     الثلاثة، وتضاعف خلالها المدة المخصصة لكل مقرر.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: fe04dd9d7d608ecb4b5d47e448f756e4c5a168679e5ccfb1629dbce3c31bd6d5
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -230,12 +252,14 @@ records:
     مقرر.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: مدة زمنية لا تقل عن أربعة أسابيع لنظام المستوى الدراسي، وتضاعف خلالها المدة المخصصة
     لكل مقرر.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 557fe2148439e742305b1785d66d7b050199bf1af30919c092bb0329cac22dad
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -251,12 +275,14 @@ records:
   - الخطة
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: مجموعة المقررات الإجبارية والاختيارية والحرة التي تشكل وحداتها متطلبات التخرج، ويجب
     اجتيازها بنجاح للحصول على الدرجة العلمية في التخصص المحدد.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 8ef9d251f6428a324f275b1a9fa0015fb6317a5780994e767ef29c0726ea5298
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -272,12 +298,14 @@ records:
   - المادة
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: المادة الدراسية في خطة كل برنامج، ولها رقم ورمز ووصف للمحتوى، وتخضع للمتابعة والتقييم
     والتطوير، وقد تكون مستقلة أو لها متطلب سابق أو متطلب متزامن.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: fbc0f5a8e2c542529e7a0800d6a16db871024892419b92894f086a871e979eb6
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -293,12 +321,14 @@ records:
   - الساعة الدراسية
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: محاضرة نظرية أسبوعية أو درس سريري أو تمارين لا تقل مدته عن خمسين دقيقة، أو درس عملي
     لا تقل مدته عن مئة دقيقة، أو درس ميداني محدد في الخطة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 927437c7f4974aa8cb0bd16495baa08438556354319c9069e831ba12545fbcea
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -311,11 +341,13 @@ records:
   statement_ar: طرائق التعليم تشمل التعليم الحضوري والمدمج وعن بعد والذاتي وغيرها.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: طرائق التعليم تشمل التعليم الحضوري والمدمج وعن بعد والذاتي وغيرها.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 60415ac6e88d30801b25d574359392f42fcd76ae3313fec486973824e17ab729
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -330,11 +362,13 @@ records:
   - التجسير
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: برنامج مصمم لإكمال الدراسة من الدبلوم إلى البكالوريوس.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 6ee48d7629ab8b205c3c0b177343f409fe6adc379317df7d46b2d166c78454fd
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -348,12 +382,14 @@ records:
     والبحوث والأنشطة المتصلة بالمقرر.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: الدرجة الممنوحة للأعمال التي ينجزها الطالب خلال الفصل أو المستوى أو السنة، وتشمل الاختبارات
     والبحوث والأنشطة المتصلة بالمقرر.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 810371758f0ec4fad53b13e02f2ba67adab23dd981e9f23cf8534797c3864fdd
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -368,11 +404,13 @@ records:
   - الفاينل
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: اختبار يعقد مرة واحدة في نهاية تدريس المقرر في المستوى أو الفصل أو السنة الدراسية الكاملة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 22df0d98bb3d543c1ad81289c6e9635613f51e12b584c41a7e12f6c3506bb152
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -385,11 +423,13 @@ records:
   statement_ar: الدرجة التي يحصل عليها الطالب في الاختبار النهائي للمقرر.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: الدرجة التي يحصل عليها الطالب في الاختبار النهائي للمقرر.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 340a7bbd3b2503f5667fe334f49aacdcef4c0047e1335a51146398c7f4e57aea
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -402,11 +442,13 @@ records:
   statement_ar: مجموع درجات الأعمال الفصلية ودرجة الاختبار النهائي للمقرر، وتحسب من مئة.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: مجموع درجات الأعمال الفصلية ودرجة الاختبار النهائي للمقرر، وتحسب من مئة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 90efa8f95d063e1333943167cc3734fe2097e16a895795e657236b4f2e5368d6
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -421,11 +463,13 @@ records:
   - كشف الدرجات
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: بيان تفصيلي بجميع المقررات التي درسها الطالب وتقديراته، ويشمل المعدلين الفصلي والتراكمي.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 748e09b72782ce72e83a15e2efcd00a573b5076c61e6ae9a6a7ca1dc8a5a8a77
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -440,11 +484,13 @@ records:
   - زائر
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: طالب يدرس بعض المقررات في جامعة أخرى أو في فرع من فروع جامعته دون تحويله.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 5b45d1f008cf1ecf2c2c99c0a8da8cbdb9845544f1e19e67791d1facd4a83155
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -457,11 +503,13 @@ records:
   statement_ar: وصف للنسبة المئوية أو الرمز الأبجدي للدرجة النهائية في المقرر.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: وصف للنسبة المئوية أو الرمز الأبجدي للدرجة النهائية في المقرر.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 0c6234aff0ef89207eed12a6138a6a75a98f5a5e257df9ee1aeb72f4889e5e4b
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -478,12 +526,14 @@ records:
   - IC
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: تقدير لمقرر تعذر استكمال متطلباته في الموعد المحدد، ويرمز له بالعربية (ل) أو بالإنجليزية
     (IC).
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 6136e7bb34addc134fa14d2eb3ab4de2b8a34979fb741cbc29aeb8563482d197
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -499,12 +549,14 @@ records:
   - IP
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: تقدير لمقرر يتطلب أكثر من فصل دراسي لاستكماله، ويرمز له بالعربية (م) أو بالإنجليزية
     (IP).
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 59937e3235a6c3721c1bbe9c4b84133aaede5f115bd09e04b13ba5d5e8debd3c
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -518,12 +570,14 @@ records:
     وزن التقدير.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: مجموع نقاط مقررات الفصل مقسوماً على مجموع وحداتها، وتحسب نقاط المقرر بضرب عدد وحداته
     في وزن التقدير.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: f70c65222ee33a5e77687cc4fabce1e021608b622a10e2c6bdfcd4c90ee0414a
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -536,11 +590,13 @@ records:
   statement_ar: مجموع نقاط جميع المقررات منذ الالتحاق بالجامعة مقسوماً على مجموع وحداتها.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: مجموع نقاط جميع المقررات منذ الالتحاق بالجامعة مقسوماً على مجموع وحداتها.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 9880703c6f90b7591cb9ae502a835561510bfec38e97448847fc43e9e83ca161
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -553,11 +609,13 @@ records:
   statement_ar: وصف مستوى التحصيل العلمي للطالب خلال مدة دراسته في الجامعة.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: وصف مستوى التحصيل العلمي للطالب خلال مدة دراسته في الجامعة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 7ff371b87d1835d163eca7e12fde259d8120f4d655decb2ebae768c116d54edd
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -573,12 +631,14 @@ records:
   - عدد الساعات
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: مجموع الوحدات الدراسية التي يسمح للطالب بالتسجيل فيها في فصل أو مستوى أو سنة دراسية،
     وفق ما يحدده مجلس الجامعة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: b9a9343ea32bd13357170c5601ff5693d08a3f203ed2ce4525f88dacb3b4c0dd
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -592,12 +652,14 @@ records:
     محدد.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: برنامج متكامل من المقررات يعد الطالب معرفياً ومهارياً وشخصياً لنيل درجة علمية في تخصص
     محدد.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: c7b258d0bc596ea3b80063bc77860c06eea1bb00d237e8c8ccfa34bd14feb563
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -610,11 +672,13 @@ records:
   statement_ar: مقررات إجبارية واختيارية يدرسها جميع طلبة الجامعة في مرحلة البكالوريوس.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: مقررات إجبارية واختيارية يدرسها جميع طلبة الجامعة في مرحلة البكالوريوس.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 15310fbcd41658f2104994c2611683140a42fad662a120d561316bb26b0ae918
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -627,11 +691,13 @@ records:
   statement_ar: مقررات إجبارية معينة يدرسها جميع طلبة الكلية.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: مقررات إجبارية معينة يدرسها جميع طلبة الكلية.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 2111e94759c2f0f66fc5029fbadb26121c91c17d95e52d0f5d3541398b9b8ea6
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -644,11 +710,13 @@ records:
   statement_ar: مقررات إجبارية بعدد محدد من الوحدات يدرسها جميع طلبة البرنامج.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: مقررات إجبارية بعدد محدد من الوحدات يدرسها جميع طلبة البرنامج.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: c3328012be2c41e019c65c7cc28670efc05f0063099293cf76ebaab849a64f09
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -661,11 +729,13 @@ records:
   statement_ar: مجموعة مقررات يختار منها الطالب ما يحقق العدد المطلوب من الوحدات المخصصة لاختيارات البرنامج.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: مجموعة مقررات يختار منها الطالب ما يحقق العدد المطلوب من الوحدات المخصصة لاختيارات البرنامج.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 8c7086f3aa430424bfc7b50bcf08c1320fae979f6ff15d2989ac59f16f3da9bb
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -678,11 +748,13 @@ records:
   statement_ar: مقررات إجبارية يدرسها طلبة البرنامج من قسم أو برنامج آخر وتعد من متطلبات البرنامج.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: مقررات إجبارية يدرسها طلبة البرنامج من قسم أو برنامج آخر وتعد من متطلبات البرنامج.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 09cbb64c58a723ea25d9a08f662ad25b57bcbc5d402ff6ff8caa58308f73b814
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -697,11 +769,13 @@ records:
   - المقرر الحر
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: مقررات اختيارية حرة متاحة على مستوى الجامعة ضمن برامجها المطروحة، ولا يكون لها متطلب.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 9c5b0b70388c232eb287943bf7f206112906767c425c4ffb91830fa66d257c0a
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -716,11 +790,13 @@ records:
   - بريركوزيت
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: مقرر يجب اجتيازه قبل تسجيل مقرر آخر مرتبط به ضمن الخطة الدراسية.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 696a864c6f16dd7fd3897db3f504d28a9c855ab9fbccf019fcd075b0f827c2b5
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -734,12 +810,14 @@ records:
     فترة الانقطاع ضمن مدة التخرج إذا أعيد قيده بعذر تقبله اللجنة المختصة.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: حالة أكاديمية تسجل عند عدم تسجيل الطالب أي مقرر دون إذن بالتأجيل أو الاعتذار؛ ولا تحسب
     فترة الانقطاع ضمن مدة التخرج إذا أعيد قيده بعذر تقبله اللجنة المختصة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 3db82029dd6577dd33a2823791eea427254afc200df853c1067fec43d635b6a0
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -753,12 +831,14 @@ records:
     أو الانقطاع أو التغيب المتواصل أو انتهاء مدة البرنامج دون اجتيازه، وذلك لمدة محددة.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: تعليق أو إيقاف علاقة الطالب بالجامعة بسبب الفصل الأكاديمي أو التأديبي أو الانسحاب النهائي
     أو الانقطاع أو التغيب المتواصل أو انتهاء مدة البرنامج دون اجتيازه، وذلك لمدة محددة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 6ba08db07a2c39882c0514b9f6808b43d5314d1aa08fe66362236d94a2e764e0
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -772,12 +852,14 @@ records:
     التحصيل العلمي، والتغلب على العقبات، والاستفادة من خدمات المؤسسة التعليمية.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: خدمة يقدم فيها المرشد المشورة لمساعدة الطالب على الاندماج في البيئة الأكاديمية، وتحقيق
     التحصيل العلمي، والتغلب على العقبات، والاستفادة من خدمات المؤسسة التعليمية.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 2655049c72896c4c0acdd7227ecaf25c53c9373173c62d531ed78582f3ce1927
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -790,11 +872,13 @@ records:
   statement_ar: الإرشاد الأكاديمي مسؤولية مشتركة بين المرشد والطالب، وله دور حيوي في جودة الحياة الجامعية.
   normativity: ADVISORY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: الإرشاد الأكاديمي مسؤولية مشتركة بين المرشد والطالب، وله دور حيوي في جودة الحياة الجامعية.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 970ee5668941c48d56c71f9877041bd051e7ca0ec6133eabc68e7658142f0dbf
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -808,12 +892,14 @@ records:
     وتعريفهم بحقوقهم وواجباتهم.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: برامج توجيهية لتعريف الطلبة المستجدين بنظام الدراسة والاختبارات، ومساعدتهم على التأقلم،
     وتعريفهم بحقوقهم وواجباتهم.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 89b6590278e177c6e61cb7d60bf252ca6ae42bfc3d50b16d6e80dbf0480f620f
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -827,12 +913,14 @@ records:
     ودراسة مشكلاتهم وتوفير فرص التدريب وفق قدراتهم وحاجاتهم.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: برامج تساعد الطلبة ذوي الاحتياجات الخاصة على التكيف النفسي والاجتماعي والتحصيل الأكاديمي،
     ودراسة مشكلاتهم وتوفير فرص التدريب وفق قدراتهم وحاجاتهم.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: cf04c1b3f765d38ff4ab40ea1ba62eeb42bbb61741f011ce00953ba8733b3786
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -845,11 +933,13 @@ records:
   statement_ar: برامج لمساعدة الطلبة المتعثرين على تجاوز عثراتهم والتغلب على العقبات والمشكلات.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: برامج لمساعدة الطلبة المتعثرين على تجاوز عثراتهم والتغلب على العقبات والمشكلات.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 0d4e1a33cc85ac73d7f32b1524d4ecad64db8d8420439459d681db3fc7ddd169
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -862,11 +952,13 @@ records:
   statement_ar: برامج لمساعدة الطلبة المتفوقين على الاستمرار في التفوق وتشجيعهم وتحفيز غيرهم.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: برامج لمساعدة الطلبة المتفوقين على الاستمرار في التفوق وتشجيعهم وتحفيز غيرهم.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: e05de597d94f7cc271cc5997faceb20cf1519806d198f39c2354e12ace4d93c0
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -880,12 +972,14 @@ records:
     التعليمية.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: تتولى عمادة القبول والتسجيل تنفيذ ومتابعة برامج الإرشاد وتحفيز الإرشاد الأكاديمي في
     الوحدات التعليمية.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: d9af92661676ce1139e273a676680c0c87329d53d0b418ac45cffd77750db429
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -898,11 +992,13 @@ records:
   statement_ar: تعريف الطلبة بالحياة الجامعية والأنظمة واللوائح الدراسية والخدمات التي توفرها الجامعة.
   normativity: ADVISORY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: تعريف الطلبة بالحياة الجامعية والأنظمة واللوائح الدراسية والخدمات التي توفرها الجامعة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 5ebff30274c574f8f5895e0f36e693ef3b7da3055e754d599c6fdf2fb7e9daec
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -915,11 +1011,13 @@ records:
   statement_ar: مساعدة الطلبة على حل المشكلات والمعوقات التي تؤثر مباشرة في تحصيلهم الدراسي.
   normativity: ADVISORY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: مساعدة الطلبة على حل المشكلات والمعوقات التي تؤثر مباشرة في تحصيلهم الدراسي.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: b0f25b649b53db48fc90c6b8012ad494953c06e6ee6a63328191daa3b24997d6
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -932,11 +1030,13 @@ records:
   statement_ar: تعريف الطلبة بحقوقهم وواجباتهم وتزويدهم بالخدمات والتسهيلات الجامعية.
   normativity: ADVISORY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: تعريف الطلبة بحقوقهم وواجباتهم وتزويدهم بالخدمات والتسهيلات الجامعية.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 6cac0aa331483ab472c17513dce73374c8f5e5f6cff4fce4954d639d3329d9fa
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -949,11 +1049,13 @@ records:
   statement_ar: تشجيع المتفوقين على الاستمرار في التفوق وحسن الاستفادة من وسائل دعم التحصيل.
   normativity: ADVISORY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: تشجيع المتفوقين على الاستمرار في التفوق وحسن الاستفادة من وسائل دعم التحصيل.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: b09db1344704858759ee3039d95efde0e58ec52f7b4c0457e9f31c3d58f90516
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -967,12 +1069,14 @@ records:
     وخدمة المجتمع.
   normativity: ADVISORY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: تشجيع الطلبة على ممارسة دور إيجابي في العملية التعليمية والمشاركة في الأنشطة اللاصفية
     وخدمة المجتمع.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 22b57ebd9114f8c03201b5403ecdfa063350be11dc6816ec16738b19264238e8
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -985,11 +1089,13 @@ records:
   statement_ar: مساعدة الطلبة على التعرف على التخصصات الملائمة لقدراتهم والتخطيط للمستقبل.
   normativity: ADVISORY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: مساعدة الطلبة على التعرف على التخصصات الملائمة لقدراتهم والتخطيط للمستقبل.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 67ad91eaf9382aa5088b4538bd2e3563411ae89943683d2fa0d9c3b0a41673ea
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -1002,11 +1108,13 @@ records:
   statement_ar: تنشيط الحياة الثقافية والاجتماعية وتنمية الانتماء للجامعة والمجتمع.
   normativity: ADVISORY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: تنشيط الحياة الثقافية والاجتماعية وتنمية الانتماء للجامعة والمجتمع.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 34497d4e9d1c768e0f2749e2f1babbd1500bf940ede3bc224c3130b2aab7b8a3
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -1019,11 +1127,13 @@ records:
   statement_ar: الإسهام في تطوير الحياة الجامعية بناءً على الدراسات والبحوث العلمية.
   normativity: ADVISORY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: الإسهام في تطوير الحياة الجامعية بناءً على الدراسات والبحوث العلمية.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 87ebfff89db67e54ae46f3b398613794d3ed19bf55d60c1dbc3ed9f90c910759
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -1037,12 +1147,14 @@ records:
     الإرشاد لتجنب المشكلات الأكاديمية.
   normativity: ADVISORY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: الطالب محور العملية التعليمية، ويتحمل مسؤولية الإلمام بالأنظمة واللوائح والاستفادة من
     الإرشاد لتجنب المشكلات الأكاديمية.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 4fd813adda64262f9df7d94c336ad69de50ffd0c48e26a909ad6425a326c7559
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -1056,12 +1168,14 @@ records:
     وتقيمها وتطورها.
   normativity: ADVISORY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: توفر العمادة الأنظمة الإلكترونية والكوادر المؤهلة والدعم والتدريب، وتراجع إجراءات الإرشاد
     وتقيمها وتطورها.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 6f094af1f6672bb864e67e76fcc97ef87b174442a2b94c7f097418fd7eb65c8e
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -1074,11 +1188,13 @@ records:
   statement_ar: تشرف الكلية والقسم علمياً على الخطط الدراسية، وتعيّن المرشدين للطلبة وتتابعهم.
   normativity: ADVISORY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: تشرف الكلية والقسم علمياً على الخطط الدراسية، وتعيّن المرشدين للطلبة وتتابعهم.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 8e87dc56442c35d52ae829aa05ea40216a4a854c0cfbd49b4b35d53182412378
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -1091,11 +1207,13 @@ records:
   statement_ar: يساعد المرشد الطالب على اتخاذ قرارات سليمة تدعم نجاح مسيرته الدراسية وفاعليتها.
   normativity: ADVISORY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: يساعد المرشد الطالب على اتخاذ قرارات سليمة تدعم نجاح مسيرته الدراسية وفاعليتها.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: e1ddf71be0c152b2be9f8368223361230ac5d6e0edf4c55ffc6da3c99974b05d
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -1108,11 +1226,13 @@ records:
   statement_ar: أداة أساسية لمعرفة ما درسه الطالب وما تبقى له من متطلبات.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: أداة أساسية لمعرفة ما درسه الطالب وما تبقى له من متطلبات.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: d2ec64001a88fd59d648b62b9e92ba9d0fe0b3d93bfa38117d030d4103e624cd
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -1126,7 +1246,7 @@ records:
     في جامعة طيبة.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   values:
@@ -1141,6 +1261,8 @@ records:
   restatement_ar: مرجع للقواعد التنفيذية المنظمة لقبول طلاب المنح الدراسية لغير السعوديين من الداخل والخارج
     في جامعة طيبة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 1b510316d32f17461c85b0a11f5400a3cbedd3d272039ce2f459b15320664ad7
   second_pass_checked: true
   in_upstream_policy_subset: false
@@ -1153,7 +1275,7 @@ records:
   statement_ar: مرجع مستقل للائحة الدراسة والاختبارات للمرحلة الجامعية وقواعدها التنفيذية لجامعة طيبة.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   values:
@@ -1167,6 +1289,8 @@ records:
     human_verification_advanced: false
   restatement_ar: مرجع مستقل للائحة الدراسة والاختبارات للمرحلة الجامعية وقواعدها التنفيذية لجامعة طيبة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: f7e0550a45c1a41fcf15f8295f000fd0d4b30f3ee72df8e31eb5bd4d070d9ebf
   second_pass_checked: true
   in_upstream_policy_subset: false
@@ -1179,11 +1303,13 @@ records:
   statement_ar: أداة إرشادية لعرض مقررات الطالب ومواعيدها.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: أداة إرشادية لعرض مقررات الطالب ومواعيدها.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 9e3cbae1dfb3016086913630689d3173ebfe683d4cfcdef5191b7a7bf684aad8
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -1196,11 +1322,13 @@ records:
   statement_ar: أداة إرشادية لعرض المقررات والدرجات والمعدلات.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: أداة إرشادية لعرض المقررات والدرجات والمعدلات.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 425d13212aa3ffb1084a86c5b5adad8c458119aea7a7f87ddcce5aaa2342b2d1
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -1213,11 +1341,13 @@ records:
   statement_ar: قناة وأداة رسمية للطالب.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: قناة وأداة رسمية للطالب.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 958a25b32e7663fe1a41f0492d3dc7f0a259877f64b5fa57d1ba580acbae10e9
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -1230,11 +1360,13 @@ records:
   statement_ar: يمكن للطالب الحصول على الأدوات من حسابه في نظام الخدمات الإلكترونية.
   normativity: ADVISORY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: يمكن للطالب الحصول على الأدوات من حسابه في نظام الخدمات الإلكترونية.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 14920af8f9c7c9cff3a87247a500e8a8edd7d67e385a87a1ac70859ce963c7fb
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -1247,11 +1379,13 @@ records:
   statement_ar: مطابقة الخطة الدراسية بالسجل أمر مهم لمعرفة ما تمت دراسته وما تبقى.
   normativity: ADVISORY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: مطابقة الخطة الدراسية بالسجل أمر مهم لمعرفة ما تمت دراسته وما تبقى.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 236ce902a0e472536ab94af130b58f59bc45de165e7359ebeaa58d2bf64de001
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -1264,11 +1398,13 @@ records:
   statement_ar: يمكن التواصل مع المرشد الأكاديمي عن طريق الإرشاد المباشر.
   normativity: ADVISORY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: يمكن التواصل مع المرشد الأكاديمي عن طريق الإرشاد المباشر.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: b89019f40f790e3d0aeee8d8e0bc112f99ed7df5b86ce1e4a6dbcf41b185bbae
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -1281,11 +1417,13 @@ records:
   statement_ar: يمكن التواصل مع المرشد الأكاديمي عن طريق منصة خدمة تك.
   normativity: ADVISORY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: يمكن التواصل مع المرشد الأكاديمي عن طريق منصة خدمة تك.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 110fe1f1a5fd5db429cf704b45c6eb6ea40a73aca15e70dc5db1164a0cf71724
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -1298,11 +1436,13 @@ records:
   statement_ar: يمكن التواصل مع المرشد الأكاديمي عن طريق البلاك بورد.
   normativity: ADVISORY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: يمكن التواصل مع المرشد الأكاديمي عن طريق البلاك بورد.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: e3f92573c3b12fbe5a9513eb215fe6ccddb47b94ec0cc87f0cccc95c790a8040
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -1315,11 +1455,13 @@ records:
   statement_ar: يمكن التواصل مع المرشد الأكاديمي عن طريق البريد الإلكتروني.
   normativity: ADVISORY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: يمكن التواصل مع المرشد الأكاديمي عن طريق البريد الإلكتروني.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: e6d68d4b359440b7d2eba557d6fd856324a051151f2c1dd5a65d894700686282
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -1332,11 +1474,13 @@ records:
   statement_ar: يمكن التواصل مع المرشد الأكاديمي عن طريق الهاتف أو Microsoft Teams.
   normativity: ADVISORY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: يمكن التواصل مع المرشد الأكاديمي عن طريق الهاتف أو Microsoft Teams.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 9aca865fb092a2cc5e67e9fccd2fdf95d7ddd452e413695c92c9704d9e07c0fa
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -1350,12 +1494,14 @@ records:
     وتحديد الأهداف.
   normativity: ADVISORY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: الإرشاد سلسلة لقاءات مستمرة ومنتظمة ترافق الطالب حتى التخرج، وتشمل التخطيط والتوجيه
     والتواصل وتحديد الأهداف.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: bb9dbce9ac54d58acc171d604d7661613ed0c858863213bbcab789679ba29d36
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -1369,12 +1515,14 @@ records:
     والسلوك والثواب والعقاب، ويلتقون بمرشديهم لاستكمال ملفات الإرشاد.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: تنظم العمادة والكلية برنامجاً للمستجدين لشرح نظام الدراسة والتقويم والخطط والحقوق والواجبات
     والسلوك والثواب والعقاب، ويلتقون بمرشديهم لاستكمال ملفات الإرشاد.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: c94cbd9ef521d19bf895a260d44a050b7fc8b276623eb7660b0b0131e141d76d
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -1388,12 +1536,14 @@ records:
     المرشد حالة كل طالب ويوجهه وفق ميوله وقدراته واستعداداته.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: يلتقي الطلبة القدامى بمرشديهم عند بدء تسجيل رغبات الفصل التالي وفق مواعيد التقويم، ويدرس
     المرشد حالة كل طالب ويوجهه وفق ميوله وقدراته واستعداداته.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: e4984eb8f17160d66f7770840293993f5387250f6cc161271037892880b62400
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -1408,11 +1558,13 @@ records:
     step: 1
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: 'تحدد حالة الطالب: مستجد في الكلية أو متخصص.'
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 62170cacf2a8d2437a1d6974a96fdfb273be63b13cb417da1f6e9946749df52d
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1427,11 +1579,13 @@ records:
     step: 2
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: يوزع المستجدون بواسطة وكيل الكلية، ويوزع المتخصصون بواسطة رئيس القسم.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: e260e05b8dc245c6fb53c4a4b65089eb4505fdcbd22704a58b7f77976d9b477f
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1446,11 +1600,13 @@ records:
     step: 3
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: تسجل حالة الطالب ضمن الإرشاد الأكاديمي.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 36e4c18490496d2f1bc8cfe0f69aef9a99c5abd91f58efd6cd44d5f3889c28b1
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1465,11 +1621,13 @@ records:
     step: 4
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: تسجل الرغبات في منتصف الفصل السابق للفصل المراد التسجيل فيه.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: ca6e5eab5d771db2bbfec7d46000adc221134fa500289b4c762807168707a68b
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1484,11 +1642,13 @@ records:
     step: 5
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: يبدأ العمل مع المرشد بعد انتهاء تسجيل الطالب عبر موقع الجامعة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: d73ca87570dd2ded2e95b1fbdc3e0b1b817a7a440cdf644169d4141a1215bc20
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1503,11 +1663,13 @@ records:
     step: 6
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: يتم التسجيل النهائي قبل بداية الفصل الدراسي.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 70d79f779878d1f0690ca87a10f967b2877cd46e9e0e22de89ef56ea3ed596d8
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1520,11 +1682,13 @@ records:
   statement_ar: يعد جدول الطالب نهائياً.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: يعد جدول الطالب نهائياً.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: c69d80d3b0108ad63f4561b1cf58ee80d09e9bd6922cb74cfbce0abd53a3c02b
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1537,7 +1701,7 @@ records:
   statement_ar: تعد اختيارات الطالب نهائية ولا تعدل إلا بمعرفة المرشد.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   evidence_group: registration_choices_final
@@ -1545,6 +1709,8 @@ records:
   - TU-GUIDE-0117
   restatement_ar: تعد اختيارات الطالب نهائية ولا تعدل إلا بمعرفة المرشد.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 552c7b254853b31bd97326b75ffd7b76f48e0f067e007362fd7325bd82e43f67
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1557,7 +1723,7 @@ records:
   statement_ar: حصر التسجيل بالتجاوز من صلاحيات وكيل الكلية أو المشرف الأكاديمي.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   evidence_group: override_registration_authority
@@ -1565,6 +1731,8 @@ records:
   - TU-GUIDE-0118
   restatement_ar: حصر التسجيل بالتجاوز من صلاحيات وكيل الكلية أو المشرف الأكاديمي.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: bb42bdd58610d00612c033bd483180fab0cd7d359c44868e24870df774b2d209
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1577,7 +1745,7 @@ records:
   statement_ar: تغيير التخصص من صلاحيات الكلية فقط.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   evidence_group: programme_change_authority
@@ -1585,6 +1753,8 @@ records:
   - TU-GUIDE-0119
   restatement_ar: تغيير التخصص من صلاحيات الكلية فقط.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 473d8b65c9c12d7b30b6b76cdbd98bfc9155a42e985e99ed51338321bea113f3
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1597,11 +1767,13 @@ records:
   statement_ar: التواصل المباشر أو الإلكتروني مع المرشد عبر القنوات المتاحة.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: التواصل المباشر أو الإلكتروني مع المرشد عبر القنوات المتاحة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 74255e66467c22342b6fc05bb32601c0adde98e6be96dd3f64f5441e577c5bbc
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1614,11 +1786,13 @@ records:
   statement_ar: الحصول على خدمات الحذف والإضافة خلال فترة تسجيل المقررات مع المرشد.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: الحصول على خدمات الحذف والإضافة خلال فترة تسجيل المقررات مع المرشد.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 77bf65ecb4adc230ceb237e26011ec9229e378e1f0ceb7270f7315a33576f51f
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1631,11 +1805,13 @@ records:
   statement_ar: مناقشة المرشد في كل ما يتعلق بالمستقبل الأكاديمي.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: مناقشة المرشد في كل ما يتعلق بالمستقبل الأكاديمي.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: e69908cb648e6382f8fd9c5bf047978beb302d3b550ff83a361a23942ceb5543
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1648,11 +1824,13 @@ records:
   statement_ar: الاستفادة من خدمات الكلية والجامعة التي يرشده إليها المرشد.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: الاستفادة من خدمات الكلية والجامعة التي يرشده إليها المرشد.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 6f03460d0ee22cc1de26b4422a07c45be1c709f7e46b63a34afb0709fcb82140
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1665,11 +1843,13 @@ records:
   statement_ar: تلقي التوجيه والإرشاد الضروري بصورة مستمرة حتى التخرج.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: تلقي التوجيه والإرشاد الضروري بصورة مستمرة حتى التخرج.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 0bcc2a4b7a79009d1aa792518c0e382ce2a2052ce6672e651e33253c27d21f92
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1682,11 +1862,13 @@ records:
   statement_ar: تعامل ملفات ومعلومات الطلبة بسرية تامة وفي سياق متطلبات الحالة.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: تعامل ملفات ومعلومات الطلبة بسرية تامة وفي سياق متطلبات الحالة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 36663d75974870414c9c5c48c8aad1126311c18ba9a43321d90a4f8cb73cdb81
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1699,11 +1881,13 @@ records:
   statement_ar: الحصول على نسخة من دليل الإرشاد وقراءته وفهم الحقوق والواجبات.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: الحصول على نسخة من دليل الإرشاد وقراءته وفهم الحقوق والواجبات.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 8b41af09f757e58a3bded88a9bed537ce7f68edb26b31382af7fc8e2bf6f7225
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1716,11 +1900,13 @@ records:
   statement_ar: الحصول على نسخة من لائحة الدراسة والاختبارات من موقع العمادة وقراءتها.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: الحصول على نسخة من لائحة الدراسة والاختبارات من موقع العمادة وقراءتها.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: f47b3e661339768c63820bb1d0b31ef7af2c50d5eb93197ce564139e6c6c1ab6
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1733,11 +1919,13 @@ records:
   statement_ar: تحمل المسؤولية الكاملة عن الأداء الأكاديمي والاستفادة من الإرشاد كوسيلة مساعدة.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: تحمل المسؤولية الكاملة عن الأداء الأكاديمي والاستفادة من الإرشاد كوسيلة مساعدة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 5c6c85919ccf225ca235c13365e63cb20ed50c4f4e29efb3a4f09f9a0d7fc77e
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1750,11 +1938,13 @@ records:
   statement_ar: معرفة المرشد وساعاته المكتبية، والتواصل مع رئيس القسم عند عدم تعيين مرشد.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: معرفة المرشد وساعاته المكتبية، والتواصل مع رئيس القسم عند عدم تعيين مرشد.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: ed30e40fc8175d20ef53ce071741fde6812c57206e1cf1629460f5ebb8158983
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1767,11 +1957,13 @@ records:
   statement_ar: متابعة مواقع الكلية والقسم والجامعة باستمرار.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: متابعة مواقع الكلية والقسم والجامعة باستمرار.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 7f0d3ccf7ccef569cb2bafea7ceed0aba94ff29841968666ab1e1b4bf8b0c62f
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1784,11 +1976,13 @@ records:
   statement_ar: الإلمام بالتقويم ومواعيد التسجيل والانسحاب والاعتذار ومراجعة المرشد عند عدم الفهم.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: الإلمام بالتقويم ومواعيد التسجيل والانسحاب والاعتذار ومراجعة المرشد عند عدم الفهم.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 777e1dc84cba4aed5da38d4eca2c317d4ddf8393323497661276727b3f93a301
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1801,11 +1995,13 @@ records:
   statement_ar: مقابلة المرشد لمناقشة الأهداف والبرنامج والجدول والجوانب الغامضة.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: مقابلة المرشد لمناقشة الأهداف والبرنامج والجدول والجوانب الغامضة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: c079ffa32f63914e79c3daa72c3ac73e393cc01e0a3274bc0d077f2967761323
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1818,11 +2014,13 @@ records:
   statement_ar: تنفيذ توصيات المرشد والمواظبة على مقابلته.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: تنفيذ توصيات المرشد والمواظبة على مقابلته.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: bd65de0c17621979d33892c79b1eed144b17a786aba871105a3b5512322a036a
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1835,11 +2033,13 @@ records:
   statement_ar: إخطار المرشد بأي تغير يؤثر في البرنامج أو الأداء الدراسي.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: إخطار المرشد بأي تغير يؤثر في البرنامج أو الأداء الدراسي.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: c23ad67ec4dac2f56de0d653b8a29ee328babc0db35872dd10bf2d57a1fcf561
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1852,11 +2052,13 @@ records:
   statement_ar: التعاون مع جهات الإرشاد وتقديم الحقائق والمعلومات اللازمة للخدمة.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: التعاون مع جهات الإرشاد وتقديم الحقائق والمعلومات اللازمة للخدمة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: d836a1363cf7fdbe7a0ee014cbc438b271e2fa6e0931c7b606330e2b1d695acd
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1869,11 +2071,13 @@ records:
   statement_ar: تستقبل وحدة الإرشاد الطلبة الجدد في أول يوم وتشرح لهم نظام الجامعة.
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: تستقبل وحدة الإرشاد الطلبة الجدد في أول يوم وتشرح لهم نظام الجامعة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 68a016e30c9b9f3acc7ba777963411be1afda74235e2b37e1e83e63f28c915af
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1886,11 +2090,13 @@ records:
   statement_ar: توزع الكلية المستجدين على المرشدين وفق ما يراه وكيل الكلية.
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: توزع الكلية المستجدين على المرشدين وفق ما يراه وكيل الكلية.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 9180c3bd1d6cd763a9ad9e0507de9ebec4016f95c5e3f2174614a87c51f6af13
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1903,11 +2109,13 @@ records:
   statement_ar: توزع الكلية الطلبة المتخصصين على مرشديهم.
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: توزع الكلية الطلبة المتخصصين على مرشديهم.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 271217983c6e1be3dc738a63573122c290be49402f3a0bf3ffd0b9298771f226
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1920,11 +2128,13 @@ records:
   statement_ar: يعد المرشد ملفاً لكل طالب تحت إشرافه.
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: يعد المرشد ملفاً لكل طالب تحت إشرافه.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 043501c636fce8dcbf3632b0daddc1a535a7a4d491fed98785bf80424de396bb
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1937,11 +2147,13 @@ records:
   statement_ar: يتضمن الملف استمارة بيانات الطالب.
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: يتضمن الملف استمارة بيانات الطالب.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 994c58af96225b381da5a0f6a63ea5137a24a70be712361c402c72513b0a9abb
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1954,11 +2166,13 @@ records:
   statement_ar: يتضمن الملف الخطة الدراسية لتخصص الطالب.
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: يتضمن الملف الخطة الدراسية لتخصص الطالب.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 9ed0108230d0ad147b87f92ad7ec8a1745133cef36ba40a54ecb2ca92a17ba82
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1971,11 +2185,13 @@ records:
   statement_ar: يتضمن الملف قائمة مقررات البرنامج المؤدية للتخرج.
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: يتضمن الملف قائمة مقررات البرنامج المؤدية للتخرج.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 3d36347db58aad5040d323474f7f54eee4b5be6eacc087b106ee1e1c9ba884ca
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -1988,11 +2204,13 @@ records:
   statement_ar: يتضمن الملف استمارات التسجيل.
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: يتضمن الملف استمارات التسجيل.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 5b8cf0b279309f658fd93fa123371165baa3f775aae39723894a379867f45481
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -2005,11 +2223,13 @@ records:
   statement_ar: يتضمن الملف نسخة من السجل الأكاديمي والوثائق الإدارية مثل استمارة التأجيل.
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: يتضمن الملف نسخة من السجل الأكاديمي والوثائق الإدارية مثل استمارة التأجيل.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: f65486d5aab6d0abc1c57b97021f516d91c9734cf2af81cdd80740ac2b30f5d9
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -2022,11 +2242,13 @@ records:
   statement_ar: تبدأ فترة تسجيل الرغبات في منتصف الفصل السابق، لتسجيل مقررات الفصل التالي مبكراً.
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: تبدأ فترة تسجيل الرغبات في منتصف الفصل السابق، لتسجيل مقررات الفصل التالي مبكراً.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: c06b24ce10ed118d757534569a8314b74f367511626a8755e71a6786577c6573
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -2040,12 +2262,14 @@ records:
     وتخصصه.
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: يدرس المرشد السجل والمواد المسجلة ويقارنها بالخطة ثم يوجه الطالب للمقررات المناسبة لحالته
     وتخصصه.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 68ea5049e8efc40f472618053ebc43e779468d034c43e2555bb6aa984b36c85c
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -2058,11 +2282,13 @@ records:
   statement_ar: يساعد المشرف الطالب غير المتخصص على بدء إجراءات التخصيص في الموعد المعلن.
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: يساعد المشرف الطالب غير المتخصص على بدء إجراءات التخصيص في الموعد المعلن.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: b51d4ed20c1291f962a8cb91265015ce7540ab550b98ddb47c7fde0607cee7ed
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -2075,11 +2301,13 @@ records:
   statement_ar: يمكن للمرشد تسجيل المقررات والحذف والإضافة من حسابه في أنظمة الجامعة.
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: يمكن للمرشد تسجيل المقررات والحذف والإضافة من حسابه في أنظمة الجامعة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 4ea6c6a15951ef63797244e01ff5f6a7116b9da9e6c5fd8b2d25a2cb65d54dd2
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -2092,11 +2320,13 @@ records:
   statement_ar: يتأكد المرشد من معرفة الطالب بمكان المحاضرات وزمانها وعدم وجود تعارض.
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: يتأكد المرشد من معرفة الطالب بمكان المحاضرات وزمانها وعدم وجود تعارض.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 6f7a9e96110840e70d4c5b5758cbd09d086099310d4c6bbe88601da06febc6f2
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -2110,12 +2340,14 @@ records:
     بعد ذلك وفق نص الدليل.
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   restatement_ar: تنتهي إجراءات التسجيل قبل بدء الدراسة بأسبوع، ولا يحق للطالب إجراء تعديلات على اختياراته
     بعد ذلك وفق نص الدليل.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 52b730deeda07a74075c40e9f30f689ccf54c26e91ad04da4bf9e2551f799264
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -2128,7 +2360,7 @@ records:
   statement_ar: اختيارات الطالب نهائية ولا تعدل إلا بمعرفة المرشد.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   evidence_group: registration_choices_final
@@ -2136,6 +2368,8 @@ records:
   - TU-GUIDE-0083
   restatement_ar: اختيارات الطالب نهائية ولا تعدل إلا بمعرفة المرشد.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: a220123d8ff7b8a182e5d5711e4f7aacaab6c1345756f4727ccb71fa7516dafd
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -2148,7 +2382,7 @@ records:
   statement_ar: التسجيل بالتجاوز محصور في وكيل الكلية أو المشرف الأكاديمي.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   evidence_group: override_registration_authority
@@ -2156,6 +2390,8 @@ records:
   - TU-GUIDE-0084
   restatement_ar: التسجيل بالتجاوز محصور في وكيل الكلية أو المشرف الأكاديمي.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 191f8a44d32f374fd2a2192dc4762f1165bad3f2b2d263336830dcddbbd0eae8
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -2168,7 +2404,7 @@ records:
   statement_ar: تغيير التخصص من صلاحيات الكلية فقط.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   evidence_group: programme_change_authority
@@ -2176,6 +2412,8 @@ records:
   - TU-GUIDE-0085
   restatement_ar: تغيير التخصص من صلاحيات الكلية فقط.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 473d8b65c9c12d7b30b6b76cdbd98bfc9155a42e985e99ed51338321bea113f3
   second_pass_checked: false
   in_upstream_policy_subset: true
@@ -2189,12 +2427,14 @@ records:
     الطلبة.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: تعمل العمادة على تطوير نظام الإرشاد الأكاديمي الإلكتروني لتحسين آلية العمل وتلبية احتياجات
     الطلبة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 7f2019a62231515500c41cc2332121fbfbe82547f2338d59b01b226d9cc43567
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -2207,11 +2447,13 @@ records:
   statement_ar: يقدم في بداية كل فصل لتعريف الطلبة ذوي الاحتياجات الخاصة بالمرافق والخدمات وحقوقهم الجامعية.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: يقدم في بداية كل فصل لتعريف الطلبة ذوي الاحتياجات الخاصة بالمرافق والخدمات وحقوقهم الجامعية.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 9f364ebe0aa03171b08e01c8fb1aa870f8c81902a1a62182469b0e5266bf3f1b
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -2224,11 +2466,13 @@ records:
   statement_ar: يقدم البرنامج خدمات استشارية مستمرة ويشرف على تنفيذ المتطلبات اللازمة.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: يقدم البرنامج خدمات استشارية مستمرة ويشرف على تنفيذ المتطلبات اللازمة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: f1fdc54794ab6c9e59f94c8aa74d60cc2ccbc8260ed989037724cb79140d409a
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -2241,11 +2485,13 @@ records:
   statement_ar: تقدم في كل فصل دورة عن ثقافة التعامل مع ذوي الاحتياجات الخاصة لأعضاء هيئة التدريس والمنسوبين.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: تقدم في كل فصل دورة عن ثقافة التعامل مع ذوي الاحتياجات الخاصة لأعضاء هيئة التدريس والمنسوبين.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 1c170b99bbcf6ad32eff2496d1a8e265f414107661a62a603d3dcaf6fb928dd0
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -2258,11 +2504,13 @@ records:
   statement_ar: توضع ملصقات إرشادية في الكليات لتوضيح مسارات ذوي الإعاقة الحركية والممرات المخصصة.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: توضع ملصقات إرشادية في الكليات لتوضيح مسارات ذوي الإعاقة الحركية والممرات المخصصة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: d06f9976cbe135b5449458f22f7f13a017e2fb54b5952da121931217d6eff0ce
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -2275,11 +2523,13 @@ records:
   statement_ar: مساعدة الطلبة ذوي الاحتياجات الخاصة على التكيف والتواصل والعيش في بيئة جامعية آمنة.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   restatement_ar: مساعدة الطلبة ذوي الاحتياجات الخاصة على التكيف والتواصل والعيش في بيئة جامعية آمنة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: db922ca9dd83112b7f992bedaaba903f5332ab4a0563d145febf333cf7ee3218
   second_pass_checked: false
   in_upstream_policy_subset: false
@@ -2292,7 +2542,7 @@ records:
   statement_ar: الدراسة الجامعية تجعل الطالب مسؤولاً عن مساره ومعدلاته وتراكم أدائه عبر جميع الفصول.
   normativity: ADVISORY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   source_alignment:
@@ -2304,6 +2554,8 @@ records:
     human_verification_advanced: false
   restatement_ar: الدراسة الجامعية تجعل الطالب مسؤولاً عن مساره ومعدلاته وتراكم أدائه عبر جميع الفصول.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: d66eb6b1778a24f926b7db105183383b935542c657809231bf993d51c35265e2
   second_pass_checked: true
   in_upstream_policy_subset: false
@@ -2320,7 +2572,7 @@ records:
     summer_min_weeks: 8
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -2333,6 +2585,8 @@ records:
   restatement_ar: يقسم العام إلى فصلين لا تقل مدة كل منهما عن 15 أسبوعاً، وفصل صيفي اختياري لا تقل مدته
     عن 8 أسابيع.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 3cc9d82122112fccecfeafb9ce6de6133dd6e7bb4f58b6898496113b8b0a7360
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -2349,7 +2603,7 @@ records:
     unit: credit_hours
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -2361,6 +2615,8 @@ records:
     human_verification_advanced: false
   restatement_ar: الحد الأدنى للعبء الدراسي في الفصل الرئيس 12 وحدة، والحد الأعلى 19 وحدة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 6e120941340ba1ed26027641b33ccaf200046a8865f5b866ab0e223bb5a60b48
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -2379,7 +2635,7 @@ records:
     unit: credit_hours
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -2391,6 +2647,8 @@ records:
     human_verification_advanced: false
   restatement_ar: الحد الأدنى في نظام السنة الكاملة 24 وحدة، والحد الأعلى 39 وحدة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: a57095ec120c8dd7dfe16953f34fab8afe95a9012833061b74b5537e7e17d7f2
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -2408,7 +2666,7 @@ records:
     unit: credit_hours
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -2420,6 +2678,8 @@ records:
     human_verification_advanced: false
   restatement_ar: الحد الأعلى للعبء الدراسي في الفصل الصيفي 9 وحدات.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 98e25e933fdde57c24f556fa339426d3d0b255b66b8fe37520f9e032bf93b186
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -2439,7 +2699,7 @@ records:
   outcome: IC ثم يتحول إلى راسب إن لم يستكمل في الفصل التالي
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -2452,6 +2712,8 @@ records:
   restatement_ar: يجوز منح تقدير غير مكتمل بناء على توصية أستاذ المقرر عند عدم إنجاز المتطلبات؛ لا يدخل
     في المعدلين، ويجب استكماله في الفصل التالي وإلا يتحول إلى رسوب.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: a43679d53df98033630e09d5804f1652f51a4b5d0c2323f6d6604efd725b7065
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -2471,7 +2733,7 @@ records:
     unit: credit_hours
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   notes: The guide states a 16-credit request ceiling for an expected graduate while the same page states
     a general 19-credit maximum. Both are preserved; interpretation requires the higher-authority regulation.
@@ -2486,6 +2748,8 @@ records:
   restatement_ar: ينص الدليل على أن المتوقع تخرجه يمكنه تقديم طلب تسجيل مقررات بما لا يتجاوز 16 ساعة في
     الفصل، ويخضع الطلب لموافقة الكلية ونظر العمادة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 27b21af6b373606fbf2158116a27880eb05eaec38318ec84eae723bc124305ce
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -2500,7 +2764,7 @@ records:
   - فتح الموعد في التقويم
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -2512,6 +2776,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يقدم طلب الاعتذار إلكترونياً وفق الموعد المحدد في التقويم الدراسي.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 78081d9f1a5130672e3e9a2d48706a3dc2f87aee71edc3b275439c8697304eb8
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -2524,7 +2790,7 @@ records:
   statement_ar: تحتسب مدة الاعتذار ضمن المدة اللازمة لإنهاء متطلبات التخرج.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -2536,6 +2802,8 @@ records:
     human_verification_advanced: false
   restatement_ar: تحتسب مدة الاعتذار ضمن المدة اللازمة لإنهاء متطلبات التخرج.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: d6a39592e72da1998bf473c9b27d3906cb84b7bcf037a11ade3dd50c6b158c47
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -2551,7 +2819,7 @@ records:
     english_code: W
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -2563,6 +2831,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يرصد للطالب المعتذر تقدير (ع) في السجل الأكاديمي.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: df91ec736449ca231cc9ab636285cafb28cedec23c9e5b336fe225d68225f602
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -2582,7 +2852,7 @@ records:
   statement_ar: تنقطع المكافأة عن الطالب المعتذر.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -2594,6 +2864,8 @@ records:
     human_verification_advanced: false
   restatement_ar: تنقطع المكافأة عن الطالب المعتذر.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 352cdf03fad737110b6bef7e38196c4bef3b179624fadeff0cf3c3bb93fabb01
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -2608,7 +2880,7 @@ records:
   - فتح الموعد في التقويم
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -2620,6 +2892,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يقدم طلب التأجيل إلكترونياً وفق الموعد المحدد في التقويم الدراسي.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 1a2b65264483be6af1fab2fe31d511400516880cdeb1cfc26e19f2b56780a21b
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -2632,7 +2906,7 @@ records:
   statement_ar: لا تحتسب مدة التأجيل ضمن المدة اللازمة لإنهاء متطلبات التخرج.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -2644,6 +2918,8 @@ records:
     human_verification_advanced: false
   restatement_ar: لا تحتسب مدة التأجيل ضمن المدة اللازمة لإنهاء متطلبات التخرج.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 6a3a9644434ebe7ec8f91895433e9a17b740219daafd872e4c6918e98fce54bf
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -2660,7 +2936,7 @@ records:
     max_nonconsecutive_semesters: 3
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -2673,6 +2949,8 @@ records:
   restatement_ar: لا تتجاوز مدة التأجيل فصلين متتاليين أو ثلاثة فصول غير متتالية طوال البقاء في الجامعة،
     مع إمكان الاستثناء عند الضرورة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 0a1f01a122c738864b20672d56f3ae0c7ee30e16e5c84dd39498ac99f5f82f4d
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -2685,7 +2963,7 @@ records:
   statement_ar: تنقطع المكافأة عن الطالب المؤجل.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -2697,6 +2975,8 @@ records:
     human_verification_advanced: false
   restatement_ar: تنقطع المكافأة عن الطالب المؤجل.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 7bae647f57f657407fb9f4fa0354cd8c65cc2a391b6fc1dc4cad66ed091afd95
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -2711,7 +2991,7 @@ records:
   - فتح الموعد في التقويم
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -2723,6 +3003,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يقدم طلب الانسحاب من مقرر إلكترونياً وفق الموعد المحدد في التقويم الدراسي.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: e6aa38766968e2048cdf89100c34f934ff369b507afb66c839774f345be08583
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -2737,7 +3019,7 @@ records:
     maximum_withdrawals: 5
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -2749,6 +3031,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يسمح بخمسة انسحابات فقط طوال فترة الالتحاق وبنفس الرقم الجامعي.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 5ad9e391e21790fdd19e0360a06f3e7e97eb6b478c6f7133c18fc914bd90463d
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -2763,7 +3047,7 @@ records:
   - العبء بعد الانسحاب >= الحد الأدنى
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -2775,6 +3059,8 @@ records:
     human_verification_advanced: false
   restatement_ar: لا يسمح بالانسحاب إذا أصبح العبء بعد التنفيذ أقل من الحد الأدنى.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 1d519ed80cebc562a5e3253226ebda6f639e2a9fb77518dc56cdfc989b21d50d
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -2789,7 +3075,7 @@ records:
   - عدم وجود حرمان
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -2801,6 +3087,8 @@ records:
     human_verification_advanced: false
   restatement_ar: لا يسمح بالانسحاب من مقرر حصل فيه الطالب على حرمان.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: c1578759bc766e52f43cb69f3f07568086d80618ff1f275a39058d72f9136a29
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -2815,7 +3103,7 @@ records:
     restricted_first_semesters: 2
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -2827,6 +3115,8 @@ records:
     human_verification_advanced: false
   restatement_ar: لا يسمح للمستجد بالانسحاب من أي مقرر في أول فصلين من البرنامج.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 612539bcd7cdf85835d79fad73c5eb413924078888ab401b0de3f01f8b4777ab
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -2839,7 +3129,7 @@ records:
   statement_ar: يتطلب الانسحاب النهائي إحضار البطاقة الجامعية.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -2851,6 +3141,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يتطلب الانسحاب النهائي إحضار البطاقة الجامعية.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: ab7cbc6a47daaa62cd66a7c051f4d6fe3eb200ac20c08eef0e0acbbfb45b0d41
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -2863,7 +3155,7 @@ records:
   statement_ar: يسلم الطالب العهد ويستكمل إخلاء الطرف من خلال منصة خدمة تك.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -2875,6 +3167,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يسلم الطالب العهد ويستكمل إخلاء الطرف من خلال منصة خدمة تك.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: c11cb3dc828fae786e0d09e2db0a900b38dd520406f15d7a3eafb1e85e2bd5f1
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -2892,7 +3186,7 @@ records:
     consecutive_warnings: 3
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -2905,6 +3199,8 @@ records:
   restatement_ar: يفصل الطالب إذا حصل على ثلاثة إنذارات متتالية لانخفاض المعدل المحدد للتخرج، ويجوز لمجلس
     الجامعة منحه فرصة إضافية.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 1d0569033d0959d59d211447f4fb0d68571c541331faaf33ff5fa45a29390e08
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -2920,7 +3216,7 @@ records:
     exception_max_academic_years: 1
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -2933,6 +3229,8 @@ records:
   restatement_ar: يفصل الطالب إذا لم ينه متطلبات التخرج خلال مدة البرنامج مضافاً إليها نصف المدة المقررة
     للتخرج؛ ويجوز منحه فرصة استثنائية لا تتجاوز عاماً دراسياً.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 7c0bfe4c76c8f8deeba86e4e56602c35c2aa4642e2b632c46cf478a273e3be3c
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -2945,7 +3243,7 @@ records:
   statement_ar: أن تكون الجامعة أو الكلية السابقة محلية أو أجنبية ومرخصة من جهة الاختصاص.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -2957,6 +3255,8 @@ records:
     human_verification_advanced: false
   restatement_ar: أن تكون الجامعة أو الكلية السابقة محلية أو أجنبية ومرخصة من جهة الاختصاص.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 943041fb15fe0f5a4e6aa38096ea6994c4de9d8a938dfe594d85d01280566dcb
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -2969,7 +3269,7 @@ records:
   statement_ar: ألا يكون الطالب مفصولاً من الجهة السابقة لأسباب تأديبية.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -2981,6 +3281,8 @@ records:
     human_verification_advanced: false
   restatement_ar: ألا يكون الطالب مفصولاً من الجهة السابقة لأسباب تأديبية.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 9fad9c7c06d54517374155310957909fe1cc8f94d90a2a96c7ddb5ff7a5c3149
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -2993,7 +3295,7 @@ records:
   statement_ar: استيفاء شروط التحويل المعتمدة من مجلس الكلية المحول إليها.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3005,6 +3307,8 @@ records:
     human_verification_advanced: false
   restatement_ar: استيفاء شروط التحويل المعتمدة من مجلس الكلية المحول إليها.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: fd55fafb0d35523c2dd99e0993f3659ef4e244245f0353b74e4d0d79d6e327ab
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3017,7 +3321,7 @@ records:
   statement_ar: استكمال إجراءات التحويل بما لا يتجاوز بداية العام الدراسي.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3029,6 +3333,8 @@ records:
     human_verification_advanced: false
   restatement_ar: استكمال إجراءات التحويل بما لا يتجاوز بداية العام الدراسي.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: adf79e8c76b1097cb7c9fe44fe3c1050b14b1abee995eea1087348f0a3a9e6ea
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3041,7 +3347,7 @@ records:
   statement_ar: إكمال فصلين أو سنة دراسية واكتساب 24 وحدة على الأقل في الجهة السابقة.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3053,6 +3359,8 @@ records:
     human_verification_advanced: false
   restatement_ar: إكمال فصلين أو سنة دراسية واكتساب 24 وحدة على الأقل في الجهة السابقة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 62729a2b0d422ae610ad3a9e4ac5723f492f2dfc0a1c71f15900762d3b1207ee
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3065,7 +3373,7 @@ records:
   statement_ar: دراسة ما لا يقل عن 50% من متطلبات التخرج في الكلية المحول إليها.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3077,6 +3385,8 @@ records:
     human_verification_advanced: false
   restatement_ar: دراسة ما لا يقل عن 50% من متطلبات التخرج في الكلية المحول إليها.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 0124772a09a749b0ff8df53731a53433aa6511927f6476d255e6ecdad151a80e
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3089,7 +3399,7 @@ records:
   statement_ar: ألا يكون التحويل من درجة علمية إلى درجة أعلى.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3101,6 +3411,8 @@ records:
     human_verification_advanced: false
   restatement_ar: ألا يكون التحويل من درجة علمية إلى درجة أعلى.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 5e7801d151a1ebd68106f1e06ab85ec029f3271078e334a6dfd06981d211c404
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3113,7 +3425,7 @@ records:
   statement_ar: تقديم الطلب إلكترونياً في الفترة المعلنة في التقويم الجامعي.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3125,6 +3437,8 @@ records:
     human_verification_advanced: false
   restatement_ar: تقديم الطلب إلكترونياً في الفترة المعلنة في التقويم الجامعي.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 398fbb94e6a715afde6dcbc7414fa4752cb70051d28a1c7f42f9aa49a87803a3
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3137,7 +3451,7 @@ records:
   statement_ar: استيفاء شروط التحويل المعتمدة من مجلس الكلية المحول إليها.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3149,6 +3463,8 @@ records:
     human_verification_advanced: false
   restatement_ar: استيفاء شروط التحويل المعتمدة من مجلس الكلية المحول إليها.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: fd55fafb0d35523c2dd99e0993f3659ef4e244245f0353b74e4d0d79d6e327ab
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3161,7 +3477,7 @@ records:
   statement_ar: إكمال فصلين أو سنة دراسية واكتساب 24 وحدة على الأقل في الكلية المحول منها.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3173,6 +3489,8 @@ records:
     human_verification_advanced: false
   restatement_ar: إكمال فصلين أو سنة دراسية واكتساب 24 وحدة على الأقل في الكلية المحول منها.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 04c19bba89b1fa6ad80335b8c8201bf0d541b42134ce8664ff157c910cc77dba
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3185,7 +3503,7 @@ records:
   statement_ar: ألا يكون قد درس أكثر من 50% من مقررات الخطة في الكلية المحول منها.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3197,6 +3515,8 @@ records:
     human_verification_advanced: false
   restatement_ar: ألا يكون قد درس أكثر من 50% من مقررات الخطة في الكلية المحول منها.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: f46b8ace81f5c4dd30fe2980e46f015ad3f353904d4abd2dfa79b139c65ff55e
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3209,7 +3529,7 @@ records:
   statement_ar: ألا يكون التحويل من درجة علمية إلى درجة أعلى.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3221,6 +3541,8 @@ records:
     human_verification_advanced: false
   restatement_ar: ألا يكون التحويل من درجة علمية إلى درجة أعلى.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 5e7801d151a1ebd68106f1e06ab85ec029f3271078e334a6dfd06981d211c404
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3233,7 +3555,7 @@ records:
   statement_ar: يسمح بالتحويل الداخلي مرة واحدة فقط طوال الدراسة.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3245,6 +3567,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يسمح بالتحويل الداخلي مرة واحدة فقط طوال الدراسة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 109ccc39b9208ab977eb7625fe57713566d1ddfa27cb6ca1519cfc3a817d0015
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3257,7 +3581,7 @@ records:
   statement_ar: من سبق له التحويل من خارج الجامعة لا يحق له التحويل بين كليات الجامعة.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3269,6 +3593,8 @@ records:
     human_verification_advanced: false
   restatement_ar: من سبق له التحويل من خارج الجامعة لا يحق له التحويل بين كليات الجامعة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: abbaf539a497046ef9e26dfd8c5860578faff3778527df2519b46e3b90462dc4
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3281,7 +3607,7 @@ records:
   statement_ar: تغيير مقر الكلية لنفس التخصص لا يحتسب ضمن مرات التحويل.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3293,6 +3619,8 @@ records:
     human_verification_advanced: false
   restatement_ar: تغيير مقر الكلية لنفس التخصص لا يحتسب ضمن مرات التحويل.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 10b9fbe1ed9a8e5c678dcd82321bff1fe0490c9f1bd9ae8ecdc812959e0fe9ba
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3305,7 +3633,7 @@ records:
   statement_ar: تستكمل الإجراءات قبل بداية العام أو وفق التقويم الجامعي.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3317,6 +3645,8 @@ records:
     human_verification_advanced: false
   restatement_ar: تستكمل الإجراءات قبل بداية العام أو وفق التقويم الجامعي.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 70910febbf5481526919f7e37e6325ddcdfa3c0e9b6b468a5d0f9957986293c9
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3329,7 +3659,7 @@ records:
   statement_ar: تقدم الطلبات إلكترونياً في الفترة المعلنة في التقويم.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3341,6 +3671,8 @@ records:
     human_verification_advanced: false
   restatement_ar: تقدم الطلبات إلكترونياً في الفترة المعلنة في التقويم.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 703594f184fbbc84b0fcb84a19a30c0cf42ee4d3a653666b66fcd39957a3602c
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3353,7 +3685,7 @@ records:
   statement_ar: استيفاء شروط التحويل المعتمدة من مجلس الكلية للقسم أو التخصص الجديد.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3365,6 +3697,8 @@ records:
     human_verification_advanced: false
   restatement_ar: استيفاء شروط التحويل المعتمدة من مجلس الكلية للقسم أو التخصص الجديد.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 68fbe62d3ea16703dbdee546ac0122b2f3cc77db3d04c2a157ce4772771613f2
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3377,7 +3711,7 @@ records:
   statement_ar: إكمال فصلين واكتساب 16 وحدة على الأقل في القسم السابق.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3389,6 +3723,8 @@ records:
     human_verification_advanced: false
   restatement_ar: إكمال فصلين واكتساب 16 وحدة على الأقل في القسم السابق.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 199af3c9c448f3e3fa2765aa0699042b3017ed4ef37379662fb0b660393c6170
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3401,7 +3737,7 @@ records:
   statement_ar: يسمح بالتحويل بين الأقسام أو التخصصات داخل الكلية مرة واحدة فقط.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3413,6 +3749,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يسمح بالتحويل بين الأقسام أو التخصصات داخل الكلية مرة واحدة فقط.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 812d0b14a9e7f33f4811c9d1c91da73d5b08b9ec9b2e6f737e007a07ca9186c8
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3426,7 +3764,7 @@ records:
     الكلية.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3439,6 +3777,8 @@ records:
   restatement_ar: من سبق له التحويل الخارجي أو بين الكليات لا يحق له التحويل بين الأقسام أو التخصصات داخل
     الكلية.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: e597bd0dd886c195498f23cc0c2fe938ac459b2d6ca6f39cce425ebfc392edee
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3451,7 +3791,7 @@ records:
   statement_ar: يقدم الطلب إلكترونياً في الفترة المعلنة في التقويم الجامعي.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3463,6 +3803,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يقدم الطلب إلكترونياً في الفترة المعلنة في التقويم الجامعي.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: d66216f591caac31eb9610c407bd8b8bc1f4c26d9d0b55150cd24d15a151b375
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3475,7 +3817,7 @@ records:
   statement_ar: يسجل المتعثر بما يضمن عدم التعارض في الجدول.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3487,6 +3829,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يسجل المتعثر بما يضمن عدم التعارض في الجدول.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 18c27e51d3b320385c88cd898c23349148debd3e5e3452603698a403be7c2482
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3499,7 +3843,7 @@ records:
   statement_ar: يشترط استيفاء المتطلبات السابقة.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3511,6 +3855,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يشترط استيفاء المتطلبات السابقة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 9a9f8912311a8115e58391fc59d6989607118bd9988d317ff757104a3f089c94
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3523,7 +3869,7 @@ records:
   statement_ar: لا يسمح للمتعثر بمقررات من مستويات لاحقة إلا لإكمال الحد الأدنى من العبء الدراسي.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3535,6 +3881,8 @@ records:
     human_verification_advanced: false
   restatement_ar: لا يسمح للمتعثر بمقررات من مستويات لاحقة إلا لإكمال الحد الأدنى من العبء الدراسي.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: fffb00e4dd553002dca15ad8bee21d76273f8895fe089a4b7b63ea2c361676d4
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3553,7 +3901,7 @@ records:
     maximum_inclusive: true
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3566,6 +3914,8 @@ records:
   restatement_ar: يكون التقدير العام ممتاز على مقياس 5 من 4.5 إلى أقل من 5.0، مع شمول الحد الأعلى في فئة
     ممتاز.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 194aa879271a0f15a470c922e319c84b86462f1ffc5a6ff525186b2aad26653f
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3584,7 +3934,7 @@ records:
     maximum_inclusive: false
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3597,6 +3947,8 @@ records:
   restatement_ar: يكون التقدير العام جيد جداً على مقياس 5 من 3.75 إلى أقل من 4.5، مع شمول الحد الأعلى
     في فئة ممتاز.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 88dadb8e9a1717ede8a997000cefba1d6a74ec95fb88483f01766dbf75017011
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3615,7 +3967,7 @@ records:
     maximum_inclusive: false
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3628,6 +3980,8 @@ records:
   restatement_ar: يكون التقدير العام جيد على مقياس 5 من 2.75 إلى أقل من 3.75، مع شمول الحد الأعلى في فئة
     ممتاز.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 8152d373280a9fef952eaae70b2d14beea502d9936bbbf096ca5897c76e88c38
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3646,7 +4000,7 @@ records:
     maximum_inclusive: false
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3659,6 +4013,8 @@ records:
   restatement_ar: يكون التقدير العام مقبول على مقياس 5 من 2.0 إلى أقل من 2.75، مع شمول الحد الأعلى في
     فئة ممتاز.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 6c20c8d3c675fe36a25eb9ef5ce79562c290fb2522a4b75986527b36d5d0ceb2
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3677,7 +4033,7 @@ records:
     maximum_inclusive: true
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3690,6 +4046,8 @@ records:
   restatement_ar: يكون التقدير العام ممتاز على مقياس 4 من 3.5 إلى أقل من 4.0، مع شمول الحد الأعلى في فئة
     ممتاز.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 4f8b1576f1aa0e21c3c326ca025ebd7ebd2fa2eeb7229aa2a1b92d56b30b9fb5
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3708,7 +4066,7 @@ records:
     maximum_inclusive: false
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3721,6 +4079,8 @@ records:
   restatement_ar: يكون التقدير العام جيد جداً على مقياس 4 من 2.75 إلى أقل من 3.5، مع شمول الحد الأعلى
     في فئة ممتاز.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 1a0eb1912c15fb4d49d1a6e254aa1d530aed74e4b188bf772860a99a075b998b
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3739,7 +4099,7 @@ records:
     maximum_inclusive: false
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3752,6 +4112,8 @@ records:
   restatement_ar: يكون التقدير العام جيد على مقياس 4 من 1.75 إلى أقل من 2.75، مع شمول الحد الأعلى في فئة
     ممتاز.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 90db378247b28ad259e370e3c212af1ad203eb9e79f97443ef6f4f00e16d9547
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3770,7 +4132,7 @@ records:
     maximum_inclusive: false
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3783,6 +4145,8 @@ records:
   restatement_ar: يكون التقدير العام مقبول على مقياس 4 من 1.0 إلى أقل من 1.75، مع شمول الحد الأعلى في
     فئة ممتاز.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 2543e8291e5d923375bdaee43c85820cb550dff63644fdaaf29182c35783a865
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3803,7 +4167,7 @@ records:
     percent_max_inclusive: 100
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3818,6 +4182,8 @@ records:
   restatement_ar: الدرجة ممتاز مرتفع (أ+/A+) تقع في النطاق من 95 إلى أقل من 100، ووزنها 5.0 من 5 و4.0
     من 4.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 9a6a7fec095a21fdbee57263236a160387e08a5df3b0a5042b636464f6a7d0e8
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3844,7 +4210,7 @@ records:
     weight_4: 3.75
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3856,6 +4222,8 @@ records:
     human_verification_advanced: false
   restatement_ar: الدرجة ممتاز (أ/A) تقع في النطاق من 90 إلى أقل من 95، ووزنها 4.75 من 5 و3.75 من 4.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 2775db0729a8376a56ef2d8090d0f33c24b9120da7ec4eb8855ddc9506e8b246
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3877,7 +4245,7 @@ records:
     weight_4: 3.5
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3890,6 +4258,8 @@ records:
   restatement_ar: الدرجة جيد جداً مرتفع (ب+/B+) تقع في النطاق من 85 إلى أقل من 90، ووزنها 4.5 من 5 و3.5
     من 4.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: abc99d5ad7ef775784d8d05e1d076ceef80af1609bff4453fcbf80f7fd316744
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3910,7 +4280,7 @@ records:
     weight_4: 3.0
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3922,6 +4292,8 @@ records:
     human_verification_advanced: false
   restatement_ar: الدرجة جيد جداً (ب/B) تقع في النطاق من 80 إلى أقل من 85، ووزنها 4.0 من 5 و3.0 من 4.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: b93deecd1e8ca9f37ab0aaa3040dc09c9d3d87f92d9fe719fb9c36af72b54e80
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3942,7 +4314,7 @@ records:
     weight_4: 2.5
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3955,6 +4327,8 @@ records:
   restatement_ar: الدرجة جيد مرتفع (ج+/C+) تقع في النطاق من 75 إلى أقل من 80، ووزنها 3.5 من 5 و2.5 من
     4.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: d478ff874627d861eb72c5b5ed6f405a0df18934e51d2fbd05ae9096fcf4baab
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -3975,7 +4349,7 @@ records:
     weight_4: 2.0
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -3987,6 +4361,8 @@ records:
     human_verification_advanced: false
   restatement_ar: الدرجة جيد (ج/C) تقع في النطاق من 70 إلى أقل من 75، ووزنها 3.0 من 5 و2.0 من 4.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: c8012da197e8f659bd32e3e20711b87efb6ff0c59e380b6b975b7c4d4c48d64c
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4008,7 +4384,7 @@ records:
     weight_4: 1.5
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -4021,6 +4397,8 @@ records:
   restatement_ar: الدرجة مقبول مرتفع (د+/D+) تقع في النطاق من 65 إلى أقل من 70، ووزنها 2.5 من 5 و1.5 من
     4.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 0758f8a4aaea8d5f48b6c2a557cfbd27bc9ad7a6b054bc7fe62317badf275fe4
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4041,7 +4419,7 @@ records:
     weight_4: 1.0
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -4053,6 +4431,8 @@ records:
     human_verification_advanced: false
   restatement_ar: الدرجة مقبول (د/D) تقع في النطاق من 60 إلى أقل من 65، ووزنها 2.0 من 5 و1.0 من 4.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 3eb8ccb7f927ff0537fccc0f4770c6c854c4c28828de5effb53ae9213b0bbb6e
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4073,7 +4453,7 @@ records:
     source_lower_bound_specified: false
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -4086,6 +4466,8 @@ records:
     correction: The source states only “less than 60”; v1 added an unstated lower bound of zero.
   restatement_ar: الدرجة راسب (هـ/F) تقع في النطاق من 0 إلى أقل من 60، ووزنها 1.0 من 5 و0.0 من 4.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 43c2ca9dfdfa72d695734f1284f065661bc8eed164698213cb65714e94b1048c
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4105,7 +4487,7 @@ records:
     والتقدير العام والمقررات المعفاة للمحول.
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   source_alignment:
@@ -4118,6 +4500,8 @@ records:
   restatement_ar: يعرض السجل المقررات في كل فصل برموزها وأرقامها ووحداتها وتقديراتها، والمعدل الفصلي والتراكمي
     والتقدير العام والمقررات المعفاة للمحول.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: fc0d0659a7c2b874a4176873b35da46acc47b08f9c272d51056b8181a733f7f1
   second_pass_checked: true
   in_upstream_policy_subset: false
@@ -4138,7 +4522,7 @@ records:
     weight_4: null
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   notes: حُفظت التهجئة الإنجليزية كما وردت في المصدر عند وجود أخطاء مطبعية.
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
@@ -4151,6 +4535,8 @@ records:
     human_verification_advanced: false
   restatement_ar: الرمز م (IP) يعني مستمر.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: c1b3a7724b6822ba8ed74dc3e21c8e44b342a9024ece46e787a43ab73342167f
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4171,7 +4557,7 @@ records:
     weight_4: null
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   notes: حُفظت التهجئة الإنجليزية كما وردت في المصدر عند وجود أخطاء مطبعية.
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
@@ -4184,6 +4570,8 @@ records:
     human_verification_advanced: false
   restatement_ar: الرمز ل (IC) يعني غير مكتمل.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: d4f7cc2925a86b750f411637af62a6c2da634867ddfef324dccec8bd05267346
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4204,7 +4592,7 @@ records:
     weight_4: 0.0
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   notes: حُفظت التهجئة الإنجليزية كما وردت في المصدر عند وجود أخطاء مطبعية.
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
@@ -4217,6 +4605,8 @@ records:
     human_verification_advanced: false
   restatement_ar: الرمز ح (DN) يعني محروم.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 0d58900e3d11ce532564859dcc7a225549787c2b1e03d593e81264cc4c5232a4
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4237,7 +4627,7 @@ records:
     weight_4: null
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   notes: حُفظت التهجئة الإنجليزية كما وردت في المصدر عند وجود أخطاء مطبعية.
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
@@ -4250,6 +4640,8 @@ records:
     human_verification_advanced: false
   restatement_ar: الرمز ند (NP) يعني ناجح دون درجة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 8795de3dc82117193cfdbde69827c1ab04065c7140eaffc013f861ac990dea8e
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4270,7 +4662,7 @@ records:
     weight_4: null
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   notes: حُفظت التهجئة الإنجليزية كما وردت في المصدر عند وجود أخطاء مطبعية.
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
@@ -4283,6 +4675,8 @@ records:
     human_verification_advanced: false
   restatement_ar: الرمز هد (NF) يعني راسب دون درجة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 2d92fb333fa6ceabe6c1a6071810d4e2475b001c06ac131cfcc49843b6b12eab
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4303,7 +4697,7 @@ records:
     weight_4: null
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   notes: حُفظت التهجئة الإنجليزية كما وردت في المصدر عند وجود أخطاء مطبعية.
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
@@ -4316,6 +4710,8 @@ records:
     human_verification_advanced: false
   restatement_ar: الرمز ع (W) يعني منسحب بعذر.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: fedded6f3d22b1d892adce755d0444a08328c95e62a6c67ce62d4c579244c81d
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4336,7 +4732,7 @@ records:
     weight_4: null
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   notes: حُفظت التهجئة الإنجليزية كما وردت في المصدر عند وجود أخطاء مطبعية.
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
@@ -4349,6 +4745,8 @@ records:
     human_verification_advanced: false
   restatement_ar: الرمز عف (E) يعني معفي.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 48cc68329ee057f02d35a652d3d3533ddbb35cea0e7a4ba4a5bf8e4cbfb082fb
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4363,7 +4761,7 @@ records:
     formula: sum(course_credit_hours * grade_weight) / sum(course_credit_hours)
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -4375,6 +4773,8 @@ records:
     human_verification_advanced: false
   restatement_ar: المعدل الفصلي = مجموع نقاط المقررات في الفصل ÷ مجموع ساعات تلك المقررات.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: f2d38a92c647d63c3c70792924d24202fb0ce13e440e545e77a55338bed9c6b1
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4389,7 +4789,7 @@ records:
     formula: sum(all_completed_course_points) / sum(all_completed_credit_hours)
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -4401,6 +4801,8 @@ records:
     human_verification_advanced: false
   restatement_ar: المعدل التراكمي = مجموع نقاط جميع الفصول المنجزة ÷ مجموع ساعات تلك الفصول.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 812c3218a7083d01dc1a92a3086e2685d3363ddcce5a24df3680ccabe352a1a3
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4415,7 +4817,7 @@ records:
     step: 1
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -4427,6 +4829,8 @@ records:
     human_verification_advanced: false
   restatement_ar: تحويل الدرجة المئوية إلى وزن التقدير وفق جدول التقديرات.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 7df4a8386fef5ff4425843a76441baf5b787b8832fedc0b05956c195009c3060
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4441,7 +4845,7 @@ records:
     step: 2
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -4453,6 +4857,8 @@ records:
     human_verification_advanced: false
   restatement_ar: ضرب عدد ساعات كل مقرر في وزن تقديره للحصول على نقاط المقرر.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: c653a17b069454ad66267d2033167d699648522a1f5e913f10106868a003d710
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4467,7 +4873,7 @@ records:
     step: 3
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -4479,6 +4885,8 @@ records:
     human_verification_advanced: false
   restatement_ar: تكرار العملية لجميع المقررات.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 0c18986140c48e1a757b358db2a649600b77640f2abc4397cff0714e9039149d
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4493,7 +4901,7 @@ records:
     step: 4
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -4505,6 +4913,8 @@ records:
     human_verification_advanced: false
   restatement_ar: جمع نقاط المقررات وجمع الساعات.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 63111b7221b028c6e2a99e609b54e3b11485e95a35ffbba14e2a76707e485cc3
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4519,7 +4929,7 @@ records:
     step: 5
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -4531,6 +4941,8 @@ records:
     human_verification_advanced: false
   restatement_ar: قسمة مجموع النقاط على مجموع الساعات للحصول على المعدل الفصلي.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 79d255f47e20780b17e003dc5a699a0490ece62723fd43b726834aac3c7d7832
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4544,7 +4956,7 @@ records:
     وإثباتها في السجل وفق ضوابط مجلس الجامعة.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -4557,6 +4969,8 @@ records:
   restatement_ar: يجوز بعد موافقة الكلية دراسة مقرر أو أكثر في جامعة أخرى أو فرع دون تحويل، مع معادلة
     المقررات وإثباتها في السجل وفق ضوابط مجلس الجامعة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 06bcfa27979708ab6c9f2002ae624347a5e8e8ec5bba56351069d1f5b63ad004
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4569,7 +4983,7 @@ records:
   statement_ar: أن تكون الدراسة في كلية أو جامعة معترف بها.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -4581,6 +4995,8 @@ records:
     human_verification_advanced: false
   restatement_ar: أن تكون الدراسة في كلية أو جامعة معترف بها.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 305c32ab4513aea1301fb7dff494d0229836ad579ce675b51e3767b82ca61955
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4593,7 +5009,7 @@ records:
   statement_ar: أن يكون المقرر الخارجي معادلاً في مفرداته لمقرر ضمن متطلبات التخرج.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -4605,6 +5021,8 @@ records:
     human_verification_advanced: false
   restatement_ar: أن يكون المقرر الخارجي معادلاً في مفرداته لمقرر ضمن متطلبات التخرج.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 4745fc1f65596245f21f14ee844765f339c85ea5e0188626548a1bb9a9021d24
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4618,7 +5036,7 @@ records:
     في السجل.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -4631,6 +5049,8 @@ records:
   restatement_ar: الأصل ألا تدخل معدلات المقررات المعادلة من جامعة أخرى في المعدل التراكمي، مع إثبات المقرر
     في السجل.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 4bb5f9dcf9df025d7852985bf34112e5a866788572a7a43c952bf29dd64d50a6
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4643,7 +5063,7 @@ records:
   statement_ar: لاحتساب المقرر في المعدل يجب أن تطابق مفرداته مفردات مقرر القسم.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -4655,6 +5075,8 @@ records:
     human_verification_advanced: false
   restatement_ar: لاحتساب المقرر في المعدل يجب أن تطابق مفرداته مفردات مقرر القسم.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 23c6e6d2ef2e12c4a7e3031baefd1ebb5287b13d74a3c4e7258966a4d00d413b
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4667,7 +5089,7 @@ records:
   statement_ar: لاحتساب المقرر في المعدل يجب أن تطابق لغة دراسته لغة مقرر القسم.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -4679,6 +5101,8 @@ records:
     human_verification_advanced: false
   restatement_ar: لاحتساب المقرر في المعدل يجب أن تطابق لغة دراسته لغة مقرر القسم.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: d96ec2ce194bfe6ceb2bff182f75b8e204ed8fed2ea7cf6c5c637d9333d82277
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4693,7 +5117,7 @@ records:
     minimum_grade: جيد جداً
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -4705,6 +5129,8 @@ records:
     human_verification_advanced: false
   restatement_ar: لاحتساب المقرر في المعدل يجب ألا يقل تقديره عن جيد جداً.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: cd218f75b91c16fbeb3577977756e65237f4f04bbf670beac2fc73fffb00e8f4
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4719,7 +5145,7 @@ records:
     maximum_percent_of_graduation_credits: 25
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -4731,6 +5157,8 @@ records:
     human_verification_advanced: false
   restatement_ar: الحد الأقصى للوحدات كزائر خارج الجامعة 25% من وحدات التخرج.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 2f1cc589d64ab756bdc2032ba32c14aa6ce4113a3352e415ee3755d3c5e31d36
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4745,7 +5173,7 @@ records:
     maximum_credit_hours: 24
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -4757,6 +5185,8 @@ records:
     human_verification_advanced: false
   restatement_ar: الحد الأقصى للوحدات كزائر داخل الجامعة 24 وحدة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 8f756f99feb6b6fcb2d32d70935ae2f2530551a5114da168121c6f4641284c77
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4769,7 +5199,7 @@ records:
   statement_ar: لا يسمح بطلب التحويل خلال فترة الزيارة داخل الجامعة أو خارجها.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -4781,6 +5211,8 @@ records:
     human_verification_advanced: false
   restatement_ar: لا يسمح بطلب التحويل خلال فترة الزيارة داخل الجامعة أو خارجها.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 451bfe2f3bcd6fde9f5b4a25db75befb34b712b57e4983167461cabae0e84be7
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4795,7 +5227,7 @@ records:
     maximum_visits: 3
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -4807,6 +5239,8 @@ records:
     human_verification_advanced: false
   restatement_ar: لا تزيد الزيارة عن ثلاث مرات طوال الالتحاق وبنفس الرقم الجامعي.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 7be09a79b73899f1e2761c4080482a6865da6055f15fc2c89ee997a31867d5f0
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4819,7 +5253,7 @@ records:
   statement_ar: يطوى القيد إذا انقطع الطالب مدة يحددها مجلس الجامعة دون طلب تأجيل أو اعتذار.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -4831,6 +5265,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يطوى القيد إذا انقطع الطالب مدة يحددها مجلس الجامعة دون طلب تأجيل أو اعتذار.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: dcacf775e084085944c7777ad180795c67bf427cf0d8b617bf7244e8e1712c32
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4843,7 +5279,7 @@ records:
   statement_ar: لا يعد الطالب منقطعاً في الفصول التي يدرسها زائراً في جامعة أخرى.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -4855,6 +5291,8 @@ records:
     human_verification_advanced: false
   restatement_ar: لا يعد الطالب منقطعاً في الفصول التي يدرسها زائراً في جامعة أخرى.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 7deb20d6135265b50c3a68672ebae67c006e74a0dc31d66493ed359b69c7785b
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4867,7 +5305,7 @@ records:
   statement_ar: للمطوي قيده التقدم لإعادة القيد برقمه وسجله السابقين.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -4879,6 +5317,8 @@ records:
     human_verification_advanced: false
   restatement_ar: للمطوي قيده التقدم لإعادة القيد برقمه وسجله السابقين.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 461665f83ffeb47aacb81ad62cffb58218c123728b352f7ef59d8aae1a558ae5
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4893,7 +5333,7 @@ records:
     maximum_academic_years: 2
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -4905,6 +5345,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يقدم الطلب بعذر خلال مدة لا تتجاوز عامين دراسيين.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: c99afcf72a23e7ea85695e2328ab20883364c8c567c4aea7c796edf6f6e20df5
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4917,7 +5359,7 @@ records:
   statement_ar: يشترط أن يكون البرنامج الأكاديمي قائماً.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -4929,6 +5371,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يشترط أن يكون البرنامج الأكاديمي قائماً.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 421acec2f45add68d189e68651b8e3782870a63767656910f349772cd55b368b
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4941,7 +5385,7 @@ records:
   statement_ar: يشترط إمكان التخرج ضمن المدة النظامية.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -4953,6 +5397,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يشترط إمكان التخرج ضمن المدة النظامية.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 2f6fd75d0821972a87e87162b91a0743173bf22bd061bde939ab901729447850
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4965,7 +5411,7 @@ records:
   statement_ar: يشترط ألا يكون الطالب مفصولاً أكاديمياً.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -4977,6 +5423,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يشترط ألا يكون الطالب مفصولاً أكاديمياً.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: e2e3d49e34f15cb074f232388fd11c5a187b9cfe417316a956c88ee5a859a3e1
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -4991,7 +5439,7 @@ records:
     maximum_reinstatements: 1
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5003,6 +5451,8 @@ records:
     human_verification_advanced: false
   restatement_ar: لا يعاد القيد أكثر من مرة، مع إمكان استثناء مجلس الجامعة عند الضرورة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 0c4279798251a779a69ccb1680687732c003f9c1f0e46d699f8894fb6849e7b8
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5015,7 +5465,7 @@ records:
   statement_ar: من تجاوز المهلة يمكنه التقدم مستجداً برقم جديد وفق شروط القبول السارية.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5027,6 +5477,8 @@ records:
     human_verification_advanced: false
   restatement_ar: من تجاوز المهلة يمكنه التقدم مستجداً برقم جديد وفق شروط القبول السارية.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 034bba6d9f0831d77b497b416a96f7f2c5ff85f05c5413e28db8a456e23e950c
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5044,7 +5496,7 @@ records:
     applies_to_dismissal_from_other_university: true
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5061,6 +5513,8 @@ records:
   restatement_ar: لا يعاد قيد المفصول تأديبياً إلا بعد مرور ثلاث سنوات، ويلغى القيد إذا ثبت عدم استيفاء
     المدة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 3c369f84f1313838520ec19126193489fc5d7bb32c868cc70a361e030d295de4
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5077,7 +5531,7 @@ records:
   statement_ar: يجوز للمنسحب طلب إعادة القيد برقمه وسجله السابقين لعذر تقبله الجهة المختصة.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5089,6 +5543,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يجوز للمنسحب طلب إعادة القيد برقمه وسجله السابقين لعذر تقبله الجهة المختصة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: a944cf60746e8a84e2945e2dfa19e7b855724d9e2fc822862162a97693a84cb3
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5102,7 +5558,7 @@ records:
     - يعاد قيده برقمه وسجله السابقين.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5115,6 +5571,8 @@ records:
   restatement_ar: إذا قدم من سحب ملفه الطلب حتى نهاية الفصل التالي - أو السنة التالية في نظام السنة الكاملة
     - يعاد قيده برقمه وسجله السابقين.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 307172bec1b7f0965ca3d18455b127c35de3e48614c3e31e7700be3f5af11972
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5129,7 +5587,7 @@ records:
     minimum_years: 2
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5141,6 +5599,8 @@ records:
     human_verification_advanced: false
   restatement_ar: لا يحق للمنسحب التقدم برقم وسجل جديدين إلا بعد سنتين من الانسحاب.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: a188a2361cc032dcd3ba10bdf660f239ea934295055d313ed9c9d5546b891219
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5153,7 +5613,7 @@ records:
   statement_ar: لا يعاد قيد من سحب ملفه إذا كان مفصولاً تأديبياً.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5165,6 +5625,8 @@ records:
     human_verification_advanced: false
   restatement_ar: لا يعاد قيد من سحب ملفه إذا كان مفصولاً تأديبياً.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: e96dc4ec84f5bc65abcdd5d815a5a08e7a97f9decc1dcd7f8b7752d28580be1c
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5177,7 +5639,7 @@ records:
   statement_ar: يقبل العذر الطبي بتقرير من منصة صحة أو الإدارة الطبية بالجامعة أو المستشفى الجامعي.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5189,6 +5651,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يقبل العذر الطبي بتقرير من منصة صحة أو الإدارة الطبية بالجامعة أو المستشفى الجامعي.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 85a6b54c075e8520e8971c1fa5d2a6fc0d65327c51d49a1b71aa5df251b17f24
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5201,7 +5665,7 @@ records:
   statement_ar: تقبل التقارير الصادرة خارج المملكة بعد تصديق الإدارة الطبية أو المستشفى الجامعي.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5213,6 +5677,8 @@ records:
     human_verification_advanced: false
   restatement_ar: تقبل التقارير الصادرة خارج المملكة بعد تصديق الإدارة الطبية أو المستشفى الجامعي.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 035e795b1ead8bba8c7537d5a688c6a680064cf09356bacdc009ed5f109f9bbb
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5227,7 +5693,7 @@ records:
     maximum_days: 14
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5239,6 +5705,8 @@ records:
     human_verification_advanced: false
   restatement_ar: تقدم التقارير أو الأعذار الموثقة خلال مدة لا تزيد على أسبوعين من تاريخ إصدارها.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 81144816aa5a43112d4ea9137876f89fe2704595b88424b6a4ea874051b10292
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5252,7 +5720,7 @@ records:
     المقرر لإعطاء اختبار بديل أو استكمال الأعمال الفصلية قبل بدء الاختبارات النهائية.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5269,6 +5737,8 @@ records:
   restatement_ar: إذا شمل التقرير اختباراً دورياً أو أعمالاً فصلية ينسق لإجراء بديل أو استكمال الأعمال
     قبل بدء الاختبارات النهائية.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: b9cec9c4e00cad5061759c06424abc96e5406bdc8b1367285338f208bb466262
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5285,7 +5755,7 @@ records:
   statement_ar: إذا شمل التقرير الاختبار النهائي يعاد الاختبار وفق الضوابط المحددة.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5297,6 +5767,8 @@ records:
     human_verification_advanced: false
   restatement_ar: إذا شمل التقرير الاختبار النهائي يعاد الاختبار وفق الضوابط المحددة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 8b52a8fd76fdac9abb979446f5f33233152e44dbee0c51ba20ca9eae7d4337f9
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5311,7 +5783,7 @@ records:
     maximum_days: 15
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5323,6 +5795,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يجوز التظلم على الدرجة النهائية خلال مدة لا تتجاوز 15 يوماً من اعتماد النتيجة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 4b9de1301781df6f4c883a0fb0cfa5fc4d22d4549b68a30971ed78c06cce2b8b
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5338,7 +5812,7 @@ records:
     step: 1
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5351,6 +5825,8 @@ records:
   restatement_ar: يطلب رئيس القسم إفادة أستاذ المقرر؛ فإن لزم التعديل تعدل النتيجة بنموذج رسمي، وإلا يبلغ
     الطالب.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: a1c21c247b0cdf2f2ee3257d897b630c62795b911f95d227eeb52f4d5627ccb9
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5365,7 +5841,7 @@ records:
     step: 2
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5377,6 +5853,8 @@ records:
     human_verification_advanced: false
   restatement_ar: عند عدم اقتناع الطالب يمكن تكليف عضو آخر في التخصص لمراجعة الدرجات.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: af5731ca332074f8a7ccf8b2a7040e4a484d664ab4e640c4a43bb7c85401ac65
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5392,7 +5870,7 @@ records:
     step: 3
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5405,6 +5883,8 @@ records:
   restatement_ar: عند استمرار عدم الاقتناع يعرض التظلم على لجنة برئاسة وكيل الكلية وعضوية رئيس القسم وأستاذ
     المقرر، ويكون قرارها نهائياً.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: f787a0aafb5dd01ec00ce379e37a5d73eac29e4be5cfb7221047864a96085bd4
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5419,7 +5899,7 @@ records:
     step: 4
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5431,6 +5911,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يعدل التقدير بقرار اللجنة موضحاً سبب التعديل.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: b9ef1dd4fa8be85cd69c860b87ee45f3b4bda4dcbbeab4ff3bdda401bad7164e
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5445,7 +5927,7 @@ records:
     step: 5
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5457,6 +5939,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يحتفظ القسم بأعمال الطالب وإجابات الاختبارات النهائية لمدة لا تقل عن عام دراسي.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: d05455aaa9b9ccd3ddab9311496b87d22764b62fd7047447f3899dbe615b819c
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5471,7 +5955,7 @@ records:
     step: 6
   normativity: PROCEDURAL_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5483,6 +5967,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يجوز رفع التظلم غير الصحيح إلى لجنة السلوك والانضباط لاتخاذ اللازم.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 9cb54aa370b8b4907de3b50096f63abfd7688a566590e53aba25553e5dbdcb75
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5495,7 +5981,7 @@ records:
   statement_ar: يتخرج الطالب بعد إنهاء متطلبات الخطة بنجاح.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5507,6 +5993,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يتخرج الطالب بعد إنهاء متطلبات الخطة بنجاح.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 0fd042be3dc20de5e74ca31817b8329262cc5504b66c251e3251ad903dac5c6a
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5522,7 +6010,7 @@ records:
     minimum_overall_grade: مقبول
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5535,6 +6023,8 @@ records:
   restatement_ar: يجب ألا يقل المعدل التراكمي عن الحد الذي يقرره مجلس الجامعة للتخصص، وألا يقل في جميع
     الأحوال عن تقدير مقبول.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 512e74bd2f4d777a0f6d207a43860cd4e014cb0a85c444d32b2a56f4c955843f
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5547,7 +6037,7 @@ records:
   statement_ar: يمنح مجلس الجامعة الدرجات العلمية بناء على مذكرة ترفعها عمادة القبول والتسجيل.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5559,6 +6049,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يمنح مجلس الجامعة الدرجات العلمية بناء على مذكرة ترفعها عمادة القبول والتسجيل.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: db6b471972955636d7b105f01008d6f333161db1f136802702e9d01fea550605
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5571,7 +6063,7 @@ records:
   statement_ar: يعد آخر فصل في سجل الطالب فصل التخرج.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5583,6 +6075,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يعد آخر فصل في سجل الطالب فصل التخرج.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: f500ac1a234740101ea076e20ae86f712f53c1c8a15bd0ed3f9d6483ee5582da
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5595,7 +6089,7 @@ records:
   statement_ar: لا يعد الطالب متخرجاً إلا بعد موافقة مجلس الجامعة على منحه الدرجة.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5607,6 +6101,8 @@ records:
     human_verification_advanced: false
   restatement_ar: لا يعد الطالب متخرجاً إلا بعد موافقة مجلس الجامعة على منحه الدرجة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 44c0271961be8bf5e0f9c180e3dbef9bad02b1a11449c87e2a0abaf715c0796b
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5620,7 +6116,7 @@ records:
     وقد تفرض الجامعة رسوماً.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5633,6 +6129,8 @@ records:
   restatement_ar: تختص عمادة القبول والتسجيل بإصدار وثائق التخرج والسجلات الأكاديمية وبدل الفاقد أو التالف،
     وقد تفرض الجامعة رسوماً.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 5405ec6f4ebfa8cc4b9278951a0a2f2cb35bad596a5c054d9c028f320b3e9710
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5646,7 +6144,7 @@ records:
     المعدل إلى مقبول.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5659,6 +6157,8 @@ records:
   restatement_ar: يمكن السماح لمن نجح في المقررات ولم يحقق معدل التخرج بإعادة مقرر أو أكثر يحدده القسم
     لرفع المعدل إلى مقبول.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 986ca9107ae40e67090671d5c9849d468f807a4cd0d5e6bdbcf1451459659e08
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5675,7 +6175,7 @@ records:
     maximum: 5.0
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5687,6 +6187,8 @@ records:
     human_verification_advanced: false
   restatement_ar: تمنح الأولى لمعدل من 4.75 إلى 5.00 عند التخرج.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 1ff288920d74267eb5bc5ea10f99fcf6c527b8cc15eedf40f8a33e74457b9e48
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5703,7 +6205,7 @@ records:
     maximum_exclusive: 4.75
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5715,6 +6217,8 @@ records:
     human_verification_advanced: false
   restatement_ar: تمنح الثانية لمعدل من 4.25 إلى أقل من 4.75.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 03417bff70a9cb4786b584263937bfdaaca4091d48904af2a2a8d4605f9fb29a
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5731,7 +6235,7 @@ records:
     maximum: 4.0
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5743,6 +6247,8 @@ records:
     human_verification_advanced: false
   restatement_ar: تمنح الأولى لمعدل من 3.75 إلى 4.00 عند التخرج.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 295e134bdbcd4921d6e14e3bd04b078954785a91e85b8bc986f63af30ef7d10c
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5759,7 +6265,7 @@ records:
     maximum_exclusive: 3.75
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5771,6 +6277,8 @@ records:
     human_verification_advanced: false
   restatement_ar: تمنح الثانية لمعدل من 3.25 إلى أقل من 3.75.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: ccdc9c51e56cdf7892c3babbef281aaa19af2ab0ca1b97cecbd413c8fc995fe9
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5783,7 +6291,7 @@ records:
   statement_ar: يشترط ألا يكون الطالب قد رسب في أي مقرر في الجامعة أو جامعة أخرى، ويشمل الزائر والمحول.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5795,6 +6303,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يشترط ألا يكون الطالب قد رسب في أي مقرر في الجامعة أو جامعة أخرى، ويشمل الزائر والمحول.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: d6b0541dabc7c7138d7d9f9308ee25f6938224750deb7bd6e09be1b0c63eaf95
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5808,7 +6318,7 @@ records:
     أو المعهد.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5821,6 +6331,8 @@ records:
   restatement_ar: يشترط إكمال متطلبات التخرج في مدة لا تتجاوز متوسط الحدين الأدنى والأقصى للبقاء في الكلية
     أو المعهد.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: c56d668d53ed5ee27bb3a23c941f3c3a64d219ac1743dd88374dfd46094c6f0a
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5835,7 +6347,7 @@ records:
     minimum_percent: 60
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5847,6 +6359,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يشترط أن يكون قد درس في جامعة التخرج ما لا يقل عن 60% من متطلبات التخرج.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: b75ffbd07469983cd54f46c6aebfabe232eb8661dde6303898f654dead9fa59c
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5859,7 +6373,7 @@ records:
   statement_ar: يشترط ألا يكون صدر بحقه قرار تأديبي خلال الدراسة.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5871,6 +6385,8 @@ records:
     human_verification_advanced: false
   restatement_ar: يشترط ألا يكون صدر بحقه قرار تأديبي خلال الدراسة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: cd58256426b78ee3b0e2b1041cd5b4f45d4d99e78b65dff7dab80d50d7928f40
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -5885,7 +6401,7 @@ records:
     absence_percent: 25
   normativity: ADVISORY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   source_alignment:
@@ -5900,6 +6416,8 @@ records:
   restatement_ar: يحذر الدليل من تجاوز الغياب 25% من المحاضرات، إذ قد يحرم الطالب من الاستمرار أو دخول
     الاختبار.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: d6c40684fd8a9c569d2923f5ff0615fa952043fe73f9c200ee166f8fcb0b06d8
   second_pass_checked: true
   in_upstream_policy_subset: false
@@ -5912,7 +6430,7 @@ records:
   statement_ar: التسجيل الآلي للمقررات لا يعفي من الحضور؛ من يريد التوقف عن الدراسة يجب أن يعتذر عن الفصل.
   normativity: ADVISORY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   source_alignment:
@@ -5925,6 +6443,8 @@ records:
   restatement_ar: التسجيل الآلي للمقررات لا يعفي من الحضور؛ من يريد التوقف عن الدراسة يجب أن يعتذر عن
     الفصل.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 5b134d37b0068b20a1d3f0ce67164cc2a7cbfb90db3547afc137c2b70a99c07b
   second_pass_checked: true
   in_upstream_policy_subset: false
@@ -5937,7 +6457,7 @@ records:
   statement_ar: تأجيل مقررات المستويات الأولى قد يسبب عوائق إذا تغيرت الخطط الدراسية.
   normativity: ADVISORY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   source_alignment:
@@ -5949,6 +6469,8 @@ records:
     human_verification_advanced: false
   restatement_ar: تأجيل مقررات المستويات الأولى قد يسبب عوائق إذا تغيرت الخطط الدراسية.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 41e8fb109edeef7a12f82bf0b8b501c34f76f9c371ce53c204efe4cfd7b07441
   second_pass_checked: true
   in_upstream_policy_subset: false
@@ -5961,7 +6483,7 @@ records:
   statement_ar: تأخير متابعة طلب تعديل الدرجة إلى فصول لاحقة قد يجعل التعديل متعذراً.
   normativity: ADVISORY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   source_alignment:
@@ -5973,6 +6495,8 @@ records:
     human_verification_advanced: false
   restatement_ar: تأخير متابعة طلب تعديل الدرجة إلى فصول لاحقة قد يجعل التعديل متعذراً.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 53c834fa42848d7544f98b305a7f55b562cfb3a52a62c563a4f24e16f3a46a7e
   second_pass_checked: true
   in_upstream_policy_subset: false
@@ -5985,7 +6509,7 @@ records:
   statement_ar: الإخلال بنظام الكليات أو مرافق الجامعة أو تعطيل سير النشاط.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -5997,6 +6521,8 @@ records:
     human_verification_advanced: false
   restatement_ar: الإخلال بنظام الكليات أو مرافق الجامعة أو تعطيل سير النشاط.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: edcf17a115b0f29974e17e2d67bd3260ee729c386a4889f5c09968f61607240e
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -6009,7 +6535,7 @@ records:
   statement_ar: الإخلال بنظام المحاضرات أو الدروس أو الامتناع عن حضورها.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -6021,6 +6547,8 @@ records:
     human_verification_advanced: false
   restatement_ar: الإخلال بنظام المحاضرات أو الدروس أو الامتناع عن حضورها.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: e22b8605d8a8e3676f620971ab47568c155815d18a3a10ccc0e9d514c91f3bb9
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -6033,7 +6561,7 @@ records:
   statement_ar: الإخلال بنظام الاختبارات بالغش أو محاولة الغش.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -6045,6 +6573,8 @@ records:
     human_verification_advanced: false
   restatement_ar: الإخلال بنظام الاختبارات بالغش أو محاولة الغش.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 04cc89dde814ff5cf09b92a55b7b6b5b0248e31f8f98124d3dc8fbd2c2501307
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -6057,7 +6587,7 @@ records:
   statement_ar: فعل يمس الدين أو حسن السيرة والسلوك أو سمعة الجامعة.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -6069,6 +6599,8 @@ records:
     human_verification_advanced: false
   restatement_ar: فعل يمس الدين أو حسن السيرة والسلوك أو سمعة الجامعة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: fbf4c6cb1a33e702a7956a7ca6efb1c6936baa8d2fe2ed138a9bf73d63aa4646
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -6081,7 +6613,7 @@ records:
   statement_ar: الاعتداء على منسوبي الجامعة أو الطلبة أو إهانتهم.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -6093,6 +6625,8 @@ records:
     human_verification_advanced: false
   restatement_ar: الاعتداء على منسوبي الجامعة أو الطلبة أو إهانتهم.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: fc17b81601a77e8c811067ba2040e21efe4186806a18bbf219c62801833c42c3
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -6105,7 +6639,7 @@ records:
   statement_ar: التعديل في الأوراق الرسمية أو الإدلاء بمعلومات غير صحيحة عن الجامعة.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -6117,6 +6651,8 @@ records:
     human_verification_advanced: false
   restatement_ar: التعديل في الأوراق الرسمية أو الإدلاء بمعلومات غير صحيحة عن الجامعة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 4d94c73e0e121c0a62eab311c50471a4f4c252a012290651f9090b0fc2454d47
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -6129,7 +6665,7 @@ records:
   statement_ar: امتناع الطالب عن الامتثال للعقوبة المقررة من الجهة المختصة.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -6141,6 +6677,8 @@ records:
     human_verification_advanced: false
   restatement_ar: امتناع الطالب عن الامتثال للعقوبة المقررة من الجهة المختصة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 0e7532a6201a9c88eb052eb21894eae5a277709459cef776d58fabb8b8c3266d
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -6155,7 +6693,7 @@ records:
     أو نهائياً.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -6169,6 +6707,8 @@ records:
     من المقرر مع الرسوب، وحرمان المكافأة أو المنحة شهراً، والحرمان من بعض الخدمات فصلاً، والفصل فصلاً
     أو نهائياً.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: bd75c5cc0e9f816e5e57cd2afde0d7c55b46ffda8650a15727f578e3aeb541bc
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -6182,7 +6722,7 @@ records:
     التالي ولا يسمح له بالتسجيل في الصيفي.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -6195,6 +6735,8 @@ records:
   restatement_ar: من غش أو حاول الغش في اختبار نصفي أو نهائي يحرم من المادة ويعد راسباً، ويفصل في الفصل
     التالي ولا يسمح له بالتسجيل في الصيفي.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 139606089878d82ee2d16fb4bb0b375231b4a8fc34765101bfe92f73ffde325d
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -6207,7 +6749,7 @@ records:
   statement_ar: من تكرر منه الغش أو ثبتت عليه محاولات الغش يفصل نهائياً من الجامعة.
   normativity: NORMATIVE_SUMMARY
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: AUTHORITY_APPROVAL
   production_use: EXPLAIN_ONLY_UNTIL_AUTHORITY_REVIEW
   source_alignment:
@@ -6219,6 +6761,8 @@ records:
     human_verification_advanced: false
   restatement_ar: من تكرر منه الغش أو ثبتت عليه محاولات الغش يفصل نهائياً من الجامعة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 8dc2b9e5968f2b8c09dbf1a78b1d087792d25e311d7b2f44cd461994e37c4538
   second_pass_checked: true
   in_upstream_policy_subset: true
@@ -6233,7 +6777,7 @@ records:
     value: www.taibahu.edu.sa
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   source_alignment:
@@ -6245,6 +6789,8 @@ records:
     human_verification_advanced: false
   restatement_ar: الموقع الإلكتروني لجامعة طيبة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 313da80e4bc49d51fc31f94c4b1d08a863d3e0ff7b630a1707faf541e9242b5b
   second_pass_checked: true
   in_upstream_policy_subset: false
@@ -6259,7 +6805,7 @@ records:
     value: عمادة القبول والتسجيل
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   source_alignment:
@@ -6271,6 +6817,8 @@ records:
     human_verification_advanced: false
   restatement_ar: حساب عمادة القبول والتسجيل.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: cdd2345ee53ef28027ce9aababd166f568f6f272e34bc4fbe277a35ffa968fc0
   second_pass_checked: true
   in_upstream_policy_subset: false
@@ -6285,7 +6833,7 @@ records:
     value: '@tuadtw'
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   source_alignment:
@@ -6297,6 +6845,8 @@ records:
     human_verification_advanced: false
   restatement_ar: حساب العمادة على منصة X.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 0949838087eb58774ec568e4592f8351a13d3d008357433894a3c618eae0e9d2
   second_pass_checked: true
   in_upstream_policy_subset: false
@@ -6311,7 +6861,7 @@ records:
     value: 014-8618800
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   source_alignment:
@@ -6323,6 +6873,8 @@ records:
     human_verification_advanced: false
   restatement_ar: رقم التواصل مع العمادة.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: ef5032be47a0850f9da17ffbf906c2db2413d4b384a654844f97e241a52b86fc
   second_pass_checked: true
   in_upstream_policy_subset: false
@@ -6337,7 +6889,7 @@ records:
     value: Dar-support@taibahu.edu.sa
   normativity: DESCRIPTIVE
   authority_level: OFFICIAL_STUDENT_GUIDE
-  verification_status: EXTRACTED
+  verification_status: AUTHORITY_APPROVED
   authority_dependency: SOURCE_VERIFICATION
   production_use: KNOWLEDGE_RESPONSE_AFTER_SOURCE_VERIFICATION
   source_alignment:
@@ -6349,6 +6901,8 @@ records:
     human_verification_advanced: false
   restatement_ar: بريد دعم عمادة القبول والتسجيل.
   is_verbatim: false
+  approved_by: project_owner
+  approved_at: '2026-08-01'
   content_sha256: 3f1a3e5515a935b02d03d8cafecd8da30dbcf09b4f017133518a020957bbc5d8
   second_pass_checked: true
   in_upstream_policy_subset: false

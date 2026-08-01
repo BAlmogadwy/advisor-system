@@ -36,13 +36,21 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: &v_extracted
-    status: EXTRACTED
+  verification: &v_approved
+    status: AUTHORITY_APPROVED
     extracted_by: agent
     extracted_at: "2026-08-01"
-    source_verified_by: null
-    domain_reviewed_by: null
-    authority_approved_by: null
+    source_verified_by: project_owner
+    source_verified_at: "2026-08-01"
+    domain_reviewed_by: project_owner
+    domain_reviewed_at: "2026-08-01"
+    authority_approved_by: project_owner
+    authority_approved_at: "2026-08-01"
+    approval_basis: >
+      Owner instruction 2026-08-01. The project owner is acting as the authority for this
+      system's own use of these records. This is NOT a statement that the Deanship of
+      Admission and Registration has reviewed them, and it does not resolve any
+      open_question or contested marker — those survive approval unchanged.
   extraction_confidence: high
   notes: >
     The single most-asked distinction in the 200-question set (Q34, Q62). Answerable
@@ -67,7 +75,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   calendar_binding:
     document_id: TU_ACADEMIC_CALENDAR_1448_T1
@@ -99,7 +107,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   notes: >
     Answers Q70 ("هل الاعتذار يؤخر تخرجي؟") authoritatively — and contradicts the
@@ -119,7 +127,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   notes: >
     Answers Q35 ("إذا انسحبت من مادة يظهر في السجل؟") for the excuse case: yes.
@@ -141,7 +149,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   notes: Answers Q69 for the excuse case.
 
@@ -162,7 +170,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   calendar_binding:
     document_id: TU_ACADEMIC_CALENDAR_1448_T1
@@ -196,7 +204,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
 
 - policy_id: TU.DEFERRAL.MAXIMUM
@@ -219,7 +227,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   runtime_use: PROHIBITED_FOR_DECISION
   runtime_use_reason: >
@@ -239,7 +247,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
 
 # ── الانسحاب من مقرر ─────────────────────────────────────────────────────
@@ -259,7 +267,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   calendar_binding:
     document_id: TU_ACADEMIC_CALENDAR_1448_T1
@@ -297,7 +305,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   runtime_use: PROHIBITED_FOR_DECISION
   runtime_use_reason: >
@@ -325,7 +333,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   notes: >
     The only one of the four withdrawal bars whose inputs plausibly exist
@@ -347,7 +355,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   runtime_use: PROHIBITED_FOR_DECISION
   runtime_use_reason: >
@@ -370,7 +378,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   runtime_use: PROHIBITED_FOR_DECISION
   runtime_use_reason: >

@@ -205,12 +205,17 @@ def main() -> int:
             ),
         },
         "verification": {
-            "status": "EXTRACTED",
+            "status": "AUTHORITY_APPROVED",
             "extracted_by": "policies/tools/extract_calendar.py",
             "extracted_at": "2026-08-01",
-            "source_verified_by": None,
-            "domain_reviewed_by": None,
-            "authority_approved_by": None,
+            "source_verified_by": "project_owner",
+            "domain_reviewed_by": "project_owner",
+            "authority_approved_by": "project_owner",
+            "approval_basis": (
+                "Owner instruction 2026-08-01. The owner is the authority for this system's "
+                "own use of these dates. Scope limits and DEADLINE_ONLY markers are "
+                "unaffected by approval."
+            ),
         },
         "counts": {
             "events": len(events),

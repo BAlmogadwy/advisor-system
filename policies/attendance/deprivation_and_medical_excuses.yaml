@@ -16,13 +16,21 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: &v_extracted
-    status: EXTRACTED
+  verification: &v_approved
+    status: AUTHORITY_APPROVED
     extracted_by: agent
     extracted_at: "2026-08-01"
-    source_verified_by: null
-    domain_reviewed_by: null
-    authority_approved_by: null
+    source_verified_by: project_owner
+    source_verified_at: "2026-08-01"
+    domain_reviewed_by: project_owner
+    domain_reviewed_at: "2026-08-01"
+    authority_approved_by: project_owner
+    authority_approved_at: "2026-08-01"
+    approval_basis: >
+      Owner instruction 2026-08-01. The project owner is acting as the authority for this
+      system's own use of these records. This is NOT a statement that the Deanship of
+      Admission and Registration has reviewed them, and it does not resolve any
+      open_question or contested marker — those survive approval unchanged.
   extraction_confidence: high
   runtime_use: PROHIBITED_FOR_DECISION
   runtime_use_reason: >
@@ -51,7 +59,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   notes: >
     The source's own "common mistakes" page. High advisory value: it names a
@@ -73,7 +81,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   notes: >
     This one IS actionable from existing data: my_progress already identifies
@@ -94,7 +102,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   cross_references: [TU.APPEAL.WINDOW, TU.APPEAL.EVIDENCE_RETENTION]
 
@@ -117,7 +125,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   notes: >
     Answers Q198 ("تقرير من مستشفى خاص") by exclusion: a private hospital is not on
@@ -139,7 +147,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
 
 - policy_id: TU.MEDICAL_EXCUSE.SUBMISSION_WINDOW
@@ -159,7 +167,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   notes: >
     Answers Q199 ("فاتني موعد تقديم العذر"). Note the clock runs from the report's
@@ -189,7 +197,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   notes: Answers Q54 ("غبت عن الاختبار بعذر").
   open_question: >

@@ -18,7 +18,7 @@ counts:
   in_upstream_policy_subset: 185
   contested: 5
 artefacts:
-  knowledge_records.yaml: 9bae37d752a5d2b0779c5610dee6fe74f99e52ff5095588da3b1010388228c64
+  knowledge_records.yaml: 19e176ab99dd350309d721cc1e8986c7e7a0c67637c716cc394842e942aa329a
   knowledge_index.csv: 931dffcc9a5f9bca2af52f166de1379d85d442f17dd8fdd49009ae469e35c765
   source_alignment_audit_v1_1.md: 1f88d66db73a82b313b7d93697b20d8c5da737578b8d19a6c1c4c934300ef3f6
   extraction_report.md: 46177c45b71ad450e1415e28854c507054bc985418041d17dd2cbbcc4ac3d785

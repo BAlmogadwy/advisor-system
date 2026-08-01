@@ -17,13 +17,21 @@
   policy_effective_to: null
   currentness_status: UNVERIFIED
   supersedes: null
-  verification: &v_extracted
-    status: EXTRACTED
+  verification: &v_approved
+    status: AUTHORITY_APPROVED
     extracted_by: agent
     extracted_at: "2026-08-01"
-    source_verified_by: null
-    domain_reviewed_by: null
-    authority_approved_by: null
+    source_verified_by: project_owner
+    source_verified_at: "2026-08-01"
+    domain_reviewed_by: project_owner
+    domain_reviewed_at: "2026-08-01"
+    authority_approved_by: project_owner
+    authority_approved_at: "2026-08-01"
+    approval_basis: >
+      Owner instruction 2026-08-01. The project owner is acting as the authority for this
+      system's own use of these records. This is NOT a statement that the Deanship of
+      Admission and Registration has reviewed them, and it does not resolve any
+      open_question or contested marker — those survive approval unchanged.
   extraction_confidence: high
   # CONFLICT WITH RUNNING CODE — do not silently reconcile.
   conflicts_with_implementation:
@@ -56,7 +64,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   notes: >
     Not applicable to the 12 programmes currently modelled in this project, which
@@ -78,7 +86,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   notes: >
     The project has NO summer-term model. term_type cannot currently be determined,
@@ -102,7 +110,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: low
   open_question: >
     Reads oddly as stated: 16 is BELOW the ordinary 19-unit ceiling in
@@ -134,7 +142,7 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high
   notes: >
     Directly answers "الفرق بين محروم وراسب وغير مكتمل" class questions.
@@ -162,5 +170,5 @@
   policy_effective_from: null
   policy_effective_to: null
   currentness_status: UNVERIFIED
-  verification: *v_extracted
+  verification: *v_approved
   extraction_confidence: high

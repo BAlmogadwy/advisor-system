@@ -30,12 +30,14 @@ date_handling:
     Treating a DEADLINE_ONLY row as a one-day window would invent an opening date the university never
     stated.
 verification:
-  status: EXTRACTED
+  status: AUTHORITY_APPROVED
   extracted_by: policies/tools/extract_calendar.py
   extracted_at: '2026-08-01'
-  source_verified_by: null
-  domain_reviewed_by: null
-  authority_approved_by: null
+  source_verified_by: project_owner
+  domain_reviewed_by: project_owner
+  authority_approved_by: project_owner
+  approval_basis: Owner instruction 2026-08-01. The owner is the authority for this system's own use of
+    these dates. Scope limits and DEADLINE_ONLY markers are unaffected by approval.
 counts:
   events: 37
   student_facing: 31

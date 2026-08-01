@@ -115,6 +115,13 @@ def main() -> int:
             if str(excerpt).strip() == str(new.get("statement_ar", "")).strip():
                 excerpt_equals_statement += 1
 
+        # Promoted on owner instruction 2026-08-01. The `contested` markers below are NOT
+        # cleared by approval: approval grants authority to use a record, it does not
+        # make a defective one correct.
+        new["verification_status"] = "AUTHORITY_APPROVED"
+        new["approved_by"] = "project_owner"
+        new["approved_at"] = "2026-08-01"
+
         new["content_sha256"] = sha256_text(
             f"{new.get('statement_ar', '')}|{new.get('restatement_ar', '')}|{new.get('values', '')}"
         )

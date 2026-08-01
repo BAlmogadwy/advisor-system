@@ -127,11 +127,28 @@ DRAFT → EXTRACTED → SOURCE_VERIFIED → DOMAIN_REVIEWED → AUTHORITY_APPROV
 | `DOMAIN_REVIEWED` | an academic-advising specialist | explanation + internal testing |
 | `AUTHORITY_APPROVED` | the institutionally designated policy owner | production eligibility decisions |
 
-**Every record in this store is currently `EXTRACTED`.** None may be served.
+**All records were promoted to `AUTHORITY_APPROVED` on 2026-08-01 by owner
+instruction** (`policies/tools/promote_verification.py`), with `project_owner` as the
+approver on every record.
 
-A citation proves what the source says. It does not prove the project is authorised
-to operationalise the rule — that is what `AUTHORITY_APPROVED` is for, and the role
-entitled to grant it has not yet been named.
+Be precise about what that does and does not mean.
+
+**It means:** the project owner, as the authority for this system's own use, has
+cleared these records to be served.
+
+**It does not mean:**
+- that the Deanship of Admission and Registration has reviewed them;
+- that a human re-read all 40 pages line by line — the excerpt check is *mechanical*,
+  against `evidence/page_text/`, and 33 records are NEAR rather than EXACT;
+- that any ambiguity in the source was resolved.
+
+That last point is the important one. **Approval and disambiguation are orthogonal.**
+`open_question` survives approval untouched on **8 records**, `contested` on **5**
+evidence records, and `runtime_use` is unchanged — 20 rules remain
+`PROHIBITED_FOR_DECISION` because the *data* to evaluate them does not exist, which
+no amount of approval can fix. A rule may be authoritatively approved and still say
+"the source is unclear on this clause" or "your record cannot supply this input", and
+the runtime must keep saying so.
 
 ## Invariants
 
