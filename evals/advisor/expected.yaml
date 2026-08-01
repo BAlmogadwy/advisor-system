@@ -1,5 +1,5 @@
 meta:
-  count: 200
+  count: 284
   built: '2026-08-01'
   grading_contract:
     must_contain: Literal tokens. Matched case-insensitively as substrings after normalising Arabic-Indic
@@ -5771,3 +5771,1853 @@ expectations:
     into discrete penalties is the extractor''s, not the source''s. Any answer that recites the penalty
     list must say so. The two genuine stipend rules in the corpus are about الاعتذار and التأجيل and must
     not be transplanted onto absence.'
+- answer_mode: FULL
+  policy_ids:
+  - TU.DEF.CALENDAR_UNITS
+  capabilities:
+  - graduation_progress
+  must_contain:
+  - المتبقية
+  - مقرر
+  - ساعة
+  must_not_contain:
+  - لا تتوفر بيانات
+  - غير متاح في النظام
+  - من إجمالي ساعات الخطة
+  answer_sketch_ar: خطتك فيها إجمالاً كذا مقرراً، اجتزت منها كذا، والمتبقي كذا مقرراً بمجموع كذا ساعة
+    معتمدة. الساعات المسجّلة لك في سجل القبول والتسجيل رقم منفصل يشمل مقررات خارج الخطة، فلا يُقسم على
+    مجموع الخطة.
+  difficulty: easy
+  reason_code: NONE
+  must_abstain: false
+  source_slice: plan-progress
+  id: 201
+- answer_mode: FULL
+  policy_ids:
+  - TU.REG.ADVISER_DUTIES_AT_REGISTRATION
+  - TU.ADVISING.TOOLS
+  capabilities:
+  - graduation_progress
+  must_contain:
+  - '%'
+  - من
+  - مقرر
+  must_not_contain:
+  - درجتك
+  - تقديرك في
+  - لا أستطيع حساب
+  answer_sketch_ar: اجتزت كذا مقرراً من أصل كذا في خطة برنامجك، أي ما نسبته كذا٪. المقررات التي تدرسها
+    الآن لا تُحتسب ضمن المُجتاز لأنها لم تُنجح بعد.
+  difficulty: easy
+  reason_code: NONE
+  must_abstain: false
+  source_slice: plan-progress
+  id: 202
+- answer_mode: FULL
+  policy_ids:
+  - TU.DEF.PROGRAMME_AND_COURSES
+  capabilities:
+  - my_progress
+  must_contain:
+  - مفتوحة
+  - متطلباتها
+  - مقرر
+  must_not_contain:
+  - المقاعد المتاحة
+  - الشعبة مفتوحة
+  - لا يمكنني معرفة مقرراتك
+  answer_sketch_ar: عندك كذا مقرراً مفتوحاً الآن استوفيت كل متطلباتها السابقة، منها كذا وكذا. هذه قائمة
+    أهلية المتطلبات فقط ولا تعني توفر شعبة أو مقعد هذا الفصل.
+  difficulty: easy
+  reason_code: NONE
+  must_abstain: false
+  source_slice: plan-progress
+  id: 203
+- answer_mode: FULL
+  policy_ids:
+  - TU.REG.ADVISER_DUTIES_AT_REGISTRATION
+  capabilities:
+  - my_progress
+  must_contain:
+  - يفتح
+  - مقرر
+  - متطلب
+  must_not_contain:
+  - أسهل مادة
+  - الدكتور
+  - لا يمكن تحديد ذلك
+  answer_sketch_ar: أكثر مقرر يفتح لك هو (رمز المقرر واسمه)، لأنه متطلب سابق لـ كذا مقرراً من المتبقي
+    في خطتك. وهو مفتوح لك الآن، أي تستطيع تسجيله هذا الفصل.
+  difficulty: medium
+  reason_code: NONE
+  must_abstain: false
+  source_slice: plan-progress
+  id: 204
+- answer_mode: FULL
+  policy_ids:
+  - TU.GRADUATION.COUNCIL_AWARDS_DEGREE
+  - TU.GRADUATION.MINIMUM_GPA
+  capabilities:
+  - graduation_progress
+  must_contain:
+  - مجلس الجامعة
+  - متبقٍ
+  - لا يُعد الطالب متخرجاً
+  must_not_contain:
+  - مبروك تخرجت
+  - أنت خريج
+  - سيصدر تخرجك هذا الفصل
+  answer_sketch_ar: خطتك تُظهر أن المتبقي عليك كذا مقرراً بمجموع كذا ساعة، وهذا اكتمال خطة لا تخرّج. لا
+    يُعد الطالب متخرجاً إلا بعد صدور موافقة مجلس الجامعة على منحه الدرجة بناءً على مذكرة التخرج من عمادة
+    القبول والتسجيل، ويُشترط ألا يقل معدلك التراكمي عن الحد الذي يقره المجلس لتخصصك.
+  difficulty: hard
+  review_flag: 'UNGRADEABLE: must_contain includes the seven-word diacritised phrase "لا يُعد الطالب متخرجاً"
+    and the tanween form "متبقٍ". A model writing natural Arabic will produce "لا يعتبر الطالب متخرجاً"
+    / "لا يعد الطالب متخرجا" / "المتبقي" — '
+  reason_code: NONE
+  must_abstain: false
+  source_slice: plan-progress
+  id: 205
+- answer_mode: FULL
+  policy_ids:
+  - TU.DEF.PROGRAMME_AND_COURSES
+  capabilities:
+  - lookup_course
+  - why_course_locked
+  - graduation_progress
+  must_contain:
+  - ساعة
+  - ليس متطلباً مقرراً
+  - ينقصك
+  must_not_contain:
+  - ينقصك مقرر
+  - لم تجتز المتطلب السابق
+  - خطأ في النظام
+  answer_sketch_ar: 'المقرر المقصود هو (الرمز واسمه). هو ليس موقوفاً بمقرر، بل ببوابة ساعات: يشترط كذا
+    ساعة وعندك الآن كذا ساعة فعّالة، فينقصك كذا ساعة. متطلباته من المقررات مستوفاة فعلاً، لذلك لن يفتح
+    بتسجيل مقرر آخر بل بجمع الساعات.'
+  difficulty: hard
+  reason_code: NONE
+  must_abstain: false
+  source_slice: plan-progress
+  id: 206
+- answer_mode: FULL
+  policy_ids:
+  - TU.ADVISING.TOOLS
+  - TU.REG.ADVISER_DUTIES_AT_REGISTRATION
+  capabilities:
+  - get_student_context
+  - my_progress
+  must_contain:
+  - مجتاز
+  - مقرر
+  - أدرسها الآن
+  must_not_contain:
+  - درجاتك
+  - تقديرك
+  - لا يوجد سجل لك
+  answer_sketch_ar: 'سجلك يُظهر كذا مقرراً مجتازاً من خطة برنامجك وهي: (الرموز). ومعها كذا مقرراً بحالة
+    "أدرسها الآن" لم تُحتسب ضمن المجتاز. سجلك لا يحمل الدرجات، فالجواب عن الاجتياز فقط لا عن التقديرات.'
+  difficulty: medium
+  reason_code: NONE
+  must_abstain: false
+  source_slice: plan-progress
+  id: 207
+- answer_mode: FULL
+  policy_ids:
+  - TU.DEF.PROGRAMME_AND_COURSES
+  - TU.REG.STUDENT_CHOICES_FINAL
+  capabilities:
+  - my_progress
+  - get_student_context
+  must_contain:
+  - المقررات الحرة
+  - خانة
+  - المرشد
+  must_not_contain:
+  - ليس لديك مقررات حرة
+  - اختر أي مقرر من الجامعة مباشرة
+  - الرمز نهائي
+  answer_sketch_ar: باقٍ عليك كذا خانة اختيارية/حرة في الخطة، تظهر برموز نائبة مثل (الرموز) وليست مقررات
+    قابلة للتسجيل بذاتها. المقررات الحرة تُعرَّف بأنها اختيارية على مستوى الجامعة وليس لها متطلب سابق،
+    ويُحدَّد المقرر الفعلي لكل خانة مع المرشد الأكاديمي.
+  difficulty: medium
+  reason_code: NONE
+  must_abstain: false
+  source_slice: plan-progress
+  id: 208
+- answer_mode: FULL
+  policy_ids:
+  - TU.GRADUATION.COUNCIL_AWARDS_DEGREE
+  - TU.TERM.STRUCTURE
+  capabilities:
+  - graduation_progress
+  - my_progress
+  must_contain:
+  - أقل عدد
+  - فصل
+  - سلسلة المتطلبات
+  must_not_contain:
+  - ستتخرج في فصل
+  - تاريخ تخرجك
+  - خلال سنة واحدة مؤكد
+  answer_sketch_ar: أقل عدد فصول ممكن هو كذا، وهذا حدّ تفرضه سلسلة المتطلبات ولا يمكن كسره بزيادة عدد
+    المقررات في الفصل؛ أما التقدير على وتيرة خمسة مقررات للفصل فهو كذا فصلاً. ابدأ بـ (رمز المقرر) لأنه
+    يفتح أكبر عدد من مقرراتك المتبقية. تحديد فصل التخرج نفسه قرار مجلس جامعة لا يصدر من هنا.
+  difficulty: hard
+  reason_code: NONE
+  must_abstain: false
+  source_slice: plan-progress
+  id: 209
+- answer_mode: EXPLAIN_ONLY
+  policy_ids: []
+  capabilities: []
+  must_contain:
+  - آخر موعد
+  - ديسمبر
+  - '2026'
+  must_not_contain:
+  - الفترة من
+  - تبدأ
+  - يوم واحد فقط
+  answer_sketch_ar: آخر موعد لتنفيذ طلبات معادلة المقررات في الفصل الدراسي الأول 1448هـ هو 2 ديسمبر 2026.
+    التقويم ينشر تاريخ الإغلاق فقط لهذا البند ولا يذكر تاريخ فتح، فلا يصح تقديمه كفترة ممتدة أو كيوم واحد.
+  difficulty: medium
+  review_flag: 'WEAK_GUARD: must_contain is [''آخر موعد'',''ديسمبر'',''2026''] — that does not identify
+    the event. 2026-12-02 is the closing date of FOUR separate calendar rows: معادلة المقررات (5B1D641422),
+    تأجيل الفصل الثاني (2FD02E8B5F), الانسحاب النه'
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: plan-progress
+  id: 210
+- answer_mode: FULL
+  policy_ids:
+  - TU.ADVISING.TOOLS
+  - TU.DEF.CALENDAR_UNITS
+  capabilities:
+  - graduation_progress
+  - get_student_context
+  must_contain:
+  - ساعة
+  - خارج الخطة
+  - رقمان مختلفان
+  must_not_contain:
+  - يوجد خطأ في بياناتك
+  - سنصحح السجل
+  - الرقمان متطابقان
+  answer_sketch_ar: 'الرقمان مختلفان بطبيعتهما وليسا خطأً: ساعاتك المجتازة لدى القبول والتسجيل كذا ساعة
+    وتشمل المعادلات والإعادات ومقررات خارج الخطة، بينما الخطة قائمة ثابتة من المقررات المتبقي منها كذا
+    مقرراً بمجموع كذا ساعة. لذلك لا يُقسم رقم السجل على مجموع الخطة، ويُقاس تقدمك بالمقررات المتبقية من
+    الخطة.'
+  difficulty: medium
+  reason_code: NONE
+  must_abstain: false
+  source_slice: plan-progress
+  id: 211
+- answer_mode: FULL
+  policy_ids:
+  - TU.DEF.PROGRAMME_AND_COURSES
+  capabilities:
+  - why_course_locked
+  - course_prerequisites
+  - get_student_context
+  must_contain:
+  - IS491
+  - '90'
+  must_not_contain:
+  - IS490
+  - IS362
+  answer_sketch_ar: 'IS491 في خطة IS ما له أي متطلب سابق من المقررات إطلاقاً؛ الشرط الوحيد المسجّل عليه
+    هو بلوغ 90 ساعة معتمدة. فالمانع عندك ليس مادة ناقصة بل عدّاد الساعات: النظام يحسب المجتاز + المسجّل
+    حالياً، وإذا المجموع أقل من 90 يبقى المقرر مقفلاً مهما نجحت في مواد المستوى الثامن.'
+  difficulty: medium
+  reason_code: NONE
+  must_abstain: false
+  source_slice: prereq-blocking
+  id: 212
+- answer_mode: FULL
+  policy_ids:
+  - TU.LOAD.SEMESTER_RANGE
+  capabilities:
+  - why_course_locked
+  - course_prerequisites
+  - get_student_context
+  must_contain:
+  - AI492
+  - '144'
+  - '152'
+  must_not_contain:
+  - AI491
+  - مشروع التخرج
+  answer_sketch_ar: 'AI492 في خطة AI2 هو التدريب التعاوني (6 وحدات) وليس له متطلب سابق من المقررات؛ شرطه
+    الوحيد 144 ساعة. حسبة النظام تعدّ المجتاز مع المسجّل حالياً: 140 + 12 = 152، أي فوق الشرط، فالمقرر
+    مفتوح لك — بشرط أن تجتاز فعلاً الـ12 ساعة المسجّلة هذا الترم، لأن رسوبك فيها يعيدك تحت الحد.'
+  difficulty: hard
+  reason_code: NONE
+  must_abstain: false
+  source_slice: prereq-blocking
+  id: 213
+- answer_mode: FULL
+  policy_ids:
+  - TU.DEF.PROGRAMME_AND_COURSES
+  capabilities:
+  - course_prerequisites
+  - lookup_course
+  must_contain:
+  - AI492
+  - AI491
+  - '144'
+  must_not_contain:
+  - خطأ في النظام
+  - تحديث الخطة
+  answer_sketch_ar: 'لا أحد منكما غلطان: الرمز AI492 مسجّل مرتين بخطتين مختلفتين. في AI هو GRADUATION
+    PROJECT II بثلاث وحدات ومتطلبه السابق AI491، وفي AI2 هو التدريب التعاوني بست وحدات ومتطلبه الوحيد
+    بوابة 144 ساعة بلا أي مقرر سابق. اقرأ الشرط من خطة برنامجك أنت، لا من خطة زميلك.'
+  difficulty: hard
+  reason_code: NONE
+  must_abstain: false
+  source_slice: prereq-blocking
+  id: 214
+- answer_mode: FULL
+  policy_ids:
+  - TU.DEF.PROGRAMME_AND_COURSES
+  capabilities:
+  - lookup_course
+  - course_prerequisites
+  must_contain:
+  - AI201
+  - AI113
+  - CS103
+  - CS163
+  must_not_contain:
+  - CS111
+  - CS112
+  answer_sketch_ar: 'الاسم نفسه يحمله رمزان: AI201 في خطتي AI وDS ومتطلبه CS103، وAI113 في خطتي AI2 وDS2
+    ومتطلبه CS163. فكلاكما صحيح لكن لبرنامجين مختلفين؛ الحاسم هو برنامجك أنت.'
+  difficulty: medium
+  reason_code: NONE
+  must_abstain: false
+  source_slice: prereq-blocking
+  id: 215
+- answer_mode: FULL
+  policy_ids:
+  - TU.ATTENDANCE.DEFERRING_EARLY_COURSES_TRAP
+  - TU.REGISTRATION.STRUGGLING_STUDENTS
+  capabilities:
+  - my_progress
+  - why_course_locked
+  - course_prerequisites
+  must_contain:
+  - CS111
+  - CS112
+  - AI221
+  - CS289
+  must_not_contain:
+  - AI201
+  - AI212
+  answer_sketch_ar: CS111 متطلب مباشر لثلاثة مقررات في خطة AI هي CS112 وAI221 وCS289، ويعتمد عليها بالتسلسل
+    خمسة عشر مقرراً من خطتك تنتهي عند AI491 وAI492. عملياً تأجيلها لآخر الخطة يعني أنك لا تستطيع الوصول
+    لمشروع التخرج أصلاً، والدليل الإرشادي يذكر تأجيل مقررات المستويات الأولى ضمن الأخطاء المتكررة.
+  difficulty: hard
+  reason_code: NONE
+  must_abstain: false
+  source_slice: prereq-blocking
+  id: 216
+- answer_mode: FULL
+  policy_ids:
+  - TU.DEF.PROGRAMME_AND_COURSES
+  capabilities:
+  - course_prerequisites
+  - why_course_locked
+  must_contain:
+  - CS372
+  - CS111
+  - CS211
+  must_not_contain:
+  - CS112
+  - CS276
+  answer_sketch_ar: 'لا، الشرط ليس واحداً: في خطة CYP متطلب CS372 السابق هو CS111 فقط، بينما في خطتي CS
+    وAI متطلبه CS211. صاحبك ينقل لك شرط برنامجه، وأنت يكفيك CS111.'
+  difficulty: hard
+  reason_code: NONE
+  must_abstain: false
+  source_slice: prereq-blocking
+  id: 217
+- answer_mode: FULL
+  policy_ids:
+  - TU.DEF.PROGRAMME_AND_COURSES
+  capabilities:
+  - why_course_locked
+  - course_prerequisites
+  - get_student_context
+  must_contain:
+  - IS490
+  - '80'
+  - '72'
+  must_not_contain:
+  - IS491
+  - IS251
+  answer_sketch_ar: 'ناقصك ساعات لا مواد: IS490 في خطة IS ليس له أي مقرر متطلب، وشرطه الوحيد 80 ساعة.
+    رصيدك المحتسب 60 مجتازة + 12 مسجّلة = 72، فينقصك 8 ساعات، ويُتوقع أن تُستوفى بعد إنهاء هذا الترم بنجاح.'
+  difficulty: medium
+  reason_code: NONE
+  must_abstain: false
+  source_slice: prereq-blocking
+  id: 218
+- answer_mode: FULL
+  policy_ids:
+  - TU.REGISTRATION.STRUGGLING_STUDENTS
+  capabilities:
+  - why_course_locked
+  - my_progress
+  - course_prerequisites
+  must_contain:
+  - CS499
+  - CS398
+  - CS387
+  - CS276
+  - CS285
+  must_not_contain:
+  - CS491
+  - CS492
+  answer_sketch_ar: CS499 متطلبه CS398، وCS398 متطلباته الثلاثة CS387 وCS276 وCS285؛ وCS387 نفسه يتطلب
+    CS276. فالسلسلة الأطول عندك تمر بـ CS276 ثم CS387 ثم CS398 ثم CS499. أقرب حلقة مفتوحة لك الآن هي المقرر
+    الذي يعيده النظام في nearest_course_you_can_take_now مع عدد الخطوات المتبقية.
+  difficulty: hard
+  reason_code: NONE
+  must_abstain: false
+  source_slice: prereq-blocking
+  id: 219
+- answer_mode: EXPLAIN_ONLY
+  policy_ids:
+  - TU.DEF.PROGRAMME_AND_COURSES
+  capabilities:
+  - course_prerequisites
+  - lookup_course
+  - my_progress
+  must_contain:
+  - FE1
+  - الحر
+  - متطلب
+  must_not_contain:
+  - ENG101
+  - MATH101
+  answer_sketch_ar: 'لا يوجد له متطلب سابق: الدليل يعرّف المقررات الحرة بأنها مقررات متاحة على مستوى الجامعة
+    «وليس لها متطلب»، وجدول المتطلبات في النظام خالٍ فعلاً من أي صف لـ FE1 أو FE2 في البرامج كلها. لكن
+    انتبه أن FE1 خانة اختيار لا مقرر يُسجَّل باسمه، والمقرر الحقيقي الذي تختاره داخلها قد تكون له شروطه
+    الخاصة، فراجع مرشدك عند الاختيار.'
+  difficulty: easy
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: prereq-blocking
+  id: 220
+- answer_mode: FULL
+  policy_ids:
+  - TU.DEF.CALENDAR_UNITS
+  - TU.REG.ADVISER_DUTIES_AT_REGISTRATION
+  capabilities:
+  - why_course_locked
+  - get_student_context
+  - course_prerequisites
+  must_contain:
+  - CS211
+  - CS112
+  - نجح
+  must_not_contain:
+  - درجتك
+  - تقديرك
+  answer_sketch_ar: 'CS211 متطلبه السابق CS112 فقط، والنظام يعتبر المقرر الذي تدرسه الآن مستوفياً للمتطلب
+    لأغراض التخطيط، فيظهر لك CS211 مفتوحاً. لكن هذا تخطيط لا ضمان: يجب أن تنجح فعلاً في CS112، والنتائج
+    غير متاحة لي لأتأكد منها، فاعتمد التسجيل مع مرشدك.'
+  difficulty: medium
+  reason_code: NONE
+  must_abstain: false
+  source_slice: prereq-blocking
+  id: 221
+- answer_mode: FULL
+  policy_ids:
+  - TU.DEF.PROGRAMME_AND_COURSES
+  capabilities:
+  - course_prerequisites
+  - why_course_locked
+  - lookup_course
+  must_contain:
+  - COE490
+  - CS498
+  - '151'
+  - '146'
+  must_not_contain:
+  - '144'
+  - '147'
+  answer_sketch_ar: 'لأن البوابة ليست واحدة: التدريب التعاوني في COE2 هو COE490 وشرطه 151 ساعة، وفي CS2
+    هو CS498 وشرطه 146 ساعة. برصيد 148 يكون صاحبك مستوفياً وأنت تنقصك 3 ساعات فقط، ويحتسب النظام لك المجتاز
+    مع المسجّل حالياً.'
+  difficulty: hard
+  reason_code: NONE
+  must_abstain: false
+  source_slice: prereq-blocking
+  id: 222
+- answer_mode: FULL
+  policy_ids:
+  - TU.DEF.PROGRAMME_AND_COURSES
+  capabilities:
+  - lookup_course
+  - course_prerequisites
+  - why_course_locked
+  must_contain:
+  - CS491
+  - CS284
+  - COE332
+  - CS362
+  - CS372
+  must_not_contain:
+  - CS398
+  - AI491
+  answer_sketch_ar: 'نعم، هي CS491 المسجّلة في خطة CS باسم GRADUATION I في المستوى التاسع بوحدة واحدة
+    — الاسم في الخطة مختصر وليس مطابقاً لـ«مشروع التخرج ١». متطلباتها السابقة أربعة: CS284 وCOE332 وCS362
+    وCS372، ويتبعها CS492 في المستوى العاشر.'
+  difficulty: medium
+  reason_code: NONE
+  must_abstain: false
+  source_slice: prereq-blocking
+  id: 223
+- answer_mode: FULL
+  policy_ids:
+  - TU.ATTENDANCE.DEFERRING_EARLY_COURSES_TRAP
+  - TU.GRADUATION.COUNCIL_AWARDS_DEGREE
+  capabilities:
+  - why_course_locked
+  - course_prerequisites
+  - graduation_progress
+  - my_progress
+  must_contain:
+  - AI331
+  - AI352
+  - AI491
+  - AI492
+  must_not_contain:
+  - '2027'
+  - لن يتأثر
+  answer_sketch_ar: 'AI331 ليست مقرراً معزولاً: يعتمد عليها مباشرة AI352 وAI491، وAI491 بدوره متطلب AI492،
+    فتأجيلها ترماً يدفع سلسلة مشروع التخرج كلها ترماً إلى الأمام لأن الحد الأدنى الذي تفرضه سلسلة المتطلبات
+    لا يمكن كسره بزيادة عدد المواد. أستطيع أن أعطيك عدد الفصول الذي تفرضه السلسلة على سجلك، أما التخرج
+    نفسه فقرار مجلس الجامعة ولا يُعلن مسبقاً.'
+  difficulty: hard
+  reason_code: NONE
+  must_abstain: false
+  source_slice: prereq-blocking
+  id: 224
+- answer_mode: FULL
+  policy_ids: []
+  capabilities:
+  - my_timetable
+  must_contain:
+  - الأحد
+  must_not_contain:
+  - مبنى رقم
+  - عدد المقاعد
+  - المقاعد المتبقية
+  - any instructor or faculty name for a class, which no student-linked meeting records
+  answer_sketch_ar: 'يوم الأحد عندك المحاضرات التالية حسب جدولك المسجَّل: (المقرر – الشعبة – من الساعة
+    إلى الساعة – رقم القاعة) مرتبة من الأبكر للأمتأخر. الجدول يذكر القاعة فقط ولا يذكر رقم المبنى، ولا
+    يعرض عدد المقاعد.'
+  difficulty: easy
+  review_flag: 'UNGRADEABLE: must_contain is ["الأحد"] — a single token that the question itself supplies.
+    Any answer that echoes the day passes, including a wholly invented Sunday timetable; the point of
+    the item (that my_timetable returns real day'
+  reason_code: NONE
+  must_abstain: false
+  source_slice: timetable-sections
+  id: 225
+- answer_mode: FULL
+  policy_ids: []
+  capabilities:
+  - my_timetable
+  - lookup_course
+  must_contain:
+  - Blackboard
+  must_not_contain:
+  - '172'
+  - مبنى رقم
+  - القاعة رقم
+  - any instructor or faculty name for a class, which no student-linked meeting records
+  answer_sketch_ar: 'ما فيه قاعة لأن GS112 (مهارات اللغة العربية 2) تُعطى عن بُعد: حقل المكان في جدولك
+    مكتوب فيه Blackboard لكل شُعب هذا المقرر. تحضرها من المنصة في وقتها المدوَّن بالجدول، وما تحتاج تروح
+    أي مبنى.'
+  difficulty: easy
+  reason_code: NONE
+  must_abstain: false
+  source_slice: timetable-sections
+  id: 226
+- answer_mode: FULL
+  policy_ids: []
+  capabilities:
+  - my_timetable
+  - lookup_course
+  must_contain:
+  - '17:20'
+  - الاثنين
+  - الخميس
+  must_not_contain:
+  - 172F
+  - 239F
+  - قاعة رقم 1 في المبنى
+  - any instructor or faculty name for a class, which no student-linked meeting records
+  answer_sketch_ar: 'شعبة F48 من CS492 (مشروع التخرج 2) لها لقاءان في الأسبوع: الاثنين والخميس من 17:20
+    إلى 18:35. أما المكان فالجدول المنشور ما يعطي رقم قاعة حقيقي لهذه الشعبة — الخانة مكتوب فيها "1" فقط،
+    أي أن اللقاء عند القسم وليس في قاعة مرقّمة. راجع مشرف المشروع أو القسم لتأكيد المكان، ولا تعتمد على
+    رقم قاعة مستنتج.'
+  difficulty: hard
+  reason_code: NONE
+  must_abstain: false
+  source_slice: timetable-sections
+  id: 227
+- answer_mode: FULL
+  policy_ids:
+  - TU.ADVISING.TOOLS
+  capabilities:
+  - my_timetable
+  - lookup_course
+  must_contain:
+  - 09:00
+  - 172FB001
+  - الاثنين
+  must_not_contain:
+  - أ.د
+  - الدكتور فهد
+  - الدكتور محمد
+  - any instructor or faculty name for a class, which no student-linked meeting records
+  answer_sketch_ar: 'IS482 (الحوسبة وأخلاقيات المهنة والمجتمع) شعبة M3 محاضرة واحدة أسبوعياً: الاثنين
+    09:00–09:50 في القاعة 172FB001. أما اسم المحاضر فغير مسجَّل في الجدول المنشور — خانة المحاضر فارغة
+    في كل اجتماعات هذا الجدول، فما أقدر أسمي لك دكتوراً؛ يظهر الاسم في بوابة الطالب أو من القسم.'
+  difficulty: medium
+  reason_code: NONE
+  must_abstain: false
+  source_slice: timetable-sections
+  id: 228
+- answer_mode: FULL
+  policy_ids: []
+  capabilities:
+  - my_timetable
+  must_contain:
+  - 239FC001
+  - 204SCL002
+  - '17:10'
+  must_not_contain:
+  - نفس القاعة
+  - مبنى رقم
+  - لا يوجد فرق
+  - any instructor or faculty name for a class, which no student-linked meeting records
+  answer_sketch_ar: 'يوم الأربعاء في CS323/F8 (نظم التشغيل): 15:50–17:05 في القاعة 239FC001، ثم 17:10–18:50
+    في القاعة 204SCL002 — قاعتان مختلفتان وبينهما خمس دقائق فقط. ولك اجتماع ثالث الاثنين 15:50–17:05 في
+    239FC001.'
+  difficulty: medium
+  reason_code: NONE
+  must_abstain: false
+  source_slice: timetable-sections
+  id: 229
+- answer_mode: FULL
+  policy_ids: []
+  capabilities:
+  - my_timetable
+  must_contain:
+  - الثلاثاء
+  - دقيقة
+  must_not_contain:
+  - مبنى رقم
+  - لا أستطيع الوصول إلى جدولك
+  - عدد المقاعد
+  - any instructor or faculty name for a class, which no student-linked meeting records
+  answer_sketch_ar: 'محاضراتك يوم الثلاثاء مرتبة بالوقت هي: (المقرر – من – إلى – القاعة). الفراغات بينها
+    بالدقيقة: بين نهاية الأولى وبداية الثانية كذا دقيقة، وبين الثانية والثالثة كذا دقيقة. أطول فراغ في
+    اليوم هو كذا دقيقة.'
+  difficulty: medium
+  review_flag: 'UNGRADEABLE: Same defect as the Sunday item: must_contain ["الثلاثاء","دقيقة"] contains
+    no computed value, so a fabricated gap ("بينهما 45 دقيقة") scores identically to the correct arithmetic
+    over my_timetable''s start/end strings. Th'
+  reason_code: NONE
+  must_abstain: false
+  source_slice: timetable-sections
+  id: 230
+- answer_mode: FULL
+  policy_ids: []
+  capabilities:
+  - my_timetable
+  must_contain:
+  - 172FB004
+  - 172FA008
+  - 172GB005
+  must_not_contain:
+  - نفس القاعة كل يوم
+  - خطأ في النظام
+  - مبنى رقم
+  - any instructor or faculty name for a class, which no student-linked meeting records
+  answer_sketch_ar: 'هذا طبيعي: الشعبة الواحدة قد تُحجز لها قاعات مختلفة لاجتماعاتها. CS112/M42 (برمجة
+    2): الأحد 09:00–10:15 في 172FB004، الثلاثاء 09:00–10:15 في 172FA008، والأربعاء 09:00–10:40 في 172GB005.
+    الوقت ثابت 09:00 في الأيام الثلاثة، والمختلف هو القاعة فقط.'
+  difficulty: medium
+  reason_code: NONE
+  must_abstain: false
+  source_slice: timetable-sections
+  id: 231
+- answer_mode: FULL
+  policy_ids: []
+  capabilities:
+  - lookup_course
+  - my_timetable
+  must_contain:
+  - 172FA009
+  - 172FB001
+  - '14:30'
+  must_not_contain:
+  - 4 ساعات
+  - مبنى رقم
+  - الشعبة ممتلئة
+  - any instructor or faculty name for a class, which no student-linked meeting records
+  answer_sketch_ar: 'MGT324 (الريادة وإدارة الأعمال الصغيرة) ثلاث ساعات معتمدة. شعبتك M2 لها لقاءان: الأحد
+    14:30–15:45 في القاعة 172FA009، والأربعاء 10:30–11:45 في القاعة 172FB001.'
+  difficulty: hard
+  reason_code: NONE
+  must_abstain: false
+  source_slice: timetable-sections
+  id: 232
+- answer_mode: FULL
+  policy_ids: []
+  capabilities:
+  - get_student_context
+  - my_timetable
+  - lookup_course
+  must_contain:
+  - 172GA002
+  - 172FA001
+  - '10:45'
+  must_not_contain:
+  - مرتين في الأسبوع
+  - مبنى رقم
+  - المقاعد المتاحة
+  - any instructor or faculty name for a class, which no student-linked meeting records
+  answer_sketch_ar: 'أنت مسجَّل في IS372 (مستودع البيانات والتنقيب) شعبة M9، وهي أربع ساعات معتمدة تجيك
+    ثلاث مرات في الأسبوع: الأحد 10:45–12:25 في 172GA002، الاثنين 13:00–14:15 في 172FA001، والأربعاء 13:00–14:15
+    في 172FA001.'
+  difficulty: hard
+  reason_code: NONE
+  must_abstain: false
+  source_slice: timetable-sections
+  id: 233
+- answer_mode: EXPLAIN_ONLY
+  policy_ids:
+  - TU.REG.ADVISER_DUTIES_AT_REGISTRATION
+  - TU.REG.STUDENT_CHOICES_FINAL
+  capabilities:
+  - my_timetable
+  must_contain:
+  - تعارض
+  - المكان والزمان
+  must_not_contain:
+  - عدد المقاعد
+  - نسبة الحضور
+  - لا توجد واجبات محددة
+  - any instructor or faculty name for a class, which no student-linked meeting records
+  answer_sketch_ar: 'واجب المرشد عند التسجيل — بحسب دليل الإرشاد — أن يراجع كشف درجاتك والمواد المسجَّلة
+    مقارنةً بالخطة، ثم يتأكد من أمرين يخصان الجدول تحديداً: أن تكون على علم بالمكان والزمان الذي تبدأ
+    فيه المحاضرات، وألا يوجد أي تعارض في مواعيد جدولك الدراسي. وبعد ذلك تُعد اختياراتك نهائية ولا تُعدَّل
+    إلا بمعرفة المرشد.'
+  difficulty: easy
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: timetable-sections
+  id: 234
+- answer_mode: FULL
+  policy_ids: []
+  capabilities:
+  - my_timetable
+  must_contain:
+  - آخر موعد
+  - 26-أغسطس-2026
+  must_not_contain:
+  - الفترة من
+  - تبدأ في
+  - أ.د
+  - any instructor or faculty name for a class, which no student-linked meeting records
+  answer_sketch_ar: 'صحيح: خانة المحاضر فارغة في كل اجتماعات الجدول المنشور، فلا أستطيع تسمية أي دكتور.
+    أما إسناد شعب المقررات آلياً لأعضاء هيئة التدريس فالتقويم يذكر له آخر موعد فقط: 26-أغسطس-2026 (13-ربيع
+    الأول-1448)، في الأسبوع الدراسي الأول من الفصل الأول 1448هـ. التقويم لا ينشر تاريخ بداية لهذا الإجراء،
+    فلا يصح ذكره كفترة ممتدة.'
+  difficulty: hard
+  review_flag: 'UNGRADEABLE: must_contain requires the literal "26-أغسطس-2026". That hyphenated form exists
+    only inside the YAML (TU.CAL.1448T1.51A74F7949 ends.gregorian); a model answering in Arabic prose
+    will write "26 أغسطس 2026", which does not '
+  reason_code: NONE
+  must_abstain: false
+  source_slice: timetable-sections
+  id: 235
+- answer_mode: FULL
+  policy_ids: []
+  capabilities:
+  - my_timetable
+  must_contain:
+  - '1447'
+  must_not_contain:
+  - 23-أغسطس-2026
+  - 20-أغسطس-2026
+  - 07-يناير-2027
+  - any instructor or faculty name for a class, which no student-linked meeting records
+  answer_sketch_ar: الجدول المعروض لك هو الجدول المنشور للعام 1447هـ الفصل الثاني — وهذه هي القيم التي
+    ترجعها أداة الجدول نفسها مع كل اجتماع. لاحظ أن التقويم الأكاديمي المتوفر لدي يغطي الفصل الأول من 1448هـ
+    فقط، فلا تُسقَط تواريخ ذلك التقويم (بداية الدراسة، الحذف والإضافة، الاختبارات) على هذا الجدول.
+  difficulty: hard
+  review_flag: 'WEAK_GUARD: The whole point of the item is to stop the model importing 1448-T1 calendar
+    dates into a 1447-T2 timetable answer, but must_not_contain lists only the hyphenated YAML forms ["23-أغسطس-2026","20-أغسطس-2026","07-يناير-2027'
+  reason_code: NONE
+  must_abstain: false
+  source_slice: timetable-sections
+  id: 236
+- answer_mode: EXPLAIN_ONLY
+  policy_ids:
+  - TU.WITHDRAWAL.MAXIMUM
+  - TU.WITHDRAWAL.NEW_STUDENT_BAR
+  capabilities: []
+  must_contain:
+  - خمس
+  - أول فصلين
+  must_not_contain:
+  - تبقى لك
+  - لكل فصل دراسي
+  answer_sketch_ar: الدليل يسمح بخمسة انسحابات فقط خلال كامل فترة التحاقك بالجامعة وبنفس الرقم الجامعي،
+    وليست خمسة في كل فصل. لكن وأنت مستجد لا يُسمح لك بالانسحاب من أي مقرر في أول فصلين دراسيين من البرنامج،
+    فالرصيد لا يبدأ فعلياً قبل ذلك، والنظام هنا لا يحتفظ بعدّاد انسحاباتك السابقة.
+  difficulty: easy
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: rules-leave-withdrawal
+  id: 237
+- answer_mode: EXPLAIN_ONLY
+  policy_ids:
+  - TU.DEFERRAL.MAXIMUM
+  capabilities: []
+  must_contain:
+  - فصلين
+  - ثلاثة فصول
+  must_not_contain:
+  - أربعة فصول
+  - بدون حد
+  answer_sketch_ar: الحد الأقصى للتأجيل ألا تتجاوز مدته فصلين دراسيين متتاليين، أو ثلاثة فصول دراسية غير
+    متتالية، كحد أقصى طيلة بقائك في الجامعة. ولمجلس الجامعة الاستثناء من ذلك في حال الضرورة. أما كم فصلاً
+    أجّلت فعلاً فلا يوجد في سجلاتنا تاريخ تأجيلات، فراجع عمادة القبول والتسجيل لمعرفة رصيدك.
+  difficulty: easy
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: rules-leave-withdrawal
+  id: 238
+- answer_mode: EXPLAIN_ONLY
+  policy_ids:
+  - TU.DEFERRAL.STIPEND_SUSPENDED
+  - TU.EXCUSE.STIPEND_SUSPENDED
+  - TU.LEAVE.COMPARISON
+  capabilities: []
+  must_contain:
+  - المؤجل
+  - تنقطع
+  must_not_contain:
+  - تستمر المكافأة
+  - لا تتأثر
+  answer_sketch_ar: 'المعلومة اللي وصلتك ناقصة: الدليل ينص صراحة على أن المكافأة تنقطع عن الطالب المؤجل،
+    تماماً كما تنقطع عن الطالب المعتذر. الفرق بين الاعتذار والتأجيل في احتساب مدة التخرج لا في المكافأة،
+    فالمكافأة تنقطع في الحالتين.'
+  difficulty: medium
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: rules-leave-withdrawal
+  id: 239
+- answer_mode: EXPLAIN_ONLY
+  policy_ids:
+  - TU.DISMISSAL.DURATION_EXCEEDED
+  capabilities: []
+  must_contain:
+  - '12'
+  - مجلس الجامعة
+  must_not_contain:
+  - '16'
+  - '24'
+  answer_sketch_ar: القاعدة أن الحد الأقصى هو مدة البرنامج مضافاً إليها نصفها، فبرنامج من ثمانية فصول
+    يعطيك 12 فصلاً كحد أقصى لإنهاء متطلبات التخرج. ويجوز لمجلس الجامعة في الحالات الاستثنائية منح فرصة
+    استثنائية لا تتجاوز عاماً دراسياً واحداً فوق ذلك. وعدد الفصول التي قضيتها فعلاً غير محفوظ عندنا، فالحساب
+    النهائي من عمادة القبول والتسجيل.
+  difficulty: hard
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: rules-leave-withdrawal
+  id: 240
+- answer_mode: EXPLAIN_ONLY
+  policy_ids:
+  - TU.UNIVERSITY_WITHDRAWAL.PROCEDURE
+  capabilities: []
+  must_contain:
+  - إخلاء الطرف
+  - خدمة تك
+  - ديسمبر
+  must_not_contain:
+  - 14 أكتوبر
+  - تقدير (ع)
+  answer_sketch_ar: 'الانسحاب النهائي من الجامعة إجراؤه: إحضار البطاقة الجامعية، وتسليم أي عهدة عليك،
+    واستكمال طلب إخلاء الطرف عبر منصة خدمة تك. وآخر موعد لتنفيذ طلبات الانسحاب النهائي من الجامعة في الفصل
+    الدراسي الأول 1448هـ هو 22 جمادى الآخرة 1448هـ الموافق 2 ديسمبر 2026م. وهذا إجراء مختلف تماماً عن
+    الانسحاب من مقرر، فلا تخلط بينهما.'
+  difficulty: medium
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: rules-leave-withdrawal
+  id: 241
+- answer_mode: EXPLAIN_ONLY
+  policy_ids:
+  - TU.DEREGISTRATION.TRIGGER
+  - TU.DEREGISTRATION.VISITING_EXEMPTION
+  capabilities: []
+  must_contain:
+  - طي القيد
+  - مجلس الجامعة
+  - زائر
+  must_not_contain:
+  - فصلين متتاليين
+  - ثلاثة فصول
+  answer_sketch_ar: إذا انقطعت عن الدراسة دون تقديم طلب تأجيل أو اعتذار يُطوى قيدك من الجامعة. لكن الدليل
+    لا يذكر مدة الانقطاع بالأرقام، بل ينص على أنها مدة يحددها مجلس الجامعة، فلا أستطيع إعطاءك عدد فصول
+    محدداً. أما الفصول التي درستها زائراً في جامعة أخرى فلا تُعد انقطاعاً عن الدراسة.
+  difficulty: hard
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: rules-leave-withdrawal
+  id: 242
+- answer_mode: EXPLAIN_ONLY
+  policy_ids:
+  - TU.EXCUSE.TRANSCRIPT_MARK
+  capabilities: []
+  must_contain:
+  - (ع)
+  - السجل الأكاديمي
+  must_not_contain:
+  - راسب
+  - لا يؤثر على المعدل
+  answer_sketch_ar: 'يُرصد للطالب المعتذر تقدير (ع) في السجل الأكاديمي، فالاعتذار يظهر ولا يختفي من الكشف.
+    ومع ذلك يجب التنبيه إلى التباس في المصدر نفسه: صفحة 24 تعطي الرمز (ع) للاعتذار عن الفصل، بينما جدول
+    الرموز في صفحة 29 يُدرج ع/W بوصف «منسحب بعذر»، ولم يُحسم بعد هل هو الرمز نفسه لحالتين أم رمزان اختُصرا.
+    ولا ينص الدليل في هذا الموضع على أثره في المعدل فلا يصح افتراضه.'
+  difficulty: hard
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: rules-leave-withdrawal
+  id: 243
+- answer_mode: EXPLAIN_ONLY
+  policy_ids:
+  - TU.REENROLMENT.LAPSED_BECOMES_NEW_APPLICANT
+  - TU.REENROLMENT.CONDITIONS
+  capabilities: []
+  must_contain:
+  - مستجد
+  - رقم جامعي جديد
+  must_not_contain:
+  - بنفس رقمه الجامعي
+  - تلقائياً
+  answer_sketch_ar: إعادة القيد بعذر مشروطة بألا تتجاوز فترة الانقطاع عامين دراسيين ضمن شروط أخرى. فإذا
+    تجاوز المطوي قيده المدة المتاحة لإعادة القيد جاز له التقدم للدراسة طالباً مستجداً برقم جامعي جديد،
+    وفق إجراءات وشروط قبول المستجدين حينها. وانتبه أن الرقم الجامعي الجديد يعني بداية جديدة للقيود المرتبطة
+    بـ«نفس الرقم الجامعي» كحد الانسحابات وحد مرات الزيارة.
+  difficulty: medium
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: rules-leave-withdrawal
+  id: 244
+- answer_mode: EXPLAIN_ONLY
+  policy_ids:
+  - TU.REENROLMENT.DISCIPLINARY_BAR
+  capabilities: []
+  must_contain:
+  - ثلاث سنوات
+  - ملغى
+  must_not_contain:
+  - سنتين
+  - لا ينطبق على جامعة أخرى
+  answer_sketch_ar: لا يُسمح بإعادة قيد من فُصل لأسباب تأديبية إلا بعد مرور ثلاث سنوات من صدور قرار الفصل،
+    والنص يشمل الفصل التأديبي من هذه الجامعة ومن جامعة أخرى على السواء. وإن اتضح بعد إعادة القيد أن الثلاث
+    سنوات لم تكتمل فيُعد قيده ملغى من تاريخ إعادة القيد نفسه لا من تاريخ اكتشاف الأمر.
+  difficulty: medium
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: rules-leave-withdrawal
+  id: 245
+- answer_mode: FULL
+  policy_ids:
+  - TU.WITHDRAWAL.MINIMUM_LOAD_BAR
+  - TU.LOAD.SEMESTER_RANGE
+  capabilities:
+  - get_student_context
+  - lookup_course
+  must_contain:
+  - '12'
+  - الحد الأدنى
+  must_not_contain:
+  - '18'
+  - استنفدت
+  answer_sketch_ar: ساعاتك المسجلة هذا الفصل هي كذا ساعة حسب تسجيلاتك في شعب الفصل الحالي. والحد الأدنى
+    للعبء الدراسي في الفصل الرئيس 12 وحدة، والدليل يمنع الانسحاب إذا نزل عبؤك عن الحد الأدنى بعد تنفيذ
+    الانسحاب. فطرح المقرر الذي عدد وحداته كذا يترك لك كذا ساعة، وعليه يكون الانسحاب متاحاً أو ممنوعاً
+    بحسب الناتج، مع تأكيد الرقم النهائي مع عمادة القبول والتسجيل.
+  difficulty: hard
+  reason_code: NONE
+  must_abstain: false
+  source_slice: rules-leave-withdrawal
+  id: 246
+- answer_mode: EXPLAIN_ONLY
+  policy_ids:
+  - TU.GRADE.SPECIAL_SYMBOLS
+  - TU.GRADE.SCALE
+  - TU.GPA.FORMULA
+  capabilities: []
+  must_contain:
+  - '1.00'
+  - '0.00'
+  - محروم
+  must_not_contain:
+  - لا يدخل في حساب المعدل
+  - أخف من الرسوب
+  - لا يؤثر على معدلك
+  answer_sketch_ar: 'لا يوجد أي فرق حسابي: تقدير محروم (ح / DN) وزنه 1.00 من 5 و0.00 من 4، وهو نفس وزن
+    الراسب (هـ / F) تماماً، وكلاهما يُحتسب داخل المعدل. الفرق بينهما إجرائي فقط: الحرمان يمنعك من الاستمرار
+    في المقرر ومن دخول الاختبار، لكنه على المعدل مطابق للرسوب.'
+  difficulty: easy
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: rules-grades-conduct
+  id: 247
+- answer_mode: EXPLAIN_ONLY
+  policy_ids:
+  - TU.GRADE.SPECIAL_SYMBOLS
+  - TU.EXCUSE.TRANSCRIPT_MARK
+  - TU.LEAVE.COMPARISON
+  capabilities: []
+  must_contain:
+  - منسحب بعذر
+  - الاعتذار عن الفصل
+  - (ع)
+  must_not_contain:
+  - سجلك يبيّن
+  - يُحتسب (ع) في المعدل
+  - يعني حصراً
+  answer_sketch_ar: 'هنا تعارض حقيقي في المصدر يجب أن تعرفه بدل أن أختار لك أحد المعنيين: جدول الرموز
+    في الدليل يذكر (ع) / W بمعنى "منسحب بعذر"، بينما صفحة الاعتذار في الدليل نفسه تنص على أن الطالب المعتذر
+    عن الفصل الدراسي يُرصد له تقدير (ع). هل هو رمز واحد يخدم الحالتين أم أن التلخيص دمج رمزين — هذا غير
+    محسوم في الدليل ويحتاج الرجوع إلى لائحة الدراسة والاختبارات. المؤكد أن (ع) لا يُحتسب ضمن المعدل، وأن
+    تحديد أي الحالتين تخصك يكون من عمادة القبول والتسجيل.'
+  difficulty: hard
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: rules-grades-conduct
+  id: 248
+- answer_mode: EXPLAIN_ONLY
+  policy_ids:
+  - TU.APPEAL.WINDOW
+  - TU.APPEAL.FALSE_APPEAL_CONSEQUENCE
+  capabilities: []
+  must_contain:
+  - '15'
+  - اعتماد النتيجة
+  - لجنة السلوك والانضباط
+  must_not_contain:
+  - 30 يوم
+  - من تاريخ ظهور الدرجة في النظام
+  - القواعد التنفيذية هي التي تحدد المدة
+  answer_sketch_ar: 'المهلة خمسة عشر (15) يوماً كحد أقصى، وتبدأ من تاريخ اعتماد النتيجة لا من يوم رؤيتك
+    للدرجة في البوابة. والدليل نفسه يحيل آلية التظلم وإجراءاته إلى القواعد التنفيذية، فما أذكره لك ليس
+    الإجراء كاملاً. ولا بد أن تعرف الوجه الآخر: إذا ثبت عدم صحة التظلم يجوز للكلية الرفع بك إلى لجنة السلوك
+    والانضباط الطلابي. تاريخ اعتماد نتيجتك غير محفوظ في هذا النظام، فاحسب المهلة من إشعار الاعتماد لدى
+    الكلية.'
+  difficulty: medium
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: rules-grades-conduct
+  id: 249
+- answer_mode: EXPLAIN_ONLY
+  policy_ids:
+  - TU.APPEAL.ESCALATION_PATH
+  - TU.APPEAL.EVIDENCE_RETENTION
+  capabilities: []
+  must_contain:
+  - عضو هيئة تدريس آخر
+  - لجنة ثلاثية
+  - وكيل الكلية
+  - نهائي
+  - عام دراسي
+  must_not_contain:
+  - عمادة القبول والتسجيل هي التي تبت في التظلم
+  - وزارة التعليم
+  - لا يوجد مسار آخر
+  answer_sketch_ar: 'ما انتهى: المسار ثلاث مراحل. أولاً يطلب رئيس القسم إفادة أستاذ المقرر، ثم عند عدم
+    اقتناعك يجوز لرئيس القسم تكليف عضو هيئة تدريس آخر في التخصص نفسه بمراجعة درجاتك، ثم عند عدم اقتناعك
+    يُعرض التظلم على لجنة ثلاثية برئاسة وكيل الكلية المختص وعضوية رئيس القسم وأستاذ المقرر، وقرارها في
+    درجتك نهائي. وللمعلومية: القسم ملزم بحفظ مستندات أعمالك الفصلية وإجابات الاختبار النهائي مدة لا تقل
+    عن عام دراسي، وهذه هي حدود بقاء الدليل.'
+  difficulty: medium
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: rules-grades-conduct
+  id: 250
+- answer_mode: EXPLAIN_ONLY
+  policy_ids:
+  - TU.ATTENDANCE.DEPRIVATION_THRESHOLD
+  capabilities: []
+  must_contain:
+  - '25'
+  - '7'
+  - الاختبار
+  must_not_contain:
+  - حسب سجل حضورك
+  - النظام يبيّن غياباتك
+  - الحرمان لا يمنع من دخول الاختبار
+  answer_sketch_ar: 'الحد النظامي أن يتجاوز الغياب 25% من المحاضرات المقررة. على 30 محاضرة يعني 7.5 محاضرة،
+    فالغياب السابع يبقيك تحت الحد (23.3%) والغياب الثامن يتجاوزه (26.7%) ويوقعك في الحرمان — أي أن أمامك
+    غياباً واحداً آمناً بعد الستة. وإذا وقع الحرمان فأثره أثران معاً: الحرمان من الاستمرار في المقرر والحرمان
+    من دخول الاختبار، فلا مجال لدخول النهائي. الحساب من رقمك أنت؛ لا توجد بيانات حضور في هذا النظام.'
+  difficulty: medium
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: rules-grades-conduct
+  id: 251
+- answer_mode: EXPLAIN_ONLY
+  policy_ids:
+  - TU.MEDICAL_EXCUSE.EFFECT_ON_ASSESSMENTS
+  capabilities: []
+  must_contain:
+  - إعادة الاختبار النهائي
+  - الضوابط المحددة
+  - رئيس القسم
+  must_not_contain:
+  - اختبار بديل عن الاختبار النهائي
+  - يُرصد لك غير مكتمل تلقائياً
+  - خلال أسبوعين من الاختبار
+  answer_sketch_ar: 'المسارَان مختلفان: إذا شملت فترة التقرير اختباراً دورياً أو أعمالاً فصلية فيُنسَّق
+    مع رئيس القسم وأستاذ المقرر لاختبار بديل أو استكمال الأعمال في مدة لا تتجاوز بدء الاختبارات النهائية.
+    أما إذا شملت الاختبار النهائي — وهي حالتك — فالنص أن يُعاد الاختبار النهائي للطالب "وفق الضوابط المحددة"،
+    وهذه الضوابط لم يعرّفها الدليل، فلا أستطيع أن أخبرك بتفاصيلها ولا بموعدها؛ اسأل عنها وكيل الكلية أو
+    القسم.'
+  difficulty: hard
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: rules-grades-conduct
+  id: 252
+- answer_mode: EXPLAIN_ONLY
+  policy_ids:
+  - TU.CONDUCT.CHEATING
+  - TU.CONDUCT.VIOLATION_TYPES
+  capabilities: []
+  must_contain:
+  - راسب
+  - الفصل الدراسي التالي
+  - الصيفي
+  - الفصل النهائي
+  must_not_contain:
+  - إنذار فقط
+  - يُسمح له بالتسجيل في الفصل الصيفي
+  - محاولة الغش لا يترتب عليها شيء
+  answer_sketch_ar: 'لا، العقوبة ثلاثية ومتراكمة في المرة الأولى: يُحرم من المادة ويُعتبر راسباً فيها،
+    ويُفصل من الجامعة في الفصل الدراسي التالي، ولا يُسمح له بالتسجيل في الفصل الصيفي. والنص يسوّي بين
+    اختبار منتصف الفصل والاختبار النهائي، ويسوّي بين الغش ومحاولة الغش. أما من تكرر منه الغش أو ثبتت عليه
+    محاولات الغش فعقوبته الفصل النهائي من الجامعة.'
+  difficulty: medium
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: rules-grades-conduct
+  id: 253
+- answer_mode: EXPLAIN_ONLY
+  policy_ids:
+  - TU.CONDUCT.PENALTIES
+  - TU.CONDUCT.VIOLATION_TYPES
+  capabilities: []
+  must_contain:
+  - التنبيه
+  - الإنذار
+  - 20%
+  - الفصل النهائي
+  must_not_contain:
+  - العقوبات محصورة في
+  - لا يوجد فصل نهائي من الجامعة
+  - العقوبة الوحيدة
+  answer_sketch_ar: 'العقوبات المذكورة في الدليل: التنبيه الشفوي أو الكتابي، الإنذار، حرمان 20% من علامات
+    المقرر وقد يصل إلى الحرمان من المقرر باعتباره راسباً، حرمان المكافأة أو المنحة لمدة شهر، الحرمان المؤقت
+    أو النهائي من بعض الخدمات كالتغذية والأنشطة لمدة فصل دراسي، الفصل من الجامعة لمدة فصل دراسي وقد يُعتبر
+    راسباً فيه، ثم الفصل النهائي من الجامعة. لكن يلزم التنبيه: هذه العقوبات وردت في الصفحة فقرةً متصلة
+    بلا ترقيم، وآخر جملة فيها لا يفصل بين "وقد يعتبر راسباً فيه" و"الفصل النهائي من الجامعة" أي علامة
+    ترقيم، فهل هما عقوبتان مستقلتان أم أن الثانية وصف للأولى — أمر غير محسوم في المصدر ويحتاج الرجوع إلى
+    لائحة الدراسة والاختبارات.'
+  difficulty: hard
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: rules-grades-conduct
+  id: 254
+- answer_mode: EXPLAIN_ONLY
+  policy_ids:
+  - TU.GPA.FORMULA
+  - TU.GRADE.SCALE
+  capabilities: []
+  must_contain:
+  - '4.75'
+  - '3.50'
+  - '4.25'
+  must_not_contain:
+  - حسب سجلك الأكاديمي
+  - درجاتك المسجلة في النظام
+  - لا أستطيع حساب المعدل
+  answer_sketch_ar: ٩٣٪ تقع في شريحة 90 إلى أقل من 95 ووزنها 4.75، فتكون نقاط المادة 3 × 4.75 = 14.25.
+    و٧٨٪ تقع في شريحة 75 إلى أقل من 80 ووزنها 3.50، فتكون نقاطها 2 × 3.50 = 7.00. مجموع النقاط 21.25 على
+    مجموع الساعات 5 = 4.25 من 5. هذا حساب على الأرقام التي أعطيتني إياها أنت؛ النظام لا يحتفظ بدرجات فلا
+    يمكن التحقق منها من سجلك.
+  difficulty: medium
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: rules-grades-conduct
+  id: 255
+- answer_mode: EXPLAIN_ONLY
+  policy_ids:
+  - TU.HONOURS.CONDITIONS
+  - TU.HONOURS.THRESHOLDS
+  capabilities: []
+  must_contain:
+  - '4.75'
+  - قرار تأديبي
+  - '60'
+  must_not_contain:
+  - لا يوجد قرار تأديبي في سجلك
+  - سجلك خالٍ
+  - مبروك مرتبة الشرف
+  answer_sketch_ar: 'معدلك 4.80 يقع فعلاً داخل شريحة مرتبة الشرف الأولى (4.75 فأعلى من 5)، لكن المعدل
+    شرط واحد فقط. الدليل يشترط أيضاً: ألا يكون قد صدر بحقك قرار تأديبي خلال فترة دراستك في الجامعة، وألا
+    تكون قد رسبت في أي مقرر درسته في هذه الجامعة أو غيرها، وأن تنهي متطلبات التخرج في مدة أقصاها متوسط
+    المدة بين الحد الأدنى والأقصى، وأن تكون قد درست في جامعة تخرجك ما لا يقل عن 60% من متطلبات التخرج.
+    والنص في القرار التأديبي مطلق بلا استثناء لمضي المدة، فبحسب القاعدة كما هي مكتوبة يسقط استحقاقك. وهذا
+    شرح للقاعدة لا قراءة لملفك: لا توجد في هذا النظام سجلات تأديبية ولا سجل رسوب أصلاً، والبتّ لعمادة
+    القبول والتسجيل.'
+  difficulty: hard
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: rules-grades-conduct
+  id: 256
+- answer_mode: EXPLAIN_ONLY
+  policy_ids:
+  - TU.GRADE.SCALE
+  capabilities: []
+  must_contain:
+  - أ+
+  - '5.00'
+  - ممتاز مرتفع
+  must_not_contain:
+  - حسب كشف درجاتك
+  - غير محدد في الدليل
+  - وزن التقدير 4.75
+  answer_sketch_ar: أ+. شريحة 95–100 هي الوحيدة المغلقة من الطرفين في الجدول، فالدرجة 95 بالضبط تدخل فيها
+    وتقديرها ممتاز مرتفع (أ+) بوزن 5.00 من 5 و4.00 من 4. أما بقية الشرائح فحدها الأعلى مستثنى ("إلى أقل
+    من")، فشريحة أ هي 90 إلى أقل من 95 ولا تشمل 95.
+  difficulty: easy
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: rules-grades-conduct
+  id: 257
+- answer_mode: EXPLAIN_ONLY
+  policy_ids:
+  - TU.LOAD.INCOMPLETE_GRADE
+  - TU.GRADE.SPECIAL_SYMBOLS
+  capabilities: []
+  must_contain:
+  - ديسمبر
+  - '2026'
+  - آخر موعد
+  - راسب
+  must_not_contain:
+  - الفترة من
+  - خلال الفترة
+  - لا يوجد موعد محدد
+  answer_sketch_ar: 'التقويم الأكاديمي للفصل الأول 1448هـ يحدد آخر موعد لتنفيذ طلبات تعديل الدرجة وتقدير
+    (غير مكتمل – ل – IC) للفصل الدراسي الثاني والفصل الصيفي 1447هـ بـ 22-جمادى الآخرة-1448 الموافق 02-ديسمبر-2026.
+    لاحظ أن الجامعة تنشر تاريخ الإغلاق فقط لهذا الصف، فهو آخر موعد وليس فترة ممتدة. ونظاماً: تقدير (ل)
+    لا يُحتسب ضمن المعدل الفصلي ولا التراكمي، لكن عليك إنهاء متطلبات المقرر في الفصل التالي وإلا تحوّل
+    إلى راسب في المادة. وهذا التاريخ يخص الفصل الأول 1448 فقط ولا يصح نقله إلى فصل آخر.'
+  difficulty: hard
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: rules-grades-conduct
+  id: 258
+- answer_mode: EXPLAIN_ONLY
+  policy_ids: []
+  capabilities: []
+  must_contain:
+  - الحذف والإضافة
+  - أغسطس
+  - '22'
+  - '23'
+  - '2026'
+  must_not_contain:
+  - بأسبوع
+  - سبتمبر
+  answer_sketch_ar: فترة الحذف والإضافة عبر بوابة الطالب لمقررات التخصص الأساسي في الفصل الأول 1448هـ
+    تبدأ 07-ربيع الأول-1448 (20-أغسطس-2026) وتنتهي 09-ربيع الأول-1448 (22-أغسطس-2026). وبداية الدراسة
+    10-ربيع الأول-1448 (23-أغسطس-2026)، أي أن الباب يُغلق قبل أول يوم دراسة بيوم واحد فقط. هذه المواعيد
+    تخص الفصل الأول 1448هـ وحده.
+  difficulty: easy
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: calendar-dates
+  id: 259
+- answer_mode: EXPLAIN_ONLY
+  policy_ids:
+  - TU.REG.CHANGES_CLOSE_ONE_WEEK_BEFORE
+  capabilities: []
+  must_contain:
+  - التقويم
+  - الحذف والإضافة
+  - أغسطس
+  - '22'
+  - '23'
+  must_not_contain:
+  - '16'
+  - سبتمبر
+  answer_sketch_ar: 'التقويم الأكاديمي أعلى مرتبةً من الدليل الإرشادي، وهو الذي يُعمل به: الحذف والإضافة
+    للفصل الأول 1448هـ من 20-أغسطس-2026 إلى 22-أغسطس-2026 وبداية الدراسة 23-أغسطس-2026 — أي يوم واحد قبل
+    الدراسة لا أسبوع. صاحبك كان داخل الفترة فعلاً، وعبارة "بأسبوع" في الدليل لا تُطبّق على هذا الفصل.
+    الملاحظة مرصودة لفصل واحد فقط ولا تُعمَّم على فصول أخرى.'
+  difficulty: hard
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: calendar-dates
+  id: 260
+- answer_mode: EXPLAIN_ONLY
+  policy_ids: []
+  capabilities: []
+  must_contain:
+  - '23'
+  - أغسطس
+  - '2026'
+  - ربيع الأول
+  must_not_contain:
+  - سبتمبر
+  - المبنى الرئيسي
+  answer_sketch_ar: بداية الدراسة للفصل الأول 1448هـ يوم 10-ربيع الأول-1448 الموافق 23-أغسطس-2026. وحسب
+    جدولك المسجَّل، محاضراتك موزعة على الأيام والأوقات التالية مع القاعة والمحاضر كما هي في النظام؛ وأي
+    شعبة قاعتها غير مسجلة تُذكر "غير محددة" ولا تُخمَّن.
+  difficulty: easy
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: calendar-dates
+  id: 261
+- answer_mode: EXPLAIN_ONLY
+  policy_ids:
+  - TU.WITHDRAWAL.PROCEDURE
+  capabilities: []
+  must_contain:
+  - آخر موعد
+  - أكتوبر
+  - '2026'
+  - بعذر
+  must_not_contain:
+  - الفترة من
+  - خمسة انسحابات
+  answer_sketch_ar: آخر موعد لتنفيذ الانسحاب بعذر من المقرر للفصل الأول 1448هـ هو 03-جمادى الأولى-1448
+    الموافق 14-أكتوبر-2026 (الأسبوع الثامن). التقويم ينشر تاريخ الإغلاق فقط، فلا يوجد تاريخ فتح معلن ولا
+    تُذكر فترة ممتدة. وتسمية التقويم "الانسحاب بعذر" تختلف عن عنوان الدليل "الانسحاب من مقرر"، والمصدران
+    لا يثبتان أنهما الإجراء نفسه، فلا يُدمجان.
+  difficulty: medium
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: calendar-dates
+  id: 262
+- answer_mode: EXPLAIN_ONLY
+  policy_ids:
+  - TU.EXCUSE.PROCEDURE
+  capabilities: []
+  must_contain:
+  - آخر موعد
+  - '28'
+  - أكتوبر
+  - '2026'
+  must_not_contain:
+  - الفترة من
+  - إلى 28
+  answer_sketch_ar: آخر موعد لتنفيذ طلبات الاعتذار عن الدراسة للفصل الأول 1448هـ (للنظام الفصلي) هو 17-جمادى
+    الأولى-1448 الموافق 28-أكتوبر-2026، والطلب يُقدَّم آلياً عبر الخدمات الإلكترونية. التقويم ينشر تاريخ
+    الإقفال فقط، فلا يصح ذكر فترة لها بداية.
+  difficulty: medium
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: calendar-dates
+  id: 263
+- answer_mode: EXPLAIN_ONLY
+  policy_ids:
+  - TU.DEFERRAL.PROCEDURE
+  capabilities: []
+  must_contain:
+  - '15'
+  - أغسطس
+  - ديسمبر
+  - آخر موعد
+  must_not_contain:
+  - الفترة من
+  - الفصل الصيفي
+  answer_sketch_ar: 'الموعد يعتمد على الفصل الذي تريد تأجيله لا الفصل الذي أنت فيه: آخر موعد لتأجيل الفصل
+    الأول 1448هـ هو 02-ربيع الأول-1448 الموافق 15-أغسطس-2026، وآخر موعد لتأجيل الفصل الثاني 1448هـ هو
+    22-جمادى الآخرة-1448 الموافق 02-ديسمبر-2026. حدّد أي فصل تقصد، وكلا الصفّين ينشر تاريخ الإقفال فقط
+    دون تاريخ فتح.'
+  difficulty: hard
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: calendar-dates
+  id: 264
+- answer_mode: EXPLAIN_ONLY
+  policy_ids: []
+  capabilities: []
+  must_contain:
+  - ديسمبر
+  - '24'
+  - '27'
+  - يناير
+  - '2027'
+  - التخصصية
+  must_not_contain:
+  - فترة واحدة
+  - الفصل الثاني
+  answer_sketch_ar: 'في الفصل الأول 1448هـ الاختبارات النهائية على فترتين: المقررات العامة والاختيارية
+    والعملية من 11-رجب-1448 (20-ديسمبر-2026) إلى 15-رجب-1448 (24-ديسمبر-2026)، والمقررات التخصصية والحرة
+    من 18-رجب-1448 (27-ديسمبر-2026) إلى 29-رجب-1448 (07-يناير-2027). أي فترة تخصك تتحدد بنوع مقرراتك.'
+  difficulty: medium
+  review_flag: 'WEAK_GUARD: must_not_contain is [''فترة واحدة'',''الفصل الثاني'']. «فترة واحدة» is a literal
+    string a model would almost never emit — the real failure mode is silently giving ONE window (answering
+    «من 20 إلى 24 ديسمبر» and stopping) or '
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: calendar-dates
+  id: 265
+- answer_mode: EXPLAIN_ONLY
+  policy_ids: []
+  capabilities: []
+  must_contain:
+  - الحرة
+  - التخصصية
+  - '27'
+  - ديسمبر
+  - يناير
+  must_not_contain:
+  - 24 ديسمبر
+  - 24-ديسمبر
+  answer_sketch_ar: 'المقررات الحرة مذكورة في التقويم مع المقررات التخصصية، لا مع العامة: فترتها من 18-رجب-1448
+    (27-ديسمبر-2026) إلى 29-رجب-1448 (07-يناير-2027). فترة 20–24 ديسمبر 2026 مخصصة للمقررات العامة والاختيارية
+    والعملية فقط.'
+  difficulty: hard
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: calendar-dates
+  id: 266
+- answer_mode: EXPLAIN_ONLY
+  policy_ids: []
+  capabilities: []
+  must_contain:
+  - '25'
+  - '29'
+  - أكتوبر
+  - '2026'
+  - التاسع
+  must_not_contain:
+  - الثامن
+  - ديسمبر
+  answer_sketch_ar: فترة الاختبارات النصفية لمقررات المتطلبات العامة في الفصل الأول 1448هـ من 14-جمادى
+    الأولى-1448 (25-أكتوبر-2026) إلى 18-جمادى الأولى-1448 (29-أكتوبر-2026)، وهي في الأسبوع الدراسي التاسع.
+  difficulty: easy
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: calendar-dates
+  id: 267
+- answer_mode: EXPLAIN_ONLY
+  policy_ids: []
+  capabilities: []
+  must_contain:
+  - اليوم الوطني
+  - سبتمبر
+  - الخريف
+  - نوفمبر
+  - '29'
+  - يناير
+  must_not_contain:
+  - الفصل الثاني
+  - تقريباً
+  answer_sketch_ar: إجازة اليوم الوطني من 12-ربيع الآخر-1448 (23-سبتمبر-2026) إلى 15-ربيع الآخر-1448 (26-سبتمبر-2026).
+    وإجازة الخريف تبدأ بنهاية دوام يوم الخميس من 09-جمادى الآخرة-1448 (19-نوفمبر-2026) إلى 18-جمادى الآخرة-1448
+    (28-نوفمبر-2026)، واستئناف الدراسة بعدها 19-جمادى الآخرة-1448 (29-نوفمبر-2026). وإجازة منتصف العام
+    من 29-رجب-1448 (07-يناير-2027) إلى 08-شعبان-1448 (16-يناير-2027).
+  difficulty: medium
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: calendar-dates
+  id: 268
+- answer_mode: EXPLAIN_ONLY
+  policy_ids: []
+  capabilities: []
+  must_contain:
+  - آخر موعد
+  - رصد
+  - يناير
+  - '2027'
+  must_not_contain:
+  - الفترة من
+  - ديسمبر
+  answer_sketch_ar: آخر موعد لانتهاء رصد الدرجات النهائية من قبل أعضاء هيئة التدريس عبر بوابة النظام الأكاديمي
+    هو 01-شعبان-1448 الموافق 09-يناير-2027، والتقويم ينشر تاريخ الإقفال فقط بلا فترة. وهذا موعد الرصد
+    المُلزِم لعضو هيئة التدريس، وليس وعداً بتاريخ ظهور درجتك لك.
+  difficulty: hard
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: calendar-dates
+  id: 269
+- answer_mode: FULL
+  policy_ids:
+  - TU.REG.EARLY_REGISTRATION_TIMING
+  capabilities:
+  - recommend_courses
+  - my_progress
+  must_contain:
+  - '11'
+  - '15'
+  - أكتوبر
+  - '2026'
+  - الفصل الثاني
+  must_not_contain:
+  - بداية الفصل الثاني
+  - ديسمبر
+  answer_sketch_ar: فترة تسجيل الرغبات للفصل الثاني 1448هـ من 30-ربيع الآخر-1448 (11-أكتوبر-2026) إلى
+    04-جمادى الأولى-1448 (15-أكتوبر-2026)، وهي الأسبوع الثامن أي منتصف الفصل السابق كما يصفه الدليل. وحسب
+    خطتك ووضعك الحالي، المقررات المقترحة لك هي القائمة التالية بعدد ساعاتها، وهي توصية إرشادية لا سقف
+    تسجيل.
+  difficulty: medium
+  reason_code: NONE
+  must_abstain: false
+  source_slice: calendar-dates
+  id: 270
+- answer_mode: FULL
+  policy_ids:
+  - TU.GRADUATION.DOCUMENTS
+  capabilities:
+  - graduation_progress
+  must_contain:
+  - '20'
+  - يناير
+  - '2027'
+  - عمادة القبول والتسجيل
+  must_not_contain:
+  - الفصل الثاني
+  - ديسمبر
+  answer_sketch_ar: توزيع وثائق الخريجين للفصل الأول 1448هـ يوم 12-شعبان-1448 الموافق 20-يناير-2027، وإصدار
+    وثائق التخرج والسجلات الأكاديمية من اختصاص عمادة القبول والتسجيل. وحسب سجلك المعتمد، ما زال أمامك
+    العدد التالي من المقررات والساعات في الخطة، فتأكد من إنهائها قبل أن يعتمد المجلس تخرجك.
+  difficulty: medium
+  reason_code: NONE
+  must_abstain: false
+  source_slice: calendar-dates
+  id: 271
+- answer_mode: FULL
+  policy_ids:
+  - TU.ADVISING.STUDENT_RIGHTS
+  capabilities:
+  - find_students
+  must_contain:
+  - '841'
+  - '355'
+  - IS
+  - CS
+  must_not_contain:
+  - لا أستطيع الوصول
+  - الدرجات
+  - نسبة الغياب
+  answer_sketch_ar: أكبر تجمّع عندنا هو CS شطر الطالبات بـ841 طالبة، ويقابله في CS شطر الطلاب طالب واحد
+    فقط. أما IS فمجموع طلابه 355 وكلهم بلا استثناء في شطر الطالبات، ولا يوجد ولا طالب واحد مسجّل في IS
+    شطر الطلاب — فطلب التدريس هذا ما يقابله أي تجمّع طلابي، وبرنامج COE له خطة معتمدة لكن بدون طلاب مسجلين
+    أصلاً.
+  difficulty: medium
+  reason_code: NONE
+  must_abstain: false
+  source_slice: staff-cohort
+  id: 272
+- answer_mode: FULL
+  policy_ids:
+  - TU.DEF.PROGRAMME_AND_COURSES
+  capabilities:
+  - course_eligibility
+  must_contain:
+  - '319'
+  - MATH204
+  - '841'
+  must_not_contain:
+  - MATH106
+  - درجة الطالبة
+  - لا أستطيع الوصول
+  answer_sketch_ar: 'من أصل 841 طالبة في CS شطر الطالبات، 319 مؤهلة لتسجيل MATH320 الآن. المتطلب السابق
+    الوحيد للمقرر في خطة CS هو MATH204، وهو أعلى سبب حجب: 81 طالبة ينقصهن MATH204. لاحظي أن باقي غير المؤهلات
+    ليس سببهن المتطلب — معظمهن اجتزن المقرر أصلاً أو يدرسنه الآن، فلا يصح جمعهن مع المحجوبات.'
+  difficulty: medium
+  reason_code: NONE
+  must_abstain: false
+  source_slice: staff-cohort
+  id: 273
+- answer_mode: FULL
+  policy_ids:
+  - TU.DEF.PROGRAMME_AND_COURSES
+  capabilities:
+  - course_eligibility
+  - course_prerequisites
+  must_contain:
+  - '209'
+  - '144'
+  - AI492
+  must_not_contain:
+  - لا أستطيع الوصول
+  - الدرجات
+  - سجل الغياب
+  answer_sketch_ar: لا أحد. طلاب خطة AI2 عددهم 209، والمؤهلون لـ AI492 صفر. المقرر ليس له متطلب مقرري
+    إطلاقاً؛ متطلبه الوحيد بوابة ساعات معتمدة قدرها 144(HOURS)، والـ209 كلهم دون هذه العتبة حتى بعد احتساب
+    ساعاتهم المسجّلة حالياً مع المكتسبة. فتح شعبة الآن يعني شعبة بلا طالب واحد مستحق.
+  difficulty: hard
+  reason_code: NONE
+  must_abstain: false
+  source_slice: staff-cohort
+  id: 274
+- answer_mode: FULL
+  policy_ids:
+  - TU.DEF.PROGRAMME_AND_COURSES
+  capabilities:
+  - course_eligibility
+  - course_prerequisites
+  must_contain:
+  - COE223
+  - COE224
+  - CS211
+  - '130'
+  - '258'
+  must_not_contain:
+  - لا أستطيع الوصول
+  - نسبة الغياب
+  answer_sketch_ar: 'في AI: 130 مؤهلاً من 323، متطلباته هناك COE223 و CS211. في CS: 258 مؤهلاً من 842،
+    ومتطلباته هناك COE224 و CS211. الفرق ليس خطأ في البيانات: جدول المتطلبات مُعرَّف لكل برنامج على حدة،
+    فنفس الرمز CS323 يحمل متطلباً مختلفاً باختلاف الخطة (COE223 مقابل COE224). أي إجابة تعطي «متطلب CS323»
+    بلا تحديد برنامج تكون ناقصة.'
+  difficulty: hard
+  reason_code: NONE
+  must_abstain: false
+  source_slice: staff-cohort
+  id: 275
+- answer_mode: FULL
+  policy_ids:
+  - TU.DEF.PROGRAMME_AND_COURSES
+  capabilities:
+  - aggregate_demand
+  - lookup_course
+  must_contain:
+  - AI1
+  - '178'
+  - CS424
+  - '152'
+  must_not_contain:
+  - المقاعد المتاحة
+  - لا أستطيع الوصول
+  - قائمة الانتظار
+  answer_sketch_ar: أعلى بند في الطلب هو AI1 بـ178 طالباً — لكنه ليس مقرراً حقيقياً، بل خانة اختياري (placeholder)
+    في الخطة ولا تُفتح له شعبة بهذا الاسم قبل ربطه بمقرر فعلي. أول مقرر حقيقي هو CS424 بـ152 طالباً، ثم
+    AI491 و AI433 و CS372 بـ138 لكل منها، ثم CS323 بـ130 و AI331 بـ125. مجموع الطلبة في البرنامج 323.
+  difficulty: hard
+  review_flag: 'UNGRADEABLE: must_contain hard-codes AI1=178 and CS424=152. Those are the values of build_aggregate_counts(1448,
+    1, program=''AI'') — I reproduced them exactly. But _exec_aggregate_demand takes year/term from the
+    chat ctx (_ctx_year_te'
+  reason_code: NONE
+  must_abstain: false
+  source_slice: staff-cohort
+  id: 276
+- answer_mode: FULL
+  policy_ids:
+  - TU.REG.EARLY_REGISTRATION_TIMING
+  capabilities:
+  - aggregate_demand
+  must_contain:
+  - MATH320
+  - '306'
+  - STAT301
+  - أكتوبر
+  - نوفمبر
+  must_not_contain:
+  - الفصل الصيفي
+  - لا أستطيع الوصول
+  - المقاعد المتاحة
+  answer_sketch_ar: 'من 841 طالبة في CS شطر الطالبات: MATH320 بـ306، ثم STAT301 بـ263، ثم CS323 بـ257.
+    أما إدخال الشعب فبند التقويم «إنشاء شعب المقررات ومجموعات الجداول للفصل الثاني 1448 من قبل الأقسام»
+    فترة كاملة معلنة الطرفين: من 25 أكتوبر 2026 إلى 5 نوفمبر 2026 (الأسبوعان العاشر والحادي عشر). ويسبقها
+    تسجيل رغبات الطلبة للفصل الثاني من 11 إلى 15 أكتوبر 2026، فالأرقام تُراجَع بعده.'
+  difficulty: hard
+  reason_code: NONE
+  must_abstain: false
+  source_slice: staff-cohort
+  id: 277
+- answer_mode: PARTIAL
+  policy_ids:
+  - TU.LOAD.SEMESTER_RANGE
+  - TU.DISMISSAL.THREE_WARNINGS
+  capabilities:
+  - graduation_shortfall
+  must_contain:
+  - '163'
+  - '355'
+  - '12'
+  - IS490
+  must_not_contain:
+  - إنذار
+  - نسبة الغياب
+  - لا أستطيع الوصول
+  answer_sketch_ar: 'من 355 طالبة في IS، 163 عبؤهن الموصى به أقل من الحد الأدنى 12 وحدة، و192 فوقه. أعلى
+    المقررات القابلة للاسترجاع (متطلباتها مستوفاة ولم يُوصَ بها): IS490 لـ111 طالبة، IS482 لـ91، MGT324
+    لـ79، FE2 لـ78، GSE2 لـ51. هذا مؤشر تخطيطي على العبء فقط، وليس حالة أكاديمية ولا إنذاراً — النظام
+    لا يحتفظ بسجل إنذارات أصلاً.'
+  difficulty: medium
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: staff-cohort
+  id: 278
+- answer_mode: FULL
+  policy_ids:
+  - TU.GRADUATION.COUNCIL_AWARDS_DEGREE
+  - TU.GRADUATION.MINIMUM_GPA
+  capabilities:
+  - graduation_shortfall
+  - get_student_context
+  must_contain:
+  - مجلس الجامعة
+  - الخطة
+  must_not_contain:
+  - جميعهن خلصن الخطة
+  - لا أستطيع الوصول
+  - نسبة الغياب
+  answer_sketch_ar: 'لا، لا تقولها بهذه الصيغة. صفر مقررات مقترحة له أكثر من سبب، والتحليل يفصلها: منهن
+    من لم يبقَ في خطتها أي مقرر (graduating)، ومنهن من ما زال ينقصها مقررات لم تبدأها (still_needs)، ومنهن
+    من كل المتبقي لديها محجوب بمتطلبات. والأهم: حتى من أنهت خطتها لا تُعدّ متخرجة — الدرجة يمنحها مجلس
+    الجامعة بناءً على مذكرة التخرج من عمادة القبول والتسجيل، فالصياغة الصحيحة «أكملت مقررات الخطة، ويبقى
+    قرار المنح».'
+  difficulty: hard
+  reason_code: NONE
+  must_abstain: false
+  source_slice: staff-cohort
+  id: 279
+- answer_mode: FULL
+  policy_ids:
+  - TU.ADVISING.STUDENT_RIGHTS
+  - TU.REG.ADVISER_DUTIES_AT_REGISTRATION
+  capabilities:
+  - portfolio_triage
+  must_contain:
+  - '60'
+  - '43'
+  - '29'
+  must_not_contain:
+  - الغياب
+  - لا أستطيع الوصول
+  - درجاتهم
+  answer_sketch_ar: 'محفظة المرشد 51 فيها 60 طالباً، منهم 43 بدون أي ساعة مسجّلة لهذا الترم. التوزيع على
+    البرامج: DS 29، AI2 23، AI 7، DS2 1. وانتبه أن «صفر ساعات» هنا محسوبة من المقررات ذات الحالة studying،
+    لا من حقل الساعات المسجّلة في ملف الطالب، فقد يختلف الرقمان.'
+  difficulty: medium
+  reason_code: NONE
+  must_abstain: false
+  source_slice: staff-cohort
+  id: 280
+- answer_mode: PARTIAL
+  policy_ids:
+  - TU.DISMISSAL.THREE_WARNINGS
+  - TU.ADVISING.STUDENT_RIGHTS
+  capabilities:
+  - portfolio_triage
+  - find_students
+  must_contain:
+  - '22'
+  - إنذار
+  - '2.0'
+  must_not_contain:
+  - حصل على إنذار
+  - لديه إنذاران
+  - لا أستطيع الوصول
+  answer_sketch_ar: 'محفظة المرشد 43 فيها 22 طالباً، اثنان منهم فقط معدلهما دون 2.0 وهما من يظهران في
+    تصنيف الخطر. لكن لا، لا تعاملهم على أنهم على إنذار: هذا مؤشر إرشادي داخلي مبني على قراءة معدل واحدة،
+    بينما اللائحة تبني الفصل على ثلاث إنذارات متتالية، وسجل الإنذارات غير موجود في قاعدة البيانات إطلاقاً
+    — فلا يمكن لأحد أن يقول كم إنذاراً على أي طالب.'
+  difficulty: hard
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: staff-cohort
+  id: 281
+- answer_mode: FULL
+  policy_ids:
+  - TU.ADVISING.STUDENT_RIGHTS
+  capabilities:
+  - find_students
+  must_contain:
+  - '251'
+  - CS323
+  - CS211
+  - COE224
+  must_not_contain:
+  - لا أستطيع الوصول
+  - درجاتهم
+  - عدد المحاولات
+  answer_sketch_ar: '251 طالباً في CS تنطبق عليهم الشروط الثلاثة: ناجحون في CS211 و COE224، ولم يجتازوا
+    CS323 ولا يدرسونه حالياً. هذا هو الطابور الفعلي على CS323 في CS. ولا يمكن معرفة كم مرة حاول أي منهم
+    المقرر — جدول مقررات الطالب يحمل صفاً واحداً لكل (طالب، مقرر) ولا يسجل المحاولات.'
+  difficulty: medium
+  reason_code: NONE
+  must_abstain: false
+  source_slice: staff-cohort
+  id: 282
+- answer_mode: PARTIAL
+  policy_ids:
+  - TU.LOAD.SEMESTER_RANGE
+  - TU.LOAD.EXPECTED_GRADUATE_REQUEST
+  - TU.REG.ADVISER_CAN_REGISTER_DIRECTLY
+  capabilities:
+  - get_student_context
+  - recommend_courses
+  must_contain:
+  - '19'
+  - '16'
+  - الكلية
+  must_not_contain:
+  - الحد الأعلى 18
+  - الحد الأقصى 18
+  - لا أستطيع الوصول
+  answer_sketch_ar: 'نعم، التسجيل والحذف والإضافة من حسابك كمرشد صلاحية منصوص عليها. أما العبء: الحد المسجّل
+    للفصل الرئيس هو 12 إلى 19 وحدة. لكن حالة هذه الطالبة GRADUATION EXPECTED، والدليل يسجّل لهذه الفئة
+    حداً منفصلاً قدره 16 ساعة بطلب، وتنظر فيه عمادة القبول والتسجيل بشرط موافقة الكلية — والعلاقة بين
+    16 و19 غير محسومة في المصدر نفسه. فلا تُعتمد 19 لها تلقائياً؛ الرقمان يُعرضان معاً ويُحسم مع الكلية.
+    وسقف التوصية الآلي في هذا النظام شيء آخر تماماً ولا يُقدَّم كحد نظامي.'
+  difficulty: hard
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: staff-cohort
+  id: 283
+- answer_mode: PARTIAL
+  policy_ids:
+  - TU.REG.CHANGES_CLOSE_ONE_WEEK_BEFORE
+  capabilities: []
+  must_contain:
+  - التقويم
+  - أغسطس
+  - '22'
+  - '23'
+  must_not_contain:
+  - 16 أغسطس
+  - 16-أغسطس-2026
+  - لا أستطيع الوصول
+  answer_sketch_ar: بلّغهم بالتقويم. للفصل الأول 1448 الحذف والإضافة عبر بوابة الطالب من 20 إلى 22 أغسطس
+    2026، وبداية الدراسة 23 أغسطس 2026 — أي أن الباب يُغلق قبل الدراسة بيوم واحد لا بأسبوع. التقويم الأكاديمي
+    أعلى مرتبة من الدليل الإرشادي في ترتيب المرجعية، فعبارة الدليل لا تُنقل للطلاب كقاعدة عاملة ولا يُطرح
+    منها أسبوع لاستنتاج تاريخ. وهذا مرصود لفصل واحد فقط، فلا يُعمَّم على الفصل الثاني.
+  difficulty: hard
+  reason_code: NO_STUDENT_DATA
+  must_abstain: false
+  source_slice: staff-cohort
+  id: 284
