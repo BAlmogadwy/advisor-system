@@ -32,7 +32,10 @@ concepts:
 
   - topic: academic_dismissal
     concept_id: programme_maximum_duration
-    aliases_ar: [المدة النظامية, تجاوزت المدة, مدة التخرج, كم سنة أدرس, ضعف المدة, المدة المسموحة للتخرج]
+    # «يفصلوني على المدة» is a dismissal question AND a duration question; both
+    # concepts must resolve so each record can be direct for the part it entails.
+    aliases_ar: [المدة النظامية, تجاوزت المدة, مدة التخرج, كم سنة أدرس, ضعف المدة,
+                 المدة المسموحة للتخرج, على المدة, كم فصل أقعد, أقصى مدة]
 
   - topic: attendance
     concept_id: course_deprivation
@@ -52,11 +55,15 @@ concepts:
 
   - topic: graduation
     concept_id: graduation_requirements
-    aliases_ar: [شروط التخرج, متى أتخرج, معدل التخرج, متطلبات التخرج]
+    aliases_ar: [شروط التخرج, متى أتخرج, معدل التخرج, متطلبات التخرج, إجراءات التخرج,
+                 اعتماد التخرج, حفل التخرج, إخلاء الطرف]
 
   - topic: graduation
     concept_id: academic_documents
-    aliases_ar: [وثيقة التخرج, السجل الأكاديمي, بدل فاقد, إصدار الوثائق, شهادة التخرج]
+    # Kept distinct from the ceremony and from eligibility: «متى حفل التخرج» must
+    # not resolve here, and «متى توزيع الوثائق» must.
+    aliases_ar: [وثيقة التخرج, وثائق التخرج, استلام الوثيقة, توزيع الوثائق, تسليم الوثيقة,
+                 الشهادة الجامعية, السجل الأكاديمي, بدل فاقد, إصدار الوثائق, شهادة التخرج]
 
   - topic: registration_process
     concept_id: registration_process

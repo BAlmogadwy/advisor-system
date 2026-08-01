@@ -293,6 +293,43 @@ def expand_tokens(text: str) -> set[str]:
     return expanded
 
 
+def expand_tokens_ordered(text: str) -> list[set[str]]:
+    """One variant set per content word, IN ORDER.
+
+    Alias matching used a word bag, and a bag cannot tell «أحول لجامعة ثانية»
+    (transfer to another university) from «أحول لكلية ثانية داخل الجامعة»
+    (transfer to another college inside the university): every alias word is
+    present, but جامعة comes from a different phrase and after ثانية rather than
+    before it. The question means the opposite of what it matched, and the
+    adviser was routed to external-transfer rules for an internal-transfer
+    question.
+    """
+    from core.services.arabic_text import STOPWORDS, all_tokens
+
+    return [
+        _variants(token) for token in all_tokens(text) if len(token) > 1 and token not in STOPWORDS
+    ]
+
+
+def alias_matches(alias_words: list[set[str]], question_words: list[set[str]]) -> bool:
+    """Do the alias's words appear in the question, in the same relative order?
+
+    Not contiguous — Arabic inserts particles freely — but ordered. That is enough
+    to reject the bag-match failure while still matching a question that phrases
+    the alias naturally.
+    """
+    if not alias_words:
+        return False
+    position = 0
+    for wanted in alias_words:
+        while position < len(question_words) and not (question_words[position] & wanted):
+            position += 1
+        if position >= len(question_words):
+            return False
+        position += 1
+    return True
+
+
 def _index_text(obj: Any, *, top: bool = True) -> list[str]:
     """Every piece of human-readable text in a record, for the token index."""
     chunks: list[str] = []
@@ -385,7 +422,7 @@ class PolicyStore:
         # second, so the merged set is never a subset. Matching word by word asks
         # the right question — is each alias word present in SOME form?
         self._alias_tokens: dict[str, list[list[set[str]]]] = {
-            topic: [words for words in (_alias_words(a) for a in als) if words]
+            topic: [words for words in (expand_tokens_ordered(a) for a in als) if words]
             for topic, als in aliases.items()
         }
 
@@ -574,8 +611,8 @@ class PolicyStore:
         An alias fires when all of its content tokens appear in the query, so the
         long aliases stay specific while tolerating the words between them.
         """
-        q_tokens = expand_tokens(query)
-        if not q_tokens:
+        q_words = expand_tokens_ordered(query)
+        if not q_words:
             return []
         hits: list[tuple[str, int]] = []
         for topic, alias_tokens in self._alias_tokens.items():
@@ -583,7 +620,7 @@ class PolicyStore:
                 continue
             score = 0
             for words in alias_tokens:
-                if all(variants & q_tokens for variants in words):
+                if alias_matches(words, q_words):
                     # Longer aliases are more specific: «الانسحاب من مقرر» should
                     # outrank a bare «انسحاب» that also matches university withdrawal.
                     score += len(words)

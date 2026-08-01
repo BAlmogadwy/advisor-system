@@ -7,39 +7,37 @@ proposals:
   question: وش المواد اللي تنصحني أسجلها الترم الجاي؟
   answer_mode: FULL
   must_abstain: false
-  resolved_concepts:
-  - advising_relationship
-  - registration_process
+  resolved_concepts: []
   legacy_policy_ids:
   - TU.REG.ADVISER_DUTIES_AT_REGISTRATION
   - TU.ATTENDANCE.DEFERRING_EARLY_COURSES_TRAP
   - TU.LOAD.SEMESTER_RANGE
   - TU.REG.STUDENT_CHOICES_FINAL
   candidate_roles:
-    direct_policy_ids:
+    direct_policy_ids: []
+    background_policy_ids:
     - TU.REG.ADVISER_DUTIES_AT_REGISTRATION
-    - TU.REG.STUDENT_CHOICES_FINAL
-    background_policy_ids: []
-    forbidden_policy_ids: []
-    irrelevant_policy_ids:
     - TU.ATTENDANCE.DEFERRING_EARLY_COURSES_TRAP
     - TU.LOAD.SEMESTER_RANGE
+    - TU.REG.STUDENT_CHOICES_FINAL
+    forbidden_policy_ids: []
+    irrelevant_policy_ids: []
     conflicting_policy_ids: []
   derivation:
     method: semantic_scope_v1_concept
     reason:
       TU.REG.ADVISER_DUTIES_AT_REGISTRATION:
-      - concept_match
+      - question_concept_unresolved
       TU.ATTENDANCE.DEFERRING_EARLY_COURSES_TRAP:
-      - no_concept_or_topic_overlap
+      - question_concept_unresolved
       TU.LOAD.SEMESTER_RANGE:
-      - no_concept_or_topic_overlap
+      - question_concept_unresolved
       TU.REG.STUDENT_CHOICES_FINAL:
-      - concept_match
+      - question_concept_unresolved
   annotation_status: needs_review
   review_reasons:
-  - multiple_plausible_concepts
-  - multiple_candidate_direct_policies
+  - question_concept_unresolved
+  - no_direct_policy_though_a_policy_answer_was_expected
 - question_id: 2
   question: هل المواد اللي اخترتها مناسبة مع خطتي الدراسية؟
   answer_mode: PARTIAL
@@ -1970,38 +1968,37 @@ proposals:
   question: كم ترم أقدر أعتذر عنه؟
   answer_mode: EXPLAIN_ONLY
   must_abstain: true
-  resolved_concepts:
-  - semester_excuse
+  resolved_concepts: []
   legacy_policy_ids:
   - TU.EXCUSE.PROCEDURE
   - TU.EXCUSE.COUNTS_TOWARD_DURATION
   - TU.DISMISSAL.DURATION_EXCEEDED
   - TU.DEFERRAL.MAXIMUM
   candidate_roles:
-    direct_policy_ids:
+    direct_policy_ids: []
+    background_policy_ids:
     - TU.EXCUSE.PROCEDURE
     - TU.EXCUSE.COUNTS_TOWARD_DURATION
-    background_policy_ids: []
-    forbidden_policy_ids: []
-    irrelevant_policy_ids:
     - TU.DISMISSAL.DURATION_EXCEEDED
     - TU.DEFERRAL.MAXIMUM
+    forbidden_policy_ids: []
+    irrelevant_policy_ids: []
     conflicting_policy_ids: []
   derivation:
     method: semantic_scope_v1_concept
     reason:
       TU.EXCUSE.PROCEDURE:
-      - concept_match
+      - question_concept_unresolved
       TU.EXCUSE.COUNTS_TOWARD_DURATION:
-      - concept_match
+      - question_concept_unresolved
       TU.DISMISSAL.DURATION_EXCEEDED:
-      - no_concept_or_topic_overlap
+      - question_concept_unresolved
       TU.DEFERRAL.MAXIMUM:
-      - no_concept_or_topic_overlap
+      - question_concept_unresolved
   annotation_status: needs_review
   review_reasons:
-  - multiple_candidate_direct_policies
-  - must_abstain_conflicts_with_direct_evidence
+  - question_concept_unresolved
+  - no_direct_policy_though_a_policy_answer_was_expected
 - question_id: 65
   question: أقدر أؤجل الدراسة بعد ما سجلت المواد؟
   answer_mode: PARTIAL
@@ -2401,17 +2398,17 @@ proposals:
   answer_mode: EXPLAIN_ONLY
   must_abstain: true
   resolved_concepts:
-  - external_transfer
+  - internal_transfer
   legacy_policy_ids:
   - TU.TRANSFER.INTERNAL_COLLEGE
   - TU.TRANSFER.DEPARTMENT_OR_MAJOR
   - TU.VISITING.NO_TRANSFER_DURING_VISIT
   candidate_roles:
-    direct_policy_ids: []
-    background_policy_ids: []
-    forbidden_policy_ids:
+    direct_policy_ids:
     - TU.TRANSFER.INTERNAL_COLLEGE
     - TU.TRANSFER.DEPARTMENT_OR_MAJOR
+    background_policy_ids: []
+    forbidden_policy_ids:
     - TU.VISITING.NO_TRANSFER_DURING_VISIT
     irrelevant_policy_ids: []
     conflicting_policy_ids: []
@@ -2419,18 +2416,17 @@ proposals:
     method: semantic_scope_v1_concept
     reason:
       TU.TRANSFER.INTERNAL_COLLEGE:
-      - excluded_concept_match
-      - concept_mismatch
+      - concept_match
       TU.TRANSFER.DEPARTMENT_OR_MAJOR:
-      - excluded_concept_match
-      - concept_mismatch
+      - concept_match
       TU.VISITING.NO_TRANSFER_DURING_VISIT:
       - excluded_concept_match
       - concept_mismatch
   annotation_status: needs_review
   review_reasons:
-  - no_direct_policy_though_a_policy_answer_was_expected
+  - multiple_candidate_direct_policies
   - legacy_policy_became_forbidden
+  - must_abstain_conflicts_with_direct_evidence
 - question_id: 78
   question: كيف أعرف التخصص الأنسب لي؟
   answer_mode: UNSUPPORTED
@@ -2647,7 +2643,6 @@ proposals:
   answer_mode: EXPLAIN_ONLY
   must_abstain: true
   resolved_concepts:
-  - academic_documents
   - graduation_requirements
   legacy_policy_ids:
   - TU.GRADUATION.COUNCIL_AWARDS_DEGREE
@@ -2656,10 +2651,10 @@ proposals:
   candidate_roles:
     direct_policy_ids:
     - TU.GRADUATION.COUNCIL_AWARDS_DEGREE
-    - TU.GRADUATION.DOCUMENTS
     - TU.GRADUATION.MINIMUM_GPA
     background_policy_ids: []
-    forbidden_policy_ids: []
+    forbidden_policy_ids:
+    - TU.GRADUATION.DOCUMENTS
     irrelevant_policy_ids: []
     conflicting_policy_ids: []
   derivation:
@@ -2668,13 +2663,14 @@ proposals:
       TU.GRADUATION.COUNCIL_AWARDS_DEGREE:
       - concept_match
       TU.GRADUATION.DOCUMENTS:
-      - concept_match
+      - excluded_concept_match
+      - concept_mismatch
       TU.GRADUATION.MINIMUM_GPA:
       - concept_match
   annotation_status: needs_review
   review_reasons:
-  - multiple_plausible_concepts
   - multiple_candidate_direct_policies
+  - legacy_policy_became_forbidden
   - must_abstain_conflicts_with_direct_evidence
 - question_id: 94
   question: عندي مادة واحدة متبقية، هل فيه حل عشان أتخرج؟
@@ -2708,6 +2704,7 @@ proposals:
   answer_mode: EXPLAIN_ONLY
   must_abstain: true
   resolved_concepts:
+  - external_transfer
   - visiting_study
   legacy_policy_ids:
   - TU.VISITING.DEFINITION
@@ -2753,6 +2750,7 @@ proposals:
       - concept_match
   annotation_status: needs_review
   review_reasons:
+  - multiple_plausible_concepts
   - multiple_candidate_direct_policies
   - must_abstain_conflicts_with_direct_evidence
 - question_id: 96
@@ -3199,30 +3197,29 @@ proposals:
   question: عندي ساعات فاضية، وش مادة أقدر أسجل؟
   answer_mode: PARTIAL
   must_abstain: false
-  resolved_concepts:
-  - advising_relationship
-  - registration_process
+  resolved_concepts: []
   legacy_policy_ids:
   - TU.LOAD.SEMESTER_RANGE
   - TU.REG.ADVISER_DUTIES_AT_REGISTRATION
   candidate_roles:
-    direct_policy_ids:
-    - TU.REG.ADVISER_DUTIES_AT_REGISTRATION
-    background_policy_ids: []
-    forbidden_policy_ids: []
-    irrelevant_policy_ids:
+    direct_policy_ids: []
+    background_policy_ids:
     - TU.LOAD.SEMESTER_RANGE
+    - TU.REG.ADVISER_DUTIES_AT_REGISTRATION
+    forbidden_policy_ids: []
+    irrelevant_policy_ids: []
     conflicting_policy_ids: []
   derivation:
     method: semantic_scope_v1_concept
     reason:
       TU.LOAD.SEMESTER_RANGE:
-      - no_concept_or_topic_overlap
+      - question_concept_unresolved
       TU.REG.ADVISER_DUTIES_AT_REGISTRATION:
-      - concept_match
+      - question_concept_unresolved
   annotation_status: needs_review
   review_reasons:
-  - multiple_plausible_concepts
+  - question_concept_unresolved
+  - no_direct_policy_though_a_policy_answer_was_expected
 - question_id: 113
   question: أقدر أسجل مادة خارج خطتي؟
   answer_mode: EXPLAIN_ONLY
@@ -5827,8 +5824,6 @@ proposals:
   must_abstain: false
   resolved_concepts:
   - academic_terminology
-  - advising_relationship
-  - registration_process
   legacy_policy_ids:
   - TU.DEF.PROGRAMME_AND_COURSES
   candidate_roles:
@@ -5843,9 +5838,7 @@ proposals:
     reason:
       TU.DEF.PROGRAMME_AND_COURSES:
       - concept_match
-  annotation_status: needs_review
-  review_reasons:
-  - multiple_plausible_concepts
+  annotation_status: auto_candidate
 - question_id: 204
   question: لو نجحت في مادة وحدة بس هذا الترم، أي وحدة تفتح لي أكثر مواد بعدها؟
   answer_mode: FULL
@@ -6217,9 +6210,7 @@ proposals:
   must_abstain: false
   resolved_concepts:
   - academic_documents
-  - advising_relationship
   - graduation_requirements
-  - registration_process
   legacy_policy_ids:
   - TU.REGISTRATION.STRUGGLING_STUDENTS
   candidate_roles:
@@ -6317,6 +6308,7 @@ proposals:
   answer_mode: FULL
   must_abstain: false
   resolved_concepts:
+  - academic_documents
   - graduation_requirements
   legacy_policy_ids:
   - TU.DEF.PROGRAMME_AND_COURSES
@@ -6334,6 +6326,7 @@ proposals:
       - no_concept_or_topic_overlap
   annotation_status: needs_review
   review_reasons:
+  - multiple_plausible_concepts
   - no_direct_policy_though_a_policy_answer_was_expected
 - question_id: 224
   question: أنا AI في المستوى السادس ومفكر أأجل AI331 ترم واحد لأنها ثقيلة مع الباقي، هل تأجيلها يأخر
@@ -6448,14 +6441,13 @@ proposals:
   question: خلاص قررت أوقف ترم. كم مرة يسمحون لي أأجل طول ما أنا مسجل بالجامعة؟
   answer_mode: EXPLAIN_ONLY
   must_abstain: false
-  resolved_concepts:
-  - study_deferral
+  resolved_concepts: []
   legacy_policy_ids:
   - TU.DEFERRAL.MAXIMUM
   candidate_roles:
-    direct_policy_ids:
+    direct_policy_ids: []
+    background_policy_ids:
     - TU.DEFERRAL.MAXIMUM
-    background_policy_ids: []
     forbidden_policy_ids: []
     irrelevant_policy_ids: []
     conflicting_policy_ids: []
@@ -6463,8 +6455,11 @@ proposals:
     method: semantic_scope_v1_concept
     reason:
       TU.DEFERRAL.MAXIMUM:
-      - concept_match
-  annotation_status: auto_candidate
+      - question_concept_unresolved
+  annotation_status: needs_review
+  review_reasons:
+  - question_concept_unresolved
+  - no_direct_policy_though_a_policy_answer_was_expected
 - question_id: 239
   question: قالوا لي المكافأة تنقطع على اللي يعتذر بس، وأنا مؤجل مو معتذر — يعني مكافأتي تنزل عادي صح؟
   answer_mode: EXPLAIN_ONLY
@@ -6501,26 +6496,25 @@ proposals:
   answer_mode: EXPLAIN_ONLY
   must_abstain: false
   resolved_concepts:
+  - programme_maximum_duration
   - university_dismissal
   legacy_policy_ids:
   - TU.DISMISSAL.DURATION_EXCEEDED
   candidate_roles:
-    direct_policy_ids: []
-    background_policy_ids: []
-    forbidden_policy_ids:
+    direct_policy_ids:
     - TU.DISMISSAL.DURATION_EXCEEDED
+    background_policy_ids: []
+    forbidden_policy_ids: []
     irrelevant_policy_ids: []
     conflicting_policy_ids: []
   derivation:
     method: semantic_scope_v1_concept
     reason:
       TU.DISMISSAL.DURATION_EXCEEDED:
-      - excluded_concept_match
-      - concept_mismatch
+      - concept_match
   annotation_status: needs_review
   review_reasons:
-  - no_direct_policy_though_a_policy_answer_was_expected
-  - legacy_policy_became_forbidden
+  - multiple_plausible_concepts
 - question_id: 241
   question: تعبت وقررت أسحب ملفي من الجامعة نهائي. وش الإجراءات المطلوبة ومتى آخر موعد في الفصل الأول؟
   answer_mode: EXPLAIN_ONLY
@@ -6551,7 +6545,7 @@ proposals:
   must_abstain: false
   resolved_concepts:
   - enrolment_lapse
-  - leave_instrument_comparison
+  - external_transfer
   - semester_excuse
   - study_deferral
   legacy_policy_ids:
@@ -6634,6 +6628,8 @@ proposals:
   must_abstain: false
   resolved_concepts:
   - enrolment_reinstatement
+  - external_transfer
+  - programme_maximum_duration
   - university_dismissal
   legacy_policy_ids:
   - TU.REENROLMENT.DISCIPLINARY_BAR
@@ -7146,26 +7142,22 @@ proposals:
   answer_mode: FULL
   must_abstain: false
   resolved_concepts:
-  - graduation_requirements
+  - academic_documents
   legacy_policy_ids:
   - TU.GRADUATION.DOCUMENTS
   candidate_roles:
-    direct_policy_ids: []
-    background_policy_ids: []
-    forbidden_policy_ids:
+    direct_policy_ids:
     - TU.GRADUATION.DOCUMENTS
+    background_policy_ids: []
+    forbidden_policy_ids: []
     irrelevant_policy_ids: []
     conflicting_policy_ids: []
   derivation:
     method: semantic_scope_v1_concept
     reason:
       TU.GRADUATION.DOCUMENTS:
-      - excluded_concept_match
-      - concept_mismatch
-  annotation_status: needs_review
-  review_reasons:
-  - no_direct_policy_though_a_policy_answer_was_expected
-  - legacy_policy_became_forbidden
+      - concept_match
+  annotation_status: auto_candidate
 - question_id: 272
   question: قبل ما نوزّع الشعب أبي أعداد الطلاب في كل برنامج مقسّمة على الشطرين، وبالذات IS شطر الطلاب
     لأن القسم رافع لنا طلب تدريس لهم.
@@ -7474,6 +7466,7 @@ proposals:
   resolved_concepts:
   - academic_documents
   - credit_load
+  - grade_scale
   - graduation_requirements
   - registration_process
   legacy_policy_ids:

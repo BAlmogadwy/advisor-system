@@ -55,7 +55,10 @@ topics:
     aliases_ar: [طي القيد, انقطعت, الانقطاع عن الدراسة, طوي قيدي, ما سجلت فصل]
 
   - topic: external_transfer
-    aliases_ar: [التحويل الخارجي, التحويل من جامعة أخرى, أحول لجامعة ثانية, تحويل خارجي]
+    # Every alias names the SOURCE as another university. «أحول لجامعة ثانية» was
+    # removed: word-order matching now rejects it against «أحول لكلية ثانية داخل
+    # الجامعة», but the phrase remains ambiguous enough not to be worth keeping.
+    aliases_ar: [التحويل الخارجي, تحويل خارجي, من جامعة أخرى, من جامعة ثانية, إلى جامعة طيبة, من خارج الجامعة, تحويل من جامعة]
 
   - topic: gpa_calculation
     aliases_ar: [حساب المعدل, المعدل التراكمي, المعدل الفصلي, كيف أحسب معدلي, نقاط المعدل, GPA]
@@ -73,7 +76,11 @@ topics:
     aliases_ar: [مرتبة الشرف, شرف أولى, شرف ثانية, أحصل على مرتبة الشرف]
 
   - topic: internal_transfer
-    aliases_ar: [التحويل الداخلي, تغيير التخصص, أحول لقسم ثاني, التحويل بين الكليات, أغير قسمي]
+    # The distinguishing phrase family is «inside the university», which the
+    # external aliases can never contain.
+    aliases_ar: [التحويل الداخلي, تحويل داخلي, تغيير التخصص, أحول لقسم ثاني, التحويل بين الكليات,
+                 أغير قسمي, داخل الجامعة, بين كليات الجامعة, من كلية لكلية, داخل طيبة,
+                 من تخصص لتخصص, كلية ثانية داخل]
 
   - topic: medical_excuse
     aliases_ar: [العذر المرضي, تقرير طبي, مرضت, دخلت المستشفى, عذر طبي, تقرير من خارج المملكة]

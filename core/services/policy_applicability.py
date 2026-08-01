@@ -189,7 +189,10 @@ class ApplicabilityIndex:
         ambiguous question must not silently pick one of two regulatory
         institutions, and leaving both in place downgrades neither to direct.
         """
-        from core.services.policy_store import expand_tokens
+        from core.services.policy_store import (
+            alias_matches,
+            expand_tokens_ordered,
+        )
 
         if not topics:
             # Curated topic aliases fire on roughly a quarter of questions; the rest
@@ -224,7 +227,7 @@ class ApplicabilityIndex:
             if record:
                 by_topic.setdefault(record["topic"], set()).add(entry["concept_id"])
 
-        q_tokens = expand_tokens(question)
+        q_words = expand_tokens_ordered(question)
         resolved: set[str] = set()
         for topic in topics:
             candidates = by_topic.get(topic, set())
@@ -236,8 +239,7 @@ class ApplicabilityIndex:
                 if entry["topic"] != topic:
                     continue
                 for alias in entry.get("aliases_ar") or []:
-                    words = [expand_tokens(w) for w in alias.split() if expand_tokens(w)]
-                    if words and all(variants & q_tokens for variants in words):
+                    if alias_matches(expand_tokens_ordered(alias), q_words):
                         matched.add(entry["concept_id"])
                         break
             resolved |= matched or candidates
