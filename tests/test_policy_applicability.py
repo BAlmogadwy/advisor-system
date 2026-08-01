@@ -19,7 +19,12 @@ from core.services.policy_applicability import (
     get_applicability_index,
     validate_claims,
 )
-from core.services.policy_store import alias_matches, expand_tokens_ordered, get_policy_store
+from core.services.policy_store import (
+    alias_matches,
+    expand_tokens_ordered,
+    get_policy_store,
+    raw_words_ordered,
+)
 
 pytestmark = pytest.mark.django_db
 
@@ -268,3 +273,93 @@ def test_a_governed_question_still_offers_citations():
 
 def test_the_index_reloads_when_asked():
     assert get_applicability_index(refresh=True).scope
+
+
+# ── Arabic surface forms the matcher must survive ────────────────
+
+
+def _topics(question: str) -> set[str]:
+    return {t for t, _ in get_policy_store().resolve_topics(question)}
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "أقدر أحول لكلية ثانية داخل الجامعة؟",
+        "أقدر أحول لكلية ثانية بالجامعة؟",  # prefix attached to the noun
+        "أقدر أُحوِّل لكلية ثانية داخل الجامعة؟",  # diacritics
+        "أحول لكلية ثانية جديدة داخل نفس الجامعة؟",  # inserted modifiers
+    ],
+)
+def test_the_internal_transfer_phrase_survives_arabic_surface_variation(question):
+    assert "internal_transfer" in _topics(question)
+
+
+def test_the_same_tokens_in_reverse_order_do_not_match():
+    assert "internal_transfer" not in _topics("الجامعة داخل ثانية لكلية أحول")
+
+
+# ── negation ─────────────────────────────────────────────────────
+#
+# Ordered matching proves a phrase is PRESENT. It cannot prove the student
+# asserted it, and «أبي أحول، بس مو داخل الجامعة» contains the internal-transfer
+# phrase while meaning its opposite.
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "أبي أحول، بس مو داخل الجامعة",
+        "ما أبغى تحويل داخلي، أبغى خارجي",
+        "التحويل مش داخل الجامعة",
+    ],
+)
+def test_a_negated_phrase_does_not_resolve(question):
+    assert "internal_transfer" not in _topics(question)
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "ما هو التحويل الداخلي؟",
+        "ما هي شروط التحويل الداخلي؟",
+        "ما الفرق بين التحويل الداخلي والخارجي؟",
+    ],
+)
+def test_interrogative_ma_is_not_read_as_negation(question):
+    """«ما» negates a verb and interrogates a noun phrase.
+
+    Treating every «ما» as a denial would suppress every "what is X" question in
+    the set — a far larger class than the negations it would catch.
+    """
+    assert "internal_transfer" in _topics(question)
+
+
+def test_negation_scope_does_not_reach_across_a_clause():
+    """Three tokens: enough for «بس مو داخل الجامعة», not enough to let an
+    unrelated earlier negation suppress a later positive phrase."""
+    question = "ما عندي مشكلة أبداً بالخطة، وأبغى أحول لكلية ثانية داخل الجامعة"
+    assert "internal_transfer" in _topics(question)
+
+
+def test_raw_words_keep_the_negators_the_matcher_drops():
+    """ما and لا are STOPWORDS, so the matching stream had already discarded
+    exactly the words that carry the negation before anything could look at them.
+
+    That is why the check needs its own raw stream rather than reusing the tokens
+    the matcher already has.
+    """
+    from core.services.arabic_text import STOPWORDS
+
+    assert "ما" in STOPWORDS and "لا" in STOPWORDS
+    phrase = "ما أبغى تحويل داخلي"
+    assert "ما" in raw_words_ordered(phrase)
+    assert not any("ما" in variants for variants in expand_tokens_ordered(phrase))
+
+
+def test_alias_matches_without_raw_words_skips_the_negation_check():
+    """Callers that cannot supply the raw stream still get ordered matching."""
+    alias = expand_tokens_ordered("داخل الجامعة")
+    negated = "مو داخل الجامعة"
+    assert alias_matches(alias, expand_tokens_ordered(negated))
+    assert not alias_matches(alias, expand_tokens_ordered(negated), raw_words_ordered(negated))

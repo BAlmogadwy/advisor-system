@@ -311,7 +311,50 @@ def expand_tokens_ordered(text: str) -> list[set[str]]:
     ]
 
 
-def alias_matches(alias_words: list[set[str]], question_words: list[set[str]]) -> bool:
+#: Unambiguous Arabic negators. «ما» is deliberately ABSENT here: «ما هو التحويل
+#: الداخلي؟» is a question, not a denial, and treating it as one would suppress
+#: every "what is X" question in the set. It is handled separately below.
+_NEGATORS = frozenset({"مو", "مش", "ليس", "لست", "بدون", "غير", "بلا"})
+
+#: «ما» negates a verb but interrogates a noun phrase. «ما أبغى تحويل داخلي» is a
+#: refusal; «ما هو التحويل الداخلي» is a request. The following word decides.
+_MA_INTERROGATIVE_NEXT = frozenset({"هو", "هي", "معني", "معناه", "الفرق", "المقصود"})
+
+
+def _negated_at(raw_words: list[str], index: int, window: int = 3) -> bool:
+    """Is the token at *index* inside the scope of a negator just before it?
+
+    Arabic negation precedes, and its scope is short. Three tokens catches
+    «بس مو داخل الجامعة» without reaching back into an unrelated clause.
+    """
+    for position in range(max(0, index - window), index):
+        word = raw_words[position]
+        if word in _NEGATORS:
+            return True
+        if word == "ما":
+            following = raw_words[position + 1] if position + 1 < len(raw_words) else ""
+            if following not in _MA_INTERROGATIVE_NEXT:
+                return True
+    return False
+
+
+def raw_words_ordered(text: str) -> list[str]:
+    """Normalised words in order, stopwords INCLUDED.
+
+    The matching stream drops stopwords — and لا and ما ARE stopwords, so exactly
+    the words carrying the negation had already been removed before anything could
+    look at them.
+    """
+    from core.services.arabic_text import all_tokens
+
+    return all_tokens(text)
+
+
+def alias_matches(
+    alias_words: list[set[str]],
+    question_words: list[set[str]],
+    raw_words: list[str] | None = None,
+) -> bool:
     """Do the alias's words appear in the question, in the same relative order?
 
     Not contiguous — Arabic inserts particles freely — but ordered. That is enough
@@ -321,12 +364,20 @@ def alias_matches(alias_words: list[set[str]], question_words: list[set[str]]) -
     if not alias_words:
         return False
     position = 0
+    first_hit: int | None = None
     for wanted in alias_words:
         while position < len(question_words) and not (question_words[position] & wanted):
             position += 1
         if position >= len(question_words):
             return False
+        if first_hit is None:
+            first_hit = position
         position += 1
+    # Order proves the phrase is present; it cannot prove the student ASSERTED it.
+    # «أبي أحول، بس مو داخل الجامعة» contains the internal-transfer phrase and
+    # means the opposite of it.
+    if raw_words is not None and first_hit is not None and _negated_at(raw_words, first_hit):
+        return False
     return True
 
 
@@ -614,13 +665,14 @@ class PolicyStore:
         q_words = expand_tokens_ordered(query)
         if not q_words:
             return []
+        q_raw = raw_words_ordered(query)
         hits: list[tuple[str, int]] = []
         for topic, alias_tokens in self._alias_tokens.items():
             if topic not in self.by_topic:
                 continue
             score = 0
             for words in alias_tokens:
-                if alias_matches(words, q_words):
+                if alias_matches(words, q_words, q_raw):
                     # Longer aliases are more specific: «الانسحاب من مقرر» should
                     # outrank a bare «انسحاب» that also matches university withdrawal.
                     score += len(words)
