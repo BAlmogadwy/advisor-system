@@ -29,12 +29,14 @@ from core.services.rbac import ROLE_ADVISOR, ROLE_GENERAL_ADVISOR, ROLE_SUPER_AD
 from core.services.recommender import recommend_next_courses
 from core.services.student_helpers import get_student_passed_and_studying, normalize_code
 from core.services.student_sections import (
+    UnknownStudentGender,
     append_unmapped_studying_courses,
     ensure_student_section_schema,
     gender_section_filter,
     get_student_term_baseline,
     replace_student_term_sections,
     student_gender,
+    student_gender_strict,
 )
 from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
@@ -425,8 +427,17 @@ def planner_sections_catalog_view(request: HttpRequest) -> JsonResponse:
         ts_qs = TermSection.objects.filter(scenario__isnull=True)
         # Gender-segregated sections: only surface the student's own cohort
         # (M/F) sections. Gender is derived server-side from Student.section.
-        gender = student_gender(student_id) if student_id else ""
-        if gender:
+        #
+        # When a student IS named their cohort must resolve, or we refuse: falling
+        # back to "" produced an all-pass filter and showed the other cohort. 722 of
+        # the 3,807 ids in StudentTermSection have no Student row, so this is not a
+        # theoretical branch. With no student named, all-pass is the intended
+        # behaviour — that is staff browsing the whole catalogue.
+        if student_id:
+            try:
+                gender = student_gender_strict(student_id)
+            except UnknownStudentGender as exc:
+                return _err(str(exc), code="STUDENT_COHORT_UNRESOLVED", status=409)
             ts_qs = ts_qs.filter(gender_section_filter(gender))
         if isinstance(course_codes, list) and course_codes:
             normalized = [

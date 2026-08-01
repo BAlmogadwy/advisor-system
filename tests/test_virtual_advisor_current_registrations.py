@@ -41,6 +41,17 @@ def _course(code: str, name: str, credits: int, plan_term: int = 4) -> Course:
 
 
 def _register(student_id: int, code: str, section: str, year: str = "1447", term: str = "2"):
+    # credits come from ProgrammeRequirement, keyed on the course code.
+    ProgrammeRequirement.objects.get_or_create(
+        program="AI",
+        course_code="ZZ900",
+        defaults={
+            "course_name": "MULTI MEETING FIXTURE",
+            "type": "Mandatory",
+            "programme_term": 99,
+            "credit_hours": 4,
+        },
+    )
     ts = TermSection.objects.create(
         course_code=code.rstrip("0123456789"),
         course_number=code[len(code.rstrip("0123456789")) :],
@@ -299,7 +310,9 @@ def test_expected_graduates_get_the_unresolved_16_hour_qualification():
     from core.services.credit_policy import EXPECTED_GRADUATE_STATUS, credit_policy_evidence
 
     ev = credit_policy_evidence(
-        recommended_credit_hours=12, unknown_for=[], term=1,
+        recommended_credit_hours=12,
+        unknown_for=[],
+        term=1,
         student_status=EXPECTED_GRADUATE_STATUS,
     )
     assert ev["qualification"]["unresolved"] is True
@@ -387,9 +400,7 @@ def test_prompts_teach_the_arabic_distinction_and_the_absent_case():
         # The load-bearing half is the PROHIBITION. Asserting only that the good term
         # appears somewhere lets the rule be gutted while a worked example keeps the
         # phrase alive — which is exactly what a mutation run showed.
-        rule = next(
-            (ln for ln in prompt.splitlines() if "ARABIC TERMINOLOGY" in ln), ""
-        )
+        rule = next((ln for ln in prompt.splitlines() if "ARABIC TERMINOLOGY" in ln), "")
         assert rule, "the Arabic terminology rule is gone"
         # Pin the INSTRUCTION, not the vocabulary. Both Arabic terms appear in the
         # worked example on the same line, so any check for their mere presence
@@ -400,3 +411,176 @@ def test_prompts_teach_the_arabic_distinction_and_the_absent_case():
         assert "recommendation cap «سقف التوصية» — never «الحد الأعلى»" in rule, (
             "the rule no longer forbids calling the recommendation cap الحد الأعلى"
         )
+
+
+def test_registered_credit_hours_counts_each_course_once():
+    """get_student_term_baseline emits ONE ROW PER MEETING.
+
+    Summing that field naively made a real student's 14 credits read as 36. The
+    capability must de-duplicate on (course, section) before adding anything up.
+    """
+    from core.models import (
+        StudentTermSection,
+        TermSection,
+        TermSectionMeeting,
+    )
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    _make_retake_student()
+    # The defect only shows when a section meets MORE THAN ONCE, so build that
+    # explicitly. An earlier version of this test used a one-meeting fixture, where
+    # de-duplication is a no-op and the assertion was tautological — a mutation run
+    # summing the raw rows passed it.
+    ts = TermSection.objects.create(
+        course_code="ZZ900",
+        course_number="ZZ900",
+        course_key="ZZ900",
+        section="M8",
+        available_capacity=25,
+    )
+    for day, start, end in (
+        ("SUN", "08:00", "09:15"),
+        ("TUE", "08:00", "09:15"),
+        ("THU", "08:00", "09:15"),
+    ):
+        TermSectionMeeting.objects.create(
+            term_section=ts,
+            day=day,
+            start_time=start,
+            end_time=end,
+            room="101",
+        )
+    StudentTermSection.objects.create(
+        student_id=SID,
+        academic_year="1448",
+        term="1",
+        term_section=ts,
+    )
+
+    out = get_default_registry().execute(
+        "my_timetable",
+        {"student_id": SID},
+        scope={"role": ROLE_SUPER_ADMIN},
+        ctx={"academic_year": 1448, "term": 1},
+    )
+    regs = out.get("registrations", [])
+    keys = [(r["course_code"], r["section"]) for r in regs]
+    assert len(keys) == len(set(keys)), "a course/section appears twice — meetings leaked through"
+    assert out["registered_course_count"] == len(regs)
+
+    fixture = next(r for r in regs if r["course_code"] == "ZZ900" and r["section"] == "M8")
+    assert fixture["meeting_count"] == 3, "fixture did not produce a multi-meeting section"
+    # The whole point: three meetings, counted once.
+    assert out["registered_credit_hours"] == sum(r["credits"] for r in regs)
+    naive = sum(int(r["credits"]) * int(r["meeting_count"]) for r in regs)
+    assert out["registered_credit_hours"] < naive, (
+        f"credit total {out['registered_credit_hours']} equals the per-meeting sum "
+        f"{naive} — the multi-count is back"
+    )
+
+
+def test_graduation_progress_returns_the_fields_the_report_computes():
+    """build_graduation_report computed these and the executor dropped them."""
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    _make_retake_student()
+    out = get_default_registry().execute(
+        "graduation_progress",
+        {"student_id": SID},
+        scope={"role": ROLE_SUPER_ADMIN},
+        ctx={"academic_year": 1448, "term": 1},
+    )
+    for field in (
+        "final_term_possible",
+        "passed_credits_in_plan",
+        "registered_credits_now",
+        "courses_in_progress",
+    ):
+        assert field in out, f"{field} is computed by the report and still dropped"
+    # Plan completion is not graduation — that is a University Council decision.
+    assert "Council" in out["note"]
+
+
+def test_why_course_locked_answers_the_forward_direction():
+    """build_unlock_report returns a prerequisite graph every caller threw away."""
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    _make_retake_student()
+    _course("AI305", "Neural Networks", 3, plan_term=5)
+    out = get_default_registry().execute(
+        "why_course_locked",
+        {"student_id": SID, "course_code": "AI305"},
+        scope={"role": ROLE_SUPER_ADMIN},
+        ctx={"academic_year": 1448, "term": 1},
+    )
+    assert "unlocks_directly" in out
+    assert "unlocks_directly_count" in out
+    assert out["unlocks_directly_count"] == len(out["unlocks_directly"])
+
+
+def test_elective_placeholder_is_not_reported_as_a_course_without_prerequisites():
+    """FE1/CS1 are SLOTS. 'prerequisites: []' on a slot is a wrong answer, not a gap."""
+    from core.models import ElectiveCourse, ElectiveTermMapping, ProgrammeRequirement
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    ProgrammeRequirement.objects.create(
+        program="AI",
+        course_code="AI1",
+        course_name="PROGRAM ELECTIVE I",
+        type="Program Elective",
+        programme_term=6,
+        credit_hours=3,
+    )
+    e = ElectiveCourse.objects.create(
+        course_code="AI411",
+        course_name="Expert Systems",
+        programme="AI",
+        category="AI",
+        credit_hours=3,
+        prerequisites_csv="AI212",
+    )
+    ElectiveTermMapping.objects.create(
+        academic_year="1448",
+        term=1,
+        programme="AI",
+        placeholder_code="AI1",
+        elective=e,
+    )
+    out = get_default_registry().execute(
+        "course_prerequisites",
+        {"course_code": "AI1", "program": "AI"},
+        scope={"role": ROLE_SUPER_ADMIN},
+        ctx={},
+    )
+    assert out["is_elective_placeholder"] is True
+    assert "per_program" not in out, "a slot must not be answered like a course"
+    assert out["options"][0]["prerequisites"] == ["AI212"]
+
+
+def test_unknown_cohort_refuses_instead_of_showing_both():
+    """gender_section_filter('') is an ALL-PASS filter.
+
+    722 of 3,807 ids in StudentTermSection have no Student row, so a fallback to ""
+    showed those students the other cohort's sections — total, not partial, because
+    every real section is gendered.
+    """
+    import pytest
+
+    from core.models import TermSection
+    from core.services.student_sections import (
+        UnknownStudentGender,
+        gender_section_filter,
+        student_gender_strict,
+    )
+
+    # The old behaviour, pinned so a regression is visible rather than silent.
+    assert TermSection.objects.filter(gender_section_filter("")).count() == (
+        TermSection.objects.count()
+    ), "blank gender is no longer all-pass — update the callers before relaxing this"
+
+    with pytest.raises(UnknownStudentGender):
+        student_gender_strict(999999999)

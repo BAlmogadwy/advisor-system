@@ -421,6 +421,45 @@ def _exec_lookup_course(
     }
 
 
+def _resolve_elective_slot(course_code: str, program: str) -> list[dict[str, Any]] | None:
+    """Return the real courses that can fill an elective slot, or None if not a slot.
+
+    A placeholder is recognised by its ProgrammeRequirement.type ("... Elective"), not
+    by guessing at the code shape — FE1 and CS1 look nothing alike and new families
+    would be missed by a pattern.
+    """
+    from core.models import ElectiveCourse, ElectiveTermMapping, ProgrammeRequirement
+
+    req = ProgrammeRequirement.objects.filter(course_code__iexact=course_code)
+    if program:
+        req = req.filter(program__iexact=program)
+    row = req.values("type", "program").first()
+    if not row or "elective" not in str(row.get("type") or "").lower():
+        return None
+
+    prog = program or str(row.get("program") or "")
+    mapped_ids = ElectiveTermMapping.objects.filter(
+        placeholder_code__iexact=course_code, programme__iexact=prog
+    ).values_list("elective_id", flat=True)
+
+    options: list[dict[str, Any]] = []
+    for e in ElectiveCourse.objects.filter(id__in=list(mapped_ids)).values(
+        "course_code", "course_name", "credit_hours", "prerequisites_csv"
+    ):
+        prereqs = [
+            p.strip().upper() for p in str(e["prerequisites_csv"] or "").split(",") if p.strip()
+        ]
+        options.append(
+            {
+                "course_code": e["course_code"],
+                "course_name": e["course_name"],
+                "credit_hours": e["credit_hours"],
+                "prerequisites": prereqs,
+            }
+        )
+    return sorted(options, key=lambda o: o["course_code"])[:_MAX_COURSE_MATCHES]
+
+
 def _exec_course_prerequisites(
     args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
 ) -> dict[str, Any]:
@@ -452,6 +491,26 @@ def _exec_course_prerequisites(
                 )
             )
         )
+    # An elective PLACEHOLDER (FE1, GSE1, CS1 ...) is a slot, not a course. Answering
+    # "prerequisites: []" for one reads as "this course has no prerequisites", which is
+    # false for every slot whose real courses have them — ElectiveCourse carries a
+    # prerequisites_csv per course. Resolve the slot and report the real options.
+    elective_options = _resolve_elective_slot(course_code, program)
+    if elective_options is not None:
+        return {
+            "ok": True,
+            "course_code": course_code,
+            "is_elective_placeholder": True,
+            "options": elective_options,
+            "note": (
+                f"{course_code} is an elective SLOT in the plan, not a course. It has no "
+                "prerequisites of its own; each course that can fill it has its own. "
+                "Answer with the options and their prerequisites, never with "
+                "'this course has no prerequisites'."
+            ),
+            "tool": "course_prerequisites",
+        }
+
     if not programs:
         return {
             "ok": True,
@@ -858,7 +917,29 @@ def _exec_why_course_locked(
     if not r:
         return {"ok": False, "error": f"No degree plan found for student {student_id}."}
 
-    base = {"student_id": int(student_id), "course_code": code}
+    # The forward direction — "if I pass this, what opens?" — is already computed:
+    # build_unlock_report returns a `graph` of prerequisite edges that every caller
+    # so far has thrown away. It costs nothing to answer, and it is the question a
+    # student actually asks after being told a course is blocked.
+    graph = r.get("graph") or {}
+    unlocks = sorted(
+        {
+            edge["course_code"]
+            for edge in (graph.get("items") or [])
+            if edge.get("prerequisite_course_code") == code
+        }
+    )
+    status_of = graph.get("statusOf") or {}
+    name_of = graph.get("nameOf") or {}
+    base = {
+        "student_id": int(student_id),
+        "course_code": code,
+        "unlocks_directly": [
+            {"code": u, "name": name_of.get(u, ""), "current_status": status_of.get(u, "")}
+            for u in unlocks
+        ],
+        "unlocks_directly_count": len(unlocks),
+    }
     for c in r["open_courses"]:
         if c["code"] == code:
             return {
@@ -930,10 +1011,20 @@ def _exec_graduation_progress(
         "courses_per_term_assumed": g["courses_per_term"],
         "terms_estimate": g["terms_estimate"],
         "credit_hour_gates": g["hour_gates"],
+        # Computed by build_graduation_report and previously dropped on the floor.
+        # "can this be my last term?" is one of the most-asked questions and the
+        # answer was already sitting in the report.
+        "final_term_possible": g["final_term_possible"],
+        "passed_credits_in_plan": g["passed_credits_in_plan"],
+        "registered_credits_now": g["registered_credits_now"],
+        "courses_in_progress": g["in_progress"],
         "note": (
             "Registrar credits include courses outside the plan, so they are not a "
             "fraction of the plan total. The prerequisite minimum cannot be beaten by "
-            "registering more courses in a term."
+            "registering more courses in a term. final_term_possible means the PLAN "
+            "could be finished this term; graduation itself is a University Council "
+            "decision (TU.GRADUATION.COUNCIL_AWARDS_DEGREE), so it must never be "
+            "reported as 'you are graduating'."
         ),
     }
 
@@ -985,15 +1076,47 @@ def _exec_my_timetable(
         for r in rows
         if r.get("start_time")
     ]
+
+    # get_student_term_baseline emits ONE ROW PER MEETING, so a 4-credit course
+    # meeting three times a week appears three times. Summing the rows' credits
+    # therefore multi-counts — measured at 36 credits for a student actually
+    # carrying 14. Registrations are de-duplicated on (course, section) first.
+    by_section: dict[tuple[str, str], dict[str, Any]] = {}
+    for r in rows:
+        key = (str(r.get("course_code") or ""), str(r.get("section") or ""))
+        entry = by_section.setdefault(
+            key,
+            {
+                "course_code": key[0],
+                "section": key[1],
+                "credits": int(r.get("credits") or 0),
+                "meeting_count": 0,
+                "scheduled": False,
+            },
+        )
+        entry["meeting_count"] += 1
+        if r.get("start_time"):
+            entry["scheduled"] = True
+
+    registrations = sorted(by_section.values(), key=lambda x: (x["course_code"], x["section"]))
+    # Registered but with no meeting on file — real, and invisible in a meetings list.
+    unscheduled = [r for r in registrations if not r["scheduled"]]
     return {
         "student_id": int(student_id),
         "academic_year": year,
         "term": term,
         "meetings": meetings[: _MAX_LIST_ROWS * 2],
-        "courses_without_a_time": sorted(
-            {r["course_code"] for r in rows if not r.get("start_time")}
+        "registrations": registrations,
+        "registered_course_count": len(registrations),
+        "registered_credit_hours": sum(r["credits"] for r in registrations),
+        "courses_without_a_time": sorted(r["course_code"] for r in unscheduled),
+        "note": (
+            "The timetable on file for the term shown; not a live seat count. "
+            "registered_credit_hours counts each course ONCE — the underlying rows are "
+            "per meeting, so adding them up over-counts a course that meets several "
+            "times a week. courses_without_a_time are genuinely registered; they simply "
+            "have no meeting recorded, so they do not appear in meetings."
         ),
-        "note": "The published timetable for the term shown; not a live seat count.",
     }
 
 
