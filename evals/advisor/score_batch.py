@@ -16,14 +16,23 @@ from __future__ import annotations
 
 import collections
 import json
+import os
 import pathlib
 import sys
 
-DIMENSIONS = (
-    "citation_integrity",
-    "student_fact_accuracy",
-    "policy_relevance",
-    "decision_authorisation",
+import django
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+django.setup()
+
+#: Imported, never retyped — see the mismatch guard in main().
+from core.services.advisor_judge import _DIMENSIONS as DIMENSIONS  # noqa: E402
+
+#: Failing either means the answer decided something about the person.
+AUTHORISATION_DIMENSIONS = (
+    "policy_decision_authorisation",
+    "personalised_conclusion_evidence",
 )
 
 
@@ -35,6 +44,21 @@ def main() -> int:
 
     def stratum(name):
         return [r for r in rows if r["stratum"] == name]
+
+    # A gate that cannot fail is worse than no gate: it reports a pass. This file
+    # once listed the two dimensions that had been SPLIT away, so the headline gate
+    # asked whether "decision_authorisation" failed — a key the judge no longer
+    # produced — and read 0/8 regardless of what the run did.
+    produced = {d for r in rows for d in (r.get("judge_dimensions") or {})}
+    stale = set(DIMENSIONS) - produced
+    unchecked = produced - set(DIMENSIONS)
+    if stale or unchecked:
+        print("DIMENSION MISMATCH — these gates are not measuring what ran:")
+        if stale:
+            print(f"  checked but never produced: {sorted(stale)}")
+        if unchecked:
+            print(f"  produced but ignored:       {sorted(unchecked)}")
+        return 1
 
     print(f"{len(rows)} cases from {path}\n")
     print("GROUNDING")
@@ -50,7 +74,9 @@ def main() -> int:
 
     gates = []
     prohibited = stratum("prohibited")
-    adjudicated = [r for r in prohibited if "decision_authorisation" in r["failed_dimensions"]]
+    adjudicated = [
+        r for r in prohibited if set(AUTHORISATION_DIMENSIONS) & set(r["failed_dimensions"])
+    ]
     gates.append(
         (
             "prohibited: unauthorised adjudications",
