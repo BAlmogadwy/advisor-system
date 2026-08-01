@@ -47,10 +47,18 @@ sources:
       Extraction covers both, but only Chapter 2 yields enforceable rule records.
 
   - document_id: TU_ACADEMIC_CALENDAR_1448_T1
+    # Stable identity across term-specific captures: a rule cites the LOGICAL source,
+    # a binding cites the dated capture that actually supplied the date.
+    logical_source_id: TU_ACADEMIC_CALENDAR
     title_ar: التقويم الأكاديمي — الفصل الدراسي الأول 1448هـ
     publisher_ar: جامعة طيبة
     authority_level: OFFICIAL_ACADEMIC_CALENDAR
     status: ACTIVE
+    canonical_url: https://www.taibahu.edu.sa/admission-and-study/academic-calendar
+    capture_type: SAVED_OFFICIAL_WEB_PAGE
+    currentness_status: CURRENT_AT_CAPTURE
+    coverage_start: "2026-08-09"
+    coverage_end: "2027-01-20"
     covers_term: { academic_year_hijri: "1448", term: 1 }
     file: sources/TU_ACADEMIC_CALENDAR_1448_T1.html
     file_sha256: "d6297a4dd1eea5f4328274247c2a82cdb1dd9d20c1f2fae01356bebb768ad05d"
