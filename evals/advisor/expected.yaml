@@ -25,6 +25,16 @@ meta:
       from STRUCTURALLY_UNREPRESENTABLE and NO_STUDENT_DATA, which are permanent until a new data source
       arrives. Filing a wiring gap as a data gap makes it invisible and permanent — these questions are
       one capability away.
+    DATA_NOT_LOADED: The function works and the wiring is possible; the particular records are simply
+      not imported yet. Section coverage is the whole of it — 77 of 246 plan course codes have sections
+      on file today, and the 1448/1 catalogue is still being loaded. Distinct from NOT_WIRED (code exists,
+      no capability) and from STRUCTURALLY_UNREPRESENTABLE (the schema cannot hold it). Grading these
+      as permanently unanswerable would bake today's import into the expectations, and they would silently
+      stay wrong once the data lands.
+  term_semantics: Students have just completed 1447 term 2; the planning term is 1448 term 1, which is
+    what the calendar covers. StudentTermSection (1447/2) and recommendations (1448/1) are SEQUENTIAL,
+    not conflicting. An answer must name which term it means — 'your current timetable' vs 'next term'
+    — but the two being different is correct, not a defect.
 expectations:
 - id: 1
   answer_mode: FULL

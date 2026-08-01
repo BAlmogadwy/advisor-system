@@ -30,13 +30,26 @@ course_code, course_number, course_key, section, source_file, created_at, update
 on `scenario__isnull=True` and `course_key`. **No capability in this app can honestly say
 "الترم الجاي".** The truthful phrasing is "the sections we hold on file".
 
-**3. "Build me a timetable" fully succeeds for about 6% of students.**
-Recommendations fire at 1448/1 (102 of 120 sampled students non-empty) and are near-dead at
-1447/2 (39/120) — yet all 18,468 `StudentTermSection` rows are 1447/2. Feeding the real
-1448/1 recommendations into the catalogue: of 500 recommended course-slots only **169 (34%)
-have a same-gender section**; **6 of 102 students** can be given a complete timetable, 80
-get a partial one, 16 get nothing. `build_plans` is real and fast (0.13s, 9 options) — but
-it needs an honest partial-answer contract, not a headline.
+**3. The two terms are SEQUENTIAL, not conflicting — I had this backwards.**
+Students have just completed **1447 term 2**, so the term they are about to register for is
+**1448 term 1** — which is exactly what the calendar covers. `StudentTermSection` holding
+1447/2 while recommendations compute at 1448/1 is the *correct* advising situation: here is
+what you took, here is what comes next. `calculate_real_student_term` confirms it — asked
+about 1447/2 it plans for the following term.
+
+An earlier draft of this document called that a mismatch and treated it as a defect. It is
+not. The only real requirement is that an answer **says which term it means**: "your current
+timetable (1447/2)" versus "next term (1448/1)".
+
+**3b. Section coverage is a DATA gap, not a design limit.**
+Feeding the real 1448/1 recommendations into the catalogue: of 500 recommended course-slots
+only **169 (34%)** have a same-gender section, and only **6 of 102** students can be given a
+complete timetable. But the section data for 1448/1 is **incomplete — not yet loaded**, not
+absent by design. So these numbers measure today's import, and they will move when the
+sections for the coming term arrive. Capabilities should therefore be built for the complete
+case and be explicit when a course has no sections on file, rather than being scoped down to
+today's coverage. `build_plans` is real and fast (0.13s, 9 options); what it needs is an
+honest "not on file" branch, not a smaller ambition.
 
 **4. A segregation leak nobody had noticed.**
 **722 of 3,807** student ids in `StudentTermSection` have **no `Student` row**.
@@ -121,9 +134,11 @@ on code. See measurement 6.
 1. **Refuse when gender is unknown.** Never let `gender=''` reach a section query — it is an
    all-pass filter and leaks the other cohort. 722 students are affected today.
 2. **Query real sections by `course_key`**, never by `course_code`. See measurement 5.
-3. **Never say "next term".** `TermSection` is termless and the student's registrations are
-   1447/2 while recommendations compute at 1448/1. Say what is on file, and say which term
-   the student's own timetable belongs to.
+3. **Always name the term, and never imply the catalogue is complete.** `TermSection`
+   itself is termless, so a section list cannot claim to be "next term's" — but the student's
+   own registrations ARE 1447/2 and the planning term IS 1448/1, and an answer must say
+   which it is talking about. When a course has no sections on file, say exactly that:
+   "not on file" is true, "no sections available" is not.
 
 ---
 
@@ -131,7 +146,10 @@ on code. See measurement 6.
 
 The set marked these questions unanswerable on the strength of the registry. That was
 wrong, and `NOT_WIRED` now exists to distinguish "the function is one wrapper away" from
-"the data does not exist". But the sweep also shows the honest answer for most section-shaped
-questions is **partial** — right for 77 of 246 courses, and for one cohort only. The
-expectations need re-deriving against the coverage numbers above, not simply flipped to
-answerable.
+"the data does not exist".
+
+A third category is now needed and does not yet exist: **`DATA_NOT_LOADED`** — the function
+works, the wiring is possible, and the *particular records* are simply not imported yet.
+Section coverage is the whole of it. Grading those as permanently unanswerable would bake
+today's import into the expectations, and they would silently stay wrong once the 1448/1
+sections land.
