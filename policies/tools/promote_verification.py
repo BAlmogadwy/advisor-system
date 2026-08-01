@@ -88,7 +88,7 @@ def main() -> int:
 
     verb = "would promote" if args.dry_run else "promoted"
     print(f"{verb} {promoted} records -> AUTHORITY_APPROVED (approver: {args.approver})")
-    print(f"\napproval does NOT change these — they survive it deliberately:")
+    print("\napproval does NOT change these — they survive it deliberately:")
     print(f"  unresolved open_question   : {len(carried_open)}")
     for pid in carried_open:
         print(f"      {pid}")
