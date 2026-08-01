@@ -1242,6 +1242,159 @@ def _exec_my_advisor(
     }
 
 
+def _student_sections_context(
+    args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Shared setup for the section-shaped capabilities.
+
+    Returns ``(error, context)``. Three guards live here rather than in each caller,
+    because getting any of them wrong is a silent wrong answer rather than a crash:
+
+    * **Cohort must resolve.** ``gender_section_filter("")`` is an ALL-PASS filter and
+      722 of the 3,807 ids in StudentTermSection have no Student row, so a fallback
+      would show the other cohort's sections. Refuse instead.
+    * **Sections are TERMLESS.** TermSection has no academic_year and no term column,
+      so nothing here may be described as "next term's" sections. The student's own
+      baseline does belong to a term, and that is reported separately.
+    * **Query by course_key.** ``course_code`` holds the department prefix on real
+      sections ('CS') and the full code on generated ones ('CS111'), so filtering on
+      it silently returns only the generated rows.
+    """
+    from core.services.planner_builder import _catalog_for_courses
+    from core.services.student_sections import (
+        UnknownStudentGender,
+        get_student_term_baseline,
+        student_gender_strict,
+    )
+
+    student_id, error = _resolve_scoped_student_id(args, scope)
+    if error:
+        return {"ok": False, "error": error}, {}
+    year, term, error = _ctx_year_term(args, ctx)
+    if error:
+        return {"ok": False, "error": error}, {}
+
+    try:
+        gender = student_gender_strict(int(student_id))
+    except UnknownStudentGender as exc:
+        return {
+            "ok": False,
+            "error": str(exc),
+            "reason": "COHORT_UNRESOLVED",
+        }, {}
+
+    raw = args.get("course_codes") or ([args["course_code"]] if args.get("course_code") else [])
+    if isinstance(raw, str):
+        raw = [raw]
+    codes = [normalize_code(c) for c in raw if str(c).strip()]
+    codes = [c for c in codes if c]
+    if not codes:
+        return {"ok": False, "error": "course_code (or course_codes) is required."}, {}
+
+    catalog = _catalog_for_courses(str(year), str(term), codes, gender)
+    baseline = get_student_term_baseline(int(student_id), str(year), str(term))
+    return None, {
+        "student_id": int(student_id),
+        "year": year,
+        "term": term,
+        "gender": gender,
+        "codes": codes,
+        "catalog": catalog,
+        "baseline": baseline,
+    }
+
+
+def _exec_my_clash_free_sections(
+    args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
+) -> dict[str, Any]:
+    """Which sections of a course fit the student's current timetable, and which do not."""
+    from core.services.planner_builder import DAY_MAP, Meeting, _overlap
+
+    error, c = _student_sections_context(args, scope, ctx)
+    if error:
+        return error
+
+    # (meeting, label) pairs rather than a dict keyed on id(): identity of a freshly
+    # built dataclass is not a stable key, and the pairing is what we actually need.
+    mine: list[tuple[Any, str]] = [
+        (
+            Meeting(
+                day=DAY_MAP.get(str(r.get("day") or ""), str(r.get("day") or "").upper()[:3]),
+                start=str(r.get("start_time") or ""),
+                end=str(r.get("end_time") or ""),
+            ),
+            f"{r.get('course_code')} {r.get('section')}",
+        )
+        for r in c["baseline"]
+        if r.get("start_time")
+    ]
+
+    results = []
+    for code in c["codes"]:
+        sections = c["catalog"].get(code) or []
+        if not sections:
+            results.append(
+                {
+                    "course_code": code,
+                    "sections_on_file": 0,
+                    "clash_free": [],
+                    "clashing": [],
+                    # NOT "no sections available" — that claims the university offers
+                    # none. Only 77 of 246 plan courses have any section on file.
+                    "status": "NOT_ON_FILE",
+                }
+            )
+            continue
+
+        free, clashing = [], []
+        for s in sections:
+            hits = []
+            for sm in s["meetings"]:
+                for bm, label in mine:
+                    if _overlap(sm, bm):
+                        hits.append(
+                            {
+                                "section_meeting": f"{sm.day} {sm.start}-{sm.end}",
+                                "conflicts_with": label,
+                                "registered_meeting": f"{bm.day} {bm.start}-{bm.end}",
+                            }
+                        )
+            entry = {
+                "section": s["section"],
+                "meetings": [f"{m.day} {m.start}-{m.end}" for m in s["meetings"]],
+            }
+            if hits:
+                clashing.append({**entry, "conflicts": hits[:4]})
+            else:
+                free.append(entry)
+
+        results.append(
+            {
+                "course_code": code,
+                "sections_on_file": len(sections),
+                "clash_free": free[:_MAX_LIST_ROWS],
+                "clashing": clashing[:_MAX_LIST_ROWS],
+                "status": "OK" if free else "ALL_CLASH",
+            }
+        )
+
+    return {
+        "ok": True,
+        "student_id": c["student_id"],
+        "compared_against_term": f"{c['year']}/{c['term']}",
+        "courses": results,
+        "note": (
+            "Compared against the timetable the student is registered in for the term "
+            "shown. Sections carry NO term of their own, so never call these 'next "
+            "term's' sections. status NOT_ON_FILE means the section catalogue holds "
+            "nothing for that course - it does NOT mean the university offers none, and "
+            "must not be reported as 'no sections available'. Seat counts are absent "
+            "from every section on file, so never say a section has room."
+        ),
+        "tool": "my_clash_free_sections",
+    }
+
+
 def build_default_registry() -> AdvisorCapabilityRegistry:
     registry = AdvisorCapabilityRegistry()
 
@@ -1663,6 +1816,41 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
             },
             allowed_roles=_ALL_ROLES,
             executor=_exec_my_advisor,
+        )
+    )
+
+    registry.register(
+        AdvisorCapability(
+            name="my_clash_free_sections",
+            description=(
+                "For one or more courses, which sections fit the student's CURRENT "
+                "registered timetable and which collide - naming the course, day and "
+                "both time ranges of every collision. Use for 'which section of X can I "
+                "take', 'does section F11 clash with my schedule', 'all the sections "
+                "clash, is that right'. status NOT_ON_FILE means no section is recorded "
+                "for that course; say exactly that, never 'no sections available'. There "
+                "are no seat counts, so never claim a section has room."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "course_code": {"type": "string", "description": "e.g. CS323"},
+                    "course_codes": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Several courses at once.",
+                    },
+                    "student_id": {
+                        "type": "integer",
+                        "description": "Omit for the chatting student.",
+                    },
+                    "academic_year": {"type": "integer"},
+                    "term": {"type": "integer"},
+                },
+                "additionalProperties": False,
+            },
+            allowed_roles=_ALL_ROLES,
+            executor=_exec_my_clash_free_sections,
         )
     )
 

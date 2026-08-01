@@ -60,6 +60,7 @@ def test_students_get_only_self_scoped_tools():
         "my_timetable",
         "my_plan_by_term",
         "my_advisor",
+        "my_clash_free_sections",
     }
     # This set is pinned on purpose. Every addition widens what a student can reach,
     # so it must be a deliberate edit here rather than a silent consequence of

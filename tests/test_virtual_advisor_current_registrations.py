@@ -659,3 +659,95 @@ def test_new_capabilities_are_student_reachable():
     for name in ("my_plan_by_term", "my_advisor"):
         assert name in reg, f"{name} is not registered"
         assert ROLE_STUDENT in reg[name].allowed_roles, f"{name} is not reachable by a student"
+
+
+def _section_with(course_key: str, section: str, meetings: list[tuple[str, str, str]]):
+    from core.models import TermSection, TermSectionMeeting
+
+    ts = TermSection.objects.create(
+        course_code=course_key, course_number=course_key, course_key=course_key,
+        section=section, available_capacity=25,
+    )
+    for day, start, end in meetings:
+        TermSectionMeeting.objects.create(
+            term_section=ts, day=day, start_time=start, end_time=end, room="1",
+        )
+    return ts
+
+
+def test_clash_free_sections_separates_fitting_from_colliding():
+    from core.models import ProgrammeRequirement, Student, StudentTermSection
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    Student.objects.create(student_id=SID, name="S", program="AI", section="M")
+    ProgrammeRequirement.objects.create(
+        program="AI", course_code="ZZ100", course_name="BUSY", type="Mandatory",
+        programme_term=1, credit_hours=3,
+    )
+    busy = _section_with("ZZ100", "M1", [("SUN", "08:00", "09:15")])
+    StudentTermSection.objects.create(
+        student_id=SID, academic_year="1448", term="1", term_section=busy,
+    )
+    _section_with("ZZ200", "M1", [("SUN", "08:30", "09:45")])   # overlaps
+    _section_with("ZZ200", "M2", [("MON", "08:00", "09:15")])   # free
+
+    out = get_default_registry().execute(
+        "my_clash_free_sections", {"student_id": SID, "course_code": "ZZ200"},
+        scope={"role": ROLE_SUPER_ADMIN}, ctx={"academic_year": 1448, "term": 1},
+    )
+    course = out["courses"][0]
+    assert course["status"] == "OK"
+    assert [s["section"] for s in course["clash_free"]] == ["M2"]
+    assert [s["section"] for s in course["clashing"]] == ["M1"]
+    # The collision must name the offending course, not merely say "conflict".
+    assert course["clashing"][0]["conflicts"][0]["conflicts_with"].startswith("ZZ100")
+
+
+def test_a_course_with_no_sections_is_not_on_file_not_unavailable():
+    """Only 77 of 246 plan courses have any section recorded.
+
+    Reporting "no sections available" for the other 169 asserts something about the
+    university's offering that the data does not support.
+    """
+    from core.models import Student
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    Student.objects.create(student_id=SID, name="S", program="AI", section="M")
+    out = get_default_registry().execute(
+        "my_clash_free_sections", {"student_id": SID, "course_code": "ZZ999"},
+        scope={"role": ROLE_SUPER_ADMIN}, ctx={"academic_year": 1448, "term": 1},
+    )
+    assert out["courses"][0]["status"] == "NOT_ON_FILE"
+    assert "NOT_ON_FILE" in out["note"] and "no sections available" in out["note"]
+
+
+def test_clash_free_sections_refuses_when_the_cohort_cannot_be_resolved():
+    """gender_section_filter('') is ALL-PASS, so a fallback shows the other cohort."""
+    from core.models import Student
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    Student.objects.create(student_id=SID, name="S", program="AI", section="")
+    out = get_default_registry().execute(
+        "my_clash_free_sections", {"student_id": SID, "course_code": "ZZ200"},
+        scope={"role": ROLE_SUPER_ADMIN}, ctx={"academic_year": 1448, "term": 1},
+    )
+    assert out["ok"] is False
+    assert out["reason"] == "COHORT_UNRESOLVED"
+
+
+def test_clash_free_sections_never_calls_the_catalogue_a_term():
+    """TermSection has no academic_year and no term column."""
+    from core.models import Student
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    Student.objects.create(student_id=SID, name="S", program="AI", section="M")
+    out = get_default_registry().execute(
+        "my_clash_free_sections", {"student_id": SID, "course_code": "ZZ200"},
+        scope={"role": ROLE_SUPER_ADMIN}, ctx={"academic_year": 1448, "term": 1},
+    )
+    assert "compared_against_term" in out, "the answer must name the term it compared against"
+    assert "carry NO term of their own" in out["note"]
