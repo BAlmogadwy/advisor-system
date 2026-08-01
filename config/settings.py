@@ -481,10 +481,14 @@ TIMETABLE_INSTRUCTOR_DAILY_CAP_ENABLED = os.getenv(
 ).lower() in ("1", "true", "yes", "on")
 TIMETABLE_INSTRUCTOR_DAILY_CAP = int(os.getenv("TIMETABLE_INSTRUCTOR_DAILY_CAP", "3"))
 
-# TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED: gates a post-build pass that compacts
-# each instructor's day (shrinks within-day idle gaps) by relocating their
-# sessions in TIME — never changing who teaches what. It runs AFTER the daily-cap
-# repair and treats the cap as a hard gate. Strictly guarded: feasibility
+# TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED: gates a post-build pass that first
+# reduces excess teaching days above each instructor's lower bound
+# max(ceil(session_count / daily_cap), H2 distinct days), then shrinks physical-
+# campus span/idle. Online sessions count as teaching work and toward H7/H8 but
+# do not create campus span/idle. It relocates sessions in time only and never
+# changes who teaches what. Room repair is transactional and fails closed.
+# It runs AFTER the daily-cap repair and treats the cap as a hard gate. Strictly
+# guarded: feasibility
 # (unresolved/unassigned/clashes) and reserve never worsen; student schedule
 # spread may rise only within a small budget, with tier-A + graduating students
 # protected and a per-student ceiling; an unfavourable instructor/student trade

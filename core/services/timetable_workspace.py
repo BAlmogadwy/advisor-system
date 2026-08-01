@@ -3378,6 +3378,9 @@ def check_publish_readiness(scenario_id: int) -> dict:
         - A board has zero placements.
         - A board has any **critical** conflicts (time overlaps or
           instructor double-bookings).
+        - Cross-board course pairs overlap with at least the H15 hard
+          student threshold.
+        - A physical placement violates H11-H14 room compatibility.
         - A board has a placement sitting on an institutionally **blocked**
           slot (legality — the timetable must not occupy a reserved cell).
 
@@ -3450,7 +3453,7 @@ def check_publish_readiness(scenario_id: int) -> dict:
         if conflicts["summary"]["warning"] > 0 and not (room_clashes > 0 and has_rooms):
             warnings.append(f"Board '{board.label}': {conflicts['summary']['warning']} warnings")
 
-    # Cross-board conflicts: high-overlap pairs are warnings
+    # Cross-board H15 uses the same hard threshold as board-local conflicts.
     from core.services.timetable_overlap import HARD_OVERLAP_THRESHOLD
 
     cross_conflicts = detect_cross_board_conflicts(scenario_id)
@@ -3458,8 +3461,36 @@ def check_publish_readiness(scenario_id: int) -> dict:
         c for c in cross_conflicts if c["overlap_count"] >= HARD_OVERLAP_THRESHOLD
     ]
     if high_overlap_cross:
-        warnings.append(
+        blockers.append(
             f"{len(high_overlap_cross)} cross-board conflicts with {HARD_OVERLAP_THRESHOLD}+ shared students"
+        )
+
+    # Scenario-wide H11-H14 backstop. Rooming operates board-by-board, so the
+    # publish gate audits every persisted physical placement independently of
+    # which construction or manual-edit path wrote it.
+    from core.services.timetable_rooming import validate_physical_room_compatibility
+
+    room_compatibility = validate_physical_room_compatibility(scenario_id)
+    if room_compatibility["violations"]:
+        failed_counts: Counter[str] = Counter()
+        for violation in room_compatibility["violations"]:
+            failed_counts.update(violation.get("failed_constraints", []))
+        constraint_order = (
+            "H11",
+            "H12",
+            "H13",
+            "H14",
+            "H11-H14_COMBINATION",
+            "PLACEMENT_NOT_FOUND",
+        )
+        failure_summary = ", ".join(
+            f"{constraint}={failed_counts[constraint]}"
+            for constraint in constraint_order
+            if failed_counts[constraint]
+        )
+        blockers.append(
+            f"{len(room_compatibility['violations'])} physical placement(s) violate "
+            f"H11-H14 room compatibility ({failure_summary})"
         )
 
     missing_sections = [

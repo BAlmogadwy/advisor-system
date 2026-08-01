@@ -249,6 +249,137 @@ def get_board_gender(board_id: int) -> str:
     return next(iter(unique)) if len(unique) == 1 else ""
 
 
+def validate_physical_room_compatibility(
+    scenario_id: int,
+    placement_ids: set[int] | None = None,
+) -> dict:
+    """Validate H11-H14 for physical placements in one scenario.
+
+    A room code is valid only when at least one concrete ``Room`` row with
+    that code simultaneously satisfies type, buffered capacity, gender, and
+    department. Online placements are excluded because they do not consume
+    physical rooms.
+
+    ``placement_ids`` narrows the audit when supplied; omitting it performs the
+    scenario-wide audit required by the publication gate.
+    """
+    from core.models import ScenarioSectionBudget
+
+    requested_ids = (
+        {int(placement_id) for placement_id in placement_ids} if placement_ids is not None else None
+    )
+    placements_qs = SectionPlacement.objects.filter(
+        board__scenario_id=scenario_id,
+    ).select_related("board", "term_section")
+    if requested_ids is not None:
+        placements_qs = placements_qs.filter(id__in=requested_ids)
+    loaded_placements = list(placements_qs.order_by("id"))
+
+    online_lookup = OnlineCourseLookup()
+    placements = [
+        placement
+        for placement in loaded_placements
+        if not online_lookup.is_online_course_for_board(
+            placement.board,
+            placement.term_section.course_code,
+        )
+    ]
+
+    budgets = list(ScenarioSectionBudget.objects.filter(scenario_id=scenario_id))
+    budget_maps = _build_rooming_budget_maps(budgets, get_capacity_buffer())
+    rooms_by_code: dict[str, list[Room]] = defaultdict(list)
+    for room in Room.objects.all().order_by("id"):
+        rooms_by_code[str(room.room_code or "").strip().upper()].append(room)
+
+    board_genders: dict[int, str] = {}
+    checks: list[dict] = []
+    violations: list[dict] = []
+    for placement in placements:
+        room_code = str(placement.room or "").strip()
+        required_type = room_type_for_placement(placement, budget_maps=budget_maps)
+        buffered_demand = _budget_value_for_placement(
+            placement,
+            budget_maps,
+            "buffered",
+            40,
+        )
+        if placement.board_id not in board_genders:
+            board_genders[placement.board_id] = get_board_gender(placement.board_id)
+        required_gender = (
+            _section_gender(placement.term_section.section) or board_genders[placement.board_id]
+        )
+        required_programmes = {
+            value.strip().upper()
+            for value in str(placement.board.program or "").split(",")
+            if value.strip()
+        }
+        candidates = rooms_by_code.get(room_code.upper(), []) if room_code else []
+        candidate_checks: list[dict] = []
+        matched_room_ids: list[int] = []
+        for room in candidates:
+            room_programmes = {
+                value.strip().upper()
+                for value in str(room.department or "").split(",")
+                if value.strip()
+            }
+            flags = {
+                "H11": str(room.room_type or "lecture").strip().lower() == required_type,
+                "H12": int(room.capacity or 0) >= buffered_demand,
+                "H13": not required_gender
+                or str(room.section or "").strip().upper() == required_gender,
+                "H14": bool(required_programmes & room_programmes),
+            }
+            candidate_checks.append({"room_id": room.id, **flags})
+            if all(flags.values()):
+                matched_room_ids.append(room.id)
+
+        row = {
+            "placement_id": placement.id,
+            "term_section_id": placement.term_section_id,
+            "room": room_code,
+            "required_type": required_type,
+            "buffered_demand": buffered_demand,
+            "required_gender": required_gender,
+            "required_programmes": sorted(required_programmes),
+            "candidate_checks": candidate_checks,
+            "matched_room_ids": matched_room_ids,
+            "valid": bool(matched_room_ids),
+        }
+        checks.append(row)
+        if matched_room_ids:
+            continue
+        if not candidates:
+            failed_constraints = ["H11", "H12", "H13", "H14"]
+        else:
+            failed_constraints = [
+                constraint
+                for constraint in ("H11", "H12", "H13", "H14")
+                if not any(candidate[constraint] for candidate in candidate_checks)
+            ]
+            if not failed_constraints:
+                failed_constraints = ["H11-H14_COMBINATION"]
+        violations.append({**row, "failed_constraints": failed_constraints})
+
+    loaded_ids = {placement.id for placement in loaded_placements}
+    if requested_ids is not None:
+        for placement_id in sorted(requested_ids - loaded_ids):
+            violations.append(
+                {
+                    "placement_id": placement_id,
+                    "failed_constraints": ["PLACEMENT_NOT_FOUND"],
+                    "valid": False,
+                }
+            )
+
+    return {
+        "valid": not violations,
+        "checked_count": len(checks),
+        "skipped_online_count": len(loaded_placements) - len(placements),
+        "checks": checks,
+        "violations": violations,
+    }
+
+
 def _to_min(t: str) -> int:
     h, m = t.split(":")
     return int(h) * 60 + int(m)

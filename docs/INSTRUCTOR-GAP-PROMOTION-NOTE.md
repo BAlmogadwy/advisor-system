@@ -70,4 +70,15 @@ only on student-neutral moves and otherwise acts as a tie-break/ratchet.
 - **CP-SAT internal span term** — per-(instructor,day) `first_start`/`last_end`
   variables minimising `Σ span`, for active compaction *during* polish. Not in
   this PR; the polisher's accept-gate already prevents instructor-gap regressions.
-- Teaching-day-count minimisation (a sibling lever, deliberately out of scope).
+- Teaching-day-count minimisation was subsequently implemented in the separate,
+  default-off `TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED` post-pass. It minimises
+  maximum/total excess days above each instructor's cap/H2 lower bound before
+  physical-campus span/idle; online teaching counts as work but not campus idle.
+
+## Subsequent compaction verification
+
+The post-pass now performs scenario-wide H9 and H15 persistence checks with an
+output-sensitive interval sweep. Randomized tests match the quadratic reference
+pair-for-pair, while a 10,000-row non-overlap case examines zero candidate pairs
+and keeps a maximum active set of one. The complete project regression suite is
+1,037 passed and 2 skipped with the feature still default-off.

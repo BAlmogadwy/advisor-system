@@ -186,6 +186,7 @@ from .timetable_workspace_views import (
     tw_scenario_clean_room_assignments_view,
     tw_scenario_create_view,
     tw_scenario_detail_view,
+    tw_scenario_exact_rooming_view,
     tw_scenario_export_per_plan_view,
     tw_scenario_export_view,
     tw_scenario_graph_summary_view,
@@ -572,6 +573,11 @@ urlpatterns = [
         "ops/tw/scenarios/<int:scenario_id>/readiness/",
         tw_scenario_readiness_view,
         name="tw_scenario_readiness",
+    ),
+    path(
+        "ops/tw/scenarios/<int:scenario_id>/exact-rooming/",
+        tw_scenario_exact_rooming_view,
+        name="tw_scenario_exact_rooming",
     ),
     path(
         "ops/tw/scenarios/<int:scenario_id>/builder-actions/",

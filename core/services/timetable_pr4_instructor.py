@@ -121,8 +121,8 @@ INSTRUCTOR_COMPACTION_FLAG_SETTING = "TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED"
 def is_instructor_compaction_enabled() -> bool:
     """Reads ``TIMETABLE_INSTRUCTOR_COMPACTION_ENABLED``. Default ``False``.
 
-    Gates the post-build instructor-day compaction pass (shrinks within-day idle
-    gaps by relocating an instructor's sessions in time). Default OFF → no-op.
+    Gates the post-build instructor compaction pass (excess teaching days first,
+    then physical-campus span/idle). Default OFF means a strict no-op.
     """
     return bool(getattr(settings, INSTRUCTOR_COMPACTION_FLAG_SETTING, False))
 

@@ -4,9 +4,10 @@ from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, JsonResponse
 from django.views.decorators.http import require_GET, require_POST
 
-from core.authz import throttle
+from core.authz import role_required, throttle
 from core.services.course_classifier import classify_courses
 from core.services.policy import require_student_scope
+from core.services.rbac import ROLE_ADVISOR
 from core.services.recommender import recommend_next_courses
 from core.services.student_parser import parse_study_plan, parse_timetable
 
@@ -59,6 +60,7 @@ def recommend_view(request: HttpRequest, student_id: int) -> JsonResponse:
 
 
 @login_required(login_url="login")
+@role_required(ROLE_ADVISOR)  # staff tool: not a student surface
 @require_POST
 @throttle(max_calls=15, window_seconds=60)
 def classify_view(request: HttpRequest) -> JsonResponse:
@@ -91,6 +93,7 @@ def classify_view(request: HttpRequest) -> JsonResponse:
 
 
 @login_required(login_url="login")
+@role_required(ROLE_ADVISOR)  # staff tool: not a student surface
 @require_POST
 @throttle(max_calls=10, window_seconds=60)
 def parse_and_classify_view(request: HttpRequest) -> JsonResponse:

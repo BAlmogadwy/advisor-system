@@ -79,6 +79,7 @@ from core.services.audit import log_audit_event
 from core.services.rbac import ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_role
 from core.services.section_move_optimisation import section_move_optimisation_engine
 from core.services.timetable_demand import compute_board_capacity
+from core.services.timetable_exact_rooming import ExactRoomingError, plan_exact_rooming
 from core.services.timetable_generate import generate_workspace_scenario
 from core.services.timetable_graph_twin import (
     TimetableGraphError,
@@ -721,6 +722,41 @@ def tw_scenario_readiness_view(request: HttpRequest, scenario_id: int) -> JsonRe
             },
         }
     )
+
+
+@login_required(login_url="login")
+@require_GET
+def tw_scenario_exact_rooming_view(request: HttpRequest, scenario_id: int) -> JsonResponse:
+    """Scenario-wide exact room assignment + shortfall decomposition. Preview only.
+
+    Coordinates the shared room pool across all boards (the per-board greedy
+    cannot), and reports whether every physical meeting can be roomed with zero
+    capacity shortfall. When it cannot, it separates the three distinct causes the
+    greedy conflates into one silent ``UNASSIGNED``: meetings with no compatible
+    room at all (a type/gender/department inventory gap), meetings that cannot be
+    roomed at their fixed times (room-count contention — a *time* problem), and a
+    residual capacity shortfall split into inventory-unavoidable vs congestion-
+    reducible. Writes nothing.
+    """
+    deny = _require_general_advisor(request)
+    if deny:
+        return deny
+    try:
+        TimetableScenario.objects.get(id=scenario_id)
+    except TimetableScenario.DoesNotExist:
+        return _err("Scenario not found", code="NOT_FOUND", status=404)
+    # Runs synchronously on the request thread: the budget bounds only the solver
+    # phases, so it is capped at 60s to leave headroom for DB load + model build
+    # under a typical 120s gunicorn worker timeout. (The eventual apply path will
+    # move off-thread like "Improve current board".)
+    try:
+        seconds = max(5.0, min(60.0, float(request.GET.get("seconds", "30"))))
+    except ValueError:
+        seconds = 30.0
+    try:
+        return _ok(plan_exact_rooming(scenario_id, time_limit_seconds=seconds).to_dict())
+    except ExactRoomingError as exc:
+        return _err(str(exc), code="CANNOT_ROOM", status=422)
 
 
 @login_required(login_url="login")

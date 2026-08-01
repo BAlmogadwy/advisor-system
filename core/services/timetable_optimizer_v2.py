@@ -1427,8 +1427,8 @@ def optimise_scenario_timetable_v2(
 
         result["instructor_clash_repair"] = repair_instructor_clashes(scenario_id)
 
-    # Instructor-day compaction — runs AFTER the cap + clash repairs (which it
-    # treats as hard gates) to shrink each instructor's within-day idle gaps.
+    # Instructor compaction — runs AFTER cap + clash repairs (hard gates), first
+    # reducing fair excess working days and then physical-campus span/idle.
     if is_instructor_compaction_enabled():
         from core.services.timetable_instructor_compaction import compact_instructor_schedules
 
