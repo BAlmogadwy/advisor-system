@@ -46,6 +46,64 @@ sources:
       duties, contact channels. The normative content is Chapter 2 (pp. 23-38).
       Extraction covers both, but only Chapter 2 yields enforceable rule records.
 
+  - document_id: TU_ACADEMIC_CALENDAR_1448_T1
+    title_ar: التقويم الأكاديمي — الفصل الدراسي الأول 1448هـ
+    publisher_ar: جامعة طيبة
+    authority_level: OFFICIAL_ACADEMIC_CALENDAR
+    status: ACTIVE
+    covers_term: { academic_year_hijri: "1448", term: 1 }
+    file: sources/TU_ACADEMIC_CALENDAR_1448_T1.html
+    file_sha256: "d6297a4dd1eea5f4328274247c2a82cdb1dd9d20c1f2fae01356bebb768ad05d"
+    extracted_to: calendar/calendar_1448_t1.yaml
+    obtained_at: "2026-08-01"
+    obtained_from: owner_supplied_page_capture
+    reviewed_by: null
+    reviewed_at: null
+    # Ranks ABOVE the student guide in authority_precedence. Where the two disagree
+    # on a date, this wins — see conflicts below.
+    outranks: [TU_STUDENT_GUIDE_V3_1447]
+    scope_limit: >
+      SINGLE TERM. Covers الفصل الدراسي الأول 1448هـ only (Aug 2026 - Jan 2027).
+      Says nothing about term 2, the summer term, or any other year. A deadline
+      question outside that span remains UNANSWERABLE — do not extrapolate.
+    capture_risk: >
+      Captured from a LIVE page, not an archival PDF. The university can change it
+      without notice and without changing any identifier. Re-capture before relying
+      on it in a later term; the hash above identifies this capture, not the page.
+
+# Where two ACTIVE sources disagree. Resolved by authority_precedence, never by
+# editing either record — both readings stay visible.
+conflicts:
+  - id: CONFLICT.ADD_DROP_DEADLINE
+    detected_at: "2026-08-01"
+    subject: when registration changes close
+    lower_authority:
+      document_id: TU_STUDENT_GUIDE_V3_1447
+      page: 20
+      policy_id: TU.REG.CHANGES_CLOSE_ONE_WEEK_BEFORE
+      says: >
+        "تنتهي كافة إجراءات التسجيل قبل بدء الدراسة بأسبوع ولا يحق للطالب إجراء
+        أية تعديلات على اختياراته" — a full week before teaching starts.
+    higher_authority:
+      document_id: TU_ACADEMIC_CALENDAR_1448_T1
+      says: >
+        الحذف والإضافة عبر بوابة الطالب: 20-22 أغسطس 2026.
+        بداية الدراسة للفصل الدراسي الأول: 23 أغسطس 2026.
+        Add/drop closes ONE DAY before teaching starts, not seven.
+    resolution: >
+      The calendar governs. OFFICIAL_ACADEMIC_CALENDAR outranks
+      OFFICIAL_STUDENT_GUIDE. Answers about term 1 of 1448 must quote the calendar
+      dates; the guide's "بأسبوع" must not be repeated as the operative rule.
+    incidentally_resolves: >
+      TU.REG.CHANGES_CLOSE_ONE_WEEK_BEFORE carried an open_question asking whether
+      "تنتهي كافة إجراءات التسجيل" foreclosed the الحذف والإضافة window too. The
+      calendar answers it: it does not — add/drop runs AFTER the guide's stated
+      cut-off and immediately before teaching begins.
+    caveat: >
+      Observed for ONE term. Whether the guide's week-long rule is simply wrong, or
+      was correct for an earlier calendar, cannot be told from a single capture.
+      Confirm against TU_UNDERGRAD_REGULATION before generalising.
+
 # Sources named by the guide but NOT yet obtained. Until these land, every record
 # extracted from the guide carries the risk that a higher authority says otherwise.
 # This block is the project's outstanding-source ledger, not a wish list.
@@ -72,12 +130,14 @@ required_sources_not_obtained:
       Procedural detail the guide compresses — notably the grade-appeal mechanism
       (p.34 defers to it explicitly) and transfer conditions set by college councils.
 
-  - document_id: TU_ACADEMIC_CALENDAR
-    title_ar: التقويم الجامعي
+  - document_id: TU_ACADEMIC_CALENDAR_OTHER_TERMS
+    title_ar: التقويم الجامعي — الفصل الثاني والفصل الصيفي وأعوام أخرى
     authority_level: OFFICIAL_ACADEMIC_CALENDAR
     named_by: TU_STUDENT_GUIDE_V3_1447
     named_on_page: 16
+    partially_obtained: TU_ACADEMIC_CALENDAR_1448_T1
     blocking: >
-      Every date-dependent rule. The guide states repeatedly that withdrawal,
-      excuse, deferral and transfer requests happen "وفق الموعد في التقويم الدراسي"
-      without ever giving a date. No deadline question is answerable without this.
+      Term 1 of 1448 is now covered. Every OTHER term is not. Deadline questions
+      about the second term, the summer term, or any other academic year remain
+      unanswerable, and the single capture in hand must never be extrapolated to
+      them — the dates move every year with the Hijri calendar.

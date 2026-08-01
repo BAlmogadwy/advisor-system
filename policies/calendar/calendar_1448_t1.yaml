@@ -1,0 +1,520 @@
+document_id: TU_ACADEMIC_CALENDAR_1448_T1
+title_ar: التقويم الأكاديمي - جامعة طيبة
+authority_level: OFFICIAL_ACADEMIC_CALENDAR
+covers:
+  academic_year_hijri: '1448'
+  term: 1
+  term_ar: الفصل الدراسي الأول
+  gregorian_span: 2026-08 .. 2027-01
+scope_warning: SINGLE TERM ONLY. This capture covers الفصل الدراسي الأول 1448هـ. It says nothing about
+  term 2, the summer term, or any other academic year. A deadline question outside that span is UNANSWERABLE
+  from this source — do not extrapolate a date from one term to another.
+capture:
+  captured_at: '2026-08-01'
+  captured_from: live university web page (not an archival PDF)
+  source_file: sources/TU_ACADEMIC_CALENDAR_1448_T1.html
+  source_file_sha256: d6297a4dd1eea5f4328274247c2a82cdb1dd9d20c1f2fae01356bebb768ad05d
+  note: A live page can change without notice. Every event was marked 'القادمة' (upcoming) at capture,
+    which is consistent with a capture date before the earliest listed event (2026-08-09). Re-capture
+    before relying on it in a later term.
+date_handling:
+  dual_calendar: Hijri and Gregorian are both recorded AS PRINTED by the university.
+  never_compute: Do not derive one calendar from the other. Hijri-Gregorian alignment is an observational
+    matter the university has already decided for these rows; a computed conversion can differ by a day
+    and would silently move a deadline.
+verification:
+  status: EXTRACTED
+  extracted_by: policies/tools/extract_calendar.py
+  extracted_at: '2026-08-01'
+  source_verified_by: null
+  domain_reviewed_by: null
+  authority_approved_by: null
+counts:
+  events: 37
+  student_facing: 31
+  staff_facing: 6
+events:
+- event_ar: بداية ونهاية فترة تسجيل الرغبات في التخصصات المزدوجة والفرعية
+  teaching_weeks: null
+  starts:
+    hijri: 26-صفر-1448
+    gregorian: 09-أغسطس-2026
+    as_printed: من 26-صفر-1448 - 09-أغسطس-2026
+  ends:
+    hijri: 01-ربيع الأول-1448
+    gregorian: 13-أغسطس-2026
+    as_printed: إلى 01-ربيع الأول-1448 - 13-أغسطس-2026
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: انتهاء تنفيذ طلبات تأجيل الفصل الدراسي الأول 1448هـ
+  teaching_weeks: null
+  starts:
+    hijri: 02-ربيع الأول-1448
+    gregorian: 15-أغسطس-2026
+    as_printed: من 02-ربيع الأول-1448 - 15-أغسطس-2026
+  ends:
+    hijri: 02-ربيع الأول-1448
+    gregorian: 15-أغسطس-2026
+    as_printed: إلى 02-ربيع الأول-1448 - 15-أغسطس-2026
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: فترة استقبال وتنفيذ طلبات الزيارة الخارجية (من وإلى جامعة طيبة) للفصل الدراسي الأول 1448هـ
+  teaching_weeks: null
+  starts:
+    hijri: 03-ربيع الأول-1448
+    gregorian: 16-أغسطس-2026
+    as_printed: من 03-ربيع الأول-1448 - 16-أغسطس-2026
+  ends:
+    hijri: 09-ربيع الأول-1448
+    gregorian: 22-أغسطس-2026
+    as_printed: إلى 09-ربيع الأول-1448 - 22-أغسطس-2026
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: فترة استقبال وتنفيذ طلبات التحويل من تخصص لآخر داخل الكلية للفصل الدراسي الأول 1448هـ
+  teaching_weeks: null
+  starts:
+    hijri: 03-ربيع الأول-1448
+    gregorian: 16-أغسطس-2026
+    as_printed: من 03-ربيع الأول-1448 - 16-أغسطس-2026
+  ends:
+    hijri: 09-ربيع الأول-1448
+    gregorian: 22-أغسطس-2026
+    as_printed: إلى 09-ربيع الأول-1448 - 22-أغسطس-2026
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: فترة استقبال وتنفيذ طلبات الزيارة الداخلية للفصل الدراسي الأول 1448هـ
+  teaching_weeks: null
+  starts:
+    hijri: 03-ربيع الأول-1448
+    gregorian: 16-أغسطس-2026
+    as_printed: من 03-ربيع الأول-1448 - 16-أغسطس-2026
+  ends:
+    hijri: 09-ربيع الأول-1448
+    gregorian: 22-أغسطس-2026
+    as_printed: إلى 09-ربيع الأول-1448 - 22-أغسطس-2026
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: فترة استقبال وتنفيذ طلبات إعادة القيد للفصل الدراسي الأول 1448هـ
+  teaching_weeks: null
+  starts:
+    hijri: 03-ربيع الأول-1448
+    gregorian: 16-أغسطس-2026
+    as_printed: من 03-ربيع الأول-1448 - 16-أغسطس-2026
+  ends:
+    hijri: 09-ربيع الأول-1448
+    gregorian: 22-أغسطس-2026
+    as_printed: إلى 09-ربيع الأول-1448 - 22-أغسطس-2026
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: التسجيل الآلي للطلبة
+  teaching_weeks: null
+  starts:
+    hijri: 05-ربيع الأول-1448
+    gregorian: 18-أغسطس-2026
+    as_printed: من 05-ربيع الأول-1448 - 18-أغسطس-2026
+  ends:
+    hijri: 06-ربيع الأول-1448
+    gregorian: 19-أغسطس-2026
+    as_printed: إلى 06-ربيع الأول-1448 - 19-أغسطس-2026
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: نتائج طلبات التسجيل في التخصصات المزدوجة والفرعية
+  teaching_weeks: null
+  starts:
+    hijri: 05-ربيع الأول-1448
+    gregorian: 18-أغسطس-2026
+    as_printed: من 05-ربيع الأول-1448 - 18-أغسطس-2026
+  ends:
+    hijri: 05-ربيع الأول-1448
+    gregorian: 18-أغسطس-2026
+    as_printed: إلى 05-ربيع الأول-1448 - 18-أغسطس-2026
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: الحذف والإضافة عبر بوابة الطالب الالكترونية لمقررات التخصص الأساسي
+  teaching_weeks: null
+  starts:
+    hijri: 07-ربيع الأول-1448
+    gregorian: 20-أغسطس-2026
+    as_printed: من 07-ربيع الأول-1448 - 20-أغسطس-2026
+  ends:
+    hijri: 09-ربيع الأول-1448
+    gregorian: 22-أغسطس-2026
+    as_printed: إلى 09-ربيع الأول-1448 - 22-أغسطس-2026
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: بداية الدراسة للفصل الدراسي الأول
+  teaching_weeks: الأول
+  starts:
+    hijri: 10-ربيع الأول-1448
+    gregorian: 23-أغسطس-2026
+    as_printed: من 10-ربيع الأول-1448 - 23-أغسطس-2026
+  ends:
+    hijri: 10-ربيع الأول-1448
+    gregorian: 23-أغسطس-2026
+    as_printed: إلى 10-ربيع الأول-1448 - 23-أغسطس-2026
+  category_ar: بداية الدراسة
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: الإرشاد الأكاديمي للطلاب والطالبات
+  teaching_weeks: الأول
+  starts:
+    hijri: 10-ربيع الأول-1448
+    gregorian: 23-أغسطس-2026
+    as_printed: من 10-ربيع الأول-1448 - 23-أغسطس-2026
+  ends:
+    hijri: 14-ربيع الأول-1448
+    gregorian: 27-أغسطس-2026
+    as_printed: إلى 14-ربيع الأول-1448 - 27-أغسطس-2026
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: انتهاء تنفيذ إسناد شعب المقررات (آليا) لأعضاء هيئة التدريس
+  teaching_weeks: الأول
+  starts:
+    hijri: 13-ربيع الأول-1448
+    gregorian: 26-أغسطس-2026
+    as_printed: من 13-ربيع الأول-1448 - 26-أغسطس-2026
+  ends:
+    hijri: 13-ربيع الأول-1448
+    gregorian: 26-أغسطس-2026
+    as_printed: إلى 13-ربيع الأول-1448 - 26-أغسطس-2026
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STAFF
+- event_ar: انتهاء تنفيذ تسجيل مقررات التخصصات المزدوجة والفرعية
+  teaching_weeks: الأول
+  starts:
+    hijri: 13-ربيع الأول-1448
+    gregorian: 26-أغسطس-2026
+    as_printed: من 13-ربيع الأول-1448 - 26-أغسطس-2026
+  ends:
+    hijri: 13-ربيع الأول-1448
+    gregorian: 26-أغسطس-2026
+    as_printed: إلى 13-ربيع الأول-1448 - 26-أغسطس-2026
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: نتائج طلبات التحويل من تخصص لآخر داخل الكلية
+  teaching_weeks: الأول
+  starts:
+    hijri: 14-ربيع الأول-1448
+    gregorian: 27-أغسطس-2026
+    as_printed: من 14-ربيع الأول-1448 - 27-أغسطس-2026
+  ends:
+    hijri: 14-ربيع الأول-1448
+    gregorian: 27-أغسطس-2026
+    as_printed: إلى 14-ربيع الأول-1448 - 27-أغسطس-2026
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: نتائج طلبات الزيارة الداخلية (بين فروع الجامعة) وطلبات الزيارة الخارجية (من وإلى جامعة طيبة)
+  teaching_weeks: الأول
+  starts:
+    hijri: 14-ربيع الأول-1448
+    gregorian: 27-أغسطس-2026
+    as_printed: من 14-ربيع الأول-1448 - 27-أغسطس-2026
+  ends:
+    hijri: 14-ربيع الأول-1448
+    gregorian: 27-أغسطس-2026
+    as_printed: إلى 14-ربيع الأول-1448 - 27-أغسطس-2026
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: انتهاء تنفيذ الانسحاب من التخصصات المزدوجة والتخصصات الفرعية
+  teaching_weeks: الخامس
+  starts:
+    hijri: 11-ربيع الآخر-1448
+    gregorian: 22-سبتمبر-2026
+    as_printed: من 11-ربيع الآخر-1448 - 22-سبتمبر-2026
+  ends:
+    hijri: 11-ربيع الآخر-1448
+    gregorian: 22-سبتمبر-2026
+    as_printed: إلى 11-ربيع الآخر-1448 - 22-سبتمبر-2026
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: إجازة اليوم الوطني
+  teaching_weeks: الخامس
+  starts:
+    hijri: 12-ربيع الآخر-1448
+    gregorian: 23-سبتمبر-2026
+    as_printed: من 12-ربيع الآخر-1448 - 23-سبتمبر-2026
+  ends:
+    hijri: 15-ربيع الآخر-1448
+    gregorian: 26-سبتمبر-2026
+    as_printed: إلى 15-ربيع الآخر-1448 - 26-سبتمبر-2026
+  category_ar: يوم وطني
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: تسليم تقرير البرنامج للعام الجامعي 1447هـ
+  teaching_weeks: السابع
+  starts:
+    hijri: 25-ربيع الآخر-1448
+    gregorian: 06-أكتوبر-2026
+    as_printed: من 25-ربيع الآخر-1448 - 06-أكتوبر-2026
+  ends:
+    hijri: 25-ربيع الآخر-1448
+    gregorian: 06-أكتوبر-2026
+    as_printed: إلى 25-ربيع الآخر-1448 - 06-أكتوبر-2026
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STAFF
+- event_ar: تسجيل الرغبات من قبل الطلاب والطالبات للفصل الدراسي الثاني للعام الجامعي 1448هـ
+  teaching_weeks: الثامن
+  starts:
+    hijri: 30-ربيع الآخر-1448
+    gregorian: 11-أكتوبر-2026
+    as_printed: من 30-ربيع الآخر-1448 - 11-أكتوبر-2026
+  ends:
+    hijri: 04-جمادى الأولى-1448
+    gregorian: 15-أكتوبر-2026
+    as_printed: إلى 04-جمادى الأولى-1448 - 15-أكتوبر-2026
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: انتهاء تنفيذ الانسحاب بعذر من المقرر للفصل الدراسي الأول 1448هـ (للنظام الفصلي والنظام السنوي)
+  teaching_weeks: الثامن
+  starts:
+    hijri: 03-جمادى الأولى-1448
+    gregorian: 14-أكتوبر-2026
+    as_printed: من 03-جمادى الأولى-1448 - 14-أكتوبر-2026
+  ends:
+    hijri: 03-جمادى الأولى-1448
+    gregorian: 14-أكتوبر-2026
+    as_printed: إلى 03-جمادى الأولى-1448 - 14-أكتوبر-2026
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: إنشاء شعب المقررات ومجموعات الجداول الدراسية للفصل الدراسي الثاني 1448هـ في نظام القبول والتسجيل
+    من قبل الأقسام
+  teaching_weeks: العاشر والحادي عشر
+  starts:
+    hijri: 14-جمادى الأولى-1448
+    gregorian: 25-أكتوبر-2026
+    as_printed: من 14-جمادى الأولى-1448 - 25-أكتوبر-2026
+  ends:
+    hijri: 25-جمادى الأولى-1448
+    gregorian: 05-نوفمبر-2026
+    as_printed: إلى 25-جمادى الأولى-1448 - 05-نوفمبر-2026
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STAFF
+- event_ar: فترة الاختبارات النصفية لمقررات المتطلبات العامة
+  teaching_weeks: التاسع
+  starts:
+    hijri: 14-جمادى الأولى-1448
+    gregorian: 25-أكتوبر-2026
+    as_printed: من 14-جمادى الأولى-1448 - 25-أكتوبر-2026
+  ends:
+    hijri: 18-جمادى الأولى-1448
+    gregorian: 29-أكتوبر-2026
+    as_printed: إلى 18-جمادى الأولى-1448 - 29-أكتوبر-2026
+  category_ar: الإختبارات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: انتهاء تنفيذ طلبات الاعتذار عن الدراسة للفصل الدراسي الأول 1448هـ (للنظام الفصلي)
+  teaching_weeks: العاشر
+  starts:
+    hijri: 17-جمادى الأولى-1448
+    gregorian: 28-أكتوبر-2026
+    as_printed: من 17-جمادى الأولى-1448 - 28-أكتوبر-2026
+  ends:
+    hijri: 17-جمادى الأولى-1448
+    gregorian: 28-أكتوبر-2026
+    as_printed: إلى 17-جمادى الأولى-1448 - 28-أكتوبر-2026
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: إجازة الخريف بنهاية دوام يوم الخميس
+  teaching_weeks: الثالث عشر
+  starts:
+    hijri: 09-جمادى الآخرة-1448
+    gregorian: 19-نوفمبر-2026
+    as_printed: من 09-جمادى الآخرة-1448 - 19-نوفمبر-2026
+  ends:
+    hijri: 18-جمادى الآخرة-1448
+    gregorian: 28-نوفمبر-2026
+    as_printed: إلى 18-جمادى الآخرة-1448 - 28-نوفمبر-2026
+  category_ar: إجازة رسمية
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: تقييم العملية التعليمية من قبل الطلاب والطالبات من خلال منصة (بوابة النظام الأكاديمي للطلاب)
+  teaching_weeks: الرابع عشر
+  starts:
+    hijri: 19-جمادى الآخرة-1448
+    gregorian: 29-نوفمبر-2026
+    as_printed: من 19-جمادى الآخرة-1448 - 29-نوفمبر-2026
+  ends:
+    hijri: 23-جمادى الآخرة-1448
+    gregorian: 03-ديسمبر-2026
+    as_printed: إلى 23-جمادى الآخرة-1448 - 03-ديسمبر-2026
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: استئناف الدراسة بعد الإجازة
+  teaching_weeks: الرابع عشر
+  starts:
+    hijri: 19-جمادى الآخرة-1448
+    gregorian: 29-نوفمبر-2026
+    as_printed: من 19-جمادى الآخرة-1448 - 29-نوفمبر-2026
+  ends:
+    hijri: 19-جمادى الآخرة-1448
+    gregorian: 29-نوفمبر-2026
+    as_printed: إلى 19-جمادى الآخرة-1448 - 29-نوفمبر-2026
+  category_ar: بداية الدراسة
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: انتهاء تنفيذ طلبات تأجيل الدراسة للفصل الثاني 1448هـ
+  teaching_weeks: الرابع عشر
+  starts:
+    hijri: 22-جمادى الآخرة-1448
+    gregorian: 02-ديسمبر-2026
+    as_printed: من 22-جمادى الآخرة-1448 - 02-ديسمبر-2026
+  ends:
+    hijri: 22-جمادى الآخرة-1448
+    gregorian: 02-ديسمبر-2026
+    as_printed: إلى 22-جمادى الآخرة-1448 - 02-ديسمبر-2026
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: انتهاء تنفيذ طلبات الانسحاب النهائي من الجامعة في الفصل الدراسي الأول 1448هـ
+  teaching_weeks: الرابع عشر
+  starts:
+    hijri: 22-جمادى الآخرة-1448
+    gregorian: 02-ديسمبر-2026
+    as_printed: من 22-جمادى الآخرة-1448 - 02-ديسمبر-2026
+  ends:
+    hijri: 22-جمادى الآخرة-1448
+    gregorian: 02-ديسمبر-2026
+    as_printed: إلى 22-جمادى الآخرة-1448 - 02-ديسمبر-2026
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: انتهاء تنفيذ طلبات تعديل الدرجة وتقدير (غير مكتمل – ل - IC) في الفصل الدراسي الثاني والفصل
+    الصيفي للعام الجامعي 1447هـ
+  teaching_weeks: الرابع عشر
+  starts:
+    hijri: 22-جمادى الآخرة-1448
+    gregorian: 02-ديسمبر-2026
+    as_printed: من 22-جمادى الآخرة-1448 - 02-ديسمبر-2026
+  ends:
+    hijri: 22-جمادى الآخرة-1448
+    gregorian: 02-ديسمبر-2026
+    as_printed: إلى 22-جمادى الآخرة-1448 - 02-ديسمبر-2026
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: انتهاء تنفيذ طلبات معادلة المقررات في الفصل الدراسي الأول 1448هـ
+  teaching_weeks: الرابع عشر
+  starts:
+    hijri: 22-جمادى الآخرة-1448
+    gregorian: 02-ديسمبر-2026
+    as_printed: من 22-جمادى الآخرة-1448 - 02-ديسمبر-2026
+  ends:
+    hijri: 22-جمادى الآخرة-1448
+    gregorian: 02-ديسمبر-2026
+    as_printed: إلى 22-جمادى الآخرة-1448 - 02-ديسمبر-2026
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: فترة الاختبارات النهائية للمقررات العامة والاختيارية والعملية
+  teaching_weeks: السابع عشر
+  starts:
+    hijri: 11-رجب-1448
+    gregorian: 20-ديسمبر-2026
+    as_printed: من 11-رجب-1448 - 20-ديسمبر-2026
+  ends:
+    hijri: 15-رجب-1448
+    gregorian: 24-ديسمبر-2026
+    as_printed: إلى 15-رجب-1448 - 24-ديسمبر-2026
+  category_ar: الإختبارات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: فترة الاختبارات النهائية للمقررات التخصصية والحرة
+  teaching_weeks: الثامن عشر والتاسع عشر
+  starts:
+    hijri: 18-رجب-1448
+    gregorian: 27-ديسمبر-2026
+    as_printed: من 18-رجب-1448 - 27-ديسمبر-2026
+  ends:
+    hijri: 29-رجب-1448
+    gregorian: 07-يناير-2027
+    as_printed: إلى 29-رجب-1448 - 07-يناير-2027
+  category_ar: الإختبارات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: إجازة منتصف العام الجامعي 1448هـ بنهاية دوام يوم الخميس
+  teaching_weeks: التاسع عشر
+  starts:
+    hijri: 29-رجب-1448
+    gregorian: 07-يناير-2027
+    as_printed: من 29-رجب-1448 - 07-يناير-2027
+  ends:
+    hijri: 08-شعبان-1448
+    gregorian: 16-يناير-2027
+    as_printed: إلى 08-شعبان-1448 - 16-يناير-2027
+  category_ar: إجازة رسمية
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_ar: انتهاء رصد الدرجات النهائية من قبل أعضاء هيئة التدريس من خلال منصة (بوابة النظام الأكاديمي
+    لأعضاء هيئة التدريس)
+  teaching_weeks: التاسع عشر
+  starts:
+    hijri: 01-شعبان-1448
+    gregorian: 09-يناير-2027
+    as_printed: من 01-شعبان-1448 - 09-يناير-2027
+  ends:
+    hijri: 01-شعبان-1448
+    gregorian: 09-يناير-2027
+    as_printed: إلى 01-شعبان-1448 - 09-يناير-2027
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STAFF
+- event_ar: إغلاق أعمال الفصل الدراسي الأول للعام الجامعي 1448هـ
+  teaching_weeks: null
+  starts:
+    hijri: 02-شعبان-1448
+    gregorian: 10-يناير-2027
+    as_printed: من 02-شعبان-1448 - 10-يناير-2027
+  ends:
+    hijri: 02-شعبان-1448
+    gregorian: 10-يناير-2027
+    as_printed: إلى 02-شعبان-1448 - 10-يناير-2027
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STAFF
+- event_ar: تسليم تقرير المقرر من قبل عضو هيئة التدريس
+  teaching_weeks: null
+  starts:
+    hijri: 02-شعبان-1448
+    gregorian: 10-يناير-2027
+    as_printed: من 02-شعبان-1448 - 10-يناير-2027
+  ends:
+    hijri: 02-شعبان-1448
+    gregorian: 10-يناير-2027
+    as_printed: إلى 02-شعبان-1448 - 10-يناير-2027
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STAFF
+- event_ar: توزيع وثائق الخريجين في الفصل الدراسي الأول 1448هـ
+  teaching_weeks: null
+  starts:
+    hijri: 12-شعبان-1448
+    gregorian: 20-يناير-2027
+    as_printed: من 12-شعبان-1448 - 20-يناير-2027
+  ends:
+    hijri: 12-شعبان-1448
+    gregorian: 20-يناير-2027
+    as_printed: إلى 12-شعبان-1448 - 20-يناير-2027
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
