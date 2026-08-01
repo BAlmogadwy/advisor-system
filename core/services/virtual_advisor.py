@@ -107,6 +107,15 @@ Rules:
 - Never expose chain-of-thought; cite concise evidence instead.
 - Treat recommendations as advising support, not official approval.
 - For list questions, summarize the count and filters used, then show the most relevant rows.
+
+UNIVERSITY RULES — what is allowed, required, how long, how many, what happens if:
+- Call policy_lookup FIRST for any such question, passing the student's question verbatim as query. Never state a rule, deadline, limit, penalty or entitlement from your own knowledge — not even one you are confident about. Your training contains other universities' regulations, and they are wrong here.
+- Cite only policies policy_lookup returned in THIS conversation, using its `citable` entries. Write the citation as: «الدليل الإرشادي للطالب، الإصدار الثالث، ص NN». Never cite a policy id or page that did not come back from the tool, and never cite a page for a policy other than its own.
+- If policy_lookup returns no policy, say the system holds no written rule on it and refer the student to عمادة القبول والتسجيل. Answer any non-policy part of the question from the data tools as usual, and say which part you could not answer. Silence about the gap is the failure, not the gap.
+- Retrieval returns the NEIGHBOURHOOD of a question, not proof that an answer is in it. Read what came back before relying on it: if the policies are about the right subject but none actually states the rule asked about — how many times a course may be repeated, whether lateness counts as absence — say the guide does not state it. Stretching the nearest policy to cover the gap is a fabrication with a real citation attached, which is worse than an obvious one because it survives checking.
+- decision_use governs how far you may go. PROHIBITED_FOR_DECISION means the rule exists but this system cannot check the student against it: explain the rule, state plainly that their own case cannot be verified here, and name who can. Do not rule on their situation, do not estimate, and do not say "you are probably fine". EXPLANATORY_ONLY records are statements of fact and carry no decision to make.
+- If a returned policy carries `conflicts`, two sources disagree and the resolution names which one governs. Follow it, quote the governing document, and say the other source differs. Never average the two, never pick silently, and never repeat the superseded figure as the operative rule.
+- Rules and the student's own data are different claims. Keep them separate in the answer: what the regulation says (cited), then what the system knows about this student (from the data tools), then what follows. Never present a rule as a verdict about the student.
 """
 
 
@@ -1153,6 +1162,47 @@ def _unverified_student_ids(answer: str, evidence_texts: list[str]) -> list[str]
     return sorted(sid for sid in mentioned if sid not in evidence)
 
 
+#: Policy ids are dotted upper-case runs (``TU.WITHDRAWAL.MAXIMUM``). Distinctive
+#: enough that ordinary Arabic or English prose never matches, which is what keeps
+#: the fabrication check from firing on innocent text.
+_POLICY_ID_RE = re.compile(r"\b[A-Z][A-Z0-9]*(?:\.[A-Z0-9_]+){2,}\b")
+
+
+def _policy_ids_in_text(text: str) -> set[str]:
+    return set(_POLICY_ID_RE.findall(text or ""))
+
+
+def _retrieved_citations(tool_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Citations the answer is entitled to use: what policy_lookup returned here.
+
+    Deduplicated by policy_id and kept in retrieval order, so the correction message
+    lists them the way the model saw them.
+    """
+    seen: set[str] = set()
+    citations: list[dict[str, Any]] = []
+    for result in tool_results or []:
+        # registry.execute returns the executor's dict directly — these entries are
+        # the results themselves, not {"result": ...} envelopes.
+        if not isinstance(result, dict) or result.get("tool") != "policy_lookup":
+            continue
+        for citation in result.get("citable") or []:
+            pid = str((citation or {}).get("policy_id") or "")
+            if pid and pid not in seen:
+                seen.add(pid)
+                citations.append(citation)
+    return citations
+
+
+def _fabricated_policy_ids(answer: str, citations: list[dict[str, Any]]) -> list[str]:
+    """Policy ids the answer cites that were never retrieved this request.
+
+    A real, approved, current policy still counts as fabricated here if the model
+    did not fetch it — otherwise an id recalled from training reads as grounded.
+    """
+    allowed = {c.get("policy_id") for c in citations}
+    return sorted(pid for pid in _policy_ids_in_text(answer) if pid not in allowed)
+
+
 def _summarise_tool_args(args: dict[str, Any]) -> dict[str, Any]:
     """Telemetry-safe argument summary (caps long lists/strings)."""
     summary: dict[str, Any] = {}
@@ -1398,6 +1448,40 @@ def answer_virtual_advisor(
         usage = result.usage
         answer_model = result.model
 
+    # Citation check: a policy id in the answer must have been RETRIEVED this
+    # request. Prompt instructions are not enforcement — a model that recites a
+    # plausible id from training produces an answer that looks sourced and is not.
+    citations = _retrieved_citations(agent_tool_results)
+    fabricated = _fabricated_policy_ids(answer, citations)
+    if fabricated:
+        telemetry["citation_retry"] = True
+        telemetry["fabricated_citations"] = fabricated
+        allowed = ", ".join(c["policy_id"] for c in citations) or "(none were retrieved)"
+        correction = (
+            "Your draft cited policy identifiers that policy_lookup did not return in "
+            f"this conversation: {', '.join(fabricated)}. The only citable policies are: "
+            f"{allowed}. Rewrite the answer using only those. If none of them supports a "
+            "claim you made, remove the claim and say the system holds no written rule "
+            "on that point rather than substituting another policy."
+        )
+        retry_messages = [
+            {"role": "system", "content": SYSTEM_PROMPT_AGENT},
+            user_message,
+            {"role": "assistant", "content": answer},
+            {"role": "user", "content": correction},
+        ]
+        try:
+            corrected_cite: ChatResult = llm.chat(
+                retry_messages,
+                model=resolved_model,
+                assistant_prefill=_assistant_prefill_for_model(resolved_model),
+            )
+            if corrected_cite.content:
+                answer = corrected_cite.content
+                telemetry["fabricated_after_retry"] = _fabricated_policy_ids(answer, citations)
+        except Exception:  # pragma: no cover - degrade to the draft answer
+            logger.exception("Citation retry failed; keeping the original answer")
+
     # Grounding check: any student id in the answer must exist in the
     # evidence (context, seed tools, agent tools) or the question itself.
     evidence_texts = [
@@ -1438,5 +1522,12 @@ def answer_virtual_advisor(
         "context_summary": _context_summary(context),
         "tool_results": tool_results,
         "verified_context": context,
+        # The structured citation contract. `citations` is what the answer was
+        # ENTITLED to cite; `cited_policy_ids` is what it actually did. A judge or a
+        # UI can check one against the other without re-parsing the prose.
+        "citations": citations,
+        "cited_policy_ids": sorted(
+            _policy_ids_in_text(answer) & {c["policy_id"] for c in citations}
+        ),
         "agent": {**telemetry, "tool_results": agent_tool_results},
     }

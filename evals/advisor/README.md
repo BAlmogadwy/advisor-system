@@ -109,3 +109,19 @@ looking like progress.
   course codes have a section on file. The honest answer names the course as *not on
   file* — never *"not available"*, which claims something about the university's
   offering that the data does not support.
+
+- **`policy_ids` mixes two relations, and only one of them is retrievable.** 252
+  questions name at least one policy, 645 pairs in total. 28% of those pairs share no
+  token and no topic alias with their question, because the field holds both *the
+  policy that answers this* and *standing advice that should frame any answer*. Seven
+  policies spanning six to twelve categories supply a third of all pairs;
+  `TU.CONTACT.ADVISER_CHANNELS` is attached across 12 of the 16 categories.
+
+  This caps policy-resolution recall at **0.718** for a retriever of any kind — the
+  connection between "what courses do you advise" and "your choices are final" is
+  editorial, not semantic, so embeddings would not close it either. `policy_recall.py`
+  therefore reports recall twice, over all pairs and over reachable pairs only.
+
+  Splitting the field into `required` and `supporting` would make the metric mean
+  what it says. It is left alone deliberately: relabelling the ground truth while
+  being scored against it is the failure mode, whatever the labels deserve.

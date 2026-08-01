@@ -1484,7 +1484,10 @@ def _exec_build_my_timetable(
     if isinstance(wanted, str):
         wanted = [wanted]
     wanted = [normalize_code(c) for c in wanted if str(c).strip()]
-    recommended = [normalize_code(c) for c in (recommend_next_courses(int(student_id), int(year), int(term)) or [])]
+    recommended = [
+        normalize_code(c)
+        for c in (recommend_next_courses(int(student_id), int(year), int(term)) or [])
+    ]
     codes = list(dict.fromkeys(wanted + recommended))
     if not codes:
         return {
@@ -1581,6 +1584,78 @@ def _exec_build_my_timetable(
         ),
         "tool": "build_my_timetable",
     }
+
+
+def _exec_policy_lookup(
+    args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
+) -> dict[str, Any]:
+    """The university's written rules, with the provenance needed to cite them.
+
+    This is the only route from the adviser to ``policies/``. Everything it returns
+    is ``AUTHORITY_APPROVED``; records at an earlier verification stage are invisible
+    rather than merely ranked lower.
+
+    Two things in the payload are load-bearing and easy to skim past:
+
+    ``decision_use`` — the record's own statement of whether it may be applied to a
+    student. 26 of the 81 records are ``PROHIBITED_FOR_DECISION`` because the inputs
+    their conditions need do not exist in the schema (no warning-count feed, no
+    absence register). For those, explaining the rule IS the complete answer, and
+    ruling on the student's case is the failure mode.
+
+    ``citable`` — the exact citations permitted for this request. A citation naming
+    any other policy is rejected downstream by ``validate_citations``, which is what
+    stops a model reciting a policy id from memory and having it read as grounded.
+
+    No student data is touched, so no scope resolution is needed: the rules are the
+    same for every student. The capability is still student-reachable only through
+    the registry's role check, like every other.
+    """
+    from core.services.policy_store import get_policy_store
+
+    topic = str(args.get("topic") or "").strip() or None
+    query = str(args.get("query") or "").strip() or None
+    policy_ids = args.get("policy_ids") or None
+    if isinstance(policy_ids, str):
+        policy_ids = [policy_ids]
+
+    if not (topic or query or policy_ids):
+        return {
+            "ok": False,
+            "error": "Pass query (the student's question in Arabic), topic, or policy_ids.",
+        }
+
+    store = get_policy_store()
+    try:
+        limit = int(args.get("limit") or 8)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "limit must be an integer."}
+
+    result = store.lookup(topic=topic, query=query, policy_ids=policy_ids, limit=limit)
+    if not result.get("ok"):
+        return result
+
+    if not result["policies"]:
+        result["note"] = (
+            "No approved policy matches. Do NOT answer the rule from general "
+            "knowledge - say the system holds no written rule on this and point the "
+            "student to the Deanship of Admission and Registration. Retrying with a "
+            "topic from available_topics is worth one attempt."
+        )
+    else:
+        result["note"] = (
+            "Cite ONLY these policies, using the entries in `citable` exactly as "
+            "given - policy_id, document, edition and page. Never cite a policy that "
+            "is not in this list, and never state a page number that is not in its "
+            "citation. Where decision_use is PROHIBITED_FOR_DECISION, explain what "
+            "the rule says and say plainly that the system cannot check the "
+            "student's own case against it; do not rule on their situation. Where a "
+            "policy carries `conflicts`, the resolution names which source governs - "
+            "follow it and say which document you are quoting, never present the two "
+            "as equally valid."
+        )
+    result["tool"] = "policy_lookup"
+    return result
 
 
 def build_default_registry() -> AdvisorCapabilityRegistry:
@@ -2081,6 +2156,56 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
             },
             allowed_roles=_ALL_ROLES,
             executor=_exec_build_my_timetable,
+        )
+    )
+
+    registry.register(
+        AdvisorCapability(
+            name="policy_lookup",
+            description=(
+                "The university's WRITTEN RULES from the approved policy store, with "
+                "the page and edition needed to cite them. Call this for any question "
+                "about what is allowed, required, how long, how many, or what happens "
+                "if - withdrawal, apology, deferral, absence, deprivation, credit "
+                "load, GPA, grades, appeals, transfer, honours, dismissal, "
+                "re-enrolment, visiting student, conduct. Pass the student's question "
+                "verbatim as `query`. Answer rule questions ONLY from what this "
+                "returns; if it returns nothing, say the system holds no written rule "
+                "rather than answering from memory. Returns each policy's "
+                "decision_use, which says whether the rule can be applied to this "
+                "student or only explained."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "The student's question, in their own words. Preferred: "
+                            "it matches both the topic index and the rule text."
+                        ),
+                    },
+                    "topic": {
+                        "type": "string",
+                        "description": (
+                            "Exact topic key, when known. See available_topics in a "
+                            "previous result. Use query instead if unsure."
+                        ),
+                    },
+                    "policy_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Fetch specific policies by id, e.g. after a cross-reference.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum policies to return (default 8, max 20).",
+                    },
+                },
+                "additionalProperties": False,
+            },
+            allowed_roles=_ALL_ROLES,
+            executor=_exec_policy_lookup,
         )
     )
 

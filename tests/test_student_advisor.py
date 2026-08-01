@@ -62,6 +62,11 @@ def test_students_get_only_self_scoped_tools():
         "my_advisor",
         "my_clash_free_sections",
         "build_my_timetable",
+        # The written regulations. Carries no student data at all — the rules are the
+        # same for everyone — so it widens what a student can READ, not what they can
+        # reach ABOUT THEMSELVES or anyone else. Added deliberately when the policy
+        # store was wired into the runtime.
+        "policy_lookup",
     }
     # This set is pinned on purpose. Every addition widens what a student can reach,
     # so it must be a deliberate edit here rather than a silent consequence of
