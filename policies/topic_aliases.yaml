@@ -25,7 +25,10 @@ schema_version: "1.0"
 
 topics:
   - topic: academic_dismissal
-    aliases_ar: [الفصل من الجامعة, مفصول, إنذار, إنذارات, انذار ثالث, يفصلوني, طردوني, تجاوزت المدة]
+    # NOT «الفصل من الجامعة»: فصل is the semester sense in every other topic, so
+    # that alias fired on «متى يبدأ الفصل الدراسي في الجامعة؟» and answered a
+    # timetable question with expulsion rules. The verb forms are unambiguous.
+    aliases_ar: [مفصول, إنذار, إنذارات, انذار ثالث, يفصلوني, طردوني, انفصل من الجامعة, تجاوزت المدة النظامية]
 
   - topic: academic_leave
     aliases_ar: [الفرق بين الاعتذار والتأجيل, اعتذار ولا تأجيل, أيهما أفضل اعتذار, وش الفرق بين الانسحاب والاعتذار]

@@ -8,8 +8,9 @@ measurable is whether the applicable policy records come back.
 
     python evals/advisor/policy_recall.py [--limit N] [--misses]
 
-Exits non-zero if reachable-population recall drops below --floor, so a change that
-quietly degrades retrieval fails rather than passing silently.
+Exits non-zero if ALL-PAIRS recall drops below --floor, so a change that quietly
+degrades retrieval fails rather than passing silently. See the gating note below for
+why the reachable-population figure must not be used for this.
 
 READ THE REACHABILITY BLOCK BEFORE TRUSTING THE HEADLINE NUMBER.
 ------------------------------------------------------------------
@@ -25,8 +26,20 @@ different relations: the policy that ANSWERS the question, and standing advice t
 should FRAME any answer ("your choices are final", "talk to your adviser"). Seven
 policies spanning six to twelve categories supply a third of all pairs.
 
-So this script reports recall twice — over all pairs, and over reachable pairs only.
-The first is bounded by the ground truth's shape; the second measures retrieval.
+So this script reports recall over all pairs AND over reachable pairs only.
+
+BUT DO NOT GATE ON THE REACHABLE NUMBER. It is not an independent measurement: a
+NONE pair is unretrievable by exactly the condition lookup() uses to reject a
+candidate, so every retrieved pair is reachable by construction and
+``recall_reach == recall_all / ceiling`` identically. Because the retriever also
+computes the denominator, weakening it shrinks both halves together — reverting to
+the pre-commit indexing (strictly less information) drops all-pairs recall
+0.498 -> 0.425 while the reachable figure moves 0.693 -> 0.692. A floor on the
+reachable number would not have noticed.
+
+The gate is therefore on ALL-PAIRS recall and the absolute count of expected
+policies found — denominators fixed by the ground truth, which the retriever cannot
+move. The reachable figure is printed as the derived diagnostic it is.
 """
 
 from __future__ import annotations
@@ -77,7 +90,12 @@ def reachability(store, text: str, policy_id: str) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=8)
-    ap.add_argument("--floor", type=float, default=0.60)
+    ap.add_argument(
+        "--floor",
+        type=float,
+        default=0.45,
+        help="minimum ALL-PAIRS recall; the reachable figure is not gateable",
+    )
     ap.add_argument("--misses", action="store_true")
     args = ap.parse_args()
 
@@ -123,8 +141,13 @@ def main() -> int:
     n = len(cases)
     recall_all = hit / total_pairs
     recall_reach = hit_reach / reachable_pairs if reachable_pairs else 0.0
-    print(f"  policy resolution recall (all pairs)       {recall_all:.3f}")
-    print(f"  policy resolution recall (reachable only)  {recall_reach:.3f}")
+    derived = recall_all / (reachable_pairs / total_pairs)
+    print(f"  policy resolution recall (all pairs)       {recall_all:.3f}   <-- the gate")
+    print(f"  expected policies found                    {hit}/{total_pairs}")
+    print(
+        f"  recall over reachable pairs                {recall_reach:.3f}   "
+        f"DERIVED (= recall_all/ceiling = {derived:.3f}), not a gate"
+    )
     print(f"  macro recall per question                  {sum(macro) / n:.3f}")
     print(f"  policy precision                           {hit / ret if ret else 0:.3f}")
     print(f"  complete-set accuracy (superset)           {complete / n:.3f}")
@@ -136,10 +159,10 @@ def main() -> int:
             print(f"q{qid} [{mode}] {missing}")
             print(f"    {text[:90]}")
 
-    if recall_reach < args.floor:
-        print(f"\nFAIL: reachable recall {recall_reach:.3f} < floor {args.floor:.2f}")
+    if recall_all < args.floor:
+        print(f"\nFAIL: all-pairs recall {recall_all:.3f} < floor {args.floor:.2f}")
         return 1
-    print(f"\nOK: reachable recall {recall_reach:.3f} >= floor {args.floor:.2f}")
+    print(f"\nOK: all-pairs recall {recall_all:.3f} >= floor {args.floor:.2f}")
     return 0
 
 

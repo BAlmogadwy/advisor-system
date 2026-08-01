@@ -48,9 +48,7 @@ _NON_WORD = re.compile(r"[^\w؀-ۿ.%]+")
 
 # High-frequency function words. Removed before overlap scoring so that two
 # unrelated sentences on the same page do not look similar merely by sharing في/من.
-STOPWORDS = frozenset(
-    "في من على أو و إلى عن أن لا ما هو التي الذي مع بين كل قد هذا ذلك عند به له".split()
-)
+_STOPWORDS_SOURCE = "في من على أو و إلى عن أن لا ما هو التي الذي مع بين كل قد هذا ذلك عند به له"
 
 
 def normalise(text: str) -> str:
@@ -63,6 +61,15 @@ def normalise(text: str) -> str:
     text = text.replace("ة", "ه")  # ta marbuta -> ه
     text = text.replace("ؤ", "و")  # waw-hamza -> و
     return _NON_WORD.sub(" ", text).strip()
+
+
+# Folded through normalise() at definition. The list is written the way the words
+# are spelled — على، إلى، أن، أو — but content_tokens() compares AFTER folding, where
+# they are علي، الي، ان، او. Stored raw, those four never matched anything and four of
+# the commonest words in Arabic were treated as content in every query and every
+# record: they entered the token index, diluted the IDF denominator, and could carry
+# a match on their own.
+STOPWORDS = frozenset(normalise(word) for word in _STOPWORDS_SOURCE.split())
 
 
 def _split(text: str) -> list[str]:

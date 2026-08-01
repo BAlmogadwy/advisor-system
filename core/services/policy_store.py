@@ -25,7 +25,7 @@ comparison, not by trust.
 
 What this module deliberately does NOT do is judge whether a rule may be applied to
 a student. Each record answers that itself through ``runtime_use``, which is surfaced
-verbatim as ``decision_use``. 26 of the 81 records are
+verbatim as ``decision_use``. 20 of the 81 records are
 ``PROHIBITED_FOR_DECISION`` — the inputs their conditions need do not exist in the
 schema — and for those the correct answer explains the rule and stops.
 """
@@ -72,6 +72,34 @@ _SKIP_DIRS = frozenset({"evidence", "tools", "sources", "calendar"})
 #: there is nothing to evaluate against a student, so explaining it is the whole
 #: correct answer.
 _DECISION_USE_DEFAULT = "EXPLANATORY_ONLY"
+
+#: Every value the answer contract in SYSTEM_PROMPT_AGENT explains. Validated at
+#: load so a new one cannot arrive undocumented.
+DECISION_USE_VALUES = frozenset(
+    {
+        "PROHIBITED_FOR_DECISION",
+        "PARTIALLY_EVALUABLE",
+        "PERMITTED_WITH_USER_PROVIDED_INPUTS",
+        _DECISION_USE_DEFAULT,
+    }
+)
+
+#: Engineering annotations, not policy text. They name database tables, quote row
+#: counts and counts of students by status, and reference internal tools and eval
+#: question ids. Useful to an operator debugging why a rule cannot be applied;
+#: never appropriate to put in front of a student.
+OPERATOR_ONLY_FIELDS = (
+    "runtime_use_reason",
+    "runtime_use_note",
+    "never_infer",
+    "open_question",
+    "notes",
+)
+
+
+def _seen_twice(records: list[dict[str, Any]], policy_id: str) -> bool:
+    return sum(1 for r in records if r.get("policy_id") == policy_id) > 1
+
 
 #: Fields a citation must carry. Kept as a constant because the answer contract in
 #: the system prompt, the validator and the tests must not drift apart.
@@ -299,7 +327,22 @@ class PolicyStore:
         self.conflicts = conflicts
         self.aliases = aliases
 
+        duplicates = sorted(
+            {r["policy_id"] for r in records}
+            & {p for p in (x["policy_id"] for x in records) if _seen_twice(records, p)}
+        )
+        if duplicates:
+            # Last-write-wins across rglob order meant an unapproved redraft in a
+            # later-sorting file could supply the BODY for an id whose approved copy
+            # passed the gate. Redrafting a record into a second file is the normal
+            # editing motion for a YAML store, so this has to be loud.
+            raise ValueError(
+                "Duplicate policy_id in the policy store: "
+                + ", ".join(duplicates)
+                + ". Each rule must exist exactly once; delete or merge the copies."
+            )
         self.by_id = {r["policy_id"]: r for r in records}
+        self._approved_by_id = {r["policy_id"]: r for r in records if self.is_approved(r)}
         self.by_topic: dict[str, list[dict[str, Any]]] = {}
         for record in records:
             self.by_topic.setdefault(record["topic"], []).append(record)
@@ -372,6 +415,24 @@ class PolicyStore:
             if isinstance(loaded, list):
                 records.extend(r for r in loaded if isinstance(r, dict) and r.get("policy_id"))
 
+        unknown_use = sorted(
+            {
+                str(r.get("runtime_use"))
+                for r in records
+                if r.get("runtime_use") and str(r.get("runtime_use")) not in DECISION_USE_VALUES
+            }
+        )
+        if unknown_use:
+            # The answer contract explains four values. A fifth would reach the model
+            # with no instruction attached, and an unexplained authority label reads
+            # as permission.
+            raise ValueError(
+                "Unknown runtime_use value(s) in the policy store: "
+                + ", ".join(unknown_use)
+                + f". Known values: {', '.join(sorted(DECISION_USE_VALUES))}. "
+                "Add the value to the answer contract before adding it to a record."
+            )
+
         return cls(records, sources, precedence, conflicts, aliases)
 
     # ------------------------------------------------------------- provenance
@@ -419,8 +480,18 @@ class PolicyStore:
             "effective_to": until.isoformat() if until else record.get("policy_effective_to"),
         }
 
-    def present(self, record: dict[str, Any], as_of: dt.date) -> dict[str, Any]:
-        """The full shape handed to the model for one policy."""
+    def present(
+        self,
+        record: dict[str, Any],
+        as_of: dt.date,
+        *,
+        include_operator_notes: bool = False,
+    ) -> dict[str, Any]:
+        """The full shape handed to the model for one policy.
+
+        ``include_operator_notes`` defaults to FALSE so that forgetting to pass it
+        withholds the internal annotations rather than publishing them.
+        """
         rule = {k: record[k] for k in _RULE_KEYS if k in record}
         source = record.get("source") or {}
         document_id = str(source.get("document_id") or "")
@@ -461,15 +532,18 @@ class PolicyStore:
             "citation": self.citation_for(record),
         }
 
-        for key in (
-            "runtime_use_reason",
-            "runtime_use_note",
-            "never_infer",
-            "open_question",
-            "notes",
-        ):
-            if record.get(key):
-                payload[key] = record[key]
+        if include_operator_notes:
+            for key in OPERATOR_ONLY_FIELDS:
+                if record.get(key):
+                    payload[key] = record[key]
+        elif record.get("open_question"):
+            # A student is entitled to know the source is unclear on a point — that
+            # is about the rule. They are not entitled to the engineering note
+            # explaining which database column is empty, which is about us.
+            payload["source_is_unclear_on"] = (
+                "The written source does not settle this point. Confirm with عمادة "
+                "القبول والتسجيل before relying on it."
+            )
 
         related = self.conflicts_by_policy.get(record["policy_id"])
         if related:
@@ -526,6 +600,7 @@ class PolicyStore:
         limit: int = 6,
         as_of: dt.date | None = None,
         include_expired: bool = False,
+        include_operator_notes: bool = False,
     ) -> dict[str, Any]:
         """Approved policies matching a topic, an explicit id list, or Arabic text."""
         as_of = as_of or dt.date.today()
@@ -540,8 +615,8 @@ class PolicyStore:
 
         if policy_ids:
             wanted = [str(p).strip() for p in policy_ids if str(p).strip()]
-            approved_ids = {r["policy_id"] for r in approved}
-            candidates = [self.by_id[p] for p in wanted if p in approved_ids]
+            approved_ids = set(self._approved_by_id)
+            candidates = [self._approved_by_id[p] for p in wanted if p in approved_ids]
             strategy = "policy_ids"
             unknown = [p for p in wanted if p not in self.by_id]
             withheld = [p for p in wanted if p in self.by_id and p not in approved_ids]
@@ -552,7 +627,16 @@ class PolicyStore:
             strategy = "topic"
             unknown, withheld = [], []
         elif query:
-            matched_topics = [t for t, _ in self.resolve_topics(query)]
+            topic_hits = self.resolve_topics(query)
+            matched_topics = [t for t, _ in topic_hits]
+            # Only the STRONGEST topic bypasses the lexical floor. resolve_topics
+            # returns every topic whose aliases fired, and admitting all of them at
+            # rank tier 0 let records sharing nothing with the question outrank real
+            # lexical matches — 136 of 1799 returned records were below-floor
+            # topic-only admissions, displacing an expected policy in 18 of 252
+            # eval questions. A weaker topic still helps, it just has to earn its place.
+            best_topic_score = topic_hits[0][1] if topic_hits else 0
+            primary_topics = {t for t, score in topic_hits if score == best_topic_score}
             q_tokens = expand_tokens(query)
             scored: list[tuple[tuple[int, float, int], dict[str, Any]]] = []
             for record in approved:
@@ -561,7 +645,7 @@ class PolicyStore:
                 # order is not fixed across processes, which is enough to reorder
                 # near-ties and make "deterministic retrieval" quietly false.
                 weight = sum(self._idf.get(token, 0.0) for token in sorted(shared))
-                topic_hit = 1 if record["topic"] in matched_topics else 0
+                topic_hit = 1 if record["topic"] in primary_topics else 0
                 # A curated topic alias is an explicit routing decision and always
                 # qualifies. Lexical matches must clear both bars: enough absolute
                 # signal, and enough of the question actually explained.
@@ -593,7 +677,9 @@ class PolicyStore:
         expired_excluded = len(candidates) - len(live)
         selected = live[:limit]
 
-        policies = [self.present(r, as_of) for r in selected]
+        policies = [
+            self.present(r, as_of, include_operator_notes=include_operator_notes) for r in selected
+        ]
         return {
             "ok": True,
             "strategy": strategy,

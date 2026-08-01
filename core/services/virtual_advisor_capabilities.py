@@ -1598,7 +1598,7 @@ def _exec_policy_lookup(
     Two things in the payload are load-bearing and easy to skim past:
 
     ``decision_use`` — the record's own statement of whether it may be applied to a
-    student. 26 of the 81 records are ``PROHIBITED_FOR_DECISION`` because the inputs
+    student. 20 of the 81 records are ``PROHIBITED_FOR_DECISION`` because the inputs
     their conditions need do not exist in the schema (no warning-count feed, no
     absence register). For those, explaining the rule IS the complete answer, and
     ruling on the student's case is the failure mode.
@@ -1631,7 +1631,16 @@ def _exec_policy_lookup(
     except (TypeError, ValueError):
         return {"ok": False, "error": "limit must be an integer."}
 
-    result = store.lookup(topic=topic, query=query, policy_ids=policy_ids, limit=limit)
+    # Operator annotations name database tables, quote row counts and quote counts
+    # of students by status. They exist to tell an engineer why a rule cannot be
+    # applied; a student asking about GPA must not be handed the schema.
+    result = store.lookup(
+        topic=topic,
+        query=query,
+        policy_ids=policy_ids,
+        limit=limit,
+        include_operator_notes=_scope_role(scope) in _STAFF_ROLES,
+    )
     if not result.get("ok"):
         return result
 

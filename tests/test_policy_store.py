@@ -18,7 +18,9 @@ import pytest
 import yaml
 
 from core.services.policy_store import (
+    DECISION_USE_VALUES,
     MIN_LEXICAL_WEIGHT,
+    OPERATOR_ONLY_FIELDS,
     PolicyStore,
     expand_tokens,
     get_policy_store,
@@ -311,6 +313,27 @@ def test_citable_list_matches_the_returned_policies_exactly(synthetic):
     ]
 
 
+def test_citable_tracks_the_truncated_selection_not_every_match(synthetic):
+    """`citable` is permission to cite. It must not exceed what was actually shown.
+
+    With limit >= the match count the two are equal whatever the code does, so the
+    test above cannot distinguish "derived from the selected slice" from "derived
+    from every match". Truncating is what makes the difference observable: deriving
+    citable from all matches would hand the model permission to cite policies whose
+    text it was never shown, and both citation checks would accept them.
+    """
+    # registration_process holds two approved, current records; the withdrawal topic
+    # has only one once the unapproved and expired ones are filtered out, and a
+    # single match cannot demonstrate truncation.
+    result = synthetic.lookup(topic="registration_process", limit=1, as_of=TODAY)
+    assert len(result["policies"]) == 1
+    assert result["total_matched"] == 2
+    assert result["truncated"] is True
+    assert [c["policy_id"] for c in result["citable"]] == [
+        p["policy_id"] for p in result["policies"]
+    ]
+
+
 # ── 7. fabricated citation rejection ─────────────────────────────
 
 
@@ -397,26 +420,87 @@ def test_policy_lookup_executes_through_the_registry_for_a_student():
 # ── 9. unsupported-policy abstention ─────────────────────────────
 
 
-def test_no_matching_policy_instructs_abstention_not_invention():
-    registry = build_default_registry()
-    result = registry.execute(
-        "policy_lookup",
-        {"query": "ما هي رسوم موقف السيارات في الحرم الجامعي؟"},
-        scope={"role": ROLE_STUDENT},
+def test_no_matching_policy_instructs_abstention_not_invention(monkeypatch, synthetic):
+    """The empty-result branch must tell the model to abstain, not to improvise.
+
+    Written against a SYNTHETIC store on purpose. The first version of this test ran
+    the real store and wrapped its assertions in `if not result["policies"]:` — the
+    real store answers almost any Arabic sentence with something, so the body never
+    executed and the test passed without checking anything at all.
+    """
+    monkeypatch.setattr("core.services.policy_store.get_policy_store", lambda **kw: synthetic)
+    result = build_default_registry().execute(
+        "policy_lookup", {"query": "zzz nothing matches this"}, scope={"role": ROLE_STUDENT}
     )
     assert result["ok"] is True
-    if not result["policies"]:
-        assert "no written rule" in result["note"]
-        assert "عمادة القبول والتسجيل" in result["note"] or "Deanship" in result["note"]
+    assert result["policies"] == [], "fixture must produce the empty branch"
+    assert "no written rule" in result["note"]
+    assert "Deanship" in result["note"] or "عمادة القبول والتسجيل" in result["note"]
+    assert result["available_topics"], "the model needs vocabulary to retry with"
+
+
+def test_non_empty_result_gets_the_citation_instruction_not_the_abstention_one(
+    monkeypatch, synthetic
+):
+    monkeypatch.setattr("core.services.policy_store.get_policy_store", lambda **kw: synthetic)
+    result = build_default_registry().execute(
+        "policy_lookup", {"query": "الانسحاب من مقرر"}, scope={"role": ROLE_STUDENT}
+    )
+    assert result["policies"]
+    assert "no written rule" not in result["note"]
+    assert "Cite ONLY these policies" in result["note"]
 
 
 def test_prohibited_for_decision_is_surfaced_verbatim():
-    """26 records cannot be evaluated against a student. The runtime must say so."""
+    """20 records cannot be evaluated against a student. The runtime must say so."""
     store = get_policy_store()
     result = store.lookup(policy_ids=["TU.DISMISSAL.THREE_WARNINGS"])
     policy = result["policies"][0]
     assert policy["decision_use"] == "PROHIBITED_FOR_DECISION"
-    assert policy["runtime_use_reason"], "the reason must travel with the prohibition"
+    # The prohibition itself reaches everyone; the engineering reason behind it does
+    # not — see the operator-notes tests below.
+    assert "runtime_use_reason" not in policy
+
+
+def test_operator_notes_are_withheld_by_default():
+    """Fail closed: forgetting the flag must withhold, never publish.
+
+    These fields name database tables, quote row counts and quote counts of students
+    by status. TU.DISMISSAL.THREE_WARNINGS' own reason mentions Student.status values
+    and how many students hold them; TU.GPA.FORMULA's names a table and its row count.
+    A student asking about their GPA must not be handed the schema.
+    """
+    store = get_policy_store()
+    policy = store.lookup(policy_ids=["TU.DISMISSAL.THREE_WARNINGS"])["policies"][0]
+    assert not set(policy) & set(OPERATOR_ONLY_FIELDS)
+
+
+def test_operator_notes_are_available_to_staff():
+    store = get_policy_store()
+    policy = store.lookup(policy_ids=["TU.DISMISSAL.THREE_WARNINGS"], include_operator_notes=True)[
+        "policies"
+    ][0]
+    assert policy["runtime_use_reason"], "an operator debugging this needs the reason"
+
+
+def test_students_reach_no_operator_notes_through_the_capability():
+    """The end-to-end path, because the flag is only useful if the executor sets it."""
+    registry = build_default_registry()
+    result = registry.execute(
+        "policy_lookup", {"query": "كيف يحسب المعدل التراكمي؟"}, scope={"role": ROLE_STUDENT}
+    )
+    leaked = {k for p in result["policies"] for k in p if k in OPERATOR_ONLY_FIELDS}
+    assert leaked == set(), f"internal annotations reached a student: {sorted(leaked)}"
+
+
+def test_an_unclear_source_is_still_disclosed_to_the_student_in_their_own_terms():
+    """Withholding the engineering note must not withhold the caveat itself."""
+    store = get_policy_store()
+    with_open_q = [r["policy_id"] for r in store.records if r.get("open_question")]
+    assert with_open_q, "fixture assumption: some record carries an open_question"
+    policy = store.lookup(policy_ids=[with_open_q[0]])["policies"][0]
+    assert "source_is_unclear_on" in policy
+    assert "open_question" not in policy
 
 
 def test_records_without_runtime_use_are_marked_explanatory_not_decidable():
@@ -566,3 +650,120 @@ def test_retrieval_is_deterministic():
     first = [p["policy_id"] for p in store.lookup(query=question, limit=10)["policies"]]
     for _ in range(5):
         assert [p["policy_id"] for p in store.lookup(query=question, limit=10)["policies"]] == first
+
+
+# ── load-time integrity ──────────────────────────────────────────
+
+
+def _write_store(tmp_path, records, name="rules.yaml"):
+    (tmp_path / "sources.yaml").write_text(
+        yaml.safe_dump({"authority_precedence": [], "sources": []}), encoding="utf-8"
+    )
+    (tmp_path / name).write_text(yaml.safe_dump(records, allow_unicode=True), encoding="utf-8")
+
+
+def test_duplicate_policy_id_is_rejected_at_load(tmp_path):
+    """Two records, one id, is an unapproved-content leak waiting to happen.
+
+    The approval gate tests an id against the set of approved ids while the BODY came
+    from a plain by-id dict built last-write-wins over rglob order. So an unapproved
+    redraft in a later-sorting file passed the gate and supplied the text — and
+    withheld_unapproved_policy_ids reported nothing, because an approved record with
+    that id did exist. Redrafting into a second file is the normal editing motion for
+    a YAML store, so this has to fail loudly rather than be caught downstream.
+    """
+    _write_store(tmp_path, [_record("TU.X.Y", "t1")], name="a_approved.yaml")
+    (tmp_path / "z_draft.yaml").write_text(
+        yaml.safe_dump(
+            [_record("TU.X.Y", "t1", status="EXTRACTED", source_text_ar="unapproved draft")],
+            allow_unicode=True,
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="Duplicate policy_id"):
+        PolicyStore.load(tmp_path)
+
+
+def test_unknown_decision_use_value_is_rejected_at_load(tmp_path):
+    """A fifth value would reach the model with no instruction attached.
+
+    The answer contract explains exactly four. An unexplained authority label is
+    worse than a missing one: the model reads it as permission.
+    """
+    _write_store(tmp_path, [_record("TU.X.Y", "t1", runtime_use="PROBABLY_FINE")])
+    with pytest.raises(ValueError, match="Unknown runtime_use"):
+        PolicyStore.load(tmp_path)
+
+
+def test_every_decision_use_in_the_real_store_is_one_the_contract_explains():
+    store = get_policy_store()
+    used = {r.get("runtime_use") for r in store.records if r.get("runtime_use")}
+    assert used <= DECISION_USE_VALUES, f"undocumented decision_use: {used - DECISION_USE_VALUES}"
+
+
+def test_the_prohibited_count_the_docs_quote_is_the_real_one():
+    """The docs said 26 for a while. 26 is the number of records carrying ANY
+    runtime_use value; 20 carry this one. A wrong number in an authoritative
+    document is a defect, and this pins it to the data."""
+    store = get_policy_store()
+    prohibited = [r for r in store.records if r.get("runtime_use") == "PROHIBITED_FOR_DECISION"]
+    assert len(prohibited) == 20
+    assert len([r for r in store.records if r.get("runtime_use")]) == 26
+
+
+# ── the retrieval defects the review found ───────────────────────
+
+
+def test_stopwords_actually_filter():
+    """They are written على/إلى/أن/أو but compared after folding to علي/الي/ان/او.
+
+    Stored unfolded, those four never matched, so four of the commonest words in
+    Arabic entered every token set — diluting IDF and able to carry a match alone.
+    """
+    from core.services.arabic_text import STOPWORDS, content_tokens, normalise
+
+    assert [w for w in STOPWORDS if normalise(w) != w] == []
+    tokens = content_tokens("هل يحق لي أن أعتذر على الفصل أو إلى الترم")
+    assert not ({"علي", "الي", "ان", "او"} & tokens)
+
+
+def test_asking_when_term_starts_does_not_retrieve_expulsion_rules():
+    """«الفصل» is the semester everywhere except dismissal, where it is expulsion.
+
+    The alias «الفصل من الجامعة» needed only فصل + جامعة, so «متى يبدأ الفصل الدراسي
+    في الجامعة؟» routed to academic_dismissal — a timetable question answered with
+    the rules for being thrown out.
+    """
+    store = get_policy_store()
+    topics = {t for t, _ in store.resolve_topics("متى يبدأ الفصل الدراسي في الجامعة؟")}
+    assert "academic_dismissal" not in topics
+    # And the real dismissal question still routes.
+    assert "academic_dismissal" in {
+        t for t, _ in store.resolve_topics("معدلي نازل، هل يفصلوني من الجامعة؟")
+    }
+
+
+def test_only_the_strongest_topic_bypasses_the_lexical_floor(scoring_store, monkeypatch):
+    """A weak topic hit must not admit records that share nothing with the question.
+
+    Every topic whose aliases fired used to be admitted at the top rank tier, so
+    records with zero lexical overlap displaced genuine matches.
+    """
+    monkeypatch.setitem(scoring_store._alias_tokens, "t1", [[expand_tokens("الطالب")]])
+    monkeypatch.setitem(
+        scoring_store._alias_tokens, "t2", [[expand_tokens("الحرمان")], [expand_tokens("الاختبار")]]
+    )
+    hits = scoring_store.resolve_topics("الطالب الحرمان الاختبار")
+    assert hits[0][0] == "t2", "t2 matches two aliases, t1 one"
+    assert dict(hits)["t1"] < dict(hits)["t2"], "t1 must be the weaker hit"
+
+    found = {
+        p["policy_id"]
+        for p in scoring_store.lookup(query="الطالب الحرمان الاختبار", limit=10, as_of=TODAY)[
+            "policies"
+        ]
+    }
+    # P.ONE/TWO/THREE share only «الطالب», whose weight (0.21) is under the floor.
+    # Asserting the FIRST result is P.RARE is not enough — it stays first either way.
+    # What must not happen is the weaker topic dragging its whole membership in.
+    assert found == {"P.RARE"}, f"a weaker topic admitted below-floor records: {found}"

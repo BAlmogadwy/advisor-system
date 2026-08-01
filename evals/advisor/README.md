@@ -117,10 +117,16 @@ looking like progress.
   policies spanning six to twelve categories supply a third of all pairs;
   `TU.CONTACT.ADVISER_CHANNELS` is attached across 12 of the 16 categories.
 
-  This caps policy-resolution recall at **0.718** for a retriever of any kind — the
+  This caps policy-resolution recall at **~0.71** for a retriever of any kind — the
   connection between "what courses do you advise" and "your choices are final" is
-  editorial, not semantic, so embeddings would not close it either. `policy_recall.py`
-  therefore reports recall twice, over all pairs and over reachable pairs only.
+  editorial, not semantic, so embeddings would not close it either.
+
+  `policy_recall.py` reports recall over all pairs and over reachable pairs, and
+  **gates on the first**. The reachable figure is not an independent measurement: a
+  pair counts as unreachable under exactly the condition the retriever uses to reject
+  a candidate, so it is identically `recall_all / ceiling` and the retriever moves its
+  own denominator. Weakening the index shrinks both halves together, which is how a
+  floor on it fails to notice a regression.
 
   Splitting the field into `required` and `supporting` would make the metric mean
   what it says. It is left alone deliberately: relabelling the ground truth while
