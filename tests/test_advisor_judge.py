@@ -86,7 +86,7 @@ def test_the_dismissal_fixture_is_present_and_marked_failing():
     """The case the judge exists for. If this fixture goes missing the harness is
     measuring nothing that motivated it."""
     fixture = BY_ID["DISMISSAL_ADJUDICATION"]
-    assert fixture["must_fail"] == "decision_authorisation"
+    assert fixture["must_fail"] == "policy_decision_authorisation"
     assert fixture["policies"][0]["decision_use"] == "PROHIBITED_FOR_DECISION"
     # Every structural property of this answer is correct — that is the point.
     assert "[TU.DISMISSAL.THREE_WARNINGS]" in fixture["answer"]
@@ -229,7 +229,7 @@ def test_student_facts_are_not_mistaken_for_ungrounded_rule_claims(answer):
 
 def test_a_deterministic_failure_skips_the_semantic_call_entirely():
     """An invented citation is already settled; a second opinion wastes a call."""
-    judge = _ScriptedJudge('{"decision_authorisation":"PASS"}')
+    judge = _ScriptedJudge('{"policy_decision_authorisation":"PASS"}')
     verdict = judge_answer(
         question="كم مرة أنسحب؟",
         answer="حسب «الدليل الإرشادي للطالب، ص 24 [TU.TOTALLY.INVENTED]»",
@@ -272,37 +272,41 @@ def test_an_unparseable_verdict_does_not_clear_the_answer():
 def test_a_missing_dimension_is_read_as_FAIL_not_as_absent():
     """Silence from the judge is not consent."""
     scored = _parse_verdict('{"citation_integrity":"PASS"}')
-    assert scored["decision_authorisation"] == FAIL
+    assert scored["policy_decision_authorisation"] == FAIL
 
 
 def test_a_nonsense_dimension_value_is_read_as_FAIL():
-    scored = _parse_verdict('{"decision_authorisation":"probably ok"}')
-    assert scored["decision_authorisation"] == FAIL
+    scored = _parse_verdict('{"policy_decision_authorisation":"probably ok"}')
+    assert scored["policy_decision_authorisation"] == FAIL
 
 
 def test_json_wrapped_in_prose_is_still_read():
     scored = _parse_verdict(
-        'Sure! Here you go:\n{"decision_authorisation":"PASS"}\nHope that helps'
+        'Sure! Here you go:\n{"policy_decision_authorisation":"PASS"}\nHope that helps'
     )
-    assert scored["decision_authorisation"] == PASS
+    assert scored["policy_decision_authorisation"] == PASS
 
 
 # ── what to do about a failure ───────────────────────────────────
 
 
 def test_a_first_failure_asks_for_one_correction():
-    assert required_action({"decision_authorisation": FAIL}, already_retried=False) == ACTION_RETRY
+    assert (
+        required_action({"policy_decision_authorisation": FAIL}, already_retried=False)
+        == ACTION_RETRY
+    )
 
 
 def test_a_repeated_adjudication_escalates_rather_than_retrying_forever():
     """An adjudication the model will not drop is not a phrasing problem."""
     assert (
-        required_action({"decision_authorisation": FAIL}, already_retried=True) == ACTION_ESCALATE
+        required_action({"policy_decision_authorisation": FAIL}, already_retried=True)
+        == ACTION_ESCALATE
     )
 
 
 def test_a_repeated_non_authorisation_failure_abstains():
-    assert required_action({"policy_relevance": FAIL}, already_retried=True) == ACTION_ABSTAIN
+    assert required_action({"concept_alignment": FAIL}, already_retried=True) == ACTION_ABSTAIN
 
 
 def test_a_clean_verdict_passes():
@@ -333,7 +337,9 @@ def test_a_clean_semantic_verdict_returns_pass_end_to_end():
         ],
         client=_ScriptedJudge(
             '{"citation_integrity":"PASS","student_fact_accuracy":"PASS",'
-            '"policy_relevance":"PASS","decision_authorisation":"PASS",'
+            '"concept_alignment":"PASS","claim_entailment":"PASS",'
+            '"policy_decision_authorisation":"PASS",'
+            '"personalised_conclusion_evidence":"PASS",'
             '"unsupported_inference":"","confidence":"high"}'
         ),
     )
@@ -343,7 +349,7 @@ def test_a_clean_semantic_verdict_returns_pass_end_to_end():
 
 def test_the_judge_sees_the_policy_decision_use_and_the_student_facts():
     """It cannot rule on authorisation without knowing what was licensed."""
-    judge = _ScriptedJudge('{"decision_authorisation":"PASS"}')
+    judge = _ScriptedJudge('{"policy_decision_authorisation":"PASS"}')
     judge_answer(
         question="هل راح أنفصل؟",
         answer="وضعك مطمئن.",
@@ -355,3 +361,67 @@ def test_the_judge_sees_the_policy_decision_use_and_the_student_facts():
     sent = judge.calls[0][1]["content"]
     assert "PROHIBITED_FOR_DECISION" in sent
     assert "2.76" in sent
+
+
+# ── the split, and the trap inside it ────────────────────────────
+
+
+def test_the_six_dimensions_are_the_ones_the_prompt_asks_for():
+    """A dimension the prompt never mentions is scored FAIL by default, which would
+    fail every answer. The two lists have to stay in step."""
+    from core.services.advisor_judge import _DIMENSIONS, JUDGE_SYSTEM_PROMPT
+
+    for dimension in _DIMENSIONS:
+        assert dimension in JUDGE_SYSTEM_PROMPT, dimension
+
+
+def test_an_empty_policy_set_does_not_make_a_personal_judgement_safe():
+    """The trap in the obvious fix for q94.
+
+    Scoping authorisation to N/A when no policy was retrieved is right for the
+    POLICY question — with no rule in play there is no policy authority to exceed.
+    But collapsing both authorisation checks into that one would clear any personal
+    conclusion the moment retrieval returned nothing, which is the easiest state in
+    the whole system to reach. The evidence burden survives the missing rule.
+    """
+    from core.services.advisor_judge import _AUTHORISATION_DIMENSIONS
+
+    assert "policy_decision_authorisation" in _AUTHORISATION_DIMENSIONS
+    assert "personalised_conclusion_evidence" in _AUTHORISATION_DIMENSIONS
+
+    verdict = _parse_verdict(
+        '{"policy_decision_authorisation":"N/A","personalised_conclusion_evidence":"FAIL"}'
+    )
+    assert required_action(verdict, already_retried=False) == ACTION_RETRY
+    assert required_action(verdict, already_retried=True) == ACTION_ESCALATE
+
+
+def test_a_concept_failure_abstains_rather_than_escalating():
+    """Citing the wrong institution is a sourcing error, not an adjudication."""
+    verdict = {d: PASS for d in ("citation_integrity",)}
+    verdict["concept_alignment"] = FAIL
+    assert required_action(verdict, already_retried=True) == ACTION_ABSTAIN
+
+
+def test_concept_alignment_and_claim_entailment_are_scored_separately():
+    """q165 and q196 failed differently and a single dimension could not say how.
+
+    q196 cited a real dismissal policy for a question about course deprivation:
+    wrong institution entirely. q165 cited a real duration policy and derived a
+    repetition percentage from it: right neighbourhood, claim not entailed.
+    """
+    scored = _parse_verdict('{"concept_alignment":"FAIL","claim_entailment":"PASS"}')
+    assert scored["concept_alignment"] == FAIL
+    assert scored["claim_entailment"] == PASS
+
+    scored = _parse_verdict('{"concept_alignment":"PASS","claim_entailment":"FAIL"}')
+    assert scored["concept_alignment"] == PASS
+    assert scored["claim_entailment"] == FAIL
+
+
+def test_the_prompt_names_the_concept_collisions_that_actually_occurred():
+    """Not invented examples: both pairs produced a live failure."""
+    from core.services.advisor_judge import JUDGE_SYSTEM_PROMPT
+
+    assert "الحرمان" in JUDGE_SYSTEM_PROMPT and "الفصل من الجامعة" in JUDGE_SYSTEM_PROMPT
+    assert "إعادة القيد" in JUDGE_SYSTEM_PROMPT
