@@ -32,6 +32,27 @@ corrected. Neither is a quotation. `page_text/` is.
 and has no single quotable sentence. They are marked `STRUCTURE_ONLY` in
 `evidence_map.yaml` and must be verified against the rendered page, not against text.
 
+## The calendar layer
+
+`calendar/calendar_1448_t1.yaml` holds 37 dated events for **الفصل الدراسي الأول
+1448هـ only**, extracted by `tools/extract_calendar.py` from a hash-pinned capture
+of the university's live page. It is what turns the guide's relative offsets
+("قبل بدء الدراسة بأسبوع", "منتصف الفصل السابق") into dates.
+
+Five rules now carry a `calendar_binding` and moved from `PROHIBITED_FOR_DECISION`
+to `PARTIALLY_EVALUABLE`. Every binding records `covers_term_only`, because **Hijri
+dates move every year — a date from one term must never be reused for another.**
+
+Both calendars are kept as printed and neither is computed from the other; a
+converted date can land a day off and silently move a deadline.
+
+This is also where `authority_precedence` first decided something. The guide says
+registration closes a week before teaching starts; the calendar puts add/drop at
+20–22 August with teaching from 23 August. `OFFICIAL_ACADEMIC_CALENDAR` outranks
+`OFFICIAL_STUDENT_GUIDE`, so the calendar governs — recorded as
+`CONFLICT.ADD_DROP_DEADLINE` in `sources.yaml` with **both readings left intact**.
+Neither record was edited to agree with the other.
+
 ## Two extractions, deliberately kept apart
 
 The evidence layer is a *second, independent* extraction of the same PDF, imported

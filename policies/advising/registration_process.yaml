@@ -70,11 +70,21 @@
   currentness_status: UNVERIFIED
   verification: *v_extracted
   extraction_confidence: high
-  runtime_use: PROHIBITED_FOR_DECISION
+  calendar_binding:
+    document_id: TU_ACADEMIC_CALENDAR_1448_T1
+    event_ar: تسجيل الرغبات من قبل الطلاب والطالبات للفصل الدراسي الثاني للعام الجامعي 1448هـ
+    window: { starts: 11-أكتوبر-2026, ends: 15-أكتوبر-2026 }
+    teaching_week: الثامن
+    covers_term_only: { academic_year_hijri: "1448", registers_for_term: 2 }
+    corroborates: >
+      The guide's "منتصف الفصل السابق" checks out — week 8 of a term whose teaching
+      weeks run to 19 is its midpoint. Lower-authority wording confirmed by a
+      higher-authority date rather than contradicted by it.
+  runtime_use: PARTIALLY_EVALUABLE
   runtime_use_reason: >
-    Milestones are RELATIVE ("منتصف الفصل السابق"), never absolute. Converting them
-    to dates needs TU_ACADEMIC_CALENDAR. The relative sequence may be explained; no
-    date may be asserted or implied.
+    The preference-registration window is answerable for 1448 term 2 ONLY. The other
+    milestones on this record ("بعد انتهاء تسجيل الطالب", "قبل بداية الفصل") remain
+    relative and have no calendar row of their own.
 
 - policy_id: TU.REG.CHANGES_CLOSE_ONE_WEEK_BEFORE
   topic: registration_process
@@ -96,16 +106,34 @@
   verification: *v_extracted
   extraction_confidence: high
   runtime_use: PROHIBITED_FOR_DECISION
-  runtime_use_reason: TERM_START is unknown without TU_ACADEMIC_CALENDAR
+  runtime_use_reason: >
+    SUPERSEDED ON THE FACTS by a higher-authority source. Do not serve the "بأسبوع"
+    figure. See CONFLICT.ADD_DROP_DEADLINE in sources.yaml.
+  superseded_by:
+    conflict_id: CONFLICT.ADD_DROP_DEADLINE
+    document_id: TU_ACADEMIC_CALENDAR_1448_T1
+    authority_level: OFFICIAL_ACADEMIC_CALENDAR
+    observed: >
+      For term 1 of 1448 the calendar puts الحذف والإضافة at 20-22 August 2026 and
+      بداية الدراسة at 23 August 2026 — one day, not the week this record states.
+  calendar_binding:
+    document_id: TU_ACADEMIC_CALENDAR_1448_T1
+    add_drop: { starts: 20-أغسطس-2026, ends: 22-أغسطس-2026 }
+    term_start: 23-أغسطس-2026
+    covers_term_only: { academic_year_hijri: "1448", term: 1 }
   notes: >
-    The closest the guide comes to answering Q31 ("آخر موعد للحذف والإضافة"). It
-    gives an OFFSET, not a date — which is exactly why the calendar is a blocking
-    source rather than a nice-to-have.
+    The closest the guide comes to answering Q31 ("آخر موعد للحذف والإضافة") — and
+    the calendar now shows the guide's own figure is not what happens in practice.
+    This is the first record where authority_precedence actually decided something,
+    which is the point of having it.
+  resolved_question: >
+    This record previously asked whether "تنتهي كافة إجراءات التسجيل" foreclosed the
+    الحذف والإضافة window as well. The calendar answers it: it does not. Add/drop
+    runs after the guide's stated cut-off, immediately before teaching starts.
   open_question: >
-    Possible tension with the الحذف والإضافة period, which p.7 and p.23 both
-    describe as falling INSIDE the term but outside the 15 counted weeks. Whether
-    "تنتهي كافة إجراءات التسجيل" refers to early registration only, or forecloses
-    the add/drop window too, is not resolvable from the guide alone.
+    Whether the guide's week-long rule is simply wrong, or was accurate under an
+    earlier calendar, cannot be told from a single term's capture. Resolve against
+    TU_UNDERGRAD_REGULATION.
 
 - policy_id: TU.REG.ADVISER_DUTIES_AT_REGISTRATION
   topic: registration_process

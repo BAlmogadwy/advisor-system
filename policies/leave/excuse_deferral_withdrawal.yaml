@@ -69,8 +69,17 @@
   currentness_status: UNVERIFIED
   verification: *v_extracted
   extraction_confidence: high
-  runtime_use: PROHIBITED_FOR_DECISION
-  runtime_use_reason: calendar_not_obtained
+  calendar_binding:
+    document_id: TU_ACADEMIC_CALENDAR_1448_T1
+    event_ar: انتهاء تنفيذ طلبات الاعتذار عن الدراسة للفصل الدراسي الأول 1448هـ (للنظام الفصلي)
+    deadline: { hijri: 17-جمادى الأولى-1448, gregorian: 28-أكتوبر-2026 }
+    teaching_week: العاشر
+    covers_term_only: { academic_year_hijri: "1448", term: 1 }
+  runtime_use: PARTIALLY_EVALUABLE
+  runtime_use_reason: >
+    Answerable for term 1 of 1448 ONLY, from the bound calendar event. For any other
+    term the deadline is unknown and must be reported as unknown — the Hijri dates
+    move every year, so this date must never be reused.
 
 - policy_id: TU.EXCUSE.COUNTS_TOWARD_DURATION
   topic: semester_excuse
@@ -155,8 +164,24 @@
   currentness_status: UNVERIFIED
   verification: *v_extracted
   extraction_confidence: high
-  runtime_use: PROHIBITED_FOR_DECISION
-  runtime_use_reason: calendar_not_obtained
+  calendar_binding:
+    document_id: TU_ACADEMIC_CALENDAR_1448_T1
+    events:
+      - { event_ar: انتهاء تنفيذ طلبات تأجيل الفصل الدراسي الأول 1448هـ,
+          deadline: { hijri: 02-ربيع الأول-1448, gregorian: 15-أغسطس-2026 }, defers: TERM_1 }
+      - { event_ar: انتهاء تنفيذ طلبات تأجيل الدراسة للفصل الثاني 1448هـ,
+          deadline: { hijri: 22-جمادى الآخرة-1448, gregorian: 02-ديسمبر-2026 }, defers: TERM_2 }
+    note: >
+      Two deadlines, and which one applies depends on the term being DEFERRED, not
+      the term the student is in: deferring term 1 closes BEFORE term 1 starts
+      (15 Aug, term starts 23 Aug), while deferring term 2 closes during term 1.
+      An answer that quotes the nearer date without checking which term the student
+      means will be wrong roughly half the time.
+    covers_term_only: { academic_year_hijri: "1448", terms: [1, 2] }
+  runtime_use: PARTIALLY_EVALUABLE
+  runtime_use_reason: >
+    Answerable for 1448 terms 1 and 2 ONLY, and only after establishing which term
+    the student intends to defer.
 
 - policy_id: TU.DEFERRAL.NOT_COUNTED
   topic: study_deferral
@@ -236,8 +261,23 @@
   currentness_status: UNVERIFIED
   verification: *v_extracted
   extraction_confidence: high
-  runtime_use: PROHIBITED_FOR_DECISION
-  runtime_use_reason: calendar_not_obtained
+  calendar_binding:
+    document_id: TU_ACADEMIC_CALENDAR_1448_T1
+    event_ar: انتهاء تنفيذ الانسحاب بعذر من المقرر للفصل الدراسي الأول 1448هـ (للنظام الفصلي والنظام السنوي)
+    deadline: { hijri: 03-جمادى الأولى-1448, gregorian: 14-أكتوبر-2026 }
+    teaching_week: الثامن
+    covers_term_only: { academic_year_hijri: "1448", term: 1 }
+    note: >
+      The calendar calls this "الانسحاب بعذر" — withdrawal WITH EXCUSE — while the
+      guide's p.24 column is headed "الانسحاب من مقرر" with no such qualifier, and
+      p.29 lists the symbol W/(ع) as "منسحب بعذر". Whether the guide's five-withdrawal
+      allowance and the calendar's excused withdrawal are the same instrument is not
+      established by either source. Do not merge them.
+  runtime_use: PARTIALLY_EVALUABLE
+  runtime_use_reason: >
+    Deadline answerable for term 1 of 1448 ONLY. Eligibility remains
+    PROHIBITED_FOR_DECISION regardless of the date — see TU.WITHDRAWAL.MAXIMUM,
+    whose withdrawal counter does not exist in any data source.
 
 - policy_id: TU.WITHDRAWAL.MAXIMUM
   topic: course_withdrawal
