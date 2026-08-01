@@ -20,6 +20,11 @@ meta:
   scope: 'STUDENT-ONLY adviser. No expectation may name a capability a student cannot call. Staff-voiced
     requests are retained as scope probes whose correct answer is a refusal: [''aggregate_demand'', ''course_eligibility'',
     ''find_students'', ''graduation_shortfall'', ''portfolio_triage'']'
+  reason_codes:
+    NOT_WIRED: The data and a working function both exist; no registered capability exposes them. Distinct
+      from STRUCTURALLY_UNREPRESENTABLE and NO_STUDENT_DATA, which are permanent until a new data source
+      arrives. Filing a wiring gap as a data gap makes it invisible and permanent — these questions are
+      one capability away.
 expectations:
 - id: 1
   answer_mode: FULL
@@ -269,7 +274,7 @@ expectations:
     specifically (p.27) and must not be stated as a general rule for every student.
 - id: 10
   answer_mode: PARTIAL
-  reason_code: OTHER_SYSTEM
+  reason_code: NOT_WIRED
   policy_ids:
   - TU.ADVISING.TOOLS
   - TU.CONTACT.ADVISER_CHANNELS
@@ -293,6 +298,17 @@ expectations:
     so there is no offering history at all. The cited calendar row is audience STAFF — quote it as context
     for when schedules appear, not as an action the student performs. Do not extrapolate the date to another
     term.'
+  wiring_gap:
+    asks_for: is a course offered this term
+    data_exists: true
+    functions_that_answer_it:
+    - core.models.TermSection / TermSectionMeeting (sections, days, times, rooms, capacity)
+    - core.services.group_availability._intervals_overlap + _hhmm_to_min (clash detection)
+    - core.services.student_sections.get_student_term_baseline (the student's current board)
+    - core.services.planner_builder.build_plans (CP-SAT clash-free construction)
+    blocker: None of these is registered as an adviser capability, so the model cannot reach them. This
+      is a WIRING gap, not a data gap — unlike grades or attendance, the answer exists today and is one
+      capability away.
 - id: 11
   answer_mode: PARTIAL
   reason_code: NO_STUDENT_DATA
@@ -527,7 +543,7 @@ expectations:
     the same name maps to different codes and different prerequisites across AI/AI2, DS/DS2, CS/CS2.'
 - id: 20
   answer_mode: PARTIAL
-  reason_code: NO_POLICY_SOURCE
+  reason_code: NOT_WIRED
   policy_ids:
   - TU.DEF.PROGRAMME_AND_COURSES
   - TU.REG.STUDENT_CHOICES_FINAL
@@ -552,9 +568,20 @@ expectations:
     is course equivalence for transferred/visiting study, not prerequisite substitution — offering it
     as the answer would be a category error. Elective substitution (ElectiveCourse/ElectiveTermMapping)
     exists in the data for electives only and does not apply to a mandatory prerequisite.
+  wiring_gap:
+    asks_for: is a prerequisite offered this term
+    data_exists: true
+    functions_that_answer_it:
+    - core.models.TermSection / TermSectionMeeting (sections, days, times, rooms, capacity)
+    - core.services.group_availability._intervals_overlap + _hhmm_to_min (clash detection)
+    - core.services.student_sections.get_student_term_baseline (the student's current board)
+    - core.services.planner_builder.build_plans (CP-SAT clash-free construction)
+    blocker: None of these is registered as an adviser capability, so the model cannot reach them. This
+      is a WIRING gap, not a data gap — unlike grades or attendance, the answer exists today and is one
+      capability away.
 - id: 21
   answer_mode: PARTIAL
-  reason_code: OTHER_SYSTEM
+  reason_code: NOT_WIRED
   policy_ids:
   - TU.REG.ADVISER_DUTIES_AT_REGISTRATION
   - TU.REG.ADVISER_CAN_REGISTER_DIRECTLY
@@ -582,6 +609,17 @@ expectations:
     بأسبوع» must never be served as operative — that string is the single highest-value trap here. The
     registry has no student-facing tool that lists other sections of a course; my_timetable returns only
     the student''s own registered meetings.'
+  wiring_gap:
+    asks_for: two courses clash — what are my options
+    data_exists: true
+    functions_that_answer_it:
+    - core.models.TermSection / TermSectionMeeting (sections, days, times, rooms, capacity)
+    - core.services.group_availability._intervals_overlap + _hhmm_to_min (clash detection)
+    - core.services.student_sections.get_student_term_baseline (the student's current board)
+    - core.services.planner_builder.build_plans (CP-SAT clash-free construction)
+    blocker: None of these is registered as an adviser capability, so the model cannot reach them. This
+      is a WIRING gap, not a data gap — unlike grades or attendance, the answer exists today and is one
+      capability away.
 - id: 22
   answer_mode: EXPLAIN_ONLY
   reason_code: NO_POLICY_SOURCE
@@ -632,7 +670,7 @@ expectations:
     cited calendar row is STAFF-audience and covers 1448 T1 capture only.
 - id: 24
   answer_mode: PARTIAL
-  reason_code: OTHER_SYSTEM
+  reason_code: NOT_WIRED
   policy_ids:
   - TU.REG.ADVISER_CAN_REGISTER_DIRECTLY
   - TU.REG.STUDENT_CHOICES_FINAL
@@ -660,6 +698,17 @@ expectations:
     freshness, and no student-facing capability lists sections of a course — so no live seat count may
     be quoted. The offer of alternative open courses (my_progress) is the genuinely useful part of the
     answer.
+  wiring_gap:
+    asks_for: all sections closed
+    data_exists: true
+    functions_that_answer_it:
+    - core.models.TermSection / TermSectionMeeting (sections, days, times, rooms, capacity)
+    - core.services.group_availability._intervals_overlap + _hhmm_to_min (clash detection)
+    - core.services.student_sections.get_student_term_baseline (the student's current board)
+    - core.services.planner_builder.build_plans (CP-SAT clash-free construction)
+    blocker: None of these is registered as an adviser capability, so the model cannot reach them. This
+      is a WIRING gap, not a data gap — unlike grades or attendance, the answer exists today and is one
+      capability away.
 - id: 25
   answer_mode: EXPLAIN_ONLY
   reason_code: NO_POLICY_SOURCE
@@ -742,7 +791,7 @@ expectations:
     year.'
 - id: 28
   answer_mode: PARTIAL
-  reason_code: OPINION_NOT_FACT
+  reason_code: NOT_WIRED
   policy_ids:
   - TU.REG.ADVISER_DUTIES_AT_REGISTRATION
   - TU.REG.STUDENT_CHOICES_FINAL
@@ -767,6 +816,17 @@ expectations:
     lists candidate sections for a student, so any comparison of sections is invented. ''أفضل'' is also
     a preference, not an institutional fact: TU.REG.ADVISER_DUTIES_AT_REGISTRATION gives the one objective
     criterion (no clash) and assigns the check to the adviser.'
+  wiring_gap:
+    asks_for: which section best fits my schedule
+    data_exists: true
+    functions_that_answer_it:
+    - core.models.TermSection / TermSectionMeeting (sections, days, times, rooms, capacity)
+    - core.services.group_availability._intervals_overlap + _hhmm_to_min (clash detection)
+    - core.services.student_sections.get_student_term_baseline (the student's current board)
+    - core.services.planner_builder.build_plans (CP-SAT clash-free construction)
+    blocker: None of these is registered as an adviser capability, so the model cannot reach them. This
+      is a WIRING gap, not a data gap — unlike grades or attendance, the answer exists today and is one
+      capability away.
 - id: 29
   answer_mode: EXPLAIN_ONLY
   reason_code: NO_POLICY_SOURCE
@@ -802,7 +862,7 @@ expectations:
     case (a) or (b).'
 - id: 30
   answer_mode: PARTIAL
-  reason_code: NO_POLICY_SOURCE
+  reason_code: NOT_WIRED
   policy_ids:
   - TU.REG.ADVISER_DUTIES_AT_REGISTRATION
   - TU.REG.STUDENT_CHOICES_FINAL
@@ -827,6 +887,17 @@ expectations:
     returns room and instructor only. An answer that names buildings is hallucinating from the question''s
     own premise. A travel-time gap is not a تعارض: TU.REG.ADVISER_DUTIES_AT_REGISTRATION obliges the adviser
     to confirm no clash and that the student knows المكان والزمان, nothing more.'
+  wiring_gap:
+    asks_for: back-to-back lectures in distant buildings — change section
+    data_exists: true
+    functions_that_answer_it:
+    - core.models.TermSection / TermSectionMeeting (sections, days, times, rooms, capacity)
+    - core.services.group_availability._intervals_overlap + _hhmm_to_min (clash detection)
+    - core.services.student_sections.get_student_term_baseline (the student's current board)
+    - core.services.planner_builder.build_plans (CP-SAT clash-free construction)
+    blocker: None of these is registered as an adviser capability, so the model cannot reach them. This
+      is a WIRING gap, not a data gap — unlike grades or attendance, the answer exists today and is one
+      capability away.
 - id: 31
   answer_mode: EXPLAIN_ONLY
   reason_code: CALENDAR_SCOPE
@@ -3338,7 +3409,7 @@ expectations:
     so citing a page for a number is a fabrication.
 - id: 117
   answer_mode: PARTIAL
-  reason_code: OPINION_NOT_FACT
+  reason_code: NOT_WIRED
   policy_ids:
   - TU.DEF.PROGRAMME_AND_COURSES
   - TU.REG.ADVISER_DUTIES_AT_REGISTRATION
@@ -3366,9 +3437,20 @@ expectations:
   notes: 'The factual half is real: ElectiveCourse/ElectiveTermMapping give which real courses fill the
     placeholders this term, plus prereqs and clash. Caveat worth surfacing: some placeholders have no
     ElectiveTermMapping rows, so ''no options listed'' may mean unmapped data, not ''nothing offered''.'
+  wiring_gap:
+    asks_for: choosing between electives
+    data_exists: true
+    functions_that_answer_it:
+    - core.models.TermSection / TermSectionMeeting (sections, days, times, rooms, capacity)
+    - core.services.group_availability._intervals_overlap + _hhmm_to_min (clash detection)
+    - core.services.student_sections.get_student_term_baseline (the student's current board)
+    - core.services.planner_builder.build_plans (CP-SAT clash-free construction)
+    blocker: None of these is registered as an adviser capability, so the model cannot reach them. This
+      is a WIRING gap, not a data gap — unlike grades or attendance, the answer exists today and is one
+      capability away.
 - id: 118
   answer_mode: PARTIAL
-  reason_code: NO_POLICY_SOURCE
+  reason_code: NOT_WIRED
   policy_ids:
   - TU.DEF.PROGRAMME_AND_COURSES
   - TU.REG.STUDENT_CHOICES_FINAL
@@ -3397,6 +3479,17 @@ expectations:
   notes: Offering status is checkable (ElectiveTermMapping / TermSection for the term); the remedy is
     not sourced. Note also the known data gap where some placeholders have no mapping — the answer should
     not turn 'unmapped' into 'the department cancelled it'.
+  wiring_gap:
+    asks_for: the elective I want is not offered
+    data_exists: true
+    functions_that_answer_it:
+    - core.models.TermSection / TermSectionMeeting (sections, days, times, rooms, capacity)
+    - core.services.group_availability._intervals_overlap + _hhmm_to_min (clash detection)
+    - core.services.student_sections.get_student_term_baseline (the student's current board)
+    - core.services.planner_builder.build_plans (CP-SAT clash-free construction)
+    blocker: None of these is registered as an adviser capability, so the model cannot reach them. This
+      is a WIRING gap, not a data gap — unlike grades or attendance, the answer exists today and is one
+      capability away.
 - id: 119
   answer_mode: PARTIAL
   reason_code: NO_POLICY_SOURCE
@@ -3776,7 +3869,7 @@ expectations:
     must not be repeated.'
 - id: 131
   answer_mode: PARTIAL
-  reason_code: OTHER_SYSTEM
+  reason_code: NOT_WIRED
   policy_ids:
   - TU.DEF.PROGRAMME_AND_COURSES
   - TU.REG.ADVISER_DUTIES_AT_REGISTRATION
@@ -3805,6 +3898,17 @@ expectations:
     TU.DEF.PROGRAMME_AND_COURSES gives the official definitions). The model must actually call why_course_locked/course_prerequisites
     rather than guessing a cause; asserting «غير مطروح» without checking sections is as wrong as asserting
     a system bug.'
+  wiring_gap:
+    asks_for: in my plan but not showing in registration
+    data_exists: true
+    functions_that_answer_it:
+    - core.models.TermSection / TermSectionMeeting (sections, days, times, rooms, capacity)
+    - core.services.group_availability._intervals_overlap + _hhmm_to_min (clash detection)
+    - core.services.student_sections.get_student_term_baseline (the student's current board)
+    - core.services.planner_builder.build_plans (CP-SAT clash-free construction)
+    blocker: None of these is registered as an adviser capability, so the model cannot reach them. This
+      is a WIRING gap, not a data gap — unlike grades or attendance, the answer exists today and is one
+      capability away.
 - id: 132
   answer_mode: PARTIAL
   reason_code: OTHER_SYSTEM
@@ -4079,7 +4183,7 @@ expectations:
     add anything regardless of prerequisites or the load ceiling».'
 - id: 141
   answer_mode: PARTIAL
-  reason_code: OTHER_SYSTEM
+  reason_code: NOT_WIRED
   policy_ids:
   - TU.REG.ADVISER_DUTIES_AT_REGISTRATION
   - TU.REG.STUDENT_CHOICES_FINAL
@@ -4104,9 +4208,20 @@ expectations:
     is genuinely computable — a blanket refusal is wrong. What is NOT available: any other section''s
     times or seats (the tool''s own note says «not a live seat count»). No obtained source regulates gaps;
     inventing one is the headline hallucination risk.'
+  wiring_gap:
+    asks_for: four-hour gap between lectures
+    data_exists: true
+    functions_that_answer_it:
+    - core.models.TermSection / TermSectionMeeting (sections, days, times, rooms, capacity)
+    - core.services.group_availability._intervals_overlap + _hhmm_to_min (clash detection)
+    - core.services.student_sections.get_student_term_baseline (the student's current board)
+    - core.services.planner_builder.build_plans (CP-SAT clash-free construction)
+    blocker: None of these is registered as an adviser capability, so the model cannot reach them. This
+      is a WIRING gap, not a data gap — unlike grades or attendance, the answer exists today and is one
+      capability away.
 - id: 142
   answer_mode: PARTIAL
-  reason_code: OTHER_SYSTEM
+  reason_code: NOT_WIRED
   policy_ids:
   - TU.LOAD.SEMESTER_RANGE
   - TU.REGISTRATION.STRUGGLING_STUDENTS
@@ -4135,9 +4250,20 @@ expectations:
     a conflicts_with_implementation flag (code publishes 18 as MAX_CREDITS — that is this system's RECOMMENDATION
     cap per credit_policy.py, not the regulatory limit). If a figure is quoted at all it must be the guide's,
     hedged, and never presented as this system's cap.
+  wiring_gap:
+    asks_for: compress my week into three days
+    data_exists: true
+    functions_that_answer_it:
+    - core.models.TermSection / TermSectionMeeting (sections, days, times, rooms, capacity)
+    - core.services.group_availability._intervals_overlap + _hhmm_to_min (clash detection)
+    - core.services.student_sections.get_student_term_baseline (the student's current board)
+    - core.services.planner_builder.build_plans (CP-SAT clash-free construction)
+    blocker: None of these is registered as an adviser capability, so the model cannot reach them. This
+      is a WIRING gap, not a data gap — unlike grades or attendance, the answer exists today and is one
+      capability away.
 - id: 143
   answer_mode: PARTIAL
-  reason_code: OTHER_SYSTEM
+  reason_code: NOT_WIRED
   policy_ids:
   - TU.REG.EARLY_REGISTRATION_TIMING
   - TU.ATTENDANCE.AUTO_REGISTRATION_TRAP
@@ -4165,9 +4291,20 @@ expectations:
   notes: 'Datable bonus from the calendar_binding on TU.REG.EARLY_REGISTRATION_TIMING: تسجيل الرغبات للفصل
     الثاني 1448هـ runs 11–15 أكتوبر 2026 (teaching week 8, which corroborates «منتصف الفصل السابق»). Covers
     that term only — must not be reused for any other term.'
+  wiring_gap:
+    asks_for: avoid late lectures
+    data_exists: true
+    functions_that_answer_it:
+    - core.models.TermSection / TermSectionMeeting (sections, days, times, rooms, capacity)
+    - core.services.group_availability._intervals_overlap + _hhmm_to_min (clash detection)
+    - core.services.student_sections.get_student_term_baseline (the student's current board)
+    - core.services.planner_builder.build_plans (CP-SAT clash-free construction)
+    blocker: None of these is registered as an adviser capability, so the model cannot reach them. This
+      is a WIRING gap, not a data gap — unlike grades or attendance, the answer exists today and is one
+      capability away.
 - id: 144
   answer_mode: PARTIAL
-  reason_code: OTHER_SYSTEM
+  reason_code: NOT_WIRED
   policy_ids:
   - TU.REG.STUDENT_CHOICES_FINAL
   - TU.REG.ADVISER_CAN_REGISTER_DIRECTLY
@@ -4193,9 +4330,20 @@ expectations:
   notes: 'Same structure as Q130/Q141: the diagnosis is available from my_timetable, the remedy is not.
     CONFLICT.ADD_DROP_DEADLINE — the calendar''s dates govern; the guide''s week-long rule must not be
     served.'
+  wiring_gap:
+    asks_for: morning lecture and end-of-day lecture
+    data_exists: true
+    functions_that_answer_it:
+    - core.models.TermSection / TermSectionMeeting (sections, days, times, rooms, capacity)
+    - core.services.group_availability._intervals_overlap + _hhmm_to_min (clash detection)
+    - core.services.student_sections.get_student_term_baseline (the student's current board)
+    - core.services.planner_builder.build_plans (CP-SAT clash-free construction)
+    blocker: None of these is registered as an adviser capability, so the model cannot reach them. This
+      is a WIRING gap, not a data gap — unlike grades or attendance, the answer exists today and is one
+      capability away.
 - id: 145
   answer_mode: EXPLAIN_ONLY
-  reason_code: OPINION_NOT_FACT
+  reason_code: NOT_WIRED
   policy_ids:
   - TU.REGISTRATION.STRUGGLING_STUDENTS
   - TU.LOAD.SEMESTER_RANGE
@@ -4225,9 +4373,20 @@ expectations:
     guidance. TU.REGISTRATION.STRUGGLING_STUDENTS is the closest citable content and its three constraints
     are already enforced by existing services; TU.ATTENDANCE.DEFERRING_EARLY_COURSES_TRAP is actionable
     from my_progress.
+  wiring_gap:
+    asks_for: best weekly distribution
+    data_exists: true
+    functions_that_answer_it:
+    - core.models.TermSection / TermSectionMeeting (sections, days, times, rooms, capacity)
+    - core.services.group_availability._intervals_overlap + _hhmm_to_min (clash detection)
+    - core.services.student_sections.get_student_term_baseline (the student's current board)
+    - core.services.planner_builder.build_plans (CP-SAT clash-free construction)
+    blocker: None of these is registered as an adviser capability, so the model cannot reach them. This
+      is a WIRING gap, not a data gap — unlike grades or attendance, the answer exists today and is one
+      capability away.
 - id: 146
   answer_mode: PARTIAL
-  reason_code: OTHER_SYSTEM
+  reason_code: NOT_WIRED
   policy_ids:
   - TU.LOAD.SEMESTER_RANGE
   - TU.REGISTRATION.STRUGGLING_STUDENTS
@@ -4254,9 +4413,20 @@ expectations:
   notes: 'Near-duplicate of Q142 but sharper: compressing into two days collides with the 12-unit minimum
     load far more often, and that tension is the substantive content. Never assert that a two-day schedule
     is achievable — no capability can see the offering grid.'
+  wiring_gap:
+    asks_for: group courses into two or three days
+    data_exists: true
+    functions_that_answer_it:
+    - core.models.TermSection / TermSectionMeeting (sections, days, times, rooms, capacity)
+    - core.services.group_availability._intervals_overlap + _hhmm_to_min (clash detection)
+    - core.services.student_sections.get_student_term_baseline (the student's current board)
+    - core.services.planner_builder.build_plans (CP-SAT clash-free construction)
+    blocker: None of these is registered as an adviser capability, so the model cannot reach them. This
+      is a WIRING gap, not a data gap — unlike grades or attendance, the answer exists today and is one
+      capability away.
 - id: 147
   answer_mode: PARTIAL
-  reason_code: OTHER_SYSTEM
+  reason_code: NOT_WIRED
   policy_ids:
   - TU.REG.ADVISER_DUTIES_AT_REGISTRATION
   - TU.REGISTRATION.STRUGGLING_STUDENTS
@@ -4282,9 +4452,20 @@ expectations:
     section) and TermSectionMeeting carries day/time/room/instructor — there is no lecture-vs-lab distinction
     anywhere in the student-facing data. Overlap among the student''s OWN registered meetings is computable
     from my_timetable; labelling one side «العملي» is not.'
+  wiring_gap:
+    asks_for: lecture clashes with the lab
+    data_exists: true
+    functions_that_answer_it:
+    - core.models.TermSection / TermSectionMeeting (sections, days, times, rooms, capacity)
+    - core.services.group_availability._intervals_overlap + _hhmm_to_min (clash detection)
+    - core.services.student_sections.get_student_term_baseline (the student's current board)
+    - core.services.planner_builder.build_plans (CP-SAT clash-free construction)
+    blocker: None of these is registered as an adviser capability, so the model cannot reach them. This
+      is a WIRING gap, not a data gap — unlike grades or attendance, the answer exists today and is one
+      capability away.
 - id: 148
   answer_mode: PARTIAL
-  reason_code: OTHER_SYSTEM
+  reason_code: NOT_WIRED
   policy_ids:
   - TU.REG.STUDENT_CHOICES_FINAL
   - TU.REG.ADVISER_CAN_REGISTER_DIRECTLY
@@ -4310,6 +4491,17 @@ expectations:
   notes: 'Both a NO and a YES are hallucinations here — the offering catalogue is not exposed by any capability,
     and my_timetable explicitly disclaims live seat counts. must_abstain covers the existence claim, not
     the whole answer: showing the registered time and naming the right desk is still expected.'
+  wiring_gap:
+    asks_for: lab time does not suit me — alternative
+    data_exists: true
+    functions_that_answer_it:
+    - core.models.TermSection / TermSectionMeeting (sections, days, times, rooms, capacity)
+    - core.services.group_availability._intervals_overlap + _hhmm_to_min (clash detection)
+    - core.services.student_sections.get_student_term_baseline (the student's current board)
+    - core.services.planner_builder.build_plans (CP-SAT clash-free construction)
+    blocker: None of these is registered as an adviser capability, so the model cannot reach them. This
+      is a WIRING gap, not a data gap — unlike grades or attendance, the answer exists today and is one
+      capability away.
 - id: 149
   answer_mode: EXPLAIN_ONLY
   reason_code: NO_POLICY_SOURCE
@@ -4474,7 +4666,7 @@ expectations:
     The load-bearing point is the timing mismatch: add/drop is over long before finals.'
 - id: 155
   answer_mode: PARTIAL
-  reason_code: OTHER_SYSTEM
+  reason_code: NOT_WIRED
   policy_ids:
   - TU.REG.STUDENT_CHOICES_FINAL
   - TU.REG.ADVISER_CAN_REGISTER_DIRECTLY
@@ -4502,6 +4694,17 @@ expectations:
     for the caller''s own registrations. There is NO capability that enumerates a course''s sections or
     their meeting times, so any ''alternative section'' the model offers is fabricated. TU.REGISTRATION.STRUGGLING_STUDENTS
     is worth citing because it guarantees a clash-free minimum load for متعثر students specifically.'
+  wiring_gap:
+    asks_for: none of the section times suit me
+    data_exists: true
+    functions_that_answer_it:
+    - core.models.TermSection / TermSectionMeeting (sections, days, times, rooms, capacity)
+    - core.services.group_availability._intervals_overlap + _hhmm_to_min (clash detection)
+    - core.services.student_sections.get_student_term_baseline (the student's current board)
+    - core.services.planner_builder.build_plans (CP-SAT clash-free construction)
+    blocker: None of these is registered as an adviser capability, so the model cannot reach them. This
+      is a WIRING gap, not a data gap — unlike grades or attendance, the answer exists today and is one
+      capability away.
 - id: 156
   answer_mode: PARTIAL
   reason_code: NO_POLICY_SOURCE
@@ -4823,7 +5026,7 @@ expectations:
     warning''.'
 - id: 167
   answer_mode: PARTIAL
-  reason_code: OTHER_SYSTEM
+  reason_code: NOT_WIRED
   policy_ids:
   - TU.REG.STUDENT_CHOICES_FINAL
   - TU.REG.ADVISER_CAN_REGISTER_DIRECTLY
@@ -4848,6 +5051,17 @@ expectations:
     registered meetings are reachable through my_timetable, so any named alternative instructor is invented.
     No record in the store speaks to instructor preference in either direction, so both a granted right
     and a refusal are fabrications.'
+  wiring_gap:
+    asks_for: take the course with a different instructor
+    data_exists: true
+    functions_that_answer_it:
+    - core.models.TermSection / TermSectionMeeting (sections, days, times, rooms, capacity)
+    - core.services.group_availability._intervals_overlap + _hhmm_to_min (clash detection)
+    - core.services.student_sections.get_student_term_baseline (the student's current board)
+    - core.services.planner_builder.build_plans (CP-SAT clash-free construction)
+    blocker: None of these is registered as an adviser capability, so the model cannot reach them. This
+      is a WIRING gap, not a data gap — unlike grades or attendance, the answer exists today and is one
+      capability away.
 - id: 168
   answer_mode: EXPLAIN_ONLY
   reason_code: NO_POLICY_SOURCE
