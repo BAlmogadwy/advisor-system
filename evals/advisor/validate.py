@@ -74,7 +74,13 @@ def load_prohibited() -> set[str]:
     return out
 
 
-def load_capability_names() -> set[str]:
+def load_capability_names() -> tuple[set[str], set[str]]:
+    """Returns (all registered names, names a STUDENT may not call).
+
+    The adviser is student-only. A staff-scoped tool named in an expected answer is
+    not a typo — it means the set expects an answer the registry will refuse to
+    produce, and grading against it would reward talking past a working control.
+    """
     import os
 
     import django
@@ -83,9 +89,11 @@ def load_capability_names() -> set[str]:
     sys.path.insert(0, str(ROOT))
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
     django.setup()
+    from core.services.rbac import ROLE_STUDENT
     from core.services.virtual_advisor_capabilities import get_default_registry
 
-    return set(get_default_registry().capabilities)
+    reg = get_default_registry().capabilities
+    return set(reg), {n for n, c in reg.items() if ROLE_STUDENT not in c.allowed_roles}
 
 
 def main() -> int:
@@ -97,7 +105,7 @@ def main() -> int:
 
     policy_ids = load_policy_ids()
     prohibited = load_prohibited()
-    capabilities = load_capability_names()
+    capabilities, staff_only = load_capability_names()
 
     problems: list[str] = []
 
@@ -127,6 +135,12 @@ def main() -> int:
         for cap in e.get("capabilities") or []:
             if cap not in capabilities:
                 problems.append(f"{tag}: names capability {cap!r} which is not registered")
+            elif cap in staff_only:
+                problems.append(
+                    f"{tag}: names {cap!r}, which a student may not call. The adviser is "
+                    "student-only; a staff-voiced question is a scope PROBE whose correct "
+                    "answer is a refusal, not a tool call."
+                )
 
         if mode in ("FULL", "PARTIAL") and not (e.get("capabilities") or e.get("policy_ids")):
             problems.append(f"{tag}: {mode} but names neither a capability nor a policy_id")
