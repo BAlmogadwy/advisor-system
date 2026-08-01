@@ -751,3 +751,150 @@ def test_clash_free_sections_never_calls_the_catalogue_a_term():
     )
     assert "compared_against_term" in out, "the answer must name the term it compared against"
     assert "carry NO term of their own" in out["note"]
+
+
+def _plan_course(program: str, code: str, credits: int, term: int = 1):
+    from core.models import ProgrammeRequirement
+
+    ProgrammeRequirement.objects.get_or_create(
+        program=program, course_code=code,
+        defaults={"course_name": code, "type": "Mandatory",
+                  "programme_term": term, "credit_hours": credits},
+    )
+
+
+def test_build_my_timetable_places_what_it_can_and_explains_the_rest():
+    from core.models import Student
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    Student.objects.create(student_id=SID, name="S", program="AI", section="M")
+    _plan_course("AI", "ZZ310", 3)
+    _plan_course("AI", "ZZ320", 3)
+    _section_with("ZZ310", "M1", [("SUN", "08:00", "09:15")])
+    # ZZ320 is in the plan but has NO section on file — the common case, 169 of 246.
+
+    out = get_default_registry().execute(
+        "build_my_timetable", {"student_id": SID, "must_include": ["ZZ310", "ZZ320"]},
+        scope={"role": ROLE_SUPER_ADMIN}, ctx={"academic_year": 1448, "term": 1},
+    )
+    assert out["ok"] is True
+    assert [p["course_code"] for p in out["placed"]] == ["ZZ310"]
+    assert out["placed"][0]["meetings"] == ["SUN 08:00-09:15"]
+
+    gap = next(u for u in out["unplaced"] if u["course_code"] == "ZZ320")
+    assert gap["reason_code"] == "NOT_ON_FILE"
+
+
+def test_build_my_timetable_never_says_a_course_is_unavailable():
+    """build_plans emits 'No sections available'. That claims the university offers
+    none, when it means our catalogue holds none — 169 of 246 plan codes."""
+    from core.models import Student
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    Student.objects.create(student_id=SID, name="S", program="AI", section="M")
+    _plan_course("AI", "ZZ330", 3)
+    out = get_default_registry().execute(
+        "build_my_timetable", {"student_id": SID, "must_include": ["ZZ330"]},
+        scope={"role": ROLE_SUPER_ADMIN}, ctx={"academic_year": 1448, "term": 1},
+    )
+    assert "No sections available" not in str(out), "the raw builder wording leaked through"
+    assert "NOT_ON_FILE" in out["note"]
+
+
+def test_build_my_timetable_respects_a_credit_ceiling():
+    from core.models import Student
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    Student.objects.create(student_id=SID, name="S", program="AI", section="M")
+    for i, day in enumerate(("SUN", "MON", "TUE", "WED")):
+        _plan_course("AI", f"ZZ4{i}0", 3)
+        _section_with(f"ZZ4{i}0", "M1", [(day, "08:00", "09:15")])
+
+    codes = [f"ZZ4{i}0" for i in range(4)]
+    capped = get_default_registry().execute(
+        "build_my_timetable", {"student_id": SID, "must_include": codes, "max_credits": 6},
+        scope={"role": ROLE_SUPER_ADMIN}, ctx={"academic_year": 1448, "term": 1},
+    )
+    assert capped["planned_credit_hours"] <= 6, "the ceiling is a hard constraint, not a hint"
+
+
+def test_build_my_timetable_promises_nothing_it_cannot_deliver():
+    """No seat counts exist (available_capacity NULL on every section), and the tool
+    registers nothing."""
+    from core.models import Student
+    from core.services.rbac import ROLE_STUDENT, ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    Student.objects.create(student_id=SID, name="S", program="AI", section="M")
+    _plan_course("AI", "ZZ500", 3)
+    _section_with("ZZ500", "M1", [("SUN", "08:00", "09:15")])
+    reg = get_default_registry()
+    out = reg.execute("build_my_timetable", {"student_id": SID, "must_include": ["ZZ500"]},
+                      scope={"role": ROLE_SUPER_ADMIN}, ctx={"academic_year": 1448, "term": 1})
+    note = out["note"]
+    assert "never say a section has room" in note
+    assert "not a registration" in note
+
+    denied = reg.execute("build_my_timetable", {"student_id": SID + 1},
+                         scope={"role": ROLE_STUDENT, "student_id": SID},
+                         ctx={"academic_year": 1448, "term": 1})
+    assert denied["ok"] is False
+
+
+def test_must_include_beats_the_recommendation():
+    """A course the student insists on must be scheduled even if the recommender
+    never suggested it — that is the whole point of 'I must take X'."""
+    from core.models import Student
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.recommender import recommend_next_courses
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    Student.objects.create(student_id=SID, name="S", program="AI", section="M")
+    # Plan term 9 with an unmet prerequisite keeps it out of the recommendation.
+    from core.models import Prerequisite
+
+    _plan_course("AI", "ZZ610", 3, term=9)
+    _plan_course("AI", "ZZ600", 3, term=8)
+    # An unmet prerequisite keeps ZZ610 out of the recommendation, so the only way it
+    # can appear in the result is via must_include.
+    Prerequisite.objects.create(program="AI", course_code="ZZ610", prerequisite_course_code="ZZ600")
+    _section_with("ZZ610", "M1", [("TUE", "08:00", "09:15")])
+    assert "ZZ610" not in (recommend_next_courses(SID, 1448, 1) or []), (
+        "fixture invalid: the recommender already suggests this course"
+    )
+
+    out = get_default_registry().execute(
+        "build_my_timetable", {"student_id": SID, "must_include": ["ZZ610"]},
+        scope={"role": ROLE_SUPER_ADMIN}, ctx={"academic_year": 1448, "term": 1},
+    )
+    assert "ZZ610" in out["requested"], "must_include never reached the builder"
+    handled = [p["course_code"] for p in out["placed"]] + [
+        u["course_code"] for u in out["unplaced"]
+    ]
+    assert "ZZ610" in handled
+
+
+def test_builder_is_called_with_the_levers_that_are_safe_on_this_data():
+    """Three build_plans levers are unsafe here and the capability must pin them.
+
+    consider_capacity is dead — available_capacity is NULL on every section and is
+    coerced to 0, so enabling it would mean 'no section has any seat' the moment the
+    coercion changes. suggest_swaps emits placeholder strings, never real swaps.
+    strict_per_course returns scheduled=0 on real data. None of these is observable
+    in the output, which is exactly why they need pinning rather than trusting.
+    """
+    import inspect
+
+    from core.services import virtual_advisor_capabilities as vac
+
+    src = inspect.getsource(vac._exec_build_my_timetable)
+    assert "consider_capacity=False" in src, "the dead capacity lever was re-enabled"
+    assert "suggest_swaps=False" in src, "placeholder swap suggestions were re-enabled"
+    assert "strict_per_course=False" in src, "strict mode returns scheduled=0 on real data"
+    # And the capability must never surface the placeholder swaps.
+    assert "swap_suggestions" not in inspect.getsource(vac._exec_build_my_timetable).split(
+        "return {"
+    )[-1]

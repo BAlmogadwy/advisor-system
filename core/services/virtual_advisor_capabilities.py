@@ -1395,6 +1395,194 @@ def _exec_my_clash_free_sections(
     }
 
 
+#: build_plans reports its own reasons, and one of them is actively misleading to a
+#: student: "No sections available" claims the university offers none, when what it
+#: means is that our catalogue holds none — true for 169 of 246 plan course codes, and
+#: true by definition for every elective placeholder. Each reason is translated to a
+#: code plus wording that says only what the data supports.
+_UNPLACED_REASONS: dict[str, tuple[str, str]] = {
+    "No sections available": (
+        "NOT_ON_FILE",
+        "No section for this course is recorded in our data. That is not the same as "
+        "the university not offering it — check the registration portal.",
+    ),
+    "No non-conflicting sections available": (
+        "ALL_SECTIONS_CLASH",
+        "Every section on file collides with something else in this plan.",
+    ),
+    "Could not fit with chosen constraints/objective": (
+        "DID_NOT_FIT",
+        "It could not be fitted alongside the rest under the limits given.",
+    ),
+    "Model infeasible under current hard constraints": (
+        "DID_NOT_FIT",
+        "No combination satisfied all the limits given.",
+    ),
+}
+
+
+def _translate_unplaced(raw: str) -> tuple[str, str]:
+    text = str(raw or "").strip()
+    for prefix, mapped in _UNPLACED_REASONS.items():
+        if text.startswith(prefix):
+            return mapped
+    if text.lower().startswith("blocked by prerequisites"):
+        return "PREREQUISITES", text
+    if text.lower().startswith("strict mode"):
+        return "DID_NOT_FIT", "It could not be fitted under the limits given."
+    return "OTHER", text
+
+
+def _exec_build_my_timetable(
+    args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
+) -> dict[str, Any]:
+    """A clash-free weekly timetable from the sections on file, with an honest tail.
+
+    Wires the SERVICE ``planner_builder.build_plans`` directly, never the HTTP view —
+    ``planner_build_view`` is staff-only and throttled, and neither applies to a
+    student asking about their own timetable.
+
+    The partial answer is the point. Measured against today's catalogue, a complete
+    timetable is possible for roughly 6% of students; most get some courses placed and
+    some not. So ``unplaced`` and its reasons are returned as first-class output rather
+    than being hidden behind a "no plan found".
+    """
+    from core.models import ProgrammeRequirement, Student
+    from core.services.planner_builder import build_plans
+    from core.services.recommender import recommend_next_courses
+    from core.services.student_sections import (
+        UnknownStudentGender,
+        get_student_term_baseline,
+        student_gender_strict,
+    )
+
+    student_id, error = _resolve_scoped_student_id(args, scope)
+    if error:
+        return {"ok": False, "error": error}
+    year, term, error = _ctx_year_term(args, ctx)
+    if error:
+        return {"ok": False, "error": error}
+
+    try:
+        gender = student_gender_strict(int(student_id))
+    except UnknownStudentGender as exc:
+        return {"ok": False, "error": str(exc), "reason": "COHORT_UNRESOLVED"}
+
+    program = str(
+        Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
+        or ""
+    ).strip()
+    credits = {
+        r["course_code"]: int(r["credit_hours"] or 0)
+        for r in ProgrammeRequirement.objects.filter(program=program).values(
+            "course_code", "credit_hours"
+        )
+    }
+
+    # Courses to place: what the student asked for, else the official recommendation.
+    wanted = args.get("must_include") or []
+    if isinstance(wanted, str):
+        wanted = [wanted]
+    wanted = [normalize_code(c) for c in wanted if str(c).strip()]
+    recommended = [normalize_code(c) for c in (recommend_next_courses(int(student_id), int(year), int(term)) or [])]
+    codes = list(dict.fromkeys(wanted + recommended))
+    if not codes:
+        return {
+            "ok": True,
+            "student_id": int(student_id),
+            "placed": [],
+            "unplaced": [],
+            "note": (
+                "There is nothing to schedule: the recommender returned no courses for "
+                "this student and none were named. That usually means the plan is "
+                "complete or every remaining course is blocked."
+            ),
+            "tool": "build_my_timetable",
+        }
+
+    max_credits = args.get("max_credits")
+    try:
+        cap = int(max_credits) if max_credits not in (None, "") else 0
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "max_credits must be an integer."}
+
+    baseline = get_student_term_baseline(int(student_id), str(year), str(term))
+    keep = bool(args.get("keep_current_sections", False))
+
+    result = build_plans(
+        year=str(year),
+        term=str(term),
+        shortlist=[{"course_code": c, "credits": credits.get(c, 3)} for c in codes],
+        baseline=baseline,
+        keep_registered=keep,
+        suggest_swaps=False,  # the service emits placeholder strings, never real swaps
+        strict_per_course=False,  # unusable on real data: returns scheduled=0
+        consider_capacity=False,  # dead lever: available_capacity is NULL on every row
+        max_credits=cap,
+        gender=gender,
+    )
+
+    options = result.get("options") or []
+    if not options:
+        return {
+            "ok": True,
+            "student_id": int(student_id),
+            "requested": codes,
+            "placed": [],
+            "unplaced": [{"course_code": c, "reason": "No plan could be built."} for c in codes],
+            "note": "No timetable could be built from the sections on file.",
+            "tool": "build_my_timetable",
+        }
+
+    best = max(options, key=lambda o: int(o.get("scheduled") or 0))
+    placed = [
+        {
+            "course_code": m.get("course_code"),
+            "section": m.get("section"),
+            "meetings": [
+                f"{mt.get('day')} {mt.get('start_time')}-{mt.get('end_time')}"
+                for mt in (m.get("meetings") or [])
+            ],
+            "credits": credits.get(str(m.get("course_code") or ""), None),
+        }
+        for m in (best.get("mappings") or [])
+    ]
+    unplaced = []
+    for u in best.get("unscheduled") or []:
+        code, explanation = _translate_unplaced(u.get("reason"))
+        unplaced.append(
+            {
+                "course_code": u.get("course_code"),
+                "reason_code": code,
+                "reason": explanation,
+            }
+        )
+
+    return {
+        "ok": True,
+        "student_id": int(student_id),
+        "using_timetable_of_term": f"{year}/{term}",
+        "requested": codes,
+        "placed": placed,
+        "placed_count": len(placed),
+        "unplaced": unplaced,
+        "unplaced_count": len(unplaced),
+        "planned_credit_hours": sum(p["credits"] or 0 for p in placed),
+        "alternatives_considered": len(options),
+        "note": (
+            "A SUGGESTION built from the sections on file, not a registration and not "
+            "an offer of a seat - there are no seat counts in the data, so never say a "
+            "section has room. A partial result is normal: a course appears under "
+            "unplaced when no section of it is on file (reason_code NOT_ON_FILE - say "
+            "exactly that, never 'not available'), or when every section collides with "
+            "something already placed. Sections carry no term of their own; the "
+            "term shown is the one the student's current timetable belongs to. The "
+            "student still registers through the university portal."
+        ),
+        "tool": "build_my_timetable",
+    }
+
+
 def build_default_registry() -> AdvisorCapabilityRegistry:
     registry = AdvisorCapabilityRegistry()
 
@@ -1851,6 +2039,48 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
             },
             allowed_roles=_ALL_ROLES,
             executor=_exec_my_clash_free_sections,
+        )
+    )
+
+    registry.register(
+        AdvisorCapability(
+            name="build_my_timetable",
+            description=(
+                "Build a clash-free weekly timetable for the student from the sections "
+                "on file. Use for 'build me a schedule', 'I must take X, can it fit', "
+                "'give me a plan under 12 hours'. Pass must_include for courses the "
+                "student insists on and max_credits for a ceiling. Returns placed AND "
+                "unplaced with a reason for each - a partial result is the normal "
+                "outcome and must be reported as such, never as a failure. It is a "
+                "SUGGESTION: it does not register anything and cannot promise a seat."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "student_id": {
+                        "type": "integer",
+                        "description": "Omit for the chatting student.",
+                    },
+                    "must_include": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Course codes the student insists on taking.",
+                    },
+                    "max_credits": {
+                        "type": "integer",
+                        "description": "Credit ceiling for the plan. Omit for no cap.",
+                    },
+                    "keep_current_sections": {
+                        "type": "boolean",
+                        "description": "Keep the sections already registered instead of re-picking.",
+                    },
+                    "academic_year": {"type": "integer"},
+                    "term": {"type": "integer"},
+                },
+                "additionalProperties": False,
+            },
+            allowed_roles=_ALL_ROLES,
+            executor=_exec_build_my_timetable,
         )
     )
 
