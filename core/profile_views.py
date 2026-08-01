@@ -15,8 +15,9 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
+from core.models import Student
 from core.services.audit import log_audit_event
-from core.services.rbac import get_user_role, get_user_scope
+from core.services.rbac import ROLE_STUDENT, get_user_role, get_user_scope
 from core.sidebar_context import get_sidebar_context
 
 
@@ -61,6 +62,14 @@ def profile_change_username_view(request: HttpRequest) -> JsonResponse:
 
     if len(new_username) > 150:
         return JsonResponse({"error": "Username too long (max 150)"}, status=400)
+
+    # Defence-in-depth for student identity: students cannot rename themselves, and
+    # no one may claim a username that is a real Student ID (identity is bound to the
+    # immutable UserScope.student_id, but this removes any confusion/pre-claim vector).
+    if get_user_scope(request.user).get("role") == ROLE_STUDENT:
+        return JsonResponse({"error": "Students cannot change their username."}, status=403)
+    if new_username.isdigit() and Student.objects.filter(student_id=int(new_username)).exists():
+        return JsonResponse({"error": "This username is reserved."}, status=400)
 
     user = request.user
     assert isinstance(user, User)

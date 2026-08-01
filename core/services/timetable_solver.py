@@ -33,6 +33,7 @@ from core.services.timetable_autoplace import (
     WEEKDAYS,
     _time_mask,
     get_meeting_pattern,
+    placeable_slots,
 )
 from core.services.timetable_online import OnlineCourseLookup, normalise_course_code
 from core.services.timetable_same_course import (
@@ -182,8 +183,9 @@ def solve_board(board_id: int, time_limit_seconds: float = 10.0) -> dict:
         return {"status": "error", "placed": 0, "placements": [], "objective": 0}
 
     scenario = board.scenario
-    slot_config = scenario.slot_config or DEFAULT_SLOTS
-    lab_slot_config = scenario.lab_slot_config or DEFAULT_LAB_SLOTS
+    # placeable_slots: the three evening windows exist so an ONLINE class can be drawn on the grid; they consume no room. Every AUTOMATIC placer must filter them out or it will book a room at 15:50/17:40/19:30 (manual placement is deliberately still allowed).
+    slot_config = placeable_slots(scenario.slot_config or DEFAULT_SLOTS)
+    lab_slot_config = placeable_slots(scenario.lab_slot_config or DEFAULT_LAB_SLOTS)
 
     budgets = list(
         ScenarioSectionBudget.objects.filter(
@@ -716,8 +718,9 @@ def solve_board_with_hints(
         return {"status": "error", "placed": 0, "placements": [], "objective": 0, "improved": False}
 
     scenario = board.scenario
-    slot_config = scenario.slot_config or DEFAULT_SLOTS
-    lab_slot_config = scenario.lab_slot_config or DEFAULT_LAB_SLOTS
+    # placeable_slots: the three evening windows exist so an ONLINE class can be drawn on the grid; they consume no room. Every AUTOMATIC placer must filter them out or it will book a room at 15:50/17:40/19:30 (manual placement is deliberately still allowed).
+    slot_config = placeable_slots(scenario.slot_config or DEFAULT_SLOTS)
+    lab_slot_config = placeable_slots(scenario.lab_slot_config or DEFAULT_LAB_SLOTS)
 
     budgets = list(
         ScenarioSectionBudget.objects.filter(

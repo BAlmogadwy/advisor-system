@@ -257,6 +257,32 @@ def run_planner_job(job_id: uuid.UUID | str) -> None:
                 strategies=p.get("strategies") or None,
                 max_chain_iterations=int(p.get("max_chain_iterations", 10)),
             )
+        elif job.mode == PlannerJob.MODE_SCHEDULER_BUILD:
+            # The alternative engine. Imported inside the branch so the original
+            # planner never carries the dependency: if the subsystem is broken or
+            # absent, every existing mode above still runs untouched, and this
+            # one fails as a failed job rather than as an import error.
+            from scheduler.bridge import build_into_scenario
+
+            p = job.params or {}
+
+            def _stage(name: str) -> None:
+                job.last_stage_seen = name
+                job.save(update_fields=["last_stage_seen"])
+
+            result = build_into_scenario(
+                job.scenario_id,
+                academic_year=str(p.get("academic_year", "")),
+                term=int(p.get("term", 1)),
+                programs=list(p.get("programs") or []),
+                gender=str(p.get("gender", "M")),
+                seconds=float(p.get("seconds", 120)),
+                runs=int(p.get("runs", 3)),
+                clash_tolerance=float(p.get("clash_tolerance", 0.20)),
+                default_capacity=int(p.get("default_capacity", 25)),
+                min_demand=int(p.get("min_demand", 5)),
+                progress=_stage,
+            )
         elif job.mode == PlannerJob.MODE_FULL_REBUILD:
             _clear_scenario_placements(job.scenario_id)
             result = auto_place_scenario(job.scenario_id, strategy="adaptive")

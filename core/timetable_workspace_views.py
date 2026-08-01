@@ -436,6 +436,10 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
     max_local_other = int(payload.get("max_local_other", 40))
     max_external = int(payload.get("max_external", 50))
     course_overrides = payload.get("course_overrides") or None
+    # Which placement engine fills the scaffold. Both build the SAME scenario
+    # scaffold first — same students, same boards, same section budgets — so the
+    # two differ in exactly one respect: where the classes go.
+    engine = str(payload.get("engine") or "classic").strip().lower()
 
     # WS-E follow-up — defer the heavy section placement off the request thread.
     # When ``defer_build`` is set and the async planner is available, build only
@@ -471,14 +475,30 @@ def tw_generate_workspace_view(request: HttpRequest) -> JsonResponse:
         from core.services.planner_job_runner import dispatch_planner_job, submit_planner_job
 
         try:
+            if engine == "scheduler":
+                job_mode = PlannerJob.MODE_SCHEDULER_BUILD
+                job_params = {
+                    "academic_year": str(year_int),
+                    "term": semester_int,
+                    "programs": programs,
+                    "gender": section or "M",
+                    "seconds": float(payload.get("seconds", 120)),
+                    "runs": int(payload.get("runs", 1)),
+                    "clash_tolerance": float(payload.get("clash_tolerance", 0.20)),
+                    "default_capacity": max_local_4cr,
+                }
+            else:
+                job_mode = PlannerJob.MODE_OPTIMISE_V2_FULL
+                job_params = {"cpsat_time_limit": 60}
             build_job_id = submit_planner_job(
                 scenario_id=result["scenario"]["id"],
-                mode=PlannerJob.MODE_OPTIMISE_V2_FULL,
+                mode=job_mode,
                 user=request.user,
-                params={"cpsat_time_limit": 60},
+                params=job_params,
             )
             dispatch_planner_job(build_job_id)
             result["build_job_id"] = str(build_job_id)
+            result["engine"] = engine
         except Exception:
             logger.exception(
                 "Deferred build dispatch failed for scenario %s", result["scenario"]["id"]

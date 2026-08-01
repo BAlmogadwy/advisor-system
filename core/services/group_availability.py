@@ -33,6 +33,7 @@ from core.services.timetable_autoplace import (
     DEFAULT_LAB_SLOTS,
     DEFAULT_SLOTS,
     WEEKDAYS,
+    placeable_slots,
 )
 
 # Safety bound on a single group query — registrar groups are small; this guards
@@ -281,6 +282,9 @@ def compute_group_availability(
         "students": students,
         "grids": {
             "lecture": _build_grid(DEFAULT_SLOTS, meetings_by_student),
-            "lab": _build_grid(DEFAULT_LAB_SLOTS, meetings_by_student),
+            # Online-only windows are not lab availability: nothing in the
+            # estate is open then, so offering them as free cells would be
+            # inviting somebody to book a room that does not exist.
+            "lab": _build_grid(placeable_slots(DEFAULT_LAB_SLOTS), meetings_by_student),
         },
     }

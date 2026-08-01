@@ -186,10 +186,15 @@ def test_registry_filters_tools_by_role() -> None:
         schema["function"]["name"]
         for schema in registry.tool_schemas_for_scope({"role": ROLE_STUDENT, "student_id": 1})
     }
-    assert "find_students" in student_tools
     assert "get_student_context" in student_tools
     assert "lookup_course" in student_tools
     assert "recommend_courses" in student_tools
+    assert "course_prerequisites" in student_tools
+    # Cohort search is staff-only. It was previously student-visible and made safe by
+    # _apply_student_scope narrowing results to the caller, but it gave a student
+    # nothing get_student_context does not (only their own row could ever match), so
+    # it is excluded rather than relying on that single filter.
+    assert "find_students" not in student_tools
     # Program-level and portfolio tools are staff-only.
     assert "course_eligibility" not in student_tools
     assert "aggregate_demand" not in student_tools

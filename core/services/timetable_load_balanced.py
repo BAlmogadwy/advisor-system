@@ -34,6 +34,7 @@ from core.services.timetable_autoplace import (
     DEFAULT_SLOTS,
     WEEKDAYS,
     _time_mask,
+    placeable_slots,
 )
 from core.services.timetable_online import OnlineCourseLookup, normalise_course_code
 from core.services.timetable_same_course import (
@@ -77,7 +78,7 @@ def _build_schedule_from_db(
     board_id: int, slot_config: list[dict], lab_slot_config: list[dict] | None = None
 ) -> tuple:
     """Load current placements into an in-memory schedule structure."""
-    lab_slots = lab_slot_config or DEFAULT_LAB_SLOTS
+    lab_slots = placeable_slots(lab_slot_config or DEFAULT_LAB_SLOTS)
     placements = list(
         SectionPlacement.objects.filter(board_id=board_id)
         .select_related("term_section")
@@ -263,7 +264,7 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
     except DeliveryBoard.DoesNotExist:
         return {"status": "error"}
 
-    slot_config = board.scenario.slot_config or DEFAULT_SLOTS
+    slot_config = placeable_slots(board.scenario.slot_config or DEFAULT_SLOTS)
 
     # Build real overlap matrix
     from core.models import ScenarioSectionBudget as _SSB
@@ -275,7 +276,7 @@ def rebalance_board(board_id: int, max_seconds: float = 8.0, seed: int = 42) -> 
         )
     )
     overlap_matrix = _bom(board.scenario_id, _board_courses) if _board_courses else {}
-    lab_slot_config = board.scenario.lab_slot_config or DEFAULT_LAB_SLOTS
+    lab_slot_config = placeable_slots(board.scenario.lab_slot_config or DEFAULT_LAB_SLOTS)
     sections, schedule, online_codes = _build_schedule_from_db(
         board_id, slot_config, lab_slot_config
     )

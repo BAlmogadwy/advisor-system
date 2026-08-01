@@ -126,6 +126,14 @@ from .sections_import_views import (
     sections_import_preview_view,
 )
 from .settings_views import defaults_settings_view
+from .student_auth_views import (
+    student_advisor_view,
+    student_courses_view,
+    student_graduation_view,
+    student_home_view,
+    student_login_view,
+    student_otp_verify_view,
+)
 from .timetable_workspace_views import (
     timetable_workspace_graph_page,
     timetable_workspace_mri_page,
@@ -214,6 +222,29 @@ from .virtual_advisor_views import (
 urlpatterns = [
     path("login/", login_view, name="login"),
     path("logout/", logout_view, name="logout"),
+    # Student OTP login (Uni ID -> email code); separate from advisor password login.
+    path("student/login/", student_login_view, name="student_login"),
+    path("student/login/verify/", student_otp_verify_view, name="student_otp_verify"),
+    path(
+        "student/",
+        login_required(student_home_view, login_url="student_login"),
+        name="student_home",
+    ),
+    path(
+        "student/advisor/",
+        login_required(student_advisor_view, login_url="student_login"),
+        name="student_advisor",
+    ),
+    path(
+        "student/courses/",
+        login_required(student_courses_view, login_url="student_login"),
+        name="student_courses",
+    ),
+    path(
+        "student/graduation/",
+        login_required(student_graduation_view, login_url="student_login"),
+        name="student_graduation",
+    ),
     path("", login_required(dashboard, login_url="login"), name="dashboard"),
     path("health/", health, name="health"),
     path("virtual-advisor/", virtual_advisor_page, name="virtual_advisor_page"),

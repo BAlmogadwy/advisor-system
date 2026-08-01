@@ -33,6 +33,29 @@ const IS_AR = document.documentElement.lang === 'ar';
     noGraphData: IS_AR ? 'لا توجد بيانات رسم بياني' : 'No graph data',
     noPrereqMap: IS_AR ? 'لا يتوفر مخطط متطلبات مسبقة' : 'No prerequisite map available',
     prereqsLoaded: IS_AR ? 'تم تحميل المتطلبات' : 'Prerequisites loaded',
+    pgByTerm: IS_AR ? 'حسب الفصل' : 'By term',
+    pgByChain: IS_AR ? 'حسب السلسلة' : 'By chain',
+    pgLayoutLabel: IS_AR ? 'تخطيط الرسم البياني' : 'Graph layout',
+    pgNoTermBand: IS_AR ? 'لا مقررات مرتبطة' : 'no linked courses',
+    pgFoundation: IS_AR ? 'أساسي' : 'Foundation',
+    pgTerminal: IS_AR ? 'نهائي' : 'Terminal',
+    pgIntermediate: IS_AR ? 'وسيط' : 'Intermediate',
+    pgInferred: IS_AR ? 'فصل غير معلن (مستنتج)' : 'Term not declared (inferred)',
+    pgGate: IS_AR ? 'بوابة ساعات معتمدة' : 'Credit-hour gate',
+    pgHoverHint: IS_AR ? 'مرّر المؤشر لتتبع السلاسل' : 'Hover to trace chains',
+    pgGateTip: (n) => IS_AR
+      ? `بوابة ${n} ساعة معتمدة — ليست مقرراً وليس لها فصل معلن؛ تُعرض قبل أول مقرر يطلبها.`
+      : `${n}-credit-hour gate — not a course and has no declared term; shown one term before the first course that requires it.`,
+    pgInferredTip: IS_AR
+      ? 'غير معلن في خطة هذا البرنامج — الفصل مستنتج من المقررات التي تعتمد عليه.'
+      : 'Not declared in this program plan — term inferred from the courses that depend on it.',
+    pgTermTip: (t) => IS_AR ? `الفصل ${t}` : `Term ${t}`,
+    pgSameTermWarn: (n) => IS_AR
+      ? `${n} متطلب مسبق معلن في نفس فصل المقرر الذي يحتاجه — لا يمكن تحقيقه كما هو معلن.`
+      : `${n} prerequisite(s) declared in the same term as the course that needs them — not satisfiable as declared.`,
+    pgBackwardWarn: (n) => IS_AR
+      ? `${n} متطلب مسبق معلن في فصل لاحق للمقرر الذي يحتاجه.`
+      : `${n} prerequisite(s) declared in a later term than the course that needs them.`,
 
     // ── Plan Viewer ──
     loadPlan: IS_AR ? 'تحميل الخطة' : 'Load Plan',
@@ -438,106 +461,64 @@ const IS_AR = document.documentElement.lang === 'ar';
     return out;
   }
 
-  /* ── Prereq graph renderer ── */
-  function renderPrereqGraph(items, container) {
-    const prereqs = {};
-    const allCourses = new Set();
-    items.forEach(row => {
-      const c = row.course_code, p = row.prerequisite_course_code;
-      allCourses.add(c); allCourses.add(p);
-      if (!prereqs[c]) prereqs[c] = [];
-      prereqs[c].push(p);
-    });
+  /* ── Prereq graph helpers ── */
 
-    /* topological layers: 0 = foundation, higher = more dependent */
-    const layers = {};
-    function depth(c, vis) {
-      if (layers[c] !== undefined) return layers[c];
-      if (!vis) vis = new Set();
-      if (vis.has(c)) return 0;
-      vis.add(c);
-      const ps = prereqs[c] || [];
-      if (!ps.length) { layers[c] = 0; return 0; }
-      const d = Math.max(...ps.map(p => depth(p, new Set(vis)))) + 1;
-      layers[c] = d; return d;
-    }
-    allCourses.forEach(c => depth(c));
+  /* Credit-hour gates ("144(HOURS)") are stored in the prerequisite table as if
+     they were courses. They are not courses and carry no programme term. */
+  /* The graph renderer lives in static/js/prereq-graph.js so the advisor
+     dashboard and the student portal share ONE implementation. This wrapper
+     supplies the dashboard's own i18n strings. */
+  const PG_GATE_RE = /^\s*(\d+)\s*\(\s*HOURS?\s*\)\s*$/i;
 
-    /* group by layer */
-    const groups = {};
-    let maxL = 0;
-    allCourses.forEach(c => {
-      const l = layers[c] || 0;
-      if (!groups[l]) groups[l] = [];
-      groups[l].push(c);
-      if (l > maxL) maxL = l;
-    });
-    Object.values(groups).forEach(a => a.sort());
+  /* still used by the prerequisite TABLE below the graph */
+  function pgEsc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
 
-    /* layout — measure longest label per node for dynamic width */
-    const nH = 34, gX = 20, gY = 56;
-    const maxRow = Math.max(...Object.values(groups).map(g => g.length));
-    /* dynamic node width: measure chars of longest code */
-    const maxChars = Math.max(...[...allCourses].map(c => c.length));
-    const nW = Math.max(72, maxChars * 8 + 20);
-    const svgW = Math.max(480, maxRow * (nW + gX) + gX * 2);
-    const svgH = (maxL + 1) * (nH + gY) + gY;
+  function renderPrereqGraph(items, container, opts) {
+    if (!window.PrereqGraph) return;
+    return window.PrereqGraph.render(items, container, Object.assign({}, opts || {}, {
+      t: {
+        termHeading: T.termHeading,
+        pgNoTermBand: T.pgNoTermBand,
+        pgGateTip: T.pgGateTip,
+        pgInferredTip: T.pgInferredTip,
+        pgTermTip: T.pgTermTip,
+        pgGate: T.pgGate,
+        pgInferred: T.pgInferred,
+        pgFoundation: T.pgFoundation,
+        pgIntermediate: T.pgIntermediate,
+        pgTerminal: T.pgTerminal,
+        pgHoverHint: T.pgHoverHint,
+        pgSameTermWarn: T.pgSameTermWarn,
+        pgBackwardWarn: T.pgBackwardWarn,
+      },
+    }));
+  }
 
-    /* position nodes */
-    const pos = {};
-    for (let l = 0; l <= maxL; l++) {
-      const g = groups[l] || [];
-      const tw = g.length * nW + (g.length - 1) * gX;
-      const sx = (svgW - tw) / 2;
-      g.forEach((c, i) => {
-        pos[c] = { x: sx + i * (nW + gX) + nW / 2, y: gY / 2 + l * (nH + gY) + nH / 2 };
-      });
-    }
+  /* Graph state: the last loaded edges + the plan terms behind the band axis.
+     Kept so the layout toggle can redraw without another round trip. */
+  let pgItems = [];
+  let pgPlan = { termOf: {}, nameOf: {} };
+  let pgMode = 'term';
 
-    /* build SVG */
-    let s = `<svg class="prereq-svg w-100" viewBox="0 0 ${svgW} ${svgH}" style="height:auto">`;
-    s += `<defs><marker id="pgA" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0,8 3,0 6" fill="var(--teal)" opacity="0.5"/></marker>`;
-    s += `<filter id="nSh"><feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="rgba(17,17,68,0.07)"/></filter></defs>`;
-
-    /* edges — bezier from prereq (bottom) → course (top) */
-    items.forEach(row => {
-      const f = pos[row.prerequisite_course_code], t = pos[row.course_code];
-      if (!f || !t) return;
-      const y1 = f.y + nH / 2, y2 = t.y - nH / 2, cy = (y1 + y2) / 2;
-      s += `<path class="pg-edge" d="M${f.x},${y1} C${f.x},${cy} ${t.x},${cy} ${t.x},${y2}" data-f="${row.prerequisite_course_code}" data-t="${row.course_code}" marker-end="url(#pgA)"/>`;
-    });
-
-    /* nodes — color by role */
-    const isPreOf = new Set();
-    items.forEach(r => isPreOf.add(r.prerequisite_course_code));
-    allCourses.forEach(c => {
-      const p = pos[c]; if (!p) return;
-      const hasP = (prereqs[c] || []).length > 0, isP = isPreOf.has(c);
-      let fl = 'rgba(255,255,255,0.65)', st = 'rgba(17,17,68,0.08)', tc = 'var(--navy)';
-      if (!hasP && isP) { fl = 'rgba(10,142,110,0.08)'; st = 'rgba(10,142,110,0.22)'; tc = '#087a5e'; }
-      else if (hasP && !isP) { fl = 'rgba(64,86,227,0.08)'; st = 'rgba(64,86,227,0.22)'; tc = '#3548c9'; }
-      s += `<g class="pg-node" data-c="${c}"><rect x="${p.x-nW/2}" y="${p.y-nH/2}" width="${nW}" height="${nH}" rx="8" fill="${fl}" stroke="${st}" stroke-width="1.2" filter="url(#nSh)"/><text x="${p.x}" y="${p.y+1}" text-anchor="middle" dominant-baseline="middle" fill="${tc}" font-family="var(--font-mono)" font-size="11" font-weight="700">${c}</text></g>`;
-    });
-    s += '</svg>';
-
-    /* legend */
-    s += `<div class="pg-legend"><span><span class="pg-legend-dot text-teal" style="background:var(--teal)"></span>Foundation</span><span><span class="pg-legend-dot text-royal" style="background:var(--royal)"></span>Terminal</span><span><span class="pg-legend-dot" style="color:var(--navy);background:var(--navy)"></span>Intermediate</span><span style="margin-inline-start:auto;opacity:0.4;font-weight:400">Hover to trace chains</span></div>`;
-    container.innerHTML = s;
-
-    /* interactivity — hover highlights full chain */
-    container.querySelectorAll('.pg-node').forEach(nd => {
-      nd.addEventListener('mouseenter', () => {
-        const cc = nd.dataset.c, conn = new Set();
-        (function up(x) { conn.add(x); (prereqs[x]||[]).forEach(p => { if(!conn.has(p)) up(p); }); })(cc);
-        (function dn(x) { conn.add(x); Object.entries(prereqs).forEach(([k,v]) => { if(v.includes(x) && !conn.has(k)) dn(k); }); })(cc);
-        container.querySelectorAll('.pg-node').forEach(n => { n.classList.toggle('hl', conn.has(n.dataset.c)); n.classList.toggle('dm', !conn.has(n.dataset.c)); });
-        container.querySelectorAll('.pg-edge').forEach(e => { const ok = conn.has(e.dataset.f) && conn.has(e.dataset.t); e.classList.toggle('hl', ok); e.classList.toggle('dm', !ok); });
-      });
-      nd.addEventListener('mouseleave', () => {
-        container.querySelectorAll('.pg-node,.pg-edge').forEach(el => { el.classList.remove('hl','dm'); });
-      });
+  function pgDrawGraph() {
+    const box = q('preGraph');
+    if (!box || !pgItems.length) return;
+    renderPrereqGraph(pgItems, box, { termOf: pgPlan.termOf, nameOf: pgPlan.nameOf, mode: pgMode });
+    [['pgModeTerm', 'term'], ['pgModeDepth', 'depth']].forEach(([id, m]) => {
+      const b = q(id);
+      if (!b) return;
+      b.classList.toggle('is-on', pgMode === m);
+      b.setAttribute('aria-pressed', pgMode === m ? 'true' : 'false');
     });
   }
+
+  [['pgModeTerm', 'term'], ['pgModeDepth', 'depth']].forEach(([id, m]) => {
+    const b = q(id);
+    if (b) b.onclick = () => { pgMode = m; pgDrawGraph(); };
+  });
 
   q('loadPre').onclick = async () => {
     const btn = q('loadPre');
@@ -550,6 +531,21 @@ const IS_AR = document.documentElement.lang === 'ar';
     try {
       res = await fetch(`/report/prerequisites/?program=${encodeURIComponent(program)}&course_code=${encodeURIComponent(code)}`);
       data = await res.json();
+      /* programme terms drive the graph's vertical axis; a failure here only
+         costs the term bands, so it must not fail the whole load */
+      try {
+        const planRes = await fetch(`/report/program-plan/?program=${encodeURIComponent(program)}`);
+        const plan = await planRes.json();
+        pgPlan = { termOf: {}, nameOf: {} };
+        if (planRes.ok && Array.isArray(plan.items)) {
+          plan.items.forEach(it => {
+            pgPlan.termOf[it.course_code] = it.programme_term;
+            if (it.course_name) pgPlan.nameOf[it.course_code] = it.course_name;
+          });
+        }
+      } catch (planErr) {
+        pgPlan = { termOf: {}, nameOf: {} };
+      }
     } catch (err) {
       notify.error(T.noPrereqRows, err.message || String(err));
       setUpdated('preUpdated', true);
@@ -583,11 +579,12 @@ const IS_AR = document.documentElement.lang === 'ar';
 
     /* table — card-rows: one row per individual prerequisite edge */
     tbody.innerHTML = norm
-      .map(row => `<tr class="cr-row"><td><span class="cr-id">${row.course_code}</span></td><td class="text-center" style="padding:6px 0"><svg width="20" height="12" viewBox="0 0 20 12" style="vertical-align:middle"><path d="M2 6h16M14 2l4 4-4 4" fill="none" stroke="var(--teal)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.5"/></svg></td><td><span class="font-mono fw-semibold" style="font-size:12px; color:var(--royal)">${row.prerequisite_course_code}</span></td></tr>`)
+      .map(row => `<tr class="cr-row"><td><span class="cr-id">${pgEsc(row.course_code)}</span></td><td class="text-center" style="padding:6px 0"><svg width="20" height="12" viewBox="0 0 20 12" style="vertical-align:middle"><path d="M2 6h16M14 2l4 4-4 4" fill="none" stroke="var(--teal)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" opacity="0.5"/></svg></td><td><span class="font-mono fw-semibold" style="font-size:12px; color:var(--royal)">${pgEsc(row.prerequisite_course_code)}</span></td></tr>`)
       .join('');
 
     /* SVG dependency graph */
-    renderPrereqGraph(norm, preGraph);
+    pgItems = norm;
+    pgDrawGraph();
 
     /* XLSX export link */
     const preXlsx = q('preXlsx');

@@ -32,6 +32,7 @@ from core.services.timetable_autoplace import (
     DEFAULT_LAB_SLOTS,
     DEFAULT_SLOTS,
     WEEKDAYS,
+    placeable_slots,
 )
 from core.services.timetable_candidate_eval import evaluate_generated_timetable_candidate
 from core.services.timetable_decision_trace import DecisionTrace
@@ -132,7 +133,8 @@ def polish_scenario_with_cpsat(
     scenario_obj = scenario.scenario
 
     slot_config = scenario_obj.slot_config or DEFAULT_SLOTS
-    lab_slot_config = scenario_obj.lab_slot_config or DEFAULT_LAB_SLOTS
+    # Placement path: online-only windows are columns, not options.
+    lab_slot_config = placeable_slots(scenario_obj.lab_slot_config or DEFAULT_LAB_SLOTS)
 
     # Build cross-board overlap matrix
     overlap = build_cross_board_overlap_matrix(scenario_id)

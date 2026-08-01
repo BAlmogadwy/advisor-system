@@ -45,6 +45,7 @@ from core.services.timetable_autoplace import (
     DEFAULT_SLOTS,
     WEEKDAYS,
     _time_mask,
+    placeable_slots,
 )
 from core.services.timetable_decision_trace import DecisionTrace
 from core.services.timetable_online import OnlineCourseLookup, normalise_course_code
@@ -362,8 +363,9 @@ def optimize_board(
         return {"status": "error", "stage_telemetry": empty_stage_telemetry()}
 
     scenario = board.scenario
-    slot_config = scenario.slot_config or DEFAULT_SLOTS
-    lab_slot_config = scenario.lab_slot_config or DEFAULT_LAB_SLOTS
+    # placeable_slots: the three evening windows exist so an ONLINE class can be drawn on the grid; they consume no room. Every AUTOMATIC placer must filter them out or it will book a room at 15:50/17:40/19:30 (manual placement is deliberately still allowed).
+    slot_config = placeable_slots(scenario.slot_config or DEFAULT_SLOTS)
+    lab_slot_config = placeable_slots(scenario.lab_slot_config or DEFAULT_LAB_SLOTS)
 
     # Build real overlap matrix
     from core.models import ScenarioSectionBudget

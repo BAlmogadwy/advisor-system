@@ -5,14 +5,16 @@ from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.models import Group
 from django.http import HttpRequest, HttpResponse, JsonResponse
-from django.shortcuts import render
+from django.shortcuts import redirect, render
 from django.views.decorators.http import require_POST
 
 from core.models import ProgrammeRequirement
 from core.services.dashboard_command_center import build_dashboard_command_center
+from core.services.policy import require_student_scope
 from core.services.rbac import (
     ROLE_ADVISOR,
     ROLE_GENERAL_ADVISOR,
+    ROLE_STUDENT,
     ROLE_SUPER_ADMIN,
     ensure_role_groups,
     ensure_scope_schema,
@@ -42,6 +44,11 @@ def dev_role_switch_view(request: HttpRequest) -> JsonResponse:
     # This prevents accidental exposure if DEBUG is ever left on in production.
     if not settings.DEBUG or os.getenv("ALLOW_DEV_ROLE_SWITCH", "").lower() != "true":
         return JsonResponse({"error": "Not available outside DEBUG mode."}, status=403)
+
+    # Caller-role guard: students self-provision via the OTP portal, so without this
+    # a student could POST their way to SUPER_ADMIN on any DEBUG/staging instance.
+    if str(get_user_scope(request.user).get("role", "")) == ROLE_STUDENT:
+        return JsonResponse({"error": "Not available for student accounts."}, status=403)
 
     role = (request.POST.get("role") or "").strip()
     advisor_id = (request.POST.get("advisor_id") or "").strip()
@@ -93,6 +100,11 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     scope = get_user_scope(request.user)
     role = str(scope.get("role", ROLE_ADVISOR))
 
+    # Students never see the advisor dashboard (it exposes staff usernames, the
+    # audit feed, and a ?student_id recommendations lookup) — send them home.
+    if role == ROLE_STUDENT:
+        return redirect("student_home")
+
     advisor_scope = str(scope.get("advisor_id", "")).strip()
     department_scope = [str(x).upper() for x in scope.get("departments", []) if str(x).strip()]
     if role == ROLE_SUPER_ADMIN:
@@ -124,6 +136,12 @@ def dashboard(request: HttpRequest) -> HttpResponse:
             semester = int(semester_raw)
         except ValueError:
             context["error"] = "student_id, year, and semester must all be integers."
+            return render(request, "core/dashboard.html", context)
+
+        # Enforce advisor/department scope before reading a student's data (IDOR guard).
+        denied = require_student_scope(request, student_id)
+        if denied is not None:
+            context["error"] = "You are not authorized to view this student."
             return render(request, "core/dashboard.html", context)
 
         recommendations = recommend_next_courses(

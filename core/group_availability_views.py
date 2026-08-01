@@ -17,11 +17,12 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_POST
 
-from core.authz import throttle
+from core.authz import role_required, throttle
 from core.services.group_availability import (
     MAX_STUDENTS,
     compute_group_availability,
 )
+from core.services.rbac import ROLE_ADVISOR
 from core.sidebar_context import get_sidebar_context
 
 
@@ -46,6 +47,7 @@ def _parse_student_ids(raw: Any) -> list[int]:
 
 
 @login_required(login_url="login")
+@role_required(ROLE_ADVISOR)  # registrar tool: never a student (exposes arbitrary students' grids)
 def group_availability_page(request: HttpRequest) -> HttpResponse:
     context = {
         **get_sidebar_context(request),
@@ -55,6 +57,7 @@ def group_availability_page(request: HttpRequest) -> HttpResponse:
 
 
 @login_required(login_url="login")
+@role_required(ROLE_ADVISOR)  # registrar tool: never a student
 @require_POST
 @throttle(max_calls=30, window_seconds=60)
 def group_availability_compute_view(request: HttpRequest) -> JsonResponse:

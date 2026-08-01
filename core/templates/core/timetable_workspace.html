@@ -57,10 +57,22 @@
       <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" style="margin-inline-end:3px;vertical-align:middle"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
       {% if LANGUAGE_CODE == 'ar' %}اختيارية{% else %}Electives{% endif %}
     </button>
-    <button id="twGenerate" class="btn btn-primary" type="button" style="padding:6px 18px;">
-      <span class="i i-sm" aria-hidden="true" style="margin-inline-end:3px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>
-      {% if LANGUAGE_CODE == 'ar' %}توليد{% else %}Generate{% endif %}
-    </button>
+    <span id="twGenerateGroup" style="display:inline-flex; position:relative;">
+      <button id="twGenerate" class="btn btn-primary" type="button" style="padding:6px 18px;">
+        <span class="i i-sm" aria-hidden="true" style="margin-inline-end:3px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg></span>
+        {% if LANGUAGE_CODE == 'ar' %}توليد{% else %}Generate{% endif %}
+      </button><button id="twGenerateMenu" class="btn btn-primary" type="button" style="padding:6px 6px; border-inline-start:1px solid rgba(255,255,255,.35); margin-inline-start:-1px;" title="{% if LANGUAGE_CODE == 'ar' %}اختر المحرك{% else %}Choose engine{% endif %}">&#x25BE;</button>
+      <div id="twGenerateDropdown" class="fs-md" style="display:none; position:absolute; top:100%; inset-inline-start:0; z-index:100; min-width:290px; margin-top:4px; background:var(--card); border:1px solid var(--line); border-radius:var(--radius-sm); box-shadow:var(--shadow-card)">
+        <div class="tw-gen-item u-cursor-pointer" data-engine="classic" style="padding:8px 12px; border-bottom:1px solid var(--line)">
+          <div class="fw-semibold text-teal">{% if LANGUAGE_CODE == 'ar' %}المولد الحالي{% else %}Current generator{% endif %}</div>
+          <div class="fs-xs text-t4">{% if LANGUAGE_CODE == 'ar' %}المحرك الأصلي مع الاستراتيجية المختارة{% else %}The original engine, with the strategy chosen above{% endif %}</div>
+        </div>
+        <div class="tw-gen-item u-cursor-pointer" data-engine="scheduler" style="padding:8px 12px">
+          <div class="fw-semibold" style="color:var(--royal)">{% if LANGUAGE_CODE == 'ar' %}المحرك الجديد{% else %}New scheduler engine{% endif %}</div>
+          <div class="fs-xs text-t4">{% if LANGUAGE_CODE == 'ar' %}أقل عدد أيام للمدرّس + توزيع الغرف الأمثل (~2 دقيقة){% else %}Fewest instructor days, exact rooming (~2 min){% endif %}</div>
+        </div>
+      </div>
+    </span>
     <span class="fs-sm text-t4" id="twGenStatus" style="white-space:nowrap"></span>
     <div class="flex-fill"></div>
     <button id="twFullscreen" class="btn u-cursor-pointer d-flex align-items-center fs-sm text-t3" type="button" title="{% if LANGUAGE_CODE == 'ar' %}شاشة كاملة{% else %}Fullscreen{% endif %}" style="padding:5px 8px; background:var(--glass-bg); border:1px solid var(--line); border-radius:6px; gap:4px">
@@ -214,5 +226,5 @@
   const defaultYear = {{ default_year }};
   const defaultTerm = {{ default_term }};
 </script>
-<script src="{% static 'js/page-timetable-workspace.js' %}?v=25"></script>
+<script src="{% static 'js/page-timetable-workspace.js' %}?v=27"></script>
 {% endblock %}

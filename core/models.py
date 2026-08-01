@@ -463,6 +463,7 @@ class UserScope(models.Model):
     )
     advisor_id = models.TextField(blank=True, default="")
     departments = models.TextField(blank=True, default="")
+    student_id = models.IntegerField(null=True, blank=True, db_index=True)
     updated_at = models.TextField(blank=True, default="")
 
     class Meta:
@@ -470,6 +471,26 @@ class UserScope(models.Model):
 
     def __str__(self) -> str:
         return f"Scope(user={self.user_id})"
+
+
+class StudentLoginOTP(models.Model):
+    """One-time email code for student login. The code itself is never stored —
+    only a salted SHA-256 hash. Short-lived, single-use, attempt-capped."""
+
+    student_id = models.IntegerField(db_index=True)
+    code_hash = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    attempts = models.IntegerField(default=0)
+    consumed = models.BooleanField(default=False)
+    request_ip = models.CharField(max_length=64, blank=True, default="")
+
+    class Meta:
+        db_table = "core_student_login_otp"
+        indexes = [models.Index(fields=["student_id", "consumed"], name="ix_otp_student_consumed")]
+
+    def __str__(self) -> str:
+        return f"OTP(student={self.student_id}, consumed={self.consumed})"
 
 
 class AuditLog(models.Model):
@@ -845,11 +866,16 @@ class PlannerJob(models.Model):
     MODE_FULL_REBUILD = "full_rebuild"
     MODE_OPTIMISE_V2_FULL = "optimise_v2_full"
     MODE_OPTIMISE_V2_CURRENT = "optimise_v2_current"
+    #: Build with the `scheduler` subsystem instead of the original placer. Same
+    #: scenario scaffold, same students, same section budgets — a different
+    #: engine for the one question of where the classes go.
+    MODE_SCHEDULER_BUILD = "scheduler_build"
     MODE_CHOICES = (
         (MODE_OPTIMISE_CURRENT, "Optimise current"),
         (MODE_FULL_REBUILD, "Full rebuild"),
         (MODE_OPTIMISE_V2_FULL, "Optimise V2 (full rebuild)"),
         (MODE_OPTIMISE_V2_CURRENT, "Optimise V2 (current)"),
+        (MODE_SCHEDULER_BUILD, "New scheduler engine"),
     )
 
     STAGE_CHOICES = (
@@ -858,6 +884,11 @@ class PlannerJob(models.Model):
         ("cpsat", "cpsat"),
         ("chain", "chain"),
         ("rooming_repair", "rooming_repair"),
+        # Stages reported by the alternative engine (MODE_SCHEDULER_BUILD).
+        ("snapshot", "snapshot"),
+        ("solve", "solve"),
+        ("rooming", "rooming"),
+        ("persist", "persist"),
     )
 
     id = models.UUIDField(primary_key=True, editable=False)

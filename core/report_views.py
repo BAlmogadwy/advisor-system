@@ -1,4 +1,5 @@
 import csv
+import re
 from io import StringIO
 
 from django.http import FileResponse, HttpRequest, HttpResponse, HttpResponseBase, JsonResponse
@@ -9,7 +10,11 @@ from core.models import Course, Prerequisite, ProgrammeRequirement, Student
 from core.services.advisors import list_students_by_advisor
 from core.services.conflict_matrix import build_conflict_matrix_report, export_conflict_matrix_xlsx
 from core.services.debug_reporting import build_recommendation_debug_report
-from core.services.eligibility import build_course_eligibility_report
+from core.services.eligibility import (
+    build_course_eligibility_report,
+    hour_gate,
+    split_hour_prereqs,
+)
 from core.services.high_priority_missing import (
     export_missing_high_priority_xlsx,
     run_missing_high_priority_report,
@@ -261,7 +266,13 @@ def _build_student_plan_payload(student_id: int) -> tuple[dict | None, JsonRespo
             status = "not_taken"
 
         prereqs = get_prerequisites(code, program)
-        missing_prereqs = [p for p in prereqs if p not in satisfied_pool]
+        # A "146(HOURS)" prerequisite is a credit-hour gate, not a course. Tested as a
+        # course code it can never be satisfied, which locked every capstone forever.
+        course_prereqs, required_hours = split_hour_prereqs(prereqs)
+        missing_prereqs = [p for p in course_prereqs if p not in satisfied_pool]
+        gate = hour_gate(student_id, required_hours) if required_hours else None
+        if gate is not None and not gate["met"]:
+            missing_prereqs = [*missing_prereqs, f"{required_hours}(HOURS)"]
         prereqs_ok = len(missing_prereqs) == 0
         can_register = status == "not_taken" and prereqs_ok
 
@@ -664,6 +675,15 @@ def export_prerequisites_xlsx_view(request: HttpRequest) -> HttpResponse:
         )
     )
 
+    # Declared programme terms drive the graph's vertical axis.
+    term_of: dict[str, int] = {
+        str(code): int(term)
+        for code, term in ProgrammeRequirement.objects.filter(program=program).values_list(
+            "course_code", "programme_term"
+        )
+        if term is not None
+    }
+
     # ── Shared styles ───────────────────────────────────────────
     thin = Side(style="thin", color="D5D8DC")
     border = Border(top=thin, bottom=thin, left=thin, right=thin)
@@ -679,7 +699,7 @@ def export_prerequisites_xlsx_view(request: HttpRequest) -> HttpResponse:
     wb.remove(wb.active)
 
     # ── Sheet 1: Dependency Graph ───────────────────────────────
-    graph_img = _render_prereq_graph(rows, program)
+    graph_img = _render_prereq_graph(rows, program, term_of)
     ws_graph = wb.create_sheet(title="Dependency Graph")
     ws_graph.sheet_properties.tabColor = "0A8E6E"
 
@@ -697,8 +717,12 @@ def export_prerequisites_xlsx_view(request: HttpRequest) -> HttpResponse:
             ws_graph.column_dimensions[get_column_letter(c)].width = 10
         for r in range(1, rows_needed + 1):
             ws_graph.row_dimensions[r].height = 15
-    else:
+    elif not rows:
         ws_graph.cell(row=1, column=1, value="No prerequisite data to graph.")
+    else:
+        # rows exist but the image could not be produced — currently only when
+        # Pillow (the optional graph renderer) is unavailable.
+        ws_graph.cell(row=1, column=1, value="Graph image unavailable (Pillow not installed).")
 
     # ── Sheet 2: Grouped by Course ──────────────────────────────
     ws2 = wb.create_sheet(title="Grouped by Course")
@@ -781,13 +805,230 @@ def export_prerequisites_xlsx_view(request: HttpRequest) -> HttpResponse:
     return response
 
 
-def _render_prereq_graph(rows: list[tuple[str, str]], program: str):
-    """Render prerequisite dependency graph as a high-quality PNG.
+# ── Prereq-graph layout helpers ─────────────────────────────────────────────
+# These mirror the frontend renderer in static/js/page-dashboard.js so the XLSX
+# export and the on-screen graph agree.  Keep the two in step when either moves.
+_PG_GATE_RE = re.compile(r"^\s*(\d+)\s*\(\s*HOURS?\s*\)\s*$", re.IGNORECASE)
 
-    Mirrors the frontend ``renderPrereqGraph`` topological layout with
-    polished rendering: anti-aliased bezier edges on a translucent layer,
-    drop-shadow nodes, refined arrowheads, and a subtle gradient
-    background.
+
+def _pg_gate_hours(code: str) -> str | None:
+    """Digit string for a credit-hour gate like ``144(HOURS)``, else ``None``."""
+    m = _PG_GATE_RE.match(str(code))
+    return m.group(1) if m else None
+
+
+def _pg_term_rows(all_courses, dependents, term_of):
+    """Assign every node a row = its declared programme term.
+
+    Nodes with no declared term (credit-hour gates, and courses that gate this
+    plan without belonging to it) are placed one row before the earliest course
+    that depends on them, and recorded in ``inferred`` so the guess stays
+    visible.  Mirrors ``pgTermRows``.
+    """
+    row: dict[str, int] = {}
+    inferred: set[str] = set()
+    for c in all_courses:
+        t = term_of.get(c)
+        if isinstance(t, int):
+            row[c] = t
+    floor = min(row.values()) if row else 1
+    changed = True
+    guard = 0
+    while changed and guard <= len(all_courses):
+        guard += 1
+        changed = False
+        for c in all_courses:
+            if c in row:
+                continue
+            known = [row[d] for d in dependents.get(c, []) if d in row]
+            if not known:
+                continue
+            row[c] = min(known) - 1
+            inferred.add(c)
+            changed = True
+    for c in all_courses:
+        if c not in row:
+            row[c] = floor - 1
+            inferred.add(c)
+    return row, inferred
+
+
+def _pg_build_edges(rows, row, inferred):
+    """Build edge dicts ``{f, t, warn}`` from ``(course, prereq)`` rows.
+
+    An edge is a "warn" (unsatisfiable as declared) only when BOTH endpoints have
+    a DECLARED term and the prerequisite's term is at or after its dependent's.
+    An edge touching an inferred-term node never warns — the "declared same/later
+    term" message would be false there.  Mirrors the frontend edge build.
+    """
+    out = []
+    for cc, pc in rows:
+        warn = pc not in inferred and cc not in inferred and row[pc] >= row[cc]
+        out.append({"f": pc, "t": cc, "warn": warn})
+    return out
+
+
+def _pg_build_slots(edges, row, min_r, max_r):
+    """Give every multi-row edge a routing point in each band it crosses.
+
+    Returns ``(slots, up, dn, chain)``: ``slots[r]`` is the ordered list of slot
+    dicts in band ``r``; ``up``/``dn`` are adjacency over slot ids; ``chain[i]``
+    is the id path for edge ``i`` (``None`` for warning edges).  Mirrors
+    ``pgBuildSlots``.
+    """
+    slots = {r: [] for r in range(min_r, max_r + 1)}
+    seen = set()
+    for e in edges:
+        for node_id in (e["f"], e["t"]):
+            if node_id in seen:
+                continue
+            seen.add(node_id)
+            slots[row[node_id]].append({"id": node_id, "kind": "node", "key": node_id})
+    up: dict[str, list[str]] = {}
+    dn: dict[str, list[str]] = {}
+
+    def link(a, b):
+        dn.setdefault(a, []).append(b)
+        up.setdefault(b, []).append(a)
+
+    chain: dict[int, list[str] | None] = {}
+    for i, e in enumerate(edges):
+        if e["warn"]:
+            chain[i] = None
+            continue
+        r1, r2 = row[e["f"]], row[e["t"]]
+        path = [e["f"]]
+        for r in range(r1 + 1, r2):
+            rid = f" d{i}@{r}"
+            slots[r].append({"id": rid, "kind": "route", "key": f"{e['f']}>{e['t']}"})
+            path.append(rid)
+        path.append(e["t"])
+        for j in range(len(path) - 1):
+            link(path[j], path[j + 1])
+        chain[i] = path
+    return slots, up, dn, chain
+
+
+def _pg_order_slots(slots, up, dn, edges, chain):
+    """Barycentre sweeps that keep the least-crossing arrangement.
+
+    Deterministic: alphabetical seed and tie-break.  Mirrors ``pgOrderSlots``.
+    Mutates ``slots`` in place and returns the sorted band keys.
+    """
+    keys = sorted(slots.keys())
+    for k in keys:
+        slots[k].sort(key=lambda s: s["key"])
+    row_of = {s["id"]: k for k in keys for s in slots[k]}
+    idx: dict[str, int] = {}
+    span: dict[int, int] = {}
+
+    def reindex():
+        for k in keys:
+            arr = slots[k]
+            span[k] = len(arr)
+            for i, s in enumerate(arr):
+                idx[s["id"]] = i
+
+    reindex()
+
+    def frac(node_id):
+        return (idx[node_id] + 0.5) / max(1, span[row_of[node_id]])
+
+    def segments():
+        out = []
+        for i in range(len(edges)):
+            path = chain.get(i)
+            if not path:
+                continue
+            for j in range(len(path) - 1):
+                out.append((path[j], path[j + 1]))
+        return out
+
+    def crossings():
+        sg = segments()
+        n = 0
+        for a in range(len(sg)):
+            a1, b1 = sg[a]
+            for b in range(a + 1, len(sg)):
+                a2, b2 = sg[b]
+                if row_of[a1] != row_of[a2] or row_of[b1] != row_of[b2]:
+                    continue
+                if a1 == a2 or b1 == b2:
+                    continue
+                if (idx[a1] - idx[a2]) * (idx[b1] - idx[b2]) < 0:
+                    n += 1
+        return n
+
+    def snapshot():
+        return {k: [s["id"] for s in slots[k]] for k in keys}
+
+    def restore(snap):
+        for k in keys:
+            by_id = {s["id"]: s for s in slots[k]}
+            slots[k] = [by_id[i] for i in snap[k]]
+
+    best = snapshot()
+    best_x = crossings()
+    for p in range(8):
+        down = p % 2 == 0
+        for k in keys if down else list(reversed(keys)):
+            arr = slots[k]
+            bc = {}
+            for s in arr:
+                nb = [frac(x) for x in (up if down else dn).get(s["id"], []) if x in idx]
+                bc[s["id"]] = sum(nb) / len(nb) if nb else frac(s["id"])
+            arr.sort(key=lambda s: (bc[s["id"]], s["key"]))
+            reindex()
+        x = crossings()
+        if x < best_x:
+            best_x = x
+            best = snapshot()
+    restore(best)
+    reindex()
+    return keys
+
+
+def _pg_dash_segment(draw, x1, y1, x2, y2, color, width, dash, gap):
+    """Draw a dashed straight line from (x1,y1) to (x2,y2)."""
+    from math import hypot
+
+    dist = hypot(x2 - x1, y2 - y1)
+    if dist == 0:
+        return
+    ux, uy = (x2 - x1) / dist, (y2 - y1) / dist
+    n = 0.0
+    while n < dist:
+        a, b = n, min(n + dash, dist)
+        draw.line([(x1 + ux * a, y1 + uy * a), (x1 + ux * b, y1 + uy * b)], fill=color, width=width)
+        n += dash + gap
+
+
+def _pg_dashed_rrect(draw, box, radius, color, width, dash, gap):
+    """Dashed rounded-rectangle border (straight edges dashed, corners arced)."""
+    x0, y0, x1, y1 = box
+    r = radius
+    _pg_dash_segment(draw, x0 + r, y0, x1 - r, y0, color, width, dash, gap)
+    _pg_dash_segment(draw, x0 + r, y1, x1 - r, y1, color, width, dash, gap)
+    _pg_dash_segment(draw, x0, y0 + r, x0, y1 - r, color, width, dash, gap)
+    _pg_dash_segment(draw, x1, y0 + r, x1, y1 - r, color, width, dash, gap)
+    draw.arc([x0, y0, x0 + 2 * r, y0 + 2 * r], 180, 270, fill=color, width=width)
+    draw.arc([x1 - 2 * r, y0, x1, y0 + 2 * r], 270, 360, fill=color, width=width)
+    draw.arc([x0, y1 - 2 * r, x0 + 2 * r, y1], 90, 180, fill=color, width=width)
+    draw.arc([x1 - 2 * r, y1 - 2 * r, x1, y1], 0, 90, fill=color, width=width)
+
+
+def _render_prereq_graph(
+    rows: list[tuple[str, str]],
+    program: str,
+    term_of: dict[str, int] | None = None,
+):
+    """Render the prerequisite dependency graph as a high-quality PNG.
+
+    The vertical axis is the declared programme term (falling back to longest
+    prerequisite chain when the plan carries no terms), matching the on-screen
+    ``renderPrereqGraph``: term-labelled bands, credit-hour gates as amber
+    dashed pills, inferred-term nodes dashed, and unsatisfiable edges bowed
+    out in amber.
 
     Returns a ``BytesIO`` ready for openpyxl ``Image()``, or ``None``.
     """
@@ -795,151 +1036,132 @@ def _render_prereq_graph(rows: list[tuple[str, str]], program: str):
     from io import BytesIO
     from math import atan2, cos, sin
 
-    from PIL import Image, ImageDraw, ImageFilter, ImageFont
+    try:
+        from PIL import Image, ImageDraw, ImageFilter, ImageFont
+    except ImportError:
+        # Pillow is optional; without it the export drops the graph image
+        # rather than failing the whole download.
+        return None
 
     if not rows:
         return None
+    term_of = term_of or {}
 
-    # ── Build adjacency ─────────────────────────────────────────
+    # ── adjacency ───────────────────────────────────────────────
     prereqs: dict[str, list[str]] = defaultdict(list)
-    all_courses: set[str] = set()
+    dependents: dict[str, list[str]] = defaultdict(list)
+    # insertion-ordered set: term inference freezes on first assignment, so a
+    # deterministic iteration order keeps the export reproducible and matched to
+    # the on-screen graph (a plain set's order is PYTHONHASHSEED-salted).
+    all_courses: dict[str, None] = {}
     for cc, pc in rows:
-        all_courses.add(cc)
-        all_courses.add(pc)
-        prereqs[cc].append(pc)
+        all_courses.setdefault(cc, None)
+        all_courses.setdefault(pc, None)
+        if pc not in prereqs[cc]:
+            prereqs[cc].append(pc)
+        if cc not in dependents[pc]:
+            dependents[pc].append(cc)
 
-    # ── Topological layers ──────────────────────────────────────
-    layers: dict[str, int] = {}
+    is_pre_of: set[str] = {pc for _cc, pc in rows}
+    gate_of = {c: _pg_gate_hours(c) for c in all_courses}
 
-    def depth(c: str, vis: set | None = None) -> int:
-        if c in layers:
+    # ── rows = declared programme term (else longest-chain depth) ─
+    declared = [c for c in all_courses if isinstance(term_of.get(c), int)]
+    by_term = bool(declared)
+    if by_term:
+        row, inferred = _pg_term_rows(all_courses, dependents, term_of)
+    else:
+        layers: dict[str, int] = {}
+
+        def _depth(c, vis=None):
+            if c in layers:
+                return layers[c]
+            vis = set() if vis is None else vis
+            if c in vis:
+                return 0
+            vis.add(c)
+            ps = prereqs.get(c, [])
+            layers[c] = (max(_depth(p, set(vis)) for p in ps) + 1) if ps else 0
             return layers[c]
-        if vis is None:
-            vis = set()
-        if c in vis:
-            return 0
-        vis.add(c)
-        ps = prereqs.get(c, [])
-        if not ps:
-            layers[c] = 0
-            return 0
-        d = max(depth(p, set(vis)) for p in ps) + 1
-        layers[c] = d
-        return d
 
-    for c in all_courses:
-        depth(c)
+        for c in all_courses:
+            _depth(c)
+        row, inferred = layers, set()
 
-    groups: dict[int, list[str]] = defaultdict(list)
-    max_layer = 0
-    for c in all_courses:
-        lyr = layers.get(c, 0)
-        groups[lyr].append(c)
-        if lyr > max_layer:
-            max_layer = lyr
-    for g in groups.values():
-        g.sort()
+    min_r, max_r = min(row.values()), max(row.values())
 
-    # ── Layout constants (render at 3x for HiDPI) ──────────────
+    # ── edges; unsatisfiable ones (declared prereq at/after its dependent) bypass routing ─
+    edges = _pg_build_edges(rows, row, inferred)
+    slots, up, dn, chain = _pg_build_slots(edges, row, min_r, max_r)
+    keys = _pg_order_slots(slots, up, dn, edges, chain)
+
+    # ── geometry (render at 3x for HiDPI) ───────────────────────
     S = 3  # supersampling factor
     node_h = 34 * S
-    node_w_base = 90 * S
     node_r = 8 * S
     gap_x = 18 * S
-    gap_y = 56 * S
-    pad_x = 50 * S
-    pad_top = 60 * S
-    pad_bot = 70 * S  # extra room for multi-row legend
+    route_w = 14 * S
+    pad_x = 40 * S
+    pad_top = 64 * S
+    pad_bot = 74 * S
+    band_pad_y = 20 * S
+    empty_h = 30 * S
     font_size = 11 * S
+    gutter = (104 * S) if by_term else 0
 
-    # Dynamic node width based on longest label
     max_chars = max(len(c) for c in all_courses)
-    node_w = max(node_w_base, (max_chars * 8 + 28) * S)
-    max_row = max(len(g) for g in groups.values())
+    node_w = max(90 * S, (max_chars * 8 + 28) * S)
 
-    img_w = max(600 * S, max_row * (node_w + gap_x) - gap_x + pad_x * 2)
-    img_h = pad_top + (max_layer + 1) * (node_h + gap_y) - gap_y + pad_bot
+    def slot_w(s):
+        return node_w if s["kind"] == "node" else route_w
 
-    # ── Node positions ──────────────────────────────────────────
+    def band_w(k):
+        arr = slots[k]
+        return sum(slot_w(s) for s in arr) + max(0, len(arr) - 1) * gap_x
+
+    # band heights: a band with a course is tall, an empty term is a thin rule
+    band_y: dict[int, int] = {}
+    band_h: dict[int, int] = {}
+    y = pad_top
+    for k in keys:
+        has_node = any(s["kind"] == "node" for s in slots[k])
+        h = (node_h + 2 * band_pad_y) if has_node else empty_h
+        band_y[k] = y
+        band_h[k] = h
+        y += h
+    img_h = y + pad_bot
+
+    content_w = max((band_w(k) for k in keys), default=node_w)
+    img_w = max(600 * S, gutter + pad_x * 2 + content_w)
+    content_x0 = gutter + pad_x
+    content_avail = img_w - gutter - pad_x * 2
+
+    # ── slot positions (nodes and routing points share the band centre) ─
     pos: dict[str, tuple[int, int]] = {}
-    for lyr in range(max_layer + 1):
-        g = groups.get(lyr, [])
-        total_w = len(g) * node_w + (len(g) - 1) * gap_x
-        sx = (img_w - total_w) // 2
-        for i, c in enumerate(g):
-            cx = sx + i * (node_w + gap_x) + node_w // 2
-            cy = pad_top + lyr * (node_h + gap_y) + node_h // 2
-            pos[c] = (cx, cy)
+    for k in keys:
+        x = content_x0 + max(0, (content_avail - band_w(k)) // 2)
+        cy = band_y[k] + band_h[k] // 2
+        for s in slots[k]:
+            w = slot_w(s)
+            pos[s["id"]] = (x + w // 2, cy)
+            x += w + gap_x
 
-    # ── Subtree colouring: each root gets a unique hue ──────────
-    is_pre_of: set[str] = set()
-    for _, pc in rows:
-        is_pre_of.add(pc)
-
-    # dependents: root → all courses reachable downward
-    dependents: dict[str, list[str]] = defaultdict(list)
-    for cc in all_courses:
-        if prereqs.get(cc):
-            for pc in prereqs[cc]:
-                dependents[pc].append(cc)
-
-    roots = sorted(c for c in all_courses if not prereqs.get(c))
-
-    # Palette: 12 visually distinct, saturated colours
-    _PALETTE = [
-        (10, 142, 110),  # teal
-        (64, 86, 227),  # indigo
-        (220, 80, 60),  # coral red
-        (180, 120, 20),  # amber
-        (140, 60, 200),  # purple
-        (20, 140, 200),  # sky blue
-        (200, 60, 140),  # magenta
-        (80, 160, 40),  # green
-        (255, 130, 50),  # orange
-        (100, 80, 180),  # violet
-        (40, 180, 160),  # cyan
-        (180, 60, 60),  # brick
-    ]
-
-    # Assign each root a colour, then BFS to find its full subtree
-    root_color: dict[str, tuple[int, int, int]] = {}
-    node_root: dict[str, str] = {}  # course → primary root
-
-    for i, root in enumerate(roots):
-        col = _PALETTE[i % len(_PALETTE)]
-        root_color[root] = col
-        # BFS downward through dependents
-        queue = [root]
-        visited = {root}
-        while queue:
-            cur = queue.pop(0)
-            if cur not in node_root:
-                node_root[cur] = root
-            for child in dependents.get(cur, []):
-                if child not in visited:
-                    visited.add(child)
-                    queue.append(child)
-
-    # Edge colour: use the root colour of the prerequisite (source) node
-    def edge_rgb(prereq_code: str) -> tuple[int, int, int]:
-        root = node_root.get(prereq_code)
-        if root:
-            return root_color[root]
-        return (160, 170, 180)  # fallback grey
-
+    # ── Node styling by role (mirrors the on-screen palette) ────
     def node_style(c: str):
-        """Return (fill, stroke, text_colour, shadow_colour) by role only."""
+        """Return (fill, stroke, text_colour, shadow_colour) for course ``c``."""
+        if gate_of.get(c):
+            # Credit-hour gate — amber
+            return (250, 240, 228), (180, 83, 9), (180, 83, 9), (180, 83, 9, 26)
         has_p = bool(prereqs.get(c))
         is_p = c in is_pre_of
         if not has_p and is_p:
             # Foundation — teal tint
             return (228, 244, 239), (10, 142, 110), (6, 100, 80), (10, 142, 110, 30)
-        elif has_p and not is_p:
+        if has_p and not is_p:
             # Terminal — indigo tint
             return (232, 235, 252), (86, 104, 220), (48, 64, 180), (86, 104, 220, 30)
-        else:
-            # Intermediate — neutral white
-            return (255, 255, 255), (195, 202, 212), (35, 45, 60), (0, 0, 0, 18)
+        # Intermediate — neutral white
+        return (255, 255, 255), (195, 202, 212), (35, 45, 60), (0, 0, 0, 18)
 
     # ── Background: subtle vertical gradient ────────────────────
     img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
@@ -971,85 +1193,129 @@ def _render_prereq_graph(rows: list[tuple[str, str]], program: str):
     )
     font_legend = _try_font(["calibri.ttf", "arial.ttf", "segoeui.ttf"], int(font_size * 0.9))
 
-    # ── Pre-compute port offsets so edges fan out across node width ─
-    # Count how many edges leave each node (bottom) and enter each node (top)
-    out_edges: dict[str, list[str]] = defaultdict(list)  # src → [dst, ...]
-    in_edges: dict[str, list[str]] = defaultdict(list)  # dst → [src, ...]
-    for cc, pc in rows:
-        out_edges[pc].append(cc)
-        in_edges[cc].append(pc)
-
-    # Sort each port list by target/source x-position so edges don't cross unnecessarily
-    for _src, dsts in out_edges.items():
-        dsts.sort(key=lambda d: pos.get(d, (0, 0))[0])
-    for _dst, srcs in in_edges.items():
-        srcs.sort(key=lambda s: pos.get(s, (0, 0))[0])
-
-    def _port_x(node: str, index: int, count: int, is_out: bool) -> int:
-        """Compute x offset for the i-th edge port on a node.
-        Spreads ports evenly across 60% of node width."""
-        cx = pos[node][0]
-        if count <= 1:
-            return cx
-        usable = node_w * 0.6
-        step = usable / (count - 1)
-        return int(cx - usable / 2 + index * step)
+    # ── Term bands: alternating tints + gutter labels behind everything ─
+    band_draw = ImageDraw.Draw(img)
+    if by_term and keys:
+        for k in keys:
+            has_node = any(s["kind"] == "node" for s in slots[k])
+            if k % 2:
+                band_draw.rectangle(
+                    [0, band_y[k], img_w, band_y[k] + band_h[k]], fill=(17, 17, 68, 8)
+                )
+            band_draw.line(
+                [(0, band_y[k]), (img_w, band_y[k])],
+                fill=(17, 17, 68, 20),
+                width=max(1, S // 2),
+            )
+            ly = band_y[k] + band_h[k] // 2
+            lbl = f"TERM {k}"
+            bb = band_draw.textbbox((0, 0), lbl, font=font_mono)
+            tw, th = bb[2] - bb[0], bb[3] - bb[1]
+            band_draw.text(
+                (gutter - 16 * S - tw, ly - th // 2),
+                lbl,
+                fill=(120, 128, 150) if has_node else (150, 156, 172),
+                font=font_mono,
+            )
+            if not has_node:
+                band_draw.text(
+                    (gutter + 14 * S, ly - th // 2),
+                    "no linked courses",
+                    fill=(160, 166, 180),
+                    font=font_legend,
+                )
+        band_draw.line(
+            [(gutter, band_y[keys[0]]), (gutter, band_y[keys[-1]] + band_h[keys[-1]])],
+            fill=(17, 17, 68, 28),
+            width=max(1, S // 2),
+        )
 
     # ── Draw edges on a separate RGBA layer (crisp, no blur) ────
     edge_layer = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
     edge_draw = ImageDraw.Draw(edge_layer)
 
-    def _bezier(x1, y1, x2, y2, steps=60):
-        """Cubic bezier with vertical control points."""
+    def _bezier(x1, y1, x2, y2, steps=26):
+        """Cubic bezier with vertical control points (prereq → course)."""
         cy = (y1 + y2) / 2
-        pts = []
+        return [
+            (
+                (1 - t) ** 3 * x1 + 3 * (1 - t) ** 2 * t * x1 + 3 * (1 - t) * t**2 * x2 + t**3 * x2,
+                (1 - t) ** 3 * y1 + 3 * (1 - t) ** 2 * t * cy + 3 * (1 - t) * t**2 * cy + t**3 * y2,
+            )
+            for t in (s / steps for s in range(steps + 1))
+        ]
+
+    def _cubic(p0, p1, p2, p3, steps=26):
+        """General cubic bezier through four control points."""
+        out = []
         for s in range(steps + 1):
             t = s / steps
             u = 1 - t
-            bx = u**3 * x1 + 3 * u**2 * t * x1 + 3 * u * t**2 * x2 + t**3 * x2
-            by = u**3 * y1 + 3 * u**2 * t * cy + 3 * u * t**2 * cy + t**3 * y2
-            pts.append((bx, by))
-        return pts
+            out.append(
+                (
+                    u**3 * p0[0] + 3 * u**2 * t * p1[0] + 3 * u * t**2 * p2[0] + t**3 * p3[0],
+                    u**3 * p0[1] + 3 * u**2 * t * p1[1] + 3 * u * t**2 * p2[1] + t**3 * p3[1],
+                )
+            )
+        return out
 
-    line_w = max(3, S + S // 2)  # thick coloured edges
+    line_w = max(3, S + S // 2)
+    teal = (10, 142, 110)
+    amber = (180, 83, 9)
 
-    for cc, pc in rows:
-        if pc not in pos or cc not in pos:
+    def _arrow(pts, color):
+        if len(pts) < 4:
+            return
+        px, py = pts[-4]
+        ax, ay = pts[-1]
+        angle = atan2(ay - py, ax - px)
+        sz = 5.5 * S
+        edge_draw.polygon(
+            [
+                (ax, ay),
+                (ax - sz * cos(angle - 0.4), ay - sz * sin(angle - 0.4)),
+                (ax - sz * cos(angle + 0.4), ay - sz * sin(angle + 0.4)),
+            ],
+            fill=color,
+        )
+
+    for i, e in enumerate(edges):
+        fc, tc = e["f"], e["t"]
+        if fc not in pos or tc not in pos:
             continue
+        if e["warn"]:
+            # prereq at/after its own dependent — bow sideways, amber dashed
+            fx, fy = pos[fc]
+            tx, ty = pos[tc]
+            d = 1 if tx >= fx else -1
+            x1 = fx + d * (node_w // 2)
+            x2 = tx - d * (node_w // 2)
+            yb = max(fy, ty) + node_h // 2 + 14 * S
+            pts = _cubic((x1, fy), (x1 + d * 26 * S, yb), (x2 - d * 26 * S, yb), (x2, ty))
+            for j in range(len(pts) - 1):
+                if j % 2 == 0:
+                    edge_draw.line([pts[j], pts[j + 1]], fill=(*amber, 190), width=line_w)
+            _arrow(pts, (*amber, 230))
+            continue
+        # route through the chain: node bottom → routing points → node top
+        path = chain.get(i) or [fc, tc]
+        anchors = []
+        for j, nid in enumerate(path):
+            qx, qy = pos[nid]
+            if j == 0:
+                anchors.append((qx, qy + node_h // 2 + 2 * S))
+            elif j == len(path) - 1:
+                anchors.append((qx, qy - node_h // 2 - 2 * S))
+            else:
+                anchors.append((qx, qy))
+        curve = []
+        for j in range(len(anchors) - 1):
+            seg = _bezier(anchors[j][0], anchors[j][1], anchors[j + 1][0], anchors[j + 1][1])
+            curve.extend(seg if j == 0 else seg[1:])
+        for j in range(len(curve) - 1):
+            edge_draw.line([curve[j], curve[j + 1]], fill=(*teal, 150), width=line_w)
+        _arrow(curve, (*teal, 220))
 
-        # Compute fanned port positions
-        out_idx = out_edges[pc].index(cc)
-        out_cnt = len(out_edges[pc])
-        in_idx = in_edges[cc].index(pc)
-        in_cnt = len(in_edges[cc])
-
-        x1 = _port_x(pc, out_idx, out_cnt, is_out=True)
-        y1 = pos[pc][1] + node_h // 2 + 2 * S
-        x2 = _port_x(cc, in_idx, in_cnt, is_out=False)
-        y2 = pos[cc][1] - node_h // 2 - 2 * S
-
-        # Colour by the subtree of the prerequisite (source) node
-        rgb = edge_rgb(pc)
-        e_col = (*rgb, 160)
-        a_col = (*rgb, 230)
-
-        pts = _bezier(x1, y1, x2, y2, steps=60)
-        for i in range(len(pts) - 1):
-            edge_draw.line([pts[i], pts[i + 1]], fill=e_col, width=line_w)
-
-        # Arrowhead — larger and more visible
-        if len(pts) >= 4:
-            px, py = pts[-4]
-            ax, ay = pts[-1]
-            angle = atan2(ay - py, ax - px)
-            sz = 5.5 * S
-            lx1 = ax - sz * cos(angle - 0.4)
-            ly1 = ay - sz * sin(angle - 0.4)
-            lx2 = ax - sz * cos(angle + 0.4)
-            ly2 = ay - sz * sin(angle + 0.4)
-            edge_draw.polygon([(ax, ay), (lx1, ly1), (lx2, ly2)], fill=a_col)
-
-    # No blur — keep edges crisp
     img = Image.alpha_composite(img, edge_layer)
 
     # ── Draw nodes ──────────────────────────────────────────────
@@ -1065,11 +1331,17 @@ def _render_prereq_graph(rows: list[tuple[str, str]], program: str):
             continue
         cx, cy = p
         _, _, _, sh_col = node_style(c)
-        x0 = cx - node_w // 2
-        y0 = cy - node_h // 2 + shadow_offset
-        x1 = cx + node_w // 2
-        y1 = cy + node_h // 2 + shadow_offset
-        shadow_draw.rounded_rectangle([x0, y0, x1, y1], radius=node_r, fill=sh_col)
+        rad = node_h // 2 if gate_of.get(c) else node_r
+        shadow_draw.rounded_rectangle(
+            [
+                cx - node_w // 2,
+                cy - node_h // 2 + shadow_offset,
+                cx + node_w // 2,
+                cy + node_h // 2 + shadow_offset,
+            ],
+            radius=rad,
+            fill=sh_col,
+        )
     shadow_layer = shadow_layer.filter(ImageFilter.GaussianBlur(radius=4 * S))
     img = Image.alpha_composite(img, shadow_layer)
 
@@ -1081,25 +1353,24 @@ def _render_prereq_graph(rows: list[tuple[str, str]], program: str):
             continue
         cx, cy = p
         fill_c, stroke_c, text_c, _ = node_style(c)
-        x0 = cx - node_w // 2
-        y0 = cy - node_h // 2
-        x1 = cx + node_w // 2
-        y1 = cy + node_h // 2
+        is_gate = bool(gate_of.get(c))
+        is_inf = c in inferred and not is_gate
+        rad = node_h // 2 if is_gate else node_r
+        box = [cx - node_w // 2, cy - node_h // 2, cx + node_w // 2, cy + node_h // 2]
 
-        # Node body with border
-        draw.rounded_rectangle(
-            [x0, y0, x1, y1],
-            radius=node_r,
-            fill=(*fill_c, 240),
-            outline=(*stroke_c, 180),
-            width=max(1, S),
-        )
+        draw.rounded_rectangle(box, radius=rad, fill=(*fill_c, 240))
+        if is_gate or is_inf:
+            # gates and inferred-term nodes carry a dashed border (matches screen)
+            _pg_dashed_rrect(draw, box, rad, (*stroke_c, 220), max(1, S), 5 * S, 3 * S)
+        else:
+            draw.rounded_rectangle(box, radius=rad, outline=(*stroke_c, 180), width=max(1, S))
 
-        # Centred text
-        bbox = draw.textbbox((0, 0), c, font=font_mono)
+        # Centred label — gates show their hours, courses their code
+        label = f"{gate_of[c]} hrs" if is_gate else c
+        bbox = draw.textbbox((0, 0), label, font=font_mono)
         tw = bbox[2] - bbox[0]
         th = bbox[3] - bbox[1]
-        draw.text((cx - tw // 2, cy - th // 2), c, fill=(*text_c, 255), font=font_mono)
+        draw.text((cx - tw // 2, cy - th // 2), label, fill=(*text_c, 255), font=font_mono)
 
     # ── Title ───────────────────────────────────────────────────
     title = f"Dependency Graph — {program}"
@@ -1112,47 +1383,37 @@ def _render_prereq_graph(rows: list[tuple[str, str]], program: str):
         font=font_title,
     )
 
-    # ── Legend: one entry per root subtree (centred at bottom) ───
-    # Build legend items from root courses and their colours
-    legend_items = [(root_color[r], r) for r in roots if r in root_color]
+    # ── Legend: node roles present in this graph (centred at bottom) ─
+    legend_items: list[tuple[tuple[int, int, int], str]] = [
+        ((10, 142, 110), "Foundation"),
+        ((86, 104, 220), "Terminal"),
+        ((120, 128, 150), "Intermediate"),
+    ]
+    if any(gate_of.values()):
+        legend_items.append(((180, 83, 9), "Credit-hour gate"))
+    if inferred:
+        legend_items.append(((150, 158, 175), "Term inferred"))
+
     dot_r = 5 * S
     item_gap = 18 * S
-
-    # May need multiple rows if too many roots
-    max_legend_w = img_w - pad_x * 2
-    legend_rows: list[list[tuple]] = [[]]
-    cur_row_w = 0
-    for color, label in legend_items:
+    row_w = 0
+    for _color, label in legend_items:
         bbox = draw.textbbox((0, 0), label, font=font_legend)
-        item_w = dot_r * 2 + 6 * S + (bbox[2] - bbox[0]) + item_gap
-        if cur_row_w + item_w > max_legend_w and legend_rows[-1]:
-            legend_rows.append([])
-            cur_row_w = 0
-        legend_rows[-1].append((color, label))
-        cur_row_w += item_w
+        row_w += dot_r * 2 + 6 * S + (bbox[2] - bbox[0]) + item_gap
+    row_w -= item_gap  # no trailing gap
 
-    row_height = int(font_size * 1.2)
-    ly_start = img_h - pad_bot + 10 * S
-    for row_idx, row_items in enumerate(legend_rows):
-        # Measure row width for centering
-        row_w = 0
-        for _color, label in row_items:
-            bbox = draw.textbbox((0, 0), label, font=font_legend)
-            row_w += dot_r * 2 + 6 * S + (bbox[2] - bbox[0]) + item_gap
-        row_w -= item_gap  # no trailing gap
-
-        lx = (img_w - row_w) // 2
-        ly = ly_start + row_idx * row_height
-        for color, label in row_items:
-            draw.ellipse([lx, ly, lx + dot_r * 2, ly + dot_r * 2], fill=(*color, 255))
-            draw.text(
-                (lx + dot_r * 2 + 6 * S, ly - 2 * S),
-                label,
-                fill=(80, 90, 100, 255),
-                font=font_legend,
-            )
-            bbox = draw.textbbox((0, 0), label, font=font_legend)
-            lx += dot_r * 2 + 6 * S + (bbox[2] - bbox[0]) + item_gap
+    lx = (img_w - row_w) // 2
+    ly = img_h - pad_bot + 14 * S
+    for color, label in legend_items:
+        draw.ellipse([lx, ly, lx + dot_r * 2, ly + dot_r * 2], fill=(*color, 255))
+        draw.text(
+            (lx + dot_r * 2 + 6 * S, ly - 2 * S),
+            label,
+            fill=(80, 90, 100, 255),
+            font=font_legend,
+        )
+        bbox = draw.textbbox((0, 0), label, font=font_legend)
+        lx += dot_r * 2 + 6 * S + (bbox[2] - bbox[0]) + item_gap
 
     # ── Finalise: flatten to RGB, downscale for crisp output ────
     flat = Image.new("RGB", img.size, (240, 247, 250))

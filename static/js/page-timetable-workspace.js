@@ -177,10 +177,78 @@ async function runOptimiseRequest(mode, payload, btn, modeLabel) {
   return sub;
 }
 
+/* What the new engine actually achieved, said out loud.
+ *
+ * The scheduler returns a full report — instructor days against their proven
+ * floor, unroomed meetings against theirs, how many sections keep the same hour
+ * all week — and a `notes` list for anything it had to give up. None of it was
+ * reaching the screen: a build that quietly dropped a rule looked identical to
+ * one that met it. Notes are shown as warnings for exactly that reason.
+ */
+async function showSchedulerOutcome(jobId) {
+  // Deliberately NOT twFetch: that helper toasts an error on any non-2xx, and a
+  // hiccup fetching this summary would then show a red failure for a build that
+  // succeeded. This is a nice-to-have on top of a finished job; if it cannot be
+  // fetched, say nothing.
+  let r = null;
+  try {
+    const res = await fetch(`/planner-jobs/${jobId}/result/`, { credentials: 'same-origin' });
+    if (res.ok) r = (await res.json()).result;
+  } catch { /* the build succeeded; the summary is decoration */ }
+  if (!r) return;
+
+  const bits = [];
+  if (r.instructor_days != null) {
+    const floor = r.instructor_days === r.instructor_days_floor
+      ? (IS_AR ? ' (الحد الأدنى المثبت)' : ' (proven floor)') : '';
+    bits.push((IS_AR ? 'أيام المدرسين: ' : 'Instructor days: ') + r.instructor_days + floor);
+  }
+  if (r.sections_on_the_same_hour_percent != null
+      && r.sections_within_one_slot_percent != null) {
+    bits.push((IS_AR ? 'نفس التوقيت: ' : 'Same hour all week: ')
+      + r.sections_on_the_same_hour_percent + '%'
+      + (IS_AR ? ' (ضمن فترة واحدة: ' : ' (within one slot: ')
+      + r.sections_within_one_slot_percent + '%)');
+  }
+  if (r.unroomed != null) {
+    bits.push((IS_AR ? 'بلا قاعة: ' : 'Unroomed: ') + r.unroomed
+      + (IS_AR ? ' (لا مفر منها: ' : ' (unavoidable: ') + r.unroomed_floor + ')');
+  }
+  if (bits.length) $('twGenStatus').textContent = bits.join('  |  ');
+  // `warnings` only, never `notes`. Notes are a mixed channel — every successful
+  // two-pass run appends one ("19 working days held; idle 3255 -> 1635") — so
+  // showing them as warnings would put an amber triangle on every good build and
+  // teach the reader to ignore the one that matters.
+  (r.warnings || []).forEach(warning => notify.warning(warning));
+}
+
+/* Which placement engine the plain Generate button uses. The dropdown beside it
+   picks explicitly; this is what a bare click means. */
+const TW_ENGINE = 'classic';
+
 /* ── Init ── */
 (function init() {
   // Events — Generate bar
-  $('twGenerate').addEventListener('click', runGenerate);
+  $('twGenerate').addEventListener('click', () => runGenerate(TW_ENGINE));
+
+  // Engine picker. The two engines share the whole pipeline except placement:
+  // both build the same scenario scaffold, same students, same section budgets.
+  const genMenu = $('twGenerateMenu');
+  const genDrop = $('twGenerateDropdown');
+  if (genMenu && genDrop) {
+    genMenu.addEventListener('click', (e) => {
+      e.stopPropagation();
+      genDrop.style.display = genDrop.style.display === 'none' ? 'block' : 'none';
+    });
+    document.addEventListener('click', () => { genDrop.style.display = 'none'; });
+    genDrop.querySelectorAll('.tw-gen-item').forEach((item) => {
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        genDrop.style.display = 'none';
+        runGenerate(item.dataset.engine || 'classic');
+      });
+    });
+  }
 
   // Events — Workspace command bar
   $('twScenario').addEventListener('change', onScenarioChange);
@@ -260,7 +328,7 @@ async function runOptimiseRequest(mode, payload, btn, modeLabel) {
 })();
 
 /* ── Generate Workspace ── */
-async function runGenerate() {
+async function runGenerate(engine = 'classic') {
   const year = $('twYear').value.trim();
   const term = $('twTerm').value.trim();
   const program = $('twProgram').value.trim().toUpperCase();
@@ -273,7 +341,9 @@ async function runGenerate() {
   }
 
   $('twGenerate').disabled = true;
-  $('twGenStatus').textContent = IS_AR ? 'جاري التوليد...' : 'Generating...';
+  $('twGenStatus').textContent = engine === 'scheduler'
+    ? (IS_AR ? 'جاري التوليد بالمحرك الجديد...' : 'Generating with the new engine...')
+    : (IS_AR ? 'جاري التوليد...' : 'Generating...');
 
   const data = await twFetch('/ops/tw/generate-workspace/', {
     method: 'POST',
@@ -284,6 +354,7 @@ async function runGenerate() {
       program: program,
       section: section,
       strategy: strategy,
+      engine: engine,     // 'classic' = the original placer, 'scheduler' = the new engine
       defer_build: true,  // place sections via an async job (won't block the request)
     }),
   });
@@ -348,6 +419,7 @@ async function runGenerate() {
       await onScenarioChange();
       $('twGenStatus').textContent = '';
       notify.success(IS_AR ? 'تم التوليد والبناء' : 'Generated + built');
+      if (engine === 'scheduler') await showSchedulerOutcome(data.build_job_id);
     } else {
       notify.error((IS_AR ? 'فشل البناء: ' : 'Build failed: ') + (job.error_message || job.status));
     }
