@@ -2,7 +2,13 @@ from django.http import HttpRequest, JsonResponse
 
 from core.models import Student
 from core.services.audit import log_audit_event
-from core.services.rbac import ROLE_ADVISOR, ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_scope
+from core.services.rbac import (
+    ROLE_ADVISOR,
+    ROLE_GENERAL_ADVISOR,
+    ROLE_STUDENT,
+    ROLE_SUPER_ADMIN,
+    get_user_scope,
+)
 
 
 def _policy_deny(
@@ -137,6 +143,27 @@ def require_student_scope(request: HttpRequest, student_id: int) -> JsonResponse
 
     scope = get_user_scope(request.user)
     role = str(scope.get("role", ""))
+
+    if role == ROLE_STUDENT:
+        # A student may only ever touch their OWN record. Identity comes from the
+        # session (scope['student_id']), never the requested id.
+        own = scope.get("student_id")
+        if own is None or int(own) != int(student_id):
+            return _policy_deny(
+                request,
+                action="policy.student_scope",
+                reason_code="STUDENT_SCOPE_SELF_ONLY",
+                error="Students may only access their own record.",
+                status=403,
+                details={"student_id": student_id},
+            )
+        _policy_allow(
+            request,
+            action="policy.student_scope",
+            reason_code="STUDENT_SCOPE_SELF",
+            details={"student_id": student_id},
+        )
+        return None
 
     if role == ROLE_ADVISOR:
         own_advisor = str(scope.get("advisor_id", "")).strip()

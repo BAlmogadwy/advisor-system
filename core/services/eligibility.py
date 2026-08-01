@@ -1,3 +1,5 @@
+import re
+
 from core.models import ElectiveCourse, ProgrammeRequirement, Student
 from core.services.student_helpers import (
     get_all_programs,
@@ -5,6 +7,51 @@ from core.services.student_helpers import (
     get_student_passed_and_studying,
     normalize_code,
 )
+
+_HOUR_PREREQ_RE = re.compile(r"^(\d+)\s*\(?\s*HOURS?\s*\)?$", re.IGNORECASE)
+
+
+def split_hour_prereqs(prereqs: list[str]) -> tuple[list[str], int]:
+    """Split a prerequisite list into real course codes and a credit-hour gate.
+
+    The curriculum encodes "you need N credit hours" as a pseudo-prerequisite such
+    as ``146(HOURS)``. It is NOT a course code: tested as one it can never be
+    satisfied, which silently locks every capstone forever.
+    """
+    courses: list[str] = []
+    required_hours = 0
+    for p in prereqs:
+        m = _HOUR_PREREQ_RE.match(str(p).strip())
+        if m:
+            required_hours = max(required_hours, int(m.group(1)))
+        else:
+            courses.append(p)
+    return courses, required_hours
+
+
+def hour_gate(
+    student_id: int | str, required_hours: int, *, strict_passed_only: bool = False
+) -> dict[str, object]:
+    """Evaluate a credit-hour gate for one student.
+
+    Mirrors the rule already used by course_eligibility: currently-registered
+    credits count toward the gate unless ``strict_passed_only``.
+    """
+    row = (
+        Student.objects.filter(student_id=student_id)
+        .values_list("total_earned_credits", "current_registered_credits")
+        .first()
+    )
+    earned, current = (row[0] or 0, row[1] or 0) if row else (0, 0)
+    effective = earned if strict_passed_only else earned + current
+    return {
+        "required": int(required_hours),
+        "earned": int(earned),
+        "registered": int(current),
+        "effective": int(effective),
+        "met": bool(required_hours <= 0 or effective >= required_hours),
+        "remaining": max(0, int(required_hours) - int(effective)),
+    }
 
 
 def _course_exists_in_program(course_code: str, program: str) -> bool:

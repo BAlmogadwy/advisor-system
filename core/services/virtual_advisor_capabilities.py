@@ -777,6 +777,228 @@ def _course_codes_array_schema(description: str) -> dict[str, Any]:
     return {"type": "array", "items": {"type": "string"}, "description": description}
 
 
+def _exec_my_progress(
+    args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
+) -> dict[str, Any]:
+    """Where the student stands: what is open now, what is blocked and why."""
+    from core.services.student_unlock import build_unlock_report
+
+    student_id, error = _resolve_scoped_student_id(args, scope)
+    if error:
+        return {"ok": False, "error": error}
+    year, term, error = _ctx_year_term(args, ctx)
+    if error:
+        return {"ok": False, "error": error}
+
+    r = build_unlock_report(int(student_id), int(year), int(term))
+    if not r:
+        return {"ok": False, "error": f"No degree plan found for student {student_id}."}
+
+    def why(c):
+        out = []
+        for x in c["reasons"]:
+            if x["kind"] == "MISSING_COURSE":
+                out.append(f"needs {x['code']}")
+            elif x["kind"] == "MISSING_HOURS":
+                out.append(f"needs {x['required']} credit hours, has {x['effective']}")
+            else:
+                out.append(x["kind"].lower())
+        return out
+
+    return {
+        "student_id": int(student_id),
+        "program": r["program"],
+        "academic_year": year,
+        "term": term,
+        "counts": r["counts"],
+        "most_useful_course_to_pass": r["top_blocker"],
+        "open_now": [
+            {
+                "code": c["code"],
+                "name": c["name"],
+                "credits": c["credits"],
+                "fits_this_term": c["fits_this_term"],
+            }
+            for c in r["open_courses"][:_MAX_LIST_ROWS]
+        ],
+        "elective_slots": [c["code"] for c in r["elective_slots"]],
+        "blocked": [
+            {
+                "code": c["code"],
+                "name": c["name"],
+                "steps_away": c["steps"],
+                "opens_n_courses": c["frees_eventually"],
+                "nearest_course_you_can_take_now": (c["nearest_open"] or {}).get("code"),
+                "why": why(c),
+            }
+            for c in r["locked_courses"][:_MAX_LIST_ROWS]
+        ],
+        "note": (
+            "A course being studied satisfies a prerequisite but must still be passed. "
+            "This does not know which courses actually run this term or seat availability."
+        ),
+    }
+
+
+def _exec_why_course_locked(
+    args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
+) -> dict[str, Any]:
+    """Explain ONE course: passed, studying, open now, or blocked and exactly why."""
+    from core.services.student_unlock import build_unlock_report
+
+    student_id, error = _resolve_scoped_student_id(args, scope)
+    if error:
+        return {"ok": False, "error": error}
+    code = normalize_code(str(args.get("course_code") or ""))
+    if not code:
+        return {"ok": False, "error": "course_code is required."}
+    year, term, error = _ctx_year_term(args, ctx)
+    if error:
+        return {"ok": False, "error": error}
+
+    r = build_unlock_report(int(student_id), int(year), int(term))
+    if not r:
+        return {"ok": False, "error": f"No degree plan found for student {student_id}."}
+
+    base = {"student_id": int(student_id), "course_code": code}
+    for c in r["open_courses"]:
+        if c["code"] == code:
+            return {
+                **base,
+                "status": "open_now",
+                "name": c["name"],
+                "fits_this_term": c["fits_this_term"],
+                "explanation": "Every prerequisite is satisfied; it can be registered.",
+            }
+    for c in r["done"]:
+        if c["code"] == code:
+            return {**base, "status": "passed", "name": c["name"], "explanation": "Already passed."}
+    for c in r["in_progress"]:
+        if c["code"] == code:
+            return {
+                **base,
+                "status": "studying",
+                "name": c["name"],
+                "explanation": "Being studied now; must still be passed.",
+            }
+    for c in r["locked_courses"]:
+        if c["code"] == code:
+            return {
+                **base,
+                "status": "blocked",
+                "name": c["name"],
+                "steps_away": c["steps"],
+                "opens_n_courses": c["frees_eventually"],
+                "nearest_course_you_can_take_now": (c["nearest_open"] or {}).get("code"),
+                "blocked_by": c["reasons"],
+                "explanation": (
+                    "Blocked only by a credit-hour requirement, not by any course."
+                    if c["hours_only"]
+                    else "Blocked by prerequisite courses not yet passed or being studied."
+                ),
+            }
+    return {"ok": False, "error": f"{code} is not in this student's degree plan."}
+
+
+def _exec_graduation_progress(
+    args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
+) -> dict[str, Any]:
+    """How far from graduating, with the prerequisite floor kept separate from the
+    pace assumption."""
+    from core.services.student_graduation import build_graduation_report
+
+    student_id, error = _resolve_scoped_student_id(args, scope)
+    if error:
+        return {"ok": False, "error": error}
+    year, term, error = _ctx_year_term(args, ctx)
+    if error:
+        return {"ok": False, "error": error}
+
+    g = build_graduation_report(int(student_id), int(year), int(term))
+    if not g:
+        return {"ok": False, "error": f"No degree plan found for student {student_id}."}
+    return {
+        "student_id": int(student_id),
+        "program": g["program"],
+        "plan_courses_passed": g["plan_courses_passed"],
+        "plan_courses_total": g["plan_courses_total"],
+        "percent_complete": g["percent_courses"],
+        "courses_remaining": g["remaining_courses"],
+        "credits_remaining_in_plan": g["remaining_credits"],
+        "credits_earned_registrar": g["earned_credits_registrar"],
+        "gpa": g["gpa"],
+        "minimum_terms_by_prerequisites": g["chain_floor_terms"],
+        "terms_at_assumed_pace": g["pace_terms"],
+        "courses_per_term_assumed": g["courses_per_term"],
+        "terms_estimate": g["terms_estimate"],
+        "credit_hour_gates": g["hour_gates"],
+        "note": (
+            "Registrar credits include courses outside the plan, so they are not a "
+            "fraction of the plan total. The prerequisite minimum cannot be beaten by "
+            "registering more courses in a term."
+        ),
+    }
+
+
+def _exec_my_timetable(
+    args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
+) -> dict[str, Any]:
+    """The student's registered weekly schedule: day, time, course, section, room."""
+    from core.services.student_sections import get_student_term_baseline, student_gender
+
+    student_id, error = _resolve_scoped_student_id(args, scope)
+    if error:
+        return {"ok": False, "error": error}
+    year, term, error = _ctx_year_term(args, ctx)
+    if error:
+        return {"ok": False, "error": error}
+
+    rows = get_student_term_baseline(int(student_id), str(year), str(term))
+    if not rows:
+        from core.models import StudentTermSection
+
+        published = list(
+            StudentTermSection.objects.filter(term_section__scenario__isnull=True)
+            .values_list("academic_year", "term")
+            .distinct()[:2]
+        )
+        if len(published) == 1:
+            year, term = published[0]
+            rows = get_student_term_baseline(int(student_id), str(year), str(term))
+
+    gender = student_gender(int(student_id))
+    if gender:
+        rows = [
+            r
+            for r in rows
+            if not str(r.get("section") or "").upper().startswith(("M", "F"))
+            or str(r.get("section") or "").upper().startswith(gender)
+        ]
+    meetings = [
+        {
+            "day": r["day"],
+            "start": r["start_time"],
+            "end": r["end_time"],
+            "course_code": r["course_code"],
+            "section": r["section"],
+            "room": r["room"],
+            "instructor": r["instructor"],
+        }
+        for r in rows
+        if r.get("start_time")
+    ]
+    return {
+        "student_id": int(student_id),
+        "academic_year": year,
+        "term": term,
+        "meetings": meetings[: _MAX_LIST_ROWS * 2],
+        "courses_without_a_time": sorted(
+            {r["course_code"] for r in rows if not r.get("start_time")}
+        ),
+        "note": "The published timetable for the term shown; not a live seat count.",
+    }
+
+
 def build_default_registry() -> AdvisorCapabilityRegistry:
     registry = AdvisorCapabilityRegistry()
 
@@ -822,7 +1044,7 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                 },
                 "additionalProperties": False,
             },
-            allowed_roles=_ALL_ROLES,
+            allowed_roles=_STAFF_ROLES,  # cohort search: staff only, never students
             executor=_exec_find_students,
         )
     )
@@ -1031,6 +1253,117 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
             },
             allowed_roles=_PROGRAM_ROLES,
             executor=_exec_aggregate_demand,
+        )
+    )
+
+    registry.register(
+        AdvisorCapability(
+            name="my_progress",
+            description=(
+                "The student's full standing in their degree plan: how many courses are "
+                "open to register NOW (all prerequisites satisfied), how many are blocked, "
+                "which single course would unlock the most, and for every blocked course "
+                "why it is blocked, how many passes away it is, and the nearest course on "
+                "that chain they can take today. Use for 'what can I take', 'what is "
+                "blocking me', 'what should I do next'. Broader than recommend_courses, "
+                "which returns only the credit-capped suggestion for the coming term."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "student_id": {
+                        "type": "integer",
+                        "description": "Omit for the chatting student.",
+                    },
+                    "academic_year": {"type": "integer"},
+                    "term": {"type": "integer"},
+                },
+                "additionalProperties": False,
+            },
+            allowed_roles=_ALL_ROLES,
+            executor=_exec_my_progress,
+        )
+    )
+
+    registry.register(
+        AdvisorCapability(
+            name="why_course_locked",
+            description=(
+                "Explain ONE named course for this student: whether it is already passed, "
+                "being studied, open to register now, or blocked - and if blocked, exactly "
+                "which prerequisite courses are missing or how many credit hours are short, "
+                "how many passes away it is, and the nearest course on the chain they can "
+                "take now. Use whenever a student asks about a specific course code."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "course_code": {"type": "string", "description": "e.g. CS323"},
+                    "student_id": {
+                        "type": "integer",
+                        "description": "Omit for the chatting student.",
+                    },
+                    "academic_year": {"type": "integer"},
+                    "term": {"type": "integer"},
+                },
+                "required": ["course_code"],
+                "additionalProperties": False,
+            },
+            allowed_roles=_ALL_ROLES,
+            executor=_exec_why_course_locked,
+        )
+    )
+
+    registry.register(
+        AdvisorCapability(
+            name="graduation_progress",
+            description=(
+                "How close this student is to graduating: courses passed of the plan total, "
+                "percent complete, courses and credits remaining, registrar credits earned, "
+                "GPA, any unmet credit-hour gate, and how many terms remain - split into the "
+                "minimum forced by prerequisite chains (which cannot be beaten) and the "
+                "estimate at an assumed pace. Use for 'when will I graduate', 'how much is "
+                "left', 'am I close to finishing'."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "student_id": {
+                        "type": "integer",
+                        "description": "Omit for the chatting student.",
+                    },
+                    "academic_year": {"type": "integer"},
+                    "term": {"type": "integer"},
+                },
+                "additionalProperties": False,
+            },
+            allowed_roles=_ALL_ROLES,
+            executor=_exec_graduation_progress,
+        )
+    )
+
+    registry.register(
+        AdvisorCapability(
+            name="my_timetable",
+            description=(
+                "The student's registered weekly class schedule: day, start and end time, "
+                "course, section, room and instructor. Use for 'what is my schedule', 'when "
+                "is my class', 'what do I have on Monday', 'where is my class'."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "student_id": {
+                        "type": "integer",
+                        "description": "Omit for the chatting student.",
+                    },
+                    "academic_year": {"type": "integer"},
+                    "term": {"type": "integer"},
+                },
+                "additionalProperties": False,
+            },
+            allowed_roles=_ALL_ROLES,
+            executor=_exec_my_timetable,
         )
     )
 

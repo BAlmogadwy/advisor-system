@@ -463,6 +463,7 @@ class UserScope(models.Model):
     )
     advisor_id = models.TextField(blank=True, default="")
     departments = models.TextField(blank=True, default="")
+    student_id = models.IntegerField(null=True, blank=True, db_index=True)
     updated_at = models.TextField(blank=True, default="")
 
     class Meta:
@@ -470,6 +471,26 @@ class UserScope(models.Model):
 
     def __str__(self) -> str:
         return f"Scope(user={self.user_id})"
+
+
+class StudentLoginOTP(models.Model):
+    """One-time email code for student login. The code itself is never stored —
+    only a salted SHA-256 hash. Short-lived, single-use, attempt-capped."""
+
+    student_id = models.IntegerField(db_index=True)
+    code_hash = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    attempts = models.IntegerField(default=0)
+    consumed = models.BooleanField(default=False)
+    request_ip = models.CharField(max_length=64, blank=True, default="")
+
+    class Meta:
+        db_table = "core_student_login_otp"
+        indexes = [models.Index(fields=["student_id", "consumed"], name="ix_otp_student_consumed")]
+
+    def __str__(self) -> str:
+        return f"OTP(student={self.student_id}, consumed={self.consumed})"
 
 
 class AuditLog(models.Model):
