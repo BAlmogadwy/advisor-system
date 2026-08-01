@@ -1,0 +1,168 @@
+# Three distinct transfer regimes with DIFFERENT thresholds. Conflating them is the
+# most likely substantive error on this topic: internal college transfer requires
+# 24 units, department/major transfer requires 16.
+
+- policy_id: TU.TRANSFER.EXTERNAL
+  topic: external_transfer
+  title_ar: ضوابط التحويل الخارجي
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 26 }
+  source_text_ar: >
+    أن يكون الطالب/ـة قد درس في جامعة أو كلية محلية، أو جامعة أو كلية أو مؤسسة
+    تعليمية أجنبية على أن تكون مرخصة من جهة الاختصاص في بلد الدراسة؛ ألا يكون
+    مفصولاً من الجامعة المحول منها لأسباب تأديبية؛ أن تنطبق عليه شروط التحويل
+    المعتمدة من مجلس الكلية المحوّل إليها؛ أن تستكمل إجراءات التحويل في مدة لا
+    تتجاوز بداية العام الدراسي؛ أن يكون قد أمضى على الأقل فصلين دراسيين أو سنة
+    دراسية كاملة واكتسب على الأقل (٢٤) وحدة دراسية في الكلية المحول منها؛ أن
+    يدرس ما لا يقل عن ٥٠٪ من متطلبات التخرج في الكلية المحول إليها؛ ألا يكون
+    التحويل من درجة علمية إلى درجة علمية أعلى منها.
+  rule_type: eligibility
+  conditions:
+    - { field: prior_institution_recognised, operator: "==", value: true }
+    - { field: disciplinary_dismissal_from_prior, operator: "==", value: false }
+    - { field: meets_receiving_college_conditions, operator: "==", value: true }
+    - { field: semesters_completed_at_prior, operator: ">=", value: 2 }
+    - { field: units_earned_at_prior, operator: ">=", value: 24 }
+    - { field: share_of_requirements_at_receiving, operator: ">=", value: 50, unit: percent }
+    - { field: transfer_to_higher_degree_level, operator: "==", value: false }
+  deadline: BEFORE_ACADEMIC_YEAR_START
+  channel: ELECTRONIC_UNIVERSITY_PORTAL
+  window_defined_in: TU_ACADEMIC_CALENDAR
+  required_inputs:
+    [prior_institution_recognised, disciplinary_dismissal_from_prior,
+     meets_receiving_college_conditions, semesters_completed_at_prior,
+     units_earned_at_prior, share_of_requirements_at_receiving]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: &v_extracted
+    status: EXTRACTED
+    extracted_by: agent
+    extracted_at: "2026-08-01"
+    source_verified_by: null
+    domain_reviewed_by: null
+    authority_approved_by: null
+  extraction_confidence: high
+  runtime_use: PROHIBITED_FOR_DECISION
+  runtime_use_reason: >
+    Concerns applicants from outside; the project holds no pre-admission records at
+    all. Explain-only by nature.
+
+- policy_id: TU.TRANSFER.INTERNAL_COLLEGE
+  topic: internal_transfer
+  title_ar: ضوابط التحويل الداخلي بين كليات الجامعة
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 26 }
+  source_text_ar: >
+    أن تنطبق على الطالب/ـة شروط التحويل المعتمدة من مجلس الكلية المحوّل إليها؛ أن
+    يكون قد أمضى فصلين دراسيين أو سنة دراسية على الأقل، واكتسب على الأقل (٢٤)
+    وحدة دراسية في الكلية المحول منها؛ ألا يكون قد درس في الكلية المحول منها ما
+    يزيد عن ٥٠٪ من مقررات الخطة الدراسية؛ ألا يكون التحويل من درجة علمية إلى
+    درجة علمية أعلى منها؛ أن يكون التحويل لمرة واحدة فقط خلال فترة دراسة الطالب
+    في الجامعة؛ من سبق له التحويل من خارج الجامعة، فلا يحق له التحويل من كلية إلى
+    أخرى داخل الجامعة؛ تغيير مقر الكلية لنفس التخصص لا يحتسب ضمن مرات التحويل.
+  rule_type: eligibility
+  conditions:
+    - { field: meets_receiving_college_conditions, operator: "==", value: true }
+    - { field: semesters_completed, operator: ">=", value: 2 }
+    - { field: units_earned_at_current_college, operator: ">=", value: 24 }
+    - { field: share_of_plan_already_studied, operator: "<=", value: 50, unit: percent }
+    - { field: transfer_to_higher_degree_level, operator: "==", value: false }
+    - { field: previous_internal_transfer_count, operator: "<", value: 1 }
+    - { field: transferred_from_outside_university, operator: "==", value: false }
+  exclusions_from_count:
+    - "تغيير مقر الكلية لنفس التخصص"
+  channel: ELECTRONIC_UNIVERSITY_PORTAL
+  window_defined_in: TU_ACADEMIC_CALENDAR
+  required_inputs:
+    [meets_receiving_college_conditions, semesters_completed,
+     units_earned_at_current_college, share_of_plan_already_studied,
+     previous_internal_transfer_count, transferred_from_outside_university]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_extracted
+  extraction_confidence: high
+  runtime_use: PROHIBITED_FOR_DECISION
+  runtime_use_note: >
+    Every material input is MISSING or unrepresentable. units_earned exists but is
+    UNDATED and registrar-scoped (Student.total_earned_credits counts transfers and
+    out-of-plan courses, so it is not "units earned at this college"). The other
+    four are absent. May report the conditions and name what is unknown; may NOT
+    return an eligibility verdict.
+  never_infer: >
+    CORRECTED 2026-08-01. An earlier revision claimed share_of_plan_already_studied
+    was derivable by intersecting PASSED courses with ProgrammeRequirement. That is
+    wrong and it is the exact optimistic derivation this store exists to prevent.
+    The page says "ما درسها" — STUDIED, not passed. Studied includes failed
+    attempts, withdrawn attempts and repeats, none of which the schema can
+    represent (StudentCourse holds one row per student-course with statuses
+    passed / studying / not_taken). Passed courses are a strict UNDER-count of
+    studied courses, so the derived ratio would be biased low — and this condition
+    is an upper bound ("ألا يزيد عن 50%"), meaning the bias runs toward wrongly
+    telling a student they are still eligible.
+  answers_questions: [71, 72, 76, 79, 80]
+
+- policy_id: TU.TRANSFER.DEPARTMENT_OR_MAJOR
+  topic: internal_transfer
+  title_ar: ضوابط التحويل بين الأقسام داخل الكلية أو بين التخصصات داخل القسم
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 27 }
+  source_text_ar: >
+    أن يكون الطالب/ـة مستوفياً لشروط التحويل في القسم المحول إليه والمعتمدة من
+    مجلس الكلية؛ أن يكون قد أمضى فصلين دراسيين على الأقل واكتسب على الأقل (١٦)
+    وحدة دراسية في القسم المحول منه؛ أن يكون التحويل لمرة واحدة فقط؛ من سبق له
+    التحويل من خارج الجامعة، أو من سبق له التحويل من كلية إلى أخرى داخل الجامعة،
+    فلا يحق له التحويل من قسم لآخر داخل الكلية أو من تخصص لآخر داخل القسم.
+  rule_type: eligibility
+  conditions:
+    - { field: meets_receiving_department_conditions, operator: "==", value: true }
+    - { field: semesters_completed, operator: ">=", value: 2 }
+    - { field: units_earned_at_current_department, operator: ">=", value: 16 }
+    - { field: previous_department_transfer_count, operator: "<", value: 1 }
+    - { field: transferred_from_outside_university, operator: "==", value: false }
+    - { field: transferred_between_colleges, operator: "==", value: false }
+  channel: ELECTRONIC_UNIVERSITY_PORTAL
+  window_defined_in: TU_ACADEMIC_CALENDAR
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_extracted
+  extraction_confidence: high
+  contrast_note: >
+    16 units here vs 24 in TU.TRANSFER.INTERNAL_COLLEGE. The two rules are otherwise
+    near-identical in wording, which is exactly why an answer must name which regime
+    it is quoting. This is also the regime that applies to the AI/CS/IS/DS/COE/CYB
+    moves students actually ask about, since those are departments within one college.
+  runtime_use: PROHIBITED_FOR_DECISION
+  runtime_use_reason: transfer history and per-department unit totals are both MISSING
+
+- policy_id: TU.REGISTRATION.STRUGGLING_STUDENTS
+  topic: registration_priority
+  title_ar: التسجيل للطلاب المتعثرين
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 27 }
+  source_text_ar: >
+    الطلاب المتعثرون دراسياً يتم تسجيلهم في المقررات بما يضمن لهم الحد الأدنى مع
+    مراعاة ما يلي: عدم التعارض في الجدول الدراسي؛ استيفاء المتطلبات السابقة؛ عدم
+    السماح بأخذ مقررات من المستويات التالية إلا لإكمال الحد الأدنى من العبء الدراسي.
+  rule_type: procedure
+  constraints:
+    - NO_TIMETABLE_CLASH
+    - PREREQUISITES_SATISFIED
+    - NO_HIGHER_LEVEL_COURSES_EXCEPT_TO_REACH_MINIMUM_LOAD
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_extracted
+  extraction_confidence: high
+  implementation_note: >
+    All three constraints are ALREADY enforced by existing services — clash by
+    conflict_matrix, prerequisites by the recommender and my_progress, minimum load
+    by MIN_CREDITS. This record supplies the authoritative justification for
+    behaviour the system already has, and is the closest thing in the guide to an
+    answer for Q174 ("خطة خاصة للمتعثرين").

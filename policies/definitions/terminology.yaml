@@ -1,0 +1,213 @@
+# مصطلحات الإرشاد الأكاديمي — pp.7-9.
+#
+# Highest return-on-effort content in the store: every one of these answers a
+# student question with ZERO student data required, so none of it is blocked by the
+# grade/attendance/calendar gaps. Pure EXPLAIN_ONLY by nature, not by deficiency.
+
+- policy_id: TU.DEF.CALENDAR_UNITS
+  topic: terminology
+  title_ar: مصطلحات النظام والفصول الدراسية
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 7 }
+  rule_type: definitions
+  terms:
+    - term_ar: العام الدراسي
+      definition_ar: >
+        فصلان دراسيان أو أكثر وفصل صيفي إن وجد، أو أربع مستويات إن وجد ومستوى صيفي
+        أو مستويين صيفيين إن وجد.
+    - term_ar: النظام الدراسي
+      definition_ar: >
+        أسلوب الدراسة المتبع في كليات ومعاهد الجامعة، سواء بنظام المستويات
+        الدراسية، أو الفصول الدراسية، أو السنة الدراسية الكاملة.
+    - term_ar: الفصل الدراسي
+      definition_ar: >
+        مدة زمنية لا تقل عن خمسة عشر أسبوعاً في نظام الفصلين الدراسيين، ولا تقل عن
+        اثني عشر أسبوعاً في نظام الفصول الدراسية الثلاثة، ولا تدخل ضمنها فترات
+        التسجيل والحذف والإضافة والاختبارات النهائية.
+    - term_ar: المستوى الدراسي
+      definition_ar: >
+        أسلوب دراسي تكون المدة الزمنية فيه أقل من الفصل الدراسي، بحيث لا يقل عن
+        أربعة أسابيع ولا يزيد على ثمانية أسابيع، ولا يقل إجمالي الأسابيع الدراسية
+        عن أربعين أسبوعاً في العام.
+    - term_ar: السنة الدراسية
+      definition_ar: مدة زمنية لا تقل عن أربعين أسبوعاً في العام.
+    - term_ar: الفصل الصيفي
+      definition_ar: >
+        مدة زمنية لا تقل عن ثمانية أسابيع لنظام الفصلين الدراسيين، ولا تقل عن ستة
+        أسابيع لنظام الفصول الدراسية الثلاثة، وتُضاعف خلالها المدة المخصصة لكل
+        مقرر دراسي.
+    - term_ar: المستوى الصيفي
+      definition_ar: >
+        مدة زمنية لا تقل عن أربعة أسابيع لنظام المستوى الدراسي، وتُضاعف خلالها
+        المدة المخصصة لكل مقرر دراسي.
+    - term_ar: الخطة الدراسية
+      definition_ar: >
+        مجموعة المقررات الدراسية الإجبارية والاختيارية والحُرة، التي تشكل مجموع
+        وحداتها متطلبات التخرج، التي يجب على الطالب/ـة اجتيازها بنجاح للحصول على
+        الدرجة العلمية في التخصص المحدد.
+    - term_ar: المقرر الدراسي
+      definition_ar: >
+        المادة الدراسية في خطة كل برنامج، وتشتمل رقماً ورمزاً ووصفاً للمحتوى،
+        وتخضع في كل قسم للمتابعة والتقييم والتطوير، ويجوز أن تُدرس مستقلة، أو أن
+        يكون لها متطلب سابق، أو متطلب متزامن معها.
+    - term_ar: الوحدة الدراسية
+      definition_ar: >
+        المحاضرة النظرية الأسبوعية (أو الدرس السريري أو درس التمارين) التي لا تقل
+        مدتها عن خمسين دقيقة، أو الدرس العملي الذي لا تقل مدته عن مئة دقيقة، أو
+        الدرس الميداني المحدد في الخطة الدراسية.
+    - term_ar: أنماط التعليم
+      definition_ar: >
+        طرائق التعليم المختلفة ومنها التعليم الحضوري، التعليم المدمج، التعليم عن
+        بعد، التعليم الذاتي، وغيرها.
+    - term_ar: برنامج الترقية الأكاديمية (التجسير)
+      definition_ar: البرنامج المصمم لإكمال الدراسة من الدبلوم إلى البكالوريوس.
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: &v_extracted
+    status: EXTRACTED
+    extracted_by: agent
+    extracted_at: "2026-08-01"
+    source_verified_by: null
+    domain_reviewed_by: null
+    authority_approved_by: null
+  extraction_confidence: high
+  key_finding: >
+    المقرر الدراسي explicitly admits "متطلب متزامن" — CONCURRENT prerequisites are
+    recognised by the regulation. Earlier project analysis recorded co-requisites as
+    a concept the university does not use; that was wrong. They exist in the rules
+    and are absent from OUR schema (the prerequisites table holds a single relation
+    type). Q13/Q14 are therefore a DATA gap, not a non-existent concept. The guide
+    defines متطلب سابق on p.9 but gives no standalone definition or rules for
+    متطلب متزامن — those must come from TU_UNDERGRAD_REGULATION.
+
+- policy_id: TU.DEF.ASSESSMENT_AND_RECORD
+  topic: terminology
+  title_ar: مصطلحات الدرجات والسجل الأكاديمي
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 8 }
+  rule_type: definitions
+  terms:
+    - term_ar: درجة الأعمال الفصلية
+      definition_ar: >
+        الدرجة الممنوحة للأعمال التي يتحصل عليها الطالب/ـة خلال الدراسة في مستوى
+        دراسي أو فصل دراسي أو السنة الدراسية -إن وجدت- وتشمل الاختبارات والبحوث
+        والأنشطة التعليمية التي تتصل بالمقرر الدراسي.
+    - term_ar: الاختبار النهائي
+      definition_ar: >
+        اختبار في المقرر الدراسي يعقد مرة واحدة في نهاية تدريس المقرر الدراسي.
+    - term_ar: درجة الاختبار النهائي
+      definition_ar: >
+        الدرجة التي يحصل عليها الطالب/ـة في الاختبار النهائي في كل مقرر دراسي.
+    - term_ar: الدرجة النهائية
+      definition_ar: >
+        مجموع درجات الأعمال الفصلية وتُضاف إليها درجة الاختبار النهائي لكل مقرر
+        دراسي، وتحسب الدرجة الإجمالية من مئة.
+    - term_ar: السجل الأكاديمي
+      definition_ar: >
+        بيان تفصيلي يتضمن جميع المقررات الدراسية التي درسها الطالب/ـة والتقديرات
+        التي حصل عليها، ويشمل المعدلين (الفصلي والتراكمي).
+    - term_ar: الطالب الزائر
+      definition_ar: >
+        الطالب/ـة الذي يقوم بدراسة بعض المقررات الدراسية في جامعة أخرى، أو في فرع
+        من فروع الجامعة التي ينتمي إليها دون تحويله.
+    - term_ar: التقدير
+      definition_ar: >
+        وصف للنسبة المئوية أو الرمز الأبجدي للدرجة النهائية التي حصل عليها
+        الطالب/ـة في أي مقرر دراسي.
+    - term_ar: تقدير غير مكتمل
+      definition_ar: >
+        تقدير يُرصد لكل مقرر دراسي يتعذر على الطالب/ـة استكمال متطلباته في الموعد
+        المحدد، ويرمز له في السجل الأكاديمي بالرمز (ل) (IC).
+    - term_ar: تقدير مستمر
+      definition_ar: >
+        تقدير يُرصد لكل مقرر دراسي يتطلب أكثر من فصل دراسي لاستكمال دراسته، ويرمز
+        له بالرمز (م) أو (IP).
+    - term_ar: المعدل الفصلي
+      definition_ar: >
+        حاصل قسمة مجموع النقاط التي حصل عليها الطالب/ـة على مجموع الوحدات المقررة
+        لجميع المقررات الدراسية التي درسها في أي فصل دراسي، وتحسب النقاط بضرب
+        الوحدة المقررة في وزن التقدير الذي حصل عليه في كل مقرر دراسي.
+    - term_ar: المعدل التراكمي
+      definition_ar: >
+        حاصل قسمة مجموع النقاط التي حصل عليها الطالب/ـة في جميع المقررات الدراسية
+        التي درسها منذ التحاقه بالجامعة على مجموع الوحدات المقررة لتلك المقررات.
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_extracted
+  extraction_confidence: high
+  cross_references: [TU.GPA.FORMULA, TU.GRADE.SPECIAL_SYMBOLS]
+
+- policy_id: TU.DEF.PROGRAMME_AND_COURSES
+  topic: terminology
+  title_ar: مصطلحات البرنامج وأنواع المقررات
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 9 }
+  rule_type: definitions
+  terms:
+    - term_ar: التقدير العام
+      definition_ar: وصف مستوى التحصيل العلمي للطالب/ـة خلال مدة دراسته في الجامعة.
+    - term_ar: العبء الدراسي
+      definition_ar: >
+        مجموع الوحدات الدراسية التي يسمح للطالب/ـة التسجيل فيها في مستوى دراسي أو
+        فصل دراسي أو سنة دراسية كاملة، محددة من مجلس الجامعة.
+    - term_ar: البرنامج الدراسي
+      definition_ar: >
+        برنامج متكامل من المقررات التي تعد الطالب/ـة خلال مدة زمنية محددة إعداداً
+        معرفياً ومهارياً وشخصياً؛ لنيل الدرجة العلمية في تخصص محدد.
+    - term_ar: متطلبات الجامعة
+      definition_ar: >
+        مقررات إجبارية ومقررات اختيارية يدرسها جميع طلبة الجامعة في مرحلة
+        البكالوريوس.
+    - term_ar: متطلبات الكلية
+      definition_ar: مقررات إجبارية معيّنة يدرسها جميع طلبة الكلية.
+    - term_ar: متطلبات البرنامج
+      definition_ar: >
+        مقررات إجبارية معينة لعدد محدد من الوحدات الدراسية المعتمدة يدرسها جميع
+        طلبة البرنامج.
+    - term_ar: المقررات الاختيارية
+      definition_ar: >
+        مجموعة من المقررات يختار منها الطالب/ـة عدداً مطلوباً من الوحدات الدراسية
+        المعتمدة والمخصصة للمقررات الاختيارية للبرنامج الدراسي.
+    - term_ar: المقررات المساعدة
+      definition_ar: >
+        مقررات إجبارية يدرسها طلبة برنامج من قسم أو برنامج آخر وتعتبر ضمن المقررات
+        الإجبارية للبرنامج.
+    - term_ar: المقررات الحرة
+      definition_ar: >
+        مقررات اختيارية حرة متاحة على مستوى الجامعة ضمن برامجها الدراسية المطروحة،
+        وليس لها متطلب.
+    - term_ar: متطلب سابق
+      definition_ar: >
+        مقرر دراسي يجب على الطالب/ـة اجتيازه قبل تسجيل مقرر آخر ضمن الخطة الدراسية
+        للبرنامج بحيث يكون بينهما ارتباط في المجال.
+    - term_ar: الانقطاع
+      definition_ar: >
+        حالة أكاديمية تسجل على النظام عند عدم تسجيل الطالب/ـة أي مقرر في فصل دراسي
+        أو سنة دراسية دون حصوله على إذن بتأجيل الدراسة أو الاعتذار، ولا تحسب فترة
+        الانقطاع ضمن مدة الدراسة للتخرج في حالة أعيد قيده بعذر تقبله اللجنة المختصة.
+    - term_ar: طي القيد
+      definition_ar: >
+        تعليق أو إيقاف علاقة الطالب/ـة بالجامعة سواء أكان ذلك عن طريق الفصل
+        الأكاديمي أو التأديبي أو الانسحاب النهائي أو الانقطاع عن الدراسة أو التغيب
+        المتواصل أو انتهاء الفترة المحددة للبرنامج حسب الخطة الدراسية بدون
+        اجتيازها، وذلك لمدة محددة.
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_extracted
+  extraction_confidence: high
+  mapping_to_project_data: >
+    ProgrammeRequirement.type carries exactly four values — Mandatory (511),
+    Program Elective (38), University Elective (30), Free Elective (16) — which map
+    onto متطلبات البرنامج / المقررات الاختيارية / متطلبات الجامعة / المقررات الحرة.
+    This record supplies the official definitions behind labels the database already
+    uses, and answers Q8, Q114, Q115, Q116 with a citation rather than a paraphrase.
+  key_finding: >
+    المقررات الحرة are defined as having NO prerequisite ("وليس لها متطلب"). That is
+    a checkable invariant against the prerequisites table for the 16 Free Elective
+    rows — a cheap data-quality test the store makes possible.

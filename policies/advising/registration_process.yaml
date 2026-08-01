@@ -1,0 +1,217 @@
+- policy_id: TU.REG.STUDENT_CHOICES_FINAL
+  topic: registration_process
+  title_ar: نهائية اختيارات الطالب وصلاحيات التعديل
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, pages: [17, 21] }
+  source_text_ar: >
+    يعتبر جدول الطالب نهائياً. تعتبر اختيارات الطالب نهائية ولا يتم التعديل إلا
+    بمعرفة المرشد. حصر التسجيل بالتجاوز لوكيل الكلية أو المشرف الأكاديمي. تغيير
+    التخصص من صلاحيات الكلية فقط.
+  rule_type: authority_allocation
+  authorities:
+    - { action: MODIFY_REGISTRATION, actor: ACADEMIC_ADVISER, note: "لا يتم التعديل إلا بمعرفة المرشد" }
+    - { action: OVERRIDE_REGISTRATION, actor: [COLLEGE_VICE_DEAN, ACADEMIC_SUPERVISOR], exclusive: true }
+    - { action: CHANGE_MAJOR, actor: COLLEGE, exclusive: true }
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: &v_extracted
+    status: EXTRACTED
+    extracted_by: agent
+    extracted_at: "2026-08-01"
+    source_verified_by: null
+    domain_reviewed_by: null
+    authority_approved_by: null
+  extraction_confidence: high
+  answers_questions: [37, 139]
+
+- policy_id: TU.REG.ADVISER_CAN_REGISTER_DIRECTLY
+  topic: registration_process
+  title_ar: صلاحية المرشد في التسجيل والحذف والإضافة
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 20 }
+  source_text_ar: >
+    بعد ذلك يمكن للمرشد الأكاديمي تسجيل المقررات للطالب والحذف والإضافة مباشرة من
+    حسابه على أنظمة الجامعة.
+  rule_type: authority_allocation
+  actor: ACADEMIC_ADVISER
+  permitted_actions: [REGISTER_COURSES, DROP, ADD]
+  channel: UNIVERSITY_SYSTEMS_ADVISER_ACCOUNT
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_extracted
+  extraction_confidence: high
+  answers_questions: [140]
+  notes: >
+    Answers Q140 ("هل المرشد يقدر يضيف لي المادة يدوياً؟") in the affirmative — a
+    question the project previously classified as unanswerable.
+
+- policy_id: TU.REG.EARLY_REGISTRATION_TIMING
+  topic: registration_process
+  title_ar: توقيت التسجيل المبكر وتسجيل الرغبات
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, pages: [17, 20] }
+  source_text_ar: >
+    تسجيل الرغبات: منتصف الفصل السابق للفصل المسجل به. فترة التسجيل المبكر تبدأ في
+    منتصف الفصل الدراسي الذي يسبق الفصل المسجل له. انتهاء التسجيل وبدء العمل مع
+    المرشد: بعد انتهاء تسجيل الطالب على حسابه في موقع الجامعة. التسجيل النهائي
+    للطالب: قبل بداية الفصل الدراسي.
+  rule_type: schedule
+  milestones:
+    - { event: PREFERENCE_REGISTRATION, when: MIDPOINT_OF_PRECEDING_TERM }
+    - { event: ADVISER_REVIEW, when: AFTER_STUDENT_SELF_REGISTRATION }
+    - { event: FINAL_REGISTRATION, when: BEFORE_TERM_START }
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_extracted
+  extraction_confidence: high
+  runtime_use: PROHIBITED_FOR_DECISION
+  runtime_use_reason: >
+    Milestones are RELATIVE ("منتصف الفصل السابق"), never absolute. Converting them
+    to dates needs TU_ACADEMIC_CALENDAR. The relative sequence may be explained; no
+    date may be asserted or implied.
+
+- policy_id: TU.REG.CHANGES_CLOSE_ONE_WEEK_BEFORE
+  topic: registration_process
+  title_ar: إغلاق التعديلات قبل بدء الدراسة بأسبوع
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 20 }
+  source_text_ar: >
+    تنتهي كافة إجراءات التسجيل قبل بدء الدراسة بأسبوع ولا يحق للطالب إجراء أية
+    تعديلات على اختياراته.
+  rule_type: deadline
+  offset: -7
+  offset_unit: days
+  relative_to: TERM_START
+  effect_after: NO_STUDENT_MODIFICATIONS_PERMITTED
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_extracted
+  extraction_confidence: high
+  runtime_use: PROHIBITED_FOR_DECISION
+  runtime_use_reason: TERM_START is unknown without TU_ACADEMIC_CALENDAR
+  notes: >
+    The closest the guide comes to answering Q31 ("آخر موعد للحذف والإضافة"). It
+    gives an OFFSET, not a date — which is exactly why the calendar is a blocking
+    source rather than a nice-to-have.
+  open_question: >
+    Possible tension with the الحذف والإضافة period, which p.7 and p.23 both
+    describe as falling INSIDE the term but outside the 15 counted weeks. Whether
+    "تنتهي كافة إجراءات التسجيل" refers to early registration only, or forecloses
+    the add/drop window too, is not resolvable from the guide alone.
+
+- policy_id: TU.REG.ADVISER_DUTIES_AT_REGISTRATION
+  topic: registration_process
+  title_ar: واجبات المرشد أثناء التسجيل
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 20 }
+  source_text_ar: >
+    يدرس المرشد الأكاديمي كشف درجات الطالب والمواد المسجلة ومقارنة ذلك مع الخطة
+    الدراسية ثم توجيه الطالب للمقررات التي تتطابق مع حالته الأكاديمية وتخصصه.
+    يقوم المرشد بالتأكد من معرفة الطالب بالمكان والزمان الذي تبدأ فيه المحاضرات،
+    ومن عدم وجود أي تعارض في مواعيد جدول الطالب الدراسي.
+  rule_type: obligation
+  obliged_party: ACADEMIC_ADVISER
+  duties:
+    - REVIEW_TRANSCRIPT_AGAINST_STUDY_PLAN
+    - RECOMMEND_COURSES_MATCHING_ACADEMIC_STANDING
+    - CONFIRM_STUDENT_KNOWS_TIME_AND_PLACE_OF_LECTURES
+    - CONFIRM_NO_TIMETABLE_CLASH
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_extracted
+  extraction_confidence: high
+  implementation_note: >
+    This is a near-exact description of what the adviser subsystem already does:
+    my_progress compares record against plan, recommend_courses matches standing,
+    my_timetable supplies time and place, conflict_matrix detects clashes. Useful as
+    the authoritative statement of what the tool is FOR — and as evidence that the
+    existing capability set was aimed at the right target.
+
+- policy_id: TU.ADVISING.STUDENT_RIGHTS
+  topic: advising
+  title_ar: حقوق الطالب على المرشد الأكاديمي
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 18 }
+  rule_type: enumeration
+  rights:
+    - "التواصل المباشر أو الإلكتروني مع المرشد الأكاديمي من خلال جميع القنوات المتاحة."
+    - "الحصول على خدمات أكاديمية مثل الحذف والإضافة في فترة تسجيل المقررات مع المرشد الأكاديمي."
+    - "المناقشة مع المرشد الأكاديمي في كل ما يهم مستقبله الأكاديمي."
+    - "الاستفادة من الخدمات المتاحة بالكلية والجامعة والتي يرشده إليها المرشد الأكاديمي."
+    - "يقوم المرشد الأكاديمي بتقديم التوجيه والإرشاد الضروري واللازم للطالب/ـة بصفة مستمرة حتى تخرجه."
+    - "تعامل جميع ملفات ومعلومات الطلبة المراجعين بسرية تامة وفي سياق متطلبات الحالة."
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_extracted
+  extraction_confidence: high
+  privacy_note: >
+    The last right — "تعامل جميع ملفات ومعلومات الطلبة بسرية تامة" — is the
+    institution's own confidentiality commitment, and it binds this system too. It
+    is the policy basis for the adviser's existing scope rules (find_students and
+    portfolio_triage are staff-only; a student may never query another student).
+
+- policy_id: TU.ADVISING.STUDENT_DUTIES
+  topic: advising
+  title_ar: واجبات الطالب
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 19 }
+  rule_type: enumeration
+  duties:
+    - "الحصول على نسخة كاملة من دليل الإرشاد الأكاديمي وقراءته وفهم كل حقوقه وواجباته."
+    - "الحصول على نسخة كاملة من لائحة الدراسة والاختبارات من موقع عمادة القبول والتسجيل وقراءتها كاملة."
+    - "تحمل كامل المسؤولية عن أدائه، حيث أن الإرشاد الأكاديمي وسيلة للمساعدة ينبغي عليه الاستفادة منها."
+    - "معرفة المرشد الأكاديمي المحدد له ومواعيد ساعاته المكتبية، وإن لم يتم تحديد مرشد يجب التواصل مع رئيس القسم."
+    - "الحرص على الاطلاع بصورة دائمة على المواقع الإلكترونية لكليته وقسمه العلمي."
+    - "الإلمام بتفاصيل التقويم الدراسي والمواعيد المهمة التي تختص بالتسجيل والانسحاب والاعتذار ومراجعة المرشد الأكاديمي في حال تعذر فهم أي من الحالات الأكاديمية."
+    - "مقابلة المرشد للتشاور حول الأهداف الدراسية والمهنية المستقبلية والبرنامج والجدول الدراسي."
+    - "تنفيذ توصيات المرشد والمواظبة على مقابلته حسب المواعيد المتفق عليها."
+    - "إخطار المرشد بأي متغيرات قد تؤثر في برنامجه أو أدائه الدراسي."
+    - "التعاون مع كل محاور الإرشاد لتقديم المعلومات المناسبة التي تتطلبها الخدمة الإرشادية بإظهار الحقائق وإيضاح ما خفي عنهم."
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_extracted
+  extraction_confidence: high
+  notes: >
+    The second duty independently confirms the source hierarchy: the guide tells
+    students to obtain لائحة الدراسة والاختبارات separately. It does not present
+    itself as the authority.
+
+- policy_id: TU.ADVISING.TOOLS
+  topic: advising
+  title_ar: أدوات الإرشاد الأكاديمي
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 14 }
+  rule_type: enumeration
+  tools:
+    - "الخطة الدراسية لبرامج التخصص"
+    - "القواعد التنفيذية المنظمة لقبول طلاب المنح الدراسية لغير السعوديين من الداخل والخارج في جامعة طيبة"
+    - "لائحة الدراسة والاختبارات للمرحلة الجامعية وقواعدها التنفيذية لجامعة طيبة"
+    - "جدولك الدراسي"
+    - "السجل الأكاديمي (كشف الدرجات)"
+    - "البريد الإلكتروني الجامعي للطالب/ـة"
+  access_channel: "نظام الخدمات الإلكترونية"
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_extracted
+  extraction_confidence: high
+  provenance_significance: >
+    THIS is the page that establishes the source hierarchy in sources.yaml — the
+    guide lists لائحة الدراسة والاختبارات وقواعدها التنفيذية as a separate tool,
+    with its own QR code. The guide is a companion to the regulation, not a
+    replacement for it, and it says so itself.

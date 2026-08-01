@@ -1,0 +1,170 @@
+- policy_id: TU.GRADUATION.MINIMUM_GPA
+  topic: graduation
+  title_ar: المعدل التراكمي المطلوب للتخرج
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 35 }
+  source_text_ar: >
+    يتخرج الطالب بعد إنهاء متطلبات التخرج بنجاح حسب النظام الدراسي والخطة الدراسية
+    المقرة من مجلس الجامعة، على ألا يقل معدله التراكمي عن المعدل الذي يحدده مجلس
+    الجامعة لكل تخصص، على ألا يقل في كل الأحوال عن تقدير "مقبول".
+  rule_type: eligibility
+  condition: { field: cumulative_gpa_band, operator: ">=", value: "مقبول" }
+  floor_resolves_to: { of_5: 2.00, of_4: 1.00, via: TU.GPA.GENERAL_ESTIMATE_BANDS }
+  per_programme_threshold_set_by: UNIVERSITY_COUNCIL
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: &v_extracted
+    status: EXTRACTED
+    extracted_by: agent
+    extracted_at: "2026-08-01"
+    source_verified_by: null
+    domain_reviewed_by: null
+    authority_approved_by: null
+  extraction_confidence: high
+  notes: >
+    Answers Q43. Two-layer rule: each programme may set a HIGHER bar, and مقبول is
+    the absolute floor. The project holds no per-programme threshold, so answers
+    must quote the floor and say the programme-specific figure is set by the
+    University Council — never present the floor as the applicable requirement.
+
+- policy_id: TU.GRADUATION.COUNCIL_AWARDS_DEGREE
+  topic: graduation
+  title_ar: منح الدرجة العلمية ومتى يُعد الطالب متخرجاً
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 35 }
+  source_text_ar: >
+    يمنح مجلس الجامعة الدرجات العلمية للطلاب بناءً على مذكرة التخرج التي ترفع من
+    قبل عمادة القبول والتسجيل، ويعد آخر فصل دراسي في سجل الطالب هو فصل التخرج. لا
+    يعتبر الطالب متخرجاً إلا بعد صدور موافقة مجلس الجامعة على منحه الدرجة العلمية.
+  rule_type: procedure
+  authority: UNIVERSITY_COUNCIL
+  graduation_term: LAST_TERM_IN_RECORD
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_extracted
+  extraction_confidence: high
+  critical_distinction: >
+    This is the authoritative basis for separating ACADEMIC_PLAN_COMPLETE from
+    OFFICIAL_GRADUATION_ELIGIBILITY. graduation_progress can compute the former from
+    ProgrammeRequirement; the latter requires a University Council resolution the
+    project has no access to. Q92 and Q96 must never be answered as "yes, you are
+    graduating" — only as "your plan shows X remaining; the award itself is a
+    Council decision".
+
+- policy_id: TU.GRADUATION.GPA_RESCUE_RETAKE
+  topic: graduation
+  title_ar: إعادة مقررات لرفع المعدل إلى مقبول للخريج
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 35 }
+  source_text_ar: >
+    يجوز لمجلس الكلية بناءً على توصية مجلس القسم المختص السماح فقط للطالب الخريج
+    الذي نجح في المقررات الدراسية، ولكنه رسب في المعدل التراكمي، بإعادة دراسة
+    مقرر دراسي أو أكثر يتم تحديده من قبل القسم المختص لرفع المعدل التراكمي
+    للطالب إلى تقدير مقبول.
+  rule_type: exception
+  applies_when: { all_courses_passed: true, cumulative_gpa_below: "مقبول" }
+  remedy: RETAKE_COURSES_SELECTED_BY_DEPARTMENT
+  target: "رفع المعدل إلى مقبول"
+  requires_approval: [DEPARTMENT_COUNCIL_RECOMMENDATION, COLLEGE_COUNCIL]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_extracted
+  extraction_confidence: high
+  notes: >
+    A genuine escape hatch students do not know exists — directly relevant to Q44
+    and Q94. Note the department, not the student, chooses which courses to retake.
+
+- policy_id: TU.GRADUATION.DOCUMENTS
+  topic: graduation
+  title_ar: إصدار وثائق التخرج والسجلات وبدل الفاقد
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 35 }
+  source_text_ar: >
+    إصدار وثائق التخرج والسجلات الأكاديمية للطلبة من اختصاص عمادة القبول والتسجيل.
+    تتولى عمادة القبول والتسجيل إصدار وثائق بدل فاقد أو تالف بعد إثبات الطالب
+    الفقد أو التلف، ويتم استكمال النموذج بذلك، ويمكن للجامعة فرض رسوم مالية.
+  rule_type: procedure
+  responsible: DEANSHIP_OF_ADMISSION_AND_REGISTRATION
+  fees_possible: true
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_extracted
+  extraction_confidence: high
+  notes: Answers Q93 in part.
+
+# ── مرتبة الشرف ───────────────────────────────────────────────────────────
+
+- policy_id: TU.HONOURS.THRESHOLDS
+  topic: honours
+  title_ar: عتبات مرتبة الشرف الأولى والثانية
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 36 }
+  source_text_ar: >
+    يحصل الطالب على مرتبة الشرف الأولى إذا حصل على معدل ٤٫٧٥ كحد أدنى عند التخرج،
+    وتمنح مرتبة الشرف الثانية للطالب الحاصل على معدل ٤٫٢٥ إلى أقل من ٤٫٧٥.
+  rule_type: lookup_table
+  bands:
+    - rank: FIRST
+      rank_ar: الأولى
+      of_5: { min: 4.75, max: 5.00, max_inclusive: true }
+      of_4: { min: 3.75, max: 4.00, max_inclusive: true }
+    - rank: SECOND
+      rank_ar: الثانية
+      of_5: { min: 4.25, max: 4.75, max_inclusive: false }
+      of_4: { min: 3.25, max: 3.75, max_inclusive: false }
+  measured_at: GRADUATION
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_extracted
+  extraction_confidence: high
+
+- policy_id: TU.HONOURS.CONDITIONS
+  topic: honours
+  title_ar: شروط الحصول على مرتبة الشرف
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 36 }
+  source_text_ar: >
+    ألا يكون الطالب/ـة قد رسب في أي مقرر درسه في الجامعة أو في جامعة أخرى، ويشمل
+    الطالب الزائر والطالب المحول إلى الجامعة؛ أن يكون قد أكمل متطلبات التخرج في
+    مدة أقصاها متوسط المدة بين الحد الأدنى والحد الأقصى للبقاء في كليته أو معهده؛
+    أن يكون قد درس في الجامعة التي سيتخرج منها ما لا يقل عن ٦٠٪ من متطلبات
+    التخرج؛ ألا يكون صدر بحق الطالب قرار تأديبي خلال فترة دراسته في الجامعة.
+  rule_type: eligibility
+  conditions:
+    - { field: ever_failed_course, operator: "==", value: false, scope: ANY_INSTITUTION }
+    - { field: completed_within_average_duration, operator: "==", value: true }
+    - { field: home_university_requirement_ratio, operator: ">=", value: 60, unit: percent }
+    - { field: disciplinary_decision_exists, operator: "==", value: false }
+  required_inputs:
+    [graduation_gpa, ever_failed_course, completed_within_average_duration,
+     home_university_requirement_ratio, disciplinary_decision_exists]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_extracted
+  extraction_confidence: high
+  runtime_use: PROHIBITED_FOR_DECISION
+  runtime_use_reason: >
+    ever_failed_course is STRUCTURALLY_UNREPRESENTABLE — StudentCourse enforces one
+    row per (student, course) and its statuses are passed / studying / not_taken, so
+    a failed course is byte-identical to one never attempted. A naive check would
+    compute ever_failed = false for EVERY student and confidently award honours to
+    people who failed. This is the canonical unknown-must-not-become-false case.
+    disciplinary_decision_exists and home_university_requirement_ratio are also
+    MISSING (no disciplinary source; no institution-of-origin marker on courses).
+  never_infer: >
+    Do not derive ever_failed_course from status == 'not_taken'. Do not derive
+    home_university_requirement_ratio from Student.total_earned_credits — that
+    figure already includes transferred and out-of-plan credit, which is precisely
+    what the 60% rule is trying to exclude.

@@ -1,0 +1,117 @@
+- policy_id: TU.APPEAL.WINDOW
+  topic: grade_appeal
+  title_ar: مهلة التظلم على الدرجة النهائية
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 34 }
+  source_text_ar: >
+    يجوز للطالب التظلم على الدرجة النهائية للمقرر الدراسي خلال مدة لا تتجاوز خمسة
+    عشر يوماً من اعتماد النتيجة، وتحدد القواعد التنفيذية لهذه اللائحة الآلية
+    والإجراءات لتظلم الطالب على الدرجة النهائية للمقرر الدراسي.
+  rule_type: limit
+  max_value: 15
+  unit: days
+  clock_starts_at: RESULT_APPROVAL
+  required_inputs: [result_approval_date, today]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: &v_extracted
+    status: EXTRACTED
+    extracted_by: agent
+    extracted_at: "2026-08-01"
+    source_verified_by: null
+    domain_reviewed_by: null
+    authority_approved_by: null
+  extraction_confidence: high
+  defers_to: TU_EXECUTIVE_RULES
+  defers_to_note: >
+    The guide explicitly delegates the mechanism to القواعد التنفيذية. This record
+    is therefore known-incomplete BY ITS OWN SOURCE — a rare and important case.
+    Answers may state the 15-day window and the escalation path, and must not imply
+    the procedure below is exhaustive.
+  runtime_use: PROHIBITED_FOR_DECISION
+  runtime_use_reason: >
+    result_approval_date is not held anywhere — there are no grades, therefore no
+    result-approval events. The rule can be explained but never applied to a case.
+
+- policy_id: TU.APPEAL.ESCALATION_PATH
+  topic: grade_appeal
+  title_ar: مسار التظلم على الدرجة
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 34 }
+  source_text_ar: >
+    على رئيس القسم طلب إفادة من أستاذ المقرر على تظلم الطالب، فإذا اتضح أن هناك
+    حاجة إلى تعديل الدرجة، تعدل النتيجة بموجب نموذج تعديل الدرجة، أما في حالة عدم
+    الحاجة فيتم إفادة الطالب بذلك. في حالة عدم اقتناع الطالب، يجوز لرئيس القسم
+    تكليف عضو هيئة تدريس آخر في التخصص نفسه لمراجعة درجات الطالب. في حالة عدم
+    اقتناع الطالب يعرض التظلم على لجنة ثلاثية مشكلة برئاسة وكيل الكلية المختص
+    وعضوية كل من رئيس القسم المختص وأستاذ المقرر للبت فيه، ويكون قرار اللجنة في
+    درجة الطالب في المقرر نهائياً.
+  rule_type: procedure
+  stages:
+    - stage: 1
+      actor: DEPARTMENT_HEAD
+      action: request_statement_from_course_instructor
+      outcomes: [GRADE_AMENDED_VIA_FORM, STUDENT_INFORMED_NO_CHANGE]
+    - stage: 2
+      trigger: student_not_satisfied
+      actor: DEPARTMENT_HEAD
+      action: assign_second_faculty_member_same_specialty_to_review
+      outcomes: [GRADE_AMENDED_VIA_FORM, STUDENT_INFORMED_NO_CHANGE]
+    - stage: 3
+      trigger: student_not_satisfied
+      actor: THREE_MEMBER_COMMITTEE
+      composition: [COLLEGE_VICE_DEAN_CHAIR, DEPARTMENT_HEAD, COURSE_INSTRUCTOR]
+      decision_is_final: true
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_extracted
+  extraction_confidence: high
+  notes: Directly answers Q51, Q52, Q59.
+
+- policy_id: TU.APPEAL.EVIDENCE_RETENTION
+  topic: grade_appeal
+  title_ar: الاحتفاظ بمستندات الأعمال الفصلية وإجابات الاختبارات
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 34 }
+  source_text_ar: >
+    على القسم المختص أو من يفوضه الاحتفاظ بمستندات أعمال الطالب الفصلية وإجابات
+    الاختبارات النهائية لمدة لا تقل عن عام دراسي.
+  rule_type: obligation
+  obliged_party: DEPARTMENT
+  min_value: 1
+  unit: academic_years
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_extracted
+  extraction_confidence: high
+  notes: >
+    Materially useful to a student: it bounds how long the evidence for an appeal
+    survives, which the 15-day window alone does not convey.
+
+- policy_id: TU.APPEAL.FALSE_APPEAL_CONSEQUENCE
+  topic: grade_appeal
+  title_ar: إحالة التظلم غير الصحيح إلى لجنة السلوك والانضباط
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 34 }
+  source_text_ar: >
+    يجوز للكلية في حالة ثبوت عدم صحة تظلم الطالب الرفع إلى لجنة السلوك والانضباط
+    الطلابي لاتخاذ ما يلزم بحق الطالب وفق لائحة السلوك والانضباط الطلابي.
+  rule_type: consequence
+  trigger: appeal_proven_baseless
+  effect: REFERRAL_TO_STUDENT_CONDUCT_COMMITTEE
+  governed_by: "لائحة السلوك والانضباط الطلابي"
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_extracted
+  extraction_confidence: high
+  advisory_note: >
+    Must be surfaced whenever an appeal is explained. Presenting the 15-day right
+    without this downside would be a materially incomplete answer.

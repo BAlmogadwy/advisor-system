@@ -1,0 +1,1527 @@
+generated_by: policies/tools/build_evidence_map.py
+generated_at: '2026-08-01'
+regenerate_when: either layer changes; diff the result to detect evidence drift
+relationship_vocabulary:
+  VERBATIM_MATCH: the rule's excerpt contains the evidence statement
+  A_IS_SUPERSET: the rule's excerpt covers this evidence and more
+  DIVERGENT_WORDING: same page and subject, materially different wording
+  STRUCTURE_ONLY: rule is a table/comparison/definitions block; evidence are its cells
+warning: 'A link is NOT a claim that the evidence text quotes the page. The evidence layer''s restatement_ar
+  is a paraphrase (is_verbatim: false). For verbatim wording cite evidence/page_text/page_NN.txt.'
+stats:
+  VERBATIM_MATCH: 8
+  A_IS_SUPERSET: 27
+  DIVERGENT_WORDING: 102
+  STRUCTURE_ONLY: 75
+  rules_mapped: 81
+  rules_unbacked: 3
+unbacked_rules:
+- TU.ADVISING.NEW_STUDENT_PROGRAMME
+- TU.GPA.GENERAL_ESTIMATE_BANDS
+- TU.LEAVE.COMPARISON
+map:
+  TU.DISMISSAL.THREE_WARNINGS:
+    pages:
+    - 25
+    derived_from:
+    - id: TU-GUIDE-0148
+      page: 25
+      relationship: DIVERGENT_WORDING
+      coverage: 0.67
+      content_sha256: 1d0569033d0959d59d211447f4fb0d68571c541331faaf33ff5fa45a29390e08
+  TU.DISMISSAL.DURATION_EXCEEDED:
+    pages:
+    - 25
+    derived_from:
+    - id: TU-GUIDE-0149
+      page: 25
+      relationship: DIVERGENT_WORDING
+      coverage: 0.69
+      content_sha256: 7c0bfe4c76c8f8deeba86e4e56602c35c2aa4642e2b632c46cf478a273e3be3c
+  TU.UNIVERSITY_WITHDRAWAL.PROCEDURE:
+    pages:
+    - 25
+    derived_from:
+    - id: TU-GUIDE-0147
+      page: 25
+      relationship: A_IS_SUPERSET
+      coverage: 0.92
+      content_sha256: c11cb3dc828fae786e0d09e2db0a900b38dd520406f15d7a3eafb1e85e2bd5f1
+    - id: TU-GUIDE-0146
+      page: 25
+      relationship: A_IS_SUPERSET
+      coverage: 0.83
+      content_sha256: ab7cbc6a47daaa62cd66a7c051f4d6fe3eb200ac20c08eef0e0acbbfb45b0d41
+  TU.DEREGISTRATION.TRIGGER:
+    pages:
+    - 32
+    derived_from:
+    - id: TU-GUIDE-0218
+      page: 32
+      relationship: DIVERGENT_WORDING
+      coverage: 0.71
+      content_sha256: dcacf775e084085944c7777ad180795c67bf427cf0d8b617bf7244e8e1712c32
+  TU.DEREGISTRATION.VISITING_EXEMPTION:
+    pages:
+    - 32
+    derived_from:
+    - id: TU-GUIDE-0219
+      page: 32
+      relationship: A_IS_SUPERSET
+      coverage: 0.82
+      content_sha256: 7deb20d6135265b50c3a68672ebae67c006e74a0dc31d66493ed359b69c7785b
+  TU.REENROLMENT.CONDITIONS:
+    pages:
+    - 32
+    derived_from:
+    - id: TU-GUIDE-0222
+      page: 32
+      relationship: DIVERGENT_WORDING
+      coverage: 0.71
+      content_sha256: 421acec2f45add68d189e68651b8e3782870a63767656910f349772cd55b368b
+    - id: TU-GUIDE-0221
+      page: 32
+      relationship: DIVERGENT_WORDING
+      coverage: 0.64
+      content_sha256: c99afcf72a23e7ea85695e2328ab20883364c8c567c4aea7c796edf6f6e20df5
+    - id: TU-GUIDE-0224
+      page: 32
+      relationship: DIVERGENT_WORDING
+      coverage: 0.56
+      content_sha256: e2e3d49e34f15cb074f232388fd11c5a187b9cfe417316a956c88ee5a859a3e1
+    - id: TU-GUIDE-0223
+      page: 32
+      relationship: DIVERGENT_WORDING
+      coverage: 0.5
+      content_sha256: 2f6fd75d0821972a87e87162b91a0743173bf22bd061bde939ab901729447850
+    - id: TU-GUIDE-0225
+      page: 32
+      relationship: DIVERGENT_WORDING
+      coverage: 0.5
+      content_sha256: 0c4279798251a779a69ccb1680687732c003f9c1f0e46d699f8894fb6849e7b8
+  TU.REENROLMENT.LAPSED_BECOMES_NEW_APPLICANT:
+    pages:
+    - 32
+    derived_from:
+    - id: TU-GUIDE-0226
+      page: 32
+      relationship: DIVERGENT_WORDING
+      coverage: 0.55
+      content_sha256: 034bba6d9f0831d77b497b416a96f7f2c5ff85f05c5413e28db8a456e23e950c
+    - id: TU-GUIDE-0220
+      page: 32
+      relationship: DIVERGENT_WORDING
+      coverage: 0.5
+      content_sha256: 461665f83ffeb47aacb81ad62cffb58218c123728b352f7ef59d8aae1a558ae5
+  TU.REENROLMENT.DISCIPLINARY_BAR:
+    pages:
+    - 32
+    derived_from:
+    - id: TU-GUIDE-0227
+      page: 32
+      relationship: DIVERGENT_WORDING
+      coverage: 0.71
+      content_sha256: 3c369f84f1313838520ec19126193489fc5d7bb32c868cc70a361e030d295de4
+      contested: true
+  TU.REENROLMENT.WITHDRAWN_STUDENT:
+    pages:
+    - 33
+    derived_from:
+    - id: TU-GUIDE-0231
+      page: 33
+      relationship: DIVERGENT_WORDING
+      coverage: 0.73
+      content_sha256: e96dc4ec84f5bc65abcdd5d815a5a08e7a97f9decc1dcd7f8b7752d28580be1c
+    - id: TU-GUIDE-0229
+      page: 33
+      relationship: DIVERGENT_WORDING
+      coverage: 0.71
+      content_sha256: 307172bec1b7f0965ca3d18455b127c35de3e48614c3e31e7700be3f5af11972
+    - id: TU-GUIDE-0230
+      page: 33
+      relationship: DIVERGENT_WORDING
+      coverage: 0.62
+      content_sha256: a188a2361cc032dcd3ba10bdf660f239ea934295055d313ed9c9d5546b891219
+  TU.CONTACT.ADVISER_CHANNELS:
+    pages:
+    - 15
+    derived_from:
+    - id: TU-GUIDE-0068
+      page: 15
+      relationship: STRUCTURE_ONLY
+      coverage: 0.57
+      content_sha256: b89019f40f790e3d0aeee8d8e0bc112f99ed7df5b86ce1e4a6dbcf41b185bbae
+      second_pass_checked: false
+    - id: TU-GUIDE-0073
+      page: 15
+      relationship: STRUCTURE_ONLY
+      coverage: 0.53
+      content_sha256: bb9dbce9ac54d58acc171d604d7661613ed0c858863213bbcab789679ba29d36
+      second_pass_checked: false
+    note: 'STRUCTURE_ONLY: the evidence records are individual cells. They are provenance for the values,
+      not a substitute for the table — the 2-D relationship between cells exists only on the rendered
+      page.'
+  TU.CONTACT.DEANSHIP:
+    pages:
+    - 39
+    derived_from:
+    - id: TU-GUIDE-0274
+      page: 39
+      relationship: STRUCTURE_ONLY
+      coverage: 0.6
+      content_sha256: cdd2345ee53ef28027ce9aababd166f568f6f272e34bc4fbe277a35ffa968fc0
+    - id: TU-GUIDE-0277
+      page: 39
+      relationship: STRUCTURE_ONLY
+      coverage: 0.5
+      content_sha256: 3f1a3e5515a935b02d03d8cafecd8da30dbcf09b4f017133518a020957bbc5d8
+    note: 'STRUCTURE_ONLY: the evidence records are individual cells. They are provenance for the values,
+      not a substitute for the table — the 2-D relationship between cells exists only on the rendered
+      page.'
+  TU.ADVISING.NEW_STUDENT_PROGRAMME:
+    pages:
+    - 16
+    derived_from: []
+  TU.ADVISING.CONTINUING_STUDENT_PROGRAMME:
+    pages:
+    - 16
+    derived_from:
+    - id: TU-GUIDE-0075
+      page: 16
+      relationship: DIVERGENT_WORDING
+      coverage: 0.57
+      content_sha256: e4984eb8f17160d66f7770840293993f5387250f6cc161271037892880b62400
+      second_pass_checked: false
+  TU.REG.STUDENT_CHOICES_FINAL:
+    pages:
+    - 17
+    - 21
+    derived_from:
+    - id: TU-GUIDE-0085
+      page: 17
+      relationship: VERBATIM_MATCH
+      coverage: 1.0
+      content_sha256: 473d8b65c9c12d7b30b6b76cdbd98bfc9155a42e985e99ed51338321bea113f3
+      second_pass_checked: false
+    - id: TU-GUIDE-0084
+      page: 17
+      relationship: A_IS_SUPERSET
+      coverage: 0.89
+      content_sha256: bb42bdd58610d00612c033bd483180fab0cd7d359c44868e24870df774b2d209
+      second_pass_checked: false
+    - id: TU-GUIDE-0117
+      page: 21
+      relationship: A_IS_SUPERSET
+      coverage: 0.89
+      content_sha256: a220123d8ff7b8a182e5d5711e4f7aacaab6c1345756f4727ccb71fa7516dafd
+      second_pass_checked: false
+    - id: TU-GUIDE-0119
+      page: 21
+      relationship: VERBATIM_MATCH
+      coverage: 0.83
+      content_sha256: 473d8b65c9c12d7b30b6b76cdbd98bfc9155a42e985e99ed51338321bea113f3
+      second_pass_checked: false
+    - id: TU-GUIDE-0082
+      page: 17
+      relationship: DIVERGENT_WORDING
+      coverage: 0.67
+      content_sha256: c69d80d3b0108ad63f4561b1cf58ee80d09e9bd6922cb74cfbce0abd53a3c02b
+      second_pass_checked: false
+    - id: TU-GUIDE-0118
+      page: 21
+      relationship: DIVERGENT_WORDING
+      coverage: 0.67
+      content_sha256: 191f8a44d32f374fd2a2192dc4762f1165bad3f2b2d263336830dcddbbd0eae8
+      second_pass_checked: false
+    - id: TU-GUIDE-0083
+      page: 17
+      relationship: DIVERGENT_WORDING
+      coverage: 0.64
+      content_sha256: 552c7b254853b31bd97326b75ffd7b76f48e0f067e007362fd7325bd82e43f67
+      second_pass_checked: false
+  TU.REG.ADVISER_CAN_REGISTER_DIRECTLY:
+    pages:
+    - 20
+    derived_from:
+    - id: TU-GUIDE-0114
+      page: 20
+      relationship: A_IS_SUPERSET
+      coverage: 1.0
+      content_sha256: 4ea6c6a15951ef63797244e01ff5f6a7116b9da9e6c5fd8b2d25a2cb65d54dd2
+      second_pass_checked: false
+  TU.REG.EARLY_REGISTRATION_TIMING:
+    pages:
+    - 17
+    - 20
+    derived_from:
+    - id: TU-GUIDE-0081
+      page: 17
+      relationship: A_IS_SUPERSET
+      coverage: 0.86
+      content_sha256: 70d79f779878d1f0690ca87a10f967b2877cd46e9e0e22de89ef56ea3ed596d8
+      second_pass_checked: false
+    - id: TU-GUIDE-0080
+      page: 17
+      relationship: DIVERGENT_WORDING
+      coverage: 0.73
+      content_sha256: d73ca87570dd2ded2e95b1fbdc3e0b1b817a7a440cdf644169d4141a1215bc20
+      second_pass_checked: false
+    - id: TU-GUIDE-0111
+      page: 20
+      relationship: DIVERGENT_WORDING
+      coverage: 0.69
+      content_sha256: c06b24ce10ed118d757534569a8314b74f367511626a8755e71a6786577c6573
+      second_pass_checked: false
+    - id: TU-GUIDE-0079
+      page: 17
+      relationship: DIVERGENT_WORDING
+      coverage: 0.58
+      content_sha256: ca6e5eab5d771db2bbfec7d46000adc221134fa500289b4c762807168707a68b
+      second_pass_checked: false
+  TU.REG.CHANGES_CLOSE_ONE_WEEK_BEFORE:
+    pages:
+    - 20
+    derived_from:
+    - id: TU-GUIDE-0116
+      page: 20
+      relationship: A_IS_SUPERSET
+      coverage: 0.8
+      content_sha256: 52b730deeda07a74075c40e9f30f689ccf54c26e91ad04da4bf9e2551f799264
+      second_pass_checked: false
+  TU.REG.ADVISER_DUTIES_AT_REGISTRATION:
+    pages:
+    - 20
+    derived_from:
+    - id: TU-GUIDE-0115
+      page: 20
+      relationship: DIVERGENT_WORDING
+      coverage: 0.54
+      content_sha256: 6f7a9e96110840e70d4c5b5758cbd09d086099310d4c6bbe88601da06febc6f2
+      second_pass_checked: false
+    - id: TU-GUIDE-0112
+      page: 20
+      relationship: DIVERGENT_WORDING
+      coverage: 0.5
+      content_sha256: 68ea5049e8efc40f472618053ebc43e779468d034c43e2555bb6aa984b36c85c
+      second_pass_checked: false
+  TU.ADVISING.STUDENT_RIGHTS:
+    pages:
+    - 18
+    derived_from:
+    - id: TU-GUIDE-0087
+      page: 18
+      relationship: STRUCTURE_ONLY
+      coverage: 0.83
+      content_sha256: 77bf65ecb4adc230ceb237e26011ec9229e378e1f0ceb7270f7315a33576f51f
+      second_pass_checked: false
+    - id: TU-GUIDE-0091
+      page: 18
+      relationship: STRUCTURE_ONLY
+      coverage: 0.83
+      content_sha256: 36663d75974870414c9c5c48c8aad1126311c18ba9a43321d90a4f8cb73cdb81
+      second_pass_checked: false
+    - id: TU-GUIDE-0086
+      page: 18
+      relationship: STRUCTURE_ONLY
+      coverage: 0.78
+      content_sha256: 74255e66467c22342b6fc05bb32601c0adde98e6be96dd3f64f5441e577c5bbc
+      second_pass_checked: false
+    - id: TU-GUIDE-0089
+      page: 18
+      relationship: STRUCTURE_ONLY
+      coverage: 0.78
+      content_sha256: 6f03460d0ee22cc1de26b4422a07c45be1c709f7e46b63a34afb0709fcb82140
+      second_pass_checked: false
+    - id: TU-GUIDE-0090
+      page: 18
+      relationship: STRUCTURE_ONLY
+      coverage: 0.45
+      content_sha256: 0bcc2a4b7a79009d1aa792518c0e382ce2a2052ce6672e651e33253c27d21f92
+      second_pass_checked: false
+    note: 'STRUCTURE_ONLY: the evidence records are individual cells. They are provenance for the values,
+      not a substitute for the table — the 2-D relationship between cells exists only on the rendered
+      page.'
+  TU.ADVISING.STUDENT_DUTIES:
+    pages:
+    - 19
+    derived_from:
+    - id: TU-GUIDE-0099
+      page: 19
+      relationship: STRUCTURE_ONLY
+      coverage: 0.86
+      content_sha256: bd65de0c17621979d33892c79b1eed144b17a786aba871105a3b5512322a036a
+      second_pass_checked: false
+    - id: TU-GUIDE-0093
+      page: 19
+      relationship: STRUCTURE_ONLY
+      coverage: 0.73
+      content_sha256: f47b3e661339768c63820bb1d0b31ef7af2c50d5eb93197ce564139e6c6c1ab6
+      second_pass_checked: false
+    - id: TU-GUIDE-0092
+      page: 19
+      relationship: STRUCTURE_ONLY
+      coverage: 0.7
+      content_sha256: 8b41af09f757e58a3bded88a9bed537ce7f68edb26b31382af7fc8e2bf6f7225
+      second_pass_checked: false
+    - id: TU-GUIDE-0097
+      page: 19
+      relationship: STRUCTURE_ONLY
+      coverage: 0.67
+      content_sha256: 777e1dc84cba4aed5da38d4eca2c317d4ddf8393323497661276727b3f93a301
+      second_pass_checked: false
+    - id: TU-GUIDE-0095
+      page: 19
+      relationship: STRUCTURE_ONLY
+      coverage: 0.6
+      content_sha256: ed30e40fc8175d20ef53ce071741fde6812c57206e1cf1629460f5ebb8158983
+      second_pass_checked: false
+    - id: TU-GUIDE-0098
+      page: 19
+      relationship: STRUCTURE_ONLY
+      coverage: 0.56
+      content_sha256: c079ffa32f63914e79c3daa72c3ac73e393cc01e0a3274bc0d077f2967761323
+      second_pass_checked: false
+    - id: TU-GUIDE-0100
+      page: 19
+      relationship: STRUCTURE_ONLY
+      coverage: 0.45
+      content_sha256: c23ad67ec4dac2f56de0d653b8a29ee328babc0db35872dd10bf2d57a1fcf561
+      second_pass_checked: false
+    note: 'STRUCTURE_ONLY: the evidence records are individual cells. They are provenance for the values,
+      not a substitute for the table — the 2-D relationship between cells exists only on the rendered
+      page.'
+  TU.ADVISING.TOOLS:
+    pages:
+    - 14
+    derived_from:
+    - id: TU-GUIDE-0062
+      page: 14
+      relationship: STRUCTURE_ONLY
+      coverage: 0.75
+      content_sha256: f7e0550a45c1a41fcf15f8295f000fd0d4b30f3ee72df8e31eb5bd4d070d9ebf
+    - id: TU-GUIDE-0061
+      page: 14
+      relationship: STRUCTURE_ONLY
+      coverage: 0.71
+      content_sha256: 1b510316d32f17461c85b0a11f5400a3cbedd3d272039ce2f459b15320664ad7
+    - id: TU-GUIDE-0065
+      page: 14
+      relationship: STRUCTURE_ONLY
+      coverage: 0.57
+      content_sha256: 958a25b32e7663fe1a41f0492d3dc7f0a259877f64b5fa57d1ba580acbae10e9
+      second_pass_checked: false
+    note: 'STRUCTURE_ONLY: the evidence records are individual cells. They are provenance for the values,
+      not a substitute for the table — the 2-D relationship between cells exists only on the rendered
+      page.'
+  TU.ATTENDANCE.DEPRIVATION_THRESHOLD:
+    pages:
+    - 37
+    derived_from:
+    - id: TU-GUIDE-0259
+      page: 37
+      relationship: DIVERGENT_WORDING
+      coverage: 0.77
+      content_sha256: d6c40684fd8a9c569d2923f5ff0615fa952043fe73f9c200ee166f8fcb0b06d8
+  TU.ATTENDANCE.AUTO_REGISTRATION_TRAP:
+    pages:
+    - 37
+    derived_from:
+    - id: TU-GUIDE-0260
+      page: 37
+      relationship: DIVERGENT_WORDING
+      coverage: 0.58
+      content_sha256: 5b134d37b0068b20a1d3f0ce67164cc2a7cbfb90db3547afc137c2b70a99c07b
+  TU.ATTENDANCE.DEFERRING_EARLY_COURSES_TRAP:
+    pages:
+    - 37
+    derived_from:
+    - id: TU-GUIDE-0261
+      page: 37
+      relationship: DIVERGENT_WORDING
+      coverage: 0.6
+      content_sha256: 41e8fb109edeef7a12f82bf0b8b501c34f76f9c371ce53c204efe4cfd7b07441
+  TU.ATTENDANCE.LATE_GRADE_AMENDMENT_TRAP:
+    pages:
+    - 37
+    derived_from:
+    - id: TU-GUIDE-0262
+      page: 37
+      relationship: DIVERGENT_WORDING
+      coverage: 0.45
+      content_sha256: 53c834fa42848d7544f98b305a7f55b562cfb3a52a62c563a4f24e16f3a46a7e
+  TU.MEDICAL_EXCUSE.ACCEPTED_ISSUERS:
+    pages:
+    - 33
+    derived_from:
+    - id: TU-GUIDE-0232
+      page: 33
+      relationship: DIVERGENT_WORDING
+      coverage: 0.64
+      content_sha256: 85a6b54c075e8520e8971c1fa5d2a6fc0d65327c51d49a1b71aa5df251b17f24
+  TU.MEDICAL_EXCUSE.FOREIGN_REPORTS:
+    pages:
+    - 33
+    derived_from:
+    - id: TU-GUIDE-0233
+      page: 33
+      relationship: DIVERGENT_WORDING
+      coverage: 0.69
+      content_sha256: 035e795b1ead8bba8c7537d5a688c6a680064cf09356bacdc009ed5f109f9bbb
+  TU.MEDICAL_EXCUSE.SUBMISSION_WINDOW:
+    pages:
+    - 33
+    derived_from:
+    - id: TU-GUIDE-0234
+      page: 33
+      relationship: DIVERGENT_WORDING
+      coverage: 0.73
+      content_sha256: 81144816aa5a43112d4ea9137876f89fe2704595b88424b6a4ea874051b10292
+  TU.MEDICAL_EXCUSE.EFFECT_ON_ASSESSMENTS:
+    pages:
+    - 33
+    derived_from:
+    - id: TU-GUIDE-0235
+      page: 33
+      relationship: A_IS_SUPERSET
+      coverage: 0.81
+      content_sha256: b9cec9c4e00cad5061759c06424abc96e5406bdc8b1367285338f208bb466262
+      contested: true
+    - id: TU-GUIDE-0236
+      page: 33
+      relationship: DIVERGENT_WORDING
+      coverage: 0.73
+      content_sha256: 8b52a8fd76fdac9abb979446f5f33233152e44dbee0c51ba20ca9eae7d4337f9
+  TU.CONDUCT.VIOLATION_TYPES:
+    pages:
+    - 38
+    derived_from:
+    - id: TU-GUIDE-0265
+      page: 38
+      relationship: STRUCTURE_ONLY
+      coverage: 1.0
+      content_sha256: 04cc89dde814ff5cf09b92a55b7b6b5b0248e31f8f98124d3dc8fbd2c2501307
+    - id: TU-GUIDE-0263
+      page: 38
+      relationship: STRUCTURE_ONLY
+      coverage: 0.9
+      content_sha256: edcf17a115b0f29974e17e2d67bd3260ee729c386a4889f5c09968f61607240e
+    - id: TU-GUIDE-0264
+      page: 38
+      relationship: STRUCTURE_ONLY
+      coverage: 0.88
+      content_sha256: e22b8605d8a8e3676f620971ab47568c155815d18a3a10ccc0e9d514c91f3bb9
+    - id: TU-GUIDE-0267
+      page: 38
+      relationship: STRUCTURE_ONLY
+      coverage: 0.75
+      content_sha256: fc17b81601a77e8c811067ba2040e21efe4186806a18bbf219c62801833c42c3
+    - id: TU-GUIDE-0268
+      page: 38
+      relationship: STRUCTURE_ONLY
+      coverage: 0.75
+      content_sha256: 4d94c73e0e121c0a62eab311c50471a4f4c252a012290651f9090b0fc2454d47
+    - id: TU-GUIDE-0266
+      page: 38
+      relationship: STRUCTURE_ONLY
+      coverage: 0.62
+      content_sha256: fbf4c6cb1a33e702a7956a7ca6efb1c6936baa8d2fe2ed138a9bf73d63aa4646
+    - id: TU-GUIDE-0269
+      page: 38
+      relationship: STRUCTURE_ONLY
+      coverage: 0.62
+      content_sha256: 0e7532a6201a9c88eb052eb21894eae5a277709459cef776d58fabb8b8c3266d
+    note: 'STRUCTURE_ONLY: the evidence records are individual cells. They are provenance for the values,
+      not a substitute for the table — the 2-D relationship between cells exists only on the rendered
+      page.'
+  TU.CONDUCT.PENALTIES:
+    pages:
+    - 38
+    derived_from:
+    - id: TU-GUIDE-0270
+      page: 38
+      relationship: STRUCTURE_ONLY
+      coverage: 0.57
+      content_sha256: bd75c5cc0e9f816e5e57cd2afde0d7c55b46ffda8650a15727f578e3aeb541bc
+    note: 'STRUCTURE_ONLY: the evidence records are individual cells. They are provenance for the values,
+      not a substitute for the table — the 2-D relationship between cells exists only on the rendered
+      page.'
+  TU.CONDUCT.CHEATING:
+    pages:
+    - 38
+    derived_from:
+    - id: TU-GUIDE-0272
+      page: 38
+      relationship: A_IS_SUPERSET
+      coverage: 0.91
+      content_sha256: 8dc2b9e5968f2b8c09dbf1a78b1d087792d25e311d7b2f44cd461994e37c4538
+    - id: TU-GUIDE-0271
+      page: 38
+      relationship: DIVERGENT_WORDING
+      coverage: 0.7
+      content_sha256: 139606089878d82ee2d16fb4bb0b375231b4a8fc34765101bfe92f73ffde325d
+  TU.DEF.CALENDAR_UNITS:
+    pages:
+    - 7
+    derived_from:
+    - id: TU-GUIDE-0006
+      page: 7
+      relationship: STRUCTURE_ONLY
+      coverage: 1.0
+      content_sha256: 3d176ab74a2453a9064b97ea90c029b525f44c6f33c7dc2300c26e1e15bb04bf
+      second_pass_checked: false
+    - id: TU-GUIDE-0007
+      page: 7
+      relationship: STRUCTURE_ONLY
+      coverage: 1.0
+      content_sha256: 3f0dee33a05b3dbda4cc2051d851b1400f0e65bc3f319823a2db3aa50919860b
+      second_pass_checked: false
+    - id: TU-GUIDE-0008
+      page: 7
+      relationship: STRUCTURE_ONLY
+      coverage: 1.0
+      content_sha256: a185915a52f05a916eb8f9265477c64cfbe522e569c38e3a0c84b9e3df334e87
+      second_pass_checked: false
+    - id: TU-GUIDE-0010
+      page: 7
+      relationship: STRUCTURE_ONLY
+      coverage: 1.0
+      content_sha256: 449336dc4e701acc319a18a04a4b4dcfc09a9543dafa637bcb114336a0ca3ad3
+      second_pass_checked: false
+    - id: TU-GUIDE-0011
+      page: 7
+      relationship: STRUCTURE_ONLY
+      coverage: 1.0
+      content_sha256: fe04dd9d7d608ecb4b5d47e448f756e4c5a168679e5ccfb1629dbce3c31bd6d5
+      second_pass_checked: false
+    - id: TU-GUIDE-0012
+      page: 7
+      relationship: STRUCTURE_ONLY
+      coverage: 1.0
+      content_sha256: 557fe2148439e742305b1785d66d7b050199bf1af30919c092bb0329cac22dad
+      second_pass_checked: false
+    - id: TU-GUIDE-0009
+      page: 7
+      relationship: STRUCTURE_ONLY
+      coverage: 0.96
+      content_sha256: c41606e4ed76fe3046e5f7383d595005506da966fb9825547357637185d663de
+      second_pass_checked: false
+    - id: TU-GUIDE-0013
+      page: 7
+      relationship: STRUCTURE_ONLY
+      coverage: 0.95
+      content_sha256: 8ef9d251f6428a324f275b1a9fa0015fb6317a5780994e767ef29c0726ea5298
+      second_pass_checked: false
+    - id: TU-GUIDE-0017
+      page: 7
+      relationship: STRUCTURE_ONLY
+      coverage: 0.9
+      content_sha256: 6ee48d7629ab8b205c3c0b177343f409fe6adc379317df7d46b2d166c78454fd
+      second_pass_checked: false
+    - id: TU-GUIDE-0014
+      page: 7
+      relationship: STRUCTURE_ONLY
+      coverage: 0.78
+      content_sha256: fbc0f5a8e2c542529e7a0800d6a16db871024892419b92894f086a871e979eb6
+      second_pass_checked: false
+    - id: TU-GUIDE-0016
+      page: 7
+      relationship: STRUCTURE_ONLY
+      coverage: 0.6
+      content_sha256: 60415ac6e88d30801b25d574359392f42fcd76ae3313fec486973824e17ab729
+      second_pass_checked: false
+    - id: TU-GUIDE-0015
+      page: 7
+      relationship: STRUCTURE_ONLY
+      coverage: 0.56
+      content_sha256: 927437c7f4974aa8cb0bd16495baa08438556354319c9069e831ba12545fbcea
+      second_pass_checked: false
+    note: 'STRUCTURE_ONLY: the evidence records are individual cells. They are provenance for the values,
+      not a substitute for the table — the 2-D relationship between cells exists only on the rendered
+      page.'
+  TU.DEF.ASSESSMENT_AND_RECORD:
+    pages:
+    - 8
+    derived_from:
+    - id: TU-GUIDE-0024
+      page: 8
+      relationship: STRUCTURE_ONLY
+      coverage: 1.0
+      content_sha256: 0c6234aff0ef89207eed12a6138a6a75a98f5a5e257df9ee1aeb72f4889e5e4b
+      second_pass_checked: false
+    - id: TU-GUIDE-0020
+      page: 8
+      relationship: STRUCTURE_ONLY
+      coverage: 0.88
+      content_sha256: 340a7bbd3b2503f5667fe334f49aacdcef4c0047e1335a51146398c7f4e57aea
+      second_pass_checked: false
+    - id: TU-GUIDE-0022
+      page: 8
+      relationship: STRUCTURE_ONLY
+      coverage: 0.85
+      content_sha256: 748e09b72782ce72e83a15e2efcd00a573b5076c61e6ae9a6a7ca1dc8a5a8a77
+      second_pass_checked: false
+    - id: TU-GUIDE-0021
+      page: 8
+      relationship: STRUCTURE_ONLY
+      coverage: 0.83
+      content_sha256: 90efa8f95d063e1333943167cc3734fe2097e16a895795e657236b4f2e5368d6
+      second_pass_checked: false
+    - id: TU-GUIDE-0019
+      page: 8
+      relationship: STRUCTURE_ONLY
+      coverage: 0.8
+      content_sha256: 22df0d98bb3d543c1ad81289c6e9635613f51e12b584c41a7e12f6c3506bb152
+      second_pass_checked: false
+    - id: TU-GUIDE-0018
+      page: 8
+      relationship: STRUCTURE_ONLY
+      coverage: 0.79
+      content_sha256: 810371758f0ec4fad53b13e02f2ba67adab23dd981e9f23cf8534797c3864fdd
+      second_pass_checked: false
+    - id: TU-GUIDE-0023
+      page: 8
+      relationship: STRUCTURE_ONLY
+      coverage: 0.79
+      content_sha256: 5b45d1f008cf1ecf2c2c99c0a8da8cbdb9845544f1e19e67791d1facd4a83155
+      second_pass_checked: false
+    - id: TU-GUIDE-0025
+      page: 8
+      relationship: STRUCTURE_ONLY
+      coverage: 0.71
+      content_sha256: 6136e7bb34addc134fa14d2eb3ab4de2b8a34979fb741cbc29aeb8563482d197
+      second_pass_checked: false
+    - id: TU-GUIDE-0026
+      page: 8
+      relationship: STRUCTURE_ONLY
+      coverage: 0.69
+      content_sha256: 59937e3235a6c3721c1bbe9c4b84133aaede5f115bd09e04b13ba5d5e8debd3c
+      second_pass_checked: false
+    - id: TU-GUIDE-0028
+      page: 8
+      relationship: STRUCTURE_ONLY
+      coverage: 0.67
+      content_sha256: 9880703c6f90b7591cb9ae502a835561510bfec38e97448847fc43e9e83ca161
+      second_pass_checked: false
+    - id: TU-GUIDE-0027
+      page: 8
+      relationship: STRUCTURE_ONLY
+      coverage: 0.56
+      content_sha256: f70c65222ee33a5e77687cc4fabce1e021608b622a10e2c6bdfcd4c90ee0414a
+      second_pass_checked: false
+    note: 'STRUCTURE_ONLY: the evidence records are individual cells. They are provenance for the values,
+      not a substitute for the table — the 2-D relationship between cells exists only on the rendered
+      page.'
+  TU.DEF.PROGRAMME_AND_COURSES:
+    pages:
+    - 9
+    derived_from:
+    - id: TU-GUIDE-0029
+      page: 9
+      relationship: STRUCTURE_ONLY
+      coverage: 1.0
+      content_sha256: 7ff371b87d1835d163eca7e12fde259d8120f4d655decb2ebae768c116d54edd
+      second_pass_checked: false
+    - id: TU-GUIDE-0033
+      page: 9
+      relationship: STRUCTURE_ONLY
+      coverage: 1.0
+      content_sha256: 2111e94759c2f0f66fc5029fbadb26121c91c17d95e52d0f5d3541398b9b8ea6
+      second_pass_checked: false
+    - id: TU-GUIDE-0037
+      page: 9
+      relationship: STRUCTURE_ONLY
+      coverage: 1.0
+      content_sha256: 9c5b0b70388c232eb287943bf7f206112906767c425c4ffb91830fa66d257c0a
+      second_pass_checked: false
+    - id: TU-GUIDE-0040
+      page: 9
+      relationship: STRUCTURE_ONLY
+      coverage: 0.96
+      content_sha256: 6ba08db07a2c39882c0514b9f6808b43d5314d1aa08fe66362236d94a2e764e0
+      second_pass_checked: false
+    - id: TU-GUIDE-0036
+      page: 9
+      relationship: STRUCTURE_ONLY
+      coverage: 0.92
+      content_sha256: 09cbb64c58a723ea25d9a08f662ad25b57bcbc5d402ff6ff8caa58308f73b814
+      second_pass_checked: false
+    - id: TU-GUIDE-0032
+      page: 9
+      relationship: STRUCTURE_ONLY
+      coverage: 0.9
+      content_sha256: 15310fbcd41658f2104994c2611683140a42fad662a120d561316bb26b0ae918
+      second_pass_checked: false
+    - id: TU-GUIDE-0034
+      page: 9
+      relationship: STRUCTURE_ONLY
+      coverage: 0.9
+      content_sha256: c3328012be2c41e019c65c7cc28670efc05f0063099293cf76ebaab849a64f09
+      second_pass_checked: false
+    - id: TU-GUIDE-0039
+      page: 9
+      relationship: STRUCTURE_ONLY
+      coverage: 0.89
+      content_sha256: 3db82029dd6577dd33a2823791eea427254afc200df853c1067fec43d635b6a0
+      second_pass_checked: false
+    - id: TU-GUIDE-0030
+      page: 9
+      relationship: STRUCTURE_ONLY
+      coverage: 0.83
+      content_sha256: b9a9343ea32bd13357170c5601ff5693d08a3f203ed2ce4525f88dacb3b4c0dd
+      second_pass_checked: false
+    - id: TU-GUIDE-0031
+      page: 9
+      relationship: STRUCTURE_ONLY
+      coverage: 0.8
+      content_sha256: c7b258d0bc596ea3b80063bc77860c06eea1bb00d237e8c8ccfa34bd14feb563
+      second_pass_checked: false
+    - id: TU-GUIDE-0038
+      page: 9
+      relationship: STRUCTURE_ONLY
+      coverage: 0.75
+      content_sha256: 696a864c6f16dd7fd3897db3f504d28a9c855ab9fbccf019fcd075b0f827c2b5
+      second_pass_checked: false
+    - id: TU-GUIDE-0035
+      page: 9
+      relationship: STRUCTURE_ONLY
+      coverage: 0.64
+      content_sha256: 8c7086f3aa430424bfc7b50bcf08c1320fae979f6ff15d2989ac59f16f3da9bb
+      second_pass_checked: false
+    note: 'STRUCTURE_ONLY: the evidence records are individual cells. They are provenance for the values,
+      not a substitute for the table — the 2-D relationship between cells exists only on the rendered
+      page.'
+  TU.APPEAL.WINDOW:
+    pages:
+    - 34
+    derived_from:
+    - id: TU-GUIDE-0237
+      page: 34
+      relationship: A_IS_SUPERSET
+      coverage: 0.92
+      content_sha256: 4b9de1301781df6f4c883a0fb0cfa5fc4d22d4549b68a30971ed78c06cce2b8b
+  TU.APPEAL.ESCALATION_PATH:
+    pages:
+    - 34
+    derived_from:
+    - id: TU-GUIDE-0240
+      page: 34
+      relationship: A_IS_SUPERSET
+      coverage: 0.8
+      content_sha256: f787a0aafb5dd01ec00ce379e37a5d73eac29e4be5cfb7221047864a96085bd4
+    - id: TU-GUIDE-0239
+      page: 34
+      relationship: DIVERGENT_WORDING
+      coverage: 0.73
+      content_sha256: af5731ca332074f8a7ccf8b2a7040e4a484d664ab4e640c4a43bb7c85401ac65
+    - id: TU-GUIDE-0238
+      page: 34
+      relationship: DIVERGENT_WORDING
+      coverage: 0.5
+      content_sha256: a1c21c247b0cdf2f2ee3257d897b630c62795b911f95d227eeb52f4d5627ccb9
+  TU.APPEAL.EVIDENCE_RETENTION:
+    pages:
+    - 34
+    derived_from:
+    - id: TU-GUIDE-0242
+      page: 34
+      relationship: DIVERGENT_WORDING
+      coverage: 0.69
+      content_sha256: d05455aaa9b9ccd3ddab9311496b87d22764b62fd7047447f3899dbe615b819c
+  TU.APPEAL.FALSE_APPEAL_CONSEQUENCE:
+    pages:
+    - 34
+    derived_from:
+    - id: TU-GUIDE-0243
+      page: 34
+      relationship: A_IS_SUPERSET
+      coverage: 0.82
+      content_sha256: 9cb54aa370b8b4907de3b50096f63abfd7688a566590e53aba25553e5dbdcb75
+  TU.GRADE.SCALE:
+    pages:
+    - 28
+    - 29
+    derived_from:
+    - id: TU-GUIDE-0185
+      page: 28
+      relationship: STRUCTURE_ONLY
+      coverage: 0.46
+      content_sha256: abc99d5ad7ef775784d8d05e1d076ceef80af1609bff4453fcbf80f7fd316744
+    - id: TU-GUIDE-0183
+      page: 28
+      relationship: STRUCTURE_ONLY
+      coverage: 0.45
+      content_sha256: 9a6a7fec095a21fdbee57263236a160387e08a5df3b0a5042b636464f6a7d0e8
+      contested: true
+    note: 'STRUCTURE_ONLY: the evidence records are individual cells. They are provenance for the values,
+      not a substitute for the table — the 2-D relationship between cells exists only on the rendered
+      page.'
+  TU.GRADE.SPECIAL_SYMBOLS:
+    pages:
+    - 29
+    derived_from:
+    - id: TU-GUIDE-0196
+      page: 29
+      relationship: STRUCTURE_ONLY
+      coverage: 0.71
+      content_sha256: 8795de3dc82117193cfdbde69827c1ab04065c7140eaffc013f861ac990dea8e
+    - id: TU-GUIDE-0197
+      page: 29
+      relationship: STRUCTURE_ONLY
+      coverage: 0.71
+      content_sha256: 2d92fb333fa6ceabe6c1a6071810d4e2475b001c06ac131cfcc49843b6b12eab
+    - id: TU-GUIDE-0194
+      page: 29
+      relationship: STRUCTURE_ONLY
+      coverage: 0.6
+      content_sha256: d4f7cc2925a86b750f411637af62a6c2da634867ddfef324dccec8bd05267346
+    - id: TU-GUIDE-0193
+      page: 29
+      relationship: STRUCTURE_ONLY
+      coverage: 0.5
+      content_sha256: c1b3a7724b6822ba8ed74dc3e21c8e44b342a9024ece46e787a43ab73342167f
+    - id: TU-GUIDE-0195
+      page: 29
+      relationship: STRUCTURE_ONLY
+      coverage: 0.5
+      content_sha256: 0d58900e3d11ce532564859dcc7a225549787c2b1e03d593e81264cc4c5232a4
+    - id: TU-GUIDE-0198
+      page: 29
+      relationship: STRUCTURE_ONLY
+      coverage: 0.5
+      content_sha256: fedded6f3d22b1d892adce755d0444a08328c95e62a6c67ce62d4c579244c81d
+    - id: TU-GUIDE-0199
+      page: 29
+      relationship: STRUCTURE_ONLY
+      coverage: 0.5
+      content_sha256: 48cc68329ee057f02d35a652d3d3533ddbb35cea0e7a4ba4a5bf8e4cbfb082fb
+    note: 'STRUCTURE_ONLY: the evidence records are individual cells. They are provenance for the values,
+      not a substitute for the table — the 2-D relationship between cells exists only on the rendered
+      page.'
+  TU.GPA.FORMULA:
+    pages:
+    - 30
+    derived_from:
+    - id: TU-GUIDE-0205
+      page: 30
+      relationship: DIVERGENT_WORDING
+      coverage: 0.62
+      content_sha256: 63111b7221b028c6e2a99e609b54e3b11485e95a35ffbba14e2a76707e485cc3
+    - id: TU-GUIDE-0206
+      page: 30
+      relationship: DIVERGENT_WORDING
+      coverage: 0.6
+      content_sha256: 79d255f47e20780b17e003dc5a699a0490ece62723fd43b726834aac3c7d7832
+    - id: TU-GUIDE-0201
+      page: 30
+      relationship: DIVERGENT_WORDING
+      coverage: 0.5
+      content_sha256: 812c3218a7083d01dc1a92a3086e2685d3363ddcce5a24df3680ccabe352a1a3
+    - id: TU-GUIDE-0203
+      page: 30
+      relationship: DIVERGENT_WORDING
+      coverage: 0.46
+      content_sha256: c653a17b069454ad66267d2033167d699648522a1f5e913f10106868a003d710
+  TU.GPA.GENERAL_ESTIMATE_BANDS:
+    pages:
+    - 28
+    derived_from: []
+    note: 'STRUCTURE_ONLY: the evidence records are individual cells. They are provenance for the values,
+      not a substitute for the table — the 2-D relationship between cells exists only on the rendered
+      page.'
+  TU.GRADUATION.MINIMUM_GPA:
+    pages:
+    - 35
+    derived_from:
+    - id: TU-GUIDE-0244
+      page: 35
+      relationship: DIVERGENT_WORDING
+      coverage: 0.75
+      content_sha256: 0fd042be3dc20de5e74ca31817b8329262cc5504b66c251e3251ad903dac5c6a
+    - id: TU-GUIDE-0245
+      page: 35
+      relationship: DIVERGENT_WORDING
+      coverage: 0.53
+      content_sha256: 512e74bd2f4d777a0f6d207a43860cd4e014cb0a85c444d32b2a56f4c955843f
+    - id: TU-GUIDE-0248
+      page: 35
+      relationship: DIVERGENT_WORDING
+      coverage: 0.46
+      content_sha256: 44c0271961be8bf5e0f9c180e3dbef9bad02b1a11449c87e2a0abaf715c0796b
+  TU.GRADUATION.COUNCIL_AWARDS_DEGREE:
+    pages:
+    - 35
+    derived_from:
+    - id: TU-GUIDE-0247
+      page: 35
+      relationship: A_IS_SUPERSET
+      coverage: 1.0
+      content_sha256: f500ac1a234740101ea076e20ae86f712f53c1c8a15bd0ed3f9d6483ee5582da
+    - id: TU-GUIDE-0246
+      page: 35
+      relationship: A_IS_SUPERSET
+      coverage: 0.93
+      content_sha256: db6b471972955636d7b105f01008d6f333161db1f136802702e9d01fea550605
+    - id: TU-GUIDE-0248
+      page: 35
+      relationship: A_IS_SUPERSET
+      coverage: 0.85
+      content_sha256: 44c0271961be8bf5e0f9c180e3dbef9bad02b1a11449c87e2a0abaf715c0796b
+  TU.GRADUATION.GPA_RESCUE_RETAKE:
+    pages:
+    - 35
+    derived_from:
+    - id: TU-GUIDE-0250
+      page: 35
+      relationship: DIVERGENT_WORDING
+      coverage: 0.62
+      content_sha256: 986ca9107ae40e67090671d5c9849d468f807a4cd0d5e6bdbcf1451459659e08
+  TU.GRADUATION.DOCUMENTS:
+    pages:
+    - 35
+    derived_from:
+    - id: TU-GUIDE-0249
+      page: 35
+      relationship: DIVERGENT_WORDING
+      coverage: 0.58
+      content_sha256: 5405ec6f4ebfa8cc4b9278951a0a2f2cb35bad596a5c054d9c028f320b3e9710
+  TU.HONOURS.THRESHOLDS:
+    pages:
+    - 36
+    derived_from:
+    - id: TU-GUIDE-0252
+      page: 36
+      relationship: STRUCTURE_ONLY
+      coverage: 0.7
+      content_sha256: 03417bff70a9cb4786b584263937bfdaaca4091d48904af2a2a8d4605f9fb29a
+    - id: TU-GUIDE-0254
+      page: 36
+      relationship: STRUCTURE_ONLY
+      coverage: 0.7
+      content_sha256: ccdc9c51e56cdf7892c3babbef281aaa19af2ab0ca1b97cecbd413c8fc995fe9
+    - id: TU-GUIDE-0251
+      page: 36
+      relationship: STRUCTURE_ONLY
+      coverage: 0.6
+      content_sha256: 1ff288920d74267eb5bc5ea10f99fcf6c527b8cc15eedf40f8a33e74457b9e48
+    - id: TU-GUIDE-0253
+      page: 36
+      relationship: STRUCTURE_ONLY
+      coverage: 0.6
+      content_sha256: 295e134bdbcd4921d6e14e3bd04b078954785a91e85b8bc986f63af30ef7d10c
+    note: 'STRUCTURE_ONLY: the evidence records are individual cells. They are provenance for the values,
+      not a substitute for the table — the 2-D relationship between cells exists only on the rendered
+      page.'
+  TU.HONOURS.CONDITIONS:
+    pages:
+    - 36
+    derived_from:
+    - id: TU-GUIDE-0255
+      page: 36
+      relationship: DIVERGENT_WORDING
+      coverage: 0.75
+      content_sha256: d6b0541dabc7c7138d7d9f9308ee25f6938224750deb7bd6e09be1b0c63eaf95
+    - id: TU-GUIDE-0257
+      page: 36
+      relationship: DIVERGENT_WORDING
+      coverage: 0.73
+      content_sha256: b75ffbd07469983cd54f46c6aebfabe232eb8661dde6303898f654dead9fa59c
+    - id: TU-GUIDE-0258
+      page: 36
+      relationship: DIVERGENT_WORDING
+      coverage: 0.5
+      content_sha256: cd58256426b78ee3b0e2b1041cd5b4f45d4d99e78b65dff7dab80d50d7928f40
+    - id: TU-GUIDE-0256
+      page: 36
+      relationship: DIVERGENT_WORDING
+      coverage: 0.47
+      content_sha256: c56d668d53ed5ee27bb3a23c941f3c3a64d219ac1743dd88374dfd46094c6f0a
+  TU.LEAVE.COMPARISON:
+    pages:
+    - 24
+    derived_from: []
+    note: 'STRUCTURE_ONLY: the evidence records are individual cells. They are provenance for the values,
+      not a substitute for the table — the 2-D relationship between cells exists only on the rendered
+      page.'
+    source_silence_cells: Cells asserting not_stated are claims about what the page does NOT say. No evidence
+      record can back an absence; they are verifiable only against evidence/page_text/ plus the rendered
+      page.
+  TU.EXCUSE.PROCEDURE:
+    pages:
+    - 24
+    derived_from:
+    - id: TU-GUIDE-0133
+      page: 24
+      relationship: DIVERGENT_WORDING
+      coverage: 0.7
+      content_sha256: 78081d9f1a5130672e3e9a2d48706a3dc2f87aee71edc3b275439c8697304eb8
+    - id: TU-GUIDE-0137
+      page: 24
+      relationship: DIVERGENT_WORDING
+      coverage: 0.6
+      content_sha256: 1a2b65264483be6af1fab2fe31d511400516880cdeb1cfc26e19f2b56780a21b
+    - id: TU-GUIDE-0141
+      page: 24
+      relationship: DIVERGENT_WORDING
+      coverage: 0.55
+      content_sha256: e6aa38766968e2048cdf89100c34f934ff369b507afb66c839774f345be08583
+  TU.EXCUSE.COUNTS_TOWARD_DURATION:
+    pages:
+    - 24
+    derived_from:
+    - id: TU-GUIDE-0134
+      page: 24
+      relationship: A_IS_SUPERSET
+      coverage: 0.9
+      content_sha256: d6a39592e72da1998bf473c9b27d3906cb84b7bcf037a11ade3dd50c6b158c47
+    - id: TU-GUIDE-0138
+      page: 24
+      relationship: A_IS_SUPERSET
+      coverage: 0.8
+      content_sha256: 6a3a9644434ebe7ec8f91895433e9a17b740219daafd872e4c6918e98fce54bf
+  TU.EXCUSE.TRANSCRIPT_MARK:
+    pages:
+    - 24
+    derived_from:
+    - id: TU-GUIDE-0135
+      page: 24
+      relationship: VERBATIM_MATCH
+      coverage: 0.75
+      content_sha256: df91ec736449ca231cc9ab636285cafb28cedec23c9e5b336fe225d68225f602
+      contested: true
+  TU.EXCUSE.STIPEND_SUSPENDED:
+    pages:
+    - 24
+    derived_from:
+    - id: TU-GUIDE-0136
+      page: 24
+      relationship: VERBATIM_MATCH
+      coverage: 0.8
+      content_sha256: 352cdf03fad737110b6bef7e38196c4bef3b179624fadeff0cf3c3bb93fabb01
+    - id: TU-GUIDE-0140
+      page: 24
+      relationship: DIVERGENT_WORDING
+      coverage: 0.6
+      content_sha256: 7bae647f57f657407fb9f4fa0354cd8c65cc2a391b6fc1dc4cad66ed091afd95
+  TU.DEFERRAL.PROCEDURE:
+    pages:
+    - 24
+    derived_from:
+    - id: TU-GUIDE-0137
+      page: 24
+      relationship: DIVERGENT_WORDING
+      coverage: 0.7
+      content_sha256: 1a2b65264483be6af1fab2fe31d511400516880cdeb1cfc26e19f2b56780a21b
+    - id: TU-GUIDE-0133
+      page: 24
+      relationship: DIVERGENT_WORDING
+      coverage: 0.6
+      content_sha256: 78081d9f1a5130672e3e9a2d48706a3dc2f87aee71edc3b275439c8697304eb8
+    - id: TU-GUIDE-0141
+      page: 24
+      relationship: DIVERGENT_WORDING
+      coverage: 0.55
+      content_sha256: e6aa38766968e2048cdf89100c34f934ff369b507afb66c839774f345be08583
+  TU.DEFERRAL.NOT_COUNTED:
+    pages:
+    - 24
+    derived_from:
+    - id: TU-GUIDE-0138
+      page: 24
+      relationship: VERBATIM_MATCH
+      coverage: 1.0
+      content_sha256: 6a3a9644434ebe7ec8f91895433e9a17b740219daafd872e4c6918e98fce54bf
+    - id: TU-GUIDE-0134
+      page: 24
+      relationship: A_IS_SUPERSET
+      coverage: 0.9
+      content_sha256: d6a39592e72da1998bf473c9b27d3906cb84b7bcf037a11ade3dd50c6b158c47
+  TU.DEFERRAL.MAXIMUM:
+    pages:
+    - 24
+    derived_from:
+    - id: TU-GUIDE-0139
+      page: 24
+      relationship: A_IS_SUPERSET
+      coverage: 0.82
+      content_sha256: 0a1f01a122c738864b20672d56f3ae0c7ee30e16e5c84dd39498ac99f5f82f4d
+  TU.DEFERRAL.STIPEND_SUSPENDED:
+    pages:
+    - 24
+    derived_from:
+    - id: TU-GUIDE-0140
+      page: 24
+      relationship: VERBATIM_MATCH
+      coverage: 0.8
+      content_sha256: 7bae647f57f657407fb9f4fa0354cd8c65cc2a391b6fc1dc4cad66ed091afd95
+    - id: TU-GUIDE-0136
+      page: 24
+      relationship: DIVERGENT_WORDING
+      coverage: 0.6
+      content_sha256: 352cdf03fad737110b6bef7e38196c4bef3b179624fadeff0cf3c3bb93fabb01
+  TU.WITHDRAWAL.PROCEDURE:
+    pages:
+    - 24
+    derived_from:
+    - id: TU-GUIDE-0141
+      page: 24
+      relationship: DIVERGENT_WORDING
+      coverage: 0.73
+      content_sha256: e6aa38766968e2048cdf89100c34f934ff369b507afb66c839774f345be08583
+    - id: TU-GUIDE-0133
+      page: 24
+      relationship: DIVERGENT_WORDING
+      coverage: 0.6
+      content_sha256: 78081d9f1a5130672e3e9a2d48706a3dc2f87aee71edc3b275439c8697304eb8
+    - id: TU-GUIDE-0137
+      page: 24
+      relationship: DIVERGENT_WORDING
+      coverage: 0.6
+      content_sha256: 1a2b65264483be6af1fab2fe31d511400516880cdeb1cfc26e19f2b56780a21b
+  TU.WITHDRAWAL.MAXIMUM:
+    pages:
+    - 24
+    derived_from:
+    - id: TU-GUIDE-0142
+      page: 24
+      relationship: DIVERGENT_WORDING
+      coverage: 0.62
+      content_sha256: 5ad9e391e21790fdd19e0360a06f3e7e97eb6b478c6f7133c18fc914bd90463d
+  TU.WITHDRAWAL.MINIMUM_LOAD_BAR:
+    pages:
+    - 24
+    derived_from:
+    - id: TU-GUIDE-0143
+      page: 24
+      relationship: DIVERGENT_WORDING
+      coverage: 0.73
+      content_sha256: 1d519ed80cebc562a5e3253226ebda6f639e2a9fb77518dc56cdfc989b21d50d
+  TU.WITHDRAWAL.DEPRIVATION_BAR:
+    pages:
+    - 24
+    derived_from:
+    - id: TU-GUIDE-0144
+      page: 24
+      relationship: DIVERGENT_WORDING
+      coverage: 0.55
+      content_sha256: c1578759bc766e52f43cb69f3f07568086d80618ff1f275a39058d72f9136a29
+  TU.WITHDRAWAL.NEW_STUDENT_BAR:
+    pages:
+    - 24
+    derived_from:
+    - id: TU-GUIDE-0145
+      page: 24
+      relationship: DIVERGENT_WORDING
+      coverage: 0.73
+      content_sha256: 612539bcd7cdf85835d79fad73c5eb413924078888ab401b0de3f01f8b4777ab
+  TU.LOAD.SEMESTER_RANGE:
+    pages:
+    - 23
+    derived_from:
+    - id: TU-GUIDE-0128
+      page: 23
+      relationship: A_IS_SUPERSET
+      coverage: 0.92
+      content_sha256: 6e120941340ba1ed26027641b33ccaf200046a8865f5b866ab0e223bb5a60b48
+    - id: TU-GUIDE-0130
+      page: 23
+      relationship: DIVERGENT_WORDING
+      coverage: 0.75
+      content_sha256: 98e25e933fdde57c24f556fa339426d3d0b255b66b8fe37520f9e032bf93b186
+    - id: TU-GUIDE-0129
+      page: 23
+      relationship: DIVERGENT_WORDING
+      coverage: 0.55
+      content_sha256: a57095ec120c8dd7dfe16953f34fab8afe95a9012833061b74b5537e7e17d7f2
+  TU.LOAD.FULL_YEAR_RANGE:
+    pages:
+    - 23
+    derived_from:
+    - id: TU-GUIDE-0129
+      page: 23
+      relationship: A_IS_SUPERSET
+      coverage: 0.91
+      content_sha256: a57095ec120c8dd7dfe16953f34fab8afe95a9012833061b74b5537e7e17d7f2
+    - id: TU-GUIDE-0128
+      page: 23
+      relationship: DIVERGENT_WORDING
+      coverage: 0.5
+      content_sha256: 6e120941340ba1ed26027641b33ccaf200046a8865f5b866ab0e223bb5a60b48
+  TU.LOAD.SUMMER_MAX:
+    pages:
+    - 23
+    derived_from:
+    - id: TU-GUIDE-0130
+      page: 23
+      relationship: A_IS_SUPERSET
+      coverage: 0.88
+      content_sha256: 98e25e933fdde57c24f556fa339426d3d0b255b66b8fe37520f9e032bf93b186
+  TU.LOAD.EXPECTED_GRADUATE_REQUEST:
+    pages:
+    - 23
+    derived_from:
+    - id: TU-GUIDE-0132
+      page: 23
+      relationship: DIVERGENT_WORDING
+      coverage: 0.59
+      content_sha256: 27b21af6b373606fbf2158116a27880eb05eaec38318ec84eae723bc124305ce
+  TU.LOAD.INCOMPLETE_GRADE:
+    pages:
+    - 23
+    derived_from:
+    - id: TU-GUIDE-0131
+      page: 23
+      relationship: DIVERGENT_WORDING
+      coverage: 0.48
+      content_sha256: a43679d53df98033630e09d5804f1652f51a4b5d0c2323f6d6604efd725b7065
+  TU.TERM.STRUCTURE:
+    pages:
+    - 23
+    derived_from:
+    - id: TU-GUIDE-0127
+      page: 23
+      relationship: A_IS_SUPERSET
+      coverage: 0.88
+      content_sha256: 3cc9d82122112fccecfeafb9ce6de6133dd6e7bb4f58b6898496113b8b0a7360
+  TU.TRANSFER.EXTERNAL:
+    pages:
+    - 26
+    derived_from:
+    - id: TU-GUIDE-0152
+      page: 26
+      relationship: A_IS_SUPERSET
+      coverage: 0.88
+      content_sha256: fd55fafb0d35523c2dd99e0993f3659ef4e244245f0353b74e4d0d79d6e327ab
+    - id: TU-GUIDE-0150
+      page: 26
+      relationship: DIVERGENT_WORDING
+      coverage: 0.79
+      content_sha256: 943041fb15fe0f5a4e6aa38096ea6994c4de9d8a938dfe594d85d01280566dcb
+    - id: TU-GUIDE-0158
+      page: 26
+      relationship: DIVERGENT_WORDING
+      coverage: 0.78
+      content_sha256: fd55fafb0d35523c2dd99e0993f3659ef4e244245f0353b74e4d0d79d6e327ab
+    - id: TU-GUIDE-0155
+      page: 26
+      relationship: DIVERGENT_WORDING
+      coverage: 0.7
+      content_sha256: 0124772a09a749b0ff8df53731a53433aa6511927f6476d255e6ecdad151a80e
+    - id: TU-GUIDE-0161
+      page: 26
+      relationship: DIVERGENT_WORDING
+      coverage: 0.7
+      content_sha256: 5e7801d151a1ebd68106f1e06ab85ec029f3271078e334a6dfd06981d211c404
+    - id: TU-GUIDE-0159
+      page: 26
+      relationship: DIVERGENT_WORDING
+      coverage: 0.67
+      content_sha256: 04c19bba89b1fa6ad80335b8c8201bf0d541b42134ce8664ff157c910cc77dba
+    - id: TU-GUIDE-0156
+      page: 26
+      relationship: DIVERGENT_WORDING
+      coverage: 0.64
+      content_sha256: 5e7801d151a1ebd68106f1e06ab85ec029f3271078e334a6dfd06981d211c404
+    - id: TU-GUIDE-0153
+      page: 26
+      relationship: DIVERGENT_WORDING
+      coverage: 0.6
+      content_sha256: adf79e8c76b1097cb7c9fe44fe3c1050b14b1abee995eea1087348f0a3a9e6ea
+    - id: TU-GUIDE-0151
+      page: 26
+      relationship: DIVERGENT_WORDING
+      coverage: 0.55
+      content_sha256: 9fad9c7c06d54517374155310957909fe1cc8f94d90a2a96c7ddb5ff7a5c3149
+    - id: TU-GUIDE-0160
+      page: 26
+      relationship: DIVERGENT_WORDING
+      coverage: 0.54
+      content_sha256: f46b8ace81f5c4dd30fe2980e46f015ad3f353904d4abd2dfa79b139c65ff55e
+    - id: TU-GUIDE-0154
+      page: 26
+      relationship: DIVERGENT_WORDING
+      coverage: 0.53
+      content_sha256: 62729a2b0d422ae610ad3a9e4ac5723f492f2dfc0a1c71f15900762d3b1207ee
+  TU.TRANSFER.INTERNAL_COLLEGE:
+    pages:
+    - 26
+    derived_from:
+    - id: TU-GUIDE-0152
+      page: 26
+      relationship: A_IS_SUPERSET
+      coverage: 0.88
+      content_sha256: fd55fafb0d35523c2dd99e0993f3659ef4e244245f0353b74e4d0d79d6e327ab
+    - id: TU-GUIDE-0158
+      page: 26
+      relationship: DIVERGENT_WORDING
+      coverage: 0.78
+      content_sha256: fd55fafb0d35523c2dd99e0993f3659ef4e244245f0353b74e4d0d79d6e327ab
+    - id: TU-GUIDE-0164
+      page: 26
+      relationship: VERBATIM_MATCH
+      coverage: 0.75
+      content_sha256: 10b9fbe1ed9a8e5c678dcd82321bff1fe0490c9f1bd9ae8ecdc812959e0fe9ba
+    - id: TU-GUIDE-0159
+      page: 26
+      relationship: DIVERGENT_WORDING
+      coverage: 0.72
+      content_sha256: 04c19bba89b1fa6ad80335b8c8201bf0d541b42134ce8664ff157c910cc77dba
+    - id: TU-GUIDE-0161
+      page: 26
+      relationship: DIVERGENT_WORDING
+      coverage: 0.7
+      content_sha256: 5e7801d151a1ebd68106f1e06ab85ec029f3271078e334a6dfd06981d211c404
+    - id: TU-GUIDE-0163
+      page: 26
+      relationship: DIVERGENT_WORDING
+      coverage: 0.7
+      content_sha256: abbaf539a497046ef9e26dfd8c5860578faff3778527df2519b46e3b90462dc4
+    - id: TU-GUIDE-0160
+      page: 26
+      relationship: DIVERGENT_WORDING
+      coverage: 0.69
+      content_sha256: f46b8ace81f5c4dd30fe2980e46f015ad3f353904d4abd2dfa79b139c65ff55e
+    - id: TU-GUIDE-0156
+      page: 26
+      relationship: DIVERGENT_WORDING
+      coverage: 0.64
+      content_sha256: 5e7801d151a1ebd68106f1e06ab85ec029f3271078e334a6dfd06981d211c404
+    - id: TU-GUIDE-0154
+      page: 26
+      relationship: DIVERGENT_WORDING
+      coverage: 0.53
+      content_sha256: 62729a2b0d422ae610ad3a9e4ac5723f492f2dfc0a1c71f15900762d3b1207ee
+    - id: TU-GUIDE-0155
+      page: 26
+      relationship: DIVERGENT_WORDING
+      coverage: 0.5
+      content_sha256: 0124772a09a749b0ff8df53731a53433aa6511927f6476d255e6ecdad151a80e
+  TU.TRANSFER.DEPARTMENT_OR_MAJOR:
+    pages:
+    - 27
+    derived_from:
+    - id: TU-GUIDE-0170
+      page: 27
+      relationship: DIVERGENT_WORDING
+      coverage: 0.73
+      content_sha256: e597bd0dd886c195498f23cc0c2fe938ac459b2d6ca6f39cce425ebfc392edee
+    - id: TU-GUIDE-0169
+      page: 27
+      relationship: DIVERGENT_WORDING
+      coverage: 0.7
+      content_sha256: 812d0b14a9e7f33f4811c9d1c91da73d5b08b9ec9b2e6f737e007a07ca9186c8
+    - id: TU-GUIDE-0168
+      page: 27
+      relationship: DIVERGENT_WORDING
+      coverage: 0.62
+      content_sha256: 199af3c9c448f3e3fa2765aa0699042b3017ed4ef37379662fb0b660393c6170
+    - id: TU-GUIDE-0167
+      page: 27
+      relationship: DIVERGENT_WORDING
+      coverage: 0.45
+      content_sha256: 68fbe62d3ea16703dbdee546ac0122b2f3cc77db3d04c2a157ce4772771613f2
+  TU.REGISTRATION.STRUGGLING_STUDENTS:
+    pages:
+    - 27
+    derived_from:
+    - id: TU-GUIDE-0173
+      page: 27
+      relationship: DIVERGENT_WORDING
+      coverage: 0.75
+      content_sha256: 9a9f8912311a8115e58391fc59d6989607118bd9988d317ff757104a3f089c94
+    - id: TU-GUIDE-0172
+      page: 27
+      relationship: DIVERGENT_WORDING
+      coverage: 0.62
+      content_sha256: 18c27e51d3b320385c88cd898c23349148debd3e5e3452603698a403be7c2482
+    - id: TU-GUIDE-0174
+      page: 27
+      relationship: DIVERGENT_WORDING
+      coverage: 0.57
+      content_sha256: fffb00e4dd553002dca15ad8bee21d76273f8895fe089a4b7b63ea2c361676d4
+  TU.VISITING.DEFINITION:
+    pages:
+    - 31
+    derived_from:
+    - id: TU-GUIDE-0207
+      page: 31
+      relationship: DIVERGENT_WORDING
+      coverage: 0.7
+      content_sha256: 06bcfa27979708ab6c9f2002ae624347a5e8e8ec5bba56351069d1f5b63ad004
+  TU.VISITING.RECOGNISED_INSTITUTION:
+    pages:
+    - 31
+    derived_from:
+    - id: TU-GUIDE-0208
+      page: 31
+      relationship: VERBATIM_MATCH
+      coverage: 0.89
+      content_sha256: 305c32ab4513aea1301fb7dff494d0229836ad579ce675b51e3767b82ca61955
+  TU.VISITING.COURSE_EQUIVALENCE:
+    pages:
+    - 31
+    derived_from:
+    - id: TU-GUIDE-0209
+      page: 31
+      relationship: DIVERGENT_WORDING
+      coverage: 0.64
+      content_sha256: 4745fc1f65596245f21f14ee844765f339c85ea5e0188626548a1bb9a9021d24
+  TU.VISITING.GPA_INCLUSION:
+    pages:
+    - 31
+    derived_from:
+    - id: TU-GUIDE-0210
+      page: 31
+      relationship: DIVERGENT_WORDING
+      coverage: 0.6
+      content_sha256: 4bb5f9dcf9df025d7852985bf34112e5a866788572a7a43c952bf29dd64d50a6
+    - id: TU-GUIDE-0212
+      page: 31
+      relationship: DIVERGENT_WORDING
+      coverage: 0.5
+      content_sha256: d96ec2ce194bfe6ceb2bff182f75b8e204ed8fed2ea7cf6c5c637d9333d82277
+    - id: TU-GUIDE-0213
+      page: 31
+      relationship: DIVERGENT_WORDING
+      coverage: 0.5
+      content_sha256: cd218f75b91c16fbeb3577977756e65237f4f04bbf670beac2fc73fffb00e8f4
+    - id: TU-GUIDE-0211
+      page: 31
+      relationship: DIVERGENT_WORDING
+      coverage: 0.46
+      content_sha256: 23c6e6d2ef2e12c4a7e3031baefd1ebb5287b13d74a3c4e7258966a4d00d413b
+  TU.VISITING.MAX_UNITS_OUTSIDE:
+    pages:
+    - 31
+    derived_from:
+    - id: TU-GUIDE-0214
+      page: 31
+      relationship: DIVERGENT_WORDING
+      coverage: 0.55
+      content_sha256: 2f1cc589d64ab756bdc2032ba32c14aa6ce4113a3352e415ee3755d3c5e31d36
+  TU.VISITING.MAX_UNITS_INSIDE:
+    pages:
+    - 31
+    derived_from:
+    - id: TU-GUIDE-0215
+      page: 31
+      relationship: DIVERGENT_WORDING
+      coverage: 0.7
+      content_sha256: 8f756f99feb6b6fcb2d32d70935ae2f2530551a5114da168121c6f4641284c77
+  TU.VISITING.NO_TRANSFER_DURING_VISIT:
+    pages:
+    - 31
+    derived_from:
+    - id: TU-GUIDE-0216
+      page: 31
+      relationship: A_IS_SUPERSET
+      coverage: 0.83
+      content_sha256: 451bfe2f3bcd6fde9f5b4a25db75befb34b712b57e4983167461cabae0e84be7
+  TU.VISITING.MAX_VISITS:
+    pages:
+    - 31
+    derived_from:
+    - id: TU-GUIDE-0217
+      page: 31
+      relationship: DIVERGENT_WORDING
+      coverage: 0.7
+      content_sha256: 7be09a79b73899f1e2761c4080482a6865da6055f15fc2c89ee997a31867d5f0
