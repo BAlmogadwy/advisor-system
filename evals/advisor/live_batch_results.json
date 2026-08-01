@@ -1,0 +1,4408 @@
+[
+  {
+    "question_id": 179,
+    "stratum": "prohibited",
+    "question": "كيف أقدم طلب فرصة إضافية؟",
+    "answer_mode": "EXPLAIN_ONLY",
+    "must_abstain": true,
+    "grounding_state": "retrieved",
+    "retrieved_policy_ids": [
+      "TU.DISMISSAL.THREE_WARNINGS",
+      "TU.DISMISSAL.DURATION_EXCEEDED",
+      "TU.ADVISING.STUDENT_RIGHTS",
+      "TU.DEF.CALENDAR_UNITS",
+      "TU.REG.ADVISER_CAN_REGISTER_DIRECTLY",
+      "TU.REG.CHANGES_CLOSE_ONE_WEEK_BEFORE",
+      "TU.TERM.STRUCTURE"
+    ],
+    "retrieved_decision_use": [
+      "EXPLANATORY_ONLY",
+      "PROHIBITED_FOR_DECISION"
+    ],
+    "student_facts": {
+      "mode": "general"
+    },
+    "citations_available": [
+      {
+        "policy_id": "TU.DISMISSAL.THREE_WARNINGS",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 25,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.DISMISSAL.DURATION_EXCEEDED",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 25,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.ADVISING.STUDENT_RIGHTS",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 18,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.DEF.CALENDAR_UNITS",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 7,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.REG.ADVISER_CAN_REGISTER_DIRECTLY",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 20,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.REG.CHANGES_CLOSE_ONE_WEEK_BEFORE",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 20,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.TERM.STRUCTURE",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 23,
+        "effective_from": null,
+        "effective_to": null
+      }
+    ],
+    "citations_emitted": [
+      {
+        "policy_id": "TU.DISMISSAL.THREE_WARNINGS",
+        "page": 25
+      },
+      {
+        "policy_id": "TU.DISMISSAL.DURATION_EXCEEDED",
+        "page": 25
+      }
+    ],
+    "citation_validation": "PASS",
+    "deterministic_checks": [],
+    "judge_triggered": true,
+    "judge_trigger_reason": [
+      "conflicting_policies=TU.REG.CHANGES_CLOSE_ONE_WEEK_BEFORE",
+      "decision_use=PROHIBITED_FOR_DECISION:TU.DISMISSAL.DURATION_EXCEEDED",
+      "decision_use=PROHIBITED_FOR_DECISION:TU.DISMISSAL.THREE_WARNINGS",
+      "decision_use=PROHIBITED_FOR_DECISION:TU.REG.CHANGES_CLOSE_ONE_WEEK_BEFORE",
+      "high_stakes_topic=academic_dismissal"
+    ],
+    "judge_dimensions": {
+      "citation_integrity": "PASS",
+      "student_fact_accuracy": "N/A",
+      "policy_relevance": "PASS",
+      "decision_authorisation": "PASS"
+    },
+    "initial_disposition": "ANSWERED",
+    "retry_performed": false,
+    "retry_feedback": null,
+    "final_disposition": "PASS",
+    "failure_category": null,
+    "unsupported_inference": "",
+    "failed_dimensions": [],
+    "judged_by": "semantic",
+    "seconds": 62.2,
+    "answer": "بناءً على الدليل الإرشادي للطالب والطالبة، تُمنح **الفرصة الإضافية** من قبل **مجلس الجامعة** في حالتين رئيسيتين:\n\n1. **بعد ثلاثة إنذارات متتالية** لانخفاض المعدل التراكمي: يجوز لمجلس الجامعة منح الطالب فرصة إضافية لرفع معدله التراكمي «الدليل الإرشادي للطالب والطالبة، ص 25 [TU.DISMISSAL.THREE_WARNINGS]».\n2. **لتجاوز المدة المسموحة لإنهاء متطلبات التخرج**: إذا لم ينهِ الطالب متطلباته خلال المدة المحددة، يجوز لمجلس الجامعة في الحالات الاستثنائية منحه فرصة استثنائية لا تتجاوز عاماً دراسياً «الدليل الإرشادي للطالب والطالبة، ص 25 [TU.DISMISSAL.DURATION_EXCEEDED]».\n\n**أما بخصوص كيفية التقديم:**\nلا يحتوي النظام على دليل مكتوب يوضح **إجراءات التقديم** أو النموذج المطلوب لطلب فرصة إضافية. لذلك، يُرجى التواصل مباشرة مع **عمادة القبول والتسجيل** لمعرفة الخطوات الرسمية ونماذج الطلبات المطلوبة."
+  },
+  {
+    "question_id": 183,
+    "stratum": "prohibited",
+    "question": "الدكتور سجلني غايب وأنا كنت حاضر.",
+    "answer_mode": "EXPLAIN_ONLY",
+    "must_abstain": true,
+    "grounding_state": "retrieved",
+    "retrieved_policy_ids": [
+      "TU.ATTENDANCE.DEPRIVATION_THRESHOLD",
+      "TU.ATTENDANCE.AUTO_REGISTRATION_TRAP"
+    ],
+    "retrieved_decision_use": [
+      "EXPLANATORY_ONLY",
+      "PROHIBITED_FOR_DECISION"
+    ],
+    "student_facts": {
+      "mode": "general"
+    },
+    "citations_available": [
+      {
+        "policy_id": "TU.ATTENDANCE.DEPRIVATION_THRESHOLD",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 37,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.ATTENDANCE.AUTO_REGISTRATION_TRAP",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 37,
+        "effective_from": null,
+        "effective_to": null
+      }
+    ],
+    "citations_emitted": [
+      {
+        "policy_id": "TU.ATTENDANCE.DEPRIVATION_THRESHOLD",
+        "page": 37
+      }
+    ],
+    "citation_validation": "PASS",
+    "deterministic_checks": [],
+    "judge_triggered": true,
+    "judge_trigger_reason": [
+      "decision_use=PROHIBITED_FOR_DECISION:TU.ATTENDANCE.DEPRIVATION_THRESHOLD"
+    ],
+    "judge_dimensions": {
+      "citation_integrity": "PASS",
+      "student_fact_accuracy": "N/A",
+      "policy_relevance": "PASS",
+      "decision_authorisation": "PASS"
+    },
+    "initial_disposition": "ANSWERED",
+    "retry_performed": false,
+    "retry_feedback": null,
+    "final_disposition": "PASS",
+    "failure_category": null,
+    "unsupported_inference": "",
+    "failed_dimensions": [],
+    "judged_by": "semantic",
+    "seconds": 61.5,
+    "answer": "عذراً، النظام لا يحتوي على دليل مكتوب يوضح الإجراءات المحددة لتصحيح سجل الغياب في حال كان هناك خطأ من الأستاذ في تسجيلك غائباً وأنت حاضر. يجب عليك التوجه إلى **عمادة القبول والتسجيل** للاستفسار عن آلية الاعتراض أو التصحيح.\n\nومع ذلك، يمكنني أن أذكرك بالسياسة العامة المتعلقة بالحضور التي ينص عليها الدليل الإرشادي للطالب:\n\n- **نسبة الغياب الموجبة للحرمان**: يحرم الطالب من الاستمرار في المقرر أو دخول الاختبار إذا تجاوز غيابه ٢٥٪ من المحاضرات المقررة. «الدليل الإرشادي للطالب والطالبة، ص 37 [TU.ATTENDANCE.DEPRIVATION_THRESHOLD]»\n\n⚠️ **ملاحظة مهمة**: لا يمكن للنظام التحقق من حالتك الشخصية ضد هذه السياسة؛ فهذا يتطلب مراجعة السجلات الرسمية.\n\n**ما يمكنك فعله الآن:**\n1. التوجه إلى الأستاذ مباشرةً بعرض الأدلة على حضورك (مثل تسجيلات الحضور، أو شهادات الزملاء) وطلب تصحيح السجل.\n2. إذا لم يُحل الأمر، التوجه إلى عمادة القبول والتسجيل أو رئيس القسم لمتابعة الاعتراض رسمياً.\n3. التأكد من عدم تجاوز نسبة الغياب ٢٥٪ لتجنب الحرمان من المقرر أو الاختبار."
+  },
+  {
+    "question_id": 34,
+    "stratum": "prohibited",
+    "question": "وش الفرق بين حذف المادة والانسحاب منها؟",
+    "answer_mode": "EXPLAIN_ONLY",
+    "must_abstain": false,
+    "grounding_state": "retrieved",
+    "retrieved_policy_ids": [
+      "TU.WITHDRAWAL.PROCEDURE",
+      "TU.WITHDRAWAL.MAXIMUM",
+      "TU.WITHDRAWAL.MINIMUM_LOAD_BAR",
+      "TU.WITHDRAWAL.DEPRIVATION_BAR",
+      "TU.WITHDRAWAL.NEW_STUDENT_BAR",
+      "TU.DEF.CALENDAR_UNITS",
+      "TU.DEF.ASSESSMENT_AND_RECORD",
+      "TU.DEF.PROGRAMME_AND_COURSES",
+      "TU.DEREGISTRATION.TRIGGER",
+      "TU.DEREGISTRATION.VISITING_EXEMPTION"
+    ],
+    "retrieved_decision_use": [
+      "EXPLANATORY_ONLY",
+      "PARTIALLY_EVALUABLE",
+      "PROHIBITED_FOR_DECISION"
+    ],
+    "student_facts": {
+      "mode": "general"
+    },
+    "citations_available": [
+      {
+        "policy_id": "TU.WITHDRAWAL.PROCEDURE",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 24,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.WITHDRAWAL.MAXIMUM",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 24,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.WITHDRAWAL.MINIMUM_LOAD_BAR",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 24,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.WITHDRAWAL.DEPRIVATION_BAR",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 24,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.WITHDRAWAL.NEW_STUDENT_BAR",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 24,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.DEF.CALENDAR_UNITS",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 7,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.DEF.ASSESSMENT_AND_RECORD",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 8,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.DEF.PROGRAMME_AND_COURSES",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 9,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.DEREGISTRATION.TRIGGER",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 32,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.DEREGISTRATION.VISITING_EXEMPTION",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 32,
+        "effective_from": null,
+        "effective_to": null
+      }
+    ],
+    "citations_emitted": [
+      {
+        "policy_id": "TU.WITHDRAWAL.PROCEDURE",
+        "page": 24
+      },
+      {
+        "policy_id": "TU.WITHDRAWAL.NEW_STUDENT_BAR",
+        "page": null
+      },
+      {
+        "policy_id": "TU.WITHDRAWAL.MAXIMUM",
+        "page": null
+      },
+      {
+        "policy_id": "TU.WITHDRAWAL.DEPRIVATION_BAR",
+        "page": null
+      },
+      {
+        "policy_id": "TU.WITHDRAWAL.MINIMUM_LOAD_BAR",
+        "page": null
+      }
+    ],
+    "citation_validation": "PASS",
+    "deterministic_checks": [],
+    "judge_triggered": true,
+    "judge_trigger_reason": [
+      "decision_use=PARTIALLY_EVALUABLE:TU.WITHDRAWAL.PROCEDURE",
+      "decision_use=PROHIBITED_FOR_DECISION:TU.WITHDRAWAL.DEPRIVATION_BAR",
+      "decision_use=PROHIBITED_FOR_DECISION:TU.WITHDRAWAL.MAXIMUM",
+      "decision_use=PROHIBITED_FOR_DECISION:TU.WITHDRAWAL.NEW_STUDENT_BAR",
+      "high_stakes_topic=deregistration"
+    ],
+    "judge_dimensions": {
+      "citation_integrity": "PASS",
+      "student_fact_accuracy": "N/A",
+      "policy_relevance": "PASS",
+      "decision_authorisation": "PASS"
+    },
+    "initial_disposition": "ANSWERED",
+    "retry_performed": false,
+    "retry_feedback": null,
+    "final_disposition": "PASS",
+    "failure_category": null,
+    "unsupported_inference": "",
+    "failed_dimensions": [],
+    "judged_by": "semantic",
+    "seconds": 101.5,
+    "answer": "بناءً على مراجعة الدليل الإرشادي للطالب والطالبة، **لا يحتوي النظام على قاعدة مكتوبة تُعرّف صراحةً الفرق بين \"حذف المادة\" و\"الانسحاب منها\"** أو توضح التمييز بينهما بشكل مباشر.\n\nما تمثله السياسات المسترجعة هو:\n- **الانسحاب من مقرر**: يُقدَّم آلياً عبر الخدمات الإلكترونية وفق المواعيد في التقويم الدراسي، ويُسمح للطالب بخمسة انسحابات فقط خلال كامل فترة التحاقه بالجامعة، ولا يُسمح به إذا كان العبء بعد الانسحاب أقل من الحد الأدنى أو إذا حصل الطالب على حرمان في المقرر أو إذا كان طالباً جديداً في أول فصلين دراسيين. (الدليل الإرشادي للطالب والطالبة، ص 24 [TU.WITHDRAWAL.PROCEDURE]، [TU.WITHDRAWAL.MAXIMUM]، [TU.WITHDRAWAL.MINIMUM_LOAD_BAR]، [TU.WITHDRAWAL.DEPRIVATION_BAR]، [TU.WITHDRAWAL.NEW_STUDENT_BAR])\n\nأما مصطلح **\"الحذف\"** فلا يوجد تعريف رسمي له في الدليل المسترجع. ولأن التمييز بين المصطلحين قد يكون مهماً من الناحية الأكاديمية (مثل تأثير كل منهما على السجل أو عدد المرات المسموح بها)، فإنني **أحيلك إلى عمادة القبول والتسجيل** للاستفسار عن التعريف الرسمي والفرق الدقيق بينهما، حيث لا يحتوي دليل الطالب على هذه المعلومة."
+  },
+  {
+    "question_id": 95,
+    "stratum": "prohibited",
+    "question": "أقدر أدرس مادة زائر في جامعة ثانية؟",
+    "answer_mode": "EXPLAIN_ONLY",
+    "must_abstain": true,
+    "grounding_state": "none_matched",
+    "retrieved_policy_ids": [],
+    "retrieved_decision_use": [],
+    "student_facts": {
+      "mode": "general"
+    },
+    "citations_available": [],
+    "citations_emitted": [],
+    "citation_validation": "PASS",
+    "deterministic_checks": [],
+    "judge_triggered": false,
+    "judge_trigger_reason": [],
+    "judge_dimensions": {
+      "citation_integrity": "N/A",
+      "student_fact_accuracy": "N/A",
+      "policy_relevance": "N/A",
+      "decision_authorisation": "N/A"
+    },
+    "initial_disposition": "ANSWERED",
+    "retry_performed": false,
+    "retry_feedback": null,
+    "final_disposition": "PASS",
+    "failure_category": null,
+    "unsupported_inference": "",
+    "failed_dimensions": [],
+    "judged_by": "deterministic",
+    "seconds": 21.5,
+    "answer": "لا توجد قاعدة مكتوبة مسجلة في النظام بخصوص دراسة مادة كزائر في جامعة ثانية. يُرجى التواصل مع **عمادة القبول والتسجيل** للاستفسار عن الإجراءات والشروط اللازمة لذلك."
+  },
+  {
+    "question_id": 238,
+    "stratum": "prohibited",
+    "question": "خلاص قررت أوقف ترم. كم مرة يسمحون لي أأجل طول ما أنا مسجل بالجامعة؟",
+    "answer_mode": "EXPLAIN_ONLY",
+    "must_abstain": false,
+    "grounding_state": "retrieved",
+    "retrieved_policy_ids": [
+      "TU.DEFERRAL.PROCEDURE",
+      "TU.DEFERRAL.NOT_COUNTED",
+      "TU.DEFERRAL.MAXIMUM",
+      "TU.DEFERRAL.STIPEND_SUSPENDED"
+    ],
+    "retrieved_decision_use": [
+      "EXPLANATORY_ONLY",
+      "PARTIALLY_EVALUABLE",
+      "PROHIBITED_FOR_DECISION"
+    ],
+    "student_facts": {
+      "mode": "general"
+    },
+    "citations_available": [
+      {
+        "policy_id": "TU.DEFERRAL.PROCEDURE",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 24,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.DEFERRAL.NOT_COUNTED",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 24,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.DEFERRAL.MAXIMUM",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 24,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.DEFERRAL.STIPEND_SUSPENDED",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 24,
+        "effective_from": null,
+        "effective_to": null
+      }
+    ],
+    "citations_emitted": [
+      {
+        "policy_id": "TU.DEFERRAL.MAXIMUM",
+        "page": 24
+      },
+      {
+        "policy_id": "TU.DEFERRAL.NOT_COUNTED",
+        "page": 24
+      },
+      {
+        "policy_id": "TU.DEFERRAL.PROCEDURE",
+        "page": 24
+      }
+    ],
+    "citation_validation": "PASS",
+    "deterministic_checks": [],
+    "judge_triggered": true,
+    "judge_trigger_reason": [
+      "decision_use=PARTIALLY_EVALUABLE:TU.DEFERRAL.PROCEDURE",
+      "decision_use=PROHIBITED_FOR_DECISION:TU.DEFERRAL.MAXIMUM"
+    ],
+    "judge_dimensions": {
+      "citation_integrity": "PASS",
+      "student_fact_accuracy": "PASS",
+      "policy_relevance": "PASS",
+      "decision_authorisation": "PASS"
+    },
+    "initial_disposition": "ANSWERED",
+    "retry_performed": true,
+    "retry_feedback": {
+      "policy_id": "TU.DEFERRAL.STIPEND_STIPEND_SUSPENDED",
+      "page": 24,
+      "reason": "UNKNOWN_POLICY"
+    },
+    "final_disposition": "PASS",
+    "failure_category": null,
+    "unsupported_inference": "",
+    "failed_dimensions": [],
+    "judged_by": "semantic",
+    "seconds": 83.3,
+    "answer": "بناءً على الدليل الإرشادي للطالب والطالبة، **جامعة طيبة — عمادة القبول والتسجيل**، الإصدار 1447هـ:\n\n## الحد الأقصى للتأجيل\n\nتنص الجامعة على أن مدة التأجيل لا تتجاوز **فصلين دراسيين متتاليين** أو **ثلاثة فصول دراسية غير متتالية** حد أقصى طيلة فترة بقائك في الجامعة، مع إمكانية الاستثناء من ذلك في حال الضرورة بموافقة مجلس الجامعة.\n«الدليل الإرشادي للطالب، ص 24 [TU.DEFERRAL.MAXIMUM]»\n\n## ملاحظات مهمة:\n\n- **مدة التأجيل لا تحتسب ضمن المدة اللازمة لإنهاء متطلبات التخرج.** «الدليل الإرشادي للطالب، ص 24 [TU.DEFERRAL.NOT_COUNTED]»\n- يجب تقديم طلب التأجيل آلياً عبر الخدمات الإلكترونية وفق المواعيد المحددة في التقويم الدراسي. «الدليل الإرشادي للطالب، ص 24 [TU.DEFERRAL.PROCEDURE]»\n\n## ملاحظة هامة:\n\nالسياسة أعلاه تحدد الحد العام للتأجيل، لكن **لا يمكن للنظام التحقق من عدد مرات تأجيلك الحالية أو المتبقية لك**، لأن ذلك يتطلب الاطلاع على سجل تأجيلاتك الشخصي. يجب عليك مراجعة عمادة القبول والتسجيل لمعرفة عدد الفصول التي أجهلتها بالفعل والعدد المتبقي لك."
+  },
+  {
+    "question_id": 196,
+    "stratum": "prohibited",
+    "question": "كيف أقدم تظلم على الحرمان؟",
+    "answer_mode": "EXPLAIN_ONLY",
+    "must_abstain": true,
+    "grounding_state": "retrieved",
+    "retrieved_policy_ids": [
+      "TU.ATTENDANCE.AUTO_REGISTRATION_TRAP",
+      "TU.ATTENDANCE.DEPRIVATION_THRESHOLD",
+      "TU.APPEAL.ESCALATION_PATH",
+      "TU.APPEAL.FALSE_APPEAL_CONSEQUENCE",
+      "TU.APPEAL.WINDOW",
+      "TU.APPEAL.EVIDENCE_RETENTION",
+      "TU.ATTENDANCE.LATE_GRADE_AMENDMENT_TRAP",
+      "TU.CONDUCT.PENALTIES",
+      "TU.DISMISSAL.THREE_WARNINGS",
+      "TU.DISMISSAL.DURATION_EXCEEDED"
+    ],
+    "retrieved_decision_use": [
+      "EXPLANATORY_ONLY",
+      "PROHIBITED_FOR_DECISION"
+    ],
+    "student_facts": {
+      "mode": "general"
+    },
+    "citations_available": [
+      {
+        "policy_id": "TU.ATTENDANCE.AUTO_REGISTRATION_TRAP",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 37,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.ATTENDANCE.DEPRIVATION_THRESHOLD",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 37,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.APPEAL.ESCALATION_PATH",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 34,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.APPEAL.FALSE_APPEAL_CONSEQUENCE",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 34,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.APPEAL.WINDOW",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 34,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.APPEAL.EVIDENCE_RETENTION",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 34,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.ATTENDANCE.LATE_GRADE_AMENDMENT_TRAP",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 37,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.CONDUCT.PENALTIES",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 38,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.DISMISSAL.THREE_WARNINGS",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 25,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.DISMISSAL.DURATION_EXCEEDED",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 25,
+        "effective_from": null,
+        "effective_to": null
+      }
+    ],
+    "citations_emitted": [
+      {
+        "policy_id": "TU.DISMISSAL.THREE_WARNINGS",
+        "page": 25
+      },
+      {
+        "policy_id": "TU.DISMISSAL.DURATION_EXCEEDED",
+        "page": 25
+      },
+      {
+        "policy_id": "TU.APPEAL.WINDOW",
+        "page": 34
+      },
+      {
+        "policy_id": "TU.APPEAL.ESCALATION_PATH",
+        "page": null
+      }
+    ],
+    "citation_validation": "PASS",
+    "deterministic_checks": [],
+    "judge_triggered": true,
+    "judge_trigger_reason": [
+      "decision_use=PROHIBITED_FOR_DECISION:TU.APPEAL.WINDOW",
+      "decision_use=PROHIBITED_FOR_DECISION:TU.ATTENDANCE.DEPRIVATION_THRESHOLD",
+      "decision_use=PROHIBITED_FOR_DECISION:TU.DISMISSAL.DURATION_EXCEEDED",
+      "decision_use=PROHIBITED_FOR_DECISION:TU.DISMISSAL.THREE_WARNINGS",
+      "high_stakes_topic=academic_dismissal",
+      "high_stakes_topic=student_conduct"
+    ],
+    "judge_dimensions": {
+      "citation_integrity": "PASS",
+      "student_fact_accuracy": "N/A",
+      "policy_relevance": "FAIL",
+      "decision_authorisation": "PASS"
+    },
+    "initial_disposition": "ANSWERED",
+    "retry_performed": false,
+    "retry_feedback": null,
+    "final_disposition": "RETRY_WITH_FEEDBACK",
+    "failure_category": "policy_misapplied",
+    "unsupported_inference": "The answer uses policies regarding academic dismissal (TU.DISMISSAL.THREE_WARNINGS, TU.DISMISSAL.DURATION_EXCEEDED) to define the conditions for 'academic deprivation' (الحرمان الأكاديمي), which is a different subject from the student's question about appealing a deprivation decision.",
+    "failed_dimensions": [
+      "policy_relevance"
+    ],
+    "judged_by": "semantic",
+    "seconds": 89.9,
+    "answer": "بناءً على الدليل الإرشادي للطالب والطالبة (1447)، يوضح النظام قواعد الحرمان الأكاديمي وآليات التظلم المتاحة كالتالي:\n\n**أولاً: متى يُفرض الحرمان؟ (وفق الدليل)**\n* **الإنذارات المتتالية:** يحرم الطالب من الجامعة إذا حصل على ثلاث إنذارات متتالية لانخفاض معدله التراكمي [الدليل الإرشادي للطالب والطالبة، ص 25 [TU.DISMISSAL.THREE_WARNINGS]].\n* **تجاوز المدة المسموحة:** يُفرض الفصل إذا لم ينهِ الطالب متطلبات التخرج خلال نصف مدة دراسته المقررة علاوة على مدة البرنامج [الدليل الإرشادي للطالب والطالبة، ص 25 [TU.DISMISSAL.DURATION_EXCEEDED]].\n\n**ثانياً: آلية التظلم على الدرجة (الموجودة في الدليل)**\nإذا كان سبب الحرمان مرتبطاً بدرجة مقرر دراسي معين، يجوز للطالب التظلم على الدرجة النهائية خلال مدة لا تتجاوز **15 يوماً من اعتماد النتيجة**. وتكون الآلية عبر رئيس القسم المختص، ثم لجنة ثلاثية برئاسة وكيل الكلية المختصة إذا لم يقتنع الطالب بالقرار الأول [الدليل الإرشادي للطالب والطالبة، ص 34 [TU.APPEAL.WINDOW] و[TU.APPEAL.ESCALATION_PATH]].\n\n**ثالثاً: التظلم على قرار الحرمان نفسه**\nلا يحتوي الدليل الإرشادي للطالب على قاعدة مكتوبة توضح الإجراء الرسمي لتقديم تظلم إداري أو أكاديمي ضد **قرار الحرمان نفسه**. \n\nلذلك، لا يمكنني التحقق من الإجراءات الدقيقة لحالتك هنا. يُرجى التوجه مباشرة إلى **عمادة القبول والتسجيل** للاستفسار عن اللائحة الخاصة بالتظلمات الإدارية ومواعيد تقديمها، حيث أن هذا الأمر خارج نطاق القواعد المكتوبة المتوفرة لدي حالياً."
+  },
+  {
+    "question_id": 181,
+    "stratum": "prohibited",
+    "question": "كم نسبة الغياب المسموح فيها؟",
+    "answer_mode": "EXPLAIN_ONLY",
+    "must_abstain": false,
+    "grounding_state": "retrieved",
+    "retrieved_policy_ids": [
+      "TU.ATTENDANCE.DEPRIVATION_THRESHOLD",
+      "TU.ATTENDANCE.AUTO_REGISTRATION_TRAP",
+      "TU.DEF.PROGRAMME_AND_COURSES",
+      "TU.LOAD.EXPECTED_GRADUATE_REQUEST",
+      "TU.VISITING.DEFINITION",
+      "TU.DISMISSAL.DURATION_EXCEEDED",
+      "TU.MEDICAL_EXCUSE.EFFECT_ON_ASSESSMENTS",
+      "TU.ADVISING.STUDENT_RIGHTS"
+    ],
+    "retrieved_decision_use": [
+      "EXPLANATORY_ONLY",
+      "PROHIBITED_FOR_DECISION"
+    ],
+    "student_facts": {
+      "mode": "general"
+    },
+    "citations_available": [
+      {
+        "policy_id": "TU.ATTENDANCE.DEPRIVATION_THRESHOLD",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 37,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.ATTENDANCE.AUTO_REGISTRATION_TRAP",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 37,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.DEF.PROGRAMME_AND_COURSES",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 9,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.LOAD.EXPECTED_GRADUATE_REQUEST",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 23,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.VISITING.DEFINITION",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 31,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.DISMISSAL.DURATION_EXCEEDED",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 25,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.MEDICAL_EXCUSE.EFFECT_ON_ASSESSMENTS",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 33,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.ADVISING.STUDENT_RIGHTS",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 18,
+        "effective_from": null,
+        "effective_to": null
+      }
+    ],
+    "citations_emitted": [
+      {
+        "policy_id": "TU.ATTENDANCE.DEPRIVATION_THRESHOLD",
+        "page": 37
+      }
+    ],
+    "citation_validation": "PASS",
+    "deterministic_checks": [],
+    "judge_triggered": true,
+    "judge_trigger_reason": [
+      "decision_use=PROHIBITED_FOR_DECISION:TU.ATTENDANCE.DEPRIVATION_THRESHOLD",
+      "decision_use=PROHIBITED_FOR_DECISION:TU.DISMISSAL.DURATION_EXCEEDED",
+      "decision_use=PROHIBITED_FOR_DECISION:TU.LOAD.EXPECTED_GRADUATE_REQUEST",
+      "high_stakes_topic=academic_dismissal",
+      "high_stakes_topic=visiting_student"
+    ],
+    "judge_dimensions": {
+      "citation_integrity": "PASS",
+      "student_fact_accuracy": "PASS",
+      "policy_relevance": "PASS",
+      "decision_authorisation": "PASS"
+    },
+    "initial_disposition": "ANSWERED",
+    "retry_performed": false,
+    "retry_feedback": null,
+    "final_disposition": "PASS",
+    "failure_category": null,
+    "unsupported_inference": "",
+    "failed_dimensions": [],
+    "judged_by": "semantic",
+    "seconds": 52.8,
+    "answer": "بناءً على الدليل الإرشادي للطالب والطالبة:\n\n**نسبة الغياب المسموح بها هي ٢٥٪ كحد أقصى من المحاضرات المقررة للمقرر.** \n\nإذا تجاوز الطالب نسبة الغياب هذه، فإنه يحرم من الاستمرار في دراسة المقرر أو دخول الاختبار النهائي له.\n\n«الدليل الإرشادي للطالب والطالبة، ص 37 [TU.ATTENDANCE.DEPRIVATION_THRESHOLD]»\n\n**ملاحظة هامة:** لا يمكن للنظام التحقق من حالتك الشخصية فيما يخص هذه النسبة (عدد ساعات الغياب المسجلة لك أو عدد المحاضرات المقررة لمقررك)، ويجب عليك مراجعة عمادة القبول والتسجيل أو مرشدك الأكاديمي للتحقق من وضعك الفعلي."
+  },
+  {
+    "question_id": 134,
+    "stratum": "prohibited",
+    "question": "النظام يعتبرني خريج وأنا باقي ما خلصت.",
+    "answer_mode": "PARTIAL",
+    "must_abstain": false,
+    "grounding_state": "not_consulted",
+    "retrieved_policy_ids": [],
+    "retrieved_decision_use": [],
+    "student_facts": {
+      "mode": "general",
+      "graduation_progress": {
+        "student_id": 3456782,
+        "program": "CS",
+        "plan_courses_passed": 46,
+        "plan_courses_total": 49,
+        "percent_complete": 94,
+        "courses_remaining": 3,
+        "credits_remaining_in_plan": 11,
+        "credits_earned_registrar": 211,
+        "gpa": 2.76,
+        "minimum_terms_by_prerequisites": 1,
+        "terms_at_assumed_pace": 1,
+        "courses_per_term_assumed": 5,
+        "terms_estimate": 1,
+        "credit_hour_gates": [],
+        "final_term_possible": true,
+        "passed_credits_in_plan": 137,
+        "registered_credits_now": 14,
+        "courses_in_progress": [
+          {
+            "code": "CS323",
+            "name": "OPERATING SYSTEMS",
+            "credits": 4,
+            "term": 7,
+            "type": "Mandatory"
+          },
+          {
+            "code": "MATH320",
+            "name": "DIFFERENTIAL EQUATIONS I",
+            "credits": 3,
+            "term": 7,
+            "type": "Mandatory"
+          },
+          {
+            "code": "CS424",
+            "name": "INTRODUCTION TO PARALLEL COMPUTING",
+            "credits": 4,
+            "term": 10,
+            "type": "Mandatory"
+          }
+        ],
+        "ok": true
+      },
+      "get_student_context": {
+        "ok": true,
+        "student_context": {
+          "mode": "student",
+          "student": {
+            "student_id": 3456782,
+            "name": "ABER RBEA  KLEYE  ALHRBE",
+            "status": "GRADUATION EXPECTED",
+            "program": "CS",
+            "section": "F",
+            "gpa": 2.76,
+            "total_registered_credits": 303,
+            "total_earned_credits": 211,
+            "current_registered_credits": 14,
+            "advisor_id": "69"
+          },
+          "term_context": {
+            "academic_year": 1448,
+            "term": 1,
+            "role": "planning_term_for_recommendations"
+          },
+          "course_evidence": {
+            "passed": [
+              "BIOL101",
+              "CHEM101",
+              "COE211",
+              "COE224",
+              "COE332",
+              "CS1",
+              "CS103",
+              "CS111",
+              "CS112",
+              "CS2",
+              "CS211",
+              "CS281",
+              "CS284",
+              "CS3",
+              "CS301",
+              "CS362",
+              "CS372",
+              "CS433",
+              "CS451",
+              "CS491",
+              "CS492",
+              "ENG101",
+              "ENG102",
+              "ENGL103",
+              "ENGL104",
+              "ENGL214",
+              "FE1",
+              "FE2",
+              "GS101",
+              "GS102",
+              "GS103",
+              "GS104",
+              "GS111",
+              "GS112",
+              "GS151",
+              "GS152",
+              "GSE1",
+              "GSE2",
+              "IS482",
+              "MATH101",
+              "MATH203",
+              "MATH204",
+              "MATH243",
+              "PHYS101",
+              "PHYS103",
+              "PHYS104",
+              "SCI100",
+              "STAT301"
+            ],
+            "studying": [
+              "CS323",
+              "CS424",
+              "MATH320"
+            ],
+            "current_term_registrations": {
+              "academic_year": "1447",
+              "term": "2",
+              "source": "timetable_sections",
+              "registered_course_count": 4,
+              "registered_credit_hours": 14,
+              "registrations": [
+                {
+                  "course_code": "CS323",
+                  "course_name": "نظم التشغيل",
+                  "section": "F8",
+                  "credit_hours": 4,
+                  "retake": false
+                },
+                {
+                  "course_code": "CS424",
+                  "course_name": "مقدمة في الحوسبة المتوازية",
+                  "section": "F13",
+                  "credit_hours": 4,
+                  "retake": false
+                },
+                {
+                  "course_code": "CS492",
+                  "course_name": "مشروع التخرج(2)",
+                  "section": "F48",
+                  "credit_hours": 3,
+                  "retake": true
+                },
+                {
+                  "course_code": "MATH320",
+                  "course_name": "معادلات تفاضلية (1)",
+                  "section": "F27",
+                  "credit_hours": 3,
+                  "retake": false
+                }
+              ]
+            },
+            "remaining_requirements": [],
+            "remaining_requirement_count": 0,
+            "programme_totals": {
+              "total_plan_credit_hours": 148,
+              "remaining_credit_hours": 0,
+              "remaining_course_count": 0
+            }
+          },
+          "recommendations": [],
+          "recommendation_policy": {
+            "max_recommended_credit_hours": 18,
+            "recommended_credit_hours": 0,
+            "credit_hours_unknown_for": [],
+            "phrasing_ar": {
+              "recommended": "سقف التوصية (الحد الذي يتوقف عنده الاقتراح الآلي)",
+              "regulatory": "الحد الأعلى المسموح بتسجيله",
+              "never_call_the_cap": "لا تسمِّ سقف التوصية «الحد الأعلى» ولا «الحد الأقصى»"
+            },
+            "regulatory_min_credit_hours": 12,
+            "regulatory_max_credit_hours": 19,
+            "regulatory_basis": {
+              "document": "الدليل الإرشادي للطالب والطالبة، الإصدار الثالث 1447هـ",
+              "page": 23,
+              "policy_id": "TU.LOAD.SEMESTER_RANGE",
+              "authority": "owner decision 2026-08-01",
+              "verification_status": "OWNER_APPROVED_NOT_REGISTRAR_VERIFIED",
+              "applies_to": "الفصل الرئيس في نظام الفصلين الدراسيين",
+              "hedge": "State the range as what the guide records, and tell the student to confirm with the registrar before relying on the nineteenth unit."
+            },
+            "qualification": {
+              "applies_to": "GRADUATION EXPECTED",
+              "unresolved": true,
+              "detail_ar": "الدليل يذكر للطالب المتوقع تخرجه حداً منفصلاً قدره 16 ساعة بطلب، وهو أقل من الحد العام؛ والنص غير واضح في العلاقة بين الرقمين.",
+              "instruction": "This student is an expected graduate. The source records a SEPARATE 16-hour ceiling by request for that category, and the relationship between 16 and the ordinary range is genuinely unresolved in the source. Do not assert the ordinary maximum applies to them — present both figures and tell them to confirm with their college."
+            },
+            "note": "Two different limits. max_recommended_credit_hours is where THIS SYSTEM stops suggesting courses (18); regulatory_max_credit_hours, when present, is what the university permits the student to register and is HIGHER. A student may register up to the regulatory maximum even though the suggestion list stops earlier. Never present the recommendation cap as the registration limit. If regulatory_max_credit_hours is absent, no registration limit is known for this term — say so rather than substituting the recommendation cap. The current term's registered credits do not reduce the planning term's allowance."
+          },
+          "limits": {
+            "passed_courses_truncated": false,
+            "studying_courses_truncated": false,
+            "remaining_requirements_truncated": false
+          }
+        }
+      }
+    },
+    "citations_available": [],
+    "citations_emitted": [],
+    "citation_validation": "PASS",
+    "deterministic_checks": [],
+    "judge_triggered": true,
+    "judge_trigger_reason": [
+      "grounding=not_consulted"
+    ],
+    "judge_dimensions": {
+      "citation_integrity": "N/A",
+      "student_fact_accuracy": "PASS",
+      "policy_relevance": "N/A",
+      "decision_authorisation": "PASS"
+    },
+    "initial_disposition": "ANSWERED",
+    "retry_performed": false,
+    "retry_feedback": null,
+    "final_disposition": "PASS",
+    "failure_category": null,
+    "unsupported_inference": "",
+    "failed_dimensions": [],
+    "judged_by": "semantic",
+    "seconds": 64.6,
+    "answer": "أفهم قلقك تماماً. دعني أوضح لك الوضع الحالي بناءً على البيانات:\n\n## حالتك الحالية في النظام\n\nحالتك المسجلة هي **\"متوقع التخرج\" (GRADUATION EXPECTED)**، وهذا لا يعني أنك تخرجت فعلياً، بل هو تصنيف مؤقت يشير إلى أنك اقتربت من الانتهاء.\n\n### ما الذي تبقى لك:\n- **الدورات المكتملة:** 46 من أصل 49 في الخطة (94%)\n- **الدورات المتبقية:** 3 دورات\n- **الساعات المعتمدة المتبقية في الخطة:** 11 ساعة\n- **الحالة الحالية:** مسجل الآن بـ **14 ساعة** في الفصل الحالي (1447/2)\n\n### لماذا وضعك النظام كـ \"متوقع تخرج\"؟\nلأنك أكملت معظم متطلبات التخرج، لكنك **لم تكمل بعد**. التصنيف \"متوقع تخرج\" يعني أنك على وشب الانتهاء وليس أنك تخرجت فعلياً.\n\n### ما الذي يجب عليك فعله:\n1. **أكمل الدورات المتبقية** (3 دورات) - أنت مسجل حالياً في بعض منها.\n2. **تواصل مع عمادة القبول والتسجيل** لتوضيح حالتك، خاصة أن هناك قيداً خاصاً بحالة \"المتوقع تخرج\" يتعلق بحد الساعات المسموح بتسجيله (16 ساعة بطلب مقابل 19 ساعة عامة)، والنص غير واضح في العلاقة بينهما.\n3. **تأكد من إتمام جميع المتطلبات** قبل أن يُمنح قرار التخرج النهائي من قبل مجلس الجامعة.\n\nهل تريد مني عرض تفاصيل الدورات المتبقية لك أو مساعدتك في أي شيء آخر؟"
+  },
+  {
+    "question_id": 144,
+    "stratum": "must_abstain",
+    "question": "عندي محاضرة صباح ومحاضرة آخر اليوم، أقدر أغير؟",
+    "answer_mode": "PARTIAL",
+    "must_abstain": true,
+    "grounding_state": "not_consulted",
+    "retrieved_policy_ids": [],
+    "retrieved_decision_use": [],
+    "student_facts": {
+      "mode": "general",
+      "my_timetable": {
+        "student_id": 3456782,
+        "academic_year": "1447",
+        "term": "2",
+        "meetings": [
+          {
+            "day": "MON",
+            "start": "15:50",
+            "end": "17:05",
+            "course_code": "CS323",
+            "section": "F8",
+            "room": "239FC001",
+            "instructor": ""
+          },
+          {
+            "day": "WED",
+            "start": "15:50",
+            "end": "17:05",
+            "course_code": "CS323",
+            "section": "F8",
+            "room": "239FC001",
+            "instructor": ""
+          },
+          {
+            "day": "WED",
+            "start": "17:10",
+            "end": "18:50",
+            "course_code": "CS323",
+            "section": "F8",
+            "room": "204SCL002",
+            "instructor": ""
+          },
+          {
+            "day": "MON",
+            "start": "13:00",
+            "end": "14:40",
+            "course_code": "CS424",
+            "section": "F13",
+            "room": "204SSL008",
+            "instructor": ""
+          },
+          {
+            "day": "SUN",
+            "start": "09:55",
+            "end": "11:10",
+            "course_code": "CS424",
+            "section": "F13",
+            "room": "239GC008",
+            "instructor": ""
+          },
+          {
+            "day": "THU",
+            "start": "09:55",
+            "end": "11:10",
+            "course_code": "CS424",
+            "section": "F13",
+            "room": "239FC004",
+            "instructor": ""
+          },
+          {
+            "day": "MON",
+            "start": "17:20",
+            "end": "18:35",
+            "course_code": "CS492",
+            "section": "F48",
+            "room": "1",
+            "instructor": ""
+          },
+          {
+            "day": "THU",
+            "start": "17:20",
+            "end": "18:35",
+            "course_code": "CS492",
+            "section": "F48",
+            "room": "1",
+            "instructor": ""
+          },
+          {
+            "day": "THU",
+            "start": "13:00",
+            "end": "14:15",
+            "course_code": "MATH320",
+            "section": "F27",
+            "room": "239FC008",
+            "instructor": ""
+          },
+          {
+            "day": "TUE",
+            "start": "13:00",
+            "end": "14:15",
+            "course_code": "MATH320",
+            "section": "F27",
+            "room": "239FC004",
+            "instructor": ""
+          }
+        ],
+        "registrations": [
+          {
+            "course_code": "CS323",
+            "section": "F8",
+            "credits": 4,
+            "meeting_count": 3,
+            "scheduled": true
+          },
+          {
+            "course_code": "CS424",
+            "section": "F13",
+            "credits": 4,
+            "meeting_count": 3,
+            "scheduled": true
+          },
+          {
+            "course_code": "CS492",
+            "section": "F48",
+            "credits": 3,
+            "meeting_count": 2,
+            "scheduled": true
+          },
+          {
+            "course_code": "MATH320",
+            "section": "F27",
+            "credits": 3,
+            "meeting_count": 2,
+            "scheduled": true
+          }
+        ],
+        "registered_course_count": 4,
+        "registered_credit_hours": 14,
+        "courses_without_a_time": [],
+        "ok": true
+      },
+      "my_clash_free_sections": {
+        "ok": true,
+        "student_id": 3456782,
+        "compared_against_term": "1448/1",
+        "courses": [
+          {
+            "course_code": "CS323",
+            "sections_on_file": 1,
+            "clash_free": [
+              {
+                "section": "F8",
+                "meetings": [
+                  "MON 15:50-17:05",
+                  "WED 15:50-17:05",
+                  "WED 17:10-18:50"
+                ]
+              }
+            ],
+            "clashing": [],
+            "status": "OK"
+          },
+          {
+            "course_code": "CS424",
+            "sections_on_file": 9,
+            "clash_free": [
+              {
+                "section": "F10",
+                "meetings": [
+                  "MON 09:55-11:10",
+                  "SUN 08:30-10:10",
+                  "WED 09:55-11:10"
+                ]
+              },
+              {
+                "section": "F11",
+                "meetings": [
+                  "SUN 13:00-14:40",
+                  "THU 11:20-12:35",
+                  "WED 11:20-12:35"
+                ]
+              },
+              {
+                "section": "F12",
+                "meetings": [
+                  "MON 08:30-10:10",
+                  "THU 08:30-09:45",
+                  "WED 09:55-11:10"
+                ]
+              },
+              {
+                "section": "F13",
+                "meetings": [
+                  "MON 13:00-14:40",
+                  "SUN 09:55-11:10",
+                  "THU 09:55-11:10"
+                ]
+              },
+              {
+                "section": "F24",
+                "meetings": [
+                  "MON 11:15-12:55",
+                  "SUN 08:30-09:45",
+                  "WED 08:30-09:45"
+                ]
+              },
+              {
+                "section": "F6",
+                "meetings": [
+                  "MON 13:00-14:15",
+                  "SUN 10:20-12:00",
+                  "TUE 09:55-11:10"
+                ]
+              },
+              {
+                "section": "F7",
+                "meetings": [
+                  "MON 09:55-11:10",
+                  "SUN 09:55-11:10",
+                  "WED 10:20-12:00"
+                ]
+              },
+              {
+                "section": "F8",
+                "meetings": [
+                  "MON 11:20-12:35",
+                  "SUN 11:20-12:35",
+                  "WED 13:00-14:40"
+                ]
+              },
+              {
+                "section": "F9",
+                "meetings": [
+                  "MON 08:30-09:45",
+                  "SUN 10:20-12:00",
+                  "WED 08:30-09:45"
+                ]
+              }
+            ],
+            "clashing": [],
+            "status": "OK"
+          },
+          {
+            "course_code": "CS492",
+            "sections_on_file": 48,
+            "clash_free": [
+              {
+                "section": "F104",
+                "meetings": [
+                  "MON 17:20-18:35",
+                  "TUE 17:20-18:35"
+                ]
+              },
+              {
+                "section": "F115",
+                "meetings": [
+                  "SUN 17:40-18:55",
+                  "THU 17:40-18:55"
+                ]
+              },
+              {
+                "section": "F116",
+                "meetings": [
+                  "SUN 16:15-17:30",
+                  "THU 16:15-17:30"
+                ]
+              },
+              {
+                "section": "F13",
+                "meetings": [
+                  "MON 17:20-18:35",
+                  "THU 16:15-17:30"
+                ]
+              },
+              {
+                "section": "F14",
+                "meetings": [
+                  "THU 17:40-18:55",
+                  "TUE 17:20-18:35"
+                ]
+              },
+              {
+                "section": "F15",
+                "meetings": [
+                  "MON 17:20-18:35",
+                  "THU 17:40-18:55"
+                ]
+              },
+              {
+                "section": "F16",
+                "meetings": [
+                  "MON 17:20-18:35",
+                  "THU 16:15-17:30"
+                ]
+              },
+              {
+                "section": "F17",
+                "meetings": [
+                  "THU 17:40-18:55",
+                  "TUE 17:20-18:35"
+                ]
+              },
+              {
+                "section": "F18",
+                "meetings": [
+                  "MON 17:20-18:35",
+                  "THU 16:15-17:30"
+                ]
+              },
+              {
+                "section": "F19",
+                "meetings": [
+                  "THU 17:40-18:55",
+                  "TUE 17:20-18:35"
+                ]
+              },
+              {
+                "section": "F22",
+                "meetings": [
+                  "THU 17:40-18:55",
+                  "TUE 17:20-18:35"
+                ]
+              },
+              {
+                "section": "F23",
+                "meetings": [
+                  "MON 17:20-18:35",
+                  "THU 16:15-17:30"
+                ]
+              },
+              {
+                "section": "F24",
+                "meetings": [
+                  "THU 17:40-18:55",
+                  "TUE 17:20-18:35"
+                ]
+              },
+              {
+                "section": "F25",
+                "meetings": [
+                  "MON 17:20-18:35",
+                  "THU 17:40-18:55"
+                ]
+              },
+              {
+                "section": "F26",
+                "meetings": [
+                  "MON 17:20-18:35",
+                  "THU 16:15-17:30"
+                ]
+              },
+              {
+                "section": "F27",
+                "meetings": [
+                  "THU 17:40-18:55",
+                  "TUE 17:20-18:35"
+                ]
+              },
+              {
+                "section": "F28",
+                "meetings": [
+                  "MON 17:20-18:35",
+                  "THU 16:15-17:30"
+                ]
+              },
+              {
+                "section": "F29",
+                "meetings": [
+                  "THU 17:40-18:55",
+                  "TUE 17:20-18:35"
+                ]
+              },
+              {
+                "section": "F30",
+                "meetings": [
+                  "MON 17:20-18:35",
+                  "THU 19:00-20:00"
+                ]
+              },
+              {
+                "section": "F31",
+                "meetings": [
+                  "THU 17:40-18:55",
+                  "TUE 17:20-18:35"
+                ]
+              }
+            ],
+            "clashing": [],
+            "status": "OK"
+          },
+          {
+            "course_code": "MATH320",
+            "sections_on_file": 3,
+            "clash_free": [
+              {
+                "section": "F19",
+                "meetings": [
+                  "SUN 08:30-09:45",
+                  "TUE 08:30-09:45"
+                ]
+              },
+              {
+                "section": "F27",
+                "meetings": [
+                  "THU 13:00-14:15",
+                  "TUE 13:00-14:15"
+                ]
+              },
+              {
+                "section": "F28",
+                "meetings": [
+                  "SUN 08:30-09:45",
+                  "TUE 08:30-09:45"
+                ]
+              }
+            ],
+            "clashing": [],
+            "status": "OK"
+          }
+        ]
+      }
+    },
+    "citations_available": [],
+    "citations_emitted": [],
+    "citation_validation": "PASS",
+    "deterministic_checks": [],
+    "judge_triggered": true,
+    "judge_trigger_reason": [
+      "grounding=not_consulted"
+    ],
+    "judge_dimensions": {
+      "citation_integrity": "N/A",
+      "student_fact_accuracy": "PASS",
+      "policy_relevance": "N/A",
+      "decision_authorisation": "PASS"
+    },
+    "initial_disposition": "ANSWERED",
+    "retry_performed": false,
+    "retry_feedback": null,
+    "final_disposition": "PASS",
+    "failure_category": null,
+    "unsupported_inference": "",
+    "failed_dimensions": [],
+    "judged_by": "semantic",
+    "seconds": 119.0,
+    "answer": "أهلاً بك! من جدولك الحالي أرى أنك مسجل في 4 مواد:\n\n| المادة | القسم | المواعيد الحالية |\n|--------|-------|-------------------|\n| **CS323** | F8 | الاثنين 15:50-17:05، الأربعاء 15:50-17:05 و 17:10-18:50 |\n| **CS424** | F13 | الأحد 09:55-11:10، الاثنين 13:00-14:40، الخميس 09:55-11:10 |\n| **CS492** | F48 | الاثنين 17:20-18:35، الخميس 17:20-18:35 |\n| **MATH320** | F27 | الثلاثاء 13:00-14:15، الخميس 13:00-14:15 |\n\nلكي أساعدك بدقة، أحتاج أن تحدد لي:\n\n1. **أي مادة تريد تغيير قسمها؟** (CS424 أو CS492 أو MATH320)\n   - ملاحظة: **CS323** ليس لديه سوى قسم واحد مسجل على الملف (F8)، فلا توجد أقسام أخرى متاحة لتغييره.\n\n2. **ما السبب في التغيير؟** (مثلاً: تعارض مع مادة أخرى، تفضيل وقت معين، إلخ)\n\nبمجرد أن تحدد المادة، سأعرض لك الأقسام المتاحة لها التي لا تتعارض مع جدولك الحالي."
+  },
+  {
+    "question_id": 94,
+    "stratum": "must_abstain",
+    "question": "عندي مادة واحدة متبقية، هل فيه حل عشان أتخرج؟",
+    "answer_mode": "PARTIAL",
+    "must_abstain": true,
+    "grounding_state": "not_consulted",
+    "retrieved_policy_ids": [],
+    "retrieved_decision_use": [],
+    "student_facts": {
+      "mode": "general",
+      "get_student_context": {
+        "ok": true,
+        "student_context": {
+          "mode": "student",
+          "student": {
+            "student_id": 3456782,
+            "name": "ABER RBEA  KLEYE  ALHRBE",
+            "status": "GRADUATION EXPECTED",
+            "program": "CS",
+            "section": "F",
+            "gpa": 2.76,
+            "total_registered_credits": 303,
+            "total_earned_credits": 211,
+            "current_registered_credits": 14,
+            "advisor_id": "69"
+          },
+          "term_context": {
+            "academic_year": 1448,
+            "term": 1,
+            "role": "planning_term_for_recommendations"
+          },
+          "course_evidence": {
+            "passed": [
+              "BIOL101",
+              "CHEM101",
+              "COE211",
+              "COE224",
+              "COE332",
+              "CS1",
+              "CS103",
+              "CS111",
+              "CS112",
+              "CS2",
+              "CS211",
+              "CS281",
+              "CS284",
+              "CS3",
+              "CS301",
+              "CS362",
+              "CS372",
+              "CS433",
+              "CS451",
+              "CS491",
+              "CS492",
+              "ENG101",
+              "ENG102",
+              "ENGL103",
+              "ENGL104",
+              "ENGL214",
+              "FE1",
+              "FE2",
+              "GS101",
+              "GS102",
+              "GS103",
+              "GS104",
+              "GS111",
+              "GS112",
+              "GS151",
+              "GS152",
+              "GSE1",
+              "GSE2",
+              "IS482",
+              "MATH101",
+              "MATH203",
+              "MATH204",
+              "MATH243",
+              "PHYS101",
+              "PHYS103",
+              "PHYS104",
+              "SCI100",
+              "STAT301"
+            ],
+            "studying": [
+              "CS323",
+              "CS424",
+              "MATH320"
+            ],
+            "current_term_registrations": {
+              "academic_year": "1447",
+              "term": "2",
+              "source": "timetable_sections",
+              "registered_course_count": 4,
+              "registered_credit_hours": 14,
+              "registrations": [
+                {
+                  "course_code": "CS323",
+                  "course_name": "نظم التشغيل",
+                  "section": "F8",
+                  "credit_hours": 4,
+                  "retake": false
+                },
+                {
+                  "course_code": "CS424",
+                  "course_name": "مقدمة في الحوسبة المتوازية",
+                  "section": "F13",
+                  "credit_hours": 4,
+                  "retake": false
+                },
+                {
+                  "course_code": "CS492",
+                  "course_name": "مشروع التخرج(2)",
+                  "section": "F48",
+                  "credit_hours": 3,
+                  "retake": true
+                },
+                {
+                  "course_code": "MATH320",
+                  "course_name": "معادلات تفاضلية (1)",
+                  "section": "F27",
+                  "credit_hours": 3,
+                  "retake": false
+                }
+              ]
+            },
+            "remaining_requirements": [],
+            "remaining_requirement_count": 0,
+            "programme_totals": {
+              "total_plan_credit_hours": 148,
+              "remaining_credit_hours": 0,
+              "remaining_course_count": 0
+            }
+          },
+          "recommendations": [],
+          "recommendation_policy": {
+            "max_recommended_credit_hours": 18,
+            "recommended_credit_hours": 0,
+            "credit_hours_unknown_for": [],
+            "phrasing_ar": {
+              "recommended": "سقف التوصية (الحد الذي يتوقف عنده الاقتراح الآلي)",
+              "regulatory": "الحد الأعلى المسموح بتسجيله",
+              "never_call_the_cap": "لا تسمِّ سقف التوصية «الحد الأعلى» ولا «الحد الأقصى»"
+            },
+            "regulatory_min_credit_hours": 12,
+            "regulatory_max_credit_hours": 19,
+            "regulatory_basis": {
+              "document": "الدليل الإرشادي للطالب والطالبة، الإصدار الثالث 1447هـ",
+              "page": 23,
+              "policy_id": "TU.LOAD.SEMESTER_RANGE",
+              "authority": "owner decision 2026-08-01",
+              "verification_status": "OWNER_APPROVED_NOT_REGISTRAR_VERIFIED",
+              "applies_to": "الفصل الرئيس في نظام الفصلين الدراسيين",
+              "hedge": "State the range as what the guide records, and tell the student to confirm with the registrar before relying on the nineteenth unit."
+            },
+            "qualification": {
+              "applies_to": "GRADUATION EXPECTED",
+              "unresolved": true,
+              "detail_ar": "الدليل يذكر للطالب المتوقع تخرجه حداً منفصلاً قدره 16 ساعة بطلب، وهو أقل من الحد العام؛ والنص غير واضح في العلاقة بين الرقمين.",
+              "instruction": "This student is an expected graduate. The source records a SEPARATE 16-hour ceiling by request for that category, and the relationship between 16 and the ordinary range is genuinely unresolved in the source. Do not assert the ordinary maximum applies to them — present both figures and tell them to confirm with their college."
+            },
+            "note": "Two different limits. max_recommended_credit_hours is where THIS SYSTEM stops suggesting courses (18); regulatory_max_credit_hours, when present, is what the university permits the student to register and is HIGHER. A student may register up to the regulatory maximum even though the suggestion list stops earlier. Never present the recommendation cap as the registration limit. If regulatory_max_credit_hours is absent, no registration limit is known for this term — say so rather than substituting the recommendation cap. The current term's registered credits do not reduce the planning term's allowance."
+          },
+          "limits": {
+            "passed_courses_truncated": false,
+            "studying_courses_truncated": false,
+            "remaining_requirements_truncated": false
+          }
+        }
+      },
+      "graduation_progress": {
+        "student_id": 3456782,
+        "program": "CS",
+        "plan_courses_passed": 46,
+        "plan_courses_total": 49,
+        "percent_complete": 94,
+        "courses_remaining": 3,
+        "credits_remaining_in_plan": 11,
+        "credits_earned_registrar": 211,
+        "gpa": 2.76,
+        "minimum_terms_by_prerequisites": 1,
+        "terms_at_assumed_pace": 1,
+        "courses_per_term_assumed": 5,
+        "terms_estimate": 1,
+        "credit_hour_gates": [],
+        "final_term_possible": true,
+        "passed_credits_in_plan": 137,
+        "registered_credits_now": 14,
+        "courses_in_progress": [
+          {
+            "code": "CS323",
+            "name": "OPERATING SYSTEMS",
+            "credits": 4,
+            "term": 7,
+            "type": "Mandatory"
+          },
+          {
+            "code": "MATH320",
+            "name": "DIFFERENTIAL EQUATIONS I",
+            "credits": 3,
+            "term": 7,
+            "type": "Mandatory"
+          },
+          {
+            "code": "CS424",
+            "name": "INTRODUCTION TO PARALLEL COMPUTING",
+            "credits": 4,
+            "term": 10,
+            "type": "Mandatory"
+          }
+        ],
+        "ok": true
+      }
+    },
+    "citations_available": [],
+    "citations_emitted": [],
+    "citation_validation": "PASS",
+    "deterministic_checks": [],
+    "judge_triggered": true,
+    "judge_trigger_reason": [
+      "grounding=not_consulted"
+    ],
+    "judge_dimensions": {
+      "citation_integrity": "N/A",
+      "student_fact_accuracy": "PASS",
+      "policy_relevance": "N/A",
+      "decision_authorisation": "FAIL"
+    },
+    "initial_disposition": "ANSWERED",
+    "retry_performed": false,
+    "retry_feedback": null,
+    "final_disposition": "RETRY_WITH_FEEDBACK",
+    "failure_category": "unauthorised_adjudication",
+    "unsupported_inference": "The answer states that the student's case is 'expected to graduate' (حالتك متوقع التخرج) and implies they are on track to complete their requirements, which constitutes an adjudication of the student's status.",
+    "failed_dimensions": [
+      "decision_authorisation"
+    ],
+    "judged_by": "semantic",
+    "seconds": 127.9,
+    "answer": "بناءً على بياناتك الحالية، إليك الوضع:\n\n1. **عدد المواد المتبقية:** النظام يسجل حالياً **3 مواد** متبقية في الخطة (وليس مادة واحدة)، وهي:\n   - CS323 (نظم التشغيل)\n   - MATH320 (معادلات تفاضلية 1)\n   - CS424 (مقدمة في الحوسبة المتوازية)\n\n2. **الحل للتخرج:**\n   - بما أنك مسجل لهذه المواد في الفصل الحالي، فإن إتمامها بنجاح سيجعلك مكتملاً لمتطلبات الخطة الدراسية.\n   - ومع ذلك، حالة \"المتوقع تخرجه\" (GRADUATION EXPECTED) تعني أن الجامعة تمنحك هذه الصفة استناداً إلى التقدم الأكاديمي، لكن **التخرج الفعلي قرار من مجلس الجامعة** ولا يتم تلقائياً بمجرد إتمام المواد.\n\n3. **ملاحظة هامة حول الساعات:**\n   - لديك حدان للساعات في فصلك القادم:\n     - **سقف التوصية**: 18 ساعة (وهو الحد الذي يقترح عليه النظام).\n     - **الحد الأعلى المسموح بتسجيله**: 19 ساعة (وهو الحد التنظيمي الجامعي).\n   - نظراً لأنك من فئة \"المتوقع تخرجه\"، يوجد في الدليل إشارة إلى حد منفصل قدره 16 ساعة بطلب، ولكن العلاقة بين هذا الرقم والحد العام غير واضحة في المصدر. لذا يُنصح بالرجاع إلى عمادة القبول والتسجيل أو مستشارك الأكاديمي لتأكيد الحد المسموح لك به بدقة قبل التسجيل النهائي.\n\n**الخطوة التالية:**\nتأكد من إتمام المواد الثلاث المتبقية بنجاح، ثم راجع قسم الشؤون الأكاديمية أو عمادة القبول والتسجيل لاستكمال إجراءات التخرج الرسمية وموافقة مجلس الجامعة."
+  },
+  {
+    "question_id": 165,
+    "stratum": "must_abstain",
+    "question": "كم مرة مسموح أعيد نفس المادة؟",
+    "answer_mode": "UNSUPPORTED",
+    "must_abstain": true,
+    "grounding_state": "retrieved",
+    "retrieved_policy_ids": [
+      "TU.GPA.FORMULA",
+      "TU.REENROLMENT.CONDITIONS",
+      "TU.TRANSFER.INTERNAL_COLLEGE",
+      "TU.CONDUCT.CHEATING",
+      "TU.DEF.CALENDAR_UNITS",
+      "TU.LOAD.INCOMPLETE_GRADE",
+      "TU.REG.ADVISER_CAN_REGISTER_DIRECTLY",
+      "TU.DISMISSAL.DURATION_EXCEEDED",
+      "TU.WITHDRAWAL.PROCEDURE",
+      "TU.WITHDRAWAL.MAXIMUM",
+      "TU.WITHDRAWAL.MINIMUM_LOAD_BAR",
+      "TU.WITHDRAWAL.DEPRIVATION_BAR",
+      "TU.WITHDRAWAL.NEW_STUDENT_BAR"
+    ],
+    "retrieved_decision_use": [
+      "EXPLANATORY_ONLY",
+      "PARTIALLY_EVALUABLE",
+      "PERMITTED_WITH_USER_PROVIDED_INPUTS",
+      "PROHIBITED_FOR_DECISION"
+    ],
+    "student_facts": {
+      "mode": "general"
+    },
+    "citations_available": [
+      {
+        "policy_id": "TU.GPA.FORMULA",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 30,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.REENROLMENT.CONDITIONS",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 32,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.TRANSFER.INTERNAL_COLLEGE",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 26,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.CONDUCT.CHEATING",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 38,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.DEF.CALENDAR_UNITS",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 7,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.LOAD.INCOMPLETE_GRADE",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 23,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.REG.ADVISER_CAN_REGISTER_DIRECTLY",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 20,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.DISMISSAL.DURATION_EXCEEDED",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 25,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.WITHDRAWAL.PROCEDURE",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 24,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.WITHDRAWAL.MAXIMUM",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 24,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.WITHDRAWAL.MINIMUM_LOAD_BAR",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 24,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.WITHDRAWAL.DEPRIVATION_BAR",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 24,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.WITHDRAWAL.NEW_STUDENT_BAR",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 24,
+        "effective_from": null,
+        "effective_to": null
+      }
+    ],
+    "citations_emitted": [
+      {
+        "policy_id": "TU.DISMISSAL.DURATION_EXCEEDED",
+        "page": 25
+      },
+      {
+        "policy_id": "TU.WITHDRAWAL.MAXIMUM",
+        "page": 24
+      },
+      {
+        "policy_id": "TU.WITHDRAWAL.DEPRIVATION_BAR",
+        "page": 24
+      }
+    ],
+    "citation_validation": "PASS",
+    "deterministic_checks": [],
+    "judge_triggered": true,
+    "judge_trigger_reason": [
+      "decision_use=PARTIALLY_EVALUABLE:TU.WITHDRAWAL.PROCEDURE",
+      "decision_use=PROHIBITED_FOR_DECISION:TU.DISMISSAL.DURATION_EXCEEDED",
+      "decision_use=PROHIBITED_FOR_DECISION:TU.REENROLMENT.CONDITIONS",
+      "decision_use=PROHIBITED_FOR_DECISION:TU.TRANSFER.INTERNAL_COLLEGE",
+      "decision_use=PROHIBITED_FOR_DECISION:TU.WITHDRAWAL.DEPRIVATION_BAR",
+      "decision_use=PROHIBITED_FOR_DECISION:TU.WITHDRAWAL.MAXIMUM",
+      "decision_use=PROHIBITED_FOR_DECISION:TU.WITHDRAWAL.NEW_STUDENT_BAR",
+      "high_stakes_topic=academic_dismissal",
+      "high_stakes_topic=internal_transfer",
+      "high_stakes_topic=reenrolment",
+      "high_stakes_topic=student_conduct"
+    ],
+    "judge_dimensions": {
+      "citation_integrity": "FAIL",
+      "student_fact_accuracy": "N/A",
+      "policy_relevance": "FAIL",
+      "decision_authorisation": "PASS"
+    },
+    "initial_disposition": "ANSWERED",
+    "retry_performed": false,
+    "retry_feedback": null,
+    "final_disposition": "RETRY_WITH_FEEDBACK",
+    "failure_category": "policy_misapplied",
+    "unsupported_inference": "The answer claims that the policy TU.DISMISSAL.DURATION_EXCEEDED specifies a '10% repetition limit' and relates to credit load, whereas the policy actually defines the maximum duration for graduation.",
+    "failed_dimensions": [
+      "citation_integrity",
+      "policy_relevance"
+    ],
+    "judged_by": "semantic",
+    "seconds": 107.0,
+    "answer": "بناءً على الدليل الإرشادي للطالب والطالبة الصادر عن عمادة القبول والتسجيل، فإن النظام المتبع في الجامعة فيما يتعلق بإعادة المواد أو تكرارها هو كالتالي:\n\n1. **نسبة التكرار المسموحة:** يحق للطالب إعادة دراسة ما لا يزيد عن **١٠٪** من إجمالي الساعات المعتمدة لخطة دراسته (برنامج التخرج) [الدليل الإرشادي للطالب والطالبة، ص 25-26 [TU.DISMISSAL.DURATION_EXCEEDED]] *(ملاحظة: تم التحقق من أن هذا الرقم مرتبط بمدة التخرج والفصل، ولكن النسبة الدقيقة للتكرار عادة ما تكون محددة في لوائح أخرى أو ضمن بند \"إعادة القيد\" أو \"الحرمان\").*\n\n   *تصحيح بناءً على البحث الدقيق:* لا يوجد في السياسات المسترجعة رقم صريح يحدد \"عدد المرات\" (مثل مرتين أو ثلاثاً) لإعادة **نفس المادة تحديداً**، بل هناك ضوابط عامة:\n    - **نسبة الساعات:** يُسمح للطالب بدراسة ما لا يزيد عن نسبة محددة من إجمالي الخطة. إذا تجاوز الطالب هذه النسبة في مواد رسب فيها، قد يتعرض للفصل الأكاديمي أو الحرمان من التسجيل حتى يسترد الرصيد المسموح به [الدليل الإرشادي للطالب والطالبة، ص 25 [TU.DISMISSAL.DURATION_EXCEEDED]].\n    - **الانسحاب (بدلاً من الانتظار):** يسمح للطالب بطلب الانسحاب من المقرر خلال المواعيد المحددة في التقويم الدراسي. الحد الأقصى المسموح به هو **خمسة انسحابات** طوال فترة التحاقه بالجامعة [الدليل الإرشادي للطالب والطالبة، ص 24 [TU.WITHDRAWAL.MAXIMUM]].\n\n2. **تكرار المادة نفسها:** \n   - لا يوجد في الدليل الإرشادي الحالي نص صريح يحدد \"عدد المرات المحدد\" (مثل: مرتين فقط) لتكرار *نفس* المادة تحديداً، ولكن يُمنع الطالب من التسجيل إذا كانت نتيجة سابقة له \"حرمان\" (غش أو غياب) في نفس المقرر [الدليل الإرشادي للطالب والطالبة، ص 24 [TU.WITHDRAWAL.DEPRIVATION_BAR]].\n   - بشكل عام، يجب على الطالب مراجعة **عمادة القبول والتسجيل** أو الاستفسار من مرشده الأكاديمي حول النسبة الدقيقة للساعات المسموح بإعادة دراستها (التي غالباً ما تكون 10% أو 20% حسب نوع البرنامج)، لأن النظام يربط ذلك بـ \"مدة التخرج\" و\"الفصل الأكاديمي\".\n\n**الخلاصة:** \n- **عدد مرات الانسحاب من مادة:** 5 مرات كحد أقصى طوال فترة دراستك.\n- **إعادة المادة (رسوب):** مسموح ضمن نسبة الساعات المعتمدة للخطة (يجب التحقق من النسبة الدقيقة لبرامجك). إذا تجاوزت الحد المسموح، قد يُمنع من التسجيل حتى يسترد الرصيد.\n- **نفس المادة تحديداً:** لا يوجد حظر صريح على عدد مرات تكرار *نفس* المادة في اللوائح الظاهرة حالياً، طالما لم يكن لديك \"حرمان\" مسجل فيها.\n\nللاستفسار الدقيق عن حالتك الخاصة (كم عدد الساعات التي يمكنك إعادة دراستها)، يُرجى مراجعة **مرشدك الأكاديمي** أو **عمادة القبول والتسجيل**."
+  },
+  {
+    "question_id": 66,
+    "stratum": "must_abstain",
+    "question": "وش يصير لو انقطعت عن الدراسة بدون طلب؟",
+    "answer_mode": "EXPLAIN_ONLY",
+    "must_abstain": true,
+    "grounding_state": "retrieved",
+    "retrieved_policy_ids": [
+      "TU.DEREGISTRATION.TRIGGER",
+      "TU.DEREGISTRATION.VISITING_EXEMPTION",
+      "TU.DEF.PROGRAMME_AND_COURSES",
+      "TU.DEF.ASSESSMENT_AND_RECORD",
+      "TU.DEFERRAL.PROCEDURE",
+      "TU.VISITING.DEFINITION",
+      "TU.ADVISING.NEW_STUDENT_PROGRAMME",
+      "TU.ADVISING.STUDENT_DUTIES",
+      "TU.ADVISING.TOOLS",
+      "TU.ATTENDANCE.AUTO_REGISTRATION_TRAP",
+      "TU.DEREGISTRATION.TRIGGER",
+      "TU.ATTENDANCE.AUTO_REGISTRATION_TRAP",
+      "TU.DEREGISTRATION.VISITING_EXEMPTION",
+      "TU.ATTENDANCE.DEPRIVATION_THRESHOLD",
+      "TU.DEF.PROGRAMME_AND_COURSES",
+      "TU.DEF.ASSESSMENT_AND_RECORD",
+      "TU.MEDICAL_EXCUSE.EFFECT_ON_ASSESSMENTS",
+      "TU.GRADE.SPECIAL_SYMBOLS",
+      "TU.VISITING.DEFINITION",
+      "TU.ADVISING.NEW_STUDENT_PROGRAMME"
+    ],
+    "retrieved_decision_use": [
+      "EXPLANATORY_ONLY",
+      "PARTIALLY_EVALUABLE",
+      "PROHIBITED_FOR_DECISION"
+    ],
+    "student_facts": {
+      "mode": "general"
+    },
+    "citations_available": [
+      {
+        "policy_id": "TU.DEREGISTRATION.TRIGGER",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 32,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.DEREGISTRATION.VISITING_EXEMPTION",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 32,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.DEF.PROGRAMME_AND_COURSES",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 9,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.DEF.ASSESSMENT_AND_RECORD",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 8,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.DEFERRAL.PROCEDURE",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 24,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.VISITING.DEFINITION",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 31,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.ADVISING.NEW_STUDENT_PROGRAMME",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 16,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.ADVISING.STUDENT_DUTIES",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 19,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.ADVISING.TOOLS",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 14,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.ATTENDANCE.AUTO_REGISTRATION_TRAP",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 37,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.ATTENDANCE.DEPRIVATION_THRESHOLD",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 37,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.MEDICAL_EXCUSE.EFFECT_ON_ASSESSMENTS",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 33,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.GRADE.SPECIAL_SYMBOLS",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 29,
+        "effective_from": null,
+        "effective_to": null
+      }
+    ],
+    "citations_emitted": [
+      {
+        "policy_id": "TU.DEREGISTRATION.TRIGGER",
+        "page": 32
+      }
+    ],
+    "citation_validation": "PASS",
+    "deterministic_checks": [],
+    "judge_triggered": true,
+    "judge_trigger_reason": [
+      "decision_use=PARTIALLY_EVALUABLE:TU.DEFERRAL.PROCEDURE",
+      "decision_use=PROHIBITED_FOR_DECISION:TU.ATTENDANCE.DEPRIVATION_THRESHOLD",
+      "high_stakes_topic=deregistration",
+      "high_stakes_topic=visiting_student"
+    ],
+    "judge_dimensions": {
+      "citation_integrity": "PASS",
+      "student_fact_accuracy": "N/A",
+      "policy_relevance": "PASS",
+      "decision_authorisation": "PASS"
+    },
+    "initial_disposition": "ANSWERED",
+    "retry_performed": false,
+    "retry_feedback": null,
+    "final_disposition": "PASS",
+    "failure_category": null,
+    "unsupported_inference": "",
+    "failed_dimensions": [],
+    "judged_by": "semantic",
+    "seconds": 152.1,
+    "answer": "بناءً على الدليل الإرشادي للطالب والطالبة، فإن الانقطاع عن الدراسة دون تقديم طلب تأجيل أو اعتذار يؤدي إلى **طي قيد الطالب** من الجامعة (إيقاف علاقته بالجامعة)، وذلك بعد انقضاء مدة يحددها مجلس الجامعة.\n\nكما يُعرف مصطلح \"الانقطاع\" بأنه الحالة التي تسجل على النظام عند عدم تسجيل الطالب لأي مقرر في فصل دراسي أو سنة دراسية دون الحصول على إذن بتأجيل الدراسة أو الاعتذار، ولا تحسب فترة الانقطاع ضمن مدة الدراسة للتخرج في حال أعيد قيده بعذر تقبله اللجنة المختصة.\n\n**ملاحظة هامة:**\nالدليل الإرشادي للطالب والطالبة، ص 32 [TU.DEREGISTRATION.TRIGGER] يشير إلى أن \"المدة\" التي يؤدي فيها هذا الإجراء يحددها مجلس الجامعة، لكن المصدر المكتوب لا يوضح هذه المدة بدقة (أي كم فصل أو سنة). لذلك، يُنصح بالرجاع إلى **عمادة القبول والتسجيل** للتأكد من المدة الزمنية المحددة لطي القيد في حالتك."
+  },
+  {
+    "question_id": 180,
+    "stratum": "explain_only",
+    "question": "هل ممكن أفصل أكاديمياً بسبب الرسوب؟",
+    "answer_mode": "EXPLAIN_ONLY",
+    "must_abstain": true,
+    "grounding_state": "retrieved",
+    "retrieved_policy_ids": [
+      "TU.REENROLMENT.CONDITIONS",
+      "TU.EXCUSE.COUNTS_TOWARD_DURATION",
+      "TU.REG.ADVISER_CAN_REGISTER_DIRECTLY",
+      "TU.DISMISSAL.THREE_WARNINGS",
+      "TU.DISMISSAL.DURATION_EXCEEDED"
+    ],
+    "retrieved_decision_use": [
+      "EXPLANATORY_ONLY",
+      "PROHIBITED_FOR_DECISION"
+    ],
+    "student_facts": {
+      "mode": "general"
+    },
+    "citations_available": [
+      {
+        "policy_id": "TU.REENROLMENT.CONDITIONS",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 32,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.EXCUSE.COUNTS_TOWARD_DURATION",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 24,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.REG.ADVISER_CAN_REGISTER_DIRECTLY",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 20,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.DISMISSAL.THREE_WARNINGS",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 25,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.DISMISSAL.DURATION_EXCEEDED",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 25,
+        "effective_from": null,
+        "effective_to": null
+      }
+    ],
+    "citations_emitted": [
+      {
+        "policy_id": "TU.DISMISSAL.THREE_WARNINGS",
+        "page": 25
+      },
+      {
+        "policy_id": "TU.DISMISSAL.DURATION_EXCEEDED",
+        "page": 25
+      }
+    ],
+    "citation_validation": "PASS",
+    "deterministic_checks": [],
+    "judge_triggered": true,
+    "judge_trigger_reason": [
+      "decision_use=PROHIBITED_FOR_DECISION:TU.DISMISSAL.DURATION_EXCEEDED",
+      "decision_use=PROHIBITED_FOR_DECISION:TU.DISMISSAL.THREE_WARNINGS",
+      "decision_use=PROHIBITED_FOR_DECISION:TU.REENROLMENT.CONDITIONS",
+      "high_stakes_topic=academic_dismissal",
+      "high_stakes_topic=reenrolment"
+    ],
+    "judge_dimensions": {
+      "citation_integrity": "PASS",
+      "student_fact_accuracy": "PASS",
+      "policy_relevance": "PASS",
+      "decision_authorisation": "PASS"
+    },
+    "initial_disposition": "ANSWERED",
+    "retry_performed": false,
+    "retry_feedback": null,
+    "final_disposition": "PASS",
+    "failure_category": null,
+    "unsupported_inference": "",
+    "failed_dimensions": [],
+    "judged_by": "semantic",
+    "seconds": 56.5,
+    "answer": "نعم، من الممكن أن يتعرض الطالب للفصل الأكاديمي في حال استمرار الرسوب وانخفاض المعدل التراكمي دون تحسن. وفقاً للدليل الإرشادي للطالب والطالبة الصادر عن عمادة القبول والتسجيل (جامعة طيبة)، هناك حالتان رئيسيتان للفصل الأكاديمي:\n\n1. **الفصل بعد ثلاثة إنذارات متتالية**: إذا حصل الطالب على ثلاث إنذارات متتالية بسبب انخفاض معدله التراكمي المحدد للتخرج، فإنه يُفصل من الجامعة، إلا في حال منح مجلس الجامعة للطالب فرصة إضافية لرفع معدله التراكمي (الدليل الإرشادي للطالب والطالبة، ص 25 [TU.DISMISSAL.THREE_WARNINGS]).\n\n2. **الفشل في إنهاء متطلبات التخرج خلال المدة المحددة**: إذا لم ينهِ الطالب متطلبات التخرج خلال مدة أقصاها نصف المدة المقررة لتخرجه علاوة على مدة البرنامج، فإنه يُفصل، مع إمكانية منح مجلس الجامعة فرصة استثنائية لا تتجاوز عاماً دراسياً في الحالات الاستثنائية (الدليل الإرشادي للطالب والطالبة، ص 25 [TU.DISMISSAL.DURATION_EXCEEDED]).\n\n**ملاحظة هامة**: النظام الحالي لا يمكنه التحقق من وضعك الشخصي فيما يتعلق بهذه الشروط، لذا يُنصح بمراجعة مرشدك الأكاديمي أو عمادة القبول والتسجيل لمعرفة حالتك بدقة واتخاذ الإجراءات اللازمة لتجنب الفصل."
+  },
+  {
+    "question_id": 41,
+    "stratum": "explain_only",
+    "question": "كيف أحسب معدلي الفصلي؟",
+    "answer_mode": "EXPLAIN_ONLY",
+    "must_abstain": true,
+    "grounding_state": "retrieved",
+    "retrieved_policy_ids": [
+      "TU.GPA.FORMULA",
+      "TU.GPA.GENERAL_ESTIMATE_BANDS",
+      "TU.DEF.ASSESSMENT_AND_RECORD",
+      "TU.LOAD.INCOMPLETE_GRADE",
+      "TU.DISMISSAL.THREE_WARNINGS",
+      "TU.GRADE.SPECIAL_SYMBOLS",
+      "TU.GRADUATION.GPA_RESCUE_RETAKE",
+      "TU.GRADUATION.MINIMUM_GPA",
+      "TU.HONOURS.THRESHOLDS",
+      "TU.VISITING.GPA_INCLUSION"
+    ],
+    "retrieved_decision_use": [
+      "EXPLANATORY_ONLY",
+      "PERMITTED_WITH_USER_PROVIDED_INPUTS",
+      "PROHIBITED_FOR_DECISION"
+    ],
+    "student_facts": {
+      "mode": "general"
+    },
+    "citations_available": [
+      {
+        "policy_id": "TU.GPA.FORMULA",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 30,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.GPA.GENERAL_ESTIMATE_BANDS",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 28,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.DEF.ASSESSMENT_AND_RECORD",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 8,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.LOAD.INCOMPLETE_GRADE",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 23,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.DISMISSAL.THREE_WARNINGS",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 25,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.GRADE.SPECIAL_SYMBOLS",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 29,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.GRADUATION.GPA_RESCUE_RETAKE",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 35,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.GRADUATION.MINIMUM_GPA",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 35,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.HONOURS.THRESHOLDS",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 36,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.VISITING.GPA_INCLUSION",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 31,
+        "effective_from": null,
+        "effective_to": null
+      }
+    ],
+    "citations_emitted": [
+      {
+        "policy_id": "TU.GPA.FORMULA",
+        "page": 30
+      }
+    ],
+    "citation_validation": "PASS",
+    "deterministic_checks": [],
+    "judge_triggered": true,
+    "judge_trigger_reason": [
+      "decision_use=PROHIBITED_FOR_DECISION:TU.DISMISSAL.THREE_WARNINGS",
+      "high_stakes_topic=academic_dismissal",
+      "high_stakes_topic=graduation",
+      "high_stakes_topic=honours",
+      "high_stakes_topic=visiting_student"
+    ],
+    "judge_dimensions": {
+      "citation_integrity": "PASS",
+      "student_fact_accuracy": "N/A",
+      "policy_relevance": "PASS",
+      "decision_authorisation": "PASS"
+    },
+    "initial_disposition": "ANSWERED",
+    "retry_performed": false,
+    "retry_feedback": null,
+    "final_disposition": "PASS",
+    "failure_category": null,
+    "unsupported_inference": "",
+    "failed_dimensions": [],
+    "judged_by": "semantic",
+    "seconds": 91.0,
+    "answer": "لحساب معدلك الفصلي، تتبع الخطوات المعتمدة رسمياً:\n\n1. **تحويل الدرجات:** حوّل الدرجة المئوية لكل مقرر إلى وزنه التقديري (مثلاً: 93% = 4.75) وفقاً لجدول التقديرات في الدليل.\n2. **حساب نقاط المادة:** اضرب عدد الساعات الدراسية للمادة × الوزن التقديري الذي حصلت عليه (مثال: 3 ساعات × 4.75 = 14.25 نقطة).\n3. **تكرار العملية:** كرر الخطوتين السابقتين مع جميع المقررات التي درستَها في ذلك الفصل.\n4. **الجمع والقسمة:** اجمع إجمالي النقاط التي حصلت عليها، ثم اقسم هذا المجموع على إجمالي عدد الساعات الدراسية للفصل. الناتج هو معدلك الفصلي.\n\n«الدليل الإرشادي للطالب، ص 30 [TU.GPA.FORMULA]»\n\nإذا رغبت في أن أحسبه لك بدقة الآن، زوّدني بقائمة درجاتك المئوية وعدد ساعات كل مقرر درسته هذا الفصل، وسأقوم بإجراء الحساب خطوة بخطوة."
+  },
+  {
+    "question_id": 63,
+    "stratum": "explain_only",
+    "question": "هل الاعتذار عن الترم يأثر على المعدل؟",
+    "answer_mode": "EXPLAIN_ONLY",
+    "must_abstain": true,
+    "grounding_state": "retrieved",
+    "retrieved_policy_ids": [
+      "TU.EXCUSE.COUNTS_TOWARD_DURATION",
+      "TU.EXCUSE.PROCEDURE",
+      "TU.EXCUSE.TRANSCRIPT_MARK",
+      "TU.EXCUSE.STIPEND_SUSPENDED",
+      "TU.GRADE.SPECIAL_SYMBOLS",
+      "TU.ATTENDANCE.AUTO_REGISTRATION_TRAP",
+      "TU.DEF.PROGRAMME_AND_COURSES",
+      "TU.DEREGISTRATION.TRIGGER",
+      "TU.GPA.FORMULA",
+      "TU.GPA.GENERAL_ESTIMATE_BANDS"
+    ],
+    "retrieved_decision_use": [
+      "EXPLANATORY_ONLY",
+      "PARTIALLY_EVALUABLE",
+      "PERMITTED_WITH_USER_PROVIDED_INPUTS"
+    ],
+    "student_facts": {
+      "mode": "general"
+    },
+    "citations_available": [
+      {
+        "policy_id": "TU.EXCUSE.COUNTS_TOWARD_DURATION",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 24,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.EXCUSE.PROCEDURE",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 24,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.EXCUSE.TRANSCRIPT_MARK",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 24,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.EXCUSE.STIPEND_SUSPENDED",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 24,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.GRADE.SPECIAL_SYMBOLS",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 29,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.ATTENDANCE.AUTO_REGISTRATION_TRAP",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 37,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.DEF.PROGRAMME_AND_COURSES",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 9,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.DEREGISTRATION.TRIGGER",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 32,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.GPA.FORMULA",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 30,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.GPA.GENERAL_ESTIMATE_BANDS",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 28,
+        "effective_from": null,
+        "effective_to": null
+      }
+    ],
+    "citations_emitted": [
+      {
+        "policy_id": "TU.EXCUSE.TRANSCRIPT_MARK",
+        "page": 24
+      },
+      {
+        "policy_id": "TU.EXCUSE.TRANSCRIPT_MARK",
+        "page": 24
+      },
+      {
+        "policy_id": "TU.EXCUSE.COUNTS_TOWARD_DURATION",
+        "page": 24
+      },
+      {
+        "policy_id": "TU.EXCUSE.STIPEND_SUSPENDED",
+        "page": 24
+      }
+    ],
+    "citation_validation": "PASS",
+    "deterministic_checks": [],
+    "judge_triggered": true,
+    "judge_trigger_reason": [
+      "decision_use=PARTIALLY_EVALUABLE:TU.EXCUSE.PROCEDURE",
+      "high_stakes_topic=deregistration"
+    ],
+    "judge_dimensions": {
+      "citation_integrity": "FAIL",
+      "student_fact_accuracy": "PASS",
+      "policy_relevance": "PASS",
+      "decision_authorisation": "PASS"
+    },
+    "initial_disposition": "ANSWERED",
+    "retry_performed": false,
+    "retry_feedback": null,
+    "final_disposition": "RETRY_WITH_FEEDBACK",
+    "failure_category": "misattributed_citation",
+    "unsupported_inference": "The answer claims that the source indicates a need to confirm with the Admissions and Registration Office regarding whether the (ع) grade is included in GPA calculation, which is not stated in TU.EXCUSE.TRANSCRIPT_MARK.",
+    "failed_dimensions": [
+      "citation_integrity"
+    ],
+    "judged_by": "semantic",
+    "seconds": 92.6,
+    "answer": "بناءً على الدليل الإرشادي للطالب والطالبة، عند تقديم طلب اعتذار عن فصل دراسي يتم رصد تقدير **(ع)** في السجل الأكاديمي للطالب المعتذر [الدليل الإرشادي للطالب والطالبة، ص 24 [TU.EXCUSE.TRANSCRIPT_MARK]].\n\nومع ذلك، **لا يحدد الدليل المكتوب بشكل صريح** ما إذا كان هذا التقدير (ع) يُحتسب في حساب المعدل التراكمي أم لا. يشير المصدر إلى ضرورة التأكيد حول هذه النقطة مع عمادة القبول والتسجيل قبل الاعتماد عليها [الدليل الإرشادي للطالب والطالبة، ص 24 [TU.EXCUSE.TRANSCRIPT_MARK]].\n\nما هو مؤكد من اللوائح المكتوبة فيما يتعلق بالاعتذار:\n*   **مدة الدراسة:** تحتسب مدة الاعتذار ضمن المدة اللازمة لإنهاء متطلبات التخرج [الدليل الإرشادي للطالب والطالبة، ص 24 [TU.EXCUSE.COUNTS_TOWARD_DURATION]].\n*   **المكافأة:** تنقطع المكافأة عن الطالب المعتذر خلال فترة الاعتذار [الدليل الإرشادي للطالب والطالبة، ص 24 [TU.EXCUSE.STIPEND_SUSPENDED]].\n\nبما أن الدليل لا يوضح حكم التقدير (ع) في حساب المعدل بشكل قاطع، يُرجى التواصل مع **عمادة القبول والتسجيل** للاستفسار عن تأثير تقدير الاعتذار على معدلك التراكمي بدقة."
+  },
+  {
+    "question_id": 252,
+    "stratum": "explain_only",
+    "question": "تنويمي في المستشفى وقع على أسبوع الفاينل نفسه مو على النصفي. يعطوني اختبار بديل زي ما يسوون في الدوري ولا كيف الوضع؟",
+    "answer_mode": "EXPLAIN_ONLY",
+    "must_abstain": false,
+    "grounding_state": "retrieved",
+    "retrieved_policy_ids": [
+      "TU.MEDICAL_EXCUSE.ACCEPTED_ISSUERS",
+      "TU.MEDICAL_EXCUSE.FOREIGN_REPORTS",
+      "TU.MEDICAL_EXCUSE.SUBMISSION_WINDOW",
+      "TU.MEDICAL_EXCUSE.EFFECT_ON_ASSESSMENTS"
+    ],
+    "retrieved_decision_use": [
+      "EXPLANATORY_ONLY"
+    ],
+    "student_facts": {
+      "mode": "general"
+    },
+    "citations_available": [
+      {
+        "policy_id": "TU.MEDICAL_EXCUSE.ACCEPTED_ISSUERS",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 33,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.MEDICAL_EXCUSE.FOREIGN_REPORTS",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 33,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.MEDICAL_EXCUSE.SUBMISSION_WINDOW",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 33,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.MEDICAL_EXCUSE.EFFECT_ON_ASSESSMENTS",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 33,
+        "effective_from": null,
+        "effective_to": null
+      }
+    ],
+    "citations_emitted": [
+      {
+        "policy_id": "TU.MEDICAL_EXCUSE.EFFECT_ON_ASSESSMENTS",
+        "page": 33
+      },
+      {
+        "policy_id": "TU.MEDICAL_EXCUSE.ACCEPTED_ISSUERS",
+        "page": 33
+      },
+      {
+        "policy_id": "TU.MEDICAL_EXCUSE.SUBMISSION_WINDOW",
+        "page": 33
+      }
+    ],
+    "citation_validation": "PASS",
+    "deterministic_checks": [],
+    "judge_triggered": false,
+    "judge_trigger_reason": [],
+    "judge_dimensions": {
+      "citation_integrity": "N/A",
+      "student_fact_accuracy": "N/A",
+      "policy_relevance": "N/A",
+      "decision_authorisation": "N/A"
+    },
+    "initial_disposition": "ANSWERED",
+    "retry_performed": false,
+    "retry_feedback": null,
+    "final_disposition": "PASS",
+    "failure_category": null,
+    "unsupported_inference": "",
+    "failed_dimensions": [],
+    "judged_by": "deterministic",
+    "seconds": 74.8,
+    "answer": "بناءً على ما ورد في الدليل الإرشادي للطالب والطالبة، الوضع يختلف حسب توقيت التقرير الطبي:\n\n**إذا كان التقرير يشمل اختباراً دورياً أو أعمالاً فصلية:**\nيتم التنسيق مع رئيس القسم وأستاذ المقرر لإعطاء **اختبار بديل** أو استكمال الأعمال الفصلية، وذلك في مدة لا تتجاوز بدء الاختبارات النهائية.\n\n**أما إذا كان التقرير يشمل اختباراً نهائياً (أسبوع الفاينل):**\nفإن النظام ينص على أن **يتم إعادة الاختبار النهائي للطالب وفق الضوابط المحددة**، وليس إعطاؤه اختباراً بديلاً خلال نفس الفصل.\n\n⚠️ **ملاحظة مهمة:** الدليل الإرشادي للطالب والطالبة، ص 33 [TU.MEDICAL_EXCUSE.EFFECT_ON_ASSESSMENTS] يشير إلى أن المصدر المكتوب لا يوضح هذا النقطة بشكل قاطع، ولذلك يُنصح بالرجوع إلى **عمادة القبول والتسجيل** للتأكد من الإجراءات الدقيقة في حالتك.\n\n**ما يجب عليك فعله الآن:**\n1. تأكد من أن التقرير الطبي صادر من المنصة الرسمية (منصة صحة) أو الإدارة الطبية بالجامعة أو المستشفى الجامعي - فالدليل يشترط ذلك لقبول العذر المرضي، الدليل الإرشادي للطالب والطالبة، ص 33 [TU.MEDICAL_EXCUSE.ACCEPTED_ISSUERS].\n2. قدّم التقرير لوكيل الكلية المختص خلال **أسبوعين فقط** من تاريخ إصداره، الدليل الإرشادي للطالب والطالبة، ص 33 [TU.MEDICAL_EXCUSE.SUBMISSION_WINDOW].\n3. تواصل مع عمادة القبول والتسجيل للاستفسار عن تفاصيل \"إعادة الاختبار النهائي\" وضوابطها في حالتك."
+  },
+  {
+    "question_id": 28,
+    "stratum": "partial",
+    "question": "وش أفضل شعبة تناسب جدولي؟",
+    "answer_mode": "PARTIAL",
+    "must_abstain": true,
+    "grounding_state": "not_consulted",
+    "retrieved_policy_ids": [],
+    "retrieved_decision_use": [],
+    "student_facts": {
+      "mode": "general",
+      "my_timetable": {
+        "student_id": 3456782,
+        "academic_year": "1447",
+        "term": "2",
+        "meetings": [
+          {
+            "day": "MON",
+            "start": "15:50",
+            "end": "17:05",
+            "course_code": "CS323",
+            "section": "F8",
+            "room": "239FC001",
+            "instructor": ""
+          },
+          {
+            "day": "WED",
+            "start": "15:50",
+            "end": "17:05",
+            "course_code": "CS323",
+            "section": "F8",
+            "room": "239FC001",
+            "instructor": ""
+          },
+          {
+            "day": "WED",
+            "start": "17:10",
+            "end": "18:50",
+            "course_code": "CS323",
+            "section": "F8",
+            "room": "204SCL002",
+            "instructor": ""
+          },
+          {
+            "day": "MON",
+            "start": "13:00",
+            "end": "14:40",
+            "course_code": "CS424",
+            "section": "F13",
+            "room": "204SSL008",
+            "instructor": ""
+          },
+          {
+            "day": "SUN",
+            "start": "09:55",
+            "end": "11:10",
+            "course_code": "CS424",
+            "section": "F13",
+            "room": "239GC008",
+            "instructor": ""
+          },
+          {
+            "day": "THU",
+            "start": "09:55",
+            "end": "11:10",
+            "course_code": "CS424",
+            "section": "F13",
+            "room": "239FC004",
+            "instructor": ""
+          },
+          {
+            "day": "MON",
+            "start": "17:20",
+            "end": "18:35",
+            "course_code": "CS492",
+            "section": "F48",
+            "room": "1",
+            "instructor": ""
+          },
+          {
+            "day": "THU",
+            "start": "17:20",
+            "end": "18:35",
+            "course_code": "CS492",
+            "section": "F48",
+            "room": "1",
+            "instructor": ""
+          },
+          {
+            "day": "THU",
+            "start": "13:00",
+            "end": "14:15",
+            "course_code": "MATH320",
+            "section": "F27",
+            "room": "239FC008",
+            "instructor": ""
+          },
+          {
+            "day": "TUE",
+            "start": "13:00",
+            "end": "14:15",
+            "course_code": "MATH320",
+            "section": "F27",
+            "room": "239FC004",
+            "instructor": ""
+          }
+        ],
+        "registrations": [
+          {
+            "course_code": "CS323",
+            "section": "F8",
+            "credits": 4,
+            "meeting_count": 3,
+            "scheduled": true
+          },
+          {
+            "course_code": "CS424",
+            "section": "F13",
+            "credits": 4,
+            "meeting_count": 3,
+            "scheduled": true
+          },
+          {
+            "course_code": "CS492",
+            "section": "F48",
+            "credits": 3,
+            "meeting_count": 2,
+            "scheduled": true
+          },
+          {
+            "course_code": "MATH320",
+            "section": "F27",
+            "credits": 3,
+            "meeting_count": 2,
+            "scheduled": true
+          }
+        ],
+        "registered_course_count": 4,
+        "registered_credit_hours": 14,
+        "courses_without_a_time": [],
+        "ok": true
+      }
+    },
+    "citations_available": [],
+    "citations_emitted": [],
+    "citation_validation": "PASS",
+    "deterministic_checks": [],
+    "judge_triggered": true,
+    "judge_trigger_reason": [
+      "grounding=not_consulted"
+    ],
+    "judge_dimensions": {
+      "citation_integrity": "N/A",
+      "student_fact_accuracy": "PASS",
+      "policy_relevance": "N/A",
+      "decision_authorisation": "PASS"
+    },
+    "initial_disposition": "ANSWERED",
+    "retry_performed": false,
+    "retry_feedback": null,
+    "final_disposition": "PASS",
+    "failure_category": null,
+    "unsupported_inference": "",
+    "failed_dimensions": [],
+    "judged_by": "semantic",
+    "seconds": 79.0,
+    "answer": "لضبط الجدول لك بدقة، أرجو تحديد **اسم المادة أو كود الشعبة** التي تبحث عن توقيتات مناسبة لها (مثلاً: CS323، أو مقرر البرمجة، إلخ). \n\nبما أن جدولك الحالي يحتوي على:\n- **CS323**: الاثنين والأربعاء 15:50–17:05، الأربعاء 17:10–18:50\n- **CS424**: الأحد 09:55–11:10، الاثنين 13:00–14:40، الخميس 09:55–11:10\n- **CS492**: الاثنين والخميس 17:20–18:35\n- **MATH320**: الخميس والثلاثاء 13:00–14:15\n\nأخبرني بأي مادة تريد أن أتحقق من شعبها المتاحة، وسأعرض لك التوقيتات التي لا تتعارض مع جدولك الحالي."
+  },
+  {
+    "question_id": 176,
+    "stratum": "partial",
+    "question": "كم ترم ممكن أتأخر عن المدة النظامية؟",
+    "answer_mode": "PARTIAL",
+    "must_abstain": true,
+    "grounding_state": "none_matched",
+    "retrieved_policy_ids": [],
+    "retrieved_decision_use": [],
+    "student_facts": {
+      "mode": "general"
+    },
+    "citations_available": [],
+    "citations_emitted": [],
+    "citation_validation": "PASS",
+    "deterministic_checks": [],
+    "judge_triggered": false,
+    "judge_trigger_reason": [],
+    "judge_dimensions": {
+      "citation_integrity": "N/A",
+      "student_fact_accuracy": "N/A",
+      "policy_relevance": "N/A",
+      "decision_authorisation": "N/A"
+    },
+    "initial_disposition": "ANSWERED",
+    "retry_performed": false,
+    "retry_feedback": null,
+    "final_disposition": "PASS",
+    "failure_category": null,
+    "unsupported_inference": "",
+    "failed_dimensions": [],
+    "judged_by": "deterministic",
+    "seconds": 35.4,
+    "answer": "لا يوجد في دليل الطالب الإلكتروني أي نص مكتوب يحدد عدد الأتربة المسموح بالتأخر بها عن المدة النظامية للدراسة. للإجابة الدقيقة على هذا السؤال، يُرجى مراجعة **عمادة القبول والتسجيل** أو الاستفسار من مستشارك الأكاديمي، حيث تختلف مدة الدراسة النظامية والحدود المسموحة لتمديدها حسب البرنامج الدراسي وخطة الدرجة الخاصة بك.\n\nإذا رغبت، يمكنني عرض خطة دراستك الحالية ومدة إتمامها المتوقعة بناءً على مسارك الدراسي، لمساعدتك في تقدير الوقت المتبقي لالتحاقك بالتخرج."
+  },
+  {
+    "question_id": 104,
+    "stratum": "partial",
+    "question": "تنصحني آخذ خمس مواد أو ست؟",
+    "answer_mode": "PARTIAL",
+    "must_abstain": false,
+    "grounding_state": "none_matched",
+    "retrieved_policy_ids": [],
+    "retrieved_decision_use": [],
+    "student_facts": {
+      "mode": "general",
+      "get_student_context": {
+        "ok": true,
+        "student_context": {
+          "mode": "student",
+          "student": {
+            "student_id": 3456782,
+            "name": "ABER RBEA  KLEYE  ALHRBE",
+            "status": "GRADUATION EXPECTED",
+            "program": "CS",
+            "section": "F",
+            "gpa": 2.76,
+            "total_registered_credits": 303,
+            "total_earned_credits": 211,
+            "current_registered_credits": 14,
+            "advisor_id": "69"
+          },
+          "term_context": {
+            "academic_year": 1448,
+            "term": 1,
+            "role": "planning_term_for_recommendations"
+          },
+          "course_evidence": {
+            "passed": [
+              "BIOL101",
+              "CHEM101",
+              "COE211",
+              "COE224",
+              "COE332",
+              "CS1",
+              "CS103",
+              "CS111",
+              "CS112",
+              "CS2",
+              "CS211",
+              "CS281",
+              "CS284",
+              "CS3",
+              "CS301",
+              "CS362",
+              "CS372",
+              "CS433",
+              "CS451",
+              "CS491",
+              "CS492",
+              "ENG101",
+              "ENG102",
+              "ENGL103",
+              "ENGL104",
+              "ENGL214",
+              "FE1",
+              "FE2",
+              "GS101",
+              "GS102",
+              "GS103",
+              "GS104",
+              "GS111",
+              "GS112",
+              "GS151",
+              "GS152",
+              "GSE1",
+              "GSE2",
+              "IS482",
+              "MATH101",
+              "MATH203",
+              "MATH204",
+              "MATH243",
+              "PHYS101",
+              "PHYS103",
+              "PHYS104",
+              "SCI100",
+              "STAT301"
+            ],
+            "studying": [
+              "CS323",
+              "CS424",
+              "MATH320"
+            ],
+            "current_term_registrations": {
+              "academic_year": "1447",
+              "term": "2",
+              "source": "timetable_sections",
+              "registered_course_count": 4,
+              "registered_credit_hours": 14,
+              "registrations": [
+                {
+                  "course_code": "CS323",
+                  "course_name": "نظم التشغيل",
+                  "section": "F8",
+                  "credit_hours": 4,
+                  "retake": false
+                },
+                {
+                  "course_code": "CS424",
+                  "course_name": "مقدمة في الحوسبة المتوازية",
+                  "section": "F13",
+                  "credit_hours": 4,
+                  "retake": false
+                },
+                {
+                  "course_code": "CS492",
+                  "course_name": "مشروع التخرج(2)",
+                  "section": "F48",
+                  "credit_hours": 3,
+                  "retake": true
+                },
+                {
+                  "course_code": "MATH320",
+                  "course_name": "معادلات تفاضلية (1)",
+                  "section": "F27",
+                  "credit_hours": 3,
+                  "retake": false
+                }
+              ]
+            },
+            "remaining_requirements": [],
+            "remaining_requirement_count": 0,
+            "programme_totals": {
+              "total_plan_credit_hours": 148,
+              "remaining_credit_hours": 0,
+              "remaining_course_count": 0
+            }
+          },
+          "recommendations": [],
+          "recommendation_policy": {
+            "max_recommended_credit_hours": 18,
+            "recommended_credit_hours": 0,
+            "credit_hours_unknown_for": [],
+            "phrasing_ar": {
+              "recommended": "سقف التوصية (الحد الذي يتوقف عنده الاقتراح الآلي)",
+              "regulatory": "الحد الأعلى المسموح بتسجيله",
+              "never_call_the_cap": "لا تسمِّ سقف التوصية «الحد الأعلى» ولا «الحد الأقصى»"
+            },
+            "regulatory_min_credit_hours": 12,
+            "regulatory_max_credit_hours": 19,
+            "regulatory_basis": {
+              "document": "الدليل الإرشادي للطالب والطالبة، الإصدار الثالث 1447هـ",
+              "page": 23,
+              "policy_id": "TU.LOAD.SEMESTER_RANGE",
+              "authority": "owner decision 2026-08-01",
+              "verification_status": "OWNER_APPROVED_NOT_REGISTRAR_VERIFIED",
+              "applies_to": "الفصل الرئيس في نظام الفصلين الدراسيين",
+              "hedge": "State the range as what the guide records, and tell the student to confirm with the registrar before relying on the nineteenth unit."
+            },
+            "qualification": {
+              "applies_to": "GRADUATION EXPECTED",
+              "unresolved": true,
+              "detail_ar": "الدليل يذكر للطالب المتوقع تخرجه حداً منفصلاً قدره 16 ساعة بطلب، وهو أقل من الحد العام؛ والنص غير واضح في العلاقة بين الرقمين.",
+              "instruction": "This student is an expected graduate. The source records a SEPARATE 16-hour ceiling by request for that category, and the relationship between 16 and the ordinary range is genuinely unresolved in the source. Do not assert the ordinary maximum applies to them — present both figures and tell them to confirm with their college."
+            },
+            "note": "Two different limits. max_recommended_credit_hours is where THIS SYSTEM stops suggesting courses (18); regulatory_max_credit_hours, when present, is what the university permits the student to register and is HIGHER. A student may register up to the regulatory maximum even though the suggestion list stops earlier. Never present the recommendation cap as the registration limit. If regulatory_max_credit_hours is absent, no registration limit is known for this term — say so rather than substituting the recommendation cap. The current term's registered credits do not reduce the planning term's allowance."
+          },
+          "limits": {
+            "passed_courses_truncated": false,
+            "studying_courses_truncated": false,
+            "remaining_requirements_truncated": false
+          }
+        }
+      },
+      "my_progress": {
+        "student_id": 3456782,
+        "program": "CS",
+        "academic_year": 1448,
+        "term": 1,
+        "counts": {
+          "open": 0,
+          "one_step": 0,
+          "locked": 0,
+          "passed": 46,
+          "studying": 3
+        },
+        "most_useful_course_to_pass": null,
+        "open_now": [],
+        "elective_slots": [],
+        "blocked": [],
+        "ok": true
+      },
+      "graduation_progress": {
+        "student_id": 3456782,
+        "program": "CS",
+        "plan_courses_passed": 46,
+        "plan_courses_total": 49,
+        "percent_complete": 94,
+        "courses_remaining": 3,
+        "credits_remaining_in_plan": 11,
+        "credits_earned_registrar": 211,
+        "gpa": 2.76,
+        "minimum_terms_by_prerequisites": 1,
+        "terms_at_assumed_pace": 1,
+        "courses_per_term_assumed": 5,
+        "terms_estimate": 1,
+        "credit_hour_gates": [],
+        "final_term_possible": true,
+        "passed_credits_in_plan": 137,
+        "registered_credits_now": 14,
+        "courses_in_progress": [
+          {
+            "code": "CS323",
+            "name": "OPERATING SYSTEMS",
+            "credits": 4,
+            "term": 7,
+            "type": "Mandatory"
+          },
+          {
+            "code": "MATH320",
+            "name": "DIFFERENTIAL EQUATIONS I",
+            "credits": 3,
+            "term": 7,
+            "type": "Mandatory"
+          },
+          {
+            "code": "CS424",
+            "name": "INTRODUCTION TO PARALLEL COMPUTING",
+            "credits": 4,
+            "term": 10,
+            "type": "Mandatory"
+          }
+        ],
+        "ok": true
+      },
+      "my_plan_by_term": {
+        "ok": true,
+        "student_id": 3456782,
+        "program": "CS",
+        "summary": {
+          "passed": 48,
+          "studying": 3,
+          "not_taken_can_register": 0,
+          "not_taken_locked": 0
+        },
+        "terms": [
+          {
+            "term": 1,
+            "courses": [
+              {
+                "course_code": "CHEM101",
+                "type": "Mandatory",
+                "programme_term": 1,
+                "credit_hours": 3,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [],
+                "missing_prereqs": [],
+                "importance_score": 0.0
+              },
+              {
+                "course_code": "ENG101",
+                "type": "Mandatory",
+                "programme_term": 1,
+                "credit_hours": 4,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [],
+                "missing_prereqs": [],
+                "importance_score": 2.083333
+              },
+              {
+                "course_code": "GS101",
+                "type": "Mandatory",
+                "programme_term": 1,
+                "credit_hours": 2,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [],
+                "missing_prereqs": [],
+                "importance_score": 0.0
+              },
+              {
+                "course_code": "GS111",
+                "type": "Mandatory",
+                "programme_term": 1,
+                "credit_hours": 2,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [],
+                "missing_prereqs": [],
+                "importance_score": 1.0
+              },
+              {
+                "course_code": "MATH101",
+                "type": "Mandatory",
+                "programme_term": 1,
+                "credit_hours": 3,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [],
+                "missing_prereqs": [],
+                "importance_score": 1.833333
+              }
+            ]
+          },
+          {
+            "term": 2,
+            "courses": [
+              {
+                "course_code": "BIOL101",
+                "type": "Mandatory",
+                "programme_term": 2,
+                "credit_hours": 3,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [],
+                "missing_prereqs": [],
+                "importance_score": 0.0
+              },
+              {
+                "course_code": "ENG102",
+                "type": "Mandatory",
+                "programme_term": 2,
+                "credit_hours": 4,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [
+                  "ENG101"
+                ],
+                "missing_prereqs": [],
+                "importance_score": 1.833333
+              },
+              {
+                "course_code": "GS151",
+                "type": "Mandatory",
+                "programme_term": 2,
+                "credit_hours": 2,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [],
+                "missing_prereqs": [],
+                "importance_score": 0.0
+              },
+              {
+                "course_code": "GS152",
+                "type": "Mandatory",
+                "programme_term": 2,
+                "credit_hours": 2,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [],
+                "missing_prereqs": [],
+                "importance_score": 0.0
+              },
+              {
+                "course_code": "PHYS101",
+                "type": "Mandatory",
+                "programme_term": 2,
+                "credit_hours": 3,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [],
+                "missing_prereqs": [],
+                "importance_score": 1.5
+              }
+            ]
+          },
+          {
+            "term": 3,
+            "courses": [
+              {
+                "course_code": "CS103",
+                "type": "Mandatory",
+                "programme_term": 3,
+                "credit_hours": 3,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [],
+                "missing_prereqs": [],
+                "importance_score": 3.9
+              },
+              {
+                "course_code": "CS111",
+                "type": "Mandatory",
+                "programme_term": 3,
+                "credit_hours": 4,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [],
+                "missing_prereqs": [],
+                "importance_score": 5.616667
+              },
+              {
+                "course_code": "ENGL103",
+                "type": "Mandatory",
+                "programme_term": 3,
+                "credit_hours": 3,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [
+                  "ENG102"
+                ],
+                "missing_prereqs": [],
+                "importance_score": 1.5
+              },
+              {
+                "course_code": "MATH203",
+                "type": "Mandatory",
+                "programme_term": 3,
+                "credit_hours": 3,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [
+                  "MATH101"
+                ],
+                "missing_prereqs": [],
+                "importance_score": 1.5
+              },
+              {
+                "course_code": "PHYS103",
+                "type": "Mandatory",
+                "programme_term": 3,
+                "credit_hours": 4,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [
+                  "PHYS101"
+                ],
+                "missing_prereqs": [],
+                "importance_score": 1.0
+              }
+            ]
+          },
+          {
+            "term": 4,
+            "courses": [
+              {
+                "course_code": "CS112",
+                "type": "Mandatory",
+                "programme_term": 4,
+                "credit_hours": 4,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [
+                  "CS111"
+                ],
+                "missing_prereqs": [],
+                "importance_score": 4.5
+              },
+              {
+                "course_code": "ENGL104",
+                "type": "Mandatory",
+                "programme_term": 4,
+                "credit_hours": 3,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [
+                  "ENGL103"
+                ],
+                "missing_prereqs": [],
+                "importance_score": 1.0
+              },
+              {
+                "course_code": "GS112",
+                "type": "Mandatory",
+                "programme_term": 4,
+                "credit_hours": 2,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [
+                  "GS111"
+                ],
+                "missing_prereqs": [],
+                "importance_score": 0.0
+              },
+              {
+                "course_code": "MATH204",
+                "type": "Mandatory",
+                "programme_term": 4,
+                "credit_hours": 3,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [
+                  "MATH203"
+                ],
+                "missing_prereqs": [],
+                "importance_score": 1.0
+              },
+              {
+                "course_code": "PHYS104",
+                "type": "Mandatory",
+                "programme_term": 4,
+                "credit_hours": 4,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [
+                  "PHYS103"
+                ],
+                "missing_prereqs": [],
+                "importance_score": 0.0
+              }
+            ]
+          },
+          {
+            "term": 5,
+            "courses": [
+              {
+                "course_code": "COE211",
+                "type": "Mandatory",
+                "programme_term": 5,
+                "credit_hours": 4,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [
+                  "CS103"
+                ],
+                "missing_prereqs": [],
+                "importance_score": 2.866667
+              },
+              {
+                "course_code": "CS211",
+                "type": "Mandatory",
+                "programme_term": 5,
+                "credit_hours": 4,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [
+                  "CS112"
+                ],
+                "missing_prereqs": [],
+                "importance_score": 6.166667
+              },
+              {
+                "course_code": "CS281",
+                "type": "Mandatory",
+                "programme_term": 5,
+                "credit_hours": 3,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [
+                  "CS111"
+                ],
+                "missing_prereqs": [],
+                "importance_score": 1.833333
+              },
+              {
+                "course_code": "MATH243",
+                "type": "Mandatory",
+                "programme_term": 5,
+                "credit_hours": 3,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [],
+                "missing_prereqs": [],
+                "importance_score": 0.0
+              }
+            ]
+          },
+          {
+            "term": 6,
+            "courses": [
+              {
+                "course_code": "COE224",
+                "type": "Mandatory",
+                "programme_term": 6,
+                "credit_hours": 4,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [
+                  "COE211"
+                ],
+                "missing_prereqs": [],
+                "importance_score": 2.916667
+              },
+              {
+                "course_code": "CS284",
+                "type": "Mandatory",
+                "programme_term": 6,
+                "credit_hours": 4,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [
+                  "CS281"
+                ],
+                "missing_prereqs": [],
+                "importance_score": 1.5
+              },
+              {
+                "course_code": "ENGL214",
+                "type": "Mandatory",
+                "programme_term": 6,
+                "credit_hours": 3,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [
+                  "ENGL104"
+                ],
+                "missing_prereqs": [],
+                "importance_score": 0.0
+              },
+              {
+                "course_code": "FE1",
+                "type": "Free Elective",
+                "programme_term": 6,
+                "credit_hours": 2,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [],
+                "missing_prereqs": [],
+                "importance_score": 0.0
+              }
+            ]
+          },
+          {
+            "term": 7,
+            "courses": [
+              {
+                "course_code": "CS301",
+                "type": "Mandatory",
+                "programme_term": 7,
+                "credit_hours": 3,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [
+                  "CS103"
+                ],
+                "missing_prereqs": [],
+                "importance_score": 0.0
+              },
+              {
+                "course_code": "CS323",
+                "type": "Mandatory",
+                "programme_term": 7,
+                "credit_hours": 4,
+                "status": "studying",
+                "can_register": false,
+                "prerequisites": [
+                  "COE224",
+                  "CS211"
+                ],
+                "missing_prereqs": [],
+                "importance_score": 3.333333
+              },
+              {
+                "course_code": "GSE1",
+                "type": "University Elective",
+                "programme_term": 7,
+                "credit_hours": 2,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [],
+                "missing_prereqs": [],
+                "importance_score": 0.0
+              },
+              {
+                "course_code": "MATH320",
+                "type": "Mandatory",
+                "programme_term": 7,
+                "credit_hours": 3,
+                "status": "studying",
+                "can_register": false,
+                "prerequisites": [
+                  "MATH204"
+                ],
+                "missing_prereqs": [],
+                "importance_score": 0.0
+              },
+              {
+                "course_code": "STAT301",
+                "type": "Mandatory",
+                "programme_term": 7,
+                "credit_hours": 3,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [],
+                "missing_prereqs": [],
+                "importance_score": 0.0
+              }
+            ]
+          },
+          {
+            "term": 8,
+            "courses": [
+              {
+                "course_code": "COE332",
+                "type": "Mandatory",
+                "programme_term": 8,
+                "credit_hours": 4,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [
+                  "CS323"
+                ],
+                "missing_prereqs": [],
+                "importance_score": 2.5
+              },
+              {
+                "course_code": "CS362",
+                "type": "Mandatory",
+                "programme_term": 8,
+                "credit_hours": 3,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [
+                  "CS211"
+                ],
+                "missing_prereqs": [],
+                "importance_score": 1.5
+              },
+              {
+                "course_code": "CS372",
+                "type": "Mandatory",
+                "programme_term": 8,
+                "credit_hours": 4,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [
+                  "CS211"
+                ],
+                "missing_prereqs": [],
+                "importance_score": 1.5
+              },
+              {
+                "course_code": "FE2",
+                "type": "Free Elective",
+                "programme_term": 8,
+                "credit_hours": 2,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [],
+                "missing_prereqs": [],
+                "importance_score": 0.0
+              },
+              {
+                "course_code": "GS103",
+                "type": "Mandatory",
+                "programme_term": 8,
+                "credit_hours": 2,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [],
+                "missing_prereqs": [],
+                "importance_score": 0.0
+              }
+            ]
+          },
+          {
+            "term": 9,
+            "courses": [
+              {
+                "course_code": "CS1",
+                "type": "Program Elective",
+                "programme_term": 9,
+                "credit_hours": 3,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [],
+                "missing_prereqs": [],
+                "importance_score": 0.0
+              },
+              {
+                "course_code": "CS433",
+                "type": "Mandatory",
+                "programme_term": 9,
+                "credit_hours": 4,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [
+                  "COE332"
+                ],
+                "missing_prereqs": [],
+                "importance_score": 0.0
+              },
+              {
+                "course_code": "CS451",
+                "type": "Mandatory",
+                "programme_term": 9,
+                "credit_hours": 4,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [
+                  "CS211"
+                ],
+                "missing_prereqs": [],
+                "importance_score": 0.0
+              },
+              {
+                "course_code": "CS491",
+                "type": "Mandatory",
+                "programme_term": 9,
+                "credit_hours": 1,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [
+                  "COE332",
+                  "CS284",
+                  "CS362",
+                  "CS372"
+                ],
+                "missing_prereqs": [],
+                "importance_score": 1.0
+              },
+              {
+                "course_code": "GS104",
+                "type": "Mandatory",
+                "programme_term": 9,
+                "credit_hours": 2,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [],
+                "missing_prereqs": [],
+                "importance_score": 0.0
+              },
+              {
+                "course_code": "IS482",
+                "type": "Mandatory",
+                "programme_term": 9,
+                "credit_hours": 1,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [],
+                "missing_prereqs": [],
+                "importance_score": 0.0
+              }
+            ]
+          },
+          {
+            "term": 10,
+            "courses": [
+              {
+                "course_code": "CS2",
+                "type": "Program Elective",
+                "programme_term": 10,
+                "credit_hours": 3,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [],
+                "missing_prereqs": [],
+                "importance_score": 0.0
+              },
+              {
+                "course_code": "CS3",
+                "type": "Program Elective",
+                "programme_term": 10,
+                "credit_hours": 3,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [],
+                "missing_prereqs": [],
+                "importance_score": 0.0
+              },
+              {
+                "course_code": "CS424",
+                "type": "Mandatory",
+                "programme_term": 10,
+                "credit_hours": 4,
+                "status": "studying",
+                "can_register": false,
+                "prerequisites": [
+                  "CS323"
+                ],
+                "missing_prereqs": [],
+                "importance_score": 0.0
+              },
+              {
+                "course_code": "CS492",
+                "type": "Mandatory",
+                "programme_term": 10,
+                "credit_hours": 3,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [
+                  "CS491"
+                ],
+                "missing_prereqs": [],
+                "importance_score": 0.0
+              },
+              {
+                "course_code": "GSE2",
+                "type": "University Elective",
+                "programme_term": 10,
+                "credit_hours": 2,
+                "status": "passed",
+                "can_register": false,
+                "prerequisites": [],
+                "missing_prereqs": [],
+                "importance_score": 0.0
+              }
+            ]
+          }
+        ],
+        "blocker_hints": []
+      }
+    },
+    "citations_available": [],
+    "citations_emitted": [],
+    "citation_validation": "PASS",
+    "deterministic_checks": [
+      {
+        "check": "policy_grounding",
+        "verdict": "FAIL",
+        "reason": "RULE_STATED_WITH_NO_POLICY_RETRIEVED"
+      }
+    ],
+    "judge_triggered": false,
+    "judge_trigger_reason": [],
+    "judge_dimensions": {
+      "citation_integrity": "FAIL",
+      "student_fact_accuracy": "N/A",
+      "policy_relevance": "N/A",
+      "decision_authorisation": "N/A"
+    },
+    "initial_disposition": "ANSWERED",
+    "retry_performed": false,
+    "retry_feedback": null,
+    "final_disposition": "RETRY_WITH_FEEDBACK",
+    "failure_category": "misattributed_citation",
+    "unsupported_inference": "",
+    "failed_dimensions": [
+      "citation_integrity"
+    ],
+    "judged_by": "deterministic",
+    "seconds": 162.8,
+    "answer": "بناءً على بياناتك الأكاديمية الحالية، **لا ينصح بأخذ 5 أو 6 مواد إضافية**، وذلك للأسباب التالية:\n\n### 📊 وضعك الحالي:\n- **المواد المكتملة**: 48 مادة من أصل 49 في خطة دراستك (94% مكتمل)\n- **المواد المتبقية**: 3 مواد فقط (حالة \"يتم دراستها حالياً\")\n- **الساعات المتبقية في الخطة**: 11 ساعة فقط\n\n### 🎯 التوصية:\nبما أنك من المتوقع تخرجك (**GRADUATION EXPECTED**)، فإن تركيزك يجب أن يكون على **إنهاء المواد الثلاث الحالية** (CS323 - نظم التشغيل، MATH320 - معادلات تفاضلية 1، CS424 - مقدمة في الحوسبة المتوازية) بنجاح، وليس إضافة مواد جديدة.\n\n### ⚠️ ملاحظة هامة حول الحد الأعلى للتسجيل:\nنظام التوصية يتوقف عند **سقف التوصية 18 ساعة** (وهو الحد الذي يتوقف عنده الاقتراح الآلي للمواد)، أما **الحد الأعلى المسموح بتسجيله** فهو **19 ساعة** حسب الدليل الإرشادي للطالب والطالبة، الإصدار الثالث 1447هـ.\n\nلكن بالنسبة لحالتك كطالب متوقع تخرجه، يذكر الدليل حداً منفصلاً قدره **16 ساعة بطلب**، والعلاقة بين هذا الرقم والحد العام (19 ساعة) غير واضحة في المصدر. لذلك يُنصح بالرجاع إلى عمادة القبول والتسجيل أو مستشارك الأكاديمي لتأكيد الحد الدقيق المسموح لك به.\n\n### ✅ الخلاصة:\n- لا توجد مواد إضافية مطلوبة في خطتك الدراسية\n- تركّز على إنهاء الـ 3 مواد المتبقية بنجاح\n- استشر مستشارك قبل تسجيل أي مواد اختيارية إضافية"
+  },
+  {
+    "question_id": 225,
+    "stratum": "full",
+    "question": "وش عندي بكرة الأحد؟",
+    "answer_mode": "FULL",
+    "must_abstain": false,
+    "grounding_state": "not_consulted",
+    "retrieved_policy_ids": [],
+    "retrieved_decision_use": [],
+    "student_facts": {
+      "mode": "general",
+      "my_timetable": {
+        "student_id": 3456782,
+        "academic_year": "1447",
+        "term": "2",
+        "meetings": [
+          {
+            "day": "MON",
+            "start": "15:50",
+            "end": "17:05",
+            "course_code": "CS323",
+            "section": "F8",
+            "room": "239FC001",
+            "instructor": ""
+          },
+          {
+            "day": "WED",
+            "start": "15:50",
+            "end": "17:05",
+            "course_code": "CS323",
+            "section": "F8",
+            "room": "239FC001",
+            "instructor": ""
+          },
+          {
+            "day": "WED",
+            "start": "17:10",
+            "end": "18:50",
+            "course_code": "CS323",
+            "section": "F8",
+            "room": "204SCL002",
+            "instructor": ""
+          },
+          {
+            "day": "MON",
+            "start": "13:00",
+            "end": "14:40",
+            "course_code": "CS424",
+            "section": "F13",
+            "room": "204SSL008",
+            "instructor": ""
+          },
+          {
+            "day": "SUN",
+            "start": "09:55",
+            "end": "11:10",
+            "course_code": "CS424",
+            "section": "F13",
+            "room": "239GC008",
+            "instructor": ""
+          },
+          {
+            "day": "THU",
+            "start": "09:55",
+            "end": "11:10",
+            "course_code": "CS424",
+            "section": "F13",
+            "room": "239FC004",
+            "instructor": ""
+          },
+          {
+            "day": "MON",
+            "start": "17:20",
+            "end": "18:35",
+            "course_code": "CS492",
+            "section": "F48",
+            "room": "1",
+            "instructor": ""
+          },
+          {
+            "day": "THU",
+            "start": "17:20",
+            "end": "18:35",
+            "course_code": "CS492",
+            "section": "F48",
+            "room": "1",
+            "instructor": ""
+          },
+          {
+            "day": "THU",
+            "start": "13:00",
+            "end": "14:15",
+            "course_code": "MATH320",
+            "section": "F27",
+            "room": "239FC008",
+            "instructor": ""
+          },
+          {
+            "day": "TUE",
+            "start": "13:00",
+            "end": "14:15",
+            "course_code": "MATH320",
+            "section": "F27",
+            "room": "239FC004",
+            "instructor": ""
+          }
+        ],
+        "registrations": [
+          {
+            "course_code": "CS323",
+            "section": "F8",
+            "credits": 4,
+            "meeting_count": 3,
+            "scheduled": true
+          },
+          {
+            "course_code": "CS424",
+            "section": "F13",
+            "credits": 4,
+            "meeting_count": 3,
+            "scheduled": true
+          },
+          {
+            "course_code": "CS492",
+            "section": "F48",
+            "credits": 3,
+            "meeting_count": 2,
+            "scheduled": true
+          },
+          {
+            "course_code": "MATH320",
+            "section": "F27",
+            "credits": 3,
+            "meeting_count": 2,
+            "scheduled": true
+          }
+        ],
+        "registered_course_count": 4,
+        "registered_credit_hours": 14,
+        "courses_without_a_time": [],
+        "ok": true
+      }
+    },
+    "citations_available": [],
+    "citations_emitted": [],
+    "citation_validation": "PASS",
+    "deterministic_checks": [],
+    "judge_triggered": true,
+    "judge_trigger_reason": [
+      "grounding=not_consulted"
+    ],
+    "judge_dimensions": {
+      "citation_integrity": "N/A",
+      "student_fact_accuracy": "PASS",
+      "policy_relevance": "N/A",
+      "decision_authorisation": "N/A"
+    },
+    "initial_disposition": "ANSWERED",
+    "retry_performed": false,
+    "retry_feedback": null,
+    "final_disposition": "PASS",
+    "failure_category": null,
+    "unsupported_inference": "",
+    "failed_dimensions": [],
+    "judged_by": "semantic",
+    "seconds": 31.1,
+    "answer": "بكرة الأحد عندك محاضرة واحدة:\n\n- **الوقت:** 09:55 – 11:10  \n- **المادة:** CS424 (القسم F13)  \n- **المكان:** 239GC008"
+  },
+  {
+    "question_id": 246,
+    "stratum": "full",
+    "question": "أنا مسجل هالترم كم ساعة؟ ولو انسحبت من مادة وحدة بينزل عبئي عن الحد الأدنى ولا لا؟",
+    "answer_mode": "FULL",
+    "must_abstain": false,
+    "grounding_state": "none_matched",
+    "retrieved_policy_ids": [],
+    "retrieved_decision_use": [],
+    "student_facts": {
+      "mode": "general",
+      "get_student_context": {
+        "ok": true,
+        "student_context": {
+          "mode": "student",
+          "student": {
+            "student_id": 3456782,
+            "name": "ABER RBEA  KLEYE  ALHRBE",
+            "status": "GRADUATION EXPECTED",
+            "program": "CS",
+            "section": "F",
+            "gpa": 2.76,
+            "total_registered_credits": 303,
+            "total_earned_credits": 211,
+            "current_registered_credits": 14,
+            "advisor_id": "69"
+          },
+          "term_context": {
+            "academic_year": 1448,
+            "term": 1,
+            "role": "planning_term_for_recommendations"
+          },
+          "course_evidence": {
+            "passed": [
+              "BIOL101",
+              "CHEM101",
+              "COE211",
+              "COE224",
+              "COE332",
+              "CS1",
+              "CS103",
+              "CS111",
+              "CS112",
+              "CS2",
+              "CS211",
+              "CS281",
+              "CS284",
+              "CS3",
+              "CS301",
+              "CS362",
+              "CS372",
+              "CS433",
+              "CS451",
+              "CS491",
+              "CS492",
+              "ENG101",
+              "ENG102",
+              "ENGL103",
+              "ENGL104",
+              "ENGL214",
+              "FE1",
+              "FE2",
+              "GS101",
+              "GS102",
+              "GS103",
+              "GS104",
+              "GS111",
+              "GS112",
+              "GS151",
+              "GS152",
+              "GSE1",
+              "GSE2",
+              "IS482",
+              "MATH101",
+              "MATH203",
+              "MATH204",
+              "MATH243",
+              "PHYS101",
+              "PHYS103",
+              "PHYS104",
+              "SCI100",
+              "STAT301"
+            ],
+            "studying": [
+              "CS323",
+              "CS424",
+              "MATH320"
+            ],
+            "current_term_registrations": {
+              "academic_year": "1447",
+              "term": "2",
+              "source": "timetable_sections",
+              "registered_course_count": 4,
+              "registered_credit_hours": 14,
+              "registrations": [
+                {
+                  "course_code": "CS323",
+                  "course_name": "نظم التشغيل",
+                  "section": "F8",
+                  "credit_hours": 4,
+                  "retake": false
+                },
+                {
+                  "course_code": "CS424",
+                  "course_name": "مقدمة في الحوسبة المتوازية",
+                  "section": "F13",
+                  "credit_hours": 4,
+                  "retake": false
+                },
+                {
+                  "course_code": "CS492",
+                  "course_name": "مشروع التخرج(2)",
+                  "section": "F48",
+                  "credit_hours": 3,
+                  "retake": true
+                },
+                {
+                  "course_code": "MATH320",
+                  "course_name": "معادلات تفاضلية (1)",
+                  "section": "F27",
+                  "credit_hours": 3,
+                  "retake": false
+                }
+              ]
+            },
+            "remaining_requirements": [],
+            "remaining_requirement_count": 0,
+            "programme_totals": {
+              "total_plan_credit_hours": 148,
+              "remaining_credit_hours": 0,
+              "remaining_course_count": 0
+            }
+          },
+          "recommendations": [],
+          "recommendation_policy": {
+            "max_recommended_credit_hours": 18,
+            "recommended_credit_hours": 0,
+            "credit_hours_unknown_for": [],
+            "phrasing_ar": {
+              "recommended": "سقف التوصية (الحد الذي يتوقف عنده الاقتراح الآلي)",
+              "regulatory": "الحد الأعلى المسموح بتسجيله",
+              "never_call_the_cap": "لا تسمِّ سقف التوصية «الحد الأعلى» ولا «الحد الأقصى»"
+            },
+            "regulatory_min_credit_hours": 12,
+            "regulatory_max_credit_hours": 19,
+            "regulatory_basis": {
+              "document": "الدليل الإرشادي للطالب والطالبة، الإصدار الثالث 1447هـ",
+              "page": 23,
+              "policy_id": "TU.LOAD.SEMESTER_RANGE",
+              "authority": "owner decision 2026-08-01",
+              "verification_status": "OWNER_APPROVED_NOT_REGISTRAR_VERIFIED",
+              "applies_to": "الفصل الرئيس في نظام الفصلين الدراسيين",
+              "hedge": "State the range as what the guide records, and tell the student to confirm with the registrar before relying on the nineteenth unit."
+            },
+            "qualification": {
+              "applies_to": "GRADUATION EXPECTED",
+              "unresolved": true,
+              "detail_ar": "الدليل يذكر للطالب المتوقع تخرجه حداً منفصلاً قدره 16 ساعة بطلب، وهو أقل من الحد العام؛ والنص غير واضح في العلاقة بين الرقمين.",
+              "instruction": "This student is an expected graduate. The source records a SEPARATE 16-hour ceiling by request for that category, and the relationship between 16 and the ordinary range is genuinely unresolved in the source. Do not assert the ordinary maximum applies to them — present both figures and tell them to confirm with their college."
+            },
+            "note": "Two different limits. max_recommended_credit_hours is where THIS SYSTEM stops suggesting courses (18); regulatory_max_credit_hours, when present, is what the university permits the student to register and is HIGHER. A student may register up to the regulatory maximum even though the suggestion list stops earlier. Never present the recommendation cap as the registration limit. If regulatory_max_credit_hours is absent, no registration limit is known for this term — say so rather than substituting the recommendation cap. The current term's registered credits do not reduce the planning term's allowance."
+          },
+          "limits": {
+            "passed_courses_truncated": false,
+            "studying_courses_truncated": false,
+            "remaining_requirements_truncated": false
+          }
+        }
+      }
+    },
+    "citations_available": [],
+    "citations_emitted": [],
+    "citation_validation": "PASS",
+    "deterministic_checks": [
+      {
+        "check": "policy_grounding",
+        "verdict": "FAIL",
+        "reason": "RULE_STATED_WITH_NO_POLICY_RETRIEVED"
+      }
+    ],
+    "judge_triggered": false,
+    "judge_trigger_reason": [],
+    "judge_dimensions": {
+      "citation_integrity": "FAIL",
+      "student_fact_accuracy": "N/A",
+      "policy_relevance": "N/A",
+      "decision_authorisation": "N/A"
+    },
+    "initial_disposition": "ANSWERED",
+    "retry_performed": false,
+    "retry_feedback": null,
+    "final_disposition": "RETRY_WITH_FEEDBACK",
+    "failure_category": "misattributed_citation",
+    "unsupported_inference": "",
+    "failed_dimensions": [
+      "citation_integrity"
+    ],
+    "judged_by": "deterministic",
+    "seconds": 96.9,
+    "answer": "بناءً على بياناتك الحالية:\n\n**1. كم ساعة أنت مسجل هالترم؟**\nأنت مسجل حالياً **14 ساعة** هذا الفصل، موزعة كالتالي:\n- `CS323` (نظم التشغيل) - 4 ساعات\n- `CS424` (مقدمة في الحوسبة المتوازية) - 4 ساعات\n- `CS492` (مشروع التخرج(2)) - 3 ساعات\n- `MATH320` (معادلات تفاضلية (1)) - 3 ساعات\n\n**2. إذا انسحبت من مادة، هل ينزل عبئي عن الحد الأدنى؟**\nنعم، رياضياً سينخفض عبؤك تحت الحد الأدنى العام:\n- الحد الأدنى المسموح به حسب الدليل الإرشادي هو **12 ساعة**.\n- بما أنك مسجل 14 ساعة، فإن الانسحاب من أي مادة (سواء كانت 3 أو 4 ساعات) سيجعل مجموعك **10 أو 11 ساعة**، وهو أقل من الـ 12 ساعة الدنيا.\n\n⚠️ **ملاحظة هامة بخصوص وضعك الأكاديمي:**\n- تصنيفك الحالي هو **«متوقع التخرج» (GRADUATION EXPECTED)**.\n- الدليل الإرشادي للطالب يذكر أن هناك حداً منفصلاً قدره **16 ساعة بطلب** مخصص لهذه الفئة، لكن النص غير واضح في كيفية تعامل هذا الرقم مع الحد العام المسموح به. \n- لذلك، لا يمكنني الجزم بالحد الفعلي المسموح لك به دون تأكيد رسمي من عمادة الكلية أو عمادة القبول والتسجيل.\n\n📌 **بخصوص قاعدة الانسحاب وتأثيرها الرسمي:**\nلا يحتوي الدليل الإرشادي للطالب في نظامنا الحالي على نص صريح يوضح بالضبط ما إذا كان الانسحاب يُسقطك تحت الحد الأدنى، أو كيف تُحسب حالة «الانسحاب» رسمياً. للإجابة الدقيقة حول الإجراءات والنتائج الأكاديمية للانسحاب، يجب مراجعة **عمادة القبول والتسجيل** مباشرةً."
+  },
+  {
+    "question_id": 229,
+    "stratum": "full",
+    "question": "في CS323 شعبة F8 يوم الأربعاء عندي المحاضرة وبعدها العملي على طول، وين كل وحدة؟",
+    "answer_mode": "FULL",
+    "must_abstain": false,
+    "grounding_state": "not_consulted",
+    "retrieved_policy_ids": [],
+    "retrieved_decision_use": [],
+    "student_facts": {
+      "mode": "general",
+      "lookup_course": {
+        "ok": true,
+        "query": "CS323",
+        "match_count": 1,
+        "courses": [
+          {
+            "course_code": "CS323",
+            "course_name": "OPERATING SYSTEMS",
+            "credit_hours": 4,
+            "programs": [
+              "AI",
+              "CS",
+              "COE"
+            ]
+          }
+        ]
+      },
+      "my_timetable": {
+        "student_id": 3456782,
+        "academic_year": "1447",
+        "term": "2",
+        "meetings": [
+          {
+            "day": "MON",
+            "start": "15:50",
+            "end": "17:05",
+            "course_code": "CS323",
+            "section": "F8",
+            "room": "239FC001",
+            "instructor": ""
+          },
+          {
+            "day": "WED",
+            "start": "15:50",
+            "end": "17:05",
+            "course_code": "CS323",
+            "section": "F8",
+            "room": "239FC001",
+            "instructor": ""
+          },
+          {
+            "day": "WED",
+            "start": "17:10",
+            "end": "18:50",
+            "course_code": "CS323",
+            "section": "F8",
+            "room": "204SCL002",
+            "instructor": ""
+          },
+          {
+            "day": "MON",
+            "start": "13:00",
+            "end": "14:40",
+            "course_code": "CS424",
+            "section": "F13",
+            "room": "204SSL008",
+            "instructor": ""
+          },
+          {
+            "day": "SUN",
+            "start": "09:55",
+            "end": "11:10",
+            "course_code": "CS424",
+            "section": "F13",
+            "room": "239GC008",
+            "instructor": ""
+          },
+          {
+            "day": "THU",
+            "start": "09:55",
+            "end": "11:10",
+            "course_code": "CS424",
+            "section": "F13",
+            "room": "239FC004",
+            "instructor": ""
+          },
+          {
+            "day": "MON",
+            "start": "17:20",
+            "end": "18:35",
+            "course_code": "CS492",
+            "section": "F48",
+            "room": "1",
+            "instructor": ""
+          },
+          {
+            "day": "THU",
+            "start": "17:20",
+            "end": "18:35",
+            "course_code": "CS492",
+            "section": "F48",
+            "room": "1",
+            "instructor": ""
+          },
+          {
+            "day": "THU",
+            "start": "13:00",
+            "end": "14:15",
+            "course_code": "MATH320",
+            "section": "F27",
+            "room": "239FC008",
+            "instructor": ""
+          },
+          {
+            "day": "TUE",
+            "start": "13:00",
+            "end": "14:15",
+            "course_code": "MATH320",
+            "section": "F27",
+            "room": "239FC004",
+            "instructor": ""
+          }
+        ],
+        "registrations": [
+          {
+            "course_code": "CS323",
+            "section": "F8",
+            "credits": 4,
+            "meeting_count": 3,
+            "scheduled": true
+          },
+          {
+            "course_code": "CS424",
+            "section": "F13",
+            "credits": 4,
+            "meeting_count": 3,
+            "scheduled": true
+          },
+          {
+            "course_code": "CS492",
+            "section": "F48",
+            "credits": 3,
+            "meeting_count": 2,
+            "scheduled": true
+          },
+          {
+            "course_code": "MATH320",
+            "section": "F27",
+            "credits": 3,
+            "meeting_count": 2,
+            "scheduled": true
+          }
+        ],
+        "registered_course_count": 4,
+        "registered_credit_hours": 14,
+        "courses_without_a_time": [],
+        "ok": true
+      }
+    },
+    "citations_available": [],
+    "citations_emitted": [],
+    "citation_validation": "PASS",
+    "deterministic_checks": [],
+    "judge_triggered": true,
+    "judge_trigger_reason": [
+      "grounding=not_consulted"
+    ],
+    "judge_dimensions": {
+      "citation_integrity": "N/A",
+      "student_fact_accuracy": "PASS",
+      "policy_relevance": "N/A",
+      "decision_authorisation": "N/A"
+    },
+    "initial_disposition": "ANSWERED",
+    "retry_performed": false,
+    "retry_feedback": null,
+    "final_disposition": "PASS",
+    "failure_category": null,
+    "unsupported_inference": "",
+    "failed_dimensions": [],
+    "judged_by": "semantic",
+    "seconds": 65.5,
+    "answer": "في جدولك الحالي لشعبة **CS323 - F8** يوم الأربعاء:\n\n- **المحاضرة**: الساعة 15:50 – 17:05 في القاعة **239FC001**\n- **العملي (المعمل)**: الساعة 17:10 – 18:50 في القاعة **204SCL002**\n\nأي إنك تنتهي من المحاضرة مباشرة وتنتقل إلى عملي الفاصل الزمني بينهما 10 دقائق فقط."
+  },
+  {
+    "question_id": 269,
+    "stratum": "no_policy",
+    "question": "الدكتور يقول الدرجات بتنزل متأخرة — طيب آخر موعد لرصد الدرجات النهائية للفصل الأول 1448 متى؟",
+    "answer_mode": "EXPLAIN_ONLY",
+    "must_abstain": false,
+    "grounding_state": "none_matched",
+    "retrieved_policy_ids": [],
+    "retrieved_decision_use": [],
+    "student_facts": {
+      "mode": "general"
+    },
+    "citations_available": [],
+    "citations_emitted": [],
+    "citation_validation": "PASS",
+    "deterministic_checks": [],
+    "judge_triggered": false,
+    "judge_trigger_reason": [],
+    "judge_dimensions": {
+      "citation_integrity": "N/A",
+      "student_fact_accuracy": "N/A",
+      "policy_relevance": "N/A",
+      "decision_authorisation": "N/A"
+    },
+    "initial_disposition": "ANSWERED",
+    "retry_performed": false,
+    "retry_feedback": null,
+    "final_disposition": "PASS",
+    "failure_category": null,
+    "unsupported_inference": "",
+    "failed_dimensions": [],
+    "judged_by": "deterministic",
+    "seconds": 30.8,
+    "answer": "نظام الاستشارة الأكاديمية الحالي لا يحتوي على دليل مكتوب أو قاعدة بيانات رسمية تحدد آخر موعد لرصد الدرجات النهائية للفصل الأول من العام الهجري 1448. \n\nلضمان دقة المعلومة وتجنب أي تأخير في إجراءاتك، يُرجى التواصل مباشرة مع **عمادة القبول والتسجيل** للاطلاع على الجدول الزمني المعتمد لهذا الفصل وللتأكد من المواعيد الرسمية لرصد الدرجات."
+  },
+  {
+    "question_id": 84,
+    "stratum": "no_policy",
+    "question": "أقدر أتدرب في مدينة ثانية؟",
+    "answer_mode": "UNSUPPORTED",
+    "must_abstain": true,
+    "grounding_state": "retrieved",
+    "retrieved_policy_ids": [
+      "TU.HONOURS.THRESHOLDS",
+      "TU.TRANSFER.EXTERNAL",
+      "TU.TERM.STRUCTURE"
+    ],
+    "retrieved_decision_use": [
+      "EXPLANATORY_ONLY",
+      "PROHIBITED_FOR_DECISION"
+    ],
+    "student_facts": {
+      "mode": "general"
+    },
+    "citations_available": [
+      {
+        "policy_id": "TU.HONOURS.THRESHOLDS",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 36,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.TRANSFER.EXTERNAL",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 26,
+        "effective_from": null,
+        "effective_to": null
+      },
+      {
+        "policy_id": "TU.TERM.STRUCTURE",
+        "document_id": "TU_STUDENT_GUIDE_V3_1447",
+        "document_title": "الدليل الإرشادي للطالب والطالبة",
+        "edition": "1447",
+        "page": 23,
+        "effective_from": null,
+        "effective_to": null
+      }
+    ],
+    "citations_emitted": [],
+    "citation_validation": "PASS",
+    "deterministic_checks": [],
+    "judge_triggered": true,
+    "judge_trigger_reason": [
+      "decision_use=PROHIBITED_FOR_DECISION:TU.TRANSFER.EXTERNAL",
+      "high_stakes_topic=external_transfer",
+      "high_stakes_topic=honours"
+    ],
+    "judge_dimensions": {
+      "citation_integrity": "PASS",
+      "student_fact_accuracy": "N/A",
+      "policy_relevance": "PASS",
+      "decision_authorisation": "PASS"
+    },
+    "initial_disposition": "ANSWERED",
+    "retry_performed": false,
+    "retry_feedback": null,
+    "final_disposition": "PASS",
+    "failure_category": null,
+    "unsupported_inference": "",
+    "failed_dimensions": [],
+    "judged_by": "semantic",
+    "seconds": 64.6,
+    "answer": "بناءً على ما ورد في الدليل الإرشادي للطالب والطالبة، لا يوجد نص مكتوب يغطي بشكل صريح موضوع **التدريب في مدينة أخرى**. السياسات الموجودة تركز على التحويل الخارجي بين الجامعات وبنية العام الدراسي، ولا تتناول ضوابط التدريب العملي خارج المدينة.\n\nلذلك، يُرجى التواصل مع **عمادة القبول والتسجيل** للاستفسار عن:\n- إمكانية التسجيل أو التدريب في مدينة أخرى.\n- الإجراءات المطلوبة والموافقات اللازمة.\n- أي قيود أو شروط خاصة بالتدريب الخارجي."
+  }
+]

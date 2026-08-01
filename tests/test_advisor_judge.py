@@ -144,6 +144,28 @@ def test_high_stakes_topics_trigger_even_without_a_prohibited_flag():
     assert triggered
 
 
+def test_an_answer_produced_without_consulting_the_rules_is_looked_at():
+    """The batch found four answers no layer examined, one on a prohibited question.
+
+    With no policies retrieved the policy-keyed triggers have nothing to fire on, so
+    "the model never checked the rules" has to be a trigger in its own right.
+    """
+    triggered, reasons = needs_semantic_review("لديك 3 مواد متبقية.", [], "not_consulted")
+    assert triggered
+    assert any("grounding=not_consulted" in r for r in reasons)
+
+
+def test_a_policy_store_outage_is_looked_at():
+    triggered, reasons = needs_semantic_review("لديك 3 مواد متبقية.", [], "unavailable")
+    assert triggered
+    assert any("grounding=unavailable" in r for r in reasons)
+
+
+def test_a_normally_grounded_answer_is_not_triggered_by_grounding_alone():
+    triggered, _ = needs_semantic_review("التقدير العام وصف لمستوى التحصيل.", [], "retrieved")
+    assert not triggered
+
+
 def test_the_live_failure_would_have_been_looked_at():
     """The trigger must fire on the exact answer that motivated the judge."""
     fixture = BY_ID["DISMISSAL_ADJUDICATION"]
@@ -171,14 +193,38 @@ def test_ordinary_explanation_carries_no_adjudication_markers():
 # ── deterministic findings settle some answers alone ─────────────
 
 
-def test_a_rule_stated_with_nothing_retrieved_is_flagged_without_a_judge():
-    findings = deterministic_findings("يسمح لك بخمس مرات انسحاب.", [])
+def test_attributing_a_rule_to_the_guide_without_citing_it_is_flagged():
+    findings = deterministic_findings("وفقاً للدليل الإرشادي، يسمح لك بخمس مرات انسحاب.", [])
     assert any(f["reason"] == "RULE_STATED_WITH_NO_POLICY_RETRIEVED" for f in findings)
 
 
 def test_an_abstention_with_nothing_retrieved_is_not_flagged():
     findings = deterministic_findings("لا يوجد لدينا نظام مكتوب حول هذا.", [])
     assert findings == []
+
+
+# The four answers below are VERBATIM from the 24-case live batch. All four are
+# correct — pure student data, each explicitly abstaining on the policy part — and
+# all four were flagged by the first version of this check, which matched a number
+# next to a unit. Every student-data answer contains one. 4 false positives, 0 true
+# ones: in production, a pointless retry on any answer mentioning a credit hour.
+_REAL_STUDENT_DATA_ANSWERS = [
+    "بناءً على بياناتك الحالية: المعدل التراكمي 2.76، الساعات المكتسبة 211 ساعة، "
+    "ونسبة إكمال الخطة 94%. لديك 3 مواد متبقية. ملاحظة: لا يوجد دليل إرشادي متاح "
+    "في النظام يحدد هذه الحالة.",
+    "أنت مسجل حالياً في 14 ساعة معتمدة تغطي 4 مواد. سقف التوصية 18 ساعة. "
+    "لا توجد سياسة مكتوبة في دليل الطالب المتاح تحدد أثر الانسحاب.",
+    "لديك 0 مواد متبقية في خطة دراستك، وحالتك متوقع التخرج. "
+    "لا يوجد دليل مكتوب في النظام يحدد هذا الحد.",
+    "لقد أكملت 46 مادة من أصل 49 مادة في خطتك. تواصل مع عمادة القبول والتسجيل "
+    "لتأكيد إجراءات التخرج.",
+]
+
+
+@pytest.mark.parametrize("answer", _REAL_STUDENT_DATA_ANSWERS)
+def test_student_facts_are_not_mistaken_for_ungrounded_rule_claims(answer):
+    """A number about this student is not a claim about the university."""
+    assert deterministic_findings(answer, []) == []
 
 
 def test_a_deterministic_failure_skips_the_semantic_call_entirely():

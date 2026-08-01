@@ -1267,6 +1267,73 @@ def _uncheckable_pages(answer: str, allowed: list[dict[str, Any]]) -> list[int]:
     return sorted(cited - known)
 
 
+def _find_credit_block(obj: Any, depth: int = 0) -> dict[str, Any] | None:
+    """Locate the credit-load evidence wherever this request happens to carry it.
+
+    On the fallback it sits at ``context["recommendation_policy"]``; on the agent
+    path it arrives nested inside ``get_student_context``'s result. Looking in only
+    one place is why the first attempt at this silently did nothing on the very path
+    that produced the defect.
+    """
+    if depth > 6:
+        return None
+    if isinstance(obj, dict):
+        if "max_recommended_credit_hours" in obj:
+            return obj
+        children: Any = obj.values()
+    elif isinstance(obj, list | tuple):
+        # Tool results arrive as a LIST. Recursing only through dict values walked
+        # straight past them, so this found the block on the fallback path and never
+        # on the agent path — the one that produced the defect.
+        children = obj
+    else:
+        return None
+    for value in children:
+        found = _find_credit_block(value, depth + 1)
+        if found is not None:
+            return found
+    return None
+
+
+def _credit_policy_evidence_citations(context: dict[str, Any]) -> dict[str, Any] | None:
+    """Make the credit-load figures citable from the records that state them.
+
+    Returns a ``policy_lookup``-shaped result so the citation contract, the
+    validator and the response payload treat it exactly like a retrieved policy.
+    Returns None when the block carries no regulatory figure — the advisory cap of
+    18 is this system's own and no page of the guide says it, so lending it a
+    citation would be the same defect pointed the other way.
+    """
+    from core.services.credit_policy import backing_citations, verify_against_store
+    from core.services.policy_store import get_policy_store
+
+    evidence = _find_credit_block(context)
+    if evidence is None:
+        return None
+    wanted = backing_citations(evidence)
+    if not wanted:
+        return None
+
+    drift = verify_against_store()
+    if drift:
+        # The constants and the records disagree. Citing page 23 for a figure page 23
+        # does not contain would pass every mechanical check, so withhold instead.
+        logger.error("credit_policy constants disagree with the policy store: %s", drift)
+        return None
+
+    result = get_policy_store().lookup(policy_ids=wanted)
+    if not result.get("policies"):
+        return None
+    result["tool"] = "policy_lookup"
+    result["note"] = (
+        "These records state the credit-load figures already present in "
+        "recommendation_policy. Cite them the same way as any other policy when you "
+        "quote the minimum or maximum. The recommendation cap is NOT among them and "
+        "must never be attributed to the guide."
+    )
+    return result
+
+
 def _seed_policy_evidence(question: str) -> tuple[dict[str, Any], str]:
     """Retrieve policies for a path that has no tools of its own.
 
@@ -1578,6 +1645,13 @@ def answer_virtual_advisor(
         "turn_error": None,
     }
     agent_tool_results: list[dict[str, Any]] = []
+
+    # The credit range reaches the model through recommendation_policy, not through
+    # policy_lookup — a second regulatory channel that was outside the citation
+    # contract entirely. The batch caught it: «الحد الأدنى حسب الدليل 12 ساعة» went
+    # to a student attributed to the guide with nothing citable behind it. Binding
+    # the figures to the records they actually come from makes them citable like any
+    # other rule, and makes an unbacked figure impossible rather than merely unlikely.
     tool_results: list[dict[str, Any]] = []
     answer = ""
     usage: dict[str, Any] = {}
@@ -1692,6 +1766,15 @@ def answer_virtual_advisor(
     # Citation check: a policy id in the answer must have been RETRIEVED this
     # request. Prompt instructions are not enforcement — a model that recites a
     # plausible id from training produces an answer that looks sourced and is not.
+    # Attached here rather than up front: on the agent path the credit block only
+    # exists once get_student_context has returned, so anything earlier finds nothing
+    # on exactly the path that produced the uncited «حسب الدليل، الحد الأدنى 12 ساعة».
+    credit_citations = _credit_policy_evidence_citations(
+        {"context": context, "tools": agent_tool_results}
+    )
+    if credit_citations:
+        agent_tool_results = [*agent_tool_results, credit_citations]
+
     citations = _retrieved_citations(agent_tool_results)
     bad = _bad_citations(answer, citations)
     if bad:

@@ -101,11 +101,15 @@ _ADJUDICATION_MARKERS = (
 
 
 def _norm(text: str) -> str:
-    """Fold the few Arabic variants that would otherwise defeat a literal marker."""
-    text = str(text or "")
-    text = re.sub("[أإآٱ]", "ا", text)
-    text = re.sub("[ىئ]", "ي", text)
-    return text.replace("ة", "ه").lower()
+    """Fold to the comparison form the rest of the project already uses.
+
+    Not a local reimplementation: the shared normaliser also strips diacritics, and
+    a marker list written without them silently matches nothing — «وفقاً للدليل»
+    against «وفقا للدليل» is the whole check failing on one tanween.
+    """
+    from core.services.arabic_text import normalise
+
+    return normalise(text).lower()
 
 
 def adjudication_markers_in(answer: str) -> list[str]:
@@ -140,29 +144,48 @@ def deterministic_findings(
     return findings
 
 
-#: Arabic spells its small numbers out, and the live answers all did — «يسمح للطالب
-#: بخمسة انسحابات», «ثلاث إنذارات متتالية». A digits-only pattern misses exactly the
-#: sentences a regulation answer is made of.
-_NUMBER_WORD = (
-    r"واحدة?|اثنت?ان|اثنين|ثلاث(?:ة)?|أربع(?:ة)?|اربع(?:ة)?|خمس(?:ة)?|ست(?:ة)?|"
-    r"سبع(?:ة)?|ثمان(?:ية)?|تسع(?:ة)?|عشر(?:ة)?"
-)
-
-#: A quantity followed by a unit a regulation would use. Crude on purpose: it decides
-#: whether to flag an ungrounded-looking claim, not whether the claim is wrong.
-_RULE_SHAPE = re.compile(
-    rf"(\d+|[٠-٩]+|{_NUMBER_WORD})\s*"
-    r"(انسحابات|انسحاب|مرات|مرة|ساعة|ساعات|وحدات|فصل|فصول|أسبوع|أسابيع|سنوات|سنة|"
-    r"إنذارات|إنذار|%|٪|percent|times|hours)"
+#: ATTRIBUTION, not quantity. The first version of this matched a number next to a
+#: unit — and every student-data answer contains one. «أنت مسجل في 14 ساعة» is a fact
+#: about this student, «يسمح بخمسة انسحابات» is a rule about the university, and a
+#: digit-and-unit pattern cannot tell them apart. Measured on a 24-case live batch it
+#: flagged 4 correct answers and 0 incorrect ones: a pure false-positive rate, and in
+#: production a pointless retry on any answer that mentions a credit hour.
+#:
+#: What is actually ungrounded is claiming the GUIDE SAYS something while citing
+#: nothing. That is unambiguous, and it is what this now matches.
+_RULE_ATTRIBUTION = (
+    "وفقا للدليل",
+    "وفقا للائحه",
+    "حسب الدليل",
+    "حسب اللائحه",
+    "الدليل الارشادي ينص",
+    "تنص اللائحه",
+    "اللائحه تنص",
+    "ينص النظام على",
+    "تنص الانظمه",
+    "according to the guide",
+    "according to the regulation",
+    "the regulation states",
+    "the student guide states",
+    "university policy states",
 )
 
 
 def _states_a_rule(answer: str) -> bool:
-    return bool(_RULE_SHAPE.search(answer or ""))
+    """Does the answer claim the regulation says something, while citing nothing?
+
+    Deliberately narrow. A false positive here costs a correct answer a retry, and
+    the semantic judge is the layer that catches unlicensed CONTENT — this one only
+    catches unsourced ATTRIBUTION, which needs no model to see.
+    """
+    folded = _norm(answer)
+    return any(_norm(marker) in folded for marker in _RULE_ATTRIBUTION)
 
 
 def needs_semantic_review(
-    answer: str, policies: list[dict[str, Any]] | None
+    answer: str,
+    policies: list[dict[str, Any]] | None,
+    grounding_state: str | None = None,
 ) -> tuple[bool, list[str]]:
     """Should a second model look at this? Returns the decision and why.
 
@@ -184,6 +207,13 @@ def needs_semantic_review(
     markers = adjudication_markers_in(answer)
     if markers:
         reasons.append(f"adjudication_language={markers[:3]}")
+
+    # An answer produced without consulting the rules at all cannot be checked
+    # against them, and the policy-keyed triggers above have nothing to fire on.
+    # The batch found four such answers that no layer looked at, one of them on a
+    # question whose expected policy was PROHIBITED_FOR_DECISION.
+    if grounding_state in {"not_consulted", "unavailable"}:
+        reasons.append(f"grounding={grounding_state}")
     return bool(reasons), sorted(set(reasons))
 
 
@@ -293,6 +323,7 @@ def judge_answer(
     policies: list[dict[str, Any]] | None = None,
     citations: list[dict[str, Any]] | None = None,
     student_facts: dict[str, Any] | None = None,
+    grounding_state: str | None = None,
     client: Any = None,
     model: str | None = None,
     already_retried: bool = False,
@@ -300,7 +331,7 @@ def judge_answer(
 ) -> dict[str, Any]:
     """Audit one answer. Deterministic first, semantic only if the risk warrants it."""
     findings = deterministic_findings(answer, citations or [], policies)
-    triggered, reasons = needs_semantic_review(answer, policies)
+    triggered, reasons = needs_semantic_review(answer, policies, grounding_state)
 
     verdict: dict[str, Any] = {
         "deterministic_findings": findings,
