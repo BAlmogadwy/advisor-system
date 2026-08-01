@@ -24,5 +24,13 @@ repos:
     rev: v5.0.0
     hooks:
       - id: check-merge-conflict
+      # policies/sources/ holds source documents verbatim — the university's own PDF
+      # and calendar page. They are identified by SHA-256 in policies/sources.yaml and
+      # the extractors refuse to run on a hash mismatch. A formatter appending a
+      # newline changes that hash and invalidates the evidence, so these two hooks
+      # must not touch them. (Caught exactly this way: end-of-file-fixer rewrote the
+      # calendar HTML and extract_calendar.py refused to parse it.)
       - id: end-of-file-fixer
+        exclude: ^policies/sources/
       - id: trailing-whitespace
+        exclude: ^policies/sources/

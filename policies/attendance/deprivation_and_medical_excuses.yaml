@@ -1,0 +1,205 @@
+- policy_id: TU.ATTENDANCE.DEPRIVATION_THRESHOLD
+  topic: attendance
+  title_ar: نسبة الغياب الموجبة للحرمان
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 37 }
+  source_text_ar: >
+    يجب على الطالب/ة أن يحرص على حضور المحاضرات والدروس العلمية، حيث يحرم
+    الطالب/ـة من الاستمرار في المقرر أو دخول الاختبار إذا تجاوز غيابه ٢٥٪ من
+    المحاضرات المقررة.
+  rule_type: limit
+  max_value: 25
+  unit: percent_of_scheduled_lectures
+  effect_if_exceeded: [BARRED_FROM_CONTINUING_COURSE, BARRED_FROM_SITTING_EXAM]
+  required_inputs: [absence_count, scheduled_lecture_count]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: &v_approved
+    status: AUTHORITY_APPROVED
+    extracted_by: agent
+    extracted_at: "2026-08-01"
+    source_verified_by: project_owner
+    source_verified_at: "2026-08-01"
+    domain_reviewed_by: project_owner
+    domain_reviewed_at: "2026-08-01"
+    authority_approved_by: project_owner
+    authority_approved_at: "2026-08-01"
+    approval_basis: >
+      Owner instruction 2026-08-01. The project owner is acting as the authority for this
+      system's own use of these records. This is NOT a statement that the Deanship of
+      Admission and Registration has reviewed them, and it does not resolve any
+      open_question or contested marker — those survive approval unchanged.
+  extraction_confidence: high
+  runtime_use: PROHIBITED_FOR_DECISION
+  runtime_use_reason: >
+    The project holds NO attendance data — no field, no table, no service. Both
+    required inputs are MISSING. The rule is fully explainable and never applicable.
+  notes: >
+    Answers Q181 and Q60 authoritatively. Note the two distinct effects: barred from
+    CONTINUING and barred from the EXAM. Q190 ("أختبر النهائي بعد الحرمان؟") is
+    therefore answered directly: no.
+  cross_references: [TU.WITHDRAWAL.DEPRIVATION_BAR, TU.GRADE.SPECIAL_SYMBOLS]
+
+- policy_id: TU.ATTENDANCE.AUTO_REGISTRATION_TRAP
+  topic: attendance
+  title_ar: التسجيل الآلي لمن لم يسجل مبكراً وأثره على الحرمان
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 37 }
+  source_text_ar: >
+    تقوم عمادة القبول والتسجيل بالتسجيل آلياً للطلاب الذين لم يسجلوا مقرراتهم في
+    التسجيل المبكر بأنفسهم، فيعتقد الطالب/ـة أنه لا يجب عليه الحضور ودراسة
+    المقررات المسجلة آلياً ولا يحضر المحاضرات، فيتم رصد درجة حرمان له في نهاية
+    الفصل، حيث كان يتوجب على الطالب/ـة الاعتذار عن الفصل إذا أراد التوقف عن
+    الدراسة لذلك الفصل الدراسي.
+  rule_type: advisory_warning
+  listed_under: "أخطاء متكررة"
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  notes: >
+    The source's own "common mistakes" page. High advisory value: it names a
+    specific, frequent, and costly student misconception. Worth surfacing
+    proactively rather than only on request.
+
+- policy_id: TU.ATTENDANCE.DEFERRING_EARLY_COURSES_TRAP
+  topic: registration_advice
+  title_ar: خطأ تأجيل مقررات المستويات الأولى إلى الفصول الأخيرة
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 37 }
+  source_text_ar: >
+    يتكرر خطأ من الطلاب بتأجيل المقررات الدراسية التي تدرَّس في المستويات الأولى
+    إلى الفصول الدراسية الأخيرة، وقد يحدث وتتغير الخطط الدراسية وتظل تلك المواد
+    المؤجلة عائقاً له في الدراسة.
+  rule_type: advisory_warning
+  listed_under: "أخطاء متكررة"
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  notes: >
+    This one IS actionable from existing data: my_progress already identifies
+    low-term courses still outstanding. The guide supplies the authoritative
+    justification for surfacing them, which the adviser previously lacked.
+
+- policy_id: TU.ATTENDANCE.LATE_GRADE_AMENDMENT_TRAP
+  topic: grade_appeal
+  title_ar: خطأ التأخر في متابعة طلب تعديل الدرجة
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 37 }
+  source_text_ar: >
+    يؤخر بعض الطلاب متابعة طلب تعديل الدرجة لفصول متأخرة ما يجعل تعديلها بعمادة
+    القبول والتسجيل مستحيلاً.
+  rule_type: advisory_warning
+  listed_under: "أخطاء متكررة"
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  cross_references: [TU.APPEAL.WINDOW, TU.APPEAL.EVIDENCE_RETENTION]
+
+# ── الأعذار المرضية ───────────────────────────────────────────────────────
+
+- policy_id: TU.MEDICAL_EXCUSE.ACCEPTED_ISSUERS
+  topic: medical_excuse
+  title_ar: الجهات المقبولة لإصدار العذر المرضي
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 33 }
+  source_text_ar: >
+    يعتمد قبول الأعذار المرضية بشرط تقديم تقرير طبي صادر من المنصة الرسمية (منصة
+    صحة) أو الإدارة الطبية بالجامعة، أو المستشفى الجامعي.
+  rule_type: eligibility
+  accepted_issuers:
+    - "منصة صحة"
+    - "الإدارة الطبية بالجامعة"
+    - "المستشفى الجامعي"
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  notes: >
+    Answers Q198 ("تقرير من مستشفى خاص") by exclusion: a private hospital is not on
+    the accepted-issuer list. State the list; do not assert a blanket refusal that
+    the source does not word that way.
+
+- policy_id: TU.MEDICAL_EXCUSE.FOREIGN_REPORTS
+  topic: medical_excuse
+  title_ar: الأعذار المرضية الصادرة من خارج المملكة
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 33 }
+  source_text_ar: >
+    يعتمد قبول الأعذار المرضية الصادرة من خارج المملكة بعد تصديقها من الإدارة
+    الطبية بالجامعة، أو المستشفى الجامعي.
+  rule_type: eligibility
+  requires: ATTESTATION
+  attesting_bodies: ["الإدارة الطبية بالجامعة", "المستشفى الجامعي"]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+
+- policy_id: TU.MEDICAL_EXCUSE.SUBMISSION_WINDOW
+  topic: medical_excuse
+  title_ar: مهلة تقديم التقرير الطبي
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 33 }
+  source_text_ar: >
+    تقدم التقارير الطبية أو الأعذار الأخرى الموثقة لوكيل الكلية المختص في فترة لا
+    تزيد عن أسبوعين فقط من تاريخ إصدارها.
+  rule_type: limit
+  max_value: 2
+  unit: weeks
+  clock_starts_at: REPORT_ISSUE_DATE
+  submitted_to: COLLEGE_VICE_DEAN
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  notes: >
+    Answers Q199 ("فاتني موعد تقديم العذر"). Note the clock runs from the report's
+    ISSUE date, not from the absence — a distinction students routinely get wrong.
+
+- policy_id: TU.MEDICAL_EXCUSE.EFFECT_ON_ASSESSMENTS
+  topic: medical_excuse
+  title_ar: أثر العذر المرضي على الاختبارات والأعمال الفصلية
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 33 }
+  source_text_ar: >
+    إذا كانت فترة التقرير الطبي المعتمد تشمل اختباراً دورياً أو أعمالاً فصلية،
+    فيتم التنسيق مع رئيس القسم وأستاذ المقرر لإعطاء اختبار بديل أو استكمال
+    الأعمال الفصلية للطالب في مدة لا تتجاوز بدء الاختبارات النهائية. وإذا كانت
+    فترة التقرير تشمل اختباراً نهائياً فيتم إعادة الاختبار النهائي للطالب وفق
+    الضوابط المحددة.
+  rule_type: procedure
+  branches:
+    - covers: [PERIODIC_EXAM, COURSEWORK]
+      remedy: ALTERNATIVE_EXAM_OR_COMPLETION
+      coordinated_by: [DEPARTMENT_HEAD, COURSE_INSTRUCTOR]
+      deadline: BEFORE_FINAL_EXAMS_BEGIN
+    - covers: [FINAL_EXAM]
+      remedy: FINAL_EXAM_REPEATED
+      governed_by: "الضوابط المحددة"
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  notes: Answers Q54 ("غبت عن الاختبار بعذر").
+  open_question: >
+    "وفق الضوابط المحددة" for the final-exam case is undefined in the guide.
+    Resolve against TU_EXECUTIVE_RULES.

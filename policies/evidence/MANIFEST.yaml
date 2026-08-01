@@ -1,0 +1,40 @@
+evidence_set: TU_STUDENT_GUIDE_V3_1447_EXTRACTION_B
+imported_at: '2026-08-01'
+document_id: TU_STUDENT_GUIDE_V3_1447
+source_file_sha256: 155b7df5ec782860cc047287919e2dcfbe78aa76759b9f0bed105bcad0a15227
+provenance:
+  produced_by: a second, independent LLM-assisted extraction (not this agent)
+  upstream_revision: '1.1'
+  upstream_declares_extracted_by: LLM-assisted extraction
+  upstream_second_pass: AI-assisted source alignment review, pages 23-39 only
+  model_identity: NOT RECORDED UPSTREAM — unknown model, unknown version
+  human_verified: false
+counts:
+  records: 277
+  excerpt_fields_renamed: 277
+  restatement_identical_to_statement: 273
+  second_pass_checked: 154
+  never_second_pass_checked: 123
+  in_upstream_policy_subset: 185
+  contested: 5
+artefacts:
+  knowledge_records.yaml: 19e176ab99dd350309d721cc1e8986c7e7a0c67637c716cc394842e942aa329a
+  knowledge_index.csv: 931dffcc9a5f9bca2af52f166de1379d85d442f17dd8fdd49009ae469e35c765
+  source_alignment_audit_v1_1.md: 1f88d66db73a82b313b7d93697b20d8c5da737578b8d19a6c1c4c934300ef3f6
+  extraction_report.md: 46177c45b71ad450e1415e28854c507054bc985418041d17dd2cbbcc4ac3d785
+  upstream_sources.yaml: 19528730149b908fc278efe4fa9f5b100ac405c80c77a58de0fc6e75dd090a23
+dropped:
+  file: policy_records(1).yaml
+  reason: 'Strict subset of knowledge_records filtered by normativity (NORMATIVE_SUMMARY + PROCEDURAL_SUMMARY).
+    Verified: all 185 ids present in the 277 with no field-level differences and no unique content. Membership
+    is preserved on each record as in_upstream_policy_subset, so the subset is reconstructible without
+    keeping a second copy.'
+known_defects:
+  restatement_is_not_a_quotation: restatement_ar equals the record's own statement_ar in 273/277 records,
+    carries zero Arabic-Indic digits where the page prints them, and is stale in the four records the
+    upstream audit corrected. It is NOT citable as source text. Cite evidence/page_text/ for verbatim
+    wording.
+  positional_ids: Ids are contiguous and page-ordered with no allocation ledger. A re-extraction that
+    inserts a record renumbers everything after it. derived_from pointers therefore carry content_sha256.
+  coverage_of_second_pass: 123 records were never second-pass checked — the entire pp.1-21 block, including
+    all student rights, all student duties, the registration-authority rules and the p.20 workflow records.

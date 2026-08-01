@@ -1,0 +1,386 @@
+# Source page 24 presents الاعتذار / التأجيل / الانسحاب من مقرر as ONE three-column
+# comparison table. The contrast IS the content — students confuse these three, and
+# the distinction that matters (does the period count toward the graduation clock?)
+# is only visible across columns. The comparison record below is therefore a
+# first-class record, not a summary of the others.
+
+- policy_id: TU.LEAVE.COMPARISON
+  topic: academic_leave
+  title_ar: الفرق بين الاعتذار والتأجيل والانسحاب من مقرر
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 24 }
+  rule_type: comparison
+  presented_as: single_comparison_table
+  dimensions:
+    counts_toward_graduation_clock:
+      excuse: true
+      deferral: false
+      course_withdrawal: not_stated
+    transcript_mark:
+      excuse: "تقدير (ع)"
+      deferral: not_stated
+      course_withdrawal: not_stated_on_this_page
+    stipend_مكافأة:
+      excuse: SUSPENDED
+      deferral: SUSPENDED
+      course_withdrawal: not_stated
+    request_channel:
+      excuse: ELECTRONIC_SERVICES
+      deferral: ELECTRONIC_SERVICES
+      course_withdrawal: ELECTRONIC_SERVICES
+    deadline_source:
+      excuse: ACADEMIC_CALENDAR
+      deferral: ACADEMIC_CALENDAR
+      course_withdrawal: ACADEMIC_CALENDAR
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: &v_approved
+    status: AUTHORITY_APPROVED
+    extracted_by: agent
+    extracted_at: "2026-08-01"
+    source_verified_by: project_owner
+    source_verified_at: "2026-08-01"
+    domain_reviewed_by: project_owner
+    domain_reviewed_at: "2026-08-01"
+    authority_approved_by: project_owner
+    authority_approved_at: "2026-08-01"
+    approval_basis: >
+      Owner instruction 2026-08-01. The project owner is acting as the authority for this
+      system's own use of these records. This is NOT a statement that the Deanship of
+      Admission and Registration has reviewed them, and it does not resolve any
+      open_question or contested marker — those survive approval unchanged.
+  extraction_confidence: high
+  notes: >
+    The single most-asked distinction in the 200-question set (Q34, Q62). Answerable
+    as pure explanation with no student data at all — so this record is EXPLAIN_ONLY
+    by nature, not by deficiency.
+
+# ── الاعتذار عن الفصل الدراسي ────────────────────────────────────────────
+
+- policy_id: TU.EXCUSE.PROCEDURE
+  topic: semester_excuse
+  title_ar: تقديم طلب الاعتذار عن الفصل الدراسي
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 24 }
+  source_text_ar: >
+    أن يتقدم الطالب بطلب الاعتذار آليا عبر الخدمات الالكترونية وفق الموعد في
+    التقويم الدراسي.
+  rule_type: procedure
+  channel: ELECTRONIC_SERVICES
+  deadline_defined_in: TU_ACADEMIC_CALENDAR
+  required_inputs: [current_date, calendar_excuse_window]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  calendar_binding:
+    document_id: TU_ACADEMIC_CALENDAR_1448_T1
+    event_ar: انتهاء تنفيذ طلبات الاعتذار عن الدراسة للفصل الدراسي الأول 1448هـ (للنظام الفصلي)
+    deadline: { hijri: 17-جمادى الأولى-1448, gregorian: 28-أكتوبر-2026 }
+    teaching_week: العاشر
+    covers_term_only: { academic_year_hijri: "1448", term: 1 }
+  runtime_use: PARTIALLY_EVALUABLE
+  runtime_use_reason: >
+    Answerable for term 1 of 1448 ONLY, from the bound calendar event. For any other
+    term the deadline is unknown and must be reported as unknown — the Hijri dates
+    move every year, so this date must never be reused.
+
+- policy_id: TU.EXCUSE.COUNTS_TOWARD_DURATION
+  topic: semester_excuse
+  title_ar: احتساب مدة الاعتذار ضمن مدة التخرج
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 24 }
+  source_text_ar: >
+    تحتسب مدة الاعتذار ضمن المدة الازمة لإنهاء متطلبات التخرج.
+  source_typo_note: >
+    "الازمة" is the source's own spelling on p.24 in the الاعتذار column (missing
+    lam). The التأجيل column on the SAME page spells it "اللازمة" correctly. Both
+    LLM extractions of this guide silently repaired it; a record that claims to
+    quote a page must not. Preserved as printed — flag for the source verifier.
+  rule_type: consequence
+  effect: COUNTS_TOWARD_GRADUATION_CLOCK
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  notes: >
+    Answers Q70 ("هل الاعتذار يؤخر تخرجي؟") authoritatively — and contradicts the
+    intuition that an excused term is "free". Contrast TU.DEFERRAL.NOT_COUNTED.
+
+- policy_id: TU.EXCUSE.TRANSCRIPT_MARK
+  topic: semester_excuse
+  title_ar: رصد تقدير (ع) للطالب المعتذر
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 24 }
+  source_text_ar: >
+    يرصد للطالب المعتذر تقدير (ع) في السجل الأكاديمي.
+  rule_type: consequence
+  effect: TRANSCRIPT_SYMBOL_ASSIGNED
+  symbol_ar: "ع"
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  notes: >
+    Answers Q35 ("إذا انسحبت من مادة يظهر في السجل؟") for the excuse case: yes.
+    NOTE a possible source inconsistency — p.29's symbol table lists W / (ع) as
+    "منسحب بعذر" (Withdrawn), while p.24 assigns (ع) to الاعتذار عن الفصل. Whether
+    the same symbol serves both, or the summary compressed two symbols, must be
+    settled against TU_UNDERGRAD_REGULATION. Flagged, not resolved.
+  open_question: symbol_ع_collision_between_p24_and_p29
+
+- policy_id: TU.EXCUSE.STIPEND_SUSPENDED
+  topic: semester_excuse
+  title_ar: انقطاع المكافأة عن الطالب المعتذر
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 24 }
+  source_text_ar: تنقطع المكافأة عن الطالب المعتذر.
+  rule_type: consequence
+  effect: STIPEND_SUSPENDED
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  notes: Answers Q69 for the excuse case.
+
+# ── تأجيل الدراسة ────────────────────────────────────────────────────────
+
+- policy_id: TU.DEFERRAL.PROCEDURE
+  topic: study_deferral
+  title_ar: تقديم طلب تأجيل الدراسة
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 24 }
+  source_text_ar: >
+    أن يتقدم الطالب بطلب التأجيل آليا عبر الخدمات الالكترونية وفق الموعد في
+    التقويم الدراسي.
+  rule_type: procedure
+  channel: ELECTRONIC_SERVICES
+  deadline_defined_in: TU_ACADEMIC_CALENDAR
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  calendar_binding:
+    document_id: TU_ACADEMIC_CALENDAR_1448_T1
+    events:
+      - { event_ar: انتهاء تنفيذ طلبات تأجيل الفصل الدراسي الأول 1448هـ,
+          deadline: { hijri: 02-ربيع الأول-1448, gregorian: 15-أغسطس-2026 }, defers: TERM_1 }
+      - { event_ar: انتهاء تنفيذ طلبات تأجيل الدراسة للفصل الثاني 1448هـ,
+          deadline: { hijri: 22-جمادى الآخرة-1448, gregorian: 02-ديسمبر-2026 }, defers: TERM_2 }
+    note: >
+      Two deadlines, and which one applies depends on the term being DEFERRED, not
+      the term the student is in: deferring term 1 closes BEFORE term 1 starts
+      (15 Aug, term starts 23 Aug), while deferring term 2 closes during term 1.
+      An answer that quotes the nearer date without checking which term the student
+      means will be wrong roughly half the time.
+    covers_term_only: { academic_year_hijri: "1448", terms: [1, 2] }
+  runtime_use: PARTIALLY_EVALUABLE
+  runtime_use_reason: >
+    Answerable for 1448 terms 1 and 2 ONLY, and only after establishing which term
+    the student intends to defer.
+
+- policy_id: TU.DEFERRAL.NOT_COUNTED
+  topic: study_deferral
+  title_ar: عدم احتساب مدة التأجيل ضمن مدة التخرج
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 24 }
+  source_text_ar: >
+    لا تحتسب مدة التأجيل ضمن المدة اللازمة لإنهاء متطلبات التخرج.
+  rule_type: consequence
+  effect: EXCLUDED_FROM_GRADUATION_CLOCK
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+
+- policy_id: TU.DEFERRAL.MAXIMUM
+  topic: study_deferral
+  title_ar: الحد الأقصى لمدة التأجيل
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 24 }
+  source_text_ar: >
+    ألا تتجاوز مدة التأجيل فصلين دراسيين متتاليين أو ثلاثة فصول دراسية غير متتالية
+    حد أقصى طيلة بقائه في الجامعة، في حال الضرورة الاستثناء من ذلك.
+  rule_type: limit
+  limits:
+    - { pattern: CONSECUTIVE, max_value: 2, unit: semesters }
+    - { pattern: NON_CONSECUTIVE, max_value: 3, unit: semesters }
+  scope: entire_enrolment_period
+  exceptions:
+    - { condition: NECESSITY, authority: UNIVERSITY_COUNCIL, note: "الاستثناء من ذلك في حال الضرورة" }
+  required_inputs: [deferral_history, deferral_consecutiveness]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  runtime_use: PROHIBITED_FOR_DECISION
+  runtime_use_reason: >
+    Needs deferral_history (absent) AND event ordering to tell CONSECUTIVE from
+    NON_CONSECUTIVE (structurally absent — actual_term empty on all 159,778 rows).
+    Two independent blockers; supplying the history alone would not unblock it.
+
+- policy_id: TU.DEFERRAL.STIPEND_SUSPENDED
+  topic: study_deferral
+  title_ar: انقطاع المكافأة عن الطالب المؤجل
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 24 }
+  source_text_ar: تنقطع المكافأة عن الطالب المؤجل.
+  rule_type: consequence
+  effect: STIPEND_SUSPENDED
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+
+# ── الانسحاب من مقرر ─────────────────────────────────────────────────────
+
+- policy_id: TU.WITHDRAWAL.PROCEDURE
+  topic: course_withdrawal
+  title_ar: تقديم طلب الانسحاب من مقرر
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 24 }
+  source_text_ar: >
+    أن يتقدم الطالب بطلب الانسحاب آليا عبر الخدمات الالكترونية وفق الموعد في
+    التقويم الدراسي.
+  rule_type: procedure
+  channel: ELECTRONIC_SERVICES
+  deadline_defined_in: TU_ACADEMIC_CALENDAR
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  calendar_binding:
+    document_id: TU_ACADEMIC_CALENDAR_1448_T1
+    event_ar: انتهاء تنفيذ الانسحاب بعذر من المقرر للفصل الدراسي الأول 1448هـ (للنظام الفصلي والنظام السنوي)
+    deadline: { hijri: 03-جمادى الأولى-1448, gregorian: 14-أكتوبر-2026 }
+    teaching_week: الثامن
+    covers_term_only: { academic_year_hijri: "1448", term: 1 }
+    note: >
+      The calendar calls this "الانسحاب بعذر" — withdrawal WITH EXCUSE — while the
+      guide's p.24 column is headed "الانسحاب من مقرر" with no such qualifier, and
+      p.29 lists the symbol W/(ع) as "منسحب بعذر". Whether the guide's five-withdrawal
+      allowance and the calendar's excused withdrawal are the same instrument is not
+      established by either source. Do not merge them.
+  runtime_use: PARTIALLY_EVALUABLE
+  runtime_use_reason: >
+    Deadline answerable for term 1 of 1448 ONLY. Eligibility remains
+    PROHIBITED_FOR_DECISION regardless of the date — see TU.WITHDRAWAL.MAXIMUM,
+    whose withdrawal counter does not exist in any data source.
+
+- policy_id: TU.WITHDRAWAL.MAXIMUM
+  topic: course_withdrawal
+  title_ar: الحد الأقصى لعدد الانسحابات
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 24 }
+  source_text_ar: >
+    يسمح للطالب بخمسة انسحابات فقط خلال كامل فترة التحاقه بالجامعة وبنفس الرقم
+    الجامعي.
+  rule_type: limit
+  max_value: 5
+  unit: withdrawals
+  scope: entire_enrolment_period
+  scope_qualifier: same_university_id
+  required_inputs: [previous_withdrawal_count]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  runtime_use: PROHIBITED_FOR_DECISION
+  runtime_use_reason: >
+    previous_withdrawal_count is MISSING. Course withdrawal leaves no trace in
+    StudentCourse (statuses are passed / studying / not_taken only). Student.status
+    values FINAL WITHDRAWN / EXCUSED WITHDRAWN describe withdrawal from the
+    UNIVERSITY, not from a course, and must not be substituted for this counter.
+
+- policy_id: TU.WITHDRAWAL.MINIMUM_LOAD_BAR
+  topic: course_withdrawal
+  title_ar: منع الانسحاب إذا نزل العبء عن الحد الأدنى
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 24 }
+  source_text_ar: >
+    لا يسمح للطالب الانسحاب في حال كان العبء الدراسي أقل من الحد الأدنى للعبء
+    الدراسي بعد تنفيذ الانسحاب.
+  rule_type: eligibility
+  condition:
+    field: credits_after_withdrawal
+    operator: ">="
+    value_from_policy: TU.LOAD.SEMESTER_RANGE.min_value
+  result_if_false: NOT_ELIGIBLE
+  required_inputs: [registered_credits_this_term, course_credits, study_system]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  notes: >
+    The only one of the four withdrawal bars whose inputs plausibly exist
+    (current_registered_credits + course credit_hours). Still gated by dataset
+    freshness — see the coverage matrix.
+
+- policy_id: TU.WITHDRAWAL.DEPRIVATION_BAR
+  topic: course_withdrawal
+  title_ar: منع الانسحاب بعد الحرمان من المقرر
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 24 }
+  source_text_ar: >
+    لا يسمح للطالب الانسحاب من المقرر في حال حصل على حرمان في المقرر.
+  rule_type: eligibility
+  condition: { field: has_deprivation_in_course, operator: "==", value: false }
+  result_if_false: NOT_ELIGIBLE
+  required_inputs: [has_deprivation_in_course]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  runtime_use: PROHIBITED_FOR_DECISION
+  runtime_use_reason: >
+    Deprivation (حرمان) is derived from attendance, of which the project holds
+    nothing. Cross-references TU.ATTENDANCE.DEPRIVATION_THRESHOLD.
+
+- policy_id: TU.WITHDRAWAL.NEW_STUDENT_BAR
+  topic: course_withdrawal
+  title_ar: منع الطالب المستجد من الانسحاب في أول فصلين
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 24 }
+  source_text_ar: >
+    لا يسمح للطالب المستجد الانسحاب من أي مقرر في أول فصلين دراسيين من البرنامج
+    الدراسي.
+  rule_type: eligibility
+  condition: { field: completed_semesters, operator: ">=", value: 2 }
+  result_if_false: NOT_ELIGIBLE
+  required_inputs: [completed_semesters]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  runtime_use: PROHIBITED_FOR_DECISION
+  runtime_use_reason: >
+    completed_semesters is not stored and cannot be derived: actual_term is empty
+    on every StudentCourse row, so there is no way to count terms attended.

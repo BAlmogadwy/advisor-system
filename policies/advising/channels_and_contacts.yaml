@@ -1,0 +1,107 @@
+- policy_id: TU.CONTACT.ADVISER_CHANNELS
+  topic: contact_channels
+  title_ar: وسائل التواصل مع المرشد الأكاديمي
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 15 }
+  source_text_ar: >
+    الإرشاد الأكاديمي ليس عمل عابر بل هو سلسلة من اللقاءات التي تحدث بين فترة
+    وأخرى بين المرشد وطلابه تحت الإرشاد، وهي عملية مستمرة ومنتظمة ترافق مسيرة
+    الطالب/ـة حتى التخرج.
+  rule_type: enumeration
+  channels:
+    - "الإرشاد عن طريق منصة خدمة تك"
+    - "الإرشاد عن طريق البلاك بورد"
+    - "الإرشاد عن طريق البريد الإلكتروني"
+    - "الإرشاد عبر الهاتف / التيمز"
+    - "الإرشاد المباشر"
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: &v_approved
+    status: AUTHORITY_APPROVED
+    extracted_by: agent
+    extracted_at: "2026-08-01"
+    source_verified_by: project_owner
+    source_verified_at: "2026-08-01"
+    domain_reviewed_by: project_owner
+    domain_reviewed_at: "2026-08-01"
+    authority_approved_by: project_owner
+    authority_approved_at: "2026-08-01"
+    approval_basis: >
+      Owner instruction 2026-08-01. The project owner is acting as the authority for this
+      system's own use of these records. This is NOT a statement that the Deanship of
+      Admission and Registration has reviewed them, and it does not resolve any
+      open_question or contested marker — those survive approval unchanged.
+  extraction_confidence: high
+  notes: >
+    Answers the "مين أتواصل معه؟" class of questions (Q59, Q128, Q133) at the
+    adviser level. Escalation beyond the adviser is covered by
+    TU.APPEAL.ESCALATION_PATH and TU.REG.STUDENT_CHOICES_FINAL.
+
+- policy_id: TU.CONTACT.DEANSHIP
+  topic: contact_channels
+  title_ar: قنوات عمادة القبول والتسجيل
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 39 }
+  rule_type: enumeration
+  contacts:
+    - { kind: website, value: "www.taibahu.edu.sa" }
+    - { kind: youtube, value: "عمادة القبول والتسجيل" }
+    - { kind: x_twitter, value: "@tuadtw" }
+    - { kind: phone, value: "014-8618800" }
+    - { kind: support_email, value: "Dar-support@taibahu.edu.sa" }
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  staleness_note: >
+    Contact details drift faster than regulations and are NOT covered by the
+    edition's effective_from. Re-check on each new edition; treat a failed contact
+    as a source-refresh trigger rather than a student error.
+
+- policy_id: TU.ADVISING.NEW_STUDENT_PROGRAMME
+  topic: advising
+  title_ar: خدمات الإرشاد للطلاب المستجدين
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 16 }
+  source_text_ar: >
+    تتولى عمادة القبول والتسجيل بالاشتراك مع الكلية تنظيم برنامج خاص للطلاب
+    المستجدين لشرح نظام الدراسة والتقويم والخطط الدراسية لبرامج التخصصات، ما يمثل
+    إرشاداً جماعياً ويتضمن هذا البرنامج لقاء الطلاب مع عميد الكلية للترحيب وتعريف
+    الطلاب بواجباتهم وحقوقهم والسلوكيات المطلوبة منهم والسلوكيات المرفوضة منهم
+    وأوجه الثواب والعقاب. يلتقي الطلاب بمرشديهم الأكاديميين لاستيفاء بيانات ملفات
+    الإرشاد الأكاديمي.
+  rule_type: procedure
+  audience: NEW_STUDENTS
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+
+- policy_id: TU.ADVISING.CONTINUING_STUDENT_PROGRAMME
+  topic: advising
+  title_ar: خدمات الإرشاد للطلاب المتخصصين
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 16 }
+  source_text_ar: >
+    تتم لقاءات الطلاب القدامى مع مرشديهم الأكاديميين عند بدء تسجيل رغبات الفصل
+    التالي، وذلك طبقاً لمواعيد محددة مسبقاً في التقويم الدراسي، حيث يمكن الحصول
+    على التقويم من موقع عمادة القبول والتسجيل بالجامعة. يقوم كل مرشد بدراسة حالة
+    كل طالب من خلال النماذج والتقارير التي يضمها الملف الإرشادي الإلكتروني الخاص
+    به وتوجيهه بما يتفق مع ميوله وقدراته واستعداداته.
+  rule_type: procedure
+  audience: CONTINUING_STUDENTS
+  timing: AT_PREFERENCE_REGISTRATION_FOR_NEXT_TERM
+  timing_defined_in: TU_ACADEMIC_CALENDAR
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  cross_references: [TU.REG.EARLY_REGISTRATION_TIMING]

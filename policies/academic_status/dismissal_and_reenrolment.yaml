@@ -1,0 +1,256 @@
+- policy_id: TU.DISMISSAL.THREE_WARNINGS
+  topic: academic_dismissal
+  title_ar: الفصل من الجامعة بعد ثلاثة إنذارات متتالية
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 25 }
+  source_text_ar: >
+    إذا حصل على ثلاث إنذارات متتالية لانخفاض معدله التراكمي المحدد للتخرج،
+    ولمجلس الجامعة منح الطالب/ـة فرصة إضافية لرفع معدله التراكمي.
+  rule_type: eligibility
+  condition: { field: consecutive_warning_count, operator: "<", value: 3 }
+  result_if_false: DISMISSED
+  exceptions:
+    - { condition: ADDITIONAL_CHANCE_GRANTED, authority: UNIVERSITY_COUNCIL }
+  required_inputs: [consecutive_warning_count]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: &v_approved
+    status: AUTHORITY_APPROVED
+    extracted_by: agent
+    extracted_at: "2026-08-01"
+    source_verified_by: project_owner
+    source_verified_at: "2026-08-01"
+    domain_reviewed_by: project_owner
+    domain_reviewed_at: "2026-08-01"
+    authority_approved_by: project_owner
+    authority_approved_at: "2026-08-01"
+    approval_basis: >
+      Owner instruction 2026-08-01. The project owner is acting as the authority for this
+      system's own use of these records. This is NOT a statement that the Deanship of
+      Admission and Registration has reviewed them, and it does not resolve any
+      open_question or contested marker — those survive approval unchanged.
+  extraction_confidence: high
+  runtime_use: PROHIBITED_FOR_DECISION
+  runtime_use_reason: >
+    Blocked twice over. (1) consecutive_warning_count is MISSING — no warning
+    history exists anywhere in the schema; Student.status carries outcomes such as
+    'FAIL IN LAST TERM' (18 students), never a counter. (2) Even if a warning feed
+    arrived, "متتالية" needs event ordering, and actual_term is empty on all
+    159,778 StudentCourse rows. Supplying the count alone would NOT unblock this.
+  never_infer: >
+    Do not treat gpa < 2.0 as "on warning". The guide sets dismissal on a COUNT of
+    consecutive warnings against a graduation-specific threshold, not on a single
+    GPA reading. portfolio_triage(focus='risk') is an advisory flag and must never
+    be presented as an إنذار.
+
+- policy_id: TU.DISMISSAL.DURATION_EXCEEDED
+  topic: academic_dismissal
+  title_ar: الفصل لتجاوز المدة المسموحة لإنهاء متطلبات التخرج
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 25 }
+  source_text_ar: >
+    إذا لم ينهِ متطلبات التخرج خلال مدة أقصاها نصف المدة المقررة لتخرجه علاوة على
+    مدة البرنامج. ويجوز لمجلس الجامعة في الحالات الاستثنائية معالجة أوضاع الطلاب
+    بإعطائهم فرصة استثنائية لا تتجاوز عاماً دراسياً.
+  rule_type: limit
+  formula: max_duration = programme_duration * 1.5
+  exceptions:
+    - { condition: EXCEPTIONAL_CASE, authority: UNIVERSITY_COUNCIL, max_extra: 1, unit: academic_years }
+  required_inputs: [programme_nominal_duration, terms_elapsed_since_admission]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  runtime_use: PROHIBITED_FOR_DECISION
+  runtime_use_reason: >
+    terms_elapsed_since_admission is not stored and not derivable — there is no
+    admission date on Student and no term stamp on any course row. Programme
+    nominal duration IS derivable from max(ProgrammeRequirement.programme_term),
+    so half the formula is available and half is not.
+  notes: >
+    This is the authoritative answer to "المدة النظامية" questions (Q176-Q178),
+    which the project previously could not answer at all.
+
+- policy_id: TU.UNIVERSITY_WITHDRAWAL.PROCEDURE
+  topic: university_withdrawal
+  title_ar: إجراءات الانسحاب النهائي من الجامعة
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 25 }
+  source_text_ar: >
+    يحق للطالب الانسحاب نهائياً من الجامعة وفق الإجراءات التالية: إحضار البطاقة
+    الجامعية، يسلم الطالب أي عهد عليه ويستكمل طلب إخلاء الطرف من خلال منصة خدمة تك.
+  rule_type: procedure
+  steps:
+    - present_university_id_card
+    - surrender_any_held_assets
+    - complete_clearance_request
+  channel: "منصة خدمة تك"
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  notes: >
+    Distinct from TU.WITHDRAWAL.* (course withdrawal). Conflating the two is the
+    single likeliest retrieval error on this corpus — both are "انسحاب".
+
+# ── طي القيد وإعادته ──────────────────────────────────────────────────────
+
+- policy_id: TU.DEREGISTRATION.TRIGGER
+  topic: deregistration
+  title_ar: طي قيد الطالب عند الانقطاع
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 32 }
+  source_text_ar: >
+    يُطوى قيد الطالب/ـة من الجامعة إذا انقطع عن الدراسة مدة يحددها مجلس الجامعة
+    دون تقدمه بطلب التأجيل أو الاعتذار عن الدراسة.
+  rule_type: consequence
+  trigger: { interruption_without_deferral_or_excuse: true }
+  effect: RECORD_DEREGISTERED
+  duration_defined_by: UNIVERSITY_COUNCIL
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  open_question: >
+    The guide does not state the interruption period — it delegates to مجلس الجامعة.
+    The actual figure must come from TU_UNDERGRAD_REGULATION or a council decision.
+    Answers to Q66 must say "a period set by the University Council" and stop there.
+
+- policy_id: TU.DEREGISTRATION.VISITING_EXEMPTION
+  topic: deregistration
+  title_ar: الفصول المدروسة كطالب زائر لا تُعد انقطاعاً
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 32 }
+  source_text_ar: >
+    لا يُعد الطالب/ـة منقطعاً عن الدراسة للفصول التي يدرسها زائراً في جامعة أخرى.
+  rule_type: exception
+  exempts: TU.DEREGISTRATION.TRIGGER
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+
+- policy_id: TU.REENROLMENT.CONDITIONS
+  topic: reenrolment
+  title_ar: ضوابط إعادة القيد
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 32 }
+  source_text_ar: >
+    أن يتقدم بطلب إعادة القيد بعذر خلال فترة لا تتجاوز عامين دراسيين؛ أن يكون
+    البرنامج الأكاديمي قائماً في الجامعة؛ أن يكون التخرج من البرنامج الدراسي في
+    المدة النظامية المقررة؛ ألا يكون مفصولاً أكاديمياً؛ ألا يكون أعيد قيده أكثر
+    من مرة واحدة، ولمجلس الجامعة -في حال الضرورة- الاستثناء من ذلك.
+  rule_type: eligibility
+  conditions:
+    - { field: years_since_interruption, operator: "<=", value: 2, unit: academic_years }
+    - { field: programme_still_active, operator: "==", value: true }
+    - { field: can_graduate_within_nominal_duration, operator: "==", value: true }
+    - { field: academically_dismissed, operator: "==", value: false }
+    - { field: previous_reenrolment_count, operator: "<", value: 1 }
+  exceptions:
+    - { condition: NECESSITY, authority: UNIVERSITY_COUNCIL, applies_to: previous_reenrolment_count }
+  required_inputs:
+    [years_since_interruption, programme_still_active,
+     can_graduate_within_nominal_duration, academically_dismissed,
+     previous_reenrolment_count]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  runtime_use: PROHIBITED_FOR_DECISION
+  runtime_use_reason: >
+    Only programme_still_active is derivable (ProgrammeRequirement rows exist).
+    Four of five inputs are MISSING, and three of them need history the schema
+    cannot represent.
+
+- policy_id: TU.REENROLMENT.LAPSED_BECOMES_NEW_APPLICANT
+  topic: reenrolment
+  title_ar: تجاوز مدة إعادة القيد يعيد الطالب مستجداً
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 32 }
+  source_text_ar: >
+    إذا تجاوز الطالب المطوي قيده المدة المتاحة لإعادة القيد جاز له التقدم للدراسة
+    في الجامعة طالباً مستجداً برقم جامعي جديد، وفق إجراءات وشروط ومعايير قبول
+    الطلبة المستجدين حينها.
+  rule_type: consequence
+  effect: MUST_REAPPLY_AS_NEW_STUDENT
+  side_effect: NEW_UNIVERSITY_ID
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  notes: >
+    Materially important and easy to miss: a new university id resets the counters
+    that are scoped "بنفس الرقم الجامعي" — notably TU.WITHDRAWAL.MAXIMUM (5) and
+    TU.VISITING.MAX_VISITS (3).
+
+- policy_id: TU.REENROLMENT.DISCIPLINARY_BAR
+  topic: reenrolment
+  title_ar: منع إعادة قيد المفصول تأديبياً قبل ثلاث سنوات
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 32 }
+  source_text_ar: >
+    لا يسمح بإعادة قيد الطالب/ـة الذي فُصل من الجامعة لأسباب تأديبية، أو تم فصله
+    من جامعة أخرى لأسباب تأديبية، إلا بعد مرور ثلاث سنوات من صدور قرار الفصل،
+    وإذا اتضح بعد إعادة قيده عدم استيفاء فترة الفصل -ثلاث سنوات كاملة- فيعد قيده
+    ملغى من تاريخ إعادة القيد.
+  rule_type: eligibility
+  condition: { field: years_since_disciplinary_dismissal, operator: ">=", value: 3 }
+  result_if_false: NOT_ELIGIBLE
+  applies_to_dismissals_from: [THIS_UNIVERSITY, OTHER_UNIVERSITY]
+  retroactive_effect: >
+    قيده ملغى من تاريخ إعادة القيد — re-enrolment granted in error is void from its
+    own date, not from discovery.
+  required_inputs: [disciplinary_dismissal_date]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  emphasis_in_source: underlined
+  runtime_use: PROHIBITED_FOR_DECISION
+  runtime_use_reason: no disciplinary record source exists
+
+- policy_id: TU.REENROLMENT.WITHDRAWN_STUDENT
+  topic: reenrolment
+  title_ar: ضوابط إعادة قيد الطالب المنسحب
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 33 }
+  source_text_ar: >
+    يعاد قيد الطالب/ـة الذي سحب ملفه من الجامعة برقمه وسجله السابق إذا تقدم لعمادة
+    القبول والتسجيل بطلب إعادة قيده في مدة أقصاها نهاية الفصل الدراسي التالي، وفي
+    نظام السنة الدراسية الكاملة إذا تقدم بالطلب في مدة أقصاها نهاية السنة الدراسية
+    التالية. ولا يحق للطالب المنسحب التقدم للجامعة مرة أخرى (برقم وسجل جديد) إلا
+    بعد مضي سنتين من تاريخ انسحابه. ولا يعاد قيد الطالب الذي سحب ملفه إذا كان
+    مفصولاً لأسباب تأديبية.
+  rule_type: eligibility
+  branches:
+    - { path: SAME_ID_AND_RECORD, deadline: END_OF_NEXT_TERM, study_system: TWO_SEMESTER }
+    - { path: SAME_ID_AND_RECORD, deadline: END_OF_NEXT_YEAR, study_system: FULL_YEAR }
+    - { path: NEW_ID_AND_RECORD, waiting_period: 2, unit: years }
+  bars:
+    - { condition: disciplinary_dismissal, effect: PERMANENTLY_NOT_ELIGIBLE }
+  required_inputs: [withdrawal_date, study_system, disciplinary_dismissal]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  runtime_use: PROHIBITED_FOR_DECISION
+  runtime_use_reason: no withdrawal date and no disciplinary record

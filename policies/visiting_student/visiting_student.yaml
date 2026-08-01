@@ -1,0 +1,190 @@
+- policy_id: TU.VISITING.DEFINITION
+  topic: visiting_student
+  title_ar: الطالب الزائر
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 31 }
+  source_text_ar: >
+    يجوز للطالب/ـة -بعد موافقة الكلية التي يدرس فيها- دراسة مقرر دراسي أو أكثر في
+    جامعة أخرى داخل المملكة أو خارجها، أو في فرع من فروع الجامعة التي ينتمي إليها
+    دون تحويله، على أن تكون دراسته متزامنة مع دراسته في جامعته أو كطالب زائر،
+    وتعادل له المقررات الدراسية التي درسها، وتُثبَّت المقررات التي تم معادلتها في
+    السجل الأكاديمي، ويحدد مجلس الجامعة الضوابط المنظمة لذلك.
+  rule_type: definition
+  requires_approval: [HOME_COLLEGE]
+  approval_covers: [visit_request, list_of_courses_to_be_studied]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: &v_approved
+    status: AUTHORITY_APPROVED
+    extracted_by: agent
+    extracted_at: "2026-08-01"
+    source_verified_by: project_owner
+    source_verified_at: "2026-08-01"
+    domain_reviewed_by: project_owner
+    domain_reviewed_at: "2026-08-01"
+    authority_approved_by: project_owner
+    authority_approved_at: "2026-08-01"
+    approval_basis: >
+      Owner instruction 2026-08-01. The project owner is acting as the authority for this
+      system's own use of these records. This is NOT a statement that the Deanship of
+      Admission and Registration has reviewed them, and it does not resolve any
+      open_question or contested marker — those survive approval unchanged.
+  extraction_confidence: high
+  notes: >
+    Answers Q95. Note the college must approve BOTH the visit and the specific
+    course list — students commonly assume only the former.
+
+- policy_id: TU.VISITING.RECOGNISED_INSTITUTION
+  topic: visiting_student
+  title_ar: أن تكون الدراسة في كلية أو جامعة معترف بها
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 31 }
+  source_text_ar: أن تكون الدراسة في كلية أو جامعة معترف بها.
+  rule_type: eligibility
+  condition: { field: host_institution_recognised, operator: "==", value: true }
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+
+- policy_id: TU.VISITING.COURSE_EQUIVALENCE
+  topic: visiting_student
+  title_ar: معادلة المقرر المدروس خارج الجامعة
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 31 }
+  source_text_ar: >
+    أن يكون المقرر الذي يدرسه الطالب خارج الجامعة معادلاً أو (مكافئاً) في مفرداته
+    لأحد المقررات التي تتضمنها متطلبات التخرج.
+  rule_type: eligibility
+  condition: { field: syllabus_equivalent_to_graduation_requirement_course, operator: "==", value: true }
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+
+- policy_id: TU.VISITING.GPA_INCLUSION
+  topic: visiting_student
+  title_ar: احتساب مقررات الطالب الزائر ضمن المعدل التراكمي
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 31 }
+  source_text_ar: >
+    لا تحتسب معدلات المقررات التي تتم معادلتها للطالب الزائر من جامعة أخرى ضمن
+    معدله التراكمي، وتثبت المقررات في سجله الأكاديمي، ويمكن احتسابها ضمن المعدل
+    التراكمي في حال استيفاء الآتي: أن تكون مفردات المقرر المُعادل مطابقة لمفردات
+    المقرر الذي يُقدمه القسم؛ أن تكون لغة دراسة المقرر مطابقة للغة دراسة المقرر
+    الذي يُقدمه القسم؛ ألا يقل تقدير المقرر المعادل عن (جيد جداً).
+  rule_type: conditional_consequence
+  default: EXCLUDED_FROM_GPA_BUT_RECORDED_ON_TRANSCRIPT
+  included_in_gpa_if_all:
+    - { field: syllabus_identical, operator: "==", value: true }
+    - { field: language_of_instruction_identical, operator: "==", value: true }
+    - { field: grade_at_least, operator: ">=", value: "جيد جداً" }
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  cross_references: [TU.GPA.GENERAL_ESTIMATE_BANDS]
+  notes: >
+    "ألا يقل عن جيد جداً" resolves against TU.GRADE.SCALE to a course weight of
+    4.00 of 5 (80%+), not against the cumulative-GPA bands. State the band name
+    rather than a derived number until a domain reviewer confirms which table applies.
+  open_question: which_table_governs_جيد_جداً_here
+
+- policy_id: TU.VISITING.MAX_UNITS_OUTSIDE
+  topic: visiting_student
+  title_ar: الحد الأقصى للوحدات كطالب زائر خارج الجامعة
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 31 }
+  source_text_ar: >
+    لا يزيد الحد الأقصى للوحدات الدراسية التي يسمح للطالب بدراستها كطالب زائر خارج
+    الجامعة عن ٢٥٪ من عدد الوحدات المطلوبة للتخرج.
+  rule_type: limit
+  max_value: 25
+  unit: percent_of_graduation_units
+  location: OUTSIDE_UNIVERSITY
+  required_inputs: [units_studied_as_visitor_outside, graduation_units_required]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  runtime_use: PROHIBITED_FOR_DECISION
+  runtime_use_reason: >
+    graduation_units_required IS derivable from ProgrammeRequirement, but
+    units_studied_as_visitor_outside is MISSING — StudentCourse carries no
+    institution-of-origin marker, so visited units are indistinguishable from
+    home units. Half the ratio is computable, which is not enough.
+
+- policy_id: TU.VISITING.MAX_UNITS_INSIDE
+  topic: visiting_student
+  title_ar: الحد الأقصى للوحدات كطالب زائر داخل الجامعة
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 31 }
+  source_text_ar: >
+    لا يزيد الحد الأقصى للوحدات الدراسية التي يسمح للطالب لدراستها كطالب زائر
+    داخل الجامعة عن (٢٤) وحدة دراسية، من عدد الوحدات المطلوبة للتخرج.
+  rule_type: limit
+  max_value: 24
+  unit: credit_units
+  location: INSIDE_UNIVERSITY_ANOTHER_BRANCH
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  runtime_use: PROHIBITED_FOR_DECISION
+
+- policy_id: TU.VISITING.NO_TRANSFER_DURING_VISIT
+  topic: visiting_student
+  title_ar: منع طلب التحويل أثناء فترة الزيارة
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 31 }
+  source_text_ar: >
+    لا يسمح للطالب طلب التحويل خلال فترة زيارته داخل أو خارج الجامعة.
+  rule_type: eligibility
+  blocks: [TU.TRANSFER.INTERNAL_COLLEGE, TU.TRANSFER.DEPARTMENT_OR_MAJOR, TU.TRANSFER.EXTERNAL]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  runtime_use: PARTIALLY_EVALUABLE
+  runtime_use_note: >
+    Student.status carries 'VISITOR TO ANOTHER UNIVERSITY' (22 students) and
+    'VISITOR INACTIVE' (7). That is a CURRENT-state flag of unknown freshness — it
+    supports flagging the bar as likely applicable, never a definitive verdict.
+
+- policy_id: TU.VISITING.MAX_VISITS
+  topic: visiting_student
+  title_ar: الحد الأقصى لمرات الزيارة
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 31 }
+  source_text_ar: >
+    لا تزيد مرات الزيارة عن ثلاث مرات طوال فترة التحاق الطالب بالجامعة ولنفس
+    الرقم الجامعي.
+  rule_type: limit
+  max_value: 3
+  unit: visits
+  scope: entire_enrolment_period
+  scope_qualifier: same_university_id
+  required_inputs: [visit_count]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  runtime_use: PROHIBITED_FOR_DECISION
+  runtime_use_reason: visit_count is MISSING — only a current-state flag exists
+  cross_references: [TU.REENROLMENT.LAPSED_BECOMES_NEW_APPLICANT]

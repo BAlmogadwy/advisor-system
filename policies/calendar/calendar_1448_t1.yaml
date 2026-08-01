@@ -1,0 +1,727 @@
+document_id: TU_ACADEMIC_CALENDAR_1448_T1
+title_ar: التقويم الأكاديمي - جامعة طيبة
+authority_level: OFFICIAL_ACADEMIC_CALENDAR
+covers:
+  academic_year_hijri: '1448'
+  term: 1
+  term_ar: الفصل الدراسي الأول
+  gregorian_span: 2026-08 .. 2027-01
+scope_warning: SINGLE TERM ONLY. This capture covers الفصل الدراسي الأول 1448هـ. It says nothing about
+  term 2, the summer term, or any other academic year. A deadline question outside that span is UNANSWERABLE
+  from this source — do not extrapolate a date from one term to another.
+capture:
+  captured_at: '2026-08-01'
+  captured_from: live university web page (not an archival PDF)
+  source_file: sources/TU_ACADEMIC_CALENDAR_1448_T1.html
+  source_file_sha256: d6297a4dd1eea5f4328274247c2a82cdb1dd9d20c1f2fae01356bebb768ad05d
+  note: A live page can change without notice. Every event was marked 'القادمة' (upcoming) at capture,
+    which is consistent with a capture date before the earliest listed event (2026-08-09). Re-capture
+    before relying on it in a later term.
+date_handling:
+  dual_calendar: Hijri and Gregorian are both recorded AS PRINTED by the university.
+  never_compute: Do not derive one calendar from the other. Hijri-Gregorian alignment is an observational
+    matter the university has already decided for these rows; a computed conversion can differ by a day
+    and would silently move a deadline.
+  iso_field: '`iso` renames the Arabic Gregorian month the university already wrote (أغسطس -> 08). It
+    is a relabelling of the SAME calendar, not a Hijri conversion, and is provided only so events sort
+    and compare mechanically.'
+  deadline_vs_window: window_completeness distinguishes DEADLINE_ONLY (source gives a closing date; the
+    opening date is unpublished and the من/إلى columns merely repeat it) from FULL_WINDOW and POINT_EVENT.
+    Treating a DEADLINE_ONLY row as a one-day window would invent an opening date the university never
+    stated.
+verification:
+  status: AUTHORITY_APPROVED
+  extracted_by: policies/tools/extract_calendar.py
+  extracted_at: '2026-08-01'
+  source_verified_by: project_owner
+  domain_reviewed_by: project_owner
+  authority_approved_by: project_owner
+  approval_basis: Owner instruction 2026-08-01. The owner is the authority for this system's own use of
+    these dates. Scope limits and DEADLINE_ONLY markers are unaffected by approval.
+counts:
+  events: 37
+  student_facing: 31
+  staff_facing: 6
+events:
+- event_id: TU.CAL.1448T1.2CB0D101E2
+  event_ar: بداية ونهاية فترة تسجيل الرغبات في التخصصات المزدوجة والفرعية
+  teaching_weeks: null
+  window_completeness: FULL_WINDOW
+  deadline_only_note: null
+  starts:
+    hijri: 26-صفر-1448
+    gregorian: 09-أغسطس-2026
+    as_printed: من 26-صفر-1448 - 09-أغسطس-2026
+    iso: '2026-08-09'
+  ends:
+    hijri: 01-ربيع الأول-1448
+    gregorian: 13-أغسطس-2026
+    as_printed: إلى 01-ربيع الأول-1448 - 13-أغسطس-2026
+    iso: '2026-08-13'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.3B082D1A26
+  event_ar: انتهاء تنفيذ طلبات تأجيل الفصل الدراسي الأول 1448هـ
+  teaching_weeks: null
+  window_completeness: DEADLINE_ONLY
+  deadline_only_note: The source publishes only the closing date for this row. Say 'آخر موعد'; never state
+    an opening date or a date range.
+  starts:
+    hijri: 02-ربيع الأول-1448
+    gregorian: 15-أغسطس-2026
+    as_printed: من 02-ربيع الأول-1448 - 15-أغسطس-2026
+    iso: '2026-08-15'
+  ends:
+    hijri: 02-ربيع الأول-1448
+    gregorian: 15-أغسطس-2026
+    as_printed: إلى 02-ربيع الأول-1448 - 15-أغسطس-2026
+    iso: '2026-08-15'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.6E7524CB02
+  event_ar: فترة استقبال وتنفيذ طلبات الزيارة الخارجية (من وإلى جامعة طيبة) للفصل الدراسي الأول 1448هـ
+  teaching_weeks: null
+  window_completeness: FULL_WINDOW
+  deadline_only_note: null
+  starts:
+    hijri: 03-ربيع الأول-1448
+    gregorian: 16-أغسطس-2026
+    as_printed: من 03-ربيع الأول-1448 - 16-أغسطس-2026
+    iso: '2026-08-16'
+  ends:
+    hijri: 09-ربيع الأول-1448
+    gregorian: 22-أغسطس-2026
+    as_printed: إلى 09-ربيع الأول-1448 - 22-أغسطس-2026
+    iso: '2026-08-22'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.FEE1B92EF2
+  event_ar: فترة استقبال وتنفيذ طلبات التحويل من تخصص لآخر داخل الكلية للفصل الدراسي الأول 1448هـ
+  teaching_weeks: null
+  window_completeness: FULL_WINDOW
+  deadline_only_note: null
+  starts:
+    hijri: 03-ربيع الأول-1448
+    gregorian: 16-أغسطس-2026
+    as_printed: من 03-ربيع الأول-1448 - 16-أغسطس-2026
+    iso: '2026-08-16'
+  ends:
+    hijri: 09-ربيع الأول-1448
+    gregorian: 22-أغسطس-2026
+    as_printed: إلى 09-ربيع الأول-1448 - 22-أغسطس-2026
+    iso: '2026-08-22'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.63DD69A0FA
+  event_ar: فترة استقبال وتنفيذ طلبات الزيارة الداخلية للفصل الدراسي الأول 1448هـ
+  teaching_weeks: null
+  window_completeness: FULL_WINDOW
+  deadline_only_note: null
+  starts:
+    hijri: 03-ربيع الأول-1448
+    gregorian: 16-أغسطس-2026
+    as_printed: من 03-ربيع الأول-1448 - 16-أغسطس-2026
+    iso: '2026-08-16'
+  ends:
+    hijri: 09-ربيع الأول-1448
+    gregorian: 22-أغسطس-2026
+    as_printed: إلى 09-ربيع الأول-1448 - 22-أغسطس-2026
+    iso: '2026-08-22'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.5A9E6FC5D1
+  event_ar: فترة استقبال وتنفيذ طلبات إعادة القيد للفصل الدراسي الأول 1448هـ
+  teaching_weeks: null
+  window_completeness: FULL_WINDOW
+  deadline_only_note: null
+  starts:
+    hijri: 03-ربيع الأول-1448
+    gregorian: 16-أغسطس-2026
+    as_printed: من 03-ربيع الأول-1448 - 16-أغسطس-2026
+    iso: '2026-08-16'
+  ends:
+    hijri: 09-ربيع الأول-1448
+    gregorian: 22-أغسطس-2026
+    as_printed: إلى 09-ربيع الأول-1448 - 22-أغسطس-2026
+    iso: '2026-08-22'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.5130E5559E
+  event_ar: التسجيل الآلي للطلبة
+  teaching_weeks: null
+  window_completeness: FULL_WINDOW
+  deadline_only_note: null
+  starts:
+    hijri: 05-ربيع الأول-1448
+    gregorian: 18-أغسطس-2026
+    as_printed: من 05-ربيع الأول-1448 - 18-أغسطس-2026
+    iso: '2026-08-18'
+  ends:
+    hijri: 06-ربيع الأول-1448
+    gregorian: 19-أغسطس-2026
+    as_printed: إلى 06-ربيع الأول-1448 - 19-أغسطس-2026
+    iso: '2026-08-19'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.75ED92D1CB
+  event_ar: نتائج طلبات التسجيل في التخصصات المزدوجة والفرعية
+  teaching_weeks: null
+  window_completeness: POINT_EVENT
+  deadline_only_note: null
+  starts:
+    hijri: 05-ربيع الأول-1448
+    gregorian: 18-أغسطس-2026
+    as_printed: من 05-ربيع الأول-1448 - 18-أغسطس-2026
+    iso: '2026-08-18'
+  ends:
+    hijri: 05-ربيع الأول-1448
+    gregorian: 18-أغسطس-2026
+    as_printed: إلى 05-ربيع الأول-1448 - 18-أغسطس-2026
+    iso: '2026-08-18'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.E92DB8DA87
+  event_ar: الحذف والإضافة عبر بوابة الطالب الالكترونية لمقررات التخصص الأساسي
+  teaching_weeks: null
+  window_completeness: FULL_WINDOW
+  deadline_only_note: null
+  starts:
+    hijri: 07-ربيع الأول-1448
+    gregorian: 20-أغسطس-2026
+    as_printed: من 07-ربيع الأول-1448 - 20-أغسطس-2026
+    iso: '2026-08-20'
+  ends:
+    hijri: 09-ربيع الأول-1448
+    gregorian: 22-أغسطس-2026
+    as_printed: إلى 09-ربيع الأول-1448 - 22-أغسطس-2026
+    iso: '2026-08-22'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.0BBCD43E7C
+  event_ar: بداية الدراسة للفصل الدراسي الأول
+  teaching_weeks: الأول
+  window_completeness: POINT_EVENT
+  deadline_only_note: null
+  starts:
+    hijri: 10-ربيع الأول-1448
+    gregorian: 23-أغسطس-2026
+    as_printed: من 10-ربيع الأول-1448 - 23-أغسطس-2026
+    iso: '2026-08-23'
+  ends:
+    hijri: 10-ربيع الأول-1448
+    gregorian: 23-أغسطس-2026
+    as_printed: إلى 10-ربيع الأول-1448 - 23-أغسطس-2026
+    iso: '2026-08-23'
+  category_ar: بداية الدراسة
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.9D65C049A3
+  event_ar: الإرشاد الأكاديمي للطلاب والطالبات
+  teaching_weeks: الأول
+  window_completeness: FULL_WINDOW
+  deadline_only_note: null
+  starts:
+    hijri: 10-ربيع الأول-1448
+    gregorian: 23-أغسطس-2026
+    as_printed: من 10-ربيع الأول-1448 - 23-أغسطس-2026
+    iso: '2026-08-23'
+  ends:
+    hijri: 14-ربيع الأول-1448
+    gregorian: 27-أغسطس-2026
+    as_printed: إلى 14-ربيع الأول-1448 - 27-أغسطس-2026
+    iso: '2026-08-27'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.51A74F7949
+  event_ar: انتهاء تنفيذ إسناد شعب المقررات (آليا) لأعضاء هيئة التدريس
+  teaching_weeks: الأول
+  window_completeness: DEADLINE_ONLY
+  deadline_only_note: The source publishes only the closing date for this row. Say 'آخر موعد'; never state
+    an opening date or a date range.
+  starts:
+    hijri: 13-ربيع الأول-1448
+    gregorian: 26-أغسطس-2026
+    as_printed: من 13-ربيع الأول-1448 - 26-أغسطس-2026
+    iso: '2026-08-26'
+  ends:
+    hijri: 13-ربيع الأول-1448
+    gregorian: 26-أغسطس-2026
+    as_printed: إلى 13-ربيع الأول-1448 - 26-أغسطس-2026
+    iso: '2026-08-26'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STAFF
+- event_id: TU.CAL.1448T1.9F3B3FBFA5
+  event_ar: انتهاء تنفيذ تسجيل مقررات التخصصات المزدوجة والفرعية
+  teaching_weeks: الأول
+  window_completeness: DEADLINE_ONLY
+  deadline_only_note: The source publishes only the closing date for this row. Say 'آخر موعد'; never state
+    an opening date or a date range.
+  starts:
+    hijri: 13-ربيع الأول-1448
+    gregorian: 26-أغسطس-2026
+    as_printed: من 13-ربيع الأول-1448 - 26-أغسطس-2026
+    iso: '2026-08-26'
+  ends:
+    hijri: 13-ربيع الأول-1448
+    gregorian: 26-أغسطس-2026
+    as_printed: إلى 13-ربيع الأول-1448 - 26-أغسطس-2026
+    iso: '2026-08-26'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.40352CE8CE
+  event_ar: نتائج طلبات التحويل من تخصص لآخر داخل الكلية
+  teaching_weeks: الأول
+  window_completeness: POINT_EVENT
+  deadline_only_note: null
+  starts:
+    hijri: 14-ربيع الأول-1448
+    gregorian: 27-أغسطس-2026
+    as_printed: من 14-ربيع الأول-1448 - 27-أغسطس-2026
+    iso: '2026-08-27'
+  ends:
+    hijri: 14-ربيع الأول-1448
+    gregorian: 27-أغسطس-2026
+    as_printed: إلى 14-ربيع الأول-1448 - 27-أغسطس-2026
+    iso: '2026-08-27'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.A133D8D3EF
+  event_ar: نتائج طلبات الزيارة الداخلية (بين فروع الجامعة) وطلبات الزيارة الخارجية (من وإلى جامعة طيبة)
+  teaching_weeks: الأول
+  window_completeness: POINT_EVENT
+  deadline_only_note: null
+  starts:
+    hijri: 14-ربيع الأول-1448
+    gregorian: 27-أغسطس-2026
+    as_printed: من 14-ربيع الأول-1448 - 27-أغسطس-2026
+    iso: '2026-08-27'
+  ends:
+    hijri: 14-ربيع الأول-1448
+    gregorian: 27-أغسطس-2026
+    as_printed: إلى 14-ربيع الأول-1448 - 27-أغسطس-2026
+    iso: '2026-08-27'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.65D979B208
+  event_ar: انتهاء تنفيذ الانسحاب من التخصصات المزدوجة والتخصصات الفرعية
+  teaching_weeks: الخامس
+  window_completeness: DEADLINE_ONLY
+  deadline_only_note: The source publishes only the closing date for this row. Say 'آخر موعد'; never state
+    an opening date or a date range.
+  starts:
+    hijri: 11-ربيع الآخر-1448
+    gregorian: 22-سبتمبر-2026
+    as_printed: من 11-ربيع الآخر-1448 - 22-سبتمبر-2026
+    iso: '2026-09-22'
+  ends:
+    hijri: 11-ربيع الآخر-1448
+    gregorian: 22-سبتمبر-2026
+    as_printed: إلى 11-ربيع الآخر-1448 - 22-سبتمبر-2026
+    iso: '2026-09-22'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.3CA934AD11
+  event_ar: إجازة اليوم الوطني
+  teaching_weeks: الخامس
+  window_completeness: FULL_WINDOW
+  deadline_only_note: null
+  starts:
+    hijri: 12-ربيع الآخر-1448
+    gregorian: 23-سبتمبر-2026
+    as_printed: من 12-ربيع الآخر-1448 - 23-سبتمبر-2026
+    iso: '2026-09-23'
+  ends:
+    hijri: 15-ربيع الآخر-1448
+    gregorian: 26-سبتمبر-2026
+    as_printed: إلى 15-ربيع الآخر-1448 - 26-سبتمبر-2026
+    iso: '2026-09-26'
+  category_ar: يوم وطني
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.880FE4BC03
+  event_ar: تسليم تقرير البرنامج للعام الجامعي 1447هـ
+  teaching_weeks: السابع
+  window_completeness: DEADLINE_ONLY
+  deadline_only_note: The source publishes only the closing date for this row. Say 'آخر موعد'; never state
+    an opening date or a date range.
+  starts:
+    hijri: 25-ربيع الآخر-1448
+    gregorian: 06-أكتوبر-2026
+    as_printed: من 25-ربيع الآخر-1448 - 06-أكتوبر-2026
+    iso: '2026-10-06'
+  ends:
+    hijri: 25-ربيع الآخر-1448
+    gregorian: 06-أكتوبر-2026
+    as_printed: إلى 25-ربيع الآخر-1448 - 06-أكتوبر-2026
+    iso: '2026-10-06'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STAFF
+- event_id: TU.CAL.1448T1.9FFEF452C7
+  event_ar: تسجيل الرغبات من قبل الطلاب والطالبات للفصل الدراسي الثاني للعام الجامعي 1448هـ
+  teaching_weeks: الثامن
+  window_completeness: FULL_WINDOW
+  deadline_only_note: null
+  starts:
+    hijri: 30-ربيع الآخر-1448
+    gregorian: 11-أكتوبر-2026
+    as_printed: من 30-ربيع الآخر-1448 - 11-أكتوبر-2026
+    iso: '2026-10-11'
+  ends:
+    hijri: 04-جمادى الأولى-1448
+    gregorian: 15-أكتوبر-2026
+    as_printed: إلى 04-جمادى الأولى-1448 - 15-أكتوبر-2026
+    iso: '2026-10-15'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.4C8E0ED3DB
+  event_ar: انتهاء تنفيذ الانسحاب بعذر من المقرر للفصل الدراسي الأول 1448هـ (للنظام الفصلي والنظام السنوي)
+  teaching_weeks: الثامن
+  window_completeness: DEADLINE_ONLY
+  deadline_only_note: The source publishes only the closing date for this row. Say 'آخر موعد'; never state
+    an opening date or a date range.
+  starts:
+    hijri: 03-جمادى الأولى-1448
+    gregorian: 14-أكتوبر-2026
+    as_printed: من 03-جمادى الأولى-1448 - 14-أكتوبر-2026
+    iso: '2026-10-14'
+  ends:
+    hijri: 03-جمادى الأولى-1448
+    gregorian: 14-أكتوبر-2026
+    as_printed: إلى 03-جمادى الأولى-1448 - 14-أكتوبر-2026
+    iso: '2026-10-14'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.F0F5B86EF4
+  event_ar: إنشاء شعب المقررات ومجموعات الجداول الدراسية للفصل الدراسي الثاني 1448هـ في نظام القبول والتسجيل
+    من قبل الأقسام
+  teaching_weeks: العاشر والحادي عشر
+  window_completeness: FULL_WINDOW
+  deadline_only_note: null
+  starts:
+    hijri: 14-جمادى الأولى-1448
+    gregorian: 25-أكتوبر-2026
+    as_printed: من 14-جمادى الأولى-1448 - 25-أكتوبر-2026
+    iso: '2026-10-25'
+  ends:
+    hijri: 25-جمادى الأولى-1448
+    gregorian: 05-نوفمبر-2026
+    as_printed: إلى 25-جمادى الأولى-1448 - 05-نوفمبر-2026
+    iso: '2026-11-05'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STAFF
+- event_id: TU.CAL.1448T1.8A59771F78
+  event_ar: فترة الاختبارات النصفية لمقررات المتطلبات العامة
+  teaching_weeks: التاسع
+  window_completeness: FULL_WINDOW
+  deadline_only_note: null
+  starts:
+    hijri: 14-جمادى الأولى-1448
+    gregorian: 25-أكتوبر-2026
+    as_printed: من 14-جمادى الأولى-1448 - 25-أكتوبر-2026
+    iso: '2026-10-25'
+  ends:
+    hijri: 18-جمادى الأولى-1448
+    gregorian: 29-أكتوبر-2026
+    as_printed: إلى 18-جمادى الأولى-1448 - 29-أكتوبر-2026
+    iso: '2026-10-29'
+  category_ar: الإختبارات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.C6FAD43E10
+  event_ar: انتهاء تنفيذ طلبات الاعتذار عن الدراسة للفصل الدراسي الأول 1448هـ (للنظام الفصلي)
+  teaching_weeks: العاشر
+  window_completeness: DEADLINE_ONLY
+  deadline_only_note: The source publishes only the closing date for this row. Say 'آخر موعد'; never state
+    an opening date or a date range.
+  starts:
+    hijri: 17-جمادى الأولى-1448
+    gregorian: 28-أكتوبر-2026
+    as_printed: من 17-جمادى الأولى-1448 - 28-أكتوبر-2026
+    iso: '2026-10-28'
+  ends:
+    hijri: 17-جمادى الأولى-1448
+    gregorian: 28-أكتوبر-2026
+    as_printed: إلى 17-جمادى الأولى-1448 - 28-أكتوبر-2026
+    iso: '2026-10-28'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.919DA0ADB4
+  event_ar: إجازة الخريف بنهاية دوام يوم الخميس
+  teaching_weeks: الثالث عشر
+  window_completeness: FULL_WINDOW
+  deadline_only_note: null
+  starts:
+    hijri: 09-جمادى الآخرة-1448
+    gregorian: 19-نوفمبر-2026
+    as_printed: من 09-جمادى الآخرة-1448 - 19-نوفمبر-2026
+    iso: '2026-11-19'
+  ends:
+    hijri: 18-جمادى الآخرة-1448
+    gregorian: 28-نوفمبر-2026
+    as_printed: إلى 18-جمادى الآخرة-1448 - 28-نوفمبر-2026
+    iso: '2026-11-28'
+  category_ar: إجازة رسمية
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.69AC6B7964
+  event_ar: تقييم العملية التعليمية من قبل الطلاب والطالبات من خلال منصة (بوابة النظام الأكاديمي للطلاب)
+  teaching_weeks: الرابع عشر
+  window_completeness: FULL_WINDOW
+  deadline_only_note: null
+  starts:
+    hijri: 19-جمادى الآخرة-1448
+    gregorian: 29-نوفمبر-2026
+    as_printed: من 19-جمادى الآخرة-1448 - 29-نوفمبر-2026
+    iso: '2026-11-29'
+  ends:
+    hijri: 23-جمادى الآخرة-1448
+    gregorian: 03-ديسمبر-2026
+    as_printed: إلى 23-جمادى الآخرة-1448 - 03-ديسمبر-2026
+    iso: '2026-12-03'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.6043ABCBCB
+  event_ar: استئناف الدراسة بعد الإجازة
+  teaching_weeks: الرابع عشر
+  window_completeness: POINT_EVENT
+  deadline_only_note: null
+  starts:
+    hijri: 19-جمادى الآخرة-1448
+    gregorian: 29-نوفمبر-2026
+    as_printed: من 19-جمادى الآخرة-1448 - 29-نوفمبر-2026
+    iso: '2026-11-29'
+  ends:
+    hijri: 19-جمادى الآخرة-1448
+    gregorian: 29-نوفمبر-2026
+    as_printed: إلى 19-جمادى الآخرة-1448 - 29-نوفمبر-2026
+    iso: '2026-11-29'
+  category_ar: بداية الدراسة
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.2FD02E8B5F
+  event_ar: انتهاء تنفيذ طلبات تأجيل الدراسة للفصل الثاني 1448هـ
+  teaching_weeks: الرابع عشر
+  window_completeness: DEADLINE_ONLY
+  deadline_only_note: The source publishes only the closing date for this row. Say 'آخر موعد'; never state
+    an opening date or a date range.
+  starts:
+    hijri: 22-جمادى الآخرة-1448
+    gregorian: 02-ديسمبر-2026
+    as_printed: من 22-جمادى الآخرة-1448 - 02-ديسمبر-2026
+    iso: '2026-12-02'
+  ends:
+    hijri: 22-جمادى الآخرة-1448
+    gregorian: 02-ديسمبر-2026
+    as_printed: إلى 22-جمادى الآخرة-1448 - 02-ديسمبر-2026
+    iso: '2026-12-02'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.A1AB283A0A
+  event_ar: انتهاء تنفيذ طلبات الانسحاب النهائي من الجامعة في الفصل الدراسي الأول 1448هـ
+  teaching_weeks: الرابع عشر
+  window_completeness: DEADLINE_ONLY
+  deadline_only_note: The source publishes only the closing date for this row. Say 'آخر موعد'; never state
+    an opening date or a date range.
+  starts:
+    hijri: 22-جمادى الآخرة-1448
+    gregorian: 02-ديسمبر-2026
+    as_printed: من 22-جمادى الآخرة-1448 - 02-ديسمبر-2026
+    iso: '2026-12-02'
+  ends:
+    hijri: 22-جمادى الآخرة-1448
+    gregorian: 02-ديسمبر-2026
+    as_printed: إلى 22-جمادى الآخرة-1448 - 02-ديسمبر-2026
+    iso: '2026-12-02'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.9D3426DFD4
+  event_ar: انتهاء تنفيذ طلبات تعديل الدرجة وتقدير (غير مكتمل – ل - IC) في الفصل الدراسي الثاني والفصل
+    الصيفي للعام الجامعي 1447هـ
+  teaching_weeks: الرابع عشر
+  window_completeness: DEADLINE_ONLY
+  deadline_only_note: The source publishes only the closing date for this row. Say 'آخر موعد'; never state
+    an opening date or a date range.
+  starts:
+    hijri: 22-جمادى الآخرة-1448
+    gregorian: 02-ديسمبر-2026
+    as_printed: من 22-جمادى الآخرة-1448 - 02-ديسمبر-2026
+    iso: '2026-12-02'
+  ends:
+    hijri: 22-جمادى الآخرة-1448
+    gregorian: 02-ديسمبر-2026
+    as_printed: إلى 22-جمادى الآخرة-1448 - 02-ديسمبر-2026
+    iso: '2026-12-02'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.5B1D641422
+  event_ar: انتهاء تنفيذ طلبات معادلة المقررات في الفصل الدراسي الأول 1448هـ
+  teaching_weeks: الرابع عشر
+  window_completeness: DEADLINE_ONLY
+  deadline_only_note: The source publishes only the closing date for this row. Say 'آخر موعد'; never state
+    an opening date or a date range.
+  starts:
+    hijri: 22-جمادى الآخرة-1448
+    gregorian: 02-ديسمبر-2026
+    as_printed: من 22-جمادى الآخرة-1448 - 02-ديسمبر-2026
+    iso: '2026-12-02'
+  ends:
+    hijri: 22-جمادى الآخرة-1448
+    gregorian: 02-ديسمبر-2026
+    as_printed: إلى 22-جمادى الآخرة-1448 - 02-ديسمبر-2026
+    iso: '2026-12-02'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.AED735B90B
+  event_ar: فترة الاختبارات النهائية للمقررات العامة والاختيارية والعملية
+  teaching_weeks: السابع عشر
+  window_completeness: FULL_WINDOW
+  deadline_only_note: null
+  starts:
+    hijri: 11-رجب-1448
+    gregorian: 20-ديسمبر-2026
+    as_printed: من 11-رجب-1448 - 20-ديسمبر-2026
+    iso: '2026-12-20'
+  ends:
+    hijri: 15-رجب-1448
+    gregorian: 24-ديسمبر-2026
+    as_printed: إلى 15-رجب-1448 - 24-ديسمبر-2026
+    iso: '2026-12-24'
+  category_ar: الإختبارات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.5A0CAA38C1
+  event_ar: فترة الاختبارات النهائية للمقررات التخصصية والحرة
+  teaching_weeks: الثامن عشر والتاسع عشر
+  window_completeness: FULL_WINDOW
+  deadline_only_note: null
+  starts:
+    hijri: 18-رجب-1448
+    gregorian: 27-ديسمبر-2026
+    as_printed: من 18-رجب-1448 - 27-ديسمبر-2026
+    iso: '2026-12-27'
+  ends:
+    hijri: 29-رجب-1448
+    gregorian: 07-يناير-2027
+    as_printed: إلى 29-رجب-1448 - 07-يناير-2027
+    iso: '2027-01-07'
+  category_ar: الإختبارات
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.A5EED0DEC3
+  event_ar: إجازة منتصف العام الجامعي 1448هـ بنهاية دوام يوم الخميس
+  teaching_weeks: التاسع عشر
+  window_completeness: FULL_WINDOW
+  deadline_only_note: null
+  starts:
+    hijri: 29-رجب-1448
+    gregorian: 07-يناير-2027
+    as_printed: من 29-رجب-1448 - 07-يناير-2027
+    iso: '2027-01-07'
+  ends:
+    hijri: 08-شعبان-1448
+    gregorian: 16-يناير-2027
+    as_printed: إلى 08-شعبان-1448 - 16-يناير-2027
+    iso: '2027-01-16'
+  category_ar: إجازة رسمية
+  state_at_capture_ar: القادمة
+  audience: STUDENT
+- event_id: TU.CAL.1448T1.605CCB524A
+  event_ar: انتهاء رصد الدرجات النهائية من قبل أعضاء هيئة التدريس من خلال منصة (بوابة النظام الأكاديمي
+    لأعضاء هيئة التدريس)
+  teaching_weeks: التاسع عشر
+  window_completeness: DEADLINE_ONLY
+  deadline_only_note: The source publishes only the closing date for this row. Say 'آخر موعد'; never state
+    an opening date or a date range.
+  starts:
+    hijri: 01-شعبان-1448
+    gregorian: 09-يناير-2027
+    as_printed: من 01-شعبان-1448 - 09-يناير-2027
+    iso: '2027-01-09'
+  ends:
+    hijri: 01-شعبان-1448
+    gregorian: 09-يناير-2027
+    as_printed: إلى 01-شعبان-1448 - 09-يناير-2027
+    iso: '2027-01-09'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STAFF
+- event_id: TU.CAL.1448T1.E0418972C8
+  event_ar: إغلاق أعمال الفصل الدراسي الأول للعام الجامعي 1448هـ
+  teaching_weeks: null
+  window_completeness: POINT_EVENT
+  deadline_only_note: null
+  starts:
+    hijri: 02-شعبان-1448
+    gregorian: 10-يناير-2027
+    as_printed: من 02-شعبان-1448 - 10-يناير-2027
+    iso: '2027-01-10'
+  ends:
+    hijri: 02-شعبان-1448
+    gregorian: 10-يناير-2027
+    as_printed: إلى 02-شعبان-1448 - 10-يناير-2027
+    iso: '2027-01-10'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STAFF
+- event_id: TU.CAL.1448T1.887361D621
+  event_ar: تسليم تقرير المقرر من قبل عضو هيئة التدريس
+  teaching_weeks: null
+  window_completeness: DEADLINE_ONLY
+  deadline_only_note: The source publishes only the closing date for this row. Say 'آخر موعد'; never state
+    an opening date or a date range.
+  starts:
+    hijri: 02-شعبان-1448
+    gregorian: 10-يناير-2027
+    as_printed: من 02-شعبان-1448 - 10-يناير-2027
+    iso: '2027-01-10'
+  ends:
+    hijri: 02-شعبان-1448
+    gregorian: 10-يناير-2027
+    as_printed: إلى 02-شعبان-1448 - 10-يناير-2027
+    iso: '2027-01-10'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STAFF
+- event_id: TU.CAL.1448T1.1E33B429C5
+  event_ar: توزيع وثائق الخريجين في الفصل الدراسي الأول 1448هـ
+  teaching_weeks: null
+  window_completeness: POINT_EVENT
+  deadline_only_note: null
+  starts:
+    hijri: 12-شعبان-1448
+    gregorian: 20-يناير-2027
+    as_printed: من 12-شعبان-1448 - 20-يناير-2027
+    iso: '2027-01-20'
+  ends:
+    hijri: 12-شعبان-1448
+    gregorian: 20-يناير-2027
+    as_printed: إلى 12-شعبان-1448 - 20-يناير-2027
+    iso: '2027-01-20'
+  category_ar: مواعيد الإجراءات
+  state_at_capture_ar: القادمة
+  audience: STUDENT

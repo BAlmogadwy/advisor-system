@@ -1,0 +1,17 @@
+# Source documents are EVIDENCE. They are identified by SHA-256 in
+# policies/sources.yaml, and the extractors refuse to run on a hash mismatch.
+#
+# With core.autocrlf=true (the Windows default, and set in this repo), git rewrites
+# line endings on checkout. The blob stored in git stays correct, but the file on
+# disk does not — the calendar HTML committed as LF materialises as CRLF in a fresh
+# clone, its hash changes, and extract_calendar.py stops with a mismatch. The PDF
+# escapes this only because git auto-detects it as binary.
+#
+# Caught by validating from a clean worktree rather than the one the files were
+# authored in. Marking these paths binary tells git to leave the bytes alone, which
+# is the only way a content hash can mean anything across machines.
+policies/sources/** -text -diff
+
+# Generated from the PDF text layer; their SHA-256s are recorded in INDEX.json, so
+# they are subject to exactly the same corruption.
+policies/evidence/page_text/** -text

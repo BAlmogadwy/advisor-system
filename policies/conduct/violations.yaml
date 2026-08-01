@@ -1,0 +1,121 @@
+- policy_id: TU.CONDUCT.VIOLATION_TYPES
+  topic: student_conduct
+  title_ar: أنواع المخالفات الطلابية
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 38 }
+  source_text_ar: >
+    الإخلال بنظام الكليات أو مرافق الجامعة الأخرى، أو تعطيل سير النشاط بأي صورة
+    كانت؛ الإخلال بنظام المحاضرات أو الدروس العلمية، أو الامتناع عن حضورها؛
+    الإخلال بنظام الاختبارات بالغش أو محاولة الغش؛ القيام بأي فعل يمس الدين أو
+    يخل بحسن السيرة والسلوك، أو المساس بسمعة الجامعة؛ الاعتداء على منسوبي الجامعة
+    موظفين أو طلاب أو إهانتهم؛ التعديل والتغيير في الأوراق الرسمية أو الإدلاء
+    بمعلومات غير صحيحة عن الجامعة؛ امتناع الطالب عن الامتثال للعقوبة التي تقرر من
+    الجهات المختصة.
+  rule_type: enumeration
+  governed_by: "لائحة السلوك والانضباط الطلابي"
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: &v_approved
+    status: AUTHORITY_APPROVED
+    extracted_by: agent
+    extracted_at: "2026-08-01"
+    source_verified_by: project_owner
+    source_verified_at: "2026-08-01"
+    domain_reviewed_by: project_owner
+    domain_reviewed_at: "2026-08-01"
+    authority_approved_by: project_owner
+    authority_approved_at: "2026-08-01"
+    approval_basis: >
+      Owner instruction 2026-08-01. The project owner is acting as the authority for this
+      system's own use of these records. This is NOT a statement that the Deanship of
+      Admission and Registration has reviewed them, and it does not resolve any
+      open_question or contested marker — those survive approval unchanged.
+  extraction_confidence: high
+  notes: >
+    Note the second item: refusing to attend lectures is itself listed as a
+    disciplinary violation, separate from the 25% deprivation threshold.
+
+- policy_id: TU.CONDUCT.PENALTIES
+  topic: student_conduct
+  title_ar: العقوبات التأديبية
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 38 }
+  source_text_ar: >
+    التنبيه الشفوي أو الكتابي، والإنذار، حرمان 20% من علامات المقرر وقد يصل إلى
+    حرمانه من المقرر باعتباره راسبا، حرمان المكافأة أو المنحة لمدة شهر، الحرمان
+    المؤقت أو النهائي من بعض الخدمات كالتغذية والأنشطة الطلابية لمدة فصل دراسي،
+    الفصل من الجامعة لمدة فصل دراسي وقد يعتبر راسبا فيه الفصل النهائي من الجامعة.
+  rule_type: enumeration
+  penalties:
+    - { code: VERBAL_OR_WRITTEN_WARNING, ar: التنبيه الشفوي أو الكتابي }
+    - { code: FORMAL_WARNING, ar: الإنذار }
+    - { code: MARK_DEDUCTION, ar: حرمان 20% من علامات المقرر, value: 20, unit: percent_of_course_marks }
+    - { code: COURSE_DEPRIVATION_AS_FAIL, ar: الحرمان من المقرر باعتباره راسبا }
+    - { code: STIPEND_SUSPENSION, ar: حرمان المكافأة أو المنحة, duration: 1, unit: month }
+    - { code: SERVICE_SUSPENSION, ar: الحرمان المؤقت أو النهائي من بعض الخدمات كالتغذية والأنشطة الطلابية, duration: 1, unit: semester, temporary_or_permanent: true }
+    - { code: SUSPENSION_FROM_UNIVERSITY, ar: الفصل من الجامعة لمدة فصل دراسي, duration: 1, unit: semester, may_count_as_fail: true }
+    - { code: PERMANENT_DISMISSAL, ar: الفصل النهائي من الجامعة }
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: medium
+  transcription_risk: >
+    Rendered as a run-on paragraph rather than a structured list; the decomposition
+    into discrete penalties above is the extractor's, not the source's.
+  adjudicated_against_page: >
+    2026-08-01, against the PDF text layer for p.38, resolving a disagreement
+    between two independent extractions. BOTH were partly wrong.
+      - "المؤقت أو النهائي" qualifies الخدمات (service deprivation), NOT dismissal.
+        One extraction attached it to dismissal; that reading is not supported.
+      - BUT the sentence ends "...وقد يعتبر راسبا فيه الفصل النهائي من الجامعة"
+        with NO separator, and PERMANENT_DISMISSAL is a distinct listed penalty.
+        This extraction had omitted it entirely. Now added.
+      - Order corrected: stipend suspension is listed THIRD from last on the page,
+        not last. The earlier ordering was invented.
+  open_question: >
+    The run-on between "وقد يعتبر راسبا فيه" and "الفصل النهائي من الجامعة" carries
+    no punctuation in either the rendered page or the text layer. The reading above
+    treats them as two penalties; a reading treating the second as a qualifier of
+    the first is grammatically possible. Both independent extractions misparsed this
+    sentence in different directions, which is itself evidence it is ambiguous.
+    Resolve against TU_UNDERGRAD_REGULATION.
+  answers_questions: [200]
+
+- policy_id: TU.CONDUCT.CHEATING
+  topic: student_conduct
+  title_ar: عقوبة الغش أو محاولة الغش
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 38 }
+  source_text_ar: >
+    يحرم من المادة من غش أو حاول الغش في امتحان نصف الفصل أو الامتحان النهائي
+    ويعتبر راسبا، ويفصل من الجامعة في الفصل الدراسي التالي ولا يسمح له بالتسجيل
+    في الفصل الصيفي. يفصل من الجامعة نهائيا من تكرر منه الغش أو ثبتت عليه محاولات
+    الغش.
+  transcription_correction: >
+    Corrected 2026-08-01 against the p.38 text layer. The earlier reading —
+    "من ثبت عليه تكرر منه الغش أو محاولات الغش" — collapsed the page's two distinct
+    branches into one. The page states TWO independent triggers for permanent
+    dismissal: repeated cheating (تكرر منه الغش) OR proven attempts (ثبتت عليه
+    محاولات الغش). The garbled form made proof a condition of both.
+  rule_type: consequence
+  first_offence:
+    - DEPRIVED_OF_COURSE_AND_RECORDED_AS_FAIL
+    - SUSPENDED_NEXT_SEMESTER
+    - BARRED_FROM_SUMMER_REGISTRATION
+  repeat_offence: PERMANENT_DISMISSAL
+  applies_to_exams: [MIDTERM, FINAL]
+  attempt_counts_as_offence: true
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_approved
+  extraction_confidence: high
+  notes: >
+    Attempted cheating carries the same first-offence consequence as cheating.
+    The compounding penalties (fail + suspension + summer bar) are frequently
+    understated when students ask; answers should list all three.
