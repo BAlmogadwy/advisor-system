@@ -22,12 +22,15 @@ from core.models import (
     Student,
     StudentCourse,
 )
+from core.services.credit_policy import REGULATORY_MIN_CREDITS
 from core.services.recommender_batch import batch_recommend
 from core.services.reporting import get_student_ids
 
 logger = logging.getLogger(__name__)
 
-MIN_CREDITS = 12
+# Third copy of this literal historically. Shared so the regulatory minimum
+# has exactly one definition. See core/services/credit_policy.py.
+MIN_CREDITS = REGULATORY_MIN_CREDITS
 
 
 def _build_credit_map(programs: list[str]) -> dict[str, int]:

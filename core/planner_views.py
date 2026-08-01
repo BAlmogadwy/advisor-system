@@ -19,6 +19,10 @@ from core.models import (
     TermSection,
     TermSectionMeeting,
 )
+from core.services.credit_policy import (
+    RECOMMENDED_MAX_CREDITS,
+    REGULATORY_MAX_CREDITS,
+)
 from core.services.planner_builder import build_plans
 from core.services.policy import require_student_scope
 from core.services.rbac import ROLE_ADVISOR, ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_role
@@ -185,7 +189,12 @@ def _planner_context_inner(
         "advisor_id": student["advisor_id"] or "",
         "gpa": student["gpa"],
         "registered_credits": student["total_registered_credits"] or 0,
-        "credit_cap": 18,
+        # The SUGGESTED cap, not the university's limit. page-planner.js labels this
+        # "الحد الأعلى للساعات" and planner_builder turns it into a hard
+        # sum(credits) <= cap constraint, so a literal 18 here silently forbade the
+        # 19th unit a student is entitled to. Both figures are sent; the UI decides.
+        "credit_cap": RECOMMENDED_MAX_CREDITS,
+        "regulatory_max_credits": REGULATORY_MAX_CREDITS,
     }
 
     baseline = get_student_term_baseline(student_id, year, term)

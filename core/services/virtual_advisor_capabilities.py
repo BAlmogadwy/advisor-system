@@ -554,10 +554,13 @@ def _exec_recommend_courses(
     codes = recommend_next_courses(int(student_id), int(year), int(term))
     names = _course_names(set(codes))
 
-    program = str(
-        Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
-        or ""
-    ).strip()
+    profile = (
+        Student.objects.filter(student_id=student_id).values("program", "status").first() or {}
+    )
+    program = str(profile.get("program") or "").strip()
+    # Needed by credit_policy_evidence: expected graduates carry a separate,
+    # unresolved 16-hour ceiling that must not be papered over with the general one.
+    student_status = str(profile.get("status") or "").strip()
     credit_map: dict[str, int] = {}
     credit_qs = ProgrammeRequirement.objects.filter(course_code__in=codes)
     if program:
@@ -591,6 +594,8 @@ def _exec_recommend_courses(
         "credit_policy": credit_policy_evidence(
             recommended_credit_hours=sum(credit_map[code] for code in codes if code in credit_map),
             unknown_for=[code for code in codes if code not in credit_map],
+            term=term,
+            student_status=student_status,
         ),
     }
 
@@ -1099,11 +1104,12 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
             name="recommend_courses",
             description=(
                 "Compute the official next-term course recommendations for one "
-                "student using the verified recommender. The returned list is "
-                "already capped to the university's per-term credit limit "
-                "(credit_policy.regulatory_max_credit_hours; the list itself stops at "
-                "max_recommended_credit_hours, which is LOWER) — it is the suggested "
-                "set for the planning term. Use for 'what can I register next "
+                "student using the verified recommender. The returned list stops at "
+                "credit_policy.max_recommended_credit_hours — this system's own "
+                "advisory cap. It is a SUGGESTION, never the registration ceiling. "
+                "How many hours the student may actually register is a separate "
+                "figure, credit_policy.regulatory_max_credit_hours, which is higher "
+                "and may be absent for some terms. Use for 'what should I take next "
                 "term' questions."
             ),
             parameters={

@@ -239,7 +239,7 @@ def test_recommendation_cap_is_below_the_registration_ceiling():
     assert RECOMMENDED_MAX_CREDITS < REGULATORY_MAX_CREDITS
     assert REGULATORY_MIN_CREDITS < RECOMMENDED_MAX_CREDITS
 
-    evidence = credit_policy_evidence(recommended_credit_hours=15, unknown_for=[])
+    evidence = credit_policy_evidence(recommended_credit_hours=15, unknown_for=[], term=1)
     assert evidence["max_recommended_credit_hours"] == RECOMMENDED_MAX_CREDITS
     assert evidence["regulatory_max_credit_hours"] == REGULATORY_MAX_CREDITS
     assert "max_term_credit_hours" not in evidence
@@ -265,3 +265,138 @@ def test_advisor_prompts_teach_the_distinction():
         assert "regulatory_max_credit_hours" in prompt
         assert "max_recommended_credit_hours" in prompt
         assert "max_term_credit_hours" not in prompt
+
+
+def test_summer_term_publishes_no_registration_limit():
+    """Term 3's real cap is 9. Asserting 12..19 there overstates by three.
+
+    The first version of this module documented "summer is not modelled" in a
+    docstring and then served 19 anyway, because the warning lived in a constant
+    nothing imported. Absence of the key is what makes the prompt's "say the system
+    does not define one" branch fire.
+    """
+    from core.services.credit_policy import SUMMER_TERM, credit_policy_evidence
+
+    ev = credit_policy_evidence(recommended_credit_hours=9, unknown_for=[], term=SUMMER_TERM)
+    assert "regulatory_max_credit_hours" not in ev
+    assert "regulatory_min_credit_hours" not in ev
+    assert "regulatory_range_unknown" in ev
+    assert "9" in ev["regulatory_range_unknown"]
+
+
+def test_unknown_term_does_not_assume_a_main_term():
+    """A caller that cannot say which term it is may not publish a term limit."""
+    from core.services.credit_policy import credit_policy_evidence
+
+    for term in (None, 0, 7, "1"):
+        ev = credit_policy_evidence(recommended_credit_hours=12, unknown_for=[], term=term)
+        assert "regulatory_max_credit_hours" not in ev, f"term={term!r} leaked a limit"
+        assert "regulatory_range_unknown" in ev
+
+
+def test_expected_graduates_get_the_unresolved_16_hour_qualification():
+    """The source records a SEPARATE 16-hour ceiling for متوقع تخرجه, unresolved."""
+    from core.services.credit_policy import EXPECTED_GRADUATE_STATUS, credit_policy_evidence
+
+    ev = credit_policy_evidence(
+        recommended_credit_hours=12, unknown_for=[], term=1,
+        student_status=EXPECTED_GRADUATE_STATUS,
+    )
+    assert ev["qualification"]["unresolved"] is True
+    assert "16" in ev["qualification"]["detail_ar"]
+
+    ordinary = credit_policy_evidence(
+        recommended_credit_hours=12, unknown_for=[], term=1, student_status="ACTIVE"
+    )
+    assert "qualification" not in ordinary
+
+
+def test_regulatory_figure_carries_its_own_basis():
+    """A number the model asserts to a student must arrive with its provenance.
+
+    Written only in a docstring, the caveat reached nobody — which is exactly how
+    the first version shipped an unhedged regulatory claim.
+    """
+    from core.services.credit_policy import credit_policy_evidence
+
+    ev = credit_policy_evidence(recommended_credit_hours=12, unknown_for=[], term=1)
+    basis = ev["regulatory_basis"]
+    assert basis["page"] == 23
+    assert "NOT_REGISTRAR_VERIFIED" in basis["verification_status"]
+    assert basis["hedge"]
+
+
+def test_evidence_supplies_ready_made_arabic():
+    """Both limits translate to الحد الأعلى; leaving it to the model loses the distinction."""
+    from core.services.credit_policy import credit_policy_evidence
+
+    ev = credit_policy_evidence(recommended_credit_hours=12, unknown_for=[], term=1)
+    assert ev["phrasing_ar"]["recommended"].startswith("سقف التوصية")
+    assert "الحد الأعلى" in ev["phrasing_ar"]["regulatory"]
+
+
+def test_capability_description_never_binds_the_list_to_the_regulatory_limit():
+    """The tool description is shipped to the model verbatim and had no test.
+
+    That is precisely where the conflation survived a green suite: the evidence dict
+    and both prompts were fixed while the string telling the model what the tool
+    GUARANTEES still said the list was capped to the university limit.
+    """
+    import re
+
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    desc = get_default_registry().capabilities["recommend_courses"].description
+    assert "max_recommended_credit_hours" in desc
+    # "capped"/"limit" must never share a sentence with the regulatory figure.
+    for sentence in re.split(r"(?<=[.!?])\s+", desc):
+        if "regulatory_max_credit_hours" in sentence:
+            assert not re.search(r"\bcapped\b|\bcap\b", sentence), (
+                f"'capped' shares a clause with the regulatory limit: {sentence!r}"
+            )
+
+
+def test_planner_does_not_advertise_the_advisory_cap_as_the_limit():
+    """The planner drawer labels credit_cap 'الحد الأعلى للساعات' and CP-SAT enforces it."""
+    import inspect
+
+    from core import planner_views
+    from core.services.credit_policy import RECOMMENDED_MAX_CREDITS, REGULATORY_MAX_CREDITS
+
+    src = inspect.getsource(planner_views)
+    assert '"credit_cap": 18' not in src, "hardcoded literal is back"
+    assert "RECOMMENDED_MAX_CREDITS" in src
+    assert "regulatory_max_credits" in src
+    assert RECOMMENDED_MAX_CREDITS < REGULATORY_MAX_CREDITS
+
+
+def test_regulatory_minimum_has_one_definition():
+    from core.services import credit_shortfall_analysis
+    from core.services.credit_policy import REGULATORY_MIN_CREDITS
+
+    assert credit_shortfall_analysis.MIN_CREDITS == REGULATORY_MIN_CREDITS
+
+
+def test_prompts_teach_the_arabic_distinction_and_the_absent_case():
+    from core.services.virtual_advisor import SYSTEM_PROMPT, SYSTEM_PROMPT_AGENT
+
+    for prompt in (SYSTEM_PROMPT, SYSTEM_PROMPT_AGENT):
+        assert "سقف التوصية" in prompt, "no Arabic term reserved for the advisory cap"
+        assert "ABSENT" in prompt, "no rule for a term with no known limit"
+        assert "qualification" in prompt
+        # The load-bearing half is the PROHIBITION. Asserting only that the good term
+        # appears somewhere lets the rule be gutted while a worked example keeps the
+        # phrase alive — which is exactly what a mutation run showed.
+        rule = next(
+            (ln for ln in prompt.splitlines() if "ARABIC TERMINOLOGY" in ln), ""
+        )
+        assert rule, "the Arabic terminology rule is gone"
+        # Pin the INSTRUCTION, not the vocabulary. Both Arabic terms appear in the
+        # worked example on the same line, so any check for their mere presence
+        # survives the rule being inverted — a mutation run proved exactly that.
+        assert "الحد الأعلى المسموح بتسجيله» for regulatory_max_credit_hours ONLY" in rule, (
+            "the regulatory term is no longer reserved to the regulatory figure"
+        )
+        assert "recommendation cap «سقف التوصية» — never «الحد الأعلى»" in rule, (
+            "the rule no longer forbids calling the recommendation cap الحد الأعلى"
+        )

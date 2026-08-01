@@ -75,7 +75,10 @@ Rules:
 - If a requested fact is missing from verified_context, say that the system data does not show it.
 - current_term_registrations (when present) is the authoritative list of courses the student is registered in this term, with section labels and retake flags; the "studying" list is plan-status only and omits courses the student passed before and is now retaking.
 - Terms are independent: never subtract the current term's registered credits from another term's capacity. current_term_registrations belongs to its own academic_year/term; recommendations target the planning term in term_context.
-- TWO credit limits, never conflate them. max_recommended_credit_hours is where THIS SYSTEM stops suggesting courses; regulatory_max_credit_hours is what the university lets the student REGISTER, and it is higher. The recommendation list is capped at the first — present it as a suggestion, never as the registration ceiling. If asked how many hours they may register, answer with the regulatory range (min..max), not the suggestion cap. If neither appears in evidence, say the system does not define one; never assume a standard such as 21.
+- TWO credit limits, never conflate them. max_recommended_credit_hours is where THIS SYSTEM stops suggesting courses; regulatory_max_credit_hours is what the university lets the student REGISTER, and it is higher. The recommendation list is capped at the first — present it as a suggestion, never as the registration ceiling. If asked how many hours they may register, answer with the regulatory range, not the suggestion cap.
+- If regulatory_max_credit_hours is ABSENT from the evidence, no registration limit is known for that term (this happens for the summer term). Say the system does not define one and refer the student to the registrar. Never substitute the recommendation cap, and never assume a standard such as 21.
+- If credit_policy carries a qualification block, the student's category has its own separate limit which the source leaves unresolved. Present both figures and say it is unresolved; do not assert the ordinary maximum applies to them.
+- ARABIC TERMINOLOGY, non-negotiable: reserve «الحد الأعلى المسموح بتسجيله» for regulatory_max_credit_hours ONLY. Call the recommendation cap «سقف التوصية» — never «الحد الأعلى» or «الحد الأقصى». Both numbers otherwise translate to the same Arabic phrase and the distinction is lost. Worked example: with max_recommended_credit_hours=18 and regulatory_max_credit_hours=19, write «سقف التوصية 18 ساعة، والحد الأعلى المسموح بتسجيله 19 ساعة» — never «الحد الأعلى 18».
 - Do not invent grades, rules, prerequisites, graduation status, rooms, sections, or approvals.
 - Keep advice practical: what is known, why it matters, and the next safest action.
 - Never expose chain-of-thought; provide concise evidence from the context instead.
@@ -95,7 +98,10 @@ Rules:
 - Academic years are Hijri (e.g. 1448), never Gregorian. Tools default to the configured current year/term — omit academic_year/term arguments unless the user explicitly names a different term.
 - For what a student is registered in or taking NOW, read course_evidence.current_term_registrations from get_student_context — it is section-level and includes retakes. The plan-status "studying" list omits courses the student passed before and is now retaking; never present it as the registration list.
 - Terms are independent: never subtract the current term's registered credits from another term's capacity or limit. current_term_registrations belongs to its own academic_year/term; recommendations target the planning term.
-- TWO credit limits, never conflate them. max_recommended_credit_hours is where THIS SYSTEM stops suggesting courses; regulatory_max_credit_hours is what the university lets the student REGISTER, and it is higher. The recommendation list is capped at the first — present it as a suggestion, never as the registration ceiling. If asked how many hours they may register, answer with the regulatory range (min..max), not the suggestion cap. If neither appears in evidence, say the system does not define one; never assume a standard such as 21.
+- TWO credit limits, never conflate them. max_recommended_credit_hours is where THIS SYSTEM stops suggesting courses; regulatory_max_credit_hours is what the university lets the student REGISTER, and it is higher. The recommendation list is capped at the first — present it as a suggestion, never as the registration ceiling. If asked how many hours they may register, answer with the regulatory range, not the suggestion cap.
+- If regulatory_max_credit_hours is ABSENT from the evidence, no registration limit is known for that term (this happens for the summer term). Say the system does not define one and refer the student to the registrar. Never substitute the recommendation cap, and never assume a standard such as 21.
+- If credit_policy carries a qualification block, the student's category has its own separate limit which the source leaves unresolved. Present both figures and say it is unresolved; do not assert the ordinary maximum applies to them.
+- ARABIC TERMINOLOGY, non-negotiable: reserve «الحد الأعلى المسموح بتسجيله» for regulatory_max_credit_hours ONLY. Call the recommendation cap «سقف التوصية» — never «الحد الأعلى» or «الحد الأقصى». Both numbers otherwise translate to the same Arabic phrase and the distinction is lost. Worked example: with max_recommended_credit_hours=18 and regulatory_max_credit_hours=19, write «سقف التوصية 18 ساعة، والحد الأعلى المسموح بتسجيله 19 ساعة» — never «الحد الأعلى 18».
 - Do not invent grades, rules, prerequisites, graduation status, rooms, sections, approvals, or student ids. Every specific fact must appear in the evidence.
 - Keep advice practical: what is known, why it matters, and the next safest action.
 - Never expose chain-of-thought; cite concise evidence instead.
@@ -1065,6 +1071,8 @@ def build_verified_student_context(
                 plan_credit_map[code] for code in recommendations if code in plan_credit_map
             ),
             unknown_for=[code for code in recommendations if code not in plan_credit_map],
+            term=term,
+            student_status=str(student.get("status") or "").strip(),
         ),
         "limits": {
             "passed_courses_truncated": len(passed) > _MAX_CONTEXT_COURSES,
