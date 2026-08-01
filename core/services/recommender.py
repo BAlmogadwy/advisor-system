@@ -1,4 +1,5 @@
 from core.models import Prerequisite, ProgrammeRequirement
+from core.services.credit_policy import RECOMMENDED_MAX_CREDITS
 from core.services.student_helpers import (
     get_prerequisites,
     get_student_passed_and_studying,
@@ -6,7 +7,10 @@ from core.services.student_helpers import (
     normalize_code,
 )
 
-MAX_CREDITS = 18
+# This is the ADVISORY cap the recommender fills up to — not the university's limit,
+# which is higher. See core/services/credit_policy.py for why the two must stay apart.
+# Re-exported under the old name so existing callers keep working.
+MAX_CREDITS = RECOMMENDED_MAX_CREDITS
 
 
 def calculate_real_student_term(
