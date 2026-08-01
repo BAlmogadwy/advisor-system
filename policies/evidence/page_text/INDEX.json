@@ -1,0 +1,255 @@
+{
+  "document_id": "TU_STUDENT_GUIDE_V3_1447",
+  "source_file_sha256": "155b7df5ec782860cc047287919e2dcfbe78aa76759b9f0bed105bcad0a15227",
+  "extractor": "pypdf",
+  "extractor_note": "machine text-layer extraction, no model in the loop",
+  "is_verbatim": true,
+  "covers": "wording only — NOT table structure or reading order",
+  "pages_total": 40,
+  "pages_with_no_text_layer": [
+    2,
+    40
+  ],
+  "pages": [
+    {
+      "page": 1,
+      "file": "page_text/page_01.txt",
+      "chars": 62,
+      "sha256": "ede7193deb84400c7cff98150cc66864c8cdb5b784eeb306ea545a19d2d3b653"
+    },
+    {
+      "page": 2,
+      "file": "page_text/page_02.txt",
+      "chars": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "page": 3,
+      "file": "page_text/page_03.txt",
+      "chars": 201,
+      "sha256": "28568e666d6374583d6711029ce1cdf96ade95d81deef64e7009b06211dcfc51"
+    },
+    {
+      "page": 4,
+      "file": "page_text/page_04.txt",
+      "chars": 1138,
+      "sha256": "66752286f7cc1bc0b3bb4eb3e58d55d45a0134ec470a31913e688af038b74885"
+    },
+    {
+      "page": 5,
+      "file": "page_text/page_05.txt",
+      "chars": 2892,
+      "sha256": "d528220f14c1f57dbca4d3ba4e7b3a370032332c3a3bd761f6e00e0e81685281"
+    },
+    {
+      "page": 6,
+      "file": "page_text/page_06.txt",
+      "chars": 421,
+      "sha256": "262aa0cc0afb86dc4e495f89b303396be58587a9a34d6c8aef89e008ce7ac5a1"
+    },
+    {
+      "page": 7,
+      "file": "page_text/page_07.txt",
+      "chars": 1896,
+      "sha256": "ebdf74866e548598227faca6a831d4634b144410ecfe130ded7aa444d8f83b9d"
+    },
+    {
+      "page": 8,
+      "file": "page_text/page_08.txt",
+      "chars": 1728,
+      "sha256": "188cad945713f571b31c4bc04facbb48c0c81874e2c09aa819ff6523a7ee4624"
+    },
+    {
+      "page": 9,
+      "file": "page_text/page_09.txt",
+      "chars": 1722,
+      "sha256": "e1e0956a10261802a5af6523ec10d4f79fe39657f3fb1e40a2f5f29d1b459781"
+    },
+    {
+      "page": 10,
+      "file": "page_text/page_10.txt",
+      "chars": 469,
+      "sha256": "afc8de8cb3b9137eee89e6c918c2e19dee91c750dd168da886c3d102ad692039"
+    },
+    {
+      "page": 11,
+      "file": "page_text/page_11.txt",
+      "chars": 1206,
+      "sha256": "fa299ce34a6b4b71098d2ae7bd1db3978f26009675fcd39ac0a740bb87270f4b"
+    },
+    {
+      "page": 12,
+      "file": "page_text/page_12.txt",
+      "chars": 1263,
+      "sha256": "503ab956a81e3f6e3c5c620f237a43f23ee932fcccbe114ec66960db41c24e1d"
+    },
+    {
+      "page": 13,
+      "file": "page_text/page_13.txt",
+      "chars": 2048,
+      "sha256": "752cb11e9d09ee36f52886229f2b76b674e25949137b073c2b48cd2c14d5b0b6"
+    },
+    {
+      "page": 14,
+      "file": "page_text/page_14.txt",
+      "chars": 1013,
+      "sha256": "b9e93093e461f59968447a494b78739c3c1ec063daf6a5d59fe283889852bec4"
+    },
+    {
+      "page": 15,
+      "file": "page_text/page_15.txt",
+      "chars": 477,
+      "sha256": "26a2b7013c3db9e560701ffb599d840b070a6f757f369e44f8542d4093fd0a1a"
+    },
+    {
+      "page": 16,
+      "file": "page_text/page_16.txt",
+      "chars": 972,
+      "sha256": "4b26ebdeb4124f62c3c40cb02d6b69a1c301c6b6d88b645408960f4eab83455e"
+    },
+    {
+      "page": 17,
+      "file": "page_text/page_17.txt",
+      "chars": 905,
+      "sha256": "4e6d6b79be1eae9777cfa297b4d3a1fbb90c2c493d4047086f5fd1ff52557a91"
+    },
+    {
+      "page": 18,
+      "file": "page_text/page_18.txt",
+      "chars": 662,
+      "sha256": "f83495336653a56db402e6f382afb193f9817e38e2ebda0a86e15a3f9f73a969"
+    },
+    {
+      "page": 19,
+      "file": "page_text/page_19.txt",
+      "chars": 1472,
+      "sha256": "337ffdf879a2ac578e2c4387b1c0c7cb9df0897c0f87a5ff4fd855813a848bfe"
+    },
+    {
+      "page": 20,
+      "file": "page_text/page_20.txt",
+      "chars": 1852,
+      "sha256": "61b15a7d093c9b36194c1d57f95cee4e32a1f57d01988d1ee02d5a56d7ba0b68"
+    },
+    {
+      "page": 21,
+      "file": "page_text/page_21.txt",
+      "chars": 1754,
+      "sha256": "6de745066c311aba07e83bc179001956db49f45b91552ca722813da08f09aa96"
+    },
+    {
+      "page": 22,
+      "file": "page_text/page_22.txt",
+      "chars": 65,
+      "sha256": "7a973de6f7ebe5b72d1f36699053f0773eb234e936543f8b5e6cf11674637e28"
+    },
+    {
+      "page": 23,
+      "file": "page_text/page_23.txt",
+      "chars": 2261,
+      "sha256": "c1ea3242c5db2635bf0f873cba93c889a4b0068d026222deb3ca79df37aeeafc"
+    },
+    {
+      "page": 24,
+      "file": "page_text/page_24.txt",
+      "chars": 1083,
+      "sha256": "296ba977f5bd563ae73c521c19ed8c518ae4153ff1037a4dce94948001d29090"
+    },
+    {
+      "page": 25,
+      "file": "page_text/page_25.txt",
+      "chars": 605,
+      "sha256": "d4d3f0fe4358f6f8c5c87d1ddde19ac52811d35551c2752e2adf78356e444d68"
+    },
+    {
+      "page": 26,
+      "file": "page_text/page_26.txt",
+      "chars": 1762,
+      "sha256": "6e471f1da9c0847c69b940dd005c7f432461beccfefa3dbc45392ca29117b27e"
+    },
+    {
+      "page": 27,
+      "file": "page_text/page_27.txt",
+      "chars": 978,
+      "sha256": "f2ac7de2df53cf23f409147670aeb534f200a6ca3fe2322e1f1577a94c503a06"
+    },
+    {
+      "page": 28,
+      "file": "page_text/page_28.txt",
+      "chars": 983,
+      "sha256": "c4783546a4c72435fcd5dedc2b7a7ab9fb1babc625929907c180fa3a5c79d8be"
+    },
+    {
+      "page": 29,
+      "file": "page_text/page_29.txt",
+      "chars": 1071,
+      "sha256": "0996f1d77e396dd33294cd1a6f143ac4820bf3b943744c11eaa8a4274ca6e46a"
+    },
+    {
+      "page": 30,
+      "file": "page_text/page_30.txt",
+      "chars": 887,
+      "sha256": "6e81275554501cc6ede82b88bf165f9b30e867e45a1a6505a0223d158789bb4d"
+    },
+    {
+      "page": 31,
+      "file": "page_text/page_31.txt",
+      "chars": 1646,
+      "sha256": "769ef8021ba04a173bc70009daba74d47aaa61a29edde4a1eedef54b209dd696"
+    },
+    {
+      "page": 32,
+      "file": "page_text/page_32.txt",
+      "chars": 1223,
+      "sha256": "cb2b80f514f3033cbd1c9890fec2b117924a0c11d3f52ea989e6ba238c1a60cd"
+    },
+    {
+      "page": 33,
+      "file": "page_text/page_33.txt",
+      "chars": 1411,
+      "sha256": "f00ac5eba70f41349910faeef918f235e873f43ce9301c391fb57c15ea622063"
+    },
+    {
+      "page": 34,
+      "file": "page_text/page_34.txt",
+      "chars": 1296,
+      "sha256": "d09394579ec8e44690c04ad7d0c8ae66487ff0cd7013828efd5b2721ada05cbd"
+    },
+    {
+      "page": 35,
+      "file": "page_text/page_35.txt",
+      "chars": 1275,
+      "sha256": "dc20a10da2dbf01bddb9dcb9f80fc36c8c9fc147f8bcaff216b8306b2a935dad"
+    },
+    {
+      "page": 36,
+      "file": "page_text/page_36.txt",
+      "chars": 899,
+      "sha256": "ac4b7b0b3378493388a6631481c376805f1457ea4bde2870066829964b63cbd4"
+    },
+    {
+      "page": 37,
+      "file": "page_text/page_37.txt",
+      "chars": 1023,
+      "sha256": "1f9c177d635da0e38a0c61e5f2b33486ef7c64ab881e4d58c6d5df0067db3a5b"
+    },
+    {
+      "page": 38,
+      "file": "page_text/page_38.txt",
+      "chars": 1446,
+      "sha256": "266f0c72b92b620aa24e7f932b7e919b746d1ec97a4a6c2b47c46192aafcff6d"
+    },
+    {
+      "page": 39,
+      "file": "page_text/page_39.txt",
+      "chars": 148,
+      "sha256": "96922d92505bc73435026172b5189f58bcdcc5a5d9994b60e289a8270cbdf5e1"
+    },
+    {
+      "page": 40,
+      "file": "page_text/page_40.txt",
+      "chars": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

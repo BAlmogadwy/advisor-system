@@ -1,0 +1,166 @@
+- policy_id: TU.LOAD.SEMESTER_RANGE
+  topic: credit_load
+  title_ar: الحد الأدنى والأعلى للعبء الدراسي في الفصل الرئيس
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 23 }
+  source_text_ar: >
+    الحد الأدنى من العبء الدراسي للفصل الرئيس في نظام الفصلين الدراسيين هو (12)
+    وحدات دراسية والحد الأعلى هو (19) وحدة دراسية.
+  rule_type: range
+  applies_to: { study_system: TWO_SEMESTER, term_type: MAIN }
+  min_value: 12
+  max_value: 19
+  unit: credit_units
+  required_inputs: [registered_credits_this_term, study_system, term_type]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  supersedes: null
+  verification: &v_extracted
+    status: EXTRACTED
+    extracted_by: agent
+    extracted_at: "2026-08-01"
+    source_verified_by: null
+    domain_reviewed_by: null
+    authority_approved_by: null
+  extraction_confidence: high
+  # CONFLICT WITH RUNNING CODE — do not silently reconcile.
+  conflicts_with_implementation:
+    location: core/services/recommender.py:9
+    symbol: MAX_CREDITS
+    implementation_value: 18
+    policy_value: 19
+    exposed_to_students_as: max_term_credit_hours
+    impact: >
+      The virtual adviser currently publishes a per-term ceiling one unit BELOW the
+      guide's. Either 18 is a deliberate local rule (then it needs its own source
+      record and must not be presented as the university limit), or it is a defect.
+    resolution: OWNER_DECISION_REQUIRED
+
+- policy_id: TU.LOAD.FULL_YEAR_RANGE
+  topic: credit_load
+  title_ar: العبء الدراسي في نظام السنة الدراسية الكاملة
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 23 }
+  source_text_ar: >
+    الحد الأدنى من العبء الدراسي للسنة الدراسية في نظام السنة الدراسية الكاملة هو
+    (٢٤) وحدة دراسية والحد الأعلى هو (٣٩) وحدة دراسية.
+  rule_type: range
+  applies_to: { study_system: FULL_YEAR }
+  min_value: 24
+  max_value: 39
+  unit: credit_units
+  required_inputs: [registered_credits_this_year, study_system]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_extracted
+  extraction_confidence: high
+  notes: >
+    Not applicable to the 12 programmes currently modelled in this project, which
+    all run on the two-semester system. Recorded for completeness of the source.
+
+- policy_id: TU.LOAD.SUMMER_MAX
+  topic: credit_load
+  title_ar: الحد الأعلى للعبء الدراسي في الفصل الصيفي
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 23 }
+  source_text_ar: >
+    الحد الأعلى من العبء الدراسي للفصل الصيفي هو (٩) وحدات دراسية.
+  rule_type: limit
+  applies_to: { term_type: SUMMER }
+  max_value: 9
+  unit: credit_units
+  required_inputs: [registered_credits_this_term, term_type]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_extracted
+  extraction_confidence: high
+  notes: >
+    The project has NO summer-term model. term_type cannot currently be determined,
+    so this rule is EXPLAIN_ONLY regardless of the load figure being available.
+
+- policy_id: TU.LOAD.EXPECTED_GRADUATE_REQUEST
+  topic: credit_load
+  title_ar: تسجيل الطالب المتوقع تخرجه
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 23 }
+  source_text_ar: >
+    ويحق للطالب المتوقع تخرجه تقديم طلب تسجيل مقررات بما لا يتجاوز (16) ساعة في
+    الفصل الدراسي، وتنظر عمادة القبول والتسجيل في تلك الطلبات بشرط حصول الطالب
+    على موافقة الكلية التي يدرس فيها.
+  rule_type: exception
+  max_value: 16
+  unit: credit_hours
+  requires_approval: [DEANSHIP_OF_ADMISSION_AND_REGISTRATION, COLLEGE]
+  required_inputs: [is_expected_graduate, requested_credits]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_extracted
+  extraction_confidence: low
+  open_question: >
+    Reads oddly as stated: 16 is BELOW the ordinary 19-unit ceiling in
+    TU.LOAD.SEMESTER_RANGE, so "يحق له ... بما لا يتجاوز ١٦" is not obviously a
+    concession. Possible readings: (a) it is a summer-term allowance raising the
+    9-unit cap; (b) it is an overload path measured in contact HOURS not UNITS
+    (the text says ساعة here, وحدة elsewhere); (c) the ceiling applies to some
+    other condition compressed out of the summary.
+    MUST be resolved against TU_UNDERGRAD_REGULATION before any runtime use.
+  runtime_use: PROHIBITED_FOR_DECISION
+
+- policy_id: TU.LOAD.INCOMPLETE_GRADE
+  topic: credit_load
+  title_ar: تقدير غير مكتمل (IC) واستكماله
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 23 }
+  source_text_ar: >
+    إذا لم ينجز الطالب متطلبات أي مقرر دراسي فإنه يسمح له باستكمال متطلبات المقرر
+    بناء على توصية أستاذ المادة، ويحصل على تقدير غير مكتمل (IC) ولا يحسب ضمن
+    المعدل الفصلي أو التراكمي وعلى الطالب إنهاء متطلباتها في الفصل التالي وإلا
+    تحول إلى راسب في المادة.
+  rule_type: procedure
+  outcomes:
+    - { condition: granted, effect: GRADE_IC_ASSIGNED, counted_in_gpa: false }
+    - { condition: not_completed_next_term, effect: CONVERTS_TO_FAIL }
+  requires_approval: [COURSE_INSTRUCTOR]
+  required_inputs: [course_grade_symbol, term_sequence]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_extracted
+  extraction_confidence: high
+  notes: >
+    Directly answers "الفرق بين محروم وراسب وغير مكتمل" class questions.
+    Not evaluable per-student: grade symbols are absent from the database
+    (StudentCourse.grade empty on all 159,778 rows) and there is no term ordering
+    (actual_term empty on all rows), so "الفصل التالي" cannot be resolved.
+
+- policy_id: TU.TERM.STRUCTURE
+  topic: academic_structure
+  title_ar: بنية العام الدراسي
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 23 }
+  source_text_ar: >
+    يقسم العام الدراسي إلى فصلين دراسيين لا تقل مدة الفصل عن (١٥) أسبوعاً لا يدخل
+    ضمنها فترات التسجيل والحذف والإضافة والاختبارات النهائية وفصل صيفي اختياري لا
+    تقل مدته عن ثمانية أسابيع.
+  rule_type: definition
+  facts:
+    main_terms_per_year: 2
+    min_main_term_weeks: 15
+    min_summer_term_weeks: 8
+    summer_optional: true
+    weeks_exclude: [registration, add_drop, final_exams]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_extracted
+  extraction_confidence: high

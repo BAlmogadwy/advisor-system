@@ -1,0 +1,83 @@
+# Policy source registry.
+#
+# Every policy record cites a document_id declared here. A source is identified by
+# its SHA-256, so a replaced PDF cannot silently keep the same identity — if the
+# file changes, the hash changes, and every record citing it must be re-verified.
+#
+# authority_precedence is the resolution order when two active sources disagree.
+# A lower-level source may EXPLAIN a rule; it may never override a higher one.
+
+authority_precedence:
+  - UNIVERSITY_REGULATION        # لائحة الدراسة والاختبارات للمرحلة الجامعية
+  - UNIVERSITY_EXECUTIVE_RULES   # القواعد التنفيذية لجامعة طيبة
+  - UNIVERSITY_DECISION          # قرارات مجلس الجامعة المعدِّلة
+  - OFFICIAL_ACADEMIC_CALENDAR   # التقويم الجامعي
+  - OFFICIAL_STUDENT_GUIDE       # الدليل الإرشادي للطالب والطالبة
+  - COLLEGE_PROCEDURE
+  - DEPARTMENT_GUIDANCE
+
+sources:
+  - document_id: TU_STUDENT_GUIDE_V3_1447
+    title_ar: الدليل الإرشادي للطالب والطالبة
+    title_en: Student Advising Guide
+    publisher_ar: جامعة طيبة — عمادة القبول والتسجيل
+    authority_level: OFFICIAL_STUDENT_GUIDE
+    version: "3"
+    edition_ar: الإصدار الثالث
+    effective_from: "1447"
+    effective_to: null
+    status: ACTIVE
+    page_count: 40
+    file: sources/TU_STUDENT_GUIDE_V3_1447.pdf
+    file_sha256: "155b7df5ec782860cc047287919e2dcfbe78aa76759b9f0bed105bcad0a15227"
+    obtained_at: "2026-08-01"
+    obtained_from: owner_supplied
+    reviewed_by: null
+    reviewed_at: null
+    # The guide is a SUMMARISING source. Page 14 ("أدوات الإرشاد الأكاديمي") itself
+    # points at the regulation it summarises, via QR code. It therefore sits BELOW
+    # the regulation and the executive rules in authority_precedence, and any record
+    # extracted from it is provisional until checked against those.
+    summarises:
+      - TU_UNDERGRAD_REGULATION      # not yet obtained
+      - TU_EXECUTIVE_RULES           # not yet obtained
+    notes: >
+      Chapter 1 (pp. 4-21) is largely descriptive — what advising is, rights and
+      duties, contact channels. The normative content is Chapter 2 (pp. 23-38).
+      Extraction covers both, but only Chapter 2 yields enforceable rule records.
+
+# Sources named by the guide but NOT yet obtained. Until these land, every record
+# extracted from the guide carries the risk that a higher authority says otherwise.
+# This block is the project's outstanding-source ledger, not a wish list.
+required_sources_not_obtained:
+  - document_id: TU_UNDERGRAD_REGULATION
+    title_ar: لائحة الدراسة والاختبارات للمرحلة الجامعية
+    authority_level: UNIVERSITY_REGULATION
+    named_by: TU_STUDENT_GUIDE_V3_1447
+    named_on_page: 14
+    # Target of the QR code embedded in the p.14 "أدوات الإرشاد الأكاديمي" panel,
+    # recovered from the PDF object model rather than the rendered page.
+    obtain_from: https://www.taibahu.edu.sa/deanship-of-admission-and-registration/regulation-and-policies
+    blocking: >
+      Every rule record currently extracted from the student guide. The guide
+      summarises this document; where they differ, this one wins.
+
+  - document_id: TU_EXECUTIVE_RULES
+    title_ar: القواعد التنفيذية للائحة الدراسة والاختبارات لجامعة طيبة
+    authority_level: UNIVERSITY_EXECUTIVE_RULES
+    named_by: TU_STUDENT_GUIDE_V3_1447
+    named_on_page: 14
+    obtain_from: https://www.taibahu.edu.sa/deanship-of-admission-and-registration/regulation-and-policies
+    blocking: >
+      Procedural detail the guide compresses — notably the grade-appeal mechanism
+      (p.34 defers to it explicitly) and transfer conditions set by college councils.
+
+  - document_id: TU_ACADEMIC_CALENDAR
+    title_ar: التقويم الجامعي
+    authority_level: OFFICIAL_ACADEMIC_CALENDAR
+    named_by: TU_STUDENT_GUIDE_V3_1447
+    named_on_page: 16
+    blocking: >
+      Every date-dependent rule. The guide states repeatedly that withdrawal,
+      excuse, deferral and transfer requests happen "وفق الموعد في التقويم الدراسي"
+      without ever giving a date. No deadline question is answerable without this.

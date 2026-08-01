@@ -1,0 +1,135 @@
+# The only records in this store whose inputs the student can supply directly, and
+# therefore the only basis for a shippable calculator. Transcribed from rendered
+# tables — every number here MUST be checked against pp.28-30 before SOURCE_VERIFIED.
+
+- policy_id: TU.GRADE.SCALE
+  topic: grade_scale
+  title_ar: جدول التقديرات وأوزانها
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, pages: [28, 29] }
+  rule_type: lookup_table
+  table_ref_in_source: ["جدول (٢) ص٢٨", "جدول (٣) ص٢٩"]
+  scale:
+    - { percent_min: 95, percent_max: 100, ar: ممتاز مرتفع,     en: Exceptional,    symbol_ar: "أ+",  symbol_en: "A+", weight_of_5: 5.00, weight_of_4: 4.00 }
+    - { percent_min: 90, percent_max: 95,  ar: ممتاز,           en: Excellent,      symbol_ar: "أ",   symbol_en: "A",  weight_of_5: 4.75, weight_of_4: 3.75 }
+    - { percent_min: 85, percent_max: 90,  ar: جيد جداً مرتفع,  en: Superior,       symbol_ar: "ب+",  symbol_en: "B+", weight_of_5: 4.50, weight_of_4: 3.50 }
+    - { percent_min: 80, percent_max: 85,  ar: جيد جداً,        en: Very Good,      symbol_ar: "ب",   symbol_en: "B",  weight_of_5: 4.00, weight_of_4: 3.00 }
+    - { percent_min: 75, percent_max: 80,  ar: جيد مرتفع,       en: Above Average,  symbol_ar: "ج+",  symbol_en: "C+", weight_of_5: 3.50, weight_of_4: 2.50 }
+    - { percent_min: 70, percent_max: 75,  ar: جيد,             en: Good,           symbol_ar: "ج",   symbol_en: "C",  weight_of_5: 3.00, weight_of_4: 2.00 }
+    - { percent_min: 65, percent_max: 70,  ar: مقبول مرتفع,     en: High Pass,      symbol_ar: "د+",  symbol_en: "D+", weight_of_5: 2.50, weight_of_4: 1.50 }
+    - { percent_min: 60, percent_max: 65,  ar: مقبول,           en: Pass,           symbol_ar: "د",   symbol_en: "D",  weight_of_5: 2.00, weight_of_4: 1.00 }
+    - { percent_min: null, percent_max: 60, ar: راسب,          en: Fail,           symbol_ar: "هـ",  symbol_en: "F",  weight_of_5: 1.00, weight_of_4: 0.00, source_lower_bound_specified: false }
+  interval_convention: "[percent_min, percent_max) — الأعلى مستثنى ('إلى أقل من')، عدا الصف الأعلى 95-100 المغلق من الطرفين"
+  lower_bound_note: >
+    The F row carries NO lower bound in the source — p.28 states only "أقل من ٦٠".
+    percent_min is null rather than 0: writing 0 would invent a bound the page does
+    not state. (Corrected 2026-08-01 after an independent extraction flagged it.)
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: &v_extracted
+    status: EXTRACTED
+    extracted_by: agent
+    extracted_at: "2026-08-01"
+    source_verified_by: null
+    domain_reviewed_by: null
+    authority_approved_by: null
+  extraction_confidence: high
+  transcription_risk: >
+    Nine rows × four numeric columns transcribed from a rendered table. A single
+    digit error silently corrupts every GPA the calculator produces. This record
+    must be re-keyed independently by the source verifier, not merely eyeballed.
+
+- policy_id: TU.GRADE.SPECIAL_SYMBOLS
+  topic: grade_scale
+  title_ar: الرموز الخاصة في السجل الأكاديمي
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 29 }
+  rule_type: lookup_table
+  symbols:
+    - { symbol_ar: "م",  symbol_en: IP, ar: مستمر,          en: In-Progress,  weight_of_5: null, weight_of_4: null, counts_in_gpa: false, percent: null }
+    - { symbol_ar: "ل",  symbol_en: IC, ar: غير مكتمل,      en: In-Complete,  weight_of_5: null, weight_of_4: null, counts_in_gpa: false, percent: null }
+    - { symbol_ar: "ح",  symbol_en: DN, ar: محروم,          en_as_printed: "Denile",   weight_of_5: 1.00, weight_of_4: 0.00, counts_in_gpa: true,  percent: null }
+    - { symbol_ar: "ند", symbol_en: NP, ar: ناجح دون درجة,  en: Nograde-Pass, weight_of_5: null, weight_of_4: null, counts_in_gpa: false, percent: "60 وأكثر" }
+    - { symbol_ar: "هد", symbol_en: NF, ar: راسب دون درجة,  en: Nograde-Fail, weight_of_5: null, weight_of_4: null, counts_in_gpa: false, percent: "أقل من 60" }
+    - { symbol_ar: "ع",  symbol_en: W,  ar: منسحب بعذر,     en_as_printed: "Withdrewn", weight_of_5: null, weight_of_4: null, counts_in_gpa: false, percent: null }
+    - { symbol_ar: "عف", symbol_en: E,  ar: معفي,           en: Exemption,    weight_of_5: null, weight_of_4: null, counts_in_gpa: false, percent: null }
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_extracted
+  extraction_confidence: high
+  as_printed_note: >
+    The English labels on p.29 contain typographical errors in the SOURCE:
+    "Denile" (for Denied) and "Withdrewn" (for Withdrawn). Recorded as printed under
+    en_as_printed — a record that claims to quote a page must not silently correct
+    it. Flag for the source verifier; do not fix in the record.
+  key_finding: >
+    محروم (DN) carries the SAME numeric weight as راسب (F) — 1.00 of 5, 0.00 of 4.
+    This is the precise, citable answer to "الفرق بين محروم وراسب" (Q56): the
+    difference is procedural (barred from sitting the exam), not arithmetical.
+  open_question: >
+    (ع) is listed here as "منسحب بعذر / Withdrawn", but p.24 assigns تقدير (ع) to
+    الاعتذار عن الفصل الدراسي. Either one symbol serves both, or the summary merged
+    two. See TU.EXCUSE.TRANSCRIPT_MARK. Unresolved — do not state which in answers.
+
+- policy_id: TU.GPA.FORMULA
+  topic: gpa_calculation
+  title_ar: طريقة حساب المعدل الفصلي والتراكمي
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 30 }
+  source_text_ar: >
+    قم بتحويل الدرجات المئوية إلى الوزن التقديري حسب الجدول رقم ٢ أعلاه، مثال:
+    ٩٣٪ = ٤٫٧٥. اضرب عدد ساعات كل مادة × الوزن التقديري لتحصل على نقاط المادة،
+    مثال: ٣ × ٤٫٧٥. كرر العملية مع بقية المواد. اجمع عدد النقاط، وكذلك اجمع عدد
+    الساعات الدراسية. اقسم عدد النقاط على عدد الساعات لتحصل على المعدل الفصلي.
+    ولحساب المعدل التراكمي يتم جمع نقاط الفصول الدراسية التي تم الانتهاء منها
+    وقسمته على إجمالي عدد الساعات لنفس الفصول.
+  rule_type: formula
+  formulas:
+    term_gpa: "Σ(course_credit_hours × grade_weight) / Σ(course_credit_hours)"
+    cumulative_gpa: "Σ(points across completed terms) / Σ(credit hours across those terms)"
+  worked_example_in_source: { percent: 93, weight: 4.75, credit_hours: 3, points: 14.25 }
+  scale_used_in_example: 5
+  required_inputs: [per_course_grade, per_course_credit_hours]
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_extracted
+  extraction_confidence: high
+  notes: >
+    The worked example (93% → 4.75) uses the FIVE-point column, which settles which
+    scale is operative when the source presents both. Excluded from the denominator:
+    every symbol in TU.GRADE.SPECIAL_SYMBOLS with counts_in_gpa false — notably IC,
+    which TU.LOAD.INCOMPLETE_GRADE independently confirms is excluded.
+  runtime_use: PERMITTED_WITH_USER_PROVIDED_INPUTS
+  runtime_use_note: >
+    Grades are absent from the database (StudentCourse.grade empty on all 159,778
+    rows; mark NULL on all). The calculator therefore runs ONLY on figures the
+    student types in, and its output must be labelled as such — never presented as
+    a reading of the academic record.
+
+- policy_id: TU.GPA.GENERAL_ESTIMATE_BANDS
+  topic: gpa_calculation
+  title_ar: التقدير العام للمعدل التراكمي عند التخرج
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source: { document_id: TU_STUDENT_GUIDE_V3_1447, page: 28 }
+  rule_type: lookup_table
+  table_ref_in_source: "جدول (١)"
+  bands:
+    - { ar: ممتاز,    of_4: { min: 3.50, max: 4.00, max_inclusive: true },  of_5: { min: 4.50, max: 5.00, max_inclusive: true } }
+    - { ar: جيد جداً, of_4: { min: 2.75, max: 3.50, max_inclusive: false }, of_5: { min: 3.75, max: 4.50, max_inclusive: false } }
+    - { ar: جيد,      of_4: { min: 1.75, max: 2.75, max_inclusive: false }, of_5: { min: 2.75, max: 3.75, max_inclusive: false } }
+    - { ar: مقبول,    of_4: { min: 1.00, max: 1.75, max_inclusive: false }, of_5: { min: 2.00, max: 2.75, max_inclusive: false } }
+  source_edition: "1447"
+  policy_effective_from: null
+  policy_effective_to: null
+  currentness_status: UNVERIFIED
+  verification: *v_extracted
+  extraction_confidence: high
+  notes: >
+    مقبول is the floor band, which is what makes TU.GRADUATION.MINIMUM_GPA
+    ("ألا يقل عن تقدير مقبول") a concrete number: 2.00 of 5 / 1.00 of 4.

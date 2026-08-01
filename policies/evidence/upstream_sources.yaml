@@ -1,0 +1,42 @@
+sources:
+- document_id: TU_STUDENT_GUIDE_V3_1447
+  title_ar: الدليل الإرشادي للطالب والطالبة
+  issuer_ar: جامعة طيبة - عمادة القبول والتسجيل
+  edition: 3
+  year_hijri: 1447هـ
+  year_gregorian: 2025م
+  authority_level: OFFICIAL_STUDENT_GUIDE
+  source_role: STUDENT_FACING_SUMMARY
+  page_count: 40
+  source_file_name: aldlyl alarshady lltalb (1)(2).pdf
+  source_file_sha256: 155b7df5ec782860cc047287919e2dcfbe78aa76759b9f0bed105bcad0a15227
+  pdf_metadata:
+    title: عرض تقديمي في PowerPoint
+    author: yousraa alharby
+    creator: Microsoft PowerPoint for Microsoft 365
+    creation_date_pdf: '2025-08-13T11:01:32Z'
+  effective_from: '1447'
+  effective_to: null
+  supersedes: null
+  status: ACTIVE_UNTIL_SUPERSEDED
+  verification:
+    status: EXTRACTED
+    extracted_by: LLM-assisted extraction
+    source_verified_by: null
+    domain_reviewed_by: null
+    authority_approved_by: null
+  precedence_note_ar: الدليل مصدر إرشادي رسمي موجّه للطلبة، لكنه يشير في الصفحة 14 إلى لائحة الدراسة والاختبارات وقواعدها التنفيذية بوصفها مصدراً
+    مستقلاً أعلى سلطة.
+  extraction_revision: '1.1'
+  second_pass_audit:
+    scope_pages: 23-39 plus page 14 embedded links
+    records_checked: 152
+    checked_at: '2026-08-01T08:19:00+03:00'
+    performed_by: AI-assisted source alignment review
+    governance_status_advanced: false
+  embedded_resource_links:
+  - source_page: 14
+    uri: https://www.taibahu.edu.sa/deanship-of-admission-and-registration/regulation-and-policies
+    applies_to:
+    - non_saudi_scholarship_rules
+    - study_and_examination_regulation_and_executive_rules
