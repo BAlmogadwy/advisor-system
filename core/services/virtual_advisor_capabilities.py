@@ -1120,6 +1120,128 @@ def _exec_my_timetable(
     }
 
 
+def _exec_my_plan_by_term(
+    args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
+) -> dict[str, Any]:
+    """The whole degree plan, level by level, with each course's status.
+
+    ``my_progress`` answers "what can I take"; this answers "show me the plan". The
+    difference matters to a student who wants the shape of what is left rather than a
+    filtered list of what is open right now.
+    """
+    from core.report_views import _build_student_plan_payload
+
+    student_id, error = _resolve_scoped_student_id(args, scope)
+    if error:
+        return {"ok": False, "error": error}
+
+    payload, payload_err = _build_student_plan_payload(int(student_id))
+    if payload is None or payload_err is not None:
+        return {"ok": False, "error": f"No degree plan found for student {student_id}."}
+
+    terms = payload.get("terms") or []
+    only = args.get("term")
+    if only not in (None, ""):
+        try:
+            wanted = int(only)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "term must be an integer plan level."}
+        terms = [row for row in terms if int(row.get("term") or 0) == wanted]
+        if not terms:
+            return {
+                "ok": True,
+                "student_id": int(student_id),
+                "program": payload.get("program", ""),
+                "plan_level": wanted,
+                "terms": [],
+                "note": f"The plan has no level {wanted}.",
+                "tool": "my_plan_by_term",
+            }
+
+    return {
+        "ok": True,
+        "student_id": int(student_id),
+        "program": payload.get("program", ""),
+        "summary": payload.get("summary", {}),
+        "terms": terms,
+        "blocker_hints": payload.get("blocker_hints") or [],
+        "note": (
+            "Plan LEVELS, not calendar terms - programme_term is where a course sits in "
+            "the degree plan, not when it is taught. status is passed / studying / "
+            "not_taken, and can_register reflects prerequisites ONLY, never whether a "
+            "section is being offered."
+        ),
+        "tool": "my_plan_by_term",
+    }
+
+
+def _exec_my_advisor(
+    args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
+) -> dict[str, Any]:
+    """The student's own academic adviser, by name rather than by internal id."""
+    from core.models import AcademicAdvisor, Student
+
+    student_id, error = _resolve_scoped_student_id(args, scope)
+    if error:
+        return {"ok": False, "error": error}
+
+    row = Student.objects.filter(student_id=student_id).values("advisor_id", "program").first()
+    if not row:
+        return {"ok": False, "error": f"Student not found: {student_id}."}
+
+    advisor_id = str(row.get("advisor_id") or "").strip()
+    if not advisor_id:
+        return {
+            "ok": True,
+            "student_id": int(student_id),
+            "advisor_assigned": False,
+            "note": (
+                "No adviser is recorded for this student. The guide tells the student to "
+                "contact the head of department when no adviser has been assigned "
+                "(TU.ADVISING.STUDENT_DUTIES)."
+            ),
+            "tool": "my_advisor",
+        }
+
+    adv = (
+        AcademicAdvisor.objects.filter(advisor_id=advisor_id)
+        .values("advisor_id", "full_name", "department", "email")
+        .first()
+    )
+    if not adv:
+        return {
+            "ok": True,
+            "student_id": int(student_id),
+            "advisor_assigned": True,
+            "advisor_id": advisor_id,
+            "advisor_name": None,
+            "note": (
+                "An adviser id is on file but no matching adviser record exists, so the "
+                "name cannot be given. Do not present the id to the student as a name."
+            ),
+            "tool": "my_advisor",
+        }
+
+    return {
+        "ok": True,
+        "student_id": int(student_id),
+        "advisor_assigned": True,
+        "advisor_id": adv["advisor_id"],
+        "advisor_name": adv.get("full_name") or "",
+        # Email is withheld deliberately: all 89 advisor rows carry a synthetic
+        # address (advisorNN@placeholder.local). Returning it would send a student
+        # to an address that does not exist, which is worse than saying nothing.
+        "advisor_email": None,
+        "contact_note": (
+            "No usable adviser email is on file, so none is given. Direct the student "
+            "to the adviser through the channels the guide lists "
+            "(TU.CONTACT.ADVISER_CHANNELS) rather than inventing contact details."
+        ),
+        "advisor_department": adv.get("department") or "",
+        "tool": "my_advisor",
+    }
+
+
 def build_default_registry() -> AdvisorCapabilityRegistry:
     registry = AdvisorCapabilityRegistry()
 
@@ -1487,6 +1609,60 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
             },
             allowed_roles=_ALL_ROLES,
             executor=_exec_my_timetable,
+        )
+    )
+
+    registry.register(
+        AdvisorCapability(
+            name="my_plan_by_term",
+            description=(
+                "The student's whole degree plan laid out level by level: every course "
+                "marked passed / studying / not taken, and whether prerequisites allow "
+                "registering it now. Use for 'show me my plan', 'what is left in level "
+                "6', 'how much of the plan have I finished'. Broader than my_progress, "
+                "which returns only what is open now. Pass `term` to narrow to one plan "
+                "level. can_register reflects prerequisites ONLY - it says nothing about "
+                "whether a section is being taught."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "student_id": {
+                        "type": "integer",
+                        "description": "Omit for the chatting student.",
+                    },
+                    "term": {
+                        "type": "integer",
+                        "description": "Optional plan LEVEL (1..10), not a calendar term.",
+                    },
+                },
+                "additionalProperties": False,
+            },
+            allowed_roles=_ALL_ROLES,
+            executor=_exec_my_plan_by_term,
+        )
+    )
+
+    registry.register(
+        AdvisorCapability(
+            name="my_advisor",
+            description=(
+                "Who the student's academic adviser is - name and department, not just "
+                "the internal id. Use for 'who is my adviser', 'which department is my "
+                "adviser in', 'I do not know who to ask'."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "student_id": {
+                        "type": "integer",
+                        "description": "Omit for the chatting student.",
+                    },
+                },
+                "additionalProperties": False,
+            },
+            allowed_roles=_ALL_ROLES,
+            executor=_exec_my_advisor,
         )
     )
 

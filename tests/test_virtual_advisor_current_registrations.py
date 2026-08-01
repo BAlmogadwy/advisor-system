@@ -584,3 +584,78 @@ def test_unknown_cohort_refuses_instead_of_showing_both():
 
     with pytest.raises(UnknownStudentGender):
         student_gender_strict(999999999)
+
+
+def test_my_plan_by_term_is_student_scoped_and_level_filtered():
+    from core.services.rbac import ROLE_STUDENT, ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    _make_retake_student()
+    reg = get_default_registry()
+
+    full = reg.execute("my_plan_by_term", {"student_id": SID},
+                       scope={"role": ROLE_SUPER_ADMIN}, ctx={})
+    assert full["ok"] is True
+    assert full["terms"], "the plan came back empty"
+
+    level = int(full["terms"][0]["term"])
+    one = reg.execute("my_plan_by_term", {"student_id": SID, "term": level},
+                      scope={"role": ROLE_SUPER_ADMIN}, ctx={})
+    assert [int(t["term"]) for t in one["terms"]] == [level]
+
+    # A student may only ever see their own plan.
+    other = reg.execute("my_plan_by_term", {"student_id": SID + 1},
+                        scope={"role": ROLE_STUDENT, "student_id": SID}, ctx={})
+    assert other["ok"] is False
+    assert "own records" in other["error"]
+
+    # can_register is about prerequisites, never about a section existing. The note
+    # has to say so or the model will read it as "a seat is waiting".
+    assert "prerequisites ONLY" in full["note"]
+
+
+def test_my_advisor_never_hands_out_the_placeholder_email():
+    """All 89 AcademicAdvisor rows carry advisorNN@placeholder.local.
+
+    Returning it would send a student to an address that does not exist — worse than
+    saying nothing, because it looks actionable.
+    """
+    from core.models import AcademicAdvisor, Student
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    Student.objects.create(student_id=SID, name="S", program="AI", section="M", advisor_id="7")
+    AcademicAdvisor.objects.create(
+        advisor_id="7", full_name="د. اختبار", department="AI",
+        email="advisor7@placeholder.local",
+    )
+    out = get_default_registry().execute(
+        "my_advisor", {"student_id": SID}, scope={"role": ROLE_SUPER_ADMIN}, ctx={},
+    )
+    assert out["advisor_name"] == "د. اختبار"
+    assert out["advisor_email"] is None, "a placeholder address reached the student"
+    assert "placeholder" not in str(out).lower() or "contact_note" in out
+
+
+def test_my_advisor_says_so_when_none_is_assigned():
+    from core.models import Student
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    Student.objects.create(student_id=SID, name="S", program="AI", section="M", advisor_id="")
+    out = get_default_registry().execute(
+        "my_advisor", {"student_id": SID}, scope={"role": ROLE_SUPER_ADMIN}, ctx={},
+    )
+    assert out["ok"] is True
+    assert out["advisor_assigned"] is False
+    assert "advisor_name" not in out, "an unassigned adviser must not get an empty name"
+
+
+def test_new_capabilities_are_student_reachable():
+    from core.services.rbac import ROLE_STUDENT
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    reg = get_default_registry().capabilities
+    for name in ("my_plan_by_term", "my_advisor"):
+        assert name in reg, f"{name} is not registered"
+        assert ROLE_STUDENT in reg[name].allowed_roles, f"{name} is not reachable by a student"

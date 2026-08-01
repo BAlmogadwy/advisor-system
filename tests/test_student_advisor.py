@@ -58,7 +58,13 @@ def test_students_get_only_self_scoped_tools():
         "why_course_locked",
         "graduation_progress",
         "my_timetable",
+        "my_plan_by_term",
+        "my_advisor",
     }
+    # This set is pinned on purpose. Every addition widens what a student can reach,
+    # so it must be a deliberate edit here rather than a silent consequence of
+    # registering a tool. If this assertion fails, check the new tool is genuinely
+    # self-scoped before updating the set.
     assert "find_students" in _tools(ROLE_ADVISOR)  # staff keep it
     assert "aggregate_demand" in _tools(ROLE_SUPER_ADMIN)
 
