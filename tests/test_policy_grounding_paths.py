@@ -170,6 +170,56 @@ def test_agent_loop_disabled_by_settings_still_reaches_the_policy_store(settings
 # ── failure mode 4: nothing applicable in the store ──────────────
 
 
+def _off_concept_lookup(monkeypatch):
+    """Make every retrieved record BACKGROUND: related, and governing nothing.
+
+    Patched at `classify`, which is the function whose whole job is that sorting —
+    not at the grounding producer, because mocking the producer would only prove a
+    value passes through itself, and not at the registry singleton, whose instance
+    attribute leaks into later tests in this module.
+    """
+    from core.services import policy_applicability
+
+    real_classify = policy_applicability.classify
+
+    def classify(policies, **kwargs):
+        roles = real_classify(policies, **kwargs)
+        roles["background_policy_evidence"] = (
+            roles["direct_policy_evidence"] + roles["background_policy_evidence"]
+        )
+        roles["direct_policy_evidence"] = []
+        return roles
+
+    monkeypatch.setattr(policy_applicability, "classify", classify)
+
+
+def test_the_fallback_does_not_report_off_concept_records_as_grounded(monkeypatch):
+    """ "Records came back" and "a record answers this" are different facts.
+
+    Collapsing them made the one case most in need of a human — related rules
+    retrieved, none of them about the question — persist as "retrieved" and read
+    downstream as a grounded success.
+    """
+    _off_concept_lookup(monkeypatch)
+    result = answer_virtual_advisor(
+        question=POLICY_QUESTION, principal=PRINCIPAL, client=_NoToolsClient()
+    )
+    assert result["agent"]["policy_grounding"] == "none_governing"
+
+
+def test_the_agent_loop_does_not_report_off_concept_records_as_grounded(monkeypatch):
+    """The same fact, computed independently on the other path."""
+    _off_concept_lookup(monkeypatch)
+    fake = FakeToolClient(
+        turns=[
+            _tool_turn(tool_calls=(_tool_call("policy_lookup", {"query": POLICY_QUESTION}),)),
+            _tool_turn(content="لا توجد قاعدة تحكم هذا السؤال."),
+        ]
+    )
+    result = answer_virtual_advisor(question=POLICY_QUESTION, principal=PRINCIPAL, client=fake)
+    assert result["agent"]["policy_grounding"] == "none_governing"
+
+
 def test_no_applicable_policy_is_reported_not_silently_omitted():
     """The second half of the acceptance rule: saying so is a valid outcome.
 

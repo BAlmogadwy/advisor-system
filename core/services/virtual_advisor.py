@@ -1393,7 +1393,14 @@ def _seed_policy_evidence(question: str) -> tuple[dict[str, Any], str]:
             {"tool": "policy_lookup", "ok": False, "policies": [], "citable": []},
             "unavailable",
         )
-    return (result, "retrieved" if result.get("policies") else "none_matched")
+    # The same three states the agent loop reports. Collapsing "records came back"
+    # into "grounded" here would leave the single-shot path silently disagreeing
+    # with the loop about the one case that most needs a human.
+    if not result.get("policies"):
+        return (result, "none_matched")
+    if not result.get("direct_policy_evidence"):
+        return (result, "none_governing")
+    return (result, "retrieved")
 
 
 def _retrieved_citations(tool_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1733,9 +1740,18 @@ def answer_virtual_advisor(
                     for r in agent_tool_results
                     if isinstance(r, dict) and r.get("tool") == "policy_lookup"
                 ]
-                telemetry["policy_grounding"] = (
-                    "retrieved" if any(r.get("policies") for r in consulted) else "none_matched"
-                )
+                # Three states, not two. "Records came back" and "a record
+                # governs this question" are different facts, and the applicability
+                # layer exists precisely because they diverge: a turn that
+                # retrieved four related rules and none that answers the question
+                # used to persist as "retrieved" and read downstream as grounded,
+                # so the one case most in need of a human looked like a success.
+                if not any(r.get("policies") for r in consulted):
+                    telemetry["policy_grounding"] = "none_matched"
+                elif not any(r.get("direct_policy_evidence") for r in consulted):
+                    telemetry["policy_grounding"] = "none_governing"
+                else:
+                    telemetry["policy_grounding"] = "retrieved"
             # The UI evidence panel reads ``tool_results``; in loop mode
             # the agent's tool results are that evidence.
             tool_results = agent_tool_results

@@ -31,7 +31,14 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
-from .models import AdvisorConversation, AdvisorFeedback, AdvisorMessage, AdvisorMessageCitation
+from .models import (
+    AdvisorConversation,
+    AdvisorFeedback,
+    AdvisorMessage,
+    AdvisorMessageCitation,
+    FinalDisposition,
+)
+from .services.advisor_outcome import derive_outcome
 from .services.advisor_principal import AdvisorPrincipal, IdentityError
 from .services.rate_limit import CONVERSATION, FEEDBACK, GENERATION, HISTORY
 from .services.rate_limit import consume as spend_budget
@@ -500,12 +507,18 @@ def _persist_answer(
 
     agent = result.get("agent") or {}
     answer = str(result.get("answer") or "")
+
+    # Derived ONCE, here, from the result the student will actually see — after the
+    # citation check and any grounding retry. Deriving it earlier and correcting it
+    # later leaves a window where the stored outcome disagrees with the stored
+    # answer, and the escalation layer reads the stored outcome.
+    outcome = derive_outcome(result)
     entitled = {c.get("policy_id"): c for c in (result.get("citations") or [])}
     claimed = [c for c in _claimed_citations(answer) if c.get("policy_id") in entitled]
 
-    disposition = AdvisorMessage.STATUS_COMPLETED
-    if agent.get("citation_refused"):
-        disposition = AdvisorMessage.STATUS_ABSTAINED
+    status = AdvisorMessage.STATUS_COMPLETED
+    if outcome.disposition in {FinalDisposition.ABSTAIN, FinalDisposition.ESCALATE}:
+        status = AdvisorMessage.STATUS_ABSTAINED
 
     with transaction.atomic():
         assistant = AdvisorMessage.objects.create(
@@ -514,14 +527,17 @@ def _persist_answer(
             role=AdvisorMessage.ROLE_ASSISTANT,
             content=answer,
             grounding_state=str(agent.get("policy_grounding") or ""),
-            final_disposition="ABSTAIN" if agent.get("citation_refused") else "PASS",
+            final_disposition=outcome.disposition,
+            reason_codes=outcome.reason_codes,
+            missing_information=outcome.missing_information,
+            outcome_schema_version=outcome.schema_version,
             model_name=str(result.get("model") or ""),
             route=(
                 AdvisorMessage.ROUTE_AGENT
                 if agent.get("loop_used")
                 else AdvisorMessage.ROUTE_SEEDED_FALLBACK
             ),
-            status=disposition,
+            status=status,
         )
         for claim in claimed:
             source = entitled[claim["policy_id"]]

@@ -1544,6 +1544,20 @@ class AdvisorConversation(models.Model):
         return f"Conversation({self.id}/{self.student_id})"
 
 
+class FinalDisposition(models.TextChoices):
+    """What the final student-visible answer did.
+
+    FAILED is separate from ABSTAIN on purpose: abstaining is a decision the
+    adviser made about the evidence, while failing is the adviser never getting to
+    decide. An escalation queue that cannot tell them apart fills with outages.
+    """
+
+    PASS = "PASS", "Answered"
+    ABSTAIN = "ABSTAIN", "Declined to answer"
+    ESCALATE = "ESCALATE", "Sent to a human adviser"
+    FAILED = "FAILED", "Could not be produced"
+
+
 class AdvisorMessage(models.Model):
     """One turn. The student-visible body ONLY.
 
@@ -1572,7 +1586,30 @@ class AdvisorMessage(models.Model):
     # "was this grounded?" has to be answerable turn by turn.
     answer_mode = models.CharField(max_length=16, blank=True, default="")
     grounding_state = models.CharField(max_length=24, blank=True, default="")
-    final_disposition = models.CharField(max_length=24, blank=True, default="")
+
+    #: What the FINAL, validated answer did — not what the policies permitted. A
+    #: rule marked PROHIBITED_FOR_DECISION constrains the answer; it does not by
+    #: itself mean the turn abstained, because the same rule can be explained
+    #: perfectly well in general terms.
+    final_disposition = models.CharField(
+        max_length=24, choices=FinalDisposition.choices, blank=True, default=""
+    )
+
+    #: Why the answer stopped where it did. Server-set from a closed vocabulary —
+    #: an adviser triages on these, so a free-text reason is a category nobody can
+    #: count. Written once, from the final result, in the same transaction as the
+    #: answer and its citations.
+    reason_codes = models.JSONField(default=list, blank=True)
+
+    #: Structured only, and `[]` when the runtime produces nothing. Never extracted
+    #: from the Arabic answer: parsing prose for "what was missing" invents a
+    #: machine-readable field out of a sentence written for a person.
+    missing_information = models.JSONField(default=list, blank=True)
+
+    #: Bumped when the meaning of a stored outcome changes, so a reader can tell a
+    #: row written under different rules from one it can interpret. Rows written
+    #: before this contract existed carry "", which is not any version.
+    outcome_schema_version = models.CharField(max_length=16, blank=True, default="")
 
     model_name = models.CharField(max_length=120, blank=True, default="")
     model_revision = models.CharField(max_length=120, blank=True, default="")
