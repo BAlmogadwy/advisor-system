@@ -77,6 +77,15 @@ from .instructor_views import (
     instructors_set_active_view,
     instructors_update_view,
 )
+from .planner_draft_views import (
+    draft_confirm_rebuild_view,
+    draft_create_view,
+    draft_detail_view,
+    draft_edit_view,
+    draft_generate_view,
+    draft_select_view,
+    student_planner_page,
+)
 from .planner_job_views import (
     planner_job_cancel,
     planner_job_poll,
@@ -302,6 +311,47 @@ urlpatterns = [
         "student/advisor/escalations/<str:escalation_id>/",
         login_required(escalation_detail_view, login_url="student_login"),
         name="advisor_escalation_detail",
+    ),
+    # The student's planner. Deliberately NOT under `ops/planner/` — those are the
+    # staff endpoints, which take a `student_id` from the payload and check scope
+    # against it. These take no student id at all: the principal is the session,
+    # and it is the same value that filters every query.
+    path(
+        "student/planner/drafts/",
+        login_required(draft_create_view, login_url="student_login"),
+        name="planner_draft_create",
+    ),
+    path(
+        "student/planner/drafts/<str:draft_id>/",
+        login_required(draft_detail_view, login_url="student_login"),
+        name="planner_draft_detail",
+    ),
+    path(
+        "student/planner/drafts/<str:draft_id>/edit/",
+        login_required(draft_edit_view, login_url="student_login"),
+        name="planner_draft_edit",
+    ),
+    path(
+        "student/planner/drafts/<str:draft_id>/confirm-rebuild/",
+        login_required(draft_confirm_rebuild_view, login_url="student_login"),
+        name="planner_draft_confirm_rebuild",
+    ),
+    path(
+        "student/planner/drafts/<str:draft_id>/generate/",
+        login_required(draft_generate_view, login_url="student_login"),
+        name="planner_draft_generate",
+    ),
+    path(
+        "student/planner/drafts/<str:draft_id>/select/",
+        login_required(draft_select_view, login_url="student_login"),
+        name="planner_draft_select",
+    ),
+    # The screen. Declared after the `drafts/…` routes so the literal segment wins;
+    # they differ in length anyway, but order makes that independent of the pattern.
+    path(
+        "student/planner/<str:draft_id>/",
+        login_required(student_planner_page, login_url="student_login"),
+        name="student_planner_page",
     ),
     # The adviser side. `role_required` keeps students out; `visible_cases` decides
     # WHICH cases a member of staff may see, in the query rather than after it.

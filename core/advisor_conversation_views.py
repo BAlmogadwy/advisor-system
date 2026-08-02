@@ -19,7 +19,6 @@ how provenance drifts without anyone noticing.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import uuid
 from datetime import timedelta
@@ -31,6 +30,10 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
+from .advisor_http import forbidden as _forbidden
+from .advisor_http import json_body as _body
+from .advisor_http import over_budget as _over_budget
+from .advisor_http import student_principal as _principal
 from .models import (
     AdvisorConversation,
     AdvisorEscalation,
@@ -47,28 +50,13 @@ from .services.advisor_escalation import (
 )
 from .services.advisor_history import load_visible_history
 from .services.advisor_outcome import derive_outcome
-from .services.advisor_principal import AdvisorPrincipal, IdentityError
 from .services.rate_limit import CONVERSATION, ESCALATION, FEEDBACK, GENERATION, HISTORY
-from .services.rate_limit import consume as spend_budget
 from .services.rate_limit import release as refund_budget
 
 logger = logging.getLogger(__name__)
 
 MAX_QUESTION_CHARS = 4000
 MAX_TITLE_CHARS = 120
-
-
-def _principal(request: HttpRequest) -> AdvisorPrincipal | None:
-    """The effective student, from the authenticated session ONLY.
-
-    Never from the payload. A request that names a student id is describing what
-    it wants, not who it is. Returns None so each view can answer 403 in its own
-    shape; the principal itself fails closed by raising.
-    """
-    try:
-        return AdvisorPrincipal.for_student(request)
-    except IdentityError:
-        return None
 
 
 def _owned_conversation(conversation_id: Any, student_id: int) -> AdvisorConversation:
@@ -87,41 +75,6 @@ def _owned_conversation(conversation_id: Any, student_id: int) -> AdvisorConvers
 
         raise Http404("No such conversation") from None
     return get_object_or_404(AdvisorConversation, id=parsed, student_id=student_id)
-
-
-def _body(request: HttpRequest) -> tuple[dict[str, Any], JsonResponse | None]:
-    try:
-        payload = json.loads(request.body or b"{}")
-    except (ValueError, UnicodeDecodeError):
-        return {}, JsonResponse({"error": "Invalid JSON body."}, status=400)
-    if not isinstance(payload, dict):
-        return {}, JsonResponse({"error": "Body must be a JSON object."}, status=400)
-    return payload, None
-
-
-def _forbidden() -> JsonResponse:
-    return JsonResponse({"error": "This endpoint is for signed-in students."}, status=403)
-
-
-def _over_budget(budget: str, student_id: int) -> JsonResponse | None:
-    """Spend one unit, or explain how long to wait.
-
-    Budgets are named for the RESOURCE. Generation is the expensive one and every
-    door onto it — a new question, a retry of a failed turn — draws on the same
-    allowance, so retrying cannot become a way around the limit on asking.
-    """
-    decision = spend_budget(budget, student_id)
-    if decision.allowed:
-        return None
-    response = JsonResponse(
-        {
-            "error": "لقد أرسلت طلبات كثيرة. يرجى المحاولة بعد قليل.",
-            "retry_after": decision.retry_after,
-        },
-        status=429,
-    )
-    response["Retry-After"] = str(decision.retry_after)
-    return response
 
 
 # ── serialisation: the ONLY shape the browser ever sees ──────────

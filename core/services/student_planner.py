@@ -34,6 +34,7 @@ from core.services.student_helpers import normalize_code
 from core.services.student_sections import (
     UnknownStudentGender,
     get_student_term_baseline,
+    section_is_available_to_student,
     student_gender_strict,
 )
 from core.services.virtual_advisor_capabilities import _translate_unplaced
@@ -42,6 +43,13 @@ from core.services.virtual_advisor_capabilities import _translate_unplaced
 #: builder's credit cap becomes meaningless. Matches the value the chat capability
 #: already uses, so the two paths cannot disagree about the same student.
 DEFAULT_CREDITS = 3
+
+#: The domain name for the retain-or-rebuild choice. Four names existed for it —
+#: `keep_registered` in the solver, `mode: keep|ignore` at the staff HTTP boundary,
+#: `keep_current_sections` in the tool schema, `keep_current` here — and a toggle
+#: whose name changes at every layer is one refactor away from the UI and the
+#: executor disagreeing about which way it points.
+KEEP_CURRENT_SECTIONS = "keep_current_sections"
 
 #: Sunday-first, which is how the week reads here.
 DAY_ORDER = ("SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT")
@@ -64,8 +72,76 @@ class PlannerRequest:
     year: int
     term: int
     must_include: tuple[str, ...] = ()
-    keep_current: bool = True
+    keep_current_sections: bool = True
     max_credits: int = 0
+    #: {"AI221": 4213} — courses whose section the student pinned. A course absent
+    #: from here is one the planner chooses freely, which is the default and the
+    #: common case.
+    fixed_sections: tuple[tuple[str, int], ...] = ()
+
+
+def _run_solver(
+    *,
+    year: str,
+    term: str,
+    shortlist: list[dict[str, Any]],
+    baseline: list[dict[str, Any]],
+    keep_current_sections: bool,
+    max_credits: int,
+    gender: str,
+) -> dict[str, Any]:
+    """The ONLY place student-facing code reaches the solver.
+
+    Two vocabularies meet here and nowhere else. `keep_current_sections` is the
+    domain name — what the student is choosing, and what the toggle, the tool
+    schema and the draft all call it. `keep_registered` is the solver's own
+    parameter, and it is deliberately not renamed there: read aloud it sounds like
+    "keep it registered", which in a product that never registers anything is
+    exactly the wrong thing to imply.
+
+    The dead levers are pinned shut here too, so no caller has to remember them.
+    """
+    return build_plans(
+        year=year,
+        term=term,
+        shortlist=shortlist,
+        baseline=baseline,
+        keep_registered=keep_current_sections,
+        suggest_swaps=False,  # the service emits placeholder strings, never real swaps
+        strict_per_course=False,  # unusable on real data: returns scheduled=0
+        consider_capacity=False,  # dead lever: available_capacity is NULL on every row
+        max_credits=int(max_credits or 0),
+        gender=gender,
+    )
+
+
+def permitted_course_codes(program: str) -> set[str]:
+    """Every course this programme's student may legitimately put in a plan.
+
+    Plan membership alone is too narrow. A student filling an elective slot picks a
+    CONCRETE course that is permitted through that slot and is not itself a plan
+    row — rejecting it would refuse exactly the choice the elective screen exists to
+    offer.
+
+    The elective knowledge is not re-derived here. `_resolve_elective_slot` already
+    knows that a placeholder is recognised by its requirement TYPE rather than by
+    guessing at the code shape, and which concrete courses each slot maps to; this
+    asks it, once per placeholder.
+    """
+    from core.models import ProgrammeRequirement
+    from core.services.virtual_advisor_capabilities import _resolve_elective_slot
+
+    rows = list(ProgrammeRequirement.objects.filter(program=program).values("course_code", "type"))
+    permitted = {normalize_code(r["course_code"]) for r in rows if r["course_code"]}
+
+    for row in rows:
+        if "elective" not in str(row.get("type") or "").lower():
+            continue
+        for option in _resolve_elective_slot(row["course_code"], program) or []:
+            code = normalize_code(option.get("course_code") or "")
+            if code:
+                permitted.add(code)
+    return permitted
 
 
 def _course_credits(program: str) -> dict[str, int]:
@@ -175,16 +251,25 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
         }
 
     baseline = get_student_term_baseline(student_id, str(request.year), str(request.term))
-    result = build_plans(
+
+    # A pin is a filter on one course's options; every other course keeps its full
+    # list. The builder honours this before any solver runs, so mixing pinned and
+    # free courses in one request needs nothing special here.
+    pinned = dict(request.fixed_sections)
+    shortlist: list[dict[str, Any]] = []
+    for code in codes:
+        item: dict[str, Any] = {"course_code": code, "credits": credits.get(code, DEFAULT_CREDITS)}
+        if code in pinned:
+            item["pinned_sections"] = [{"term_section_id": int(pinned[code])}]
+        shortlist.append(item)
+
+    result = _run_solver(
         year=str(request.year),
         term=str(request.term),
-        shortlist=[{"course_code": c, "credits": credits.get(c, DEFAULT_CREDITS)} for c in codes],
+        shortlist=shortlist,
         baseline=baseline,
-        keep_registered=request.keep_current,
-        suggest_swaps=False,  # the service emits placeholder strings, never real swaps
-        strict_per_course=False,  # unusable on real data: returns scheduled=0
-        consider_capacity=False,  # dead lever: available_capacity is NULL on every row
-        max_credits=int(request.max_credits or 0),
+        keep_current_sections=request.keep_current_sections,
+        max_credits=request.max_credits,
         gender=gender,
     )
 
@@ -206,6 +291,10 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
                         "course_code": m.get("course_code"),
                         "section": m.get("section"),
                         "credits": credits.get(str(m.get("course_code") or ""), DEFAULT_CREDITS),
+                        # Carried so "keep this one" can name a section. A student
+                        # pinning a choice has to identify it, and the label alone
+                        # is not unique across the catalogue.
+                        "term_section_id": m.get("term_section_id"),
                     }
                     for m in (option.get("mappings") or [])
                 ],
@@ -244,3 +333,82 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
         "generated": len(result.get("options") or []),
         "reason": "" if alternatives else "NO_VALID_TIMETABLE",
     }
+
+
+# ── drafts: carrying a selection across a navigation ─────────────
+
+
+class DraftRejected(ValueError):
+    """The draft names something this student may not take."""
+
+
+def validate_draft_selection(
+    student_id: int,
+    course_codes: Any,
+    fixed_sections: Any,
+) -> tuple[list[str], dict[str, int]]:
+    """Re-derive what the draft is allowed to contain, from the student's own data.
+
+    A draft is a convenience for carrying a selection across a navigation, never a
+    grant of authority over its contents — so nothing in it is trusted. Course codes
+    must be in this student's programme plan; a pinned section must exist, belong to
+    that course, and be one this student's cohort may take.
+
+    The cohort check is the one that matters most. Sections are gender-segregated by
+    their leading letter, so a pinned id from the other cohort would otherwise put a
+    student in a section they cannot attend — and the planner would schedule around
+    it happily, because the id is real.
+    """
+    from core.models import TermSection
+
+    # Refuses rather than guesses, before anything else is checked: an unresolvable
+    # cohort must not reach a section comparison at all.
+    try:
+        student_gender_strict(student_id)
+    except UnknownStudentGender as exc:
+        raise DraftRejected(str(exc)) from exc
+
+    program = str(
+        Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
+        or ""
+    ).strip()
+    permitted = permitted_course_codes(program)
+
+    codes: list[str] = []
+    for raw in course_codes if isinstance(course_codes, list) else []:
+        code = normalize_code(str(raw))
+        if not code:
+            continue
+        if code not in permitted:
+            raise DraftRejected(f"{code} is not a course this student may take.")
+        if code not in codes:
+            codes.append(code)
+
+    pinned: dict[str, int] = {}
+    for raw_code, raw_id in (
+        (fixed_sections or {}).items() if isinstance(fixed_sections, dict) else []
+    ):
+        code = normalize_code(str(raw_code))
+        if code not in codes:
+            raise DraftRejected(f"A section was pinned for {code}, which is not in the selection.")
+        try:
+            section_id = int(raw_id)
+        except (TypeError, ValueError) as exc:
+            raise DraftRejected(f"The section pinned for {code} is not a section id.") from exc
+
+        section = TermSection.objects.filter(id=section_id, scenario__isnull=True).first()
+        if section is None:
+            raise DraftRejected(f"The section pinned for {code} does not exist.")
+        actual = normalize_code(
+            section.course_key or f"{section.course_code}{section.course_number}"
+        )
+        if actual != code:
+            raise DraftRejected(f"The section pinned for {code} belongs to {actual}.")
+        # THE canonical answer, shared with every other surface. Spelling the rule
+        # out here — "the label starts with M" — would mean a change to section
+        # coding splitting the planner and the chat apart without a failing test.
+        if not section_is_available_to_student(section, student_id=student_id):
+            raise DraftRejected(f"Section {section.section} of {code} is not open to this student.")
+        pinned[code] = section_id
+
+    return codes, pinned

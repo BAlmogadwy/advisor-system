@@ -11069,3 +11069,44 @@ html[data-theme="dark"] .im-modal-footer {
   .sa-conv-list { flex-direction: row; overflow-x: auto; padding-bottom: .25rem; }
   .sa-conv { width: auto; flex: 0 0 auto; max-width: 60vw; }
 }
+
+/* ── student timetable planner ───────────────────────────────────
+   Three stacked cards: what was asked for, how to build it, and what came back.
+   The order is the decision order, so the destructive choice sits between the
+   selection and its consequences rather than beside the results. */
+.sp-layout { display: flex; flex-direction: column; }
+
+/* The same guard the adviser layout needs: a flex or grid `display` on a child
+   beats the `hidden` attribute, and an "empty" message then sits under the list
+   it was meant to replace. */
+.sp-layout [hidden] { display: none !important; }
+
+.sp-muted { color: var(--t2); }
+.sp-note { margin: .75rem 0 .25rem; font-weight: 600; }
+.sp-status { margin-top: .75rem; min-height: 1.5em; color: var(--t2); }
+
+.sp-requested, .sp-unplaced { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .375rem; }
+.sp-requested-item { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.sp-code { font-weight: 600; }
+.sp-name { color: var(--t2); }
+.sp-reason { color: var(--t2); font-size: .875rem; }
+
+/* Fixed vs automatic is the distinction the student is actually managing, so it
+   is a badge rather than a sentence. */
+.sp-tag { font-size: .75rem; border-radius: 999px; padding: .125rem .5rem; border: 1px solid var(--line); }
+.sp-tag-fixed { background: var(--accent-soft, rgba(13,110,253,.12)); }
+.sp-tag-auto { color: var(--t2); }
+
+.sp-confirm { margin-top: .75rem; padding: .75rem; border: 1px solid var(--warn, #b8860b); border-radius: var(--radius-sm, 8px); }
+.sp-warning { margin: 0 0 .5rem; font-weight: 600; }
+
+.sp-options { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; }
+.sp-option { border: 1px solid var(--line); border-radius: var(--radius-sm, 8px); padding: .75rem; }
+.sp-option-selected { border-color: var(--ok, #198754); border-width: 2px; }
+.sp-option header { display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; margin-bottom: .5rem; }
+.sp-option header h3 { margin: 0; }
+
+/* The timetable is wide and the page must not be. It scrolls inside its own box. */
+.sp-grid { width: 100%; border-collapse: collapse; font-size: .875rem; margin-bottom: .75rem; display: block; overflow-x: auto; }
+.sp-grid th, .sp-grid td { border-bottom: 1px solid var(--line); padding: .25rem .375rem; text-align: start; white-space: nowrap; }
+.sp-added { font-size: .8125rem; color: var(--t2); margin: 0 0 .5rem; }

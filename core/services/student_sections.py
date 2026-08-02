@@ -54,6 +54,29 @@ def gender_section_filter(gender: str) -> Q:
     return Q(section__istartswith=g) | ~gendered
 
 
+def section_is_available_to_student(section: object, *, student_id: int | str) -> bool:
+    """Whether this student's cohort may take this section.
+
+    THE canonical per-section answer, and the one every surface must call — the
+    planner, the chat hand-off, and whatever comes next. `gender_section_filter`
+    answers the same question for a queryset; this answers it for a row, and the
+    two deliberately share `section_gender` so they cannot drift apart.
+
+    The rule that must not be re-implemented anywhere else: a section's cohort is
+    the leading letter of its label, and a label with neither M nor F is open to
+    everyone. Spelling that out at a call site would mean a change to section
+    coding silently splitting the surfaces apart.
+
+    Refuses rather than guesses for an unresolvable student, for the same reason
+    `student_gender_strict` does: every real section is gendered, so an all-pass
+    fallback is not a partial failure but a complete one.
+    """
+    required = student_gender_strict(student_id)
+    label = getattr(section, "section", "") or ""
+    allowed = section_gender(label)
+    return not allowed or allowed == required
+
+
 def student_gender_strict(student_id: int | str) -> str:
     """Return the student's cohort, or raise rather than fall back to all-pass.
 

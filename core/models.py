@@ -2036,3 +2036,119 @@ class AdvisorEscalationEvent(models.Model):
 
     def __str__(self) -> str:
         return f"{self.kind}@{self.escalation_id}"
+
+
+class PlannerDraft(models.Model):
+    """A timetable request handed from one screen to another, by reference.
+
+    The chat says "I have put those courses in your planner" and sends the student
+    to a link. The obvious way to do that is a query string carrying the course
+    codes — and a query string is written by whoever is holding the keyboard, so
+    the planner would be taking its subject matter from the address bar.
+
+    A row instead. The link carries an opaque id; everything the planner acts on is
+    read back from here under the student's own principal, and every code and
+    section in it is re-validated against what that student may actually take. The
+    draft is a convenience for carrying a selection across a navigation, never a
+    grant of authority over its contents.
+
+    Deliberately narrow: course codes, optional fixed sections, the retain choice,
+    where it came from, and when it dies. No tool results, no model reasoning, no
+    retrieved policies — a draft is an input to a screen, not a transcript.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    #: Bare integer, the external-table convention used throughout the adviser: a
+    #: roster re-import must not cascade a student's drafts away.
+    student_id = models.IntegerField(db_index=True)
+
+    #: WHICH term is being planned. Part of the draft, not a parameter of the
+    #: generate call: the term decides which registrations count as "current", so a
+    #: draft that took it from the request could be generated twice, for two
+    #: different terms, under one version — and the second answer would be served
+    #: from the first one's cache. Set once, from the project's configured
+    #: defaults, and only changed by editing the draft.
+    academic_year = models.CharField(max_length=4, default="", blank=True)
+    term = models.CharField(max_length=1, default="", blank=True)
+
+    #: ["CS113", "AI221"] — codes only. Never section ids, never free text.
+    course_codes = models.JSONField(default=list, blank=True)
+    #: {"AI221": 4213} — course code to term_section id, for the ones the student
+    #: pinned. A course absent from here is one the planner may choose freely.
+    fixed_sections = models.JSONField(default=dict, blank=True)
+    keep_current_sections = models.BooleanField(default=True)
+
+    #: Where it came from, so a draft opened from chat can point back at the turn
+    #: that produced it. Null for one the student built on the planner itself.
+    source_message = models.ForeignKey(
+        "AdvisorMessage",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="planner_drafts",
+    )
+
+    #: Bumped by every change to the selection. A confirmation token is bound to a
+    #: version, so editing the draft after confirming invalidates the confirmation —
+    #: otherwise a student could confirm a harmless rebuild, change what it contains,
+    #: and have the old approval carry.
+    version = models.PositiveIntegerField(default=1)
+
+    #: A HASH of the server-issued token, never the token. A posted
+    #: `"confirmed": true` is written by whoever holds the keyboard; this is not.
+    #: Bound to (student, draft, version) and single-use, so it authorises exactly
+    #: one generation of exactly the inputs the student was shown when they
+    #: confirmed — not whatever the draft becomes afterwards.
+    rebuild_token_hash = models.CharField(max_length=64, blank=True, default="")
+    rebuild_token_version = models.PositiveIntegerField(default=0)
+    rebuild_token_expires_at = models.DateTimeField(null=True, blank=True)
+
+    #: THE generated result, persisted rather than recomputed. The solver randomises
+    #: and the catalogue moves, so regenerating on reload would quietly show a
+    #: different set of timetables than the one the student was comparing.
+    alternatives = models.JSONField(default=list, blank=True)
+    generated_at = models.DateTimeField(null=True, blank=True)
+    #: What the alternatives were generated FROM, so a later request can tell whether
+    #: the world moved underneath them: the validated courses, the pins, the retain
+    #: choice, and the baseline the solver actually saw.
+    generated_inputs = models.JSONField(default=dict, blank=True)
+    #: Bumps when the shape of a stored result changes, so an old row is detectable
+    #: rather than silently misread.
+    generation_schema_version = models.CharField(max_length=16, blank=True, default="")
+
+    #: The student's preference. NOT a registration, and nothing downstream may
+    #: treat it as one.
+    selected_alternative = models.CharField(max_length=200, blank=True, default="")
+    selected_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    #: A hand-off, not a saved plan. An old draft describes a catalogue that may no
+    #: longer exist, so it expires rather than lingering as a stale suggestion.
+    expires_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "planner_drafts"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["student_id", "-created_at"], name="idx_draft_student"),
+            models.Index(fields=["expires_at"], name="idx_draft_expiry"),
+        ]
+
+    def __str__(self) -> str:
+        return f"Draft({self.id}/{self.student_id})"
+
+    @property
+    def is_live(self) -> bool:
+        from django.utils import timezone
+
+        return self.expires_at > timezone.now()
+
+    @property
+    def has_current_generation(self) -> bool:
+        """Whether the stored alternatives still describe THIS draft.
+
+        A generation belongs to the version that produced it. Change the selection
+        and the stored timetables are about something else — showing them would be
+        answering a question the student has already moved on from.
+        """
+        return bool(self.alternatives) and self.generated_inputs.get("version") == self.version

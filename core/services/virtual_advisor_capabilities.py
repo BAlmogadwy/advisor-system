@@ -1532,14 +1532,15 @@ def _exec_build_my_timetable(
     # it silently discards section choices the student already made, possibly with
     # an adviser. Replacing must be asked for, which is what the tool description
     # now requires.
-    keep = bool(args.get("keep_current_sections", True))
+    keep_current_sections = bool(args.get("keep_current_sections", True))
 
     result = build_plans(
         year=str(year),
         term=str(term),
         shortlist=[{"course_code": c, "credits": credits.get(c, 3)} for c in codes],
         baseline=baseline,
-        keep_registered=keep,
+        # Domain name in, solver name out — translated here and nowhere else.
+        keep_registered=keep_current_sections,
         suggest_swaps=False,  # the service emits placeholder strings, never real swaps
         strict_per_course=False,  # unusable on real data: returns scheduled=0
         consider_capacity=False,  # dead lever: available_capacity is NULL on every row
