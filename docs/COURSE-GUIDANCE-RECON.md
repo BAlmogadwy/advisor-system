@@ -3,7 +3,22 @@
 Three deterministic student surfaces: **why a course is locked**, **what a course
 formally requires**, and **what can fill an elective slot**.
 
-Reconnaissance only. No implementation, no planner changes, no CI changes.
+Reconnaissance only. No planner changes, no CI changes.
+
+## Two decisions, settled
+
+**Electives: publish the mappings first.** The screen does not ship until a
+programme passes the readiness gate. `manage.py elective_mapping_readiness
+--with-students` reports it; live today, **2 of 28 slots ready, zero programmes
+ready, 2035 student-slot pairs would see an empty screen**. The honest empty state
+«لم تُنشر خيارات هذا المتطلب الاختياري بعد» must be exceptional, not the
+experience.
+
+**Personalised eligibility: deferred to a canonical engine**
+([issue #56](https://github.com/BAlmogadwy/advisor-system/issues/56)).
+`you_can_take_it_now` is cut from the contract. Elective options may say what a
+course *is* and what it formally requires; they may not say «يمكنك تسجيل هذا
+المقرر الآن.» Timetable feasibility is not academic eligibility.
 
 ## Correction: the first draft of this document was wrong
 
@@ -245,8 +260,13 @@ eligibility logic**, not a free field:
   documented broken for the 5 IS rows carrying `programme=''`
   (`CAPABILITY-SCREEN-MAP.md:153`).
 
-Either cut the field or scope it as its own work with its own review. It must not
-arrive inside a contract as though it were already computed.
+**Cut, and scoped as its own work** —
+[issue #56](https://github.com/BAlmogadwy/advisor-system/issues/56). The rule that
+makes the deferral safe: *absence of a blocking reason must not be converted into an
+affirmative eligibility decision.* `eligible_now: true` is a claim the university
+acts on; "we found nothing blocking" is a different statement. The planner already
+sets the precedent — `PlannerUnavailable` refuses rather than degrading to a
+permissive default.
 
 ---
 
@@ -302,6 +322,9 @@ Written down because each was learned expensively, mostly during the planner.
 ---
 
 ## 7. Revised scope for this branch
+
+Progress: 1 and 3 are done, and the readiness gate for 4 is built.
+
 
 1. **Test the shipping locked-course page** — `student_courses_view` and
    `student_courses.html`. It is the largest untested student-facing surface, and
