@@ -1786,16 +1786,35 @@ class AdvisorEscalation(models.Model):
     TERMINAL_STATUSES = (Status.RESOLVED, Status.CLOSED)
 
     class Reason(models.TextChoices):
-        """Why a human is needed. Set by the server from the turn, never by the
-        client — a reason the student can choose is a reason the student can be
-        wrong about, and it is what the adviser triages on."""
+        """Why this case was sent to a person.
+
+        The SAME vocabulary the assistant turn uses, and deliberately not the same
+        value. The message records why the ANSWER was limited; this records why a
+        HUMAN was asked. A student who simply wants a person to look at a perfectly
+        good answer produces STUDENT_REQUESTED here while the turn keeps whatever
+        constrained it — which was nothing.
+
+        Set by the server. A reason the student can choose is a reason the student
+        can be wrong about, and it is what the adviser queue sorts on.
+        """
 
         PROHIBITED_FOR_DECISION = (
             "PROHIBITED_FOR_DECISION",
-            "The regulation forbids deciding this case automatically",
+            "The regulation reserves this decision to a person",
         )
-        MISSING_INFORMATION = ("MISSING_INFORMATION", "Required information was unavailable")
-        NO_GROUNDED_ANSWER = ("NO_GROUNDED_ANSWER", "No approved policy covered the question")
+        POLICY_NOT_FOUND = ("POLICY_NOT_FOUND", "No approved policy governs the question")
+        POLICY_UNAVAILABLE = ("POLICY_UNAVAILABLE", "The policy store could not be consulted")
+        STUDENT_DATA_MISSING = ("STUDENT_DATA_MISSING", "Required student facts were unavailable")
+        PROCEDURE_NOT_DOCUMENTED = (
+            "PROCEDURE_NOT_DOCUMENTED",
+            "The procedure is not written down",
+        )
+        CONFLICTING_AUTHORITIES = (
+            "CONFLICTING_AUTHORITIES",
+            "Sources disagree and a person must choose",
+        )
+        JUDGE_REJECTED = ("JUDGE_REJECTED", "The answer did not survive review")
+        MODEL_UNAVAILABLE = ("MODEL_UNAVAILABLE", "No answer could be produced")
         STUDENT_REQUESTED = ("STUDENT_REQUESTED", "The student asked for a human adviser")
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

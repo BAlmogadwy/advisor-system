@@ -21,6 +21,12 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.services.advisor_outcome import (
+    OutcomeError,
+    validate_missing_information,
+    validate_reason_codes,
+)
+
 #: Every key the snapshot may contain. The builder returns exactly these, and the
 #: validator refuses anything else — so adding a field is a deliberate edit here
 #: rather than something that happens by accident upstream.
@@ -84,6 +90,15 @@ def validate_evidence(snapshot: dict[str, Any]) -> dict[str, Any]:
         stray = set(citation) - set(CITATION_FIELDS)
         if stray:
             raise EvidenceError(f"citation carries extra fields: {sorted(stray)}")
+
+    # Delegated rather than re-implemented: the turn and the case must agree about
+    # what a missing-information entry is, or a snapshot could carry a shape the
+    # message itself would have refused.
+    try:
+        validate_reason_codes(snapshot.get("reason_codes") or [])
+        validate_missing_information(snapshot.get("missing_information") or [])
+    except OutcomeError as exc:
+        raise EvidenceError(str(exc)) from exc
     return snapshot
 
 
@@ -107,7 +122,12 @@ def deterministic_summary(evidence: dict[str, Any]) -> str:
     if reasons:
         lines.append("سبب الإحالة: " + "، ".join(str(r) for r in reasons))
     if missing:
-        lines.append("معلومات ناقصة: " + "، ".join(str(m) for m in missing))
+        # The Arabic label, never the code: the summary is read by a person, and
+        # WITHDRAWAL_HISTORY is the vocabulary the queue sorts on, not a sentence.
+        lines.append(
+            "معلومات ناقصة: "
+            + "، ".join(str(m.get("label_ar") or m.get("code") or "") for m in missing)
+        )
     if citations:
         refs = "؛ ".join(
             " ".join(
@@ -129,3 +149,98 @@ def deterministic_summary(evidence: dict[str, Any]) -> str:
         # that reproduces it is not a summary.
         lines.append("خلاصة رد النظام: " + (answer[:600] + "…" if len(answer) > 600 else answer))
     return "\n".join(lines)
+
+
+# ── building a case from committed rows ──────────────────────────
+
+#: Which reason to file the case under when the student did not ask for a person
+#: outright. Ordered by how much a human is actually needed: a decision the
+#: regulation reserves to a person outranks a rule nobody could find, which
+#: outranks an outage. The first match wins, so the queue sorts on one stable
+#: value rather than on whichever reason happened to be appended first.
+_ESCALATION_PRIORITY = (
+    "PROHIBITED_FOR_DECISION",
+    "CONFLICTING_AUTHORITIES",
+    "JUDGE_REJECTED",
+    "STUDENT_DATA_MISSING",
+    "PROCEDURE_NOT_DOCUMENTED",
+    "POLICY_NOT_FOUND",
+    "POLICY_UNAVAILABLE",
+    "MODEL_UNAVAILABLE",
+)
+
+
+def may_escalate(message: Any, *, student_requested: bool = False) -> bool:
+    """Whether this turn can be handed to a person.
+
+    A student may ask for a human about a perfectly good answer — being satisfied
+    with a system's reply is not a precondition for wanting a person to look at it
+    — so `student_requested` opens the door on its own.
+
+    What is deliberately NOT here: automatic escalation of every turn that found no
+    governing policy. Plenty of unsupported questions are about services outside
+    academic advising and need redirecting, not a case in an adviser's queue.
+    """
+    if student_requested:
+        return True
+    disposition = str(getattr(message, "final_disposition", "") or "")
+    if disposition in {"ABSTAIN", "ESCALATE"}:
+        return True
+    return "PROHIBITED_FOR_DECISION" in (getattr(message, "reason_codes", None) or [])
+
+
+def escalation_reason(message: Any, *, student_requested: bool = False) -> str:
+    """Why a PERSON was asked — which is not always why the answer was limited.
+
+    A student requesting review of an answer that passed is STUDENT_REQUESTED here
+    while the turn itself keeps its own reasons, which may be none. Collapsing the
+    two would rewrite the record of what constrained the answer every time somebody
+    pressed a button.
+    """
+    if student_requested:
+        return "STUDENT_REQUESTED"
+    codes = list(getattr(message, "reason_codes", None) or [])
+    for candidate in _ESCALATION_PRIORITY:
+        if candidate in codes:
+            return candidate
+    return "STUDENT_REQUESTED"
+
+
+def build_evidence(message: Any) -> dict[str, Any]:
+    """Freeze what the adviser will read, from the stored turn and nothing else.
+
+    Every field comes from a committed row: the question from the student message
+    this one replies to, the answer and typed outcome from the message itself, the
+    references from its citation snapshots. Nothing is looked up live.
+
+    That is the whole point. A case opened tomorrow against today's answer must
+    show today's evidence — if the policy store or the student's record is consulted
+    at creation time, the adviser reads a case whose facts have moved since the
+    student was given them, and neither of them can tell.
+
+    `relevant_student_facts` is `{}` until the turn persists them. Reconstructing
+    them from the live record would reintroduce exactly the drift above, and
+    reading them out of the Arabic answer would invent structure from prose.
+    """
+    question = getattr(message.in_reply_to, "content", "") if message.in_reply_to_id else ""
+    snapshot = {
+        "question": str(question or ""),
+        "assistant_answer": str(message.content or ""),
+        "answer_mode": str(message.answer_mode or ""),
+        "final_disposition": str(message.final_disposition or ""),
+        "reason_codes": list(message.reason_codes or []),
+        "relevant_student_facts": {},
+        "citations": [
+            {
+                "policy_id": c.policy_id,
+                "document_title": c.document_title,
+                "edition": c.edition,
+                "page": c.page,
+                "effective_from": c.effective_from,
+                "effective_to": c.effective_to,
+            }
+            for c in message.citations.all()
+        ],
+        "missing_information": list(message.missing_information or []),
+    }
+    return validate_evidence(snapshot)

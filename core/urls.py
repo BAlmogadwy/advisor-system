@@ -6,6 +6,9 @@ from .advisor_conversation_views import (
     conversation_list_view,
     conversation_messages_view,
     conversation_post_message_view,
+    escalation_create_view,
+    escalation_detail_view,
+    escalation_list_view,
     message_feedback_view,
 )
 from .advisor_views import (
@@ -279,6 +282,23 @@ urlpatterns = [
         "student/advisor/messages/<str:message_id>/feedback/",
         login_required(message_feedback_view, login_url="student_login"),
         name="advisor_message_feedback",
+    ),
+    # A case is anchored to the turn that produced it: the adviser opens it with
+    # the question, the answer and the sources already attached.
+    path(
+        "student/advisor/messages/<str:message_id>/escalations/",
+        login_required(escalation_create_view, login_url="student_login"),
+        name="advisor_escalation_create",
+    ),
+    path(
+        "student/advisor/escalations/",
+        login_required(escalation_list_view, login_url="student_login"),
+        name="advisor_escalation_list",
+    ),
+    path(
+        "student/advisor/escalations/<str:escalation_id>/",
+        login_required(escalation_detail_view, login_url="student_login"),
+        name="advisor_escalation_detail",
     ),
     path("", login_required(dashboard, login_url="login"), name="dashboard"),
     path("health/", health, name="health"),

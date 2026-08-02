@@ -33,14 +33,21 @@ from django.views.decorators.http import require_GET, require_POST
 
 from .models import (
     AdvisorConversation,
+    AdvisorEscalation,
     AdvisorFeedback,
     AdvisorMessage,
     AdvisorMessageCitation,
     FinalDisposition,
 )
+from .services.advisor_escalation import (
+    build_evidence,
+    deterministic_summary,
+    escalation_reason,
+    may_escalate,
+)
 from .services.advisor_outcome import derive_outcome
 from .services.advisor_principal import AdvisorPrincipal, IdentityError
-from .services.rate_limit import CONVERSATION, FEEDBACK, GENERATION, HISTORY
+from .services.rate_limit import CONVERSATION, ESCALATION, FEEDBACK, GENERATION, HISTORY
 from .services.rate_limit import consume as spend_budget
 from .services.rate_limit import release as refund_budget
 
@@ -658,3 +665,186 @@ def message_feedback_view(request: HttpRequest, message_id: str) -> JsonResponse
             "feedback": {"rating": feedback.rating, "reason_codes": feedback.reason_codes},
         }
     )
+
+
+# ── escalation: handing one turn to a person ─────────────────────
+
+MAX_NOTE_CHARS = 2000
+
+
+def _escalation_json(escalation: AdvisorEscalation) -> dict[str, Any]:
+    """What the STUDENT may see of their own case.
+
+    An allowlist, and a short one. `adviser_notes` is working correspondence about
+    them rather than to them; `evidence_snapshot` is the adviser's copy of material
+    the student already has in the conversation, restated in machine shape; and
+    `assigned_adviser_id` names a colleague who has not agreed to be named. The
+    reference, the status and the summary are what a person chasing their own case
+    actually needs.
+    """
+    return {
+        "id": escalation.reference,
+        "status": escalation.status,
+        "reason_code": escalation.reason_code,
+        "student_note": escalation.student_note,
+        "generated_summary": escalation.generated_summary,
+        "created_at": escalation.created_at.isoformat(),
+        "updated_at": escalation.updated_at.isoformat(),
+    }
+
+
+def _owned_assistant_message(message_id: Any, student_id: int) -> AdvisorMessage:
+    """An assistant turn this student owns, with the question it answered.
+
+    Ownership is in the query, as everywhere else here. The `in_reply_to` filter is
+    not decoration: a case whose evidence cannot include the question is a case an
+    adviser has to reconstruct from the student's memory of it.
+    """
+    try:
+        parsed = uuid.UUID(str(message_id))
+    except (ValueError, AttributeError, TypeError):
+        from django.http import Http404
+
+        raise Http404("No such message") from None
+    return get_object_or_404(
+        AdvisorMessage.objects.select_related("in_reply_to"),
+        id=parsed,
+        role=AdvisorMessage.ROLE_ASSISTANT,
+        conversation__student_id=student_id,
+        in_reply_to__isnull=False,
+    )
+
+
+@require_POST
+def escalation_create_view(request: HttpRequest, message_id: str) -> JsonResponse:
+    """Hand one answered turn to a human adviser.
+
+    The whole thing is one transaction over a LOCKED source message, because three
+    things have to agree afterwards: a case exists, its evidence matches the answer
+    that produced it, and that answer says it was escalated. A database holding an
+    open case whose source turn still reads ABSTAIN is one where the adviser and
+    the student are looking at different accounts of the same event.
+    """
+    principal = _principal(request)
+    if principal is None:
+        return _forbidden()
+    student_id = principal.student_id
+
+    payload, err = _body(request)
+    if err:
+        return err
+    note = str(payload.get("student_note") or "").strip()[:MAX_NOTE_CHARS]
+    student_requested = bool(payload.get("student_requested"))
+
+    message = _owned_assistant_message(message_id, student_id)
+
+    with transaction.atomic():
+        # Locked for the whole decision: without it two taps of the button both see
+        # no open case and both try to create one.
+        locked = (
+            AdvisorMessage.objects.select_for_update()
+            .select_related("in_reply_to")
+            .get(pk=message.pk)
+        )
+
+        existing = (
+            AdvisorEscalation.objects.filter(source_message=locked)
+            .exclude(status__in=AdvisorEscalation.TERMINAL_STATUSES)
+            .first()
+        )
+        if existing is not None:
+            # The same request, not a second one. Returned as-is: regenerating the
+            # summary would rewrite what an adviser may already have read.
+            return JsonResponse({"escalation": _escalation_json(existing)}, status=200)
+
+        if not may_escalate(locked, student_requested=student_requested):
+            return JsonResponse(
+                {
+                    "error": (
+                        "هذه الإجابة لا تحتاج إلى مراجعة المرشد الأكاديمي. "
+                        "يمكنك طلب المراجعة صراحةً إذا رغبت."
+                    )
+                },
+                status=409,
+            )
+
+        over = _over_budget(ESCALATION, student_id)
+        if over:
+            return over
+
+        evidence = build_evidence(locked)
+        try:
+            # Its OWN savepoint. An IntegrityError marks the enclosing atomic block
+            # broken, so without this the recovery query below cannot run — the
+            # concurrency handler would itself raise, in production, on exactly the
+            # contended path it exists to survive.
+            with transaction.atomic():
+                escalation = AdvisorEscalation.objects.create(
+                    conversation=locked.conversation,
+                    source_message=locked,
+                    student_id=student_id,
+                    reason_code=escalation_reason(locked, student_requested=student_requested),
+                    student_note=note,
+                    generated_summary=deterministic_summary(evidence),
+                    evidence_snapshot=evidence,
+                )
+        except IntegrityError:
+            # The partial unique index caught a concurrent creation. That request
+            # won; this one reports its result rather than inventing a second case.
+            winner = (
+                AdvisorEscalation.objects.filter(source_message=locked)
+                .exclude(status__in=AdvisorEscalation.TERMINAL_STATUSES)
+                .first()
+            )
+            if winner is None:
+                raise
+            return JsonResponse({"escalation": _escalation_json(winner)}, status=200)
+
+        # The turn now says it was escalated — but keeps the reasons that
+        # constrained the ANSWER. Those record why the adviser stopped where it
+        # did; the case records why a person was asked, and for a student who
+        # simply wanted a human to look, that is a different fact.
+        locked.final_disposition = FinalDisposition.ESCALATE
+        locked.status = AdvisorMessage.STATUS_ESCALATED
+        locked.save(update_fields=["final_disposition", "status"])
+
+    return JsonResponse({"escalation": _escalation_json(escalation)}, status=201)
+
+
+@require_GET
+def escalation_list_view(request: HttpRequest) -> JsonResponse:
+    principal = _principal(request)
+    if principal is None:
+        return _forbidden()
+    over = _over_budget(HISTORY, principal.student_id)
+    if over:
+        return over
+    cases = AdvisorEscalation.objects.filter(student_id=principal.student_id)
+    return JsonResponse({"escalations": [_escalation_json(c) for c in cases]})
+
+
+@require_GET
+def escalation_detail_view(request: HttpRequest, escalation_id: str) -> JsonResponse:
+    principal = _principal(request)
+    if principal is None:
+        return _forbidden()
+    over = _over_budget(HISTORY, principal.student_id)
+    if over:
+        return over
+
+    # Accepts the reference the student was shown as well as the raw id, because
+    # the reference is the only one of the two they ever saw.
+    lookup: dict[str, Any] = {"student_id": principal.student_id}
+    raw = str(escalation_id or "")
+    try:
+        lookup["id"] = uuid.UUID(raw)
+    except (ValueError, AttributeError, TypeError):
+        prefix = raw.upper().removeprefix("ESC-")
+        if not prefix.isalnum():
+            from django.http import Http404
+
+            raise Http404("No such escalation") from None
+        lookup["id__startswith"] = prefix.lower()
+
+    case = get_object_or_404(AdvisorEscalation, **lookup)
+    return JsonResponse({"escalation": _escalation_json(case)})

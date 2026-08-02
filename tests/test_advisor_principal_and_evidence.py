@@ -193,7 +193,9 @@ def _evidence(**overrides) -> dict:
                 "effective_to": "",
             }
         ],
-        "missing_information": ["عدد الانسحابات السابقة"],
+        "missing_information": [
+            {"code": "WITHDRAWAL_HISTORY", "label_ar": "عدد مرات الانسحاب السابقة"}
+        ],
     }
     base.update(overrides)
     return base
@@ -261,7 +263,8 @@ def test_the_summary_needs_no_model():
     summary = deterministic_summary(_evidence())
     assert "كم مرة أقدر أنسحب؟" in summary
     assert "PROHIBITED_FOR_DECISION" in summary
-    assert "عدد الانسحابات السابقة" in summary
+    assert "عدد مرات الانسحاب السابقة" in summary
+    assert "WITHDRAWAL_HISTORY" not in summary, "the code is queue vocabulary, not a sentence"
     assert "TU.WITHDRAWAL.MAXIMUM" in summary
 
 
