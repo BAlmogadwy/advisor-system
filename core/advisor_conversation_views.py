@@ -22,6 +22,7 @@ import hashlib
 import json
 import logging
 import uuid
+from datetime import timedelta
 from typing import Any
 
 from django.db import IntegrityError, transaction
@@ -111,13 +112,31 @@ def _message_json(message: AdvisorMessage) -> dict[str, Any]:
         "status": message.status,
         "created_at": message.created_at.isoformat(),
     }
+    if (
+        message.role == AdvisorMessage.ROLE_STUDENT
+        and message.idempotency_key
+        and _is_resumable(message)
+    ):
+        # The one piece of turn machinery the browser genuinely needs, and only on
+        # the turns that need it. Retry has to resume THIS question rather than ask
+        # it again, and a key held only in page memory is gone after a reload — so
+        # a resumable turn carries its own token back. It is the client's own value
+        # echoed to the client, scoped to a message it already owns.
+        #
+        # Keyed on resumability rather than on FAILED so that an ABANDONED turn is
+        # recoverable too: a worker killed mid-generation leaves PENDING set
+        # forever, and "Preparing the answer…" with no way out is a lost question
+        # wearing a spinner.
+        data["retry_token"] = message.idempotency_key
+
     if message.role == AdvisorMessage.ROLE_ASSISTANT:
-        data.update(
-            answer_mode=message.answer_mode or None,
-            grounding_state=message.grounding_state or None,
-            final_disposition=message.final_disposition or None,
-            citations=[_citation_json(c) for c in message.citations.all()],
-        )
+        # `answer_mode`, `grounding_state` and `final_disposition` are NOT here on
+        # purpose. They are the system's account of its own reasoning — which
+        # retrieval state it was in, what the judge decided — and nothing on the
+        # screen reads them. Shipping them anyway would let a student open the
+        # network tab and read "grounding_state: not_consulted" beside an answer
+        # about withdrawal limits. `status` already carries what the UI needs.
+        data["citations"] = [_citation_json(c) for c in message.citations.all()]
     return data
 
 
@@ -197,7 +216,6 @@ def conversation_post_message_view(request: HttpRequest, conversation_id: str) -
     message without its citations would be an uncited answer that looks cited-by-
     omission rather than one that failed.
     """
-    from .services.local_llm import LocalLLMError
     from .services.virtual_advisor import answer_virtual_advisor
 
     student_id = _student_id(request)
@@ -217,46 +235,52 @@ def conversation_post_message_view(request: HttpRequest, conversation_id: str) -
     key = str(payload.get("idempotency_key") or "").strip()[:64]
     request_hash = hashlib.sha256(question.encode("utf-8")).hexdigest()
 
+    student_message = None
     if key:
         existing = conversation.messages.filter(
             idempotency_key=key, role=AdvisorMessage.ROLE_STUDENT
         ).first()
         if existing is not None:
-            if existing.request_hash != request_hash:
-                # The same key carrying a different question is a client bug, not a
-                # retry. Answering it would silently attach one question's answer to
-                # another's key.
-                return JsonResponse(
-                    {"error": "idempotency_key was already used for a different message."},
-                    status=409,
-                )
-            return _replay(conversation, existing, student_id)
+            resumed, response = _resume_or_replay(conversation, existing, student_id, request_hash)
+            if response is not None:
+                return response
+            student_message = resumed
 
-    with transaction.atomic():
+    if student_message is None:
         try:
-            student_message = AdvisorMessage.objects.create(
-                conversation=conversation,
-                role=AdvisorMessage.ROLE_STUDENT,
-                content=question,
-                idempotency_key=key,
-                request_hash=request_hash,
-                status=AdvisorMessage.STATUS_PENDING,
-            )
+            with transaction.atomic():
+                student_message = AdvisorMessage.objects.create(
+                    conversation=conversation,
+                    role=AdvisorMessage.ROLE_STUDENT,
+                    content=question,
+                    idempotency_key=key,
+                    request_hash=request_hash,
+                    status=AdvisorMessage.STATUS_PENDING,
+                )
         except IntegrityError:
+            if not key:
+                # The unique constraint only covers non-empty keys, so this cannot be
+                # an idempotency collision — it is some other integrity failure, and
+                # the recovery below would match an unrelated earlier keyless turn
+                # and serve its stored answer as this question's.
+                raise
             # Two concurrent sends of the same key. The other one is authoritative.
             existing = conversation.messages.filter(
                 idempotency_key=key, role=AdvisorMessage.ROLE_STUDENT
             ).first()
             if existing is None:
                 raise
-            return _replay(conversation, existing, student_id)
+            resumed, response = _resume_or_replay(conversation, existing, student_id, request_hash)
+            if response is not None:
+                return response
+            student_message = resumed
 
     try:
         result = answer_virtual_advisor(
             question=question,
             scope={"role": ROLE_STUDENT, "student_id": student_id},
         )
-    except (LocalLLMError, Exception) as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
         logger.exception("Adviser generation failed for conversation %s", conversation.id)
         student_message.status = AdvisorMessage.STATUS_FAILED
         student_message.save(update_fields=["status"])
@@ -265,8 +289,10 @@ def conversation_post_message_view(request: HttpRequest, conversation_id: str) -
                 "conversation": _conversation_json(conversation),
                 "student_message": _message_json(student_message),
                 "assistant_message": None,
+                # No exception class name: varying the input and reading back
+                # `ConnectionError` vs `OperationalError` is a free map of which
+                # subsystem the student just broke.
                 "error": "The adviser could not answer just now. Your question was saved.",
-                "detail": type(exc).__name__,
             },
             status=503,
         )
@@ -282,18 +308,99 @@ def conversation_post_message_view(request: HttpRequest, conversation_id: str) -
     )
 
 
+#: How long a turn may sit PENDING before we accept that whatever was generating it
+#: is gone. Generously longer than the slowest model call, because resuming a turn
+#: that IS still running would answer it twice.
+STALE_GENERATION = timedelta(minutes=15)
+
+
+def _is_resumable(message: AdvisorMessage) -> bool:
+    """Whether this turn still needs an answer.
+
+    FAILED is the clean case: generation raised and said so. PENDING is the dirty
+    one — the worker was killed, the deploy restarted, the request timed out
+    upstream — and nothing else will ever move it on. Treating PENDING as
+    permanently in-flight rebuilds, one state over, exactly the trap that made a
+    failed question unanswerable forever.
+    """
+    if message.status == AdvisorMessage.STATUS_FAILED:
+        return True
+    if message.status != AdvisorMessage.STATUS_PENDING:
+        return False
+    started = message.generation_started_at or message.created_at
+    return timezone.now() - started > STALE_GENERATION
+
+
+def _resume_or_replay(
+    conversation: AdvisorConversation,
+    existing: AdvisorMessage,
+    student_id: int,
+    request_hash: str,
+) -> tuple[AdvisorMessage | None, JsonResponse | None]:
+    """Decide what a repeated idempotency key means for THIS turn.
+
+    Idempotency exists so a retry cannot produce a second answer to a question
+    already answered. It must not also mean a question that FAILED can never be
+    answered at all — and it did: replaying returned the failed student message
+    with `assistant_message: null`, so every retry succeeded at doing nothing and
+    the student's question was permanently stuck.
+
+    A pending turn is still being generated, so replaying is right. A finished one
+    has its answer. A failed one is unfinished, and gets resumed.
+
+    Returns `(message_to_answer, None)` to generate, or `(None, response)` to
+    return immediately.
+    """
+    if existing.request_hash != request_hash:
+        # The same key carrying a different question is a client bug, not a retry.
+        # Answering it would silently attach one question's answer to another's key.
+        return None, JsonResponse(
+            {"error": "idempotency_key was already used for a different message."},
+            status=409,
+        )
+    if not _is_resumable(existing):
+        return None, _replay(conversation, existing, student_id)
+
+    # Claim it with ONE conditional UPDATE. Reading the status and then writing it
+    # is two statements with a gap in between, and a double-clicked Retry fits
+    # inside that gap: both requests see FAILED, both claim it, both call the
+    # model, and the student gets two answers to one question.
+    claimed = AdvisorMessage.objects.filter(pk=existing.pk, status=existing.status).update(
+        status=AdvisorMessage.STATUS_PENDING, generation_started_at=timezone.now()
+    )
+    if not claimed:
+        # Someone else claimed it first. They are generating; we replay.
+        existing.refresh_from_db()
+        return None, _replay(conversation, existing, student_id)
+
+    existing.status = AdvisorMessage.STATUS_PENDING
+    return existing, None
+
+
 def _replay(
     conversation: AdvisorConversation, student_message: AdvisorMessage, student_id: int
 ) -> JsonResponse:
     """Return the turn this key already produced, rather than generating again."""
     assistant = (
-        conversation.messages.filter(
-            role=AdvisorMessage.ROLE_ASSISTANT, created_at__gte=student_message.created_at
-        )
+        conversation.messages.filter(in_reply_to=student_message)
         .prefetch_related("citations")
         .order_by("created_at")
         .first()
     )
+    if assistant is None:
+        # Rows written before turns were paired explicitly. The old heuristic is
+        # wrong whenever turns finish out of order, so it is a fallback for history
+        # only — never the primary answer.
+        assistant = (
+            conversation.messages.filter(
+                role=AdvisorMessage.ROLE_ASSISTANT,
+                in_reply_to__isnull=True,
+                created_at__gte=student_message.created_at,
+            )
+            .prefetch_related("citations")
+            .order_by("created_at")
+            .first()
+        )
     return JsonResponse(
         {
             "conversation": _conversation_json(conversation),
@@ -332,6 +439,7 @@ def _persist_answer(
     with transaction.atomic():
         assistant = AdvisorMessage.objects.create(
             conversation=conversation,
+            in_reply_to=student_message,
             role=AdvisorMessage.ROLE_ASSISTANT,
             content=answer,
             grounding_state=str(agent.get("policy_grounding") or ""),
@@ -351,7 +459,7 @@ def _persist_answer(
                 policy_id=source.get("policy_id") or "",
                 document_title=source.get("document_title") or "",
                 edition=str(source.get("edition") or ""),
-                page=str(source.get("page") if source.get("page") is not None else ""),
+                page=_page_shown(claim, source),
                 effective_from=str(source.get("effective_from") or ""),
                 effective_to=str(source.get("effective_to") or ""),
                 authority_status="AUTHORITY_APPROVED",
@@ -370,6 +478,26 @@ def _persist_answer(
     # Re-read so the response is built from what the database holds, not from the
     # objects that were just constructed in memory.
     return AdvisorMessage.objects.prefetch_related("citations").get(pk=assistant.pk)
+
+
+def _page_shown(claim: dict[str, Any], source: dict[str, Any]) -> str:
+    """The single page this citation points a student at.
+
+    A policy record's `page` is an int when the rule sits on one page and a LIST
+    when it spans several, so taking it verbatim renders "p. [24, 25]" in the
+    Sources block — and on PostgreSQL a long enough span overflows the column,
+    raising inside the atomic block, leaving the turn stranded mid-generation.
+    SQLite truncates silently, so it would never show up in development.
+
+    The claim is the better source anyway: it carries the page the answer actually
+    sent the student to, already parsed to one integer.
+    """
+    page = claim.get("page")
+    if page is None:
+        page = source.get("page")
+    if isinstance(page, list | tuple):
+        page = page[0] if page else None
+    return "" if page is None else str(page)[:40]
 
 
 def _source_hash(citation: dict[str, Any]) -> str:

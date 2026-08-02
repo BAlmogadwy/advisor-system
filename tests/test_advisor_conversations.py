@@ -7,8 +7,10 @@ student's academic questions, which is a different category of wrong.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
+from datetime import timedelta
 from unittest import mock
 
 import pytest
@@ -331,6 +333,308 @@ def test_a_generation_failure_saves_the_question_and_reports_it(client):
     assert saved.status == AdvisorMessage.STATUS_FAILED
 
 
+def test_retrying_a_failed_turn_generates_the_answer_it_never_got(client):
+    """Idempotency must not turn a failure into a permanent one.
+
+    The key exists so a retry cannot produce a SECOND answer. Applied to a turn
+    that failed, it replayed the failure instead — returning the saved question
+    with no answer, forever, however many times the student pressed Retry.
+    """
+    conversation = _conversation(MINE)
+    _student(client, MINE)
+    url = reverse("advisor_conversation_send", args=[str(conversation.id)])
+    body = {"message": "سؤال", "idempotency_key": "k-1"}
+
+    with mock.patch(
+        "core.services.virtual_advisor.answer_virtual_advisor",
+        side_effect=RuntimeError("model down"),
+    ):
+        assert _post(client, url, body).status_code == 503
+
+    with mock.patch(
+        "core.services.virtual_advisor.answer_virtual_advisor",
+        return_value=_fake_answer("باقي لك ٣ مواد."),
+    ):
+        retried = _post(client, url, body)
+
+    assert retried.status_code == 201
+    assert retried.json()["assistant_message"]["content"] == "باقي لك ٣ مواد."
+    # Resumed, not duplicated: still one question, now marked done.
+    student_messages = AdvisorMessage.objects.filter(role=AdvisorMessage.ROLE_STUDENT)
+    assert student_messages.count() == 1
+    assert student_messages.get().status == AdvisorMessage.STATUS_COMPLETED
+
+
+def test_a_succeeded_turn_is_still_replayed_rather_than_regenerated(client):
+    """The guard above must not reopen turns that already have an answer."""
+    conversation = _conversation(MINE)
+    _student(client, MINE)
+    url = reverse("advisor_conversation_send", args=[str(conversation.id)])
+    body = {"message": "سؤال", "idempotency_key": "k-2"}
+
+    advisor = mock.Mock(return_value=_fake_answer("الأولى."))
+    with mock.patch("core.services.virtual_advisor.answer_virtual_advisor", advisor):
+        assert _post(client, url, body).status_code == 201
+        replay = _post(client, url, body)
+
+    assert replay.status_code == 200
+    assert replay.json()["replayed"] is True
+    assert advisor.call_count == 1
+    assert AdvisorMessage.objects.filter(role=AdvisorMessage.ROLE_ASSISTANT).count() == 1
+
+
+def test_an_abandoned_pending_turn_becomes_answerable_again(client):
+    """PENDING is only trustworthy while something is still working on the turn.
+
+    A killed worker or a deploy restart leaves it set forever, and treating that as
+    permanently in-flight rebuilds — one state over — the same trap that made a
+    failed question unanswerable.
+    """
+    from django.utils import timezone
+
+    from core.advisor_conversation_views import STALE_GENERATION
+
+    conversation = _conversation(MINE)
+    _student(client, MINE)
+    url = reverse("advisor_conversation_send", args=[str(conversation.id)])
+    body = {"message": "سؤال", "idempotency_key": "k-stale"}
+
+    stranded = AdvisorMessage.objects.create(
+        conversation=conversation,
+        role=AdvisorMessage.ROLE_STUDENT,
+        content="سؤال",
+        idempotency_key="k-stale",
+        request_hash=hashlib.sha256("سؤال".encode()).hexdigest(),
+        status=AdvisorMessage.STATUS_PENDING,
+        generation_started_at=timezone.now() - STALE_GENERATION - timedelta(minutes=1),
+    )
+
+    with mock.patch(
+        "core.services.virtual_advisor.answer_virtual_advisor",
+        return_value=_fake_answer("أخيرًا."),
+    ):
+        response = _post(client, url, body)
+
+    assert response.status_code == 201
+    assert response.json()["assistant_message"]["content"] == "أخيرًا."
+    stranded.refresh_from_db()
+    assert stranded.status == AdvisorMessage.STATUS_COMPLETED
+
+
+def test_a_turn_still_generating_is_not_started_a_second_time(client):
+    """The counterpart: a genuinely in-flight turn must be left alone."""
+    from django.utils import timezone
+
+    conversation = _conversation(MINE)
+    _student(client, MINE)
+    AdvisorMessage.objects.create(
+        conversation=conversation,
+        role=AdvisorMessage.ROLE_STUDENT,
+        content="سؤال",
+        idempotency_key="k-live",
+        request_hash=hashlib.sha256("سؤال".encode()).hexdigest(),
+        status=AdvisorMessage.STATUS_PENDING,
+        generation_started_at=timezone.now(),
+    )
+    advisor = mock.Mock(return_value=_fake_answer())
+    with mock.patch("core.services.virtual_advisor.answer_virtual_advisor", advisor):
+        response = _post(
+            client,
+            reverse("advisor_conversation_send", args=[str(conversation.id)]),
+            {"message": "سؤال", "idempotency_key": "k-live"},
+        )
+    assert response.status_code == 200
+    assert advisor.call_count == 0
+
+
+def test_replay_returns_the_answer_to_that_question_not_a_later_one(client):
+    """Pairing by "first assistant row at or after the question" breaks whenever
+    turns finish out of order — a resumed retry is written AFTER answers to later
+    questions, so the student is handed a cited answer to something else."""
+    conversation = _conversation(MINE)
+    _student(client, MINE)
+    url = reverse("advisor_conversation_send", args=[str(conversation.id)])
+
+    with mock.patch(
+        "core.services.virtual_advisor.answer_virtual_advisor",
+        side_effect=RuntimeError("model down"),
+    ):
+        _post(client, url, {"message": "السؤال الأول", "idempotency_key": "k-a"})
+
+    with mock.patch(
+        "core.services.virtual_advisor.answer_virtual_advisor",
+        return_value=_fake_answer("جواب الثاني"),
+    ):
+        _post(client, url, {"message": "السؤال الثاني", "idempotency_key": "k-b"})
+
+    with mock.patch(
+        "core.services.virtual_advisor.answer_virtual_advisor",
+        return_value=_fake_answer("جواب الأول"),
+    ):
+        resumed = _post(client, url, {"message": "السؤال الأول", "idempotency_key": "k-a"})
+    assert resumed.json()["assistant_message"]["content"] == "جواب الأول"
+
+    replayed = _post(client, url, {"message": "السؤال الأول", "idempotency_key": "k-a"})
+    assert replayed.status_code == 200
+    assert replayed.json()["replayed"] is True
+    assert replayed.json()["assistant_message"]["content"] == "جواب الأول"
+
+
+def test_a_multi_page_policy_cites_one_page_a_student_can_turn_to(client):
+    """A policy spanning pages stores its page as a LIST, which rendered as
+    "p. [24, 25]" and, on PostgreSQL, overflowed the column mid-transaction."""
+    conversation = _conversation(MINE)
+    _student(client, MINE)
+    citations = [
+        {
+            "policy_id": "TU.WITHDRAWAL.MAXIMUM",
+            "document_id": "TU.GUIDE",
+            "document_title": "الدليل",
+            "edition": "1447",
+            "page": [24, 25, 26],
+            "effective_from": "",
+            "effective_to": "",
+        }
+    ]
+    with mock.patch(
+        "core.services.virtual_advisor.answer_virtual_advisor",
+        return_value=_fake_answer(
+            "خمسة «الدليل، ص 24 [TU.WITHDRAWAL.MAXIMUM]».", citations=citations
+        ),
+    ):
+        response = _post(
+            client,
+            reverse("advisor_conversation_send", args=[str(conversation.id)]),
+            {"message": "سؤال"},
+        )
+    assert response.json()["assistant_message"]["citations"][0]["page"] == "24"
+    assert AdvisorMessageCitation.objects.get().page == "24"
+
+
+def test_an_abandoned_turn_offers_the_student_a_way_out(client):
+    """A turn stuck on PENDING shows "preparing the answer" for ever.
+
+    Without a token there is no Retry button on it, so a worker killed
+    mid-generation costs the student the question with no sign anything is wrong.
+    """
+    from django.utils import timezone
+
+    from core.advisor_conversation_views import STALE_GENERATION
+
+    conversation = _conversation(MINE)
+    _student(client, MINE)
+    fresh = AdvisorMessage.objects.create(
+        conversation=conversation,
+        role=AdvisorMessage.ROLE_STUDENT,
+        content="سؤال جديد",
+        idempotency_key="k-fresh",
+        status=AdvisorMessage.STATUS_PENDING,
+        generation_started_at=timezone.now(),
+    )
+    AdvisorMessage.objects.create(
+        conversation=conversation,
+        role=AdvisorMessage.ROLE_STUDENT,
+        content="سؤال مهجور",
+        idempotency_key="k-gone",
+        status=AdvisorMessage.STATUS_PENDING,
+        generation_started_at=timezone.now() - STALE_GENERATION - timedelta(minutes=1),
+    )
+
+    messages = client.get(
+        reverse("advisor_conversation_messages", args=[str(conversation.id)])
+    ).json()["messages"]
+    by_content = {m["content"]: m for m in messages}
+    # Still working: no escape hatch, or the student interrupts a live answer.
+    assert "retry_token" not in by_content["سؤال جديد"]
+    assert by_content["سؤال مهجور"]["retry_token"] == "k-gone"
+    assert fresh.status == AdvisorMessage.STATUS_PENDING
+
+
+def test_only_one_of_two_simultaneous_retries_may_claim_the_turn(client):
+    """The race a double-clicked Retry actually runs.
+
+    Reading the status and then writing it are two statements with a gap between
+    them, and both clicks fit inside that gap: both see FAILED, both claim it, both
+    call the model, and the student gets two different answers to one question. The
+    two in-memory copies below are exactly what two concurrent requests hold.
+    """
+    from core.advisor_conversation_views import _resume_or_replay
+
+    conversation = _conversation(MINE)
+    _student(client, MINE)
+    request_hash = hashlib.sha256("سؤال".encode()).hexdigest()
+    AdvisorMessage.objects.create(
+        conversation=conversation,
+        role=AdvisorMessage.ROLE_STUDENT,
+        content="سؤال",
+        idempotency_key="k-race",
+        request_hash=request_hash,
+        status=AdvisorMessage.STATUS_FAILED,
+    )
+    # Two separate reads, both taken before either writes — the interleaving.
+    first = AdvisorMessage.objects.get(idempotency_key="k-race")
+    second = AdvisorMessage.objects.get(idempotency_key="k-race")
+    assert first.status == second.status == AdvisorMessage.STATUS_FAILED
+
+    won, response = _resume_or_replay(conversation, first, MINE, request_hash)
+    assert won is not None and response is None
+
+    lost, response = _resume_or_replay(conversation, second, MINE, request_hash)
+    assert lost is None, "both requests claimed the same turn and will both generate"
+    assert response.status_code == 200
+
+
+def test_an_integrity_error_with_no_key_is_not_treated_as_a_retry(client):
+    """The unique constraint only covers non-empty keys, so a keyless send can
+    never collide on it. Recovering as if it had matched the conversation's oldest
+    keyless turn and served its stored answer as this question's."""
+    conversation = _conversation(MINE)
+    _student(client, MINE)
+    url = reverse("advisor_conversation_send", args=[str(conversation.id)])
+
+    with mock.patch(
+        "core.services.virtual_advisor.answer_virtual_advisor",
+        return_value=_fake_answer("جواب قديم"),
+    ):
+        _post(client, url, {"message": "سؤال"})
+
+    from django.db import IntegrityError
+
+    with mock.patch.object(
+        AdvisorMessage.objects, "create", side_effect=IntegrityError("some other constraint")
+    ):
+        with pytest.raises(IntegrityError):
+            _post(client, url, {"message": "سؤال"})
+
+    # And nothing was invented: still exactly the one original turn.
+    assert conversation.messages.filter(role=AdvisorMessage.ROLE_STUDENT).count() == 1
+
+
+def test_a_conversation_with_no_activity_sorts_last_not_first(client):
+    """`-last_message_at` alone means different things on SQLite and PostgreSQL.
+
+    Descending order puts NULLs last on SQLite and first on PostgreSQL, so a
+    conversation whose first send failed would sit at the bottom in development
+    and at the top in production — and the screen opens whatever is at the top.
+    """
+    from django.utils import timezone
+
+    _student(client, MINE)
+    active = _conversation(MINE, title="active", last_message_at=timezone.now())
+    idle = _conversation(MINE, title="idle")
+
+    response = client.get(reverse("advisor_conversation_list"))
+    order = [c["id"] for c in response.json()["conversations"]]
+    assert order == [str(active.id), str(idle.id)]
+
+    # That assertion alone is vacuous on SQLite, which already sorts NULLs last on
+    # a descending column — it would pass just as happily with the bug present, and
+    # only PostgreSQL would disagree. So assert the instruction was actually
+    # emitted, which is true on every backend or on none.
+    sql = str(AdvisorConversation.objects.all().query)
+    assert "NULLS LAST" in sql, sql
+
+
 def test_a_refused_answer_is_stored_as_abstained(client):
     conversation = _conversation(MINE)
     _student(client, MINE)
@@ -372,6 +676,124 @@ def test_internal_traces_never_reach_the_browser(client):
     body = response.content.decode()
     for leak in ("tool_results", "verified_context", "159,778", "StudentCourse"):
         assert leak not in body, leak
+
+
+def test_the_browser_receives_exactly_these_fields_and_no_others(client):
+    """An allowlist, because a denylist only catches the leaks already imagined.
+
+    Adding `grounding_state` or `model_name` to the serialiser passes every
+    string-matching test in this file while shipping the system's account of its
+    own reasoning to the person who asked the question.
+    """
+    conversation = _conversation(MINE)
+    _student(client, MINE)
+    citations = [
+        {
+            "policy_id": "TU.WITHDRAWAL.MAXIMUM",
+            "document_id": "TU.GUIDE",
+            "document_title": "الدليل",
+            "edition": "1447",
+            "page": 24,
+            "effective_from": "1447",
+            "effective_to": "",
+        }
+    ]
+    answer = "خمسة «الدليل، ص 24 [TU.WITHDRAWAL.MAXIMUM]»."
+    with mock.patch(
+        "core.services.virtual_advisor.answer_virtual_advisor",
+        return_value=_fake_answer(answer, citations=citations),
+    ):
+        _post(
+            client,
+            reverse("advisor_conversation_send", args=[str(conversation.id)]),
+            {"message": "سؤال"},
+        )
+
+    payload = client.get(
+        reverse("advisor_conversation_messages", args=[str(conversation.id)])
+    ).json()
+    assert set(payload) == {"conversation", "messages"}
+    assert set(payload["conversation"]) == {
+        "id",
+        "title",
+        "status",
+        "created_at",
+        "updated_at",
+        "last_message_at",
+    }
+
+    student_message, assistant = payload["messages"]
+    assert set(student_message) == {"id", "role", "content", "status", "created_at"}
+    assert set(assistant) == {
+        "id",
+        "role",
+        "content",
+        "status",
+        "created_at",
+        "citations",
+    }
+    assert set(assistant["citations"][0]) == {
+        "policy_id",
+        "document_title",
+        "edition",
+        "page",
+        "effective_from",
+        "effective_to",
+    }
+
+
+def test_a_generation_failure_does_not_name_the_subsystem_that_broke(client):
+    """`ConnectionError` vs `OperationalError` is a free map of the backend."""
+    conversation = _conversation(MINE)
+    _student(client, MINE)
+    with mock.patch(
+        "core.services.virtual_advisor.answer_virtual_advisor",
+        side_effect=ZeroDivisionError("secret internals"),
+    ):
+        response = _post(
+            client,
+            reverse("advisor_conversation_send", args=[str(conversation.id)]),
+            {"message": "سؤال"},
+        )
+    assert response.status_code == 503
+    body = response.content.decode()
+    assert "ZeroDivisionError" not in body
+    assert "secret internals" not in body
+    assert set(response.json()) == {
+        "conversation",
+        "student_message",
+        "assistant_message",
+        "error",
+    }
+
+
+def test_a_failed_turn_carries_the_token_that_retries_it(client):
+    """A key kept only in page memory is gone after a reload, and the retry then
+    asks the question a second time instead of resuming it."""
+    conversation = _conversation(MINE)
+    _student(client, MINE)
+    url = reverse("advisor_conversation_send", args=[str(conversation.id)])
+    with mock.patch(
+        "core.services.virtual_advisor.answer_virtual_advisor",
+        side_effect=RuntimeError("model down"),
+    ):
+        _post(client, url, {"message": "سؤال", "idempotency_key": "k-9"})
+
+    messages = client.get(
+        reverse("advisor_conversation_messages", args=[str(conversation.id)])
+    ).json()["messages"]
+    assert messages[0]["retry_token"] == "k-9"
+
+    # And only there: a completed turn has nothing to resume.
+    with mock.patch(
+        "core.services.virtual_advisor.answer_virtual_advisor",
+        return_value=_fake_answer(),
+    ):
+        _post(client, url, {"message": "سؤال", "idempotency_key": "k-9"})
+    messages = client.get(
+        reverse("advisor_conversation_messages", args=[str(conversation.id)])
+    ).json()["messages"]
+    assert "retry_token" not in messages[0]
 
 
 # ── 14. ordering and feedback ────────────────────────────────────

@@ -2,6 +2,7 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+from django.db.models import F
 
 
 class Student(models.Model):
@@ -1530,7 +1531,11 @@ class AdvisorConversation(models.Model):
 
     class Meta:
         db_table = "advisor_conversations"
-        ordering = ["-last_message_at", "-created_at"]
+        # `-last_message_at` alone is not portable: SQLite sorts NULLs last on a
+        # descending column, PostgreSQL sorts them first. A conversation whose send
+        # failed before any message landed would therefore sit at the bottom in
+        # development and at the top in production. Say which we mean.
+        ordering = [F("last_message_at").desc(nulls_last=True), "-created_at"]
         indexes = [
             models.Index(fields=["student_id", "-last_message_at"], name="idx_adv_conv_student"),
         ]
@@ -1599,6 +1604,20 @@ class AdvisorMessage(models.Model):
         (STATUS_ESCALATED, "Escalated"),
     ]
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_COMPLETED)
+
+    # Which question this answers. Pairing by "first assistant row at or after the
+    # question" is wrong the moment turns finish out of order — a resumed retry is
+    # written AFTER answers to later questions, so the heuristic hands the student a
+    # cited answer to a question they did not ask. Null on student turns, and on
+    # assistant rows written before this column existed.
+    in_reply_to = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="answers"
+    )
+
+    # When generation was claimed. A PENDING row is only trustworthy while something
+    # is still working on it; if the worker is killed mid-call nothing ever moves it
+    # on, and without an age the turn is stuck exactly as FAILED used to be.
+    generation_started_at = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
 
