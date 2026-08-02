@@ -1959,3 +1959,50 @@ def allocate_escalation_reference(*, year: int | None = None) -> str:
         counter.last_number += 1
         counter.save(update_fields=["last_number"])
         return f"ADV-{year}-{counter.last_number:05d}"
+
+
+class AdvisorEscalationEvent(models.Model):
+    """Who did what to a case, and when.
+
+    Append-only. A case's own columns hold its current state; this holds how it
+    got there, which is the part anyone asking "why was this closed?" actually
+    needs. Note and response bodies are NOT copied in — they live on the case and
+    are edited there, and a duplicate that drifts is worse than a pointer.
+    """
+
+    class Kind(models.TextChoices):
+        OPENED = "OPENED", "Opened by the student"
+        VIEWED = "VIEWED", "Opened by an adviser"
+        ASSIGNED = "ASSIGNED", "Assigned"
+        STATUS_CHANGED = "STATUS_CHANGED", "Status changed"
+        NOTE_ADDED = "NOTE_ADDED", "Internal note added"
+        RESPONSE_RECORDED = "RESPONSE_RECORDED", "Reply to the student recorded"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    escalation = models.ForeignKey(
+        AdvisorEscalation, on_delete=models.CASCADE, related_name="events"
+    )
+    #: Null for the student's own action: they are identified by the case, and a
+    #: staff user row would be the wrong thing to point at.
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="advisor_escalation_events",
+    )
+    actor_label = models.CharField(max_length=120, blank=True, default="")
+    kind = models.CharField(max_length=24, choices=Kind.choices)
+    from_status = models.CharField(max_length=24, blank=True, default="")
+    to_status = models.CharField(max_length=24, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "advisor_escalation_events"
+        ordering = ["created_at"]
+        indexes = [
+            models.Index(fields=["escalation", "created_at"], name="idx_adv_evt_case"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.kind}@{self.escalation_id}"

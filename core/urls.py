@@ -11,6 +11,7 @@ from .advisor_conversation_views import (
     escalation_list_view,
     message_feedback_view,
 )
+from .advisor_inbox_views import inbox_case_action_view, inbox_case_view, inbox_view
 from .advisor_views import (
     advisor_upsert_view,
     advisors_list_view,
@@ -22,6 +23,7 @@ from .advisor_views import (
 from .api_views import classify_view, parse_and_classify_view, recommend_view
 from .audit_views import audit_explorer_api, audit_explorer_page, audit_export_csv_view
 from .auth_views import login_view, logout_view
+from .authz import role_required
 from .db_admin_views import (
     db_admin_page,
     db_backup_snapshot_view,
@@ -135,6 +137,7 @@ from .sections_import_views import (
     sections_import_page,
     sections_import_preview_view,
 )
+from .services.rbac import ROLE_ADVISOR
 from .settings_views import defaults_settings_view
 from .student_auth_views import (
     student_advisor_view,
@@ -299,6 +302,23 @@ urlpatterns = [
         "student/advisor/escalations/<str:escalation_id>/",
         login_required(escalation_detail_view, login_url="student_login"),
         name="advisor_escalation_detail",
+    ),
+    # The adviser side. `role_required` keeps students out; `visible_cases` decides
+    # WHICH cases a member of staff may see, in the query rather than after it.
+    path(
+        "ops/advisor-cases/",
+        login_required(role_required(ROLE_ADVISOR)(inbox_view), login_url="login"),
+        name="advisor_inbox",
+    ),
+    path(
+        "ops/advisor-cases/<str:reference>/",
+        login_required(role_required(ROLE_ADVISOR)(inbox_case_view), login_url="login"),
+        name="advisor_inbox_case",
+    ),
+    path(
+        "ops/advisor-cases/<str:reference>/action/",
+        login_required(role_required(ROLE_ADVISOR)(inbox_case_action_view), login_url="login"),
+        name="advisor_inbox_case_action",
     ),
     path("", login_required(dashboard, login_url="login"), name="dashboard"),
     path("health/", health, name="health"),

@@ -10923,6 +10923,84 @@ html[data-theme="dark"] .im-modal-footer {
    one declaration away for every other element here that JS toggles. */
 .sa-layout [hidden] { display: none !important; }
 
+/* ── adviser inbox ───────────────────────────────────────────────
+   The queue is a working view: dense, scannable, and left-to-right even though the
+   questions inside it are Arabic. Each cell that holds student prose carries
+   dir="auto" so the text runs the way it was written without turning the table
+   round. */
+.ai-filters { display: flex; flex-wrap: wrap; gap: .75rem; align-items: flex-end; }
+.ai-filter { display: flex; flex-direction: column; gap: .25rem; }
+.ai-filter label { font-size: .8125rem; color: var(--t2); }
+.ai-filter select, .ai-filter input {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm, 8px);
+  padding: .375rem .5rem;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+}
+.ai-filter-check label { flex-direction: row; align-items: center; gap: .375rem; display: flex; }
+
+.table-wrap { overflow-x: auto; }
+.ai-cases { width: 100%; border-collapse: collapse; }
+.ai-cases th, .ai-cases td {
+  padding: .5rem .625rem;
+  border-bottom: 1px solid var(--line);
+  text-align: start;
+  vertical-align: top;
+  font-size: .875rem;
+}
+.ai-cases thead th { color: var(--t2); font-weight: 600; white-space: nowrap; }
+.ai-question { max-width: 22rem; }
+.ai-empty { text-align: center; color: var(--t2); padding: 1.5rem; }
+.ai-muted { color: var(--t2); }
+
+.ai-status { border-radius: 999px; padding: .0625rem .5rem; font-size: .8125rem; white-space: nowrap; }
+.ai-status-open { background: color-mix(in srgb, var(--teal) 18%, transparent); }
+.ai-status-assigned { background: color-mix(in srgb, var(--brand) 18%, transparent); }
+.ai-status-needs_information { background: color-mix(in srgb, orange 22%, transparent); }
+.ai-status-resolved { background: color-mix(in srgb, green 18%, transparent); }
+.ai-status-closed { background: var(--surface-2, rgba(127,127,127,.14)); }
+
+.ai-case-h { font-size: 1rem; margin: 0 0 .5rem; }
+.ai-case-sub { font-size: .875rem; margin: .75rem 0 .25rem; color: var(--t2); }
+.ai-case-body { margin: 0 0 .5rem; white-space: pre-wrap; }
+.ai-case-meta { display: grid; grid-template-columns: auto 1fr; gap: .125rem .75rem; margin: 0; }
+.ai-case-meta dt { color: var(--t2); font-size: .875rem; }
+.ai-case-meta dd { margin: 0; font-size: .875rem; }
+.ai-case-pre {
+  white-space: pre-wrap;
+  background: var(--surface-2, rgba(127,127,127,.06));
+  padding: .625rem;
+  border-radius: var(--radius-sm, 8px);
+  margin: .5rem 0 0;
+  font: inherit;
+}
+.ai-citations, .ai-missing, .ai-events { margin: 0; padding-inline-start: 1.25rem; }
+.ai-events li { margin-bottom: .25rem; font-size: .875rem; }
+.ai-event-kind { font-weight: 600; margin-inline-end: .375rem; }
+
+.ai-action-row { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: .75rem; }
+.ai-two-up { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.ai-two-up textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm, 8px);
+  padding: .5rem;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  resize: vertical;
+  margin-bottom: .5rem;
+}
+.ai-label { display: block; margin-bottom: .25rem; font-size: .875rem; font-weight: 600; }
+.ai-notes { max-height: 12rem; overflow-y: auto; }
+.ai-action-error { color: var(--danger, #b42318); margin: .75rem 0 0; }
+
+@media (max-width: 900px) {
+  .ai-two-up { grid-template-columns: 1fr; }
+}
+
 /* ── handing a case to a person ──────────────────────────────────
    Direction-agnostic like the rest of this screen: padding-inline and text-align
    start, so the same rules serve Arabic and English. */
