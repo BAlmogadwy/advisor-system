@@ -209,9 +209,9 @@ Sampled across 60 students, `GS104` appears in 49 of them.
 
 This is the same disease as issue #54 (section labels): one rule, two
 implementations, one classifying by string shape and one by declared type.
-**Tracked separately — it is a defect in shipped code, not a design question for
-these screens**, and fixing it changes what the locked screen displays for most
-students.
+**Tracked as [issue #55](https://github.com/BAlmogadwy/advisor-system/issues/55)** —
+it is a defect in shipped code, not a design question for these screens, and fixing
+it changes what the locked screen displays for most students.
 
 ---
 
