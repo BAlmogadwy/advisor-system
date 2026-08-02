@@ -49,6 +49,7 @@ from core.services.advisor_judge import (  # noqa: E402
     FAIL,
     judge_answer,
 )
+from core.services.advisor_principal import AdvisorPrincipal  # noqa: E402
 from core.services.local_llm import LocalLLMClient  # noqa: E402
 from core.services.policy_store import get_policy_store  # noqa: E402
 from core.services.rbac import ROLE_STUDENT  # noqa: E402
@@ -157,13 +158,16 @@ def main() -> int:
     print()
 
     client = LocalLLMClient()
+    # The same identity object the runtime uses. The battery previously passed a
+    # hand-built scope and no student id, reproducing exactly the defect being
+    # measured — so every live number to date was produced with the student's own
+    # record absent from the prompt. Re-baseline before comparing to older runs.
+    principal = AdvisorPrincipal(role=ROLE_STUDENT, student_id=STUDENT_ID)
     rows = []
     for n, (qid, text, entry) in enumerate(items, 1):
         started = time.perf_counter()
         try:
-            result = answer_virtual_advisor(
-                question=text, scope={"role": ROLE_STUDENT, "student_id": STUDENT_ID}, client=client
-            )
+            result = answer_virtual_advisor(question=text, principal=principal, client=client)
         except Exception as exc:  # noqa: BLE001
             print(f"[{n:2d}/{len(items)}] q{qid} EXCEPTION {type(exc).__name__}: {exc}")
             continue

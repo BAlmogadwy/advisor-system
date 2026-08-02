@@ -1720,3 +1720,136 @@ class AdvisorFeedback(models.Model):
 
     def __str__(self) -> str:
         return f"Feedback({self.message_id}/{self.rating})"
+
+
+class AdvisorEscalation(models.Model):
+    """A case handed to a human adviser, anchored to the turn that produced it.
+
+    Anchored, not free-form: a support ticket that arrives without the question,
+    the answer and the sources it rested on makes the adviser reconstruct the
+    conversation before they can begin, and reconstruct it from the student's
+    memory of it. The source message is therefore required, and the evidence
+    travels with the case.
+
+    `evidence_snapshot` is a FROZEN copy for the same reason the citation rows
+    are: an escalation is a record of what was said at the time. If it were
+    rebuilt from live policies and a live student record, a case opened today
+    would quietly change its own facts before anyone read it — and the adviser
+    would be answering a question the student never asked.
+    """
+
+    class Status(models.TextChoices):
+        OPEN = "OPEN", "Open"
+        ASSIGNED = "ASSIGNED", "Assigned"
+        NEEDS_INFORMATION = "NEEDS_INFORMATION", "Needs information"
+        RESOLVED = "RESOLVED", "Resolved"
+        CLOSED = "CLOSED", "Closed"
+
+    #: A case stops blocking a new one for the same turn once it reaches these.
+    TERMINAL_STATUSES = (Status.RESOLVED, Status.CLOSED)
+
+    class Reason(models.TextChoices):
+        """Why a human is needed. Set by the server from the turn, never by the
+        client — a reason the student can choose is a reason the student can be
+        wrong about, and it is what the adviser triages on."""
+
+        PROHIBITED_FOR_DECISION = (
+            "PROHIBITED_FOR_DECISION",
+            "The regulation forbids deciding this case automatically",
+        )
+        MISSING_INFORMATION = ("MISSING_INFORMATION", "Required information was unavailable")
+        NO_GROUNDED_ANSWER = ("NO_GROUNDED_ANSWER", "No approved policy covered the question")
+        STUDENT_REQUESTED = ("STUDENT_REQUESTED", "The student asked for a human adviser")
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    # Real foreign keys: conversations and messages are OUR tables, so referential
+    # integrity is free and a deleted conversation must not leave orphan cases.
+    # `student_id` stays a bare integer — the same convention as the conversation
+    # itself, because Student rows are re-imported wholesale and a cascade would
+    # delete a student's case history on the next import.
+    conversation = models.ForeignKey(
+        AdvisorConversation, on_delete=models.CASCADE, related_name="escalations"
+    )
+    source_message = models.ForeignKey(
+        AdvisorMessage, on_delete=models.CASCADE, related_name="escalations"
+    )
+    student_id = models.IntegerField(db_index=True)
+
+    reason_code = models.CharField(max_length=32, choices=Reason.choices)
+    student_note = models.TextField(blank=True, default="")
+
+    #: Written for the adviser, from student-visible messages and an allowlist —
+    #: never from the agent trace.
+    generated_summary = models.TextField(blank=True, default="")
+    evidence_snapshot = models.JSONField(default=dict, blank=True)
+
+    status = models.CharField(max_length=24, choices=Status.choices, default=Status.OPEN)
+    assigned_adviser_id = models.CharField(max_length=64, blank=True, default="")
+
+    #: Adviser-only. Never serialised to the student: the case is about them, the
+    #: working notes on it are not addressed to them.
+    adviser_notes = models.TextField(blank=True, default="")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "advisor_escalations"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["student_id", "-created_at"], name="idx_adv_esc_student"),
+            models.Index(fields=["status", "-created_at"], name="idx_adv_esc_status"),
+            models.Index(fields=["assigned_adviser_id"], name="idx_adv_esc_adviser"),
+        ]
+        constraints = [
+            # One LIVE case per turn. Pressing the button twice is the same request,
+            # not two, and two open cases for one question means two advisers can
+            # answer it differently. Resolved and closed cases are excluded so a
+            # question that comes back later can be raised again.
+            models.UniqueConstraint(
+                fields=["source_message"],
+                condition=~models.Q(status__in=("RESOLVED", "CLOSED")),
+                name="uq_adv_esc_one_open_per_message",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.reference}({self.status})"
+
+    @property
+    def reference(self) -> str:
+        """What the student quotes to an adviser.
+
+        Derived from the id rather than stored: it is a prefix of the real primary
+        key, so an adviser given the reference can always find the row, and there
+        is no second identifier that can drift out of step with the first.
+        """
+        return f"ESC-{str(self.id).split('-')[0].upper()}"
+
+
+class RateLimitBucket(models.Model):
+    """One counter, shared by every worker.
+
+    A row rather than a dict or a cache entry, because the count has to survive
+    both a second gunicorn worker and a restart, and because it has to be
+    incremented atomically — `select_for_update` on a row gives that, while the
+    database cache backend's `incr` is a get followed by a set.
+    """
+
+    #: "<budget>:<student_id>". The budget names the RESOURCE, not the endpoint, so
+    #: two doors onto the same expensive work cannot each be given a full allowance.
+    key = models.CharField(max_length=200, primary_key=True)
+    window_start = models.DateTimeField()
+    count = models.PositiveIntegerField(default=0)
+    #: What was spent in the window before this one. Carried forward so a new
+    #: window does not hand back the whole allowance at its boundary.
+    previous_count = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "rate_limit_buckets"
+        indexes = [models.Index(fields=["window_start"], name="idx_ratelimit_window")]
+
+    def __str__(self) -> str:
+        return f"{self.key}={self.count}"

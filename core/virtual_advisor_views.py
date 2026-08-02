@@ -7,11 +7,12 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_GET, require_POST
 
-from core.authz import throttle
+from core.authz import role_required, throttle
+from core.services.advisor_principal import AdvisorPrincipal, IdentityError
 from core.services.audit import log_audit_event
 from core.services.local_llm import LocalLLMError, check_local_llm_health
 from core.services.policy import require_student_scope
-from core.services.rbac import ROLE_STUDENT, get_user_scope
+from core.services.rbac import ROLE_ADVISOR, ROLE_STUDENT, get_user_scope
 from core.services.virtual_advisor import answer_virtual_advisor, run_planned_tools
 from core.settings_views import load_defaults
 from core.sidebar_context import get_sidebar_context
@@ -37,6 +38,7 @@ def _optional_int(value: Any, field: str) -> tuple[int | None, JsonResponse | No
 
 
 @login_required(login_url="login")
+@role_required(ROLE_ADVISOR)
 def virtual_advisor_page(request: HttpRequest) -> HttpResponse:
     defaults = load_defaults()
     context = {
@@ -49,7 +51,10 @@ def virtual_advisor_page(request: HttpRequest) -> HttpResponse:
     return render(request, "core/virtual_advisor.html", context)
 
 
+# Staff only: this makes an outbound call to the model host, so an ungated version
+# lets any signed-in student aim the deployment's own LLM connection.
 @login_required(login_url="login")
+@role_required(ROLE_ADVISOR)
 @require_GET
 @throttle(max_calls=30, window_seconds=60)
 def virtual_advisor_health_view(request: HttpRequest) -> JsonResponse:
@@ -57,6 +62,7 @@ def virtual_advisor_health_view(request: HttpRequest) -> JsonResponse:
 
 
 @login_required(login_url="login")
+@role_required(ROLE_ADVISOR)
 @require_POST
 @throttle(max_calls=30, window_seconds=60)
 def virtual_advisor_tool_preview_view(request: HttpRequest) -> JsonResponse:
@@ -75,7 +81,13 @@ def virtual_advisor_tool_preview_view(request: HttpRequest) -> JsonResponse:
     return JsonResponse({"ok": True, "tool_results": results})
 
 
+# Staff only. This is the OPERATOR console, and it reaches the same generator as
+# the student adviser on a separate, looser budget — so without a role gate a
+# student who has spent their generation allowance could simply call this one from
+# the browser console. The ROLE_STUDENT branch inside is left in place as a second
+# lock: if this decorator is ever removed, the clamp to their own record still holds.
 @login_required(login_url="login")
+@role_required(ROLE_ADVISOR)
 @require_POST
 @throttle(max_calls=12, window_seconds=60)
 def virtual_advisor_chat_view(request: HttpRequest) -> JsonResponse:
@@ -92,17 +104,18 @@ def virtual_advisor_chat_view(request: HttpRequest) -> JsonResponse:
 
     scope = get_user_scope(request.user)
     if str(scope.get("role", "")) == ROLE_STUDENT:
-        # A student's identity is never taken from the request: force their own id and
-        # ignore whatever the payload claims, so the chat can only ever read their data.
-        student_id = scope.get("student_id")
-        if student_id is None:
-            return JsonResponse(
-                {"error": "No student identity is linked to this session."}, status=403
-            )
+        # A student's identity is never taken from the request: their own principal
+        # forces their own id and ignores whatever the payload claims.
+        try:
+            principal = AdvisorPrincipal.for_student(request)
+        except IdentityError as exc:
+            return JsonResponse({"error": str(exc)}, status=403)
+        student_id = principal.student_id
     else:
         student_id, err = _optional_int(payload.get("student_id"), "student_id")
         if err:
             return err
+        principal = None  # built below, once the subject has been authorised
 
     defaults = load_defaults()
     academic_year, err = _optional_int(
@@ -119,6 +132,14 @@ def virtual_advisor_chat_view(request: HttpRequest) -> JsonResponse:
         if scope_err:
             return scope_err
 
+    if principal is None:
+        # Built only AFTER the subject was authorised: the principal names whose
+        # record loads, and must never be the thing that decides it may.
+        try:
+            principal = AdvisorPrincipal.for_staff(request, student_id)
+        except IdentityError as exc:
+            return JsonResponse({"error": str(exc)}, status=403)
+
     model = str(payload.get("model", "")).strip() or None
     if model and len(model) > 220:
         return JsonResponse({"error": "model is too long"}, status=400)
@@ -126,12 +147,11 @@ def virtual_advisor_chat_view(request: HttpRequest) -> JsonResponse:
     try:
         result = answer_virtual_advisor(
             question=question,
-            student_id=student_id,
+            principal=principal,
             academic_year=academic_year,
             term=term,
             history=payload.get("history", []),
             model=model,
-            scope=scope,
         )
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=404)

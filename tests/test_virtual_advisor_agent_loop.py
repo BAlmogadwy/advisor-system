@@ -20,6 +20,7 @@ from urllib.error import HTTPError
 import pytest
 
 from core.models import Course, ProgrammeRequirement, Student, StudentCourse
+from core.services.advisor_principal import AdvisorPrincipal
 from core.services.local_llm import (
     ChatResult,
     LocalLLMBadRequest,
@@ -384,7 +385,7 @@ def test_agent_loop_executes_tool_then_answers() -> None:
 
     result = answer_virtual_advisor(
         question="How is the AI cohort doing?",
-        scope={"role": ROLE_SUPER_ADMIN},
+        principal=AdvisorPrincipal(role=ROLE_SUPER_ADMIN, student_id=None),
         client=fake,
     )
 
@@ -417,7 +418,7 @@ def test_agent_loop_deduplicates_identical_calls() -> None:
 
     result = answer_virtual_advisor(
         question="AI students overview please",
-        scope={"role": ROLE_SUPER_ADMIN},
+        principal=AdvisorPrincipal(role=ROLE_SUPER_ADMIN, student_id=None),
         client=fake,
     )
 
@@ -438,7 +439,7 @@ def test_agent_loop_iteration_cap_forces_final_answer(settings) -> None:
 
     result = answer_virtual_advisor(
         question="Keep digging into AI students",
-        scope={"role": ROLE_SUPER_ADMIN},
+        principal=AdvisorPrincipal(role=ROLE_SUPER_ADMIN, student_id=None),
         client=fake,
     )
 
@@ -456,7 +457,7 @@ def test_agent_loop_falls_back_when_model_rejects_tools() -> None:
 
     result = answer_virtual_advisor(
         question="hello there",
-        scope={"role": ROLE_SUPER_ADMIN},
+        principal=AdvisorPrincipal(role=ROLE_SUPER_ADMIN, student_id=None),
         client=fake,
     )
 
@@ -475,7 +476,7 @@ def test_agent_loop_disabled_by_flag(settings) -> None:
 
     result = answer_virtual_advisor(
         question="hello there",
-        scope={"role": ROLE_SUPER_ADMIN},
+        principal=AdvisorPrincipal(role=ROLE_SUPER_ADMIN, student_id=None),
         client=fake,
     )
 
@@ -493,10 +494,9 @@ def test_student_scope_gets_student_tool_schemas_only() -> None:
 
     answer_virtual_advisor(
         question="what should I take?",
-        student_id=6001001,
+        principal=AdvisorPrincipal(role=ROLE_STUDENT, student_id=6001001),
         academic_year=1448,
         term=1,
-        scope={"role": ROLE_STUDENT, "student_id": 6001001},
         client=fake,
     )
 
@@ -515,7 +515,7 @@ def test_grounding_retry_on_unverified_student_id() -> None:
 
     result = answer_virtual_advisor(
         question="who should I contact?",
-        scope={"role": ROLE_SUPER_ADMIN},
+        principal=AdvisorPrincipal(role=ROLE_SUPER_ADMIN, student_id=None),
         client=fake,
     )
 
@@ -544,7 +544,7 @@ def test_agent_loop_survives_mid_loop_turn_failure() -> None:
 
     result = answer_virtual_advisor(
         question="how are AI students doing?",
-        scope={"role": ROLE_SUPER_ADMIN},
+        principal=AdvisorPrincipal(role=ROLE_SUPER_ADMIN, student_id=None),
         client=fake,
     )
 
@@ -571,7 +571,7 @@ def test_loop_mode_skips_regex_seed_and_mirrors_agent_evidence() -> None:
     # This wording triggers the legacy regex planner ("find", "students").
     result = answer_virtual_advisor(
         question="find AI students with 90 credit hours",
-        scope={"role": ROLE_SUPER_ADMIN},
+        principal=AdvisorPrincipal(role=ROLE_SUPER_ADMIN, student_id=None),
         client=fake,
     )
 
@@ -591,8 +591,7 @@ def test_year_term_default_when_caller_omits_them() -> None:
 
     result = answer_virtual_advisor(
         question="what should I take?",
-        student_id=6001001,
-        scope={"role": ROLE_STUDENT, "student_id": 6001001},
+        principal=AdvisorPrincipal(role=ROLE_STUDENT, student_id=6001001),
         client=fake,
     )
 
@@ -651,7 +650,7 @@ def test_loop_passes_budgets_to_tool_turns() -> None:
 
     answer_virtual_advisor(
         question="hello",
-        scope={"role": ROLE_SUPER_ADMIN},
+        principal=AdvisorPrincipal(role=ROLE_SUPER_ADMIN, student_id=None),
         client=fake,
     )
 
@@ -726,8 +725,7 @@ def test_answer_language_pinned_in_user_message() -> None:
     fake = FakeToolClient(turns=[_tool_turn(content="ok")])
     answer_virtual_advisor(
         question="كم ساعة باقي علي؟",
-        student_id=6001001,
-        scope={"role": ROLE_STUDENT, "student_id": 6001001},
+        principal=AdvisorPrincipal(role=ROLE_STUDENT, student_id=6001001),
         client=fake,
     )
     assert "answer_language: Arabic" in fake.tool_messages_seen[0][-1]["content"]
@@ -735,8 +733,7 @@ def test_answer_language_pinned_in_user_message() -> None:
     fake_en = FakeToolClient(turns=[_tool_turn(content="ok")])
     answer_virtual_advisor(
         question="how many hours left?",
-        student_id=6001001,
-        scope={"role": ROLE_STUDENT, "student_id": 6001001},
+        principal=AdvisorPrincipal(role=ROLE_STUDENT, student_id=6001001),
         client=fake_en,
     )
     assert "answer_language: English" in fake_en.tool_messages_seen[0][-1]["content"]
@@ -765,7 +762,7 @@ def test_grounded_student_id_does_not_trigger_retry() -> None:
 
     result = answer_virtual_advisor(
         question="How is the AI cohort?",
-        scope={"role": ROLE_SUPER_ADMIN},
+        principal=AdvisorPrincipal(role=ROLE_SUPER_ADMIN, student_id=None),
         client=fake,
     )
 

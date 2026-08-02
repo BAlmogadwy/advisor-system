@@ -5,9 +5,11 @@ from django.contrib.auth.models import Group, User
 from django.test import Client
 
 from core.models import Course, ProgrammeRequirement, Student, StudentCourse
+from core.services.advisor_principal import AdvisorPrincipal
 from core.services.local_llm import ChatResult
 from core.services.rbac import (
     ROLE_ADVISOR,
+    ROLE_STUDENT,
     ROLE_SUPER_ADMIN,
     ensure_role_groups,
     ensure_scope_schema,
@@ -209,7 +211,7 @@ def test_virtual_advisor_agent_finds_students_by_credits_and_passed_course(
 
     result = answer_virtual_advisor(
         question="Find the students who completed 90 hours or more and have CS323 passed. Show top 5.",
-        scope={"role": ROLE_SUPER_ADMIN},
+        principal=AdvisorPrincipal(role=ROLE_SUPER_ADMIN, student_id=None),
     )
 
     tool_result = result["tool_results"][0]
@@ -641,8 +643,7 @@ def test_student_like_vague_question_uses_verified_context_without_dataset_tool(
 
     result = answer_virtual_advisor(
         question="I finished the AI thing, what should I do next?",
-        student_id=student.student_id,
-        scope={"role": "STUDENT", "student_id": student.student_id},
+        principal=AdvisorPrincipal(role=ROLE_STUDENT, student_id=student.student_id),
     )
 
     assert result["tool_results"] == []

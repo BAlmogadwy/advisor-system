@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import pytest
 
+from core.services.advisor_principal import AdvisorPrincipal
 from core.services.local_llm import LocalLLMBadRequest
 from core.services.rbac import ROLE_STUDENT
 from core.services.virtual_advisor import (
@@ -32,8 +33,39 @@ from tests.test_virtual_advisor_agent_loop import FakeToolClient, _tool_call, _t
 
 pytestmark = pytest.mark.django_db
 
+
+#: These modules call the real entry point, which now loads a real record. Before
+#: the identity fix they ran against the general-mode stub, so no student had to
+#: exist — that absence WAS the defect. One row, autouse, so the tests exercise the
+#: same path a signed-in student does.
+@pytest.fixture(autouse=True)
+def _the_asking_student(db):
+    from core.models import Student
+
+    Student.objects.get_or_create(
+        student_id=6001001,
+        defaults={"name": "Test Student", "program": "CS", "section": "M"},
+    )
+
+
 POLICY_QUESTION = "كم مرة أقدر أنسحب من مقرر؟"
-SCOPE = {"role": ROLE_STUDENT, "student_id": 6001001}
+PRINCIPAL = AdvisorPrincipal(role=ROLE_STUDENT, student_id=6001001)
+
+
+def _retrieved(result) -> list:
+    """Citations the RETRIEVAL path entitled, excluding the seeded credit rules.
+
+    The credit-load policies reach the entitlement list through their own
+    deliberate channel: they back the numeric limits in the student's own context,
+    so they are citable whenever that context exists, whatever the question
+    retrieved or whether the lookup tool is working. Before identity was wired that
+    context was never built, so "citations == []" was accidentally broader than
+    what these tests are about.
+    """
+    from core.services.credit_policy import BACKING_POLICY_IDS
+
+    seeded = set(BACKING_POLICY_IDS.values())
+    return [c for c in (result.get("citations") or []) if c["policy_id"] not in seeded]
 
 
 class _NoToolsClient:
@@ -92,7 +124,7 @@ def test_the_single_shot_prompt_does_not_promise_a_tool_it_does_not_have():
 
 def test_fallback_retrieves_policies_and_puts_them_in_the_context():
     fake = _NoToolsClient()
-    result = answer_virtual_advisor(question=POLICY_QUESTION, scope=SCOPE, client=fake)
+    result = answer_virtual_advisor(question=POLICY_QUESTION, principal=PRINCIPAL, client=fake)
 
     assert result["agent"]["loop_used"] is False
     assert result["agent"]["policy_grounding"] == "retrieved"
@@ -106,7 +138,7 @@ def test_fallback_retrieves_policies_and_puts_them_in_the_context():
 
 def test_fallback_prompt_is_the_seeded_variant():
     fake = _NoToolsClient()
-    answer_virtual_advisor(question=POLICY_QUESTION, scope=SCOPE, client=fake)
+    answer_virtual_advisor(question=POLICY_QUESTION, principal=PRINCIPAL, client=fake)
     assert "UNIVERSITY RULES" in _system_prompt_of(fake)
     assert "policy_evidence" in _system_prompt_of(fake)
 
@@ -116,7 +148,7 @@ def test_fallback_prompt_is_the_seeded_variant():
 
 def test_tools_rejected_mid_request_still_reaches_the_policy_store():
     fake = _ToolsRejectedClient()
-    result = answer_virtual_advisor(question=POLICY_QUESTION, scope=SCOPE, client=fake)
+    result = answer_virtual_advisor(question=POLICY_QUESTION, principal=PRINCIPAL, client=fake)
 
     assert result["agent"]["fallback_reason"] == "tools_rejected_by_model"
     assert result["agent"]["policy_grounding"] == "retrieved"
@@ -129,7 +161,7 @@ def test_tools_rejected_mid_request_still_reaches_the_policy_store():
 def test_agent_loop_disabled_by_settings_still_reaches_the_policy_store(settings):
     settings.VIRTUAL_ADVISOR_AGENT_LOOP_ENABLED = False
     fake = FakeToolClient(turns=[_tool_turn(content="...")])
-    result = answer_virtual_advisor(question=POLICY_QUESTION, scope=SCOPE, client=fake)
+    result = answer_virtual_advisor(question=POLICY_QUESTION, principal=PRINCIPAL, client=fake)
 
     assert result["agent"]["loop_used"] is False
     assert result["agent"]["policy_grounding"] == "retrieved"
@@ -145,12 +177,13 @@ def test_no_applicable_policy_is_reported_not_silently_omitted():
     that there is none — that is the state in which it answers from memory.
     """
     fake = _NoToolsClient()
-    result = answer_virtual_advisor(question="zzzz qqqq wwww", scope=SCOPE, client=fake)
+    result = answer_virtual_advisor(question="zzzz qqqq wwww", principal=PRINCIPAL, client=fake)
 
     assert result["agent"]["policy_grounding"] == "none_matched"
     context = _context_of(fake)
     assert "policy_evidence" in context
-    assert result["citations"] == [], "nothing retrieved means nothing citable"
+
+    assert _retrieved(result) == [], "nothing retrieved means nothing citable"
 
 
 # ── failure mode 5: the policy store itself fails ────────────────
@@ -166,10 +199,10 @@ def test_a_broken_policy_store_degrades_to_abstention_not_to_memory(monkeypatch)
         "core.services.virtual_advisor_capabilities.AdvisorCapabilityRegistry.execute", _boom
     )
     fake = _NoToolsClient()
-    result = answer_virtual_advisor(question=POLICY_QUESTION, scope=SCOPE, client=fake)
+    result = answer_virtual_advisor(question=POLICY_QUESTION, principal=PRINCIPAL, client=fake)
 
     assert result["agent"]["policy_grounding"] == "unavailable"
-    assert result["citations"] == []
+    assert _retrieved(result) == []
     # The model is told it may not state a rule, rather than being left to guess.
     context = _context_of(fake)
     assert "could not be consulted" in context or "policy_evidence" in context
@@ -181,9 +214,9 @@ def test_a_malformed_store_response_is_treated_as_unavailable(monkeypatch):
         lambda *a, **k: "not a dict at all",
     )
     fake = _NoToolsClient()
-    result = answer_virtual_advisor(question=POLICY_QUESTION, scope=SCOPE, client=fake)
+    result = answer_virtual_advisor(question=POLICY_QUESTION, principal=PRINCIPAL, client=fake)
     assert result["agent"]["policy_grounding"] == "unavailable"
-    assert result["citations"] == []
+    assert _retrieved(result) == []
 
 
 # ── failure mode 6: the agent path, for comparison ───────────────
@@ -198,7 +231,7 @@ def test_agent_path_records_when_the_model_never_consulted_the_store():
     it measurable, and catching the resulting claim is the semantic judge's job.
     """
     fake = FakeToolClient(turns=[_tool_turn(content="خمس مرات، بالتأكيد.")])
-    result = answer_virtual_advisor(question=POLICY_QUESTION, scope=SCOPE, client=fake)
+    result = answer_virtual_advisor(question=POLICY_QUESTION, principal=PRINCIPAL, client=fake)
 
     assert result["agent"]["loop_used"] is True
     assert result["agent"]["policy_grounding"] == "not_consulted"
@@ -212,7 +245,7 @@ def test_agent_path_records_a_successful_consultation():
             _tool_turn(content="«الدليل الإرشادي للطالب، ص 24 [TU.WITHDRAWAL.MAXIMUM]»"),
         ]
     )
-    result = answer_virtual_advisor(question=POLICY_QUESTION, scope=SCOPE, client=fake)
+    result = answer_virtual_advisor(question=POLICY_QUESTION, principal=PRINCIPAL, client=fake)
     assert result["agent"]["policy_grounding"] == "retrieved"
     assert result["cited_policy_ids"] == ["TU.WITHDRAWAL.MAXIMUM"]
 
@@ -223,7 +256,7 @@ def test_agent_path_records_a_successful_consultation():
 def test_the_fallback_cannot_cite_a_policy_it_did_not_retrieve():
     """The enforcement must not be agent-path-only."""
     fake = _NoToolsClient(answer="حسب «الدليل الإرشادي للطالب، ص 25 [TU.DISMISSAL.THREE_WARNINGS]»")
-    result = answer_virtual_advisor(question=POLICY_QUESTION, scope=SCOPE, client=fake)
+    result = answer_virtual_advisor(question=POLICY_QUESTION, principal=PRINCIPAL, client=fake)
 
     agent = result["agent"]
     assert agent["citation_retry"] is True

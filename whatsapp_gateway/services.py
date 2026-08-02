@@ -13,6 +13,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from core.models import AcademicAdvisor, Student
+from core.services.advisor_principal import AdvisorPrincipal
 from core.services.rbac import (
     ROLE_ADVISOR,
     ROLE_GENERAL_ADVISOR,
@@ -306,7 +307,10 @@ def scope_for_link(link: WhatsAppUserLink) -> dict[str, Any]:
         getattr(settings, "WHATSAPP_ALLOW_SUPER_ADMIN", False)
     ):
         return {"role": ROLE_SUPER_ADMIN, "advisor_id": "", "departments": []}
-    return {"role": ROLE_STUDENT, "student_id": -1}
+    # None, not -1. A negative sentinel travels into the same field a real id
+    # occupies, and any clamp to a positive minimum silently promotes this refusal
+    # into student number 1.
+    return {"role": ROLE_STUDENT, "student_id": None}
 
 
 def recent_history_for_wa_id(
@@ -342,15 +346,19 @@ def answer_for_link(
 ) -> dict[str, Any]:
     scope = scope_for_link(link)
     history = recent_history_for_wa_id(wa_id=link.wa_id, latest_message=message)
-    if link.role == ROLE_STUDENT:
-        return answer_virtual_advisor(
-            question=message,
-            student_id=link.student_id,
-            scope=scope,
-            model=model,
-            history=history,
-        )
-    return answer_virtual_advisor(question=message, scope=scope, model=model, history=history)
+    # Built from the SAME scope the link resolves to, rather than re-plumbing a
+    # student id beside it. This path has no session behind it, so it is the one
+    # place where a second identity channel would be easiest to reintroduce and
+    # hardest to notice.
+    principal = AdvisorPrincipal(
+        role=str(scope.get("role") or ""),
+        student_id=scope.get("student_id"),
+        advisor_id=str(scope.get("advisor_id") or ""),
+        departments=tuple(scope.get("departments") or ()),
+    )
+    return answer_virtual_advisor(
+        question=message, principal=principal, model=model, history=history
+    )
 
 
 def verify_meta_signature(*, body: bytes, signature_header: str) -> bool:

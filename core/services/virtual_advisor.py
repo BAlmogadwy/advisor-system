@@ -16,6 +16,7 @@ from core.models import (
     StudentTermSection,
     TermSection,
 )
+from core.services.advisor_principal import AdvisorPrincipal
 from core.services.credit_policy import credit_policy_evidence
 from core.services.local_llm import (
     ChatResult,
@@ -354,12 +355,18 @@ def _apply_student_scope(
     qs: QuerySet[Student], scope: dict[str, Any] | None
 ) -> tuple[QuerySet[Student], dict[str, Any]]:
     scope = scope or {}
-    role = str(scope.get("role") or ROLE_SUPER_ADMIN)
+    # An absent scope is a caller whose authority nobody established, not the most
+    # privileged one. Defaulting to SUPER_ADMIN made an unfiltered cohort query one
+    # dropped keyword argument away.
+    role = str(scope.get("role") or "")
     applied: dict[str, Any] = {"role": role}
     if role == ROLE_STUDENT:
-        student_id = _coerce_int(scope.get("student_id"), minimum=1)
+        # NOT clamped to a minimum of 1. The WhatsApp gateway signals "no student
+        # here" with -1, and `max(1, -1)` turned that refusal into student number 1
+        # — a denial that resolves to a real person's record.
+        student_id = _coerce_int(scope.get("student_id"))
         applied["student_id"] = student_id
-        if not student_id:
+        if not student_id or student_id < 1:
             return qs.none(), applied
         return qs.filter(student_id=student_id), applied
     if role == ROLE_ADVISOR:
@@ -376,8 +383,15 @@ def _apply_student_scope(
         if not departments:
             return qs.none(), applied
         return qs.filter(program__in=departments), applied
-    applied["scope"] = "all_students"
-    return qs, applied
+    if role == ROLE_SUPER_ADMIN:
+        applied["scope"] = "all_students"
+        return qs, applied
+    # Anything else — an absent scope, an empty role, a role this function does not
+    # know — reaches nobody. Falling through to the unfiltered queryset made "no
+    # role" indistinguishable from "the highest role", which is the wrong direction
+    # for a default to lean.
+    applied["scope"] = "none"
+    return qs.none(), applied
 
 
 def _students_with_course_status(course_code: str, statuses: list[str]) -> QuerySet[Student]:
@@ -1608,14 +1622,25 @@ def _run_agent_loop(
 def answer_virtual_advisor(
     *,
     question: str,
-    student_id: int | None = None,
+    principal: AdvisorPrincipal,
     academic_year: int | None = None,
     term: int | None = None,
     history: Any = None,
     model: str | None = None,
-    scope: dict[str, Any] | None = None,
     client: LocalLLMClient | None = None,
 ) -> dict[str, Any]:
+    """Answer one question, as one identity.
+
+    `principal` replaced a `student_id` parameter and a `scope` dict that each
+    carried a student identity. Two channels meant a caller could fill in one and
+    forget the other — which is exactly what the conversation view did, so every
+    stored turn was answered without the student's own record. They are now one
+    object, and the scope is derived from it rather than supplied alongside it, so
+    "whose record loads" and "under whose authority" cannot disagree.
+    """
+    student_id = principal.student_id
+    scope = principal.as_scope()
+
     # Default the academic term when the caller did not supply one
     # (the WhatsApp gateway never does). Without this, every
     # time-dependent capability errors with "academic_year and term

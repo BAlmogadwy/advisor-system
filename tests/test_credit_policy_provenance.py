@@ -35,6 +35,20 @@ from core.services.virtual_advisor import (
 pytestmark = pytest.mark.django_db
 
 
+#: These modules call the real entry point, which now loads a real record. Before
+#: the identity fix they ran against the general-mode stub, so no student had to
+#: exist — that absence WAS the defect. One row, autouse, so the tests exercise the
+#: same path a signed-in student does.
+@pytest.fixture(autouse=True)
+def _the_asking_student(db):
+    from core.models import Student
+
+    Student.objects.get_or_create(
+        student_id=6001001,
+        defaults={"name": "Test Student", "program": "CS", "section": "M"},
+    )
+
+
 def _main_term_evidence(status: str | None = None):
     return credit_policy_evidence(12, [], term=1, student_status=status)
 
@@ -199,13 +213,14 @@ def test_a_real_request_can_cite_the_credit_range():
     every unit test above green — the gap was between "derived correctly" and
     "reached the answer contract".
     """
+    from core.services.advisor_principal import AdvisorPrincipal
     from core.services.rbac import ROLE_STUDENT
     from core.services.virtual_advisor import answer_virtual_advisor
     from tests.test_policy_grounding_paths import _NoToolsClient
 
     result = answer_virtual_advisor(
         question="كم الحد الأدنى للساعات؟",
-        scope={"role": ROLE_STUDENT, "student_id": 6001001},
+        principal=AdvisorPrincipal(role=ROLE_STUDENT, student_id=6001001),
         client=_NoToolsClient(),
     )
     cited = {c["policy_id"] for c in result["citations"]}
@@ -214,6 +229,7 @@ def test_a_real_request_can_cite_the_credit_range():
 
 def test_the_credit_range_is_citable_without_a_fabrication_flag():
     """And an answer that cites it correctly must pass the citation check."""
+    from core.services.advisor_principal import AdvisorPrincipal
     from core.services.rbac import ROLE_STUDENT
     from core.services.virtual_advisor import _bad_citations, answer_virtual_advisor
     from tests.test_policy_grounding_paths import _NoToolsClient
@@ -221,7 +237,7 @@ def test_the_credit_range_is_citable_without_a_fabrication_flag():
     answer = "الحد الأدنى «الدليل الإرشادي للطالب، ص 23 [TU.LOAD.SEMESTER_RANGE]» هو 12 ساعة."
     result = answer_virtual_advisor(
         question="كم الحد الأدنى للساعات؟",
-        scope={"role": ROLE_STUDENT, "student_id": 6001001},
+        principal=AdvisorPrincipal(role=ROLE_STUDENT, student_id=6001001),
         client=_NoToolsClient(answer=answer),
     )
     assert _bad_citations(answer, result["citations"]) == []

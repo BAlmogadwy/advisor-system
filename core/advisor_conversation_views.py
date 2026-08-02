@@ -32,7 +32,10 @@ from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
 from .models import AdvisorConversation, AdvisorFeedback, AdvisorMessage, AdvisorMessageCitation
-from .services.rbac import ROLE_STUDENT, get_user_scope
+from .services.advisor_principal import AdvisorPrincipal, IdentityError
+from .services.rate_limit import CONVERSATION, FEEDBACK, GENERATION, HISTORY
+from .services.rate_limit import consume as spend_budget
+from .services.rate_limit import release as refund_budget
 
 logger = logging.getLogger(__name__)
 
@@ -40,17 +43,17 @@ MAX_QUESTION_CHARS = 4000
 MAX_TITLE_CHARS = 120
 
 
-def _student_id(request: HttpRequest) -> int | None:
-    """The effective student, from the session ONLY.
+def _principal(request: HttpRequest) -> AdvisorPrincipal | None:
+    """The effective student, from the authenticated session ONLY.
 
     Never from the payload. A request that names a student id is describing what
-    it wants, not who it is.
+    it wants, not who it is. Returns None so each view can answer 403 in its own
+    shape; the principal itself fails closed by raising.
     """
-    scope = get_user_scope(request.user)
-    if str(scope.get("role", "")) != ROLE_STUDENT:
+    try:
+        return AdvisorPrincipal.for_student(request)
+    except IdentityError:
         return None
-    student_id = scope.get("student_id")
-    return int(student_id) if student_id is not None else None
 
 
 def _owned_conversation(conversation_id: Any, student_id: int) -> AdvisorConversation:
@@ -83,6 +86,27 @@ def _body(request: HttpRequest) -> tuple[dict[str, Any], JsonResponse | None]:
 
 def _forbidden() -> JsonResponse:
     return JsonResponse({"error": "This endpoint is for signed-in students."}, status=403)
+
+
+def _over_budget(budget: str, student_id: int) -> JsonResponse | None:
+    """Spend one unit, or explain how long to wait.
+
+    Budgets are named for the RESOURCE. Generation is the expensive one and every
+    door onto it — a new question, a retry of a failed turn — draws on the same
+    allowance, so retrying cannot become a way around the limit on asking.
+    """
+    decision = spend_budget(budget, student_id)
+    if decision.allowed:
+        return None
+    response = JsonResponse(
+        {
+            "error": "لقد أرسلت طلبات كثيرة. يرجى المحاولة بعد قليل.",
+            "retry_after": decision.retry_after,
+        },
+        status=429,
+    )
+    response["Retry-After"] = str(decision.retry_after)
+    return response
 
 
 # ── serialisation: the ONLY shape the browser ever sees ──────────
@@ -158,18 +182,30 @@ def _conversation_json(conversation: AdvisorConversation) -> dict[str, Any]:
 
 @require_GET
 def conversation_list_view(request: HttpRequest) -> JsonResponse:
-    student_id = _student_id(request)
-    if student_id is None:
+    principal = _principal(request)
+    if principal is None:
         return _forbidden()
+    student_id = principal.student_id
+    over = _over_budget(HISTORY, student_id)
+    if over:
+        return over
     conversations = AdvisorConversation.objects.filter(student_id=student_id)
     return JsonResponse({"conversations": [_conversation_json(c) for c in conversations]})
 
 
 @require_POST
 def conversation_create_view(request: HttpRequest) -> JsonResponse:
-    student_id = _student_id(request)
-    if student_id is None:
+    principal = _principal(request)
+    if principal is None:
         return _forbidden()
+    student_id = principal.student_id
+    # Its OWN budget, not the generation one. The client creates a conversation on
+    # its way to asking, so charging both made the real ceiling three questions per
+    # ten minutes against a limit that reads as six — and the refusal surfaced on
+    # the create call, where the client had no wait to show.
+    over = _over_budget(CONVERSATION, student_id)
+    if over:
+        return over
     payload, err = _body(request)
     if err:
         return err
@@ -180,9 +216,13 @@ def conversation_create_view(request: HttpRequest) -> JsonResponse:
 
 @require_GET
 def conversation_messages_view(request: HttpRequest, conversation_id: str) -> JsonResponse:
-    student_id = _student_id(request)
-    if student_id is None:
+    principal = _principal(request)
+    if principal is None:
         return _forbidden()
+    student_id = principal.student_id
+    over = _over_budget(HISTORY, student_id)
+    if over:
+        return over
     conversation = _owned_conversation(conversation_id, student_id)
     messages = conversation.messages.prefetch_related("citations").order_by("created_at")
     mine = {
@@ -218,9 +258,10 @@ def conversation_post_message_view(request: HttpRequest, conversation_id: str) -
     """
     from .services.virtual_advisor import answer_virtual_advisor
 
-    student_id = _student_id(request)
-    if student_id is None:
+    principal = _principal(request)
+    if principal is None:
         return _forbidden()
+    student_id = principal.student_id
     conversation = _owned_conversation(conversation_id, student_id)
 
     payload, err = _body(request)
@@ -245,6 +286,14 @@ def conversation_post_message_view(request: HttpRequest, conversation_id: str) -
             if response is not None:
                 return response
             student_message = resumed
+
+    # Charged here: after ownership, after validation, and after the idempotency
+    # branch that may replay a stored answer — but still before the model is
+    # called, which is what admission control requires. Charged earlier, a replay
+    # served entirely from storage cost the student the same as a new question.
+    over = _over_budget(GENERATION, student_id)
+    if over:
+        return over
 
     if student_message is None:
         try:
@@ -276,9 +325,31 @@ def conversation_post_message_view(request: HttpRequest, conversation_id: str) -
             student_message = resumed
 
     try:
-        result = answer_virtual_advisor(
-            question=question,
-            scope={"role": ROLE_STUDENT, "student_id": student_id},
+        result = answer_virtual_advisor(question=question, principal=principal)
+    except ValueError as exc:
+        # The student's own row is gone — a roster re-import can do this. Passing a
+        # real identity makes it raise where the general-mode stub used to answer
+        # blandly and work, so without this branch the student gets a 503 on every
+        # question they ever ask, permanently, with no explanation. Do NOT fall back
+        # to the general context: an answer that silently stops being about them is
+        # the failure this whole change removes.
+        logger.warning(
+            "Adviser has no student record for conversation %s: %s", conversation.id, exc
+        )
+        # No answer is possible for this student until their record is restored, so
+        # charging them would spend the whole allowance on a diagnosis and then
+        # replace it with a rate-limit message that hides the diagnosis.
+        refund_budget(GENERATION, student_id)
+        student_message.status = AdvisorMessage.STATUS_FAILED
+        student_message.save(update_fields=["status"])
+        return JsonResponse(
+            {
+                "conversation": _conversation_json(conversation),
+                "student_message": _message_json(student_message),
+                "assistant_message": None,
+                "error": ("تعذر العثور على سجلك الأكاديمي. يرجى التواصل مع عمادة القبول والتسجيل."),
+            },
+            status=409,
         )
     except Exception:  # noqa: BLE001
         logger.exception("Adviser generation failed for conversation %s", conversation.id)
@@ -519,9 +590,14 @@ def _source_hash(citation: dict[str, Any]) -> str:
 @require_POST
 def message_feedback_view(request: HttpRequest, message_id: str) -> JsonResponse:
     """Rate an assistant message in one of the student's OWN conversations."""
-    student_id = _student_id(request)
-    if student_id is None:
+    principal = _principal(request)
+    if principal is None:
         return _forbidden()
+    student_id = principal.student_id
+    over = _over_budget(FEEDBACK, student_id)
+    if over:
+        return over
+
     payload, err = _body(request)
     if err:
         return err

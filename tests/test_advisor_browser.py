@@ -32,7 +32,13 @@ from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from django.test import Client
 from django.urls import reverse
 
-from core.models import AdvisorConversation, AdvisorFeedback, AdvisorMessage, Student
+from core.models import (
+    AdvisorConversation,
+    AdvisorFeedback,
+    AdvisorMessage,
+    RateLimitBucket,
+    Student,
+)
 from core.services.rbac import ensure_role_groups
 
 playwright_api = pytest.importorskip("playwright.sync_api")
@@ -174,6 +180,11 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         # Without this the fixture can fail silently and every caller reports a
         # 15-second selector timeout pointing at the JavaScript instead.
         assert response.status_code == 201, response.content
+
+        # Seeding history is setup, not a student asking questions, so it must not
+        # be governed by the product's generation budget. The budget itself is
+        # tested directly in tests/test_advisor_rate_limit.py.
+        RateLimitBucket.objects.all().delete()
 
     def _seed(self, answer: str = WITHDRAWAL_ANSWER, citations=None) -> AdvisorConversation:
         conversation = AdvisorConversation.objects.create(student_id=MINE)
@@ -497,6 +508,58 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
 
         assert page.locator(".va-message-user").count() == 1
         assert AdvisorMessage.objects.filter(role=AdvisorMessage.ROLE_STUDENT).count() == 1
+
+    # ── 17. a rate limit must say how long ──
+    def test_a_rate_limited_send_names_the_wait_and_holds_the_button(self):
+        """ "Please try again" plus a disabled button is a dead end.
+
+        The server returns Retry-After and a wait in the body; the client used to
+        throw both away and tell the student to do immediately the one thing that
+        cannot work.
+        """
+        from core.services import rate_limit
+
+        conversation = AdvisorConversation.objects.create(student_id=MINE)
+        limit, _window = rate_limit.LIMITS[rate_limit.GENERATION]
+        for _ in range(limit):
+            rate_limit.consume(rate_limit.GENERATION, MINE)
+
+        page = self._page()
+        self._open(page, f"?c={conversation.id}")
+        page.fill("#saQuestion", "سؤال")
+        page.click("#saSend")
+        page.wait_for_selector("#saComposerError:visible", timeout=15_000)
+
+        message = page.locator("#saComposerError").inner_text()
+        assert any(ch.isdigit() for ch in message), message
+        assert page.locator("#saSend").is_disabled() is True
+        # The question is kept — it was never sent.
+        assert page.locator("#saQuestion").input_value() == "سؤال"
+
+    # ── 18. a refusal on the way TO asking must explain itself too ──
+    def test_a_rate_limited_conversation_create_names_the_wait(self):
+        """The client creates a conversation on its way to every question.
+
+        A refusal there used to return a bare null, so the screen said "could not
+        send" with no wait and a live button — the exact dead end the send path
+        was fixed to avoid.
+        """
+        from core.services import rate_limit
+
+        limit, _window = rate_limit.LIMITS[rate_limit.CONVERSATION]
+        for _ in range(limit):
+            rate_limit.consume(rate_limit.CONVERSATION, MINE)
+
+        page = self._page()
+        self._open(page)  # no ?c=, and no conversation exists: send must create one
+        page.fill("#saQuestion", "سؤال")
+        page.click("#saSend")
+        page.wait_for_selector("#saComposerError:visible", timeout=15_000)
+
+        message = page.locator("#saComposerError").inner_text()
+        assert any(ch.isdigit() for ch in message), message
+        assert page.locator("#saSend").is_disabled() is True
+        assert page.locator("#saQuestion").input_value() == "سؤال"
 
     # ── 14. the page must not leak its own source ──
     def test_no_raw_template_syntax_reaches_the_page(self):

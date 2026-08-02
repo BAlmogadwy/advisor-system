@@ -593,19 +593,28 @@ def test_my_plan_by_term_is_student_scoped_and_level_filtered():
     _make_retake_student()
     reg = get_default_registry()
 
-    full = reg.execute("my_plan_by_term", {"student_id": SID},
-                       scope={"role": ROLE_SUPER_ADMIN}, ctx={})
+    full = reg.execute(
+        "my_plan_by_term", {"student_id": SID}, scope={"role": ROLE_SUPER_ADMIN}, ctx={}
+    )
     assert full["ok"] is True
     assert full["terms"], "the plan came back empty"
 
     level = int(full["terms"][0]["term"])
-    one = reg.execute("my_plan_by_term", {"student_id": SID, "term": level},
-                      scope={"role": ROLE_SUPER_ADMIN}, ctx={})
+    one = reg.execute(
+        "my_plan_by_term",
+        {"student_id": SID, "term": level},
+        scope={"role": ROLE_SUPER_ADMIN},
+        ctx={},
+    )
     assert [int(t["term"]) for t in one["terms"]] == [level]
 
     # A student may only ever see their own plan.
-    other = reg.execute("my_plan_by_term", {"student_id": SID + 1},
-                        scope={"role": ROLE_STUDENT, "student_id": SID}, ctx={})
+    other = reg.execute(
+        "my_plan_by_term",
+        {"student_id": SID + 1},
+        scope={"role": ROLE_STUDENT, "student_id": SID},
+        ctx={},
+    )
     assert other["ok"] is False
     assert "own records" in other["error"]
 
@@ -626,11 +635,16 @@ def test_my_advisor_never_hands_out_the_placeholder_email():
 
     Student.objects.create(student_id=SID, name="S", program="AI", section="M", advisor_id="7")
     AcademicAdvisor.objects.create(
-        advisor_id="7", full_name="د. اختبار", department="AI",
+        advisor_id="7",
+        full_name="د. اختبار",
+        department="AI",
         email="advisor7@placeholder.local",
     )
     out = get_default_registry().execute(
-        "my_advisor", {"student_id": SID}, scope={"role": ROLE_SUPER_ADMIN}, ctx={},
+        "my_advisor",
+        {"student_id": SID},
+        scope={"role": ROLE_SUPER_ADMIN},
+        ctx={},
     )
     assert out["advisor_name"] == "د. اختبار"
     assert out["advisor_email"] is None, "a placeholder address reached the student"
@@ -644,7 +658,10 @@ def test_my_advisor_says_so_when_none_is_assigned():
 
     Student.objects.create(student_id=SID, name="S", program="AI", section="M", advisor_id="")
     out = get_default_registry().execute(
-        "my_advisor", {"student_id": SID}, scope={"role": ROLE_SUPER_ADMIN}, ctx={},
+        "my_advisor",
+        {"student_id": SID},
+        scope={"role": ROLE_SUPER_ADMIN},
+        ctx={},
     )
     assert out["ok"] is True
     assert out["advisor_assigned"] is False
@@ -665,12 +682,19 @@ def _section_with(course_key: str, section: str, meetings: list[tuple[str, str, 
     from core.models import TermSection, TermSectionMeeting
 
     ts = TermSection.objects.create(
-        course_code=course_key, course_number=course_key, course_key=course_key,
-        section=section, available_capacity=25,
+        course_code=course_key,
+        course_number=course_key,
+        course_key=course_key,
+        section=section,
+        available_capacity=25,
     )
     for day, start, end in meetings:
         TermSectionMeeting.objects.create(
-            term_section=ts, day=day, start_time=start, end_time=end, room="1",
+            term_section=ts,
+            day=day,
+            start_time=start,
+            end_time=end,
+            room="1",
         )
     return ts
 
@@ -682,19 +706,28 @@ def test_clash_free_sections_separates_fitting_from_colliding():
 
     Student.objects.create(student_id=SID, name="S", program="AI", section="M")
     ProgrammeRequirement.objects.create(
-        program="AI", course_code="ZZ100", course_name="BUSY", type="Mandatory",
-        programme_term=1, credit_hours=3,
+        program="AI",
+        course_code="ZZ100",
+        course_name="BUSY",
+        type="Mandatory",
+        programme_term=1,
+        credit_hours=3,
     )
     busy = _section_with("ZZ100", "M1", [("SUN", "08:00", "09:15")])
     StudentTermSection.objects.create(
-        student_id=SID, academic_year="1448", term="1", term_section=busy,
+        student_id=SID,
+        academic_year="1448",
+        term="1",
+        term_section=busy,
     )
-    _section_with("ZZ200", "M1", [("SUN", "08:30", "09:45")])   # overlaps
-    _section_with("ZZ200", "M2", [("MON", "08:00", "09:15")])   # free
+    _section_with("ZZ200", "M1", [("SUN", "08:30", "09:45")])  # overlaps
+    _section_with("ZZ200", "M2", [("MON", "08:00", "09:15")])  # free
 
     out = get_default_registry().execute(
-        "my_clash_free_sections", {"student_id": SID, "course_code": "ZZ200"},
-        scope={"role": ROLE_SUPER_ADMIN}, ctx={"academic_year": 1448, "term": 1},
+        "my_clash_free_sections",
+        {"student_id": SID, "course_code": "ZZ200"},
+        scope={"role": ROLE_SUPER_ADMIN},
+        ctx={"academic_year": 1448, "term": 1},
     )
     course = out["courses"][0]
     assert course["status"] == "OK"
@@ -716,8 +749,10 @@ def test_a_course_with_no_sections_is_not_on_file_not_unavailable():
 
     Student.objects.create(student_id=SID, name="S", program="AI", section="M")
     out = get_default_registry().execute(
-        "my_clash_free_sections", {"student_id": SID, "course_code": "ZZ999"},
-        scope={"role": ROLE_SUPER_ADMIN}, ctx={"academic_year": 1448, "term": 1},
+        "my_clash_free_sections",
+        {"student_id": SID, "course_code": "ZZ999"},
+        scope={"role": ROLE_SUPER_ADMIN},
+        ctx={"academic_year": 1448, "term": 1},
     )
     assert out["courses"][0]["status"] == "NOT_ON_FILE"
     assert "NOT_ON_FILE" in out["note"] and "no sections available" in out["note"]
@@ -731,8 +766,10 @@ def test_clash_free_sections_refuses_when_the_cohort_cannot_be_resolved():
 
     Student.objects.create(student_id=SID, name="S", program="AI", section="")
     out = get_default_registry().execute(
-        "my_clash_free_sections", {"student_id": SID, "course_code": "ZZ200"},
-        scope={"role": ROLE_SUPER_ADMIN}, ctx={"academic_year": 1448, "term": 1},
+        "my_clash_free_sections",
+        {"student_id": SID, "course_code": "ZZ200"},
+        scope={"role": ROLE_SUPER_ADMIN},
+        ctx={"academic_year": 1448, "term": 1},
     )
     assert out["ok"] is False
     assert out["reason"] == "COHORT_UNRESOLVED"
@@ -746,8 +783,10 @@ def test_clash_free_sections_never_calls_the_catalogue_a_term():
 
     Student.objects.create(student_id=SID, name="S", program="AI", section="M")
     out = get_default_registry().execute(
-        "my_clash_free_sections", {"student_id": SID, "course_code": "ZZ200"},
-        scope={"role": ROLE_SUPER_ADMIN}, ctx={"academic_year": 1448, "term": 1},
+        "my_clash_free_sections",
+        {"student_id": SID, "course_code": "ZZ200"},
+        scope={"role": ROLE_SUPER_ADMIN},
+        ctx={"academic_year": 1448, "term": 1},
     )
     assert "compared_against_term" in out, "the answer must name the term it compared against"
     assert "carry NO term of their own" in out["note"]
@@ -757,9 +796,14 @@ def _plan_course(program: str, code: str, credits: int, term: int = 1):
     from core.models import ProgrammeRequirement
 
     ProgrammeRequirement.objects.get_or_create(
-        program=program, course_code=code,
-        defaults={"course_name": code, "type": "Mandatory",
-                  "programme_term": term, "credit_hours": credits},
+        program=program,
+        course_code=code,
+        defaults={
+            "course_name": code,
+            "type": "Mandatory",
+            "programme_term": term,
+            "credit_hours": credits,
+        },
     )
 
 
@@ -775,8 +819,10 @@ def test_build_my_timetable_places_what_it_can_and_explains_the_rest():
     # ZZ320 is in the plan but has NO section on file — the common case, 169 of 246.
 
     out = get_default_registry().execute(
-        "build_my_timetable", {"student_id": SID, "must_include": ["ZZ310", "ZZ320"]},
-        scope={"role": ROLE_SUPER_ADMIN}, ctx={"academic_year": 1448, "term": 1},
+        "build_my_timetable",
+        {"student_id": SID, "must_include": ["ZZ310", "ZZ320"]},
+        scope={"role": ROLE_SUPER_ADMIN},
+        ctx={"academic_year": 1448, "term": 1},
     )
     assert out["ok"] is True
     assert [p["course_code"] for p in out["placed"]] == ["ZZ310"]
@@ -796,8 +842,10 @@ def test_build_my_timetable_never_says_a_course_is_unavailable():
     Student.objects.create(student_id=SID, name="S", program="AI", section="M")
     _plan_course("AI", "ZZ330", 3)
     out = get_default_registry().execute(
-        "build_my_timetable", {"student_id": SID, "must_include": ["ZZ330"]},
-        scope={"role": ROLE_SUPER_ADMIN}, ctx={"academic_year": 1448, "term": 1},
+        "build_my_timetable",
+        {"student_id": SID, "must_include": ["ZZ330"]},
+        scope={"role": ROLE_SUPER_ADMIN},
+        ctx={"academic_year": 1448, "term": 1},
     )
     assert "No sections available" not in str(out), "the raw builder wording leaked through"
     assert "NOT_ON_FILE" in out["note"]
@@ -815,8 +863,10 @@ def test_build_my_timetable_respects_a_credit_ceiling():
 
     codes = [f"ZZ4{i}0" for i in range(4)]
     capped = get_default_registry().execute(
-        "build_my_timetable", {"student_id": SID, "must_include": codes, "max_credits": 6},
-        scope={"role": ROLE_SUPER_ADMIN}, ctx={"academic_year": 1448, "term": 1},
+        "build_my_timetable",
+        {"student_id": SID, "must_include": codes, "max_credits": 6},
+        scope={"role": ROLE_SUPER_ADMIN},
+        ctx={"academic_year": 1448, "term": 1},
     )
     assert capped["planned_credit_hours"] <= 6, "the ceiling is a hard constraint, not a hint"
 
@@ -832,15 +882,22 @@ def test_build_my_timetable_promises_nothing_it_cannot_deliver():
     _plan_course("AI", "ZZ500", 3)
     _section_with("ZZ500", "M1", [("SUN", "08:00", "09:15")])
     reg = get_default_registry()
-    out = reg.execute("build_my_timetable", {"student_id": SID, "must_include": ["ZZ500"]},
-                      scope={"role": ROLE_SUPER_ADMIN}, ctx={"academic_year": 1448, "term": 1})
+    out = reg.execute(
+        "build_my_timetable",
+        {"student_id": SID, "must_include": ["ZZ500"]},
+        scope={"role": ROLE_SUPER_ADMIN},
+        ctx={"academic_year": 1448, "term": 1},
+    )
     note = out["note"]
     assert "never say a section has room" in note
     assert "not a registration" in note
 
-    denied = reg.execute("build_my_timetable", {"student_id": SID + 1},
-                         scope={"role": ROLE_STUDENT, "student_id": SID},
-                         ctx={"academic_year": 1448, "term": 1})
+    denied = reg.execute(
+        "build_my_timetable",
+        {"student_id": SID + 1},
+        scope={"role": ROLE_STUDENT, "student_id": SID},
+        ctx={"academic_year": 1448, "term": 1},
+    )
     assert denied["ok"] is False
 
 
@@ -867,8 +924,10 @@ def test_must_include_beats_the_recommendation():
     )
 
     out = get_default_registry().execute(
-        "build_my_timetable", {"student_id": SID, "must_include": ["ZZ610"]},
-        scope={"role": ROLE_SUPER_ADMIN}, ctx={"academic_year": 1448, "term": 1},
+        "build_my_timetable",
+        {"student_id": SID, "must_include": ["ZZ610"]},
+        scope={"role": ROLE_SUPER_ADMIN},
+        ctx={"academic_year": 1448, "term": 1},
     )
     assert "ZZ610" in out["requested"], "must_include never reached the builder"
     handled = [p["course_code"] for p in out["placed"]] + [
@@ -895,6 +954,7 @@ def test_builder_is_called_with_the_levers_that_are_safe_on_this_data():
     assert "suggest_swaps=False" in src, "placeholder swap suggestions were re-enabled"
     assert "strict_per_course=False" in src, "strict mode returns scheduled=0 on real data"
     # And the capability must never surface the placeholder swaps.
-    assert "swap_suggestions" not in inspect.getsource(vac._exec_build_my_timetable).split(
-        "return {"
-    )[-1]
+    assert (
+        "swap_suggestions"
+        not in inspect.getsource(vac._exec_build_my_timetable).split("return {")[-1]
+    )
