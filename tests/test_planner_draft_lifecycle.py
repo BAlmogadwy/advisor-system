@@ -1332,3 +1332,174 @@ def _stub_solver(monkeypatch, world, extra=(), alternatives=None, unplaced=()):
 
     monkeypatch.setattr(svc, "build_student_options", fake)
     return seen
+
+
+# ── 14. retention ────────────────────────────────────────────────
+
+
+def test_an_abandoned_draft_goes_sooner_than_a_generated_one(world, monkeypatch):
+    """Two retentions, because the two kinds of row are worth different amounts.
+
+    An expired draft nobody generated is a course list the student walked away
+    from. A generated one holds the alternatives AND the baseline the solver saw —
+    their registered timetable, with instructor names, rooms and enrolment counts.
+    That is the row worth keeping for a day or two and the row most worth deleting
+    after that; one grace period for both gets one of them wrong.
+    """
+    from django.core.management import call_command
+
+    from core.management.commands.purge_planner_drafts import (
+        GENERATED_GRACE,
+        UNGENERATED_GRACE,
+    )
+
+    _stub_solver(monkeypatch, world)
+
+    def aged(days, generate=False):
+        d = svc.create_draft(student_id=OWNER, course_codes=["CS113"])
+        if generate:
+            svc.generate(d)
+        PlannerDraft.objects.filter(pk=d.pk).update(
+            expires_at=timezone.now() - timedelta(days=days)
+        )
+        return d.pk
+
+    live = svc.create_draft(student_id=OWNER, course_codes=["CS113"]).pk
+    fresh_abandoned = aged(0)  # expired just now, never generated
+    old_abandoned = aged(UNGENERATED_GRACE.days + 1)
+    fresh_generated = aged(UNGENERATED_GRACE.days + 1, generate=True)
+    old_generated = aged(GENERATED_GRACE.days + 1, generate=True)
+
+    # Dry run by default, like every destructive command in this project.
+    call_command("purge_planner_drafts")
+    assert PlannerDraft.objects.count() == 5, "the default run deleted something"
+
+    call_command("purge_planner_drafts", "--apply")
+    survivors = set(PlannerDraft.objects.values_list("pk", flat=True))
+    assert survivors == {live, fresh_abandoned, fresh_generated}, {
+        "live": live in survivors,
+        "fresh_abandoned": fresh_abandoned in survivors,
+        "old_abandoned": old_abandoned in survivors,
+        "fresh_generated": fresh_generated in survivors,
+        "old_generated": old_generated in survivors,
+    }
+
+
+def test_a_generated_draft_is_not_swept_by_the_shorter_grace(world, monkeypatch):
+    """The distinction has to be the GENERATION, not the age alone.
+
+    Reading `generated_version > 0` without comparing it to `version` would treat a
+    draft edited after generating as still generated, and keep it a week; ignoring
+    the flag entirely would sweep a day-old result the student may still be reading.
+    """
+    from django.core.management import call_command
+
+    from core.management.commands.purge_planner_drafts import UNGENERATED_GRACE
+
+    _stub_solver(monkeypatch, world)
+    generated = svc.create_draft(student_id=OWNER, course_codes=["CS113"])
+    svc.generate(generated)
+    # Edited AFTER generating: the stored result no longer describes this draft, so
+    # it is abandoned rather than generated, and goes on the shorter clock.
+    edited = svc.create_draft(student_id=OWNER, course_codes=["CS113"])
+    svc.generate(edited)
+    svc.edit_draft(edited, course_codes=["CS113", "AI221"])
+
+    for pk in (generated.pk, edited.pk):
+        PlannerDraft.objects.filter(pk=pk).update(
+            expires_at=timezone.now() - timedelta(days=UNGENERATED_GRACE.days + 1)
+        )
+
+    call_command("purge_planner_drafts", "--apply")
+    assert PlannerDraft.objects.filter(pk=generated.pk).exists(), "a live result was swept early"
+    assert not PlannerDraft.objects.filter(pk=edited.pk).exists(), (
+        "a draft whose result was superseded was kept on the long clock"
+    )
+
+
+def test_deleting_the_conversation_does_not_delete_the_draft(world, monkeypatch):
+    """A draft outlives the turn that produced it.
+
+    `source_message` is a provenance pointer, not an owner. If it cascaded, a
+    student tidying their chat history would silently destroy a live planner draft
+    — and worse, a purge run afterwards would look like the cause. The FK is
+    SET_NULL for exactly this, and this is the test that says so.
+    """
+    from django.core.management import call_command
+
+    from core.models import AdvisorConversation, AdvisorMessage
+
+    conversation = AdvisorConversation.objects.create(student_id=OWNER, title="mine")
+    message = AdvisorMessage.objects.create(
+        conversation=conversation, role=AdvisorMessage.ROLE_ASSISTANT, content="…"
+    )
+    draft = svc.create_draft(student_id=OWNER, course_codes=["CS113"], source_message=message)
+    assert draft.source_message_id == message.id
+
+    conversation.delete()
+
+    draft.refresh_from_db()
+    assert draft.source_message_id is None, "the provenance link cleared, as intended"
+    assert draft.is_live, "the draft itself is untouched"
+
+    # And a purge afterwards must still judge it by age alone.
+    call_command("purge_planner_drafts", "--apply")
+    assert PlannerDraft.objects.filter(pk=draft.pk).exists(), (
+        "a live draft was purged because its conversation was deleted"
+    )
+
+
+def test_a_draft_whose_student_row_vanishes_is_still_purged_by_age(world):
+    """`student_id` is a bare integer, not an FK — deliberately, across the adviser.
+
+    So a roster re-import cannot cascade a student's drafts away, and equally
+    cannot leave rows the purge refuses to touch. Age is the only criterion.
+    """
+    from django.core.management import call_command
+
+    from core.management.commands.purge_planner_drafts import GENERATED_GRACE
+
+    orphan = svc.create_draft(student_id=OWNER, course_codes=["CS113"])
+    PlannerDraft.objects.filter(pk=orphan.pk).update(
+        expires_at=timezone.now() - GENERATED_GRACE - timedelta(days=1)
+    )
+    Student.objects.filter(student_id=OWNER).delete()
+
+    call_command("purge_planner_drafts", "--apply")
+    assert not PlannerDraft.objects.filter(pk=orphan.pk).exists()
+
+
+def test_the_purge_agrees_with_the_application_about_what_is_generated(world, monkeypatch):
+    """One predicate, two dialects — and they must not drift.
+
+    The command's SQL mirrors `has_current_generation`: a result belongs to the
+    version that produced it. Today no reachable state has `generated_version > 0`
+    while disagreeing with `version`, because `edit_draft` clears it — so the
+    version half of the SQL looks redundant and a mutant that drops it survives.
+
+    That is precisely the clause worth pinning, because its job is to still be
+    right when a future edit path forgets half of its invalidation. The state is
+    forced here the same way the model's own test forces it.
+    """
+    from django.core.management import call_command
+
+    from core.management.commands.purge_planner_drafts import UNGENERATED_GRACE
+
+    _stub_solver(monkeypatch, world)
+    draft = svc.create_draft(student_id=OWNER, course_codes=["CS113"])
+    svc.generate(draft)
+    draft.refresh_from_db()
+    assert draft.has_current_generation
+
+    # A forgetful writer: the version moves, the stored result does not.
+    PlannerDraft.objects.filter(pk=draft.pk).update(
+        version=draft.version + 1,
+        expires_at=timezone.now() - timedelta(days=UNGENERATED_GRACE.days + 1),
+    )
+    draft.refresh_from_db()
+    assert draft.has_current_generation is False, "the application calls this NOT generated"
+
+    call_command("purge_planner_drafts", "--apply")
+    assert not PlannerDraft.objects.filter(pk=draft.pk).exists(), (
+        "the purge kept on the long clock a row the application treats as abandoned"
+    )
