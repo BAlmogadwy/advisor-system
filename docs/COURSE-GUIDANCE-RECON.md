@@ -40,8 +40,19 @@ Every field the first draft proposed is already on it:
 
 So the honest scope for the locked-course surface is **not a new screen**. It is:
 
-1. **Tests.** `student_courses_view` and its template have none — no test file
-   references either. A shipping Arabic student page with no coverage is the gap.
+1. **Tests for what the page RENDERS.** A second correction: the first rewrite of
+   this section said the page had no coverage at all. Wrong.
+   `tests/test_student_unlock.py` has 24 tests, including
+   `test_screen_renders_from_session_identity_only:154`, which proves the identity
+   clamp (`?student_id=` cannot change whose report is built) and that staff are
+   redirected off it.
+
+   What is untested is the **rendering of the reason branches**. The only
+   assertion touching a kind is `:98` on the service (`kinds == ["MISSING_HOURS"]`);
+   nothing asserts that the template's `MISSING_HOURS` branch shows
+   `effective / required / remaining`, that `UNKNOWN_PREREQ` shows its Arabic
+   sentence, or that the `{% else %}` degrades rather than echoing a token. Those
+   branches are the product.
 2. **Extension**, if a review of the page finds something missing.
 
 Converting it to JSON + a client renderer would also reverse a stated project
@@ -74,6 +85,28 @@ The shipping template already is one (`:122–139`), including an `{% else %}` t
 degrades to «راجع مرشدك الأكاديمي» rather than echoing a token — which is the
 correct handling of the `_translate_unplaced` defect class, already implemented.
 
+**How often each fires, across all 320 students** — this is the number that
+matters, and one student's report was not it:
+
+| kind | students affected |
+|---|---|
+| `MISSING_COURSE` | 320 |
+| `MISSING_HOURS` | 168 (52%) |
+| `UNKNOWN_PREREQ` | **74 (23%)** |
+| `ASK_ADVISOR` | 0 today |
+
+`UNKNOWN_PREREQ` firing on a quarter of students matters because the chat path
+already reaches `why()`'s fall-through for it
+(`virtual_advisor_capabilities.py:897`) and hands the student the literal token
+`unknown_prereq`. The defect this document warns about is not hypothetical; it is
+live, in the capability, now.
+
+`ASK_ADVISOR` is unreachable only by data accident: it needs a status outside
+`passed`/`studying`/`not_taken`, and `_build_student_plan_payload` emits only
+those three — but `StudentCourse.status` is a `TextField` with **no choices**
+(`core/models.py:61`), so one bad write reaches it. Handle it; do not rely on it
+being impossible.
+
 **Two nullable fields the first draft declared as plain values:** `steps` is
 `None` when `hours_only`, and `steps_to` returns `None` on a cycle
 (`student_unlock.py:124`, `:169`); `nearest_open` is `None` when nothing on the
@@ -88,10 +121,22 @@ chain is open (`:178`). The template guards both. A contract must declare both.
 edges. Live reason kinds observed: `MISSING_COURSE` only — which is why a sample
 cannot substitute for reading the code.
 
-127 queries is acceptable for one page render. It is **not** acceptable per screen
-on a journey that visits several, and the obvious journey — locked list → "why?" →
-course detail — would call it twice. Any design that needs the report on more than
-one hop must pass it along, not re-derive it.
+127 is near the FLOOR, not the typical case. Across all 320 students: **min 118,
+p50 135, p90 148, max 158**. It does not scale with plan size — it scales with how
+much of the plan is unfinished (`corr(queries, not_taken) = +0.98`), so the cost is
+highest for the students in most trouble and lowest for near-graduates. Quoting a
+single number from one well-advanced student was the mistake; quoting the spread is
+the fix.
+
+**119 of the 127 are one statement** — `SELECT prerequisite_course_code FROM
+prerequisites WHERE …` — an N+1 issued twice over the same plan:
+`report_views.py:268` inside `_build_student_plan_payload`, then
+`student_unlock.py:71` again, discarding the `prerequisites` / `missing_prereqs` /
+`can_register` keys the payload already computed (`report_views.py:279`).
+
+Still not a reason to optimise speculatively. It IS a reason not to call the report
+twice on one journey: locked list → "why?" → course detail would do exactly that.
+Pass the report along, do not re-derive it.
 
 ---
 
@@ -109,9 +154,64 @@ regressed on: the resolver collapses `None` ("not an elective slot") and `[]`
 ("slot with nothing published") into one indistinguishable empty array. At 92%
 the empty state IS the screen, so it needs an explicit reason code.
 
+Sharper still, for the programmes that actually have students (AI, AI2, DS, DS2):
+**26 of 28 `(programme, slot)` pairs resolve to zero options.** Only `AI/AI1` and
+`DS/DS2` return anything, one course each. AI2 and DS2 — **115 of 320 students** —
+get zero for every slot they have.
+
+**And the data is not missing, the join is.** `ElectiveCourse` holds 55 rows
+against only 23 `ElectiveTermMapping` rows, and `_resolve_elective_slot` reaches
+electives *only* through the mapping table
+(`virtual_advisor_capabilities.py:471`), so AI's 12 catalogued electives are
+invisible to AI2 and AI3. A second path already reads the catalogue directly —
+`eligibility._get_elective_prerequisites` (`eligibility.py:68`). That changes what
+the screen should say: not "nothing exists", but "nothing is published for your
+slot".
+
 **Owner decision, not an implementation detail:** publish `ElectiveTermMapping`
 rows first, or ship an expandable slot that mostly says «لم تُنشر خيارات هذه
 المتطلب بعد». Do not ship a blank list either way.
+
+---
+
+## 4a. A live defect the recon surfaced: mandatory courses shown as elective slots
+
+Two implementations of "is this an elective placeholder?" disagree, and one is in
+the shipping screen:
+
+- `student_unlock._is_placeholder(code, ctype)` (`:25`) — matches on **code shape**
+  first (`GS`/`GSE`/`FE` prefix), only then consults the type.
+- `virtual_advisor_capabilities.is_elective_slot(type)` (`:441`) — matches on the
+  declared **`ProgrammeRequirement.type`**, and its docstring explains why: a code
+  pattern "would miss new families".
+
+Measured, they disagree on **seven real courses**, all declared `Mandatory`:
+
+```
+GS101 ISLAMIC STUDIES: BELIEF AND WORSHIP     12 programmes
+GS103 ISLAMIC STUDIES: HUMAN RIGHTS            6
+GS104 ISLAMIC STUDIES: ISLAMIC VALUES         12
+GS111 ARABIC LANGUAGE SKILLS I                12
+GS112 ARABIC LANGUAGE SKILLS II               12
+GS151 UNIVERSITY LIFE SKILLS                   6
+GS152 COMPUTER SKILLS                          6
+```
+
+`student_unlock.py:137` returns before the open/locked branch for anything it calls
+a placeholder, so a mandatory course a student still needs appears in **neither
+`open_courses` nor `locked_courses` nor any `counts` bucket** — and on screen it
+reads as an elective slot with "choose with your adviser" rather than a course they
+must pass.
+
+Reference student 4401603: `elective_slots` is `['FE2', 'AI1', 'GS104', 'AI2',
+'AI3']` — `GS104` is mandatory — and `counts` sums to **47 against a 50-row plan**.
+Sampled across 60 students, `GS104` appears in 49 of them.
+
+This is the same disease as issue #54 (section labels): one rule, two
+implementations, one classifying by string shape and one by declared type.
+**Tracked separately — it is a defect in shipped code, not a design question for
+these screens**, and fixing it changes what the locked screen displays for most
+students.
 
 ---
 
@@ -166,12 +266,22 @@ Written down because each was learned expensively, mostly during the planner.
 8. **Echo the term rendered.** Three code paths choose it three different ways and
    agree today only because the live data is one combination
    (`CAPABILITY-SCREEN-MAP.md:163`).
-9. **Read budgets.** No solver, no model. But `HISTORY` is currently the
+9. **Do not inherit `_MAX_LIST_ROWS`.** `_exec_my_progress` truncates both
+   `open_now` and `blocked` at 20 (`virtual_advisor_capabilities.py:914`, `:926`) —
+   a chat-readability cap, like the elective one. **23 of 320 students have more
+   than 20 locked courses** (max 28), so a screen lifting that shape would silently
+   truncate exactly the list it exists to show, for the students with most to see.
+10. **Say which "most useful course" you mean.** Two already exist in one call
+   chain: `_build_student_plan_payload` returns `blocker_hints`
+   (`report_views.py:294`) and `build_unlock_report` computes `top_blocker`
+   independently (`student_unlock.py:197`), by a different key. For 4401603 they
+   disagree in shape. A contract quoting one must name it.
+11. **Read budgets.** No solver, no model. But `HISTORY` is currently the
    conversation-history budget — charging browsing to it lets a student paging
    through courses exhaust the allowance for re-reading their own adviser
    conversation. A separate name is one line; note `rate_limit.consume` indexes
    `LIMITS[budget]` without `.get`, so an unregistered name is a 500.
-10. **Nothing here registers anything.**
+12. **Nothing here registers anything.**
 
 ---
 
@@ -194,7 +304,15 @@ Written down because each was learned expensively, mostly during the planner.
 
 - The planner lifecycle and CI (PR #53 owns both).
 - Section labels and cohort classification (issue #54).
-- Seat availability — `available_capacity` is NULL on every row.
+- Ranking or seat promises. **Correcting an inherited claim:** the first draft
+  justified excluding seats with "`available_capacity` is NULL on every row". That
+  is now false — measured, **50 of 50 live rows are non-NULL** (AI1→70, AI113→30,
+  AI221→25). The claim came from a stale comment in shipped planner code
+  (`student_planner.py:122`) that predates the 50-section XLSX import. Not
+  promising seats may still be right, but it needs a current reason: capacity is a
+  snapshot with no reservation behind it, and a screen that shows "25 seats" is
+  read as "a seat for you". **The stale comment in `student_planner.py` should be
+  corrected in PR #53, not here.**
 - Ranking or difficulty. No difficulty data exists; `importance_score` is a staff
   planning number. Worth stating because it is the first thing a student asks once
   a slot shows five options.
