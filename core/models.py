@@ -1642,6 +1642,13 @@ class AdvisorMessage(models.Model):
     ]
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_COMPLETED)
 
+    # Position in the conversation, 1-based. `created_at` alone cannot order a
+    # thread: two messages written in the same request land in the SAME microsecond
+    # on a coarse system clock, and the UUID primary key is random, so the tiebreak
+    # reversed question and answer. A chat that can render the reply above the
+    # question is not a chat.
+    sequence = models.PositiveIntegerField(default=0, db_index=True)
+
     # Which question this answers. Pairing by "first assistant row at or after the
     # question" is wrong the moment turns finish out of order — a resumed retry is
     # written AFTER answers to later questions, so the heuristic hands the student a
@@ -1660,7 +1667,10 @@ class AdvisorMessage(models.Model):
 
     class Meta:
         db_table = "advisor_messages"
-        ordering = ["created_at"]
+        # `sequence` first: it is the only field guaranteed to increase within a
+        # conversation. `created_at` stays as the fallback for rows written before
+        # the column existed, which all carry sequence 0.
+        ordering = ["sequence", "created_at"]
         indexes = [
             models.Index(fields=["conversation", "created_at"], name="idx_adv_msg_conv"),
         ]
@@ -1674,6 +1684,26 @@ class AdvisorMessage(models.Model):
 
     def __str__(self) -> str:
         return f"Message({self.id}/{self.role})"
+
+    def save(self, *args, **kwargs):
+        """Claim the next position in the conversation on first write.
+
+        Computed here rather than by the callers, because a message written without
+        one silently sorts to the front — and both write paths already run inside a
+        transaction, which is what makes max+1 safe against the concurrent send the
+        idempotency key exists to catch.
+        """
+        if not self.sequence and self.conversation_id:
+            from django.db.models import Max
+
+            highest = (
+                AdvisorMessage.objects.filter(conversation_id=self.conversation_id)
+                .aggregate(top=Max("sequence"))
+                .get("top")
+                or 0
+            )
+            self.sequence = highest + 1
+        super().save(*args, **kwargs)
 
 
 class AdvisorMessageCitation(models.Model):

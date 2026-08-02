@@ -45,6 +45,7 @@ from .services.advisor_escalation import (
     escalation_reason,
     may_escalate,
 )
+from .services.advisor_history import load_visible_history
 from .services.advisor_outcome import derive_outcome
 from .services.advisor_principal import AdvisorPrincipal, IdentityError
 from .services.rate_limit import CONVERSATION, ESCALATION, FEEDBACK, GENERATION, HISTORY
@@ -253,7 +254,7 @@ def conversation_messages_view(request: HttpRequest, conversation_id: str) -> Js
         return over
     conversation = _owned_conversation(conversation_id, student_id)
     messages = conversation.messages.prefetch_related("citations", "escalations").order_by(
-        "created_at"
+        "sequence", "created_at"
     )
     mine = {
         f.message_id: f
@@ -355,7 +356,15 @@ def conversation_post_message_view(request: HttpRequest, conversation_id: str) -
             student_message = resumed
 
     try:
-        result = answer_virtual_advisor(question=question, principal=principal)
+        # The turns the student already saw, so a follow-up has something to refer
+        # to. Excludes THIS question, which was written to the database before
+        # generation and would otherwise arrive twice — and twice again on a retry,
+        # which reuses the same row.
+        result = answer_virtual_advisor(
+            question=question,
+            principal=principal,
+            history=load_visible_history(conversation, exclude_message_id=student_message.pk),
+        )
     except ValueError as exc:
         # The student's own row is gone — a roster re-import can do this. Passing a
         # real identity makes it raise where the general-mode stub used to answer
@@ -485,7 +494,7 @@ def _replay(
     assistant = (
         conversation.messages.filter(in_reply_to=student_message)
         .prefetch_related("citations")
-        .order_by("created_at")
+        .order_by("sequence", "created_at")
         .first()
     )
     if assistant is None:
@@ -499,7 +508,7 @@ def _replay(
                 created_at__gte=student_message.created_at,
             )
             .prefetch_related("citations")
-            .order_by("created_at")
+            .order_by("sequence", "created_at")
             .first()
         )
     return JsonResponse(

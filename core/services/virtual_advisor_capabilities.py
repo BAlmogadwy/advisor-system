@@ -1527,7 +1527,12 @@ def _exec_build_my_timetable(
         return {"ok": False, "error": "max_credits must be an integer."}
 
     baseline = get_student_term_baseline(int(student_id), str(year), str(term))
-    keep = bool(args.get("keep_current_sections", False))
+    # Defaults to KEEPING. "أبي أسجل CS113" means add a course, not rebuild the
+    # week — and re-picking is the destructive reading of an ambiguous request:
+    # it silently discards section choices the student already made, possibly with
+    # an adviser. Replacing must be asked for, which is what the tool description
+    # now requires.
+    keep = bool(args.get("keep_current_sections", True))
 
     result = build_plans(
         year=str(year),
@@ -2194,7 +2199,9 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                 "student insists on and max_credits for a ceiling. Returns placed AND "
                 "unplaced with a reason for each - a partial result is the normal "
                 "outcome and must be reported as such, never as a failure. It is a "
-                "SUGGESTION: it does not register anything and cannot promise a seat."
+                "SUGGESTION: it does not register anything and cannot promise a seat. "
+                "Adding a course keeps the student's current sections; rebuilding the "
+                "whole timetable is a separate thing they must ask for."
             ),
             parameters={
                 "type": "object",
@@ -2214,7 +2221,14 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                     },
                     "keep_current_sections": {
                         "type": "boolean",
-                        "description": "Keep the sections already registered instead of re-picking.",
+                        "description": (
+                            "Defaults to true: keep the sections the student is already "
+                            "registered in and fit the new courses around them. Pass false "
+                            "ONLY after the student has explicitly confirmed they want the "
+                            "whole timetable rebuilt — it discards section choices they "
+                            "already made. If the request is ambiguous, ask first rather "
+                            "than guessing."
+                        ),
                     },
                     "academic_year": {"type": "integer"},
                     "term": {"type": "integer"},

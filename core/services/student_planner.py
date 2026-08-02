@@ -1,0 +1,246 @@
+"""Timetable alternatives for a student to choose between.
+
+The scheduling is not here. `planner_builder.build_plans` does that, and this module
+calls it with the same arguments `build_my_timetable` already uses — identity clamped
+to the caller, cohort resolved strictly, credits read from the programme rather than
+accepted from a client. What changes is the ending.
+
+`build_my_timetable` closes with `max(options, key=scheduled)`: it considers nine
+alternatives and reports one. That is right for a chat answer, where a list of nine
+timetables is unreadable. It is wrong for a screen whose entire purpose is the student
+comparing alternatives and picking the one that suits them — the nine already exist and
+are thrown away one line before the return.
+
+So this module keeps them, removes the duplicates the builder cannot avoid producing,
+and attaches the few facts a person needs to tell one from another. It computes nothing
+academic: days, earliest and latest come from the meetings the builder already returned,
+which is arithmetic over its output, not a second opinion about scheduling.
+
+Deliberately absent, because the data cannot honestly support them: gaps between
+classes, rooms and buildings, lecture-versus-laboratory labels, online-versus-in-person,
+and any statement about seats. A screen that ranks timetables by a number the student
+did not ask for is also absent — the ordering here is stable, not a recommendation.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from core.models import ProgrammeRequirement, Student
+from core.services.planner_builder import build_plans
+from core.services.recommender import recommend_next_courses
+from core.services.student_helpers import normalize_code
+from core.services.student_sections import (
+    UnknownStudentGender,
+    get_student_term_baseline,
+    student_gender_strict,
+)
+from core.services.virtual_advisor_capabilities import _translate_unplaced
+
+#: A course with no credit hours recorded still has to be given a weight, or the
+#: builder's credit cap becomes meaningless. Matches the value the chat capability
+#: already uses, so the two paths cannot disagree about the same student.
+DEFAULT_CREDITS = 3
+
+#: Sunday-first, which is how the week reads here.
+DAY_ORDER = ("SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT")
+
+
+class PlannerUnavailable(Exception):
+    """The request cannot be answered, and guessing would be worse than refusing."""
+
+
+@dataclass(frozen=True)
+class PlannerRequest:
+    """Everything the builder needs, all of it derived server-side.
+
+    Frozen, and holding no client-supplied academic input on purpose: a caller may
+    say WHICH courses to try, and nothing else. Credits, cohort, baseline and the
+    recommendation come from the student's own record.
+    """
+
+    student_id: int
+    year: int
+    term: int
+    must_include: tuple[str, ...] = ()
+    keep_current: bool = True
+    max_credits: int = 0
+
+
+def _course_credits(program: str) -> dict[str, int]:
+    return {
+        r["course_code"]: int(r["credit_hours"] or 0)
+        for r in ProgrammeRequirement.objects.filter(program=program).values(
+            "course_code", "credit_hours"
+        )
+    }
+
+
+def _option_signature(option: dict[str, Any]) -> tuple[int, ...]:
+    """What makes two timetables the same timetable.
+
+    The builder runs three methods and takes the top three from each, with the
+    duplicate check scoped to a single method — so the same timetable can come back
+    up to three times. The section ids it chose are the identity; everything else in
+    the payload is derived from them.
+    """
+    ids = [
+        int(m.get("term_section_id"))
+        for m in (option.get("mappings") or [])
+        if m.get("term_section_id") is not None
+    ]
+    return tuple(sorted(ids))
+
+
+def _meeting_rows(option: dict[str, Any], credits: dict[str, int]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for mapping in option.get("mappings") or []:
+        code = str(mapping.get("course_code") or "")
+        for meeting in mapping.get("meetings") or []:
+            rows.append(
+                {
+                    "course_code": code,
+                    "section": mapping.get("section"),
+                    "credits": credits.get(code, DEFAULT_CREDITS),
+                    "day": str(meeting.get("day") or "").strip().upper()[:3],
+                    "start": str(meeting.get("start_time") or ""),
+                    "end": str(meeting.get("end_time") or ""),
+                }
+            )
+    rows.sort(key=lambda r: (DAY_ORDER.index(r["day"]) if r["day"] in DAY_ORDER else 9, r["start"]))
+    return rows
+
+
+def _comparison(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """The handful of facts that let a person tell two timetables apart.
+
+    Arithmetic over meetings the builder already returned — not a judgement about
+    which timetable is better. No gap analysis: the data supports counting days and
+    reading the first and last class, and nothing more is offered as if it were.
+    """
+    if not rows:
+        return {"days_on_campus": 0, "days": [], "earliest_start": None, "latest_end": None}
+    days = sorted(
+        {r["day"] for r in rows}, key=lambda d: DAY_ORDER.index(d) if d in DAY_ORDER else 9
+    )
+    return {
+        "days_on_campus": len(days),
+        "days": days,
+        "earliest_start": min(r["start"] for r in rows if r["start"]),
+        "latest_end": max(r["end"] for r in rows if r["end"]),
+    }
+
+
+def build_student_options(request: PlannerRequest) -> dict[str, Any]:
+    """Every distinct timetable the builder could find, for the student to choose from.
+
+    Raises `PlannerUnavailable` rather than degrading: a cohort that cannot be
+    resolved must not fall through to an all-pass section filter, because every real
+    section is gendered and the result would be the other cohort's timetable rather
+    than an empty one.
+    """
+    student_id = int(request.student_id)
+    try:
+        gender = student_gender_strict(student_id)
+    except UnknownStudentGender as exc:
+        raise PlannerUnavailable(str(exc)) from exc
+
+    program = str(
+        Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
+        or ""
+    ).strip()
+    if not program:
+        raise PlannerUnavailable(
+            f"No programme is recorded for student {student_id}, so there is no plan to build from."
+        )
+    credits = _course_credits(program)
+
+    # What the student asked for, then whatever their own plan recommends. Ordered so
+    # a named course is never dropped in favour of a recommended one.
+    wanted = [normalize_code(c) for c in request.must_include if str(c).strip()]
+    recommended = [
+        normalize_code(c)
+        for c in (recommend_next_courses(student_id, request.year, request.term) or [])
+    ]
+    codes = list(dict.fromkeys(wanted + recommended))
+    if not codes:
+        return {
+            "student_id": student_id,
+            "term": f"{request.year}/{request.term}",
+            "requested": [],
+            "alternatives": [],
+            "unplaced": [],
+            "reason": "NOTHING_TO_SCHEDULE",
+        }
+
+    baseline = get_student_term_baseline(student_id, str(request.year), str(request.term))
+    result = build_plans(
+        year=str(request.year),
+        term=str(request.term),
+        shortlist=[{"course_code": c, "credits": credits.get(c, DEFAULT_CREDITS)} for c in codes],
+        baseline=baseline,
+        keep_registered=request.keep_current,
+        suggest_swaps=False,  # the service emits placeholder strings, never real swaps
+        strict_per_course=False,  # unusable on real data: returns scheduled=0
+        consider_capacity=False,  # dead lever: available_capacity is NULL on every row
+        max_credits=int(request.max_credits or 0),
+        gender=gender,
+    )
+
+    alternatives: list[dict[str, Any]] = []
+    seen: set[tuple[int, ...]] = set()
+    for option in result.get("options") or []:
+        signature = _option_signature(option)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        rows = _meeting_rows(option, credits)
+        alternatives.append(
+            {
+                # Stable across a response, and the only thing a client sends back to
+                # say which timetable it chose. Not a database id.
+                "key": "-".join(str(i) for i in signature),
+                "courses": [
+                    {
+                        "course_code": m.get("course_code"),
+                        "section": m.get("section"),
+                        "credits": credits.get(str(m.get("course_code") or ""), DEFAULT_CREDITS),
+                    }
+                    for m in (option.get("mappings") or [])
+                ],
+                "meetings": rows,
+                "course_count": len(option.get("mappings") or []),
+                "credit_hours": sum(
+                    credits.get(str(m.get("course_code") or ""), DEFAULT_CREDITS)
+                    for m in (option.get("mappings") or [])
+                ),
+                **_comparison(rows),
+            }
+        )
+
+    # Reported from the first alternative: `unscheduled` is a property of the course
+    # set against the catalogue, not of one arrangement of it.
+    unplaced: list[dict[str, Any]] = []
+    first = (result.get("options") or [{}])[0]
+    for entry in first.get("unscheduled") or []:
+        code, explanation = _translate_unplaced(entry.get("reason"))
+        unplaced.append(
+            {
+                "course_code": entry.get("course_code"),
+                "reason_code": code,
+                "reason": explanation,
+            }
+        )
+
+    return {
+        "student_id": student_id,
+        "term": f"{request.year}/{request.term}",
+        "requested": codes,
+        "alternatives": alternatives,
+        "unplaced": unplaced,
+        # How many the builder produced before duplicates were removed, so a caller
+        # can see that "3 alternatives" came from nine attempts rather than three.
+        "generated": len(result.get("options") or []),
+        "reason": "" if alternatives else "NO_VALID_TIMETABLE",
+    }
