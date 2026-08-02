@@ -35,14 +35,14 @@ def json_body(request: HttpRequest) -> tuple[dict[str, Any], JsonResponse | None
     try:
         payload = json.loads(request.body or b"{}")
     except (ValueError, UnicodeDecodeError):
-        return {}, JsonResponse({"error": "Invalid JSON body."}, status=400)
+        return {}, JsonResponse({"error": "تعذّرت قراءة الطلب."}, status=400)
     if not isinstance(payload, dict):
-        return {}, JsonResponse({"error": "Body must be a JSON object."}, status=400)
+        return {}, JsonResponse({"error": "صيغة الطلب غير صحيحة."}, status=400)
     return payload, None
 
 
 def forbidden() -> JsonResponse:
-    return JsonResponse({"error": "This endpoint is for signed-in students."}, status=403)
+    return JsonResponse({"error": "هذه الخدمة متاحة للطلاب المسجَّل دخولهم فقط."}, status=403)
 
 
 def over_budget(budget: str, student_id: int) -> JsonResponse | None:

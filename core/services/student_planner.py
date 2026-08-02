@@ -24,11 +24,11 @@ did not ask for is also absent — the ordering here is stable, not a recommenda
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import Any
 
 from core.models import ProgrammeRequirement, Student
-from core.services.planner_builder import build_plans
 from core.services.recommender import recommend_next_courses
 from core.services.student_helpers import normalize_code
 from core.services.student_sections import (
@@ -80,7 +80,7 @@ class PlannerRequest:
     fixed_sections: tuple[tuple[str, int], ...] = ()
 
 
-def _run_solver(
+def run_solver(
     *,
     year: str,
     term: str,
@@ -90,7 +90,11 @@ def _run_solver(
     max_credits: int,
     gender: str,
 ) -> dict[str, Any]:
-    """The ONLY place student-facing code reaches the solver.
+    """THE one place student-facing code reaches the solver.
+
+    Public, and called by the chat capability as well as by this module. It was
+    private, which meant the capability could not use it and duplicated the whole
+    call instead — two functions each commented as the sole translation point.
 
     Two vocabularies meet here and nowhere else. `keep_current_sections` is the
     domain name — what the student is choosing, and what the toggle, the tool
@@ -101,6 +105,11 @@ def _run_solver(
 
     The dead levers are pinned shut here too, so no caller has to remember them.
     """
+    # Imported HERE, not at module scope. A module-level `from … import build_plans`
+    # binds the name once, so patching `planner_builder.build_plans` — which is what
+    # the existing tests do, at the real boundary — would silently miss this call.
+    from core.services.planner_builder import build_plans
+
     return build_plans(
         year=year,
         term=term,
@@ -129,15 +138,24 @@ def permitted_course_codes(program: str) -> set[str]:
     asks it, once per placeholder.
     """
     from core.models import ProgrammeRequirement
-    from core.services.virtual_advisor_capabilities import _resolve_elective_slot
+    from core.services.virtual_advisor_capabilities import _resolve_elective_slot, is_elective_slot
 
-    rows = list(ProgrammeRequirement.objects.filter(program=program).values("course_code", "type"))
+    # `iexact`, like every other programme lookup here. Exact matching made a
+    # lowercase or oddly-cased `Student.program` yield an EMPTY permitted set —
+    # which then rejected every course the student named, with a message blaming
+    # the course.
+    rows = list(
+        ProgrammeRequirement.objects.filter(program__iexact=program).values("course_code", "type")
+    )
     permitted = {normalize_code(r["course_code"]) for r in rows if r["course_code"]}
 
     for row in rows:
-        if "elective" not in str(row.get("type") or "").lower():
+        # The shared predicate, not a second copy of the rule.
+        if not is_elective_slot(row.get("type")):
             continue
-        for option in _resolve_elective_slot(row["course_code"], program) or []:
+        # `limit=None`: the cap inside is for chat readability, and inheriting it
+        # here would turn a display decision into an authorisation one.
+        for option in _resolve_elective_slot(row["course_code"], program, limit=None) or []:
             code = normalize_code(option.get("course_code") or "")
             if code:
                 permitted.add(code)
@@ -147,7 +165,7 @@ def permitted_course_codes(program: str) -> set[str]:
 def _course_credits(program: str) -> dict[str, int]:
     return {
         r["course_code"]: int(r["credit_hours"] or 0)
-        for r in ProgrammeRequirement.objects.filter(program=program).values(
+        for r in ProgrammeRequirement.objects.filter(program__iexact=program).values(
             "course_code", "credit_hours"
         )
     }
@@ -220,7 +238,14 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
     try:
         gender = student_gender_strict(student_id)
     except UnknownStudentGender as exc:
-        raise PlannerUnavailable(str(exc)) from exc
+        # NOT `str(exc)`. That message explains to an operator WHY the code refuses
+        # to guess — "an unresolved cohort would return the other cohort's sections"
+        # — which is internal reasoning about a database query, and it was going
+        # straight to the student. The cause is chained for the log; the student
+        # gets the thing they can act on.
+        raise PlannerUnavailable(
+            "تعذّر تحديد الشطر (طلاب/طالبات) في ملفك، ولا يصحّ تخمينه. راجع القسم لتحديث بياناتك."
+        ) from exc
 
     program = str(
         Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
@@ -228,7 +253,8 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
     ).strip()
     if not program:
         raise PlannerUnavailable(
-            f"No programme is recorded for student {student_id}, so there is no plan to build from."
+            "لا يوجد برنامج دراسي مسجَّل في ملفك، فلا توجد خطة يمكن البناء عليها. "
+            "راجع القسم لتحديث بياناتك."
         )
     credits = _course_credits(program)
 
@@ -263,7 +289,7 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
             item["pinned_sections"] = [{"term_section_id": int(pinned[code])}]
         shortlist.append(item)
 
-    result = _run_solver(
+    result = run_solver(
         year=str(request.year),
         term=str(request.term),
         shortlist=shortlist,
@@ -283,17 +309,23 @@ def build_student_options(request: PlannerRequest) -> dict[str, Any]:
         rows = _meeting_rows(option, credits)
         alternatives.append(
             {
-                # Stable across a response, and the only thing a client sends back to
-                # say which timetable it chose. Not a database id.
-                "key": "-".join(str(i) for i in signature),
+                # Stable, opaque, and the only thing a client sends back to say
+                # which timetable it chose. It used to be the section ids joined by
+                # dashes, under a comment claiming it was "not a database id" —
+                # which was simply false, and false comments are what stop the next
+                # reader looking. Hashed, so removing the ids from the payload
+                # actually removes them.
+                "key": hashlib.sha256(
+                    "-".join(str(i) for i in signature).encode("ascii")
+                ).hexdigest()[:16],
                 "courses": [
                     {
                         "course_code": m.get("course_code"),
                         "section": m.get("section"),
                         "credits": credits.get(str(m.get("course_code") or ""), DEFAULT_CREDITS),
-                        # Carried so "keep this one" can name a section. A student
-                        # pinning a choice has to identify it, and the label alone
-                        # is not unique across the catalogue.
+                        # Kept for the SERVER's own use — the draft stores this whole
+                        # structure, and a pin is expressed as a section id. The view
+                        # strips it before anything reaches the browser.
                         "term_section_id": m.get("term_section_id"),
                     }
                     for m in (option.get("mappings") or [])
@@ -366,7 +398,9 @@ def validate_draft_selection(
     try:
         student_gender_strict(student_id)
     except UnknownStudentGender as exc:
-        raise DraftRejected(str(exc)) from exc
+        raise DraftRejected(
+            "تعذّر تحديد الشطر (طلاب/طالبات) في ملفك، ولا يصحّ تخمينه. راجع القسم لتحديث بياناتك."
+        ) from exc
 
     program = str(
         Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
@@ -380,7 +414,7 @@ def validate_draft_selection(
         if not code:
             continue
         if code not in permitted:
-            raise DraftRejected(f"{code} is not a course this student may take.")
+            raise DraftRejected(f"المقرر {code} ليس ضمن المقررات المتاحة لك.")
         if code not in codes:
             codes.append(code)
 
@@ -390,25 +424,25 @@ def validate_draft_selection(
     ):
         code = normalize_code(str(raw_code))
         if code not in codes:
-            raise DraftRejected(f"A section was pinned for {code}, which is not in the selection.")
+            raise DraftRejected(f"حُدِّدت شعبة للمقرر {code} وهو غير مُدرَج ضمن اختيارك.")
         try:
             section_id = int(raw_id)
         except (TypeError, ValueError) as exc:
-            raise DraftRejected(f"The section pinned for {code} is not a section id.") from exc
+            raise DraftRejected(f"الشعبة المحدَّدة للمقرر {code} غير صالحة.") from exc
 
         section = TermSection.objects.filter(id=section_id, scenario__isnull=True).first()
         if section is None:
-            raise DraftRejected(f"The section pinned for {code} does not exist.")
+            raise DraftRejected(f"الشعبة المحدَّدة للمقرر {code} غير موجودة.")
         actual = normalize_code(
             section.course_key or f"{section.course_code}{section.course_number}"
         )
         if actual != code:
-            raise DraftRejected(f"The section pinned for {code} belongs to {actual}.")
+            raise DraftRejected(f"الشعبة المحدَّدة للمقرر {code} تخصّ المقرر {actual}.")
         # THE canonical answer, shared with every other surface. Spelling the rule
         # out here — "the label starts with M" — would mean a change to section
         # coding splitting the planner and the chat apart without a failing test.
         if not section_is_available_to_student(section, student_id=student_id):
-            raise DraftRejected(f"Section {section.section} of {code} is not open to this student.")
+            raise DraftRejected(f"الشعبة {section.section} من {code} غير متاحة لك.")
         pinned[code] = section_id
 
     return codes, pinned

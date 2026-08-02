@@ -936,25 +936,63 @@ def test_must_include_beats_the_recommendation():
     assert "ZZ610" in handled
 
 
+@pytest.mark.django_db
 def test_builder_is_called_with_the_levers_that_are_safe_on_this_data():
-    """Three build_plans levers are unsafe here and the capability must pin them.
+    """Three build_plans levers are unsafe here and every student path must pin them.
 
     consider_capacity is dead — available_capacity is NULL on every section and is
     coerced to 0, so enabling it would mean 'no section has any seat' the moment the
     coercion changes. suggest_swaps emits placeholder strings, never real swaps.
     strict_per_course returns scheduled=0 on real data. None of these is observable
     in the output, which is exactly why they need pinning rather than trusting.
+
+    Asserted on what the SOLVER receives, not on the source text of one caller. The
+    grep version passed for the wrong reason and then failed for the wrong reason:
+    it was pointed at `_exec_build_my_timetable`, and when the pinning moved into
+    the shared adapter — one place instead of two copies, which is an improvement —
+    the test reported the levers had been re-enabled. They had not.
+    """
+    from unittest import mock
+
+    from core.models import Student
+    from core.services.virtual_advisor_capabilities import _exec_build_my_timetable
+
+    seen: dict = {}
+
+    def fake_build_plans(**kwargs):
+        seen.update(kwargs)
+        return {"options": []}
+
+    Student.objects.get_or_create(
+        student_id=4400001, defaults={"name": "S", "program": "CS", "section": "M"}
+    )
+    with (
+        mock.patch("core.services.planner_builder.build_plans", fake_build_plans),
+        mock.patch("core.services.recommender.recommend_next_courses", return_value=["CS113"]),
+    ):
+        _exec_build_my_timetable(
+            {}, {"role": "STUDENT", "student_id": 4400001}, {"academic_year": 1448, "term": 1}
+        )
+
+    assert seen["consider_capacity"] is False, "the dead capacity lever was re-enabled"
+    assert seen["suggest_swaps"] is False, "placeholder swap suggestions were re-enabled"
+    assert seen["strict_per_course"] is False, "strict mode returns scheduled=0 on real data"
+
+
+def test_the_planner_pins_the_same_dead_levers_as_the_chat():
+    """One adapter, so the two student paths cannot drift apart on this.
+
+    The planner reaching the solver by a second route with its own copy of the
+    levers is precisely how the chat and the screen come to disagree about the same
+    student in the same minute.
     """
     import inspect
 
-    from core.services import virtual_advisor_capabilities as vac
+    from core.services import planner_drafts, student_planner
 
-    src = inspect.getsource(vac._exec_build_my_timetable)
-    assert "consider_capacity=False" in src, "the dead capacity lever was re-enabled"
-    assert "suggest_swaps=False" in src, "placeholder swap suggestions were re-enabled"
-    assert "strict_per_course=False" in src, "strict mode returns scheduled=0 on real data"
-    # And the capability must never surface the placeholder swaps.
-    assert (
-        "swap_suggestions"
-        not in inspect.getsource(vac._exec_build_my_timetable).split("return {")[-1]
+    assert "build_plans(" not in inspect.getsource(planner_drafts), (
+        "the planner reached the solver without going through the adapter"
     )
+    adapter = inspect.getsource(student_planner.run_solver)
+    for lever in ("consider_capacity=False", "suggest_swaps=False", "strict_per_course=False"):
+        assert lever in adapter, f"{lever} is no longer pinned in the one adapter"

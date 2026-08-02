@@ -652,8 +652,17 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
 
         # fetch REJECTS here rather than resolving; an unguarded await skipped the
         # line that re-enables these and the student was locked out until reload.
-        assert page.locator("#saQuestion").is_disabled() is False
-        assert page.locator("#saSend").is_disabled() is False
+        #
+        # WAITED for, not sampled. `is_disabled()` is a point-in-time read with no
+        # auto-wait, and the composer is disabled from the moment Send is pressed
+        # until the failure is handled — so the assertion was racing a window that
+        # is invisible on an idle machine and wide enough to lose on a loaded one.
+        # It passed alone and in file order, and failed intermittently in the full
+        # suite; that is the window, not the behaviour.
+        from playwright.sync_api import expect
+
+        expect(page.locator("#saQuestion")).to_be_enabled(timeout=15_000)
+        expect(page.locator("#saSend")).to_be_enabled(timeout=15_000)
         assert page.locator("#saQuestion").input_value() == "سؤال"
 
     # ── 10. reachable by keyboard, describable by a screen reader ──

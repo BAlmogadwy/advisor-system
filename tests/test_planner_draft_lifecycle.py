@@ -24,7 +24,9 @@ from core.models import (
     TermSection,
     TermSectionMeeting,
 )
+from core.planner_draft_views import UNPLACED_AR, UNPLACED_AR_DEFAULT
 from core.services import planner_drafts as svc
+from core.services.student_planner import DraftRejected
 
 pytestmark = pytest.mark.django_db
 
@@ -228,12 +230,35 @@ def test_rebuilding_without_a_confirmation_is_refused(owner_client, world, draft
     assert response.json()["needs_confirmation"] is True
 
 
-def test_a_posted_confirmed_flag_is_not_a_confirmation(owner_client, world, draft):
-    """The whole point: a client can fabricate both values in one request."""
+def test_a_posted_confirmed_flag_is_not_a_confirmation(owner_client, world, draft, monkeypatch):
+    """The whole point: a client can fabricate both values in one request.
+
+    Tried in BOTH states — before a token exists and while a live one does. With no
+    token the check exits at the first guard and never reaches the comparison, so
+    testing only that state left `compare_digest` itself unpinned: replacing it with
+    `return True` passed.
+    """
+    _stub_solver(monkeypatch, world)
     _post(owner_client, "planner_draft_edit", draft, {"keep_current_sections": False})
-    for payload in ({"confirmed": True}, {"confirmation": "yes"}, {"confirmation": True}):
-        response = _post(owner_client, "planner_draft_generate", draft, payload)
-        assert response.status_code == 428, payload
+    fabrications = ({"confirmed": True}, {"confirmation": "yes"}, {"confirmation": True})
+
+    for payload in fabrications:
+        assert _post(owner_client, "planner_draft_generate", draft, payload).status_code == 428, (
+            f"accepted with no token outstanding: {payload}"
+        )
+
+    real = _post(owner_client, "planner_draft_confirm_rebuild", draft).json()["confirmation"]
+    for payload in (*fabrications, {"confirmation": real[:-1]}, {"confirmation": real + "x"}):
+        assert _post(owner_client, "planner_draft_generate", draft, payload).status_code == 428, (
+            f"accepted while a live token was outstanding: {payload}"
+        )
+    # And the real one still works, so the test is not passing by refusing
+    # everything — which is how a "nothing is accepted" assertion quietly becomes
+    # true because the endpoint is broken.
+    assert (
+        _post(owner_client, "planner_draft_generate", draft, {"confirmation": real}).status_code
+        == 200
+    )
 
 
 def test_the_raw_token_is_never_stored(world, draft):
@@ -352,6 +377,72 @@ def test_a_second_generation_of_one_version_reuses_the_result(world, draft, monk
     assert [a["key"] for a in second.alternatives] == keys
 
 
+def test_reloading_after_a_rebuild_does_not_ask_permission_again(world, draft, monkeypatch):
+    """The early return is not redundant with the claim, and this is why.
+
+    A rebuild spends its confirmation. If the replay check did not run BEFORE the
+    confirmation check, a reload — or a second tab, or the client re-fetching —
+    would find the stored result unreachable behind a demand for a permission the
+    student already gave and the server already consumed. They would confirm the
+    same rebuild twice to see a timetable that was sitting in the row.
+    """
+    _stub_solver(monkeypatch, world)
+    svc.edit_draft(draft, keep_current_sections=False)
+    token = svc.issue_rebuild_token(draft)
+    first = svc.generate(draft, confirmation=token)
+    keys = [a["key"] for a in first.alternatives]
+
+    draft.refresh_from_db()
+    assert draft.rebuild_token_hash == "", "the token really was spent"
+    replay = svc.generate(draft)  # no confirmation, because none should be needed
+    assert [a["key"] for a in replay.alternatives] == keys
+
+
+def test_two_requests_racing_past_the_early_return_still_solve_once(world, draft, monkeypatch):
+    """The claim, tested where the early return cannot help.
+
+    `has_current_generation` catches the SEQUENTIAL replay — the second request
+    arrives after the first finished. It cannot catch the concurrent one, where
+    both requests read "nothing generated yet" before either writes. On PostgreSQL
+    the row lock serialises them; on SQLite, which is what this suite runs,
+    `select_for_update` is silently a no-op, so the conditional UPDATE is the only
+    thing standing between the student and two different sets of timetables.
+
+    The interleaving is forced into the exact window: the competitor commits inside
+    the confirmation check, which is the last thing that runs after `generate` has
+    read "nothing generated yet" and before it claims the version. Hooking anything
+    later proves nothing — the claim is deliberately taken early, so the window it
+    guards is only a few lines wide.
+    """
+    calls = _stub_solver(monkeypatch, world)
+    svc.edit_draft(draft, keep_current_sections=False)
+    token = svc.issue_rebuild_token(draft)
+    draft.refresh_from_db()
+
+    real = svc._confirmation_is_valid
+    fired = []
+
+    def competitor_wins(*args, **kwargs):
+        if not fired:
+            fired.append(True)
+            # Another request finishes this version while we are still checking.
+            PlannerDraft.objects.filter(pk=draft.pk).update(
+                generated_version=draft.version,
+                alternatives=[{"key": "theirs", "courses": [], "meetings": []}],
+                generated_inputs={"version": draft.version},
+            )
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(svc, "_confirmation_is_valid", competitor_wins)
+    result = svc.generate(draft, confirmation=token)
+
+    assert fired, "the interleaving never happened, so this proved nothing"
+    assert [a["key"] for a in result.alternatives] == ["theirs"], (
+        "the loser overwrote the winner's timetables"
+    )
+    assert len(calls) == 0, "the loser ran the solver a second time for one version"
+
+
 def test_a_solver_failure_rolls_back_the_token(world, draft, monkeypatch):
     """Retry must not require asking permission a second time."""
     svc.edit_draft(draft, keep_current_sections=False)
@@ -405,28 +496,56 @@ def test_the_term_comes_from_the_draft_not_the_request(owner_client, world, draf
 
 def test_the_fingerprint_has_no_clock_in_it(world):
     """Two identical requests must fingerprint the same, or it dates rather than identifies."""
+
+    # A real baseline row, with the field names `get_student_term_baseline` really
+    # emits. A three-key literal made every one of the lookups below untestable:
+    # reading `start`/`end` instead of `start_time`/`end_time` gave None for both
+    # and the test still passed, which in production means two timetables differing
+    # only in TIME fingerprint identically — the exact staleness this is for.
+    def row(course="CS113", section="M1", day="SUN", start="09:00", end="10:15"):
+        return {
+            "course_code": course,
+            "section": section,
+            "day": day,
+            "start_time": start,
+            "end_time": end,
+            "room": "LAB-3",
+            "instructor": "د. عبدالله",
+        }
+
     kwargs = dict(
         version=1,
         academic_year="1448",
         term="1",
-        course_codes=["CS113"],
+        course_codes=["CS113", "AI221"],
         fixed_sections={"CS113": 4},
         keep_current_sections=True,
-        baseline=[],
+        baseline=[row()],
     )
     assert svc.generation_fingerprint(**kwargs) == svc.generation_fingerprint(**kwargs)
-    # Order of the same material is not different material.
-    assert svc.generation_fingerprint(**{**kwargs, "course_codes": ["CS113"]}) == (
+
+    # Order of the same material is not different material — and the two lists here
+    # are genuinely different objects, unlike the version of this assertion that
+    # compared a list against itself and proved nothing.
+    assert svc.generation_fingerprint(**{**kwargs, "course_codes": ["AI221", "CS113"]}) == (
         svc.generation_fingerprint(**kwargs)
     )
-    # Anything that changes the answer changes the fingerprint.
+
+    # Anything that changes the answer changes the fingerprint. Each baseline case
+    # keeps the SAME number of rows, so nothing passes merely by counting.
     for change in (
         {"version": 2},
         {"term": "2"},
-        {"course_codes": ["CS113", "AI221"]},
+        {"academic_year": "1449"},
+        {"course_codes": ["CS113", "AI221", "PHYS103"]},
         {"fixed_sections": {"CS113": 5}},
         {"keep_current_sections": False},
-        {"baseline": [{"course_code": "X", "section": "M1", "day": "SUN"}]},
+        {"baseline": [row(course="AI221")]},
+        {"baseline": [row(section="M2")]},
+        {"baseline": [row(day="MON")]},
+        {"baseline": [row(start="13:00")]},
+        {"baseline": [row(end="11:00")]},
+        {"baseline": []},
     ):
         assert svc.generation_fingerprint(**{**kwargs, **change}) != (
             svc.generation_fingerprint(**kwargs)
@@ -591,10 +710,553 @@ def test_a_signed_in_non_student_is_refused(client, world, draft):
     assert str(OWNER) not in response.content.decode()
 
 
+# ── 11. the wiring between the endpoints ─────────────────────────
+#
+# Everything above this line tests a rule. These test that the rules are actually
+# REACHED — which is where a review found fourteen live mutants: the service was
+# well covered and the wire between two views was held by nothing.
+
+
+def test_the_whole_rebuild_works_over_http(owner_client, world, draft, monkeypatch):
+    """The happy path, end to end, through the endpoints a browser actually calls.
+
+    Every other confirmation test calls the service directly. Rename the response
+    key at confirm-rebuild, or read a different key at generate, and all of them
+    still pass while no student can ever rebuild — the one HTTP test that existed
+    asserted 428, which is also what a permanently broken confirm endpoint returns.
+    """
+    seen = _stub_solver(monkeypatch, world)
+    assert (
+        _post(
+            owner_client, "planner_draft_edit", draft, {"keep_current_sections": False}
+        ).status_code
+        == 200
+    )
+
+    issued = _post(owner_client, "planner_draft_confirm_rebuild", draft)
+    assert issued.status_code == 200
+    token = issued.json()["confirmation"]
+
+    done = _post(owner_client, "planner_draft_generate", draft, {"confirmation": token})
+    assert done.status_code == 200, done.content
+    assert done.json()["draft"]["has_current_generation"] is True
+    assert len(seen) == 1, "the solver did not run, or ran twice"
+
+
+def test_the_students_two_choices_actually_reach_the_solver(
+    owner_client, world, draft, monkeypatch
+):
+    """The retain toggle and the pins are what all the ceremony above protects.
+
+    They were validated four ways, guarded by a one-use token, and then never
+    checked to arrive: passing `keep_current_sections=True` and `fixed_sections=()`
+    unconditionally left every test green. A confirmation that guards a value
+    nothing reads guards nothing.
+    """
+    section = world[("CS113", "M2")]
+    seen = _stub_solver(monkeypatch, world)
+    _post(
+        owner_client,
+        "planner_draft_edit",
+        draft,
+        {
+            "course_codes": ["CS113"],
+            "fixed_sections": {"CS113": section.id},
+            "keep_current_sections": False,
+        },
+    )
+    token = _post(owner_client, "planner_draft_confirm_rebuild", draft).json()["confirmation"]
+    _post(owner_client, "planner_draft_generate", draft, {"confirmation": token})
+
+    assert seen[0].keep_current_sections is False, "the rebuild choice never reached the solver"
+    assert dict(seen[0].fixed_sections) == {"CS113": section.id}, "the pin never reached the solver"
+
+
+def test_the_pinned_section_is_the_one_in_the_answer(owner_client, world, draft, monkeypatch):
+    """And the pin survives all the way to what the student is shown."""
+    section = world[("CS113", "M2")]
+    _stub_solver(monkeypatch, world)
+    _post(
+        owner_client,
+        "planner_draft_edit",
+        draft,
+        {"course_codes": ["CS113"], "fixed_sections": {"CS113": section.id}},
+    )
+    body = _post(owner_client, "planner_draft_generate", draft).json()
+    sections = {c["course_code"]: c["section"] for c in body["alternatives"][0]["courses"]}
+    assert sections["CS113"] == "M2"
+
+
+def test_generation_is_charged_to_the_planner_budget_not_the_advisers(
+    owner_client, world, draft, monkeypatch
+):
+    """Which budget is spent is a behaviour, and swapping it left the suite green.
+
+    It matters in one direction: the planner's solver measured 0.09s against a
+    model turn's ninety, so sharing the adviser's allowance meant regenerating a
+    timetable spent the student's questions.
+    """
+    from core.models import RateLimitBucket
+    from core.services.rate_limit import GENERATION, PLANNING
+
+    _stub_solver(monkeypatch, world)
+    _post(owner_client, "planner_draft_generate", draft)
+
+    spent = dict(RateLimitBucket.objects.values_list("key", "count"))
+    assert spent.get(f"{PLANNING}:{OWNER}") == 1
+    assert spent.get(f"{GENERATION}:{OWNER}", 0) == 0, (
+        "the planner spent the adviser's question allowance"
+    )
+
+
+def test_a_replay_is_refunded(owner_client, world, draft, monkeypatch):
+    """A result served from storage has already been paid for once."""
+    from core.models import RateLimitBucket
+    from core.services.rate_limit import PLANNING
+
+    _stub_solver(monkeypatch, world)
+    _post(owner_client, "planner_draft_generate", draft)
+    _post(owner_client, "planner_draft_generate", draft)
+    assert RateLimitBucket.objects.get(key=f"{PLANNING}:{OWNER}").count == 1
+
+
+def test_asking_for_a_confirmation_costs_no_generation(owner_client, world, draft):
+    """The 428 round-trip runs no solver, so it must not bill for one."""
+    from core.models import RateLimitBucket
+    from core.services.rate_limit import PLANNING
+
+    _post(owner_client, "planner_draft_edit", draft, {"keep_current_sections": False})
+    assert _post(owner_client, "planner_draft_generate", draft).status_code == 428
+    assert not RateLimitBucket.objects.filter(key=f"{PLANNING}:{OWNER}", count__gt=0).exists()
+
+
+def test_the_budget_actually_refuses(owner_client, world, draft, monkeypatch):
+    """A limit nothing tests is a limit nobody knows is wired."""
+    from core.services.rate_limit import LIMITS, PLANNING
+
+    _stub_solver(monkeypatch, world)
+    limit = LIMITS[PLANNING][0]
+    for _ in range(limit + 2):
+        # Each one edits first, so every generate is a real solve rather than a
+        # refunded replay.
+        svc.edit_draft(draft, course_codes=["CS113"] if _ % 2 else ["CS113", "AI221"])
+        response = _post(owner_client, "planner_draft_generate", draft)
+        if response.status_code == 429:
+            assert int(response["Retry-After"]) > 0
+            assert response.json()["retry_after"] > 0
+            return
+    raise AssertionError(f"{limit + 2} generations were allowed against a limit of {limit}")
+
+
+def test_the_course_names_are_really_looked_up(owner_client, world, draft, monkeypatch):
+    """An eleven-line docstring justifies a four-source resolver; nothing read it.
+
+    Returning `{}` from the lookup blanked every course name on the screen and left
+    the suite green.
+    """
+    _stub_solver(monkeypatch, world)
+    body = _post(owner_client, "planner_draft_generate", draft).json()
+    assert body["draft"]["requested"][0]["course_name"] == "PROGRAMMING II"
+    assert body["alternatives"][0]["meetings"][0]["course_name"] == "PROGRAMMING II"
+
+
+def test_the_chosen_timetable_is_marked_as_chosen(owner_client, world, draft, monkeypatch):
+    _stub_solver(monkeypatch, world)
+    body = _post(owner_client, "planner_draft_generate", draft).json()
+    key = body["alternatives"][0]["key"]
+    after = _post(owner_client, "planner_draft_select", draft, {"key": key}).json()
+    assert [a["selected"] for a in after["alternatives"]] == [True]
+
+
+def test_the_handoff_defaults_to_the_students_own_recommendation(owner_client, world):
+    """The documented PRIMARY hand-off: no course codes at all.
+
+    Every create test posted explicit codes, so `source = None` — the branch the
+    chat button actually uses — was never executed.
+    """
+    from unittest import mock
+
+    with mock.patch(
+        "core.services.recommender.recommend_next_courses", return_value=["CS113", "AI221"]
+    ):
+        response = owner_client.post(
+            reverse("planner_draft_create"), data="{}", content_type="application/json"
+        )
+    assert response.status_code == 201
+    assert PlannerDraft.objects.get(id=response.json()["draft_id"]).course_codes == [
+        "CS113",
+        "AI221",
+    ]
+
+
+def test_the_handoff_records_the_turn_it_came_from(owner_client, world):
+    """The positive half. Breaking the lookup entirely left the negative test green."""
+    from core.models import AdvisorConversation, AdvisorMessage
+
+    conversation = AdvisorConversation.objects.create(student_id=OWNER, title="mine")
+    mine = AdvisorMessage.objects.create(
+        conversation=conversation, role=AdvisorMessage.ROLE_ASSISTANT, content="…"
+    )
+    response = owner_client.post(
+        reverse("planner_draft_create"),
+        data=json.dumps({"course_codes": ["CS113"], "source_message_id": str(mine.id)}),
+        content_type="application/json",
+    )
+    assert response.status_code == 201
+    assert PlannerDraft.objects.get(id=response.json()["draft_id"]).source_message_id == mine.id
+
+
+def test_an_unparseable_source_message_id_is_not_a_crash(owner_client, world):
+    """`AdvisorMessage.id` is a UUID pk, so `filter(pk="abc")` raises."""
+    response = owner_client.post(
+        reverse("planner_draft_create"),
+        data=json.dumps({"course_codes": ["CS113"], "source_message_id": "abc"}),
+        content_type="application/json",
+    )
+    assert response.status_code == 201
+    assert PlannerDraft.objects.get(id=response.json()["draft_id"]).source_message_id is None
+
+
+def test_the_handoff_honours_a_rebuild_request(owner_client, world):
+    """Hardcoding this to True left the suite green."""
+    response = owner_client.post(
+        reverse("planner_draft_create"),
+        data=json.dumps({"course_codes": ["CS113"], "keep_current_sections": False}),
+        content_type="application/json",
+    )
+    assert PlannerDraft.objects.get(id=response.json()["draft_id"]).keep_current_sections is False
+
+
+# ── 12. the rules that had two guards and therefore no test ──────
+
+
+def test_a_generation_is_withheld_on_version_alone(world, draft, monkeypatch):
+    """`has_current_generation` compares versions, and nothing proved it.
+
+    An edit clears `alternatives` in the same breath as it bumps `version`, so a
+    property reading only `bool(alternatives)` passed every test. The version is
+    bumped here WITHOUT touching the result, which is the state a future edit path
+    that forgot half its job would leave behind.
+    """
+    _stub_solver(monkeypatch, world)
+    svc.generate(draft)
+    draft.refresh_from_db()
+    assert draft.has_current_generation
+
+    PlannerDraft.objects.filter(pk=draft.pk).update(version=draft.version + 1)
+    draft.refresh_from_db()
+    assert draft.alternatives, "the setup must leave the stored result in place"
+    assert draft.has_current_generation is False
+
+
+def test_the_view_withholds_a_generation_the_version_disowns(
+    owner_client, world, draft, monkeypatch
+):
+    """Same state, at the door. The 'withheld' test passed with the withholding
+    deleted, because it arrived with nothing to withhold."""
+    _stub_solver(monkeypatch, world)
+    svc.generate(draft)
+    PlannerDraft.objects.filter(pk=draft.pk).update(version=draft.version + 1)
+
+    body = owner_client.get(_url("planner_draft_detail", draft)).json()
+    assert body["alternatives"] == []
+    assert PlannerDraft.objects.get(pk=draft.pk).alternatives, "the row still holds them"
+
+
+def test_an_empty_result_is_a_result(world, draft, monkeypatch):
+    """ "The solver found nothing" is an answer, not "nothing has run yet".
+
+    Read as the latter, the retry re-ran the solver for a version that already had
+    an answer, the spent confirmation made that retry demand permission again, and
+    the `unplaced` reasons — the only useful output when there are no timetables —
+    were computed, stored and then withheld.
+    """
+    calls = _stub_solver(
+        monkeypatch,
+        world,
+        alternatives=[],
+        unplaced=[{"course_code": "CS113", "reason_code": "ALL_SECTIONS_CLASH", "reason": "x"}],
+    )
+    svc.generate(draft)
+    draft.refresh_from_db()
+    assert draft.has_current_generation is True
+    svc.generate(draft)
+    assert len(calls) == 1, "the solver re-ran for a version that already had an answer"
+
+
+def test_the_reason_a_course_did_not_fit_reaches_the_student_in_arabic(
+    owner_client, world, draft, monkeypatch
+):
+    _stub_solver(
+        monkeypatch,
+        world,
+        alternatives=[],
+        unplaced=[
+            {
+                "course_code": "CS113",
+                "reason_code": "ALL_SECTIONS_CLASH",
+                # The solver's own English, which must NOT be what is shown.
+                "reason": "No non-conflicting sections available",
+            }
+        ],
+    )
+    body = _post(owner_client, "planner_draft_generate", draft).json()
+    assert len(body["unplaced"]) == 1
+    shown = body["unplaced"][0]["reason"]
+    assert shown == UNPLACED_AR["ALL_SECTIONS_CLASH"]
+    assert "sections available" not in shown
+
+
+def test_an_unrecognised_solver_reason_is_not_shown_verbatim(
+    owner_client, world, draft, monkeypatch
+):
+    """`_translate_unplaced` falls through to the builder's internal wording."""
+    _stub_solver(
+        monkeypatch,
+        world,
+        alternatives=[],
+        unplaced=[
+            {
+                "course_code": "CS113",
+                "reason_code": "OTHER",
+                "reason": "No candidate sections after hard filters",
+            }
+        ],
+    )
+    body = _post(owner_client, "planner_draft_generate", draft).json()
+    assert body["unplaced"][0]["reason"] == UNPLACED_AR_DEFAULT
+    assert "hard filters" not in json.dumps(body, ensure_ascii=False)
+
+
+# ── 13. the ceiling, the staleness check, and the messages ───────
+
+
+def test_a_suggested_timetable_respects_the_credit_ceiling(world, draft, monkeypatch):
+    """`max_credits=0` means UNBOUNDED to the builder, and it was never set."""
+    from core.services.credit_policy import REGULATORY_MAX_CREDITS
+
+    seen = _stub_solver(monkeypatch, world)
+    svc.generate(draft)
+    assert seen[0].max_credits == REGULATORY_MAX_CREDITS
+    assert seen[0].max_credits > 0, "0 is not a cap; it is the absence of one"
+
+
+def test_the_summer_ceiling_is_the_lower_one(world):
+    from core.services.credit_policy import REGULATORY_MAX_CREDITS, SUMMER_MAX_CREDITS_BOUND
+
+    assert svc.credit_ceiling(1) == REGULATORY_MAX_CREDITS
+    assert svc.credit_ceiling(2) == REGULATORY_MAX_CREDITS
+    assert svc.credit_ceiling(3) == SUMMER_MAX_CREDITS_BOUND
+    assert SUMMER_MAX_CREDITS_BOUND < REGULATORY_MAX_CREDITS
+
+
+def test_a_registration_change_marks_the_generation_stale(world, draft, monkeypatch):
+    """The version cannot see this. The fingerprint can, and was never compared."""
+    from core.models import StudentTermSection
+
+    _stub_solver(monkeypatch, world)
+    svc.generate(draft)
+    draft.refresh_from_db()
+    assert svc.generation_is_stale(draft) is False
+
+    StudentTermSection.objects.create(
+        student_id=OWNER,
+        term_section=world[("AI221", "M1")],
+        academic_year=draft.academic_year,
+        term=draft.term,
+    )
+    assert svc.generation_is_stale(draft) is True
+
+
+def test_a_section_moving_to_a_different_hour_marks_it_stale(world, draft, monkeypatch):
+    """ONLY the hour changes. Same course, same section, same day, same count.
+
+    Adding a registration is the easy case — the list gets longer and almost any
+    hash notices. Swapping one section for another is nearly as easy, because the
+    label and usually the day change too. Neither proves the fingerprint reads the
+    TIMES, and reading `start`/`end` instead of the `start_time`/`end_time` the
+    baseline actually carries gave None for both and passed.
+
+    It is also the realistic case: the registrar moves a section's lecture, the
+    student's week changes, and the timetables built around the old hour are the
+    ones that most need rebuilding.
+    """
+    from core.models import StudentTermSection, TermSectionMeeting
+
+    section = world[("AI221", "M1")]
+    StudentTermSection.objects.create(
+        student_id=OWNER, term_section=section, academic_year="1448", term="1"
+    )
+    _stub_solver(monkeypatch, world)
+    svc.generate(draft)
+    draft.refresh_from_db()
+    assert svc.generation_is_stale(draft) is False
+
+    moved = TermSectionMeeting.objects.filter(term_section=section)
+    assert moved.count() == 1
+    moved.update(start_time="15:00", end_time="16:15")  # same SUN, four hours later
+
+    assert StudentTermSection.objects.filter(student_id=OWNER).count() == 1
+    assert svc.generation_is_stale(draft) is True
+
+
+def test_the_browser_is_told_the_generation_is_stale(owner_client, world, draft, monkeypatch):
+    """At the door, not just in the service — the screen is what says so."""
+    from core.models import StudentTermSection
+
+    _stub_solver(monkeypatch, world)
+    _post(owner_client, "planner_draft_generate", draft)
+    assert (
+        owner_client.get(_url("planner_draft_detail", draft)).json()["draft"]["is_stale"] is False
+    )
+
+    StudentTermSection.objects.create(
+        student_id=OWNER,
+        term_section=world[("AI221", "M1")],
+        academic_year=draft.academic_year,
+        term=draft.term,
+    )
+    assert owner_client.get(_url("planner_draft_detail", draft)).json()["draft"]["is_stale"] is True
+
+
+def test_no_english_reaches_the_student_on_any_refusal(owner_client, world, draft):
+    """Every refusal below renders on an Arabic page, in place of a timetable."""
+    import re
+
+    latin = re.compile(r"[A-Za-z]{4,}")
+    responses = [
+        _post(owner_client, "planner_draft_edit", draft, {"course_codes": ["ZZ999"]}),
+        _post(owner_client, "planner_draft_select", draft, {"key": "nope"}),
+        _post(owner_client, "planner_draft_confirm_rebuild", draft),
+    ]
+    _post(owner_client, "planner_draft_edit", draft, {"keep_current_sections": False})
+    responses.append(_post(owner_client, "planner_draft_generate", draft))
+
+    for response in responses:
+        assert response.status_code >= 400, "these are all meant to be refusals"
+        message = response.json().get("error", "")
+        assert message, response.content
+        # A course code inside the sentence is fine; a sentence OF English is not.
+        assert not latin.search(message.replace("ZZ999", "")), message
+
+
+def test_the_cohort_diagnostic_never_reaches_the_student(world, monkeypatch):
+    """Its own text explains a database decision to an operator."""
+    from core.services import student_planner as sp
+    from core.services.student_sections import UnknownStudentGender
+
+    def refuse(_student_id):
+        raise UnknownStudentGender(
+            "Cannot resolve the cohort (M/F) for student 1. Refusing to query sections, "
+            "because an unresolved cohort would return the other cohort's sections."
+        )
+
+    monkeypatch.setattr(sp, "student_gender_strict", refuse)
+    with pytest.raises(DraftRejected) as caught:
+        sp.validate_draft_selection(OWNER, ["CS113"], {})
+    assert "Refusing to query" not in str(caught.value)
+    assert "cohort" not in str(caught.value)
+
+
+def test_a_non_string_confirmation_is_refused_not_a_crash(world, draft):
+    """`_hash` would reach `True.encode`, once a live token exists."""
+    svc.edit_draft(draft, keep_current_sections=False)
+    svc.issue_rebuild_token(draft)
+    draft.refresh_from_db()
+    for bogus in (True, 123, {"a": 1}, ["x"], 1.5):
+        with pytest.raises(svc.ConfirmationRequired):
+            svc.generate(draft, confirmation=bogus)
+
+
+def test_a_draft_with_no_term_refuses_rather_than_crashing(world, draft, monkeypatch):
+    """The columns carry a blank default; `int("")` is a 500."""
+    _stub_solver(monkeypatch, world)
+    PlannerDraft.objects.filter(pk=draft.pk).update(academic_year="", term="")
+    draft.refresh_from_db()
+    with pytest.raises(svc.DraftError):
+        svc.generate(draft)
+
+
+def test_an_expired_draft_gets_no_fresh_confirmation(world, draft):
+    """The expiry guard on the token issuer was itself unguarded."""
+    svc.edit_draft(draft, keep_current_sections=False)
+    PlannerDraft.objects.filter(pk=draft.pk).update(
+        expires_at=timezone.now() - timedelta(seconds=1)
+    )
+    draft.refresh_from_db()
+    with pytest.raises(svc.DraftExpired):
+        svc.issue_rebuild_token(draft)
+
+
+def test_a_stale_in_memory_draft_does_not_overwrite_a_newer_one(world, draft):
+    """Passing an out-of-date object in is safe, because the row is re-read.
+
+    This is the first half of the fix and the easy half. `edit_draft` takes a
+    snapshot only to learn WHICH row; everything it decides from is read again
+    under the lock, so tab A holding a stale object simply edits current state.
+    """
+    stale = PlannerDraft.objects.get(pk=draft.pk)
+    svc.edit_draft(draft, course_codes=["CS113", "AI221"])
+
+    svc.edit_draft(stale, keep_current_sections=False)
+    draft.refresh_from_db()
+    assert draft.version == 3, "each edit is one version, from the row and not the snapshot"
+    assert draft.course_codes == ["CS113", "AI221"], "the earlier edit was not lost"
+    assert draft.keep_current_sections is False
+
+
+def test_a_writer_that_slips_in_mid_edit_is_refused(world, draft, monkeypatch):
+    """The second half, and the one that actually needs the version guard.
+
+    `select_for_update` is silently a no-op on SQLite — which is what the dev
+    database and this whole suite run on — so two requests really can both read
+    version 1 before either writes. Both then compute 2, and the loser's UPDATE
+    must match zero rows rather than overwrite the winner. Without the guard the
+    row ends up holding one tab's courses at the version number the OTHER tab is
+    displaying, and the confirmation given on that screen validates cleanly,
+    because nothing about the token is wrong.
+
+    The interleaving is forced rather than raced: another writer commits inside the
+    validation call, which is exactly the window between the read and the write.
+    """
+    real = svc.validate_draft_selection
+    fired = []
+
+    def slip_in(*args, **kwargs):
+        if not fired:
+            fired.append(True)
+            PlannerDraft.objects.filter(pk=draft.pk).update(version=99)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(svc, "validate_draft_selection", slip_in)
+    with pytest.raises(svc.DraftConflict):
+        svc.edit_draft(draft, course_codes=["CS113", "AI221"])
+
+    # The losing edit wrote NOTHING — not a partial row, not a bumped version.
+    #
+    # The interloper's own write is rolled back with it, which a real second
+    # connection's committed transaction would not be; that is the cost of forcing
+    # the interleaving inside one transaction rather than racing two. What the test
+    # is for survives it: without the `if not updated` guard the edit lands, no
+    # exception is raised, and this fails.
+    draft.refresh_from_db()
+    assert draft.course_codes == ["CS113"]
+    assert fired, "the interleaving never happened, so this proved nothing"
+
+
+def test_an_unchanged_edit_keeps_a_live_confirmation(world, draft):
+    """The claim the version test made in its docstring and never checked."""
+    svc.edit_draft(draft, keep_current_sections=False)
+    token = svc.issue_rebuild_token(draft)
+    svc.edit_draft(draft, course_codes=["CS113"], keep_current_sections=False)
+    draft.refresh_from_db()
+    assert svc._confirmation_is_valid(draft, token) is True
+
+
 # ── helpers ──────────────────────────────────────────────────────
 
 
-def _stub_solver(monkeypatch, world, extra=()):
+def _stub_solver(monkeypatch, world, extra=(), alternatives=None, unplaced=()):
     """Replace the solver, and record what it was asked.
 
     The solver itself is exercised against real data elsewhere. What these tests
@@ -602,48 +1264,71 @@ def _stub_solver(monkeypatch, world, extra=()):
     and what survives an edit — so a deterministic stand-in makes the assertions
     about that rather than about scheduling.
 
-    `extra` models the real builder's own behaviour of filling the term with courses
-    the student did not name.
+    It emits the fields the REAL builder emits, including the ones the view is
+    supposed to strip. A stub that emitted only the six whitelisted keys would make
+    the whitelist test assert the stub's own shape: delete the whitelist and it
+    still passes, because there was nothing to leak. `_meeting_rows` really does
+    carry `credits`, and real sections carry rooms and instructors, so the stub
+    carries them too and the test has something to catch.
+
+    `extra` models the builder filling the term with courses the student did not
+    name; `unplaced` its explanation for a course it could not place.
     """
     seen = []
 
     def fake(request):
         seen.append(request)
-        request = request.__class__(
-            **{
-                **{f: getattr(request, f) for f in request.__dataclass_fields__},
-                "must_include": tuple(request.must_include) + tuple(extra),
-            }
-        )
-        return {
-            "alternatives": [
+        codes = tuple(request.must_include) + tuple(extra)
+        pinned = dict(request.fixed_sections)
+
+        def section_for(code):
+            """Honour a pin, so a test can prove the pin reached the solver."""
+            pin = pinned.get(code)
+            if pin is not None:
+                return next(s for s in world.values() if s.id == pin)
+            return world[(code, "M1")]
+
+        built = alternatives
+        if built is None:
+            chosen = {c: section_for(c) for c in codes}
+            built = [
                 {
-                    "key": "-".join(str(world[(c, "M1")].id) for c in request.must_include),
+                    "key": "-".join(str(chosen[c].id) for c in codes),
                     "courses": [
                         {
                             "course_code": c,
-                            "section": "M1",
+                            "section": chosen[c].section,
                             "credits": 3,
-                            "term_section_id": world[(c, "M1")].id,
+                            "term_section_id": chosen[c].id,
                         }
-                        for c in request.must_include
+                        for c in codes
                     ],
                     "meetings": [
                         {
                             "course_code": c,
-                            "section": "M1",
+                            "section": chosen[c].section,
                             "day": "SUN",
                             "start": "09:00",
                             "end": "10:15",
+                            # Present in the real payload, and every one of them is
+                            # something the browser must never receive.
+                            "credits": 3,
+                            "room": "LAB-3",
+                            "instructor": "د. عبدالله",
+                            "registered_count": 17,
+                            "term_section_id": chosen[c].id,
                         }
-                        for c in request.must_include
+                        for c in codes
                     ],
-                    "credit_hours": 3 * len(request.must_include),
+                    "course_count": len(codes),
+                    "credit_hours": 3 * len(codes),
+                    "days_on_campus": 1,
+                    "days": ["SUN"],
+                    "earliest_start": "09:00",
+                    "latest_end": "10:15",
                 }
-            ],
-            "unplaced": [],
-            "generated": 1,
-        }
+            ]
+        return {"alternatives": built, "unplaced": list(unplaced), "generated": len(built)}
 
     monkeypatch.setattr(svc, "build_student_options", fake)
     return seen

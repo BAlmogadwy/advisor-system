@@ -45,18 +45,30 @@
       {% if LANGUAGE_CODE == 'ar' %}طريقة البناء{% else %}How to build{% endif %}
     </h2>
 
-    <div class="form-check">
-      <input class="form-check-input" type="radio" name="spMode" id="spKeep" value="keep" checked>
-      <label class="form-check-label" for="spKeep">
-        {% if LANGUAGE_CODE == 'ar' %}<strong>احتفظ بشُعبي الحالية</strong> وأضِف المقررات الجديدة حولها.{% else %}<strong>Keep my current sections</strong> and fit the new courses around them.{% endif %}
-      </label>
-    </div>
-    <div class="form-check">
-      <input class="form-check-input" type="radio" name="spMode" id="spRebuild" value="rebuild">
-      <label class="form-check-label" for="spRebuild">
-        {% if LANGUAGE_CODE == 'ar' %}<strong>أعِد بناء الجدول من جديد</strong> — قد تتغيّر شُعب مقرراتك الحالية.{% else %}<strong>Rebuild the timetable from scratch</strong> — your current sections may change.{% endif %}
-      </label>
-    </div>
+    {% comment %}
+      A real fieldset. The <h2> labels the <section>, not the group, so without this
+      a screen reader announces two loose radios with no shared question.
+
+      The wording says what actually happens. "قد تتغيّر شُعب مقرراتك الحالية" — your
+      current sections may change — reads as a change to your registration, on a page
+      whose own intro promises it registers you for nothing. Nothing changes; only
+      the SUGGESTION differs.
+    {% endcomment %}
+    <fieldset class="sp-modes">
+      <legend class="sp-visually-hidden">{% if LANGUAGE_CODE == 'ar' %}طريقة بناء الجدول المقترح{% else %}How to build the suggested timetable{% endif %}</legend>
+      <div class="form-check">
+        <input class="form-check-input" type="radio" name="spMode" id="spKeep" value="keep" checked>
+        <label class="form-check-label" for="spKeep">
+          {% if LANGUAGE_CODE == 'ar' %}<strong>ابنِ حول شُعبي الحالية</strong> — يُبقي الاقتراح على شُعبك المسجّلة ويضيف المقررات الجديدة حولها.{% else %}<strong>Build around my current sections</strong> — the suggestion keeps the sections you are registered in and fits the new courses around them.{% endif %}
+        </label>
+      </div>
+      <div class="form-check">
+        <input class="form-check-input" type="radio" name="spMode" id="spRebuild" value="rebuild">
+        <label class="form-check-label" for="spRebuild">
+          {% if LANGUAGE_CODE == 'ar' %}<strong>اقترِح جدولًا من جديد</strong> — قد يقترح شُعبًا غير التي سجّلت فيها. تسجيلك الحالي لا يتغيّر.{% else %}<strong>Suggest a timetable from scratch</strong> — it may propose sections other than the ones you registered in. Your actual registration does not change.{% endif %}
+        </label>
+      </div>
+    </fieldset>
 
     {# The dialog asks. The SERVER decides: generate refuses without a token it issued. #}
     <div class="sp-confirm" id="spConfirm" hidden>

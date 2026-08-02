@@ -2107,6 +2107,13 @@ class PlannerDraft(models.Model):
     #: and the catalogue moves, so regenerating on reload would quietly show a
     #: different set of timetables than the one the student was comparing.
     alternatives = models.JSONField(default=list, blank=True)
+    #: The draft version this generation belongs to, as a COLUMN rather than a key
+    #: inside `generated_inputs`, so it can be compared inside a conditional UPDATE.
+    #: That single statement is what makes "one generation per version" hold on a
+    #: backend without row locks: `select_for_update` is silently a no-op on SQLite,
+    #: so a rule that rested on it alone would be enforced in production and merely
+    #: hoped for everywhere the project actually runs its tests.
+    generated_version = models.PositiveIntegerField(default=0)
     generated_at = models.DateTimeField(null=True, blank=True)
     #: What the alternatives were generated FROM, so a later request can tell whether
     #: the world moved underneath them: the validated courses, the pins, the retain
@@ -2145,10 +2152,18 @@ class PlannerDraft(models.Model):
 
     @property
     def has_current_generation(self) -> bool:
-        """Whether the stored alternatives still describe THIS draft.
+        """Whether a generation has RUN for this draft's current version.
 
         A generation belongs to the version that produced it. Change the selection
         and the stored timetables are about something else — showing them would be
         answering a question the student has already moved on from.
+
+        Deliberately NOT `bool(self.alternatives)`. "The solver found nothing" is a
+        result, and reading it as "nothing has run yet" made the one case that most
+        needs explaining behave worst: the retry re-ran the solver for a version
+        that already had an answer, the spent confirmation made that retry ask for
+        permission again, and the `unplaced` reasons — the only useful output when
+        there are no timetables — were computed, stored, and then withheld from the
+        student because they hung off this same flag.
         """
-        return bool(self.alternatives) and self.generated_inputs.get("version") == self.version
+        return self.generated_version != 0 and self.generated_version == self.version

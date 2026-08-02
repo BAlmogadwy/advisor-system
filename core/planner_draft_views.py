@@ -11,11 +11,12 @@ the request came through. These views parse, spend a budget, call it, and shape
 the reply.
 
 **What goes on the wire.** Course code and name, section label, day, start and
-end. Not rooms, not instructors, not registered counts, not the baseline the
-solver saw, not the fingerprint — those sit in `generated_inputs` for the server's
-own use and describe the institution rather than the student's week. The one
-identifier that does travel is the term-section id, because pinning a section is
-the student naming one, and they cannot name what they have not been given.
+end. Not rooms, not instructors, not registered counts, not term-section ids, not
+the baseline the solver saw, not the fingerprint — those sit in `generated_inputs`
+for the server's own use and describe the institution rather than the student's
+week. The only opaque handle that travels is an alternative's `key`, which the
+client sends back to say which timetable it chose and which resolves only against
+the alternatives stored on this student's own draft.
 """
 
 from __future__ import annotations
@@ -23,7 +24,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from django.http import HttpRequest, JsonResponse
+from django.core.exceptions import PermissionDenied
+from django.http import Http404, HttpRequest, JsonResponse
 from django.shortcuts import render
 from django.urls import reverse
 from django.views.decorators.http import require_GET, require_POST
@@ -34,17 +36,21 @@ from .advisor_http import over_budget as _over_budget
 from .advisor_http import student_principal as _principal
 from .services.planner_drafts import (
     ConfirmationRequired,
+    DraftConflict,
     DraftError,
     DraftExpired,
     DraftRejected,
     create_draft,
     edit_draft,
     generate,
+    generation_is_stale,
     issue_rebuild_token,
     owned_draft,
     select_alternative,
 )
-from .services.rate_limit import CONVERSATION, GENERATION, HISTORY
+from .services.rate_limit import CONVERSATION, HISTORY, PLANNING
+from .services.rate_limit import release as _refund_budget
+from .services.student_planner import PlannerUnavailable
 
 logger = logging.getLogger(__name__)
 
@@ -79,9 +85,10 @@ def _alternative_json(
                 # because a course the student never named must not be presented as
                 # though they did.
                 "requested": str(c.get("course_code") or "") in requested,
-                # The pin affordance: "keep this one next time" has to name a
-                # section, and this is where the browser learns which.
-                "term_section_id": c.get("term_section_id"),
+                # `term_section_id` is deliberately NOT here. It was carried for a
+                # pin affordance this screen does not yet have — so it was a raw
+                # primary key, per course, per alternative, shipped for nothing.
+                # It comes back when something reads it.
             }
             for c in alternative.get("courses", [])
         ],
@@ -136,6 +143,10 @@ def _draft_json(draft: Any) -> dict[str, Any]:
             "is_live": draft.is_live,
             "generated_at": (draft.generated_at.isoformat() if draft.generated_at else None),
             "has_current_generation": draft.has_current_generation,
+            # The version catches the student changing their own mind. This catches
+            # the other thing that invalidates a timetable — their registrations
+            # moving underneath it — which no amount of version bumping can see.
+            "is_stale": generation_is_stale(draft),
             "selected_alternative": draft.selected_alternative,
         },
         "alternatives": (
@@ -149,22 +160,59 @@ def _draft_json(draft: Any) -> dict[str, Any]:
             # with a caveat nobody reads.
             else []
         ),
-        # Why a requested course is missing, in the student's own language. The
-        # builder's raw reason is already translated by `_translate_unplaced`; the
-        # machine-readable code goes no further than here.
+        # Why a requested course is missing, in the student's own language, from the
+        # code rather than from the solver's own sentence. The machine-readable code
+        # goes no further than here.
         "unplaced": [
             {
                 "course_code": str(u.get("course_code") or ""),
                 "course_name": names.get(str(u.get("course_code") or ""), ""),
-                "reason": str(u.get("reason") or ""),
+                "reason": UNPLACED_AR.get(str(u.get("reason_code") or ""), UNPLACED_AR_DEFAULT),
             }
             for u in unplaced
         ],
     }
 
 
+#: Why a course could not be placed, said in Arabic, keyed on the CODE.
+#:
+#: Not on the accompanying English sentence, and never on the solver's own string.
+#: `_translate_unplaced` falls through to `("OTHER", text)`, so an unrecognised
+#: reason returns the builder's internal wording — "No candidate sections after
+#: hard filters" — which would land on an Arabic page under an Arabic heading.
+#: A closed vocabulary in, one sentence out, and an unknown code says only what is
+#: actually known.
+UNPLACED_AR: dict[str, str] = {
+    "NOT_ON_FILE": "لا توجد شُعب مسجَّلة لهذا المقرر في بياناتنا. راجع بوابة التسجيل للتأكد.",
+    "ALL_SECTIONS_CLASH": "كل الشُعب المطروحة لهذا المقرر تتعارض مع بقية جدولك.",
+    "PREREQUISITES": "لم تُستوفَ متطلبات هذا المقرر السابقة بعد.",
+    "DID_NOT_FIT": "لم يتّسع له الجدول مع بقية المقررات ضمن الحدود المتاحة.",
+}
+UNPLACED_AR_DEFAULT = "تعذّر وضع هذا المقرر في الجدول."
+
+
 def _refused(exc: Exception, status: int = 409) -> JsonResponse:
     return JsonResponse({"error": str(exc)}, status=status)
+
+
+def _owned_message(raw: Any, student_id: int) -> Any:
+    """The student's own turn, or nothing.
+
+    Parsed before it is queried. `AdvisorMessage.id` is a UUID primary key, so
+    `filter(pk="abc")` raises `ValidationError` — a 500 on a value a client picked,
+    where the sibling lookup in `owned_draft` correctly answers "nothing here".
+    """
+    if not raw:
+        return None
+    import uuid as _uuid
+
+    from .models import AdvisorMessage
+
+    try:
+        parsed = _uuid.UUID(str(raw))
+    except (ValueError, AttributeError, TypeError):
+        return None
+    return AdvisorMessage.objects.filter(pk=parsed, conversation__student_id=student_id).first()
 
 
 # ── endpoints ────────────────────────────────────────────────────
@@ -203,14 +251,7 @@ def draft_create_view(request: HttpRequest) -> JsonResponse:
 
     # A draft may point back at the turn that produced it, but only at one this
     # student owns — the id is checked against their own messages, in the query.
-    source = None
-    raw_source = payload.get("source_message_id")
-    if raw_source:
-        from .models import AdvisorMessage
-
-        source = AdvisorMessage.objects.filter(
-            pk=str(raw_source), conversation__student_id=principal.student_id
-        ).first()
+    source = _owned_message(payload.get("source_message_id"), principal.student_id)
 
     try:
         draft = create_draft(
@@ -221,6 +262,10 @@ def draft_create_view(request: HttpRequest) -> JsonResponse:
         )
     except DraftRejected as exc:
         return _refused(exc, status=400)
+    except PlannerUnavailable as exc:
+        # No programme on file, or an unresolvable cohort. A real answer, not a
+        # crash: the student is told what is missing rather than shown a 500.
+        return _refused(exc, status=409)
 
     return JsonResponse(
         {
@@ -285,6 +330,10 @@ def draft_edit_view(request: HttpRequest, draft_id: str) -> JsonResponse:
         return _refused(exc, status=400)
     except DraftExpired as exc:
         return _refused(exc, status=410)
+    except DraftConflict as exc:
+        # Another tab moved the draft between our read and our write. 409 with the
+        # reason, so the screen reloads instead of silently overwriting.
+        return _refused(exc, status=409)
     return JsonResponse(_draft_json(draft))
 
 
@@ -303,14 +352,20 @@ def draft_confirm_rebuild_view(request: HttpRequest, draft_id: str) -> JsonRespo
         token = issue_rebuild_token(draft)
     except DraftExpired as exc:
         return _refused(exc, status=410)
+    except DraftConflict as exc:
+        return _refused(exc, status=409)
     except DraftError as exc:
         return _refused(exc, status=400)
+    draft.refresh_from_db()
     return JsonResponse(
         {
             "confirmation": token,
             "version": draft.version,
             # Said plainly, because this is the sentence the student is agreeing to.
-            "warning": "سيتم تجاهل الشُعب المسجّلة حاليًا وإعادة بناء الجدول من جديد.",
+            "warning": (
+                "سيقترح النظام جدولًا جديدًا قد يتضمّن شُعبًا غير التي سجّلت فيها. "
+                "لن يتغيّر تسجيلك الفعلي؛ هذا اقتراح فقط."
+            ),
         }
     )
 
@@ -323,27 +378,51 @@ def draft_generate_view(request: HttpRequest, draft_id: str) -> JsonResponse:
     payload, err = _body(request)
     if err:
         return err
-    # The expensive budget, shared with asking a question: the solver is the cost
-    # either way, so a student cannot spend their way past one limit using the other.
-    over = _over_budget(GENERATION, principal.student_id)
+    # The PLANNER's budget, not the adviser's. They were shared on the reasoning
+    # that both "generate"; measurement says one is 0.09 s of local solver and the
+    # other is a ninety-second model turn, and sharing them let a student spend
+    # their questions on timetables.
+    over = _over_budget(PLANNING, principal.student_id)
     if over:
         return over
 
-    draft = owned_draft(principal.student_id, draft_id)
+    # Handed back on every path that did NOT run a solve. The budget is meant to
+    # measure work done, not requests made — and the screen's own flow posts once
+    # to discover it needs a confirmation, so without this a rebuild would cost two
+    # of the six generations a student gets in ten minutes.
+    try:
+        draft = owned_draft(principal.student_id, draft_id)
+    except Http404:
+        _refund_budget(PLANNING, principal.student_id)
+        raise
+
+    before = draft.generated_version
     try:
         draft = generate(draft, confirmation=payload.get("confirmation"))
     except ConfirmationRequired as exc:
+        _refund_budget(PLANNING, principal.student_id)
         # 428: the request is well-formed and the student is entitled to make it;
         # what is missing is the confirmation.
         return JsonResponse({"error": str(exc), "needs_confirmation": True}, status=428)
     except DraftExpired as exc:
+        _refund_budget(PLANNING, principal.student_id)
         return _refused(exc, status=410)
     except DraftRejected as exc:
+        _refund_budget(PLANNING, principal.student_id)
         # Revalidation at generation time: a section withdrawn since the draft was
         # made, or a course the student may no longer take.
         return _refused(exc, status=409)
-    except DraftError as exc:
+    except PlannerUnavailable as exc:
+        _refund_budget(PLANNING, principal.student_id)
         return _refused(exc, status=409)
+    except DraftError as exc:
+        _refund_budget(PLANNING, principal.student_id)
+        return _refused(exc, status=409)
+
+    if draft.generated_version == before:
+        # A replay: this version was already generated, and the result came from
+        # storage rather than the solver. It has been paid for once already.
+        _refund_budget(PLANNING, principal.student_id)
     return JsonResponse(_draft_json(draft))
 
 
@@ -362,7 +441,7 @@ def draft_select_view(request: HttpRequest, draft_id: str) -> JsonResponse:
 
     draft = owned_draft(principal.student_id, draft_id)
     try:
-        draft = select_alternative(draft, str(payload.get("key") or ""))
+        draft = select_alternative(draft, payload.get("key"))
     except DraftExpired as exc:
         return _refused(exc, status=410)
     except DraftError as exc:
@@ -382,7 +461,9 @@ def student_planner_page(request: HttpRequest, draft_id: str):
     """
     principal = _principal(request)
     if principal is None:
-        return _forbidden()
+        # An HTML route, so an HTML answer: a JsonResponse here would render as a
+        # line of JSON in the browser window where a page should be.
+        raise PermissionDenied("This page is for signed-in students.")
     draft = owned_draft(principal.student_id, draft_id)
     return render(
         request,

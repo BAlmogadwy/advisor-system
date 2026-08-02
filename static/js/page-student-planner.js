@@ -41,6 +41,12 @@
      action, and a token that survives the tab survives the intent behind it. */
   let confirmation = null;
   let busy = false;
+  let needsConfirmation = false;
+
+  /* Used only until the server has spoken. Kept identical to the server's wording
+     on purpose, and never preferred over it. */
+  const FALLBACK_WARNING =
+    'سيقترح النظام جدولًا جديدًا قد يتضمّن شُعبًا غير التي سجّلت فيها. لن يتغيّر تسجيلك الفعلي.';
 
   function csrf() {
     const input = document.querySelector('[name=csrfmiddlewaretoken]');
@@ -79,6 +85,16 @@
     busy = state;
     el.generate.disabled = state;
     el.generate.setAttribute('aria-busy', state ? 'true' : 'false');
+  }
+
+  /* Arabic counts three ways, not two: one, a pair, then 3-10, then 11+ reverts to
+     the singular. "6 ساعة معتمدة" and "تم إعداد 6 جدول" are both wrong. */
+  function plural(n, one, two, few) {
+    const count = Number(n) || 0;
+    if (count === 1) return one;
+    if (count === 2) return two;
+    if (count >= 3 && count <= 10) return count + ' ' + few;
+    return count + ' ' + one;
   }
 
   function text(tag, value, cls) {
@@ -126,8 +142,11 @@
     card.className = 'sp-option' + (option.selected ? ' sp-option-selected' : '');
 
     const head = document.createElement('header');
-    head.appendChild(text('h3', 'الخيار ' + (index + 1), 'h6'));
-    head.appendChild(text('span', option.credit_hours + ' ساعة معتمدة', 'sp-muted'));
+    const heading = text('h3', 'الخيار ' + (index + 1), 'h6');
+    heading.id = 'spOption' + index;
+    card.setAttribute('aria-labelledby', heading.id);
+    head.appendChild(heading);
+    head.appendChild(text('span', plural(option.credit_hours, 'ساعة معتمدة', 'ساعتان معتمدتان', 'ساعات معتمدة'), 'sp-muted'));
     card.appendChild(head);
 
     /* The builder fills the term from the student's own plan, so an alternative
@@ -145,12 +164,28 @@
 
     /* Course, section, day, start, end. Nothing else: rooms, instructors and
        enrolment counts are the institution's business, not this student's week. */
+    /* The scroll container is a WRAPPER, never the table. `display:block` on a
+       <table> drops its implicit table role, so the thead/th/td structure below is
+       announced as a flat run of text — no row or column navigation, no header
+       association. `tabindex` because a scrollable region a keyboard cannot reach
+       is content a keyboard cannot read. */
+    const wrap = document.createElement('div');
+    wrap.className = 'sp-grid-wrap';
+    wrap.tabIndex = 0;
+    wrap.setAttribute('role', 'group');
+    wrap.setAttribute('aria-label', 'جدول الخيار ' + (index + 1));
+
     const table = document.createElement('table');
     table.className = 'sp-grid';
+    const caption = text('caption', 'الخيار ' + (index + 1));
+    caption.className = 'sp-visually-hidden';
+    table.appendChild(caption);
     const thead = document.createElement('thead');
     const hrow = document.createElement('tr');
     ['المقرر', 'الشعبة', 'اليوم', 'من', 'إلى'].forEach(function (label) {
-      hrow.appendChild(text('th', label));
+      const th = text('th', label);
+      th.setAttribute('scope', 'col');
+      hrow.appendChild(th);
     });
     thead.appendChild(hrow);
     table.appendChild(thead);
@@ -166,7 +201,8 @@
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
-    card.appendChild(table);
+    wrap.appendChild(table);
+    card.appendChild(wrap);
 
     const choose = document.createElement('button');
     choose.type = 'button';
@@ -187,65 +223,131 @@
        a failed edit must not leave the page claiming a choice the draft rejected. */
     el.keep.checked = draft.keep_current_sections;
     el.rebuild.checked = !draft.keep_current_sections;
+    needsConfirmation = !!draft.needs_confirmation;
 
     const options = data.alternatives || [];
     el.options.replaceChildren();
     el.optionsEmpty.hidden = options.length > 0;
+    /* Three different nothings, and telling the student to press the button they
+       just pressed is only right for one of them. */
+    if (!options.length) {
+      el.optionsEmpty.textContent = !draft.has_current_generation
+        ? 'اضغط «اعرض الجداول الممكنة» لعرض الخيارات.'
+        : 'لا يوجد جدول ممكن بهذه المقررات. جرّب تعديل اختيارك.';
+    }
     options.forEach(function (option, i) { el.options.appendChild(renderOption(option, i)); });
 
     if (!draft.is_live) {
       say('انتهت صلاحية هذا المخطط. ابدأ من جديد من قائمة مقرراتك.');
       el.generate.disabled = true;
+    } else if (draft.is_stale) {
+      /* The timetables are still ON SCREEN — they were valid when built and the
+         student may still want to read them. What changes is that they are labelled
+         instead of quietly presented as current. */
+      say('تغيّرت شُعبك المسجّلة منذ إعداد هذه الجداول. اضغط «اعرض الجداول الممكنة» لتحديثها.');
     }
   }
 
   /* ── actions ───────────────────────────────────────────────── */
 
   async function load() {
+    /* Said while it is in flight. Without it the first paint is a heading over an
+       empty list with its own empty-state hidden — indistinguishable from a draft
+       with nothing in it. */
+    say('جارٍ تحميل مخططك…');
     const res = await api(base, { headers: { Accept: 'application/json' } });
-    if (!res.ok) { say(res.body.error || 'تعذّر تحميل المخطط.'); return; }
+    if (!res.ok) {
+      say((res.body.error || 'تعذّر تحميل المخطط.') + ' أعد تحميل الصفحة للمحاولة مرة أخرى.');
+      return;
+    }
+    say('');
     render(res.body);
+  }
+
+  /* Settled before it is sent. The two radios are one arrow-key group, so holding
+     ← or → auto-repeats through them — and every change used to POST `edit/`, which
+     spends the CONVERSATION budget the ADVISER CHAT also draws on. Thirty in ten
+     minutes, gone in two seconds of arrow-key, and the student's next question to
+     the adviser answers «لقد أرسلت طلبات كثيرة». */
+  let modeTimer = null;
+  let modeInFlight = false;
+
+  function requestMode(keep) {
+    confirmation = null;
+    el.confirm.hidden = true;
+    if (modeTimer) clearTimeout(modeTimer);
+    modeTimer = setTimeout(function () { modeTimer = null; setMode(keep); }, 400);
   }
 
   async function setMode(keep) {
     /* Any edit kills a confirmation the server has already invalidated. Holding on
        to it here would only produce a 428 the student cannot explain. */
+    if (modeInFlight) return;
+    modeInFlight = true;
     confirmation = null;
     el.confirm.hidden = true;
     const res = await post(base + 'edit/', { keep_current_sections: keep });
+    modeInFlight = false;
     if (!res.ok) { say(res.body.error || 'تعذّر حفظ التغيير.'); await load(); return; }
     render(res.body);
     if (!keep) askConfirmation();
   }
 
-  function askConfirmation() {
-    el.confirmText.textContent =
-      'سيتم تجاهل الشُعب المسجّلة حاليًا وإعادة بناء الجدول من جديد.';
+  function askConfirmation(serverWarning) {
+    /* The SERVER's sentence when there is one. It was being written into the box and
+       hidden in the same tick, so the wording the student agreed to was this file's
+       copy — which means changing the registrar's wording server-side would have
+       changed nothing on screen. */
+    el.confirmText.textContent = serverWarning || FALLBACK_WARNING;
     el.confirm.hidden = false;
+    /* Announced and focused. Choosing the destructive option used to reveal a box
+       silently: a screen-reader user heard the radio change and nothing else, and
+       found out a confirmation was needed only by pressing the button and being
+       refused. */
+    say(el.confirmText.textContent);
+    el.confirmBtn.focus();
   }
 
   async function confirmRebuild() {
     const res = await post(base + 'confirm-rebuild/', {});
     if (!res.ok) { say(res.body.error || 'تعذّر تأكيد إعادة البناء.'); return; }
     confirmation = res.body.confirmation;
-    el.confirmText.textContent = res.body.warning || el.confirmText.textContent;
     el.confirm.hidden = true;
+    el.generate.focus();
     say('تم التأكيد. اضغط «اعرض الجداول الممكنة».');
   }
 
   async function generate() {
     if (busy) return;
+    /* Ask BEFORE spending a generation. Posting first to discover the 428 worked,
+       but it billed a unit of the expensive budget for a request that never
+       reached the solver — two of the six a student gets in ten minutes, for one
+       rebuild. The server still refuses without a real token; this only avoids
+       walking into the refusal on purpose. */
+    /* The SERVER already said whether a confirmation is needed. Re-deriving it
+       from the radio would be a second implementation of a rule that arrived in
+       the response. */
+    if (needsConfirmation && !confirmation) { askConfirmation(); return; }
+
     setBusy(true);
     say('جارٍ إعداد الجداول…');
     const res = await post(base + 'generate/', confirmation ? { confirmation: confirmation } : {});
+
+    if (res.status === 429) {
+      /* The server already worked out how long. Re-enabling the button and letting
+         the student hammer it would only spend the wait again. */
+      const wait = Number(res.body.retry_after) || 60;
+      say((res.body.error || 'لقد أرسلت طلبات كثيرة.') + ' حاول بعد ' + wait + ' ثانية.');
+      setTimeout(function () { setBusy(false); say(''); }, wait * 1000);
+      return;
+    }
     setBusy(false);
 
     if (res.status === 428) {
       /* The server, not this file, decided the confirmation was missing, stale or
          spent. Ask again rather than guessing which. */
       confirmation = null;
-      askConfirmation();
-      say(res.body.error || 'يلزم تأكيد إعادة البناء أولًا.');
+      askConfirmation(res.body.error);
       return;
     }
     if (!res.ok) { say(res.body.error || 'تعذّر إعداد الجداول.'); return; }
@@ -254,7 +356,9 @@
     confirmation = null;
     render(res.body);
     const count = (res.body.alternatives || []).length;
-    say(count ? 'تم إعداد ' + count + ' جدول.' : 'لا يوجد جدول ممكن بهذه المقررات.');
+    say(count
+      ? 'تم إعداد ' + plural(count, 'جدول واحد', 'جدولين', 'جداول') + '.'
+      : 'لا يوجد جدول ممكن بهذه المقررات. راجع أسباب التعذّر أعلاه.');
   }
 
   async function select(key) {
@@ -266,13 +370,14 @@
     say(res.body.message || 'تم حفظ هذا الجدول كخيارك المفضل. لم يتم تسجيلك في أي مقرر.');
   }
 
-  el.keep.addEventListener('change', function () { if (el.keep.checked) setMode(true); });
-  el.rebuild.addEventListener('change', function () { if (el.rebuild.checked) setMode(false); });
+  el.keep.addEventListener('change', function () { if (el.keep.checked) requestMode(true); });
+  el.rebuild.addEventListener('change', function () { if (el.rebuild.checked) requestMode(false); });
   el.confirmBtn.addEventListener('click', confirmRebuild);
   el.confirmCancel.addEventListener('click', function () {
     el.confirm.hidden = true;
     el.keep.checked = true;
-    setMode(true);
+    el.keep.focus();
+    requestMode(true);
   });
   el.generate.addEventListener('click', generate);
 

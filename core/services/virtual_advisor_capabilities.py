@@ -438,7 +438,20 @@ def _exec_lookup_course(
     }
 
 
-def _resolve_elective_slot(course_code: str, program: str) -> list[dict[str, Any]] | None:
+def is_elective_slot(requirement_type: Any) -> bool:
+    """Whether a programme-requirement row is an elective PLACEHOLDER.
+
+    One line, shared, because it was written twice — here and in the planner's
+    `permitted_course_codes`, which then documented that it had avoided exactly
+    that. Recognised by the requirement TYPE rather than by the code shape: FE1 and
+    CS1 look nothing alike and a pattern would miss new families.
+    """
+    return "elective" in str(requirement_type or "").lower()
+
+
+def _resolve_elective_slot(
+    course_code: str, program: str, *, limit: int | None = _MAX_COURSE_MATCHES
+) -> list[dict[str, Any]] | None:
     """Return the real courses that can fill an elective slot, or None if not a slot.
 
     A placeholder is recognised by its ProgrammeRequirement.type ("... Elective"), not
@@ -451,7 +464,7 @@ def _resolve_elective_slot(course_code: str, program: str) -> list[dict[str, Any
     if program:
         req = req.filter(program__iexact=program)
     row = req.values("type", "program").first()
-    if not row or "elective" not in str(row.get("type") or "").lower():
+    if not row or not is_elective_slot(row.get("type")):
         return None
 
     prog = program or str(row.get("program") or "")
@@ -474,7 +487,12 @@ def _resolve_elective_slot(course_code: str, program: str) -> list[dict[str, Any
                 "prerequisites": prereqs,
             }
         )
-    return sorted(options, key=lambda o: o["course_code"])[:_MAX_COURSE_MATCHES]
+    ordered = sorted(options, key=lambda o: o["course_code"])
+    # `limit=None` means every option. The cap is a DISPLAY limit — a chat answer
+    # listing thirty electives is unreadable — and a caller deciding what a student
+    # is ALLOWED to take must not inherit it, or the eleventh option alphabetically
+    # becomes a course they are told they may not take.
+    return ordered if limit is None else ordered[:limit]
 
 
 def _exec_course_prerequisites(
@@ -1465,7 +1483,6 @@ def _exec_build_my_timetable(
     than being hidden behind a "no plan found".
     """
     from core.models import ProgrammeRequirement, Student
-    from core.services.planner_builder import build_plans
     from core.services.recommender import recommend_next_courses
     from core.services.student_sections import (
         UnknownStudentGender,
@@ -1534,16 +1551,19 @@ def _exec_build_my_timetable(
     # now requires.
     keep_current_sections = bool(args.get("keep_current_sections", True))
 
-    result = build_plans(
+    # Through the adapter, not around it. `student_planner._run_solver` calls itself
+    # "the ONLY place student-facing code reaches the solver", and this — a
+    # student-facing capability — was the counter-example, with the domain-to-solver
+    # translation and all three pinned levers duplicated verbatim. Two sole sources
+    # of truth is none.
+    from core.services.student_planner import DEFAULT_CREDITS, run_solver
+
+    result = run_solver(
         year=str(year),
         term=str(term),
-        shortlist=[{"course_code": c, "credits": credits.get(c, 3)} for c in codes],
+        shortlist=[{"course_code": c, "credits": credits.get(c, DEFAULT_CREDITS)} for c in codes],
         baseline=baseline,
-        # Domain name in, solver name out — translated here and nowhere else.
-        keep_registered=keep_current_sections,
-        suggest_swaps=False,  # the service emits placeholder strings, never real swaps
-        strict_per_course=False,  # unusable on real data: returns scheduled=0
-        consider_capacity=False,  # dead lever: available_capacity is NULL on every row
+        keep_current_sections=keep_current_sections,
         max_credits=cap,
         gender=gender,
     )

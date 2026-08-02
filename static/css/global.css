@@ -11073,7 +11073,12 @@ html[data-theme="dark"] .im-modal-footer {
 /* ── student timetable planner ───────────────────────────────────
    Three stacked cards: what was asked for, how to build it, and what came back.
    The order is the decision order, so the destructive choice sits between the
-   selection and its consequences rather than beside the results. */
+   selection and its consequences rather than beside the results.
+
+   Every colour below is a real token. The first draft reached for `--warn`, `--ok`
+   and `--accent-soft`, none of which this design system defines — so the hardcoded
+   fallbacks always won, and the two affordances that most need to read as
+   destructive and as chosen were the only ones that did not follow Deep Navy. */
 .sp-layout { display: flex; flex-direction: column; }
 
 /* The same guard the adviser layout needs: a flex or grid `display` on a child
@@ -11085,28 +11090,48 @@ html[data-theme="dark"] .im-modal-footer {
 .sp-note { margin: .75rem 0 .25rem; font-weight: 600; }
 .sp-status { margin-top: .75rem; min-height: 1.5em; color: var(--t2); }
 
+/* Present to a screen reader, absent to the eye. The table caption names which
+   option a row belongs to; on screen the heading above it already says so. */
+.sp-visually-hidden {
+  position: absolute; width: 1px; height: 1px;
+  margin: -1px; padding: 0; overflow: hidden;
+  clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+}
+
 .sp-requested, .sp-unplaced { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .375rem; }
 .sp-requested-item { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
 .sp-code { font-weight: 600; }
 .sp-name { color: var(--t2); }
 .sp-reason { color: var(--t2); font-size: .875rem; }
+.sp-added { font-size: .8125rem; color: var(--t2); margin: 0 0 .5rem; }
 
 /* Fixed vs automatic is the distinction the student is actually managing, so it
    is a badge rather than a sentence. */
 .sp-tag { font-size: .75rem; border-radius: 999px; padding: .125rem .5rem; border: 1px solid var(--line); }
-.sp-tag-fixed { background: var(--accent-soft, rgba(13,110,253,.12)); }
+.sp-tag-fixed { border-color: var(--brand); color: var(--brand); }
 .sp-tag-auto { color: var(--t2); }
 
-.sp-confirm { margin-top: .75rem; padding: .75rem; border: 1px solid var(--warn, #b8860b); border-radius: var(--radius-sm, 8px); }
-.sp-warning { margin: 0 0 .5rem; font-weight: 600; }
+.sp-confirm { margin-top: .75rem; padding: .75rem; border: 1px solid var(--warning); border-radius: var(--radius-sm); }
+.sp-warning { margin: 0 0 .5rem; font-weight: 600; color: var(--warning); }
 
-.sp-options { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1rem; }
-.sp-option { border: 1px solid var(--line); border-radius: var(--radius-sm, 8px); padding: .75rem; }
-.sp-option-selected { border-color: var(--ok, #198754); border-width: 2px; }
+.sp-options { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 1rem; }
+.sp-option { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: .75rem; }
+.sp-option-selected { border-color: var(--success); border-width: 2px; }
 .sp-option header { display: flex; justify-content: space-between; align-items: baseline; gap: .5rem; margin-bottom: .5rem; }
 .sp-option header h3 { margin: 0; }
 
-/* The timetable is wide and the page must not be. It scrolls inside its own box. */
-.sp-grid { width: 100%; border-collapse: collapse; font-size: .875rem; margin-bottom: .75rem; display: block; overflow-x: auto; }
+/* The timetable is wide and the page must not be, so the scroll lives on a
+   WRAPPER. Putting `display:block` on the <table> itself scrolled correctly and
+   silently stripped its table semantics. */
+.sp-grid-wrap { overflow-x: auto; margin-bottom: .75rem; }
+.sp-grid-wrap:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.sp-grid { width: 100%; border-collapse: collapse; font-size: .875rem; }
 .sp-grid th, .sp-grid td { border-bottom: 1px solid var(--line); padding: .25rem .375rem; text-align: start; white-space: nowrap; }
-.sp-added { font-size: .8125rem; color: var(--t2); margin: 0 0 .5rem; }
+
+@media (max-width: 480px) {
+  /* `main` clips horizontal overflow, so a track wider than the viewport does not
+     scroll — it disappears. The `min()` above is the real fix; this keeps the
+     option cards readable once they are the full width. */
+  .sp-options { grid-template-columns: 1fr; }
+  .sp-option { padding: .5rem; }
+}

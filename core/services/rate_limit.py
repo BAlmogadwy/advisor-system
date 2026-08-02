@@ -36,6 +36,7 @@ from core.models import RateLimitBucket
 
 #: Logical budgets. Every endpoint that spends the same resource shares one.
 GENERATION = "advisor_generation"
+PLANNING = "planner_generation"
 CONVERSATION = "advisor_conversation"
 ESCALATION = "advisor_escalation"
 FEEDBACK = "advisor_feedback"
@@ -53,6 +54,19 @@ LIMITS: dict[str, tuple[int, int]] = {
     # real ceiling three questions per ten minutes against a limit that reads as
     # six. Loose enough never to be the binding constraint, tight enough to stop a
     # script filling the sidebar with empty rows.
+    # The planner's solver, which is NOT the adviser's. It shares the word
+    # "generate" and almost nothing else: measured at 0.09 s per call against a
+    # language-model turn's ninety, with no external call at all. Charging it to
+    # GENERATION meant six timetable regenerations locked a student out of ASKING
+    # THEIR ADVISER A QUESTION for the rest of the window — a cheap door closing an
+    # expensive one, which is the protection running backwards.
+    #
+    # Twenty is roughly two seconds of solver per ten minutes at today's catalogue
+    # of 50 sections. The real ceiling is `planner_builder`'s own 8 s CP-SAT limit
+    # times three methods, so a full-size catalogue could make each call two orders
+    # of magnitude slower; this number is sized on measurement and should be
+    # re-measured, not assumed, when the catalogue is restored.
+    PLANNING: (20, 600),
     CONVERSATION: (30, 600),
     # The cost here is an adviser's attention, not CPU. Kept above the number of
     # bad turns a single frustrated session produces, because this is the only

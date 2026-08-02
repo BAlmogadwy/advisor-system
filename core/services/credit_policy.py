@@ -48,6 +48,15 @@ REGULATORY_MAX_CREDITS: Final[int] = 19
 MAIN_TERMS: Final[frozenset[int]] = frozenset({1, 2})
 SUMMER_TERM: Final[int] = 3
 
+#: The summer ceiling the guide records. Deliberately NOT part of the evidence this
+#: module hands the adviser — telling a student "your summer limit is 9" is a claim
+#: this system does not stand behind, and the instruction above says so.
+#:
+#: It exists for the opposite use: as an upper BOUND on what we may suggest. Not
+#: stating a limit and proposing a timetable that exceeds one we know about are
+#: different failures, and only the second puts a number in front of the student.
+SUMMER_MAX_CREDITS_BOUND: Final[int] = 9
+
 #: Registrar status marking a student the source page qualifies separately.
 EXPECTED_GRADUATE_STATUS: Final[str] = "GRADUATION EXPECTED"
 
