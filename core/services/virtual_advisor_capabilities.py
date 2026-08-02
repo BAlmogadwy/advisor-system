@@ -39,6 +39,7 @@ from core.services.rbac import (
     ROLE_STUDENT,
     ROLE_SUPER_ADMIN,
 )
+from core.services.student_helpers import is_elective_slot as _is_elective_slot
 from core.services.student_helpers import normalize_code
 
 logger = logging.getLogger(__name__)
@@ -438,15 +439,10 @@ def _exec_lookup_course(
     }
 
 
-def is_elective_slot(requirement_type: Any) -> bool:
-    """Whether a programme-requirement row is an elective PLACEHOLDER.
-
-    One line, shared, because it was written twice — here and in the planner's
-    `permitted_course_codes`, which then documented that it had avoided exactly
-    that. Recognised by the requirement TYPE rather than by the code shape: FE1 and
-    CS1 look nothing alike and a pattern would miss new families.
-    """
-    return "elective" in str(requirement_type or "").lower()
+#: Re-exported so this module's callers keep their import, but there is now ONE
+#: definition, in `student_helpers`, shared with the student screens. It was
+#: written twice and the two disagreed on seven mandatory courses (issue #55).
+is_elective_slot = _is_elective_slot
 
 
 def _resolve_elective_slot(
@@ -869,6 +865,32 @@ def _course_codes_array_schema(description: str) -> dict[str, Any]:
     return {"type": "array", "items": {"type": "string"}, "description": description}
 
 
+#: Every `kind` `build_unlock_report` can emit, said in words.
+#:
+#: The fall-through used to be `x["kind"].lower()`, which handed the model — and so
+#: the student — the literal string `unknown_prereq`. That is not a rare edge:
+#: UNKNOWN_PREREQ fires for 74 of 320 students on live data, because a plan can name
+#: a prerequisite that is not itself a plan row. `ASK_ADVISOR` carries no payload at
+#: all and would have read as `ask_advisor`.
+#:
+#: A closed vocabulary in, a sentence out, and an unknown kind says only what is
+#: actually known — the same contract the student screen's template already keeps.
+def _explain_reason(reason: dict[str, Any]) -> str:
+    kind = str(reason.get("kind") or "")
+    if kind == "MISSING_COURSE":
+        return f"needs {reason.get('code')}"
+    if kind == "MISSING_HOURS":
+        return f"needs {reason.get('required')} credit hours, has {reason.get('effective')}"
+    if kind == "UNKNOWN_PREREQ":
+        # The code is, by definition, not in this student's plan — so there is no
+        # name to give and no chain to point at.
+        return (
+            f"lists {reason.get('code')} as a prerequisite, which is not in this "
+            "student's plan; the adviser must confirm it"
+        )
+    return "the adviser must confirm why this course is blocked"
+
+
 def _exec_my_progress(
     args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
 ) -> dict[str, Any]:
@@ -887,15 +909,7 @@ def _exec_my_progress(
         return {"ok": False, "error": f"No degree plan found for student {student_id}."}
 
     def why(c):
-        out = []
-        for x in c["reasons"]:
-            if x["kind"] == "MISSING_COURSE":
-                out.append(f"needs {x['code']}")
-            elif x["kind"] == "MISSING_HOURS":
-                out.append(f"needs {x['required']} credit hours, has {x['effective']}")
-            else:
-                out.append(x["kind"].lower())
-        return out
+        return [_explain_reason(x) for x in c["reasons"]]
 
     return {
         "student_id": int(student_id),

@@ -203,15 +203,31 @@ a placeholder, so a mandatory course a student still needs appears in **neither
 reads as an elective slot with "choose with your adviser" rather than a course they
 must pass.
 
-Reference student 4401603: `elective_slots` is `['FE2', 'AI1', 'GS104', 'AI2',
-'AI3']` — `GS104` is mandatory — and `counts` sums to **47 against a 50-row plan**.
-Sampled across 60 students, `GS104` appears in 49 of them.
+Reference student 4401603: `elective_slots` was `['FE2', 'AI1', 'GS104', 'AI2',
+'AI3']` — `GS104` is mandatory. Sampled across 60 students, `GS104` appeared in 49
+of them, `GS103` in 8, `GS112` in 7.
+
+**Correcting a claim made in the previous commit.** It said `counts` "sums to 47
+against a 50-row plan", implying rows were being dropped. They were not. `one_step`
+is a SUBSET of `locked` (`student_unlock.py:258` — those two steps away), so adding
+the five counts double-counts and the total means nothing. The real partition is
+`open + locked + passed + studying + elective_slots`, and it summed to exactly 50
+both before and after the fix.
+
+That is what made this defect quiet: the misclassification moved a row **between**
+buckets without changing any total. The harm was never a missing row; it was that a
+mandatory course was placed in the "choose one with your adviser" bucket and shown
+to the student as a choice they do not have. `test_every_plan_row_lands_in_exactly_one_bucket`
+now asserts the disjoint partition and that `one_step <= locked`.
 
 This is the same disease as issue #54 (section labels): one rule, two
 implementations, one classifying by string shape and one by declared type.
-**Tracked as [issue #55](https://github.com/BAlmogadwy/advisor-system/issues/55)** —
-it is a defect in shipped code, not a design question for these screens, and fixing
-it changes what the locked screen displays for most students.
+**Fixed on this branch**, since a design document cannot describe screens built on
+a classifier that is wrong. `is_elective_slot` now lives in `student_helpers` and
+is the only implementation; `_is_placeholder` delegates to it and the code-shape
+rule is gone. For the reference student, `open` went 11 → 12 and `GS104` moved into
+the list of courses they must actually pass. See
+[issue #55](https://github.com/BAlmogadwy/advisor-system/issues/55).
 
 ---
 

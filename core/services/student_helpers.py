@@ -11,6 +11,27 @@ def normalize_code(code: object | None) -> str:
     return s
 
 
+def is_elective_slot(requirement_type: object | None) -> bool:
+    """Whether a programme-requirement row is an elective PLACEHOLDER.
+
+    THE answer, in the module both the student screens and the adviser capabilities
+    already import, because there were two and they disagreed on seven real courses.
+
+    The rule is the DECLARED `ProgrammeRequirement.type`, never the shape of the
+    code. `student_unlock` used to match a `GS`/`GSE`/`FE` prefix first and consult
+    the type second, which caught GS101, GS103, GS104, GS111, GS112, GS151 and
+    GS152 — Islamic Studies, Arabic Language Skills, University Life Skills and
+    Computer Skills. Every one of them is declared `Mandatory`, and every one was
+    shown to students as a "choose one with your adviser" slot and counted in no
+    progress bucket at all (issue #55).
+
+    Code shape cannot work here for the reason the adviser side already documented:
+    FE1 and CS1 look nothing alike, so a pattern that covers today's families misses
+    tomorrow's — and, as it turned out, wrongly claims some of today's.
+    """
+    return "ELECTIVE" in str(requirement_type or "").upper()
+
+
 def get_student_program(student_id: int | str) -> str | None:
     val = Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
     return val if val else None
