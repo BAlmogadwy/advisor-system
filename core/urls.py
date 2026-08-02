@@ -1,6 +1,13 @@
 from django.contrib.auth.decorators import login_required
 from django.urls import path
 
+from .advisor_conversation_views import (
+    conversation_create_view,
+    conversation_list_view,
+    conversation_messages_view,
+    conversation_post_message_view,
+    message_feedback_view,
+)
 from .advisor_views import (
     advisor_upsert_view,
     advisors_list_view,
@@ -244,6 +251,34 @@ urlpatterns = [
         "student/graduation/",
         login_required(student_graduation_view, login_url="student_login"),
         name="student_graduation",
+    ),
+    # Durable conversations. Every one of these resolves the student from the
+    # session and filters on it in the same query, so a conversation belonging to
+    # someone else is not found rather than found-and-refused.
+    path(
+        "student/advisor/conversations/",
+        login_required(conversation_list_view, login_url="student_login"),
+        name="advisor_conversation_list",
+    ),
+    path(
+        "student/advisor/conversations/new/",
+        login_required(conversation_create_view, login_url="student_login"),
+        name="advisor_conversation_create",
+    ),
+    path(
+        "student/advisor/conversations/<str:conversation_id>/messages/",
+        login_required(conversation_messages_view, login_url="student_login"),
+        name="advisor_conversation_messages",
+    ),
+    path(
+        "student/advisor/conversations/<str:conversation_id>/send/",
+        login_required(conversation_post_message_view, login_url="student_login"),
+        name="advisor_conversation_send",
+    ),
+    path(
+        "student/advisor/messages/<str:message_id>/feedback/",
+        login_required(message_feedback_view, login_url="student_login"),
+        name="advisor_message_feedback",
     ),
     path("", login_required(dashboard, login_url="login"), name="dashboard"),
     path("health/", health, name="health"),

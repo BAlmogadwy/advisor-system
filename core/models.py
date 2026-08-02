@@ -1578,6 +1578,28 @@ class AdvisorMessage(models.Model):
     # network failure cannot turn one question into two stored turns.
     idempotency_key = models.CharField(max_length=64, blank=True, default="", db_index=True)
 
+    # sha256 of the request that produced this turn. The unique key alone cannot
+    # tell a genuine retry from a different question sent under a reused key; with
+    # this, the first is replayed and the second is refused.
+    request_hash = models.CharField(max_length=64, blank=True, default="")
+
+    # Without a status, a crash between saving the student's message and saving the
+    # assistant's leaves a half-turn that is indistinguishable from a question still
+    # being answered — so a retry either duplicates it or is wrongly refused.
+    STATUS_PENDING = "PENDING"
+    STATUS_COMPLETED = "COMPLETED"
+    STATUS_FAILED = "FAILED"
+    STATUS_ABSTAINED = "ABSTAINED"
+    STATUS_ESCALATED = "ESCALATED"
+    STATUS_CHOICES = [
+        (STATUS_PENDING, "Pending"),
+        (STATUS_COMPLETED, "Completed"),
+        (STATUS_FAILED, "Failed"),
+        (STATUS_ABSTAINED, "Abstained"),
+        (STATUS_ESCALATED, "Escalated"),
+    ]
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_COMPLETED)
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
