@@ -82,9 +82,10 @@
       /* {id} is substituted client-side; Django cannot reverse a placeholder. */
       messages: "{% url 'advisor_conversation_messages' conversation_id='CONVERSATION_ID' %}",
       send:     "{% url 'advisor_conversation_send' conversation_id='CONVERSATION_ID' %}",
-      feedback: "{% url 'advisor_message_feedback' message_id='MESSAGE_ID' %}"
+      feedback: "{% url 'advisor_message_feedback' message_id='MESSAGE_ID' %}",
+      escalate: "{% url 'advisor_escalation_create' message_id='MESSAGE_ID' %}"
     }
   };
 </script>
-<script src="{% static 'js/page-student-advisor.js' %}?v=10"></script>
+<script src="{% static 'js/page-student-advisor.js' %}?v=12"></script>
 {% endblock %}

@@ -175,6 +175,20 @@ def _message_json(message: AdvisorMessage) -> dict[str, Any]:
         # network tab and read "grounding_state: not_consulted" beside an answer
         # about withdrawal limits. `status` already carries what the UI needs.
         data["citations"] = [_citation_json(c) for c in message.citations.all()]
+        case = next(iter(message.escalations.all()), None)
+        if case is not None:
+            # Enough for the thread to show that a person has this, and no more:
+            # the full case is its own endpoint.
+            data["escalation"] = {
+                "reference": case.reference,
+                "status": case.status,
+                "status_label": STATUS_LABELS_AR.get(case.status, case.status),
+                # A finished case stays on screen — the student wants the outcome —
+                # but it stops standing in the way of raising the question again.
+                "is_open": case.status not in AdvisorEscalation.TERMINAL_STATUSES,
+                "resolution_message": case.resolution_message,
+                "created_at": case.created_at.isoformat(),
+            }
     return data
 
 
@@ -238,7 +252,9 @@ def conversation_messages_view(request: HttpRequest, conversation_id: str) -> Js
     if over:
         return over
     conversation = _owned_conversation(conversation_id, student_id)
-    messages = conversation.messages.prefetch_related("citations").order_by("created_at")
+    messages = conversation.messages.prefetch_related("citations", "escalations").order_by(
+        "created_at"
+    )
     mine = {
         f.message_id: f
         for f in AdvisorFeedback.objects.filter(
@@ -672,6 +688,18 @@ def message_feedback_view(request: HttpRequest, message_id: str) -> JsonResponse
 MAX_NOTE_CHARS = 2000
 
 
+#: What a student is told a case is doing. The internal names are a workflow
+#: vocabulary — "OPEN" tells someone waiting on a decision nothing about whether a
+#: person has looked at it yet.
+STATUS_LABELS_AR = {
+    AdvisorEscalation.Status.OPEN: "جديدة",
+    AdvisorEscalation.Status.ASSIGNED: "قيد المراجعة",
+    AdvisorEscalation.Status.NEEDS_INFORMATION: "مطلوب معلومات إضافية",
+    AdvisorEscalation.Status.RESOLVED: "تمت المعالجة",
+    AdvisorEscalation.Status.CLOSED: "مغلقة",
+}
+
+
 def _escalation_json(escalation: AdvisorEscalation) -> dict[str, Any]:
     """What the STUDENT may see of their own case.
 
@@ -683,13 +711,18 @@ def _escalation_json(escalation: AdvisorEscalation) -> dict[str, Any]:
     actually needs.
     """
     return {
-        "id": escalation.reference,
+        "reference": escalation.reference,
         "status": escalation.status,
+        "status_label": STATUS_LABELS_AR.get(escalation.status, escalation.status),
         "reason_code": escalation.reason_code,
         "student_note": escalation.student_note,
         "generated_summary": escalation.generated_summary,
+        # What the adviser decided, written TO the student. Their working notes are
+        # a different field and are never here.
+        "resolution_message": escalation.resolution_message,
         "created_at": escalation.created_at.isoformat(),
         "updated_at": escalation.updated_at.isoformat(),
+        "resolved_at": escalation.resolved_at.isoformat() if escalation.resolved_at else None,
     }
 
 
@@ -832,19 +865,11 @@ def escalation_detail_view(request: HttpRequest, escalation_id: str) -> JsonResp
     if over:
         return over
 
-    # Accepts the reference the student was shown as well as the raw id, because
-    # the reference is the only one of the two they ever saw.
-    lookup: dict[str, Any] = {"student_id": principal.student_id}
-    raw = str(escalation_id or "")
-    try:
-        lookup["id"] = uuid.UUID(raw)
-    except (ValueError, AttributeError, TypeError):
-        prefix = raw.upper().removeprefix("ESC-")
-        if not prefix.isalnum():
-            from django.http import Http404
-
-            raise Http404("No such escalation") from None
-        lookup["id__startswith"] = prefix.lower()
-
-    case = get_object_or_404(AdvisorEscalation, **lookup)
+    # By reference, which is the only identifier the student was ever shown. The
+    # primary key stays internal.
+    case = get_object_or_404(
+        AdvisorEscalation,
+        reference=str(escalation_id or "").strip().upper(),
+        student_id=principal.student_id,
+    )
     return JsonResponse({"escalation": _escalation_json(case)})

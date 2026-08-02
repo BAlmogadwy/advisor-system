@@ -1,7 +1,7 @@
 import uuid
 
 from django.conf import settings
-from django.db import models
+from django.db import models, transaction
 from django.db.models import F
 
 
@@ -1819,6 +1819,13 @@ class AdvisorEscalation(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
+    #: What the student and the adviser quote to each other. Stored rather than
+    #: derived from the primary key: a reference that is a slice of the UUID hands
+    #: out part of an internal identifier every time it is read aloud, and it is
+    #: unreadable over a telephone. Allocated once, never changed — a case number
+    #: that moves is worse than no case number.
+    reference = models.CharField(max_length=24, unique=True, editable=False)
+
     # Real foreign keys: conversations and messages are OUR tables, so referential
     # integrity is free and a deleted conversation must not leave orphan cases.
     # `student_id` stays a bare integer — the same convention as the conversation
@@ -1847,6 +1854,19 @@ class AdvisorEscalation(models.Model):
     #: working notes on it are not addressed to them.
     adviser_notes = models.TextField(blank=True, default="")
 
+    #: What the adviser decided, written TO the student. A separate field from the
+    #: notes above and not a repurposing of them: the moment one field has to serve
+    #: both audiences, the first request to show the student an outcome publishes
+    #: the internal discussion that reached it.
+    resolution_message = models.TextField(blank=True, default="")
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="advisor_escalations_resolved",
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     resolved_at = models.DateTimeField(null=True, blank=True)
@@ -1874,15 +1894,10 @@ class AdvisorEscalation(models.Model):
     def __str__(self) -> str:
         return f"{self.reference}({self.status})"
 
-    @property
-    def reference(self) -> str:
-        """What the student quotes to an adviser.
-
-        Derived from the id rather than stored: it is a prefix of the real primary
-        key, so an adviser given the reference can always find the row, and there
-        is no second identifier that can drift out of step with the first.
-        """
-        return f"ESC-{str(self.id).split('-')[0].upper()}"
+    def save(self, *args, **kwargs):
+        if not self.reference:
+            self.reference = allocate_escalation_reference()
+        super().save(*args, **kwargs)
 
 
 class RateLimitBucket(models.Model):
@@ -1909,3 +1924,38 @@ class RateLimitBucket(models.Model):
 
     def __str__(self) -> str:
         return f"{self.key}={self.count}"
+
+
+class AdvisorReferenceCounter(models.Model):
+    """One row per year, holding the last case number issued.
+
+    Counting existing rows and adding one is the obvious approach and it is wrong:
+    two students escalating at the same moment both read the same count and both
+    claim the same number, and a case number that is not unique is not a reference
+    at all. Allocation locks this row instead.
+    """
+
+    year = models.PositiveIntegerField(primary_key=True)
+    last_number = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "advisor_reference_counters"
+
+    def __str__(self) -> str:
+        return f"{self.year}:{self.last_number}"
+
+
+def allocate_escalation_reference(*, year: int | None = None) -> str:
+    """The next case number, claimed under a row lock.
+
+    Zero-padded and year-scoped so it reads over a telephone and sorts by hand:
+    ADV-2026-00184.
+    """
+    from django.utils import timezone
+
+    year = year or timezone.now().year
+    with transaction.atomic():
+        counter, _ = AdvisorReferenceCounter.objects.select_for_update().get_or_create(year=year)
+        counter.last_number += 1
+        counter.save(update_fields=["last_number"])
+        return f"ADV-{year}-{counter.last_number:05d}"

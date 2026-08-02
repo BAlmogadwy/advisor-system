@@ -223,7 +223,7 @@ def test_pressing_the_button_twice_returns_the_same_case(client):
 
     assert first.status_code == 201
     assert second.status_code == 200
-    assert first.json()["escalation"]["id"] == second.json()["escalation"]["id"]
+    assert first.json()["escalation"]["reference"] == second.json()["escalation"]["reference"]
     assert AdvisorEscalation.objects.count() == 1
 
 
@@ -423,13 +423,16 @@ def test_the_student_serialiser_withholds_the_advisers_working_notes(client):
     assert detail.status_code == 200
     case = detail.json()["escalation"]
     assert set(case) == {
-        "id",
+        "reference",
         "status",
+        "status_label",
         "reason_code",
         "student_note",
         "generated_summary",
+        "resolution_message",
         "created_at",
         "updated_at",
+        "resolved_at",
     }
     body = detail.content.decode()
     for withheld in ("غير جاد", "A-1007", "evidence_snapshot", "adviser_notes"):
@@ -451,7 +454,7 @@ def test_a_student_sees_only_their_own_cases(client):
 
     listed = client.get(reverse("advisor_escalation_list")).json()["escalations"]
     assert len(listed) == 1
-    assert listed[0]["id"] == AdvisorEscalation.objects.get(student_id=MINE).reference
+    assert listed[0]["reference"] == AdvisorEscalation.objects.get(student_id=MINE).reference
 
 
 def test_another_students_case_is_not_found_by_reference(client):
