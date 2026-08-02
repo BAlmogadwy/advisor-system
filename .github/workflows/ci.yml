@@ -70,6 +70,83 @@ jobs:
           coverage run -m pytest
           coverage report --fail-under=35
 
+  planner-postgres:
+    # The `test` job above runs the whole suite on SQLite, where
+    # `select_for_update` is SILENTLY a no-op: Django nests the "are we in a
+    # transaction" check inside a `has_select_for_update` feature flag, so the
+    # lock request is discarded without error. The planner's concurrency
+    # guarantees therefore cannot be exercised there at all — a change removing
+    # both the row lock and the conditional-UPDATE claim would leave that job
+    # green.
+    #
+    # This job is not a duplicate of the suite; it is the only place those
+    # guarantees are tested. Deliberately narrow: migrations, the planner
+    # lifecycle, and the five real threaded concurrency tests. Widening it to the
+    # full suite on PostgreSQL is a separate decision with its own cost.
+    name: planner (PostgreSQL 16)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: advisor_test
+          POSTGRES_USER: advisor
+          POSTGRES_PASSWORD: advisor_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U advisor -d advisor_test"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      DATABASE_URL: postgresql://advisor:advisor_test_password@localhost:5432/advisor_test
+      # Turns a SKIP into a FAILURE. Without it, a malformed DATABASE_URL, a
+      # settings override or a service that never became healthy would produce a
+      # green job containing five skips — which looks exactly like a green job
+      # containing five passes.
+      REQUIRE_POSTGRES_TESTS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Verify the database engine before trusting the run
+        run: |
+          python -c "
+          import django, os
+          os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
+          django.setup()
+          from django.db import connection
+          assert connection.vendor == 'postgresql', connection.vendor
+          with connection.cursor() as c:
+              c.execute('SELECT version()')
+              print(c.fetchone()[0])
+          assert connection.features.has_select_for_update, 'row locking unavailable'
+          print('has_select_for_update:', connection.features.has_select_for_update)
+          "
+      - name: Apply migrations
+        run: python manage.py migrate --noinput
+      - name: Planner lifecycle and concurrency tests
+        run: |
+          pytest -q -p no:randomly \
+            tests/test_planner_draft_lifecycle.py \
+            tests/test_planner_draft_concurrency.py \
+            --maxfail=1
+      - name: Fail if the PostgreSQL-only tests did not actually run
+        # Belt and braces alongside REQUIRE_POSTGRES_TESTS: assert the five
+        # concurrency tests reported as PASSED, not merely that the job exited 0.
+        run: |
+          pytest -q -p no:randomly tests/test_planner_draft_concurrency.py \
+            --no-header -rA 2>&1 | tee /tmp/conc.txt
+          passed=$(grep -c '^PASSED' /tmp/conc.txt || true)
+          echo "concurrency tests passed: $passed"
+          test "$passed" -eq 5 || { echo "expected 5 passing concurrency tests"; exit 1; }
+
   security:
     name: security (bandit + pip-audit)
     runs-on: ubuntu-latest

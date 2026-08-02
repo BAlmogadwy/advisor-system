@@ -36,6 +36,7 @@ available, and `tests/test_planner_draft_lifecycle.py` pins that half on its own
 
 from __future__ import annotations
 
+import os
 import threading
 
 import pytest
@@ -44,15 +45,49 @@ from django.db import connection, connections
 from core.models import Course, PlannerDraft, ProgrammeRequirement, Student, TermSection
 from core.services import planner_drafts as svc
 
-pytestmark = [
-    pytest.mark.django_db(transaction=True),
-    pytest.mark.skipif(
-        not connection.features.has_select_for_update,
-        reason="row locking is a no-op on this backend; run with DATABASE_URL=postgres://…",
-    ),
-]
+pytestmark = [pytest.mark.django_db(transaction=True)]
 
 OWNER = 910001
+
+#: Set by the PostgreSQL CI job. Without it these tests skip, which is right for
+#: everyday SQLite development; with it they must FAIL rather than skip.
+REQUIRE_ENV = "REQUIRE_POSTGRES_TESTS"
+
+
+def require_postgresql() -> None:
+    """Skip on SQLite; refuse to be skipped where PostgreSQL was promised.
+
+    Called INSIDE each test rather than as a module-level `skipif`, because a
+    module-level marker is evaluated at import — before any fixture has opened a
+    connection, and long before a misconfigured `DATABASE_URL` would show itself.
+
+    The environment variable is the whole point. A green job containing five skips
+    looks exactly like a green job containing five passes, so a malformed
+    connection string, a settings override or a service that never became healthy
+    would silently retire the only tests that exercise the row lock. Concurrency
+    correctness is part of this feature's contract; it is not allowed to opt out
+    quietly.
+    """
+    if connection.vendor == "postgresql":
+        return
+
+    if os.environ.get(REQUIRE_ENV) == "1":
+        pytest.fail(
+            f"PostgreSQL planner tests were required ({REQUIRE_ENV}=1), "
+            f"but Django is using {connection.vendor!r}. Check DATABASE_URL and "
+            "that the database service is reachable."
+        )
+
+    pytest.skip(
+        "Requires PostgreSQL transaction semantics — `select_for_update` is a "
+        "silent no-op here. Run with DATABASE_URL=postgres://…"
+    )
+
+
+@pytest.fixture(autouse=True)
+def _postgresql_only():
+    """Autouse, so a test added later cannot forget it and quietly run on SQLite."""
+    require_postgresql()
 
 
 @pytest.fixture
