@@ -61,6 +61,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
+      - name: Install the browser the suite actually needs
+        # `build.sh` has done this for the deploy since the browser tests landed,
+        # but this job never runs build.sh — it pip-installs and goes straight to
+        # pytest. So every run since those tests were added has failed here, on
+        # this branch and on its base, with an error about a missing executable
+        # rather than anything about the code.
+        run: python -m playwright install --with-deps chromium
       - name: Clean shipped DB for fresh test database
         run: rm -f db.sqlite3
       - name: Run migrations
