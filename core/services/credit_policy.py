@@ -64,6 +64,62 @@ REGULATORY_BASIS: Final[dict[str, Any]] = {
     ),
 }
 
+#: The store records these figures actually come from. Declaring the id in
+#: REGULATORY_BASIS was not enough: the model read it, correctly attributed the range
+#: to the guide, and had no citable entry to render — so «الحد الأدنى حسب الدليل 12
+#: ساعة» went out uncited, a second regulatory channel outside the citation contract.
+#: Naming them here lets the runtime fetch the real records and cite them.
+BACKING_POLICY_IDS: Final[dict[str, str]] = {
+    "semester_range": "TU.LOAD.SEMESTER_RANGE",
+    "summer_max": "TU.LOAD.SUMMER_MAX",
+    "expected_graduate": "TU.LOAD.EXPECTED_GRADUATE_REQUEST",
+}
+
+
+def verify_against_store() -> list[str]:
+    """Do the constants still match the records they claim to come from?
+
+    Returns a list of disagreements, empty when consistent. The constants and the
+    store are two copies of the same numbers, and a copy that drifts silently is
+    worse than no copy: the answer would cite page 23 for a figure page 23 does not
+    contain, and every mechanical check would pass.
+    """
+    from core.services.policy_store import get_policy_store
+
+    problems: list[str] = []
+    store = get_policy_store()
+    record = store.by_id.get(BACKING_POLICY_IDS["semester_range"])
+    if record is None:
+        return [f"{BACKING_POLICY_IDS['semester_range']} is not in the policy store"]
+    if not store.is_approved(record):
+        problems.append(f"{record['policy_id']} is not AUTHORITY_APPROVED")
+    if record.get("min_value") != REGULATORY_MIN_CREDITS:
+        problems.append(
+            f"min: constant {REGULATORY_MIN_CREDITS} != record {record.get('min_value')}"
+        )
+    if record.get("max_value") != REGULATORY_MAX_CREDITS:
+        problems.append(
+            f"max: constant {REGULATORY_MAX_CREDITS} != record {record.get('max_value')}"
+        )
+    return problems
+
+
+def backing_citations(evidence: dict[str, Any]) -> list[str]:
+    """Which policy records back the figures actually present in this evidence block.
+
+    RECOMMENDED_MAX_CREDITS is deliberately absent: 18 is this system's own advisory
+    cap and no page of the guide says it. Attaching a citation to it would be the
+    same defect in the opposite direction — lending institutional authority to a
+    number we chose ourselves.
+    """
+    ids: list[str] = []
+    if "regulatory_max_credit_hours" in evidence:
+        ids.append(BACKING_POLICY_IDS["semester_range"])
+    if evidence.get("qualification"):
+        ids.append(BACKING_POLICY_IDS["expected_graduate"])
+    return ids
+
+
 #: Ready-made Arabic. Both limits translate naturally to الحد الأعلى, so leaving the
 #: wording to the model lets the distinction collapse in the one language the answer
 #: is actually written in.

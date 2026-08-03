@@ -1,0 +1,1670 @@
+schema_version: '1.0'
+_comment: 'Curated applicability scope, NOT extracted source. The records say what the guide says; this
+  says which questions each record may be used to answer. excluded_intents is the field that does the
+  work: it names the questions a retriever would plausibly route here on shared vocabulary and which
+  this record must never be used to answer.'
+scope:
+- policy_id: TU.ADVISING.CONTINUING_STUDENT_PROGRAMME
+  concept_id: advising_relationship
+  governing_entity: ADVISING
+  action: ADVISE
+  claim_types:
+  - PROCEDURE
+  direct_answer_intents:
+  - continuing_student_advising_timing
+  - when_do_i_meet_my_adviser
+  excluded_intents:
+  - new_student_orientation_programme
+  - preference_registration_window
+  - add_drop_deadline
+  - academic_calendar_dates
+  why_excluded: fixes advising meetings relative to preference registration and then points at the academic
+    calendar; it carries no date of its own, so it must never supply a registration or add/drop deadline
+- policy_id: TU.ADVISING.NEW_STUDENT_PROGRAMME
+  concept_id: advising_relationship
+  governing_entity: ADVISING
+  action: ADVISE
+  claim_types:
+  - PROCEDURE
+  - ENTITLEMENT
+  direct_answer_intents:
+  - new_student_orientation_programme
+  - first_advising_meeting_for_new_students
+  - group_advising_for_new_students
+  excluded_intents:
+  - continuing_student_advising_timing
+  - preference_registration_window
+  - adviser_duties_at_registration
+  - student_conduct_penalties
+  why_excluded: describes the one-off orientation for new entrants; it mentions rights, duties and 'الثواب
+    والعقاب' in passing as agenda items but states no conduct rule, and it does not govern when continuing
+    students meet their adviser
+- policy_id: TU.ADVISING.STUDENT_DUTIES
+  concept_id: advising_relationship
+  governing_entity: ADVISING
+  action: ADVISE
+  claim_types:
+  - PROCEDURE
+  direct_answer_intents:
+  - student_duties_toward_adviser
+  - what_to_do_if_no_adviser_is_assigned
+  excluded_intents:
+  - student_rights_toward_adviser
+  - academic_calendar_dates
+  - course_withdrawal_deadline
+  - semester_excuse_procedure
+  - attendance_requirement
+  - student_conduct_penalties
+  why_excluded: lists the student's obligations. It tells the student to go read the calendar and the
+    لائحة and to ask about الانسحاب/الاعتذار — it reproduces none of their content, so it can never
+    be evidence for a date, a withdrawal rule or an excuse rule; and a duty is not a disciplinary rule
+- policy_id: TU.ADVISING.STUDENT_RIGHTS
+  concept_id: advising_relationship
+  governing_entity: ADVISING
+  action: ADVISE
+  claim_types:
+  - ENTITLEMENT
+  - PROCEDURE
+  direct_answer_intents:
+  - student_rights_toward_adviser
+  - advising_confidentiality
+  - entitlement_to_adviser_help_with_add_and_drop
+  excluded_intents:
+  - student_duties_toward_adviser
+  - add_drop_deadline
+  - grade_appeal_procedure
+  - transcript_issuance_procedure
+  - student_record_privacy_regulation
+  why_excluded: enumerates what the student may expect FROM the adviser. Its add/drop right is an entitlement
+    to help, not a window; and its confidentiality sentence is the advising unit's own commitment, not
+    the university's records-release regulation
+- policy_id: TU.ADVISING.TOOLS
+  concept_id: advising_relationship
+  governing_entity: ADVISING
+  action: ADVISE
+  claim_types:
+  - PROCEDURE
+  - DEFINITION
+  direct_answer_intents:
+  - advising_tools_and_documents
+  - where_to_find_my_study_plan_and_transcript
+  - which_regulation_governs_study_and_exams
+  excluded_intents:
+  - graduation_requirements
+  - credit_load_limit
+  - grade_scale_definition
+  - transcript_issuance_procedure
+  - scholarship_admission_rules
+  why_excluded: names the six documents an adviser and student work from and where to reach them. It
+    holds none of their content, so it must never evidence a plan requirement, a load ceiling, a grade
+    rule or the non-Saudi scholarship rules it merely cites by title
+- policy_id: TU.APPEAL.ESCALATION_PATH
+  concept_id: grade_appeal
+  governing_entity: GRADE
+  action: APPEAL
+  claim_types:
+  - PROCEDURE
+  direct_answer_intents:
+  - grade_appeal_procedure
+  - grade_appeal_escalation
+  - who_decides_a_grade_appeal
+  - is_the_grade_appeal_decision_final
+  excluded_intents:
+  - grade_appeal_deadline
+  - course_deprivation_appeal
+  - conduct_penalty_appeal
+  - university_dismissal_appeal
+  - medical_excuse_effect_on_exams
+  - recalculation_of_gpa
+  why_excluded: this is the route for disputing a mark in a course; deprivation, disciplinary penalties
+    and dismissal are separate institutions with their own committees, and no date appears here
+- policy_id: TU.APPEAL.EVIDENCE_RETENTION
+  concept_id: grade_appeal
+  governing_entity: GRADE
+  action: APPEAL
+  claim_types:
+  - NUMERICAL_LIMIT
+  - ENTITLEMENT
+  direct_answer_intents:
+  - exam_script_retention_period
+  - how_long_is_appeal_evidence_kept
+  - can_i_see_my_exam_paper_later
+  excluded_intents:
+  - grade_appeal_deadline
+  - grade_appeal_procedure
+  - transcript_issuance
+  - student_record_retention
+  - document_replacement_procedure
+  why_excluded: the one-academic-year floor bounds how long the DEPARTMENT keeps evidence — it is not
+    the student's appeal window and says nothing about the academic record or its documents
+- policy_id: TU.APPEAL.FALSE_APPEAL_CONSEQUENCE
+  concept_id: grade_appeal
+  governing_entity: GRADE
+  action: APPEAL
+  claim_types:
+  - CONSEQUENCE
+  direct_answer_intents:
+  - risk_of_a_baseless_grade_appeal
+  - what_happens_if_my_appeal_is_rejected_as_untrue
+  excluded_intents:
+  - grade_appeal_procedure
+  - grade_appeal_deadline
+  - student_conduct_penalty_list
+  - student_conduct_violation_types
+  - cheating_penalty
+  why_excluded: it names only the referral to the conduct committee and imposes no penalty itself —
+    the penalty catalogue and the definition of a violation are separate records
+- policy_id: TU.APPEAL.WINDOW
+  concept_id: grade_appeal
+  governing_entity: GRADE
+  action: APPEAL
+  claim_types:
+  - DEADLINE
+  - NUMERICAL_LIMIT
+  - ENTITLEMENT
+  direct_answer_intents:
+  - grade_appeal_deadline
+  - grade_appeal_right
+  - when_does_the_appeal_clock_start
+  excluded_intents:
+  - grade_appeal_procedure
+  - grade_appeal_escalation
+  - course_deprivation_appeal
+  - conduct_penalty_appeal
+  - medical_excuse_submission_deadline
+  - course_withdrawal_deadline
+  - exam_script_retention_period
+  why_excluded: it fixes only a 15-day window from result approval and defers the mechanism to القواعد
+    التنفيذية by its own wording, so it is known-incomplete as a procedure and is not any other document's
+    deadline
+- policy_id: TU.ATTENDANCE.AUTO_REGISTRATION_TRAP
+  concept_id: attendance_requirement
+  governing_entity: ATTENDANCE
+  action: ATTEND
+  claim_types:
+  - CONSEQUENCE
+  direct_answer_intents:
+  - must_i_attend_auto_registered_courses
+  - common_registration_and_attendance_mistakes
+  - what_happens_if_i_ignore_courses_registered_for_me
+  excluded_intents:
+  - course_deprivation_threshold
+  - automatic_registration_eligibility
+  - semester_excuse_procedure
+  - semester_excuse_deadline
+  - registration_deadline
+  - how_to_drop_an_auto_registered_course
+  why_excluded: an anecdotal 'common mistake' warning that quotes no percentage, no deadline and no
+    procedure — it must never supply the 25% figure or the الاعتذار عن الفصل steps it merely alludes
+    to
+- policy_id: TU.ATTENDANCE.DEFERRING_EARLY_COURSES_TRAP
+  concept_id: course_sequencing_advice
+  governing_entity: PROGRAMME
+  action: REGISTER
+  claim_types:
+  - CONSEQUENCE
+  - PROCEDURE
+  direct_answer_intents:
+  - risk_of_postponing_early_level_courses
+  - course_sequencing_advice
+  - should_i_delay_first_level_courses
+  excluded_intents:
+  - study_deferral_procedure
+  - study_deferral_limit
+  - semester_excuse_procedure
+  - attendance_requirement
+  - course_deprivation_threshold
+  - course_withdrawal_procedure
+  why_excluded: 'despite the ATTENDANCE prefix in its id this record is about postponing COURSES within
+    a study plan and says nothing about attendance or الحرمان. Its ''تأجيل'' is not تأجيل الدراسة: it
+    is listed under أخطاء متكررة as advice, and creates no deferral entitlement, limit or procedure'
+- policy_id: TU.ATTENDANCE.DEPRIVATION_THRESHOLD
+  concept_id: course_deprivation
+  governing_entity: COURSE
+  action: DEPRIVE
+  claim_types:
+  - NUMERICAL_LIMIT
+  - CONSEQUENCE
+  direct_answer_intents:
+  - course_deprivation_threshold
+  - attendance_percentage_causing_deprivation
+  - can_i_sit_the_final_after_deprivation
+  - effect_of_deprivation_on_the_course
+  excluded_intents:
+  - university_dismissal_threshold
+  - university_dismissal_appeal
+  - course_deprivation_appeal
+  - conduct_deprivation_penalty
+  - deprivation_grade_gpa_weight
+  - medical_excuse_removes_deprivation
+  - course_withdrawal_after_deprivation
+  why_excluded: it bars a student from ONE course on an absence percentage — it is not dismissal from
+    enrolment, not the disciplinary deprivation penalty, and it states no appeal or excuse route at
+    all
+- policy_id: TU.ATTENDANCE.LATE_GRADE_AMENDMENT_TRAP
+  concept_id: grade_appeal
+  governing_entity: GRADE
+  action: APPEAL
+  claim_types:
+  - CONSEQUENCE
+  direct_answer_intents:
+  - why_follow_up_a_grade_amendment_promptly
+  - common_grade_appeal_mistakes
+  excluded_intents:
+  - grade_appeal_deadline
+  - grade_appeal_procedure
+  - grade_appeal_escalation
+  - attendance_requirement_percentage
+  - course_deprivation_threshold
+  - medical_excuse_submission_deadline
+  why_excluded: despite the ATTENDANCE prefix in its id this is a grade-amendment warning, and it fixes
+    no window — 'لفصول متأخرة' must never be converted into a deadline
+- policy_id: TU.CONDUCT.CHEATING
+  concept_id: student_conduct
+  governing_entity: CONDUCT
+  action: PENALISE
+  claim_types:
+  - CONSEQUENCE
+  - ELIGIBILITY
+  direct_answer_intents:
+  - cheating_penalty
+  - attempted_cheating_penalty
+  - repeat_cheating_consequence
+  - can_i_register_in_summer_after_cheating
+  excluded_intents:
+  - course_repetition_limit
+  - failed_course_retake_procedure
+  - university_dismissal_academic_threshold
+  - course_deprivation_threshold
+  - summer_registration_eligibility
+  - student_conduct_penalty_list
+  - exam_regulations_general
+  why_excluded: it fixes the consequence of cheating only — the course is recorded as a fail here, but
+    how a failed course may be retaken, and who may otherwise register in summer, are governed elsewhere
+- policy_id: TU.CONDUCT.PENALTIES
+  concept_id: student_conduct
+  governing_entity: CONDUCT
+  action: PENALISE
+  claim_types:
+  - CONSEQUENCE
+  - NUMERICAL_LIMIT
+  direct_answer_intents:
+  - student_conduct_penalty_list
+  - how_severe_can_a_disciplinary_penalty_be
+  - disciplinary_dismissal_exists
+  excluded_intents:
+  - university_dismissal_academic_threshold
+  - university_dismissal_after_warnings
+  - course_deprivation_threshold
+  - attendance_requirement_percentage
+  - cheating_penalty
+  - student_conduct_violation_types
+  - conduct_committee_procedure
+  - reenrolment_after_disciplinary_dismissal
+  why_excluded: every deprivation and dismissal listed here is a DISCIPLINARY sanction imposed by committee
+    — it is not the 25% attendance deprivation and not the academic dismissal that follows three warnings;
+    the source sentence is also a run-on whose parse the record itself flags as unresolved
+- policy_id: TU.CONDUCT.VIOLATION_TYPES
+  concept_id: student_conduct
+  governing_entity: CONDUCT
+  action: DEFINE
+  claim_types:
+  - DEFINITION
+  direct_answer_intents:
+  - student_conduct_violation_types
+  - is_this_act_a_disciplinary_violation
+  excluded_intents:
+  - student_conduct_penalty_list
+  - cheating_penalty
+  - attendance_requirement_percentage
+  - course_deprivation_threshold
+  - conduct_committee_procedure
+  - reenrolment_after_disciplinary_dismissal
+  why_excluded: it enumerates what counts as a violation and attaches no penalty — and although it lists
+    'الامتناع عن حضورها' it sets no attendance percentage and must never supply the deprivation threshold
+- policy_id: TU.CONTACT.ADVISER_CHANNELS
+  concept_id: contact_channels
+  governing_entity: ADVISING
+  action: ADVISE
+  claim_types:
+  - PROCEDURE
+  direct_answer_intents:
+  - adviser_contact_channels
+  - how_to_reach_my_academic_adviser
+  excluded_intents:
+  - deanship_contact_details
+  - deprivation_appeal_procedure
+  - grade_appeal_procedure
+  - complaint_escalation_path
+  - registration_override_authority
+  why_excluded: lists the five channels for reaching the academic ADVISER only; it names no other office
+    and describes no appeal or escalation route, so 'who do I go to about X' questions about grades,
+    deprivation or overrides must not land here
+- policy_id: TU.CONTACT.DEANSHIP
+  concept_id: contact_channels
+  governing_entity: ADVISING
+  action: ADVISE
+  claim_types:
+  - PROCEDURE
+  direct_answer_intents:
+  - deanship_of_admission_and_registration_contact_details
+  excluded_intents:
+  - adviser_contact_channels
+  - grade_appeal_procedure
+  - deprivation_appeal_procedure
+  - complaint_escalation_path
+  - registration_override_authority
+  why_excluded: a contact list for the Deanship of Admission and Registration; having a phone number
+    is not a procedure, so it can never evidence who decides an appeal, an override, or that the deanship
+    is the right recipient for a given request
+- policy_id: TU.DEF.ASSESSMENT_AND_RECORD
+  concept_id: academic_terminology
+  governing_entity: GRADE
+  action: DEFINE
+  claim_types:
+  - DEFINITION
+  direct_answer_intents:
+  - grade_terminology_definitions
+  - final_grade_composition
+  - term_gpa_vs_cumulative_gpa_definition
+  - incomplete_grade_definition
+  - in_progress_grade_definition
+  - academic_record_definition
+  - visiting_student_definition
+  excluded_intents:
+  - grade_scale_weights
+  - gpa_calculation_worked_method
+  - visiting_study_limits
+  - visiting_study_eligibility
+  - incomplete_grade_completion_procedure
+  - grade_appeal_procedure
+  - honours_eligibility
+  - transcript_issuance
+  why_excluded: definitions only — it defines الطالب الزائر and المعدل without any of the visiting-study
+    limits, without the weight table the GPA arithmetic needs, and without the route for completing
+    an IC
+- policy_id: TU.DEF.CALENDAR_UNITS
+  concept_id: academic_terminology
+  governing_entity: TERM
+  action: DEFINE
+  claim_types:
+  - DEFINITION
+  - NUMERICAL_LIMIT
+  direct_answer_intents:
+  - academic_year_definition
+  - semester_definition_minimum_weeks
+  - summer_term_definition
+  - credit_unit_definition
+  - study_plan_definition
+  - course_definition
+  - concurrent_prerequisite_recognised
+  excluded_intents:
+  - academic_calendar_dates
+  - current_term_dates
+  - credit_load_limits
+  - programme_maximum_duration
+  - graduation_requirements_credits
+  - registration_deadline
+  - prerequisite_of_specific_course
+  why_excluded: it defines the units of the calendar in regulation minimums — it fixes no actual dates,
+    no credit-load ceiling, and no programme duration, so its week counts must never be read as this
+    university's timetable or as a limit on the student
+- policy_id: TU.DEF.PROGRAMME_AND_COURSES
+  concept_id: academic_terminology
+  governing_entity: PROGRAMME
+  action: DEFINE
+  claim_types:
+  - DEFINITION
+  direct_answer_intents:
+  - course_requirement_type_definitions
+  - free_elective_definition
+  - prerequisite_definition
+  - credit_load_definition
+  - enrolment_lapse_definition
+  - deregistration_definition
+  - general_estimate_definition
+  excluded_intents:
+  - credit_load_limits
+  - deregistration_trigger_threshold
+  - enrolment_lapse_consequence
+  - enrolment_reinstatement_procedure
+  - graduation_requirements_credits
+  - prerequisite_of_specific_course
+  - programme_maximum_duration
+  why_excluded: it defines العبء الدراسي, الانقطاع and طي القيد as terms and states no number and no
+    trigger for any of them — the load ceilings, the lapse threshold and the reinstatement route are
+    separate records
+- policy_id: TU.DEFERRAL.MAXIMUM
+  concept_id: study_deferral
+  governing_entity: TERM
+  action: DEFER
+  claim_types:
+  - NUMERICAL_LIMIT
+  - ELIGIBILITY
+  direct_answer_intents:
+  - study_deferral_maximum
+  - study_deferral_consecutive_limit
+  - how_many_terms_may_i_defer
+  excluded_intents:
+  - course_withdrawal_limit
+  - course_repetition_limit
+  - semester_excuse_maximum_count
+  - maximum_programme_duration
+  - university_dismissal_duration
+  - enrolment_lapse_limit
+  why_excluded: 2 consecutive / 3 non-consecutive is a ceiling on DEFERRALS only; it shares the phrase
+    الحد الأقصى with the five-withdrawal allowance, the repeat count and the programme duration limit,
+    and is the exact shape of the live failure where one ceiling was read as another
+- policy_id: TU.DEFERRAL.NOT_COUNTED
+  concept_id: study_deferral
+  governing_entity: TERM
+  action: DEFER
+  claim_types:
+  - CONSEQUENCE
+  direct_answer_intents:
+  - study_deferral_graduation_clock_effect
+  - does_deferring_a_term_delay_graduation
+  excluded_intents:
+  - semester_excuse_graduation_clock_effect
+  - maximum_programme_duration
+  - university_dismissal_duration
+  - study_deferral_maximum
+  - course_withdrawal_graduation_clock_effect
+  why_excluded: deferred terms are EXCLUDED from the graduation clock, the mirror image of the excuse
+    rule; it states neither how long the clock runs nor how many terms may be deferred
+- policy_id: TU.DEFERRAL.PROCEDURE
+  concept_id: study_deferral
+  governing_entity: TERM
+  action: DEFER
+  claim_types:
+  - PROCEDURE
+  - DEADLINE
+  direct_answer_intents:
+  - study_deferral_procedure
+  - study_deferral_deadline
+  - study_deferral_request_channel
+  excluded_intents:
+  - semester_excuse_procedure
+  - semester_excuse_deadline
+  - course_withdrawal_procedure
+  - course_withdrawal_deadline
+  - university_withdrawal_procedure
+  - study_deferral_maximum
+  - enrolment_reinstatement_procedure
+  why_excluded: the sentence is word-for-word the excuse and course-withdrawal procedure with التأجيل
+    swapped in, yet it binds two different calendar deadlines keyed on the term being deferred — reused
+    for a neighbouring instrument it yields a confidently wrong date
+- policy_id: TU.DEFERRAL.STIPEND_SUSPENDED
+  concept_id: study_deferral
+  governing_entity: TERM
+  action: DEFER
+  claim_types:
+  - CONSEQUENCE
+  direct_answer_intents:
+  - study_deferral_stipend_effect
+  excluded_intents:
+  - semester_excuse_stipend_effect
+  - course_withdrawal_stipend_effect
+  - stipend_eligibility_rules
+  - stipend_reinstatement_after_return
+  - study_deferral_graduation_clock_effect
+  why_excluded: it covers the stipend of the المؤجل student only; the excuse case has its own record
+    and no source states what a course withdrawal does to the stipend or when it resumes
+- policy_id: TU.DEREGISTRATION.TRIGGER
+  concept_id: enrolment_lapse
+  governing_entity: ENROLMENT
+  action: DISMISS
+  claim_types:
+  - CONSEQUENCE
+  - DEFINITION
+  direct_answer_intents:
+  - deregistration_grounds
+  - enrolment_lapse_trigger
+  - interruption_without_deferral_consequence
+  excluded_intents:
+  - deregistration_interruption_duration
+  - university_dismissal_grounds
+  - study_deferral_procedure
+  - semester_excuse_procedure
+  - enrolment_reinstatement_conditions
+  - academic_warning_consequence
+  why_excluded: States that interruption triggers طي القيد but delegates the length to مجلس الجامعة
+    — quoting any period from it fabricates a number; and طي القيد is not الفصل الأكاديمي.
+- policy_id: TU.DEREGISTRATION.VISITING_EXEMPTION
+  concept_id: enrolment_lapse
+  governing_entity: ENROLMENT
+  action: VISIT
+  claim_types:
+  - DEFINITION
+  - CONSEQUENCE
+  direct_answer_intents:
+  - enrolment_lapse_exemptions
+  - visiting_study_effect_on_enrolment_continuity
+  - what_counts_as_interruption
+  excluded_intents:
+  - deregistration_interruption_duration
+  - visiting_study_eligibility
+  - visiting_study_unit_limit_outside_university
+  - visiting_study_visit_limit
+  - visiting_study_approval_requirement
+  - semester_excuse_effect
+  - study_deferral_procedure
+  why_excluded: A single carve-out from the interruption count — it authorises nothing about visiting
+    study itself and supplies no interruption period.
+- policy_id: TU.DISMISSAL.DURATION_EXCEEDED
+  concept_id: programme_maximum_duration
+  governing_entity: PROGRAMME
+  action: DISMISS
+  claim_types:
+  - NUMERICAL_LIMIT
+  - CONSEQUENCE
+  - ELIGIBILITY
+  direct_answer_intents:
+  - programme_maximum_duration
+  - university_dismissal_duration
+  - nominal_study_duration_definition
+  - duration_extension_exception
+  excluded_intents:
+  - course_repetition_limit
+  - course_deprivation_appeal
+  - graduation_credit_total
+  - credit_load_limit
+  - study_deferral_limit
+  - semester_excuse_limit
+  - university_dismissal_warning_threshold
+  why_excluded: Governs the maximum DURATION for finishing a programme; it states no percentage of credits
+    and no per-course allowance, so it can never ground a repeat limit or any credit-count claim (the
+    exact live failure).
+- policy_id: TU.DISMISSAL.THREE_WARNINGS
+  concept_id: university_dismissal
+  governing_entity: ENROLMENT
+  action: DISMISS
+  claim_types:
+  - ELIGIBILITY
+  - CONSEQUENCE
+  - NUMERICAL_LIMIT
+  direct_answer_intents:
+  - university_dismissal_grounds
+  - university_dismissal_warning_threshold
+  - academic_warning_consequence
+  - university_council_dismissal_exception
+  excluded_intents:
+  - course_deprivation_appeal
+  - course_deprivation_threshold
+  - course_repetition_limit
+  - disciplinary_dismissal_grounds
+  - academic_warning_issuance_criteria
+  - gpa_probation_threshold
+  - deregistration_interruption_duration
+  - programme_maximum_duration
+  why_excluded: Dismissal from ENROLMENT on a count of warnings — it is not deprivation from a course,
+    not a disciplinary dismissal, not طي القيد, and its "three" is warnings, never course retakes or
+    a GPA reading.
+- policy_id: TU.EXCUSE.COUNTS_TOWARD_DURATION
+  concept_id: semester_excuse
+  governing_entity: TERM
+  action: EXCUSE
+  claim_types:
+  - CONSEQUENCE
+  direct_answer_intents:
+  - semester_excuse_graduation_clock_effect
+  - does_apologising_for_a_term_delay_graduation
+  excluded_intents:
+  - study_deferral_graduation_clock_effect
+  - maximum_programme_duration
+  - university_dismissal_duration
+  - course_withdrawal_graduation_clock_effect
+  - semester_excuse_maximum_count
+  why_excluded: it says an excused term counts toward the graduation clock; the deferral rule is the
+    exact inverse and the ceiling on that clock is a different record — citing this one for either would
+    invert or invent the answer
+- policy_id: TU.EXCUSE.PROCEDURE
+  concept_id: semester_excuse
+  governing_entity: TERM
+  action: EXCUSE
+  claim_types:
+  - PROCEDURE
+  - DEADLINE
+  direct_answer_intents:
+  - semester_excuse_procedure
+  - semester_excuse_deadline
+  - semester_excuse_request_channel
+  excluded_intents:
+  - course_withdrawal_procedure
+  - course_withdrawal_deadline
+  - study_deferral_procedure
+  - study_deferral_deadline
+  - university_withdrawal_procedure
+  - medical_excuse_procedure
+  - semester_excuse_maximum_count
+  - semester_excuse_eligibility
+  why_excluded: its one-line wording is near-identical to the deferral and course-withdrawal procedures
+    but its bound calendar event is a different date and covers only 1448 term 1; اعتذار is also not
+    the medical عذر, and no count or eligibility bar is stated here
+- policy_id: TU.EXCUSE.STIPEND_SUSPENDED
+  concept_id: semester_excuse
+  governing_entity: TERM
+  action: EXCUSE
+  claim_types:
+  - CONSEQUENCE
+  direct_answer_intents:
+  - semester_excuse_stipend_effect
+  excluded_intents:
+  - study_deferral_stipend_effect
+  - course_withdrawal_stipend_effect
+  - stipend_eligibility_rules
+  - stipend_reinstatement_after_return
+  - semester_excuse_graduation_clock_effect
+  why_excluded: it covers the stipend of the المعتذر student only; deferral has its own identically-worded
+    record that must be cited for deferral, and no source states the effect of a course withdrawal or
+    how the stipend resumes
+- policy_id: TU.EXCUSE.TRANSCRIPT_MARK
+  concept_id: semester_excuse
+  governing_entity: STUDENT_RECORD
+  action: EXCUSE
+  claim_types:
+  - CONSEQUENCE
+  direct_answer_intents:
+  - semester_excuse_transcript_mark
+  - what_appears_on_my_record_after_a_term_excuse
+  excluded_intents:
+  - course_withdrawal_transcript_mark
+  - transcript_symbol_table_lookup
+  - grade_symbol_meaning
+  - gpa_effect_of_semester_excuse
+  - study_deferral_transcript_mark
+  why_excluded: it assigns (ع) for a WHOLE-TERM excuse only; the p.29 symbol table lists W/(ع) as منسحب
+    بعذر and that collision is unresolved, so this record can neither say what a course withdrawal shows
+    nor what the symbol does to the GPA
+- policy_id: TU.GPA.FORMULA
+  concept_id: gpa_calculation
+  governing_entity: GRADE
+  action: CALCULATE
+  claim_types:
+  - PROCEDURE
+  - DEFINITION
+  direct_answer_intents:
+  - gpa_calculation_method
+  - how_are_points_computed
+  - term_gpa_vs_cumulative_gpa_method
+  excluded_intents:
+  - student_actual_gpa_lookup
+  - grade_scale_weights
+  - general_estimate_bands
+  - graduation_minimum_gpa
+  - honours_gpa_thresholds
+  - academic_warning_gpa_threshold
+  why_excluded: it supplies arithmetic only — the weights come from the scale table, and the database
+    holds no grades at all, so this record can never be used to report a particular student's GPA
+- policy_id: TU.GPA.GENERAL_ESTIMATE_BANDS
+  concept_id: gpa_calculation
+  governing_entity: GRADE
+  action: CALCULATE
+  claim_types:
+  - NUMERICAL_LIMIT
+  - DEFINITION
+  direct_answer_intents:
+  - general_estimate_bands
+  - gpa_band_for_cumulative_average
+  - numeric_value_of_maqbool_band
+  excluded_intents:
+  - grade_scale_bands
+  - honours_gpa_thresholds
+  - graduation_minimum_gpa
+  - academic_warning_gpa_threshold
+  - gpa_calculation_method
+  why_excluded: these bands classify a CUMULATIVE GPA and share their Arabic names with the course-grade
+    table — they are not course grades, not honours ranks, and they state no eligibility rule of their
+    own
+- policy_id: TU.GRADE.SCALE
+  concept_id: grade_scale
+  governing_entity: GRADE
+  action: CALCULATE
+  claim_types:
+  - DEFINITION
+  - NUMERICAL_LIMIT
+  direct_answer_intents:
+  - grade_scale_bands
+  - percent_to_letter_grade
+  - grade_symbol_weights
+  - pass_mark_threshold
+  - which_gpa_scale_is_used
+  excluded_intents:
+  - general_estimate_bands
+  - honours_gpa_thresholds
+  - graduation_minimum_gpa
+  - gpa_calculation_method
+  - special_grade_symbols
+  - academic_warning_gpa_threshold
+  why_excluded: its ممتاز / جيد جداً / مقبول bands describe ONE course's percentage, not the cumulative-GPA
+    bands that carry the identical Arabic names — and its 4.75 weight is a course weight, not the first-honours
+    GPA
+- policy_id: TU.GRADE.SPECIAL_SYMBOLS
+  concept_id: grade_scale
+  governing_entity: GRADE
+  action: DEFINE
+  claim_types:
+  - DEFINITION
+  - NUMERICAL_LIMIT
+  direct_answer_intents:
+  - special_grade_symbol_meaning
+  - deprivation_grade_gpa_weight
+  - difference_between_denied_and_failed
+  - which_grades_count_in_gpa
+  excluded_intents:
+  - semester_excuse_transcript_mark
+  - course_withdrawal_transcript_mark
+  - course_deprivation_threshold
+  - course_deprivation_appeal
+  - grade_scale_bands
+  - incomplete_grade_completion_procedure
+  - honours_gpa_thresholds
+  why_excluded: the record's own open question leaves the owner of the symbol (ع) unresolved between
+    الانسحاب and الاعتذار, so it must not settle either; and it weighs محروم without stating when deprivation
+    occurs or how to contest it
+- policy_id: TU.GRADUATION.COUNCIL_AWARDS_DEGREE
+  concept_id: graduation_requirements
+  governing_entity: PROGRAMME
+  action: GRADUATE
+  claim_types:
+  - PROCEDURE
+  - DEFINITION
+  direct_answer_intents:
+  - who_awards_the_degree
+  - when_am_i_officially_graduated
+  - graduation_term_definition
+  excluded_intents:
+  - remaining_requirements_check
+  - am_i_graduating_this_term
+  - graduation_minimum_gpa
+  - graduation_requirements_credits
+  - graduation_document_issuance
+  - honours_eligibility
+  why_excluded: it names the awarding authority and separates plan completion from official graduation
+    — it can therefore never be cited to confirm that a student has finished, only that the award is
+    a Council decision
+- policy_id: TU.GRADUATION.DOCUMENTS
+  concept_id: academic_documents
+  governing_entity: STUDENT_RECORD
+  action: ISSUE_DOCUMENT
+  claim_types:
+  - PROCEDURE
+  direct_answer_intents:
+  - transcript_issuance
+  - graduation_certificate_issuance
+  - replacement_of_lost_or_damaged_document
+  - document_fees
+  excluded_intents:
+  - official_graduation_confirmation
+  - graduation_minimum_gpa
+  - graduation_requirements_credits
+  - academic_record_definition
+  - exam_script_retention_period
+  - grade_appeal_procedure
+  why_excluded: it routes document requests to the deanship and decides nothing about whether the student
+    has graduated or what the record must contain
+- policy_id: TU.GRADUATION.GPA_RESCUE_RETAKE
+  concept_id: graduation_requirements
+  governing_entity: PROGRAMME
+  action: REPEAT
+  claim_types:
+  - ELIGIBILITY
+  - PROCEDURE
+  direct_answer_intents:
+  - passed_all_courses_but_gpa_too_low
+  - gpa_rescue_retake_eligibility
+  - who_chooses_the_courses_to_retake_for_gpa
+  excluded_intents:
+  - course_repetition_limit
+  - failed_course_retake_procedure
+  - grade_replacement_rule
+  - graduation_minimum_gpa
+  - university_dismissal_duration
+  - academic_warning_remedy
+  why_excluded: a discretionary college-council remedy available only to a graduate who PASSED every
+    course — it fixes no count and no limit, so it must never answer how many times a course may be
+    repeated or what happens to a failed one
+- policy_id: TU.GRADUATION.MINIMUM_GPA
+  concept_id: graduation_requirements
+  governing_entity: PROGRAMME
+  action: GRADUATE
+  claim_types:
+  - ELIGIBILITY
+  - NUMERICAL_LIMIT
+  direct_answer_intents:
+  - graduation_minimum_gpa
+  - is_my_gpa_high_enough_to_graduate_in_principle
+  excluded_intents:
+  - honours_gpa_thresholds
+  - graduation_requirements_credits
+  - programme_maximum_duration
+  - official_graduation_confirmation
+  - general_estimate_bands
+  - academic_warning_gpa_threshold
+  why_excluded: it states the absolute floor (مقبول) while each programme may set a higher bar the project
+    does not hold — so the floor must never be presented as the applicable requirement, and it decides
+    nothing about credits or the Council's award
+- policy_id: TU.HONOURS.CONDITIONS
+  concept_id: honours
+  governing_entity: PROGRAMME
+  action: GRADUATE
+  claim_types:
+  - ELIGIBILITY
+  - NUMERICAL_LIMIT
+  direct_answer_intents:
+  - honours_eligibility_conditions
+  - does_a_failed_course_block_honours
+  - honours_home_university_credit_ratio
+  - does_a_disciplinary_decision_block_honours
+  excluded_intents:
+  - am_i_eligible_for_honours
+  - honours_gpa_thresholds
+  - programme_maximum_duration
+  - programme_minimum_duration
+  - graduation_minimum_gpa
+  - student_conduct_penalty_list
+  - transfer_credit_counting
+  why_excluded: every input it needs is missing or structurally unrepresentable in the project (a failed
+    course is byte-identical to one never taken), so it may be explained but never evaluated; and it
+    references the min/max stay durations without defining them
+- policy_id: TU.HONOURS.THRESHOLDS
+  concept_id: honours
+  governing_entity: PROGRAMME
+  action: GRADUATE
+  claim_types:
+  - NUMERICAL_LIMIT
+  - ELIGIBILITY
+  direct_answer_intents:
+  - honours_gpa_thresholds
+  - first_versus_second_honours_gpa
+  excluded_intents:
+  - honours_eligibility_conditions
+  - am_i_eligible_for_honours
+  - general_estimate_bands
+  - grade_scale_bands
+  - graduation_minimum_gpa
+  - scholarship_eligibility
+  why_excluded: the GPA figure is necessary but nowhere near sufficient — the four disqualifying conditions
+    sit in a separate record, so this one alone must never be used to tell a student they qualify
+- policy_id: TU.LEAVE.COMPARISON
+  concept_id: leave_instrument_comparison
+  governing_entity: TERM
+  action: DEFINE
+  claim_types:
+  - DEFINITION
+  - CONSEQUENCE
+  direct_answer_intents:
+  - leave_instrument_comparison
+  - excuse_vs_deferral_difference
+  - course_withdrawal_vs_semester_excuse_difference
+  - which_leave_instrument_should_i_choose
+  excluded_intents:
+  - course_withdrawal_transcript_mark
+  - course_withdrawal_graduation_clock_effect
+  - course_withdrawal_stipend_effect
+  - semester_excuse_deadline
+  - study_deferral_deadline
+  - course_withdrawal_deadline
+  - study_deferral_maximum
+  - course_withdrawal_limit
+  - university_withdrawal_procedure
+  - study_deferral_transcript_mark
+  why_excluded: it is a side-by-side table whose course-withdrawal and deferral cells are explicitly
+    not_stated and whose deadline cells only point at the academic calendar, so it must never be the
+    source of a mark, a count or a date
+- policy_id: TU.LOAD.EXPECTED_GRADUATE_REQUEST
+  concept_id: credit_load
+  governing_entity: TERM
+  action: REGISTER
+  claim_types:
+  - ELIGIBILITY
+  - PROCEDURE
+  direct_answer_intents:
+  - expected_graduate_registration_request_procedure
+  - who_approves_an_expected_graduate_load_request
+  excluded_intents:
+  - max_credits_per_term
+  - min_credits_per_term
+  - credit_load_limit
+  - overload_permission_limit
+  - summer_credit_load_limit
+  - graduation_requirements
+  why_excluded: its 16-hour figure is unresolved (hours vs units, and it sits BELOW the ordinary 19-unit
+    ceiling), extraction confidence is low and runtime use is PROHIBITED_FOR_DECISION — so this record
+    may support only the request-and-approval route, never any load number; nor does it state what qualifies
+    a student as متوقع تخرجه
+- policy_id: TU.LOAD.FULL_YEAR_RANGE
+  concept_id: credit_load
+  governing_entity: TERM
+  action: REGISTER
+  claim_types:
+  - NUMERICAL_LIMIT
+  direct_answer_intents:
+  - full_year_system_credit_load_limit
+  excluded_intents:
+  - max_credits_per_term
+  - min_credits_per_term
+  - summer_credit_load_limit
+  - graduation_total_credits
+  - programme_duration_limit
+  why_excluded: applies only to the FULL_YEAR study system, which none of the 12 modelled programmes
+    use. Its 24-39 figures are annual and must never be served as a semester ceiling or halved into
+    one
+- policy_id: TU.LOAD.INCOMPLETE_GRADE
+  concept_id: grade_scale
+  governing_entity: GRADE
+  action: DEFINE
+  claim_types:
+  - DEFINITION
+  - CONSEQUENCE
+  - PROCEDURE
+  - DEADLINE
+  direct_answer_intents:
+  - incomplete_grade_meaning
+  - incomplete_grade_completion_deadline
+  - incomplete_grade_gpa_effect
+  - how_to_get_an_incomplete
+  excluded_intents:
+  - deprivation_meaning
+  - deprivation_appeal_procedure
+  - failing_grade_consequence
+  - course_repetition_limit
+  - grade_appeal_procedure
+  - gpa_calculation_method
+  - semester_excuse_procedure
+  why_excluded: 'defines IC (غير مكتمل) only. It sits inside the محروم/راسب/غير مكتمل vocabulary cluster
+    and must never answer for الحرمان or for a failed course: it grants no appeal, sets no repetition
+    allowance, and ''لا يحسب ضمن المعدل'' is an exclusion from the GPA, not a method for computing it'
+- policy_id: TU.LOAD.SEMESTER_RANGE
+  concept_id: credit_load
+  governing_entity: TERM
+  action: REGISTER
+  claim_types:
+  - NUMERICAL_LIMIT
+  direct_answer_intents:
+  - max_credits_per_term
+  - min_credits_per_term
+  - credit_load_limit
+  excluded_intents:
+  - summer_credit_load_limit
+  - full_year_credit_load_limit
+  - expected_graduate_load_exception
+  - graduation_total_credits
+  - course_repetition_limit
+  - programme_duration_limit
+  why_excluded: 'a 12-19 unit range for a MAIN term under the two-semester system only. It is a per-term
+    figure: it must never be rescaled into a degree total, a duration, or a repetition allowance, and
+    the summer/full-year/expected-graduate ceilings each have their own record'
+- policy_id: TU.LOAD.SUMMER_MAX
+  concept_id: credit_load
+  governing_entity: TERM
+  action: REGISTER
+  claim_types:
+  - NUMERICAL_LIMIT
+  direct_answer_intents:
+  - summer_credit_load_limit
+  excluded_intents:
+  - max_credits_per_term
+  - min_credits_per_term
+  - full_year_credit_load_limit
+  - summer_term_length
+  - is_summer_term_compulsory
+  why_excluded: caps the summer term's load at 9 units and nothing else — not the main-term range, and
+    not how long the summer term is or whether it runs, which belong to the term-structure record
+- policy_id: TU.MEDICAL_EXCUSE.ACCEPTED_ISSUERS
+  concept_id: medical_excuse
+  governing_entity: ATTENDANCE
+  action: EXCUSE
+  claim_types:
+  - ELIGIBILITY
+  direct_answer_intents:
+  - medical_excuse_accepted_issuers
+  - is_a_private_hospital_report_accepted
+  - which_body_must_issue_my_medical_report
+  excluded_intents:
+  - medical_excuse_submission_deadline
+  - foreign_medical_report_acceptance
+  - medical_excuse_effect_on_exams
+  - semester_excuse_procedure
+  - semester_excuse_eligibility
+  - study_deferral_eligibility
+  - medical_excuse_removes_deprivation
+  why_excluded: it lists WHO may issue a report and nothing else — it is not the two-week window, not
+    the attestation rule for reports issued abroad, and not the الاعتذار عن الفصل institution that shares
+    the word عذر
+- policy_id: TU.MEDICAL_EXCUSE.EFFECT_ON_ASSESSMENTS
+  concept_id: medical_excuse
+  governing_entity: COURSE
+  action: EXCUSE
+  claim_types:
+  - PROCEDURE
+  - ENTITLEMENT
+  direct_answer_intents:
+  - missed_exam_with_medical_excuse
+  - alternative_exam_procedure
+  - missed_final_exam_remedy
+  - missed_coursework_with_medical_excuse
+  excluded_intents:
+  - medical_excuse_accepted_issuers
+  - medical_excuse_submission_deadline
+  - incomplete_grade_procedure
+  - course_repetition_limit
+  - course_deprivation_appeal
+  - grade_appeal_procedure
+  why_excluded: it grants a substitute assessment coordinated by the department, which is not an IC
+    grade, not a retake of the course, and not a challenge to a mark already awarded
+- policy_id: TU.MEDICAL_EXCUSE.FOREIGN_REPORTS
+  concept_id: medical_excuse
+  governing_entity: ATTENDANCE
+  action: EXCUSE
+  claim_types:
+  - ELIGIBILITY
+  - PROCEDURE
+  direct_answer_intents:
+  - foreign_medical_report_acceptance
+  - medical_report_attestation_body
+  - i_was_treated_abroad_will_it_count
+  excluded_intents:
+  - medical_excuse_accepted_issuers
+  - medical_excuse_submission_deadline
+  - external_transfer_eligibility
+  - visiting_study_abroad_approval
+  - medical_excuse_effect_on_exams
+  why_excluded: attestation of a report issued outside the Kingdom — the domestic issuer list is a different
+    record, and 'من خارج المملكة' here is nothing to do with studying or transferring abroad
+- policy_id: TU.MEDICAL_EXCUSE.SUBMISSION_WINDOW
+  concept_id: medical_excuse
+  governing_entity: ATTENDANCE
+  action: EXCUSE
+  claim_types:
+  - DEADLINE
+  - NUMERICAL_LIMIT
+  - PROCEDURE
+  direct_answer_intents:
+  - medical_excuse_submission_deadline
+  - who_do_i_submit_a_medical_report_to
+  - when_does_the_medical_report_clock_start
+  excluded_intents:
+  - grade_appeal_deadline
+  - semester_excuse_deadline
+  - course_withdrawal_deadline
+  - medical_excuse_accepted_issuers
+  - late_medical_excuse_remedy
+  - medical_excuse_effect_on_exams
+  why_excluded: two weeks running from the report's ISSUE date, not from the absence — and the record
+    offers no remedy for a student who has already missed it, so it must not be used to answer 'I was
+    late, what now?'
+- policy_id: TU.REENROLMENT.CONDITIONS
+  concept_id: enrolment_reinstatement
+  governing_entity: ENROLMENT
+  action: REINSTATE
+  claim_types:
+  - ELIGIBILITY
+  - NUMERICAL_LIMIT
+  - DEADLINE
+  direct_answer_intents:
+  - reenrolment_eligibility
+  - reenrolment_time_limit
+  - reenrolment_frequency_limit
+  - reenrolment_after_academic_dismissal
+  excluded_intents:
+  - reenrolment_after_disciplinary_dismissal
+  - reenrolment_after_file_withdrawal
+  - reenrolment_application_channel
+  - reenrolment_window_lapsed_options
+  - university_dismissal_grounds
+  - deregistration_interruption_duration
+  - programme_maximum_duration
+  why_excluded: Covers the standard طي قيد → إعادة قيد path only; the disciplinary and file-withdrawal
+    paths have their own different clocks, and this record names no office or channel to apply through.
+- policy_id: TU.REENROLMENT.DISCIPLINARY_BAR
+  concept_id: enrolment_reinstatement
+  governing_entity: ENROLMENT
+  action: REINSTATE
+  claim_types:
+  - ELIGIBILITY
+  - NUMERICAL_LIMIT
+  - CONSEQUENCE
+  direct_answer_intents:
+  - reenrolment_after_disciplinary_dismissal
+  - disciplinary_dismissal_waiting_period
+  - reenrolment_granted_in_error_effect
+  excluded_intents:
+  - reenrolment_after_academic_dismissal
+  - reenrolment_eligibility
+  - student_conduct_penalties
+  - disciplinary_appeal_procedure
+  - university_dismissal_grounds
+  - external_transfer_eligibility
+  - reenrolment_after_file_withdrawal
+  why_excluded: Its three-year clock runs on DISCIPLINARY dismissal only — academic dismissal is an
+    outright bar elsewhere, and this record neither defines the violations nor the appeal route.
+- policy_id: TU.REENROLMENT.LAPSED_BECOMES_NEW_APPLICANT
+  concept_id: enrolment_reinstatement
+  governing_entity: ENROLMENT
+  action: REINSTATE
+  claim_types:
+  - CONSEQUENCE
+  - ELIGIBILITY
+  direct_answer_intents:
+  - reenrolment_window_lapsed_options
+  - reapplication_as_new_student
+  - new_university_id_consequence
+  excluded_intents:
+  - reenrolment_time_limit
+  - reenrolment_eligibility
+  - admission_requirements_for_new_students
+  - course_withdrawal_limit
+  - visiting_study_visit_limit
+  - external_transfer_eligibility
+  why_excluded: Says only what happens AFTER the re-enrolment window lapses; it states neither the window
+    nor the admission criteria, and its note about counters resetting must never be cited as the source
+    of the 5-withdrawal or 3-visit figures.
+- policy_id: TU.REENROLMENT.WITHDRAWN_STUDENT
+  concept_id: enrolment_reinstatement
+  governing_entity: ENROLMENT
+  action: REINSTATE
+  claim_types:
+  - ELIGIBILITY
+  - DEADLINE
+  - NUMERICAL_LIMIT
+  - PROCEDURE
+  direct_answer_intents:
+  - reenrolment_after_file_withdrawal
+  - reenrolment_deadline_after_withdrawal
+  - reenrolment_application_office
+  - reapplication_waiting_period_after_withdrawal
+  excluded_intents:
+  - course_withdrawal_deadline
+  - course_withdrawal_limit
+  - reenrolment_eligibility
+  - reenrolment_after_disciplinary_dismissal
+  - university_withdrawal_procedure
+  - deregistration_grounds
+  why_excluded: Governs re-enrolment after سحب الملف (withdrawing from the university); it shares the
+    word انسحاب with course withdrawal and its permanent disciplinary bar is specific to this path,
+    not the general three-year rule.
+- policy_id: TU.REG.ADVISER_CAN_REGISTER_DIRECTLY
+  concept_id: registration_process
+  governing_entity: COURSE
+  action: REGISTER
+  claim_types:
+  - PROCEDURE
+  - ELIGIBILITY
+  direct_answer_intents:
+  - can_adviser_add_course_manually
+  - adviser_system_access_to_add_and_drop
+  excluded_intents:
+  - add_drop_deadline
+  - prerequisite_waiver
+  - section_capacity_override
+  - course_withdrawal_procedure
+  - registration_override_authority
+  why_excluded: grants the adviser system access to register/add/drop; it does not extend any deadline,
+    waive a prerequisite or a full section, and 'حذف' here is dropping inside the registration window,
+    not الانسحاب من مقرر
+- policy_id: TU.REG.ADVISER_DUTIES_AT_REGISTRATION
+  concept_id: advising_relationship
+  governing_entity: ADVISING
+  action: ADVISE
+  claim_types:
+  - PROCEDURE
+  - ENTITLEMENT
+  direct_answer_intents:
+  - adviser_duties_at_registration
+  - what_the_adviser_checks_before_registration
+  excluded_intents:
+  - registration_override_authority
+  - timetable_clash_resolution_procedure
+  - credit_load_limit
+  - struggling_student_registration_rules
+  - prerequisite_rules
+  why_excluded: 'states what the adviser must review (transcript vs plan, standing, time/place, no clash).
+    Naming a check is not stating the rule being checked: it supplies no load ceiling, no prerequisite
+    rule, no clash-resolution procedure and no override power'
+- policy_id: TU.REG.CHANGES_CLOSE_ONE_WEEK_BEFORE
+  concept_id: registration_process
+  governing_entity: COURSE
+  action: REGISTER
+  claim_types:
+  - DEADLINE
+  direct_answer_intents: []
+  excluded_intents:
+  - add_drop_deadline
+  - registration_modification_deadline
+  - last_day_to_change_my_schedule
+  - preference_registration_window
+  why_excluded: SUPERSEDED ON THE FACTS by the academic calendar (add/drop runs 20-22 Aug against a
+    23 Aug term start, i.e. one day, not the week this record states) and flagged PROHIBITED_FOR_DECISION.
+    It answers nothing directly; its only plausible intent is the very deadline question it gets wrong
+- policy_id: TU.REG.EARLY_REGISTRATION_TIMING
+  concept_id: registration_process
+  governing_entity: COURSE
+  action: REGISTER
+  claim_types:
+  - DEADLINE
+  - PROCEDURE
+  direct_answer_intents:
+  - preference_registration_window
+  - early_registration_timing
+  - final_registration_timing
+  excluded_intents:
+  - add_drop_deadline
+  - course_withdrawal_deadline
+  - semester_excuse_deadline
+  - exam_dates
+  - term_start_date
+  why_excluded: covers the preference/early-registration milestones, and its calendar binding is dated
+    for 1448 term 2 ONLY; add/drop, withdrawal and excuse windows are separate calendar events and must
+    never be inferred from these dates
+- policy_id: TU.REG.STUDENT_CHOICES_FINAL
+  concept_id: registration_process
+  governing_entity: COURSE
+  action: REGISTER
+  claim_types:
+  - PROCEDURE
+  - ELIGIBILITY
+  direct_answer_intents:
+  - registration_modification_authority
+  - registration_override_authority
+  - change_major_authority
+  - is_my_schedule_final
+  excluded_intents:
+  - internal_transfer_eligibility
+  - internal_transfer_procedure
+  - add_drop_deadline
+  - course_withdrawal_procedure
+  - grade_appeal_procedure
+  - credit_load_limit
+  why_excluded: allocates WHO may modify, override or change a registration. Its 'تغيير التخصص من صلاحيات
+    الكلية' clause names an authority, not the GPA/seat conditions for internal transfer; and it sets
+    no date, no load limit and no appeal route
+- policy_id: TU.REGISTRATION.STRUGGLING_STUDENTS
+  concept_id: registration_priority
+  governing_entity: COURSE
+  action: REGISTER
+  claim_types:
+  - PROCEDURE
+  - ELIGIBILITY
+  direct_answer_intents:
+  - struggling_student_registration_rules
+  - registration_priority_for_struggling_students
+  - may_i_take_a_higher_level_course
+  excluded_intents:
+  - academic_warning_threshold
+  - academic_dismissal_threshold
+  - university_dismissal_procedure
+  - min_credits_per_term
+  - max_credits_per_term
+  - course_repetition_limit
+  - gpa_probation_definition
+  why_excluded: '''متعثر'' is shared vocabulary with الإنذار and الفصل الأكاديمي, but this record governs
+    only HOW a struggling student''s courses are registered. It defines no GPA threshold, no warning
+    count and no dismissal consequence, and it cites the minimum load without ever stating its value'
+- policy_id: TU.TERM.STRUCTURE
+  concept_id: academic_calendar_structure
+  governing_entity: TERM
+  action: DEFINE
+  claim_types:
+  - DEFINITION
+  - NUMERICAL_LIMIT
+  direct_answer_intents:
+  - academic_year_structure
+  - term_length_weeks
+  - summer_term_existence_and_length
+  excluded_intents:
+  - term_start_date
+  - add_drop_deadline
+  - exam_dates
+  - preference_registration_window
+  - summer_credit_load_limit
+  - programme_duration_limit
+  why_excluded: defines how long a term must LAST (a 15-week floor, 8 for summer) and explicitly excludes
+    the registration, add/drop and exam periods from that count — so it can never be used to place any
+    of those windows on a date, nor to bound how many years a degree may take
+- policy_id: TU.TRANSFER.DEPARTMENT_OR_MAJOR
+  concept_id: internal_transfer
+  governing_entity: PROGRAMME
+  action: TRANSFER
+  claim_types:
+  - ELIGIBILITY
+  - NUMERICAL_LIMIT
+  - PROCEDURE
+  direct_answer_intents:
+  - department_transfer_eligibility
+  - major_change_eligibility
+  - department_transfer_unit_threshold
+  - department_transfer_frequency_limit
+  excluded_intents:
+  - internal_transfer_between_colleges_eligibility
+  - internal_transfer_unit_threshold
+  - internal_transfer_studied_share_limit
+  - external_transfer_eligibility
+  - internal_transfer_deadline
+  - transfer_during_visiting_period
+  why_excluded: 'The within-college regime: 16 units and NO share-of-plan ceiling — answering a college-transfer
+    question from it would understate the units and silently drop the 50% condition.'
+- policy_id: TU.TRANSFER.EXTERNAL
+  concept_id: external_transfer
+  governing_entity: ENROLMENT
+  action: TRANSFER
+  claim_types:
+  - ELIGIBILITY
+  - NUMERICAL_LIMIT
+  - DEADLINE
+  - PROCEDURE
+  direct_answer_intents:
+  - external_transfer_eligibility
+  - external_transfer_minimum_units
+  - external_transfer_deadline
+  - external_transfer_share_of_requirements
+  - external_transfer_application_channel
+  excluded_intents:
+  - internal_transfer_between_colleges_eligibility
+  - department_transfer_eligibility
+  - major_change_eligibility
+  - internal_transfer_studied_share_limit
+  - internal_transfer_unit_threshold
+  - visiting_study_eligibility
+  - visiting_course_equivalence_conditions
+  - transfer_during_visiting_period
+  why_excluded: Governs joining this university from another institution; its 50% is a floor to be studied
+    HERE, the internal rule's 50% is a ceiling already studied THERE — inverted, and its 24 units are
+    earned at a prior institution.
+- policy_id: TU.TRANSFER.INTERNAL_COLLEGE
+  concept_id: internal_transfer
+  governing_entity: PROGRAMME
+  action: TRANSFER
+  claim_types:
+  - ELIGIBILITY
+  - NUMERICAL_LIMIT
+  - PROCEDURE
+  direct_answer_intents:
+  - internal_transfer_between_colleges_eligibility
+  - internal_transfer_unit_threshold
+  - internal_transfer_studied_share_limit
+  - internal_transfer_frequency_limit
+  - internal_transfer_application_channel
+  excluded_intents:
+  - department_transfer_eligibility
+  - major_change_eligibility
+  - department_transfer_unit_threshold
+  - external_transfer_eligibility
+  - internal_transfer_deadline
+  - visiting_course_equivalence_conditions
+  - transfer_during_visiting_period
+  why_excluded: This is the college-to-college regime (24 units, ≤50% of plan studied); the department/major
+    regime is near-identical in wording but sets 16 units and no 50% cap, and the transfer window lives
+    in the academic calendar, not here.
+- policy_id: TU.UNIVERSITY_WITHDRAWAL.PROCEDURE
+  concept_id: university_withdrawal
+  governing_entity: ENROLMENT
+  action: WITHDRAW
+  claim_types:
+  - PROCEDURE
+  - ENTITLEMENT
+  direct_answer_intents:
+  - university_withdrawal_procedure
+  - university_clearance_process
+  - how_to_leave_the_university_permanently
+  excluded_intents:
+  - course_withdrawal_procedure
+  - course_withdrawal_deadline
+  - course_withdrawal_limit
+  - course_withdrawal_eligibility
+  - semester_excuse_procedure
+  - study_deferral_procedure
+  - enrolment_reinstatement_procedure
+  - university_dismissal_appeal
+  why_excluded: governs permanently ending enrolment (clearance/إخلاء طرف), not dropping a course or
+    pausing a term — everything here shares the word انسحاب, which the record itself flags as the likeliest
+    retrieval error on this corpus
+- policy_id: TU.VISITING.COURSE_EQUIVALENCE
+  concept_id: visiting_study
+  governing_entity: COURSE
+  action: VISIT
+  claim_types:
+  - ELIGIBILITY
+  direct_answer_intents:
+  - visiting_course_equivalence_conditions
+  - which_courses_may_be_studied_as_visitor
+  excluded_intents:
+  - visiting_course_gpa_inclusion
+  - graduation_requirements_list
+  - course_repetition_limit
+  - external_transfer_credit_recognition
+  - visiting_study_unit_limit_outside_university
+  why_excluded: Sets equivalence for permission to study a course elsewhere (معادل أو مكافئ); the stricter
+    مطابقة + language + grade test that decides GPA inclusion is a different rule and must not be conflated
+    with it.
+- policy_id: TU.VISITING.DEFINITION
+  concept_id: visiting_study
+  governing_entity: ENROLMENT
+  action: VISIT
+  claim_types:
+  - DEFINITION
+  - ENTITLEMENT
+  - PROCEDURE
+  direct_answer_intents:
+  - visiting_study_definition
+  - visiting_study_approval_requirement
+  - visiting_study_without_transfer
+  - visiting_course_transcript_recording
+  excluded_intents:
+  - external_transfer_eligibility
+  - internal_transfer_between_colleges_eligibility
+  - visiting_study_unit_limit_outside_university
+  - visiting_study_unit_limit_inside_university
+  - visiting_study_visit_limit
+  - visiting_course_gpa_inclusion
+  - visiting_course_equivalence_conditions
+  why_excluded: Defines the visiting status and its approval (the college approves BOTH the visit and
+    the course list); a visit is expressly دون تحويل, and this record carries no ceiling, no visit count
+    and no equivalence or GPA conditions.
+- policy_id: TU.VISITING.GPA_INCLUSION
+  concept_id: visiting_study
+  governing_entity: GRADE
+  action: CALCULATE
+  claim_types:
+  - CONSEQUENCE
+  - ELIGIBILITY
+  direct_answer_intents:
+  - visiting_course_gpa_inclusion
+  - visiting_course_transcript_recording
+  - when_equated_courses_count_in_gpa
+  excluded_intents:
+  - gpa_calculation_method
+  - grade_scale_bands
+  - honours_eligibility
+  - visiting_course_equivalence_conditions
+  - transcript_issuance_procedure
+  - course_repetition_gpa_effect
+  why_excluded: Governs only whether an equated visiting course enters the GPA; it does not define the
+    GPA formula and its "جيد جداً" must not be resolved into a numeric point value from the grade tables.
+- policy_id: TU.VISITING.MAX_UNITS_INSIDE
+  concept_id: visiting_study
+  governing_entity: PROGRAMME
+  action: VISIT
+  claim_types:
+  - NUMERICAL_LIMIT
+  direct_answer_intents:
+  - visiting_study_unit_limit_inside_university
+  excluded_intents:
+  - visiting_study_unit_limit_outside_university
+  - visiting_study_visit_limit
+  - credit_load_limit
+  - internal_transfer_unit_threshold
+  - external_transfer_minimum_units
+  why_excluded: 24 here is a ceiling on units visited at another branch of this university — the same
+    figure appears as an earned-units FLOOR for transfer eligibility and as a percentage rule for visits
+    abroad.
+- policy_id: TU.VISITING.MAX_UNITS_OUTSIDE
+  concept_id: visiting_study
+  governing_entity: PROGRAMME
+  action: VISIT
+  claim_types:
+  - NUMERICAL_LIMIT
+  direct_answer_intents:
+  - visiting_study_unit_limit_outside_university
+  excluded_intents:
+  - visiting_study_unit_limit_inside_university
+  - visiting_study_visit_limit
+  - credit_load_limit
+  - external_transfer_share_of_requirements
+  - graduation_credit_total
+  why_excluded: A 25% ceiling on units taken OUTSIDE the university; the inside-university ceiling is
+    a flat 24 units, and this percentage has nothing to do with per-term credit load or the transfer
+    50% share.
+- policy_id: TU.VISITING.MAX_VISITS
+  concept_id: visiting_study
+  governing_entity: ENROLMENT
+  action: VISIT
+  claim_types:
+  - NUMERICAL_LIMIT
+  direct_answer_intents:
+  - visiting_study_visit_limit
+  excluded_intents:
+  - course_repetition_limit
+  - university_dismissal_warning_threshold
+  - visiting_study_unit_limit_outside_university
+  - visiting_study_unit_limit_inside_university
+  - internal_transfer_frequency_limit
+  - department_transfer_frequency_limit
+  why_excluded: Its "three" counts VISITS per university id — not course retakes, not consecutive warnings,
+    and not the once-only transfer allowance.
+- policy_id: TU.VISITING.NO_TRANSFER_DURING_VISIT
+  concept_id: visiting_study
+  governing_entity: ENROLMENT
+  action: TRANSFER
+  claim_types:
+  - ELIGIBILITY
+  - CONSEQUENCE
+  direct_answer_intents:
+  - transfer_during_visiting_period
+  - visiting_study_restrictions
+  excluded_intents:
+  - internal_transfer_between_colleges_eligibility
+  - department_transfer_eligibility
+  - major_change_eligibility
+  - external_transfer_eligibility
+  - internal_transfer_deadline
+  - visiting_study_eligibility
+  why_excluded: 'A timing bar only: it says when a transfer request may not be filed, and states none
+    of the eligibility conditions, unit thresholds or windows for any transfer regime.'
+- policy_id: TU.VISITING.RECOGNISED_INSTITUTION
+  concept_id: visiting_study
+  governing_entity: ENROLMENT
+  action: VISIT
+  claim_types:
+  - ELIGIBILITY
+  direct_answer_intents:
+  - visiting_study_host_institution_requirement
+  - visiting_study_eligibility
+  excluded_intents:
+  - recognised_institution_list
+  - external_transfer_eligibility
+  - visiting_course_equivalence_conditions
+  - visiting_course_gpa_inclusion
+  - visiting_study_approval_requirement
+  why_excluded: A one-line condition that the host be recognised — it names no institutions and no recognising
+    authority, and the parallel recognition clause for transfer applicants lives in TU.TRANSFER.EXTERNAL.
+- policy_id: TU.WITHDRAWAL.DEPRIVATION_BAR
+  concept_id: course_withdrawal
+  governing_entity: COURSE
+  action: WITHDRAW
+  claim_types:
+  - ELIGIBILITY
+  - CONSEQUENCE
+  direct_answer_intents:
+  - course_withdrawal_eligibility_after_deprivation
+  - can_i_withdraw_from_a_course_i_was_deprived_from
+  excluded_intents:
+  - course_deprivation_appeal
+  - course_deprivation_threshold
+  - course_deprivation_definition
+  - attendance_requirement
+  - university_dismissal_appeal
+  - course_withdrawal_limit
+  why_excluded: it only bars withdrawal once حرمان already exists — it neither defines deprivation,
+    sets the attendance percentage that triggers it, nor gives any appeal route, which is the gap the
+    live الحرمان failure fell through
+- policy_id: TU.WITHDRAWAL.MAXIMUM
+  concept_id: course_withdrawal
+  governing_entity: COURSE
+  action: WITHDRAW
+  claim_types:
+  - NUMERICAL_LIMIT
+  direct_answer_intents:
+  - course_withdrawal_limit
+  - how_many_courses_may_i_withdraw_from
+  excluded_intents:
+  - course_repetition_limit
+  - study_deferral_maximum
+  - semester_excuse_maximum_count
+  - maximum_programme_duration
+  - university_dismissal_duration
+  - university_withdrawal_procedure
+  - credit_load_maximum
+  why_excluded: five is a lifetime cap on COURSE WITHDRAWALS under one university ID — not on retakes,
+    deferrals, excused terms or credits; it is the nearest neighbour to the repeat-limit question that
+    produced the live failure
+- policy_id: TU.WITHDRAWAL.MINIMUM_LOAD_BAR
+  concept_id: course_withdrawal
+  governing_entity: COURSE
+  action: WITHDRAW
+  claim_types:
+  - ELIGIBILITY
+  direct_answer_intents:
+  - course_withdrawal_eligibility_minimum_load
+  - can_i_withdraw_if_it_drops_me_below_the_minimum_load
+  excluded_intents:
+  - minimum_credit_load_value
+  - maximum_credit_load
+  - credit_load_for_probation_students
+  - course_withdrawal_limit
+  - university_withdrawal_procedure
+  - course_withdrawal_deadline
+  why_excluded: it is a conditional bar that DEFERS the number to TU.LOAD.SEMESTER_RANGE; it carries
+    no credit figure of its own, so it must never be the evidence for what the minimum or maximum load
+    is
+- policy_id: TU.WITHDRAWAL.NEW_STUDENT_BAR
+  concept_id: course_withdrawal
+  governing_entity: COURSE
+  action: WITHDRAW
+  claim_types:
+  - ELIGIBILITY
+  direct_answer_intents:
+  - course_withdrawal_eligibility_new_student
+  - can_a_first_year_student_withdraw_from_a_course
+  excluded_intents:
+  - course_withdrawal_limit
+  - course_withdrawal_deadline
+  - study_deferral_eligibility_new_student
+  - semester_excuse_eligibility_new_student
+  - registration_priority_new_student
+  - university_withdrawal_procedure
+  why_excluded: it bars the المستجد from COURSE withdrawal in the first two terms only; it is not the
+    five-withdrawal allowance, and it says nothing about whether a new student may defer, apologise
+    for a term or leave the university
+- policy_id: TU.WITHDRAWAL.PROCEDURE
+  concept_id: course_withdrawal
+  governing_entity: COURSE
+  action: WITHDRAW
+  claim_types:
+  - PROCEDURE
+  - DEADLINE
+  direct_answer_intents:
+  - course_withdrawal_procedure
+  - course_withdrawal_deadline
+  - course_withdrawal_request_channel
+  excluded_intents:
+  - university_withdrawal_procedure
+  - semester_excuse_deadline
+  - study_deferral_deadline
+  - course_withdrawal_limit
+  - course_withdrawal_eligibility
+  - excused_withdrawal_definition
+  - course_deprivation_appeal
+  why_excluded: it governs dropping ONE course; withdrawal from the university is a different instrument
+    under the same word انسحاب, and the record's own note forbids treating the calendar's الانسحاب بعذر
+    as established to be this same instrument

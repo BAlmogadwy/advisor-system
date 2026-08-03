@@ -28,6 +28,10 @@ def student_gender(student_id: int | str) -> str:
     return g if g in ("M", "F") else ""
 
 
+class UnknownStudentGender(Exception):
+    """Raised when a student's cohort cannot be resolved and must not be guessed."""
+
+
 def gender_section_filter(gender: str) -> Q:
     """Build a Q() keeping only sections a ``gender`` student may take.
 
@@ -35,12 +39,41 @@ def gender_section_filter(gender: str) -> Q:
     all). An unknown/blank gender returns an all-pass Q() so callers never
     accidentally hide every section. Used by both the planner's section catalog
     (display) and the build (scheduling) so they can never disagree.
+
+    CAUTION — the all-pass branch is only safe when NO student was named. If a
+    student WAS named and their gender could not be resolved, all-pass shows the
+    other cohort's sections. Every real global section is gendered (415 F, 303 M,
+    zero ungendered), so that failure is total rather than partial. Callers acting
+    on behalf of a specific student must use :func:`student_gender_strict`, which
+    refuses instead of guessing.
     """
     g = (gender or "").strip().upper()
     if g not in ("M", "F"):
         return Q()
     gendered = Q(section__istartswith="M") | Q(section__istartswith="F")
     return Q(section__istartswith=g) | ~gendered
+
+
+def student_gender_strict(student_id: int | str) -> str:
+    """Return the student's cohort, or raise rather than fall back to all-pass.
+
+    ``student_gender`` returns "" for a student with no ``Student`` row — and 722 of
+    the 3,807 ids in ``StudentTermSection`` are exactly that. Feeding that "" into
+    ``gender_section_filter`` produces an all-pass filter, so a student whose record
+    is missing would be shown the other cohort's sections.
+
+    Use this wherever the query is on behalf of a NAMED student. Keep plain
+    ``student_gender`` only for staff browsing with no student in scope, where
+    all-pass is the intended behaviour.
+    """
+    g = student_gender(student_id)
+    if g not in ("M", "F"):
+        raise UnknownStudentGender(
+            f"Cannot resolve the cohort (M/F) for student {student_id}. Refusing to "
+            "query sections, because an unresolved cohort would return the other "
+            "cohort's sections rather than none."
+        )
+    return g
 
 
 def _section_course_key(term_section) -> str:

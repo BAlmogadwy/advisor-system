@@ -1,0 +1,96 @@
+# Questions the store cannot answer, and the neighbour it must not reach for.
+#
+# These are NOT role-recall cases. They carry no expected direct policy, so they
+# belong in no recall denominator — including them would score the system on
+# retrieving something that does not exist.
+#
+# What they test instead is the dangerous-neighbour relation. For each, the store
+# holds a record that shares vocabulary, is real, approved and retrievable, and
+# would produce a confident false rule if it were ever promoted to DIRECT_SUPPORT.
+# `known_confusion_policy_ids` records that neighbour adversarially: its presence
+# among retrieval candidates is expected and fine; its presence in DIRECT_SUPPORT,
+# behind a normative claim, or in a citation is a failure.
+#
+# Every entry here is a real observed failure, not a hypothetical.
+
+schema_version: "1.0"
+
+fixtures:
+  - question_id: 165
+    question: كم مرة مسموح أعيد نفس المادة؟
+    intent: course_repetition_limit
+    concept_id: course_repetition
+    origin: live 2026-08-01, agent path
+
+    expected_direct_policy_ids: []
+    expected_behaviour: abstain_on_numeric_limit
+
+    known_confusion_policy_ids:
+      - TU.DISMISSAL.DURATION_EXCEEDED
+      - TU.REENROLMENT.CONDITIONS
+
+    forbidden_claim_types:
+      - NUMERICAL_LIMIT
+      - ELIGIBILITY
+
+    must_not_assert:
+      - any percentage of programme credits
+      - any fixed repetition count
+      - any figure qualified as "usually" or "generally"
+
+    why: >
+      No record in the store governs how often a course may be repeated —
+      course_repetition_limit is named in twelve records' excluded_intents and
+      owned by none, which is that absence encoded. The observed failure derived
+      «يحق للطالب إعادة ما لا يزيد عن ١٠٪ من إجمالي الساعات» from
+      TU.DISMISSAL.DURATION_EXCEEDED, a maximum-DURATION rule containing no
+      percentage, then hedged it as "usually 10% or 20% depending on programme".
+      Every mechanical check passed: the record is real, approved, retrieved and
+      cited at the right page.
+
+    scoring:
+      exclude_from: [direct_policy_recall]
+      include_in:
+        - forbidden_to_direct_leakage
+        - normative_claim_abstention
+        - regression_fixtures
+
+  - question_id: 196
+    question: كيف أقدم تظلم على الحرمان؟
+    intent: course_deprivation_appeal
+    concept_id: course_deprivation
+    origin: live 2026-08-01, agent path
+
+    # The store states the deprivation THRESHOLD and the grade-appeal route, but
+    # nothing states how to appeal a deprivation decision itself.
+    expected_direct_policy_ids: []
+    expected_behaviour: explain_related_then_abstain_on_the_appeal_route
+
+    known_confusion_policy_ids:
+      - TU.DISMISSAL.THREE_WARNINGS
+      - TU.DISMISSAL.DURATION_EXCEEDED
+
+    forbidden_claim_types:
+      - APPEAL_ROUTE
+      - REGULATORY_DEFINITION
+      - RESPONSIBLE_AUTHORITY
+
+    must_not_assert:
+      - that الحرمان is dismissal from the university
+      - that the deprivation appeal follows the academic-dismissal route
+      - a warning count as the cause of deprivation
+
+    why: >
+      الحرمان bars a student from ONE COURSE on an absence percentage; الفصل من
+      الجامعة ends ENROLMENT on a count of warnings. Both are real approved
+      records reachable from absence-adjacent words. The observed failure defined
+      the first using the second. Note the grade-appeal records ARE direct for the
+      grade-appeal part of the question — the abstention is specifically on the
+      route for appealing a deprivation decision.
+
+    scoring:
+      exclude_from: [direct_policy_recall]
+      include_in:
+        - forbidden_to_direct_leakage
+        - concept_alignment_accuracy
+        - regression_fixtures

@@ -421,6 +421,45 @@ def _exec_lookup_course(
     }
 
 
+def _resolve_elective_slot(course_code: str, program: str) -> list[dict[str, Any]] | None:
+    """Return the real courses that can fill an elective slot, or None if not a slot.
+
+    A placeholder is recognised by its ProgrammeRequirement.type ("... Elective"), not
+    by guessing at the code shape — FE1 and CS1 look nothing alike and new families
+    would be missed by a pattern.
+    """
+    from core.models import ElectiveCourse, ElectiveTermMapping, ProgrammeRequirement
+
+    req = ProgrammeRequirement.objects.filter(course_code__iexact=course_code)
+    if program:
+        req = req.filter(program__iexact=program)
+    row = req.values("type", "program").first()
+    if not row or "elective" not in str(row.get("type") or "").lower():
+        return None
+
+    prog = program or str(row.get("program") or "")
+    mapped_ids = ElectiveTermMapping.objects.filter(
+        placeholder_code__iexact=course_code, programme__iexact=prog
+    ).values_list("elective_id", flat=True)
+
+    options: list[dict[str, Any]] = []
+    for e in ElectiveCourse.objects.filter(id__in=list(mapped_ids)).values(
+        "course_code", "course_name", "credit_hours", "prerequisites_csv"
+    ):
+        prereqs = [
+            p.strip().upper() for p in str(e["prerequisites_csv"] or "").split(",") if p.strip()
+        ]
+        options.append(
+            {
+                "course_code": e["course_code"],
+                "course_name": e["course_name"],
+                "credit_hours": e["credit_hours"],
+                "prerequisites": prereqs,
+            }
+        )
+    return sorted(options, key=lambda o: o["course_code"])[:_MAX_COURSE_MATCHES]
+
+
 def _exec_course_prerequisites(
     args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
 ) -> dict[str, Any]:
@@ -452,6 +491,26 @@ def _exec_course_prerequisites(
                 )
             )
         )
+    # An elective PLACEHOLDER (FE1, GSE1, CS1 ...) is a slot, not a course. Answering
+    # "prerequisites: []" for one reads as "this course has no prerequisites", which is
+    # false for every slot whose real courses have them — ElectiveCourse carries a
+    # prerequisites_csv per course. Resolve the slot and report the real options.
+    elective_options = _resolve_elective_slot(course_code, program)
+    if elective_options is not None:
+        return {
+            "ok": True,
+            "course_code": course_code,
+            "is_elective_placeholder": True,
+            "options": elective_options,
+            "note": (
+                f"{course_code} is an elective SLOT in the plan, not a course. It has no "
+                "prerequisites of its own; each course that can fill it has its own. "
+                "Answer with the options and their prerequisites, never with "
+                "'this course has no prerequisites'."
+            ),
+            "tool": "course_prerequisites",
+        }
+
     if not programs:
         return {
             "ok": True,
@@ -858,7 +917,29 @@ def _exec_why_course_locked(
     if not r:
         return {"ok": False, "error": f"No degree plan found for student {student_id}."}
 
-    base = {"student_id": int(student_id), "course_code": code}
+    # The forward direction — "if I pass this, what opens?" — is already computed:
+    # build_unlock_report returns a `graph` of prerequisite edges that every caller
+    # so far has thrown away. It costs nothing to answer, and it is the question a
+    # student actually asks after being told a course is blocked.
+    graph = r.get("graph") or {}
+    unlocks = sorted(
+        {
+            edge["course_code"]
+            for edge in (graph.get("items") or [])
+            if edge.get("prerequisite_course_code") == code
+        }
+    )
+    status_of = graph.get("statusOf") or {}
+    name_of = graph.get("nameOf") or {}
+    base = {
+        "student_id": int(student_id),
+        "course_code": code,
+        "unlocks_directly": [
+            {"code": u, "name": name_of.get(u, ""), "current_status": status_of.get(u, "")}
+            for u in unlocks
+        ],
+        "unlocks_directly_count": len(unlocks),
+    }
     for c in r["open_courses"]:
         if c["code"] == code:
             return {
@@ -930,10 +1011,20 @@ def _exec_graduation_progress(
         "courses_per_term_assumed": g["courses_per_term"],
         "terms_estimate": g["terms_estimate"],
         "credit_hour_gates": g["hour_gates"],
+        # Computed by build_graduation_report and previously dropped on the floor.
+        # "can this be my last term?" is one of the most-asked questions and the
+        # answer was already sitting in the report.
+        "final_term_possible": g["final_term_possible"],
+        "passed_credits_in_plan": g["passed_credits_in_plan"],
+        "registered_credits_now": g["registered_credits_now"],
+        "courses_in_progress": g["in_progress"],
         "note": (
             "Registrar credits include courses outside the plan, so they are not a "
             "fraction of the plan total. The prerequisite minimum cannot be beaten by "
-            "registering more courses in a term."
+            "registering more courses in a term. final_term_possible means the PLAN "
+            "could be finished this term; graduation itself is a University Council "
+            "decision (TU.GRADUATION.COUNCIL_AWARDS_DEGREE), so it must never be "
+            "reported as 'you are graduating'."
         ),
     }
 
@@ -985,16 +1076,636 @@ def _exec_my_timetable(
         for r in rows
         if r.get("start_time")
     ]
+
+    # get_student_term_baseline emits ONE ROW PER MEETING, so a 4-credit course
+    # meeting three times a week appears three times. Summing the rows' credits
+    # therefore multi-counts — measured at 36 credits for a student actually
+    # carrying 14. Registrations are de-duplicated on (course, section) first.
+    by_section: dict[tuple[str, str], dict[str, Any]] = {}
+    for r in rows:
+        key = (str(r.get("course_code") or ""), str(r.get("section") or ""))
+        entry = by_section.setdefault(
+            key,
+            {
+                "course_code": key[0],
+                "section": key[1],
+                "credits": int(r.get("credits") or 0),
+                "meeting_count": 0,
+                "scheduled": False,
+            },
+        )
+        entry["meeting_count"] += 1
+        if r.get("start_time"):
+            entry["scheduled"] = True
+
+    registrations = sorted(by_section.values(), key=lambda x: (x["course_code"], x["section"]))
+    # Registered but with no meeting on file — real, and invisible in a meetings list.
+    unscheduled = [r for r in registrations if not r["scheduled"]]
     return {
         "student_id": int(student_id),
         "academic_year": year,
         "term": term,
         "meetings": meetings[: _MAX_LIST_ROWS * 2],
-        "courses_without_a_time": sorted(
-            {r["course_code"] for r in rows if not r.get("start_time")}
+        "registrations": registrations,
+        "registered_course_count": len(registrations),
+        "registered_credit_hours": sum(r["credits"] for r in registrations),
+        "courses_without_a_time": sorted(r["course_code"] for r in unscheduled),
+        "note": (
+            "The timetable on file for the term shown; not a live seat count. "
+            "registered_credit_hours counts each course ONCE — the underlying rows are "
+            "per meeting, so adding them up over-counts a course that meets several "
+            "times a week. courses_without_a_time are genuinely registered; they simply "
+            "have no meeting recorded, so they do not appear in meetings."
         ),
-        "note": "The published timetable for the term shown; not a live seat count.",
     }
+
+
+def _exec_my_plan_by_term(
+    args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
+) -> dict[str, Any]:
+    """The whole degree plan, level by level, with each course's status.
+
+    ``my_progress`` answers "what can I take"; this answers "show me the plan". The
+    difference matters to a student who wants the shape of what is left rather than a
+    filtered list of what is open right now.
+    """
+    from core.report_views import _build_student_plan_payload
+
+    student_id, error = _resolve_scoped_student_id(args, scope)
+    if error:
+        return {"ok": False, "error": error}
+
+    payload, payload_err = _build_student_plan_payload(int(student_id))
+    if payload is None or payload_err is not None:
+        return {"ok": False, "error": f"No degree plan found for student {student_id}."}
+
+    terms = payload.get("terms") or []
+    only = args.get("term")
+    if only not in (None, ""):
+        try:
+            wanted = int(only)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "term must be an integer plan level."}
+        terms = [row for row in terms if int(row.get("term") or 0) == wanted]
+        if not terms:
+            return {
+                "ok": True,
+                "student_id": int(student_id),
+                "program": payload.get("program", ""),
+                "plan_level": wanted,
+                "terms": [],
+                "note": f"The plan has no level {wanted}.",
+                "tool": "my_plan_by_term",
+            }
+
+    return {
+        "ok": True,
+        "student_id": int(student_id),
+        "program": payload.get("program", ""),
+        "summary": payload.get("summary", {}),
+        "terms": terms,
+        "blocker_hints": payload.get("blocker_hints") or [],
+        "note": (
+            "Plan LEVELS, not calendar terms - programme_term is where a course sits in "
+            "the degree plan, not when it is taught. status is passed / studying / "
+            "not_taken, and can_register reflects prerequisites ONLY, never whether a "
+            "section is being offered."
+        ),
+        "tool": "my_plan_by_term",
+    }
+
+
+def _exec_my_advisor(
+    args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
+) -> dict[str, Any]:
+    """The student's own academic adviser, by name rather than by internal id."""
+    from core.models import AcademicAdvisor, Student
+
+    student_id, error = _resolve_scoped_student_id(args, scope)
+    if error:
+        return {"ok": False, "error": error}
+
+    row = Student.objects.filter(student_id=student_id).values("advisor_id", "program").first()
+    if not row:
+        return {"ok": False, "error": f"Student not found: {student_id}."}
+
+    advisor_id = str(row.get("advisor_id") or "").strip()
+    if not advisor_id:
+        return {
+            "ok": True,
+            "student_id": int(student_id),
+            "advisor_assigned": False,
+            "note": (
+                "No adviser is recorded for this student. The guide tells the student to "
+                "contact the head of department when no adviser has been assigned "
+                "(TU.ADVISING.STUDENT_DUTIES)."
+            ),
+            "tool": "my_advisor",
+        }
+
+    adv = (
+        AcademicAdvisor.objects.filter(advisor_id=advisor_id)
+        .values("advisor_id", "full_name", "department", "email")
+        .first()
+    )
+    if not adv:
+        return {
+            "ok": True,
+            "student_id": int(student_id),
+            "advisor_assigned": True,
+            "advisor_id": advisor_id,
+            "advisor_name": None,
+            "note": (
+                "An adviser id is on file but no matching adviser record exists, so the "
+                "name cannot be given. Do not present the id to the student as a name."
+            ),
+            "tool": "my_advisor",
+        }
+
+    return {
+        "ok": True,
+        "student_id": int(student_id),
+        "advisor_assigned": True,
+        "advisor_id": adv["advisor_id"],
+        "advisor_name": adv.get("full_name") or "",
+        # Email is withheld deliberately: all 89 advisor rows carry a synthetic
+        # address (advisorNN@placeholder.local). Returning it would send a student
+        # to an address that does not exist, which is worse than saying nothing.
+        "advisor_email": None,
+        "contact_note": (
+            "No usable adviser email is on file, so none is given. Direct the student "
+            "to the adviser through the channels the guide lists "
+            "(TU.CONTACT.ADVISER_CHANNELS) rather than inventing contact details."
+        ),
+        "advisor_department": adv.get("department") or "",
+        "tool": "my_advisor",
+    }
+
+
+def _student_sections_context(
+    args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Shared setup for the section-shaped capabilities.
+
+    Returns ``(error, context)``. Three guards live here rather than in each caller,
+    because getting any of them wrong is a silent wrong answer rather than a crash:
+
+    * **Cohort must resolve.** ``gender_section_filter("")`` is an ALL-PASS filter and
+      722 of the 3,807 ids in StudentTermSection have no Student row, so a fallback
+      would show the other cohort's sections. Refuse instead.
+    * **Sections are TERMLESS.** TermSection has no academic_year and no term column,
+      so nothing here may be described as "next term's" sections. The student's own
+      baseline does belong to a term, and that is reported separately.
+    * **Query by course_key.** ``course_code`` holds the department prefix on real
+      sections ('CS') and the full code on generated ones ('CS111'), so filtering on
+      it silently returns only the generated rows.
+    """
+    from core.services.planner_builder import _catalog_for_courses
+    from core.services.student_sections import (
+        UnknownStudentGender,
+        get_student_term_baseline,
+        student_gender_strict,
+    )
+
+    student_id, error = _resolve_scoped_student_id(args, scope)
+    if error:
+        return {"ok": False, "error": error}, {}
+    year, term, error = _ctx_year_term(args, ctx)
+    if error:
+        return {"ok": False, "error": error}, {}
+
+    try:
+        gender = student_gender_strict(int(student_id))
+    except UnknownStudentGender as exc:
+        return {
+            "ok": False,
+            "error": str(exc),
+            "reason": "COHORT_UNRESOLVED",
+        }, {}
+
+    raw = args.get("course_codes") or ([args["course_code"]] if args.get("course_code") else [])
+    if isinstance(raw, str):
+        raw = [raw]
+    codes = [normalize_code(c) for c in raw if str(c).strip()]
+    codes = [c for c in codes if c]
+    if not codes:
+        return {"ok": False, "error": "course_code (or course_codes) is required."}, {}
+
+    catalog = _catalog_for_courses(str(year), str(term), codes, gender)
+    baseline = get_student_term_baseline(int(student_id), str(year), str(term))
+    return None, {
+        "student_id": int(student_id),
+        "year": year,
+        "term": term,
+        "gender": gender,
+        "codes": codes,
+        "catalog": catalog,
+        "baseline": baseline,
+    }
+
+
+def _exec_my_clash_free_sections(
+    args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
+) -> dict[str, Any]:
+    """Which sections of a course fit the student's current timetable, and which do not."""
+    from core.services.planner_builder import DAY_MAP, Meeting, _overlap
+
+    error, c = _student_sections_context(args, scope, ctx)
+    if error:
+        return error
+
+    # (meeting, label) pairs rather than a dict keyed on id(): identity of a freshly
+    # built dataclass is not a stable key, and the pairing is what we actually need.
+    mine: list[tuple[Any, str]] = [
+        (
+            Meeting(
+                day=DAY_MAP.get(str(r.get("day") or ""), str(r.get("day") or "").upper()[:3]),
+                start=str(r.get("start_time") or ""),
+                end=str(r.get("end_time") or ""),
+            ),
+            f"{r.get('course_code')} {r.get('section')}",
+        )
+        for r in c["baseline"]
+        if r.get("start_time")
+    ]
+
+    results = []
+    for code in c["codes"]:
+        sections = c["catalog"].get(code) or []
+        if not sections:
+            results.append(
+                {
+                    "course_code": code,
+                    "sections_on_file": 0,
+                    "clash_free": [],
+                    "clashing": [],
+                    # NOT "no sections available" — that claims the university offers
+                    # none. Only 77 of 246 plan courses have any section on file.
+                    "status": "NOT_ON_FILE",
+                }
+            )
+            continue
+
+        free, clashing = [], []
+        for s in sections:
+            hits = []
+            for sm in s["meetings"]:
+                for bm, label in mine:
+                    if _overlap(sm, bm):
+                        hits.append(
+                            {
+                                "section_meeting": f"{sm.day} {sm.start}-{sm.end}",
+                                "conflicts_with": label,
+                                "registered_meeting": f"{bm.day} {bm.start}-{bm.end}",
+                            }
+                        )
+            entry = {
+                "section": s["section"],
+                "meetings": [f"{m.day} {m.start}-{m.end}" for m in s["meetings"]],
+            }
+            if hits:
+                clashing.append({**entry, "conflicts": hits[:4]})
+            else:
+                free.append(entry)
+
+        results.append(
+            {
+                "course_code": code,
+                "sections_on_file": len(sections),
+                "clash_free": free[:_MAX_LIST_ROWS],
+                "clashing": clashing[:_MAX_LIST_ROWS],
+                "status": "OK" if free else "ALL_CLASH",
+            }
+        )
+
+    return {
+        "ok": True,
+        "student_id": c["student_id"],
+        "compared_against_term": f"{c['year']}/{c['term']}",
+        "courses": results,
+        "note": (
+            "Compared against the timetable the student is registered in for the term "
+            "shown. Sections carry NO term of their own, so never call these 'next "
+            "term's' sections. status NOT_ON_FILE means the section catalogue holds "
+            "nothing for that course - it does NOT mean the university offers none, and "
+            "must not be reported as 'no sections available'. Seat counts are absent "
+            "from every section on file, so never say a section has room."
+        ),
+        "tool": "my_clash_free_sections",
+    }
+
+
+#: build_plans reports its own reasons, and one of them is actively misleading to a
+#: student: "No sections available" claims the university offers none, when what it
+#: means is that our catalogue holds none — true for 169 of 246 plan course codes, and
+#: true by definition for every elective placeholder. Each reason is translated to a
+#: code plus wording that says only what the data supports.
+_UNPLACED_REASONS: dict[str, tuple[str, str]] = {
+    "No sections available": (
+        "NOT_ON_FILE",
+        "No section for this course is recorded in our data. That is not the same as "
+        "the university not offering it — check the registration portal.",
+    ),
+    "No non-conflicting sections available": (
+        "ALL_SECTIONS_CLASH",
+        "Every section on file collides with something else in this plan.",
+    ),
+    "Could not fit with chosen constraints/objective": (
+        "DID_NOT_FIT",
+        "It could not be fitted alongside the rest under the limits given.",
+    ),
+    "Model infeasible under current hard constraints": (
+        "DID_NOT_FIT",
+        "No combination satisfied all the limits given.",
+    ),
+}
+
+
+def _translate_unplaced(raw: str) -> tuple[str, str]:
+    text = str(raw or "").strip()
+    for prefix, mapped in _UNPLACED_REASONS.items():
+        if text.startswith(prefix):
+            return mapped
+    if text.lower().startswith("blocked by prerequisites"):
+        return "PREREQUISITES", text
+    if text.lower().startswith("strict mode"):
+        return "DID_NOT_FIT", "It could not be fitted under the limits given."
+    return "OTHER", text
+
+
+def _exec_build_my_timetable(
+    args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
+) -> dict[str, Any]:
+    """A clash-free weekly timetable from the sections on file, with an honest tail.
+
+    Wires the SERVICE ``planner_builder.build_plans`` directly, never the HTTP view —
+    ``planner_build_view`` is staff-only and throttled, and neither applies to a
+    student asking about their own timetable.
+
+    The partial answer is the point. Measured against today's catalogue, a complete
+    timetable is possible for roughly 6% of students; most get some courses placed and
+    some not. So ``unplaced`` and its reasons are returned as first-class output rather
+    than being hidden behind a "no plan found".
+    """
+    from core.models import ProgrammeRequirement, Student
+    from core.services.planner_builder import build_plans
+    from core.services.recommender import recommend_next_courses
+    from core.services.student_sections import (
+        UnknownStudentGender,
+        get_student_term_baseline,
+        student_gender_strict,
+    )
+
+    student_id, error = _resolve_scoped_student_id(args, scope)
+    if error:
+        return {"ok": False, "error": error}
+    year, term, error = _ctx_year_term(args, ctx)
+    if error:
+        return {"ok": False, "error": error}
+
+    try:
+        gender = student_gender_strict(int(student_id))
+    except UnknownStudentGender as exc:
+        return {"ok": False, "error": str(exc), "reason": "COHORT_UNRESOLVED"}
+
+    program = str(
+        Student.objects.filter(student_id=student_id).values_list("program", flat=True).first()
+        or ""
+    ).strip()
+    credits = {
+        r["course_code"]: int(r["credit_hours"] or 0)
+        for r in ProgrammeRequirement.objects.filter(program=program).values(
+            "course_code", "credit_hours"
+        )
+    }
+
+    # Courses to place: what the student asked for, else the official recommendation.
+    wanted = args.get("must_include") or []
+    if isinstance(wanted, str):
+        wanted = [wanted]
+    wanted = [normalize_code(c) for c in wanted if str(c).strip()]
+    recommended = [
+        normalize_code(c)
+        for c in (recommend_next_courses(int(student_id), int(year), int(term)) or [])
+    ]
+    codes = list(dict.fromkeys(wanted + recommended))
+    if not codes:
+        return {
+            "ok": True,
+            "student_id": int(student_id),
+            "placed": [],
+            "unplaced": [],
+            "note": (
+                "There is nothing to schedule: the recommender returned no courses for "
+                "this student and none were named. That usually means the plan is "
+                "complete or every remaining course is blocked."
+            ),
+            "tool": "build_my_timetable",
+        }
+
+    max_credits = args.get("max_credits")
+    try:
+        cap = int(max_credits) if max_credits not in (None, "") else 0
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "max_credits must be an integer."}
+
+    baseline = get_student_term_baseline(int(student_id), str(year), str(term))
+    keep = bool(args.get("keep_current_sections", False))
+
+    result = build_plans(
+        year=str(year),
+        term=str(term),
+        shortlist=[{"course_code": c, "credits": credits.get(c, 3)} for c in codes],
+        baseline=baseline,
+        keep_registered=keep,
+        suggest_swaps=False,  # the service emits placeholder strings, never real swaps
+        strict_per_course=False,  # unusable on real data: returns scheduled=0
+        consider_capacity=False,  # dead lever: available_capacity is NULL on every row
+        max_credits=cap,
+        gender=gender,
+    )
+
+    options = result.get("options") or []
+    if not options:
+        return {
+            "ok": True,
+            "student_id": int(student_id),
+            "requested": codes,
+            "placed": [],
+            "unplaced": [{"course_code": c, "reason": "No plan could be built."} for c in codes],
+            "note": "No timetable could be built from the sections on file.",
+            "tool": "build_my_timetable",
+        }
+
+    best = max(options, key=lambda o: int(o.get("scheduled") or 0))
+    placed = [
+        {
+            "course_code": m.get("course_code"),
+            "section": m.get("section"),
+            "meetings": [
+                f"{mt.get('day')} {mt.get('start_time')}-{mt.get('end_time')}"
+                for mt in (m.get("meetings") or [])
+            ],
+            "credits": credits.get(str(m.get("course_code") or ""), None),
+        }
+        for m in (best.get("mappings") or [])
+    ]
+    unplaced = []
+    for u in best.get("unscheduled") or []:
+        code, explanation = _translate_unplaced(u.get("reason"))
+        unplaced.append(
+            {
+                "course_code": u.get("course_code"),
+                "reason_code": code,
+                "reason": explanation,
+            }
+        )
+
+    return {
+        "ok": True,
+        "student_id": int(student_id),
+        "using_timetable_of_term": f"{year}/{term}",
+        "requested": codes,
+        "placed": placed,
+        "placed_count": len(placed),
+        "unplaced": unplaced,
+        "unplaced_count": len(unplaced),
+        "planned_credit_hours": sum(p["credits"] or 0 for p in placed),
+        "alternatives_considered": len(options),
+        "note": (
+            "A SUGGESTION built from the sections on file, not a registration and not "
+            "an offer of a seat - there are no seat counts in the data, so never say a "
+            "section has room. A partial result is normal: a course appears under "
+            "unplaced when no section of it is on file (reason_code NOT_ON_FILE - say "
+            "exactly that, never 'not available'), or when every section collides with "
+            "something already placed. Sections carry no term of their own; the "
+            "term shown is the one the student's current timetable belongs to. The "
+            "student still registers through the university portal."
+        ),
+        "tool": "build_my_timetable",
+    }
+
+
+def _exec_policy_lookup(
+    args: dict[str, Any], scope: dict[str, Any], ctx: dict[str, Any]
+) -> dict[str, Any]:
+    """The university's written rules, with the provenance needed to cite them.
+
+    This is the only route from the adviser to ``policies/``. Everything it returns
+    is ``AUTHORITY_APPROVED``; records at an earlier verification stage are invisible
+    rather than merely ranked lower.
+
+    Two things in the payload are load-bearing and easy to skim past:
+
+    ``decision_use`` — the record's own statement of whether it may be applied to a
+    student. 20 of the 81 records are ``PROHIBITED_FOR_DECISION`` because the inputs
+    their conditions need do not exist in the schema (no warning-count feed, no
+    absence register). For those, explaining the rule IS the complete answer, and
+    ruling on the student's case is the failure mode.
+
+    ``citable`` — the exact citations permitted for this request. A citation naming
+    any other policy is rejected downstream by ``validate_citations``, which is what
+    stops a model reciting a policy id from memory and having it read as grounded.
+
+    No student data is touched, so no scope resolution is needed: the rules are the
+    same for every student. The capability is still student-reachable only through
+    the registry's role check, like every other.
+    """
+    from core.services.policy_store import get_policy_store
+
+    topic = str(args.get("topic") or "").strip() or None
+    query = str(args.get("query") or "").strip() or None
+    policy_ids = args.get("policy_ids") or None
+    if isinstance(policy_ids, str):
+        policy_ids = [policy_ids]
+
+    if not (topic or query or policy_ids):
+        return {
+            "ok": False,
+            "error": "Pass query (the student's question in Arabic), topic, or policy_ids.",
+        }
+
+    store = get_policy_store()
+    try:
+        limit = int(args.get("limit") or 8)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "limit must be an integer."}
+
+    # Operator annotations name database tables, quote row counts and quote counts
+    # of students by status. They exist to tell an engineer why a rule cannot be
+    # applied; a student asking about GPA must not be handed the schema.
+    result = store.lookup(
+        topic=topic,
+        query=query,
+        policy_ids=policy_ids,
+        limit=limit,
+        include_operator_notes=_scope_role(scope) in _STAFF_ROLES,
+    )
+    if not result.get("ok"):
+        return result
+
+    # Sort what came back by whether it GOVERNS the question. Retrieval is broad on
+    # purpose; without this the model receives a related record and a governing one
+    # in the same undifferentiated list, which is how a programme-duration rule came
+    # to supply a course-repetition percentage.
+    from core.services.policy_applicability import classify
+
+    roles = classify(
+        result["policies"],
+        question=query or topic or "",
+        topics=result.get("matched_topics") or [],
+        store=store,
+    )
+    result["question_concepts"] = roles["question_concepts"]
+    result["direct_policy_evidence"] = roles["direct_policy_evidence"]
+    result["background_policy_evidence"] = roles["background_policy_evidence"]
+    result["conflicting_policy_evidence"] = roles["conflicting_policy_evidence"]
+    result["irrelevant_policy_evidence"] = roles["irrelevant_policy_evidence"]
+
+    # Citations are offered ONLY for direct evidence. A background record displayed
+    # beside the answer reads as authority for the question whatever the prose says.
+    direct_ids = {p["policy_id"] for p in roles["direct_policy_evidence"]}
+    result["citable"] = [c for c in result["citable"] if c["policy_id"] in direct_ids]
+
+    if not result["policies"]:
+        result["note"] = (
+            "No approved policy matches. Do NOT answer the rule from general "
+            "knowledge - say the system holds no written rule on this and point the "
+            "student to the Deanship of Admission and Registration. Retrying with a "
+            "topic from available_topics is worth one attempt."
+        )
+    elif not roles["direct_policy_evidence"]:
+        result["note"] = (
+            "NOTHING RETRIEVED GOVERNS THIS QUESTION. Records came back, but none of "
+            "them is about what was asked — they are in background_policy_evidence "
+            "and irrelevant_policy_evidence. You may say that related material exists "
+            "and does not answer the question. You may NOT take a number, a "
+            "percentage, a deadline, a definition, a procedure, an appeal route, a "
+            "responsible authority, or any statement of what is allowed or required "
+            "from them, and you may not cite them. Answer any student-data part of "
+            "the question normally, then say the guide does not state the rule and "
+            "refer the student to عمادة القبول والتسجيل."
+        )
+    else:
+        result["note"] = (
+            "Use direct_policy_evidence for anything the university REQUIRES, "
+            "PERMITS, FORBIDS, DEFINES, or tells the student WHERE TO GO. Those "
+            "records govern this question; nothing else does. "
+            "background_policy_evidence is related material that does NOT answer it "
+            "— you may note that it exists, and you may not draw a limit, deadline, "
+            "definition, procedure or eligibility from it. "
+            "Cite ONLY the entries in `citable`, using them exactly as "
+            "given - policy_id, document, edition and page. Never cite a policy that "
+            "is not in this list, and never state a page number that is not in its "
+            "citation. Where decision_use is PROHIBITED_FOR_DECISION, explain what "
+            "the rule says and say plainly that the system cannot check the "
+            "student's own case against it; do not rule on their situation. Where a "
+            "policy carries `conflicts`, the resolution names which source governs - "
+            "follow it and say which document you are quoting, never present the two "
+            "as equally valid."
+        )
+    result["tool"] = "policy_lookup"
+    return result
 
 
 def build_default_registry() -> AdvisorCapabilityRegistry:
@@ -1364,6 +2075,187 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
             },
             allowed_roles=_ALL_ROLES,
             executor=_exec_my_timetable,
+        )
+    )
+
+    registry.register(
+        AdvisorCapability(
+            name="my_plan_by_term",
+            description=(
+                "The student's whole degree plan laid out level by level: every course "
+                "marked passed / studying / not taken, and whether prerequisites allow "
+                "registering it now. Use for 'show me my plan', 'what is left in level "
+                "6', 'how much of the plan have I finished'. Broader than my_progress, "
+                "which returns only what is open now. Pass `term` to narrow to one plan "
+                "level. can_register reflects prerequisites ONLY - it says nothing about "
+                "whether a section is being taught."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "student_id": {
+                        "type": "integer",
+                        "description": "Omit for the chatting student.",
+                    },
+                    "term": {
+                        "type": "integer",
+                        "description": "Optional plan LEVEL (1..10), not a calendar term.",
+                    },
+                },
+                "additionalProperties": False,
+            },
+            allowed_roles=_ALL_ROLES,
+            executor=_exec_my_plan_by_term,
+        )
+    )
+
+    registry.register(
+        AdvisorCapability(
+            name="my_advisor",
+            description=(
+                "Who the student's academic adviser is - name and department, not just "
+                "the internal id. Use for 'who is my adviser', 'which department is my "
+                "adviser in', 'I do not know who to ask'."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "student_id": {
+                        "type": "integer",
+                        "description": "Omit for the chatting student.",
+                    },
+                },
+                "additionalProperties": False,
+            },
+            allowed_roles=_ALL_ROLES,
+            executor=_exec_my_advisor,
+        )
+    )
+
+    registry.register(
+        AdvisorCapability(
+            name="my_clash_free_sections",
+            description=(
+                "For one or more courses, which sections fit the student's CURRENT "
+                "registered timetable and which collide - naming the course, day and "
+                "both time ranges of every collision. Use for 'which section of X can I "
+                "take', 'does section F11 clash with my schedule', 'all the sections "
+                "clash, is that right'. status NOT_ON_FILE means no section is recorded "
+                "for that course; say exactly that, never 'no sections available'. There "
+                "are no seat counts, so never claim a section has room."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "course_code": {"type": "string", "description": "e.g. CS323"},
+                    "course_codes": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Several courses at once.",
+                    },
+                    "student_id": {
+                        "type": "integer",
+                        "description": "Omit for the chatting student.",
+                    },
+                    "academic_year": {"type": "integer"},
+                    "term": {"type": "integer"},
+                },
+                "additionalProperties": False,
+            },
+            allowed_roles=_ALL_ROLES,
+            executor=_exec_my_clash_free_sections,
+        )
+    )
+
+    registry.register(
+        AdvisorCapability(
+            name="build_my_timetable",
+            description=(
+                "Build a clash-free weekly timetable for the student from the sections "
+                "on file. Use for 'build me a schedule', 'I must take X, can it fit', "
+                "'give me a plan under 12 hours'. Pass must_include for courses the "
+                "student insists on and max_credits for a ceiling. Returns placed AND "
+                "unplaced with a reason for each - a partial result is the normal "
+                "outcome and must be reported as such, never as a failure. It is a "
+                "SUGGESTION: it does not register anything and cannot promise a seat."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "student_id": {
+                        "type": "integer",
+                        "description": "Omit for the chatting student.",
+                    },
+                    "must_include": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Course codes the student insists on taking.",
+                    },
+                    "max_credits": {
+                        "type": "integer",
+                        "description": "Credit ceiling for the plan. Omit for no cap.",
+                    },
+                    "keep_current_sections": {
+                        "type": "boolean",
+                        "description": "Keep the sections already registered instead of re-picking.",
+                    },
+                    "academic_year": {"type": "integer"},
+                    "term": {"type": "integer"},
+                },
+                "additionalProperties": False,
+            },
+            allowed_roles=_ALL_ROLES,
+            executor=_exec_build_my_timetable,
+        )
+    )
+
+    registry.register(
+        AdvisorCapability(
+            name="policy_lookup",
+            description=(
+                "The university's WRITTEN RULES from the approved policy store, with "
+                "the page and edition needed to cite them. Call this for any question "
+                "about what is allowed, required, how long, how many, or what happens "
+                "if - withdrawal, apology, deferral, absence, deprivation, credit "
+                "load, GPA, grades, appeals, transfer, honours, dismissal, "
+                "re-enrolment, visiting student, conduct. Pass the student's question "
+                "verbatim as `query`. Answer rule questions ONLY from what this "
+                "returns; if it returns nothing, say the system holds no written rule "
+                "rather than answering from memory. Returns each policy's "
+                "decision_use, which says whether the rule can be applied to this "
+                "student or only explained."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": (
+                            "The student's question, in their own words. Preferred: "
+                            "it matches both the topic index and the rule text."
+                        ),
+                    },
+                    "topic": {
+                        "type": "string",
+                        "description": (
+                            "Exact topic key, when known. See available_topics in a "
+                            "previous result. Use query instead if unsure."
+                        ),
+                    },
+                    "policy_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Fetch specific policies by id, e.g. after a cross-reference.",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum policies to return (default 8, max 20).",
+                    },
+                },
+                "additionalProperties": False,
+            },
+            allowed_roles=_ALL_ROLES,
+            executor=_exec_policy_lookup,
         )
     )
 

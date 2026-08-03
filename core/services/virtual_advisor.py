@@ -66,7 +66,7 @@ def _tool_turn_timeout() -> float:
     return max(10.0, float(getattr(settings, "VIRTUAL_ADVISOR_TOOL_TURN_TIMEOUT_SECONDS", 75)))
 
 
-SYSTEM_PROMPT = """You are a private local university virtual academic advisor.
+SYSTEM_PROMPT_TEMPLATE = """You are a private local university virtual academic advisor.
 
 Rules:
 - Answer in the same language as the user's latest question. When the user message carries an answer_language field, write the final answer in that language.
@@ -84,9 +84,11 @@ Rules:
 - Never expose chain-of-thought; provide concise evidence from the context instead.
 - Treat recommendations as advising support, not official approval.
 - For list questions, summarize the count, filters used, and show the most relevant rows instead of repeating every row.
+
+{POLICY_RULES}
 """
 
-SYSTEM_PROMPT_AGENT = """You are a private local university virtual academic advisor with verified data tools.
+SYSTEM_PROMPT_AGENT_TEMPLATE = """You are a private local university virtual academic advisor with verified data tools.
 
 Rules:
 - Write the final answer in the language named by the answer_language field of the user message. Never switch languages on your own.
@@ -107,7 +109,60 @@ Rules:
 - Never expose chain-of-thought; cite concise evidence instead.
 - Treat recommendations as advising support, not official approval.
 - For list questions, summarize the count and filters used, then show the most relevant rows.
+
+{POLICY_RULES}
 """
+
+#: The policy contract, shared verbatim by BOTH answer paths. It used to live only
+#: in the agent prompt, so when the loop was disabled or the model rejected tool
+#: calling, the fallback answered regulation questions from parametric memory with
+#: nothing to check — a complete grounding bypass, and invisible because the
+#: citation check finds nothing to object to when nothing was retrieved.
+_POLICY_RULES_HEADER = (
+    "UNIVERSITY RULES — what is allowed, required, how long, how many, what happens if:"
+)
+
+_NEVER_FROM_MEMORY = (
+    "Never state a rule, deadline, limit, penalty or entitlement from your own "
+    "knowledge — not even one you are confident about. Your training contains other "
+    "universities' regulations, and they are wrong here."
+)
+
+_POLICY_RULES_TAIL = """- RETRIEVED IS NOT GOVERNING. Every result is sorted into direct_policy_evidence (records that govern THIS question) and background_policy_evidence (related material that does not answer it). Anything the university REQUIRES, PERMITS, FORBIDS or DEFINES — a number, a percentage, a deadline, who is eligible, what is prohibited, what a status means, how to apply, which office decides, how to appeal — may come ONLY from direct_policy_evidence. From background you may say that related material exists and does not answer the question, and nothing more. Deriving a figure or a procedure from a related record is the failure this separation exists to prevent, and it is invisible downstream because the citation is genuine.
+- If direct_policy_evidence is empty, no retrieved record governs the question. Answer any student-data part normally, then say the guide does not state the rule and refer the student to عمادة القبول والتسجيل. Do not substitute the nearest related record, and do not offer a figure "usually" or "generally" — an approximate rule the source does not contain is still an invented rule.
+- Cite only policies retrieved for THIS question. Write every citation in EXACTLY this form, including the square brackets: «الدليل الإرشادي للطالب، ص NN [POLICY_ID]» — take NN from that policy's citation.page and POLICY_ID from its citation.policy_id, both verbatim. The bracketed id is how the system checks your citation; an answer that states a rule without one is treated as uncited. Never cite a policy or a page that was not retrieved, and never pair a page with a policy it does not belong to.
+- If no policy was retrieved, say the system holds no written rule on it and refer the student to عمادة القبول والتسجيل. Answer any non-policy part of the question from the available evidence as usual, and say which part you could not answer. Silence about the gap is the failure, not the gap.
+- Retrieval returns the NEIGHBOURHOOD of a question, not proof that an answer is in it. Read what came back before relying on it: if the policies are about the right subject but none actually states the rule asked about — how many times a course may be repeated, whether lateness counts as absence — say the guide does not state it. Stretching the nearest policy to cover the gap is a fabrication with a real citation attached, which is worse than an obvious one because it survives checking.
+- decision_use governs how far you may go, and has exactly four values. PROHIBITED_FOR_DECISION: the rule exists but this system cannot check the student against it — explain the rule, say plainly that their own case cannot be verified here, and name who can. Do not rule on their situation, do not estimate, do not say "you are probably fine", and do not tell them that dismissal, approval, eligibility or safety is or is not indicated for them. PARTIALLY_EVALUABLE: some inputs exist and others do not — say which part you could check and which you could not, and never present the result as a final determination. PERMITTED_WITH_USER_PROVIDED_INPUTS: usable only with figures the student supplies in the conversation; ask for them, and never substitute stored data. EXPLANATORY_ONLY: a statement of fact with no decision in it. A value you do not recognise is to be treated as PROHIBITED_FOR_DECISION.
+- If a returned policy carries `conflicts`, two sources disagree and the resolution names which one governs. Follow it, quote the governing document, and say the other source differs. Never average the two, never pick silently, and never repeat the superseded figure as the operative rule.
+- Rules and the student's own data are different claims. Keep them separate in the answer: what the regulation says (cited), then what the system knows about this student, then what follows. Never present a rule as a verdict about the student.
+"""
+
+#: Agent path: the model fetches its own policies.
+POLICY_RULES_AGENT = (
+    f"{_POLICY_RULES_HEADER}\n"
+    "- Call policy_lookup FIRST for any such question, passing the student's question "
+    f"verbatim as query. {_NEVER_FROM_MEMORY}\n"
+    f"{_POLICY_RULES_TAIL}"
+)
+
+#: Single-shot path: there are no tools, so retrieval already happened and the result
+#: — including "nothing matched" — is in the context. Without this the fallback had no
+#: policy contract at all and answered regulation questions from parametric memory.
+POLICY_RULES_SEEDED = (
+    f"{_POLICY_RULES_HEADER}\n"
+    "- You have NO tools on this path. The approved policies for this question were "
+    "retrieved for you and are in verified_context.policy_evidence; that is the "
+    "complete set available and there is no way to fetch more. "
+    f"{_NEVER_FROM_MEMORY}\n"
+    "- If policy_evidence.policies is empty, or the key is absent, then NO approved "
+    "policy was retrieved and you must not state a rule at all — say the system holds "
+    "no written rule on this and refer the student to عمادة القبول والتسجيل.\n"
+    f"{_POLICY_RULES_TAIL}"
+)
+
+SYSTEM_PROMPT_AGENT = SYSTEM_PROMPT_AGENT_TEMPLATE.format(POLICY_RULES=POLICY_RULES_AGENT)
+SYSTEM_PROMPT = SYSTEM_PROMPT_TEMPLATE.format(POLICY_RULES=POLICY_RULES_SEEDED)
 
 
 ADVISOR_TOOL_SCHEMAS: list[dict[str, Any]] = [
@@ -1153,6 +1208,274 @@ def _unverified_student_ids(answer: str, evidence_texts: list[str]) -> list[str]
     return sorted(sid for sid in mentioned if sid not in evidence)
 
 
+#: Policy ids are dotted upper-case runs (``TU.WITHDRAWAL.MAXIMUM``). Distinctive
+#: enough that ordinary Arabic or English prose never matches, which is what keeps
+#: the fabrication check from firing on innocent text.
+_POLICY_ID_RE = re.compile(r"\b[A-Z][A-Z0-9]*(?:\.[A-Z0-9_]+){2,}\b")
+
+
+#: The citation form the prompt mandates: «... ص 24 [TU.WITHDRAWAL.MAXIMUM]». Page
+#: digits may be Arabic-Indic, so both ranges are accepted and folded before use.
+_CITATION_RE = re.compile(r"ص\s*\.?\s*([0-9٠-٩]+)\s*\[\s*([A-Z][A-Z0-9_.]+)\s*\]")
+
+#: A page reference with no bracketed id beside it. The number a student would
+#: actually turn to, cited with nothing to check it against.
+#: (?![0-9٠-٩]) forces the whole number to be consumed before the bracket test.
+#: Without it the engine backtracks — «ص 24 [ID]» matches as page "2" followed by
+#: "4", which is not a bracket, so every correctly-formed citation reads as a bare
+#: page and the check fires on exactly the answers that complied.
+_BARE_PAGE_RE = re.compile(r"ص\s*\.?\s*([0-9٠-٩]+)(?![0-9٠-٩])(?!\s*\[)")
+
+_ARABIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
+
+
+def _policy_ids_in_text(text: str) -> set[str]:
+    return set(_POLICY_ID_RE.findall(text or ""))
+
+
+def _claimed_citations(answer: str) -> list[dict[str, Any]]:
+    """Citations the answer actually makes, in the mandated bracketed form.
+
+    A bare policy id with no page still counts as a claim — it names a source, so
+    it must be checkable — but it is the paired form the prompt requires, because
+    the page is the part a student can go and verify.
+    """
+    claims: list[dict[str, Any]] = []
+    paired: set[str] = set()
+    for page, policy_id in _CITATION_RE.findall(answer or ""):
+        paired.add(policy_id)
+        claims.append({"policy_id": policy_id, "page": int(page.translate(_ARABIC_DIGITS))})
+    for policy_id in _policy_ids_in_text(answer):
+        if policy_id not in paired:
+            claims.append({"policy_id": policy_id, "page": None})
+    return claims
+
+
+def _uncheckable_pages(answer: str, allowed: list[dict[str, Any]]) -> list[int]:
+    """Page numbers cited with no policy id beside them, that no retrieved policy has.
+
+    This is the hole the first version of this contract left wide open: the prompt
+    asked for «... ص 24» and the check looked for dotted ids, so an answer that
+    followed the instruction was never examined at all. A page with no id is not
+    automatically wrong — but a page belonging to nothing that was retrieved is.
+    """
+    known: set[int] = set()
+    for citation in allowed or []:
+        page = citation.get("page")
+        for value in page if isinstance(page, list) else [page]:
+            if isinstance(value, int):
+                known.add(value)
+    cited = {int(p.translate(_ARABIC_DIGITS)) for p in _BARE_PAGE_RE.findall(answer or "")}
+    return sorted(cited - known)
+
+
+def _find_credit_block(obj: Any, depth: int = 0) -> dict[str, Any] | None:
+    """Locate the credit-load evidence wherever this request happens to carry it.
+
+    On the fallback it sits at ``context["recommendation_policy"]``; on the agent
+    path it arrives nested inside ``get_student_context``'s result. Looking in only
+    one place is why the first attempt at this silently did nothing on the very path
+    that produced the defect.
+    """
+    if depth > 6:
+        return None
+    if isinstance(obj, dict):
+        if "max_recommended_credit_hours" in obj:
+            return obj
+        children: Any = obj.values()
+    elif isinstance(obj, list | tuple):
+        # Tool results arrive as a LIST. Recursing only through dict values walked
+        # straight past them, so this found the block on the fallback path and never
+        # on the agent path — the one that produced the defect.
+        children = obj
+    else:
+        return None
+    for value in children:
+        found = _find_credit_block(value, depth + 1)
+        if found is not None:
+            return found
+    return None
+
+
+def _credit_policy_evidence_citations(context: dict[str, Any]) -> dict[str, Any] | None:
+    """Make the credit-load figures citable from the records that state them.
+
+    Returns a ``policy_lookup``-shaped result so the citation contract, the
+    validator and the response payload treat it exactly like a retrieved policy.
+    Returns None when the block carries no regulatory figure — the advisory cap of
+    18 is this system's own and no page of the guide says it, so lending it a
+    citation would be the same defect pointed the other way.
+    """
+    from core.services.credit_policy import backing_citations, verify_against_store
+    from core.services.policy_store import get_policy_store
+
+    evidence = _find_credit_block(context)
+    if evidence is None:
+        return None
+    wanted = backing_citations(evidence)
+    if not wanted:
+        return None
+
+    drift = verify_against_store()
+    if drift:
+        # The constants and the records disagree. Citing page 23 for a figure page 23
+        # does not contain would pass every mechanical check, so withhold instead.
+        logger.error("credit_policy constants disagree with the policy store: %s", drift)
+        return None
+
+    result = get_policy_store().lookup(policy_ids=wanted)
+    if not result.get("policies"):
+        return None
+    result["tool"] = "policy_lookup"
+    result["note"] = (
+        "These records state the credit-load figures already present in "
+        "recommendation_policy. Cite them the same way as any other policy when you "
+        "quote the minimum or maximum. The recommendation cap is NOT among them and "
+        "must never be attributed to the guide."
+    )
+    return result
+
+
+def _seed_policy_evidence(question: str) -> tuple[dict[str, Any], str]:
+    """Retrieve policies for a path that has no tools of its own.
+
+    Returns the same shape ``policy_lookup`` produces, plus a grounding state for
+    telemetry so an ungrounded answer is distinguishable after the fact:
+
+      ``retrieved``    approved policies came back
+      ``none_matched`` the store was consulted and held nothing applicable
+      ``unavailable``  the store could not be consulted at all
+
+    All three are acceptable answers to "was this grounded?"; what is not acceptable
+    is not knowing. On ``unavailable`` the contract still holds — the prompt tells the
+    model that an absent or empty ``policies`` list means it may not state a rule —
+    so a store outage degrades to abstention rather than to model memory.
+    """
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    try:
+        result = get_default_registry().execute(
+            "policy_lookup", {"query": question}, scope={"role": ROLE_STUDENT}, ctx={}
+        )
+    except Exception:  # pragma: no cover - never fail an answer on a store error
+        logger.exception("Policy store unavailable while seeding the single-shot path")
+        return (
+            {
+                "tool": "policy_lookup",
+                "ok": False,
+                "policies": [],
+                "citable": [],
+                "note": (
+                    "The policy store could not be consulted for this question. State "
+                    "no rule at all; say the system could not check its regulations "
+                    "and refer the student to عمادة القبول والتسجيل."
+                ),
+            },
+            "unavailable",
+        )
+
+    if not isinstance(result, dict) or not result.get("ok"):
+        return (
+            {"tool": "policy_lookup", "ok": False, "policies": [], "citable": []},
+            "unavailable",
+        )
+    return (result, "retrieved" if result.get("policies") else "none_matched")
+
+
+def _retrieved_citations(tool_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Citations the answer is entitled to use: what policy_lookup returned here.
+
+    Deduplicated by policy_id and kept in retrieval order, so the correction message
+    lists them the way the model saw them.
+    """
+    seen: set[str] = set()
+    citations: list[dict[str, Any]] = []
+    for result in tool_results or []:
+        # registry.execute returns the executor's dict directly — these entries are
+        # the results themselves, not {"result": ...} envelopes.
+        if not isinstance(result, dict) or result.get("tool") != "policy_lookup":
+            continue
+        for citation in result.get("citable") or []:
+            pid = str((citation or {}).get("policy_id") or "")
+            if pid and pid not in seen:
+                seen.add(pid)
+                citations.append(citation)
+    return citations
+
+
+#: What the student sees when the model could not source its own answer. Naming the
+#: office is the point: an abstention that leaves the student with nowhere to go is
+#: not much better than a wrong answer.
+_CITATION_REFUSAL_AR = (
+    "لم أتمكن من التحقق من مرجع هذه الإجابة في الأنظمة المعتمدة لدينا، ولذلك لن "
+    "أعرضها حتى لا أنقل لك معلومة غير موثّقة. الرجاء مراجعة عمادة القبول والتسجيل "
+    "أو مرشدك الأكاديمي للحصول على الإجابة الرسمية."
+)
+_CITATION_REFUSAL_EN = (
+    "I could not verify this answer against the approved regulations held by the "
+    "system, so I will not show it rather than give you an unsourced rule. Please "
+    "check with the Deanship of Admission and Registration or your academic adviser."
+)
+
+
+def _policy_evidence_block(tool_results: list[dict[str, Any]]) -> str:
+    """The retrieved policies as text, for the correction turn."""
+    lines: list[str] = []
+    for result in tool_results or []:
+        if not isinstance(result, dict) or result.get("tool") != "policy_lookup":
+            continue
+        for policy in result.get("policies") or []:
+            citation = policy.get("citation") or {}
+            statement = str(policy.get("statement_ar") or policy.get("title_ar") or "").strip()
+            lines.append(
+                f"- [{policy.get('policy_id')}] ص {citation.get('page')} — {statement[:400]}"
+            )
+    return "\n".join(dict.fromkeys(lines))
+
+
+def _bad_citations(answer: str, citations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Every citation in the answer that does not check out, with the reason.
+
+    Runs the store's own validator rather than a second implementation, so page,
+    document and edition are checked against the record — not merely the policy id
+    against a list. Also catches the bare «ص NN» form, which the first version of
+    this contract asked the model to produce and then never examined.
+    """
+    from core.services.policy_store import get_policy_store
+
+    problems: list[dict[str, Any]] = []
+    claimed = _claimed_citations(answer)
+    if claimed:
+        try:
+            verdict = get_policy_store().validate_citations(claimed, citations)
+        except Exception:  # pragma: no cover - never fail an answer on a store error
+            logger.exception("Citation validation failed; treating citations as unchecked")
+            verdict = {"rejected": []}
+        for item in verdict.get("rejected") or []:
+            problems.append(
+                {
+                    "policy_id": (item.get("citation") or {}).get("policy_id"),
+                    "page": (item.get("citation") or {}).get("page"),
+                    "reason": item.get("reason"),
+                }
+            )
+    for page in _uncheckable_pages(answer, citations):
+        problems.append(
+            {"policy_id": None, "page": page, "reason": "PAGE_NOT_IN_ANY_RETRIEVED_POLICY"}
+        )
+    return problems
+
+
+def _fabricated_policy_ids(answer: str, citations: list[dict[str, Any]]) -> list[str]:
+    """Policy ids the answer cites that were never retrieved this request.
+
+    A real, approved, current policy still counts as fabricated here if the model
+    did not fetch it — otherwise an id recalled from training reads as grounded.
+    """
+    allowed = {c.get("policy_id") for c in citations}
+    return sorted(pid for pid in _policy_ids_in_text(answer) if pid not in allowed)
+
+
 def _summarise_tool_args(args: dict[str, Any]) -> dict[str, Any]:
     """Telemetry-safe argument summary (caps long lists/strings)."""
     summary: dict[str, Any] = {}
@@ -1324,6 +1647,13 @@ def answer_virtual_advisor(
         "turn_error": None,
     }
     agent_tool_results: list[dict[str, Any]] = []
+
+    # The credit range reaches the model through recommendation_policy, not through
+    # policy_lookup — a second regulatory channel that was outside the citation
+    # contract entirely. The batch caught it: «الحد الأدنى حسب الدليل 12 ساعة» went
+    # to a student attributed to the guide with nothing citable behind it. Binding
+    # the figures to the records they actually come from makes them citable like any
+    # other rule, and makes an unbacked figure impossible rather than merely unlikely.
     tool_results: list[dict[str, Any]] = []
     answer = ""
     usage: dict[str, Any] = {}
@@ -1364,6 +1694,23 @@ def answer_virtual_advisor(
                 telemetry=telemetry,
             )
             telemetry["loop_used"] = True
+            # Whether this answer had a policy basis is recorded on BOTH paths, so an
+            # ungrounded rule answer is distinguishable after the fact instead of
+            # looking exactly like a grounded one. On this path the model chooses
+            # whether to call policy_lookup; "not_consulted" is therefore a real
+            # outcome, and catching a rule stated under it is the judge's job.
+            called = {t.get("name") for t in telemetry.get("tools_called") or []}
+            if "policy_lookup" not in called:
+                telemetry["policy_grounding"] = "not_consulted"
+            else:
+                consulted = [
+                    r
+                    for r in agent_tool_results
+                    if isinstance(r, dict) and r.get("tool") == "policy_lookup"
+                ]
+                telemetry["policy_grounding"] = (
+                    "retrieved" if any(r.get("policies") for r in consulted) else "none_matched"
+                )
             # The UI evidence panel reads ``tool_results``; in loop mode
             # the agent's tool results are that evidence.
             tool_results = agent_tool_results
@@ -1377,6 +1724,26 @@ def answer_virtual_advisor(
         tool_results = run_planned_tools(question, scope=scope)
         if tool_results:
             context["tool_results"] = tool_results
+
+        # ...and the policy store is consulted for EVERY question on this path.
+        #
+        # This path has no tools, so the model cannot fetch a rule itself. Until this
+        # was added it simply answered regulation questions from parametric memory:
+        # no citation, no retrieval, and nothing for the citation check to object to,
+        # because a model that never saw a policy id will not emit one. A complete
+        # grounding bypass that looked identical to a grounded answer.
+        #
+        # Retrieval is attempted unconditionally rather than behind a "does this look
+        # like a policy question" guess: a classifier that says no is exactly how the
+        # bypass comes back, and the lookup is a local deterministic dict scan.
+        policy_evidence, grounding = _seed_policy_evidence(question)
+        telemetry["policy_grounding"] = grounding
+        context["policy_evidence"] = policy_evidence
+        if policy_evidence.get("policies"):
+            # Feed the same structure the agent loop produces, so the citation check
+            # and the response contract work identically on both paths.
+            agent_tool_results = [*agent_tool_results, policy_evidence]
+
         context_json = json.dumps(context, ensure_ascii=False)
         user_message = {
             "role": "user",
@@ -1397,6 +1764,85 @@ def answer_virtual_advisor(
         answer = result.content
         usage = result.usage
         answer_model = result.model
+
+    # Citation check: a policy id in the answer must have been RETRIEVED this
+    # request. Prompt instructions are not enforcement — a model that recites a
+    # plausible id from training produces an answer that looks sourced and is not.
+    # Attached here rather than up front: on the agent path the credit block only
+    # exists once get_student_context has returned, so anything earlier finds nothing
+    # on exactly the path that produced the uncited «حسب الدليل، الحد الأدنى 12 ساعة».
+    credit_citations = _credit_policy_evidence_citations(
+        {"context": context, "tools": agent_tool_results}
+    )
+    if credit_citations:
+        agent_tool_results = [*agent_tool_results, credit_citations]
+
+    citations = _retrieved_citations(agent_tool_results)
+    bad = _bad_citations(answer, citations)
+    if bad:
+        telemetry["citation_retry"] = True
+        telemetry["bad_citations"] = bad
+        # The correction carries the policy TEXT, not just the permitted ids. Asking
+        # a model to rewrite a rule-bearing answer while showing it only a list of
+        # ids leaves it nothing to rewrite FROM except its own memory — which is
+        # the failure this whole feature exists to prevent.
+        evidence = _policy_evidence_block(agent_tool_results)
+        correction = (
+            "Your draft's citations did not check out: "
+            + "; ".join(
+                f"{b['policy_id'] or 'page ' + str(b.get('page'))} — {b['reason']}" for b in bad
+            )
+            + ".\n\nThese are the ONLY policies retrieved in this conversation, with "
+            "their exact text, page and id:\n"
+            + (evidence or "(none — no policy was retrieved)")
+            + "\n\nRewrite the answer using only these, citing as «الدليل الإرشادي "
+            "للطالب، ص NN [POLICY_ID]». If none of them states what you claimed, "
+            "remove the claim and say the system holds no written rule on that point. "
+            "Do not substitute a different policy to keep the claim."
+        )
+        retry_messages = [
+            {"role": "system", "content": SYSTEM_PROMPT_AGENT},
+            user_message,
+            {"role": "assistant", "content": answer},
+            {"role": "user", "content": correction},
+        ]
+        try:
+            corrected_cite: ChatResult = llm.chat(
+                retry_messages,
+                model=resolved_model,
+                assistant_prefill=_assistant_prefill_for_model(resolved_model),
+            )
+            if corrected_cite.content:
+                still_bad = _bad_citations(corrected_cite.content, citations)
+                telemetry["bad_citations_after_retry"] = still_bad
+                # Keep whichever draft is less wrong. An unconditional overwrite lets
+                # a retry that invents a NEW id replace a draft that had fewer.
+                if len(still_bad) <= len(bad):
+                    answer = corrected_cite.content
+                    bad = still_bad
+                    telemetry["citation_retry_kept"] = "retry"
+                else:
+                    # Recorded because it is otherwise invisible: both drafts end in
+                    # the same refusal, so an operator asking "did the retry help?"
+                    # has nothing to read from the answer itself.
+                    telemetry["citation_retry_kept"] = "draft"
+        except Exception:  # pragma: no cover - degrade to the draft answer
+            logger.exception("Citation retry failed; keeping the original answer")
+
+        if bad:
+            # The system knows this answer's sourcing is wrong. Shipping it with
+            # ok:true would hand a student an invented rule wearing a real-looking
+            # citation — the most dangerous output this system can produce.
+            logger.error(
+                "Refusing to return an answer with unverifiable citations: %s",
+                [b["reason"] for b in bad],
+            )
+            telemetry["citation_refused"] = True
+            answer = (
+                _CITATION_REFUSAL_AR
+                if _answer_language(question) == "Arabic"
+                else _CITATION_REFUSAL_EN
+            )
 
     # Grounding check: any student id in the answer must exist in the
     # evidence (context, seed tools, agent tools) or the question itself.
@@ -1438,5 +1884,12 @@ def answer_virtual_advisor(
         "context_summary": _context_summary(context),
         "tool_results": tool_results,
         "verified_context": context,
+        # The structured citation contract. `citations` is what the answer was
+        # ENTITLED to cite; `cited_policy_ids` is what it actually did. A judge or a
+        # UI can check one against the other without re-parsing the prose.
+        "citations": citations,
+        "cited_policy_ids": sorted(
+            _policy_ids_in_text(answer) & {c["policy_id"] for c in citations}
+        ),
         "agent": {**telemetry, "tool_results": agent_tool_results},
     }

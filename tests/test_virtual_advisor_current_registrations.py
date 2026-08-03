@@ -41,6 +41,17 @@ def _course(code: str, name: str, credits: int, plan_term: int = 4) -> Course:
 
 
 def _register(student_id: int, code: str, section: str, year: str = "1447", term: str = "2"):
+    # credits come from ProgrammeRequirement, keyed on the course code.
+    ProgrammeRequirement.objects.get_or_create(
+        program="AI",
+        course_code="ZZ900",
+        defaults={
+            "course_name": "MULTI MEETING FIXTURE",
+            "type": "Mandatory",
+            "programme_term": 99,
+            "credit_hours": 4,
+        },
+    )
     ts = TermSection.objects.create(
         course_code=code.rstrip("0123456789"),
         course_number=code[len(code.rstrip("0123456789")) :],
@@ -299,7 +310,9 @@ def test_expected_graduates_get_the_unresolved_16_hour_qualification():
     from core.services.credit_policy import EXPECTED_GRADUATE_STATUS, credit_policy_evidence
 
     ev = credit_policy_evidence(
-        recommended_credit_hours=12, unknown_for=[], term=1,
+        recommended_credit_hours=12,
+        unknown_for=[],
+        term=1,
         student_status=EXPECTED_GRADUATE_STATUS,
     )
     assert ev["qualification"]["unresolved"] is True
@@ -387,9 +400,7 @@ def test_prompts_teach_the_arabic_distinction_and_the_absent_case():
         # The load-bearing half is the PROHIBITION. Asserting only that the good term
         # appears somewhere lets the rule be gutted while a worked example keeps the
         # phrase alive — which is exactly what a mutation run showed.
-        rule = next(
-            (ln for ln in prompt.splitlines() if "ARABIC TERMINOLOGY" in ln), ""
-        )
+        rule = next((ln for ln in prompt.splitlines() if "ARABIC TERMINOLOGY" in ln), "")
         assert rule, "the Arabic terminology rule is gone"
         # Pin the INSTRUCTION, not the vocabulary. Both Arabic terms appear in the
         # worked example on the same line, so any check for their mere presence
@@ -400,3 +411,490 @@ def test_prompts_teach_the_arabic_distinction_and_the_absent_case():
         assert "recommendation cap «سقف التوصية» — never «الحد الأعلى»" in rule, (
             "the rule no longer forbids calling the recommendation cap الحد الأعلى"
         )
+
+
+def test_registered_credit_hours_counts_each_course_once():
+    """get_student_term_baseline emits ONE ROW PER MEETING.
+
+    Summing that field naively made a real student's 14 credits read as 36. The
+    capability must de-duplicate on (course, section) before adding anything up.
+    """
+    from core.models import (
+        StudentTermSection,
+        TermSection,
+        TermSectionMeeting,
+    )
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    _make_retake_student()
+    # The defect only shows when a section meets MORE THAN ONCE, so build that
+    # explicitly. An earlier version of this test used a one-meeting fixture, where
+    # de-duplication is a no-op and the assertion was tautological — a mutation run
+    # summing the raw rows passed it.
+    ts = TermSection.objects.create(
+        course_code="ZZ900",
+        course_number="ZZ900",
+        course_key="ZZ900",
+        section="M8",
+        available_capacity=25,
+    )
+    for day, start, end in (
+        ("SUN", "08:00", "09:15"),
+        ("TUE", "08:00", "09:15"),
+        ("THU", "08:00", "09:15"),
+    ):
+        TermSectionMeeting.objects.create(
+            term_section=ts,
+            day=day,
+            start_time=start,
+            end_time=end,
+            room="101",
+        )
+    StudentTermSection.objects.create(
+        student_id=SID,
+        academic_year="1448",
+        term="1",
+        term_section=ts,
+    )
+
+    out = get_default_registry().execute(
+        "my_timetable",
+        {"student_id": SID},
+        scope={"role": ROLE_SUPER_ADMIN},
+        ctx={"academic_year": 1448, "term": 1},
+    )
+    regs = out.get("registrations", [])
+    keys = [(r["course_code"], r["section"]) for r in regs]
+    assert len(keys) == len(set(keys)), "a course/section appears twice — meetings leaked through"
+    assert out["registered_course_count"] == len(regs)
+
+    fixture = next(r for r in regs if r["course_code"] == "ZZ900" and r["section"] == "M8")
+    assert fixture["meeting_count"] == 3, "fixture did not produce a multi-meeting section"
+    # The whole point: three meetings, counted once.
+    assert out["registered_credit_hours"] == sum(r["credits"] for r in regs)
+    naive = sum(int(r["credits"]) * int(r["meeting_count"]) for r in regs)
+    assert out["registered_credit_hours"] < naive, (
+        f"credit total {out['registered_credit_hours']} equals the per-meeting sum "
+        f"{naive} — the multi-count is back"
+    )
+
+
+def test_graduation_progress_returns_the_fields_the_report_computes():
+    """build_graduation_report computed these and the executor dropped them."""
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    _make_retake_student()
+    out = get_default_registry().execute(
+        "graduation_progress",
+        {"student_id": SID},
+        scope={"role": ROLE_SUPER_ADMIN},
+        ctx={"academic_year": 1448, "term": 1},
+    )
+    for field in (
+        "final_term_possible",
+        "passed_credits_in_plan",
+        "registered_credits_now",
+        "courses_in_progress",
+    ):
+        assert field in out, f"{field} is computed by the report and still dropped"
+    # Plan completion is not graduation — that is a University Council decision.
+    assert "Council" in out["note"]
+
+
+def test_why_course_locked_answers_the_forward_direction():
+    """build_unlock_report returns a prerequisite graph every caller threw away."""
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    _make_retake_student()
+    _course("AI305", "Neural Networks", 3, plan_term=5)
+    out = get_default_registry().execute(
+        "why_course_locked",
+        {"student_id": SID, "course_code": "AI305"},
+        scope={"role": ROLE_SUPER_ADMIN},
+        ctx={"academic_year": 1448, "term": 1},
+    )
+    assert "unlocks_directly" in out
+    assert "unlocks_directly_count" in out
+    assert out["unlocks_directly_count"] == len(out["unlocks_directly"])
+
+
+def test_elective_placeholder_is_not_reported_as_a_course_without_prerequisites():
+    """FE1/CS1 are SLOTS. 'prerequisites: []' on a slot is a wrong answer, not a gap."""
+    from core.models import ElectiveCourse, ElectiveTermMapping, ProgrammeRequirement
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    ProgrammeRequirement.objects.create(
+        program="AI",
+        course_code="AI1",
+        course_name="PROGRAM ELECTIVE I",
+        type="Program Elective",
+        programme_term=6,
+        credit_hours=3,
+    )
+    e = ElectiveCourse.objects.create(
+        course_code="AI411",
+        course_name="Expert Systems",
+        programme="AI",
+        category="AI",
+        credit_hours=3,
+        prerequisites_csv="AI212",
+    )
+    ElectiveTermMapping.objects.create(
+        academic_year="1448",
+        term=1,
+        programme="AI",
+        placeholder_code="AI1",
+        elective=e,
+    )
+    out = get_default_registry().execute(
+        "course_prerequisites",
+        {"course_code": "AI1", "program": "AI"},
+        scope={"role": ROLE_SUPER_ADMIN},
+        ctx={},
+    )
+    assert out["is_elective_placeholder"] is True
+    assert "per_program" not in out, "a slot must not be answered like a course"
+    assert out["options"][0]["prerequisites"] == ["AI212"]
+
+
+def test_unknown_cohort_refuses_instead_of_showing_both():
+    """gender_section_filter('') is an ALL-PASS filter.
+
+    722 of 3,807 ids in StudentTermSection have no Student row, so a fallback to ""
+    showed those students the other cohort's sections — total, not partial, because
+    every real section is gendered.
+    """
+    import pytest
+
+    from core.models import TermSection
+    from core.services.student_sections import (
+        UnknownStudentGender,
+        gender_section_filter,
+        student_gender_strict,
+    )
+
+    # The old behaviour, pinned so a regression is visible rather than silent.
+    assert TermSection.objects.filter(gender_section_filter("")).count() == (
+        TermSection.objects.count()
+    ), "blank gender is no longer all-pass — update the callers before relaxing this"
+
+    with pytest.raises(UnknownStudentGender):
+        student_gender_strict(999999999)
+
+
+def test_my_plan_by_term_is_student_scoped_and_level_filtered():
+    from core.services.rbac import ROLE_STUDENT, ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    _make_retake_student()
+    reg = get_default_registry()
+
+    full = reg.execute("my_plan_by_term", {"student_id": SID},
+                       scope={"role": ROLE_SUPER_ADMIN}, ctx={})
+    assert full["ok"] is True
+    assert full["terms"], "the plan came back empty"
+
+    level = int(full["terms"][0]["term"])
+    one = reg.execute("my_plan_by_term", {"student_id": SID, "term": level},
+                      scope={"role": ROLE_SUPER_ADMIN}, ctx={})
+    assert [int(t["term"]) for t in one["terms"]] == [level]
+
+    # A student may only ever see their own plan.
+    other = reg.execute("my_plan_by_term", {"student_id": SID + 1},
+                        scope={"role": ROLE_STUDENT, "student_id": SID}, ctx={})
+    assert other["ok"] is False
+    assert "own records" in other["error"]
+
+    # can_register is about prerequisites, never about a section existing. The note
+    # has to say so or the model will read it as "a seat is waiting".
+    assert "prerequisites ONLY" in full["note"]
+
+
+def test_my_advisor_never_hands_out_the_placeholder_email():
+    """All 89 AcademicAdvisor rows carry advisorNN@placeholder.local.
+
+    Returning it would send a student to an address that does not exist — worse than
+    saying nothing, because it looks actionable.
+    """
+    from core.models import AcademicAdvisor, Student
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    Student.objects.create(student_id=SID, name="S", program="AI", section="M", advisor_id="7")
+    AcademicAdvisor.objects.create(
+        advisor_id="7", full_name="د. اختبار", department="AI",
+        email="advisor7@placeholder.local",
+    )
+    out = get_default_registry().execute(
+        "my_advisor", {"student_id": SID}, scope={"role": ROLE_SUPER_ADMIN}, ctx={},
+    )
+    assert out["advisor_name"] == "د. اختبار"
+    assert out["advisor_email"] is None, "a placeholder address reached the student"
+    assert "placeholder" not in str(out).lower() or "contact_note" in out
+
+
+def test_my_advisor_says_so_when_none_is_assigned():
+    from core.models import Student
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    Student.objects.create(student_id=SID, name="S", program="AI", section="M", advisor_id="")
+    out = get_default_registry().execute(
+        "my_advisor", {"student_id": SID}, scope={"role": ROLE_SUPER_ADMIN}, ctx={},
+    )
+    assert out["ok"] is True
+    assert out["advisor_assigned"] is False
+    assert "advisor_name" not in out, "an unassigned adviser must not get an empty name"
+
+
+def test_new_capabilities_are_student_reachable():
+    from core.services.rbac import ROLE_STUDENT
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    reg = get_default_registry().capabilities
+    for name in ("my_plan_by_term", "my_advisor"):
+        assert name in reg, f"{name} is not registered"
+        assert ROLE_STUDENT in reg[name].allowed_roles, f"{name} is not reachable by a student"
+
+
+def _section_with(course_key: str, section: str, meetings: list[tuple[str, str, str]]):
+    from core.models import TermSection, TermSectionMeeting
+
+    ts = TermSection.objects.create(
+        course_code=course_key, course_number=course_key, course_key=course_key,
+        section=section, available_capacity=25,
+    )
+    for day, start, end in meetings:
+        TermSectionMeeting.objects.create(
+            term_section=ts, day=day, start_time=start, end_time=end, room="1",
+        )
+    return ts
+
+
+def test_clash_free_sections_separates_fitting_from_colliding():
+    from core.models import ProgrammeRequirement, Student, StudentTermSection
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    Student.objects.create(student_id=SID, name="S", program="AI", section="M")
+    ProgrammeRequirement.objects.create(
+        program="AI", course_code="ZZ100", course_name="BUSY", type="Mandatory",
+        programme_term=1, credit_hours=3,
+    )
+    busy = _section_with("ZZ100", "M1", [("SUN", "08:00", "09:15")])
+    StudentTermSection.objects.create(
+        student_id=SID, academic_year="1448", term="1", term_section=busy,
+    )
+    _section_with("ZZ200", "M1", [("SUN", "08:30", "09:45")])   # overlaps
+    _section_with("ZZ200", "M2", [("MON", "08:00", "09:15")])   # free
+
+    out = get_default_registry().execute(
+        "my_clash_free_sections", {"student_id": SID, "course_code": "ZZ200"},
+        scope={"role": ROLE_SUPER_ADMIN}, ctx={"academic_year": 1448, "term": 1},
+    )
+    course = out["courses"][0]
+    assert course["status"] == "OK"
+    assert [s["section"] for s in course["clash_free"]] == ["M2"]
+    assert [s["section"] for s in course["clashing"]] == ["M1"]
+    # The collision must name the offending course, not merely say "conflict".
+    assert course["clashing"][0]["conflicts"][0]["conflicts_with"].startswith("ZZ100")
+
+
+def test_a_course_with_no_sections_is_not_on_file_not_unavailable():
+    """Only 77 of 246 plan courses have any section recorded.
+
+    Reporting "no sections available" for the other 169 asserts something about the
+    university's offering that the data does not support.
+    """
+    from core.models import Student
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    Student.objects.create(student_id=SID, name="S", program="AI", section="M")
+    out = get_default_registry().execute(
+        "my_clash_free_sections", {"student_id": SID, "course_code": "ZZ999"},
+        scope={"role": ROLE_SUPER_ADMIN}, ctx={"academic_year": 1448, "term": 1},
+    )
+    assert out["courses"][0]["status"] == "NOT_ON_FILE"
+    assert "NOT_ON_FILE" in out["note"] and "no sections available" in out["note"]
+
+
+def test_clash_free_sections_refuses_when_the_cohort_cannot_be_resolved():
+    """gender_section_filter('') is ALL-PASS, so a fallback shows the other cohort."""
+    from core.models import Student
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    Student.objects.create(student_id=SID, name="S", program="AI", section="")
+    out = get_default_registry().execute(
+        "my_clash_free_sections", {"student_id": SID, "course_code": "ZZ200"},
+        scope={"role": ROLE_SUPER_ADMIN}, ctx={"academic_year": 1448, "term": 1},
+    )
+    assert out["ok"] is False
+    assert out["reason"] == "COHORT_UNRESOLVED"
+
+
+def test_clash_free_sections_never_calls_the_catalogue_a_term():
+    """TermSection has no academic_year and no term column."""
+    from core.models import Student
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    Student.objects.create(student_id=SID, name="S", program="AI", section="M")
+    out = get_default_registry().execute(
+        "my_clash_free_sections", {"student_id": SID, "course_code": "ZZ200"},
+        scope={"role": ROLE_SUPER_ADMIN}, ctx={"academic_year": 1448, "term": 1},
+    )
+    assert "compared_against_term" in out, "the answer must name the term it compared against"
+    assert "carry NO term of their own" in out["note"]
+
+
+def _plan_course(program: str, code: str, credits: int, term: int = 1):
+    from core.models import ProgrammeRequirement
+
+    ProgrammeRequirement.objects.get_or_create(
+        program=program, course_code=code,
+        defaults={"course_name": code, "type": "Mandatory",
+                  "programme_term": term, "credit_hours": credits},
+    )
+
+
+def test_build_my_timetable_places_what_it_can_and_explains_the_rest():
+    from core.models import Student
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    Student.objects.create(student_id=SID, name="S", program="AI", section="M")
+    _plan_course("AI", "ZZ310", 3)
+    _plan_course("AI", "ZZ320", 3)
+    _section_with("ZZ310", "M1", [("SUN", "08:00", "09:15")])
+    # ZZ320 is in the plan but has NO section on file — the common case, 169 of 246.
+
+    out = get_default_registry().execute(
+        "build_my_timetable", {"student_id": SID, "must_include": ["ZZ310", "ZZ320"]},
+        scope={"role": ROLE_SUPER_ADMIN}, ctx={"academic_year": 1448, "term": 1},
+    )
+    assert out["ok"] is True
+    assert [p["course_code"] for p in out["placed"]] == ["ZZ310"]
+    assert out["placed"][0]["meetings"] == ["SUN 08:00-09:15"]
+
+    gap = next(u for u in out["unplaced"] if u["course_code"] == "ZZ320")
+    assert gap["reason_code"] == "NOT_ON_FILE"
+
+
+def test_build_my_timetable_never_says_a_course_is_unavailable():
+    """build_plans emits 'No sections available'. That claims the university offers
+    none, when it means our catalogue holds none — 169 of 246 plan codes."""
+    from core.models import Student
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    Student.objects.create(student_id=SID, name="S", program="AI", section="M")
+    _plan_course("AI", "ZZ330", 3)
+    out = get_default_registry().execute(
+        "build_my_timetable", {"student_id": SID, "must_include": ["ZZ330"]},
+        scope={"role": ROLE_SUPER_ADMIN}, ctx={"academic_year": 1448, "term": 1},
+    )
+    assert "No sections available" not in str(out), "the raw builder wording leaked through"
+    assert "NOT_ON_FILE" in out["note"]
+
+
+def test_build_my_timetable_respects_a_credit_ceiling():
+    from core.models import Student
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    Student.objects.create(student_id=SID, name="S", program="AI", section="M")
+    for i, day in enumerate(("SUN", "MON", "TUE", "WED")):
+        _plan_course("AI", f"ZZ4{i}0", 3)
+        _section_with(f"ZZ4{i}0", "M1", [(day, "08:00", "09:15")])
+
+    codes = [f"ZZ4{i}0" for i in range(4)]
+    capped = get_default_registry().execute(
+        "build_my_timetable", {"student_id": SID, "must_include": codes, "max_credits": 6},
+        scope={"role": ROLE_SUPER_ADMIN}, ctx={"academic_year": 1448, "term": 1},
+    )
+    assert capped["planned_credit_hours"] <= 6, "the ceiling is a hard constraint, not a hint"
+
+
+def test_build_my_timetable_promises_nothing_it_cannot_deliver():
+    """No seat counts exist (available_capacity NULL on every section), and the tool
+    registers nothing."""
+    from core.models import Student
+    from core.services.rbac import ROLE_STUDENT, ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    Student.objects.create(student_id=SID, name="S", program="AI", section="M")
+    _plan_course("AI", "ZZ500", 3)
+    _section_with("ZZ500", "M1", [("SUN", "08:00", "09:15")])
+    reg = get_default_registry()
+    out = reg.execute("build_my_timetable", {"student_id": SID, "must_include": ["ZZ500"]},
+                      scope={"role": ROLE_SUPER_ADMIN}, ctx={"academic_year": 1448, "term": 1})
+    note = out["note"]
+    assert "never say a section has room" in note
+    assert "not a registration" in note
+
+    denied = reg.execute("build_my_timetable", {"student_id": SID + 1},
+                         scope={"role": ROLE_STUDENT, "student_id": SID},
+                         ctx={"academic_year": 1448, "term": 1})
+    assert denied["ok"] is False
+
+
+def test_must_include_beats_the_recommendation():
+    """A course the student insists on must be scheduled even if the recommender
+    never suggested it — that is the whole point of 'I must take X'."""
+    from core.models import Student
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.recommender import recommend_next_courses
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    Student.objects.create(student_id=SID, name="S", program="AI", section="M")
+    # Plan term 9 with an unmet prerequisite keeps it out of the recommendation.
+    from core.models import Prerequisite
+
+    _plan_course("AI", "ZZ610", 3, term=9)
+    _plan_course("AI", "ZZ600", 3, term=8)
+    # An unmet prerequisite keeps ZZ610 out of the recommendation, so the only way it
+    # can appear in the result is via must_include.
+    Prerequisite.objects.create(program="AI", course_code="ZZ610", prerequisite_course_code="ZZ600")
+    _section_with("ZZ610", "M1", [("TUE", "08:00", "09:15")])
+    assert "ZZ610" not in (recommend_next_courses(SID, 1448, 1) or []), (
+        "fixture invalid: the recommender already suggests this course"
+    )
+
+    out = get_default_registry().execute(
+        "build_my_timetable", {"student_id": SID, "must_include": ["ZZ610"]},
+        scope={"role": ROLE_SUPER_ADMIN}, ctx={"academic_year": 1448, "term": 1},
+    )
+    assert "ZZ610" in out["requested"], "must_include never reached the builder"
+    handled = [p["course_code"] for p in out["placed"]] + [
+        u["course_code"] for u in out["unplaced"]
+    ]
+    assert "ZZ610" in handled
+
+
+def test_builder_is_called_with_the_levers_that_are_safe_on_this_data():
+    """Three build_plans levers are unsafe here and the capability must pin them.
+
+    consider_capacity is dead — available_capacity is NULL on every section and is
+    coerced to 0, so enabling it would mean 'no section has any seat' the moment the
+    coercion changes. suggest_swaps emits placeholder strings, never real swaps.
+    strict_per_course returns scheduled=0 on real data. None of these is observable
+    in the output, which is exactly why they need pinning rather than trusting.
+    """
+    import inspect
+
+    from core.services import virtual_advisor_capabilities as vac
+
+    src = inspect.getsource(vac._exec_build_my_timetable)
+    assert "consider_capacity=False" in src, "the dead capacity lever was re-enabled"
+    assert "suggest_swaps=False" in src, "placeholder swap suggestions were re-enabled"
+    assert "strict_per_course=False" in src, "strict mode returns scheduled=0 on real data"
+    # And the capability must never surface the placeholder swaps.
+    assert "swap_suggestions" not in inspect.getsource(vac._exec_build_my_timetable).split(
+        "return {"
+    )[-1]

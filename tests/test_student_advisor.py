@@ -58,7 +58,20 @@ def test_students_get_only_self_scoped_tools():
         "why_course_locked",
         "graduation_progress",
         "my_timetable",
+        "my_plan_by_term",
+        "my_advisor",
+        "my_clash_free_sections",
+        "build_my_timetable",
+        # The written regulations. Carries no student data at all — the rules are the
+        # same for everyone — so it widens what a student can READ, not what they can
+        # reach ABOUT THEMSELVES or anyone else. Added deliberately when the policy
+        # store was wired into the runtime.
+        "policy_lookup",
     }
+    # This set is pinned on purpose. Every addition widens what a student can reach,
+    # so it must be a deliberate edit here rather than a silent consequence of
+    # registering a tool. If this assertion fails, check the new tool is genuinely
+    # self-scoped before updating the set.
     assert "find_students" in _tools(ROLE_ADVISOR)  # staff keep it
     assert "aggregate_demand" in _tools(ROLE_SUPER_ADMIN)
 

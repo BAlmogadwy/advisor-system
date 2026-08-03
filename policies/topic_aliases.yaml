@@ -1,0 +1,116 @@
+# Arabic query vocabulary -> policy topic.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# evidence/topic_map.yaml indexes the 277 EVIDENCE records (TU-GUIDE-NNNN) and
+# shares no ids with the 81 rule records; 20 of the 27 rule topics do not appear
+# in it at all. It cannot route a student question to a rule. This file can.
+#
+# WHAT BELONGS HERE
+# -----------------
+# The words a STUDENT types, not the words the guide prints. The rule titles are
+# already matched directly by the store's token scorer, so repeating them buys
+# nothing. What the scorer cannot do is bridge vocabulary: a student writes
+# «أبغى أطلع من مادة», the guide writes «الانسحاب من مقرر».
+#
+# Aliases are matched after Arabic normalisation (alef/ya/ta-marbuta folded), so
+# spelling variants of the same word need only one entry. Add the dialectal form,
+# not every inflection.
+#
+# THIS FILE ROUTES; IT NEVER DECIDES. An alias selects candidate topics. Whether
+# a rule may be applied to a student's case is governed by each record's own
+# runtime_use field, which this file cannot alter.
+
+schema_version: "1.0"
+
+topics:
+  - topic: academic_dismissal
+    # NOT «الفصل من الجامعة»: فصل is the semester sense in every other topic, so
+    # that alias fired on «متى يبدأ الفصل الدراسي في الجامعة؟» and answered a
+    # timetable question with expulsion rules. The verb forms are unambiguous.
+    aliases_ar: [مفصول, إنذار, إنذارات, انذار ثالث, يفصلوني, طردوني, انفصل من الجامعة, تجاوزت المدة النظامية]
+
+  - topic: academic_leave
+    aliases_ar: [الفرق بين الاعتذار والتأجيل, اعتذار ولا تأجيل, أيهما أفضل اعتذار, وش الفرق بين الانسحاب والاعتذار]
+
+  - topic: academic_structure
+    aliases_ar: [الفصول الدراسية, كم فصل في السنة, الفصل الصيفي, بنية العام, السنة الدراسية]
+
+  - topic: advising
+    aliases_ar: [المرشد الأكاديمي, مرشدي, الإرشاد الأكاديمي, حقوقي على المرشد, واجباتي, من مرشدي]
+
+  - topic: attendance
+    aliases_ar: [الغياب, نسبة الغياب, الحرمان, محروم, حرموني, كم غياب مسموح, غبت]
+
+  - topic: contact_channels
+    aliases_ar: [كيف أتواصل, وسائل التواصل, عمادة القبول والتسجيل, أين أراجع, رقم التواصل, البريد]
+
+  - topic: course_withdrawal
+    aliases_ar: [الانسحاب من مقرر, أنسحب من مادة, حذف مادة, أبغى أطلع من مادة, كم مرة أنسحب, سحب مقرر]
+
+  - topic: credit_load
+    aliases_ar: [عدد الساعات, كم ساعة أسجل, العبء الدراسي, الحد الأعلى للساعات, الحد الأدنى للساعات, ساعات الفصل الصيفي, متوقع التخرج, غير مكتمل, IC]
+
+  - topic: deregistration
+    aliases_ar: [طي القيد, انقطعت, الانقطاع عن الدراسة, طوي قيدي, ما سجلت فصل]
+
+  - topic: external_transfer
+    # Every alias names the SOURCE as another university. «أحول لجامعة ثانية» was
+    # removed: word-order matching now rejects it against «أحول لكلية ثانية داخل
+    # الجامعة», but the phrase remains ambiguous enough not to be worth keeping.
+    aliases_ar: [التحويل الخارجي, تحويل خارجي, من جامعة أخرى, من جامعة ثانية, إلى جامعة طيبة, من خارج الجامعة, تحويل من جامعة]
+
+  - topic: gpa_calculation
+    aliases_ar: [حساب المعدل, المعدل التراكمي, المعدل الفصلي, كيف أحسب معدلي, نقاط المعدل, GPA]
+
+  - topic: grade_appeal
+    aliases_ar: [التظلم, أتظلم على درجة, اعتراض على الدرجة, تعديل الدرجة, راجعت الدكتور, مراجعة الدرجة]
+
+  - topic: grade_scale
+    aliases_ar: [التقديرات, جدول التقديرات, وزن التقدير, رمز التقدير, ممتاز جيد جدا, الرموز الخاصة]
+
+  - topic: graduation
+    aliases_ar: [التخرج, متى أتخرج, شروط التخرج, معدل التخرج, وثيقة التخرج, السجل الأكاديمي, بدل فاقد]
+
+  - topic: honours
+    aliases_ar: [مرتبة الشرف, شرف أولى, شرف ثانية, أحصل على مرتبة الشرف]
+
+  - topic: internal_transfer
+    # The distinguishing phrase family is «inside the university», which the
+    # external aliases can never contain.
+    aliases_ar: [التحويل الداخلي, تحويل داخلي, تغيير التخصص, أحول لقسم ثاني, التحويل بين الكليات,
+                 أغير قسمي, داخل الجامعة, بين كليات الجامعة, من كلية لكلية, داخل طيبة,
+                 من تخصص لتخصص, كلية ثانية داخل]
+
+  - topic: medical_excuse
+    aliases_ar: [العذر المرضي, تقرير طبي, مرضت, دخلت المستشفى, عذر طبي, تقرير من خارج المملكة]
+
+  - topic: reenrolment
+    aliases_ar: [إعادة القيد, أرجع للدراسة, أعيد قيدي, رجوع بعد الفصل, مفصول تأديبيا]
+
+  - topic: registration_advice
+    aliases_ar: [تأجيل مقررات المستويات الأولى, أأجل مواد المستوى الأول, ترتيب المواد]
+
+  - topic: registration_priority
+    aliases_ar: [الطلاب المتعثرون, متعثر, أولوية التسجيل, معدلي منخفض والتسجيل]
+
+  - topic: registration_process
+    aliases_ar: [التسجيل, التسجيل المبكر, الحذف والإضافة, تعديل الجدول, أسجل مواد, الرغبات, متى يقفل التسجيل]
+
+  - topic: semester_excuse
+    aliases_ar: [الاعتذار عن الفصل, أعتذر عن الترم, تقدير ع, المكافأة والاعتذار, اعتذار فصل كامل]
+
+  - topic: student_conduct
+    aliases_ar: [الغش, مخالفة, العقوبات, لجنة السلوك, ضبطوني في الاختبار, انضباط]
+
+  - topic: study_deferral
+    aliases_ar: [تأجيل الدراسة, أأجل الفصل, تأجيل فصل, كم فصل أأجل, المكافأة والتأجيل]
+
+  - topic: terminology
+    aliases_ar: [معنى المصطلح, وش معنى, تعريف المصطلح, المتطلب السابق, المتطلب المتزامن, الوحدة الدراسية المعتمدة]
+
+  - topic: university_withdrawal
+    aliases_ar: [الانسحاب من الجامعة, أترك الجامعة, انسحاب نهائي, أوقف دراستي نهائيا]
+
+  - topic: visiting_student
+    aliases_ar: [الطالب الزائر, أدرس في جامعة ثانية, معادلة مقرر, مقرر من خارج الجامعة, زائر داخل, زائر خارج]
