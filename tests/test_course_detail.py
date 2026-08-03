@@ -203,7 +203,7 @@ def test_an_unmapped_slot_says_so_rather_than_returning_a_blank_list(plan):
     """77 of 84 live slots are unmapped, so this IS the screen for most students."""
     d = _detail("CE1")
     assert d["options"] == []
-    assert d["mapping_status"] == NOT_PUBLISHED
+    assert d["mapping_ready"] is False
     assert d["message_ar"], "an empty list with no sentence explains nothing"
 
 
@@ -219,7 +219,7 @@ def test_a_mapped_slot_lists_its_options(plan):
         term=TERM,
     )
     d = _detail("CE1")
-    assert d["mapping_status"] == READY
+    assert d["mapping_ready"] is True
     assert [o["course_code"] for o in d["options"]] == ["CX401"]
 
 
@@ -383,7 +383,7 @@ def test_the_gate_is_the_backend_answer_not_a_programme_name(client_as_student):
     template = Path("core/templates/core/student_course_detail.html").read_text(encoding="utf-8")
     for programme in ("AI", "AI2", "DS", "DS2", "CS", "IS"):
         assert f'"{programme}"' not in template and f"'{programme}'" not in template
-    assert "mapping_status" in template
+    assert "mapping_ready" in template
 
 
 def test_the_planner_button_appears_only_when_prerequisites_are_met(client_as_student):
@@ -464,7 +464,6 @@ def test_an_invalid_mapping_withholds_the_options_too(client_as_student):
     thing either way: naming the difference would expose an internal data fault as
     though it were their situation.
     """
-    from core.services.elective_readiness import INVALID_MAPPING
 
     elective = ElectiveCourse.objects.create(
         course_code="CY401", course_name="Foreign", credit_hours=3, programme="SOMEWHERE"
@@ -477,7 +476,7 @@ def test_an_invalid_mapping_withholds_the_options_too(client_as_student):
         term=TERM,
     )
     d = _detail("CE1")
-    assert d["mapping_status"] == INVALID_MAPPING
+    assert d["mapping_ready"] is False
     assert d["options"] == [], "an invalid mapping leaked its options"
     assert d["message_ar"]
 
@@ -492,7 +491,6 @@ def test_a_mapping_for_another_term_does_not_open_the_gate(client_as_student):
     Without the filter a slot mapped for last year reads as ready and the screen
     ships options that are not on offer.
     """
-    from core.services.elective_readiness import NOT_PUBLISHED
 
     elective = ElectiveCourse.objects.create(
         course_code="CZ401", course_name="Last year", credit_hours=3, programme=PROG
@@ -505,7 +503,7 @@ def test_a_mapping_for_another_term_does_not_open_the_gate(client_as_student):
         term="2",
     )
     d = _detail("CE1")
-    assert d["mapping_status"] == NOT_PUBLISHED
+    assert d["mapping_ready"] is False
     assert d["options"] == []
     assert "CZ401" not in _page(client_as_student, "CE1").content.decode()
 
@@ -521,8 +519,6 @@ def test_every_non_ready_state_tells_the_student_exactly_the_same_thing(client_a
     from core.services.elective_readiness import (
         INVALID_MAPPING,
         MAPPED_BUT_EMPTY,
-        NOT_PUBLISHED,
-        READY,
         RESERVED_STATUSES,
         student_message,
     )
@@ -536,7 +532,6 @@ def test_every_non_ready_state_tells_the_student_exactly_the_same_thing(client_a
 
 def test_the_rendered_page_never_names_the_cause_or_an_internal_token(client_as_student):
     """Neither the state names nor the `kind` values may reach the page."""
-    from core.services.elective_readiness import INVALID_MAPPING
 
     elective = ElectiveCourse.objects.create(
         course_code="CW401", course_name="Foreign", credit_hours=3, programme="SOMEWHERE"
@@ -548,7 +543,7 @@ def test_the_rendered_page_never_names_the_cause_or_an_internal_token(client_as_
         academic_year=YEAR,
         term=TERM,
     )
-    assert _detail("CE1")["mapping_status"] == INVALID_MAPPING
+    assert _detail("CE1")["mapping_ready"] is False
 
     for code in ("CE1", "CB201", "ZZ999"):
         body = _page(client_as_student, code).content.decode()
@@ -565,3 +560,162 @@ def test_the_rendered_page_never_names_the_cause_or_an_internal_token(client_as_
             "cross-programme",
         ):
             assert token not in body, f"{code}: internal token {token} reached the page"
+
+
+# ── review of PR #57: four defects, six regressions ──────────────
+
+
+#: Every way a screen might tell a student they are ALLOWED to register. The first
+#: version of this check held one Arabic phrase and missed «تستطيع تسجيله الآن»,
+#: which was sitting in the prerequisite badge the whole time — a permission claim
+#: wearing the clothes of a status label.
+PERMISSION_WORDINGS = (
+    "يمكنك تسجيل",
+    "تستطيع تسجيل",
+    "تستطيع تسجيله",
+    "بإمكانك تسجيل",
+    "مؤهل للتسجيل",
+    "مسموح لك بتسجيل",
+    "يحق لك تسجيل",
+    "eligible",
+    "you may register",
+    "you can register",
+    "may enrol",
+    "can enroll",
+)
+
+
+def test_no_registration_permission_wording_in_any_payload(plan):
+    """Neither an answer nor the vocabularies behind it may say a student MAY register."""
+    from core.services.course_detail import PREREQ_STATUS_AR, REASON_AR, STATUS_AR
+
+    _passed("CA101")
+    bodies = [json.dumps(_detail(c), ensure_ascii=False) for c in ("CA101", "CB201", "CCAP", "CE1")]
+    bodies += [json.dumps(v, ensure_ascii=False) for v in (STATUS_AR, PREREQ_STATUS_AR, REASON_AR)]
+    for body in bodies:
+        for wording in PERMISSION_WORDINGS:
+            assert wording not in body, f"a permission claim reached the payload: {wording}"
+
+
+def test_no_registration_permission_wording_on_any_rendered_page(client_as_student):
+    """Both BEFORE and AFTER the prerequisite is passed.
+
+    The first version passed CA101 up front, so no prerequisite was ever in the
+    `open` state — which is the only state whose badge carried the permission
+    wording. It caught the defect in the payload and missed it on the page.
+    """
+    codes = ("CA101", "CB201", "CCAP", "CE1", "ZZ999")
+
+    def check(stage):
+        for code in codes:
+            body = _page(client_as_student, code).content.decode()
+            for wording in PERMISSION_WORDINGS:
+                assert wording not in body, f"{stage} {code}: permission claim: {wording}"
+
+    # CA101 has no prerequisites, so it is `open` — and CB201 lists it.
+    assert _detail("CB201")["prerequisites"][0]["student_status"] == "open"
+    check("before passing:")
+
+    _passed("CA101")
+    check("after passing:")
+
+
+def test_a_satisfied_prerequisite_describes_itself_not_what_you_may_do(plan):
+    from core.services.course_detail import PREREQ_STATUS_AR
+
+    assert PREREQ_STATUS_AR["open"] == "متطلباته السابقة مستوفاة"
+    _passed("CA101")
+    prereqs = {p["course_code"]: p for p in _detail("CB201")["prerequisites"]}
+    assert prereqs["CA101"]["student_status_ar"] == "مجتاز"
+
+
+def test_the_student_json_never_names_the_mapping_fault(client_as_student):
+    """The HTML hid it; the JSON endpoint returned it, one view-source away.
+
+    `student_message` says the same sentence for every non-ready state precisely so
+    a student cannot tell missing data from a misconfigured mapping. Shipping the
+    state name beside that sentence hands them the distinction anyway.
+    """
+    elective = ElectiveCourse.objects.create(
+        course_code="CV401", course_name="Foreign", credit_hours=3, programme="SOMEWHERE"
+    )
+    ElectiveTermMapping.objects.create(
+        programme=PROG,
+        placeholder_code="CE1",
+        elective_id=elective.id,
+        academic_year=YEAR,
+        term=TERM,
+    )
+    response = _get(client_as_student, "CE1")
+    body = response.content.decode()
+    payload = response.json()
+
+    assert payload["mapping_ready"] is False
+    assert "mapping_status" not in payload, "the operational state name is in the payload"
+    for state in ("INVALID_MAPPING", "NOT_PUBLISHED", "MAPPED_BUT_EMPTY", "READY"):
+        assert state not in body, f"the JSON response names an operational state: {state}"
+    assert "cross-programme" not in body and "SOMEWHERE" not in body
+
+
+def test_the_operational_report_still_carries_the_detailed_state(plan):
+    """The distinction is not deleted — it moves to where an operator reads it."""
+    from core.services.elective_readiness import INVALID_MAPPING, readiness, slot_status
+
+    elective = ElectiveCourse.objects.create(
+        course_code="CU401", course_name="Foreign", credit_hours=3, programme="SOMEWHERE"
+    )
+    ElectiveTermMapping.objects.create(
+        programme=PROG,
+        placeholder_code="CE1",
+        elective_id=elective.id,
+        academic_year=YEAR,
+        term=TERM,
+    )
+    status, options, problems = slot_status(PROG, "CE1", YEAR, TERM)
+    assert status == INVALID_MAPPING and options == [] and problems
+
+    row = next(r for r in readiness(YEAR, TERM) if r["programme"] == PROG and r["slot"] == "CE1")
+    assert row["status"] == INVALID_MAPPING
+    assert any("cross-programme" in p for p in row["problems"])
+
+
+def test_the_html_page_consumes_the_read_budget(client_as_student):
+    """It calls the same 118-158-query report as the JSON route, and did so free."""
+    from core.models import RateLimitBucket
+    from core.services.rate_limit import HISTORY
+
+    _page(client_as_student, "CB201")
+    assert RateLimitBucket.objects.get(key=f"{HISTORY}:{SID}").count == 1
+    _page(client_as_student, "CB201")
+    assert RateLimitBucket.objects.get(key=f"{HISTORY}:{SID}").count == 2
+
+
+def test_the_html_page_eventually_refuses_and_does_so_in_arabic_html(client_as_student):
+    from core.services.rate_limit import HISTORY, LIMITS
+
+    limit = LIMITS[HISTORY][0]
+    response = None
+    for _ in range(limit + 1):
+        response = _page(client_as_student, "CB201")
+        if response.status_code == 429:
+            break
+    else:
+        raise AssertionError(f"{limit + 1} page loads were allowed against a limit of {limit}")
+
+    body = response.content.decode()
+    assert "<html" in body.lower(), "an HTML route answered a throttle with something else"
+    assert "لقد فتحت صفحات كثيرة" in body
+    assert response["Retry-After"]
+
+
+def test_an_unlocked_course_carries_its_name(plan):
+    """`_course_names` ran BEFORE `unlocks` was computed, so every downstream course
+    rendered with an empty name — and the test asserted only the codes, so it passed."""
+    unlocks = _detail("CA101")["unlocks"]
+    assert [u["course_code"] for u in unlocks] == ["CB201"]
+    assert unlocks[0]["course_name"] == "Beta", "the unlocked course has no name"
+
+
+def test_an_unlocked_course_shows_its_name_on_the_page(client_as_student):
+    body = _page(client_as_student, "CA101").content.decode()
+    assert "CB201" in body and "Beta" in body

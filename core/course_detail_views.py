@@ -54,6 +54,28 @@ def course_detail_view(request: HttpRequest, course_code: str) -> JsonResponse:
     return JsonResponse(detail)
 
 
+#: Said on an HTML route, in Arabic, as a PAGE. `over_budget` answers JSON, which
+#: is right for a fetch and wrong in a browser window — the planner learned the
+#: same lesson about refusals on page routes.
+THROTTLED_AR = "لقد فتحت صفحات كثيرة في وقت قصير. يرجى المحاولة بعد قليل."
+
+
+def _read_budget_exhausted(student_id: int) -> bool:
+    """Spend one read unit, or report that there was none to spend."""
+    return _over_budget(HISTORY, student_id) is not None
+
+
+def _throttled_page(request: HttpRequest):
+    response = render(
+        request,
+        "core/student_course_detail.html",
+        {"refusal": THROTTLED_AR},
+        status=429,
+    )
+    response["Retry-After"] = "60"
+    return response
+
+
 @require_GET
 def course_detail_page(request: HttpRequest, course_code: str):
     """The screen. Server-rendered, like the locked-course page it is reached from.
@@ -67,6 +89,14 @@ def course_detail_page(request: HttpRequest, course_code: str):
         # An HTML route, so an HTML answer. A JsonResponse here would render as a
         # line of JSON in the window where a page should be.
         raise PermissionDenied("This page is for signed-in students.")
+
+    # The SAME read budget as the JSON route. This page calls the identical
+    # `build_unlock_report` — 118 to 158 queries — and without this it was an
+    # unmetered way round the limit its own sibling enforces. It is also the route
+    # a browser actually takes, so it was the cheap one to abuse.
+    if _read_budget_exhausted(principal.student_id):
+        return _throttled_page(request)
+
     try:
         detail = build_course_detail(principal.student_id, course_code)
     except CourseDetailUnavailable as exc:

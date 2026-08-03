@@ -47,7 +47,11 @@ STATUS_AR: dict[str, str] = {
 PREREQ_STATUS_AR: dict[str, str] = {
     "passed": "مجتاز",
     "studying": "تدرسه حاليًا",
-    "open": "تستطيع تسجيله الآن",
+    # NOT «تستطيع تسجيله الآن». That is a personalised registration-permission
+    # claim — the very thing this surface refuses to make — wearing the clothes of a
+    # status badge. It says what is true of the PREREQUISITE, not what the student
+    # may do about it.
+    "open": "متطلباته السابقة مستوفاة",
     "blocked": "محجوب هو نفسه",
     "unknown": "غير معروف",
 }
@@ -110,7 +114,7 @@ def build_course_detail(
     has one passes it along instead of re-deriving it.
     """
     from core.models import ProgrammeRequirement, Student
-    from core.services.elective_readiness import slot_status, student_message
+    from core.services.elective_readiness import READY, slot_status, student_message
     from core.services.student_unlock import build_unlock_report
 
     code = normalize_code(course_code)
@@ -174,7 +178,13 @@ def build_course_detail(
             "kind": KIND_ELECTIVE_SLOT,
             "course_name": str(row.get("course_name") or ""),
             "credit_hours": row.get("credit_hours") or 0,
-            "mapping_status": status,
+            # A BOOLEAN, never the operational state name. `student_message`
+            # deliberately says the same thing for every non-ready state so a
+            # student cannot tell "nobody published this" from "somebody published
+            # it wrongly" — and shipping `INVALID_MAPPING` in the payload alongside
+            # it hands them exactly that, one view-source away. The detailed state
+            # stays in `readiness()`, where an operator reads it.
+            "mapping_ready": status == READY,
             "message_ar": student_message(status),
             "options": [
                 {
@@ -219,18 +229,24 @@ def _course_detail(
             break
 
     prereq_codes, hours_gate = split_hour_prereqs(get_prerequisites(code, program))
-    status_of = (report.get("graph") or {}).get("statusOf") or {}
-    names = _course_names({normalize_code(c) for c in prereq_codes} | {code})
+    graph = report.get("graph") or {}
+    status_of = graph.get("statusOf") or {}
 
     # Already computed by the report and thrown away by every caller: "if I pass
     # this, what opens?" is the question a student asks next.
-    graph = report.get("graph") or {}
     unlocks = sorted(
         {
             e["course_code"]
             for e in (graph.get("items") or [])
             if e.get("prerequisite_course_code") == code
         }
+    )
+
+    # AFTER `unlocks`, and including it. Looking the names up first meant every
+    # downstream course rendered with an empty name — the list showed codes and
+    # nothing else, and the test only asserted the codes, so it passed.
+    names = _course_names(
+        {code} | {normalize_code(c) for c in prereq_codes} | {normalize_code(u) for u in unlocks}
     )
 
     return {

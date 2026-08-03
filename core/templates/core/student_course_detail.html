@@ -45,7 +45,8 @@
     </h2>
 
     {% comment %}
-      The gate is `mapping_status`, from the backend. No programme name appears in
+      The gate is `mapping_ready`, a BOOLEAN from the backend. No programme name
+      appears in
       this template: a template that knew which programmes were ready would be a
       second copy of that rule in the layer least able to check itself.
 
@@ -54,7 +55,7 @@
       empty list dressed as a feature is worse than an honest absence, and this is
       the common case: 77 of 84 live slots.
     {% endcomment %}
-    {% if detail.mapping_status == "READY" %}
+    {% if detail.mapping_ready %}
       <ul class="cd-options">
         {% for option in detail.options %}
           <li class="cd-option">
