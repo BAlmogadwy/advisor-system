@@ -35,8 +35,15 @@ Measured on the development database, 2026-08-03.
 | DS | 88 |
 | DS2 | 49 |
 
-**Elective slots**: 84 declared across 12 programmes; **28 in the four programmes
-that have students**.
+**Elective slots**: 38 declared across 12 programmes; **12 in the four programmes
+that have students** — three each, all `Program Elective`, all 3 hours.
+
+> **Corrected 2026-08-03.** These counts were 84 and 28 when this document was
+> first written, because `is_elective_slot` counted any requirement type
+> containing the word "elective". Free and University Electives are declared
+> electives that students take as ordinary courses — 111 have passed `FE1`, 139
+> `GSE1` — so they were never placeholders to fill. Only `Program Elective` is.
+> See §2.1.
 
 **`ElectiveTermMapping` rows — the only publication record**: 23, all
 `1448/term 1`.
@@ -52,8 +59,9 @@ that have students**.
 | IS | IS3 | 5 |
 
 **Twenty-one of the twenty-three rows serve CS and IS, which have no students.**
-Two rows serve a live programme, one option each. So the publication effort is
-essentially untouched for the entire live population.
+Two rows serve a live programme, one option each — `AI/AI1` and `DS/DS2`. So
+**2 of the 12 live slots are ready**, and 755 student-slot pairs would still
+reach an empty screen.
 
 ---
 
@@ -61,29 +69,41 @@ essentially untouched for the entire live population.
 
 Both were found by measurement, and both change what can be published at all.
 
-### 2.1 Sixteen of the 28 live slots cannot be satisfied by any catalogued course
+### 2.1 RESOLVED — the 2-hour credit mismatch was a misclassification
 
-Every course in `ElectiveCourse` is **3 credit hours**. Live slots require:
+This section previously reported that 16 of 28 live slots required 2 hours while
+every catalogued course is 3, and called for an owner decision before any FE/GSE
+mapping could be written.
 
-| required hours | slots | types |
-|---|---|---|
-| 3 | 12 | Program Elective |
-| 2 | **16** | Free Elective, University Elective |
+There is no mismatch, because **those 16 were never slots.** Free Electives and
+University Electives are declared electives that students take as ordinary
+courses, under those very codes:
 
-There is **no 2-hour course in the elective catalogue at all**. Under the credit
-compatibility rule (§5), every Free Elective and University Elective slot in every
-live programme would be rejected on import.
+| code | declared type | enrolments | statuses |
+|---|---|---|---|
+| `AI1` | Program Elective | 183 | all `not_taken` |
+| `FE1` | Free Elective | 320 | 111 `passed` |
+| `GSE1` | University Elective | 320 | 139 `passed` |
+| `GS101` | Mandatory | 320 | 314 `passed` |
 
-That is not an importer problem to work around. It is one of:
+You cannot pass a placeholder. `FE1` and `GSE1` behave exactly like `GS101` and
+nothing like `AI1`. The owner's account of the same courses — GS/GSE run online,
+FE runs 100-minute meetings — describes courses that are scheduled, attended and
+graded.
 
-* the slot credit values are wrong in `ProgrammeRequirement`;
-* the catalogue is missing the 2-hour courses these slots are meant to offer;
-* Free/University electives are approved from a different source entirely and do
-  not belong in `ElectiveCourse`.
+`PLACEHOLDER_TYPES` is now `Program Elective` only. The **credit question
+dissolves**: all 12 live slots require 3 hours and all 55 catalogued courses
+supply 3. The credit rule in §5 stays — it is still the check that stops a
+student choosing an option that would not satisfy the requirement they chose it
+for — it simply no longer rejects anything.
 
-**Owner decision required before any FE/GSE mapping is written.** Publishing a
-3-hour course against a 2-hour slot would let a student choose an option that does
-not satisfy the requirement they chose it for.
+What this cost while it was wrong: **364 completed FE/GSE enrolments across 186
+students** were shown «لم تُنشر خيارات هذا المتطلب الاختياري بعد» — the options
+for a requirement they had already completed had not been published yet.
+
+The type is still the authority. This is not a retreat to code shapes, and issue
+#55 stands: the set of types meaning "placeholder" is simply narrower than the
+word "elective" suggested.
 
 ### 2.2 AI2 and DS2 have no catalogue of their own
 
@@ -98,6 +118,11 @@ inheritance cannot be assumed.
 
 The five `programme=''` rows are a third, separate gap.
 
+With §2.1 resolved, **this is now the whole of what blocks publication**: six of
+the ten unpublished live slots belong to AI2 and DS2, and the importer will
+reject every row written for them as `CROSS_PROGRAMME` until someone with the
+authority to do so says the base catalogue applies.
+
 ---
 
 ## 3. What is settled, and what is still open
@@ -110,7 +135,7 @@ different questions, and only the first has been settled.
 `ElectiveTermMapping` rows are current truth and are RETAINED by default. No
 comparison against the online database is required, wanted, or planned.
 
-**Still open, and still blocking a write.** Twenty-six of the 28 live slots have no
+**Still open, and still blocking a write.** Ten of the 12 live slots have no
 mapping at all. Nothing in the local database says which courses fill them —
 `ElectiveCourse` records catalogue membership, and a catalogue is a list of
 candidates, not a decision. So for each `(programme, slot, term)` still to be
@@ -122,9 +147,9 @@ published:
 | where the approval came from | a mapping with no provenance cannot be audited, corrected or defended |
 | does it apply to one term or persist | `ElectiveTermMapping` is term-scoped; a mapping that should persist must be re-published per term, deliberately |
 | may a student take more than one from the slot | affects whether the screen offers a list or a single choice |
-| expected credit value | see §2.1 |
+| expected credit value | settled — 3 hours, slot and catalogue agree (§2.1) |
 | retain / add / replace / reject the existing row | the two live rows predate this process; retained by default under §Authority, but a replacement still needs a reason |
-| which active students are affected | 117 / 66 / 88 / 49 per programme |
+| which active students are affected | AI 117, AI2 66, DS 88, DS2 49 — 755 student-slot pairs unpublished |
 
 ### Forbidden inference
 
@@ -150,8 +175,8 @@ administrative data.
 
 ```csv
 academic_year,term,programme,slot_code,course_code,source_reference
-1448,1,AI,FE1,AI463,approved-plan-1448
-1448,1,AI,FE1,AI464,approved-plan-1448
+1448,1,AI,AI2,AI463,approved-plan-1448
+1448,1,AI,AI2,AI464,approved-plan-1448
 ```
 
 `source_reference` is not decoration. It is the answer to "who approved this?", and
@@ -185,7 +210,7 @@ Dry-run is the default, as with every destructive command in this project.
 * year or term missing or invalid
 * duplicate `(programme, slot, course, year, term)`
 * conflicting rows for the same logical mapping
-* credit hours conflict with the slot's requirement — see §2.1
+* credit hours conflict with the slot's requirement — currently rejects nothing (§2.1), and is kept for exactly that reason: it is a guard, not a filter
 * the import would silently delete a mapping not present in the file
 
 **Deletion and replacement are never inferred from omission.** They require
@@ -209,9 +234,11 @@ explicit mapping exists
 So a programme may legitimately sit in a mixed state:
 
 ```
-AI / FE1 / 1448-1 -> READY
-AI / FE2 / 1448-1 -> NOT_PUBLISHED
+AI / AI1 / 1448-1 -> READY
+AI / AI2 / 1448-1 -> NOT_PUBLISHED
 ```
+
+which is not hypothetical — it is exactly the live state today.
 
 and the student page must expose options for the first and the standard
 not-published sentence for the second. `slot_status` is already keyed this way; no
@@ -264,7 +291,7 @@ everything?
 
 ```
 importer: parse, validate, diff, dry-run   <- buildable NOW, against local data
--> approved mapping data for the 26 open slots   <- BLOCKED on §3
+-> approved mapping data for the 10 open slots   <- BLOCKED on §3 and §2.2
 -> reviewed publication file
 -> atomic apply
 -> readiness verification
