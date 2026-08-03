@@ -10,12 +10,33 @@ pytestmark = pytest.mark.django_db
 client = Client()
 
 
-def _login_general() -> None:
+def _login_general(departments: str = "AI") -> None:
+    """A general adviser WITH departments, which is what a real one has.
+
+    This used to leave the scope row unset. That mattered once the roster views
+    started failing closed: `core/services/policy.py` has always denied a general
+    adviser with no departments (`if not allowed or ... -> 403`), while these two
+    views read the empty list as "no filter" and served everything. The fixture was
+    quietly exercising the inconsistent half.
+    """
+    from core.services.rbac import set_user_scope
+
     ensure_role_groups()
     user, _ = User.objects.get_or_create(username="test-general")
     user.groups.clear()
     user.groups.add(Group.objects.get(name=ROLE_GENERAL_ADVISOR))
+    set_user_scope(user.id, departments=departments)
     client.force_login(user)
+
+
+def test_a_general_adviser_with_no_departments_cannot_export() -> None:
+    """Scoped to no departments is scoped to nothing, not to everything.
+
+    Matches `require_student_scope`, which has always denied this case.
+    """
+    _login_general(departments="")
+    response = client.get("/export/students-by-advisor.csv?advisor_id=A001")
+    assert response.status_code == 403, response.content[:200]
 
 
 def test_export_students_by_advisor_csv(monkeypatch: MonkeyPatch) -> None:

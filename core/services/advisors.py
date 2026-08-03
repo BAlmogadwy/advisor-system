@@ -10,6 +10,7 @@ from django.db.models.functions import Coalesce
 
 from core.models import AcademicAdvisor, Student
 from core.services.high_priority_missing import run_missing_high_priority_report
+from core.services.rbac import ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_scope
 from core.settings_views import load_defaults
 
 
@@ -350,6 +351,57 @@ def _apply_advisor_filters(
     return rows
 
 
+#: Who this caller may read, or a refusal. FAIL CLOSED.
+#:
+#: The two views that read an adviser's roster each computed this inline, and both
+#: wrote the same falsy guard:
+#:
+#:     if forced_advisor_id and advisor_id != forced_advisor_id: -> 403
+#:
+#: `rbac.get_user_role` returns ROLE_ADVISOR as the DEFAULT for any authenticated
+#: non-superuser outside the STUDENT and GENERAL_ACADEMIC_ADVISOR groups, and a user
+#: with no `UserScope` row gets `advisor_id = ""`. Blank is falsy, so the comparison
+#: was skipped entirely and the request was served. Measured: an account created with
+#: `User.objects.create_user(...)` and nothing else read another adviser's full
+#: roster — student ids, names, GPA — by naming them in the query string.
+#:
+#: An adviser with no portfolio has no portfolio to read. Absence of scope is a
+#: refusal, not a wildcard.
+def resolve_roster_scope(user: object, advisor_id: str) -> tuple[str, list[str] | None, str]:
+    """Return `(forced_advisor_id, allowed_departments, error)`.
+
+    A non-empty `error` means deny with 403 and read nothing else. `allowed_departments`
+    is `None` for callers who are not department scoped, and a LIST — possibly empty —
+    for those who are; `list_students_by_advisor` distinguishes the two.
+    """
+    scope = get_user_scope(user)
+    role = str(scope.get("role", ""))
+
+    if role == ROLE_SUPER_ADMIN:
+        return "", None, ""
+
+    if role == ROLE_GENERAL_ADVISOR:
+        departments = [str(x).upper() for x in scope.get("departments", []) if str(x).strip()]
+        if not departments:
+            # Scoped to nothing is not scoped to everything.
+            return "", [], "Your account has no departments assigned. Ask an administrator."
+        return "", departments, ""
+
+    own = str(scope.get("advisor_id", "")).strip()
+    if not own:
+        return (
+            "",
+            None,
+            (
+                "Your account is not linked to an advisor id, so it has no portfolio. "
+                "Ask an administrator to set one."
+            ),
+        )
+    if advisor_id != own:
+        return own, None, "You can only access your assigned advisor portfolio."
+    return own, None, ""
+
+
 def list_students_by_advisor(
     advisor_id: str,
     search: str | None = None,
@@ -430,7 +482,12 @@ def list_students_by_advisor(
             }
         )
 
-    if allowed_departments:
+    # `is not None`, NOT truthiness. `None` means "this caller is not department
+    # scoped" (an adviser, a super admin). `[]` means "scoped to no departments" —
+    # a general adviser whose scope row lists none. Under `if allowed_departments:`
+    # those two collapsed, and the second was served as the first: an empty
+    # allow-list disabled the filter instead of matching nothing.
+    if allowed_departments is not None:
         allow = {x.strip().upper() for x in allowed_departments if x and str(x).strip()}
         items = [x for x in items if str(x.get("program", "")).upper() in allow]
 
