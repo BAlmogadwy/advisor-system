@@ -24,6 +24,7 @@ from .api_views import classify_view, parse_and_classify_view, recommend_view
 from .audit_views import audit_explorer_api, audit_explorer_page, audit_export_csv_view
 from .auth_views import login_view, logout_view
 from .authz import role_required
+from .course_detail_views import course_detail_view
 from .db_admin_views import (
     db_admin_page,
     db_backup_snapshot_view,
@@ -261,6 +262,14 @@ urlpatterns = [
         "student/courses/",
         login_required(student_courses_view, login_url="student_login"),
         name="student_courses",
+    ),
+    # ONE surface over one course: a real course, an elective placeholder, or a code
+    # that is in no plan of theirs. The URL names a COURSE — never a student, so
+    # there is no ownership to check after the query.
+    path(
+        "student/courses/<str:course_code>/detail/",
+        login_required(course_detail_view, login_url="student_login"),
+        name="student_course_detail",
     ),
     path(
         "student/graduation/",
