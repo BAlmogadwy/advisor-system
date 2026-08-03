@@ -2,7 +2,17 @@
    Timetable Workspace — Client-Side Logic
    ══════════════════════════════════════════════════════════════════ */
 
-const IS_AR = 'LANGUAGE_CODE' === 'ar';
+/* The template's value, not the identifier in quotes.
+ *
+ * `'LANGUAGE_CODE' === 'ar'` is false for everyone, which pinned all 145 uses
+ * of IS_AR — and the whole 27-entry `T` dictionary below — to the English arm.
+ * This screen has never rendered in Arabic. Both sibling files
+ * (page-timetable-workspace-split.js, page-exam-timetable.js) already read the
+ * bare reference; only this one quoted it. `typeof` for the same reason as
+ * page-advisor-portfolio.js: a missing template block must degrade to English,
+ * not throw at the top level and take the page's JavaScript with it.
+ */
+const IS_AR = (typeof LANGUAGE_CODE === 'string' ? LANGUAGE_CODE : 'en') === 'ar';
 const T = {
   draft: IS_AR ? 'مسودة' : 'Draft',
   published: IS_AR ? 'منشور' : 'Published',
