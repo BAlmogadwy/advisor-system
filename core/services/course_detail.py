@@ -110,8 +110,7 @@ def build_course_detail(
     has one passes it along instead of re-deriving it.
     """
     from core.models import ProgrammeRequirement, Student
-    from core.services.elective_readiness import STATUS_AR as ELECTIVE_STATUS_AR
-    from core.services.elective_readiness import slot_status
+    from core.services.elective_readiness import slot_status, student_message
     from core.services.student_unlock import build_unlock_report
 
     code = normalize_code(course_code)
@@ -176,7 +175,7 @@ def build_course_detail(
             "course_name": str(row.get("course_name") or ""),
             "credit_hours": row.get("credit_hours") or 0,
             "mapping_status": status,
-            "message_ar": ELECTIVE_STATUS_AR.get(status, ""),
+            "message_ar": student_message(status),
             "options": [
                 {
                     "course_code": normalize_code(o.get("course_code") or ""),

@@ -28,34 +28,60 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
-from core.models import ElectiveCourse, ElectiveTermMapping, ProgrammeRequirement, Student
+from django.db import models
+
+from core.models import (
+    ElectiveCourse,
+    ElectiveTermMapping,
+    ProgrammeRequirement,
+    Student,
+)
 from core.services.student_helpers import is_elective_slot, normalize_code
 
-READY = "READY"
-NOT_PUBLISHED = "NOT_PUBLISHED"
-INVALID_MAPPING = "INVALID_MAPPING"
-MAPPED_BUT_EMPTY = "MAPPED_BUT_EMPTY"
 
-#: Said to the student. Only the states a student can actually meet are here; a
-#: slot that is READY renders its options instead of a sentence.
-STATUS_AR: dict[str, str] = {
-    NOT_PUBLISHED: (
-        "لم تُنشر خيارات هذا المتطلب الاختياري بعد. راجع مرشدك الأكاديمي لمعرفة الخيارات المعتمدة."
-    ),
-    INVALID_MAPPING: (
-        "خيارات هذا المتطلب الاختياري غير مكتملة في النظام. "
-        "راجع مرشدك الأكاديمي لمعرفة الخيارات المعتمدة."
-    ),
-    MAPPED_BUT_EMPTY: (
-        "لم تُنشر خيارات هذا المتطلب الاختياري بعد. راجع مرشدك الأكاديمي لمعرفة الخيارات المعتمدة."
-    ),
-}
+class MappingStatus(models.TextChoices):
+    """The OPERATIONAL vocabulary. Three are reachable; one is reserved."""
 
-#: A student must not be told the difference between "nobody published this" and
-#: "somebody published it wrongly" — both are the registrar's problem, and naming
-#: the second would expose an internal data fault as if it were their situation.
-#: The distinction is for the operational report, which is why the wording above
-#: deliberately converges.
+    READY = "READY"
+    NOT_PUBLISHED = "NOT_PUBLISHED"
+    INVALID_MAPPING = "INVALID_MAPPING"
+    #: Reserved for a future active-course filter. Unreachable under today's
+    #: schema — the mapping's FK to `ElectiveCourse` cascades, so a row cannot
+    #: point at a missing course, and there is no active/withdrawn flag. Named so
+    #: that adding one has somewhere to put its answer; NOT a distinct student
+    #: experience.
+    MAPPED_BUT_EMPTY = "MAPPED_BUT_EMPTY"
+
+
+#: Module constants, so callers read `NOT_PUBLISHED` rather than `MappingStatus.X`.
+READY = MappingStatus.READY.value
+NOT_PUBLISHED = MappingStatus.NOT_PUBLISHED.value
+INVALID_MAPPING = MappingStatus.INVALID_MAPPING.value
+MAPPED_BUT_EMPTY = MappingStatus.MAPPED_BUT_EMPTY.value
+
+#: Operational only. A state in here may appear in the readiness report and must
+#: never produce a different student-facing outcome.
+RESERVED_STATUSES = frozenset({MAPPED_BUT_EMPTY})
+
+#: ONE sentence, for EVERY non-ready state.
+#:
+#: This was a dict, and `INVALID_MAPPING` said «غير مكتملة في النظام» — which tells
+#: the student the cause is an administrative fault. That is the registrar's
+#: problem, not their situation, and the difference between "nobody published this"
+#: and "somebody published it wrongly" is not theirs to read. The distinction
+#: survives in the report and in `problems`; it does not reach the page.
+NOT_READY_AR = (
+    "لم تُنشر خيارات هذا المتطلب الاختياري بعد. راجع مرشدك الأكاديمي لمعرفة الخيارات المعتمدة."
+)
+
+
+def student_message(status: str) -> str:
+    """What a student is told. Identical for every non-ready state, by construction.
+
+    A function rather than a lookup table: a table invites a second entry, which is
+    exactly how the leak got in the first time.
+    """
+    return "" if status == READY else NOT_READY_AR
 
 
 def _problems(program: str, slot_credits: int, options: list[dict[str, Any]]) -> list[str]:
@@ -178,8 +204,11 @@ __all__ = [
     "INVALID_MAPPING",
     "MAPPED_BUT_EMPTY",
     "NOT_PUBLISHED",
+    "NOT_READY_AR",
     "READY",
-    "STATUS_AR",
+    "RESERVED_STATUSES",
+    "MappingStatus",
     "readiness",
     "slot_status",
+    "student_message",
 ]

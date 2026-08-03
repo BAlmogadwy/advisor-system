@@ -508,3 +508,60 @@ def test_a_mapping_for_another_term_does_not_open_the_gate(client_as_student):
     assert d["mapping_status"] == NOT_PUBLISHED
     assert d["options"] == []
     assert "CZ401" not in _page(client_as_student, "CE1").content.decode()
+
+
+def test_every_non_ready_state_tells_the_student_exactly_the_same_thing(client_as_student):
+    """The cause is the registrar's problem, not the student's situation.
+
+    This was a dict, and `INVALID_MAPPING` said «غير مكتملة في النظام» — which
+    tells a student that somebody misconfigured the system. Whether nobody
+    published the mapping or somebody published it wrongly is not theirs to read,
+    and the difference is preserved where it belongs: the operational report.
+    """
+    from core.services.elective_readiness import (
+        INVALID_MAPPING,
+        MAPPED_BUT_EMPTY,
+        NOT_PUBLISHED,
+        READY,
+        RESERVED_STATUSES,
+        student_message,
+    )
+
+    messages = {student_message(s) for s in (NOT_PUBLISHED, INVALID_MAPPING, MAPPED_BUT_EMPTY)}
+    assert len(messages) == 1, f"a non-ready state has its own wording: {messages}"
+    assert student_message(READY) == "", "a ready slot renders options, not a sentence"
+    assert MAPPED_BUT_EMPTY in RESERVED_STATUSES, "the reserved state must be marked as such"
+    assert NOT_PUBLISHED not in RESERVED_STATUSES
+
+
+def test_the_rendered_page_never_names_the_cause_or_an_internal_token(client_as_student):
+    """Neither the state names nor the `kind` values may reach the page."""
+    from core.services.elective_readiness import INVALID_MAPPING
+
+    elective = ElectiveCourse.objects.create(
+        course_code="CW401", course_name="Foreign", credit_hours=3, programme="SOMEWHERE"
+    )
+    ElectiveTermMapping.objects.create(
+        programme=PROG,
+        placeholder_code="CE1",
+        elective_id=elective.id,
+        academic_year=YEAR,
+        term=TERM,
+    )
+    assert _detail("CE1")["mapping_status"] == INVALID_MAPPING
+
+    for code in ("CE1", "CB201", "ZZ999"):
+        body = _page(client_as_student, code).content.decode()
+        for token in (
+            "INVALID_MAPPING",
+            "NOT_PUBLISHED",
+            "MAPPED_BUT_EMPTY",
+            "NOT_IN_PLAN",
+            "ELECTIVE_SLOT",
+            "MISSING_COURSE",
+            "MISSING_HOURS",
+            "UNKNOWN_PREREQ",
+            "ASK_ADVISOR",
+            "cross-programme",
+        ):
+            assert token not in body, f"{code}: internal token {token} reached the page"
