@@ -112,6 +112,9 @@ def build_course_detail(
     measured reason: the report costs 118–158 queries, and the obvious journey —
     locked list, then "why?", then this — would pay it twice. A caller that already
     has one passes it along instead of re-deriving it.
+
+    It is also built LAST, and only for a real course: `NOT_IN_PLAN` and every
+    elective slot answer without it.
     """
     from core.models import ProgrammeRequirement, Student
     from core.services.elective_readiness import READY, slot_status, student_message
@@ -139,9 +142,13 @@ def build_course_detail(
         academic_year = academic_year or default_year
         term = term or default_term
 
-    if report is None:
-        report = build_unlock_report(int(student_id), int(academic_year), int(term)) or {}
-
+    # CLASSIFY FIRST, then pay for the report — and only in the branch that reads
+    # it. `build_unlock_report` costs 118-158 queries, and it used to run before
+    # this row was even fetched, so `NOT_IN_PLAN` and every elective slot paid for
+    # a report neither of them opens. The unmapped elective slot is not a rare
+    # path: 77 of 84 live slots are unmapped, so the most common elective answer on
+    # the whole surface was also the most expensive way of saying "nothing
+    # published yet" — measured at 129 queries to return one sentence.
     row = (
         ProgrammeRequirement.objects.filter(program__iexact=program, course_code__iexact=code)
         .values("type", "course_name", "credit_hours")
@@ -201,6 +208,10 @@ def build_course_detail(
             ],
         }
 
+    # Only here. A real course is the one branch that reads the report, and a
+    # caller that already built one still passes it in rather than paying twice.
+    if report is None:
+        report = build_unlock_report(int(student_id), int(academic_year), int(term)) or {}
     return _course_detail(code, program, row, report, base)
 
 

@@ -29,6 +29,11 @@
   <section class="card p-3" aria-labelledby="cdHeading">
     <h2 class="h6 mb-2" id="cdHeading">{% if LANGUAGE_CODE == 'ar' %}تعذّر عرض المقرر{% else %}Cannot show this course{% endif %}</h2>
     <p class="mb-0" dir="auto">{{ refusal }}</p>
+    {% if retry_after %}
+      <p class="cd-muted mb-0 mt-2" dir="auto">
+        {% if LANGUAGE_CODE == 'ar' %}يمكنك المحاولة بعد <span dir="ltr">{{ retry_after }}</span> ثانية.{% else %}You can try again in {{ retry_after }} seconds.{% endif %}
+      </p>
+    {% endif %}
   </section>
 
 {% elif detail.kind == "NOT_IN_PLAN" %}

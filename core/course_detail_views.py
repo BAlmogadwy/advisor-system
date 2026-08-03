@@ -60,19 +60,22 @@ def course_detail_view(request: HttpRequest, course_code: str) -> JsonResponse:
 THROTTLED_AR = "لقد فتحت صفحات كثيرة في وقت قصير. يرجى المحاولة بعد قليل."
 
 
-def _read_budget_exhausted(student_id: int) -> bool:
-    """Spend one read unit, or report that there was none to spend."""
-    return _over_budget(HISTORY, student_id) is not None
+def _throttled_page(request: HttpRequest, over: JsonResponse):
+    """The limiter's OWN answer, rendered as a page.
 
-
-def _throttled_page(request: HttpRequest):
+    The first version collapsed `over_budget` to a boolean and then hard-coded
+    `Retry-After: 60`. The `HISTORY` window is 600 seconds, so that told a student
+    to come back in a minute while the limiter went on refusing them for ten — a
+    number invented by the layer least entitled to invent it. The decision is
+    carried through instead of re-guessed.
+    """
     response = render(
         request,
         "core/student_course_detail.html",
-        {"refusal": THROTTLED_AR},
+        {"refusal": THROTTLED_AR, "retry_after": over["Retry-After"]},
         status=429,
     )
-    response["Retry-After"] = "60"
+    response["Retry-After"] = over["Retry-After"]
     return response
 
 
@@ -94,8 +97,9 @@ def course_detail_page(request: HttpRequest, course_code: str):
     # `build_unlock_report` — 118 to 158 queries — and without this it was an
     # unmetered way round the limit its own sibling enforces. It is also the route
     # a browser actually takes, so it was the cheap one to abuse.
-    if _read_budget_exhausted(principal.student_id):
-        return _throttled_page(request)
+    over = _over_budget(HISTORY, principal.student_id)
+    if over:
+        return _throttled_page(request, over)
 
     try:
         detail = build_course_detail(principal.student_id, course_code)
@@ -124,9 +128,12 @@ def course_to_planner_view(request: HttpRequest, course_code: str):
     principal = _principal(request)
     if principal is None:
         raise PermissionDenied("This page is for signed-in students.")
+    # An HTML form POST, so an HTML refusal. Returning the limiter's JsonResponse
+    # here put a JSON document in the browser window — the same defect just fixed
+    # on the GET route, in the other door of the same screen.
     over = _over_budget(CONVERSATION, principal.student_id)
     if over:
-        return over
+        return _throttled_page(request, over)
 
     from django.shortcuts import redirect
 

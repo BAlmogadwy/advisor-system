@@ -719,3 +719,159 @@ def test_an_unlocked_course_carries_its_name(plan):
 def test_an_unlocked_course_shows_its_name_on_the_page(client_as_student):
     body = _page(client_as_student, "CA101").content.decode()
     assert "CB201" in body and "Beta" in body
+
+
+# ── re-review of PR #57: three more ──────────────────────────────
+
+
+def _limiter_retry_after():
+    """What the limiter itself would say, asked directly."""
+    from core.services.rate_limit import HISTORY, LIMITS
+
+    return LIMITS[HISTORY][1]
+
+
+def test_the_page_throttle_reports_the_limiters_own_wait(client_as_student):
+    """Not a number this layer invented.
+
+    It hard-coded `Retry-After: 60` while the `HISTORY` window is 600 seconds — so
+    a student was told to come back in a minute while the limiter went on refusing
+    them for ten.
+    """
+    from core.advisor_http import over_budget
+    from core.services.rate_limit import HISTORY, LIMITS
+
+    limit = LIMITS[HISTORY][0]
+    response = None
+    for _ in range(limit + 1):
+        response = _page(client_as_student, "CB201")
+        if response.status_code == 429:
+            break
+    assert response.status_code == 429
+
+    # The limiter, asked again right now, must agree with what the page said.
+    limiter = over_budget(HISTORY, SID)
+    assert limiter is not None, "the limiter is no longer refusing"
+    assert response["Retry-After"] == limiter["Retry-After"]
+    assert int(response["Retry-After"]) > 60, "the fabricated 60 is back"
+    assert response["Retry-After"] in response.content.decode(), "the wait is not shown"
+
+
+def test_the_planner_form_refuses_in_arabic_html_not_json(client_as_student):
+    """A browser form POST. Returning the limiter's JsonResponse put a JSON
+    document in the window — the same defect as the GET route, other door."""
+    from core.advisor_http import over_budget
+    from core.models import PlannerDraft
+    from core.services.rate_limit import CONVERSATION, LIMITS
+
+    _passed("CA101")
+    url = reverse("student_course_to_planner", args=["CB201"])
+    limit = LIMITS[CONVERSATION][0]
+
+    response = None
+    for _ in range(limit + 2):
+        response = client_as_student.post(url)
+        if response.status_code == 429:
+            break
+    else:
+        raise AssertionError(f"{limit + 2} posts were allowed against a limit of {limit}")
+
+    assert response["Content-Type"].startswith("text/html")
+    body = response.content.decode()
+    assert "<html" in body.lower()
+    assert "لقد فتحت صفحات كثيرة" in body
+
+    limiter = over_budget(CONVERSATION, SID)
+    assert limiter is not None
+    assert response["Retry-After"] == limiter["Retry-After"]
+
+    before = PlannerDraft.objects.filter(student_id=SID).count()
+    client_as_student.post(url)
+    assert PlannerDraft.objects.filter(student_id=SID).count() == before, (
+        "a throttled post still created a draft"
+    )
+
+
+# ── the report is built LAST, and only where it is read ──────────
+
+
+def _report_calls(monkeypatch):
+    """Count `build_unlock_report` calls through the name the service resolves."""
+    import core.services.student_unlock as su
+
+    calls: list[int] = []
+    real = su.build_unlock_report
+
+    def counting(*a, **k):
+        calls.append(1)
+        return real(*a, **k)
+
+    monkeypatch.setattr(su, "build_unlock_report", counting)
+    return calls
+
+
+def test_a_code_outside_the_plan_does_not_build_the_report(plan, monkeypatch):
+    """118-158 queries to say "that is not in your plan"."""
+    calls = _report_calls(monkeypatch)
+    assert _detail("ZZ999")["kind"] == KIND_NOT_IN_PLAN
+    assert calls == [], "the report was built for a branch that never reads it"
+
+
+def test_an_elective_slot_does_not_build_the_report(plan, monkeypatch):
+    """And this is the COMMON path: 77 of 84 live slots are unmapped, so the most
+    frequent elective answer was also the most expensive way to say nothing."""
+    calls = _report_calls(monkeypatch)
+    assert _detail("CE1")["kind"] == KIND_ELECTIVE_SLOT
+    assert calls == []
+
+
+def test_a_ready_elective_slot_does_not_build_the_report_either(plan, monkeypatch):
+    elective = ElectiveCourse.objects.create(
+        course_code="CT401", course_name="Opt", credit_hours=3, programme=PROG
+    )
+    ElectiveTermMapping.objects.create(
+        programme=PROG,
+        placeholder_code="CE1",
+        elective_id=elective.id,
+        academic_year=YEAR,
+        term=TERM,
+    )
+    calls = _report_calls(monkeypatch)
+    d = _detail("CE1")
+    assert d["mapping_ready"] is True and d["options"]
+    assert calls == []
+
+
+def test_a_real_course_builds_the_report_exactly_once(plan, monkeypatch):
+    calls = _report_calls(monkeypatch)
+    assert _detail("CB201")["kind"] == KIND_COURSE
+    assert calls == [1], f"the report ran {len(calls)} times"
+
+
+def test_a_supplied_report_is_reused_rather_than_rebuilt(plan, monkeypatch):
+    """The journey locked-list to "why?" to here must not pay twice."""
+    from core.services.student_unlock import build_unlock_report
+
+    prebuilt = build_unlock_report(SID, int(YEAR), int(TERM))
+    calls = _report_calls(monkeypatch)
+    d = _detail("CB201", report=prebuilt)
+    assert d["kind"] == KIND_COURSE
+    assert d["your_status"] == "blocked", "the supplied report was not actually used"
+    assert calls == []
+
+
+def test_the_cheap_branches_really_are_cheap(plan):
+    """Measured, not asserted by mocking alone — the mock proves the call is gone,
+    this proves the cost went with it."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    costs = {}
+    for code in ("ZZ999", "CE1", "CB201"):
+        with CaptureQueriesContext(connection) as ctx:
+            _detail(code)
+        costs[code] = len(ctx)
+
+    assert costs["ZZ999"] < 10, costs
+    assert costs["CE1"] < 15, costs
+    assert costs["CB201"] > costs["CE1"] * 2, costs
