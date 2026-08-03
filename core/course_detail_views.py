@@ -57,11 +57,28 @@ def course_detail_view(request: HttpRequest, course_code: str) -> JsonResponse:
 #: Said on an HTML route, in Arabic, as a PAGE. `over_budget` answers JSON, which
 #: is right for a fetch and wrong in a browser window — the planner learned the
 #: same lesson about refusals on page routes.
-THROTTLED_AR = "لقد فتحت صفحات كثيرة في وقت قصير. يرجى المحاولة بعد قليل."
+#:
+#: TWO messages, because two different things get throttled and one sentence
+#: described only the first. A student who pressed "add to planner" was told they
+#: had opened too many PAGES, under the heading "cannot show the course" — an
+#: accurate refusal about an action they did not take.
+THROTTLED_PAGE_AR = "لقد فتحت صفحات كثيرة في وقت قصير. يرجى المحاولة بعد قليل."
+THROTTLED_ACTION_AR = "لقد أرسلت طلبات كثيرة في وقت قصير. يرجى المحاولة بعد قليل."
+
+#: The heading has to move with the message, or the page still says "cannot show
+#: the course" over a sentence about sending requests.
+THROTTLED_PAGE_HEADING_AR = "تعذّر عرض المقرر"
+THROTTLED_ACTION_HEADING_AR = "تعذّر تنفيذ الطلب"
 
 
-def _throttled_page(request: HttpRequest, over: JsonResponse):
-    """The limiter's OWN answer, rendered as a page.
+def _throttled_page(
+    request: HttpRequest,
+    over: JsonResponse,
+    *,
+    message: str = THROTTLED_PAGE_AR,
+    heading: str = THROTTLED_PAGE_HEADING_AR,
+):
+    """The limiter's OWN answer, rendered as a page, about the thing that was refused.
 
     The first version collapsed `over_budget` to a boolean and then hard-coded
     `Retry-After: 60`. The `HISTORY` window is 600 seconds, so that told a student
@@ -72,7 +89,7 @@ def _throttled_page(request: HttpRequest, over: JsonResponse):
     response = render(
         request,
         "core/student_course_detail.html",
-        {"refusal": THROTTLED_AR, "retry_after": over["Retry-After"]},
+        {"refusal": message, "refusal_heading": heading, "retry_after": over["Retry-After"]},
         status=429,
     )
     response["Retry-After"] = over["Retry-After"]
@@ -133,7 +150,12 @@ def course_to_planner_view(request: HttpRequest, course_code: str):
     # on the GET route, in the other door of the same screen.
     over = _over_budget(CONVERSATION, principal.student_id)
     if over:
-        return _throttled_page(request, over)
+        return _throttled_page(
+            request,
+            over,
+            message=THROTTLED_ACTION_AR,
+            heading=THROTTLED_ACTION_HEADING_AR,
+        )
 
     from django.shortcuts import redirect
 
