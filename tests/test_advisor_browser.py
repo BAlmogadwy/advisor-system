@@ -657,8 +657,9 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         # auto-wait, and the composer is disabled from the moment Send is pressed
         # until the failure is handled — so the assertion was racing a window that
         # is invisible on an idle machine and wide enough to lose on a loaded one.
-        # It passed alone and in file order, and failed intermittently in the full
-        # suite; that is the window, not the behaviour.
+        # It passed alone and in file order, failed intermittently in the full
+        # suite, and finally failed on a CI runner; that is the window, not the
+        # behaviour.
         from playwright.sync_api import expect
 
         expect(page.locator("#saQuestion")).to_be_enabled(timeout=15_000)
