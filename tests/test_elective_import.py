@@ -37,6 +37,10 @@ def world():
     for code, type_, credits in (
         ("IE1", "Program Elective", 3),
         ("IE2", "Program Elective", 3),
+        # A 2-hour PLACEHOLDER, for the credit rule. It used to be a Free Elective,
+        # which is no longer a placeholder at all — students take FE/GSE as ordinary
+        # courses — so that fixture was testing the wrong refusal.
+        ("IE3", "Program Elective", 2),
         ("IF1", "Free Elective", 2),
         ("IM101", "Mandatory", 3),
     ):
@@ -87,17 +91,14 @@ def test_a_course_from_another_programme_needs_explicit_approval(world):
 
 
 def test_a_credit_mismatch_is_refused(world):
-    """A student choosing this would not satisfy the requirement they chose it for.
-
-    Every live Free/University Elective slot currently fails here: the catalogue is
-    entirely 3-hour and those slots require 2.
-    """
-    plan = build_plan(_csv(f"{YEAR},{TERM},{PROG},IF1,IX401,approved-1448"))
+    """A 3-hour course cannot fill a 2-hour placeholder — the student would not
+    satisfy the requirement they chose it for."""
+    plan = build_plan(_csv(f"{YEAR},{TERM},{PROG},IE3,IX401,approved-1448"))
     problem = next(p for p in plan.problems if p.code == "CREDIT_MISMATCH")
     assert "2h" in problem.detail and "3h" in problem.detail
 
     # And the matching 2-hour course is accepted, so this is not a blanket refusal.
-    assert build_plan(_csv(f"{YEAR},{TERM},{PROG},IF1,IX403,approved-1448")).ok
+    assert build_plan(_csv(f"{YEAR},{TERM},{PROG},IE3,IX403,approved-1448")).ok
 
 
 def test_unknown_programmes_slots_and_courses_are_refused(world):
@@ -393,3 +394,26 @@ def test_a_write_that_fails_midway_removes_nothing(world, monkeypatch):
         "the delete survived a failed insert"
     )
     assert slot_status(PROG, "IE1", YEAR, TERM)[0] == READY
+
+
+def test_free_and_university_electives_are_not_placeholders(world):
+    """They are declared electives and are taken as ORDINARY COURSES.
+
+    111 students have passed `FE1`, 139 `GSE1`, 64 `FE2`, 50 `GSE2` — under those
+    very codes, which is not something you can do to a placeholder. Publishing
+    options against one is refused, and the student sees their own status instead
+    of "options not yet published" for a requirement they may already have passed.
+    """
+    plan = build_plan(_csv(f"{YEAR},{TERM},{PROG},IF1,IX403,approved-1448"))
+    problem = next(p for p in plan.problems if p.code == "NOT_AN_ELECTIVE_SLOT")
+    assert "Free Elective" in problem.detail
+    assert slot_status(PROG, "IF1", YEAR, TERM)[0] == NOT_PUBLISHED
+
+
+def test_only_the_program_elective_type_is_a_placeholder(world):
+    from core.services.student_helpers import is_elective_slot
+
+    assert is_elective_slot("Program Elective") is True
+    assert is_elective_slot("  programme elective  ") is True
+    for not_a_slot in ("Free Elective", "University Elective", "Mandatory", "", None):
+        assert is_elective_slot(not_a_slot) is False, not_a_slot

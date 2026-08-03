@@ -405,8 +405,11 @@ def gs_plan(plan):
     # And a real slot, to prove the fix did not simply disable slot detection.
     ProgrammeRequirement.objects.update_or_create(
         program=PROG,
-        course_code="FE1",
-        defaults={"programme_term": 7, "credit_hours": 3, "type": "Free Elective"},
+        course_code="PE1",
+        # A PROGRAM elective. `Free Elective` was the wrong choice here: students
+        # take FE/GSE as ordinary courses — 111 have passed FE1 — so it is not a
+        # placeholder and never was.
+        defaults={"programme_term": 7, "credit_hours": 3, "type": "Program Elective"},
     )
     yield
 
@@ -422,7 +425,7 @@ def test_a_mandatory_course_is_not_an_elective_slot(gs_plan):
     r = _report()
     slots = {s["code"] for s in r["elective_slots"]}
     assert "GS104" not in slots, "a Mandatory course is being offered as a choice"
-    assert "FE1" in slots, "a real elective slot must still be one"
+    assert "PE1" in slots, "a real elective slot must still be one"
 
     everywhere = (
         {c["code"] for c in r["open_courses"]}
@@ -434,15 +437,20 @@ def test_a_mandatory_course_is_not_an_elective_slot(gs_plan):
 
 
 def test_the_type_decides_regardless_of_the_code(gs_plan):
-    """Both directions, so the fix cannot be 'ignore GS' rather than 'read the type'."""
+    """Both directions, so the fix cannot be 'ignore GS' rather than 'read the type'.
+
+    And the set of types that mean PLACEHOLDER is narrower than the word "elective"
+    suggests. Free and University Electives are declared electives that students
+    take as ordinary courses — 111 have passed FE1, 139 GSE1 — so counting them as
+    placeholders told a student who had completed GSE1 that its options were not
+    yet published.
+    """
     from core.services.student_helpers import is_elective_slot
 
-    assert is_elective_slot("Free Elective") is True
     assert is_elective_slot("Program Elective") is True
-    assert is_elective_slot("University Elective") is True
-    assert is_elective_slot("Mandatory") is False
-    assert is_elective_slot("") is False
-    assert is_elective_slot(None) is False
+    assert is_elective_slot("  programme elective ") is True
+    for taken_as_a_course in ("Free Elective", "University Elective", "Mandatory", "", None):
+        assert is_elective_slot(taken_as_a_course) is False, taken_as_a_course
 
 
 def test_the_two_classifiers_are_one_function(gs_plan):

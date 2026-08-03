@@ -126,13 +126,22 @@ def test_a_credit_mismatch_is_not_ready():
     assert any("credit mismatch" in p for p in r["problems"])
 
 
-def test_only_declared_elective_types_are_slots():
-    """Issue #55, at the gate: no code-shape inference anywhere near this."""
+def test_only_program_electives_are_slots():
+    """Issue #55 at the gate — no code-shape inference — and the narrower rule.
+
+    `Free Elective` and `University Elective` are declared electives that students
+    take as ORDINARY COURSES: 111 have passed `FE1`, 139 `GSE1`. A readiness report
+    that counted them reported 28 live slots when there are 12, and the screen told
+    a student who had passed `GSE1` that its options were not yet published.
+    """
     _slot(code="GS104", type_="Mandatory")
     _slot(code="FE9", type_="Free Elective")
+    _slot(code="GSE9", type_="University Elective")
+    _slot(code="PE9", type_="Program Elective")
     codes = {r["slot"] for r in readiness(YEAR, TERM) if r["programme"] == PROG}
-    assert "GS104" not in codes, "a Mandatory course was treated as an elective slot"
-    assert "FE9" in codes
+    assert "PE9" in codes
+    for not_a_slot in ("GS104", "FE9", "GSE9"):
+        assert not_a_slot not in codes, f"{not_a_slot} was treated as a placeholder"
 
 
 def test_a_mapping_published_for_another_term_does_not_count():
