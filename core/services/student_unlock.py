@@ -15,20 +15,31 @@ from __future__ import annotations
 
 from core.services.eligibility import hour_gate, split_hour_prereqs
 from core.services.recommender import eligible_next_term_courses
-from core.services.student_helpers import get_prerequisites, normalize_code
+from core.services.student_helpers import (
+    get_prerequisites,
+    is_elective_slot,
+    normalize_code,
+)
 
 _MAX_DEPTH = 12  # cycle/pathological-chain guard
 
 # Elective placeholders are not registrable courses; they are "choose one with your
-# advisor" slots, so they are listed apart and never counted as open.
-_PLACEHOLDER_PREFIXES = ("GS", "GSE", "FE")
+# advisor" slots, so they are listed apart and never counted as open. Which makes
+# misclassifying a MANDATORY course as one of them expensive: it vanishes from the
+# open and locked lists, from every counts bucket, and from any prerequisite
+# explanation, and the student is told to choose it with their adviser.
 
 
 def _is_placeholder(code: str, ctype: str) -> bool:
-    c = normalize_code(code)
-    if c.startswith(_PLACEHOLDER_PREFIXES) and not any(ch.isdigit() for ch in c[:2]):
-        return True
-    return "ELECTIVE" in str(ctype).upper() and len(c) <= 4
+    """Delegates. The declared requirement type decides, and nothing else.
+
+    This used to match a `GS`/`GSE`/`FE` code prefix BEFORE consulting the type,
+    which claimed seven `Mandatory` courses — see `is_elective_slot` and issue #55.
+    The `len(code) <= 4` guard that followed it is gone too: it was defending
+    against a concrete course carrying an elective type, and no row in the plan
+    does that.
+    """
+    return is_elective_slot(ctype)
 
 
 def build_unlock_report(student_id: int, year: int, term: int) -> dict:

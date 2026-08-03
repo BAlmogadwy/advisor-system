@@ -382,3 +382,219 @@ def test_weekly_grid_is_empty_for_an_empty_week():
 
     g = _weekly_grid([])
     assert g == {"slots": [], "rows": [], "columns": 0}
+
+
+# ── the declared type decides what is an elective slot (issue #55) ──
+
+
+@pytest.fixture
+def gs_plan(plan):
+    """A MANDATORY course whose code starts `GS` — the shape the old rule caught.
+
+    Seven real ones exist (Islamic Studies, Arabic Language Skills, University Life
+    Skills, Computer Skills), declared `Mandatory` in 6–12 programmes each.
+    """
+    Course.objects.update_or_create(
+        course_code="GS104", defaults={"description": "ISLAMIC VALUES", "credit_hours": 2}
+    )
+    ProgrammeRequirement.objects.update_or_create(
+        program=PROG,
+        course_code="GS104",
+        defaults={"programme_term": 1, "credit_hours": 2, "type": "Mandatory"},
+    )
+    # And a real slot, to prove the fix did not simply disable slot detection.
+    ProgrammeRequirement.objects.update_or_create(
+        program=PROG,
+        course_code="FE1",
+        defaults={"programme_term": 7, "credit_hours": 3, "type": "Free Elective"},
+    )
+    yield
+
+
+def test_a_mandatory_course_is_not_an_elective_slot(gs_plan):
+    """The defect: `GS104` is declared Mandatory and was shown as "choose one".
+
+    Classifying by code prefix put it in `elective_slots`, which returns before the
+    open/locked branch — so it appeared in neither list, carried no prerequisite
+    explanation, and told the student to pick it with their adviser. There is
+    nothing to pick.
+    """
+    r = _report()
+    slots = {s["code"] for s in r["elective_slots"]}
+    assert "GS104" not in slots, "a Mandatory course is being offered as a choice"
+    assert "FE1" in slots, "a real elective slot must still be one"
+
+    everywhere = (
+        {c["code"] for c in r["open_courses"]}
+        | {c["code"] for c in r["locked_courses"]}
+        | {c["code"] for c in r["done"]}
+        | {c["code"] for c in r["in_progress"]}
+    )
+    assert "GS104" in everywhere, "it vanished from every list a student reads"
+
+
+def test_the_type_decides_regardless_of_the_code(gs_plan):
+    """Both directions, so the fix cannot be 'ignore GS' rather than 'read the type'."""
+    from core.services.student_helpers import is_elective_slot
+
+    assert is_elective_slot("Free Elective") is True
+    assert is_elective_slot("Program Elective") is True
+    assert is_elective_slot("University Elective") is True
+    assert is_elective_slot("Mandatory") is False
+    assert is_elective_slot("") is False
+    assert is_elective_slot(None) is False
+
+
+def test_the_two_classifiers_are_one_function(gs_plan):
+    """There were two, and they disagreed on seven real courses."""
+    from core.services import virtual_advisor_capabilities as vac
+    from core.services.student_helpers import is_elective_slot
+
+    assert vac.is_elective_slot is is_elective_slot
+
+
+def test_every_plan_row_lands_in_exactly_one_bucket(gs_plan):
+    """The partition, asserted — because the misclassification moved a row between
+    buckets without changing any total, which is why it went unnoticed.
+
+    `one_step` is deliberately excluded: it is a SUBSET of `locked` (those two steps
+    away), so a naive sum of `counts` double-counts and tells you nothing.
+    """
+    r = _report()
+    c = r["counts"]
+    disjoint = c["open"] + c["locked"] + c["passed"] + c["studying"] + len(r["elective_slots"])
+    assert disjoint == ProgrammeRequirement.objects.filter(program=PROG).count()
+    assert c["one_step"] <= c["locked"], "one_step is a subset of locked, not a sibling"
+
+
+# ── what the SCREEN renders for each reason kind ──
+#
+# The service side was covered; the template was not. These four branches are the
+# product — they are the sentences a student actually reads when told a course is
+# blocked — and nothing asserted any of them.
+
+
+def _render():
+    """The real page, through the real URL, as the student."""
+    u = student_otp.provision_student_user(SID)
+    c = Client()
+    c.force_login(u)
+    r = c.get("/student/courses/")
+    assert r.status_code == 200
+    return r.content.decode()
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+def test_a_missing_course_reason_names_the_course_and_its_own_state(plan):
+    body = _render()
+    # TC301 is blocked by TB201, which is itself blocked by TA101.
+    assert "TB201" in body
+    assert "محجوب هو نفسه" in body or "it is itself blocked" in body
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+def test_a_missing_hours_reason_shows_the_numbers_not_a_label(plan):
+    """`MISSING_HOURS` carries no course — its whole value is the arithmetic.
+
+    A reason contract that flattens to `{code, text}` loses `effective/required/
+    remaining`, and the student is told "you need more credit hours" without being
+    told how many. TCAP is gated on 100 and the student has exactly 100, so raise
+    the gate to make it bite.
+    """
+    Prerequisite.objects.filter(program=PROG, course_code="TCAP").update(
+        prerequisite_course_code="120(HOURS)"
+    )
+    body = _render()
+    assert "120" in body, "the requirement is missing"
+    assert "100" in body, "what the student has is missing"
+    assert "20" in body, "how far short they are is missing"
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+def test_an_unknown_prerequisite_is_explained_not_echoed(plan):
+    """`UNKNOWN_PREREQ` fires for 74 of 320 live students.
+
+    Its code is by definition NOT in the student's plan, so there is no name to
+    show and no chain to point at. The screen must say something a person can act
+    on rather than print the code alone — and must never print the kind.
+    """
+    Prerequisite.objects.update_or_create(
+        program=PROG, course_code="TB201", prerequisite_course_code="ZZ999"
+    )
+    body = _render()
+    assert "ZZ999" in body
+    assert "غير موجود في خطتك" in body or "not found in your plan" in body
+    assert "UNKNOWN_PREREQ" not in body and "unknown_prereq" not in body
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+def test_an_unrecognised_reason_kind_degrades_to_a_sentence(plan, monkeypatch):
+    """The `{% else %}` branch — the one that stops a token reaching the page.
+
+    `ASK_ADVISOR` is unreachable today only because `_build_student_plan_payload`
+    emits three statuses; `StudentCourse.status` is a TextField with no choices, so
+    one bad write reaches it. A future kind would land here too.
+    """
+    import core.services.student_unlock as su
+
+    real = su.build_unlock_report
+
+    def with_a_strange_reason(*a, **k):
+        r = real(*a, **k)
+        for c in r.get("locked_courses", []):
+            c["reasons"] = [{"kind": "SOME_FUTURE_KIND"}]
+        return r
+
+    monkeypatch.setattr("core.student_auth_views.build_unlock_report", with_a_strange_reason)
+    body = _render()
+    assert "SOME_FUTURE_KIND" not in body and "some_future_kind" not in body
+    assert "راجع مرشدك الأكاديمي" in body or "Ask your academic advisor" in body
+
+
+# ── the chat path must not echo tokens either (issue #55 sibling) ──
+
+
+def test_the_chat_capability_explains_an_unknown_prerequisite(plan):
+    """`why()` used to fall through to `x["kind"].lower()`.
+
+    So `unknown_prereq` went to the model, and from there to the student — for 74
+    of 320 students on live data. The screen's template already handled this; the
+    capability did not.
+    """
+    from core.services.rbac import ROLE_STUDENT
+    from core.services.virtual_advisor_capabilities import _exec_my_progress
+
+    Prerequisite.objects.update_or_create(
+        program=PROG, course_code="TB201", prerequisite_course_code="ZZ999"
+    )
+    out = _exec_my_progress(
+        {}, {"role": ROLE_STUDENT, "student_id": SID}, {"academic_year": 1448, "term": 1}
+    )
+    whys = [w for b in out["blocked"] for w in b["why"]]
+    assert whys, "nothing was blocked, so this proved nothing"
+    for w in whys:
+        assert "_" not in w, f"an internal token reached the answer: {w!r}"
+        assert w == w.lower() or " " in w, f"looks like a constant, not a sentence: {w!r}"
+    assert any("not in this student's plan" in w for w in whys)
+
+
+def test_every_reason_kind_becomes_a_sentence():
+    """Including one that does not exist yet."""
+    from core.services.virtual_advisor_capabilities import _explain_reason
+
+    cases = [
+        {"kind": "MISSING_COURSE", "code": "TA101"},
+        {"kind": "MISSING_HOURS", "required": 120, "effective": 100},
+        {"kind": "UNKNOWN_PREREQ", "code": "ZZ999"},
+        {"kind": "ASK_ADVISOR"},
+        {"kind": "SOME_FUTURE_KIND"},
+        {},
+    ]
+    for c in cases:
+        text = _explain_reason(c)
+        assert text and " " in text, f"not a sentence: {text!r}"
+        kind = str(c.get("kind") or "")
+        # Guarded: `"" in anything` is True, so an unguarded check passes vacuously
+        # for the no-kind case and asserts nothing at all.
+        if kind:
+            assert kind.lower() not in text, f"echoed the kind: {text!r}"

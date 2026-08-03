@@ -1,0 +1,150 @@
+{% extends "core/base.html" %}
+{% load static i18n %}{% get_current_language as LANGUAGE_CODE %}
+
+{% block title %}{{ detail.course_code }}{% endblock %}
+
+{% block page_heading %}{% if refusal %}{% if LANGUAGE_CODE == 'ar' %}المقرر{% else %}Course{% endif %}{% else %}{{ detail.course_code }}{% if detail.course_name %} — {{ detail.course_name }}{% endif %}{% endif %}{% endblock %}
+
+{% block page_chips %}
+  {% if not refusal %}
+    <span class="ph-chip ph-chip-context" dir="ltr">{{ detail.program }}</span>
+    <span class="ph-chip ph-chip-page" dir="ltr">{{ detail.academic_year }}/{{ detail.term }}</span>
+  {% endif %}
+{% endblock %}
+
+{% block content %}
+{% comment %}
+  Server-rendered, like the locked-course page it is reached from. Every sentence
+  on this screen was written in `services/course_detail.py` and arrives translated;
+  the template chooses a layout, never a wording. Nothing here decides whether a
+  course may be taken — that claim needs the canonical eligibility engine, and
+  absence of a blocking reason is not the same statement.
+
+  {% comment %}, never {# #}: the hash form is single-line ONLY, and a multi-line
+  one is not parsed as a comment at all — it renders straight to the student.
+{% endcomment %}
+<div class="cd-layout">
+
+{% if refusal %}
+  <section class="card p-3" aria-labelledby="cdHeading">
+    <h2 class="h6 mb-2" id="cdHeading">{% if LANGUAGE_CODE == 'ar' %}تعذّر عرض المقرر{% else %}Cannot show this course{% endif %}</h2>
+    <p class="mb-0" dir="auto">{{ refusal }}</p>
+    {% if retry_after %}
+      <p class="cd-muted mb-0 mt-2" dir="auto">
+        {% if LANGUAGE_CODE == 'ar' %}يمكنك المحاولة بعد <span dir="ltr">{{ retry_after }}</span> ثانية.{% else %}You can try again in {{ retry_after }} seconds.{% endif %}
+      </p>
+    {% endif %}
+  </section>
+
+{% elif detail.kind == "NOT_IN_PLAN" %}
+  <section class="card p-3" aria-labelledby="cdHeading">
+    <h2 class="h6 mb-2" id="cdHeading">{% if LANGUAGE_CODE == 'ar' %}خارج خطتك{% else %}Outside your plan{% endif %}</h2>
+    <p class="mb-0" dir="auto">{{ detail.message_ar }}</p>
+  </section>
+
+{% elif detail.kind == "ELECTIVE_SLOT" %}
+  <section class="card p-3" aria-labelledby="cdHeading">
+    <h2 class="h6 mb-2" id="cdHeading">
+      {% if LANGUAGE_CODE == 'ar' %}متطلب اختياري{% else %}Elective requirement{% endif %}
+      {% if detail.credit_hours %}<span class="cd-muted" dir="ltr">· {{ detail.credit_hours }}h</span>{% endif %}
+    </h2>
+
+    {% comment %}
+      The gate is `mapping_ready`, a BOOLEAN from the backend. No programme name
+      appears in
+      this template: a template that knew which programmes were ready would be a
+      second copy of that rule in the layer least able to check itself.
+
+      When nothing is published the student gets ONE sentence — no empty option
+      cards, no greyed-out list of unmapped courses, no guessed alternatives. An
+      empty list dressed as a feature is worse than an honest absence, and this is
+      the common case: 77 of 84 live slots.
+    {% endcomment %}
+    {% if detail.mapping_ready %}
+      <ul class="cd-options">
+        {% for option in detail.options %}
+          <li class="cd-option">
+            <span class="cd-code" dir="ltr">{{ option.course_code }}</span>
+            <span class="cd-name" dir="auto">{{ option.course_name }}</span>
+            {% if option.credit_hours %}<span class="cd-muted" dir="ltr">{{ option.credit_hours }}h</span>{% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="cd-empty mb-0" dir="auto">{{ detail.message_ar }}</p>
+    {% endif %}
+  </section>
+
+{% else %}
+  <section class="card p-3 mb-3" aria-labelledby="cdStatusHeading">
+    <h2 class="h6 mb-2" id="cdStatusHeading">{% if LANGUAGE_CODE == 'ar' %}وضعك في هذا المقرر{% else %}Where you stand{% endif %}</h2>
+    <p class="cd-status cd-status-{{ detail.your_status }}" dir="auto">{{ detail.status_ar }}</p>
+
+    {% if detail.reasons %}
+      <ul class="cd-reasons">
+        {% for reason in detail.reasons %}
+          <li dir="auto">{{ reason.text_ar }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  </section>
+
+  <section class="card p-3 mb-3" aria-labelledby="cdPrereqHeading">
+    <h2 class="h6 mb-2" id="cdPrereqHeading">{% if LANGUAGE_CODE == 'ar' %}المتطلبات السابقة{% else %}Prerequisites{% endif %}</h2>
+    {% if detail.prerequisites %}
+      <ul class="cd-prereqs">
+        {% for prereq in detail.prerequisites %}
+          <li class="cd-prereq">
+            <a class="cd-code" dir="ltr" href="{% url 'student_course_detail_page' prereq.course_code %}">{{ prereq.course_code }}</a>
+            <span class="cd-name" dir="auto">{{ prereq.course_name }}</span>
+            <span class="cd-tag cd-tag-{{ prereq.student_status }}" dir="auto">{{ prereq.student_status_ar }}</span>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="cd-muted mb-0" dir="auto">{% if LANGUAGE_CODE == 'ar' %}لا توجد متطلبات سابقة لهذا المقرر.{% else %}This course has no prerequisites.{% endif %}</p>
+    {% endif %}
+
+    {% if detail.credit_hours_required %}
+      <p class="cd-muted mb-0 mt-2" dir="auto">
+        {% if LANGUAGE_CODE == 'ar' %}يتطلب أيضًا <span dir="ltr">{{ detail.credit_hours_required }}</span> ساعة معتمدة.{% else %}Also requires {{ detail.credit_hours_required }} credit hours.{% endif %}
+      </p>
+    {% endif %}
+  </section>
+
+  {% if detail.unlocks %}
+    <section class="card p-3 mb-3" aria-labelledby="cdUnlocksHeading">
+      <h2 class="h6 mb-2" id="cdUnlocksHeading">{% if LANGUAGE_CODE == 'ar' %}اجتيازه يفتح لك{% else %}Passing this opens{% endif %}</h2>
+      <ul class="cd-prereqs">
+        {% for course in detail.unlocks %}
+          <li class="cd-prereq">
+            <a class="cd-code" dir="ltr" href="{% url 'student_course_detail_page' course.course_code %}">{{ course.course_code }}</a>
+            <span class="cd-name" dir="auto">{{ course.course_name }}</span>
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+
+  {% comment %}
+    Offered only when the prerequisites are already satisfied, and worded as
+    PLANNING rather than permission: the planner arranges a week, it does not
+    decide eligibility, and «أضِفه إلى مخطط الجدول» says only what the button does.
+    Anything stronger would be the `eligible_now` claim this surface refuses to
+    make.
+  {% endcomment %}
+  {% if detail.your_status == "open_now" %}
+    <form method="post" action="{% url 'student_course_to_planner' detail.course_code %}" class="cd-actions">
+      {% csrf_token %}
+      <button type="submit" class="btn btn-primary">
+        {% if LANGUAGE_CODE == 'ar' %}أضِفه إلى مخطط الجدول{% else %}Add it to the timetable planner{% endif %}
+      </button>
+      <span class="cd-muted" dir="auto">
+        {% if LANGUAGE_CODE == 'ar' %}هذا لا يسجّلك في المقرر.{% else %}This does not register you for the course.{% endif %}
+      </span>
+    </form>
+  {% endif %}
+{% endif %}
+
+</div>
+{% endblock %}
