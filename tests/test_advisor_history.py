@@ -353,8 +353,23 @@ def test_the_builder_keeps_current_sections_unless_told_otherwise():
     assert seen["keep_registered"] is True
 
 
-def test_replacing_the_whole_timetable_is_still_possible_when_asked():
-    from core.services.virtual_advisor_capabilities import _exec_build_my_timetable
+def test_replacing_the_whole_timetable_is_no_longer_possible_from_chat():
+    """This test used to assert the opposite, and was right to at the time.
+
+    The contract then was "keeping is the default, replacing must be asked for",
+    and this proved asking worked. A live model then asked — off the single Arabic
+    word «أكد», with no prior turn saying what was being confirmed — and the
+    capability rebuilt. The requirement to confirm first lived in the tool's JSON
+    description, which is an instruction to the model, not a gate.
+
+    So the contract changed rather than the code being patched around: chat cannot
+    authorise this at all. The planner draft path owns it, with a hashed one-use
+    token bound to student + draft + version. See tests/test_advisor_rebuild_gate.py.
+    """
+    from core.services.virtual_advisor_capabilities import (
+        REBUILD_REQUIRES_PLANNER_CONFIRMATION,
+        _exec_build_my_timetable,
+    )
 
     seen = {}
 
@@ -369,23 +384,36 @@ def test_replacing_the_whole_timetable_is_still_possible_when_asked():
         mock.patch("core.services.planner_builder.build_plans", fake_build_plans),
         mock.patch("core.services.recommender.recommend_next_courses", return_value=["CS113"]),
     ):
-        _exec_build_my_timetable(
+        out = _exec_build_my_timetable(
             {"keep_current_sections": False},
             {"role": "STUDENT", "student_id": MINE},
             {"academic_year": 1448, "term": 1},
         )
-    assert seen["keep_registered"] is False
+
+    assert seen == {}, "the builder ran for a rebuild chat cannot authorise"
+    assert out["ok"] is False
+    assert out["reason"] == REBUILD_REQUIRES_PLANNER_CONFIRMATION
+    assert out["action"] == "OPEN_STUDENT_PLANNER"
 
 
-def test_the_tool_tells_the_model_to_ask_before_replacing():
-    """The default alone is not enough — the model has to know that passing false
-    discards choices the student already made."""
+def test_the_tool_no_longer_offers_the_model_a_way_to_replace():
+    """Also inverted, and for the same reason.
+
+    It used to assert the parameter's description said "confirmed" and "ask first".
+    Those words were doing the work of an access control. The parameter is gone
+    from the schema, so a compliant model cannot name it — and the executor refuses
+    it regardless, because compliance is not something to depend on.
+    """
     from core.services.rbac import ROLE_STUDENT
     from core.services.virtual_advisor_capabilities import get_default_registry
 
     schemas = get_default_registry().tool_schemas_for_scope({"role": ROLE_STUDENT})
     schema = next(s for s in schemas if s.get("function", s).get("name") == "build_my_timetable")
-    params = schema.get("function", schema)["parameters"]
-    described = params["properties"]["keep_current_sections"]["description"]
-    assert "confirmed" in described.lower()
-    assert "ask first" in described.lower()
+    fn = schema.get("function", schema)
+    assert "keep_current_sections" not in fn["parameters"]["properties"]
+
+    # And the model is told where the decision does live, so it does not invent a
+    # substitute — re-calling with must_include and the current courses left out.
+    described = fn["description"].lower()
+    assert "planner" in described
+    assert "not available here" in described

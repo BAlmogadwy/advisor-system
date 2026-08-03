@@ -51,6 +51,14 @@ _ALL_ROLES = _STAFF_ROLES | frozenset({ROLE_STUDENT})
 _MAX_LIST_ROWS = 20
 _MAX_COURSE_MATCHES = 10
 
+#: Chat asked to discard the student's current sections. It cannot authorise that.
+#:
+#: A NAMED outcome rather than a sentence, because two different callers have to
+#: recognise it without matching on prose: the answering loop, which must hand the
+#: student to the planner instead of paraphrasing a refusal, and the tests, which
+#: must be able to tell this refusal apart from every other `ok: False`.
+REBUILD_REQUIRES_PLANNER_CONFIRMATION = "REBUILD_REQUIRES_PLANNER_CONFIRMATION"
+
 
 # ── Scope helpers ────────────────────────────────────────────────
 
@@ -1557,13 +1565,42 @@ def _exec_build_my_timetable(
     except (TypeError, ValueError):
         return {"ok": False, "error": "max_credits must be an integer."}
 
+    # REBUILDING IS NOT AVAILABLE FROM CHAT. It is refused here, in the executor,
+    # not merely undocumented in the schema.
+    #
+    # This used to be `bool(args.get("keep_current_sections", True))`, and the
+    # requirement to confirm first lived in the tool's JSON description — a
+    # sentence addressed to the model, not a gate. Given the single Arabic word
+    # «أكد» with no prior turn establishing what was being confirmed, the model
+    # reasoned "this implies they want a full rebuild" and called this capability
+    # with `keep_current_sections=false`. Nothing stopped it.
+    #
+    # The real control already exists on the planner draft path:
+    # `planner_drafts.issue_rebuild_token` — hashed, one-use, bound to student +
+    # draft + version, fifteen-minute expiry — built precisely because a review of
+    # PR #53 found a valid token authorising content the student had never seen.
+    # A second confirmation mechanism in chat would not be that control; it would
+    # be a way around it. Chat hands the student to the planner instead.
+    #
+    # `is not True`, not `is False`: a caller that supplies the string "false", 0
+    # or None is malformed, and inferring "keep" from a value we could not parse
+    # is how the safe default stops being safe. Only an explicit True — or the
+    # absence of the argument — means keep.
+    requested_keep = args.get("keep_current_sections", True)
+    if requested_keep is not True:
+        return {
+            "ok": False,
+            "reason": REBUILD_REQUIRES_PLANNER_CONFIRMATION,
+            "error": (
+                "Rebuilding without the student's current sections requires "
+                "confirmation through the planner draft workflow."
+            ),
+            "action": "OPEN_STUDENT_PLANNER",
+            "tool": "build_my_timetable",
+        }
+    keep_current_sections = True
+
     baseline = get_student_term_baseline(int(student_id), str(year), str(term))
-    # Defaults to KEEPING. "أبي أسجل CS113" means add a course, not rebuild the
-    # week — and re-picking is the destructive reading of an ambiguous request:
-    # it silently discards section choices the student already made, possibly with
-    # an adviser. Replacing must be asked for, which is what the tool description
-    # now requires.
-    keep_current_sections = bool(args.get("keep_current_sections", True))
 
     # Through the adapter, not around it. `student_planner._run_solver` calls itself
     # "the ONLY place student-facing code reaches the solver", and this — a
@@ -2235,8 +2272,11 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                 "unplaced with a reason for each - a partial result is the normal "
                 "outcome and must be reported as such, never as a failure. It is a "
                 "SUGGESTION: it does not register anything and cannot promise a seat. "
-                "Adding a course keeps the student's current sections; rebuilding the "
-                "whole timetable is a separate thing they must ask for."
+                "It ALWAYS keeps the sections the student is already registered in and "
+                "fits the new courses around them. Discarding those sections and "
+                "rebuilding the whole week is not available here at all: if the student "
+                "asks for that, tell them to open the planner and confirm it there. "
+                "Saying they confirm it to you is not confirmation."
             ),
             parameters={
                 "type": "object",
@@ -2253,17 +2293,6 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                     "max_credits": {
                         "type": "integer",
                         "description": "Credit ceiling for the plan. Omit for no cap.",
-                    },
-                    "keep_current_sections": {
-                        "type": "boolean",
-                        "description": (
-                            "Defaults to true: keep the sections the student is already "
-                            "registered in and fit the new courses around them. Pass false "
-                            "ONLY after the student has explicitly confirmed they want the "
-                            "whole timetable rebuilt — it discards section choices they "
-                            "already made. If the request is ambiguous, ask first rather "
-                            "than guessing."
-                        ),
                     },
                     "academic_year": {"type": "integer"},
                     "term": {"type": "integer"},
