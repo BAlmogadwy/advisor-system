@@ -1,6 +1,17 @@
 from django.contrib.auth.decorators import login_required
 from django.urls import path
 
+from .advisor_conversation_views import (
+    conversation_create_view,
+    conversation_list_view,
+    conversation_messages_view,
+    conversation_post_message_view,
+    escalation_create_view,
+    escalation_detail_view,
+    escalation_list_view,
+    message_feedback_view,
+)
+from .advisor_inbox_views import inbox_case_action_view, inbox_case_view, inbox_view
 from .advisor_views import (
     advisor_upsert_view,
     advisors_list_view,
@@ -12,6 +23,7 @@ from .advisor_views import (
 from .api_views import classify_view, parse_and_classify_view, recommend_view
 from .audit_views import audit_explorer_api, audit_explorer_page, audit_export_csv_view
 from .auth_views import login_view, logout_view
+from .authz import role_required
 from .db_admin_views import (
     db_admin_page,
     db_backup_snapshot_view,
@@ -125,6 +137,7 @@ from .sections_import_views import (
     sections_import_page,
     sections_import_preview_view,
 )
+from .services.rbac import ROLE_ADVISOR
 from .settings_views import defaults_settings_view
 from .student_auth_views import (
     student_advisor_view,
@@ -244,6 +257,68 @@ urlpatterns = [
         "student/graduation/",
         login_required(student_graduation_view, login_url="student_login"),
         name="student_graduation",
+    ),
+    # Durable conversations. Every one of these resolves the student from the
+    # session and filters on it in the same query, so a conversation belonging to
+    # someone else is not found rather than found-and-refused.
+    path(
+        "student/advisor/conversations/",
+        login_required(conversation_list_view, login_url="student_login"),
+        name="advisor_conversation_list",
+    ),
+    path(
+        "student/advisor/conversations/new/",
+        login_required(conversation_create_view, login_url="student_login"),
+        name="advisor_conversation_create",
+    ),
+    path(
+        "student/advisor/conversations/<str:conversation_id>/messages/",
+        login_required(conversation_messages_view, login_url="student_login"),
+        name="advisor_conversation_messages",
+    ),
+    path(
+        "student/advisor/conversations/<str:conversation_id>/send/",
+        login_required(conversation_post_message_view, login_url="student_login"),
+        name="advisor_conversation_send",
+    ),
+    path(
+        "student/advisor/messages/<str:message_id>/feedback/",
+        login_required(message_feedback_view, login_url="student_login"),
+        name="advisor_message_feedback",
+    ),
+    # A case is anchored to the turn that produced it: the adviser opens it with
+    # the question, the answer and the sources already attached.
+    path(
+        "student/advisor/messages/<str:message_id>/escalations/",
+        login_required(escalation_create_view, login_url="student_login"),
+        name="advisor_escalation_create",
+    ),
+    path(
+        "student/advisor/escalations/",
+        login_required(escalation_list_view, login_url="student_login"),
+        name="advisor_escalation_list",
+    ),
+    path(
+        "student/advisor/escalations/<str:escalation_id>/",
+        login_required(escalation_detail_view, login_url="student_login"),
+        name="advisor_escalation_detail",
+    ),
+    # The adviser side. `role_required` keeps students out; `visible_cases` decides
+    # WHICH cases a member of staff may see, in the query rather than after it.
+    path(
+        "ops/advisor-cases/",
+        login_required(role_required(ROLE_ADVISOR)(inbox_view), login_url="login"),
+        name="advisor_inbox",
+    ),
+    path(
+        "ops/advisor-cases/<str:reference>/",
+        login_required(role_required(ROLE_ADVISOR)(inbox_case_view), login_url="login"),
+        name="advisor_inbox_case",
+    ),
+    path(
+        "ops/advisor-cases/<str:reference>/action/",
+        login_required(role_required(ROLE_ADVISOR)(inbox_case_action_view), login_url="login"),
+        name="advisor_inbox_case_action",
     ),
     path("", login_required(dashboard, login_url="login"), name="dashboard"),
     path("health/", health, name="health"),

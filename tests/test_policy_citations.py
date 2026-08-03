@@ -21,6 +21,20 @@ from core.services.virtual_advisor import (
 pytestmark = pytest.mark.django_db
 
 
+#: These modules call the real entry point, which now loads a real record. Before
+#: the identity fix they ran against the general-mode stub, so no student had to
+#: exist — that absence WAS the defect. One row, autouse, so the tests exercise the
+#: same path a signed-in student does.
+@pytest.fixture(autouse=True)
+def _the_asking_student(db):
+    from core.models import Student
+
+    Student.objects.get_or_create(
+        student_id=6001001,
+        defaults={"name": "Test Student", "program": "CS", "section": "M"},
+    )
+
+
 def _lookup_result(*policy_ids, tool="policy_lookup"):
     return {
         "ok": True,
@@ -195,6 +209,7 @@ def test_a_page_regex_that_backtracks_would_flag_every_compliant_answer(allowed)
 # helper's verdict: it re-asked with the evidence stripped out, overwrote the draft
 # unconditionally, and shipped answers it had already determined were fabricated.
 
+from core.services.advisor_principal import AdvisorPrincipal  # noqa: E402
 from core.services.rbac import ROLE_STUDENT  # noqa: E402
 from core.services.virtual_advisor import answer_virtual_advisor  # noqa: E402
 from tests.test_virtual_advisor_agent_loop import (  # noqa: E402
@@ -208,7 +223,13 @@ _GOOD = "«الدليل الإرشادي للطالب، ص 24 [TU.WITHDRAWAL.MAX
 
 
 def _run(client, question="كم مرة أقدر أنسحب من مقرر؟"):
-    return answer_virtual_advisor(question=question, scope={"role": ROLE_STUDENT}, client=client)
+    # A student principal must name a student: the old `{"role": ROLE_STUDENT}`
+    # with no id produced a general answer that read as a personal one.
+    return answer_virtual_advisor(
+        question=question,
+        principal=AdvisorPrincipal(role=ROLE_STUDENT, student_id=6001001),
+        client=client,
+    )
 
 
 def test_a_clean_citation_survives_untouched():

@@ -1,0 +1,79 @@
+{% extends "core/base.html" %}
+{% load static %}
+
+{% block title %}Escalated cases{% endblock %}
+{% block page_heading %}Escalated cases{% endblock %}
+
+{% block page_intro %}
+  <p class="mb-0">Questions the virtual adviser could not safely resolve, plus any a student asked a person to look at. You see only cases assigned to you, cases belonging to students you advise, and cases in departments you cover.</p>
+{% endblock %}
+
+{% block content %}
+<form class="card p-3 mb-3 ai-filters" method="get">
+  <div class="ai-filter">
+    <label for="f-status">Status</label>
+    <select id="f-status" name="status">
+      <option value="">Any</option>
+      {% for value, label in statuses %}
+        <option value="{{ value }}" {% if filters.status == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="ai-filter">
+    <label for="f-reason">Reason</label>
+    <select id="f-reason" name="reason">
+      <option value="">Any</option>
+      {% for value, label in reasons %}
+        <option value="{{ value }}" {% if filters.reason == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="ai-filter">
+    <label for="f-program">Programme</label>
+    <input id="f-program" name="program" value="{{ filters.program }}" maxlength="16" placeholder="CS">
+  </div>
+  <div class="ai-filter ai-filter-check">
+    <label for="f-mine">
+      <input type="checkbox" id="f-mine" name="mine" value="1" {% if filters.mine %}checked{% endif %}>
+      Assigned to me
+    </label>
+  </div>
+  <button class="btn btn-primary" type="submit">Filter</button>
+</form>
+
+<div class="card p-0">
+  <div class="table-wrap">
+    <table class="table ai-cases">
+      <caption class="visually-hidden">Escalated adviser cases</caption>
+      <thead>
+        <tr>
+          <th scope="col">Reference</th>
+          <th scope="col">Submitted</th>
+          <th scope="col">Status</th>
+          <th scope="col">Programme</th>
+          <th scope="col">Student</th>
+          <th scope="col">Reason</th>
+          <th scope="col">Question</th>
+          <th scope="col">Assigned</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in cases %}
+          <tr>
+            <th scope="row"><a href="{% url 'advisor_inbox_case' reference=row.case.reference %}">{{ row.case.reference }}</a></th>
+            <td>{{ row.case.created_at|date:"j M Y" }}</td>
+            <td><span class="ai-status ai-status-{{ row.case.status|lower }}">{{ row.case.get_status_display }}</span></td>
+            <td>{{ row.student.program|default:"—" }}</td>
+            <td>{{ row.student.name|default:"—" }}<br><small class="ai-muted">{{ row.case.student_id }}</small></td>
+            <td>{{ row.case.get_reason_code_display }}</td>
+            <td class="ai-question" dir="auto">{{ row.question|default:"—" }}</td>
+            <td>{{ row.case.assigned_adviser_id|default:"—" }}</td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="8" class="ai-empty">No cases match these filters.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

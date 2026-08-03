@@ -1,0 +1,118 @@
+{% extends "core/base.html" %}
+{% load static %}
+
+{% block title %}{{ case.reference }}{% endblock %}
+{% block page_heading %}{{ case.reference }}{% endblock %}
+
+{% block page_chips %}
+  <span class="ph-chip ph-chip-page">{{ case.get_status_display }}</span>
+  <span class="ph-chip ph-chip-context">{{ case.get_reason_code_display }}</span>
+{% endblock %}
+
+{% block content %}
+<div class="ai-case">
+
+  {# ── 1. what the student asked ── #}
+  <section class="card p-3 mb-3">
+    <h2 class="ai-case-h">Student question</h2>
+    <p class="ai-case-body" dir="auto">{{ evidence.question|default:"—" }}</p>
+    {% if case.student_note %}
+      <h3 class="ai-case-sub">Their note</h3>
+      <p class="ai-case-body" dir="auto">{{ case.student_note }}</p>
+    {% endif %}
+    <p class="ai-muted">
+      {{ student.name|default:"—" }} · {{ student.program|default:"—" }} · {{ case.student_id }}
+      · submitted {{ case.created_at|date:"j M Y, H:i" }}
+    </p>
+  </section>
+
+  {# ── 2. what the virtual adviser said, exactly as stored ── #}
+  <section class="card p-3 mb-3">
+    <h2 class="ai-case-h">Virtual adviser response</h2>
+    <p class="ai-case-body" dir="auto">{{ evidence.assistant_answer|default:"—" }}</p>
+    {% if citations %}
+      <h3 class="ai-case-sub">Sources shown with that answer</h3>
+      <ol class="ai-citations">
+        {% for c in citations %}
+          <li dir="auto">{{ c.document_title }} — edition {{ c.edition }}, p. {{ c.page }} <code>{{ c.policy_id }}</code></li>
+        {% endfor %}
+      </ol>
+    {% else %}
+      <p class="ai-muted">No sources were cited.</p>
+    {% endif %}
+  </section>
+
+  {# ── 3. why it came here ── #}
+  <section class="card p-3 mb-3">
+    <h2 class="ai-case-h">Why it was escalated</h2>
+    <dl class="ai-case-meta">
+      <dt>Sent to a person because</dt><dd>{{ case.get_reason_code_display }}</dd>
+      <dt>The answer itself</dt><dd>{{ evidence.final_disposition|default:"—" }}</dd>
+      <dt>What limited it</dt>
+      <dd>{% if reason_codes %}{{ reason_codes|join:", " }}{% else %}—{% endif %}</dd>
+    </dl>
+    {% if missing %}
+      <h3 class="ai-case-sub">Recorded as missing</h3>
+      <ul class="ai-missing">
+        {% for m in missing %}<li dir="auto">{{ m.label_ar }} <code>{{ m.code }}</code></li>{% endfor %}
+      </ul>
+    {% endif %}
+    <details class="ai-summary">
+      <summary>Generated summary</summary>
+      <pre class="ai-case-pre" dir="auto">{{ case.generated_summary }}</pre>
+    </details>
+  </section>
+
+  {# ── 4. what this adviser can do ── #}
+  <section class="card p-3 mb-3" id="ai-actions" data-action-url="{% url 'advisor_inbox_case_action' reference=case.reference %}">
+    <h2 class="ai-case-h">Adviser action</h2>
+    {% csrf_token %}
+
+    <div class="ai-action-row">
+      <button class="btn" type="button" data-ai-action="assign_to_me">Assign to me</button>
+      {% for status in next_statuses %}
+        <button class="btn" type="button" data-ai-action="set_status" data-ai-status="{{ status }}">
+          Mark {{ status|lower }}
+        </button>
+      {% endfor %}
+    </div>
+
+    {# Two fields, and the page says which is which. One box serving both is how #}
+    {# the first request to show a student their outcome publishes the notes. #}
+    <div class="ai-two-up">
+      <div>
+        <label class="ai-label" for="ai-note">Internal note <span class="ai-muted">— the student never sees this</span></label>
+        <textarea id="ai-note" rows="4" maxlength="4000"></textarea>
+        <button class="btn" type="button" data-ai-action="add_note" data-ai-source="ai-note">Add note</button>
+        {% if case.adviser_notes %}<pre class="ai-case-pre ai-notes" dir="auto">{{ case.adviser_notes }}</pre>{% endif %}
+      </div>
+      <div>
+        <label class="ai-label" for="ai-reply">Reply to the student <span class="ai-muted">— shown in their conversation</span></label>
+        <textarea id="ai-reply" rows="4" maxlength="4000" dir="auto">{{ case.resolution_message }}</textarea>
+        <button class="btn btn-primary" type="button" data-ai-action="record_response" data-ai-source="ai-reply">Save reply</button>
+      </div>
+    </div>
+    <p class="ai-action-error" role="alert" hidden></p>
+  </section>
+
+  {# ── the trail ── #}
+  <section class="card p-3">
+    <h2 class="ai-case-h">History</h2>
+    <ol class="ai-events">
+      {% for event in events %}
+        <li>
+          <span class="ai-event-kind">{{ event.get_kind_display }}</span>
+          <span class="ai-muted">{{ event.actor_label|default:"—" }} · {{ event.created_at|date:"j M Y, H:i" }}</span>
+          {% if event.to_status %}<span class="ai-muted">{{ event.from_status }} → {{ event.to_status }}</span>{% endif %}
+        </li>
+      {% empty %}
+        <li class="ai-muted">Nothing recorded yet.</li>
+      {% endfor %}
+    </ol>
+  </section>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{% static 'js/page-advisor-inbox.js' %}?v=1"></script>
+{% endblock %}

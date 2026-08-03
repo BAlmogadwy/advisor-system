@@ -9706,7 +9706,9 @@ html[data-theme="dark"] .um-act-btn.um-act-save {
 
 .va-examples button {
   min-width: 0;
-  text-align: left;
+  /* `left` strands Arabic labels against the wrong edge while every neighbouring
+     control is start-aligned. */
+  text-align: start;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--surface);
@@ -10788,4 +10790,294 @@ html[data-theme="dark"] .im-modal-header,
 html[data-theme="dark"] .im-modal-footer {
   background: rgba(255,255,255,0.025);
   border-color: rgba(255,255,255,0.08);
+}
+
+/* ── Student adviser: durable conversations ──────────────────────
+   Layout is a sidebar of conversations beside the open thread. Everything here
+   is direction-agnostic — margin-inline / padding-inline rather than left and
+   right — because the page renders RTL in Arabic and LTR in English from the
+   same rules. */
+
+.sa-layout {
+  display: grid;
+  grid-template-columns: minmax(200px, 260px) 1fr;
+  gap: var(--space-3, 1rem);
+  align-items: start;
+}
+
+.sa-sidebar { position: sticky; top: var(--space-3, 1rem); max-height: 78vh; overflow-y: auto; }
+.sa-conv-list { display: flex; flex-direction: column; gap: .25rem; list-style: none; margin: 0; padding: 0; }
+.sa-conv-item { display: block; }
+
+/* `.va-chat` is shared with the older adviser page, whose first child is a
+   `.va-chat-top` this page does not have. Inheriting its row template therefore
+   shifts every row by one: the 420px flexible row lands on the three suggestion
+   chips (which stretch to fill it — 280px of them on a phone) while the message
+   thread gets an `auto` row, so it sizes to its content and its `overflow: auto`
+   never produces a scrollbar. The effect is that answering a question appears to
+   do nothing: the view cannot scroll to the reply, and the composer is pushed
+   below the fold. Re-state the rows for THIS page rather than editing the shared
+   rule the other page still depends on. */
+.sa-main .va-chat {
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  max-height: 78vh;
+}
+/* No `min-height: 0` here on purpose: .va-messages already carries `overflow:
+   auto`, which by itself sets a grid item's automatic minimum size to zero, so the
+   usual guard would be a rule nothing depends on. */
+
+/* Once there is a conversation the suggestion chips are just onboarding clutter,
+   and on a phone they are ~110px of it standing between the thread and the input. */
+.sa-main .va-chat.has-messages .va-examples { display: none; }
+
+@media (max-width: 768px) {
+  /* 78vh is measured from the top of the CHAT, not of the page, so on a phone the
+     heading, the chips and the intro push the composer clean off the bottom of the
+     screen — the student has to scroll the document to reach the box they type in.
+     Leave room for that header, and use dvh so the browser's own collapsing chrome
+     is accounted for. The reserve is an approximation of that header, and the phone
+     test asserts the composer stays on screen — so if the header ever grows, that
+     test fails rather than the student silently losing the input box. */
+  .sa-main .va-chat { max-height: calc(100dvh - 20rem); min-height: 18rem; }
+}
+
+.sa-conv {
+  display: block;
+  width: 100%;
+  text-align: start;
+  padding: .5rem .625rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 8px);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sa-conv:hover { background: var(--surface-2, rgba(127,127,127,.08)); }
+.sa-conv.is-active {
+  background: var(--surface-2, rgba(127,127,127,.12));
+  border-color: var(--border, rgba(127,127,127,.25));
+  font-weight: 600;
+}
+.sa-conv:focus-visible,
+.sa-fb-btn:focus-visible,
+.sa-fb-reason:focus-visible,
+.sa-retry:focus-visible { outline: 2px solid var(--accent, #4c8bf5); outline-offset: 2px; }
+
+.sa-muted { color: var(--text-muted, #6b7280); font-size: .875rem; }
+.sa-empty { padding: .75rem .25rem; }
+.sa-error { color: var(--danger, #b42318); padding: .75rem; }
+/* The answer body. `pre-wrap` moved off the container and onto the paragraph:
+   the container now holds real <p> and <ul> elements, and pre-wrap on a parent
+   turns the whitespace BETWEEN those elements into visible blank lines. */
+.sa-body { display: flow-root; }
+.sa-para { white-space: pre-wrap; margin: 0 0 .6rem; }
+.sa-body > :last-child { margin-bottom: 0; }
+
+/* `padding-inline-start`, not `padding-left`: the marker belongs on the side the
+   text starts from, and an Arabic answer inside an English interface is exactly
+   the case this screen got wrong. */
+.sa-list { margin: 0 0 .6rem; padding-inline-start: 1.35rem; }
+.sa-list li { margin: 0 0 .2rem; }
+.sa-list li::marker { color: var(--t2); }
+
+/* Status is informative, not decorative: a failed turn has to be visibly
+   different from an answered one, or a student retries something that worked. */
+.sa-status { margin: .5rem 0 0; font-size: .875rem; }
+.sa-status-failed { color: var(--danger, #b42318); }
+.sa-status-pending { color: var(--text-muted, #6b7280); font-style: italic; }
+.sa-status-abstained,
+.sa-status-escalated { color: var(--warning, #b54708); }
+
+/* ── citations ── */
+.sa-citations {
+  margin-top: .75rem;
+  padding-top: .625rem;
+  border-top: 1px solid var(--border, rgba(127,127,127,.25));
+}
+.sa-citations-title { margin: 0 0 .375rem; font-size: .8125rem; font-weight: 600; opacity: .85; }
+.sa-citation-list { margin: 0; padding-inline-start: 1.1rem; display: flex; flex-direction: column; gap: .375rem; }
+.sa-citation { font-size: .875rem; }
+.sa-citation-text { display: block; }
+.sa-citation-details { margin-top: .25rem; font-size: .8125rem; }
+.sa-citation-details summary { cursor: pointer; color: var(--text-muted, #6b7280); }
+.sa-citation-meta { display: grid; grid-template-columns: auto 1fr; gap: .125rem .5rem; margin: .375rem 0 0; }
+.sa-citation-meta dt { font-weight: 600; opacity: .8; }
+.sa-citation-meta dd { margin: 0; overflow-wrap: anywhere; }
+.sa-citation-approved { margin: .375rem 0 0; opacity: .75; }
+
+/* ── feedback ── */
+.sa-feedback {
+  margin-top: .75rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .375rem;
+}
+.sa-feedback-q { font-size: .875rem; opacity: .85; margin-inline-end: .25rem; }
+.sa-fb-btn.is-selected,
+.sa-fb-reason.is-selected {
+  background: var(--accent, #4c8bf5);
+  border-color: var(--accent, #4c8bf5);
+  color: #fff;
+}
+.sa-fb-reasons { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: .25rem; margin-top: .25rem; }
+/* `display` wins over the `hidden` ATTRIBUTE, so a flex container marked hidden
+   stays visible. Without this the negative-feedback reasons were on screen
+   before the student had said anything was wrong. */
+/* Scoped to this screen rather than to one class: `hidden` is an attribute the UA
+   sheet implements as `display: none`, so ANY rule giving an element a display
+   value silently outranks it. That is how the negative-feedback reasons came to be
+   on screen before the student had said anything was wrong, and the same trap is
+   one declaration away for every other element here that JS toggles. */
+.sa-layout [hidden] { display: none !important; }
+
+/* ── adviser inbox ───────────────────────────────────────────────
+   The queue is a working view: dense, scannable, and left-to-right even though the
+   questions inside it are Arabic. Each cell that holds student prose carries
+   dir="auto" so the text runs the way it was written without turning the table
+   round. */
+.ai-filters { display: flex; flex-wrap: wrap; gap: .75rem; align-items: flex-end; }
+.ai-filter { display: flex; flex-direction: column; gap: .25rem; }
+.ai-filter label { font-size: .8125rem; color: var(--t2); }
+.ai-filter select, .ai-filter input {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm, 8px);
+  padding: .375rem .5rem;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+}
+.ai-filter-check label { flex-direction: row; align-items: center; gap: .375rem; display: flex; }
+
+.table-wrap { overflow-x: auto; }
+.ai-cases { width: 100%; border-collapse: collapse; }
+.ai-cases th, .ai-cases td {
+  padding: .5rem .625rem;
+  border-bottom: 1px solid var(--line);
+  text-align: start;
+  vertical-align: top;
+  font-size: .875rem;
+}
+.ai-cases thead th { color: var(--t2); font-weight: 600; white-space: nowrap; }
+.ai-question { max-width: 22rem; }
+.ai-empty { text-align: center; color: var(--t2); padding: 1.5rem; }
+.ai-muted { color: var(--t2); }
+
+.ai-status { border-radius: 999px; padding: .0625rem .5rem; font-size: .8125rem; white-space: nowrap; }
+.ai-status-open { background: color-mix(in srgb, var(--teal) 18%, transparent); }
+.ai-status-assigned { background: color-mix(in srgb, var(--brand) 18%, transparent); }
+.ai-status-needs_information { background: color-mix(in srgb, orange 22%, transparent); }
+.ai-status-resolved { background: color-mix(in srgb, green 18%, transparent); }
+.ai-status-closed { background: var(--surface-2, rgba(127,127,127,.14)); }
+
+.ai-case-h { font-size: 1rem; margin: 0 0 .5rem; }
+.ai-case-sub { font-size: .875rem; margin: .75rem 0 .25rem; color: var(--t2); }
+.ai-case-body { margin: 0 0 .5rem; white-space: pre-wrap; }
+.ai-case-meta { display: grid; grid-template-columns: auto 1fr; gap: .125rem .75rem; margin: 0; }
+.ai-case-meta dt { color: var(--t2); font-size: .875rem; }
+.ai-case-meta dd { margin: 0; font-size: .875rem; }
+.ai-case-pre {
+  white-space: pre-wrap;
+  background: var(--surface-2, rgba(127,127,127,.06));
+  padding: .625rem;
+  border-radius: var(--radius-sm, 8px);
+  margin: .5rem 0 0;
+  font: inherit;
+}
+.ai-citations, .ai-missing, .ai-events { margin: 0; padding-inline-start: 1.25rem; }
+.ai-events li { margin-bottom: .25rem; font-size: .875rem; }
+.ai-event-kind { font-weight: 600; margin-inline-end: .375rem; }
+
+.ai-action-row { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: .75rem; }
+.ai-two-up { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+.ai-two-up textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm, 8px);
+  padding: .5rem;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  resize: vertical;
+  margin-bottom: .5rem;
+}
+.ai-label { display: block; margin-bottom: .25rem; font-size: .875rem; font-weight: 600; }
+.ai-notes { max-height: 12rem; overflow-y: auto; }
+.ai-action-error { color: var(--danger, #b42318); margin: .75rem 0 0; }
+
+@media (max-width: 900px) {
+  .ai-two-up { grid-template-columns: 1fr; }
+}
+
+/* ── handing a case to a person ──────────────────────────────────
+   Direction-agnostic like the rest of this screen: padding-inline and text-align
+   start, so the same rules serve Arabic and English. */
+.sa-escalate { margin-top: .5rem; }
+.sa-escalate.is-prominent {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm, 8px);
+  padding: .625rem .75rem;
+  background: var(--surface-2, rgba(127,127,127,.06));
+}
+.sa-escalate-lead { margin: 0 0 .5rem; font-weight: 600; text-align: start; }
+
+.sa-preview {
+  margin-top: .5rem;
+  padding: .75rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--surface);
+  text-align: start;
+}
+.sa-preview-title { margin: 0 0 .375rem; font-size: .95rem; }
+.sa-preview-list { margin: 0 0 .5rem; padding-inline-start: 1.25rem; }
+.sa-preview-list li { margin-bottom: .125rem; }
+.sa-preview-limit { margin: 0 0 .625rem; color: var(--t2); font-size: .875rem; }
+.sa-preview-note-label { display: block; margin-bottom: .25rem; font-size: .875rem; }
+.sa-preview-note {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm, 8px);
+  padding: .5rem;
+  font: inherit;
+  background: var(--surface);
+  color: inherit;
+  resize: vertical;
+}
+.sa-preview-actions { display: flex; gap: .5rem; margin-top: .625rem; flex-wrap: wrap; }
+.sa-preview-error { margin: .5rem 0 0; color: var(--danger, #b42318); font-size: .875rem; }
+
+.sa-case {
+  margin-top: .5rem;
+  padding: .75rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--surface-2, rgba(127,127,127,.06));
+  text-align: start;
+}
+.sa-case-title { margin: 0 0 .5rem; font-size: .95rem; }
+.sa-case-meta { display: grid; grid-template-columns: auto 1fr; gap: .125rem .75rem; margin: 0; }
+.sa-case-meta dt { color: var(--t2); font-size: .875rem; }
+.sa-case-meta dd { margin: 0; font-size: .875rem; }
+/* A case number is quoted over a telephone and read back; it must not be
+   ellipsised, reflowed or bidi-reordered. */
+.sa-case-ref { font-weight: 700; font-variant-numeric: tabular-nums; unicode-bidi: isolate; }
+.sa-case-reply { margin-top: .625rem; padding-top: .625rem; border-top: 1px solid var(--line); }
+.sa-case-reply h5 { margin: 0 0 .25rem; font-size: .875rem; color: var(--t2); }
+.sa-case-reply p { margin: 0; }
+
+.sa-fb-reason { font-size: .8125rem; }
+.sa-retry { margin-top: .5rem; }
+
+/* On a phone the sidebar becomes a short scrolling strip above the thread
+   rather than a column, so the conversation keeps the full width. */
+@media (max-width: 768px) {
+  .sa-layout { grid-template-columns: 1fr; }
+  .sa-sidebar { position: static; max-height: 40vh; }
+  .sa-conv-list { flex-direction: row; overflow-x: auto; padding-bottom: .25rem; }
+  .sa-conv { width: auto; flex: 0 0 auto; max-width: 60vw; }
 }

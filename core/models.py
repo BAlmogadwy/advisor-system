@@ -1,7 +1,8 @@
 import uuid
 
 from django.conf import settings
-from django.db import models
+from django.db import models, transaction
+from django.db.models import F
 
 
 class Student(models.Model):
@@ -1494,3 +1495,514 @@ class TimetableRepairJob(models.Model):
 
     def __str__(self) -> str:
         return f"RepairJob({self.id}/{self.kind}/{self.status})"
+
+
+# ── Adviser conversations ────────────────────────────────────────
+#
+# The chat previously kept its history in a JavaScript array — last eight turns,
+# gone on reload. Nothing was stored, so there was nothing for a student to return
+# to, nothing for an adviser to review, and nothing to attach feedback or an
+# escalation to. Every one of those depends on messages existing.
+#
+# student_id is a plain indexed integer rather than a ForeignKey, matching
+# StudentLoginOTP: the students table is externally sourced and re-imported, and a
+# FK would let a refresh cascade away a student's conversation history.
+
+
+class AdvisorConversation(models.Model):
+    """One chat thread belonging to exactly one student."""
+
+    STATUS_ACTIVE = "ACTIVE"
+    STATUS_ARCHIVED = "ARCHIVED"
+    STATUS_ESCALATED = "ESCALATED"
+    STATUS_CHOICES = [
+        (STATUS_ACTIVE, "Active"),
+        (STATUS_ARCHIVED, "Archived"),
+        (STATUS_ESCALATED, "Escalated"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    student_id = models.IntegerField(db_index=True)
+    title = models.TextField(blank=True, default="")
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_ACTIVE)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    last_message_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "advisor_conversations"
+        # `-last_message_at` alone is not portable: SQLite sorts NULLs last on a
+        # descending column, PostgreSQL sorts them first. A conversation whose send
+        # failed before any message landed would therefore sit at the bottom in
+        # development and at the top in production. Say which we mean.
+        ordering = [F("last_message_at").desc(nulls_last=True), "-created_at"]
+        indexes = [
+            models.Index(fields=["student_id", "-last_message_at"], name="idx_adv_conv_student"),
+        ]
+
+    def __str__(self) -> str:
+        return f"Conversation({self.id}/{self.student_id})"
+
+
+class FinalDisposition(models.TextChoices):
+    """What the final student-visible answer did.
+
+    FAILED is separate from ABSTAIN on purpose: abstaining is a decision the
+    adviser made about the evidence, while failing is the adviser never getting to
+    decide. An escalation queue that cannot tell them apart fills with outages.
+    """
+
+    PASS = "PASS", "Answered"
+    ABSTAIN = "ABSTAIN", "Declined to answer"
+    ESCALATE = "ESCALATE", "Sent to a human adviser"
+    FAILED = "FAILED", "Could not be produced"
+
+
+class AdvisorMessage(models.Model):
+    """One turn. The student-visible body ONLY.
+
+    Tool results and judge traces are deliberately absent: they name database
+    tables, quote row counts and cohort statistics, and belong in an operator
+    audit record rather than in something rendered to the person who asked.
+    """
+
+    ROLE_STUDENT = "STUDENT"
+    ROLE_ASSISTANT = "ASSISTANT"
+    ROLE_CHOICES = [(ROLE_STUDENT, "Student"), (ROLE_ASSISTANT, "Assistant")]
+
+    ROUTE_AGENT = "AGENT"
+    ROUTE_SEEDED_FALLBACK = "SEEDED_FALLBACK"
+    ROUTE_CHOICES = [(ROUTE_AGENT, "Agent loop"), (ROUTE_SEEDED_FALLBACK, "Seeded fallback")]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    conversation = models.ForeignKey(
+        AdvisorConversation, on_delete=models.CASCADE, related_name="messages"
+    )
+    role = models.CharField(max_length=16, choices=ROLE_CHOICES)
+    content = models.TextField()
+
+    # How the answer was reached. Per-message rather than per-conversation because a
+    # single thread mixes grounded policy answers with pure student-data ones, and
+    # "was this grounded?" has to be answerable turn by turn.
+    answer_mode = models.CharField(max_length=16, blank=True, default="")
+    grounding_state = models.CharField(max_length=24, blank=True, default="")
+
+    #: What the FINAL, validated answer did — not what the policies permitted. A
+    #: rule marked PROHIBITED_FOR_DECISION constrains the answer; it does not by
+    #: itself mean the turn abstained, because the same rule can be explained
+    #: perfectly well in general terms.
+    final_disposition = models.CharField(
+        max_length=24, choices=FinalDisposition.choices, blank=True, default=""
+    )
+
+    #: Why the answer stopped where it did. Server-set from a closed vocabulary —
+    #: an adviser triages on these, so a free-text reason is a category nobody can
+    #: count. Written once, from the final result, in the same transaction as the
+    #: answer and its citations.
+    reason_codes = models.JSONField(default=list, blank=True)
+
+    #: Structured only, and `[]` when the runtime produces nothing. Never extracted
+    #: from the Arabic answer: parsing prose for "what was missing" invents a
+    #: machine-readable field out of a sentence written for a person.
+    missing_information = models.JSONField(default=list, blank=True)
+
+    #: Bumped when the meaning of a stored outcome changes, so a reader can tell a
+    #: row written under different rules from one it can interpret. Rows written
+    #: before this contract existed carry "", which is not any version.
+    outcome_schema_version = models.CharField(max_length=16, blank=True, default="")
+
+    model_name = models.CharField(max_length=120, blank=True, default="")
+    model_revision = models.CharField(max_length=120, blank=True, default="")
+    route = models.CharField(max_length=24, choices=ROUTE_CHOICES, blank=True, default="")
+    prompt_version = models.CharField(max_length=40, blank=True, default="")
+
+    # Set by the client per send. A retry after a dropped response reuses it, so a
+    # network failure cannot turn one question into two stored turns.
+    idempotency_key = models.CharField(max_length=64, blank=True, default="", db_index=True)
+
+    # sha256 of the request that produced this turn. The unique key alone cannot
+    # tell a genuine retry from a different question sent under a reused key; with
+    # this, the first is replayed and the second is refused.
+    request_hash = models.CharField(max_length=64, blank=True, default="")
+
+    # Without a status, a crash between saving the student's message and saving the
+    # assistant's leaves a half-turn that is indistinguishable from a question still
+    # being answered — so a retry either duplicates it or is wrongly refused.
+    STATUS_PENDING = "PENDING"
+    STATUS_COMPLETED = "COMPLETED"
+    STATUS_FAILED = "FAILED"
+    STATUS_ABSTAINED = "ABSTAINED"
+    STATUS_ESCALATED = "ESCALATED"
+    STATUS_CHOICES = [
+        (STATUS_PENDING, "Pending"),
+        (STATUS_COMPLETED, "Completed"),
+        (STATUS_FAILED, "Failed"),
+        (STATUS_ABSTAINED, "Abstained"),
+        (STATUS_ESCALATED, "Escalated"),
+    ]
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_COMPLETED)
+
+    # Which question this answers. Pairing by "first assistant row at or after the
+    # question" is wrong the moment turns finish out of order — a resumed retry is
+    # written AFTER answers to later questions, so the heuristic hands the student a
+    # cited answer to a question they did not ask. Null on student turns, and on
+    # assistant rows written before this column existed.
+    in_reply_to = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL, related_name="answers"
+    )
+
+    # When generation was claimed. A PENDING row is only trustworthy while something
+    # is still working on it; if the worker is killed mid-call nothing ever moves it
+    # on, and without an age the turn is stuck exactly as FAILED used to be.
+    generation_started_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "advisor_messages"
+        ordering = ["created_at"]
+        indexes = [
+            models.Index(fields=["conversation", "created_at"], name="idx_adv_msg_conv"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["conversation", "idempotency_key"],
+                condition=models.Q(idempotency_key__gt=""),
+                name="uq_adv_msg_idempotency",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"Message({self.id}/{self.role})"
+
+
+class AdvisorMessageCitation(models.Model):
+    """A SNAPSHOT of the citation shown, not a pointer to the current record.
+
+    Policies get revised. A foreign key would silently rewrite history: an answer
+    given under edition 3 page 24 would later display whatever that policy says
+    now, and the student's record of the advice would no longer match the advice.
+    The version hash makes a later divergence detectable rather than invisible.
+    """
+
+    VALID = "VALID"
+    INVALID = "INVALID"
+    VALIDATION_CHOICES = [(VALID, "Valid"), (INVALID, "Invalid")]
+
+    message = models.ForeignKey(AdvisorMessage, on_delete=models.CASCADE, related_name="citations")
+    policy_id = models.CharField(max_length=120)
+    document_title = models.TextField(blank=True, default="")
+    edition = models.CharField(max_length=60, blank=True, default="")
+    page = models.CharField(max_length=40, blank=True, default="")
+
+    effective_from = models.CharField(max_length=40, blank=True, default="")
+    effective_to = models.CharField(max_length=40, blank=True, default="")
+    authority_status = models.CharField(max_length=40, blank=True, default="")
+
+    validation_status = models.CharField(max_length=16, choices=VALIDATION_CHOICES, default=VALID)
+    source_version_hash = models.CharField(max_length=64, blank=True, default="")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "advisor_message_citations"
+        ordering = ["id"]
+        indexes = [
+            models.Index(fields=["message"], name="idx_adv_cit_message"),
+            models.Index(fields=["policy_id"], name="idx_adv_cit_policy"),
+        ]
+
+    def __str__(self) -> str:
+        return f"Citation({self.policy_id} p{self.page})"
+
+
+class AdvisorFeedback(models.Model):
+    """One current verdict per student per assistant message."""
+
+    HELPFUL = "HELPFUL"
+    NOT_HELPFUL = "NOT_HELPFUL"
+    RATING_CHOICES = [(HELPFUL, "Helpful"), (NOT_HELPFUL, "Not helpful")]
+
+    #: Offered on a negative rating. A closed set so the reasons can be counted;
+    #: free text stays available for what the list does not cover.
+    REASON_CODES = [
+        "answer_incorrect",
+        "did_not_understand_question",
+        "information_outdated",
+        "missing_details",
+        "citation_not_helpful",
+        "too_long",
+        "needed_human_adviser",
+    ]
+
+    message = models.ForeignKey(AdvisorMessage, on_delete=models.CASCADE, related_name="feedback")
+    student_id = models.IntegerField(db_index=True)
+    rating = models.CharField(max_length=16, choices=RATING_CHOICES)
+    reason_codes = models.JSONField(default=list, blank=True)
+    comment = models.TextField(blank=True, default="")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "advisor_feedback"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["message", "student_id"], name="uq_adv_feedback_message_student"
+            )
+        ]
+        indexes = [
+            models.Index(fields=["rating"], name="idx_adv_fb_rating"),
+        ]
+
+    def __str__(self) -> str:
+        return f"Feedback({self.message_id}/{self.rating})"
+
+
+class AdvisorEscalation(models.Model):
+    """A case handed to a human adviser, anchored to the turn that produced it.
+
+    Anchored, not free-form: a support ticket that arrives without the question,
+    the answer and the sources it rested on makes the adviser reconstruct the
+    conversation before they can begin, and reconstruct it from the student's
+    memory of it. The source message is therefore required, and the evidence
+    travels with the case.
+
+    `evidence_snapshot` is a FROZEN copy for the same reason the citation rows
+    are: an escalation is a record of what was said at the time. If it were
+    rebuilt from live policies and a live student record, a case opened today
+    would quietly change its own facts before anyone read it — and the adviser
+    would be answering a question the student never asked.
+    """
+
+    class Status(models.TextChoices):
+        OPEN = "OPEN", "Open"
+        ASSIGNED = "ASSIGNED", "Assigned"
+        NEEDS_INFORMATION = "NEEDS_INFORMATION", "Needs information"
+        RESOLVED = "RESOLVED", "Resolved"
+        CLOSED = "CLOSED", "Closed"
+
+    #: A case stops blocking a new one for the same turn once it reaches these.
+    TERMINAL_STATUSES = (Status.RESOLVED, Status.CLOSED)
+
+    class Reason(models.TextChoices):
+        """Why this case was sent to a person.
+
+        The SAME vocabulary the assistant turn uses, and deliberately not the same
+        value. The message records why the ANSWER was limited; this records why a
+        HUMAN was asked. A student who simply wants a person to look at a perfectly
+        good answer produces STUDENT_REQUESTED here while the turn keeps whatever
+        constrained it — which was nothing.
+
+        Set by the server. A reason the student can choose is a reason the student
+        can be wrong about, and it is what the adviser queue sorts on.
+        """
+
+        PROHIBITED_FOR_DECISION = (
+            "PROHIBITED_FOR_DECISION",
+            "The regulation reserves this decision to a person",
+        )
+        POLICY_NOT_FOUND = ("POLICY_NOT_FOUND", "No approved policy governs the question")
+        POLICY_UNAVAILABLE = ("POLICY_UNAVAILABLE", "The policy store could not be consulted")
+        STUDENT_DATA_MISSING = ("STUDENT_DATA_MISSING", "Required student facts were unavailable")
+        PROCEDURE_NOT_DOCUMENTED = (
+            "PROCEDURE_NOT_DOCUMENTED",
+            "The procedure is not written down",
+        )
+        CONFLICTING_AUTHORITIES = (
+            "CONFLICTING_AUTHORITIES",
+            "Sources disagree and a person must choose",
+        )
+        JUDGE_REJECTED = ("JUDGE_REJECTED", "The answer did not survive review")
+        MODEL_UNAVAILABLE = ("MODEL_UNAVAILABLE", "No answer could be produced")
+        STUDENT_REQUESTED = ("STUDENT_REQUESTED", "The student asked for a human adviser")
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    #: What the student and the adviser quote to each other. Stored rather than
+    #: derived from the primary key: a reference that is a slice of the UUID hands
+    #: out part of an internal identifier every time it is read aloud, and it is
+    #: unreadable over a telephone. Allocated once, never changed — a case number
+    #: that moves is worse than no case number.
+    reference = models.CharField(max_length=24, unique=True, editable=False)
+
+    # Real foreign keys: conversations and messages are OUR tables, so referential
+    # integrity is free and a deleted conversation must not leave orphan cases.
+    # `student_id` stays a bare integer — the same convention as the conversation
+    # itself, because Student rows are re-imported wholesale and a cascade would
+    # delete a student's case history on the next import.
+    conversation = models.ForeignKey(
+        AdvisorConversation, on_delete=models.CASCADE, related_name="escalations"
+    )
+    source_message = models.ForeignKey(
+        AdvisorMessage, on_delete=models.CASCADE, related_name="escalations"
+    )
+    student_id = models.IntegerField(db_index=True)
+
+    reason_code = models.CharField(max_length=32, choices=Reason.choices)
+    student_note = models.TextField(blank=True, default="")
+
+    #: Written for the adviser, from student-visible messages and an allowlist —
+    #: never from the agent trace.
+    generated_summary = models.TextField(blank=True, default="")
+    evidence_snapshot = models.JSONField(default=dict, blank=True)
+
+    status = models.CharField(max_length=24, choices=Status.choices, default=Status.OPEN)
+    assigned_adviser_id = models.CharField(max_length=64, blank=True, default="")
+
+    #: Adviser-only. Never serialised to the student: the case is about them, the
+    #: working notes on it are not addressed to them.
+    adviser_notes = models.TextField(blank=True, default="")
+
+    #: What the adviser decided, written TO the student. A separate field from the
+    #: notes above and not a repurposing of them: the moment one field has to serve
+    #: both audiences, the first request to show the student an outcome publishes
+    #: the internal discussion that reached it.
+    resolution_message = models.TextField(blank=True, default="")
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="advisor_escalations_resolved",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "advisor_escalations"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["student_id", "-created_at"], name="idx_adv_esc_student"),
+            models.Index(fields=["status", "-created_at"], name="idx_adv_esc_status"),
+            models.Index(fields=["assigned_adviser_id"], name="idx_adv_esc_adviser"),
+        ]
+        constraints = [
+            # One LIVE case per turn. Pressing the button twice is the same request,
+            # not two, and two open cases for one question means two advisers can
+            # answer it differently. Resolved and closed cases are excluded so a
+            # question that comes back later can be raised again.
+            models.UniqueConstraint(
+                fields=["source_message"],
+                condition=~models.Q(status__in=("RESOLVED", "CLOSED")),
+                name="uq_adv_esc_one_open_per_message",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.reference}({self.status})"
+
+    def save(self, *args, **kwargs):
+        if not self.reference:
+            self.reference = allocate_escalation_reference()
+        super().save(*args, **kwargs)
+
+
+class RateLimitBucket(models.Model):
+    """One counter, shared by every worker.
+
+    A row rather than a dict or a cache entry, because the count has to survive
+    both a second gunicorn worker and a restart, and because it has to be
+    incremented atomically — `select_for_update` on a row gives that, while the
+    database cache backend's `incr` is a get followed by a set.
+    """
+
+    #: "<budget>:<student_id>". The budget names the RESOURCE, not the endpoint, so
+    #: two doors onto the same expensive work cannot each be given a full allowance.
+    key = models.CharField(max_length=200, primary_key=True)
+    window_start = models.DateTimeField()
+    count = models.PositiveIntegerField(default=0)
+    #: What was spent in the window before this one. Carried forward so a new
+    #: window does not hand back the whole allowance at its boundary.
+    previous_count = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "rate_limit_buckets"
+        indexes = [models.Index(fields=["window_start"], name="idx_ratelimit_window")]
+
+    def __str__(self) -> str:
+        return f"{self.key}={self.count}"
+
+
+class AdvisorReferenceCounter(models.Model):
+    """One row per year, holding the last case number issued.
+
+    Counting existing rows and adding one is the obvious approach and it is wrong:
+    two students escalating at the same moment both read the same count and both
+    claim the same number, and a case number that is not unique is not a reference
+    at all. Allocation locks this row instead.
+    """
+
+    year = models.PositiveIntegerField(primary_key=True)
+    last_number = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "advisor_reference_counters"
+
+    def __str__(self) -> str:
+        return f"{self.year}:{self.last_number}"
+
+
+def allocate_escalation_reference(*, year: int | None = None) -> str:
+    """The next case number, claimed under a row lock.
+
+    Zero-padded and year-scoped so it reads over a telephone and sorts by hand:
+    ADV-2026-00184.
+    """
+    from django.utils import timezone
+
+    year = year or timezone.now().year
+    with transaction.atomic():
+        counter, _ = AdvisorReferenceCounter.objects.select_for_update().get_or_create(year=year)
+        counter.last_number += 1
+        counter.save(update_fields=["last_number"])
+        return f"ADV-{year}-{counter.last_number:05d}"
+
+
+class AdvisorEscalationEvent(models.Model):
+    """Who did what to a case, and when.
+
+    Append-only. A case's own columns hold its current state; this holds how it
+    got there, which is the part anyone asking "why was this closed?" actually
+    needs. Note and response bodies are NOT copied in — they live on the case and
+    are edited there, and a duplicate that drifts is worse than a pointer.
+    """
+
+    class Kind(models.TextChoices):
+        OPENED = "OPENED", "Opened by the student"
+        VIEWED = "VIEWED", "Opened by an adviser"
+        ASSIGNED = "ASSIGNED", "Assigned"
+        STATUS_CHANGED = "STATUS_CHANGED", "Status changed"
+        NOTE_ADDED = "NOTE_ADDED", "Internal note added"
+        RESPONSE_RECORDED = "RESPONSE_RECORDED", "Reply to the student recorded"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    escalation = models.ForeignKey(
+        AdvisorEscalation, on_delete=models.CASCADE, related_name="events"
+    )
+    #: Null for the student's own action: they are identified by the case, and a
+    #: staff user row would be the wrong thing to point at.
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="advisor_escalation_events",
+    )
+    actor_label = models.CharField(max_length=120, blank=True, default="")
+    kind = models.CharField(max_length=24, choices=Kind.choices)
+    from_status = models.CharField(max_length=24, blank=True, default="")
+    to_status = models.CharField(max_length=24, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "advisor_escalation_events"
+        ordering = ["created_at"]
+        indexes = [
+            models.Index(fields=["escalation", "created_at"], name="idx_adv_evt_case"),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.kind}@{self.escalation_id}"

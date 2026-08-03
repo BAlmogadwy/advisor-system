@@ -6,6 +6,7 @@ import pytest
 from django.test import Client, override_settings
 
 from core.models import AcademicAdvisor, Student
+from core.services.rbac import ROLE_STUDENT
 from core.services.virtual_advisor import find_students_tool
 from whatsapp_gateway.models import WhatsAppMessageLog, WhatsAppOtpChallenge, WhatsAppUserLink
 from whatsapp_gateway.services import (
@@ -202,8 +203,14 @@ def test_authenticated_whatsapp_message_uses_virtual_advisor_not_canned_role_ans
 
     assert result["action"] == "answered"
     assert result["reply"] == "A natural, evidence-based advisor answer."
-    assert captured["student_id"] == student.student_id
-    assert captured["scope"] == {"role": "STUDENT", "student_id": student.student_id}
+    # One identity object, not an id beside a scope that could disagree with it.
+    # This test stubs `answer_virtual_advisor`, so it is deliberately explicit about
+    # the CALL SHAPE: stubbing hid a signature change that made every real inbound
+    # message raise TypeError out of the webhook while this stayed green.
+    assert "student_id" not in captured and "scope" not in captured
+    principal = captured["principal"]
+    assert principal.student_id == student.student_id
+    assert principal.as_scope() == {"role": "STUDENT", "student_id": student.student_id}
 
 
 def test_authenticated_whatsapp_message_passes_recent_history(
@@ -246,3 +253,48 @@ def test_authenticated_whatsapp_message_passes_recent_history(
         {"role": "user", "content": "What is my GPA?"},
         {"role": "assistant", "content": "Your verified GPA is 4.2."},
     ]
+
+
+# ── the call shape, checked against the REAL function ────────────
+
+
+def test_the_gateway_call_matches_the_real_advisor_signature():
+    """Every gateway test stubs `answer_virtual_advisor`, so none of them can see a
+    signature change. Bind the arguments against the real function instead."""
+    import inspect
+    from unittest import mock
+
+    from core.services.virtual_advisor import answer_virtual_advisor
+    from whatsapp_gateway.models import WhatsAppUserLink
+    from whatsapp_gateway.services import answer_for_link
+
+    link = WhatsAppUserLink(
+        wa_id="966500000001", role=ROLE_STUDENT, student_id=6001001, user_id=None
+    )
+    seen: dict[str, object] = {}
+
+    def capture(**kwargs):
+        seen.update(kwargs)
+        # Raises TypeError if the gateway is calling a shape the real function
+        # does not accept.
+        inspect.signature(answer_virtual_advisor).bind(**kwargs)
+        return {"answer": "ok", "model": "t"}
+
+    with (
+        mock.patch("whatsapp_gateway.services.answer_virtual_advisor", capture),
+        mock.patch("whatsapp_gateway.services.recent_history_for_wa_id", return_value=[]),
+    ):
+        answer_for_link(link=link, message="كم ساعة باقي؟")
+
+    assert seen["principal"].student_id == 6001001
+
+
+def test_an_unrecognised_sender_cannot_be_answered_as_a_student():
+    """The gateway's "no student here" case must not become a principal at all."""
+    from core.services.advisor_principal import IdentityError
+    from whatsapp_gateway.models import WhatsAppUserLink
+    from whatsapp_gateway.services import answer_for_link
+
+    link = WhatsAppUserLink(wa_id="966500000002", role=ROLE_STUDENT, student_id=None, user_id=None)
+    with pytest.raises(IdentityError):
+        answer_for_link(link=link, message="hi")

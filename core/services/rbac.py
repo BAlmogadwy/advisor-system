@@ -77,15 +77,31 @@ def get_user_scope(user: Any) -> dict[str, Any]:
     }
 
 
+#: Distinguishes "leave the student identity alone" from "clear it". `None` is not
+#: usable for that, because it is also the value every staff scope legitimately
+#: holds.
+_KEEP = object()
+
+
 def set_user_scope(
-    user_id: int, advisor_id: str = "", departments: str = "", student_id: int | None = None
+    user_id: int,
+    advisor_id: str = "",
+    departments: str = "",
+    student_id: Any = _KEEP,
 ) -> None:
-    UserScope.objects.update_or_create(
-        user_id=user_id,
-        defaults={
-            "advisor_id": advisor_id.strip(),
-            "departments": departments.strip(),
-            "student_id": student_id,
-            "updated_at": datetime.now(UTC).isoformat(),
-        },
-    )
+    """Write a user's scope, preserving the student link unless asked to change it.
+
+    `student_id` used to sit in `defaults` with a `None` default, so every staff
+    path that called this to set departments — user admin, seeding, the advisor
+    importer — silently NULLed it. For a student that erases the one authoritative
+    copy of who they are, and the symptom is that every adviser request 403s with
+    nothing to say why. Pass `student_id=None` explicitly to clear it.
+    """
+    defaults: dict[str, Any] = {
+        "advisor_id": advisor_id.strip(),
+        "departments": departments.strip(),
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    if student_id is not _KEEP:
+        defaults["student_id"] = student_id
+    UserScope.objects.update_or_create(user_id=user_id, defaults=defaults)

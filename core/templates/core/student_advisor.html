@@ -11,47 +11,81 @@
 {% endblock %}
 
 {% block page_intro %}
-  <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}اسأل عن خطتك، متطلبات المقررات، أو ماذا تسجّل — الإجابات مبنية على سجلك أنت.{% else %}Ask about your plan, course prerequisites, or what to register — answers come from your own record.{% endif %}</p>
+  <p class="mb-0">{% if LANGUAGE_CODE == 'ar' %}اسأل عن خطتك، متطلبات المقررات، أو أنظمة الجامعة — الإجابات مبنية على سجلك أنت وعلى الأنظمة المعتمدة.{% else %}Ask about your plan, prerequisites, or university regulations — answers come from your own record and the approved regulations.{% endif %}</p>
 {% endblock %}
 
 {% block content %}
-<div class="card p-3">
-  <div class="va-chat">
-    <div class="va-messages" id="saMessages" aria-live="polite">
-      <article class="va-message va-message-assistant">
-        <div class="va-avatar">AI</div>
-        <div class="va-bubble">
-          {% if LANGUAGE_CODE == 'ar' %}مرحبًا {% if student %}{{ student.name }}{% endif %} — كيف أقدر أساعدك في خطتك الدراسية؟{% else %}Hello{% if student %} {{ student.name }}{% endif %} — how can I help with your academic plan?{% endif %}
-        </div>
-      </article>
-    </div>
+<div class="sa-layout">
 
-    <div class="va-examples">
-      {% if LANGUAGE_CODE == 'ar' %}
-        <button type="button" class="btn btn-sm" data-sa-example="ما المقررات التي أستطيع تسجيلها هذا الفصل؟">ما أستطيع تسجيله؟</button>
-        <button type="button" class="btn btn-sm" data-sa-example="كم ساعة تبقّت لي للتخرج؟">كم تبقّى للتخرج؟</button>
-        <button type="button" class="btn btn-sm" data-sa-example="ما متطلبات المقررات التي تنقصني؟">المتطلبات الناقصة</button>
-      {% else %}
-        <button type="button" class="btn btn-sm" data-sa-example="Which courses can I register this term?">What can I register?</button>
-        <button type="button" class="btn btn-sm" data-sa-example="How many credits do I have left to graduate?">Credits to graduate</button>
-        <button type="button" class="btn btn-sm" data-sa-example="Which prerequisites am I missing?">Missing prerequisites</button>
-      {% endif %}
-    </div>
+  {# ── conversations, newest activity first ── #}
+  <aside class="sa-sidebar card p-2" aria-label="{% if LANGUAGE_CODE == 'ar' %}المحادثات{% else %}Conversations{% endif %}">
+    <button type="button" class="btn btn-primary w-100 mb-2" id="saNewChat">
+      {% if LANGUAGE_CODE == 'ar' %}محادثة جديدة{% else %}New conversation{% endif %}
+    </button>
+    <p class="sa-muted sa-empty" id="saConvEmpty" hidden>
+      {% if LANGUAGE_CODE == 'ar' %}لا توجد محادثات بعد.{% else %}No conversations yet.{% endif %}
+    </p>
+    {# A real <ul>: the buttons keep their button role and the list keeps its list role. #}
+    <ul id="saConvList" class="sa-conv-list"></ul>
+  </aside>
 
-    <form class="va-composer" id="saForm" autocomplete="off">
-      {% csrf_token %}
-      <label class="visually-hidden" for="saQuestion">{% if LANGUAGE_CODE == 'ar' %}سؤالك{% else %}Your question{% endif %}</label>
-      <input class="va-input" id="saQuestion" type="text" maxlength="1000"
-             placeholder="{% if LANGUAGE_CODE == 'ar' %}اكتب سؤالك…{% else %}Type your question…{% endif %}" required>
-      <button class="btn btn-primary" id="saSend" type="submit">{% if LANGUAGE_CODE == 'ar' %}إرسال{% else %}Send{% endif %}</button>
-    </form>
-  </div>
+  {# ── the open conversation ── #}
+  <section class="sa-main card p-3">
+    <div class="va-chat">
+      {% comment %}
+        The thread is NOT the live region. renderMessages() empties and rebuilds it,
+        which makes a screen reader recite the whole conversation after every answer;
+        #saStatus below carries the announcements instead.
+        ({% comment %}, not {# #} — the hash form is single-line ONLY, and a
+        multi-line one is not parsed as a comment at all: it renders to the student.)
+      {% endcomment %}
+      <div class="va-messages" id="saMessages" role="log" aria-busy="false">
+        <p class="sa-muted sa-empty" id="saWelcome">
+          {% if LANGUAGE_CODE == 'ar' %}مرحبًا {% if student %}{{ student.name }}{% endif %} — اسألني عن خطتك أو عن أنظمة الجامعة.{% else %}Hello{% if student %} {{ student.name }}{% endif %} — ask about your plan or the university regulations.{% endif %}
+        </p>
+      </div>
+
+      <div class="va-examples" id="saExamples">
+        {% if LANGUAGE_CODE == 'ar' %}
+          <button type="button" class="btn btn-sm" data-sa-example="وش باقي لي وأتخرج؟">وش باقي لي وأتخرج؟</button>
+          <button type="button" class="btn btn-sm" data-sa-example="ما المقررات التي أستطيع تسجيلها هذا الفصل؟">ما أستطيع تسجيله؟</button>
+          <button type="button" class="btn btn-sm" data-sa-example="كم مرة أقدر أنسحب من مقرر؟">كم مرة أنسحب؟</button>
+        {% else %}
+          <button type="button" class="btn btn-sm" data-sa-example="How many credits do I have left to graduate?">Credits to graduate</button>
+          <button type="button" class="btn btn-sm" data-sa-example="Which courses can I register this term?">What can I register?</button>
+          <button type="button" class="btn btn-sm" data-sa-example="How many times may I withdraw from a course?">Withdrawal limit</button>
+        {% endif %}
+      </div>
+
+      <p class="sa-status-region visually-hidden" id="saStatus" role="status" aria-live="polite"></p>
+      <p class="sa-error" id="saComposerError" role="alert" hidden></p>
+
+      <form class="va-composer" id="saForm" autocomplete="off">
+        {% csrf_token %}
+        <label class="visually-hidden" for="saQuestion">{% if LANGUAGE_CODE == 'ar' %}سؤالك{% else %}Your question{% endif %}</label>
+        <input class="va-input" id="saQuestion" type="text" maxlength="1000"
+               placeholder="{% if LANGUAGE_CODE == 'ar' %}اكتب سؤالك…{% else %}Type your question…{% endif %}" required>
+        <button class="btn btn-primary" id="saSend" type="submit">{% if LANGUAGE_CODE == 'ar' %}إرسال{% else %}Send{% endif %}</button>
+      </form>
+    </div>
+  </section>
 </div>
 {% endblock %}
 
 {% block extra_js %}
 <script>
-  window.__STUDENT_ADVISOR__ = { chatUrl: "{% url 'virtual_advisor_chat' %}" };
+  window.__STUDENT_ADVISOR__ = {
+    isArabic: {% if LANGUAGE_CODE == 'ar' %}true{% else %}false{% endif %},
+    urls: {
+      list:   "{% url 'advisor_conversation_list' %}",
+      create: "{% url 'advisor_conversation_create' %}",
+      /* {id} is substituted client-side; Django cannot reverse a placeholder. */
+      messages: "{% url 'advisor_conversation_messages' conversation_id='CONVERSATION_ID' %}",
+      send:     "{% url 'advisor_conversation_send' conversation_id='CONVERSATION_ID' %}",
+      feedback: "{% url 'advisor_message_feedback' message_id='MESSAGE_ID' %}",
+      escalate: "{% url 'advisor_escalation_create' message_id='MESSAGE_ID' %}"
+    }
+  };
 </script>
-<script src="{% static 'js/page-student-advisor.js' %}?v=1"></script>
+<script src="{% static 'js/page-student-advisor.js' %}?v=12"></script>
 {% endblock %}

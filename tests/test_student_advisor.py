@@ -108,15 +108,19 @@ def test_staff_are_redirected_off_the_student_advisor(students):
 
 
 @override_settings(ALLOWED_HOSTS=["testserver"])
-def test_chat_ignores_a_student_id_in_the_payload(students, monkeypatch):
-    """A student may pass any id; the view must overwrite it with their own."""
-    seen = {}
+def test_a_student_cannot_reach_the_operator_console_at_all(students, monkeypatch):
+    """Stronger than the clamp this replaces.
 
-    def fake_answer(**kwargs):
-        seen.update(kwargs)
-        return {"answer": "ok", "model": "test"}
-
-    monkeypatch.setattr("core.virtual_advisor_views.answer_virtual_advisor", fake_answer)
+    The console reaches the same generator as the student adviser on a separate,
+    looser budget, so a student who could call it had a route around their own
+    rate limit — and the only thing standing between them and another student's
+    record was a payload-overwrite deep inside the view. Now they never arrive.
+    """
+    called = []
+    monkeypatch.setattr(
+        "core.virtual_advisor_views.answer_virtual_advisor",
+        lambda **k: called.append(k) or {"answer": "should not run", "model": "t"},
+    )
     u = student_otp.provision_student_user(SID)
     c = Client()
     c.force_login(u)
@@ -125,10 +129,58 @@ def test_chat_ignores_a_student_id_in_the_payload(students, monkeypatch):
         data=json.dumps({"message": "hi", "student_id": OTHER}),
         content_type="application/json",
     )
-    assert r.status_code == 200
-    assert seen["student_id"] == SID  # forced, not OTHER
-    assert seen["scope"]["role"] == ROLE_STUDENT
-    assert seen["scope"]["student_id"] == SID
+    assert r.status_code == 403
+    assert called == [], "the generator ran for a student on the operator console"
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+def test_a_student_cannot_probe_the_model_host_through_the_health_endpoint(students):
+    """It makes an outbound call to the LLM host.
+
+    Ungated, any signed-in student can aim the deployment's own model connection,
+    at 30 per minute per worker.
+    """
+    u = student_otp.provision_student_user(SID)
+    c = Client()
+    c.force_login(u)
+    assert c.get("/ops/virtual-advisor/health/").status_code == 403
+
+
+@override_settings(ALLOWED_HOSTS=["testserver"])
+def test_the_console_still_clamps_a_student_if_the_role_gate_is_removed(students, monkeypatch):
+    """The second lock. The role gate above is the first.
+
+    Called with the decorator stripped, so this pins the view's OWN behaviour: a
+    student's principal forces their own id whatever the payload claims. Without
+    this the clamp reads as dead code the moment the gate lands.
+    """
+    seen = {}
+
+    def fake_answer(**kwargs):
+        seen.update(kwargs)
+        return {"answer": "ok", "model": "test"}
+
+    monkeypatch.setattr("core.virtual_advisor_views.answer_virtual_advisor", fake_answer)
+    u = student_otp.provision_student_user(SID)
+
+    from django.test import RequestFactory
+
+    from core.virtual_advisor_views import virtual_advisor_chat_view
+
+    undecorated = virtual_advisor_chat_view
+    while hasattr(undecorated, "__wrapped__"):
+        undecorated = undecorated.__wrapped__
+
+    request = RequestFactory().post(
+        "/ops/virtual-advisor/chat/",
+        data=json.dumps({"message": "hi", "student_id": OTHER}),
+        content_type="application/json",
+    )
+    request.user = u
+    assert undecorated(request).status_code == 200
+    assert seen["principal"].student_id == SID  # forced, not OTHER
+    assert seen["principal"].as_scope()["role"] == ROLE_STUDENT
+    assert seen["principal"].as_scope()["student_id"] == SID
 
 
 @override_settings(ALLOWED_HOSTS=["testserver"])

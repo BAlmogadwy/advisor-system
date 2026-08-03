@@ -55,7 +55,14 @@ _MAX_COURSE_MATCHES = 10
 
 
 def _scope_role(scope: dict[str, Any] | None) -> str:
-    return str((scope or {}).get("role") or ROLE_SUPER_ADMIN)
+    """The role this call runs under, or nothing.
+
+    Defaulting an absent scope to SUPER_ADMIN made every capability — including
+    unfiltered cohort search — one dropped keyword argument away from being fully
+    open. An unnamed caller is not the most privileged caller; it is a caller whose
+    authority nobody established, and it gets none.
+    """
+    return str((scope or {}).get("role") or "")
 
 
 def _scope_departments(scope: dict[str, Any] | None) -> list[str]:
@@ -122,7 +129,15 @@ def _resolve_scoped_student_id(
             return None, "This student is outside your department scope."
         return requested, None
 
-    return requested, None
+    if role == ROLE_SUPER_ADMIN:
+        return requested, None
+
+    # Unreachable today, because the registry checks `allowed_roles` before any
+    # executor runs and no role set contains the empty string. Closed anyway: an
+    # open fall-through here means the restriction rests on the REGISTRY rather
+    # than on the resolver, which is the same "safe by accident" shape this module
+    # exists to remove.
+    return None, "This request carries no authority to read a student record."
 
 
 def _resolve_scoped_programs(
@@ -151,7 +166,9 @@ def _resolve_scoped_programs(
         if outside:
             return [], f"Programs outside your department scope: {', '.join(outside)}"
         return requested, None
-    return requested, None
+    if role in {ROLE_ADVISOR, ROLE_SUPER_ADMIN}:
+        return requested, None
+    return [], "This request carries no authority to aggregate over programmes."
 
 
 def _clean_section(value: Any) -> str | None:
