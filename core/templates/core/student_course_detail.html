@@ -27,7 +27,7 @@
 
 {% if refusal %}
   <section class="card p-3" aria-labelledby="cdHeading">
-    <h2 class="h6 mb-2" id="cdHeading">{% if LANGUAGE_CODE == 'ar' %}تعذّر عرض المقرر{% else %}Cannot show this course{% endif %}</h2>
+    <h2 class="h6 mb-2" id="cdHeading">{% if refusal_heading %}{{ refusal_heading }}{% elif LANGUAGE_CODE == 'ar' %}تعذّر عرض المقرر{% else %}Cannot show this course{% endif %}</h2>
     <p class="mb-0" dir="auto">{{ refusal }}</p>
     {% if retry_after %}
       <p class="cd-muted mb-0 mt-2" dir="auto">

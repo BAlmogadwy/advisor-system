@@ -779,7 +779,10 @@ def test_the_planner_form_refuses_in_arabic_html_not_json(client_as_student):
     assert response["Content-Type"].startswith("text/html")
     body = response.content.decode()
     assert "<html" in body.lower()
-    assert "لقد فتحت صفحات كثيرة" in body
+    # The ACTION was refused, not a page view. See
+    # `test_the_throttle_describes_what_was_actually_refused`.
+    assert "لقد أرسلت طلبات كثيرة" in body
+    assert "لقد فتحت صفحات كثيرة" not in body
 
     limiter = over_budget(CONVERSATION, SID)
     assert limiter is not None
@@ -875,3 +878,47 @@ def test_the_cheap_branches_really_are_cheap(plan):
     assert costs["ZZ999"] < 10, costs
     assert costs["CE1"] < 15, costs
     assert costs["CB201"] > costs["CE1"] * 2, costs
+
+
+def test_the_throttle_describes_what_was_actually_refused(client_as_student):
+    """One sentence covered two different refusals, and fitted only one.
+
+    A student who pressed "add to planner" was told they had opened too many
+    PAGES, under the heading "cannot show the course" — an accurate refusal about
+    something they had not done.
+    """
+    from core.course_detail_views import (
+        THROTTLED_ACTION_AR,
+        THROTTLED_ACTION_HEADING_AR,
+        THROTTLED_PAGE_AR,
+        THROTTLED_PAGE_HEADING_AR,
+    )
+    from core.services.rate_limit import CONVERSATION, HISTORY, LIMITS
+
+    assert THROTTLED_PAGE_AR != THROTTLED_ACTION_AR
+    assert THROTTLED_PAGE_HEADING_AR != THROTTLED_ACTION_HEADING_AR
+
+    # Reading pages: refused as a page.
+    page = None
+    for _ in range(LIMITS[HISTORY][0] + 1):
+        page = _page(client_as_student, "CB201")
+        if page.status_code == 429:
+            break
+    assert page.status_code == 429
+    page_body = page.content.decode()
+    assert THROTTLED_PAGE_AR in page_body and THROTTLED_PAGE_HEADING_AR in page_body
+    assert THROTTLED_ACTION_AR not in page_body
+
+    # Pressing the button: refused as an action.
+    _passed("CA101")
+    url = reverse("student_course_to_planner", args=["CB201"])
+    post = None
+    for _ in range(LIMITS[CONVERSATION][0] + 2):
+        post = client_as_student.post(url)
+        if post.status_code == 429:
+            break
+    assert post.status_code == 429
+    post_body = post.content.decode()
+    assert THROTTLED_ACTION_AR in post_body and THROTTLED_ACTION_HEADING_AR in post_body
+    assert THROTTLED_PAGE_AR not in post_body
+    assert THROTTLED_PAGE_HEADING_AR not in post_body
