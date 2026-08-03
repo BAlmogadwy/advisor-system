@@ -1642,6 +1642,13 @@ class AdvisorMessage(models.Model):
     ]
     status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_COMPLETED)
 
+    # Position in the conversation, 1-based. `created_at` alone cannot order a
+    # thread: two messages written in the same request land in the SAME microsecond
+    # on a coarse system clock, and the UUID primary key is random, so the tiebreak
+    # reversed question and answer. A chat that can render the reply above the
+    # question is not a chat.
+    sequence = models.PositiveIntegerField(default=0, db_index=True)
+
     # Which question this answers. Pairing by "first assistant row at or after the
     # question" is wrong the moment turns finish out of order — a resumed retry is
     # written AFTER answers to later questions, so the heuristic hands the student a
@@ -1660,7 +1667,10 @@ class AdvisorMessage(models.Model):
 
     class Meta:
         db_table = "advisor_messages"
-        ordering = ["created_at"]
+        # `sequence` first: it is the only field guaranteed to increase within a
+        # conversation. `created_at` stays as the fallback for rows written before
+        # the column existed, which all carry sequence 0.
+        ordering = ["sequence", "created_at"]
         indexes = [
             models.Index(fields=["conversation", "created_at"], name="idx_adv_msg_conv"),
         ]
@@ -1674,6 +1684,26 @@ class AdvisorMessage(models.Model):
 
     def __str__(self) -> str:
         return f"Message({self.id}/{self.role})"
+
+    def save(self, *args, **kwargs):
+        """Claim the next position in the conversation on first write.
+
+        Computed here rather than by the callers, because a message written without
+        one silently sorts to the front — and both write paths already run inside a
+        transaction, which is what makes max+1 safe against the concurrent send the
+        idempotency key exists to catch.
+        """
+        if not self.sequence and self.conversation_id:
+            from django.db.models import Max
+
+            highest = (
+                AdvisorMessage.objects.filter(conversation_id=self.conversation_id)
+                .aggregate(top=Max("sequence"))
+                .get("top")
+                or 0
+            )
+            self.sequence = highest + 1
+        super().save(*args, **kwargs)
 
 
 class AdvisorMessageCitation(models.Model):
@@ -2006,3 +2036,134 @@ class AdvisorEscalationEvent(models.Model):
 
     def __str__(self) -> str:
         return f"{self.kind}@{self.escalation_id}"
+
+
+class PlannerDraft(models.Model):
+    """A timetable request handed from one screen to another, by reference.
+
+    The chat says "I have put those courses in your planner" and sends the student
+    to a link. The obvious way to do that is a query string carrying the course
+    codes — and a query string is written by whoever is holding the keyboard, so
+    the planner would be taking its subject matter from the address bar.
+
+    A row instead. The link carries an opaque id; everything the planner acts on is
+    read back from here under the student's own principal, and every code and
+    section in it is re-validated against what that student may actually take. The
+    draft is a convenience for carrying a selection across a navigation, never a
+    grant of authority over its contents.
+
+    Deliberately narrow: course codes, optional fixed sections, the retain choice,
+    where it came from, and when it dies. No tool results, no model reasoning, no
+    retrieved policies — a draft is an input to a screen, not a transcript.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    #: Bare integer, the external-table convention used throughout the adviser: a
+    #: roster re-import must not cascade a student's drafts away.
+    student_id = models.IntegerField(db_index=True)
+
+    #: WHICH term is being planned. Part of the draft, not a parameter of the
+    #: generate call: the term decides which registrations count as "current", so a
+    #: draft that took it from the request could be generated twice, for two
+    #: different terms, under one version — and the second answer would be served
+    #: from the first one's cache. Set once, from the project's configured
+    #: defaults, and only changed by editing the draft.
+    academic_year = models.CharField(max_length=4, default="", blank=True)
+    term = models.CharField(max_length=1, default="", blank=True)
+
+    #: ["CS113", "AI221"] — codes only. Never section ids, never free text.
+    course_codes = models.JSONField(default=list, blank=True)
+    #: {"AI221": 4213} — course code to term_section id, for the ones the student
+    #: pinned. A course absent from here is one the planner may choose freely.
+    fixed_sections = models.JSONField(default=dict, blank=True)
+    keep_current_sections = models.BooleanField(default=True)
+
+    #: Where it came from, so a draft opened from chat can point back at the turn
+    #: that produced it. Null for one the student built on the planner itself.
+    source_message = models.ForeignKey(
+        "AdvisorMessage",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="planner_drafts",
+    )
+
+    #: Bumped by every change to the selection. A confirmation token is bound to a
+    #: version, so editing the draft after confirming invalidates the confirmation —
+    #: otherwise a student could confirm a harmless rebuild, change what it contains,
+    #: and have the old approval carry.
+    version = models.PositiveIntegerField(default=1)
+
+    #: A HASH of the server-issued token, never the token. A posted
+    #: `"confirmed": true` is written by whoever holds the keyboard; this is not.
+    #: Bound to (student, draft, version) and single-use, so it authorises exactly
+    #: one generation of exactly the inputs the student was shown when they
+    #: confirmed — not whatever the draft becomes afterwards.
+    rebuild_token_hash = models.CharField(max_length=64, blank=True, default="")
+    rebuild_token_version = models.PositiveIntegerField(default=0)
+    rebuild_token_expires_at = models.DateTimeField(null=True, blank=True)
+
+    #: THE generated result, persisted rather than recomputed. The solver randomises
+    #: and the catalogue moves, so regenerating on reload would quietly show a
+    #: different set of timetables than the one the student was comparing.
+    alternatives = models.JSONField(default=list, blank=True)
+    #: The draft version this generation belongs to, as a COLUMN rather than a key
+    #: inside `generated_inputs`, so it can be compared inside a conditional UPDATE.
+    #: That single statement is what makes "one generation per version" hold on a
+    #: backend without row locks: `select_for_update` is silently a no-op on SQLite,
+    #: so a rule that rested on it alone would be enforced in production and merely
+    #: hoped for everywhere the project actually runs its tests.
+    generated_version = models.PositiveIntegerField(default=0)
+    generated_at = models.DateTimeField(null=True, blank=True)
+    #: What the alternatives were generated FROM, so a later request can tell whether
+    #: the world moved underneath them: the validated courses, the pins, the retain
+    #: choice, and the baseline the solver actually saw.
+    generated_inputs = models.JSONField(default=dict, blank=True)
+    #: Bumps when the shape of a stored result changes, so an old row is detectable
+    #: rather than silently misread.
+    generation_schema_version = models.CharField(max_length=16, blank=True, default="")
+
+    #: The student's preference. NOT a registration, and nothing downstream may
+    #: treat it as one.
+    selected_alternative = models.CharField(max_length=200, blank=True, default="")
+    selected_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    #: A hand-off, not a saved plan. An old draft describes a catalogue that may no
+    #: longer exist, so it expires rather than lingering as a stale suggestion.
+    expires_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "planner_drafts"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["student_id", "-created_at"], name="idx_draft_student"),
+            models.Index(fields=["expires_at"], name="idx_draft_expiry"),
+        ]
+
+    def __str__(self) -> str:
+        return f"Draft({self.id}/{self.student_id})"
+
+    @property
+    def is_live(self) -> bool:
+        from django.utils import timezone
+
+        return self.expires_at > timezone.now()
+
+    @property
+    def has_current_generation(self) -> bool:
+        """Whether a generation has RUN for this draft's current version.
+
+        A generation belongs to the version that produced it. Change the selection
+        and the stored timetables are about something else — showing them would be
+        answering a question the student has already moved on from.
+
+        Deliberately NOT `bool(self.alternatives)`. "The solver found nothing" is a
+        result, and reading it as "nothing has run yet" made the one case that most
+        needs explaining behave worst: the retry re-ran the solver for a version
+        that already had an answer, the spent confirmation made that retry ask for
+        permission again, and the `unplaced` reasons — the only useful output when
+        there are no timetables — were computed, stored, and then withheld from the
+        student because they hung off this same flag.
+        """
+        return self.generated_version != 0 and self.generated_version == self.version

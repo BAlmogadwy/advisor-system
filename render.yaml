@@ -20,6 +20,35 @@ services:
           name: advisor-db
           property: connectionString
 
+  # Retention is a SCHEDULE, not a side effect of deploying. The release chain
+  # above still runs migrations and the rate-limit sweep, but planner drafts hold
+  # a student's registered timetable — instructor names, rooms, enrolment counts —
+  # inside `generated_inputs`, and how long that survives must not depend on how
+  # often anyone ships.
+  #
+  # 03:00 UTC is 06:00 in Riyadh: after the overnight quiet, before the day starts.
+  - type: cron
+    name: advisor-purge-planner-drafts
+    runtime: python
+    plan: starter
+    schedule: "0 3 * * *"
+    buildCommand: chmod +x build.sh && ./build.sh
+    startCommand: python manage.py purge_planner_drafts --apply
+    envVars:
+      - key: DJANGO_SECRET_KEY
+        fromService:
+          name: advisor-system
+          type: web
+          envVarKey: DJANGO_SECRET_KEY
+      - key: DJANGO_DEBUG
+        value: "false"
+      - key: DJANGO_ALLOWED_HOSTS
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: advisor-db
+          property: connectionString
+
 databases:
   - name: advisor-db
     plan: free
