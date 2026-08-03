@@ -478,6 +478,104 @@
     return message.role === 'ASSISTANT' ? text.replace(POLICY_MARKER, '') : text;
   }
 
+  /* ── the answer's own shape ──────────────────────────────────
+     Two defects lived in one line — `el('div', 'sa-body', text)`.
+
+     **Direction.** The bubble had none, so it inherited the PAGE's, and the page
+     is `dir="ltr"` whenever the interface language is English. An Arabic answer
+     inside an LTR paragraph is not merely right-aligned wrongly: the bidi
+     algorithm reorders whole segments of every wrapped line and moves trailing
+     punctuation to the visual left, so «أما بالنسبة لمقرر DS341، فالشعبة المتاحة
+     لك هي:» renders as «:فالشعبة المتاحة لك هي DS341، أما بالنسبة لمقرر». The
+     sentence is not misaligned, it is unreadable — and it is unreadable only for
+     the students who chose the English interface, which is why it survived.
+
+     `dir="auto"` per MESSAGE is the fix, not `rtl` on the container: a student may
+     ask in English and be answered in English in the same thread, and the citation
+     code in this file already sets `dir` per element for exactly this reason.
+
+     It goes on the TEXT-BEARING nodes — each <p>, each <li> — and deliberately not
+     on the wrapper or the <ul>. HTML's auto algorithm skips descendants that carry
+     their own `dir`, so a wrapper whose every child is `dir="auto"` finds no strong
+     character of its own and quietly resolves to the page direction. The first
+     version of this fix did exactly that and looked correct in the DOM while
+     computing `ltr`.
+
+     **Markdown.** The model writes it — `**bold**`, `* bullets` — and this rendered
+     the asterisks literally. Converted here to real elements, built with
+     `createElement`/`createTextNode` only: no `innerHTML`, so nothing in an answer
+     can become markup. A safe subset, matching what the model actually emits;
+     anything else stays as written rather than being silently dropped. */
+  const BOLD = /\*\*([^*]+)\*\*/g;
+  const BULLET = /^\s*[*•-]\s+(.*)$/;
+  const NUMBERED = /^\s*\d+[.)]\s+(.*)$/;
+
+  function inlineInto(node, text) {
+    const source = String(text);
+    let cursor = 0;
+    let match;
+    BOLD.lastIndex = 0;
+    while ((match = BOLD.exec(source)) !== null) {
+      if (match.index > cursor) {
+        node.appendChild(document.createTextNode(source.slice(cursor, match.index)));
+      }
+      node.appendChild(el('strong', null, match[1]));
+      cursor = match.index + match[0].length;
+    }
+    if (cursor < source.length) {
+      node.appendChild(document.createTextNode(source.slice(cursor)));
+    }
+    return node;
+  }
+
+  function renderBody(text) {
+    const wrap = el('div', 'sa-body');
+
+    let list = null;
+    let listTag = '';
+    let para = null;
+
+    String(text).split('\n').forEach(function (line) {
+      const bullet = BULLET.exec(line);
+      const numbered = bullet ? null : NUMBERED.exec(line);
+      const item = bullet || numbered;
+
+      if (item) {
+        const tag = bullet ? 'ul' : 'ol';
+        para = null;
+        if (!list || listTag !== tag) {
+          list = el(tag, 'sa-list');
+          wrap.appendChild(list);
+          listTag = tag;
+        }
+        const li = el('li');
+        li.setAttribute('dir', 'auto');
+        wrap.lastChild.appendChild(inlineInto(li, item[1]));
+        return;
+      }
+
+      list = null;
+      listTag = '';
+      if (!line.trim()) {
+        para = null;
+        return;
+      }
+      if (!para) {
+        para = el('p', 'sa-para');
+        para.setAttribute('dir', 'auto');
+        wrap.appendChild(para);
+      } else {
+        // A soft break inside one paragraph: kept, because the model uses single
+        // newlines for structure the student can see.
+        para.appendChild(document.createTextNode('\n'));
+      }
+      inlineInto(para, line);
+    });
+
+    if (!wrap.childNodes.length) wrap.appendChild(el('p', 'sa-para', ''));
+    return wrap;
+  }
+
   function statusNote(status) {
     if (status === 'FAILED') return T.failed;
     if (status === 'ABSTAINED') return T.abstained;
@@ -494,7 +592,7 @@
 
     article.appendChild(el('div', 'va-avatar', role === 'assistant' ? 'AI' : T.me));
     const bubble = el('div', 'va-bubble');
-    bubble.appendChild(el('div', 'sa-body', displayBody(message)));
+    bubble.appendChild(renderBody(displayBody(message)));
 
     const note = statusNote(message.status);
     if (note && message.status !== 'COMPLETED') {

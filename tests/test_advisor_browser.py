@@ -665,6 +665,76 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         expect(page.locator("#saSend")).to_be_enabled(timeout=15_000)
         assert page.locator("#saQuestion").input_value() == "سؤال"
 
+    # ── 14. an Arabic answer inside an English interface ────────
+    def test_an_arabic_answer_lays_out_right_to_left_in_an_english_ui(self):
+        """The bubble had no direction, so it inherited the PAGE's.
+
+        With `dir="ltr"` the bidi algorithm reorders whole segments of every
+        wrapped line and moves trailing punctuation to the visual left — the
+        sentence is not misaligned, it is unreadable. And only for students who
+        chose the English interface, which is why it survived.
+        """
+        self._seed()
+        page = self._page()
+        self._open(page)
+        page.wait_for_selector(".va-message-assistant")
+
+        # The page really is LTR: without that, this test proves nothing.
+        assert page.evaluate("document.documentElement.getAttribute('dir')") == "ltr"
+
+        # Asserted on the PARAGRAPH, not the wrapper: `dir="auto"` skips descendants
+        # that carry their own `dir`, so a wrapper of dir'd children has no strong
+        # character to judge by and resolves to the page direction. The first
+        # version of this test asserted on the wrapper and failed against a DOM
+        # that was already correct.
+        direction = page.evaluate(
+            "getComputedStyle(document.querySelector("
+            "'.va-message-assistant .sa-body .sa-para')).direction"
+        )
+        assert direction == "rtl", "an Arabic answer is being laid out left-to-right"
+
+    def test_the_models_markdown_is_rendered_not_printed(self):
+        """`**bold**` and `* item` were reaching the student as literal asterisks."""
+        self._seed(
+            answer=(
+                "بناءً على البيانات المتاحة:\n"
+                "* **المقرر:** DS341\n"
+                "* **رقم الشعبة:** M1\n"
+                "\n"
+                "**ملاحظة هامة:** راجع عمادة القبول والتسجيل."
+            ),
+            citations=[],
+        )
+        page = self._page()
+        self._open(page)
+        page.wait_for_selector(".va-message-assistant")
+
+        body = page.locator(".va-message-assistant .sa-body")
+        text = body.inner_text()
+        assert "**" not in text, "markdown emphasis reached the student as asterisks"
+        assert "* " not in text, "a list bullet reached the student as an asterisk"
+
+        assert body.locator("ul.sa-list li").count() == 2
+        assert body.locator("strong").count() >= 3
+        assert "المقرر" in body.locator("strong").first.inner_text()
+        # Every list item carries its own direction, for mixed Arabic/Latin rows.
+        assert body.locator("ul.sa-list li[dir=auto]").count() == 2
+
+    def test_an_answer_cannot_smuggle_markup_into_the_page(self):
+        """Rendered with createElement/createTextNode only — never innerHTML."""
+        self._seed(
+            answer="<img src=x onerror=alert(1)> **<b>bold</b>**",
+            citations=[],
+        )
+        page = self._page()
+        self._open(page)
+        page.wait_for_selector(".va-message-assistant")
+
+        body = page.locator(".va-message-assistant .sa-body")
+        assert body.locator("img").count() == 0
+        assert body.locator("b").count() == 0
+        assert "<img" in body.inner_text(), "the text itself must survive as text"
+
     # ── 10. reachable by keyboard, describable by a screen reader ──
     def test_keyboard_and_screen_reader_affordances(self):
         self._seed()
