@@ -77,29 +77,59 @@ mapping could be written.
 
 There is no mismatch, because **those 16 were never slots.** Free Electives and
 University Electives are declared electives that students take as ordinary
-courses, under those very codes:
+courses. `PLACEHOLDER_TYPES` is now `Program Elective` only, so all 12 live slots
+require 3 hours and all 55 catalogued courses supply 3.
+
+The credit rule in §5 stays. It is still the check that stops a student choosing
+an option that would not satisfy the requirement they chose it for; it simply no
+longer rejects anything, which is what a guard looks like when the data is sound.
+
+**On what this decision actually rests.** Two things, and it is worth being exact,
+because the obvious argument is the weak one:
+
+1. **Owner authority.** GS/GSE run online and FE runs 100-minute meetings. That is
+   a statement about courses that are scheduled, attended and graded, from the
+   person entitled to make it.
+2. **Structure.** Every FE/GSE requirement is **2 credit hours**, the same as the
+   `GS`-family university requirements (`GS101` is 2h) and unlike **every** Program
+   Elective, all of which are 3h. FE/GSE sit in the university-requirement block,
+   not the programme-elective block.
+
+The argument this document first made — *students have passed FE1 and GSE1, and you
+cannot pass a placeholder* — is **not sound**, and it was corrected here rather
+than quietly dropped:
 
 | code | declared type | enrolments | statuses |
 |---|---|---|---|
 | `AI1` | Program Elective | 183 | all `not_taken` |
+| `DS1` | Program Elective | 88 | **26 `passed`** |
 | `FE1` | Free Elective | 320 | 111 `passed` |
 | `GSE1` | University Elective | 320 | 139 `passed` |
 | `GS101` | Mandatory | 320 | 314 `passed` |
 
-You cannot pass a placeholder. `FE1` and `GSE1` behave exactly like `GS101` and
-nothing like `AI1`. The owner's account of the same courses — GS/GSE run online,
-FE runs 100-minute meetings — describes courses that are scheduled, attended and
-graded.
+**`DS1` is a Program Elective with 26 passers.** So this registrar does record
+`passed` against a placeholder code, and a pass count proves nothing about which
+kind of thing a code names. Two further points against the original reading, kept
+because they are the ones that would have to be answered if the owner ever revises
+the decision: `Course.description` for `FE1` is `FREE ELECTIVE COURSE I` — a slot
+name, like `DS1`'s `PROGRAM ELECTIVE COURSE I` and unlike `GS101`'s
+`ISLAMIC STUDIES: BELIEF AND WORSHIP`; and no `TermSection` row exists for any of
+`FE1 FE2 GSE1 GSE2 GSE3` (weak either way — `GS101` has none either, and the
+section table covers only 8 subject prefixes).
 
-`PLACEHOLDER_TYPES` is now `Program Elective` only. The **credit question
-dissolves**: all 12 live slots require 3 hours and all 55 catalogued courses
-supply 3. The credit rule in §5 stays — it is still the check that stops a
-student choosing an option that would not satisfy the requirement they chose it
-for — it simply no longer rejects anything.
+**What DS1 forced.** The narrowing was necessary and not sufficient. The 364 FE/GSE
+cases were produced by an *ordering* defect — `build_course_detail` read the
+requirement type and returned before ever looking at the student — and shrinking
+the type set fixed those while leaving the defect intact for the 26 students it
+kept. `build_course_detail` now reads the student's own record for the code first:
+a placeholder that a student has already passed or is studying reports that,
+without options and without the not-published sentence. A code can be a
+placeholder **and** completed, and the model has to be able to say so.
 
 What this cost while it was wrong: **364 completed FE/GSE enrolments across 186
-students** were shown «لم تُنشر خيارات هذا المتطلب الاختياري بعد» — the options
-for a requirement they had already completed had not been published yet.
+students, and 26 `DS1` passers**, all shown «لم تُنشر خيارات هذا المتطلب
+الاختياري بعد» — the options for a requirement they had already completed had not
+been published yet.
 
 The type is still the authority. This is not a retreat to code shapes, and issue
 #55 stands: the set of types meaning "placeholder" is simply narrower than the
@@ -258,6 +288,12 @@ screen change is required.
 * readiness flips false → true only after a successful commit
 * a failed validation or rollback leaves the prior ready state unchanged
 * the student JSON still exposes only `mapping_ready`, never an operational state
+* a `Free Elective` / `University Elective` row is answered as a COURSE, with a
+  status — asserted through `build_course_detail` and `build_unlock_report`, not
+  through the predicate (four call-site mutants survived a 2024-test suite that
+  tested the predicate alone)
+* a placeholder the student has already passed or is studying reports that, and is
+  offered no options — including when the slot is `READY`
 
 ---
 
@@ -277,7 +313,7 @@ Check each explicitly, on this branch and on the import:
 | **route response type** | does an HTML route ever answer with JSON? | the throttled page, then the throttled form POST |
 | **rate-limit truthfulness** | is the retry time the limiter's, or invented? | `Retry-After: 60` against a 600-second window |
 | **query placement** | is the expensive call inside the branch that reads it? | `build_unlock_report` ran before classification |
-| **common-path cost** | is the most frequent answer the cheapest? | unmapped elective — 77 of 84 slots — cost 131 queries to say nothing |
+| **common-path cost** | is the most frequent answer the cheapest? | unmapped elective — 31 of 38 slots — cost 131 queries to say nothing |
 | **display completeness** | does every field that reaches the screen have a value? | `unlocks` rendered every course name empty |
 
 For the import specifically, the same lens: does a rejection message reveal more

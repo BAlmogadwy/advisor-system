@@ -189,7 +189,10 @@ def build_plan(
         course_credits = int(entry["credit_hours"] or 0)
         if slot_credits and course_credits and slot_credits != course_credits:
             # A student choosing this would not satisfy the requirement they chose
-            # it for. Every live Free/University Elective slot currently fails here.
+            # it for. It currently rejects NOTHING — every declared slot wants 3
+            # hours and every catalogued course supplies 3 — and that is the point:
+            # a guard, not a filter. (It once caught every Free/University Elective
+            # slot, which turned out to mean those were not slots.)
             fail(
                 "CREDIT_MISMATCH",
                 f"{programme}/{slot} requires {slot_credits}h, {course} is {course_credits}h",

@@ -407,7 +407,17 @@ def test_free_and_university_electives_are_not_placeholders(world):
     plan = build_plan(_csv(f"{YEAR},{TERM},{PROG},IF1,IX403,approved-1448"))
     problem = next(p for p in plan.problems if p.code == "NOT_AN_ELECTIVE_SLOT")
     assert "Free Elective" in problem.detail
-    assert slot_status(PROG, "IF1", YEAR, TERM)[0] == NOT_PUBLISHED
+
+    # NOT `slot_status(...)[0] == NOT_PUBLISHED`. That was the assertion here and it
+    # proved nothing: `NOT_PUBLISHED` is returned from BOTH branches — "not a slot"
+    # and "a slot with nothing mapped" — so it holds under either rule. The
+    # discriminating value is the one the `[0]` threw away.
+    status, options, problems = slot_status(PROG, "IF1", YEAR, TERM)
+    assert status == NOT_PUBLISHED and options == []
+    assert problems == ["not an elective slot for this programme"], problems
+    assert slot_status(PROG, "IE1", YEAR, TERM)[2] == [], (
+        "a real unmapped slot must not report the same problem, or this says nothing"
+    )
 
 
 def test_only_the_program_elective_type_is_a_placeholder(world):
