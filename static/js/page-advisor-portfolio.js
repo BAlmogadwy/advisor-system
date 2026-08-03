@@ -8,6 +8,12 @@ let currentAdvisorId = '';
 let currentFocus = 'all';
 let currentPage = 1;
 const PAGE_SIZE = 50;
+//: How many rows to ASK the server for. Distinct from PAGE_SIZE, which is how
+//: many to SHOW at a time — they were accidentally equal, which is what made the
+//: truncation invisible. 500 is the ceiling in advisor_views.py.
+const SERVER_PAGE_SIZE = 500;
+//: The server's own total, which is not the same as the number of rows received.
+let rosterTotal = 0;
 let batchSelected = new Set();
 let selectedSid = null;
 
@@ -25,6 +31,10 @@ const T = {
   // ── Load students ──
   loadingStudents:    IS_AR ? 'جارٍ تحميل الطلاب…'                  : 'Loading students…',
   failedLoadStudents: IS_AR ? 'تعذّر تحميل الطلاب'                  : 'Failed to load students',
+  failedLoadAdvisors: IS_AR ? 'تعذّر تحميل قائمة المرشدين'          : 'Failed to load the advisor list',
+  showingFirst:    (n, total) => IS_AR
+    ? `يُعرض أول ${n} من ${total} طالبًا. استخدم البحث أو تصدير CSV للبقية.`
+    : `Showing the first ${n} of ${total} students. Use search or the CSV export for the rest.`,
   mappingNotReady:    IS_AR ? 'ربط الطلاب بالمرشدين غير جاهز بعد.'  : 'Student-advisor mapping is not ready yet.',
   mappingNotReadyShort: IS_AR ? 'الربط غير جاهز'                    : 'Mapping not ready',
   nStudents:       (n) => IS_AR ? `${n} طالب`                       : `${n} students`,
@@ -122,8 +132,20 @@ async function copyText(text, triggerBtn) {
 async function loadAdvisors() {
   try {
     const res = await fetch('/report/advisors/');
-    const data = await res.json();
-    if (!res.ok || !Array.isArray(data.items)) return;
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !Array.isArray(data.items)) {
+      /* A bare `return` here is what made the dead end silent: no toast, no
+         console error, and a tbody still reading "choose an advisor above".
+         `loadStudents` below already surfaces its failures, and
+         page-dashboard.js surfaces this exact endpoint's. */
+      const msg = data?.error || data?.message || `HTTP ${res.status}`;
+      const sel = q('apAdvisorSelect');
+      if (sel) sel.innerHTML = `<option value="">${T.selectAdvisor}</option>`;
+      q('apTable').querySelector('tbody').innerHTML =
+        `<tr><td colspan="10" class="text-danger small">${esc(msg)}</td></tr>`;
+      notify.error(T.failedLoadAdvisors, msg.slice(0, 120));
+      return;
+    }
     const sel = q('apAdvisorSelect');
     sel.innerHTML = `<option value="">${T.selectAdvisor}</option>` +
       data.items.map(a => `<option value="${a.advisor_id}">${a.advisor_id} — ${a.full_name} (${a.department})</option>`).join('');
@@ -154,7 +176,15 @@ async function loadStudents(advisorId) {
   tbody.innerHTML = `<tr><td colspan="10"><div class="ap-empty"><span class="ap-empty-icon"><span class="i i-xl" aria-hidden="true"><svg viewBox="0 0 24 24"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg></span></span><div class="ap-empty-title">${T.loadingStudents}</div></div></td></tr>`;
 
   try {
-    const res = await fetch(`/report/students-by-advisor/?advisor_id=${encodeURIComponent(advisorId)}`);
+    /* `page_size` explicitly. Omitting it took the server default of 50, and
+       the client's own PAGE_SIZE is also 50 — so its pager saw exactly one page
+       and hid itself, and ten of sixty advisees were unreachable with no control
+       to reach them. 500 is the server's ceiling; the slice happens after the
+       whole roster is built, so a larger page costs no extra queries (measured:
+       8 at 50, 8 at 500). `data.count` is the real total either way. */
+    const res = await fetch(
+      `/report/students-by-advisor/?advisor_id=${encodeURIComponent(advisorId)}&page=1&page_size=${SERVER_PAGE_SIZE}`
+    );
     const data = await res.json();
     if (!res.ok || !Array.isArray(data?.items)) {
       const msg = data?.error || data?.message || `HTTP ${res.status}`;
@@ -170,9 +200,20 @@ async function loadStudents(advisorId) {
 
     allStudents = data.items;
     summaryCache = data.summary || {};
+    /* The server's count, NOT allStudents.length. The chips used to report the
+       size of the slice, so a 60-student adviser read "50 students" beside an
+       attention count of 60 — the page contradicting itself. */
+    rosterTotal = Number.isFinite(data.count) ? data.count : allStudents.length;
 
     q('apAdvisorChip').textContent = advisorId;
-    q('apCountChip').textContent = T.nStudents(allStudents.length);
+    q('apCountChip').textContent = T.nStudents(rosterTotal);
+    /* And if the roster genuinely exceeds what one request returns, say so
+       rather than quietly showing a prefix. */
+    const truncated = q('apTruncatedNote');
+    if (truncated) {
+      truncated.classList.toggle('d-none', rosterTotal <= allStudents.length);
+      truncated.textContent = T.showingFirst(allStudents.length, rosterTotal);
+    }
     q('apLoadedLabel').classList.remove('d-none');
     q('apLoadedTime').textContent = new Date().toLocaleTimeString();
     q('apMetricsWrap').classList.remove('d-none');
@@ -212,7 +253,7 @@ function updateMetrics() {
   const s = summaryCache;
   q('mAttention').textContent = s.needs_attention_count || 0;
   q('mHighRisk').textContent = s.very_high_risk_count || 0;
-  q('mStudents').textContent = allStudents.length;
+  q('mStudents').textContent = rosterTotal;
   q('mAvgGpa').textContent = s.avg_gpa != null ? String(s.avg_gpa) : '—';
   q('mTermHours').textContent = s.current_term_registered_hours_total || 0;
   q('mHpMissing').textContent = s.high_priority_missing_count || 0;
@@ -720,7 +761,10 @@ wireMobileCards('apTable', {
 const USER_ROLE = typeof userRole === 'string' ? userRole : '';
 const USER_ADVISOR_ID = typeof userAdvisorId === 'string' ? userAdvisorId : '';
 
-if (USER_ROLE === 'ADVISOR' && USER_ADVISOR_ID) {
+const HIDE_ADVISOR_PICKER =
+  typeof hideAdvisorPicker === 'boolean' ? hideAdvisorPicker : false;
+
+if (HIDE_ADVISOR_PICKER) {
   // Advisor role: skip dropdown, load own students immediately
   loadStudents(USER_ADVISOR_ID);
 } else {

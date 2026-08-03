@@ -21,11 +21,26 @@
 {% endblock %}
 
 {% block content %}
-      <!-- ═══ Advisor selector bar (hidden for ADVISOR role) ═══ -->
-      <div class="ap-advisor-bar{% if role == 'ADVISOR' %} d-none{% endif %}" id="apAdvisorBar">
+      {% comment %}
+        The PICKER hides only when the JS will actually load a portfolio without
+        it — role ADVISOR *and* an advisor id. It used to hide on the role alone,
+        while the JS branched on `role === 'ADVISOR' && USER_ADVISOR_ID`. Those
+        disagree exactly when the id is blank: the else branch ran, called
+        /report/advisors/, took a 403, swallowed it, and left an empty table
+        inviting the user to "choose an advisor above" — from a control CSS had
+        hidden. One condition now, written once, passed to the JS.
+
+        The program filter and the loaded label moved OUT. They were children of
+        the hidden bar, so every adviser — including one whose own portfolio
+        loads perfectly — lost the program filter and the freshness label as
+        collateral. They belong to the roster, not to the picker.
+      {% endcomment %}
+      <div class="ap-advisor-bar{% if hide_advisor_picker %} d-none{% endif %}" id="apAdvisorBar">
         <select id="apAdvisorSelect" class="form-select" autofocus>
           <option value="">{% if LANGUAGE_CODE == 'ar' %}اختر مرشدًا…{% else %}Select advisor…{% endif %}</option>
         </select>
+      </div>
+      <div class="ap-advisor-bar" id="apRosterTools">
         <input id="apProgramFilter" class="form-control" style="max-width:140px;" placeholder="{% if LANGUAGE_CODE == 'ar' %}البرنامج{% else %}Program (AI/CS){% endif %}">
         <span class="ap-loaded-label d-none" id="apLoadedLabel">
           {% if LANGUAGE_CODE == 'ar' %}تم التحميل{% else %}Loaded{% endif %} <span class="ap-loaded-time" id="apLoadedTime"></span>
@@ -93,6 +108,7 @@
           <button class="fb-dd text-warning" data-focus="missing" aria-pressed="false" onclick="setFocus(this)">{% if LANGUAGE_CODE == 'ar' %}أولوية مفقودة{% else %}HP Missing{% endif %}</button>
           <button class="fb-dd text-warning" data-focus="zerohours" aria-pressed="false" onclick="setFocus(this)">{% if LANGUAGE_CODE == 'ar' %}بدون ساعات{% else %}Zero Hours{% endif %}</button>
         </div>
+        <span id="apTruncatedNote" class="small text-warning d-none"></span>
         <a id="apCsvLink" class="fb-dd" href="#"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span> CSV</a>
         <button class="fb-dd" type="button" onclick="copyFilteredIds(this)" title="{% if LANGUAGE_CODE == 'ar' %}نسخ معرفات الطلاب المصفّين إلى الحافظة{% else %}Copy filtered student IDs to clipboard{% endif %}">{% if LANGUAGE_CODE == 'ar' %}نسخ المعرفات{% else %}Copy IDs{% endif %}</button>
         <button class="fb-dd" type="button" onclick="copyHighRiskIds(this)" title="{% if LANGUAGE_CODE == 'ar' %}نسخ معرفات الطلاب ذوي الخطورة العالية إلى الحافظة{% else %}Copy high-risk student IDs to clipboard{% endif %}">{% if LANGUAGE_CODE == 'ar' %}نسخ معرفات المخاطر{% else %}Copy Risk IDs{% endif %}</button>
@@ -149,6 +165,8 @@
 <script>
   const userRole = "{{ role }}";
   const userAdvisorId = "{{ user_advisor_id|escapejs }}";
+  /* Computed once, server-side, so the template and the JS cannot disagree. */
+  const hideAdvisorPicker = {{ hide_advisor_picker|yesno:"true,false" }};
 </script>
-<script src="{% static 'js/page-advisor-portfolio.js' %}?v=2"></script>
+<script src="{% static 'js/page-advisor-portfolio.js' %}?v=3"></script>
 {% endblock %}
