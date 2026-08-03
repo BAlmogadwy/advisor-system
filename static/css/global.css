@@ -11147,3 +11147,33 @@ html[data-theme="dark"] .im-modal-footer {
   .sp-options { grid-template-columns: 1fr; }
   .sp-option { padding: .5rem; }
 }
+
+/* ── student course detail ───────────────────────────────────────
+   Server-rendered and zero-JavaScript, like the locked-course page it is reached
+   from. Every string here arrived translated from `services/course_detail.py`;
+   this file chooses a layout and nothing else. */
+.cd-layout { display: flex; flex-direction: column; }
+.cd-muted { color: var(--t2); }
+.cd-empty { color: var(--t2); }
+
+.cd-status { font-weight: 600; margin: 0 0 .5rem; }
+.cd-status-blocked { color: var(--warning); }
+.cd-status-passed, .cd-status-open_now { color: var(--success); }
+
+.cd-reasons, .cd-prereqs, .cd-options {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; flex-direction: column; gap: .375rem;
+}
+.cd-reasons li { color: var(--t2); }
+.cd-prereq, .cd-option { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.cd-code { font-weight: 600; }
+.cd-name { color: var(--t2); }
+
+/* The prerequisite's own state, as a badge — the affordance a chat answer cannot
+   give: three of five marked passed, readable at a glance. */
+.cd-tag { font-size: .75rem; border-radius: 999px; padding: .125rem .5rem; border: 1px solid var(--line); }
+.cd-tag-passed { border-color: var(--success); color: var(--success); }
+.cd-tag-blocked { border-color: var(--warning); color: var(--warning); }
+.cd-tag-studying, .cd-tag-open { color: var(--t2); }
+
+.cd-actions { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }

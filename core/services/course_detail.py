@@ -30,9 +30,9 @@ from core.services.student_helpers import get_prerequisites, is_elective_slot, n
 #: elective placeholder, or nothing in this student's programme at all — and that
 #: third state is one `_exec_course_prerequisites` and `why_course_locked`
 #: currently disagree about.
-KIND_COURSE = "course"
-KIND_ELECTIVE_SLOT = "elective_slot"
-KIND_NOT_IN_PLAN = "not_in_your_plan"
+KIND_COURSE = "COURSE"
+KIND_ELECTIVE_SLOT = "ELECTIVE_SLOT"
+KIND_NOT_IN_PLAN = "NOT_IN_PLAN"
 
 #: Where the student stands. `UNKNOWN` is a real answer and is not permission.
 STATUS_AR: dict[str, str] = {
@@ -64,15 +64,6 @@ REASON_AR: dict[str, str] = {
     "ASK_ADVISOR": "راجع مرشدك الأكاديمي لمعرفة سبب الحجب.",
 }
 REASON_AR_DEFAULT = "راجع مرشدك الأكاديمي لمعرفة سبب الحجب."
-
-#: `_resolve_elective_slot` returns `None` for "not a slot" and `[]` for "a slot
-#: with nothing published", and its caller cannot tell them apart. At 77 of 84 live
-#: slots unmapped, the empty case IS the screen, so it gets its own state.
-OPTIONS_PUBLISHED = "published"
-OPTIONS_NOT_PUBLISHED = "not_published"
-OPTIONS_AR: dict[str, str] = {
-    OPTIONS_NOT_PUBLISHED: "لم تُنشر خيارات هذا المتطلب الاختياري بعد. راجع مرشدك الأكاديمي.",
-}
 
 NOT_IN_PLAN_AR = "هذا المقرر ليس ضمن خطة برنامجك، فلا نستطيع تفسير وضعك فيه."
 NO_PROGRAMME_AR = (
@@ -118,10 +109,10 @@ def build_course_detail(
     locked list, then "why?", then this — would pay it twice. A caller that already
     has one passes it along instead of re-deriving it.
     """
-    from core.models import Course, ProgrammeRequirement, Student
+    from core.models import ProgrammeRequirement, Student
+    from core.services.elective_readiness import STATUS_AR as ELECTIVE_STATUS_AR
+    from core.services.elective_readiness import slot_status
     from core.services.student_unlock import build_unlock_report
-    from core.services.virtual_advisor import _course_names
-    from core.services.virtual_advisor_capabilities import _resolve_elective_slot
 
     code = normalize_code(course_code)
     if not code:
@@ -165,42 +156,36 @@ def build_course_detail(
         # The third `kind`. `_exec_course_prerequisites` answers "not found",
         # `why_course_locked` returns an error and `eligibility` passes over it in
         # silence; a student clicking a code from a friend's programme lands here.
-        return {
-            **base,
-            "kind": KIND_NOT_IN_PLAN,
-            "course_name": str(
-                Course.objects.filter(course_code__iexact=code)
-                .values_list("description", flat=True)
-                .first()
-                or ""
-            ),
-            "message_ar": NOT_IN_PLAN_AR,
-        }
+        #
+        # Deliberately NO global catalogue lookup for a name. A code valid in
+        # another programme must stay NOT_IN_PLAN and stop there — resolving it
+        # against the whole catalogue would turn a plan-scoped surface into a
+        # course search, one step from answering about a programme this student is
+        # not in.
+        return {**base, "kind": KIND_NOT_IN_PLAN, "message_ar": NOT_IN_PLAN_AR}
 
     if is_elective_slot(row["type"]):
-        # `limit=None`: the cap inside is for chat readability. A screen listing
-        # what a student MAY choose must not inherit a display cap as an
-        # availability cap.
-        options = _resolve_elective_slot(code, program, limit=None) or []
-        codes = {normalize_code(o.get("course_code") or "") for o in options}
-        names = _course_names({c for c in codes if c})
+        # The gate is a BACKEND answer, never a programme name in a template.
+        # `slot_status` returns options ONLY when READY — a caller that received
+        # them in any other state would be one `if` away from rendering the list
+        # the gate exists to withhold.
+        status, options, _problems = slot_status(program, code, academic_year, term)
         return {
             **base,
             "kind": KIND_ELECTIVE_SLOT,
             "course_name": str(row.get("course_name") or ""),
             "credit_hours": row.get("credit_hours") or 0,
-            "options_state": OPTIONS_PUBLISHED if options else OPTIONS_NOT_PUBLISHED,
-            "options_message_ar": OPTIONS_AR.get(
-                OPTIONS_PUBLISHED if options else OPTIONS_NOT_PUBLISHED, ""
-            ),
+            "mapping_status": status,
+            "message_ar": ELECTIVE_STATUS_AR.get(status, ""),
             "options": [
                 {
                     "course_code": normalize_code(o.get("course_code") or ""),
-                    "course_name": names.get(normalize_code(o.get("course_code") or ""))
-                    or str(o.get("course_name") or ""),
+                    "course_name": str(o.get("course_name") or ""),
                     "credit_hours": o.get("credit_hours") or 0,
                     "prerequisites": [
-                        {"course_code": normalize_code(p)} for p in (o.get("prerequisites") or [])
+                        {"course_code": normalize_code(c)}
+                        for c in str(o.get("prerequisites_csv") or "").split(",")
+                        if c.strip()
                     ],
                 }
                 for o in options
@@ -280,8 +265,6 @@ __all__ = [
     "KIND_COURSE",
     "KIND_ELECTIVE_SLOT",
     "KIND_NOT_IN_PLAN",
-    "OPTIONS_NOT_PUBLISHED",
-    "OPTIONS_PUBLISHED",
     "CourseDetailUnavailable",
     "build_course_detail",
 ]

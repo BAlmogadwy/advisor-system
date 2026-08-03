@@ -1,24 +1,11 @@
 """Which programmes are ready for an elective-options screen, and which are not.
 
-The screen cannot ship globally. Measured on live data, 26 of 28 `(programme,
-slot)` pairs for the programmes that actually have students resolve to zero
-options — AI2 and DS2, 115 students between them, get nothing for every slot they
-have. A screen that answers «لم تُنشر خيارات هذا المتطلب بعد» for almost everyone
-is an incomplete join wearing the costume of a feature.
+The gate itself lives in `core.services.elective_readiness`, shared with the
+student surface — a report and a screen disagreeing about readiness is exactly the
+failure this exists to prevent. This is the operational view over it.
 
-So this reports readiness per programme, and the screen is enabled per programme
-rather than by one global switch. The gate:
-
-* every active elective placeholder has a recognised mapping;
-* every slot resolves to at least one active course;
-* no cross-programme mapping (duplicates and dangling rows are impossible —
-  `uq_elective_mapping` and the cascading FK already forbid them);
-* mapped courses carry the right requirement type and credit value;
-* programmes with active students are covered.
-
-**The declared requirement type is authoritative** — `is_elective_slot`, the one
-implementation. Nothing here infers a slot from a code pattern; issue #55 is what
-that costs.
+Live today, for the programmes that actually have students: 2 of 28 slots ready,
+zero programmes ready, 2035 student-slot pairs would see an empty screen.
 
 Read-only. It changes nothing and is safe to run against production.
 """
@@ -30,110 +17,7 @@ from typing import Any
 
 from django.core.management.base import BaseCommand
 
-from core.models import (
-    ElectiveCourse,
-    ElectiveTermMapping,
-    ProgrammeRequirement,
-    Student,
-)
-from core.services.student_helpers import is_elective_slot, normalize_code
-
-
-def readiness(academic_year: str = "", term: str = "") -> list[dict[str, Any]]:
-    """One row per (programme, slot), with everything the gate needs.
-
-    TERM-SCOPED, because `ElectiveTermMapping` is: it carries `academic_year` and
-    `term`, and a slot mapped for a past term is not mapped for this one. Writing
-    the first version of this report without that filter would have reported a
-    programme ready on the strength of last year's publication —
-    `_resolve_elective_slot` has the same blind spot (`CAPABILITY-SCREEN-MAP.md:171`),
-    masked today only because every mapping row happens to be 1448/term 1.
-    """
-    if not academic_year or not term:
-        from core.services.planner_drafts import planning_term
-
-        default_year, default_term = planning_term()
-        academic_year = academic_year or default_year
-        term = term or default_term
-    students = defaultdict(int)
-    for program in Student.objects.values_list("program", flat=True):
-        students[normalize_code(program)] += 1
-
-    slots: list[tuple[str, str, int, str]] = []
-    for row in ProgrammeRequirement.objects.values(
-        "program", "course_code", "type", "credit_hours"
-    ):
-        if is_elective_slot(row["type"]):
-            slots.append(
-                (
-                    normalize_code(row["program"]),
-                    normalize_code(row["course_code"]),
-                    int(row["credit_hours"] or 0),
-                    str(row["type"] or ""),
-                )
-            )
-
-    # Mappings, grouped, so a duplicate is visible rather than deduplicated away.
-    mapped: dict[tuple[str, str], list[int]] = defaultdict(list)
-    for m in ElectiveTermMapping.objects.filter(
-        academic_year=str(academic_year), term=str(term)
-    ).values("programme", "placeholder_code", "elective_id"):
-        key = (normalize_code(m["programme"]), normalize_code(m["placeholder_code"]))
-        mapped[key].append(m["elective_id"])
-
-    electives = {
-        e["id"]: e
-        for e in ElectiveCourse.objects.values("id", "course_code", "programme", "credit_hours")
-    }
-
-    rows: list[dict[str, Any]] = []
-    for program, slot, slot_credits, slot_type in sorted(set(slots)):
-        ids = mapped.get((program, slot), [])
-        options = [electives[i] for i in ids if i in electives]
-
-        # Two of the gate's stated conditions — "no duplicate mapping" and "every
-        # mapping resolves to a real course" — are enforced by the SCHEMA, not here:
-        # `uq_elective_mapping` is unique on (year, term, programme, placeholder,
-        # elective), and the elective FK cascades. Re-checking them in Python would
-        # be a guard for a state the database cannot hold, and a test for it cannot
-        # be written without deleting the constraint. `tests/test_elective_readiness.py`
-        # asserts the constraints instead.
-        problems: list[str] = []
-        # A mapping whose elective is declared for another programme. Blank is not
-        # cross-programme — it is unset, which is its own (known) data gap.
-        foreign = sorted(
-            {
-                normalize_code(o["programme"])
-                for o in options
-                if o["programme"] and normalize_code(o["programme"]) != program
-            }
-        )
-        if foreign:
-            problems.append(f"cross-programme mapping from {', '.join(foreign)}")
-        if slot_credits:
-            wrong = [
-                o["course_code"]
-                for o in options
-                if o["credit_hours"] and int(o["credit_hours"]) != slot_credits
-            ]
-            if wrong:
-                problems.append(
-                    f"credit mismatch (slot {slot_credits}h): {', '.join(sorted(wrong)[:3])}"
-                )
-
-        rows.append(
-            {
-                "programme": program,
-                "slot": slot,
-                "type": slot_type,
-                "students": students.get(program, 0),
-                "mapping_exists": bool(ids),
-                "active_options": len(options),
-                "problems": problems,
-                "ready": bool(ids) and bool(options) and not problems,
-            }
-        )
-    return rows
+from core.services.elective_readiness import readiness
 
 
 class Command(BaseCommand):

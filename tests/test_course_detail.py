@@ -30,11 +30,10 @@ from core.services.course_detail import (
     KIND_COURSE,
     KIND_ELECTIVE_SLOT,
     KIND_NOT_IN_PLAN,
-    OPTIONS_NOT_PUBLISHED,
-    OPTIONS_PUBLISHED,
     CourseDetailUnavailable,
     build_course_detail,
 )
+from core.services.elective_readiness import NOT_PUBLISHED, READY
 from core.services.rbac import ensure_role_groups
 
 pytestmark = pytest.mark.django_db
@@ -204,8 +203,8 @@ def test_an_unmapped_slot_says_so_rather_than_returning_a_blank_list(plan):
     """77 of 84 live slots are unmapped, so this IS the screen for most students."""
     d = _detail("CE1")
     assert d["options"] == []
-    assert d["options_state"] == OPTIONS_NOT_PUBLISHED
-    assert d["options_message_ar"], "an empty list with no sentence explains nothing"
+    assert d["mapping_status"] == NOT_PUBLISHED
+    assert d["message_ar"], "an empty list with no sentence explains nothing"
 
 
 def test_a_mapped_slot_lists_its_options(plan):
@@ -220,7 +219,7 @@ def test_a_mapped_slot_lists_its_options(plan):
         term=TERM,
     )
     d = _detail("CE1")
-    assert d["options_state"] == OPTIONS_PUBLISHED
+    assert d["mapping_status"] == READY
     assert [o["course_code"] for o in d["options"]] == ["CX401"]
 
 
@@ -320,3 +319,192 @@ def test_the_endpoint_spends_the_read_budget_not_the_expensive_ones(client_as_st
     assert spent.get(f"{HISTORY}:{SID}") == 1
     for expensive in (GENERATION, PLANNING):
         assert spent.get(f"{expensive}:{SID}", 0) == 0
+
+
+# ── the screen ───────────────────────────────────────────────────
+
+
+def _page(client, code):
+    return client.get(reverse("student_course_detail_page", args=[code]))
+
+
+def test_no_raw_template_syntax_reaches_the_student(client_as_student):
+    """Django's `{# … #}` is SINGLE-LINE only; a multi-line one renders as text.
+
+    It has happened on the adviser screen and on the planner screen. It is a test
+    now rather than a habit.
+    """
+    for code in ("CB201", "CE1", "ZZ999"):
+        body = _page(client_as_student, code).content.decode()
+        for marker in ("{%", "{#", "{{"):
+            assert marker not in body, f"{code}: unrendered template syntax {marker}"
+
+
+def test_a_course_page_shows_status_reasons_and_prerequisites(client_as_student):
+    body = _page(client_as_student, "CB201").content.decode()
+    assert "CA101" in body
+    assert "لم تُستوفَ متطلباته السابقة بعد." in body
+    assert "يتطلب اجتياز" in body
+
+
+def test_an_unready_slot_shows_one_sentence_and_no_option_cards(client_as_student):
+    """77 of 84 live slots are unmapped, so this IS the screen for most students.
+
+    No empty option cards, no greyed-out list, no guessed alternatives.
+    """
+    response = _page(client_as_student, "CE1")
+    body = response.content.decode()
+    assert "لم تُنشر خيارات هذا المتطلب الاختياري بعد" in body
+    assert 'class="cd-options"' not in body, "an option list rendered for an unready slot"
+    assert 'class="cd-option"' not in body
+
+
+def test_a_ready_slot_shows_its_options(client_as_student):
+    elective = ElectiveCourse.objects.create(
+        course_code="CX401", course_name="Extra", credit_hours=3, programme=PROG
+    )
+    ElectiveTermMapping.objects.create(
+        programme=PROG,
+        placeholder_code="CE1",
+        elective_id=elective.id,
+        academic_year=YEAR,
+        term=TERM,
+    )
+    body = _page(client_as_student, "CE1").content.decode()
+    assert "CX401" in body
+    assert "لم تُنشر خيارات" not in body
+
+
+def test_the_gate_is_the_backend_answer_not_a_programme_name(client_as_student):
+    """A template that knew which programmes were ready would be a second copy of
+    the rule, in the layer least able to check itself."""
+    from pathlib import Path
+
+    template = Path("core/templates/core/student_course_detail.html").read_text(encoding="utf-8")
+    for programme in ("AI", "AI2", "DS", "DS2", "CS", "IS"):
+        assert f'"{programme}"' not in template and f"'{programme}'" not in template
+    assert "mapping_status" in template
+
+
+def test_the_planner_button_appears_only_when_prerequisites_are_met(client_as_student):
+    """Asserted on the FORM, not its label: the button text is bilingual template
+    chrome and renders in whichever language the interface is set to, while the
+    service strings are Arabic either way."""
+    action = reverse("student_course_to_planner", args=["CB201"])
+    blocked = _page(client_as_student, "CB201").content.decode()
+    assert action not in blocked, "a blocked course offered a planner action"
+
+    _passed("CA101")
+    open_now = _page(client_as_student, "CB201").content.decode()
+    assert action in open_now
+
+
+def test_the_planner_action_is_worded_as_planning_never_permission(client_as_student):
+    """The RENDERED page, not the source.
+
+    The first version of this read the template file and tripped over the word
+    "eligible" inside a comment explaining why eligibility is not claimed — a
+    comment that never reaches the student. What matters is the output.
+    """
+    _passed("CA101")
+    body = _page(client_as_student, "CB201").content.decode()
+    assert "does not register you" in body or "لا يسجّلك" in body, "the disclaimer is missing"
+    for permission in ("يمكنك تسجيل", "eligible", "you may register", "you can register"):
+        assert permission not in body, f"the screen implied permission: {permission}"
+
+    # Both wordings exist, so neither interface is missing the disclaimer.
+    from pathlib import Path
+
+    template = Path("core/templates/core/student_course_detail.html").read_text(encoding="utf-8")
+    assert "هذا لا يسجّلك في المقرر." in template
+    assert "does not register you" in template
+
+
+def test_the_planner_button_creates_a_draft_and_redirects(client_as_student):
+    from core.models import PlannerDraft
+
+    _passed("CA101")
+    response = client_as_student.post(reverse("student_course_to_planner", args=["CB201"]))
+    assert response.status_code == 302
+    draft = PlannerDraft.objects.get(student_id=SID)
+    assert draft.course_codes == ["CB201"]
+    assert response.url == reverse("student_planner_page", args=[str(draft.id)])
+
+
+def test_a_course_outside_the_plan_cannot_be_planned(client_as_student):
+    """Same validation as the JSON door — one service, two doors."""
+    from core.models import PlannerDraft
+
+    response = client_as_student.post(reverse("student_course_to_planner", args=["ZZ999"]))
+    assert response.status_code == 409
+    assert not PlannerDraft.objects.filter(student_id=SID).exists()
+
+
+def test_a_refusal_renders_as_a_page_not_a_line_of_json(client_as_student):
+    Student.objects.filter(student_id=SID).update(program="")
+    response = _page(client_as_student, "CB201")
+    assert response.status_code == 409
+    body = response.content.decode()
+    assert "<html" in body.lower(), "an HTML route answered with something else"
+    assert "لا يوجد برنامج دراسي" in body
+
+
+def test_the_page_refuses_a_non_student(client, plan):
+    from django.contrib.auth.models import User
+
+    client.force_login(User.objects.create_user(username="staffer3", password="x"))
+    assert _page(client, "CB201").status_code == 403
+
+
+def test_an_invalid_mapping_withholds_the_options_too(client_as_student):
+    """`NOT_PUBLISHED` is not the only unready state.
+
+    A mapping that exists but is wrong — another programme's elective under this
+    slot — must withhold the list just as firmly. The student is told the same
+    thing either way: naming the difference would expose an internal data fault as
+    though it were their situation.
+    """
+    from core.services.elective_readiness import INVALID_MAPPING
+
+    elective = ElectiveCourse.objects.create(
+        course_code="CY401", course_name="Foreign", credit_hours=3, programme="SOMEWHERE"
+    )
+    ElectiveTermMapping.objects.create(
+        programme=PROG,
+        placeholder_code="CE1",
+        elective_id=elective.id,
+        academic_year=YEAR,
+        term=TERM,
+    )
+    d = _detail("CE1")
+    assert d["mapping_status"] == INVALID_MAPPING
+    assert d["options"] == [], "an invalid mapping leaked its options"
+    assert d["message_ar"]
+
+    body = _page(client_as_student, "CE1").content.decode()
+    assert "CY401" not in body
+    assert 'class="cd-option"' not in body
+
+
+def test_a_mapping_for_another_term_does_not_open_the_gate(client_as_student):
+    """`ElectiveTermMapping` is term-scoped, and the gate must be too.
+
+    Without the filter a slot mapped for last year reads as ready and the screen
+    ships options that are not on offer.
+    """
+    from core.services.elective_readiness import NOT_PUBLISHED
+
+    elective = ElectiveCourse.objects.create(
+        course_code="CZ401", course_name="Last year", credit_hours=3, programme=PROG
+    )
+    ElectiveTermMapping.objects.create(
+        programme=PROG,
+        placeholder_code="CE1",
+        elective_id=elective.id,
+        academic_year="1447",
+        term="2",
+    )
+    d = _detail("CE1")
+    assert d["mapping_status"] == NOT_PUBLISHED
+    assert d["options"] == []
+    assert "CZ401" not in _page(client_as_student, "CE1").content.decode()
