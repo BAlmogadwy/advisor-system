@@ -10870,7 +10870,19 @@ html[data-theme="dark"] .im-modal-footer {
 .sa-muted { color: var(--text-muted, #6b7280); font-size: .875rem; }
 .sa-empty { padding: .75rem .25rem; }
 .sa-error { color: var(--danger, #b42318); padding: .75rem; }
-.sa-body { white-space: pre-wrap; }
+/* The answer body. `pre-wrap` moved off the container and onto the paragraph:
+   the container now holds real <p> and <ul> elements, and pre-wrap on a parent
+   turns the whitespace BETWEEN those elements into visible blank lines. */
+.sa-body { display: flow-root; }
+.sa-para { white-space: pre-wrap; margin: 0 0 .6rem; }
+.sa-body > :last-child { margin-bottom: 0; }
+
+/* `padding-inline-start`, not `padding-left`: the marker belongs on the side the
+   text starts from, and an Arabic answer inside an English interface is exactly
+   the case this screen got wrong. */
+.sa-list { margin: 0 0 .6rem; padding-inline-start: 1.35rem; }
+.sa-list li { margin: 0 0 .2rem; }
+.sa-list li::marker { color: var(--t2); }
 
 /* Status is informative, not decorative: a failed turn has to be visibly
    different from an answered one, or a student retries something that worked. */
