@@ -95,6 +95,14 @@ def _problems(program: str, slot_credits: int, options: list[dict[str, Any]]) ->
     )
     if foreign:
         problems.append(f"cross-programme mapping from {', '.join(foreign)}")
+    # A BLANK programme is unverifiable, not universal. Five `ElectiveCourse` rows
+    # carry `programme=''`, and skipping them here meant this gate said READY on a
+    # mapping the importer refuses to write (`CROSS_PROGRAMME`, owner `(unset)`).
+    # The write path and the read path have to agree, or a row created by any other
+    # route — admin, shell, an older import — opens a gate the importer closes.
+    unowned = sorted({o["course_code"] for o in options if not str(o["programme"] or "").strip()})
+    if unowned:
+        problems.append(f"catalogue entry has no programme: {', '.join(unowned[:3])}")
     if slot_credits:
         wrong = [
             o["course_code"]

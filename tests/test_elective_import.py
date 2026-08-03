@@ -15,7 +15,7 @@ from django.core.management.base import CommandError
 
 from core.models import ElectiveCourse, ElectiveTermMapping, ProgrammeRequirement, Student
 from core.services.elective_import import apply_plan, as_csv, build_plan
-from core.services.elective_readiness import NOT_PUBLISHED, READY, slot_status
+from core.services.elective_readiness import INVALID_MAPPING, NOT_PUBLISHED, READY, slot_status
 
 pytestmark = pytest.mark.django_db
 
@@ -427,3 +427,41 @@ def test_only_the_program_elective_type_is_a_placeholder(world):
     assert is_elective_slot("  programme elective  ") is True
     for not_a_slot in ("Free Elective", "University Elective", "Mandatory", "", None):
         assert is_elective_slot(not_a_slot) is False, not_a_slot
+
+
+def test_an_unowned_catalogue_entry_does_not_open_the_gate(world):
+    """The write path refused it and the read path let it through.
+
+    Five `ElectiveCourse` rows carry `programme=''`. `_problems` skipped them --
+    `if o["programme"] and ...` -- so a mapping onto one read as READY at runtime
+    while `build_plan` rejected the identical row as `CROSS_PROGRAMME` with owner
+    `(unset)`. A row written by any other route (admin, shell, an older import)
+    would therefore have shown students an option the importer will not publish.
+    """
+    orphan = ElectiveCourse.objects.create(
+        course_code="IX9",
+        course_name="Unowned",
+        credit_hours=3,
+        programme="",
+    )
+    ElectiveTermMapping.objects.create(
+        programme=PROG,
+        placeholder_code="IE1",
+        elective_id=orphan.id,
+        academic_year=YEAR,
+        term=TERM,
+    )
+    status, options, problems = slot_status(PROG, "IE1", YEAR, TERM)
+    assert status == INVALID_MAPPING, status
+    assert options == [], "an unverifiable option was handed to the caller"
+    assert any("no programme" in p for p in problems), problems
+
+    # And the two paths now agree, which is the whole point.
+    plan = build_plan(_csv(f"{YEAR},{TERM},{PROG},IE1,IX9,approved-1448"))
+    assert not plan.ok
+    assert [p.code for p in plan.problems] == ["CROSS_PROGRAMME"], plan.problems
+
+    # The student still learns nothing about which of the two it was.
+    from core.services.elective_readiness import NOT_READY_AR, student_message
+
+    assert student_message(status) == NOT_READY_AR
