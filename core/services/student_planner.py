@@ -118,7 +118,12 @@ def run_solver(
         keep_registered=keep_current_sections,
         suggest_swaps=False,  # the service emits placeholder strings, never real swaps
         strict_per_course=False,  # unusable on real data: returns scheduled=0
-        consider_capacity=False,  # dead lever: available_capacity is NULL on every row
+        # Seats are NOT promised. The reason used to read "available_capacity is
+        # NULL on every row", which was true before the 50-section import and is
+        # false now — all 50 live rows carry a number. The decision stands on a
+        # current reason instead: capacity is a snapshot with no reservation behind
+        # it, and a screen that shows "25 seats" is read as "a seat for you".
+        consider_capacity=False,
         max_credits=int(max_credits or 0),
         gender=gender,
     )
