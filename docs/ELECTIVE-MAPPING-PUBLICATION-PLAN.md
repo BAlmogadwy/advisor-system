@@ -1,7 +1,19 @@
 # Elective mapping publication — plan
 
 Read-only. **No rows are published by this document or by the commit that adds
-it**, and none may be published until an authoritative source is attached to §3.
+it.**
+
+**Authority, settled 2026-08-03:**
+
+```
+Local schema + local data  = authoritative
+Online schema + online data = obsolete test environment
+```
+
+Validate against the local database only. Do not reconcile with the online
+database and do not preserve its rows — it is disposable, and time spent matching
+it is time spent matching test data. The eventual online publication is a
+controlled rebuild, not a sync; see §10.
 
 The course-detail screen already renders elective options the moment a
 programme-slot-term goes `READY` (PR #57). Nothing further is needed on the screen
@@ -88,11 +100,21 @@ The five `programme=''` rows are a third, separate gap.
 
 ---
 
-## 3. The authoritative source — NOT YET IDENTIFIED
+## 3. What is settled, and what is still open
 
-**This section is deliberately empty of content and blocks everything below it.**
+The authority decision above answers **which database to trust**. It does not
+answer **which courses are academically approved for a slot in a term** — those are
+different questions, and only the first has been settled.
 
-For each `(programme, slot, term)` the publication must record:
+**Settled.** The local database is the current truth, so the 23 existing
+`ElectiveTermMapping` rows are current truth and are RETAINED by default. No
+comparison against the online database is required, wanted, or planned.
+
+**Still open, and still blocking a write.** Twenty-six of the 28 live slots have no
+mapping at all. Nothing in the local database says which courses fill them —
+`ElectiveCourse` records catalogue membership, and a catalogue is a list of
+candidates, not a decision. So for each `(programme, slot, term)` still to be
+published:
 
 | question | why it cannot be inferred |
 |---|---|
@@ -101,7 +123,7 @@ For each `(programme, slot, term)` the publication must record:
 | does it apply to one term or persist | `ElectiveTermMapping` is term-scoped; a mapping that should persist must be re-published per term, deliberately |
 | may a student take more than one from the slot | affects whether the screen offers a list or a single choice |
 | expected credit value | see §2.1 |
-| retain / add / replace / reject the existing row | the two live rows already exist and were not published by this process |
+| retain / add / replace / reject the existing row | the two live rows predate this process; retained by default under §Authority, but a replacement still needs a reason |
 | which active students are affected | 117 / 66 / 88 / 49 per programme |
 
 ### Forbidden inference
@@ -241,12 +263,40 @@ everything?
 ## 9. Sequence
 
 ```
-authoritative mapping inventory   <- BLOCKED on §3
--> dry-run importer and validation
--> reviewed publication data
+importer: parse, validate, diff, dry-run   <- buildable NOW, against local data
+-> approved mapping data for the 26 open slots   <- BLOCKED on §3
+-> reviewed publication file
 -> atomic apply
 -> readiness verification
 ```
 
-Steps 2 and 3 of the importer can be built against fixtures while §3 is open. **No
-elective row may be written to the live database until §3 names its source.**
+The importer is buildable now: it validates against the local schema and refuses
+anything it cannot prove. What it cannot do is invent the rows it validates. **No
+elective row may be written for an unmapped slot until §3 names its approval
+source.**
+
+---
+
+## 10. Publishing online — a rebuild, not a sync
+
+Recorded here because it is the step most likely to be improvised under time
+pressure, and the wrong version of it is silent.
+
+```
+1. final backup of the online database — for ROLLBACK ONLY, not as a source
+2. deploy current code and ALL migrations to a clean PostgreSQL database
+3. export the authoritative local data in a database-independent format
+4. import into the clean online database
+5. integrity checks, readiness reports, smoke tests
+6. switch the application to the rebuilt database
+7. keep the old database briefly, delete after verification
+```
+
+**Do not copy a local SQLite file into PostgreSQL.** The schema is migrated by
+running the migrations, and the data is imported after validation. A file copy
+carries SQLite's type affinity into a database that has real types, and it skips
+every check between here and there.
+
+The backup at step 1 exists to go backwards, not forwards. Nothing is read out of
+it into the new database — that would reintroduce the test data this rebuild is
+meant to leave behind.
