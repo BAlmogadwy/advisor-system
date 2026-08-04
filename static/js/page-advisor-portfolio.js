@@ -33,8 +33,8 @@ const T = {
   failedLoadStudents: IS_AR ? 'تعذّر تحميل الطلاب'                  : 'Failed to load students',
   failedLoadAdvisors: IS_AR ? 'تعذّر تحميل قائمة المرشدين'          : 'Failed to load the advisor list',
   showingFirst:    (n, total) => IS_AR
-    ? `يُعرض أول ${n} من ${total} طالبًا. استخدم البحث أو تصدير CSV للبقية.`
-    : `Showing the first ${n} of ${total} students. Use search or the CSV export for the rest.`,
+    ? `يُعرض أول ${n} من ${total} طالبًا في هذا الجدول. تصدير CSV يشمل القائمة كاملة.`
+    : `This table holds the first ${n} of ${total} students. The CSV export covers the full list.`,
   mappingNotReady:    IS_AR ? 'ربط الطلاب بالمرشدين غير جاهز بعد.'  : 'Student-advisor mapping is not ready yet.',
   mappingNotReadyShort: IS_AR ? 'الربط غير جاهز'                    : 'Mapping not ready',
   nStudents:       (n) => IS_AR ? `${n} طالب`                       : `${n} students`,
@@ -179,9 +179,24 @@ async function loadStudents(advisorId) {
     /* `page_size` explicitly. Omitting it took the server default of 50, and
        the client's own PAGE_SIZE is also 50 — so its pager saw exactly one page
        and hid itself, and ten of sixty advisees were unreachable with no control
-       to reach them. 500 is the server's ceiling; the slice happens after the
-       whole roster is built, so a larger page costs no extra queries (measured:
-       8 at 50, 8 at 500). `data.count` is the real total either way. */
+       to reach them.
+
+       500 is the server's ceiling. The slice happens after the whole roster is
+       built, so a larger page issues NO ADDITIONAL SQL QUERIES — measured, 8 at
+       page_size=50 and 8 at 500. That is the whole of the measurement, and it is
+       not the whole of the cost: Python enrichment, risk and recommendation
+       computation, JSON serialisation, response bytes, browser memory and DOM
+       filtering all still scale with the roster. 500 rows measured ~284 KB.
+
+       THE CONTRACT this establishes, which is not arbitrary pagination:
+         <= 500 advisees  fully interactive here — every row loaded, filtered,
+                          sorted and paged client-side.
+         >  500 advisees  the totals stay truthful (`data.count`), the screen says
+                          plainly that it holds a prefix, and the COMPLETE roster
+                          is reachable through the CSV export, which passes no
+                          page_size and so returns everything.
+       Genuine server-side paging would be needed to interact with row 501 in this
+       table. No adviser is near that today (largest measured roster: 27). */
     const res = await fetch(
       `/report/students-by-advisor/?advisor_id=${encodeURIComponent(advisorId)}&page=1&page_size=${SERVER_PAGE_SIZE}`
     );

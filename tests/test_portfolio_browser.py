@@ -424,3 +424,9 @@ class PortfolioDeadEndTests(PortfolioBrowserTests):
         assert page.is_visible("#apTruncatedNote"), "a truncated roster said nothing about it"
         note = page.inner_text("#apTruncatedNote")
         assert "500" in note and "505" in note, note
+        # And it must point somewhere. Rows 501-505 are NOT reachable in this
+        # table — that is the acknowledged boundary, not full pagination — so the
+        # note has to name the export, which passes no page_size and returns the
+        # complete roster.
+        assert "CSV" in note.upper(), note
+        assert page.get_attribute("#apCsvLink", "href") not in (None, "#")
