@@ -1160,3 +1160,61 @@ def test_an_option_without_prerequisites_shows_no_empty_gate(client_as_student):
         # page that renders `en` by default is an assertion about nothing — the
         # first version of this test passed with the condition forced to `True`.
         assert label not in body, f"{language}: an empty gate rendered as a bare label"
+
+
+# ── the status comparison is normalised, not lucky ───────────────
+
+
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [
+        ("passed", "passed"),
+        ("PASSED", "passed"),
+        (" passed ", "passed"),
+        ("Passed", "passed"),
+        ("studying", "studying"),
+        ("Studying", "studying"),
+        ("  STUDYING", "studying"),
+    ],
+)
+def test_a_settled_slot_is_recognised_whatever_case_the_status_was_written_in(
+    plan, stored, expected
+):
+    """`StudentCourse.status` is a bare TextField — no `choices`, default `''`.
+
+    Lowercase is a convention of whoever writes the rows, not a constraint of the
+    schema. All 16,434 live rows are canonical today, which is precisely the kind
+    of fact that stops being true after one import by someone who did not know it
+    was load-bearing.
+
+    The failure mode is silent and it favours the wrong answer: an unmatched
+    `"PASSED"` drops the student back into the not-published branch and tells them
+    the options for a requirement they have completed are not ready yet.
+    """
+    StudentCourse.objects.update_or_create(
+        student_id=SID,
+        course=Course.objects.get(course_code="CE1"),
+        defaults={"status": stored, "programme_term": 7},
+    )
+    d = _detail("CE1")
+    assert d["your_status"] == expected, f"{stored!r} was not read as {expected}"
+    assert d["options"] == []
+
+
+@pytest.mark.parametrize("stored", ["not_taken", "NOT_TAKEN", " not_taken ", "", "  ", "withdrawn"])
+def test_normalising_does_not_turn_an_unsettled_status_into_a_settlement(plan, stored):
+    """The other direction, so the fix cannot become "any row means done".
+
+    `withdrawn` is deliberately in the list: a status the registrar may invent
+    later must fall through to the gate, not be guessed at.
+    """
+    from core.services.elective_readiness import NOT_READY_AR
+
+    StudentCourse.objects.update_or_create(
+        student_id=SID,
+        course=Course.objects.get(course_code="CE1"),
+        defaults={"status": stored, "programme_term": 7},
+    )
+    d = _detail("CE1")
+    assert d.get("your_status") is None, f"{stored!r} was read as a settlement"
+    assert d["message_ar"] == NOT_READY_AR

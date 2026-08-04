@@ -96,14 +96,23 @@ def _own_status(student_id: int, code: str) -> str:
 
     One query, and only asked where the answer changes what is said. `passed`
     outranks `studying` because a student who retook and passed has passed.
+
+    NORMALISED before comparison. `StudentCourse.status` is a bare `TextField` —
+    no `choices`, default `''` — so lowercase is a convention of the writers, not
+    a constraint of the schema. Every one of the 16,434 live rows happens to be
+    canonical today, which is exactly the kind of fact that stops being true after
+    one import written by someone who did not know it was load-bearing.
+    `"PASSED"` matching nothing would silently return this student to the
+    not-published branch: the failure is invisible and it favours the wrong answer.
     """
     from core.models import StudentCourse
 
-    found = set(
-        StudentCourse.objects.filter(
+    found = {
+        str(status or "").strip().casefold()
+        for status in StudentCourse.objects.filter(
             student_id=int(student_id), course__course_code__iexact=code
         ).values_list("status", flat=True)
-    )
+    }
     for raw, value in SETTLED_STATUSES.items():
         if raw in found:
             return value
