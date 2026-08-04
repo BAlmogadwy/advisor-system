@@ -228,3 +228,205 @@ class PortfolioBrowserTests(StaticLiveServerTestCase):
             "the file stopped executing — the guard did not do its job"
         )
         assert errors == [], errors
+
+
+# ── the three defects the revived branch exposed ─────────────────
+#
+# None was caused by fixing `USER_ROLE`. All three sat behind a branch that had
+# never executed, so nothing had ever reached them.
+
+
+def _blank_advisor_client(self):
+    """An ADVISOR with no advisor_id — the state the template and the JS disagreed
+    about. Reachable in production through the user-admin create and demote paths,
+    through `rbac_seed --advisor-id ''`, and by simply having no UserScope row."""
+    user = User.objects.create_user(username="blankadv", password="x", is_staff=True)
+    set_user_scope(user.id, advisor_id="")
+    client = Client()
+    client.force_login(user)
+    return {
+        "name": "sessionid",
+        "value": client.cookies["sessionid"].value,
+        "url": self.live_server_url,
+    }
+
+
+class PortfolioDeadEndTests(PortfolioBrowserTests):
+    """Same harness, different failures."""
+
+    def _blank_page(self):
+        context = self.browser.new_context()
+        context.add_cookies([_blank_advisor_client(self)])
+        self.addCleanup(context.close)
+        return context.new_page()
+
+    # ── 1. blank advisor_id ──────────────────────────────────────
+
+    def test_an_adviser_with_no_id_is_told_rather_than_left_staring(self):
+        """It used to show an empty table saying "choose an advisor above" while
+        CSS hid the control it named, with no toast and no console error.
+
+        Either the picker is usable or the problem is stated. Silence is the one
+        outcome that is not allowed.
+        """
+        self._students()
+        page = self._blank_page()
+        errors = []
+        page.on("pageerror", lambda e: errors.append(str(e)))
+        self._open(page)
+
+        bar_hidden = "d-none" in (page.get_attribute("#apAdvisorBar", "class") or "")
+        body = page.inner_text("#apTable tbody")
+
+        assert not bar_hidden or body.strip(), "hidden picker AND an empty explanation"
+        if bar_hidden:
+            raise AssertionError("the picker is hidden for a user who has no portfolio")
+        assert errors == [], errors
+
+    def test_the_403_from_the_advisor_list_is_surfaced(self):
+        """`if (!res.ok || !Array.isArray(data.items)) return;` — a bare return.
+
+        `loadStudents`, twenty lines below, already renders its failures into the
+        tbody and raises a toast. This one did not.
+        """
+        self._students()
+        page = self._blank_page()
+        self._open(page)
+        page.wait_for_selector("#apTable tbody", timeout=15_000)
+        body = page.inner_text("#apTable tbody")
+        assert body.strip(), "the table is blank and nothing said why"
+        assert "choose an advisor" not in body.lower(), (
+            "still inviting the user to use a control they cannot see or use"
+        )
+
+    def test_the_program_filter_survives_for_a_healthy_adviser(self):
+        """`#apProgramFilter` and `#apLoadedLabel` were children of the hidden bar,
+        so EVERY adviser lost them — including one whose portfolio loads fine."""
+        self._students()
+        page = self._page()
+        self._open(page)
+        page.wait_for_selector("#apTable tbody tr[data-sid]", timeout=15_000)
+        assert page.is_visible("#apProgramFilter"), "the program filter went with the picker"
+
+    # ── 2. truncation ────────────────────────────────────────────
+
+    def _many(self, n=60):
+        ensure_role_groups()
+        for i in range(n):
+            Student.objects.update_or_create(
+                student_id=960000 + i,
+                defaults={
+                    "name": f"STUDENT {960000 + i}",
+                    "program": "AI",
+                    "section": "M",
+                    "advisor_id": ADVISER_ID,
+                    "status": "ACTIVE",
+                },
+            )
+
+    def test_a_roster_over_fifty_is_fully_reachable(self):
+        """The client asked for no page size, took the server default of 50, and its
+        own PAGE_SIZE is also 50 — so its pager computed one page and hid itself.
+        Ten of sixty advisees had no control that could reach them."""
+        self._many(60)
+        page = self._page()
+        self._open(page)
+        page.wait_for_selector("#apTable tbody tr[data-sid]", timeout=20_000)
+
+        assert page.evaluate("() => allStudents.length") == 60, page.evaluate(
+            "() => allStudents.length"
+        )
+        assert page.inner_html("#apPagination").strip(), "no pager for a 60-row roster"
+
+    def test_the_totals_agree_with_each_other(self):
+        """It read "50 students" beside an attention count of 60 — the page
+        contradicting itself, because one number came from the slice and the other
+        from the server's summary over the whole set."""
+        self._many(60)
+        page = self._page()
+        self._open(page)
+        page.wait_for_selector("#apTable tbody tr[data-sid]", timeout=20_000)
+
+        chip = page.inner_text("#apCountChip")
+        students = page.inner_text("#mStudents")
+        assert "60" in chip, chip
+        assert students.strip() == "60", students
+        assert "50" not in page.inner_text("#apShowing").split("of")[-1], page.inner_text(
+            "#apShowing"
+        )
+
+    # ── 3. the CSV export ────────────────────────────────────────
+
+    def test_an_adviser_can_export_the_rows_they_can_already_read(self):
+        """The JSON was ROLE_ADVISOR and the CSV was ROLE_GENERAL_ADVISOR, so an
+        adviser saw every row on screen and was refused the same rows as a file.
+        `#apCsvLink` is an <a href>, so the click navigated the whole tab to a raw
+        403 JSON blob."""
+        self._students()
+        page = self._page()
+        self._open(page)
+        page.wait_for_selector("#apTable tbody tr[data-sid]", timeout=15_000)
+
+        href = page.get_attribute("#apCsvLink", "href")
+        assert href and href != "#", href
+        if href.startswith("/"):
+            href = self.live_server_url + href
+        response = page.request.get(href)
+        assert response.status == 200, f"{response.status}: {response.text()[:200]}"
+        assert "text/csv" in (response.headers.get("content-type") or "")
+        assert "990001" in response.text()
+
+    def test_the_export_still_refuses_another_advisers_roster(self):
+        """Relaxing the guard is only safe because the scope resolver refuses a
+        mismatch. Before it, this view answered one with 200 and a header-only
+        file — a refusal that downloads looking like an empty portfolio."""
+        self._students()
+        page = self._page()
+        self._open(page)
+        response = page.request.get(
+            f"{self.live_server_url}/export/students-by-advisor.csv?advisor_id={OTHER_ADVISER_ID}"
+        )
+        assert response.status == 403, f"{response.status}: {response.text()[:200]}"
+
+    def test_a_roster_past_the_request_ceiling_reports_the_true_total(self):
+        """The only case where the two numbers differ.
+
+        Below the ceiling `rosterTotal` and `allStudents.length` are equal, so a
+        mutant reverting the chips to the slice length is EQUIVALENT and survives —
+        measured, not assumed. This builds a roster past `SERVER_PAGE_SIZE` so the
+        distinction becomes observable, and pins the honest behaviour: report the
+        server's count, and say plainly that not every row is loaded.
+        """
+        ensure_role_groups()
+        Student.objects.bulk_create(
+            [
+                Student(
+                    student_id=950000 + i,
+                    name=f"BULK {i}",
+                    program="AI",
+                    section="M",
+                    advisor_id=ADVISER_ID,
+                    status="ACTIVE",
+                )
+                for i in range(505)
+            ],
+            ignore_conflicts=True,
+        )
+        page = self._page()
+        self._open(page)
+        page.wait_for_selector("#apTable tbody tr[data-sid]", timeout=60_000)
+
+        loaded = page.evaluate("() => allStudents.length")
+        assert loaded == 500, loaded
+
+        assert "505" in page.inner_text("#apCountChip"), page.inner_text("#apCountChip")
+        assert page.inner_text("#mStudents").strip() == "505", page.inner_text("#mStudents")
+        assert page.is_visible("#apTruncatedNote"), "a truncated roster said nothing about it"
+        note = page.inner_text("#apTruncatedNote")
+        assert "500" in note and "505" in note, note
+        # And it must point somewhere. Rows 501-505 are NOT reachable in this
+        # table — that is the acknowledged boundary, not full pagination — so the
+        # note has to name the export, which passes no page_size and returns the
+        # complete roster.
+        assert "CSV" in note.upper(), note
+        assert page.get_attribute("#apCsvLink", "href") not in (None, "#")

@@ -1796,7 +1796,17 @@ def missing_high_priority_view(request: HttpRequest) -> JsonResponse:
     return JsonResponse(payload)
 
 
-@role_required(ROLE_GENERAL_ADVISOR)
+# ROLE_ADVISOR, matching the JSON endpoint this screen already reads. An adviser
+# could see every row on screen and was refused the same rows as a file — and
+# because #apCsvLink is an <a href>, clicking it navigated the whole tab to a raw
+# 403 JSON blob.
+#
+# Only safe alongside `resolve_roster_scope`: before it, this view's sole control
+# was this decorator plus a falsy-guarded scope check that a blank advisor_id
+# skipped entirely. Relaxing the guard on top of that would have turned a 403 into
+# a data leak. The resolver refuses an unscoped caller and answers a cross-advisor
+# request with 403 rather than an empty file.
+@role_required(ROLE_ADVISOR)
 @require_GET
 def export_students_by_advisor_csv_view(request: HttpRequest) -> HttpResponse:
     advisor_id = (request.GET.get("advisor_id") or "").strip()
