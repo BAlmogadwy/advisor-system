@@ -44,13 +44,121 @@
     <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}الساعات المسجّلة{% else %}Registered credits{% endif %}</div><div class="v">{% if student %}{{ student.current_registered_credits|default_if_none:"—" }}{% else %}—{% endif %}</div></div></div>
     <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}الحالة{% else %}Status{% endif %}</div><div class="v">{% if student %}{{ student.status|default_if_none:"—" }}{% else %}—{% endif %}</div></div></div>
   </div>
-  {% if plan %}
+  {% comment %}
+    THE SECOND KPI ROW, REPLACED WHOLE.
+
+    It used to mix recorded student facts, plan-state counts and one claim the
+    data does not support: «متاحة للتسجيل هذا الفصل» rendered `eligible_now`,
+    computed separately in the view from prerequisites alone. Prerequisites do not
+    establish that a course is offered this term, that a section is published, or
+    that a seat exists.
+
+    Everything below comes from ONE service, `build_student_home_cards`. This
+    template interprets nothing: no arithmetic, no thresholds, no labels derived
+    from numbers. If a value is not in `home_cards` it is not shown.
+  {% endcomment %}
+  {% if home_cards %}
   <div class="row g-2 mt-1">
-    <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}مقررات مجتازة{% else %}Passed courses{% endif %}</div><div class="v">{{ plan.summary.passed }}</div></div></div>
-    <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}قيد الدراسة{% else %}Currently studying{% endif %}</div><div class="v">{{ plan.summary.studying }}</div></div></div>
-    <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}متاحة للتسجيل هذا الفصل{% else %}Available to register this term{% endif %}</div><div class="v">{{ eligible_now|default_if_none:"—" }}</div></div></div>
-    <div class="col-md-3"><div class="kpi"><div class="k">{% if LANGUAGE_CODE == 'ar' %}محجوبة بمتطلب{% else %}Locked by prerequisite{% endif %}</div><div class="v">{{ plan.summary.not_taken_locked }}</div></div></div>
+
+    {% comment %}
+     GPA and its approved band. The band is decided by the service from the
+       policy store; the scale is asserted because the approved table itself
+       reaches it, not because stored values happen to.
+    {% endcomment %}
+    <div class="col-md-3"><div class="kpi">
+      <div class="k">{% if LANGUAGE_CODE == 'ar' %}المعدل التراكمي{% else %}Cumulative GPA{% endif %}</div>
+      <div class="v" dir="ltr">{{ home_cards.gpa.value|default:"—" }}{% if home_cards.gpa.value %} <span class="small text-secondary">/ {{ home_cards.gpa.scale }}</span>{% endif %}</div>
+      {% if home_cards.gpa.classified %}
+        <div class="small text-secondary" dir="auto">
+          {% if LANGUAGE_CODE == 'ar' %}التقدير العام: {{ home_cards.gpa.band_ar }}{% else %}General estimate: {{ home_cards.gpa.band_en }}{% endif %}
+          {% if home_cards.gpa.source.page %}<span class="text-secondary" title="{{ home_cards.gpa.source.title_ar }} — {{ home_cards.gpa.source.policy_id }}">· {% if LANGUAGE_CODE == 'ar' %}المصدر{% else %}source{% endif %} {% if LANGUAGE_CODE == 'ar' %}ص{% else %}p.{% endif %} {{ home_cards.gpa.source.page }}</span>{% endif %}
+        </div>
+      {% elif home_cards.gpa.note_ar %}
+        {% comment %}
+         A fact about the TABLE, never about the student. No warning wording:
+           TU.DISMISSAL.THREE_WARNINGS carries never_infer, and the count it needs
+           does not exist in the schema.
+        {% endcomment %}
+        <div class="small text-secondary" dir="auto">{{ home_cards.gpa.note_ar }}</div>
+      {% endif %}
+    </div></div>
+
+    {# Registered HOURS for the configured term, from the sections on file. #}
+    <div class="col-md-3"><div class="kpi">
+      <div class="k">{% if LANGUAGE_CODE == 'ar' %}الساعات المسجلة{% else %}Registered hours{% endif %}</div>
+      <div class="v">{% if home_cards.registered_hours.known %}{{ home_cards.registered_hours.value }}{% else %}—{% endif %}</div>
+      <div class="small text-secondary" dir="auto">
+        {% if LANGUAGE_CODE == 'ar' %}الفصل المحدد في النظام{% else %}the term configured in the system{% endif %}
+      </div>
+    </div></div>
+
+    {# Which single course opens the most doors, and why the number is what it is. #}
+    <div class="col-md-3"><div class="kpi">
+      <div class="k">{% if LANGUAGE_CODE == 'ar' %}مقرر يتيح أكبر عدد من المقررات{% else %}Course that frees the most{% endif %}</div>
+      {% if home_cards.unlock %}
+        <div class="v" dir="ltr">{{ home_cards.unlock.course_code }}</div>
+        <div class="small text-secondary" dir="auto">
+          {% if LANGUAGE_CODE == 'ar' %}يتيح مباشرةً {{ home_cards.unlock.frees_now_count }}{% else %}frees {{ home_cards.unlock.frees_now_count }} immediately{% endif %}
+        </div>
+      {% else %}
+        <div class="v">—</div>
+      {% endif %}
+    </div></div>
+
+    {# Progress, with NO denominator. See the breakdown below. #}
+    <div class="col-md-3"><div class="kpi">
+      <div class="k">{% if LANGUAGE_CODE == 'ar' %}تقدمك في الخطة{% else %}Your plan progress{% endif %}</div>
+      <div class="v">{{ home_cards.plan_state.passed }}</div>
+      <div class="small text-secondary" dir="auto">
+        {% if LANGUAGE_CODE == 'ar' %}مقررات مجتازة{% else %}courses passed{% endif %}
+      </div>
+    </div></div>
   </div>
+
+  {% if home_cards.unlock %}
+    <p class="small text-secondary mb-0 mt-2" dir="auto">
+      {% if LANGUAGE_CODE == 'ar' %}اجتياز <strong dir="ltr">{{ home_cards.unlock.course_code }}</strong> يتيح لك مباشرةً {{ home_cards.unlock.frees_now_count }} مقررات كانت تنتظر هذا المقرر وحده.{% else %}Passing <strong dir="ltr">{{ home_cards.unlock.course_code }}</strong> immediately frees {{ home_cards.unlock.frees_now_count }} courses that were waiting on this one alone.{% endif %}
+    </p>
+  {% endif %}
+
+  {% comment %}
+   The four mutually exclusive states. `one_step` used to sit BESIDE `locked`
+     while being a subset of it, so the tiles appeared to sum to more courses than
+     the plan holds. `blocked_deeper` is the remainder.
+  {% endcomment %}
+  <details class="mt-2">
+    <summary class="small text-secondary">{% if LANGUAGE_CODE == 'ar' %}تفصيل حالات المقررات{% else %}Course-state breakdown{% endif %}</summary>
+    <div class="table-wrap mt-2">
+      <table class="table table-sm mb-0">
+        <tbody>
+          <tr><td dir="auto">{% if LANGUAGE_CODE == 'ar' %}مجتازة{% else %}Passed{% endif %}</td><td class="text-end">{{ home_cards.plan_state.passed }}</td></tr>
+          {% if home_cards.plan_state.studying %}<tr><td dir="auto">{% if LANGUAGE_CODE == 'ar' %}قيد الدراسة{% else %}Currently studying{% endif %}</td><td class="text-end">{{ home_cards.plan_state.studying }}</td></tr>{% endif %}
+          {% comment %}
+           NOT «متاحة للتسجيل». The service establishes prerequisites only — not
+             section publication, not capacity, not permission.
+          {% endcomment %}
+          <tr><td dir="auto">{% if LANGUAGE_CODE == 'ar' %}مستوفية للمتطلبات{% else %}Prerequisites met{% endif %}</td><td class="text-end">{{ home_cards.plan_state.open }}</td></tr>
+          <tr><td dir="auto">{% if LANGUAGE_CODE == 'ar' %}يفصلها متطلب واحد{% else %}One prerequisite away{% endif %}</td><td class="text-end">{{ home_cards.plan_state.one_step }}</td></tr>
+          <tr><td dir="auto">{% if LANGUAGE_CODE == 'ar' %}تحتاج أكثر من متطلب{% else %}Needs more than one{% endif %}</td><td class="text-end">{{ home_cards.plan_state.blocked_deeper }}</td></tr>
+          {% comment %}
+           Counted APART. A placeholder is not a course in any state — it is a
+             choice not yet made.
+          {% endcomment %}
+          <tr><td dir="auto">{% if LANGUAGE_CODE == 'ar' %}متطلبات اختيارية لم يُحدّد مقررها{% else %}Elective requirements not yet chosen{% endif %}</td><td class="text-end">{{ home_cards.plan_state.placeholder_total }}</td></tr>
+        </tbody>
+      </table>
+      {% if home_cards.plan_state.reconciles %}
+        {% comment %}
+         NOT «من أصل». This is what is classified in THIS student's rows, which
+           is an inventory of what the system holds about them — not the officially
+           declared programme-plan size. That needs their exact curriculum edition.
+        {% endcomment %}
+        <p class="small text-secondary mb-0 mt-1" dir="auto">
+          {% if LANGUAGE_CODE == 'ar' %}المتطلبات المصنفة في بيانات خطتك الحالية: {{ home_cards.plan_state.classified_requirement_total }}{% else %}Requirements classified in your current plan data: {{ home_cards.plan_state.classified_requirement_total }}{% endif %}
+        </p>
+      {% endif %}
+    </div>
+  </details>
   {% endif %}
 </div>
 
@@ -111,7 +219,14 @@
 
 {# ── Recommended courses ── #}
 <div class="card p-3">
-  <h6 class="mb-2">{% if LANGUAGE_CODE == 'ar' %}المقررات المقترحة للفصل القادم{% else %}Recommended courses for next term{% endif %}</h6>
+  {% comment %}
+    NOT «للفصل القادم». The recommender ranks the student's own remaining plan
+    against prerequisites and a credit cap. It does not know which courses are
+    offered in any particular term, so naming one is a claim the data does not
+    carry.
+  {% endcomment %}
+  <h6 class="mb-2">{% if LANGUAGE_CODE == 'ar' %}المقررات المقترحة لك{% else %}Suggested for you{% endif %}</h6>
+  <p class="small text-secondary mb-2" dir="auto">{% if LANGUAGE_CODE == 'ar' %}بحسب بيانات الخطة الحالية.{% else %}Based on your current plan data.{% endif %}</p>
   {% if recommendations %}
     <div class="table-wrap">
       <table class="table table-sm mb-0">
