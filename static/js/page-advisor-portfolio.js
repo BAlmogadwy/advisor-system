@@ -701,8 +701,24 @@ wireMobileCards('apTable', {
   actionCol: 9,
 });
 
-const USER_ROLE = 'userRole';
-const USER_ADVISOR_ID = 'userAdvisorId';
+/* The values the template writes, NOT their names.
+ *
+ * These were `'userRole'` and `'userAdvisorId'` — the identifiers as string
+ * literals — so the test below was `'userRole' === 'ADVISOR'`, false for
+ * everyone, and no adviser has ever taken the own-portfolio branch.
+ *
+ * It was a DEAD END, not a degraded path. `advisor_portfolio.html` puts `d-none`
+ * on the adviser bar for exactly `role == 'ADVISOR'`, so the else branch fell
+ * through to a picker the same user could not see: an empty table telling them
+ * to "choose an advisor above", pointing at nothing.
+ *
+ * `typeof` rather than a bare reference: these are `const` in a separate inline
+ * <script>, so a template edit that drops that block would throw a ReferenceError
+ * at the top level of this file and take the rest of the page's JavaScript with
+ * it. Degrading to the picker is the safe failure.
+ */
+const USER_ROLE = typeof userRole === 'string' ? userRole : '';
+const USER_ADVISOR_ID = typeof userAdvisorId === 'string' ? userAdvisorId : '';
 
 if (USER_ROLE === 'ADVISOR' && USER_ADVISOR_ID) {
   // Advisor role: skip dropdown, load own students immediately
