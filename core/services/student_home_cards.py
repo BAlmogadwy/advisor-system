@@ -279,26 +279,35 @@ def _registered_hours(student_id: int, academic_year: int, term: int) -> dict[st
     screen ends up confidently wrong.
     """
     from core.models import Student
-    from core.services.virtual_advisor import _current_term_registrations
+    from core.services.student_sections import get_student_term_registration_summary
 
     try:
-        current = _current_term_registrations(int(student_id), set()) or {}
+        summary = get_student_term_registration_summary(
+            int(student_id), str(academic_year), str(term)
+        )
     except Exception:  # noqa: BLE001 — one card degrades, the page does not
-        return {"value": None, "known": False, "academic_year": academic_year, "term": term}
+        return {
+            "value": None,
+            "known": False,
+            "course_count": 0,
+            "source": "unavailable",
+            "academic_year": academic_year,
+            "term": term,
+            "disagrees_with_profile": None,
+        }
 
-    hours = current.get("registered_credit_hours")
+    hours = summary.get("value")
     profile = (
         Student.objects.filter(student_id=int(student_id))
         .values_list("current_registered_credits", flat=True)
         .first()
     )
     return {
-        "value": int(hours or 0),
-        "known": hours is not None,
-        "course_count": int(current.get("registered_course_count") or 0),
-        "source": str(current.get("source") or ""),
-        "academic_year": current.get("academic_year") or academic_year,
-        "term": current.get("term") or term,
+        **summary,
+        # Diagnostic only. The scraped profile column is NOT a substitute for
+        # missing term-scoped evidence — it carries no term, so it cannot answer
+        # "how many hours in 1448/1". Where the two disagree the screen shows the
+        # evidenced figure and this records the other.
         "disagrees_with_profile": (
             None if profile is None or hours is None or int(profile) == int(hours) else int(profile)
         ),

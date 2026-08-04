@@ -264,6 +264,57 @@ def append_unmapped_studying_courses(
     return out
 
 
+def get_student_term_registration_summary(
+    student_id: int | str, academic_year: str, term: str
+) -> dict[str, object]:
+    """Registered credit hours for THE TERM ASKED FOR, and how confident that is.
+
+    Distinct from `virtual_advisor._current_term_registrations`, which deliberately
+    reports the student's LATEST stored term — its docstring says so: "the chat's
+    configured term is the term being planned FOR and may differ from the term
+    being studied". That is right for adviser chat and wrong for a dashboard tile
+    labelled «الفصل المحدد في النظام», which asserts the configured term. Calling
+    the private helper there produced a real mismatch: before registration opens,
+    the configured term is 1448/1, the latest stored term is 1447/2, and the card
+    showed 1447/2's hours under 1448/1's label.
+
+    NO ROWS IS NOT ZERO. With this schema, an empty baseline can mean the student
+    registered nothing, or registration has not opened, or the import has not run,
+    or section mappings are incomplete — and there is no term-level completeness
+    marker to tell them apart. `known=False` lets the screen show «—», which is
+    true in all four cases, rather than a zero that is only true in one.
+
+    Credits are counted ONCE PER COURSE. The baseline is one row per MEETING, so
+    summing rows would multiply a 3-hour course by its three weekly sessions.
+    """
+    rows = get_student_term_baseline(student_id, str(academic_year), str(term))
+    if not rows:
+        return {
+            "value": None,
+            "known": False,
+            "course_count": 0,
+            "source": "no_term_registration_evidence",
+            "academic_year": str(academic_year),
+            "term": str(term),
+        }
+
+    credits_by_course: dict[str, int] = {}
+    for row in rows:
+        code = str(row.get("course_key") or row.get("course_code") or "").strip().upper()
+        if not code:
+            continue
+        credits_by_course.setdefault(code, int(row.get("credits") or 0))
+
+    return {
+        "value": sum(credits_by_course.values()),
+        "known": True,
+        "course_count": len(credits_by_course),
+        "source": "timetable_sections",
+        "academic_year": str(academic_year),
+        "term": str(term),
+    }
+
+
 def replace_student_term_sections(
     student_id: int | str,
     academic_year: str,

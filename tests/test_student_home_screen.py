@@ -196,3 +196,144 @@ def test_the_page_survives_the_card_service_failing(student, monkeypatch):
     response = client.get(reverse("student_home"), SERVER_NAME="testserver")
     assert response.status_code == 200
     assert response.context["home_cards"] is None
+
+
+# ── the card reads THE CONFIGURED TERM ───────────────────────────
+#
+# `virtual_advisor._current_term_registrations` reports the student's LATEST
+# stored term by design — its docstring says "the chat's configured term is the
+# term being planned FOR and may differ from the term being studied". Calling it
+# from a tile labelled «الفصل المحدد في النظام» showed one term's hours under
+# another term's label. The rendered tests did not catch it because every student
+# I checked happened to have their latest term equal to the configured one.
+
+
+def _register(student_id, code, year, term, credits=3, section="M1", meetings=3):
+    """One TermSection with several meetings, so the credit sum cannot be a row count."""
+    from core.models import (
+        Course,
+        ProgrammeRequirement,
+        StudentTermSection,
+        TermSection,
+        TermSectionMeeting,
+    )
+
+    # The baseline reads credits from ProgrammeRequirement for the student's
+    # programme, keyed on course code — TermSection carries no credit column.
+    Course.objects.update_or_create(
+        course_code=code, defaults={"description": code, "credit_hours": credits}
+    )
+    ProgrammeRequirement.objects.update_or_create(
+        program=PROG,
+        course_code=code,
+        defaults={"programme_term": 5, "credit_hours": credits, "type": "Mandatory"},
+    )
+    ts = TermSection.objects.create(
+        course_code=code[:2],
+        course_number=code[2:],
+        course_key=code,
+        course_name=code,
+        section=section,
+    )
+    for i in range(meetings):
+        TermSectionMeeting.objects.create(
+            term_section=ts,
+            day=["SUN", "MON", "WED"][i % 3],
+            start_time=f"{9 + i:02d}:00",
+            end_time=f"{10 + i:02d}:00",
+        )
+    StudentTermSection.objects.create(
+        student_id=student_id, academic_year=str(year), term=str(term), term_section=ts
+    )
+    return ts
+
+
+def test_hours_from_an_earlier_term_are_not_shown_as_the_configured_term(student):
+    """The exact mismatch. 8 hours stored in 1447/2, nothing in 1448/1.
+
+    The private adviser helper returns the 1447/2 figure because that is the
+    latest term it can find. The dashboard must not show it under a label that
+    says «the term configured in the system».
+    """
+    from core.services.student_home_cards import build_student_home_cards
+
+    _register(SID, "SX401", 1447, 2, credits=5)
+    _register(SID, "SX402", 1447, 2, credits=3)
+
+    card = build_student_home_cards(SID, 1448, 1)["registered_hours"]
+    assert card["value"] != 8, "an earlier term's hours are being shown as the configured term"
+    assert card["known"] is False
+    assert card["academic_year"] == "1448" and card["term"] == "1"
+
+
+def test_the_configured_term_wins_when_both_terms_have_rows(student):
+    """8 hours in 1447/2 and 3 in 1448/1 — the card shows 3."""
+    from core.services.student_home_cards import build_student_home_cards
+
+    _register(SID, "SX401", 1447, 2, credits=5)
+    _register(SID, "SX402", 1447, 2, credits=3)
+    _register(SID, "SX403", 1448, 1, credits=3)
+
+    card = build_student_home_cards(SID, 1448, 1)["registered_hours"]
+    assert card["value"] == 3, card
+    assert card["course_count"] == 1
+    assert card["known"] is True
+
+
+def test_credits_are_counted_once_per_course_not_once_per_meeting(student):
+    """The baseline is one row per MEETING. Summing rows multiplies a 3-hour
+    course by its three weekly sessions."""
+    from core.services.student_home_cards import build_student_home_cards
+
+    _register(SID, "SX404", 1448, 1, credits=4, meetings=3)
+    card = build_student_home_cards(SID, 1448, 1)["registered_hours"]
+    assert card["value"] == 4, f"counted meetings, not courses: {card}"
+
+
+def test_no_rows_for_the_configured_term_is_unknown_not_zero(student):
+    """An empty baseline can mean registered nothing, registration not open, the
+    import not run, or incomplete section mappings. There is no completeness
+    marker to tell them apart, so «—» is true in all four and 0 in only one."""
+    from core.services.student_home_cards import build_student_home_cards
+
+    card = build_student_home_cards(SID, 1448, 1)["registered_hours"]
+    assert card["known"] is False
+    assert card["value"] is None
+    assert card["source"] == "no_term_registration_evidence"
+
+    body = _page()
+    hours_block = body[body.index("الساعات المسجلة") :][:400]
+    assert "—" in hours_block, "an unknown figure was rendered as a number"
+
+
+def test_changing_the_configured_term_changes_what_is_queried(student):
+    """Guards the wiring itself: if the arguments were ignored again, both calls
+    would return the same figure."""
+    from core.services.student_home_cards import build_student_home_cards
+
+    _register(SID, "SX405", 1447, 2, credits=5)
+    _register(SID, "SX406", 1448, 1, credits=2)
+
+    assert build_student_home_cards(SID, 1448, 1)["registered_hours"]["value"] == 2
+    assert build_student_home_cards(SID, 1447, 2)["registered_hours"]["value"] == 5
+
+
+def test_the_dashboard_does_not_import_private_adviser_internals():
+    """The architectural boundary, not just today's behaviour.
+
+        student dashboard -> shared student-registration service
+
+    A private name reached across from `virtual_advisor` is how the semantics
+    diverged in the first place: that helper is free to change its term-selection
+    rule for chat's benefit, and the dashboard would silently follow.
+    """
+    import ast
+    import pathlib
+
+    tree = ast.parse(
+        pathlib.Path("core/services/student_home_cards.py").read_text(encoding="utf-8")
+    )
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and "virtual_advisor" in (node.module or ""):
+            private = [a.name for a in node.names if a.name.startswith("_")]
+            assert not private, f"private adviser internals imported: {private}"
