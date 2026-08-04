@@ -7,7 +7,7 @@ from django.views.decorators.http import require_GET
 
 from core.authz import role_required
 from core.models import Course, Prerequisite, ProgrammeRequirement, Student
-from core.services.advisors import list_students_by_advisor
+from core.services.advisors import list_students_by_advisor, resolve_roster_scope
 from core.services.conflict_matrix import build_conflict_matrix_report, export_conflict_matrix_xlsx
 from core.services.debug_reporting import build_recommendation_debug_report
 from core.services.eligibility import (
@@ -20,7 +20,7 @@ from core.services.high_priority_missing import (
     run_missing_high_priority_report,
 )
 from core.services.policy import require_program_scope, require_student_scope
-from core.services.rbac import ROLE_ADVISOR, ROLE_GENERAL_ADVISOR, ROLE_SUPER_ADMIN, get_user_scope
+from core.services.rbac import ROLE_ADVISOR, ROLE_GENERAL_ADVISOR
 from core.services.recommender import recommend_next_courses
 from core.services.reporting import build_aggregate_counts
 from core.services.student_helpers import (
@@ -1807,14 +1807,15 @@ def export_students_by_advisor_csv_view(request: HttpRequest) -> HttpResponse:
     focus = (request.GET.get("focus") or "").strip() or None
     program_filter = (request.GET.get("program_filter") or "").strip() or None
 
-    scope = get_user_scope(request.user)
-    role = str(scope.get("role", ""))
-    forced_advisor_id = str(scope.get("advisor_id", "")).strip() if role != ROLE_SUPER_ADMIN else ""
-    allowed_departments = (
-        [str(x).upper() for x in scope.get("departments", [])]
-        if role == ROLE_GENERAL_ADVISOR
-        else None
+    forced_advisor_id, allowed_departments, scope_error = resolve_roster_scope(
+        request.user, advisor_id
     )
+    if scope_error:
+        # An explicit refusal. This view used to answer a scope mismatch with a 200
+        # carrying nothing but the BOM and a header row, because the check below
+        # reads only `mapping_ready` and discards `payload["error"]` — so "you may
+        # not" arrived looking exactly like "this adviser has no students".
+        return JsonResponse({"error": scope_error}, status=403)
 
     payload = list_students_by_advisor(
         advisor_id,

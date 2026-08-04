@@ -11,6 +11,7 @@ from core.services.advisors import (
     list_academic_advisors,
     list_students_by_advisor,
     parse_student_advisor_csv,
+    resolve_roster_scope,
     upsert_academic_advisor,
 )
 from core.services.audit import log_audit_event
@@ -175,17 +176,11 @@ def students_by_advisor_view(request: HttpRequest) -> JsonResponse:
     except (ValueError, TypeError):
         page_size = 50
 
-    scope = get_user_scope(request.user)
-    role = str(scope.get("role", ""))
-    forced_advisor_id = str(scope.get("advisor_id", "")).strip() if role != ROLE_SUPER_ADMIN else ""
-    if forced_advisor_id and advisor_id != forced_advisor_id:
-        return JsonResponse(
-            {"error": "You can only access your assigned advisor portfolio."}, status=403
-        )
-    if role == ROLE_GENERAL_ADVISOR:
-        allowed_departments = [str(x).upper() for x in scope.get("departments", [])]
-    else:
-        allowed_departments = None
+    forced_advisor_id, allowed_departments, scope_error = resolve_roster_scope(
+        request.user, advisor_id
+    )
+    if scope_error:
+        return JsonResponse({"error": scope_error}, status=403)
 
     return JsonResponse(
         list_students_by_advisor(
