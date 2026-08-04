@@ -10,7 +10,7 @@ student and the registrar nothing:
 
 * `READY` — a mapping exists, resolves to at least one course, and is coherent.
 * `NOT_PUBLISHED` — no mapping for this programme, slot and term. **The common
-  case**: 77 of 84 live slots, and every slot in 8 of 12 programmes.
+  case**: 31 of 38 declared slots, and every slot in 8 of 12 programmes.
 * `INVALID_MAPPING` — a mapping exists but is wrong: another programme's elective,
   or a credit value the slot cannot accept.
 * `MAPPED_BUT_EMPTY` — declared for contract stability, and **currently

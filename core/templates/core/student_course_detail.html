@@ -58,7 +58,7 @@
       When nothing is published the student gets ONE sentence — no empty option
       cards, no greyed-out list of unmapped courses, no guessed alternatives. An
       empty list dressed as a feature is worse than an honest absence, and this is
-      the common case: 77 of 84 live slots.
+      the common case: 31 of 38 declared slots.
     {% endcomment %}
     {% if detail.mapping_ready %}
       <ul class="cd-options">
@@ -67,6 +67,23 @@
             <span class="cd-code" dir="ltr">{{ option.course_code }}</span>
             <span class="cd-name" dir="auto">{{ option.course_name }}</span>
             {% if option.credit_hours %}<span class="cd-muted" dir="ltr">{{ option.credit_hours }}h</span>{% endif %}
+            {% comment %}
+              The gate, which the payload has always carried and this list used to
+              drop. AI463 requires CS372 and 67 of 117 AI students have not passed
+              it; DS487 requires IS252 and 24 of 88 DS students have not. Rendering
+              code, name and hours alone turned a conditional option into an
+              unconditional offer for 91 students.
+
+              A statement about the OPTION, not about the reader: this list is not
+              personalised and must not start claiming who may take what. The
+              student's own standing in a course is what the course's own page is
+              for, and every code here is a link to it.
+            {% endcomment %}
+            {% if option.prerequisites %}
+              <span class="cd-muted cd-option-prereq" dir="auto">{% if LANGUAGE_CODE == 'ar' %}يتطلب{% else %}requires{% endif %}
+                {% for prereq in option.prerequisites %}<span dir="ltr">{{ prereq.course_code }}</span>{% if not forloop.last %}، {% endif %}{% endfor %}
+              </span>
+            {% endif %}
           </li>
         {% endfor %}
       </ul>

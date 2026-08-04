@@ -561,6 +561,45 @@ def test_elective_placeholder_is_not_reported_as_a_course_without_prerequisites(
     assert out["options"][0]["prerequisites"] == ["AI212"]
 
 
+def test_a_declared_elective_is_answered_as_the_course_it_is():
+    """The docstring above says "FE1/CS1 are SLOTS". FE1 is not, and never was.
+
+    111 students have passed `FE1` and 139 `GSE1`; they are 2-hour courses taken
+    under those codes. Answering one as a placeholder tells the model to reply with
+    a list of options that does not exist, for a course the student may already
+    hold. The `AI1` test above is the positive control -- both must hold, or the
+    rule has simply been inverted.
+    """
+    from core.models import Course, ProgrammeRequirement
+    from core.services.rbac import ROLE_SUPER_ADMIN
+    from core.services.virtual_advisor_capabilities import get_default_registry
+
+    for code, name, type_ in (
+        ("FE1", "FREE ELECTIVE COURSE I", "Free Elective"),
+        ("GSE1", "UNIVERSITY ELECTIVE COURSE I", "University Elective"),
+    ):
+        Course.objects.update_or_create(
+            course_code=code, defaults={"description": name, "credit_hours": 2}
+        )
+        ProgrammeRequirement.objects.create(
+            program="AI",
+            course_code=code,
+            course_name=name,
+            type=type_,
+            programme_term=5,
+            credit_hours=2,
+        )
+        out = get_default_registry().execute(
+            "course_prerequisites",
+            {"course_code": code, "program": "AI"},
+            scope={"role": ROLE_SUPER_ADMIN},
+            ctx={},
+        )
+        assert not out.get("is_elective_placeholder"), f"{code} answered as a slot"
+        assert "per_program" in out, f"{code}: a course must be answered like a course"
+        assert "options" not in out, f"{code}: offered options it does not have"
+
+
 def test_unknown_cohort_refuses_instead_of_showing_both():
     """gender_section_filter('') is an ALL-PASS filter.
 

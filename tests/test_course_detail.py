@@ -200,7 +200,7 @@ def test_what_passing_this_would_open(plan):
 
 
 def test_an_unmapped_slot_says_so_rather_than_returning_a_blank_list(plan):
-    """77 of 84 live slots are unmapped, so this IS the screen for most students."""
+    """31 of 38 slots are unmapped, so this IS the screen for most students."""
     d = _detail("CE1")
     assert d["options"] == []
     assert d["mapping_ready"] is False
@@ -348,7 +348,7 @@ def test_a_course_page_shows_status_reasons_and_prerequisites(client_as_student)
 
 
 def test_an_unready_slot_shows_one_sentence_and_no_option_cards(client_as_student):
-    """77 of 84 live slots are unmapped, so this IS the screen for most students.
+    """31 of 38 slots are unmapped, so this IS the screen for most students.
 
     No empty option cards, no greyed-out list, no guessed alternatives.
     """
@@ -821,7 +821,7 @@ def test_a_code_outside_the_plan_does_not_build_the_report(plan, monkeypatch):
 
 
 def test_an_elective_slot_does_not_build_the_report(plan, monkeypatch):
-    """And this is the COMMON path: 77 of 84 live slots are unmapped, so the most
+    """And this is the COMMON path: 31 of 38 slots are unmapped, so the most
     frequent elective answer was also the most expensive way to say nothing."""
     calls = _report_calls(monkeypatch)
     assert _detail("CE1")["kind"] == KIND_ELECTIVE_SLOT
@@ -922,3 +922,241 @@ def test_the_throttle_describes_what_was_actually_refused(client_as_student):
     assert THROTTLED_ACTION_AR in post_body and THROTTLED_ACTION_HEADING_AR in post_body
     assert THROTTLED_PAGE_AR not in post_body
     assert THROTTLED_PAGE_HEADING_AR not in post_body
+
+
+# -- the declared type decides, AT THE SURFACE A STUDENT READS ----
+#
+# Four call-site mutants survived the entire 2024-test suite: the predicate was
+# tested as a function and never through the branch that calls it, so the exact
+# regression the narrowing fixed could be reintroduced here and every test stayed
+# green. These are those tests.
+
+
+@pytest.fixture
+def declared_electives(plan):
+    """`FE1`/`GSE1` -- declared electives that students TAKE.
+
+    111 have passed FE1 and 139 GSE1 in the live database. They are 2-hour courses
+    sitting with the university-requirement block (`GS101` is also 2h), unlike
+    every Program Elective, which is 3h.
+    """
+    for code, name, type_ in (
+        ("GSE1", "University Elective I", "University Elective"),
+        ("FE1", "Free Elective I", "Free Elective"),
+    ):
+        Course.objects.update_or_create(
+            course_code=code, defaults={"description": name, "credit_hours": 2}
+        )
+        ProgrammeRequirement.objects.update_or_create(
+            program=PROG,
+            course_code=code,
+            defaults={
+                "programme_term": 5,
+                "credit_hours": 2,
+                "type": type_,
+                "course_name": name,
+            },
+        )
+    yield
+
+
+def test_a_passed_declared_elective_says_so_instead_of_withholding_options(declared_electives):
+    """364 completed enrolments across 186 students were answered "not published yet".
+
+    While `Free Elective` and `University Elective` counted as placeholders, this
+    branch returned before any status lookup -- so a student who had PASSED `GSE1`
+    was told the options for it had not been published.
+    """
+    from core.services.elective_readiness import NOT_READY_AR
+
+    for code in ("GSE1", "FE1"):
+        _passed(code)
+        d = _detail(code)
+        assert d["kind"] == KIND_COURSE, f"{code}: a course the student passed, answered as a slot"
+        assert d["your_status"] == "passed", f"{code}: {d.get('your_status')!r}"
+        assert d["status_ar"] == "اجتزتَ هذا المقرر."
+        assert NOT_READY_AR not in (d.get("message_ar") or "")
+        assert "options" not in d, f"{code}: offered options for a course, not a slot"
+
+
+def test_an_untaken_declared_elective_is_a_course_with_a_real_status(declared_electives):
+    """Not only the passed case -- otherwise the fix could be "look up a grade
+    first" rather than "it was never a placeholder"."""
+    d = _detail("FE1")
+    assert d["kind"] == KIND_COURSE
+    assert d["your_status"] in {"open_now", "blocked", "unknown"}
+    assert d["status_ar"]
+    assert "mapping_ready" not in d and "options" not in d
+    assert d["credit_hours"] == 2, "the 2-hour declared elective lost its own credit value"
+
+
+def test_a_program_elective_is_still_a_slot(declared_electives):
+    """The positive control. Without it the two tests above pass with the predicate
+    stubbed to `False`, which would be a different bug of the same size."""
+    d = _detail("CE1")
+    assert d["kind"] == KIND_ELECTIVE_SLOT
+    assert "options" in d
+
+
+# -- a placeholder the student has already settled -----------------
+
+
+def test_a_passed_program_elective_reports_the_pass_not_the_gate(plan):
+    """26 students have `DS1` passed, and `DS1` is declared `Program Elective`.
+
+    Narrowing the placeholder set did not fix this: the ordering defect that
+    produced it -- read the type, return, never look at the student -- survived for
+    the set that stayed. A code can be a placeholder AND completed.
+    """
+    from core.services.elective_readiness import NOT_READY_AR
+
+    _passed("CE1")
+    d = _detail("CE1")
+    assert d["your_status"] == "passed", "the slot branch still cannot say 'you did this'"
+    assert d["status_ar"] == "اجتزتَ هذا المقرر."
+    assert d["message_ar"] != NOT_READY_AR, "told to wait for options they no longer need"
+    assert d["message_ar"] == ""
+    assert d["options"] == [], "offered a choice to a student who has already made it"
+
+
+def test_a_settled_slot_does_not_offer_options_even_when_they_are_published(plan):
+    """The harmful ordering is the other way round too: READY must not override the
+    student's own record and re-open a decision they have made."""
+    elective = ElectiveCourse.objects.create(
+        course_code="CT401", course_name="Opt", credit_hours=3, programme=PROG
+    )
+    ElectiveTermMapping.objects.create(
+        programme=PROG,
+        placeholder_code="CE1",
+        elective_id=elective.id,
+        academic_year=YEAR,
+        term=TERM,
+    )
+    assert _detail("CE1")["options"], "the slot is not actually READY; the test proves nothing"
+
+    _passed("CE1")
+    d = _detail("CE1")
+    assert d["your_status"] == "passed"
+    assert d["options"] == []
+    assert d["mapping_ready"] is False
+
+
+def test_a_slot_being_studied_is_not_an_open_question_either(plan):
+    StudentCourse.objects.update_or_create(
+        student_id=SID,
+        course=Course.objects.get(course_code="CE1"),
+        defaults={"status": "studying", "programme_term": 7},
+    )
+    d = _detail("CE1")
+    assert d["your_status"] == "studying"
+    assert d["status_ar"] == ("تدرس هذا المقرر حاليًا، ويلزم اجتيازه.")
+    assert d["options"] == []
+
+
+def test_an_unsettled_slot_still_reaches_the_gate(plan):
+    """`not_taken` is not a settlement. Without this the fix could be "any row at
+    all means done", and 209 students hold a `not_taken` FE1 row."""
+    from core.services.elective_readiness import NOT_READY_AR
+
+    StudentCourse.objects.update_or_create(
+        student_id=SID,
+        course=Course.objects.get(course_code="CE1"),
+        defaults={"status": "not_taken", "programme_term": 7},
+    )
+    d = _detail("CE1")
+    assert d.get("your_status") is None
+    assert d["message_ar"] == NOT_READY_AR
+    assert d["mapping_ready"] is False
+
+
+def test_the_settled_slot_is_the_cheapest_answer_of_all(plan):
+    """It skips `slot_status` as well as the report -- the student with the least
+    left to decide must not pay the most to be told so."""
+    from django.db import connection
+    from django.test.utils import CaptureQueriesContext
+
+    with CaptureQueriesContext(connection) as unsettled:
+        _detail("CE1")
+    _passed("CE1")
+    with CaptureQueriesContext(connection) as settled:
+        _detail("CE1")
+    assert len(settled) <= len(unsettled), (len(settled), len(unsettled))
+    assert len(settled) < 10, len(settled)
+
+
+# -- what the OPTIONS list shows, and what it must not claim --------
+
+
+def test_a_published_option_shows_the_gate_it_carries(client_as_student):
+    """`options[].prerequisites` shipped in the payload and the list dropped it.
+
+    AI463 requires CS372 and 67 of 117 AI students have not passed it; DS487
+    requires IS252 and 24 of 88 DS students have not. Code, name and hours alone
+    turn a conditional option into an unconditional offer -- the display-completeness
+    failure in its stronger form: not an empty value, a dropped one.
+    """
+    elective = ElectiveCourse.objects.create(
+        course_code="CT401",
+        course_name="Retrieval",
+        credit_hours=3,
+        programme=PROG,
+        prerequisites_csv="CB201",
+    )
+    ElectiveTermMapping.objects.create(
+        programme=PROG,
+        placeholder_code="CE1",
+        elective_id=elective.id,
+        academic_year=YEAR,
+        term=TERM,
+    )
+    assert _detail("CE1")["options"][0]["prerequisites"] == [{"course_code": "CB201"}], (
+        "the payload no longer carries the gate; this test is about rendering it"
+    )
+
+    body = _page(client_as_student, "CE1").content.decode()
+    assert "CT401" in body and "Retrieval" in body
+    assert "CB201" in body, "the option's prerequisite is not shown"
+
+
+def test_the_options_list_makes_no_claim_about_this_student(client_as_student):
+    """The gate is a fact about the OPTION. This list is not personalised, and a
+    prerequisite the student happens to hold must not turn into permission."""
+    elective = ElectiveCourse.objects.create(
+        course_code="CT402",
+        course_name="Vision",
+        credit_hours=3,
+        programme=PROG,
+        prerequisites_csv="CB201",
+    )
+    ElectiveTermMapping.objects.create(
+        programme=PROG,
+        placeholder_code="CE1",
+        elective_id=elective.id,
+        academic_year=YEAR,
+        term=TERM,
+    )
+    _passed("CB201")
+    body = _page(client_as_student, "CE1").content.decode()
+    for permission in ("تستطيع تسجيل", "يمكنك تسجيل", "مؤهل", "eligible"):
+        assert permission not in body, permission
+
+
+def test_an_option_without_prerequisites_shows_no_empty_gate(client_as_student):
+    elective = ElectiveCourse.objects.create(
+        course_code="CT403", course_name="Free", credit_hours=3, programme=PROG
+    )
+    ElectiveTermMapping.objects.create(
+        programme=PROG,
+        placeholder_code="CE1",
+        elective_id=elective.id,
+        academic_year=YEAR,
+        term=TERM,
+    )
+    url = reverse("student_course_detail_page", args=["CE1"])
+    for language, label in (("ar", "يتطلب"), ("en", "requires")):
+        body = client_as_student.get(url, headers={"accept-language": language}).content.decode()
+        assert "CT403" in body, language
+        # In the language actually rendered. Asserting the Arabic label against a
+        # page that renders `en` by default is an assertion about nothing — the
+        # first version of this test passed with the condition forced to `True`.
+        assert label not in body, f"{language}: an empty gate rendered as a bare label"

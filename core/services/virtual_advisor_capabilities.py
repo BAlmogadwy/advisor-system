@@ -458,9 +458,10 @@ def _resolve_elective_slot(
 ) -> list[dict[str, Any]] | None:
     """Return the real courses that can fill an elective slot, or None if not a slot.
 
-    A placeholder is recognised by its ProgrammeRequirement.type ("... Elective"), not
-    by guessing at the code shape — FE1 and CS1 look nothing alike and new families
-    would be missed by a pattern.
+    A placeholder is recognised by its ProgrammeRequirement.type — `Program
+    Elective`, exactly — not by guessing at the code shape, and not by the word
+    "elective" either. `Free Elective` and `University Elective` are declared
+    electives students TAKE: 111 have passed FE1, 139 GSE1. See `is_elective_slot`.
     """
     from core.models import ElectiveCourse, ElectiveTermMapping, ProgrammeRequirement
 
@@ -530,7 +531,7 @@ def _exec_course_prerequisites(
                 )
             )
         )
-    # An elective PLACEHOLDER (FE1, GSE1, CS1 ...) is a slot, not a course. Answering
+    # An elective PLACEHOLDER (AI1, DS1, CS1 ...) is a slot, not a course. Answering
     # "prerequisites: []" for one reads as "this course has no prerequisites", which is
     # false for every slot whose real courses have them — ElectiveCourse carries a
     # prerequisites_csv per course. Resolve the slot and report the real options.

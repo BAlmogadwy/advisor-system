@@ -3,6 +3,7 @@
 import pytest
 from django.contrib.auth.models import User
 from django.test import Client, override_settings
+from django.urls import reverse
 
 from core.models import Course, Prerequisite, ProgrammeRequirement, Student, StudentCourse
 from core.services import student_otp
@@ -402,11 +403,25 @@ def gs_plan(plan):
         course_code="GS104",
         defaults={"programme_term": 1, "credit_hours": 2, "type": "Mandatory"},
     )
-    # And a real slot, to prove the fix did not simply disable slot detection.
+    # A declared elective students actually TAKE. Kept, not deleted, when it
+    # stopped being a placeholder: the claim "FE/GSE join the open/locked buckets
+    # they belong in" needs a row to be made about.
+    Course.objects.update_or_create(
+        course_code="FE1", defaults={"description": "FREE ELECTIVE COURSE I", "credit_hours": 2}
+    )
     ProgrammeRequirement.objects.update_or_create(
         program=PROG,
         course_code="FE1",
-        defaults={"programme_term": 7, "credit_hours": 3, "type": "Free Elective"},
+        defaults={"programme_term": 5, "credit_hours": 2, "type": "Free Elective"},
+    )
+    # And a real slot, to prove the fix did not simply disable slot detection.
+    ProgrammeRequirement.objects.update_or_create(
+        program=PROG,
+        course_code="PE1",
+        # A PROGRAM elective. `Free Elective` was the wrong choice here: students
+        # take FE/GSE as ordinary courses — 111 have passed FE1 — so it is not a
+        # placeholder and never was.
+        defaults={"programme_term": 7, "credit_hours": 3, "type": "Program Elective"},
     )
     yield
 
@@ -422,7 +437,7 @@ def test_a_mandatory_course_is_not_an_elective_slot(gs_plan):
     r = _report()
     slots = {s["code"] for s in r["elective_slots"]}
     assert "GS104" not in slots, "a Mandatory course is being offered as a choice"
-    assert "FE1" in slots, "a real elective slot must still be one"
+    assert "PE1" in slots, "a real elective slot must still be one"
 
     everywhere = (
         {c["code"] for c in r["open_courses"]}
@@ -434,15 +449,43 @@ def test_a_mandatory_course_is_not_an_elective_slot(gs_plan):
 
 
 def test_the_type_decides_regardless_of_the_code(gs_plan):
-    """Both directions, so the fix cannot be 'ignore GS' rather than 'read the type'."""
+    """Both directions, so the fix cannot be 'ignore GS' rather than 'read the type'.
+
+    And the set of types that mean PLACEHOLDER is narrower than the word "elective"
+    suggests. Free and University Electives are declared electives that students
+    take as ordinary courses — 111 have passed FE1, 139 GSE1 — so counting them as
+    placeholders told a student who had completed GSE1 that its options were not
+    yet published.
+    """
     from core.services.student_helpers import is_elective_slot
 
-    assert is_elective_slot("Free Elective") is True
     assert is_elective_slot("Program Elective") is True
-    assert is_elective_slot("University Elective") is True
-    assert is_elective_slot("Mandatory") is False
-    assert is_elective_slot("") is False
-    assert is_elective_slot(None) is False
+    assert is_elective_slot("  programme elective ") is True
+    for taken_as_a_course in ("Free Elective", "University Elective", "Mandatory", "", None):
+        assert is_elective_slot(taken_as_a_course) is False, taken_as_a_course
+
+
+def test_a_declared_elective_lands_in_a_bucket_a_student_reads(gs_plan):
+    """`elective_slots` returns BEFORE the open/locked branch, so a code routed
+    there carries no prerequisite explanation and no status at all.
+
+    That is where `FE1` and `GSE1` went -- with 916 untaken and 364 completed
+    enrolments between them -- and it is why this must be asserted through the
+    report, not through the predicate. The predicate had four tests; this branch
+    had none, and a mutant restoring the wide rule here survived all 2024 of them.
+    """
+    r = _report()
+    assert "FE1" not in {s["code"] for s in r["elective_slots"]}, (
+        "a course 111 students have passed is being offered as a choice"
+    )
+    everywhere = (
+        {c["code"] for c in r["open_courses"]}
+        | {c["code"] for c in r["locked_courses"]}
+        | {c["code"] for c in r["done"]}
+        | {c["code"] for c in r["in_progress"]}
+    )
+    assert "FE1" in everywhere, "it vanished from every list a student reads"
+    assert "PE1" in {s["code"] for s in r["elective_slots"]}
 
 
 def test_the_two_classifiers_are_one_function(gs_plan):
@@ -598,3 +641,43 @@ def test_every_reason_kind_becomes_a_sentence():
         # for the no-kind case and asserts nothing at all.
         if kind:
             assert kind.lower() not in text, f"echoed the kind: {text!r}"
+
+
+# -- the heading over `open_courses` is not a registration permission --
+
+
+def test_the_open_list_does_not_tell_the_student_they_may_register(gs_plan):
+    """«تستطيع تسجيلها الآن» is "you can register them now".
+
+    PR #57 removed exactly this claim from the prerequisite badge and it survived
+    as the heading of the list itself -- over a card whose own footnote correctly
+    defines «متاحة» as having finished what the course requires. It matters more
+    now: `FE1`/`GSE1` moved into this list, 916 untaken enrolments across 310 of
+    320 students, for codes with no `TermSection` row at all.
+    """
+    from django.test import Client
+
+    from core.services import student_otp
+
+    client = Client()
+    client.force_login(student_otp.provision_student_user(SID))
+
+    # BOTH languages. The English said the same thing and the site renders `en` by
+    # default, so an Arabic-only assertion would have left the live default unpinned.
+    ar_body = client.get(
+        reverse("student_courses"), headers={"accept-language": "ar"}
+    ).content.decode()
+    assert 'lang="ar"' in ar_body, (
+        "the Arabic page rendered in English, so every Arabic assertion below is vacuous"
+    )
+    assert "تستطيع تسجيلها الآن" not in ar_body, "the registration-permission heading is back"
+    assert "مقررات متاحة لك" in ar_body
+    # The footnote is what carries the meaning; the heading must not outrun it.
+    assert "«متاحة» تعني أنك أنهيت كل ما يتطلبه المقرر" in ar_body
+
+    en_body = client.get(
+        reverse("student_courses"), headers={"accept-language": "en"}
+    ).content.decode()
+    assert "You can take these now" not in en_body, "the English claim is still there"
+    assert "Open to you" in en_body
+    assert "“Open” means you have finished everything the course requires" in en_body

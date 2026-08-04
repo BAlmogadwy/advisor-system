@@ -84,6 +84,32 @@ class CourseDetailUnavailable(Exception):
     """
 
 
+#: The two states that mean the student has settled a requirement themselves,
+#: mapped to this surface's vocabulary. Anything else — `not_taken`, a status the
+#: registrar invents next year, no row at all — is not a settlement and must fall
+#: through to the ordinary answer rather than be guessed at.
+SETTLED_STATUSES: dict[str, str] = {"passed": "passed", "studying": "studying"}
+
+
+def _own_status(student_id: int, code: str) -> str:
+    """This student's own recorded result for this code, or `""`.
+
+    One query, and only asked where the answer changes what is said. `passed`
+    outranks `studying` because a student who retook and passed has passed.
+    """
+    from core.models import StudentCourse
+
+    found = set(
+        StudentCourse.objects.filter(
+            student_id=int(student_id), course__course_code__iexact=code
+        ).values_list("status", flat=True)
+    )
+    for raw, value in SETTLED_STATUSES.items():
+        if raw in found:
+            return value
+    return ""
+
+
 def _reason_ar(reason: dict[str, Any], names: dict[str, str]) -> str:
     kind = str(reason.get("kind") or "")
     template = REASON_AR.get(kind)
@@ -146,9 +172,10 @@ def build_course_detail(
     # it. `build_unlock_report` costs 118-158 queries, and it used to run before
     # this row was even fetched, so `NOT_IN_PLAN` and every elective slot paid for
     # a report neither of them opens. The unmapped elective slot is not a rare
-    # path: 77 of 84 live slots are unmapped, so the most common elective answer on
-    # the whole surface was also the most expensive way of saying "nothing
-    # published yet" — measured at 129 queries to return one sentence.
+    # path: 31 of 38 declared slots are unmapped — 10 of the 12 in a programme that
+    # has students — so the most common elective answer on the whole surface was
+    # also the most expensive way of saying "nothing published yet": measured at 129
+    # queries to return one sentence.
     row = (
         ProgrammeRequirement.objects.filter(program__iexact=program, course_code__iexact=code)
         .values("type", "course_name", "credit_hours")
@@ -175,6 +202,34 @@ def build_course_detail(
         return {**base, "kind": KIND_NOT_IN_PLAN, "message_ar": NOT_IN_PLAN_AR}
 
     if is_elective_slot(row["type"]):
+        # BEFORE the gate: has this student already settled the slot? The registrar
+        # records a result against the PLACEHOLDER code — 26 students have `DS1`
+        # passed — so a slot is not automatically an open question.
+        #
+        # Narrowing the placeholder set was not enough to fix this. Free and
+        # University Electives stopped being slots, which answered 364 enrolments;
+        # the ordering defect that produced them survived for the set that stayed,
+        # because the type was read before the student was. A code can be a
+        # placeholder AND completed, and the answer to someone who completed it is
+        # not "the options have not been published yet".
+        settled = _own_status(int(student_id), code)
+        if settled:
+            return {
+                **base,
+                "kind": KIND_ELECTIVE_SLOT,
+                "course_name": str(row.get("course_name") or ""),
+                "credit_hours": row.get("credit_hours") or 0,
+                "your_status": settled,
+                "status_ar": STATUS_AR.get(settled, STATUS_AR["unknown"]),
+                # No `slot_status` call, and deliberately no options: "choose one of
+                # these" is not something to say to a student who already did. It
+                # also costs nothing to answer, which is the right shape — the
+                # cheapest answer for the student with the least to decide.
+                "mapping_ready": False,
+                "message_ar": "",
+                "options": [],
+            }
+
         # The gate is a BACKEND answer, never a programme name in a template.
         # `slot_status` returns options ONLY when READY — a caller that received
         # them in any other state would be one `if` away from rendering the list

@@ -11,6 +11,22 @@ def normalize_code(code: object | None) -> str:
     return s
 
 
+#: The declared requirement types that are genuinely a PLACEHOLDER — a slot the
+#: student must choose a concrete course to fill.
+#:
+#: Only Program Electives. `Free Elective` and `University Elective` are declared
+#: electives and are NOT placeholders: the student takes them as ordinary courses,
+#: under those very codes. The data says so unambiguously — 111 students have
+#: PASSED `FE1`, 139 have passed `GSE1`, 64 `FE2`, 50 `GSE2`, and you cannot pass
+#: a placeholder. Meanwhile `AI1`/`AI2`/`AI3` are `not_taken` for all 183 students
+#: who have them, which is what a real placeholder looks like.
+#:
+#: Owner's account of the same thing: the only real electives are the Program
+#: Electives; GS/GSE are online courses and FE courses run 100-minute meetings.
+#: They are scheduled, attended and graded — courses, not choices.
+PLACEHOLDER_TYPES = frozenset({"PROGRAM ELECTIVE", "PROGRAMME ELECTIVE"})
+
+
 def is_elective_slot(requirement_type: object | None) -> bool:
     """Whether a programme-requirement row is an elective PLACEHOLDER.
 
@@ -21,15 +37,20 @@ def is_elective_slot(requirement_type: object | None) -> bool:
     code. `student_unlock` used to match a `GS`/`GSE`/`FE` prefix first and consult
     the type second, which caught GS101, GS103, GS104, GS111, GS112, GS151 and
     GS152 — Islamic Studies, Arabic Language Skills, University Life Skills and
-    Computer Skills. Every one of them is declared `Mandatory`, and every one was
-    shown to students as a "choose one with your adviser" slot and counted in no
-    progress bucket at all (issue #55).
+    Computer Skills. Every one is declared `Mandatory`, and every one was shown to
+    students as a "choose one with your adviser" slot and counted in no progress
+    bucket at all (issue #55).
 
-    Code shape cannot work here for the reason the adviser side already documented:
-    FE1 and CS1 look nothing alike, so a pattern that covers today's families misses
-    tomorrow's — and, as it turned out, wrongly claims some of today's.
+    **"Contains the word elective" was too wide.** It caught Free and University
+    Electives, which are taken as ordinary courses — so a student who had PASSED
+    `GSE1` was told «لم تُنشر خيارات هذا المتطلب الاختياري بعد»: the options for a
+    requirement they had already completed had not been published. 364 completed
+    enrolments across FE1/FE2/GSE1/GSE2 sat behind that sentence.
+
+    So the type is still the authority; the set of types that mean "placeholder" is
+    just narrower than the word suggested.
     """
-    return "ELECTIVE" in str(requirement_type or "").upper()
+    return str(requirement_type or "").strip().upper() in PLACEHOLDER_TYPES
 
 
 def get_student_program(student_id: int | str) -> str | None:

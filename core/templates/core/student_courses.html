@@ -51,10 +51,18 @@
   </p>
 </div>
 
-{# ── 2. You can take these now ── #}
+{# ── 2. Open to you — NOT "you may register these" ── #}
 <div class="card p-3 mb-3">
   <h6 class="mb-2">
-    {% if LANGUAGE_CODE == 'ar' %}تستطيع تسجيلها الآن{% else %}You can take these now{% endif %}
+    {% comment %}
+      NOT «تستطيع تسجيلها الآن» ("you can register them now"). That is a
+      registration-permission claim, the same one PR #57 removed from the
+      prerequisite badge, surviving as a heading — and it contradicted the
+      footnote three cards down, which correctly defines «متاحة» as having
+      finished what the course requires. Whether a course RUNS this term, and
+      whether a seat is left, this surface does not know.
+    {% endcomment %}
+    {% if LANGUAGE_CODE == 'ar' %}مقررات متاحة لك{% else %}Open to you{% endif %}
     <span class="badge text-bg-success">{{ report.counts.open }}</span>
   </h6>
   {% if report.open_courses %}
