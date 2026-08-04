@@ -18,8 +18,9 @@ from django.views.decorators.http import require_http_methods, require_POST
 from core.models import Course, Student, StudentTermSection
 from core.report_views import _build_student_plan_payload
 from core.services.rbac import ROLE_STUDENT, get_user_scope
-from core.services.recommender import eligible_next_term_courses, recommend_next_courses
+from core.services.recommender import recommend_next_courses
 from core.services.student_graduation import build_graduation_report
+from core.services.student_home_cards import build_student_home_cards
 from core.services.student_otp import OTPError, issue_otp, provision_student_user, verify_otp
 from core.services.student_sections import get_student_term_baseline, student_gender
 from core.services.student_unlock import build_unlock_report
@@ -396,13 +397,18 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
     except Exception:  # noqa: BLE001
         logger.exception("student recommendations failed for %s", student_id)
         rec_codes = []
-    # What the student may actually register in THIS term (same rule as the
-    # recommendation list, without the credit-load trim) — not the whole-plan count.
+    # ONE service for every card on this screen. `eligible_now` used to be computed
+    # here — a second implementation of "what can this student take", rendered as
+    # «متاحة للتسجيل هذا الفصل». Prerequisite data does not establish that a course
+    # is offered this term, that a section is published, or that a seat exists; and
+    # two implementations of one card eventually disagree, with the one on screen
+    # being the one nobody tested.
     try:
-        eligible_now = len(eligible_next_term_courses(student_id, year, term))
-    except Exception:  # noqa: BLE001
-        logger.exception("student eligibility count failed for %s", student_id)
-        eligible_now = None
+        home_cards = build_student_home_cards(student_id=student_id, academic_year=year, term=term)
+    except Exception:  # noqa: BLE001 — one card block degrades, the page does not
+        logger.exception("student home cards failed for %s", student_id)
+        home_cards = None
+
     names = dict(
         Course.objects.filter(course_code__in=rec_codes).values_list("course_code", "description")
     )
@@ -427,6 +433,6 @@ def student_home_view(request: HttpRequest) -> HttpResponse:
             "grid": grid,
             "unscheduled": unscheduled,
             "recommendations": recommendations,
-            "eligible_now": eligible_now,
+            "home_cards": home_cards,
         },
     )
