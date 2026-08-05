@@ -160,6 +160,21 @@ ALIBABA_LLM_TIMEOUT_SECONDS = float(os.getenv("ALIBABA_LLM_TIMEOUT_SECONDS", "75
 ALIBABA_LLM_MAX_TOKENS = int(os.getenv("ALIBABA_LLM_MAX_TOKENS", "3000"))
 ALIBABA_LLM_MAX_RETRIES = int(os.getenv("ALIBABA_LLM_MAX_RETRIES", "2"))
 
+# THE EGRESS KILL SWITCH. The transport refuses every Alibaba network request
+# unless this is explicitly true — regardless of LLM_BACKEND, regardless of which
+# code path constructed the client.
+#
+# It exists because selecting a backend turned out not to be a strong enough
+# control. Two live calls happened on this branch that should not have: one from
+# a test whose HTTP stub was written and never installed, and one from acting on
+# an ambiguous instruction. Neither was prevented by anything structural.
+#
+# Tests use a mocked transport and never need this. Keep it false until a review
+# authorises the next call.
+ALIBABA_LLM_ALLOW_LIVE_REQUESTS = (
+    os.getenv("ALIBABA_LLM_ALLOW_LIVE_REQUESTS", "false").lower() == "true"
+)
+
 # The evaluation JUDGE is configured separately and defaults to local, ON PURPOSE.
 # Judging Alibaba-generated answers with Alibaba confounds the comparison: a
 # provider marking its own homework is not a measurement.

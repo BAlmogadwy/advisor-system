@@ -16,6 +16,7 @@ import json
 from urllib.error import HTTPError, URLError
 
 import pytest
+from django.conf import settings
 from django.test import override_settings
 
 from core.services import llm_backend
@@ -41,6 +42,13 @@ ALIBABA = {
     "ALIBABA_LLM_BASE_URL": GOOD_URL,
     "ALIBABA_LLM_API_KEY": KEY,
     "ALIBABA_LLM_MODEL": "qwen3.7-max",
+    # The egress kill switch is ON for the transport tests in this file, and the
+    # tests are still offline: `conftest.forbid_llm_network` blocks the socket
+    # repo-wide and each test installs its own fake over it. Enabling the flag
+    # here buys the ability to test retries, redirects and error typing at all —
+    # with it off, every one of those requests stops at the switch and asserts
+    # nothing about the transport. `test_the_kill_switch_*` covers the off case.
+    "ALIBABA_LLM_ALLOW_LIVE_REQUESTS": True,
 }
 
 
@@ -334,3 +342,78 @@ def test_a_retry_log_names_the_region_not_the_host(monkeypatch, caplog):
     assert "region=ap-southeast-1" in caplog.text
     assert WORKSPACE not in caplog.text
     assert KEY not in caplog.text
+
+
+# ── the egress kill switch ───────────────────────────────────────
+#
+# The rest of this file enables `ALIBABA_LLM_ALLOW_LIVE_REQUESTS` so the
+# transport can be tested at all. These four tests are the reason that is safe:
+# they pin the OFF state, which is the shipped default.
+
+OFF = {**ALIBABA, "ALIBABA_LLM_ALLOW_LIVE_REQUESTS": False}
+
+
+def _never_called():
+    def urlopen(request, *args, **kwargs):  # pragma: no cover - must not run
+        raise AssertionError("the kill switch let a request reach the transport")
+
+    return urlopen
+
+
+@pytest.mark.parametrize(
+    ("method", "extra", "because"),
+    [
+        ("chat", {}, "disabled"),
+        ("chat_with_tools", {"tools": []}, "disabled"),
+        # `list_models` never reaches the switch: Model Studio forbids discovery
+        # outright, which stops it one guard earlier. Included anyway — the
+        # invariant under test is "no egress", not "this particular message", and
+        # a switch that covered `chat` while a health check walked out through
+        # `list_models` would still be a hole.
+        ("list_models", None, "discovery"),
+    ],
+)
+def test_the_kill_switch_stops_every_remote_entry_point(monkeypatch, method, extra, because):
+    monkeypatch.setattr(llm_backend, "urlopen", _never_called())
+    with override_settings(**OFF):
+        client = OpenAICompatibleLLMClient(endpoint_config("alibaba"))
+        with pytest.raises(LLMConfigError, match=because):
+            if extra is None:
+                getattr(client, method)()
+            else:
+                getattr(client, method)([{"role": "user", "content": "hi"}], **extra)
+
+
+def test_the_kill_switch_is_off_by_default():
+    """Absent configuration must mean no egress, not "assume yes". This asserts
+    the DEFAULT rather than an explicitly-false setting, because the deployment
+    risk is a `.env` that simply never mentions the flag."""
+    settings_without_the_flag = {k: v for k, v in ALIBABA.items() if "ALLOW_LIVE" not in k}
+    with override_settings(**settings_without_the_flag):
+        assert getattr(settings, "ALIBABA_LLM_ALLOW_LIVE_REQUESTS", False) is False
+
+
+def test_the_kill_switch_refuses_before_the_request_body_exists(monkeypatch):
+    """Ordering, not just outcome. Building the payload first would mean a
+    disabled backend still serialises the prompt — and a serialised prompt is one
+    exception traceback away from a log."""
+    built: list[object] = []
+    monkeypatch.setattr(llm_backend, "Request", lambda *a, **k: built.append(a) or object())
+    monkeypatch.setattr(llm_backend, "urlopen", _never_called())
+    with override_settings(**OFF):
+        client = OpenAICompatibleLLMClient(endpoint_config("alibaba"))
+        with pytest.raises(LLMConfigError):
+            client.chat([{"role": "user", "content": "a student's question"}])
+    assert built == []
+
+
+def test_the_kill_switch_does_not_apply_to_the_local_backend(monkeypatch):
+    """The flag governs OUTBOUND requests to an external processor. Applying it
+    to a model on localhost would make the default configuration unusable."""
+    with override_settings(LLM_BACKEND="local", ALIBABA_LLM_ALLOW_LIVE_REQUESTS=False):
+        config = endpoint_config("local")
+        monkeypatch.setattr(llm_backend, "urlopen", _ok(ANSWER, url=config.base_url))
+        answer = OpenAICompatibleLLMClient(config).chat(
+            [{"role": "user", "content": "hi"}], model="qwen3.6-35b-a3b"
+        )
+        assert answer.content

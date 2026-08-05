@@ -70,9 +70,14 @@ class Command(BaseCommand):
             help="Kept small: this is a transport check, not a generation test.",
         )
         parser.add_argument(
-            "--yes",
+            "--confirm-paid-external-request",
             action="store_true",
-            help="Required for a remote backend. States that a paid request is intended.",
+            dest="confirm_paid",
+            help=(
+                "Required for a remote backend, IN ADDITION to "
+                "ALIBABA_LLM_ALLOW_LIVE_REQUESTS=true. Two controls, because one "
+                "was demonstrably not enough."
+            ),
         )
 
     def handle(self, *args: Any, **options: Any) -> None:
@@ -82,11 +87,19 @@ class Command(BaseCommand):
         except LLMConfigError as exc:
             raise CommandError(f"{backend} is not configured: {exc}") from exc
 
-        if config.is_remote and not options["yes"]:
+        if config.is_remote and not options["confirm_paid"]:
             raise CommandError(
                 f"This will make PAID requests to {config.provider} "
                 f"(region {config.region}) using model {config.model}. "
-                "Re-run with --yes to confirm."
+                "Re-run with --confirm-paid-external-request to confirm."
+            )
+        if config.is_remote and not config.allow_live_requests:
+            # Stated here as well as in the transport so the operator learns it
+            # from the command rather than from a stack trace.
+            raise CommandError(
+                "ALIBABA_LLM_ALLOW_LIVE_REQUESTS is not true; outbound requests to "
+                "this provider are disabled. Both that setting and "
+                "--confirm-paid-external-request are required."
             )
 
         self.stdout.write(f"backend        : {config.backend}")

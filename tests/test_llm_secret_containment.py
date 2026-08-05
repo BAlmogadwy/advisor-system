@@ -68,6 +68,13 @@ ALIBABA = {
     "ALIBABA_LLM_BASE_URL": GOOD_URL,
     "ALIBABA_LLM_API_KEY": SENTINEL_KEY,
     "ALIBABA_LLM_MODEL": "qwen3.7-max",
+    # The egress kill switch is ON for the transport tests in this file, and the
+    # tests are still offline: `conftest.forbid_llm_network` blocks the socket
+    # repo-wide and each test installs its own fake over it. Enabling the flag
+    # here buys the ability to test retries, redirects and error typing at all —
+    # with it off, every one of those requests stops at the switch and asserts
+    # nothing about the transport. `test_the_kill_switch_*` covers the off case.
+    "ALIBABA_LLM_ALLOW_LIVE_REQUESTS": True,
 }
 
 

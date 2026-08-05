@@ -246,6 +246,9 @@ class LLMEndpointConfig:
     allow_model_discovery: bool = True
     #: Remote backends get the explicit privacy projection.
     is_remote: bool = False
+    #: Egress kill switch. A remote client with this false refuses to open a
+    #: connection at all — see `_request`.
+    allow_live_requests: bool = True
     #: Sent as top-level fields on remote requests.
     provider_options: dict[str, Any] = field(default_factory=dict)
 
@@ -423,6 +426,7 @@ def _alibaba_config() -> LLMEndpointConfig:
         supports_assistant_prefill=False,
         allow_model_discovery=False,
         is_remote=True,
+        allow_live_requests=_flag("ALIBABA_LLM_ALLOW_LIVE_REQUESTS", False),
         provider_options={
             # Non-thinking for the first comparison: the local model has already
             # spent whole tool turns on hidden reasoning, and a provider
@@ -529,6 +533,14 @@ class OpenAICompatibleLLMClient:
         the provider's reply into the error string, which is how a student
         record echoed back by a provider would land in a log line.
         """
+        if self.config.is_remote and not self.config.allow_live_requests:
+            # BEFORE the body is built, before a socket exists. Not a policy the
+            # caller may talk past: no argument, no keyword, no backend selector
+            # reaches around it. The only way through is the environment.
+            raise LLMConfigError(
+                "outbound requests to this provider are disabled "
+                "(ALIBABA_LLM_ALLOW_LIVE_REQUESTS is not true)."
+            )
         body = json.dumps(payload).encode("utf-8") if payload is not None else None
         expected_host = (urlparse(self.config.base_url).hostname or "").lower()
         effective_timeout = timeout_seconds if timeout_seconds else self.config.timeout_seconds
