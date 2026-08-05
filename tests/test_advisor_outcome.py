@@ -384,7 +384,19 @@ def test_the_student_never_receives_the_typed_outcome(client):
         reverse("advisor_conversation_messages", args=[str(conversation.id)])
     ).json()
     assistant = payload["messages"][1]
-    assert set(assistant) == {"id", "role", "content", "status", "created_at", "citations"}
+    # `language` is "ar" or "en" — the student's own question reflected back, so the
+    # browser can lay the answer out in the direction the server already pinned the
+    # model to. Deliberately allowed; everything below is what stays out.
+    assert set(assistant) == {
+        "id",
+        "role",
+        "content",
+        "status",
+        "created_at",
+        "citations",
+        "language",
+    }
+    assert assistant["language"] in {"ar", "en"}
     # The exact key set above is the real guard. This is belt-and-braces against a
     # value smuggled into a field that IS allowed — and deliberately does not test
     # for "ABSTAIN", which is a substring of the ABSTAINED message status the screen

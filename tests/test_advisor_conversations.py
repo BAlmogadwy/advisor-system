@@ -723,7 +723,22 @@ def test_the_browser_receives_exactly_these_fields_and_no_others(client):
     }
 
     student_message, assistant = payload["messages"]
-    assert set(student_message) == {"id", "role", "content", "status", "created_at"}
+    # `language` is "ar" or "en" and nothing else. It is added deliberately: the
+    # browser cannot work the direction of an answer out for itself — every
+    # character heuristic tried was wrong on a real answer shape — and the server
+    # already decided it in `_answer_language`, from the student's own question,
+    # before generation. It is the student's own input reflected back as one of two
+    # values, not a fact about the system's reasoning, so it belongs on this side of
+    # the line that keeps `grounding_state` and `answer_mode` off it.
+    assert set(student_message) == {
+        "id",
+        "role",
+        "content",
+        "status",
+        "created_at",
+        "language",
+    }
+    assert student_message["language"] in {"ar", "en"}
     assert set(assistant) == {
         "id",
         "role",
@@ -731,7 +746,11 @@ def test_the_browser_receives_exactly_these_fields_and_no_others(client):
         "status",
         "created_at",
         "citations",
+        "language",
     }
+    assert assistant["language"] == student_message["language"], (
+        "an answer must carry the language its QUESTION pinned"
+    )
     assert set(assistant["citations"][0]) == {
         "policy_id",
         "document_title",

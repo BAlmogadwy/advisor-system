@@ -10798,14 +10798,17 @@ html[data-theme="dark"] .im-modal-footer {
    right — because the page renders RTL in Arabic and LTR in English from the
    same rules. */
 
+/* `--space-8`, not `--space-3`. The scale here is in PIXELS — `--space-3` is 6px
+   — so `var(--space-3, 1rem)` was a declaration whose fallback contradicted its
+   token: written to mean 1rem, resolving to 6px, and looking deliberate. */
 .sa-layout {
   display: grid;
   grid-template-columns: minmax(200px, 260px) 1fr;
-  gap: var(--space-3, 1rem);
+  gap: var(--space-8);
   align-items: start;
 }
 
-.sa-sidebar { position: sticky; top: var(--space-3, 1rem); max-height: 78vh; overflow-y: auto; }
+.sa-sidebar { position: sticky; top: var(--space-8); max-height: 78vh; overflow-y: auto; }
 .sa-conv-list { display: flex; flex-direction: column; gap: .25rem; list-style: none; margin: 0; padding: 0; }
 .sa-conv-item { display: block; }
 
@@ -10838,7 +10841,11 @@ html[data-theme="dark"] .im-modal-footer {
      is accounted for. The reserve is an approximation of that header, and the phone
      test asserts the composer stays on screen — so if the header ever grows, that
      test fails rather than the student silently losing the input box. */
-  .sa-main .va-chat { max-height: calc(100dvh - 20rem); min-height: 18rem; }
+  /* 21rem, not 20: on a phone the two columns stack, so `.sa-layout`'s gap becomes
+     a VERTICAL gap between the sidebar and the thread, and correcting it from a
+     mis-fallen-back 6px to the intended 16px pushed the composer 10px off the
+     bottom of a 812px screen. The phone test caught it, which is what it is for. */
+  .sa-main .va-chat { max-height: calc(100dvh - 21rem); min-height: 18rem; }
 }
 
 .sa-conv {
@@ -10873,6 +10880,12 @@ html[data-theme="dark"] .im-modal-footer {
 /* The answer body. `pre-wrap` moved off the container and onto the paragraph:
    the container now holds real <p> and <ul> elements, and pre-wrap on a parent
    turns the whitespace BETWEEN those elements into visible blank lines. */
+/* …and the SAME trap one level higher. `.va-bubble` is shared with the older
+   adviser page, which puts raw text in it and needs `pre-wrap`; this page puts
+   elements in it, and every newline BETWEEN those elements became a blank line,
+   so each paragraph and list carried a doubled gap the stylesheet never asked
+   for. Reset here rather than on the shared rule the other page depends on. */
+.sa-layout .va-bubble { white-space: normal; }
 .sa-body { display: flow-root; }
 .sa-para { white-space: pre-wrap; margin: 0 0 .6rem; }
 .sa-body > :last-child { margin-bottom: 0; }

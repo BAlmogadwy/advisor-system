@@ -63,7 +63,19 @@
       <form class="va-composer" id="saForm" autocomplete="off">
         {% csrf_token %}
         <label class="visually-hidden" for="saQuestion">{% if LANGUAGE_CODE == 'ar' %}سؤالك{% else %}Your question{% endif %}</label>
-        <input class="va-input" id="saQuestion" type="text" maxlength="1000"
+        {% comment %}
+          dir="auto": the interface language is not the language the student types
+          in. Arabic typed into the default English UI went into a left-to-right
+          field, so the caret sat at the wrong end and the question read backwards
+          while it was being written. The value's own first strong character
+          decides, live, as it is typed.
+
+          ({% comment %}, not {# #} — the hash form is SINGLE-LINE only, and a
+          multi-line one is not a comment at all: it renders to the student. This
+          screen has now been bitten by it five times, and this file already says
+          so 30 lines above.)
+        {% endcomment %}
+        <input class="va-input" id="saQuestion" type="text" maxlength="1000" dir="auto"
                placeholder="{% if LANGUAGE_CODE == 'ar' %}اكتب سؤالك…{% else %}Type your question…{% endif %}" required>
         <button class="btn btn-primary" id="saSend" type="submit">{% if LANGUAGE_CODE == 'ar' %}إرسال{% else %}Send{% endif %}</button>
       </form>
@@ -87,5 +99,5 @@
     }
   };
 </script>
-<script src="{% static 'js/page-student-advisor.js' %}?v=12"></script>
+<script src="{% static 'js/page-student-advisor.js' %}?v=14"></script>
 {% endblock %}
