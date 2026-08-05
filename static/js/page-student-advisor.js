@@ -199,82 +199,143 @@
      Arabic as one neutral unit. The same defect silently affected every credit
      range («19-12 ساعة»), page range and ISO date in an answer. */
 
-  /* Hebrew, Arabic, Syriac, Thaana, NKo, and the Arabic presentation forms. */
-  const RTL_STRONG = /[֑-߿ࡠ-ࣿיִ-﷿ﹰ-﻿]/;
-  /* Latin, Latin Extended, Greek/Coptic, Cyrillic, Armenian — everything below
-     U+0590, which is where Hebrew begins. */
-  const LTR_STRONG = /[A-Za-zÀ-˿Ͱ-֏]/;
+  /* Hebrew, Arabic, Syriac, Thaana, NKo, and the Arabic presentation forms.
+     U+0600-0605 and U+06DD are AN, not strong; the tashkeel at U+064B-065F are
+     NSM; U+060C and U+061F are neutral punctuation. None of them decides a
+     direction, so none of them is counted. */
+  const RTL_STRONG = /[א-״ؠ-يٮ-ۓەۥۦۮۯۺ-ۿܐ-ݏހ-ޥޱߊ-ߪࡠ-ࡪࢠ-ࢴיִ-ﴽﵐ-ﷻﹰ-ﻼ]/;
+  /* Latin, Latin Extended, IPA, Greek/Coptic, Cyrillic, Armenian. Stops at
+     U+02AF: the spacing modifiers and the mathematical signs U+00D7 and U+00F7
+     that fall inside a naive \u00C0-\u02FF range are ON, not strong — a naive
+     range made `textDirection('3 × 4')` answer 'ltr' on the strength of a
+     multiplication sign. */
+  const LTR_STRONG = /[A-Za-zÀ-ÖØ-öø-ʯͰ-ͳͶ-ͽͿ-ϿЀ-ԯԱ-Ֆա-և]/;
 
-  /* WHICH SCRIPT THE TEXT IS MOSTLY IN — deliberately not `dir="auto"`'s rule.
+  /* WHICH SCRIPT A SHORT LABEL IS IN — for the nodes the server does not label.
 
-     Auto takes the FIRST strong character and stops, and this adviser answers
-     course questions: «AI221 هو المقرر الذي سألت عنه…» opens with four Latin
-     letters and is Arabic. Position is the wrong evidence, and reproducing it in
-     JavaScript would have reproduced the defect one layer down — which is what the
-     first version of this function did, and what the course-code test caught.
+     THE SERVER ALREADY DECIDED THIS FOR EVERY MESSAGE.
+     `virtual_advisor._answer_language` picks Arabic or English from the question,
+     deterministically, before generation, and pins the model to it with an
+     instruction never to switch. The API now ships that decision as
+     `message.language`, and `renderBody` takes it. No message's direction is
+     guessed here any more.
 
-     Counting is decisive where position is arbitrary: a course code is a handful
-     of Latin characters inside a paragraph of Arabic, and no realistic answer is
-     close to the boundary. A text with no strong character at all (a bare
-     «09:00-10:15», a case reference) falls back to the interface language, because
-     the labels around it are in the interface language. */
+     That matters because every character rule tried here was wrong on a real
+     answer shape. `dir="auto"` takes the FIRST strong character, so an Arabic
+     answer opening «AI221 هو المقرر…» computes LTR. A character MAJORITY fails in
+     the other direction: Arabic words are short and English course titles are
+     long, so «الشرط المسبق هو Introduction to Artificial Intelligence قبل
+     التسجيل» is 23 Arabic characters against 36 Latin, and a timetable table is
+     almost entirely course codes and clock times. Both are Arabic answers, and
+     both lose a count.
+
+     What is left for this function is the handful of nodes with no message behind
+     them: a conversation title, a case reference, a citation line. They are short
+     labels rather than prose, first-strong is the right rule for them, and the
+     interface language is the right tie-break when they hold no strong character
+     at all. */
   function textDirection(text) {
     const source = String(text == null ? '' : text);
-    let rtl = 0;
-    let ltr = 0;
     for (let i = 0; i < source.length; i += 1) {
       const ch = source.charAt(i);
-      if (RTL_STRONG.test(ch)) rtl += 1;
-      else if (LTR_STRONG.test(ch)) ltr += 1;
+      if (RTL_STRONG.test(ch)) return 'rtl';
+      if (LTR_STRONG.test(ch)) return 'ltr';
     }
-    if (rtl > ltr) return 'rtl';
-    if (ltr > rtl) return 'ltr';
     return AR ? 'rtl' : 'ltr';
   }
 
-  /* A maximal run of Latin letters, digits and the ASCII characters that BIND
-     them into one token: `09:00-10:15`, `19-12`, `2024-09-01`, `AI221`, `3.75`,
-     `M1 M2`. It must begin and end on an alphanumeric, so a bullet's leading
-     hyphen and a sentence's trailing full stop stay outside the isolate and keep
-     behaving as the neutrals they are. Spaces are internal separators on purpose:
-     «09:00 - 10:15» is the same range with the same defect, and splitting it into
-     two isolates around a bare neutral hyphen would leave the swap in place. */
-  const LTR_RUN = /[A-Za-z0-9](?:[A-Za-z0-9 \t:._/-]*[A-Za-z0-9])?/g;
+  /* ── what needs isolating, and what must NOT be ─────────────
+     The first version of this fix isolated every run of Latin-or-digits. That is
+     a way of REVERSING them, and it shipped the very defect it was written to
+     remove.
 
-  function appendIsolated(node, text) {
+     UAX#9 BD8/X9: an isolate is replaced by U+FFFC in the enclosing run, and
+     U+FFFC is class ON. Splitting one Latin sequence at any character the pattern
+     did not treat as an internal separator — `@`, `?`, `&`, `%`, `,` — therefore
+     deleted every strong L from the outer paragraph. Those separators had been
+     resolving to L by N1, as neutrals between two L runs; with both sides now
+     neutral they resolve to R by N2, and L2 lays the pieces out right to left.
+
+     Measured on the real page: «reg@taibahu.edu.sa» reached the student as
+     «taibahu.edu.sa@reg» — an address that does not exist, in a sentence telling
+     them to write to it. Also every URL with a query string, every `%20` file
+     name, and any English clause containing a comma.
+
+     A LATIN LETTER NEVER NEEDED ISOLATING. Rule W7 changes a European number to L
+     when the last strong type before it is L, so `AI221`, `Study%20Plan.pdf` and
+     `Section 3-4` were always one coherent L island and N1 bound their
+     punctuation into it.
+
+     What reorders is a number with no Latin letter in front of it: W2 makes it AN
+     when the last strong type is AL, W4 then refuses to bind the hyphen (it fuses
+     an ES separator only between two EN), and L2 swaps the groups around it. So
+     the rule here is UAX#9's own condition — isolate a digit run when the last
+     strong character before it is right-to-left, and leave every other run alone. */
+  const DIGIT_RUN = /[0-9](?:[0-9 \t:.\/-]*[0-9])?/g;
+
+  /* Carries the last strong character across a whole block. `inlineInto` hands
+     the line over in pieces around `**bold**`, and the bidi paragraph does not
+     restart at those boundaries. Seeded with the block's own direction, which is
+     what sot resolves to. */
+  function strongScanner(dir) {
+    return { last: dir === 'rtl' ? 'rtl' : 'ltr' };
+  }
+
+  function trackStrong(state, text) {
+    for (let i = 0; i < text.length; i += 1) {
+      const ch = text.charAt(i);
+      if (RTL_STRONG.test(ch)) state.last = 'rtl';
+      else if (LTR_STRONG.test(ch)) state.last = 'ltr';
+    }
+  }
+
+  function appendIsolated(node, text, state) {
     const source = String(text);
     let cursor = 0;
     let match;
-    LTR_RUN.lastIndex = 0;
-    while ((match = LTR_RUN.exec(source)) !== null) {
-      if (match.index > cursor) {
-        node.appendChild(document.createTextNode(source.slice(cursor, match.index)));
+    DIGIT_RUN.lastIndex = 0;
+    while ((match = DIGIT_RUN.exec(source)) !== null) {
+      const before = source.slice(cursor, match.index);
+      trackStrong(state, before);
+      if (before) node.appendChild(document.createTextNode(before));
+
+      if (state.last === 'rtl') {
+        const run = el('bdi', null, match[0]);
+        run.setAttribute('dir', 'ltr');
+        node.appendChild(run);
+      } else {
+        /* Preceded by a Latin letter, so W7 already resolved these digits to L.
+           Isolating here would turn a working L island into a neutral and hand its
+           punctuation to N2 — the defect above, in miniature. */
+        node.appendChild(document.createTextNode(match[0]));
       }
-      const run = el('bdi', null, match[0]);
-      run.setAttribute('dir', 'ltr');
-      node.appendChild(run);
       cursor = match.index + match[0].length;
     }
-    if (cursor < source.length) {
-      node.appendChild(document.createTextNode(source.slice(cursor)));
+    const tail = source.slice(cursor);
+    if (tail) {
+      trackStrong(state, tail);
+      node.appendChild(document.createTextNode(tail));
     }
     return node;
   }
 
-  /* Isolation is applied ONLY in an RTL context. In an LTR paragraph the digits
-     already resolve to EN, W4 already binds the hyphen, and the order is already
-     right — so wrapping there would be DOM churn that proves nothing and could
-     only introduce a difference. */
-  function appendDirected(node, text, dir) {
-    if (dir === 'rtl') return appendIsolated(node, text);
+  /* An early-out for LTR blocks, and DELIBERATELY REDUNDANT: the W7 gate below
+     already decides this. In an LTR block sot is `ltr`, so a digit run is only
+     isolated when an Arabic letter precedes it — and in an LTR paragraph even that
+     does not reorder, because N2 resolves the neutral to L rather than to R. A
+     mutant that deletes this guard is therefore EQUIVALENT, and measured to be so
+     rather than assumed; it is kept because it says what the rule is for and
+     because it skips a per-character scan of every English answer. */
+  function appendDirected(node, text, dir, state) {
+    if (dir === 'rtl') return appendIsolated(node, text, state || strongScanner(dir));
     node.appendChild(document.createTextNode(String(text)));
     return node;
   }
 
-  /* The one entry point for a text-bearing node whose language is not known in
-     advance: decides the direction from the content, states it, and isolates the
-     runs that would otherwise be reordered. Every such node on this screen goes
-     through it, so none can be forgotten the way the adviser's reply was. */
+  /* The one entry point for a SHORT LABEL with no message behind it. Every such
+     node on this screen goes through it, so none can be forgotten the way the
+     human adviser's reply was. Messages do not use this — they carry the
+     language the server pinned. */
   function writeText(node, text) {
     const dir = textDirection(text);
     node.setAttribute('dir', dir);
@@ -570,7 +631,18 @@
       /* This was the only message on the screen with no direction at all — a
          person's Arabic reply laid out left-to-right in the default English UI,
          which is the same unreadability the model's answers were fixed for. */
-      reply.appendChild(writeText(el('p'), escalation.resolution_message));
+      /* The one message on this screen written by a PERSON, and the one that had
+         no direction at all — an Arabic reply laid out left-to-right in the default
+         English interface, on the answer a student has been waiting days to read.
+         It takes the language the student ASKED in, which the API carries: it is
+         who the reply is addressed to, and reading the direction off the reply's
+         own characters is the guess this change exists to remove. */
+      const replyDir = escalation.language === 'ar' ? 'rtl'
+        : escalation.language === 'en' ? 'ltr'
+        : textDirection(escalation.resolution_message);
+      const para = el('p');
+      para.setAttribute('dir', replyDir);
+      reply.appendChild(appendDirected(para, escalation.resolution_message, replyDir));
       card.appendChild(reply);
     }
     return card;
@@ -638,29 +710,38 @@
   const BULLET = /^\s*[*•-]\s+(.*)$/;
   const NUMBERED = /^\s*\d+[.)]\s+(.*)$/;
 
+  /* One scanner per BLOCK, threaded through every segment: `**bold**` splits the
+     line into pieces, but the bidi paragraph does not restart at a <strong>, so
+     "the last strong character before this number" has to be carried across them.
+     Scoped to the block and not to the message, because each <p> and each <li> IS
+     its own bidi paragraph and sot resets at its start. */
   function inlineInto(node, text, dir) {
     const source = String(text);
+    const state = strongScanner(dir);
     let cursor = 0;
     let match;
     BOLD.lastIndex = 0;
     while ((match = BOLD.exec(source)) !== null) {
       if (match.index > cursor) {
-        appendDirected(node, source.slice(cursor, match.index), dir);
+        appendDirected(node, source.slice(cursor, match.index), dir, state);
       }
-      node.appendChild(appendDirected(el('strong'), match[1], dir));
+      node.appendChild(appendDirected(el('strong'), match[1], dir, state));
       cursor = match.index + match[0].length;
     }
     if (cursor < source.length) {
-      appendDirected(node, source.slice(cursor), dir);
+      appendDirected(node, source.slice(cursor), dir, state);
     }
     return node;
   }
 
-  function renderBody(text) {
+  function renderBody(text, language) {
     const wrap = el('div', 'sa-body');
     /* ONE direction for the whole answer, stated on the body so every block
-       inherits it. Per-block `dir="auto"` is what let a list hold two. */
-    const dir = textDirection(text);
+       inherits it — per-block `dir="auto"` is what let a list hold two — and taken
+       from the SERVER, which pinned the model to this language before it wrote a
+       word. `textDirection` is the fallback for a stored row from before the API
+       carried it, and for nothing else. */
+    const dir = language === 'ar' ? 'rtl' : language === 'en' ? 'ltr' : textDirection(text);
     wrap.setAttribute('dir', dir);
 
     let list = null;
@@ -721,7 +802,7 @@
 
     article.appendChild(el('div', 'va-avatar', role === 'assistant' ? 'AI' : T.me));
     const bubble = el('div', 'va-bubble');
-    bubble.appendChild(renderBody(displayBody(message)));
+    bubble.appendChild(renderBody(displayBody(message), message.language));
 
     const note = statusNote(message.status);
     if (note && message.status !== 'COMPLETED') {

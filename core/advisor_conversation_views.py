@@ -96,13 +96,35 @@ def _citation_json(citation: AdvisorMessageCitation) -> dict[str, Any]:
     }
 
 
-def _message_json(message: AdvisorMessage) -> dict[str, Any]:
+def _language_of(text: str) -> str:
+    """The answer language, decided by the SAME rule the model was pinned with.
+
+    `virtual_advisor._answer_language` already makes this decision, deterministically
+    and before generation, and instructs the model never to switch. Re-deriving it in
+    the browser from the characters that came back is a second opinion that can
+    disagree with the first — and every character heuristic tried here disagreed on a
+    real answer shape. Arabic words are short and course titles are long, so
+    «الشرط المسبق هو Introduction to Artificial Intelligence قبل التسجيل» is 23 Arabic
+    characters against 36 Latin ones; a timetable table is mostly course codes and
+    clock times. Both are Arabic answers and both lose a character count.
+
+    So the direction travels WITH the message, from the side that chose it.
+    """
+    from core.services.virtual_advisor import _answer_language
+
+    return "ar" if _answer_language(text or "") == "Arabic" else "en"
+
+
+def _message_json(message: AdvisorMessage, *, language: str = "") -> dict[str, Any]:
     data: dict[str, Any] = {
         "id": str(message.id),
         "role": message.role,
         "content": message.content,
         "status": message.status,
         "created_at": message.created_at.isoformat(),
+        # A student message is in its own language; an assistant message is in the
+        # language its QUESTION pinned, which is why the caller passes it in.
+        "language": language or _language_of(message.content),
     }
     if (
         message.role == AdvisorMessage.ROLE_STUDENT
@@ -142,6 +164,11 @@ def _message_json(message: AdvisorMessage) -> dict[str, Any]:
                 "is_open": case.status not in AdvisorEscalation.TERMINAL_STATUSES,
                 "resolution_message": case.resolution_message,
                 "created_at": case.created_at.isoformat(),
+                # A human adviser's reply has no pinned language of its own, so it
+                # takes the one the student asked in. That is who it is addressed to,
+                # and it is the only evidence on file — reading the direction off the
+                # reply's own characters is the guess this whole change removes.
+                "language": data["language"],
             }
     return data
 
@@ -216,8 +243,19 @@ def conversation_messages_view(request: HttpRequest, conversation_id: str) -> Js
         )
     }
     out = []
+    # An assistant turn inherits the language of the question that produced it —
+    # the same value `_answer_language` pinned the model to before it wrote a word.
+    # Reading it off the answer instead would let one Arabic office name in an
+    # English reply, or one English course title in an Arabic one, decide the
+    # direction of the whole message.
+    # Empty until the first question is seen; `_message_json` then falls back to the
+    # message's own text, which is the right answer for a student message and the
+    # only one available for a thread that somehow starts with an assistant turn.
+    asked_in = ""
     for message in messages:
-        data = _message_json(message)
+        if message.role == AdvisorMessage.ROLE_STUDENT:
+            asked_in = _language_of(message.content)
+        data = _message_json(message, language=asked_in)
         feedback = mine.get(message.id)
         if feedback:
             data["feedback"] = {"rating": feedback.rating, "reason_codes": feedback.reason_codes}
@@ -365,7 +403,11 @@ def conversation_post_message_view(request: HttpRequest, conversation_id: str) -
         {
             "conversation": _conversation_json(conversation),
             "student_message": _message_json(student_message),
-            "assistant_message": _message_json(assistant_message),
+            # The answer inherits the QUESTION's language: that is the value
+            # `_answer_language` pinned the model to before it wrote a word.
+            "assistant_message": _message_json(
+                assistant_message, language=_language_of(student_message.content)
+            ),
         },
         status=201,
     )
@@ -468,7 +510,11 @@ def _replay(
         {
             "conversation": _conversation_json(conversation),
             "student_message": _message_json(student_message),
-            "assistant_message": _message_json(assistant) if assistant else None,
+            "assistant_message": (
+                _message_json(assistant, language=_language_of(student_message.content))
+                if assistant
+                else None
+            ),
             "replayed": True,
         },
         status=200,
