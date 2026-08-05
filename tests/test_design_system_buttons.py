@@ -659,6 +659,29 @@ class ButtonSurfaceTests(StaticLiveServerTestCase):
         )
         assert keyboard_max == 1, f"the keyboard ring is not fully opaque: {keyboard['shadow']!r}"
 
+    def test_hover_keeps_the_boundary_too(self):
+        """The hover rule sets `box-shadow`, and box-shadow is not additive — so it
+        replaces the resting ring rather than adding to it. Every state has to
+        restate the boundary, and hover was the one state no assertion covered
+        until an attempt to photograph it went looking."""
+        page = self._page()
+        page.evaluate(
+            """() => {
+              const b = document.createElement('button');
+              b.className = 'btn btn-neutral';
+              b.id = 'hover-probe';
+              b.textContent = 'hover probe';
+              document.body.insertBefore(b, document.body.firstChild);
+            }"""
+        )
+        resting = page.eval_on_selector("#hover-probe", "n => getComputedStyle(n).boxShadow")
+        page.hover("#hover-probe")
+        page.wait_for_timeout(350)
+        hovered = page.eval_on_selector("#hover-probe", "n => getComputedStyle(n).boxShadow")
+
+        assert hovered != resting, "hover changed nothing; the probe was never hovered"
+        assert _has_boundary(hovered), f"hover erased the inset boundary: {hovered!r}"
+
     def test_a_control_disabled_BY_CLASS_does_not_look_focused(self):
         """The `disabled` ATTRIBUTE is not the case worth testing: HTML makes such
         an element unfocusable, so `.focus()` is a no-op and no rule can fire. An
