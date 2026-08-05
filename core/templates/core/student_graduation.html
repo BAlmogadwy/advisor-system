@@ -104,7 +104,7 @@
 
 <div class="card p-3">
   <a class="btn btn-sm btn-primary" href="{% url 'student_courses' %}">{% if LANGUAGE_CODE == 'ar' %}ماذا أستطيع أن أسجّل الآن؟{% else %}What can I take now?{% endif %}</a>
-  <a class="btn btn-sm" href="{% url 'student_advisor' %}">{% if LANGUAGE_CODE == 'ar' %}اسأل المرشد الذكي{% else %}Ask the AI advisor{% endif %}</a>
+  <a class="btn btn-neutral btn-sm" href="{% url 'student_advisor' %}">{% if LANGUAGE_CODE == 'ar' %}اسأل المرشد الذكي{% else %}Ask the AI advisor{% endif %}</a>
 </div>
 
 {% else %}

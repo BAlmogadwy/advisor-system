@@ -80,6 +80,37 @@
   --danger:         #C03030;
   --warning:        #9A6A08;
 
+  /* ── the neutral button ─────────────────────────────────────
+     Its own tokens, because it is the one control that has to look right on FOUR
+     different backdrops — a card, a `.va-bubble`, a modal footer and a glass
+     toolbar — and no opaque palette colour can do that. `.va-bubble` is
+     `var(--surface)`, so a neutral button painted `var(--surface)` is 1.00:1
+     against the very screen it was added for.
+
+     TRANSLUCENT solves it: a tint composites over whatever is behind it, so the
+     contrast is a property of the tint rather than of the backdrop. Measured
+     across all four light surfaces the fill lands at 1.15:1 every time and its
+     text at 7.8–8.8:1.
+
+     The border alpha is COMPUTED, not chosen, and deliberately NOT the minimum
+     that passes. 0.47 is the smallest alpha clearing 3:1 on the hardest of the
+     four backdrops; sitting on the threshold is fragile against alpha rounding,
+     device-pixel anti-aliasing and any future token change. 0.52 measures 3.42 to
+     3.53 across the four, so a 3.25 assertion has real headroom.
+
+     Either way the boundary meets WCAG 1.4.11 for non-text UI without `--line`
+     moving, which would have taken every card, table and input edge in the app
+     with it. That trade was only forced by the rejected base-rule design. */
+  --btn-neutral-bg:     rgba(17,17,68,0.07);
+  --btn-neutral-border: rgba(17,17,68,0.52);
+  --btn-neutral-text:   var(--t2);
+
+  /* A genuinely SECOND surface. Aliasing it to `--surface` collapsed it onto the
+     first, which is how `.sa-escalate.is-prominent` — the panel whose whole job is
+     to stand out when the adviser abstains — ended up 1.00:1 inside a bubble that
+     is already `--surface`. */
+  --surface-2:      #e7ecf4;
+
   /* shape */
   --radius:         10px;
   --radius-sm:      7px;
@@ -192,6 +223,16 @@ html[data-theme="dark"] {
   --t5:             #505468;
   --muted:          #a0a4b8;
   --muted-light:    #7a7e92;
+
+  /* the neutral button — same reasoning, dark values, same refusal to sit on the
+     threshold. 0.38 measures 4.03 to 4.5 across card, surface, bubble and page.
+     Neumorphic light-shadows do not exist against a near-black card, so dark uses
+     the translucent white this theme already gives its inputs, chips and bubbles. */
+  --btn-neutral-bg:     rgba(255,255,255,0.07);
+  --btn-neutral-border: rgba(255,255,255,0.38);
+  --btn-neutral-text:   var(--t1);
+
+  --surface-2:      #232838;
 
   /* borders */
   --line:           rgba(255,255,255,0.06);
@@ -510,8 +551,8 @@ html[data-theme="dark"] .fb-dd,
 html[data-theme="dark"] .tbl-cnt,
 html[data-theme="dark"] .pill-status,
 html[data-theme="dark"] .empty-state-action,
-html[data-theme="dark"] html body .btn:disabled,
-html[data-theme="dark"] html body .btn.disabled {
+html[data-theme="dark"] body .btn:disabled,
+html[data-theme="dark"] body .btn.disabled {
   box-shadow: 0 1px 4px rgba(0,0,0,0.2) !important;
 }
 
@@ -519,14 +560,14 @@ html[data-theme="dark"] html body .btn.disabled {
 html[data-theme="dark"] .btn-circle:hover,
 html[data-theme="dark"] .pg-btn:hover,
 html[data-theme="dark"] .fb-dd:hover,
-html[data-theme="dark"] html body .btn-outline-primary:hover,
-html[data-theme="dark"] html body .btn-outline-secondary:hover,
-html[data-theme="dark"] html body .btn-outline-success:hover,
-html[data-theme="dark"] html body .btn-outline-danger:hover,
-html[data-theme="dark"] html body .btn-outline-warning:hover,
-html[data-theme="dark"] html body .btn-outline-info:hover,
-html[data-theme="dark"] html body .btn-outline-dark:hover,
-html[data-theme="dark"] html body .btn-export:hover,
+html[data-theme="dark"] body .btn-outline-primary:hover,
+html[data-theme="dark"] body .btn-outline-secondary:hover,
+html[data-theme="dark"] body .btn-outline-success:hover,
+html[data-theme="dark"] body .btn-outline-danger:hover,
+html[data-theme="dark"] body .btn-outline-warning:hover,
+html[data-theme="dark"] body .btn-outline-info:hover,
+html[data-theme="dark"] body .btn-outline-dark:hover,
+html[data-theme="dark"] body .btn-export:hover,
 html[data-theme="dark"] .page-header-right .btn-outline-secondary:hover {
   box-shadow: 0 2px 8px rgba(0,0,0,0.3) !important;
 }
@@ -535,14 +576,19 @@ html[data-theme="dark"] .page-header-right .btn-outline-secondary:hover {
 html[data-theme="dark"] .btn-circle:active,
 html[data-theme="dark"] .pg-btn.active,
 html[data-theme="dark"] .fb-dd.active,
-html[data-theme="dark"] html body .btn-outline-primary:active,
-html[data-theme="dark"] html body .btn-outline-secondary:active {
+html[data-theme="dark"] body .btn-outline-primary:active,
+html[data-theme="dark"] body .btn-outline-secondary:active {
   box-shadow: inset 1px 1px 3px rgba(0,0,0,0.3) !important;
 }
 
-/* Button/input focus ring — keep teal ring, kill neumorphic */
-html[data-theme="dark"] html body .btn:focus,
-html[data-theme="dark"] html body .btn:focus-visible,
+/* Input focus ring — keep teal ring, kill neumorphic.
+   The two `.btn` selectors that used to be here are gone, and this is the only
+   rule in this repair where anything was REMOVED rather than corrected. It is
+   redundant after correction, and provably so: its stated intent is "keep the
+   teal ring", which the focus contract now delivers in a solid, measured form,
+   while this declaration is 20%-alpha teal — the 1.9:1 indicator that contract
+   exists to replace. Corrected but left in place, it would have won at (0,3,3)
+   with `!important` and silently reinstated the defect in dark mode. */
 html[data-theme="dark"] .form-control:focus-visible,
 html[data-theme="dark"] .form-select:focus-visible {
   box-shadow: 0 0 0 3px rgba(10,142,110,0.2) !important;
@@ -621,7 +667,7 @@ html[data-theme="dark"] .fb-dd.active {
 }
 
 /* ── Dark: btn-outline-dark hover (was hardcoded navy bg) ─── */
-html[data-theme="dark"] html body .btn-outline-dark:hover {
+html[data-theme="dark"] body .btn-outline-dark:hover {
   background: rgba(255,255,255,0.08) !important;
 }
 
@@ -1665,12 +1711,110 @@ html body .btn.btn-sm {
   border-radius: 10px !important;
 }
 
-html body .btn:focus,
-html body .btn:focus-visible {
-  outline: none !important;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--teal) 50%, transparent),
-              var(--shadow-neu-sm) !important;
+/* ── the neutral button ──────────────────────────────────────
+   An EXPLICIT class, not a fallthrough on the base rule.
+
+   `html body .btn` shapes every button in the app and sets no background, so a
+   `.btn` with no variant falls through to `ButtonFace`, a user-agent system
+   colour — measured `rgb(240,240,240)` in a light UA and `rgb(107,107,107)` in a
+   dark one, ignoring the theme entirely. That is the "dark grey, looks disabled"
+   the screen review reported.
+
+   The first attempt put the surface on the BASE rule. It reached 19 controls and
+   also everything else: `html body .btn` (0,1,2) outranks `.btn-link` (0,1,0), so
+   link-buttons lost their colour in dark mode, and three buttons carrying inline
+   backgrounds gained a grey hairline inside their fill. An explicit class cannot
+   interact with Bootstrap variants, link and close controls, or the
+   screen-specific button systems, and the scope that justified the global
+   approach was wrong anyway — 19 controls in 8 files, not the 130 across 30 I
+   first counted with a `\bbtn\b` pattern that matches inside `btn-circle`. */
+html body .btn-neutral {
+  background:   var(--btn-neutral-bg);
+  color:        var(--btn-neutral-text);
+  /* An inset ring, not a border: `border: none !important` above would have to be
+     fought, and a real border would add 2px to this control's geometry alone. */
+  box-shadow:   inset 0 0 0 1px var(--btn-neutral-border);
 }
+/* THE BOUNDARY SURVIVES EVERY STATE. It is an inset box-shadow, and box-shadow is
+   not additive — any later rule that sets it REPLACES the ring rather than adding
+   to it. The base focus rules below carry `!important`, so without the
+   `.btn-neutral` overrides here the control loses its only visible boundary at
+   precisely the moment attention is on it. Every state therefore restates the
+   inset ring first and appends its own layer. */
+html body .btn-neutral:hover {
+  background:   color-mix(in srgb, var(--teal) 10%, var(--btn-neutral-bg));
+  color:        var(--brand);
+  /* The hover ring is teal AND still a boundary: 60% teal over the fill clears
+     the same threshold the resting ring does. */
+  box-shadow:   inset 0 0 0 1px var(--btn-neutral-border),
+                inset 0 0 0 1px color-mix(in srgb, var(--teal) 60%, transparent);
+}
+
+html body .btn-neutral:active {
+  background:   var(--btn-neutral-bg);
+  box-shadow:   inset 0 0 0 1px var(--btn-neutral-border),
+                inset 2px 2px 4px rgba(0,0,0,0.10);
+}
+
+/* ── focus, in two levels ─────────────────────────────────────
+   The old rule was `var(--teal)` at 50% alpha, which composites against whatever
+   is behind it and measured 1.9–2.1:1 — below the 3:1 an indicator has to reach
+   to be one.
+
+   Dropping `:focus` entirely was the first attempt and it was wrong in the other
+   direction: `page-student-planner.js:308` moves focus to the rebuild-confirm
+   button precisely so the reveal is not silent, and `:316` announces «اضغط
+   «اعرض الجداول الممكنة»» and focuses that button. After a mouse interaction
+   neither matches `:focus-visible`, so both landed with NO indicator at all.
+
+   So both levels exist and differ: a programmatic or mouse focus is visible, a
+   keyboard focus is stronger. The 2px gap is `--surface` rather than `--card`
+   because the ring must survive on a saturated `.btn-primary`, whose own fill
+   would otherwise swallow an inner ring drawn in the card colour. */
+html body .btn:focus {
+  outline: 2px solid transparent;   /* visible to Windows High Contrast */
+  box-shadow: 0 0 0 2px var(--surface),
+              0 0 0 4px color-mix(in srgb, var(--teal) 65%, transparent) !important;
+}
+html body .btn:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: 0 0 0 2px var(--surface),
+              0 0 0 4px var(--teal) !important;
+}
+/* A disabled control must not look active. `pointer-events: none` stops the mouse
+   but says nothing about a programmatic `.focus()`. */
+html body .btn:disabled:focus,
+html body .btn.disabled:focus {
+  outline: none !important;
+  box-shadow: var(--shadow-neu-sm) !important;
+}
+
+/*
+ * MUST REMAIN AFTER THE SHARED .btn FOCUS RULES.
+ * Both declarations are !important and have EQUAL specificity (0,2,2), so source
+ * order alone decides. This rule preserves the neutral inset boundary while
+ * focused; moved above, the boundary silently disappears.
+ *
+ * Not hypothetical: `html body .btn-neutral:focus` was first written believing it
+ * outranked the shared rule at (0,3,2). `.btn-neutral` plus `:focus` is two
+ * class-level selectors, exactly like `.btn:focus`. A browser probe caught it —
+ * the focused control rendered two shadow layers instead of three, having dropped
+ * the only boundary it has, precisely when attention is on it. box-shadow is not
+ * additive; a later declaration replaces the whole list.
+ * `tests/test_design_system_buttons.py` asserts the inset ring survives both
+ * focus levels, so a formatter that reorders this file fails there.
+ */
+html body .btn-neutral:focus {
+  box-shadow:   inset 0 0 0 1px var(--btn-neutral-border),
+                0 0 0 2px var(--surface),
+                0 0 0 4px color-mix(in srgb, var(--teal) 65%, transparent) !important;
+}
+html body .btn-neutral:focus-visible {
+  box-shadow:   inset 0 0 0 1px var(--btn-neutral-border),
+                0 0 0 2px var(--surface),
+                0 0 0 4px var(--teal) !important;
+}
+
 
 /* ============================================================
    ACTIONS ROW
@@ -3967,6 +4111,28 @@ html body .btn.disabled {
   cursor: not-allowed;
   pointer-events: none;
   box-shadow: var(--shadow-neu-sm) !important;
+}
+
+/*
+ * MUST REMAIN AFTER THE SHARED .btn DISABLED RULE ABOVE.
+ * Both declarations are !important and have EQUAL specificity (0,2,2), so source
+ * order alone decides. This rule preserves the neutral inset boundary while
+ * disabled; moved above, the shared neumorphic shadow replaces it and the control
+ * has no boundary at all.
+ *
+ * The same trap as the focus rules, found the same way — by a browser probe, not
+ * by reading the file. A disabled control still has to be recognisable AS a
+ * control, so it keeps its boundary while losing its interactivity: opacity says
+ * disabled, the ring says button, and no outer focus ring appears even when
+ * something calls .focus() on it.
+ */
+html body .btn-neutral:disabled,
+html body .btn-neutral.disabled,
+html body .btn-neutral:disabled:focus,
+html body .btn-neutral.disabled:focus {
+  background:   var(--btn-neutral-bg);
+  color:        var(--btn-neutral-text);
+  box-shadow:   inset 0 0 0 1px var(--btn-neutral-border) !important;
 }
 
 /* ── Export button style (was undefined in audit_explorer) ──── */
@@ -10864,9 +11030,19 @@ html[data-theme="dark"] .im-modal-footer {
   white-space: nowrap;
 }
 .sa-conv:hover { background: var(--surface-2, rgba(127,127,127,.08)); }
+/* The app already has a selected state, 250px away in the same viewport:
+   `.nav-a.active` uses a teal wash and a teal inset edge. This used a grey border
+   that measures 1.19:1 against the sidebar, leaving `font-weight: 600` as the only
+   reliable cue for which conversation a student is in — and weight alone is not a
+   distinction someone can rely on. Same language as the navigation, so the two
+   selected states on one screen agree. */
 .sa-conv.is-active {
-  background: var(--surface-2, rgba(127,127,127,.12));
-  border-color: var(--border, rgba(127,127,127,.25));
+  background: linear-gradient(135deg,
+              color-mix(in srgb, var(--teal) 14%, transparent),
+              rgba(0,174,218,0.05));
+  border-color: transparent;
+  box-shadow: 0 0 0 1px var(--teal-border) inset;
+  color: var(--teal-deep);
   font-weight: 600;
 }
 .sa-conv:focus-visible,

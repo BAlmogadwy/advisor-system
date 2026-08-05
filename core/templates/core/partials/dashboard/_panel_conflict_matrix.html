@@ -12,10 +12,10 @@
         </button>
       </div>
       <div class="d-flex gap-8 mb-14">
-        <button id="cmSavePreset" class="btn btn-outline btn-sm"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}حفظ{% else %}Save preset{% endif %}</button>
-        <button id="cmLoadPreset" class="btn btn-outline btn-sm"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}تحميل{% else %}Load preset{% endif %}</button>
+        <button id="cmSavePreset" class="btn btn-neutral btn-sm"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}حفظ{% else %}Save preset{% endif %}</button>
+        <button id="cmLoadPreset" class="btn btn-neutral btn-sm"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></span>{% if LANGUAGE_CODE == 'ar' %}تحميل{% else %}Load preset{% endif %}</button>
         <div class="fb-spacer"></div>
-        <a id="cmXlsx" class="btn btn-outline btn-sm" href="#" style="text-decoration:none"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>XLSX</a>
+        <a id="cmXlsx" class="btn btn-neutral btn-sm" href="#" style="text-decoration:none"><span class="i i-sm" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span>XLSX</a>
       </div>
       <!-- Meta -->
       <div id="cmMeta" class="meta-banner meta-info meta-mono mb-14">{% if LANGUAGE_CODE == 'ar' %}لم يتم تحميل مصفوفة التعارض بعد.{% else %}No conflict matrix loaded.{% endif %}</div>
