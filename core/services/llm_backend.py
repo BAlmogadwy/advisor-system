@@ -201,7 +201,14 @@ _ALIBABA_HOST_SUFFIXES = (
 
 @dataclass(frozen=True)
 class LLMEndpointConfig:
-    """Everything the client needs, and nothing about which product it serves."""
+    """Everything the client needs, and nothing about which product it serves.
+
+    THE KEY IS EXCLUDED FROM THE REPR, and that is not decoration. A frozen
+    dataclass prints every field by default, so `repr(config)` inside a pytest
+    assertion diff, a `logger.debug("%s", config)`, or a traceback frame that
+    happens to hold the config would print the bearer token in full. Nothing has
+    to be careless for that to happen — the default behaviour is the leak.
+    """
 
     backend: str
     provider: str
@@ -210,7 +217,7 @@ class LLMEndpointConfig:
     timeout_seconds: float
     max_tokens: int
     max_retries: int
-    api_key: str = ""
+    api_key: str = field(default="", repr=False)
     enable_thinking: bool = False
     #: Local Qwen builds are fed a `<think></think>` prefill to suppress hidden
     #: reasoning. That is a property of the SERVER, not of the model name — a
