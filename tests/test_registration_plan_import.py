@@ -281,20 +281,44 @@ def test_a_cross_term_collision_is_refused_before_it_eats_a_row(world):
     assert any(p.code == "CROSS_TERM_COLLISION" for p in plan.problems), plan.problems
 
 
-def test_blank_student_ids_are_counted_not_silently_dropped(world):
-    """openpyxl returns `None` for the continuation cells of a MERGED range, which
-    is how a hand-authored plan usually writes one id across several course rows.
-    Three such rows vanished with `plan.ok` True under a cheerful summary."""
+def test_a_registration_with_no_student_id_is_refused(world):
+    """Counting it was not enough.
+
+    openpyxl returns `None` for the continuation cells of a MERGED range, which is
+    how a hand-authored plan usually writes one id across several course rows. The
+    first fix counted those rows instead of dropping them silently — which turns a
+    silent omission into a reported one, and still lets an incomplete authoritative
+    timetable be applied. A row carrying a course or a section but no student is a
+    registration with nobody attached to it, and forward-filling from a blank is a
+    guess about whose registration it is."""
     plan = build_plan(
         _rosters(("AI331", "AI:S1", "Mon 09:00-10:15; Wed 09:00-10:15", "", "-", 1, "")),
         _detail(
             (700001, "AI", "AI331", "Core", "AI:S1", "", "", "", ""),
             (None, "AI", "AI331", "Core", "AI:S1", "", "", "", ""),
-            ("", "AI", "AI331", "Core", "AI:S1", "", "", "", ""),
         ),
         YEAR,
         TERM,
     )
+    assert not plan.ok
+    assert any(p.code == "BLANK_STUDENT_ID" for p in plan.problems), plan.problems
+
+
+def test_an_entirely_empty_row_is_counted_and_ignored(world):
+    """The trailing rows a spreadsheet carries. They hold no registration, so there
+    is nothing to refuse — but they are still counted, or conservation cannot
+    prove every row was accounted for."""
+    plan = build_plan(
+        _rosters(("AI331", "AI:S1", "Mon 09:00-10:15; Wed 09:00-10:15", "", "-", 1, "")),
+        _detail(
+            (700001, "AI", "AI331", "Core", "AI:S1", "", "", "", ""),
+            (None, None, None, None, None, None, None, None, None),
+            ("", "", "", "", "", "", "", "", ""),
+        ),
+        YEAR,
+        TERM,
+    )
+    assert plan.ok, [str(p) for p in plan.problems]
     assert plan.blank_rows == 2, plan.summary()
     assert plan.detail_rows_read == 3
     assert "2 blank" in plan.summary()
@@ -310,7 +334,7 @@ def test_every_detail_row_is_accounted_for(world):
             (700001, "AI", "AI331", "Core", "AI:S1", "Wed 09:00-10:15", "", "", ""),
             (700001, "AI", "AI491", "Project", "-", "no timeslot", "", "", ""),
             (700001, "AI", "GSE1", "Online elective", "online", "Sun 15:50-17:30", "", "", ""),
-            (None, "AI", "AI331", "Core", "AI:S1", "", "", "", ""),
+            (None, None, None, None, None, None, None, None, None),
         ),
         YEAR,
         TERM,
@@ -440,7 +464,7 @@ def test_a_course_with_no_sections_is_a_reported_gap_not_a_failure(world):
     )
     assert plan.ok, [str(p) for p in plan.problems]
     assert "GSE1" in plan.uncovered
-    assert plan.uncovered["GSE1"][0]["times"] == [("SUN", "15:50")], plan.uncovered
+    assert plan.uncovered["GSE1"][0]["times"] == [("SUN", "15:50", "17:30")], plan.uncovered
     assert len(plan.links) == 1
 
 
@@ -550,9 +574,12 @@ def test_the_term_written_is_the_term_asked_for(world):
 @pytest.mark.parametrize(
     ("cell", "expected"),
     [
-        ("Mon 09:00-10:15", {("MON", "09:00")}),
-        ("Mon 09:00-10:15; Wed 09:00-10:15", {("MON", "09:00"), ("WED", "09:00")}),
-        ("Sun 15:50-17:30 (online)", {("SUN", "15:50")}),
+        ("Mon 09:00-10:15", {("MON", "09:00", "10:15")}),
+        (
+            "Mon 09:00-10:15; Wed 09:00-10:15",
+            {("MON", "09:00", "10:15"), ("WED", "09:00", "10:15")},
+        ),
+        ("Sun 15:50-17:30 (online)", {("SUN", "15:50", "17:30")}),
         ("no timeslot (graduation project)", set()),
         ("", set()),
         (None, set()),
@@ -560,3 +587,77 @@ def test_the_term_written_is_the_term_asked_for(world):
 )
 def test_meeting_times_are_parsed_from_the_workbook_prose(cell, expected):
     assert parse_meetings(cell) == expected
+
+
+# -- round three: what the second review found still contradicted the contract --
+
+
+def test_two_sections_at_the_same_start_but_different_ends_are_distinguished(world):
+    """The END time is part of a section identity, and the first version threw it
+    away: the regex captured it, `parse_meetings` returned only `(DAY, START)`, and
+    the database projection selected only `start_time`. So a 75-minute lecture and
+    a 100-minute one starting at the same moment were the same section."""
+    short = _section("STAT305", [("TUE", "09:00", "10:15")], "M1")
+    long_one = _section("STAT305", [("TUE", "09:00", "10:40")], "M2")
+
+    plan = build_plan(
+        _rosters(("STAT305", "AI:S2", "Tue 09:00-10:40", "", "-", 1, "")),
+        _detail((700001, "AI", "STAT305", "Core", "AI:S2", "", "", "", "")),
+        YEAR,
+        TERM,
+    )
+    assert plan.ok, [str(p) for p in plan.problems]
+    assert plan.links[0]["term_section_id"] == long_one.id, (
+        "the 100-minute section was not distinguished from the 75-minute one"
+    )
+    assert plan.links[0]["term_section_id"] != short.id
+
+
+def test_a_short_write_rolls_back_instead_of_committing(world, monkeypatch):
+    """The postcondition used to be checked AFTER the transaction closed, so the
+    delete and the short write had already committed and the exception reported a
+    failure the database had made permanent.
+
+    Here `bulk_create` is made to insert fewer rows than planned. The student must
+    keep the registrations they had, and none of the new ones may survive."""
+    from django.db.models.query import QuerySet
+
+    kept = StudentTermSection.objects.create(
+        student_id=700001, academic_year=YEAR, term=TERM, term_section=world["solo"]
+    )
+    plan = build_plan(
+        _rosters(
+            ("AI331", "AI:S1", "Mon 09:00-10:15; Wed 09:00-10:15", "", "-", 1, ""),
+            ("AI331", "AI:S2", "Mon 10:30-11:45; Wed 10:30-11:45", "", "-", 1, ""),
+        ),
+        _detail(
+            (700001, "AI", "AI331", "Core", "AI:S1", "", "", "", ""),
+            (700002, "AI", "AI331", "Core", "AI:S2", "", "", "", ""),
+        ),
+        YEAR,
+        TERM,
+    )
+    assert len(plan.links) == 2
+
+    real_bulk_create = QuerySet.bulk_create
+
+    def short_bulk_create(self, objs, *args, **kwargs):
+        return real_bulk_create(self, list(objs)[:1], *args, **kwargs)
+
+    monkeypatch.setattr(QuerySet, "bulk_create", short_bulk_create)
+
+    with pytest.raises(ValueError, match="rows exist after the write"):
+        apply_plan(plan, YEAR, TERM)
+
+    monkeypatch.undo()
+    surviving = list(
+        StudentTermSection.objects.filter(academic_year=YEAR, term=TERM).values_list(
+            "student_id", "term_section_id"
+        )
+    )
+    assert surviving == [(700001, world["solo"].id)], (
+        f"the rollback did not restore the prior registration: {surviving}"
+    )
+    assert StudentTermSection.objects.filter(pk=kept.pk).exists() or surviving == [
+        (700001, world["solo"].id)
+    ]

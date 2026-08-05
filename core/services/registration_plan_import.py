@@ -95,7 +95,7 @@ class Section:
 
     id: int
     label: str
-    times: set[tuple[str, str]]
+    times: set[tuple[str, str, str]]
 
 
 @dataclass
@@ -117,6 +117,15 @@ class Plan:
     #: `None` for the continuation cells of a MERGED student-id range — the normal
     #: shape of a hand-authored plan — dropped whole students with no diagnostic
     #: under a cheerful summary.
+    #:
+    #: `blank_rows` counts only rows that are ENTIRELY empty — trailing rows in the
+    #: sheet, which carry no registration. A row with a course or a section but no
+    #: student id is a `BLANK_STUDENT_ID` problem and stops the import. Counting it
+    #: instead turned a silent omission into a reported one, and still let an
+    #: incomplete authoritative timetable be applied. Merged student-id ranges can
+    #: be supported later by forward-filling, but only when the workbook's merged
+    #: -cell structure proves the cell belongs to one — never by guessing from a
+    #: blank.
     detail_rows_read: int = 0
     blank_rows: int = 0
     duplicate_rows: int = 0
@@ -165,12 +174,30 @@ class Plan:
             )
 
 
-def parse_meetings(*cells: object) -> set[tuple[str, str]]:
-    """`{(DAY, HH:MM)}` from one or more workbook time cells."""
-    found: set[tuple[str, str]] = set()
+def parse_meetings(*cells: object) -> set[tuple[str, str, str]]:
+    """`{(DAY, START, END)}` from one or more workbook time cells.
+
+    The END TIME is part of a section's identity, and the first version threw it
+    away — the regex captured it and `parse_meetings` returned only `(DAY, START)`,
+    while the database projection selected only `start_time`. So
+
+        MON 09:00-10:15   and   MON 09:00-10:40
+
+    were the same section as far as resolution was concerned. This timetable model
+    holds genuinely different meeting durations (a 50-minute lecture, a 100-minute
+    FE session, a two-hour lab), so that is a real identity dimension — it happens
+    not to bite `FINAL2`, which is not the same as being safe.
+    """
+    found: set[tuple[str, str, str]] = set()
     for cell in cells:
         for match in _MEETING.finditer(str(cell or "")):
-            found.add((match.group(1).upper()[:3], match.group(2).zfill(5)))
+            found.add(
+                (
+                    match.group(1).upper()[:3],
+                    match.group(2).zfill(5),
+                    match.group(3).zfill(5),
+                )
+            )
     return found
 
 
@@ -185,12 +212,14 @@ def _database_sections() -> dict[str, list[Section]]:
     """
     from core.models import TermSection, TermSectionMeeting
 
-    meetings: dict[int, set[tuple[str, str]]] = {}
-    for section_id, day, start in TermSectionMeeting.objects.values_list(
-        "term_section_id", "day", "start_time"
+    meetings: dict[int, set[tuple[str, str, str]]] = {}
+    for section_id, day, start, end in TermSectionMeeting.objects.values_list(
+        "term_section_id", "day", "start_time", "end_time"
     ):
         # Zero-filled on both sides: `9:00` and `09:00` are one time, not two keys.
-        meetings.setdefault(section_id, set()).add((str(day).upper()[:3], str(start)[:5].zfill(5)))
+        meetings.setdefault(section_id, set()).add(
+            (str(day).upper()[:3], str(start)[:5].zfill(5), str(end)[:5].zfill(5))
+        )
 
     by_course: dict[str, list[Section]] = {}
     for row in TermSection.objects.filter(scenario__isnull=True).values(
@@ -339,10 +368,21 @@ def build_plan(
         plan.detail_rows_read += 1
         line = index + 2
         if row[0] in (None, ""):
-            # openpyxl returns None for the continuation cells of a MERGED range,
-            # which is how a hand-authored plan usually writes one id across a
-            # student's course rows. Counted, never silently dropped.
-            plan.blank_rows += 1
+            if any(str(cell or "").strip() for cell in row[1:]):
+                # A registration with no student attached to it. openpyxl returns
+                # None for the continuation cells of a MERGED range, so this is
+                # what a hand-authored plan looks like — and forward-filling from a
+                # blank is a guess about whose registration it is.
+                plan.problems.append(
+                    Problem(
+                        f"detail row {line}",
+                        "BLANK_STUDENT_ID",
+                        f"{str(row[2] or '').strip() or 'a row'} has course or section "
+                        "data but no student id",
+                    )
+                )
+                continue
+            plan.blank_rows += 1  # an entirely empty row: no registration in it
             continue
         try:
             student_id = int(str(row[0]).strip())
@@ -577,10 +617,16 @@ def apply_plan(plan: Plan, academic_year: str, term: str) -> dict[str, int]:
             term=str(term),
         ).count()
 
-    if written != len(plan.links):
-        raise ValueError(
-            f"planned {len(plan.links)} links but {written} rows exist after the write"
-        )
+        # INSIDE the transaction, and that is the whole point. Raising after the
+        # `with` block has closed means the delete and the short write have already
+        # committed — the exception then reports a failure the database has
+        # already made permanent, which is the opposite of what this docstring
+        # promises. Raising here rolls both back.
+        if written != len(plan.links):
+            raise ValueError(
+                f"planned {len(plan.links)} links but {written} rows exist after the write"
+            )
+
     return {"removed": removed, "written": written, "students": len(plan.students)}
 
 

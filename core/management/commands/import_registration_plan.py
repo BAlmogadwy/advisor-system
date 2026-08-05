@@ -41,6 +41,34 @@ from core.services.registration_plan_import import (
 ROSTERS_SHEET = "Section Rosters"
 DETAIL_SHEET = "Student Courses (detail)"
 
+#: Every column this importer reads is positional, so a reordered sheet would be
+#: interpreted through positional coincidence rather than rejected. For an approved
+#: fixed-format file the headers are part of the contract, and checking them is the
+#: difference between "this workbook is not the one we agreed" and seating students
+#: from whichever column happened to land in slot 4.
+EXPECTED_HEADERS = {
+    ROSTERS_SHEET: (
+        "course",
+        "section",
+        "lectures",
+        "lab period",
+        "cap",
+        "students",
+        "student_ids",
+    ),
+    DETAIL_SHEET: (
+        "student_id",
+        "program",
+        "course",
+        "kind",
+        "section",
+        "lectures",
+        "lab period",
+        "room(s)",
+        "instructor",
+    ),
+}
+
 
 class Command(BaseCommand):
     help = "Link students to term sections from a registration-plan workbook."
@@ -84,7 +112,18 @@ class Command(BaseCommand):
                 raise CommandError(f"the workbook has no {sheet!r} sheet")
 
         def rows(name: str) -> list[tuple]:
-            return list(workbook[name].iter_rows(values_only=True))[1:]
+            all_rows = list(workbook[name].iter_rows(values_only=True))
+            if not all_rows:
+                raise CommandError(f"{name!r} is empty")
+            expected = EXPECTED_HEADERS[name]
+            found = tuple(str(h or "").strip().lower() for h in all_rows[0][: len(expected)])
+            if found != expected:
+                raise CommandError(
+                    f"UNEXPECTED_HEADER in {name!r}: expected {expected}, found {found}. "
+                    "Every column this importer reads is positional, so a reordered "
+                    "sheet must fail rather than be read through positional coincidence."
+                )
+            return all_rows[1:]
 
         year, term = str(options["year"]).strip(), str(options["term"]).strip()
         plan = build_plan(
@@ -201,6 +240,18 @@ class Command(BaseCommand):
                 raise CommandError(
                     f"--{flag.replace('_', '-')} says {expected}, the workbook produces {actual}"
                 )
+
+        # A warning scrolls away, which is the exact failure the report was added to
+        # close. If the import leaves students with an incomplete week, the record of
+        # WHICH students is a precondition of writing, not a suggestion. No default
+        # path is chosen here: the file carries student identifiers, so the operator
+        # names somewhere restricted rather than having one picked for them.
+        if options["apply"] and plan.uncovered and not options["report"]:
+            raise CommandError(
+                f"--report is required when applying a plan with "
+                f"{sum(len(v) for v in plan.uncovered.values())} uncovered registration(s); "
+                "nothing else records which students are left with an incomplete week"
+            )
 
         if not options["apply"]:
             self.stdout.write(
