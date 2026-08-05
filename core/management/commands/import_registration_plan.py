@@ -2,17 +2,31 @@
 
 Dry-run by default, like every destructive command here. The report and the write
 compute the SAME plan from the same code, so what the dry run prints is what an
-apply would do.
+apply would do — including the number of rows it would DELETE, which the first
+version never showed.
 
     python manage.py import_registration_plan plan.xlsx --year 1448 --term 1
     python manage.py import_registration_plan plan.xlsx --year 1448 --term 1 --apply
 
 `--expect-links` and `--expect-students` are drift guards: a workbook that no
 longer produces the numbers you checked stops rather than writing something else.
+
+`--accept-moved-times` links a section whose times match nothing on file, where
+the course has exactly one section. Off by default: it is how a student ends up
+seated in a section matching nothing they were told. Read the disagreement report
+first.
+
+`--report` writes the whole plan — including the coverage gaps and the workbook's
+own SHA-256 — to a JSON file. THE GAPS ARE NOT PERSISTED ANYWHERE ELSE. Nothing in
+the database distinguishes "no section exists for this course" from "not
+registered", so without this file the only record of which students have an
+incomplete week is a terminal that has since scrolled.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import pathlib
 from typing import Any
 
@@ -40,6 +54,19 @@ class Command(BaseCommand):
             action="store_true",
             help="Actually write. Without it this validates and reports only.",
         )
+        parser.add_argument(
+            "--accept-moved-times",
+            action="store_true",
+            help=(
+                "Link a single-section course whose workbook times match nothing on "
+                "file. Off by default — read the disagreement report first."
+            ),
+        )
+        parser.add_argument(
+            "--report",
+            default=None,
+            help="Write the full plan, gaps and workbook hash to this JSON path.",
+        )
         parser.add_argument("--expect-links", type=int, default=None)
         parser.add_argument("--expect-students", type=int, default=None)
 
@@ -49,6 +76,7 @@ class Command(BaseCommand):
         path = pathlib.Path(options["path"])
         if not path.exists():
             raise CommandError(f"no such file: {path}")
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
 
         workbook = openpyxl.load_workbook(path, read_only=True, data_only=True)
         for sheet in (ROSTERS_SHEET, DETAIL_SHEET):
@@ -59,9 +87,16 @@ class Command(BaseCommand):
             return list(workbook[name].iter_rows(values_only=True))[1:]
 
         year, term = str(options["year"]).strip(), str(options["term"]).strip()
-        plan = build_plan(rows(ROSTERS_SHEET), rows(DETAIL_SHEET), year, term)
+        plan = build_plan(
+            rows(ROSTERS_SHEET),
+            rows(DETAIL_SHEET),
+            year,
+            term,
+            accept_moved_times=options["accept_moved_times"],
+        )
 
         self.stdout.write(f"term {year}/{term}")
+        self.stdout.write(f"workbook {path.name}  sha256 {digest[:16]}…")
         self.stdout.write(plan.summary())
 
         # Reported, never repaired. The owner's decision is link-only: a section
@@ -91,11 +126,11 @@ class Command(BaseCommand):
                     f"exists for these {len(plan.uncovered)} course(s):"
                 )
             )
-            for course, rows in sorted(plan.uncovered.items(), key=lambda kv: -len(kv[1])):
-                slots = sorted({str(r["times"]) for r in rows})
+            for course, entries in sorted(plan.uncovered.items(), key=lambda kv: -len(kv[1])):
+                slots = sorted({str(r["times"]) for r in entries})
                 self.stdout.write(
-                    f"  {course:8} {len(rows):4} registration(s), "
-                    f"{len({r['student_id'] for r in rows})} student(s), "
+                    f"  {course:8} {len(entries):4} registration(s), "
+                    f"{len({r['student_id'] for r in entries})} student(s), "
                     f"{len(slots)} distinct slot(s) in the plan"
                 )
                 for slot in slots[:3]:
@@ -103,6 +138,44 @@ class Command(BaseCommand):
             self.stdout.write(
                 "  These students will have an INCOMPLETE week until those sections exist."
             )
+            if not options["report"]:
+                self.stdout.write(
+                    self.style.WARNING(
+                        "  Nothing in the database records this. Pass --report to keep it."
+                    )
+                )
+
+        if options["report"]:
+            report_path = pathlib.Path(options["report"])
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "workbook": str(path),
+                        "sha256": digest,
+                        "academic_year": year,
+                        "term": term,
+                        "accept_moved_times": options["accept_moved_times"],
+                        "summary": plan.summary(),
+                        "counts": {
+                            "links": len(plan.links),
+                            "students": len(plan.students),
+                            "replaces": plan.replaces,
+                            "detail_rows_read": plan.detail_rows_read,
+                            "blank_rows": plan.blank_rows,
+                            "duplicate_rows": plan.duplicate_rows,
+                            "skipped_unplaceable": plan.skipped_unplaceable,
+                        },
+                        "uncovered": plan.uncovered,
+                        "time_disagreements": plan.time_disagreements,
+                        "problems": [str(p) for p in plan.problems],
+                        "links": plan.links,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            self.stdout.write(f"\nPlan written to {report_path}")
 
         if not plan.ok:
             self.stdout.write(
@@ -130,7 +203,10 @@ class Command(BaseCommand):
                 )
 
         if not options["apply"]:
-            self.stdout.write("\nDry run — nothing written. Re-run with --apply to seed.")
+            self.stdout.write(
+                f"\nDry run — nothing written. An apply would DELETE {plan.replaces} "
+                f"existing row(s) and write {len(plan.links)}. Re-run with --apply."
+            )
             return
 
         result = apply_plan(plan, year, term)
