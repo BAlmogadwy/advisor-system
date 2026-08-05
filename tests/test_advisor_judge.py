@@ -68,7 +68,7 @@ class _ScriptedJudge:
         from core.services.local_llm import ChatResult
 
         self.calls.append(messages)
-        return ChatResult(content=self.content, model="fake-judge", usage={}, raw={})
+        return ChatResult(content=self.content, model="fake-judge", usage={})
 
 
 class _BrokenJudge:

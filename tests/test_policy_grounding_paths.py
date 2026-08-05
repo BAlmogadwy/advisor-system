@@ -84,7 +84,7 @@ class _NoToolsClient:
         from core.services.local_llm import ChatResult
 
         self.chat_calls.append([dict(m) for m in messages])
-        return ChatResult(content=self.answer, model="fake-plain", usage={}, raw={})
+        return ChatResult(content=self.answer, model="fake-plain", usage={})
 
 
 class _ToolsRejectedClient(_NoToolsClient):

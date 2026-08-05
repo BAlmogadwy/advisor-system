@@ -116,7 +116,6 @@ def _tool_turn(
         tool_calls=tool_calls,
         model="fake-tools",
         usage={"total_tokens": 10},
-        raw={},
         assistant_message=assistant,
     )
 
@@ -174,7 +173,7 @@ class FakeToolClient:
         self.chat_calls.append([dict(m) for m in messages])
         answer = self.plain_answers[min(self._plain_idx, len(self.plain_answers) - 1)]
         self._plain_idx += 1
-        return ChatResult(content=answer, model="fake-tools", usage={}, raw={})
+        return ChatResult(content=answer, model="fake-tools", usage={})
 
 
 # ── Capability registry: scope filtering ────────────────────────
@@ -890,7 +889,7 @@ def test_http_400_raises_bad_request(monkeypatch) -> None:
             io.BytesIO(b'{"error": "tools not supported"}'),
         )
 
-    monkeypatch.setattr("core.services.local_llm.urlopen", fake_urlopen)
+    monkeypatch.setattr("core.services.llm_backend.urlopen", fake_urlopen)
     client = LocalLLMClient(base_url="http://localhost:1234/v1")
 
     with pytest.raises(LocalLLMBadRequest):
