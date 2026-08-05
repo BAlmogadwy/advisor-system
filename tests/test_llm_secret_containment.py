@@ -57,7 +57,11 @@ def _no_real_network(monkeypatch):
 
 
 SENTINEL_KEY = "sk-SENTINELdoNOTleak0000000000000000"
-GOOD_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+#: Correct SHAPE, invented value. The real workspace id is a live identifier
+#: and belongs in the deployment secret store, not in git.
+WORKSPACE = "ws-synthetic0000000"
+REGION = "ap-southeast-1"
+GOOD_URL = f"https://{WORKSPACE}.{REGION}.maas.aliyuncs.com/compatible-mode/v1"
 
 ALIBABA = {
     "LLM_BACKEND": "alibaba",
@@ -87,7 +91,11 @@ def test_the_key_is_absent_from_health_output():
     body = json.dumps(health, ensure_ascii=False)
     assert SENTINEL_KEY not in body
     assert "Authorization" not in body
-    assert health["endpoint_host"] == "dashscope-intl.aliyuncs.com"
+    # REGION, never a hostname: the first label of a Model Studio host IS the
+    # workspace identifier, so "hostname only" leaks what the rule protects.
+    assert health["region"] == REGION
+    assert "endpoint_host" not in health
+    assert WORKSPACE not in body, "the workspace identifier reached the health payload"
     assert GOOD_URL not in body, "the full endpoint URL reached the health payload"
 
 

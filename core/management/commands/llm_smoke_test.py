@@ -85,14 +85,15 @@ class Command(BaseCommand):
         if config.is_remote and not options["yes"]:
             raise CommandError(
                 f"This will make PAID requests to {config.provider} "
-                f"({config.endpoint_host}) using model {config.model}. "
+                f"(region {config.region}) using model {config.model}. "
                 "Re-run with --yes to confirm."
             )
 
         self.stdout.write(f"backend        : {config.backend}")
         self.stdout.write(f"provider       : {config.provider}")
         self.stdout.write(f"model          : {config.model}")
-        self.stdout.write(f"endpoint host  : {config.endpoint_host}")
+        # REGION, never the host: the first hostname label is the workspace id.
+        self.stdout.write(f"region         : {config.region}")
         self.stdout.write(f"thinking       : {config.enable_thinking}")
         self.stdout.write(f"prefill support: {config.supports_assistant_prefill}")
         if config.is_remote:

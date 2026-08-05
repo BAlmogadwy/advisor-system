@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -189,14 +190,31 @@ ALLOWED_BACKENDS = (BACKEND_LOCAL, BACKEND_ALIBABA)
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
-#: Alibaba Model Studio / DashScope only. An arbitrary remote host would turn a
-#: configuration mistake into an exfiltration channel, so the host is checked
-#: rather than merely the scheme.
-_ALIBABA_HOST_SUFFIXES = (
-    ".aliyuncs.com",
-    ".aliyun.com",
-    ".alibabacloud.com",
+#: The FULL endpoint contract, not a suffix match.
+#:
+#: `*.aliyuncs.com` was the first version and it is far too broad: it accepts any
+#: Alibaba-hosted service, including ones that are not Model Studio and buckets
+#: that are not ours. A configuration mistake inside that space would still be a
+#: working outbound channel, which is the thing the check exists to prevent.
+#:
+#: The workspace label is deliberately NOT hard-coded — a workspace id in source
+#: is an identifier in git forever. The shape is enforced; the value comes from
+#: configuration.
+_ALIBABA_HOST_RE = re.compile(
+    r"^(?P<workspace>[a-z0-9][a-z0-9-]{0,62})\.(?P<region>[a-z0-9-]+)\.maas\.aliyuncs\.com$"
 )
+
+#: Regions this deployment is permitted to reach. Singapore today; adding one is
+#: a deliberate edit, not a wildcard.
+ALLOWED_ALIBABA_REGIONS = frozenset({"ap-southeast-1"})
+
+#: Model Studio's OpenAI-compatible path. The DashScope-native `/api/v1` speaks a
+#: different protocol and would fail confusingly rather than safely.
+_ALIBABA_REQUIRED_PATH = "/compatible-mode/v1"
+
+#: Characters that must never appear in a credential. A newline in a key becomes
+#: a header injection the moment it is written into an HTTP request.
+_CONTROL_CHARS = frozenset(chr(c) for c in range(0x20)) | {chr(0x7F)}
 
 
 @dataclass(frozen=True)
@@ -231,11 +249,96 @@ class LLMEndpointConfig:
     #: Sent as top-level fields on remote requests.
     provider_options: dict[str, Any] = field(default_factory=dict)
 
+    #: Diagnostics report this instead of a hostname.
+    region: str = ""
+
     @property
     def endpoint_host(self) -> str:
-        """The hostname alone — never the full URL, which may carry a path or
-        query a browser has no business seeing."""
+        """SERVER-SIDE ONLY. Never put this in a health payload or a template.
+
+        The first label of a Model Studio host IS the workspace identifier, so
+        "hostname only" — which sounded like the safe half of a URL — discloses
+        exactly the thing the rule was written to protect. Diagnostics report
+        `region` instead.
+        """
         return (urlparse(self.base_url).hostname or "").lower()
+
+
+def _validate_api_key(api_key: str) -> None:
+    """The key is OPAQUE. Presence and safety, never shape.
+
+    An earlier version of this work looked at a real key, saw 117 characters with
+    dots and underscores where it expected `sk-` + 32 hex, and called it
+    suspicious. It authenticated perfectly: Model Studio's newer workspace keys
+    begin `sk-ws` and are longer than the old ones. Asserting a provider's
+    credential format is a guess about someone else's roadmap, and it fails
+    closed on THEIR next change, not on a real problem.
+
+    What is checked is what can actually hurt: a newline or control character in
+    a credential becomes header injection the moment it is written into an HTTP
+    request.
+    """
+    if not api_key:
+        raise LLMConfigError("ALIBABA_LLM_API_KEY is required when LLM_BACKEND=alibaba.")
+    if any(ch in _CONTROL_CHARS for ch in api_key):
+        # The key itself is never quoted, here or anywhere.
+        raise LLMConfigError(
+            "ALIBABA_LLM_API_KEY contains a control character or newline; "
+            "check for a wrapped or partially pasted value."
+        )
+
+
+def _validate_alibaba_url(base_url: str) -> str:
+    """The whole endpoint contract. Returns the region.
+
+    Every clause closes a way for a request to leave for somewhere unintended:
+
+      * `https` only — a downgrade puts the bearer token on the wire in clear;
+      * no userinfo — `https://user:pass@real-host@evil/` is a classic confusion;
+      * port absent or 443 — an odd port on the right host is still an odd
+        destination;
+      * no query or fragment — nothing may be smuggled onto every request;
+      * exactly one workspace label before an ALLOWED region, under
+        `maas.aliyuncs.com` — the first version accepted any `*.aliyuncs.com`,
+        which is every Alibaba-hosted service in the world;
+      * the OpenAI-compatible path — DashScope's native `/api/v1` speaks a
+        different protocol and would fail confusingly rather than safely.
+    """
+    parsed = urlparse(base_url)
+    if parsed.scheme != "https":
+        raise LLMConfigError("ALIBABA_LLM_BASE_URL must use https.")
+    if parsed.username or parsed.password:
+        raise LLMConfigError("ALIBABA_LLM_BASE_URL must not contain userinfo.")
+    if parsed.query or parsed.fragment:
+        raise LLMConfigError("ALIBABA_LLM_BASE_URL must not carry a query string or fragment.")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise LLMConfigError("ALIBABA_LLM_BASE_URL has an invalid port.") from exc
+    if port not in (None, 443):
+        raise LLMConfigError("ALIBABA_LLM_BASE_URL must use the default https port.")
+
+    host = (parsed.hostname or "").lower()
+    match = _ALIBABA_HOST_RE.match(host)
+    if not match:
+        raise LLMConfigError(
+            "ALIBABA_LLM_BASE_URL host must be "
+            "<workspace>.<region>.maas.aliyuncs.com; "
+            f"{host!r} does not match."
+        )
+    region = match.group("region")
+    if region not in ALLOWED_ALIBABA_REGIONS:
+        raise LLMConfigError(
+            f"Alibaba region {region!r} is not permitted; "
+            f"allowed: {', '.join(sorted(ALLOWED_ALIBABA_REGIONS))}."
+        )
+
+    path = (parsed.path or "").rstrip("/")
+    if path != _ALIBABA_REQUIRED_PATH:
+        raise LLMConfigError(
+            f"ALIBABA_LLM_BASE_URL path must be {_ALIBABA_REQUIRED_PATH}; got {path or '/'!r}."
+        )
+    return region
 
 
 def _flag(name: str, default: bool) -> bool:
@@ -270,6 +373,7 @@ def _local_config() -> LLMEndpointConfig:
     return LLMEndpointConfig(
         backend=BACKEND_LOCAL,
         provider="local",
+        region="localhost",
         base_url=base_url.rstrip("/"),
         model=str(getattr(settings, "LOCAL_LLM_MODEL", "")).strip(),
         timeout_seconds=float(getattr(settings, "LOCAL_LLM_TIMEOUT_SECONDS", 120)),
@@ -291,8 +395,7 @@ def _alibaba_config() -> LLMEndpointConfig:
 
     if not base_url:
         raise LLMConfigError("ALIBABA_LLM_BASE_URL is required when LLM_BACKEND=alibaba.")
-    if not api_key:
-        raise LLMConfigError("ALIBABA_LLM_API_KEY is required when LLM_BACKEND=alibaba.")
+    _validate_api_key(api_key)
     if not model:
         # Never discovered, never defaulted: a silent choice of model is a silent
         # choice of price and of capability.
@@ -301,22 +404,13 @@ def _alibaba_config() -> LLMEndpointConfig:
             "never discovered from the workspace."
         )
 
-    parsed = urlparse(base_url)
-    if parsed.scheme != "https":
-        raise LLMConfigError("ALIBABA_LLM_BASE_URL must be an absolute https URL.")
-    host = (parsed.hostname or "").lower()
-    if not any(
-        host == suffix.lstrip(".") or host.endswith(suffix) for suffix in _ALIBABA_HOST_SUFFIXES
-    ):
-        raise LLMConfigError(
-            "ALIBABA_LLM_BASE_URL must be an Alibaba Model Studio/DashScope host; "
-            f"{host!r} is not one."
-        )
+    region = _validate_alibaba_url(base_url)
 
     enable_thinking = _flag("ALIBABA_LLM_ENABLE_THINKING", False)
     return LLMEndpointConfig(
         backend=BACKEND_ALIBABA,
         provider="alibaba-model-studio",
+        region=region,
         base_url=base_url.rstrip("/"),
         model=model,
         timeout_seconds=float(getattr(settings, "ALIBABA_LLM_TIMEOUT_SECONDS", 75)),
@@ -436,6 +530,7 @@ class OpenAICompatibleLLMClient:
         record echoed back by a provider would land in a log line.
         """
         body = json.dumps(payload).encode("utf-8") if payload is not None else None
+        expected_host = (urlparse(self.config.base_url).hostname or "").lower()
         effective_timeout = timeout_seconds if timeout_seconds else self.config.timeout_seconds
         attempts = self.config.max_retries + 1
         last: LLMError | None = None
@@ -449,6 +544,15 @@ class OpenAICompatibleLLMClient:
             )
             try:
                 with urlopen(request, timeout=effective_timeout) as response:  # noqa: S310  # nosec B310
+                    # Validating the URL we ASKED for does not constrain where we
+                    # ended up. A 30x to another host would carry the bearer
+                    # token there, and urllib follows redirects by default.
+                    final_host = (urlparse(response.geturl()).hostname or "").lower()
+                    if final_host != expected_host:
+                        raise LLMConfigError(
+                            "the request was redirected to a different host; refusing "
+                            "to read a response from an unconfigured destination."
+                        )
                     text = response.read().decode("utf-8")
             except HTTPError as exc:
                 last, retryable, wait = self._classify_http(exc)
@@ -480,10 +584,12 @@ class OpenAICompatibleLLMClient:
                 if wait is not None
                 else _RETRY_BACKOFF_SECONDS[min(attempt, len(_RETRY_BACKOFF_SECONDS) - 1)]
             )
+            # REGION, not host. A retry storm is exactly when logs get shipped
+            # somewhere central, and the workspace id is the first hostname label.
             logger.warning(
-                "llm retry backend=%s host=%s attempt=%d/%d category=%s",
+                "llm retry backend=%s region=%s attempt=%d/%d category=%s",
                 self.config.backend,
-                self.config.endpoint_host,
+                self.config.region,
                 attempt + 1,
                 attempts,
                 type(last).__name__,
@@ -791,8 +897,8 @@ def check_llm_health(backend: str | None = None) -> dict[str, Any]:
             "configured": False,
             "backend": str(getattr(settings, "LLM_BACKEND", BACKEND_LOCAL)).strip().lower(),
             "provider": "",
+            "region": "",
             "model": "",
-            "endpoint_host": "",
             "error_category": type(exc).__name__,
             "error": str(exc),
             "models": [],
@@ -803,8 +909,9 @@ def check_llm_health(backend: str | None = None) -> dict[str, Any]:
         "configured": True,
         "backend": config.backend,
         "provider": config.provider,
+        # REGION, never the host. The workspace id is the first hostname label.
+        "region": config.region,
         "model": config.model,
-        "endpoint_host": config.endpoint_host,
         "models": [],
     }
 
@@ -828,11 +935,14 @@ def check_local_llm_health() -> dict[str, Any]:
     # The old shape carried `base_url` and `default_model`; keep them meaningful
     # without widening what a browser can see.
     health.setdefault("default_model", health.get("model", ""))
-    health["base_url"] = health.get("endpoint_host", "")
+    # The old key is kept so existing callers do not break, but it carries the
+    # REGION now. A workspace endpoint has no browser-safe half.
+    health["base_url"] = health.get("region", "")
     return health
 
 
 __all__ = [
+    "ALLOWED_ALIBABA_REGIONS",
     "ALLOWED_BACKENDS",
     "BACKEND_ALIBABA",
     "BACKEND_LOCAL",
