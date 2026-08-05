@@ -167,6 +167,120 @@
     return node;
   }
 
+  /* ── direction ───────────────────────────────────────────────────
+     Two separate bidi defects lived on this screen, and both of them changed
+     what the student read rather than merely how it looked.
+
+     **The direction of a block.** `dir="auto"` was set per <p> and per <li>, so
+     ONE answer could resolve to two directions: an item opening with a course
+     code — «AI221 — الشعبة M1» — takes its direction from that first strong
+     character and computes LTR, while its Arabic siblings compute RTL. The list
+     then splits across both edges of the bubble and the odd item's marker is
+     painted on the far side, outside `padding-inline-start`, 5px beyond the
+     bubble's own border.
+
+     An answer is written in ONE language. So the direction is decided ONCE, from
+     the whole text, and applied explicitly to the body — descendants inherit it
+     and can no longer disagree with each other.
+
+     **The order of a range.** «الشعبة M1 من 09:00-10:15» reached the student as
+     «10:15-09:00»: a timetable adviser printing every lecture as ending before
+     it starts. This is not a font or an alignment problem, it is UAX#9 working
+     exactly as specified. An Arabic letter is class AL, so the digits after it
+     resolve to AN (Arabic-Number) rather than EN. Rule W4 fuses an ES hyphen
+     into a number only BETWEEN TWO EN — so between two AN runs the hyphen stays
+     neutral, resolves to the paragraph's RTL direction by N2, and L2 then
+     reverses the two number groups around it.
+
+     `dir="ltr"` on the paragraph does NOT fix it (measured — it changes the
+     paragraph level, not the resolved class of the digits). Isolation does: a
+     <bdi dir="ltr"> gives the run its own LTR paragraph, where the digits are EN
+     and W4 binds the hyphen, and presents the whole run to the surrounding
+     Arabic as one neutral unit. The same defect silently affected every credit
+     range («19-12 ساعة»), page range and ISO date in an answer. */
+
+  /* Hebrew, Arabic, Syriac, Thaana, NKo, and the Arabic presentation forms. */
+  const RTL_STRONG = /[֑-߿ࡠ-ࣿיִ-﷿ﹰ-﻿]/;
+  /* Latin, Latin Extended, Greek/Coptic, Cyrillic, Armenian — everything below
+     U+0590, which is where Hebrew begins. */
+  const LTR_STRONG = /[A-Za-zÀ-˿Ͱ-֏]/;
+
+  /* WHICH SCRIPT THE TEXT IS MOSTLY IN — deliberately not `dir="auto"`'s rule.
+
+     Auto takes the FIRST strong character and stops, and this adviser answers
+     course questions: «AI221 هو المقرر الذي سألت عنه…» opens with four Latin
+     letters and is Arabic. Position is the wrong evidence, and reproducing it in
+     JavaScript would have reproduced the defect one layer down — which is what the
+     first version of this function did, and what the course-code test caught.
+
+     Counting is decisive where position is arbitrary: a course code is a handful
+     of Latin characters inside a paragraph of Arabic, and no realistic answer is
+     close to the boundary. A text with no strong character at all (a bare
+     «09:00-10:15», a case reference) falls back to the interface language, because
+     the labels around it are in the interface language. */
+  function textDirection(text) {
+    const source = String(text == null ? '' : text);
+    let rtl = 0;
+    let ltr = 0;
+    for (let i = 0; i < source.length; i += 1) {
+      const ch = source.charAt(i);
+      if (RTL_STRONG.test(ch)) rtl += 1;
+      else if (LTR_STRONG.test(ch)) ltr += 1;
+    }
+    if (rtl > ltr) return 'rtl';
+    if (ltr > rtl) return 'ltr';
+    return AR ? 'rtl' : 'ltr';
+  }
+
+  /* A maximal run of Latin letters, digits and the ASCII characters that BIND
+     them into one token: `09:00-10:15`, `19-12`, `2024-09-01`, `AI221`, `3.75`,
+     `M1 M2`. It must begin and end on an alphanumeric, so a bullet's leading
+     hyphen and a sentence's trailing full stop stay outside the isolate and keep
+     behaving as the neutrals they are. Spaces are internal separators on purpose:
+     «09:00 - 10:15» is the same range with the same defect, and splitting it into
+     two isolates around a bare neutral hyphen would leave the swap in place. */
+  const LTR_RUN = /[A-Za-z0-9](?:[A-Za-z0-9 \t:._/-]*[A-Za-z0-9])?/g;
+
+  function appendIsolated(node, text) {
+    const source = String(text);
+    let cursor = 0;
+    let match;
+    LTR_RUN.lastIndex = 0;
+    while ((match = LTR_RUN.exec(source)) !== null) {
+      if (match.index > cursor) {
+        node.appendChild(document.createTextNode(source.slice(cursor, match.index)));
+      }
+      const run = el('bdi', null, match[0]);
+      run.setAttribute('dir', 'ltr');
+      node.appendChild(run);
+      cursor = match.index + match[0].length;
+    }
+    if (cursor < source.length) {
+      node.appendChild(document.createTextNode(source.slice(cursor)));
+    }
+    return node;
+  }
+
+  /* Isolation is applied ONLY in an RTL context. In an LTR paragraph the digits
+     already resolve to EN, W4 already binds the hyphen, and the order is already
+     right — so wrapping there would be DOM churn that proves nothing and could
+     only introduce a difference. */
+  function appendDirected(node, text, dir) {
+    if (dir === 'rtl') return appendIsolated(node, text);
+    node.appendChild(document.createTextNode(String(text)));
+    return node;
+  }
+
+  /* The one entry point for a text-bearing node whose language is not known in
+     advance: decides the direction from the content, states it, and isolates the
+     runs that would otherwise be reordered. Every such node on this screen goes
+     through it, so none can be forgotten the way the adviser's reply was. */
+  function writeText(node, text) {
+    const dir = textDirection(text);
+    node.setAttribute('dir', dir);
+    return appendDirected(node, text, dir);
+  }
+
   /* ── citations ──────────────────────────────────────────────
      Grouped beneath the answer rather than repeated inline, and built from the
      citation snapshot the API returned — never from a separate lookup, so what is
@@ -201,7 +315,13 @@
       const parts = [c.document_title];
       if (c.edition) parts.push((AR ? 'الإصدار ' : 'edition ') + c.edition);
       if (c.page) parts.push(T.page + ' ' + c.page);
-      item.appendChild(el('span', 'sa-citation-text', parts.filter(Boolean).join(AR ? '، ' : ', ')));
+      /* The reference carries an Arabic document title and Latin page numbers, and
+         it is shown in whichever interface language the student chose — so its own
+         direction is a property of the text, not of the page. «ص 24-23» was one of
+         the ranges arriving reversed. */
+      item.appendChild(
+        writeText(el('span', 'sa-citation-text'), parts.filter(Boolean).join(AR ? '، ' : ', '))
+      );
 
       const details = el('details', 'sa-citation-details');
       details.appendChild(el('summary', null, T.details));
@@ -430,21 +550,27 @@
 
     const dl = el('dl', 'sa-case-meta');
     dl.appendChild(el('dt', null, T.caseRef));
-    dl.appendChild(el('dd', 'sa-case-ref', escalation.reference));
+    /* The reference is the one string a student reads back to a person over the
+       phone. It is Latin and digits with separators, so in an Arabic panel it is
+       exactly the shape UAX#9 reorders. */
+    dl.appendChild(writeText(el('dd', 'sa-case-ref'), escalation.reference));
     dl.appendChild(el('dt', null, T.caseState));
-    dl.appendChild(el('dd', 'sa-case-status', escalation.status_label || escalation.status));
+    dl.appendChild(
+      writeText(el('dd', 'sa-case-status'), escalation.status_label || escalation.status)
+    );
     if (escalation.created_at) {
       dl.appendChild(el('dt', null, T.caseWhen));
-      const when = el('dd', 'sa-case-when', formatDate(escalation.created_at));
-      when.setAttribute('dir', 'auto');
-      dl.appendChild(when);
+      dl.appendChild(writeText(el('dd', 'sa-case-when'), formatDate(escalation.created_at)));
     }
     card.appendChild(dl);
 
     if (escalation.resolution_message) {
       const reply = el('div', 'sa-case-reply');
       reply.appendChild(el('h5', null, T.adviserReply));
-      reply.appendChild(el('p', null, escalation.resolution_message));
+      /* This was the only message on the screen with no direction at all — a
+         person's Arabic reply laid out left-to-right in the default English UI,
+         which is the same unreadability the model's answers were fixed for. */
+      reply.appendChild(writeText(el('p'), escalation.resolution_message));
       card.appendChild(reply);
     }
     return card;
@@ -490,16 +616,18 @@
      sentence is not misaligned, it is unreadable — and it is unreadable only for
      the students who chose the English interface, which is why it survived.
 
-     `dir="auto"` per MESSAGE is the fix, not `rtl` on the container: a student may
-     ask in English and be answered in English in the same thread, and the citation
-     code in this file already sets `dir` per element for exactly this reason.
+     Per MESSAGE is the fix, not `rtl` on the container: a student may ask in
+     English and be answered in English in the same thread.
 
-     It goes on the TEXT-BEARING nodes — each <p>, each <li> — and deliberately not
-     on the wrapper or the <ul>. HTML's auto algorithm skips descendants that carry
-     their own `dir`, so a wrapper whose every child is `dir="auto"` finds no strong
-     character of its own and quietly resolves to the page direction. The first
-     version of this fix did exactly that and looked correct in the DOM while
-     computing `ltr`.
+     The first version put `dir="auto"` on each TEXT-BEARING node — every <p> and
+     every <li> — to avoid a known trap: HTML's auto algorithm skips descendants
+     that carry their own `dir`, so a wrapper whose every child is `dir="auto"`
+     finds no strong character of its own and quietly resolves to the page
+     direction. That avoided the trap and created a worse one — a list whose items
+     each chose their OWN direction. `textDirection` reads the whole answer once
+     and states the result, so the wrapper is now safe to carry it and the blocks
+     inherit a direction they cannot disagree about. See its comment for both
+     defects in full.
 
      **Markdown.** The model writes it — `**bold**`, `* bullets` — and this rendered
      the asterisks literally. Converted here to real elements, built with
@@ -510,26 +638,30 @@
   const BULLET = /^\s*[*•-]\s+(.*)$/;
   const NUMBERED = /^\s*\d+[.)]\s+(.*)$/;
 
-  function inlineInto(node, text) {
+  function inlineInto(node, text, dir) {
     const source = String(text);
     let cursor = 0;
     let match;
     BOLD.lastIndex = 0;
     while ((match = BOLD.exec(source)) !== null) {
       if (match.index > cursor) {
-        node.appendChild(document.createTextNode(source.slice(cursor, match.index)));
+        appendDirected(node, source.slice(cursor, match.index), dir);
       }
-      node.appendChild(el('strong', null, match[1]));
+      node.appendChild(appendDirected(el('strong'), match[1], dir));
       cursor = match.index + match[0].length;
     }
     if (cursor < source.length) {
-      node.appendChild(document.createTextNode(source.slice(cursor)));
+      appendDirected(node, source.slice(cursor), dir);
     }
     return node;
   }
 
   function renderBody(text) {
     const wrap = el('div', 'sa-body');
+    /* ONE direction for the whole answer, stated on the body so every block
+       inherits it. Per-block `dir="auto"` is what let a list hold two. */
+    const dir = textDirection(text);
+    wrap.setAttribute('dir', dir);
 
     let list = null;
     let listTag = '';
@@ -548,9 +680,7 @@
           wrap.appendChild(list);
           listTag = tag;
         }
-        const li = el('li');
-        li.setAttribute('dir', 'auto');
-        wrap.lastChild.appendChild(inlineInto(li, item[1]));
+        wrap.lastChild.appendChild(inlineInto(el('li'), item[1], dir));
         return;
       }
 
@@ -562,14 +692,13 @@
       }
       if (!para) {
         para = el('p', 'sa-para');
-        para.setAttribute('dir', 'auto');
         wrap.appendChild(para);
       } else {
         // A soft break inside one paragraph: kept, because the model uses single
         // newlines for structure the student can see.
         para.appendChild(document.createTextNode('\n'));
       }
-      inlineInto(para, line);
+      inlineInto(para, line, dir);
     });
 
     if (!wrap.childNodes.length) wrap.appendChild(el('p', 'sa-para', ''));
@@ -660,7 +789,12 @@
     }
     conversations.forEach(function (c) {
       const title = c.title || T.untitled;
-      const b = el('button', 'sa-conv' + (c.id === currentId ? ' is-active' : ''), title);
+      const b = el('button', 'sa-conv' + (c.id === currentId ? ' is-active' : ''));
+      /* `text-overflow: ellipsis` truncates at the END of the line — which in an
+         LTR button holding an Arabic title is the title's BEGINNING. In the default
+         English interface every Arabic conversation was labelled by its last few
+         words, so the sidebar was a list of endings. */
+      writeText(b, title);
       b.type = 'button';
       /* No role override here. `role="listitem"` REPLACES the implicit button role,
          so the whole sidebar stopped being announced as actionable and vanished

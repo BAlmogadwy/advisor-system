@@ -718,8 +718,12 @@ class AdvisorBrowserTests(StaticLiveServerTestCase):
         assert body.locator("ul.sa-list li").count() == 2
         assert body.locator("strong").count() >= 3
         assert "المقرر" in body.locator("strong").first.inner_text()
-        # Every list item carries its own direction, for mixed Arabic/Latin rows.
-        assert body.locator("ul.sa-list li[dir=auto]").count() == 2
+        # The direction is stated ONCE, on the body, and inherited. Per-item
+        # `dir="auto"` was the previous design and it gave one answer two
+        # directions — see tests/test_advisor_bidi.py, which measures the
+        # consequence rather than the attribute.
+        assert body.get_attribute("dir") == "rtl"
+        assert body.locator("ul.sa-list li[dir]").count() == 0
 
     def test_an_answer_cannot_smuggle_markup_into_the_page(self):
         """Rendered with createElement/createTextNode only — never innerHTML."""
