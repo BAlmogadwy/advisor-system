@@ -413,8 +413,8 @@
     const prompt = el('span', 'sa-feedback-q', T.helpful);
     wrap.appendChild(prompt);
 
-    const yes = el('button', 'btn btn-sm sa-fb-btn', T.yes);
-    const no = el('button', 'btn btn-sm sa-fb-btn', T.no);
+    const yes = el('button', 'btn btn-neutral btn-sm sa-fb-btn', T.yes);
+    const no = el('button', 'btn btn-neutral btn-sm sa-fb-btn', T.no);
     yes.type = 'button'; no.type = 'button';
     yes.setAttribute('aria-label', T.helpful + ' — ' + T.yes);
     no.setAttribute('aria-label', T.helpful + ' — ' + T.no);
@@ -464,7 +464,7 @@
     no.addEventListener('click', function () { reasonsBox.hidden = false; send('NOT_HELPFUL', []); });
 
     REASONS.forEach(function (pair) {
-      const b = el('button', 'btn btn-sm sa-fb-reason', pair[1]);
+      const b = el('button', 'btn btn-neutral btn-sm sa-fb-reason', pair[1]);
       b.type = 'button';
       b.dataset.code = pair[0];
       b.setAttribute('aria-pressed', 'false');
@@ -523,7 +523,7 @@
     }
     const button = el(
       'button',
-      'btn btn-sm sa-escalate-btn' + (wanted ? ' btn-primary' : ''),
+      'btn btn-neutral btn-sm sa-escalate-btn' + (wanted ? ' btn-primary' : ''),
       wanted ? T.sendCase : T.askHuman
     );
     button.type = 'button';
@@ -832,7 +832,7 @@
        token rather than by the status: a turn abandoned mid-generation is stuck on
        PENDING, and it needs the same way out that a clean failure gets. */
     if (role === 'user' && message.retry_token) {
-      const retry = el('button', 'btn btn-sm sa-retry', T.retry);
+      const retry = el('button', 'btn btn-neutral btn-sm sa-retry', T.retry);
       retry.type = 'button';
       retry.addEventListener('click', function () { send(message.content, message.retry_token); });
       bubble.appendChild(retry);
@@ -910,7 +910,7 @@
          were trying to leave. */
       messagesEl.innerHTML = '';
       const err = el('p', 'sa-error', T.loadFail);
-      const again = el('button', 'btn btn-sm sa-retry', T.retry);
+      const again = el('button', 'btn btn-neutral btn-sm sa-retry', T.retry);
       again.type = 'button';
       again.addEventListener('click', function () { openConversation(id); });
       err.appendChild(again);
