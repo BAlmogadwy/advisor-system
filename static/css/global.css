@@ -551,8 +551,8 @@ html[data-theme="dark"] .fb-dd,
 html[data-theme="dark"] .tbl-cnt,
 html[data-theme="dark"] .pill-status,
 html[data-theme="dark"] .empty-state-action,
-html[data-theme="dark"] html body .btn:disabled,
-html[data-theme="dark"] html body .btn.disabled {
+html[data-theme="dark"] body .btn:disabled,
+html[data-theme="dark"] body .btn.disabled {
   box-shadow: 0 1px 4px rgba(0,0,0,0.2) !important;
 }
 
@@ -560,14 +560,14 @@ html[data-theme="dark"] html body .btn.disabled {
 html[data-theme="dark"] .btn-circle:hover,
 html[data-theme="dark"] .pg-btn:hover,
 html[data-theme="dark"] .fb-dd:hover,
-html[data-theme="dark"] html body .btn-outline-primary:hover,
-html[data-theme="dark"] html body .btn-outline-secondary:hover,
-html[data-theme="dark"] html body .btn-outline-success:hover,
-html[data-theme="dark"] html body .btn-outline-danger:hover,
-html[data-theme="dark"] html body .btn-outline-warning:hover,
-html[data-theme="dark"] html body .btn-outline-info:hover,
-html[data-theme="dark"] html body .btn-outline-dark:hover,
-html[data-theme="dark"] html body .btn-export:hover,
+html[data-theme="dark"] body .btn-outline-primary:hover,
+html[data-theme="dark"] body .btn-outline-secondary:hover,
+html[data-theme="dark"] body .btn-outline-success:hover,
+html[data-theme="dark"] body .btn-outline-danger:hover,
+html[data-theme="dark"] body .btn-outline-warning:hover,
+html[data-theme="dark"] body .btn-outline-info:hover,
+html[data-theme="dark"] body .btn-outline-dark:hover,
+html[data-theme="dark"] body .btn-export:hover,
 html[data-theme="dark"] .page-header-right .btn-outline-secondary:hover {
   box-shadow: 0 2px 8px rgba(0,0,0,0.3) !important;
 }
@@ -576,14 +576,19 @@ html[data-theme="dark"] .page-header-right .btn-outline-secondary:hover {
 html[data-theme="dark"] .btn-circle:active,
 html[data-theme="dark"] .pg-btn.active,
 html[data-theme="dark"] .fb-dd.active,
-html[data-theme="dark"] html body .btn-outline-primary:active,
-html[data-theme="dark"] html body .btn-outline-secondary:active {
+html[data-theme="dark"] body .btn-outline-primary:active,
+html[data-theme="dark"] body .btn-outline-secondary:active {
   box-shadow: inset 1px 1px 3px rgba(0,0,0,0.3) !important;
 }
 
-/* Button/input focus ring — keep teal ring, kill neumorphic */
-html[data-theme="dark"] html body .btn:focus,
-html[data-theme="dark"] html body .btn:focus-visible,
+/* Input focus ring — keep teal ring, kill neumorphic.
+   The two `.btn` selectors that used to be here are gone, and this is the only
+   rule in this repair where anything was REMOVED rather than corrected. It is
+   redundant after correction, and provably so: its stated intent is "keep the
+   teal ring", which the focus contract now delivers in a solid, measured form,
+   while this declaration is 20%-alpha teal — the 1.9:1 indicator that contract
+   exists to replace. Corrected but left in place, it would have won at (0,3,3)
+   with `!important` and silently reinstated the defect in dark mode. */
 html[data-theme="dark"] .form-control:focus-visible,
 html[data-theme="dark"] .form-select:focus-visible {
   box-shadow: 0 0 0 3px rgba(10,142,110,0.2) !important;
@@ -662,7 +667,7 @@ html[data-theme="dark"] .fb-dd.active {
 }
 
 /* ── Dark: btn-outline-dark hover (was hardcoded navy bg) ─── */
-html[data-theme="dark"] html body .btn-outline-dark:hover {
+html[data-theme="dark"] body .btn-outline-dark:hover {
   background: rgba(255,255,255,0.08) !important;
 }
 
