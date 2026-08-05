@@ -17,7 +17,15 @@ from core.models import (
     TermSection,
 )
 from core.services.advisor_principal import AdvisorPrincipal
+from core.services.advisor_remote_boundary import (
+    DUPLICATE_NOTE,
+    CachedToolExecution,
+    LocalToolBoundary,
+    ToolBoundary,
+    boundary_for_scope,
+)
 from core.services.credit_policy import credit_policy_evidence
+from core.services.llm_backend import BACKEND_LOCAL, LLMPrivacyError
 from core.services.local_llm import (
     ChatResult,
     LocalLLMBadRequest,
@@ -67,7 +75,7 @@ def _tool_turn_timeout() -> float:
     return max(10.0, float(getattr(settings, "VIRTUAL_ADVISOR_TOOL_TURN_TIMEOUT_SECONDS", 75)))
 
 
-SYSTEM_PROMPT_TEMPLATE = """You are a private local university virtual academic advisor.
+SYSTEM_PROMPT_TEMPLATE = """You are a university virtual academic advisor operating through verified university data tools.
 
 Rules:
 - Answer in the same language as the user's latest question. When the user message carries an answer_language field, write the final answer in that language.
@@ -89,7 +97,7 @@ Rules:
 {POLICY_RULES}
 """
 
-SYSTEM_PROMPT_AGENT_TEMPLATE = """You are a private local university virtual academic advisor with verified data tools.
+SYSTEM_PROMPT_AGENT_TEMPLATE = """You are a university virtual academic advisor operating through verified university data tools.
 
 Rules:
 - Write the final answer in the language named by the answer_language field of the user message. Never switch languages on your own.
@@ -1497,6 +1505,20 @@ def _fabricated_policy_ids(answer: str, citations: list[dict[str, Any]]) -> list
     return sorted(pid for pid in _policy_ids_in_text(answer) if pid not in allowed)
 
 
+def _known_names_from_context(context: dict[str, Any]) -> tuple[str, ...]:
+    """The exact personal names this request already knows about.
+
+    An exact set, never a pattern. A proper-name detector would have to decide
+    whether «الرياضيات المتقطعة» or «الدليل الإرشادي للطالب» is a person, and every
+    wrong answer either mangles a course title or leaves a name in place. What the
+    request genuinely holds is the student's own name — which is also the name most
+    likely to be typed into a question — so that is what gets redacted.
+    """
+    student = (context or {}).get("student")
+    name = str((student or {}).get("name") or "").strip() if isinstance(student, dict) else ""
+    return (name,) if len(name) >= 3 else ()
+
+
 def _summarise_tool_args(args: dict[str, Any]) -> dict[str, Any]:
     """Telemetry-safe argument summary (caps long lists/strings)."""
     summary: dict[str, Any] = {}
@@ -1510,6 +1532,55 @@ def _summarise_tool_args(args: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
+def _tool_message(call_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """The one place a tool result becomes text bound for the model.
+
+    Every `role: "tool"` message in the loop is built here, so "what did we
+    actually send" is a single line to audit rather than four `json.dumps` calls
+    that have to be checked individually for which object they were handed.
+    """
+    return {
+        "role": "tool",
+        "tool_call_id": call_id,
+        "content": json.dumps(payload, ensure_ascii=False, default=str),
+    }
+
+
+def _scrub_refused_call_arguments(messages: list[dict[str, Any]], call_id: str) -> None:
+    """Empty the arguments of a tool call the boundary refused.
+
+    The assistant message carrying the call has already been appended, and it
+    stays: the protocol requires every `role: "tool"` reply to answer an
+    assistant `tool_call_id`, so deleting it would make the conversation invalid.
+    Its ARGUMENTS, though, are not needed by anything — the call did not run.
+
+    Strictly this is not a leak: a forged `student_id` was written by the model,
+    so echoing it back tells the provider only what it just told us. It is
+    scrubbed anyway for two reasons. A fabricated identifier can collide with a
+    real student, and a number that was refused for naming somebody should not be
+    reinforced in the context for the next turn. And it keeps the invariant the
+    tests assert absolute — "a real id appears nowhere in what was sent" — rather
+    than an invariant with an exception that every later test has to remember.
+    """
+    for index in range(len(messages) - 1, -1, -1):
+        message = messages[index]
+        calls = message.get("tool_calls") if isinstance(message, dict) else None
+        if not isinstance(calls, list):
+            continue
+        if not any(isinstance(c, dict) and c.get("id") == call_id for c in calls):
+            continue
+        messages[index] = {
+            **message,
+            "tool_calls": [
+                {**c, "function": {**(c.get("function") or {}), "arguments": "{}"}}
+                if isinstance(c, dict) and c.get("id") == call_id
+                else c
+                for c in calls
+            ],
+        }
+        return
+
+
 def _run_agent_loop(
     *,
     llm: LocalLLMClient,
@@ -1518,17 +1589,28 @@ def _run_agent_loop(
     scope: dict[str, Any] | None,
     ctx: dict[str, Any],
     telemetry: dict[str, Any],
-) -> tuple[str, dict[str, Any], list[dict[str, Any]]]:
-    """Run the tool-calling loop. Returns (answer, usage, agent_tool_results).
+    boundary: ToolBoundary | None = None,
+) -> tuple[str, dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    """Run the tool-calling loop.
+
+    Returns (answer, usage, local_tool_results, provider_tool_results). The last
+    two are the same objects on a local backend and deliberately different ones on
+    a remote backend — see `advisor_remote_boundary`. Callers that build evidence,
+    citations or stored turns want the first; anything that will be serialised
+    towards a provider wants the second, and the two lists exist so that choice
+    has to be made explicitly at each site instead of defaulting to whatever
+    variable was nearest.
 
     Raises ``LocalLLMBadRequest`` only when the very first tools request is
     rejected (caller falls back to the single-shot path); later turns degrade
     to a forced no-tools answer instead.
     """
+    boundary = boundary or LocalToolBoundary()
     registry = get_default_registry()
-    tool_schemas = registry.tool_schemas_for_scope(scope)
+    tool_schemas = boundary.tool_schemas(registry.tool_schemas_for_scope(scope))
     agent_tool_results: list[dict[str, Any]] = []
-    seen_calls: dict[str, dict[str, Any]] = {}
+    provider_tool_results: list[dict[str, Any]] = []
+    seen_calls: dict[str, CachedToolExecution] = {}
     total_calls = 0
     usage: dict[str, Any] = {}
 
@@ -1560,7 +1642,7 @@ def _run_agent_loop(
 
         if not turn.tool_calls:
             if turn.content:
-                return turn.content, usage, agent_tool_results
+                return turn.content, usage, agent_tool_results, provider_tool_results
             break  # neither calls nor content — force a final answer below
 
         messages.append(turn.assistant_message)
@@ -1568,40 +1650,80 @@ def _run_agent_loop(
             total_calls += 1
             if total_calls > _max_tool_calls():
                 messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": call.id,
-                        "content": json.dumps(
-                            {"ok": False, "error": "Tool budget exhausted. Answer now."},
-                            ensure_ascii=False,
-                        ),
-                    }
+                    _tool_message(
+                        call.id, {"ok": False, "error": "Tool budget exhausted. Answer now."}
+                    )
                 )
                 continue
-            dedup_key = f"{call.name}:{json.dumps(call.arguments, sort_keys=True)}"
-            if dedup_key in seen_calls:
-                result = {**seen_calls[dedup_key], "note": "duplicate call; reusing prior result"}
+
+            # ── the execution order ──────────────────────────────
+            #
+            # Written out step by step rather than delegated to one call,
+            # because the ORDER is the property being enforced and a reviewer
+            # has to be able to see it. Everything above `registry.execute`
+            # refuses before any database read; the projection below it refuses
+            # before any egress. On a local backend every step here is the
+            # identity function and the loop behaves exactly as it always did.
+            try:
+                boundary.assert_capability_allowed(call.name)
+                safe_args = boundary.reject_identity_arguments(call.name, call.arguments)
+                resolved_args = boundary.resolve_reference_arguments(call.name, safe_args)
+                boundary.authorise_resolved_arguments(call.name, resolved_args)
+            except LLMPrivacyError:
+                # Nothing ran: no executor, no query, no result to leak. The
+                # exception text names the guard and sometimes the student, so
+                # it is not logged and not shown to the model — the model gets
+                # one refusal that reads the same whichever guard fired.
+                logger.warning("Boundary refused %s before execution.", call.name)
+                telemetry["boundary_refusals"].append({"name": call.name, "stage": "pre_execution"})
+                _scrub_refused_call_arguments(messages, call.id)
+                messages.append(_tool_message(call.id, boundary.refusal_result(call.name)))
+                continue
+
+            # Keyed on the RESOLVED arguments, so two references to the same
+            # student hit the same entry. Never recorded in telemetry: after
+            # resolution this string contains a real student id.
+            dedup_key = f"{call.name}:{json.dumps(resolved_args, sort_keys=True, default=str)}"
+            cached = seen_calls.get(dedup_key)
+            if cached is not None:
+                # Both halves come from the pair. Re-projecting the cached local
+                # result here would read a map that has moved on, and reaching
+                # for `cached.local_result` on the provider side is the exact
+                # cross-boundary reconstruction the pair exists to prevent.
+                local_result = {**cached.local_result, "note": DUPLICATE_NOTE}
+                provider_result = {**cached.provider_result, "note": DUPLICATE_NOTE}
             else:
                 started = time.perf_counter()
-                result = registry.execute(call.name, call.arguments, scope=scope, ctx=ctx)
+                local_result = registry.execute(call.name, resolved_args, scope=scope, ctx=ctx)
                 elapsed_ms = int((time.perf_counter() - started) * 1000)
-                seen_calls[dedup_key] = result
-                agent_tool_results.append(result)
+                try:
+                    provider_result = boundary.project_tool_result(call.name, local_result)
+                except LLMPrivacyError:
+                    # A shape the projector will not accept. Execution has
+                    # already happened — that much could not be known in
+                    # advance — but egress has not, and the result stays out of
+                    # the log line and out of the re-raised exception.
+                    logger.error("Projection refused a %s result; nothing was sent.", call.name)
+                    telemetry["boundary_refusals"].append(
+                        {"name": call.name, "stage": "projection"}
+                    )
+                    messages.append(_tool_message(call.id, boundary.refusal_result(call.name)))
+                    continue
+                seen_calls[dedup_key] = CachedToolExecution(local_result, provider_result)
+                agent_tool_results.append(local_result)
+                provider_tool_results.append(provider_result)
                 telemetry["tools_called"].append(
                     {
                         "name": call.name,
-                        "ok": bool(result.get("ok")),
+                        "ok": bool(local_result.get("ok")),
                         "ms": elapsed_ms,
+                        # The model's OWN arguments, before resolution. In remote
+                        # mode those carry `student_ref`; `resolved_args` carry
+                        # the real id, and telemetry is stored and shipped.
                         "args": _summarise_tool_args(call.arguments),
                     }
                 )
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": call.id,
-                    "content": json.dumps(result, ensure_ascii=False, default=str),
-                }
-            )
+            messages.append(_tool_message(call.id, provider_result))
 
     # Iteration or budget limit reached: force a final answer from the
     # evidence gathered so far, with tools disabled.
@@ -1623,7 +1745,7 @@ def _run_agent_loop(
         assistant_prefill=_assistant_prefill_for_model(resolved_model),
     )
     telemetry["forced_final"] = True
-    return final.content, final.usage or usage, agent_tool_results
+    return final.content, final.usage or usage, agent_tool_results, provider_tool_results
 
 
 def answer_virtual_advisor(
@@ -1677,8 +1799,24 @@ def answer_virtual_advisor(
         "forced_final": False,
         "grounding_retry": False,
         "turn_error": None,
+        "boundary_refusals": [],
     }
     agent_tool_results: list[dict[str, Any]] = []
+    provider_tool_results: list[dict[str, Any]] = []
+
+    # Whether anything leaves the institution is decided here, from configuration
+    # alone, and once. `LLM_BACKEND=local` yields a boundary whose every step is
+    # the identity function, so the shipped default is byte-for-byte the previous
+    # behaviour rather than a new path that happens to agree with it.
+    #
+    # The student's own name is handed over as a redaction target: it is the one
+    # personal string that reliably appears in a question ("أنا محمد، كم ساعة…")
+    # and the sanitiser works from an exact set rather than a name pattern.
+    boundary = boundary_for_scope(
+        scope,
+        backend=str(getattr(settings, "LLM_BACKEND", BACKEND_LOCAL) or BACKEND_LOCAL),
+        known_names=_known_names_from_context(context),
+    )
 
     # The credit range reaches the model through recommendation_policy, not through
     # policy_lookup — a second regulatory channel that was outside the citation
@@ -1695,11 +1833,17 @@ def answer_virtual_advisor(
     if telemetry["enabled"] and not loop_supported:
         telemetry["fallback_reason"] = "client_has_no_tool_support"
 
+    # TWO SERIALISATIONS OF THE SAME CONTEXT, and they are not interchangeable.
+    # `context_json` is the complete local record: it is the evidence the
+    # grounding check reads, and shrinking it there would turn a check into a
+    # rubber stamp. `prompt_context_json` is what a model is allowed to see.
+    # Locally they are identical strings; remotely the second is the projection.
     context_json = json.dumps(context, ensure_ascii=False)
+    prompt_context_json = json.dumps(boundary.project_context(context), ensure_ascii=False)
     user_message = {
         "role": "user",
         "content": (
-            f"verified_context:\n{context_json}\n\n"
+            f"verified_context:\n{prompt_context_json}\n\n"
             f"answer_language: {_answer_language(question)}\n\n"
             f"latest_question:\n{question.strip()}"
         ),
@@ -1711,19 +1855,28 @@ def answer_virtual_advisor(
         # tokens), which slowed every turn and tempted the model to answer
         # from a misleading sample instead of calling find_students with
         # the right filters. The model fetches precisely what it needs.
-        loop_messages: list[dict[str, Any]] = [
-            {"role": "system", "content": SYSTEM_PROMPT_AGENT},
-            *_sanitize_history(history),
-            user_message,
-        ]
+        loop_messages: list[dict[str, Any]] = boundary.sanitise_messages(
+            [
+                {"role": "system", "content": SYSTEM_PROMPT_AGENT},
+                *_sanitize_history(history),
+                user_message,
+            ]
+        )
+        # Sanitised HERE, once, over the whole list rather than over the question
+        # alone. History is the part that gets forgotten: a stored turn carries
+        # last week's question back into this prompt verbatim, and a boundary that
+        # only inspects `question` would wave it through. Messages appended inside
+        # the loop need no second pass — they are the model's own words coming
+        # back, and tool results that were already projected.
         try:
-            answer, usage, agent_tool_results = _run_agent_loop(
+            answer, usage, agent_tool_results, provider_tool_results = _run_agent_loop(
                 llm=llm,
                 resolved_model=resolved_model,
                 messages=loop_messages,
                 scope=scope,
                 ctx={"academic_year": academic_year, "term": term},
                 telemetry=telemetry,
+                boundary=boundary,
             )
             telemetry["loop_used"] = True
             # Whether this answer had a policy basis is recorded on BOTH paths, so an
@@ -1784,19 +1937,33 @@ def answer_virtual_advisor(
             # Feed the same structure the agent loop produces, so the citation check
             # and the response contract work identically on both paths.
             agent_tool_results = [*agent_tool_results, policy_evidence]
+            provider_tool_results = [
+                *provider_tool_results,
+                boundary.project_tool_result("policy_lookup", policy_evidence),
+            ]
 
         context_json = json.dumps(context, ensure_ascii=False)
+        # Disabling tools does not relax the boundary. This path serialises the
+        # WHOLE context into one message — seeded tool results and policy evidence
+        # included — so it is the largest single payload the adviser ever sends,
+        # and reaching for the unprojected object here because "there are no tools
+        # to project" would be the most expensive shortcut in the feature.
+        prompt_context_json = json.dumps(boundary.project_context(context), ensure_ascii=False)
         user_message = {
             "role": "user",
             "content": (
-                f"verified_context:\n{context_json}\n\n"
+                f"verified_context:\n{prompt_context_json}\n\n"
                 f"answer_language: {_answer_language(question)}\n\n"
                 f"latest_question:\n{question.strip()}"
             ),
         }
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-        messages.extend(_sanitize_history(history))
-        messages.append(user_message)
+        messages = boundary.sanitise_messages(
+            [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                *_sanitize_history(history),
+                user_message,
+            ]
+        )
         result: ChatResult = llm.chat(
             messages,
             model=resolved_model,
@@ -1817,7 +1984,15 @@ def answer_virtual_advisor(
     )
     if credit_citations:
         agent_tool_results = [*agent_tool_results, credit_citations]
+        provider_tool_results = [
+            *provider_tool_results,
+            boundary.project_tool_result("policy_lookup", credit_citations),
+        ]
 
+    # The citation contract is checked against the LOCAL evidence. What the answer
+    # was entitled to cite is a fact about what this request retrieved, not about
+    # what a provider was shown — and a check run against the projection would
+    # weaken with every field the projection drops.
     citations = _retrieved_citations(agent_tool_results)
     bad = _bad_citations(answer, citations)
     if bad:
@@ -1827,7 +2002,11 @@ def answer_virtual_advisor(
         # a model to rewrite a rule-bearing answer while showing it only a list of
         # ids leaves it nothing to rewrite FROM except its own memory — which is
         # the failure this whole feature exists to prevent.
-        evidence = _policy_evidence_block(agent_tool_results)
+        # The correction quotes policy TEXT back at the model, so it is outbound
+        # payload and takes the provider results. The DECISION to retry, and the
+        # list of what failed, came from the local check above — the boundary
+        # applies to what is sent, not to what is verified.
+        evidence = _policy_evidence_block(provider_tool_results)
         correction = (
             "Your draft's citations did not check out: "
             + "; ".join(
@@ -1841,13 +2020,21 @@ def answer_virtual_advisor(
             "remove the claim and say the system holds no written rule on that point. "
             "Do not substitute a different policy to keep the claim."
         )
-        retry_messages = [
-            {"role": "system", "content": SYSTEM_PROMPT_AGENT},
-            user_message,
-            {"role": "assistant", "content": answer},
-            {"role": "user", "content": correction},
-        ]
         try:
+            # Inside the try on purpose. The draft is the model's own text and may
+            # contain an identifier it invented — which is exactly what the
+            # grounding check below exists to catch. If the boundary refuses to
+            # send it back, that is the correct outcome and the cost is one lost
+            # retry: the draft stands, and a draft with bad citations is replaced
+            # by the refusal a few lines down rather than shipped.
+            retry_messages = boundary.sanitise_messages(
+                [
+                    {"role": "system", "content": SYSTEM_PROMPT_AGENT},
+                    user_message,
+                    {"role": "assistant", "content": answer},
+                    {"role": "user", "content": correction},
+                ]
+            )
             corrected_cite: ChatResult = llm.chat(
                 retry_messages,
                 model=resolved_model,
@@ -1895,18 +2082,32 @@ def answer_virtual_advisor(
     unverified = _unverified_student_ids(answer, evidence_texts)
     if unverified:
         telemetry["grounding_retry"] = True
-        correction = (
-            "Your draft answer mentioned student ids that do not appear in the verified "
-            f"evidence: {', '.join(unverified)}. Rewrite the answer strictly from the "
-            "evidence; never invent identifiers."
-        )
-        retry_messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            user_message,
-            {"role": "assistant", "content": answer},
-            {"role": "user", "content": correction},
-        ]
+        if boundary.is_remote:
+            # The ids are NOT quoted back. Every one of them is unverified by
+            # definition, so each is either invented or — the case that matters —
+            # a real student who was never part of this request. Listing them to
+            # make the correction concrete would send exactly the identifiers the
+            # boundary spent the whole request keeping out.
+            correction = (
+                "Your draft answer mentioned student identifiers that do not appear in "
+                "the verified evidence. Rewrite the answer strictly from the evidence; "
+                "never state or invent an identifier."
+            )
+        else:
+            correction = (
+                "Your draft answer mentioned student ids that do not appear in the verified "
+                f"evidence: {', '.join(unverified)}. Rewrite the answer strictly from the "
+                "evidence; never invent identifiers."
+            )
         try:
+            retry_messages = boundary.sanitise_messages(
+                [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    user_message,
+                    {"role": "assistant", "content": answer},
+                    {"role": "user", "content": correction},
+                ]
+            )
             corrected: ChatResult = llm.chat(
                 retry_messages,
                 model=resolved_model,
