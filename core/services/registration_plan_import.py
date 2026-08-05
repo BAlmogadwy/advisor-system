@@ -1,9 +1,9 @@
 """Seed registered timetables from an approved registration plan workbook.
 
-**This module never writes.** It parses, resolves and validates, and returns a
-deterministic plan. The command decides whether to apply it. That split is what
-makes the dry run trustworthy: the run that reports and the run that writes
-compute the same thing from the same code.
+Planning is side-effect-free: `build_plan()` parses, resolves and validates a
+deterministic plan. `apply_plan()` is the sole writer and applies only a validated
+plan atomically. That split is what makes the dry run trustworthy: the run that
+reports and the run that writes compute the same thing from the same code.
 
 WHY THE SECTION LABELS CANNOT BE MATCHED DIRECTLY
 
@@ -53,11 +53,9 @@ WHAT IS DELIBERATELY NOT WRITTEN
 
   * `TermSectionMeeting` — owner decision: link only, change no times. Every
     disagreement is REPORTED rather than repaired, because a student would
-    otherwise be shown a time that contradicts the plan that placed them. (An
-    earlier version of this docstring named `DS332`, `MATH471` and `AI225` as
-    sections whose clock had moved. Measured against `FINAL2`: **zero** sections
-    disagree, so nothing here depends on that. The reporting path stays, because
-    the next workbook is not this one.)
+    otherwise be shown a time that contradicts the plan that placed them. `FINAL2`
+    has zero measured time disagreements; the reporting path is kept for the
+    workbooks that follow it.
   * `StudentCourse.status` — sections are what the plan assigned; status is what
     the registrar recorded. One import, one meaning.
   * `Project` and `Foundation retake` rows — 156 of them, and not by preference:
@@ -74,8 +72,8 @@ from typing import Any
 #: Rows the workbook itself marks as having no timeslot.
 UNPLACEABLE_KINDS = frozenset({"Project", "Foundation retake"})
 
-#: `Mon 09:00-10:15` -> (`MON`, `09:00`). The workbook writes three-letter English
-#: days in title case; `TermSectionMeeting.day` stores them upper.
+#: `Mon 09:00-10:15` -> (`MON`, `09:00`, `10:15`). The workbook writes three-letter
+#: English days in title case; `TermSectionMeeting.day` stores them upper.
 _MEETING = re.compile(r"(\w{3})\s+(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})")
 
 
@@ -277,10 +275,11 @@ def build_plan(
     row already removed.
 
     `accept_moved_times` opts in to linking a section whose times match nothing on
-    file, where the course has exactly one section. That is a real case — the
-    workbook moved `DS332`, `MATH471` and `AI225` to seat more students — but it is
-    also how a student ends up in a section matching nothing they were told, so it
-    is off unless an operator asks for it having read the disagreement report.
+    file, where the course has exactly one section. It is how a student ends up in
+    a section matching nothing they were told, so it is off unless an operator asks
+    for it having read the disagreement report. The option is retained for future
+    workbooks. `FINAL2` has zero measured time disagreements, so the current import
+    does not use this path.
     """
     from core.services.student_sections import section_gender
 
