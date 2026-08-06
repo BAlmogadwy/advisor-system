@@ -30,6 +30,33 @@ from core.services.policy_contract import (
 pytestmark = pytest.mark.django_db
 
 
+class _PlainClient:
+    """A client with no `chat_with_tools`, so the single-shot path runs.
+
+    Defined here rather than imported from another test module. The import made
+    `test_policy_grounding_paths` reachable as both `tests.X` and `X`, which is
+    enough to stop mypy resolving the package at all — and reaching into another
+    test file's private helper is a dependency between test modules that nothing
+    declares.
+    """
+
+    def __init__(self, answer: str = "لا أعرف.") -> None:
+        self.answer = answer
+        self.chat_calls: list[list[dict]] = []
+
+    backend = "local"
+    supports_assistant_prefill = True
+
+    def resolve_model(self, requested_model=None):
+        return requested_model or "fake-plain"
+
+    def chat(self, messages, **kwargs):
+        from core.services.local_llm import ChatResult
+
+        self.chat_calls.append([dict(m) for m in messages])
+        return ChatResult(content=self.answer, model="fake-plain", usage={})
+
+
 # ── 1. the detector ──────────────────────────────────────────────
 
 
@@ -86,7 +113,6 @@ def test_the_detector_never_decides_whether_to_retrieve() -> None:
     from core.services.advisor_principal import AdvisorPrincipal
     from core.services.rbac import ROLE_STUDENT
     from core.services.virtual_advisor import answer_virtual_advisor
-    from tests.test_policy_grounding_paths import _NoToolsClient
 
     Student.objects.get_or_create(
         student_id=6001001, defaults={"name": "S", "program": "CS", "section": "M"}
@@ -94,7 +120,7 @@ def test_the_detector_never_decides_whether_to_retrieve() -> None:
     result = answer_virtual_advisor(
         question="وش عندي بكرة الأحد؟",
         principal=AdvisorPrincipal(role=ROLE_STUDENT, student_id=6001001),
-        client=_NoToolsClient(),
+        client=_PlainClient(),
     )
     assert result["agent"]["policy_required"] is False
     assert result["agent"]["policy_grounding"] in {
@@ -306,12 +332,11 @@ def test_the_model_sees_the_credit_policy_before_it_states_a_limit() -> None:
     from core.services.credit_policy import BACKING_POLICY_IDS
     from core.services.rbac import ROLE_STUDENT
     from core.services.virtual_advisor import answer_virtual_advisor
-    from tests.test_policy_grounding_paths import _NoToolsClient
 
     Student.objects.get_or_create(
         student_id=6001001, defaults={"name": "S", "program": "CS", "section": "M"}
     )
-    client = _NoToolsClient()
+    client = _PlainClient()
     answer_virtual_advisor(
         question="كم ساعة أقدر أسجل هذا الترم؟",
         principal=AdvisorPrincipal(role=ROLE_STUDENT, student_id=6001001),
