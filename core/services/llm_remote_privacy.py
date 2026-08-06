@@ -359,9 +359,46 @@ def _project_my_clash_free_sections(result: dict[str, Any], _: RemoteIdentityMap
 
 
 def _project_build_my_timetable(result: dict[str, Any], _: RemoteIdentityMap) -> dict[str, Any]:
+    """The whole provenance contract, plus the sentence that explains a partial result.
+
+    ``note`` was not on the old list, and its absence is why a remote answer could
+    report a partial build as a failure: the note is the sentence saying "there is
+    nothing to schedule … the plan is complete or every remaining course is
+    blocked", and the tool description insists a partial result "must be reported as
+    such, never as a failure". The model was held to a rule whose evidence had been
+    stripped from the payload it was given. The note carries no identity — every
+    branch of the executor writes it as a constant in this repository.
+
+    ``academic_year`` and ``term`` were dead names: the executor emits
+    ``using_timetable_of_term`` and has never emitted those two, so a remote answer
+    was working from a timetable with no term on it at all.
+
+    The section rows need no filtering HERE because they were built filtered:
+    ``timetable_provenance.baseline_sections`` keeps course, name, section and
+    meeting times and drops ``instructor`` and ``room``. That is the same rule
+    ``_project_my_timetable`` states two functions below, and it is enforced at the
+    point the rows are made so that this allowlist cannot be the only thing standing
+    between a member of staff's name and an external provider.
+    """
     out = _envelope(result)
     out.update(
-        _keep(result, "academic_year", "term", "placed", "unplaced", "reason", "action", "tool")
+        _keep(
+            result,
+            "using_timetable_of_term",
+            "student_requested_courses",
+            "system_recommended_courses",
+            "retained_sections",
+            "new_sections",
+            "fixed_sections",
+            "section_replacements",
+            "unplaced_courses",
+            "credit_summary",
+            "alternatives_considered",
+            "note",
+            "reason",
+            "action",
+            "tool",
+        )
     )
     return out
 

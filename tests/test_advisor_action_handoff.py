@@ -56,6 +56,7 @@ from core.services.advisor_intent import IntentFamily
 from core.services.advisor_outcome import derive_outcome
 from core.services.advisor_principal import AdvisorPrincipal
 from core.services.rbac import ROLE_ADVISOR, ROLE_STUDENT
+from core.services.timetable_provenance import TIMETABLE_FACT_KEYS
 from tests.test_llm_remote_execution_boundary import ExecutionSpy, ScriptedClient, _call
 
 pytestmark = pytest.mark.django_db
@@ -167,7 +168,7 @@ def test_an_ordinary_result_is_not_intercepted() -> None:
     answers with a referral."""
     for result in (
         {"tool": "my_progress", "ok": True, "reason": "SOMETHING_ELSE"},
-        {"tool": "build_my_timetable", "ok": True, "placed": []},
+        {"tool": "build_my_timetable", "ok": True, "new_sections": []},
         {"ok": False, "error": "boom"},
         "not a dict",
         None,
@@ -193,7 +194,13 @@ def test_a_chat_rebuild_request_is_routed_before_any_work_happens() -> None:
         scope={"role": ROLE_STUDENT, "student_id": MINE},
         ctx={"academic_year": 1448, "term": 1},
     )
-    assert not result.get("placed"), "chat rebuilt a timetable without the current sections"
+    # Against the WHOLE fact set, not against one key. The old assertion named
+    # `placed`, which no longer exists on any path — so it passed by asking a
+    # question about a key nobody writes, which is the quietest way for a guard test
+    # to stop guarding. A refused rebuild must carry no timetable at all.
+    assert not (set(result) & TIMETABLE_FACT_KEYS), (
+        "chat rebuilt a timetable without the current sections"
+    )
     assert result["ok"] is False
     assert result["reason"] == "REBUILD_REQUIRES_PLANNER_CONFIRMATION"
     assert result["action"] == "OPEN_STUDENT_PLANNER"

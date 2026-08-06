@@ -1548,11 +1548,21 @@ def _exec_build_my_timetable(
 
     from core.models import ProgrammeRequirement, Student
     from core.services.recommender import recommend_next_courses
+
+    # Through the adapter, not around it. `student_planner.run_solver` calls itself
+    # "the ONLY place student-facing code reaches the solver", and this — a
+    # student-facing capability — was the counter-example, with the domain-to-solver
+    # translation and all three pinned levers duplicated verbatim. Two sole sources
+    # of truth is none. Imported at the top of the body rather than beside the call,
+    # because DEFAULT_CREDITS is now the one credit fallback for the whole answer and
+    # every return path below needs it.
+    from core.services.student_planner import DEFAULT_CREDITS, run_solver
     from core.services.student_sections import (
         UnknownStudentGender,
         get_student_term_baseline,
         student_gender_strict,
     )
+    from core.services.timetable_provenance import baseline_sections, build_timetable_facts
 
     student_id, error = _resolve_scoped_student_id(args, scope)
     if error:
@@ -1572,12 +1582,29 @@ def _exec_build_my_timetable(
     ).strip()
     credits = {
         r["course_code"]: int(r["credit_hours"] or 0)
-        for r in ProgrammeRequirement.objects.filter(program=program).values(
+        # `iexact`, matching `get_student_term_baseline` and
+        # `student_planner._course_credits`, which read the same table for the same
+        # fact. An exact match here gives a programme stored in any other case an
+        # EMPTY credit map — harmless while the only consumer was a display total,
+        # and not harmless now that `credit_summary` reconciles against the
+        # baseline's own credits. Dormant on today's data (0 of 4 live programmes
+        # differ in case), fixed because the two lookups have to agree.
+        for r in ProgrammeRequirement.objects.filter(program__iexact=program).values(
             "course_code", "credit_hours"
         )
     }
 
-    # Courses to place: what the student asked for, else the official recommendation.
+    max_credits = args.get("max_credits")
+    try:
+        cap = int(max_credits) if max_credits not in (None, "") else 0
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "max_credits must be an integer."}
+
+    # Courses to place: what the student asked for, AND the official recommendation
+    # — kept as two lists the whole way to the answer. Merging them into one field
+    # called `requested` is what left TT21 «الجدول أضاف مقررًا أنا ما طلبته، من وين
+    # جاء؟» unanswerable: the payload asserted the student had asked for all four
+    # courses, so the model concluded the system keeps no record of who chose what.
     wanted = args.get("must_include") or []
     if isinstance(wanted, str):
         wanted = [wanted]
@@ -1586,13 +1613,44 @@ def _exec_build_my_timetable(
         normalize_code(c)
         for c in (recommend_next_courses(int(student_id), int(year), int(term)) or [])
     ]
-    codes = list(dict.fromkeys(wanted + recommended))
-    if not codes:
+    asked = list(dict.fromkeys(wanted + recommended))
+
+    baseline = get_student_term_baseline(int(student_id), str(year), str(term))
+    held = {row["course_code"] for row in baseline_sections(baseline)}
+
+    # A course the student is ALREADY registered in this term never goes to the
+    # solver. It cannot be scheduled twice, and sending it produces one of two wrong
+    # answers, both seen live on TT10: the solver prunes the student's own section
+    # because it collides with the student's own baseline, then either picks a
+    # DIFFERENT section of the same course — «تم الاحتفاظ بـ CS323-M1» followed by
+    # «CS323: شعبة M2» in one answer — or, when nothing else fits, reports
+    # ALL_SECTIONS_CLASH, which reads as "you cannot take AI331" about a course the
+    # student is sitting in.
+    #
+    # `recommend_next_courses` is what makes this the common case rather than an
+    # edge: it excludes PASSED and STUDYING courses, and a `StudentTermSection`
+    # registration is neither, so the term's own registrations come back as
+    # recommendations. They belong in `retained_sections`, and that is where they go.
+    codes = [c for c in asked if c not in held]
+
+    def _facts(mappings: list[dict[str, Any]], unscheduled: list[dict[str, Any]]) -> dict[str, Any]:
+        return build_timetable_facts(
+            student_id=int(student_id),
+            using_timetable_of_term=f"{year}/{term}",
+            requested_codes=wanted,
+            recommended_codes=recommended,
+            baseline=baseline,
+            mappings=mappings,
+            unscheduled=unscheduled,
+            credit_hours=credits,
+            default_credits=DEFAULT_CREDITS,
+            cap=cap,
+        ).as_payload()
+
+    if not asked:
         return {
             "ok": True,
-            "student_id": int(student_id),
-            "placed": [],
-            "unplaced": [],
+            **_facts([], []),
             "note": (
                 "There is nothing to schedule: the recommender returned no courses for "
                 "this student and none were named. That usually means the plan is "
@@ -1600,21 +1658,6 @@ def _exec_build_my_timetable(
             ),
             "tool": "build_my_timetable",
         }
-
-    max_credits = args.get("max_credits")
-    try:
-        cap = int(max_credits) if max_credits not in (None, "") else 0
-    except (TypeError, ValueError):
-        return {"ok": False, "error": "max_credits must be an integer."}
-
-    baseline = get_student_term_baseline(int(student_id), str(year), str(term))
-
-    # Through the adapter, not around it. `student_planner._run_solver` calls itself
-    # "the ONLY place student-facing code reaches the solver", and this — a
-    # student-facing capability — was the counter-example, with the domain-to-solver
-    # translation and all three pinned levers duplicated verbatim. Two sole sources
-    # of truth is none.
-    from core.services.student_planner import DEFAULT_CREDITS, run_solver
 
     result = run_solver(
         year=str(year),
@@ -1630,58 +1673,53 @@ def _exec_build_my_timetable(
     if not options:
         return {
             "ok": True,
-            "student_id": int(student_id),
-            "requested": codes,
-            "placed": [],
-            "unplaced": [{"course_code": c, "reason": "No plan could be built."} for c in codes],
-            "note": "No timetable could be built from the sections on file.",
+            **_facts(
+                [],
+                [
+                    {"course_code": c, "reason_code": None, "reason": "No plan could be built."}
+                    for c in codes
+                ],
+            ),
+            "alternatives_considered": 0,
+            "note": (
+                "No timetable could be built from the sections on file. Any section "
+                "under retained_sections is still the student's — it was never at risk, "
+                "because this build never touched what they are already registered in."
+            ),
             "tool": "build_my_timetable",
         }
 
     best = max(options, key=lambda o: int(o.get("scheduled") or 0))
-    placed = [
-        {
-            "course_code": m.get("course_code"),
-            "section": m.get("section"),
-            "meetings": [
-                f"{mt.get('day')} {mt.get('start_time')}-{mt.get('end_time')}"
-                for mt in (m.get("meetings") or [])
-            ],
-            "credits": credits.get(str(m.get("course_code") or ""), None),
-        }
-        for m in (best.get("mappings") or [])
-    ]
-    unplaced = []
+    unscheduled = []
     for u in best.get("unscheduled") or []:
         code, explanation = _translate_unplaced(u.get("reason"))
-        unplaced.append(
-            {
-                "course_code": u.get("course_code"),
-                "reason_code": code,
-                "reason": explanation,
-            }
+        unscheduled.append(
+            {"course_code": u.get("course_code"), "reason_code": code, "reason": explanation}
         )
 
     return {
         "ok": True,
-        "student_id": int(student_id),
-        "using_timetable_of_term": f"{year}/{term}",
-        "requested": codes,
-        "placed": placed,
-        "placed_count": len(placed),
-        "unplaced": unplaced,
-        "unplaced_count": len(unplaced),
-        "planned_credit_hours": sum(p["credits"] or 0 for p in placed),
+        **_facts(best.get("mappings") or [], unscheduled),
         "alternatives_considered": len(options),
         "note": (
             "A SUGGESTION built from the sections on file, not a registration and not "
             "an offer of a seat - there are no seat counts in the data, so never say a "
-            "section has room. A partial result is normal: a course appears under "
-            "unplaced when no section of it is on file (reason_code NOT_ON_FILE - say "
-            "exactly that, never 'not available'), or when every section collides with "
-            "something already placed. Sections carry no term of their own; the "
-            "term shown is the one the student's current timetable belongs to. The "
-            "student still registers through the university portal."
+            "section has room. Every course and section carries where it came from: "
+            "source STUDENT_REQUEST means the student named it, SYSTEM_RECOMMENDATION "
+            "means the recommender chose it, and CURRENT_REGISTRATION means they are "
+            "already registered in it. change RETAIN means it was kept untouched, ADD "
+            "means it is newly scheduled. Report retained_sections as kept and "
+            "new_sections as proposed; never present a retained section as new. A "
+            "partial result is normal: a course appears under unplaced_courses with "
+            "reason_code NOT_ON_FILE when no section of it is on file (say exactly "
+            "that, never 'not available'), with ALL_SECTIONS_CLASH when every section "
+            "collides with something already in the week, and with outcome "
+            "ALREADY_REGISTERED when the student is registered in it already - that "
+            "last one is not a failure and must never be reported as one. "
+            "credit_summary splits the hours already held from the hours this build "
+            "adds. Sections carry no term of their own; the term shown is the one the "
+            "student's current timetable belongs to. The student still registers "
+            "through the university portal."
         ),
         "tool": "build_my_timetable",
     }
@@ -2275,12 +2313,23 @@ def build_default_registry() -> AdvisorCapabilityRegistry:
                 "Build a clash-free weekly timetable for the student from the sections "
                 "on file. Use for 'build me a schedule', 'I must take X, can it fit', "
                 "'give me a plan under 12 hours'. Pass must_include for courses the "
-                "student insists on and max_credits for a ceiling. Returns placed AND "
-                "unplaced with a reason for each - a partial result is the normal "
-                "outcome and must be reported as such, never as a failure. It is a "
-                "SUGGESTION: it does not register anything and cannot promise a seat. "
-                "It ALWAYS keeps the sections the student is already registered in and "
-                "fits the new courses around them. "
+                "student insists on and max_credits for a ceiling. A partial result is "
+                "the normal outcome and must be reported as such, never as a failure. "
+                "It is a SUGGESTION: it does not register anything and cannot promise "
+                "a seat. It ALWAYS keeps the sections the student is already "
+                "registered in and fits the new courses around them - those sections "
+                "are listed in retained_sections, so say what was kept from that list "
+                "and never from memory. "
+                # The retention promise used to stand alone, with nothing in the
+                # payload behind it: `placed` holds only what the solver chose, and
+                # the baseline reaches the solver as an occupancy mask that never
+                # enters the result. The model was asked to assert a retention it had
+                # no evidence of, and on TT10 it did — «تم الاحتفاظ بـ CS323-M1» beside
+                # «CS323: شعبة M2», in one answer.
+                "student_requested_courses is what the student named; "
+                "system_recommended_courses is what the recommender chose. They are "
+                "separate because 'where did this course come from' is a question the "
+                "student actually asks, and one merged list cannot answer it. "
                 # The model must CALL for a rebuild request, not answer it. This
                 # used to read "not available here at all: tell them to open the
                 # planner", and the model obeyed — it never called, so the server
