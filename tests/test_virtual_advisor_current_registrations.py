@@ -927,8 +927,10 @@ def test_build_my_timetable_respects_a_credit_ceiling():
     # the credits through a second lookup whose fallback was None — so a course the
     # solver charged 3 hours against this very ceiling was reported as contributing
     # nothing, and the ceiling could be exceeded by a sum that said it was not.
-    assert capped["credit_summary"]["new"] <= 6, "the ceiling is a hard constraint, not a hint"
-    assert capped["credit_summary"]["cap"] == 6
+    assert capped["credit_summary"]["new_credit_hours"] <= 6, (
+        "the ceiling is a hard constraint, not a hint"
+    )
+    assert capped["credit_summary"]["new_courses_credit_cap"] == 6
 
 
 def test_build_my_timetable_promises_nothing_it_cannot_deliver():

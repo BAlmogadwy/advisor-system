@@ -621,21 +621,35 @@ def test_an_elective_placeholder_is_never_a_course_to_pass(plan):
     assert "AI1" not in [r["code"] for r in _progress()["unlock_impact_ranking"]]
 
 
-def test_the_ranking_omits_courses_that_would_free_nothing(plan):
-    """A ranked list of zeroes is not a ranking.
+def test_the_ranking_keeps_courses_that_would_free_nothing(plan):
+    """A zero is a real answer, and dropping it is a silent claim.
 
-    Seven of this student's open courses free nothing at all. Listing them under
-    "which course opens the most" invites the model to name one.
+    This asserted the OPPOSITE — that a course freeing nothing is omitted, because
+    "a ranked list of zeroes is not a ranking". The reading was wrong in the way that
+    matters: the ranking measures ONE criterion, and a course that unlocks nothing
+    may still be required for graduation, be in this term's recommendation, or be the
+    only way to a sane load. Omitting it turned "ranked lowest by unlock impact" into
+    "not worth taking", which is a judgement this computation cannot make. Measured on
+    the live record it removed 4 of 7 open courses.
+
+    The ranking is still a ranking: the order is unchanged and the basis is named in
+    the payload. What changed is that the candidate set is complete.
     """
     _add("GS101", 1, 2, (), "Mandatory")
-    ranking = _progress()["unlock_impact_ranking"]
+    progress = _progress()
+    ranking = progress["unlock_impact_ranking"]
 
-    assert "GS101" not in [r["code"] for r in ranking]
-    assert [r["code"] for r in ranking] == ["AI331", "CS323", "CS289"]
-    assert all(
-        r["sole_remaining_prerequisite_count"] or r["on_prerequisite_chain_of_count"]
-        for r in ranking
+    assert "GS101" in [r["code"] for r in ranking]
+    # Order preserved, zeroes last.
+    assert [r["code"] for r in ranking][:3] == ["AI331", "CS323", "CS289"]
+    assert [r["code"] for r in ranking][-1] == "GS101"
+    # Every course whose prerequisites are satisfied is a candidate.
+    assert {r["code"] for r in ranking} == {c["code"] for c in progress["prerequisites_satisfied"]}
+    # And the basis is stated, so "ranked last" cannot be read as "not important".
+    assert progress["unlock_impact_ranking_basis"] == (
+        "SOLE_REMAINING_UNLOCK_COUNT_THEN_DOWNSTREAM_COUNT"
     )
+    assert "zero is a real answer" in progress["unlock_impact_ranking_note"]
 
 
 def test_my_plan_by_term_does_not_write_into_the_payload_it_was_handed(plan):

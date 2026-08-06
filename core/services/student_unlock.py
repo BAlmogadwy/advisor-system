@@ -322,9 +322,14 @@ def build_unlock_report(student_id: int, year: int, term: int) -> dict:
         # `top_blocker` is a `max()` over this list and answers only "which one
         # course", so a question that ranks three named courses, or asks which opens
         # the most DIRECTLY rather than over the whole chain, had nothing to read.
+        # EVERY open course, including the ones that unlock nothing. The filter
+        # that used to sit here dropped 4 of one student's 7, and a ranking that
+        # silently omits candidates is read as the complete set of things worth
+        # taking. A course opening nothing may still be required for graduation, in
+        # this term's recommendation, or the only way to reach a sane load — none of
+        # which this ranking measures, and none of which it may quietly decide.
         "blockers": sorted(
-            (b for b in blockers if b["frees_now"] or b["frees_eventually"]),
-            key=lambda b: (-b["frees_now"], -b["frees_eventually"], b["code"]),
+            blockers, key=lambda b: (-b["frees_now"], -b["frees_eventually"], b["code"])
         ),
         "program": program,
         "counts": {
