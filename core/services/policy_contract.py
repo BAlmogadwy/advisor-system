@@ -290,6 +290,27 @@ def _compile() -> dict[str, tuple[tuple[list[set[str]], str], ...]]:
 _COMPILED = _compile()
 
 
+def _policy_domain(intent: Any) -> str:
+    """The coarse domain, from a family or its name. GENERAL when nothing was routed.
+
+    Imported lazily and tolerant of a string, because `policy_contract` is read by
+    offline scoring tools that have no router; an unknown value means "not a data
+    intent", which keeps the broad gate rather than relaxing it.
+    """
+    if intent is None:
+        return "GENERAL"
+    from core.services.advisor_intent import IntentFamily, policy_domain_of
+
+    try:
+        return policy_domain_of(IntentFamily(str(intent)))
+    except ValueError:
+        return "GENERAL"
+
+
+#: Imported by value rather than referenced, so the two modules cannot drift.
+_DATA_DOMAINS = frozenset({"PLANNER_DATA", "TIMETABLE_DATA", "COURSE_DATA"})
+
+
 def policy_intent(question: str) -> tuple[str, ...]:
     """Which claim types this question asks for, and which regulated subjects.
 
@@ -363,6 +384,9 @@ class PolicyContractState:
     direct_policy_ids: frozenset[str] = field(default_factory=frozenset)
     citable_policy_ids: frozenset[str] = field(default_factory=frozenset)
     intent: tuple[str, ...] = ()
+    #: Which coarse domain decided the obligation. Recorded so a stored turn says
+    #: WHY it owed a citation, not only that it did.
+    policy_domain: str = "GENERAL"
 
     @property
     def retrieval_missing(self) -> bool:
@@ -407,6 +431,7 @@ class PolicyContractState:
             "policy_required": self.required,
             "policy_intent": list(self.intent),
             "policy_grounding": self.grounding_state,
+            "policy_domain": self.policy_domain,
             "direct_policy_count": len(self.direct_policy_ids),
             "citable_policy_count": len(self.citable_policy_ids),
         }
@@ -421,7 +446,12 @@ def _ids(rows: Any) -> frozenset[str]:
 
 
 def build_policy_contract_state(
-    question: str, policy_results: list[dict[str, Any]] | None, *, grounding_state: str
+    question: str,
+    policy_results: list[dict[str, Any]] | None,
+    *,
+    grounding_state: str,
+    intent: Any = None,
+    explicit_normative_claim: bool | None = None,
 ) -> PolicyContractState:
     """Assemble the contract from the question and every policy result this turn.
 
@@ -438,12 +468,43 @@ def build_policy_contract_state(
         direct |= _ids(result.get("direct_policy_evidence"))
         citable |= _ids(result.get("citable"))
         citable |= _ids(result.get("policies"))
+    # ONCE. `requires_policy_contract` called `policy_intent` and this function
+    # called it again, so every answer resolved the store's 27 topic aliases twice
+    # for one decision. Cheap, and the shape mattered more than the cost: two calls
+    # is two places for the gate to be changed in one of them.
+    claims = policy_intent(question)
+
+    # ── the domain decides what the answer OWES ──────────────────────────────
+    #
+    # Measured on the 50-question batch, the word-level gate demanded a citation on
+    # 13 questions and could discharge it on 1. CP11 «وش المقررات المقفلة عندي وما
+    # يفصلني عنها إلا مقرر واحد؟» and CP15 were REFUSED their own prerequisite data
+    # over a rule that does not exist, and 7 more were "grounded" by citing a
+    # glossary entry on a prerequisite question — which is worse than a refusal,
+    # because it looks like evidence.
+    #
+    # The narrow check is the same POLICY markers the router uses, so a question a
+    # data family owns can still owe a citation: TT08 «أريد تسجيل 19 ساعة» classifies
+    # MIXED and keeps the obligation, which is the defect this whole branch exists
+    # for. Retrieval is UNCHANGED and still unconditional — this decides what the
+    # answer owes, never whether the store is consulted.
+    domain = _policy_domain(intent)
+    if domain in _DATA_DOMAINS:
+        if explicit_normative_claim is None:
+            from core.services.advisor_intent import explicit_normative_claim_present
+
+            explicit_normative_claim = explicit_normative_claim_present(question)
+        required = bool(explicit_normative_claim)
+    else:
+        required = bool(claims)
+
     return PolicyContractState(
-        required=requires_policy_contract(question),
+        required=required,
         grounding_state=grounding_state,
         direct_policy_ids=frozenset(direct),
         citable_policy_ids=frozenset(citable),
-        intent=policy_intent(question),
+        intent=claims,
+        policy_domain=domain,
     )
 
 

@@ -615,6 +615,51 @@ _PRECEDENCE: tuple[IntentFamily, ...] = (
 )
 
 
+#: The coarse domain a family's question belongs to, for the POLICY GATE only.
+#:
+#: DELIBERATELY NOT `_DOMAIN`. That map exists to decide MIXED — a question whose
+#: families span more than one domain — and its coarseness is load-bearing: measured
+#: over the 50-question batch, separating TIMETABLE_DATA from PLANNER_DATA inside it
+#: changes exactly one classification, and that one is TT28 «أكّد، تجاهل جدولي
+#: الحالي», which stops being PLANNER_REBUILD and loses the precedence that carries
+#: the confirmation requirement. The «أكّد» incident is the reason this branch
+#: exists, so the routing map keeps its three domains and the policy gate gets its
+#: own five.
+#:
+#: Two axes, two maps: `_DOMAIN` decides which FAMILY wins, this decides what the
+#: ANSWER owes. Sharing one table would have coupled a citation rule to a
+#: precedence rule, and neither would have been safe to change again.
+POLICY_DOMAIN_FOR_FAMILY: dict[IntentFamily, str] = {
+    IntentFamily.PLANNER_BUILD: "PLANNER_DATA",
+    IntentFamily.PLANNER_REBUILD: "PLANNER_DATA",
+    IntentFamily.PLANNER_EDIT_DRAFT: "PLANNER_DATA",
+    IntentFamily.PLANNER_VIEW_ALTERNATIVES: "PLANNER_DATA",
+    IntentFamily.PLANNER_SELECT_PREFERRED: "PLANNER_DATA",
+    IntentFamily.CURRENT_TIMETABLE: "TIMETABLE_DATA",
+    IntentFamily.TIMETABLE_CLASH: "TIMETABLE_DATA",
+    IntentFamily.COURSE_PRIORITY: "COURSE_DATA",
+    IntentFamily.COURSE_UNLOCKS: "COURSE_DATA",
+    IntentFamily.COURSE_LOCK_REASON: "COURSE_DATA",
+    IntentFamily.POLICY: "POLICY",
+}
+
+#: The domains whose questions are about the student's OWN RECORD. A question here
+#: owes a citation only when it asks, in so many words, what the rules permit.
+#:
+#: MIXED and GENERAL_AGENT are absent, and that is the whole safety of this change.
+#: MIXED means a regulatory family fired alongside a data one, so the answer still
+#: owes its rule. GENERAL_AGENT means the router was not certain — and a genuine
+#: policy question whose phrasing the markers miss lands there, so it keeps the broad
+#: obligation. Narrowing the unrouted default would have removed the contract from
+#: every question the router does not recognise.
+DATA_POLICY_DOMAINS = frozenset({"PLANNER_DATA", "TIMETABLE_DATA", "COURSE_DATA"})
+
+
+def policy_domain_of(family: IntentFamily) -> str:
+    """The policy domain this family's questions belong to. GENERAL when unrouted."""
+    return POLICY_DOMAIN_FOR_FAMILY.get(family, "GENERAL")
+
+
 #: The capability that OWNS each family's answer. Declared here so "which tool
 #: answers this question" is a fact the server states and a test can read, instead
 #: of a hope about how a model reads a description.

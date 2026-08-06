@@ -772,3 +772,23 @@ def test_an_ambiguous_pin_is_left_to_the_planner_to_ask_about(question: str, why
     handoff = handoff_for_question(question)
     if handoff is not None:
         assert "requested_edit" not in handoff.as_payload(), why
+
+
+def test_the_router_family_reaches_the_policy_gate(monkeypatch) -> None:
+    """The wiring, end to end, not the gate in isolation.
+
+    `build_policy_contract_state` can be handed the right family in a unit test and
+    still never receive one in production — the parameter defaults to None and falls
+    back to the broad gate, silently. CP11 is the case that proves the thread is
+    connected: routed COURSE_PRIORITY, it must reach the gate as a data domain and
+    owe nothing, where the word-level rule refused it its own prerequisite data.
+    """
+    ExecutionSpy(monkeypatch, result={"tool": "my_progress", "ok": True})
+    payload = _ask(
+        ScriptedClient([_call("my_progress", {})], final="حسب خطتك، هذه المقررات."),
+        question="وش المقررات المقفلة عندي وما يفصلني عنها إلا مقرر واحد؟",
+    )
+    agent = payload["agent"]
+    assert agent["policy_domain"] == "COURSE_DATA"
+    assert agent["policy_required"] is False
+    assert derive_outcome(payload).disposition != "ABSTAIN"

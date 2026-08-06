@@ -17,6 +17,7 @@ from core.models import (
     TermSection,
 )
 from core.services.advisor_actions import handoff_for, handoff_for_question
+from core.services.advisor_intent import classify_intent
 from core.services.advisor_principal import AdvisorPrincipal
 from core.services.advisor_remote_boundary import (
     DUPLICATE_NOTE,
@@ -2630,7 +2631,13 @@ def answer_virtual_advisor(
     # abstention contains no identifiers and would pass the identifier gate
     # trivially either way.
     contract = build_policy_contract_state(
-        question, agent_tool_results, grounding_state=telemetry["policy_grounding"]
+        question,
+        agent_tool_results,
+        grounding_state=telemetry["policy_grounding"],
+        # The family the router already decided, so the obligation is keyed on the
+        # DOMAIN of the question rather than on whether a regulated-sounding word
+        # appeared in it.
+        intent=classify_intent(question),
     )
     telemetry.update(contract.as_telemetry())
     answer_language = _answer_language(question)

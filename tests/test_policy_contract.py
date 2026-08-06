@@ -393,3 +393,142 @@ def test_a_governing_policy_is_never_shown_twice_with_opposite_directness() -> N
     # …and putting it through the context projector does not re-classify it.
     twice = boundary.project_context({"policy_evidence": shaped})
     assert all(r["is_direct_evidence"] is True for r in twice["policy_evidence"]["policies"])
+
+
+# ── 6B: the obligation follows the DOMAIN, not a word in the sentence ────────
+
+
+def _batch_questions() -> dict[str, str]:
+    import pathlib as _p
+
+    import yaml as _y
+
+    path = _p.Path(__file__).resolve().parents[1] / "evals/advisor/planner_priority_eval_v1.yaml"
+    return {
+        c["id"]: c["question_ar"] for c in _y.safe_load(path.read_text(encoding="utf-8"))["cases"]
+    }
+
+
+def _domain_state(question: str, *, grounding: str = "none_governing"):
+    from core.services.advisor_intent import classify_intent
+    from core.services.policy_contract import build_policy_contract_state
+
+    return build_policy_contract_state(
+        question, [], grounding_state=grounding, intent=classify_intent(question)
+    )
+
+
+def test_a_student_is_not_refused_their_own_prerequisite_data() -> None:
+    """CP11 and CP15, the two the word-level gate refused.
+
+    Both ask about the student's own prerequisite graph. `policy_intent` read
+    «المقررات» and «مقفلة» as regulatory, retrieval found nothing governing — because
+    there is no rule about which course is one step away — and the contract turned
+    that into an abstention. The student was told no policy exists, about a question
+    no policy governs.
+    """
+    for question in (
+        "وش المقررات المقفلة عندي وما يفصلني عنها إلا مقرر واحد؟",
+        "عندي مقرر اختياري مقفل بسبب متطلب، هل أعتبره أولوية أو لازم نحدد المقرر الفعلي أولًا؟",
+    ):
+        state = _domain_state(question)
+        assert state.policy_domain == "COURSE_DATA", question
+        assert state.required is False, question
+        assert state.must_abstain is False, question
+
+
+def test_the_credit_limit_question_still_owes_its_citation() -> None:
+    """TT08 is the defect this whole branch exists for.
+
+    «أريد تسجيل 19 ساعة» names a regulated ceiling, so it must cite the record that
+    sets it. It classifies MIXED — a regulatory family fired beside a planner one —
+    and MIXED is deliberately absent from the data domains, so the broad gate holds.
+    """
+    state = _domain_state("أريد تسجيل 19 ساعة، هل تستطيع بناء جدول كامل بهذا الحد؟")
+    assert state.policy_domain != "COURSE_DATA"
+    assert state.required is True
+
+
+def test_an_unrouted_question_keeps_the_broad_obligation() -> None:
+    """GENERAL_AGENT is the router's "not certain", and a genuine policy question
+    whose phrasing the markers miss lands there. Treating it as data would remove the
+    contract from every question the router does not recognise — the corpus-wide
+    cost that makes this narrowing safe only for families that were actually routed.
+    """
+    from core.services.advisor_intent import IntentFamily, classify_intent
+
+    question = "هل يجوز لي تأجيل الفصل الدراسي؟"
+    assert classify_intent(question) in (IntentFamily.POLICY, IntentFamily.GENERAL_AGENT)
+    assert _domain_state(question).required is True
+
+
+def test_the_two_domain_maps_are_deliberately_different() -> None:
+    """`_DOMAIN` decides MIXED; this one decides what the answer owes.
+
+    Sharing one table would couple a citation rule to a precedence rule. Measured:
+    splitting TIMETABLE_DATA out of `_DOMAIN` changes exactly one classification —
+    TT28 «أكّد» stops being PLANNER_REBUILD — so the routing map keeps three domains
+    and the policy map has five.
+    """
+    from core.services.advisor_intent import _DOMAIN, POLICY_DOMAIN_FOR_FAMILY, IntentFamily
+
+    assert _DOMAIN[IntentFamily.CURRENT_TIMETABLE] == _DOMAIN[IntentFamily.PLANNER_BUILD]
+    assert (
+        POLICY_DOMAIN_FOR_FAMILY[IntentFamily.CURRENT_TIMETABLE]
+        != POLICY_DOMAIN_FOR_FAMILY[IntentFamily.PLANNER_BUILD]
+    )
+    # MIXED and GENERAL_AGENT must never become data domains.
+    assert IntentFamily.MIXED not in POLICY_DOMAIN_FOR_FAMILY
+    assert IntentFamily.GENERAL_AGENT not in POLICY_DOMAIN_FOR_FAMILY
+
+
+def test_an_unrouted_data_question_still_carries_the_broad_obligation() -> None:
+    """The corpus-wide cost of narrowing, made concrete.
+
+    TT20 «ليش ما ضفت AI491؟ هل المشكلة في المتطلب السابق أو في وقت الشعبة؟» is a data
+    question that the router does not classify, and `policy_intent` reads ELIGIBILITY
+    in it. It KEEPS its obligation, because GENERAL_AGENT means "not certain" and a
+    genuine policy question whose phrasing the markers miss lands in exactly the same
+    place. It can discharge the obligation — retrieval finds governing records — so
+    the cost is a citation it did not need, not a refusal.
+
+    Admitting GENERAL to the data domains would silence this, and would silence every
+    unrecognised policy question with it. That trade is the reason the narrowing is
+    keyed on families that were actually ROUTED.
+    """
+    from core.services.advisor_intent import IntentFamily, classify_intent
+
+    question = "ليش ما ضفت AI491؟ هل المشكلة في المتطلب السابق أو في وقت الشعبة؟"
+    assert classify_intent(question) is IntentFamily.GENERAL_AGENT
+    state = _domain_state(question, grounding="retrieved")
+    assert state.policy_domain == "GENERAL"
+    assert state.required is True
+
+
+def test_a_data_family_question_cannot_carry_a_normative_marker() -> None:
+    """Why the narrow check inside the data branch is a GUARD, not a live branch.
+
+    `explicit_normative_claim_present` reads the POLICY family's own markers, and
+    `classify_intent` returns MIXED as soon as a question's families span more than
+    one domain. So a POLICY marker firing is precisely what stops a question being a
+    data family — and inside the data branch the narrow check is always False.
+
+    It is written as the owner specified rather than as a bare `False`, because the
+    equivalence is a property of today's precedence and marker sets. If POLICY ever
+    stopped forcing MIXED, a bare `False` would silently exempt a rule question. This
+    test is what would go red first.
+    """
+    from core.services.advisor_intent import (
+        DATA_POLICY_DOMAINS,
+        classify_intent,
+        explicit_normative_claim_present,
+        policy_domain_of,
+    )
+
+    offenders = [
+        qid
+        for qid, text in _batch_questions().items()
+        if policy_domain_of(classify_intent(text)) in DATA_POLICY_DOMAINS
+        and explicit_normative_claim_present(text)
+    ]
+    assert offenders == [], offenders
