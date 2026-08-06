@@ -395,6 +395,18 @@ _ONE_WORD = _words("واحد", "واحده", "one", "single")
 
 _WHY_WORD = _words("ليش", "لماذا", "ليه", "السبب", "why")
 
+#: «المتطلب السابق» — the prerequisite, named as a noun rather than as a lock.
+#: TT20 «ليش ما ضفت AI491؟ هل المشكلة في المتطلب السابق أو في وقت الشعبة؟» asks why a
+#: course was left out and offers two candidate causes; the lock markers need a lock
+#: WORD («مقفل») and there is none, so the question reached no family at all — and an
+#: unrouted question kept the broad citation obligation it could never earn.
+_PREREQ_NOUN = _words("المتطلب", "متطلب", "المتطلبات", "prerequisite", "prerequisites")
+
+#: PAST TENSE again, and for the same reason as «اخترت»: «ما ضفت» asks about a build
+#: that already ran. The imperative «أضف» is the build request itself and is already
+#: `_ADD_VERB`, whose markers all require a schedule noun that TT20 does not have.
+_WAS_ADDED_VERB = _words("ضفت", "اضفت", "اضيفت", "added", "include")
+
 _LOCKED_WORD = _words("مقفل", "مقفله", "المقفل", "المقفله", "مغلق", "مغلقه", "locked", "blocked")
 
 #: Course code as written in this catalogue: 2-4 Latin letters closed up against
@@ -530,6 +542,10 @@ _MARKERS: dict[IntentFamily, tuple[_Marker, ...]] = {
         _m(_BUILD_VERB, _SCHEDULE),
         _m(_WANT_VERB, _SCHEDULE),
         _m(_ADD_VERB, _SCHEDULE),
+        # TT20's planner half: "why was this not added", about a build that ran.
+        # Requires the course code, because «ليش ما ضفت شي؟» names no course and is
+        # not a question about a timetable result.
+        _m_code(_WHY_WORD, _WAS_ADDED_VERB),
     ),
     IntentFamily.CURRENT_TIMETABLE: (
         _m(_SHOW_VERB, _MY_SCHEDULE),
@@ -561,6 +577,8 @@ _MARKERS: dict[IntentFamily, tuple[_Marker, ...]] = {
     IntentFamily.COURSE_LOCK_REASON: (
         _m(_WHY_WORD, _LOCKED_WORD),
         _m(_LOCKED_WORD, _WHY_WORD),
+        # TT20's prerequisite half.
+        _m(_WHY_WORD, _PREREQ_NOUN),
     ),
     IntentFamily.POLICY: (
         _m(_PERMISSION),
@@ -615,6 +633,102 @@ _PRECEDENCE: tuple[IntentFamily, ...] = (
 )
 
 
+class CompositionKind(StrEnum):
+    """What a turn is MADE OF, which is a different question from who owns it.
+
+    `IntentFamily.MIXED` was answering both, and the two disagree. TT20 «ليش ما ضفت
+    AI491؟ هل المشكلة في المتطلب السابق أو في وقت الشعبة؟» needs a planner result AND
+    a lock reason — two DATA capabilities, no rule anywhere in it. TT08 «أريد تسجيل
+    19 ساعة» needs a timetable and the load REGULATION. One enum controlling both the
+    tool surface and the citation obligation could not express the second without
+    implying the first, so TT20 inherited a citation obligation it could never earn.
+    """
+
+    SINGLE = "SINGLE"
+    MULTI_CAPABILITY = "MULTI_CAPABILITY"
+    DATA_PLUS_POLICY = "DATA_PLUS_POLICY"
+
+
+class PolicyDomain(StrEnum):
+    """The coarse domain the POLICY GATE keys on. Never the routing domain."""
+
+    PLANNER_DATA = "PLANNER_DATA"
+    TIMETABLE_DATA = "TIMETABLE_DATA"
+    COURSE_DATA = "COURSE_DATA"
+    POLICY = "POLICY"
+    GENERAL = "GENERAL"
+
+
+#: The domains whose questions are about the student's OWN RECORD.
+DATA_POLICY_DOMAINS = frozenset(
+    {PolicyDomain.PLANNER_DATA, PolicyDomain.TIMETABLE_DATA, PolicyDomain.COURSE_DATA}
+)
+
+
+@dataclass(frozen=True)
+class AdvisorRoute:
+    """One decision, carrying every axis that used to be squeezed into a family.
+
+    `primary_family` still decides the owning capability and the action. What is new
+    is that the OTHER families that fired are kept — precedence exists to pick a
+    winner, and the halves it discards are exactly what a multi-capability question
+    needs — and that composition and policy domain are stated rather than inferred
+    from the winner's identity.
+    """
+
+    primary_family: IntentFamily
+    secondary_families: tuple[IntentFamily, ...] = ()
+    composition: CompositionKind = CompositionKind.SINGLE
+    policy_domain: PolicyDomain = PolicyDomain.GENERAL
+
+    @property
+    def families(self) -> tuple[IntentFamily, ...]:
+        return (self.primary_family, *self.secondary_families)
+
+
+def route_intent(question: str) -> AdvisorRoute:
+    """The whole routing decision for one question.
+
+    Reads the families that FIRED, not just the winner. `classify_intent` is left
+    exactly as it was — it is the precedence table that protects TT28, and nothing
+    here touches it — so the two agree on the primary family by construction.
+    """
+    hits = _families(question)
+    primary = classify_intent(question)
+    if not hits:
+        return AdvisorRoute(primary_family=primary)
+
+    domains = {_DOMAIN[h] for h in hits}
+    if "policy" in domains and len(domains) > 1:
+        composition = CompositionKind.DATA_PLUS_POLICY
+    elif len(hits) > 1:
+        composition = CompositionKind.MULTI_CAPABILITY
+    else:
+        composition = CompositionKind.SINGLE
+
+    # MIXED is a precedence outcome, not a surface. Its policy domain comes from the
+    # composition: a data-plus-policy question owes its rule, a multi-capability one
+    # is data throughout and takes the domain of the family that owns it.
+    if composition is CompositionKind.DATA_PLUS_POLICY:
+        domain = PolicyDomain.POLICY
+    elif primary is IntentFamily.MIXED:
+        domain = policy_domain_of(hits[0])
+    else:
+        domain = policy_domain_of(primary)
+
+    # MIXED is a precedence OUTCOME, not a surface — no capability owns it — so the
+    # highest-precedence family that actually fired is the primary, and the rest are
+    # secondaries. Computed after that resolution, or the primary appears in its own
+    # secondary list.
+    resolved = hits[0] if primary is IntentFamily.MIXED else primary
+    return AdvisorRoute(
+        primary_family=resolved,
+        secondary_families=tuple(h for h in hits if h is not resolved),
+        composition=composition,
+        policy_domain=domain,
+    )
+
+
 #: The coarse domain a family's question belongs to, for the POLICY GATE only.
 #:
 #: DELIBERATELY NOT `_DOMAIN`. That map exists to decide MIXED — a question whose
@@ -629,18 +743,18 @@ _PRECEDENCE: tuple[IntentFamily, ...] = (
 #: Two axes, two maps: `_DOMAIN` decides which FAMILY wins, this decides what the
 #: ANSWER owes. Sharing one table would have coupled a citation rule to a
 #: precedence rule, and neither would have been safe to change again.
-POLICY_DOMAIN_FOR_FAMILY: dict[IntentFamily, str] = {
-    IntentFamily.PLANNER_BUILD: "PLANNER_DATA",
-    IntentFamily.PLANNER_REBUILD: "PLANNER_DATA",
-    IntentFamily.PLANNER_EDIT_DRAFT: "PLANNER_DATA",
-    IntentFamily.PLANNER_VIEW_ALTERNATIVES: "PLANNER_DATA",
-    IntentFamily.PLANNER_SELECT_PREFERRED: "PLANNER_DATA",
-    IntentFamily.CURRENT_TIMETABLE: "TIMETABLE_DATA",
-    IntentFamily.TIMETABLE_CLASH: "TIMETABLE_DATA",
-    IntentFamily.COURSE_PRIORITY: "COURSE_DATA",
-    IntentFamily.COURSE_UNLOCKS: "COURSE_DATA",
-    IntentFamily.COURSE_LOCK_REASON: "COURSE_DATA",
-    IntentFamily.POLICY: "POLICY",
+POLICY_DOMAIN_FOR_FAMILY: dict[IntentFamily, PolicyDomain] = {
+    IntentFamily.PLANNER_BUILD: PolicyDomain.PLANNER_DATA,
+    IntentFamily.PLANNER_REBUILD: PolicyDomain.PLANNER_DATA,
+    IntentFamily.PLANNER_EDIT_DRAFT: PolicyDomain.PLANNER_DATA,
+    IntentFamily.PLANNER_VIEW_ALTERNATIVES: PolicyDomain.PLANNER_DATA,
+    IntentFamily.PLANNER_SELECT_PREFERRED: PolicyDomain.PLANNER_DATA,
+    IntentFamily.CURRENT_TIMETABLE: PolicyDomain.TIMETABLE_DATA,
+    IntentFamily.TIMETABLE_CLASH: PolicyDomain.TIMETABLE_DATA,
+    IntentFamily.COURSE_PRIORITY: PolicyDomain.COURSE_DATA,
+    IntentFamily.COURSE_UNLOCKS: PolicyDomain.COURSE_DATA,
+    IntentFamily.COURSE_LOCK_REASON: PolicyDomain.COURSE_DATA,
+    IntentFamily.POLICY: PolicyDomain.POLICY,
 }
 
 #: The domains whose questions are about the student's OWN RECORD. A question here
@@ -652,12 +766,11 @@ POLICY_DOMAIN_FOR_FAMILY: dict[IntentFamily, str] = {
 #: policy question whose phrasing the markers miss lands there, so it keeps the broad
 #: obligation. Narrowing the unrouted default would have removed the contract from
 #: every question the router does not recognise.
-DATA_POLICY_DOMAINS = frozenset({"PLANNER_DATA", "TIMETABLE_DATA", "COURSE_DATA"})
 
 
-def policy_domain_of(family: IntentFamily) -> str:
+def policy_domain_of(family: IntentFamily) -> PolicyDomain:
     """The policy domain this family's questions belong to. GENERAL when unrouted."""
-    return POLICY_DOMAIN_FOR_FAMILY.get(family, "GENERAL")
+    return POLICY_DOMAIN_FOR_FAMILY.get(family, PolicyDomain.GENERAL)
 
 
 #: The capability that OWNS each family's answer. Declared here so "which tool
@@ -792,6 +905,7 @@ __all__ = [
     "CAPABILITY_FOR_FAMILY",
     "IntentFamily",
     "classify_intent",
+    "route_intent",
     "explicit_normative_claim_present",
     "owning_capability",
 ]

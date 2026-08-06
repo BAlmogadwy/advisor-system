@@ -792,3 +792,43 @@ def test_the_router_family_reaches_the_policy_gate(monkeypatch) -> None:
     assert agent["policy_domain"] == "COURSE_DATA"
     assert agent["policy_required"] is False
     assert derive_outcome(payload).disposition != "ABSTAIN"
+
+
+def test_a_missing_rule_suppresses_the_rule_and_not_the_students_record(monkeypatch) -> None:
+    """The whole point of splitting the halves.
+
+    A turn that owes a rule the store does not hold still refuses the PROSE — text
+    surgery on free Arabic is a problem nobody has solved, and a half-edited answer
+    is one whose remaining sentences nobody has checked. But the verified facts were
+    never in the prose: they are the structured tool results the server already
+    holds. Destroying them with the sentence was the defect.
+
+    So: the answer is the abstention, `policy_part` says ABSTAINED, and `data_part`
+    still carries what the tool returned, keyed by tool name so a consumer reads it
+    without indexing a position.
+    """
+    progress = {"tool": "my_progress", "ok": True, "counts": {"open": 7, "one_step": 6}}
+    ExecutionSpy(monkeypatch, result=progress)
+    payload = _ask(
+        ScriptedClient([_call("my_progress", {})], final="القاعدة تسمح بذلك."),
+        question="هل يجوز لي تسجيل 21 ساعة هذا الفصل؟",
+    )
+
+    assert payload["agent"].get("policy_contract_failure") == "no_governing_evidence"
+    assert payload["policy_part"]["status"] == "ABSTAINED"
+    # The rule sentence the model wrote is gone…
+    assert "القاعدة تسمح" not in payload["answer"]
+    # …and the student's own record is not.
+    assert payload["data_part"]["status"] == "ANSWERED"
+    assert payload["data_part"]["facts"]["my_progress"]["counts"]["one_step"] == 6
+
+
+def test_an_ordinary_answer_reports_both_halves_answered(monkeypatch) -> None:
+    """`policy_part` is present on every response, so a caller tests one key."""
+    ExecutionSpy(monkeypatch, result={"tool": "my_progress", "ok": True})
+    payload = _ask(
+        ScriptedClient([_call("my_progress", {})], final="هذه مقرراتك."),
+        question="وش المقررات المقفلة عندي وما يفصلني عنها إلا مقرر واحد؟",
+    )
+    assert payload["policy_part"]["status"] == "ANSWERED"
+    assert payload["data_part"]["status"] == "ANSWERED"

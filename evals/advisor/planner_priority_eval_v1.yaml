@@ -58,6 +58,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: TT02
   category: planner_alternatives
   role: student
@@ -89,9 +90,11 @@ cases:
     expected_family: PLANNER_VIEW_ALTERNATIVES
     allowed_families:
     - PLANNER_VIEW_ALTERNATIVES
-    secondary_families: []
+    secondary_families:
+    - PLANNER_BUILD
     clarification_reason: null
     requires_prior_context: false
+    composition: MULTI_CAPABILITY
 - id: TT03
   category: planner_build
   role: student
@@ -129,6 +132,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: TT04
   category: planner_build
   role: student
@@ -165,6 +169,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: TT05
   category: planner_build
   role: student
@@ -199,6 +204,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: TT06
   category: planner_credit_cap
   role: student
@@ -233,6 +239,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: TT07
   category: planner_credit_cap
   role: student
@@ -269,6 +276,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: TT08
   category: planner_policy_mixed
   role: student
@@ -304,9 +312,11 @@ cases:
     expected_family: MIXED
     allowed_families:
     - MIXED
-    secondary_families: []
+    secondary_families:
+    - POLICY
     clarification_reason: null
     requires_prior_context: false
+    composition: DATA_PLUS_POLICY
 - id: TT09
   category: planner_edit
   role: student
@@ -342,9 +352,11 @@ cases:
     allowed_families:
     - PLANNER_BUILD
     - PLANNER_EDIT_DRAFT
-    secondary_families: []
+    secondary_families:
+    - PLANNER_BUILD
     clarification_reason: null
     requires_prior_context: false
+    composition: MULTI_CAPABILITY
 - id: TT10
   category: planner_edit
   role: student
@@ -378,6 +390,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: true
+    composition: SINGLE
 - id: TT11
   category: current_timetable
   role: student
@@ -410,6 +423,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: TT12
   category: current_registration
   role: student
@@ -437,7 +451,7 @@ cases:
   - current_term_registrations
   routing:
     mode: one_of
-    domain: TIMETABLE_DATA
+    domain: GENERAL
     expected_family: CURRENT_TIMETABLE
     allowed_families:
     - CURRENT_TIMETABLE
@@ -445,6 +459,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: TT13
   category: current_timetable
   role: student
@@ -469,7 +484,7 @@ cases:
   - Do not invent time or room data.
   routing:
     mode: one_of
-    domain: TIMETABLE_DATA
+    domain: GENERAL
     expected_family: CURRENT_TIMETABLE
     allowed_families:
     - CURRENT_TIMETABLE
@@ -477,6 +492,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: TT14
   category: timetable_clash
   role: student
@@ -507,9 +523,11 @@ cases:
     expected_family: TIMETABLE_CLASH
     allowed_families:
     - TIMETABLE_CLASH
-    secondary_families: []
+    secondary_families:
+    - CURRENT_TIMETABLE
     clarification_reason: null
     requires_prior_context: false
+    composition: MULTI_CAPABILITY
 - id: TT15
   category: timetable_clash
   role: student
@@ -543,6 +561,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: TT16
   category: planner_partial_result
   role: student
@@ -574,6 +593,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: TT17
   category: data_semantics
   role: student
@@ -603,13 +623,14 @@ cases:
   - Do not automatically call the warning a technical error.
   routing:
     mode: exact
-    domain: TIMETABLE_DATA
+    domain: GENERAL
     expected_family: GENERAL_AGENT
     allowed_families:
     - GENERAL_AGENT
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: TT18
   category: timetable_clash
   role: student
@@ -642,6 +663,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: TT19
   category: planner_explanation
   role: student
@@ -666,13 +688,14 @@ cases:
   clarification_allowed: true
   routing:
     mode: clarify
-    domain: PLANNER_DATA
+    domain: GENERAL
     expected_family: null
     allowed_families:
     - GENERAL_AGENT
     secondary_families: []
     clarification_reason: MISSING_COURSE
     requires_prior_context: false
+    composition: SINGLE
 - id: TT20
   category: planner_prerequisite_diagnosis
   role: student
@@ -701,14 +724,16 @@ cases:
     course_code: AI491
   routing:
     mode: one_of
-    domain: COURSE_DATA
+    domain: PLANNER_DATA
     expected_family: GENERAL_AGENT
     allowed_families:
     - GENERAL_AGENT
     - MIXED
-    secondary_families: []
+    secondary_families:
+    - COURSE_LOCK_REASON
     clarification_reason: null
     requires_prior_context: false
+    composition: MULTI_CAPABILITY
 - id: TT21
   category: planner_provenance
   role: student
@@ -735,13 +760,14 @@ cases:
   - system_recommended_courses
   routing:
     mode: contextual
-    domain: PLANNER_DATA
+    domain: GENERAL
     expected_family: GENERAL_AGENT
     allowed_families:
     - GENERAL_AGENT
     secondary_families: []
     clarification_reason: null
     requires_prior_context: true
+    composition: SINGLE
 - id: TT22
   category: planner_data_limits
   role: student
@@ -764,13 +790,14 @@ cases:
   - Do not infer space from clash-free status.
   routing:
     mode: exact
-    domain: PLANNER_DATA
+    domain: GENERAL
     expected_family: GENERAL_AGENT
     allowed_families:
     - GENERAL_AGENT
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: TT23
   category: registration_safety
   role: student
@@ -795,13 +822,14 @@ cases:
   setup: No authoritative persisted option payload is supplied to answer generation.
   routing:
     mode: exact
-    domain: PLANNER_DATA
+    domain: GENERAL
     expected_family: GENERAL_AGENT
     allowed_families:
     - GENERAL_AGENT
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: TT24
   category: planner_preference
   role: student
@@ -836,6 +864,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: TT25
   category: planner_preference
   role: student
@@ -857,13 +886,14 @@ cases:
   - Do not claim automatic registration, seat reservation, or deletion of current sections.
   routing:
     mode: none
-    domain: PLANNER_DATA
+    domain: GENERAL
     expected_family: null
     allowed_families:
     - GENERAL_AGENT
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: TT26
   category: planner_edit
   role: student
@@ -898,6 +928,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: true
+    composition: SINGLE
 - id: TT27
   category: planner_rebuild
   role: student
@@ -929,9 +960,11 @@ cases:
     expected_family: PLANNER_REBUILD
     allowed_families:
     - PLANNER_REBUILD
-    secondary_families: []
+    secondary_families:
+    - PLANNER_BUILD
     clarification_reason: null
     requires_prior_context: false
+    composition: MULTI_CAPABILITY
 - id: TT28
   category: planner_rebuild
   role: student
@@ -961,9 +994,11 @@ cases:
     expected_family: PLANNER_REBUILD
     allowed_families:
     - PLANNER_REBUILD
-    secondary_families: []
+    secondary_families:
+    - CURRENT_TIMETABLE
     clarification_reason: null
     requires_prior_context: false
+    composition: MULTI_CAPABILITY
 - id: TT29
   category: planner_rebuild
   role: student
@@ -996,6 +1031,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: TT30
   category: planner_data_limits
   role: student
@@ -1017,13 +1053,14 @@ cases:
   - Do not infer live seats, room distance, lab type, or delivery mode.
   routing:
     mode: exact
-    domain: PLANNER_DATA
+    domain: GENERAL
     expected_family: GENERAL_AGENT
     allowed_families:
     - GENERAL_AGENT
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: CP01
   category: course_priority
   role: student
@@ -1054,6 +1091,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: CP02
   category: course_priority
   role: student
@@ -1085,9 +1123,11 @@ cases:
     expected_family: COURSE_PRIORITY
     allowed_families:
     - COURSE_PRIORITY
-    secondary_families: []
+    secondary_families:
+    - COURSE_UNLOCKS
     clarification_reason: null
     requires_prior_context: false
+    composition: MULTI_CAPABILITY
 - id: CP03
   category: course_priority
   role: student
@@ -1123,6 +1163,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: CP04
   category: course_unlocks
   role: student
@@ -1159,6 +1200,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: CP05
   category: course_unlocks
   role: student
@@ -1194,6 +1236,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: CP06
   category: course_unlocks
   role: student
@@ -1228,6 +1271,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: CP07
   category: course_priority_comparison
   role: student
@@ -1258,7 +1302,7 @@ cases:
     - AI352
   routing:
     mode: one_of
-    domain: COURSE_DATA
+    domain: GENERAL
     expected_family: COURSE_PRIORITY
     allowed_families:
     - COURSE_PRIORITY
@@ -1267,6 +1311,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: CP08
   category: course_priority_impact
   role: student
@@ -1295,7 +1340,7 @@ cases:
     course_code: AI331
   routing:
     mode: one_of
-    domain: COURSE_DATA
+    domain: GENERAL
     expected_family: COURSE_UNLOCKS
     allowed_families:
     - COURSE_UNLOCKS
@@ -1304,6 +1349,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: CP09
   category: recommendation_vs_status
   role: student
@@ -1333,13 +1379,14 @@ cases:
     course_code: AI331
   routing:
     mode: exact
-    domain: COURSE_DATA
+    domain: GENERAL
     expected_family: GENERAL_AGENT
     allowed_families:
     - GENERAL_AGENT
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: CP10
   category: course_priority_recompute
   role: student
@@ -1370,6 +1417,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: CP11
   category: one_step_courses
   role: student
@@ -1403,6 +1451,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: CP12
   category: clarification
   role: student
@@ -1429,9 +1478,11 @@ cases:
     domain: COURSE_DATA
     expected_family: null
     allowed_families: []
-    secondary_families: []
+    secondary_families:
+    - COURSE_UNLOCKS
     clarification_reason: MISSING_COURSE
     requires_prior_context: true
+    composition: MULTI_CAPABILITY
 - id: CP13
   category: clarification
   role: student
@@ -1462,6 +1513,7 @@ cases:
     secondary_families: []
     clarification_reason: MISSING_COURSE
     requires_prior_context: false
+    composition: SINGLE
 - id: CP14
   category: unknown_prerequisite
   role: student
@@ -1495,6 +1547,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: CP15
   category: elective_placeholder
   role: student
@@ -1529,6 +1582,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: CP16
   category: importance_vs_sections
   role: student
@@ -1568,6 +1622,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: CP17
   category: priority_vs_recommendation
   role: student
@@ -1599,6 +1654,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: CP18
   category: priority_under_cap
   role: student
@@ -1626,7 +1682,7 @@ cases:
   - Do not guarantee offering, registration, or seats.
   routing:
     mode: one_of
-    domain: COURSE_DATA
+    domain: GENERAL
     expected_family: COURSE_PRIORITY
     allowed_families:
     - COURSE_PRIORITY
@@ -1634,6 +1690,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: false
+    composition: SINGLE
 - id: CP19
   category: advisor_course_priority
   role: advisor
@@ -1670,6 +1727,7 @@ cases:
     secondary_families: []
     clarification_reason: null
     requires_prior_context: true
+    composition: SINGLE
 - id: CP20
   category: auditable_priority
   role: student
@@ -1704,8 +1762,10 @@ cases:
     expected_family: COURSE_PRIORITY
     allowed_families:
     - COURSE_PRIORITY
-    secondary_families: []
+    secondary_families:
+    - COURSE_UNLOCKS
     clarification_reason: null
     requires_prior_context: true
+    composition: MULTI_CAPABILITY
   setup:
     prior_course_code: AI331

@@ -422,7 +422,7 @@ def test_no_batch_question_is_routed_outside_its_domain() -> None:
         assert family in expected, f"{qid} routed to {family}"
 
 
-def test_the_router_abstains_on_fourteen_of_the_fifty() -> None:
+def test_the_router_abstains_on_thirteen_of_the_fifty() -> None:
     """Pinned deliberately. Loosening a pattern to raise coverage moves this
     number, and the review that follows should be about which question stopped
     falling through and whether the family can actually answer it.
@@ -435,6 +435,11 @@ def test_the_router_abstains_on_fourteen_of_the_fifty() -> None:
     `counts.one_step`, which is that number exactly. Closed because abstention is not
     free downstream: the policy gate keys on the family, so GENERAL_AGENT kept a
     citation obligation the question could not discharge.
+
+    14 -> 13, commit 6C. TT20 «ليش ما ضفت AI491؟» — two data halves, no rule. It
+    was closed for the same reason CP11 was: unrouted, it kept a citation obligation
+    it could never earn, and discharged it live by quoting a glossary entry, which
+    looks like grounding and is not.
 
     18 -> 14, commit 6A.2. Four more, each classified a router defect by the audit in
     `docs/ADVISOR-ROUTING-AUDIT.md` before anything was changed:
@@ -463,8 +468,8 @@ def test_the_router_abstains_on_fourteen_of_the_fifty() -> None:
         for qid, text in QUESTIONS.items()
         if classify_intent(text) is IntentFamily.GENERAL_AGENT
     ]
-    assert len(fell_through) == 14, sorted(fell_through)
-    for closed in ("CP11", "TT10", "CP14", "CP16", "CP19"):
+    assert len(fell_through) == 13, sorted(fell_through)
+    for closed in ("CP11", "TT10", "CP14", "CP16", "CP19", "TT20"):
         assert closed not in fell_through
 
 

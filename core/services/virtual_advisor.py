@@ -17,7 +17,7 @@ from core.models import (
     TermSection,
 )
 from core.services.advisor_actions import handoff_for, handoff_for_question
-from core.services.advisor_intent import classify_intent
+from core.services.advisor_intent import route_intent
 from core.services.advisor_principal import AdvisorPrincipal
 from core.services.advisor_remote_boundary import (
     DUPLICATE_NOTE,
@@ -2630,6 +2630,7 @@ def answer_virtual_advisor(
     # policy id, and before the output contract, because a deterministic
     # abstention contains no identifiers and would pass the identifier gate
     # trivially either way.
+    route = route_intent(question)
     contract = build_policy_contract_state(
         question,
         agent_tool_results,
@@ -2637,10 +2638,17 @@ def answer_virtual_advisor(
         # The family the router already decided, so the obligation is keyed on the
         # DOMAIN of the question rather than on whether a regulated-sounding word
         # appeared in it.
-        intent=classify_intent(question),
+        # The whole route, not the family: a MULTI_CAPABILITY question's domain is a
+        # property of what it is made of. TT20 wins PLANNER_BUILD on precedence and is
+        # planner DATA throughout; asking the family alone would have said the same
+        # thing for a question that also fired POLICY.
+        intent=route,
     )
     telemetry.update(contract.as_telemetry())
+    telemetry["composition"] = str(route.composition)
+    telemetry["secondary_families"] = [str(f) for f in route.secondary_families]
     answer_language = _answer_language(question)
+    policy_abstained = False
 
     if contract.retrieval_missing:
         # Unreachable through any normal path now that retrieval is server-side
@@ -2657,13 +2665,20 @@ def answer_virtual_advisor(
         # corpus this is 53 questions, none of which the curated labels call
         # answerable without a policy.
         #
-        # It refuses the WHOLE turn, including any student-data part. That is the
-        # owner's explicit choice, and the alternative is worse: removing
-        # unsupported rule sentences from free prose is a text-surgery problem
-        # nobody has solved, and a half-edited answer is one whose remaining
-        # sentences nobody has checked.
+        # The ANSWER PROSE is still replaced wholesale, and that has not changed:
+        # removing unsupported rule sentences from free text is a surgery nobody has
+        # solved, and a half-edited answer is one whose remaining sentences nobody
+        # has checked.
+        #
+        # What changed is that the verified student data is no longer DESTROYED with
+        # it. The facts were never in the prose — they are the structured tool
+        # results the server already holds — so `data_part` carries them out beside
+        # the abstention, and the interface renders the timetable or the prerequisite
+        # list it always could have. Only the regulatory CLAIM is suppressed, which
+        # is the half that had no evidence.
         telemetry["policy_contract_failure"] = "no_governing_evidence"
         answer = _POLICY_ABSTENTION_AR if answer_language == "Arabic" else _POLICY_ABSTENTION_EN
+        policy_abstained = True
     elif contract.missing_governing_citation(
         _policy_ids_in_text(answer) & contract.citable_policy_ids
     ):
@@ -2819,5 +2834,28 @@ def answer_virtual_advisor(
         "cited_policy_ids": sorted(
             _policy_ids_in_text(answer) & {c["policy_id"] for c in citations}
         ),
+        # ── the two halves, kept apart ──────────────────────────────────────
+        #
+        # A turn can owe a rule AND report the student's own record, and those two
+        # obligations fail independently. When the store holds nothing governing,
+        # the regulatory CLAIM is suppressed — the prose above is the abstention —
+        # but the verified facts are not destroyed with it: they were never in the
+        # prose to begin with, they are the structured tool results, and the
+        # interface can render the timetable or the prerequisite list unchanged.
+        #
+        # `data_part.facts` is the tool results by NAME, not the raw list, so a
+        # consumer reads `facts["my_progress"]` instead of indexing a position.
+        "data_part": {
+            "status": "ANSWERED" if tool_results else "NOT_ATTEMPTED",
+            "facts": {
+                str(r.get("tool") or f"result_{i}"): r
+                for i, r in enumerate(tool_results)
+                if isinstance(r, dict)
+            },
+        },
+        "policy_part": {
+            "status": "ABSTAINED" if policy_abstained else "ANSWERED",
+            "evidence": citations,
+        },
         "agent": {**telemetry, "tool_results": agent_tool_results},
     }

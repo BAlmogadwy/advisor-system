@@ -299,10 +299,15 @@ def _policy_domain(intent: Any) -> str:
     """
     if intent is None:
         return "GENERAL"
-    from core.services.advisor_intent import IntentFamily, policy_domain_of
+    from core.services.advisor_intent import AdvisorRoute, IntentFamily, policy_domain_of
 
+    # A whole route states its domain — a MULTI_CAPABILITY question's domain comes
+    # from its composition, not from the winning family's name, so asking the family
+    # would give TT20 the wrong answer.
+    if isinstance(intent, AdvisorRoute):
+        return str(intent.policy_domain)
     try:
-        return policy_domain_of(IntentFamily(str(intent)))
+        return str(policy_domain_of(IntentFamily(str(intent))))
     except ValueError:
         return "GENERAL"
 
