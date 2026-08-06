@@ -483,28 +483,25 @@ def test_a_client_cannot_be_built_around_the_kill_switch(monkeypatch):
     """
     monkeypatch.setattr(llm_backend, "_http_open", _never_called())
 
-    # 1. an Alibaba config that lies about being remote, with the switch off
+    # EVERY construction inside the settings block. Two of these built their
+    # config outside it, so they read whatever `.env` the machine happened to
+    # have: green on a developer box that has real Alibaba settings — against the
+    # REAL workspace URL — and a hard error in CI, where there are none. A test
+    # that only passes where the secrets live is not testing the code.
     with override_settings(**OFF):
-        lying = LLMEndpointConfig(
-            **{
-                **endpoint_config("alibaba").__dict__,
-                "is_remote": False,
-                "allow_live_requests": True,
-            }
-        )
+        base = endpoint_config("alibaba").__dict__
+
+        # 1. an Alibaba config that lies about being remote, with the switch off
+        lying = LLMEndpointConfig(**{**base, "is_remote": False, "allow_live_requests": True})
         with pytest.raises(LLMConfigError, match="disabled"):
             OpenAICompatibleLLMClient(lying).chat([{"role": "user", "content": "hi"}])
 
-    # 2. a "local" client pointed at a provider host
-    with pytest.raises(LLMConfigError, match="external provider"):
-        OpenAICompatibleLLMClient(
-            LLMEndpointConfig(**{**endpoint_config("alibaba").__dict__, "backend": "local"})
-        )
+        # 2. a "local" client pointed at a provider host
+        with pytest.raises(LLMConfigError, match="external provider"):
+            OpenAICompatibleLLMClient(LLMEndpointConfig(**{**base, "backend": "local"}))
 
-    # 3. an Alibaba backend whose URL never passed validation
-    with pytest.raises(LLMConfigError):
-        OpenAICompatibleLLMClient(
-            LLMEndpointConfig(
-                **{**endpoint_config("alibaba").__dict__, "base_url": "https://evil.test/v1"}
+        # 3. an Alibaba backend whose URL never passed validation
+        with pytest.raises(LLMConfigError):
+            OpenAICompatibleLLMClient(
+                LLMEndpointConfig(**{**base, "base_url": "https://evil.test/v1"})
             )
-        )

@@ -47,3 +47,23 @@ def forbid_llm_network(monkeypatch) -> None:  # noqa: PT004
     # whole point of this fixture is that it cannot be forgotten.
     monkeypatch.setattr(llm_backend, "_http_open", blocked)
     monkeypatch.setattr(llm_backend, "urlopen", blocked)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_provider_settings(settings) -> None:  # noqa: PT004
+    """No test sees the developer's real Alibaba configuration.
+
+    A `.env` with genuine values made two tests pass locally and fail in CI —
+    and worse, one of them built a client against the REAL workspace URL to
+    assert a refusal. A test that only passes where the secrets live is not
+    testing the code, and one that reads them is a test that could one day send
+    them somewhere.
+
+    Neutralised for every test; a test that needs a provider configuration
+    declares a synthetic one with `override_settings`, which wins over this.
+    """
+    settings.LLM_BACKEND = "local"
+    settings.ALIBABA_LLM_BASE_URL = ""
+    settings.ALIBABA_LLM_API_KEY = ""
+    settings.ALIBABA_LLM_MODEL = ""
+    settings.ALIBABA_LLM_ALLOW_LIVE_REQUESTS = False
