@@ -16,7 +16,7 @@ from core.models import (
     StudentTermSection,
     TermSection,
 )
-from core.services.advisor_actions import handoff_for
+from core.services.advisor_actions import handoff_for, handoff_for_question
 from core.services.advisor_principal import AdvisorPrincipal
 from core.services.advisor_remote_boundary import (
     DUPLICATE_NOTE,
@@ -2271,6 +2271,55 @@ def answer_virtual_advisor(
             f"reports {client_backend!r}; refusing to answer through an "
             "unintended provider."
         )
+
+    # ── the route, decided from the question, before any evidence is gathered ──
+    #
+    # HERE and not later, for two reasons that are not about cost, both measured
+    # against the loaded store rather than reasoned about:
+    #
+    #   «سوِّ لي أكثر من خيار للجدول»  retrieved     8 policies, 2 citable
+    #   «احفظ الخيار الثاني…»          none_matched  0 policies
+    #   «عدّلت قائمة المقررات…»         retrieved     8 policies, 2 citable
+    #
+    # Retrieval seeds `tool_results`, which the UI renders as the evidence behind
+    # the answer — so two of the three would carry eight policy records beside a
+    # fixed referral that cites none of them. And `derive_outcome` reads
+    # `policy_grounding`: the preference question matches nothing, `none_matched`
+    # becomes POLICY_NOT_FOUND, and POLICY_NOT_FOUND with no citations is ABSTAIN,
+    # which stores a route the student can act on as one the adviser declined.
+    #
+    # STUDENTS ONLY, and that is a correctness gate rather than caution. Every
+    # planner-draft endpoint builds its principal with `AdvisorPrincipal.for_student`
+    # and refuses anything else, so «افتح المخطط الدراسي» offered to an adviser
+    # names a screen that will answer them 403. Routing someone to a door that is
+    # locked against them is the same defect as denying a feature that exists,
+    # pointed the other way.
+    #
+    # `PLANNER_REBUILD` is not routed here — see `ROUTED_INTENTS`. It is refused
+    # inside `build_my_timetable`, where the arguments are known, and answering it
+    # from the question as well would leave one rule with two implementations.
+    if principal.role == ROLE_STUDENT:
+        routed = handoff_for_question(question)
+        if routed is not None:
+            telemetry["action_handoff"] = routed.action
+            telemetry["intent_route"] = routed.intent
+            return {
+                "ok": True,
+                "answer": routed.answer(_answer_language(question)),
+                "action": routed.as_payload(),
+                # No model was contacted, so naming one would attribute a constant
+                # in this repository to a provider that never saw the question —
+                # and `_persist_answer` stores this string on the turn.
+                "model": "",
+                "usage": {},
+                "context_summary": _context_summary(context),
+                "tool_results": [],
+                "verified_context": context,
+                "citations": [],
+                "cited_policy_ids": [],
+                "agent": {**telemetry, "tool_results": []},
+            }
+
     boundary = boundary_for_scope(
         scope,
         backend=client_backend,
